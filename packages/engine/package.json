@@ -1,0 +1,26 @@
+{
+  "name": "@weave/engine",
+  "version": "0.0.1",
+  "description": "Weave orchestration engine: agent runner, hooks, skills, and background manager",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "module": "./dist/index.js",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "bun build ./src/index.ts --outdir ./dist --target bun && tsc -p tsconfig.build.json --emitDeclarationOnly",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@weave/core": "workspace:*",
+    "pino": "^9.6.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5"
+  }
+}

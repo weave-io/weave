@@ -1,0 +1,20 @@
+{
+  "name": "@weave-io/root",
+  "version": "0.0.1",
+  "private": true,
+  "workspaces": [
+    "packages/core",
+    "packages/engine",
+    "packages/adapters/*"
+  ],
+  "scripts": {
+    "build": "bun run --filter '*' build",
+    "test": "bun test --recursive",
+    "typecheck": "tsc --noEmit -p tsconfig.json && bun run --filter '*' typecheck",
+    "clean": "find . -type d -name dist -not -path '*/node_modules/*' | xargs rm -rf"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5",
+    "bun-types": "latest"
+  }
+}

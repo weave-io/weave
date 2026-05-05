@@ -1,0 +1,19 @@
+[install]
+# Use exact versions by default
+exact = false
+
+[install.cache]
+dir = "~/.bun/install/cache"
+disable = false
+disableManifest = false
+
+[test]
+# Run tests with coverage reporting
+# coverage = true
+# coverageDir = "coverage"
+timeout = 5000
+smol = false
+
+[bundle]
+# External packages not to be bundled
+# external = []
