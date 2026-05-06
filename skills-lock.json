@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "skills": {
+    "bun": {
+      "source": "bun.sh",
+      "sourceType": "well-known",
+      "computedHash": "303b379d67551584e974dd5edbbe77be389f7b8868f80d6e9baf04b4ae375f2b"
+    },
+    "neverthrow-return-types": {
+      "source": "code-sherpas/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/neverthrow-return-types/SKILL.md",
+      "computedHash": "f5f2565710300bf4770d6fd745024e8a788e419ca6aff5cabc0ca7f9abbbd31a"
+    },
+    "neverthrow-wrap-exceptions": {
+      "source": "code-sherpas/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/neverthrow-wrap-exceptions/SKILL.md",
+      "computedHash": "daed66259d9d2a0adadf050d3285909397fc3c34d29ac1c95adf84775f5485a8"
+    },
+    "zod": {
+      "source": "pproenca/dot-skills",
+      "sourceType": "github",
+      "skillPath": "skills/.curated/zod/SKILL.md",
+      "computedHash": "e5d8e35002d0d6b03db0b0daad54e1b82c9c10804f8a745025c07db5ea685655"
+    }
+  }
+}

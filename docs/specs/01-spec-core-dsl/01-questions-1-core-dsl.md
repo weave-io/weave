@@ -9,7 +9,8 @@ How should agents declare their system prompts in the DSL? This is the core desi
 - [ ] (A) **Section array** — `sections: [{ tag: "Role", content: "..." }, { tag: "Delegation", builder: (ctx) => "..." }]` — Follows the sketch in `docs/legacy-architecture.md` §7.2. Each section has a tag, and is either static content or a dynamic builder function receiving a context object.
 - [ ] (B) **Simple string + append** — `prompt: "full prompt text"` with optional `prompt_append: "extra"` — Keep it simple like the current `AgentConfig`. Builtin agents construct their full prompt string in their config declaration using helper functions. No first-class section concept in the type system.
 - [ ] (C) **Hybrid** — `prompt: string | PromptSection[]` — Support both a simple string (for basic agents) and a section array (for complex composition). The engine normalises both to sections before composing the final prompt.
-- [ ] (D) Other (describe)
+- [x] (D) Other (describe): it can be either a string, or a file path to a
+  prompts file. (.weave/prompts/prompt_a.md)
 
 **Recommended answer(s):** (C)
 
@@ -24,7 +25,7 @@ How should agents declare their system prompts in the DSL? This is the core desi
 How should agents declare which tools they can use?
 
 - [ ] (A) **String array** (current) — `tools: ["read", "edit", "bash"]` — Simple allowlist of tool names.
-- [ ] (B) **Capability map** — `toolPolicy: { read: true, write: true, edit: true, delegate: true }` — Boolean map of abstract capabilities. Adapters map capabilities to harness-specific tool names. Follows §7.2/§7.3 recommendation.
+- [x] (B) **Capability map** — `toolPolicy: { read: true, write: true, edit: true, delegate: true }` — Boolean map of abstract capabilities. Adapters map capabilities to harness-specific tool names. Follows §7.2/§7.3 recommendation.
 - [ ] (C) **Both** — `tools?: string[]` for quick declarations + `toolPolicy?: Record<string, boolean>` for fine-grained control. If both are provided, `toolPolicy` wins.
 - [ ] (D) Other (describe)
 
@@ -41,7 +42,7 @@ How should agents declare which tools they can use?
 How much of the legacy configuration surface should this spec cover? The legacy system has agents, categories, continuation, analytics, workflows, background concurrency, and log level.
 
 - [ ] (A) **Agents only** — Focus this spec on `AgentConfig` (prompt composition, tool policies, model resolution, delegation metadata, modes) and the minimal `WeaveConfig` shell. Categories, continuation, analytics, etc. become separate future specs.
-- [ ] (B) **Agents + categories** — Agents plus the category/domain routing system (glob patterns, per-category model/tool overrides), since categories directly affect agent behaviour and prompt composition.
+- [x] (B) **Agents + categories** — Agents plus the category/domain routing system (glob patterns, per-category model/tool overrides), since categories directly affect agent behaviour and prompt composition.
 - [ ] (C) **Full legacy parity** — Cover the entire legacy config surface in one spec: agents, categories, continuation, analytics, workflows, background, log level, disabled lists.
 - [ ] (D) Other (describe)
 
@@ -58,7 +59,7 @@ How much of the legacy configuration surface should this spec cover? The legacy 
 Should `@weave/core` include Zod schemas for runtime validation of config, or only TypeScript types?
 
 - [ ] (A) **TypeScript types only** — `@weave/core` exports pure TS interfaces. Runtime validation (Zod) lives in `@weave/engine` where config is actually loaded and parsed.
-- [ ] (B) **Types + Zod schemas in core** — Export both the TS types and co-located Zod schemas from `@weave/core`. The schemas are the source of truth; TS types are inferred from them via `z.infer<>`.
+- [x] (B) **Types + Zod schemas in core** — Export both the TS types and co-located Zod schemas from `@weave/core`. The schemas are the source of truth; TS types are inferred from them via `z.infer<>`.
 - [ ] (C) **Types + lightweight validation** — Export TS types and a `validateConfig(input: unknown): WeaveConfig` function in core that does runtime checks without a Zod dependency.
 - [ ] (D) Other (describe)
 
@@ -74,7 +75,7 @@ Should `@weave/core` include Zod schemas for runtime validation of config, or on
 
 The legacy system has agent modes (`primary`, `subagent`, `all`) that affect model resolution. Should this be part of the DSL?
 
-- [ ] (A) **Yes, include `mode`** — Add `mode: "primary" | "subagent" | "all"` to `AgentConfig`. Builtin agents use this to declare their model resolution behaviour. Adapters interpret it for their harness.
+- [x] (A) **Yes, include `mode`** — Add `mode: "primary" | "subagent" | "all"` to `AgentConfig`. Builtin agents use this to declare their model resolution behaviour. Adapters interpret it for their harness.
 - [ ] (B) **No, defer to engine** — Mode is a resolution concern, not a declaration concern. The DSL declares the model/fallback chain; the engine decides resolution strategy.
 - [ ] (C) Other (describe)
 
@@ -90,7 +91,7 @@ The legacy system has agent modes (`primary`, `subagent`, `all`) that affect mod
 How should agents declare model preferences when the primary model is unavailable?
 
 - [ ] (A) **`model` + `fallback_models`** — `model: "claude-sonnet-4-5"`, `fallback_models: ["gpt-4o", "gemini-2-flash"]` — Matches the legacy custom agent config shape.
-- [ ] (B) **`models` array** — `models: ["claude-sonnet-4-5", "gpt-4o", "gemini-2-flash"]` — Single ordered preference list; first available wins.
+- [x] (B) **`models` array** — `models: ["claude-sonnet-4-5", "gpt-4o", "gemini-2-flash"]` — Single ordered preference list; first available wins.
 - [ ] (C) **Both** — `model?: string` (single preferred) + `models?: string[]` (full fallback chain). If `model` is set, it's prepended to `models`.
 - [ ] (D) Other (describe)
 

@@ -1,0 +1,21 @@
+# Project Context
+
+This is a typescript project using raw-http.
+It is a monorepo with workspaces: @weave/core (packages/core), @weave/engine (packages/engine), @weave/adapter-opencode (packages/adapters/opencode).
+
+
+High-impact files (most imported, changes here affect many other files):
+- packages/core/src/agent.ts (imported by 2 files)
+- packages/core/src/hook.ts (imported by 2 files)
+- packages/core/src/skill.ts (imported by 2 files)
+- packages/core/src/config.ts (imported by 2 files)
+- packages/engine/src/adapter.ts (imported by 2 files)
+- packages/engine/src/logger.ts (imported by 2 files)
+- packages/core/src/dsl.ts (imported by 1 files)
+- packages/engine/src/runner.ts (imported by 1 files)
+
+Required environment variables (no defaults):
+- LOG_LEVEL (packages/engine/src/logger.ts)
+
+Read .codesight/wiki/index.md for orientation (WHERE things live). Then read actual source files before implementing. Wiki articles are navigation aids, not implementation guides.
+Read .codesight/CODESIGHT.md for the complete AI context map including all routes, schema, components, libraries, config, middleware, and dependency graph.

@@ -18,5 +18,9 @@
   },
   "devDependencies": {
     "typescript": "^5.4.5"
+  },
+  "dependencies": {
+    "neverthrow": "^8.2.0",
+    "zod": "^4.4.3"
   }
 }
