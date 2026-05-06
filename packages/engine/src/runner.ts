@@ -22,62 +22,52 @@ const log = logger.child({ module: "runner" });
  * ```
  */
 export class WeaveRunner {
-	private readonly config: WeaveConfig;
-	private readonly adapter: HarnessAdapter;
+  private readonly config: WeaveConfig;
+  private readonly adapter: HarnessAdapter;
 
-	constructor(config: WeaveConfig, adapter: HarnessAdapter) {
-		this.config = config;
-		this.adapter = adapter;
-	}
+  constructor(config: WeaveConfig, adapter: HarnessAdapter) {
+    this.config = config;
+    this.adapter = adapter;
+  }
 
-	/**
-	 * Execute the full Weave orchestration lifecycle:
-	 *
-	 * 1. Initialise the harness adapter.
-	 * 2. Load all skills that are not disabled.
-	 * 3. Register all enabled hooks.
-	 * 4. Spawn all agents that are not disabled.
-	 */
-	async run(): Promise<void> {
-		const { agents, hooks, skills, disabled = [] } = this.config;
+  /**
+   * Execute the full Weave orchestration lifecycle:
+   *
+   * 1. Initialise the harness adapter.
+   * 2. Load all skills that are not disabled.  (deferred — see TODO)
+   * 3. Register all enabled hooks.             (deferred — see TODO)
+   * 4. Spawn all agents that are not disabled.
+   */
+  async run(): Promise<void> {
+    const { agents, disabled } = this.config;
 
-		// 1. Initialise the adapter.
-		log.info("Initialising harness adapter");
-		await this.adapter.init();
+    // 1. Initialise the adapter.
+    log.info("Initialising harness adapter");
+    await this.adapter.init();
 
-		// 2. Load skills (skip any that appear in the disabled list).
-		for (const skill of skills) {
-			if (disabled.includes(skill.name)) {
-				log.debug({ skill: skill.name }, "Skipping disabled skill");
-				continue;
-			}
-			log.info({ skill: skill.name, scope: skill.scope }, "Loading skill");
-			await this.adapter.loadSkill(skill);
-		}
+    // 2. TODO: restore skill loading when skill config surfaces are specced.
+    // Skills are referenced by name in agent config but full SkillConfig
+    // (path, scope) is an engine concern not yet part of the .weave DSL spec.
 
-		// 3. Register enabled hooks (skip disabled ones).
-		for (const hook of hooks) {
-			if (!hook.enabled || disabled.includes(hook.name)) {
-				log.debug({ hook: hook.name }, "Skipping disabled hook");
-				continue;
-			}
-			log.info({ hook: hook.name }, "Registering hook");
-			await this.adapter.registerHook(hook);
-		}
+    // 3. TODO: restore hook registration when hook config surfaces are specced.
+    // Hooks are not part of the .weave DSL spec in @weave/core at this time.
 
-		// 4. Spawn agents (skip any that appear in the disabled list).
-		for (const [name, agentConfig] of Object.entries(agents) as [
-			string,
-			AgentConfig,
-		][]) {
-			if (disabled.includes(name)) {
-				log.debug({ agent: name }, "Skipping disabled agent");
-				continue;
-			}
-			log.info({ agent: name, model: agentConfig.model }, "Spawning agent");
-			await this.adapter.spawnSubagent(name, agentConfig);
-		}
+    // 4. Spawn agents (skip any that appear in the disabled.agents list).
+    for (const [name, agentConfig] of Object.entries(agents) as [
+      string,
+      AgentConfig,
+    ][]) {
+      if (disabled.agents.includes(name)) {
+        log.debug({ agent: name }, "Skipping disabled agent");
+        continue;
+      }
+      log.info(
+        { agent: name, model: agentConfig.models?.[0] },
+        "Spawning agent",
+      );
+      await this.adapter.spawnSubagent(name, agentConfig);
+    }
 
-		log.info("Weave run complete");
-	}
+    log.info("Weave run complete");
+  }
 }
