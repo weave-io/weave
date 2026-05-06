@@ -6,27 +6,27 @@
  * after each bad construct by skipping to the next safe boundary.
  */
 
-import { ok, err, type Result } from "neverthrow";
-import type { ParseError } from "./errors.js";
-import { type Token, TokenType } from "./tokens.js";
-import type { SourcePos } from "./tokens.js";
+import { err, ok, type Result } from "neverthrow";
 import type {
+  AgentBlock,
+  ArrayValue,
   AstNode,
   AstValue,
-  Property,
-  AgentBlock,
+  BlockValue,
+  BooleanValue,
   CategoryBlock,
-  WorkflowBlock,
   DisableDirective,
+  IdentifierValue,
+  NumberValue,
+  Property,
   SettingAssignment,
   StepBlock,
   StringValue,
-  NumberValue,
-  BooleanValue,
-  IdentifierValue,
-  ArrayValue,
-  BlockValue,
+  WorkflowBlock,
 } from "./ast.js";
+import type { ParseError } from "./errors.js";
+import type { SourcePos } from "./tokens.js";
+import { type Token, TokenType } from "./tokens.js";
 
 export class Parser {
   readonly #tokens: Token[];
@@ -44,17 +44,6 @@ export class Parser {
   #current(): Token {
     return (
       this.#tokens[this.#cursor] ?? {
-        type: TokenType.EOF,
-        value: "",
-        line: 0,
-        column: 0,
-      }
-    );
-  }
-
-  #peek(offset = 0): Token {
-    return (
-      this.#tokens[this.#cursor + offset] ?? {
         type: TokenType.EOF,
         value: "",
         line: 0,
@@ -91,11 +80,6 @@ export class Parser {
     while (this.#current().type === TokenType.Newline) {
       this.#advance();
     }
-  }
-
-  #pos(): SourcePos {
-    const t = this.#current();
-    return { line: t.line, column: t.column };
   }
 
   // ---------------------------------------------------------------------------
@@ -150,13 +134,6 @@ export class Parser {
         return this.#parseSettingAssignment();
     }
   }
-
-  // ---------------------------------------------------------------------------
-  // Block parsers
-  // ---------------------------------------------------------------------------
-
-  #parseNamedBlock(blockType: "agent"): AgentBlock | null;
-  #parseNamedBlock(blockType: "category"): CategoryBlock | null;
   #parseNamedBlock(blockType: string): AgentBlock | CategoryBlock | null {
     const startTok = this.#advance(); // consume 'agent' / 'category'
     const pos: SourcePos = { line: startTok.line, column: startTok.column };

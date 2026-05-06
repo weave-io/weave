@@ -5,9 +5,9 @@
  * All errors are collected and returned together — the lexer never throws.
  */
 
-import { ok, err, type Result } from "neverthrow";
+import { err, ok, type Result } from "neverthrow";
 import type { LexError } from "./errors.js";
-import { type Token, TokenType, type SourcePos } from "./tokens.js";
+import { type Token, TokenType } from "./tokens.js";
 
 export class Lexer {
   readonly #source: string;
@@ -46,14 +46,6 @@ export class Lexer {
       if (ch !== " " && ch !== "\t" && ch !== "\r") break;
       this.#advance();
     }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Readers
-  // ---------------------------------------------------------------------------
-
-  #currentPos(): SourcePos {
-    return { line: this.#line, column: this.#col };
   }
 
   /** Read a double-quoted string. Returns the inner value or an error. */
@@ -152,7 +144,7 @@ export class Lexer {
             type: "InvalidNumber",
             line: startLine,
             column: startCol,
-            value: value + ".",
+            value: `${value}.`,
           });
         }
         value += ch;
