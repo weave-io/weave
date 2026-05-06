@@ -13,7 +13,8 @@ bun run validate-config
 echo "▶ test..."
 bun test --recursive
 
-echo "✔ all checks passed"
-
-echo "▶  Generating Codesight Wiki..."
+echo "▶ codesight..."
 npx codesight
+git add .codesight/
+
+echo "✔ all checks passed"
