@@ -1,5 +1,5 @@
 {
-  "name": "@weave-io/root",
+  "name": "@weave",
   "version": "0.0.1",
   "private": true,
   "workspaces": [
@@ -11,10 +11,14 @@
     "build": "bun run --filter '*' build",
     "test": "bun test --recursive",
     "typecheck": "tsc --noEmit -p tsconfig.json && bun run --filter '*' typecheck",
-    "clean": "find . -type d -name dist -not -path '*/node_modules/*' | xargs rm -rf"
+    "lint": "biome lint packages/",
+    "clean": "find . -type d -name dist -not -path '*/node_modules/*' | xargs rm -rf",
+    "prepare": "husky"
   },
   "devDependencies": {
-    "typescript": "^5.4.5",
-    "bun-types": "latest"
+    "@biomejs/biome": "^2.4.14",
+    "bun-types": "latest",
+    "husky": "^9.1.7",
+    "typescript": "^5.4.5"
   }
 }

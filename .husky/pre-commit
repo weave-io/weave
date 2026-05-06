@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "▶ lint..."
+bun run lint
+
+echo "▶ typecheck..."
+bun run typecheck
+
+echo "▶ test..."
+bun test --recursive
+
+echo "✔ all checks passed"

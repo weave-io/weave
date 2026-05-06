@@ -16,6 +16,6 @@ import pino from "pino";
  * ```
  */
 export const logger = pino({
-	name: "weave",
-	level: process.env["LOG_LEVEL"] ?? "info",
+  name: "weave",
+  level: process.env.LOG_LEVEL ?? "info",
 });
