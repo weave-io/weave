@@ -5,6 +5,7 @@
 Task 4.0 implements `schema.ts` (Zod schemas and inferred types) and `validate.ts` (the `validate()` function that walks an `AstNode[]`, converts it to a plain object, and runs it through Zod). This is the third and final stage of the pipeline before the `WeaveConfig` is returned to callers.
 
 Key design decisions implemented here:
+
 - All TypeScript config types are `z.infer<>` derivations — no hand-written interfaces.
 - `AgentConfigSchema` has two `.refine()` checks: `prompt`/`prompt_file` mutual exclusivity, and `prompt_file` path safety (no `..`, no absolute paths).
 - `CategoryConfigSchema` enforces `patterns` has at least one entry.
@@ -35,6 +36,7 @@ Two artifacts: validation test suite output (15/15 pass) and workspace typecheck
 **Why it matters:** The validator is the spec's trust boundary — it turns an untyped AST into a typed, guaranteed-valid `WeaveConfig`. Every gap here would allow malformed config to reach runtime.
 
 **Command:**
+
 ```bash
 bun test packages/core/src/__tests__/validate.test.ts
 ```
@@ -75,6 +77,7 @@ Ran 15 tests across 1 file. [34.00ms]
 **Why it matters:** The inferred types replace all hand-written config interfaces; if any consumer expected a different shape, it would fail typecheck here.
 
 **Command:**
+
 ```bash
 bun run typecheck
 ```

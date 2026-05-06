@@ -5,6 +5,7 @@
 Task 2.0 implements the `Lexer` class and `tokenize()` function that convert raw `.weave` source text into a `Token[]` stream consumed by the parser. It also defines `TokenType`, `Token`, and `SourcePos` in `tokens.ts`. This is the first stage of the three-stage DSL pipeline (lex → parse → validate).
 
 A bug discovered during this task — `bun test --recursive` hanging indefinitely — was traced to two root causes fixed as part of this task:
+
 1. `bunfig.toml` used `dir = "~/.bun/install/cache"` which Bun does not expand; a literal `~/` directory was created inside the project root and populated with zod's own test suite (~150 files), causing `--recursive` to discover and attempt to run them.
 2. An infinite loop in `Parser.parse()` (discovered when isolating the hang) where a stray `}` token caused `#parseTopLevel()` to re-enter with no cursor progress. Fixed by adding a safety advance when no progress is made.
 
@@ -30,6 +31,7 @@ Two artifacts: lexer test suite output (18/18 pass) and workspace typecheck conf
 **Why it matters:** The lexer is the entry point of the pipeline; any gap here would silently corrupt all downstream parsing and validation.
 
 **Command:**
+
 ```bash
 bun test packages/core/src/__tests__/lexer.test.ts
 ```
@@ -73,6 +75,7 @@ Ran 18 tests across 1 file. [18.00ms]
 **Why it matters:** The `Token` and `SourcePos` types are re-exported from `ast.ts` and used throughout the parser; a type mismatch here would cascade across the entire pipeline.
 
 **Command:**
+
 ```bash
 bun run typecheck
 ```

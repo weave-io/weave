@@ -26,6 +26,7 @@ Three artifacts: legacy-reference grep (zero results), workspace typecheck, and 
 **Why it matters:** Stale imports to deleted files would cause runtime errors or silent type holes. Zero results confirms the cleanup is complete.
 
 **Command:**
+
 ```bash
 grep -r "defineConfig\|from.*['\"].*dsl['\"]" packages/ --include="*.ts"
 ```
@@ -44,6 +45,7 @@ grep -r "defineConfig\|from.*['\"].*dsl['\"]" packages/ --include="*.ts"
 **Why it matters:** This is the definitive verification that the cleanup is non-breaking. A single missed import or shape mismatch in the engine would surface here.
 
 **Command:**
+
 ```bash
 bun run typecheck
 ```
@@ -65,6 +67,7 @@ $ tsc --noEmit -p tsconfig.json && bun run --filter '*' typecheck
 **Why it matters:** The runner's `run()` method touches `WeaveConfig` fields directly; if the shape update were wrong, the engine env test or a future runner test would catch it.
 
 **Command:**
+
 ```bash
 bun test --recursive
 ```

@@ -29,6 +29,7 @@ Two artifacts: parser test suite output (15/15 pass) and workspace typecheck con
 **Why it matters:** The parser is the structural backbone of the pipeline. Incorrect AST construction would corrupt the config objects produced by the validator.
 
 **Command:**
+
 ```bash
 bun test packages/core/src/__tests__/parser.test.ts
 ```
@@ -69,6 +70,7 @@ Ran 15 tests across 1 file. [18.00ms]
 **Why it matters:** The `AstNode[]` type is the contract between the parser and validator; any shape mismatch would surface here before reaching runtime.
 
 **Command:**
+
 ```bash
 bun run typecheck
 ```

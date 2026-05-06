@@ -27,6 +27,7 @@ Three artifacts: end-to-end test suite (11/11 pass), full workspace test suite (
 **Why it matters:** This is the primary consumer-facing function. If any stage's errors don't propagate correctly, callers would receive wrong results without any indication of failure.
 
 **Command:**
+
 ```bash
 bun test packages/core/src/__tests__/parse_config.test.ts
 ```
@@ -63,6 +64,7 @@ Ran 11 tests across 1 file. [37.00ms]
 **Why it matters:** Barrel rewrites are a common regression source. This confirms the updated exports are backward-compatible with everything that imports from `@weave/core`.
 
 **Command:**
+
 ```bash
 bun test --recursive
 ```
@@ -84,6 +86,7 @@ Ran 85 tests across 6 files. [42.00ms]
 **Why it matters:** The barrel is the only import path for downstream packages; a broken export here would be a compile-time failure for every consumer.
 
 **Command:**
+
 ```bash
 bun run typecheck
 ```
