@@ -39,6 +39,7 @@
       "dependencies": {
         "@weave/core": "workspace:*",
         "pino": "^9.6.0",
+        "zod": "^4.4.3",
       },
       "devDependencies": {
         "typescript": "^5.4.5",

@@ -1,4 +1,5 @@
 import pino from "pino";
+import { env } from "./env.js";
 
 /**
  * Shared pino logger for the Weave engine.
@@ -17,5 +18,5 @@ import pino from "pino";
  */
 export const logger = pino({
   name: "weave",
-  level: process.env.LOG_LEVEL ?? "info",
+  level: env.LOG_LEVEL,
 });
