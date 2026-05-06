@@ -23,6 +23,7 @@ Three artifacts: dependency install confirmation, test suite output (21/21 pass)
 **Why it matters:** All subsequent pipeline modules depend on `neverthrow` for `Result` types and `zod` for schema validation.
 
 **Command:**
+
 ```bash
 cd packages/core && bun add neverthrow zod
 ```
@@ -49,6 +50,7 @@ installed zod@4.4.3
 **Why it matters:** Every downstream module (`lexer.ts`, `parser.ts`, `validate.ts`) relies on these error types being correctly shaped and narrowable.
 
 **Command:**
+
 ```bash
 bun test packages/core/src/__tests__/errors.test.ts
 ```
@@ -95,6 +97,7 @@ Ran 21 tests across 1 file. [11.00ms]
 **Why it matters:** A clean typecheck confirms the error types are correctly exported and compatible with the rest of `@weave/core` and the engine packages.
 
 **Command:**
+
 ```bash
 bun run typecheck
 ```

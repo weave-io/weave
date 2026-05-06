@@ -11,3 +11,6 @@ echo "▶ test..."
 bun test --recursive
 
 echo "✔ all checks passed"
+
+echo "▶  Generating Codesight Wiki..."
+npx codesight

@@ -13,6 +13,7 @@
   },
   "scripts": {
     "build": "bun build ./src/index.ts --outdir ./dist --target bun && tsc -p tsconfig.build.json --emitDeclarationOnly",
+    "test": "bun test ./src/__tests__",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "clean": "rm -rf dist"
   },
