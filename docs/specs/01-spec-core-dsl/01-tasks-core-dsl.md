@@ -62,7 +62,7 @@
 
 ---
 
-### [ ] 2.0 Lexer — Tokenize `.weave` Source Files
+### [x] 2.0 Lexer — Tokenize `.weave` Source Files
 
 #### 2.0 Proof Artifact(s)
 
@@ -71,11 +71,11 @@
 
 #### 2.0 Tasks
 
-- [ ] 2.1 Create `packages/core/src/tokens.ts` with:
+- [x] 2.1 Create `packages/core/src/tokens.ts` with:
   - `TokenType` enum: `Identifier`, `String`, `Number`, `LBrace`, `RBrace`, `LBracket`, `RBracket`, `Comma`, `Newline`, `EOF`
   - `Token` interface: `{ type: TokenType; value: string; line: number; column: number }`
   - `SourcePos` interface: `{ line: number; column: number }`
-- [ ] 2.2 Create `packages/core/src/lexer.ts` with a `Lexer` class:
+- [x] 2.2 Create `packages/core/src/lexer.ts` with a `Lexer` class:
   - Constructor takes `source: string`, initialises `pos`, `line`, `col` tracking
   - Private methods: `advance()`, `peek()`, `skipWhitespace()` (spaces/tabs only, not newlines), `readString()`, `readTripleQuotedString()` (with common indentation stripping), `readNumber()`, `readIdentifier()`
   - `readTripleQuotedString()` shall strip the common leading whitespace from all non-empty lines (like Kotlin `trimIndent()`)
@@ -83,8 +83,8 @@
   - `#` comments: skip from `#` to end of line (do not emit token)
   - Newline handling: emit `Newline` tokens, collapse consecutive newlines into one
   - Trailing commas in arrays: naturally handled since `,` is a token and parser will accept optional trailing comma
-- [ ] 2.3 Export a standalone `tokenize(source: string): Result<Token[], LexError[]>` function that creates a `Lexer` and calls its `tokenize()` method.
-- [ ] 2.4 Create `packages/core/src/__tests__/lexer.test.ts` testing:
+- [x] 2.3 Export a standalone `tokenize(source: string): Result<Token[], LexError[]>` function that creates a `Lexer` and calls its `tokenize()` method.
+- [x] 2.4 Create `packages/core/src/__tests__/lexer.test.ts` testing:
   - Tokenize a simple agent block: `agent loom { temperature 0.1 }` → correct token sequence
   - Double-quoted strings: `"hello world"` → `String` token with correct value
   - Triple-quoted strings: `"""multi\nline"""` → `String` token with indentation stripped
@@ -100,7 +100,7 @@
 
 ---
 
-### [ ] 3.0 Parser + AST — Token Stream to Typed AST
+### [x] 3.0 Parser + AST — Token Stream to Typed AST
 
 #### 3.0 Proof Artifact(s)
 
@@ -109,7 +109,7 @@
 
 #### 3.0 Tasks
 
-- [ ] 3.1 Create `packages/core/src/ast.ts` with AST node types:
+- [x] 3.1 Create `packages/core/src/ast.ts` with AST node types:
   - `SourcePos`: `{ line: number; column: number }` (re-export from tokens if shared)
   - `AstValue` discriminated union: `StringValue`, `NumberValue`, `BooleanValue`, `IdentifierValue`, `ArrayValue`, `BlockValue`
     - `StringValue`: `{ kind: "string"; value: string; pos: SourcePos }`
@@ -126,7 +126,7 @@
     - `WorkflowBlock`: `{ type: "workflow"; name: string; properties: Property[]; steps: StepBlock[]; pos: SourcePos }`
     - `DisableDirective`: `{ type: "disable"; target: "agents" | "hooks" | "skills"; items: string[]; pos: SourcePos }`
     - `SettingAssignment`: `{ type: "setting"; key: string; value: AstValue; pos: SourcePos }`
-- [ ] 3.2 Create `packages/core/src/parser.ts` with a `Parser` class:
+- [x] 3.2 Create `packages/core/src/parser.ts` with a `Parser` class:
   - Constructor takes `tokens: Token[]`, initialises cursor position and error accumulator
   - Private methods:
     - `current()`, `advance()`, `expect(type, value?)`, `skipNewlines()` — token navigation
@@ -140,8 +140,8 @@
     - `parseDisableDirective()` — reads `disable`, target identifier (`agents`/`hooks`/`skills`), array value
   - Error recovery: on unexpected token, skip to next `Newline` or `RBrace` and continue parsing
   - Public method `parse(): Result<AstNode[], ParseError[]>`
-- [ ] 3.3 Export a standalone `parse(tokens: Token[]): Result<AstNode[], ParseError[]>` function.
-- [ ] 3.4 Create `packages/core/src/__tests__/parser.test.ts` testing:
+- [x] 3.3 Export a standalone `parse(tokens: Token[]): Result<AstNode[], ParseError[]>` function.
+- [x] 3.4 Create `packages/core/src/__tests__/parser.test.ts` testing:
   - Full agent block with nested `tool_policy` block and `triggers` array of objects → correct `AgentBlock` AST
   - Category block with `patterns` array → correct `CategoryBlock` AST
   - Disable directive: `disable agents ["warp", "spindle"]` → correct `DisableDirective`
@@ -155,7 +155,7 @@
 
 ---
 
-### [ ] 4.0 Schema Validation — AST to Validated `WeaveConfig`
+### [x] 4.0 Schema Validation — AST to Validated `WeaveConfig`
 
 #### 4.0 Proof Artifact(s)
 
@@ -164,7 +164,7 @@
 
 #### 4.0 Tasks
 
-- [ ] 4.1 Create `packages/core/src/schema.ts` with Zod schemas:
+- [x] 4.1 Create `packages/core/src/schema.ts` with Zod schemas:
   - `ToolPermissionSchema`: `z.enum(["allow", "deny", "ask"])`
   - `DelegationTriggerSchema`: `z.object({ domain: z.string(), trigger: z.string() })`
   - `AgentConfigSchema`: `z.object(...)` with all fields from spec (name, description, display_name, prompt, prompt_file, prompt_append, models, temperature 0–2, mode, tool_policy, skills, triggers). Add `.refine()` for prompt/prompt_file mutual exclusivity. Add `.refine()` for prompt_file path safety (no `..`, no absolute paths).
@@ -172,12 +172,12 @@
   - `DisabledConfigSchema`: `z.object({ agents: z.array(z.string()).default([]), hooks: z.array(z.string()).default([]), skills: z.array(z.string()).default([]) })`
   - `WeaveConfigSchema`: `z.object({ agents: z.record(...).default({}), categories: z.record(...).default({}), disabled: DisabledConfigSchema.default({}), log_level: z.enum([...]).optional(), workflows: z.record(z.string(), z.unknown()).optional() })`
   - Export all inferred types: `type AgentConfig = z.infer<typeof AgentConfigSchema>`, etc.
-- [ ] 4.2 Create `packages/core/src/validate.ts` with:
+- [x] 4.2 Create `packages/core/src/validate.ts` with:
   - Internal `astToPlainObject(nodes: AstNode[]): Record<string, unknown>` — walks AST, groups agents/categories/disables/settings into a plain object shaped for `WeaveConfigSchema`
   - Helper `propertiesToObject(props: Property[]): Record<string, unknown>` — converts `Property[]` into key-value pairs, recursing into `BlockValue` and `ArrayValue`
   - Public `validate(ast: AstNode[]): Result<WeaveConfig, ValidationError[]>` — calls `astToPlainObject`, then `WeaveConfigSchema.safeParse()`, maps Zod errors to `ValidationError[]` with source positions from AST
   - Zod error mapping: traverse `ZodError.issues`, build `path` string from issue path array, attach `line`/`column` from the originating AST node where possible
-- [ ] 4.3 Create `packages/core/src/__tests__/validate.test.ts` testing:
+- [x] 4.3 Create `packages/core/src/__tests__/validate.test.ts` testing:
   - Valid agent with all fields → `ok(WeaveConfig)` with correct data
   - Valid category with patterns and tool_policy → correct data
   - prompt + prompt_file both set → `err` with clear message mentioning agent name
@@ -192,7 +192,7 @@
 
 ---
 
-### [ ] 5.0 End-to-End Pipeline and Public API
+### [x] 5.0 End-to-End Pipeline and Public API
 
 #### 5.0 Proof Artifact(s)
 
@@ -202,12 +202,12 @@
 
 #### 5.0 Tasks
 
-- [ ] 5.1 Create `packages/core/src/parse-config.ts` with:
+- [x] 5.1 Create `packages/core/src/parse-config.ts` with:
   - `parseConfig(source: string): Result<WeaveConfig, ConfigError[]>` — chains `tokenize(source).andThen(parse).andThen(validate)`, maps all error types into `ConfigError[]`
   - If `tokenize` fails, return lex errors immediately (cannot proceed to parse)
   - If `parse` fails, return parse errors (cannot proceed to validate)
   - If `validate` fails, return validation errors
-- [ ] 5.2 Update `packages/core/src/index.ts` barrel exports:
+- [x] 5.2 Update `packages/core/src/index.ts` barrel exports:
   - Export `parseConfig` from `./parse-config.js`
   - Export `tokenize` from `./lexer.js`
   - Export `parse` from `./parser.js`
@@ -217,7 +217,7 @@
   - Export all error types from `./errors.js`: `LexError`, `ParseError`, `ValidationError`, `ConfigError`, `formatError`
   - Export all AST types from `./ast.js`: `AstNode`, `AstValue`, `Property`, `StepBlock`, `SourcePos`
   - Export `Token`, `TokenType` from `./tokens.js`
-- [ ] 5.3 Create `packages/core/src/__tests__/parse-config.test.ts` testing:
+- [x] 5.3 Create `packages/core/src/__tests__/parse-config.test.ts` testing:
   - Minimal valid source: single agent with prompt → `ok(WeaveConfig)` with correct agent entry
   - Full valid source: multiple agents, categories, disable directives, log_level setting → `ok(WeaveConfig)` with all data populated
   - Source matching AGENTS.md examples (loom agent with tool_policy, triggers; backend/frontend categories) → `ok(WeaveConfig)` roundtrip
@@ -229,7 +229,7 @@
 
 ---
 
-### [ ] 6.0 Cleanup — Remove Legacy Types, Update Engine Consumers
+### [x] 6.0 Cleanup — Remove Legacy Types, Update Engine Consumers
 
 #### 6.0 Proof Artifact(s)
 
@@ -239,23 +239,23 @@
 
 #### 6.0 Tasks
 
-- [ ] 6.1 Delete legacy files from `packages/core/src/`:
+- [x] 6.1 Delete legacy files from `packages/core/src/`:
   - `agent.ts` — replaced by `AgentConfig` from `schema.ts`
   - `config.ts` — replaced by `WeaveConfig` from `schema.ts`
   - `dsl.ts` — `defineConfig()` no longer exists
   - `hook.ts` — `HookConfig` no longer needed in core (hooks are not part of the `.weave` DSL in this spec; engine will handle hooks directly)
   - `skill.ts` — `SkillConfig` no longer needed in core (skills are referenced by name in agent config; full skill config is an engine concern)
-- [ ] 6.2 Update `packages/engine/src/adapter.ts`:
+- [x] 6.2 Update `packages/engine/src/adapter.ts`:
   - Change `import type { AgentConfig, HookConfig, SkillConfig } from "@weave/core"` to import only `AgentConfig` from `@weave/core`
   - For `HookConfig` and `SkillConfig`, define local interface types in the engine package (or a new `packages/engine/src/types.ts`) since these types are no longer exported from core. Keep the same shape as the current interfaces.
   - Update `spawnSubagent` parameter type to use the new Zod-inferred `AgentConfig`
-- [ ] 6.3 Update `packages/engine/src/runner.ts`:
+- [x] 6.3 Update `packages/engine/src/runner.ts`:
   - Update `import type { AgentConfig, WeaveConfig } from "@weave/core"` to use new types
   - The new `WeaveConfig` shape has `agents`, `categories`, `disabled` (object with `agents`/`hooks`/`skills` arrays), `log_level`, `workflows` — no `hooks` or `skills` arrays at the top level. Update the `run()` method destructuring and logic accordingly.
   - The runner's hook/skill loading logic will need to be adapted — for now, the runner can skip hook/skill iteration since those config surfaces are deferred to future specs. Add `// TODO: restore hook/skill loading when config surfaces are specced` comments.
   - Update `disabled` check: old shape was `disabled?: string[]`, new shape is `disabled: { agents: string[], hooks: string[], skills: string[] }`. Update the disabled-check logic for agents to use `disabled.agents.includes(name)`.
   - Update model field access: old `agentConfig.model` → new `agentConfig.models?.[0]` for logging.
-- [ ] 6.4 Verify the full workspace compiles and all tests pass:
+- [x] 6.4 Verify the full workspace compiles and all tests pass:
   - Run `bun run typecheck` from workspace root
   - Run `bun test` from workspace root
   - Grep for any remaining references to deleted files/exports: `grep -r "defineConfig\|from.*dsl\|from.*hook\|from.*skill\|from.*config\.js\|from.*agent\.js" packages/ --include="*.ts"` — should return zero results (excluding test files and the new schema/validate/parse-config files)
