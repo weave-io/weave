@@ -12,6 +12,7 @@ disableManifest = false
 # coverageDir = "coverage"
 timeout = 5000
 smol = true
+preload = ["./scripts/test-setup.ts"]
 
 [bundle]
 # External packages not to be bundled
