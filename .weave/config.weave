@@ -1,0 +1,271 @@
+# Weave — project configuration
+#
+# This file is the canonical declaration of all built-in agents and the
+# framework development categories used when building Weave itself.
+# It is validated on every commit via `bun run validate-config`.
+
+# ---------------------------------------------------------------------------
+# Built-in agents
+# ---------------------------------------------------------------------------
+
+agent loom {
+  description "Loom (Main Orchestrator)"
+  prompt_file "loom.md"
+  models ["claude-sonnet-4-5", "gpt-4o"]
+  mode primary
+  temperature 0.1
+
+  tool_policy {
+    read     allow
+    write    allow
+    edit     allow
+    delegate allow
+    search   ask
+  }
+
+  triggers [
+    { domain "Orchestration" trigger "Complex multi-step tasks requiring coordination across agents" }
+    { domain "Architecture"  trigger "System design, ADRs, and cross-cutting technical decisions" }
+    { domain "Triage"        trigger "Unclear requests that need decomposition before acting" }
+  ]
+
+  skills ["tdd", "code-review"]
+}
+
+agent tapestry {
+  description "Tapestry (Plan Execution Coordinator)"
+  prompt_file "tapestry.md"
+  models ["claude-sonnet-4-5", "gpt-4o"]
+  mode primary
+  temperature 0.1
+
+  tool_policy {
+    read     allow
+    write    allow
+    edit     allow
+    delegate allow
+    search   ask
+  }
+
+  triggers [
+    { domain "Execution"    trigger "Driving a plan to completion step by step" }
+    { domain "Coordination" trigger "Sequencing sub-tasks across multiple shuttle agents" }
+    { domain "Resumption"   trigger "Continuing work after an idle or compaction event" }
+  ]
+
+  skills ["tdd"]
+}
+
+agent shuttle {
+  description "Shuttle (Domain Specialist)"
+  prompt_file "shuttle.md"
+  models ["claude-sonnet-4-5", "gpt-4o"]
+  mode all
+  temperature 0.2
+
+  tool_policy {
+    read     allow
+    write    allow
+    edit     allow
+    delegate deny
+    search   ask
+  }
+
+  triggers [
+    { domain "Implementation" trigger "Writing, editing, or refactoring code in a specific domain" }
+    { domain "Debugging"      trigger "Diagnosing and fixing a known issue in a scoped area" }
+  ]
+
+  skills ["tdd", "code-review"]
+}
+
+agent pattern {
+  description "Pattern (Strategic Planner)"
+  prompt_file "pattern.md"
+  models ["claude-sonnet-4-5"]
+  mode subagent
+  temperature 0.3
+
+  tool_policy {
+    read     allow
+    write    allow
+    edit     allow
+    delegate deny
+    search   ask
+  }
+
+  triggers [
+    { domain "Planning"  trigger "Breaking a goal into a structured, file-backed implementation plan" }
+    { domain "Scoping"   trigger "Estimating complexity and identifying unknowns before implementation" }
+  ]
+}
+
+agent thread {
+  description "Thread (Codebase Explorer)"
+  prompt_file "thread.md"
+  models ["claude-sonnet-4-5"]
+  mode subagent
+  temperature 0.0
+
+  tool_policy {
+    read     allow
+    write    deny
+    edit     deny
+    delegate deny
+    search   ask
+  }
+
+  triggers [
+    { domain "Exploration" trigger "Navigating unfamiliar code, tracing call graphs, understanding structure" }
+    { domain "Discovery"   trigger "Finding all usages, definitions, or dependents of a symbol" }
+  ]
+}
+
+agent spindle {
+  description "Spindle (External Researcher)"
+  prompt_file "spindle.md"
+  models ["claude-sonnet-4-5"]
+  mode subagent
+  temperature 0.1
+
+  tool_policy {
+    read     allow
+    write    deny
+    edit     deny
+    delegate deny
+    search   allow
+  }
+
+  triggers [
+    { domain "Research"      trigger "Looking up external documentation, RFCs, or library APIs" }
+    { domain "Benchmarking"  trigger "Comparing approaches using external evidence and prior art" }
+  ]
+}
+
+agent weft {
+  description "Weft (Reviewer)"
+  prompt_file "weft.md"
+  models ["claude-sonnet-4-5"]
+  mode subagent
+  temperature 0.1
+
+  tool_policy {
+    read     allow
+    write    deny
+    edit     deny
+    delegate deny
+    search   deny
+  }
+
+  triggers [
+    { domain "Review"   trigger "Code review, correctness checks, and quality gate enforcement" }
+    { domain "Critique" trigger "Identifying logic errors, edge cases, and missing tests" }
+  ]
+}
+
+agent warp {
+  description "Warp (Security Auditor)"
+  prompt_file "warp.md"
+  models ["claude-sonnet-4-5"]
+  mode subagent
+  temperature 0.1
+
+  tool_policy {
+    read     allow
+    write    deny
+    edit     deny
+    delegate deny
+    search   deny
+  }
+
+  triggers [
+    { domain "Security"      trigger "Auditing changes for vulnerabilities, injection risks, or secret exposure" }
+    { domain "Threat-model"  trigger "Reviewing trust boundaries and attack surface of new features" }
+  ]
+}
+
+# ---------------------------------------------------------------------------
+# Framework development categories
+# (These define domain routing when building Weave itself)
+# ---------------------------------------------------------------------------
+
+category core {
+  description "DSL lexer, parser, AST, Zod schemas — @weave/core"
+  models ["claude-sonnet-4-5"]
+  patterns ["packages/core/**"]
+  temperature 0.1
+  prompt_append "This is the parsing and type layer. Preserve neverthrow Result return types, keep all exported types Zod-inferred, and maintain the lexer/parser/validate separation."
+
+  tool_policy {
+    read     allow
+    write    allow
+    edit     allow
+    delegate deny
+  }
+}
+
+category engine {
+  description "WeaveRunner, HarnessAdapter, config loader — @weave/engine"
+  models ["claude-sonnet-4-5"]
+  patterns ["packages/engine/**"]
+  temperature 0.1
+  prompt_append "This is the orchestration layer. The runner must stay adapter-agnostic. All fallible paths return Result types. Pino logger is the only logging mechanism."
+
+  tool_policy {
+    read     allow
+    write    allow
+    edit     allow
+    delegate deny
+  }
+}
+
+category adapters {
+  description "Harness adapter implementations — @weave/adapter-*"
+  models ["claude-sonnet-4-5"]
+  patterns ["packages/adapters/**"]
+  temperature 0.2
+  prompt_append "Each adapter implements HarnessAdapter exactly. No adapter should import from another adapter. Keep harness-specific logic fully contained."
+
+  tool_policy {
+    read     allow
+    write    allow
+    edit     allow
+    delegate deny
+  }
+}
+
+category docs {
+  description "Specs, ADRs, proof artifacts, and guides"
+  models ["claude-sonnet-4-5"]
+  patterns ["docs/**", "*.md"]
+  temperature 0.2
+  prompt_append "Documentation is a first-class deliverable. Every non-trivial change must be reflected in docs/. Specs live in docs/specs/, ADRs in docs/. Cross-link liberally."
+
+  tool_policy {
+    read     allow
+    write    allow
+    edit     allow
+    delegate deny
+  }
+}
+
+category scripts {
+  description "Build scripts, validation tooling, and dev utilities"
+  models ["claude-sonnet-4-5"]
+  patterns ["scripts/**"]
+  temperature 0.1
+  prompt_append "Scripts run with Bun. Use Bun.file() for I/O, never Node.js fs. CLI entry points convert Result to process.exit at the boundary."
+
+  tool_policy {
+    read     allow
+    write    allow
+    edit     allow
+    delegate deny
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Settings
+# ---------------------------------------------------------------------------
+
+log_level INFO

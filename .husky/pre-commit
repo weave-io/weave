@@ -7,6 +7,9 @@ bun run lint
 echo "▶ typecheck..."
 bun run typecheck
 
+echo "▶ validate-config..."
+bun run validate-config
+
 echo "▶ test..."
 bun test --recursive
 

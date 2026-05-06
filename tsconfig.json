@@ -24,7 +24,8 @@
   },
   "include": [
     "packages/*/src/**/*",
-    "packages/adapters/*/src/**/*"
+    "packages/adapters/*/src/**/*",
+    "scripts/**/*"
   ],
   "exclude": ["node_modules", "**/dist/**"]
 }
