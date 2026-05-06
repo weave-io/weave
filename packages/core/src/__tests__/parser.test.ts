@@ -1,15 +1,15 @@
-import { describe, it, expect } from "bun:test";
-import { tokenize } from "../lexer.js";
-import { parse } from "../parser.js";
+import { describe, expect, it } from "bun:test";
 import type {
   AgentBlock,
+  ArrayValue,
+  BlockValue,
   CategoryBlock,
   DisableDirective,
   SettingAssignment,
   WorkflowBlock,
-  BlockValue,
-  ArrayValue,
 } from "../ast.js";
+import { tokenize } from "../lexer.js";
+import { parse } from "../parser.js";
 
 /** Helper: lex + parse a source string */
 function parseSource(src: string) {
