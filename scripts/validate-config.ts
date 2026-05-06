@@ -9,8 +9,8 @@
  *   1 — config not found, unreadable, or contains errors
  */
 
-import { parseConfig, formatError } from "@weave/core";
 import type { WeaveConfig } from "@weave/core";
+import { formatError, parseConfig } from "@weave/core";
 
 const CONFIG_PATH = ".weave/config.weave";
 
@@ -49,7 +49,9 @@ function printSummary(config: WeaveConfig): void {
 
   const disabledAll = [...disabledAgents, ...disabledHooks, ...disabledSkills];
   if (disabledAll.length > 0) {
-    console.log(`  disabled   (${disabledAll.length}): ${disabledAll.join(", ")}`);
+    console.log(
+      `  disabled   (${disabledAll.length}): ${disabledAll.join(", ")}`,
+    );
   }
 
   if (config.log_level) {

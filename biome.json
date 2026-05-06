@@ -33,6 +33,18 @@
     }
   },
   "files": {
-    "includes": ["packages/**/*.ts", "packages/**/*.tsx"]
-  }
+    "includes": ["packages/**/*.ts", "packages/**/*.tsx", "scripts/**/*.ts"]
+  },
+  "overrides": [
+    {
+      "includes": ["scripts/**/*.ts"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noConsole": "off"
+          }
+        }
+      }
+    }
+  ]
 }

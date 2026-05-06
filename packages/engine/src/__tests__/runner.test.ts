@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "bun:test";
+import { beforeEach, describe, expect, it } from "bun:test";
 import { parseConfig } from "@weave/core";
 import { WeaveRunner } from "../runner.js";
 import { MockAdapter } from "./mock-adapter.js";

@@ -5,6 +5,7 @@
  */
 
 export type { SourcePos } from "./tokens.js";
+
 import type { SourcePos } from "./tokens.js";
 
 // ---------------------------------------------------------------------------

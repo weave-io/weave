@@ -20,6 +20,10 @@
     "@biomejs/biome": "^2.4.14",
     "bun-types": "latest",
     "husky": "^9.1.7",
+    "lint-staged": "^17.0.2",
     "typescript": "^5.4.5"
+  },
+  "lint-staged": {
+    "**/*.{ts,tsx,js,jsx,json,jsonc}": "biome check --write --no-errors-on-unmatched"
   }
 }

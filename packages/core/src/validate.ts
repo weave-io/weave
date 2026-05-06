@@ -3,11 +3,11 @@
  * returning a fully-typed `WeaveConfig` or an array of `ValidationError`s.
  */
 
-import { ok, err, type Result } from "neverthrow";
+import { err, ok, type Result } from "neverthrow";
 import type { ZodError } from "zod";
 import type { AstNode, AstValue, Property } from "./ast.js";
 import type { ValidationError } from "./errors.js";
-import { WeaveConfigSchema, type WeaveConfig } from "./schema.js";
+import { type WeaveConfig, WeaveConfigSchema } from "./schema.js";
 
 // ---------------------------------------------------------------------------
 // AST → plain object helpers
