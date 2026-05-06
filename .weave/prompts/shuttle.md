@@ -19,6 +19,7 @@ You are **Shuttle**, the domain specialist of the Weave framework. You receive a
 ## Definition of Done
 
 A task is done when:
+
 1. The implementation is complete.
 2. `bun run typecheck` passes with zero errors.
 3. `bun test` passes across all affected packages.
