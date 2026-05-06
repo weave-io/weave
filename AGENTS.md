@@ -4,6 +4,10 @@
 
 Weave is a **harness-agnostic multi-agent orchestration framework** built in TypeScript, run exclusively on **Bun**. A single `weave.config.ts` declares a fleet of AI agents (model, tools, skills, persona); the engine drives their full lifecycle through whichever harness adapter is active — OpenCode, Claude Code, Pi, or any future target.
 
+> **Reference**: `docs/legacy-architecture.md` documents the alpha, OpenCode-exclusive version of Weave (`opencode-weave`). That document is the source of truth for understanding what we are porting away from. The framework being built here is the harness-agnostic successor.
+
+> **DSL-first agents**: Built-in agents (Loom, Tapestry, Shuttle, etc.) are defined using the same `defineConfig()` DSL that end users use for custom agents. There is no separate code path for builtins — they are just well-known named entries in a config. This means the DSL must be expressive enough to declare the full behaviour of any agent, and that users can replicate, extend, or replace any builtin by writing equivalent DSL config.
+
 | Layer        | Package            | Responsibility                                         |
 | ------------ | ------------------ | ------------------------------------------------------ |
 | **Core**     | `@weave/core`      | DSL types, schema, `defineConfig()`                    |
@@ -126,6 +130,40 @@ Never swallow errors silently. Log with the shared pino logger before re-throwin
 
 // ❌
 } catch { /* nothing */ }
+```
+
+### Errors must be handled, not just rethrown
+
+A `catch` block must do real work. Catching an error only to log and rethrow it adds noise without value. Either **recover** (return a fallback), or **wrap** the error with additional context using `{ cause: err }`. If neither applies, don't catch at all — let the error propagate naturally.
+
+```ts
+// ✅ — recovers with a fallback
+async function loadConfig(path: string): Promise<WeaveConfig> {
+  try {
+    return await readFile(path);
+  } catch {
+    return defaultConfig();
+  }
+}
+
+// ✅ — wraps with context, preserving the original cause
+async function loadConfig(path: string): Promise<WeaveConfig> {
+  try {
+    return await readFile(path);
+  } catch (err) {
+    throw new Error(`Failed to load config at ${path}`, { cause: err });
+  }
+}
+
+// ❌ — catches only to log and rethrow; adds no value
+async function loadConfig(path: string): Promise<WeaveConfig> {
+  try {
+    return await readFile(path);
+  } catch (err) {
+    log.error({ err }, "Failed to load config");
+    throw err;
+  }
+}
 ```
 
 ### Reuse types and constants before creating new ones
