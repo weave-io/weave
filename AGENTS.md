@@ -456,6 +456,77 @@ interface MyAgentConfig {
 
 Inject all dependencies (adapter, config, logger) through constructors. Keep side effects (file I/O, process spawning) in named private methods so tests can provide mocks without starting a real harness.
 
+## Testing
+
+### Schema evolution and test maintenance
+
+Zod schemas are the source of truth for config validation. Every schema change — adding a field, removing a field, narrowing a type, adding a `.refine()`, or changing a discriminated union variant — **must be reflected in the corresponding test file in the same commit**. Never land a schema change without updating its tests.
+
+**Rule: schema change = test change, always in the same commit.**
+
+| Change type | Required test update |
+| --- | --- |
+| New field added | Accept valid value; reject invalid value |
+| Field made required (`.optional()` removed) | Omit field → assert rejection with correct path |
+| New `.refine()` or cross-field constraint | Valid case passes; violation case rejected with readable message |
+| New enum variant | New variant accepted; existing variants still pass |
+| New discriminated union variant | Valid input for each variant; invalid discriminant rejected |
+| Field removed | Remove or update all tests that referenced it |
+
+The test files that must be kept in sync with each schema layer:
+
+| Schema layer | Test file |
+| --- | --- |
+| `packages/core/src/schema.ts` | `packages/core/src/__tests__/schema.test.ts` |
+| Parser behaviour (`parser.ts`) | `packages/core/src/__tests__/parser.test.ts` |
+| Validator / AST transform (`validate.ts`) | `packages/core/src/__tests__/validate.test.ts` |
+| Full pipeline (`parse-config.ts`) | `packages/core/src/__tests__/parse_config.test.ts` |
+
+For any change that touches `schema.ts`, add coverage at **all four levels** — unit (schema), transform (validate), and E2E (parse_config) — not just the schema test. The E2E test is the regression guard that catches wiring errors the unit test cannot.
+
+### Module isolation: mocked adapters and dependencies
+
+When building or extending a module that crosses a package or process boundary — a `HarnessAdapter`, file I/O, process spawning, network calls, or any interface defined in another package — **write the tests against a mock, not the real implementation**. Never start a real harness, write real files, or spawn real processes in unit or integration tests.
+
+Mocks live alongside the tests they support. Create a `Mock*` class or inline stub that satisfies the interface's minimum surface for the test at hand.
+
+```ts
+// ✅ — mock adapter; no real harness, no file I/O
+class MockAdapter implements HarnessAdapter {
+  readonly calls: string[] = [];
+  async init(): Promise<void> {}
+  async spawnSubagent(name: string, config: AgentConfig): Promise<void> {
+    this.calls.push(name);
+  }
+}
+
+it("spawns all agents in config order", async () => {
+  const adapter = new MockAdapter();
+  const runner = new WeaveRunner(config, adapter);
+  await runner.run();
+  expect(adapter.calls).toEqual(["loom", "shuttle"]);
+});
+
+// ❌ — starts a real harness process
+it("spawns agents", async () => {
+  const adapter = new OpenCodeAdapter(); // needs a live OpenCode process
+  ...
+});
+```
+
+What to mock at each layer:
+
+| Module under test | What to mock |
+| --- | --- |
+| `WeaveRunner` | `HarnessAdapter` — implement the interface with in-memory stubs |
+| `HarnessAdapter` implementations | File system (`Bun.file` → string fixtures), process (`Bun.spawn` → stub returning controlled output) |
+| Config loader (`loader.ts`) | Pass source strings directly; stub `Bun.file()` reads with known content |
+| Any code calling external services | Replace the client with a minimal in-memory stub |
+
+**Every critical module must have at least one isolated test file** — with all external dependencies replaced by mocks. "Critical" means any module in `packages/engine/`, any `HarnessAdapter` implementation, and any module that owns state or coordinates multiple components.
+
+The existing `packages/engine/src/__tests__/runner.test.ts` is the canonical example: it exercises `WeaveRunner` fully via `MockAdapter` with no real harness involved.
+
 ## Logging
 
 All logging uses the shared pino instance exported from `@weave/engine`. Never use `console.*` anywhere in the codebase.
