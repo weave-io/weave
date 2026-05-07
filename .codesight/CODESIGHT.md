@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 8 lib files | 1 env vars | 0 middleware | 0% test coverage
 > **Token savings:** this file is ~1,200 tokens. Without it, AI exploration would cost ~9,900 tokens. **Saves ~8,800 tokens per conversation.**
-> **Last scanned:** 2026-05-07 19:46 — re-run after significant changes
+> **Last scanned:** 2026-05-07 20:16 — re-run after significant changes
 
 ---
 
@@ -27,7 +27,7 @@
   - const envSchema
   - const env: Env
 - `packages/engine/src/runner.ts` — class WeaveRunner
-- `scripts/validate-config.ts` — function printSummary: (config) => void
+- `scripts/validate-config.ts` — function printSummary: (config, configPath) => void
 
 ---
 

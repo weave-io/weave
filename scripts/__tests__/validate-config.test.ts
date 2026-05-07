@@ -7,6 +7,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
+import { readFileSync } from "node:fs";
 import { parseConfig } from "@weave/core";
 import { printSummary } from "../validate-config.js";
 
@@ -272,6 +273,22 @@ describe("printSummary", () => {
   });
 
   // -------------------------------------------------------------------------
+  // configPath parameter
+  // -------------------------------------------------------------------------
+
+  it("includes the configPath in the summary header", () => {
+    const config = cfg(`agent a { prompt "x" models ["m"] }`);
+    printSummary(config, "path/to/my.weave");
+    expect(logLines[0]).toContain("path/to/my.weave");
+  });
+
+  it("defaults to .weave/config.weave when configPath is omitted", () => {
+    const config = cfg(`agent a { prompt "x" models ["m"] }`);
+    printSummary(config);
+    expect(logLines[0]).toContain(".weave/config.weave");
+  });
+
+  // -------------------------------------------------------------------------
   // Full config smoke test
   // -------------------------------------------------------------------------
 
@@ -322,6 +339,44 @@ describe("printSummary", () => {
       logLines.some((l) => l.includes("workflows  (1): quick-fix [2 steps]")),
     ).toBe(true);
     expect(logLines.some((l) => l.includes("disabled   (1): warp"))).toBe(true);
+    expect(logLines.some((l) => l.includes("log_level: DEBUG"))).toBe(true);
+  });
+
+  // -------------------------------------------------------------------------
+  // Fixture smoke test — scripts/fixtures/full-config.weave
+  // -------------------------------------------------------------------------
+
+  it("scripts/fixtures/full-config.weave parses cleanly and summarises all sections", () => {
+    const source = readFileSync("scripts/fixtures/full-config.weave", "utf8");
+    const result = parseConfig(source);
+    expect(result.isOk()).toBe(true);
+
+    printSummary(result._unsafeUnwrap(), "scripts/fixtures/full-config.weave");
+
+    // header
+    expect(logLines[0]).toContain("scripts/fixtures/full-config.weave");
+    // 4 agents covering all three mode values
+    const agentLine = logLines.find((l) => l.includes("agents"));
+    expect(agentLine).toContain("agents     (4):");
+    expect(agentLine).toContain("orchestrator");
+    expect(agentLine).toContain("specialist");
+    expect(agentLine).toContain("hybrid");
+    expect(agentLine).toContain("bare");
+    // 2 categories
+    const catLine = logLines.find((l) => l.includes("categories"));
+    expect(catLine).toContain("categories (2):");
+    expect(catLine).toContain("full-cat");
+    expect(catLine).toContain("minimal-cat");
+    // 2 workflows — comprehensive has 7 steps (all types + all on_reject),
+    // minimal has 1 step
+    const wfLine = logLines.find((l) => l.includes("workflows"));
+    expect(wfLine).toContain("workflows  (2):");
+    expect(wfLine).toContain("comprehensive [7 steps]");
+    expect(wfLine).toContain("minimal [1 step]");
+    // 5 disabled items across agents + hooks + skills
+    const disabledLine = logLines.find((l) => l.includes("disabled"));
+    expect(disabledLine).toContain("disabled   (5):");
+    // log_level
     expect(logLines.some((l) => l.includes("log_level: DEBUG"))).toBe(true);
   });
 });

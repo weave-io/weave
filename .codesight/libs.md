@@ -16,4 +16,4 @@
   - const envSchema
   - const env: Env
 - `packages/engine/src/runner.ts` — class WeaveRunner
-- `scripts/validate-config.ts` — function printSummary: (config) => void
+- `scripts/validate-config.ts` — function printSummary: (config, configPath) => void
