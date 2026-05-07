@@ -21,10 +21,13 @@ Three new tests were added to `packages/core/src/__tests__/parser.test.ts` under
 **What it proves:** All parser tests — including the three new named block value tests — pass.
 **Why it matters:** Confirms the enhancement works correctly and did not regress existing behaviour.
 **Command:**
+
 ```bash
 bun test packages/core/src/__tests__/parser.test.ts
 ```
+
 **Result summary:** 18 pass, 0 fail.
+
 ```
 (pass) Parser — named block value > completion plan_created { plan_name '...' } produces a BlockValue with __name [0.13ms]
 (pass) Parser — named block value > completion user_confirm (no block) still produces an IdentifierValue [0.05ms]
@@ -40,10 +43,13 @@ Ran 18 tests across 1 file.
 
 **What it proves:** The parser change introduces no TypeScript type errors.
 **Command:**
+
 ```bash
 bun run typecheck
 ```
+
 **Result summary:** Zero errors across all packages.
+
 ```
 @weave/core typecheck: Exited with code 0
 @weave/engine typecheck: Exited with code 0

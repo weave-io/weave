@@ -21,10 +21,13 @@ Five new end-to-end tests were added to `packages/core/src/__tests__/parse_confi
 
 **What it proves:** The complete `parseConfig()` pipeline handles real-world workflow DSL from AGENTS.md.
 **Command:**
+
 ```bash
 bun test packages/core/src/__tests__/parse_config.test.ts
 ```
+
 **Result summary:** 16 pass, 0 fail.
+
 ```
 (pass) parseConfig — workflows > secure-feature workflow (4 steps) parses end-to-end with correct typed shape [0.29ms]
 (pass) parseConfig — workflows > quick-fix workflow (2 steps) parses end-to-end correctly [0.14ms]
@@ -42,10 +45,13 @@ Ran 16 tests across 1 file.
 
 **What it proves:** No regressions across the entire `@weave/core` package (all 6 test files).
 **Command:**
+
 ```bash
 bun test packages/core/
 ```
+
 **Result summary:** 122 pass, 0 fail (80 original + 42 new).
+
 ```
  122 pass
  0 fail

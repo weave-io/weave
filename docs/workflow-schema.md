@@ -3,6 +3,7 @@
 This document describes the typed workflow schema introduced by [spec 02](specs/02-spec-workflow-schema/index.md). It covers field semantics, the completion method model, validation constraints, the `name`/`display_name` mapping convention, and the `__name` parser pattern that makes parameterised completion syntax possible.
 
 **Related source files:**
+
 - [`packages/core/src/schema.ts`](../packages/core/src/schema.ts) — all Zod schemas and inferred types
 - [`packages/core/src/validate.ts`](../packages/core/src/validate.ts) — `transformStepProperties()` and `astToPlainObject()`
 - [`packages/core/src/parser.ts`](../packages/core/src/parser.ts) — named block value parser enhancement
@@ -14,12 +15,12 @@ This document describes the typed workflow schema introduced by [spec 02](specs/
 
 A workflow is declared with the `workflow <name> { }` top-level block.
 
-| Field         | Type                        | Required | Description                                                    |
-|---------------|-----------------------------|----------|----------------------------------------------------------------|
+| Field         | Type                        | Required | Description                                                     |
+| ------------- | --------------------------- | -------- | --------------------------------------------------------------- |
 | `name`        | `string`                    | no       | Internal name (set from block identifier, not the `name` field) |
-| `description` | `string`                    | no       | Human-readable description of the workflow's purpose           |
-| `version`     | `number` (positive integer) | **yes**  | Schema version for future migration; must be ≥ 1               |
-| `steps`       | `WorkflowStep[]`            | **yes**  | Ordered list of steps; at least one step is required           |
+| `description` | `string`                    | no       | Human-readable description of the workflow's purpose            |
+| `version`     | `number` (positive integer) | **yes**  | Schema version for future migration; must be ≥ 1                |
+| `steps`       | `WorkflowStep[]`            | **yes**  | Ordered list of steps; at least one step is required            |
 
 ---
 
@@ -27,25 +28,25 @@ A workflow is declared with the `workflow <name> { }` top-level block.
 
 Each `step <name> { }` block inside a workflow produces a `WorkflowStep`.
 
-| Field          | Type               | Required | Description                                                                |
-|----------------|--------------------|----------|----------------------------------------------------------------------------|
-| `name`         | `string`           | **yes**  | The step's block identifier (e.g. `step plan { }` → `"plan"`)             |
-| `display_name` | `string`           | no       | Human-readable label — sourced from the inner `name "..."` property        |
-| `type`         | `WorkflowStepType` | **yes**  | Execution mode: `autonomous`, `interactive`, or `gate`                     |
-| `agent`        | `string`           | **yes**  | Name of the agent that runs this step                                       |
-| `prompt`       | `string`           | **yes**  | Instruction sent to the agent; may contain `{{template}}` variables        |
-| `completion`   | `CompletionMethod` | **yes**  | How the step signals that it is done (see below)                           |
-| `inputs`       | `ArtifactRef[]`    | no       | Named artifacts this step consumes from a previous step                    |
-| `outputs`      | `ArtifactRef[]`    | no       | Named artifacts this step produces for downstream steps                    |
-| `on_reject`    | `OnReject`         | no       | Behaviour when a gate step rejects (only valid when `type` is `"gate"`)   |
+| Field          | Type               | Required | Description                                                             |
+| -------------- | ------------------ | -------- | ----------------------------------------------------------------------- |
+| `name`         | `string`           | **yes**  | The step's block identifier (e.g. `step plan { }` → `"plan"`)           |
+| `display_name` | `string`           | no       | Human-readable label — sourced from the inner `name "..."` property     |
+| `type`         | `WorkflowStepType` | **yes**  | Execution mode: `autonomous`, `interactive`, or `gate`                  |
+| `agent`        | `string`           | **yes**  | Name of the agent that runs this step                                   |
+| `prompt`       | `string`           | **yes**  | Instruction sent to the agent; may contain `{{template}}` variables     |
+| `completion`   | `CompletionMethod` | **yes**  | How the step signals that it is done (see below)                        |
+| `inputs`       | `ArtifactRef[]`    | no       | Named artifacts this step consumes from a previous step                 |
+| `outputs`      | `ArtifactRef[]`    | no       | Named artifacts this step produces for downstream steps                 |
+| `on_reject`    | `OnReject`         | no       | Behaviour when a gate step rejects (only valid when `type` is `"gate"`) |
 
 ### Step Type Enum
 
-| Value          | Meaning                                       |
-|----------------|-----------------------------------------------|
-| `autonomous`   | Agent works alone without user interaction    |
-| `interactive`  | User can intervene mid-step                   |
-| `gate`         | Approve/reject checkpoint; supports `on_reject` |
+| Value         | Meaning                                         |
+| ------------- | ----------------------------------------------- |
+| `autonomous`  | Agent works alone without user interaction      |
+| `interactive` | User can intervene mid-step                     |
+| `gate`        | Approve/reject checkpoint; supports `on_reject` |
 
 ---
 
@@ -53,13 +54,13 @@ Each `step <name> { }` block inside a workflow produces a `WorkflowStep`.
 
 The `completion` field uses a **discriminated union** keyed on `method`. There are five variants:
 
-| Method           | Extra fields              | Description                                      |
-|------------------|---------------------------|--------------------------------------------------|
-| `agent_signal`   | —                         | Agent emits an explicit done signal              |
-| `user_confirm`   | —                         | User explicitly approves the step outcome        |
-| `plan_created`   | `plan_name: string`       | Agent writes a named plan file                   |
-| `plan_complete`  | `plan_name: string`       | Agent finishes executing a named plan            |
-| `review_verdict` | —                         | Gate agent returns an approve or reject decision |
+| Method           | Extra fields        | Description                                      |
+| ---------------- | ------------------- | ------------------------------------------------ |
+| `agent_signal`   | —                   | Agent emits an explicit done signal              |
+| `user_confirm`   | —                   | User explicitly approves the step outcome        |
+| `plan_created`   | `plan_name: string` | Agent writes a named plan file                   |
+| `plan_complete`  | `plan_name: string` | Agent finishes executing a named plan            |
+| `review_verdict` | —                   | Gate agent returns an approve or reject decision |
 
 ### DSL syntax
 
@@ -78,6 +79,7 @@ completion plan_created {
 ```
 
 The validator in `transformStepProperties()` maps these two forms:
+
 - `IdentifierValue("user_confirm")` → `{ method: "user_confirm" }`
 - `BlockValue(__name: "plan_created", plan_name: "...")` → `{ method: "plan_created", plan_name: "..." }`
 
@@ -87,11 +89,11 @@ The validator in `transformStepProperties()` maps these two forms:
 
 `on_reject` is **only valid on `type: "gate"` steps**. Setting it on an `autonomous` or `interactive` step causes a `ValidationError` (enforced by a Zod `.refine()` on `WorkflowStepSchema`).
 
-| Value   | Behaviour when gate rejects   |
-|---------|-------------------------------|
-| `pause` | Workflow pauses for user input |
+| Value   | Behaviour when gate rejects      |
+| ------- | -------------------------------- |
+| `pause` | Workflow pauses for user input   |
 | `fail`  | Workflow terminates with failure |
-| `retry` | Step is re-executed            |
+| `retry` | Step is re-executed              |
 
 ---
 
@@ -99,9 +101,9 @@ The validator in `transformStepProperties()` maps these two forms:
 
 The DSL has an intentional collision: every step block has a block-level identifier **and** a `name "..."` property inside. The validator disambiguates them:
 
-| DSL source                | Mapped field     | Example value                   |
-|---------------------------|------------------|---------------------------------|
-| `step plan { }` (block id) | `name`          | `"plan"`                        |
+| DSL source                            | Mapped field   | Example value   |
+| ------------------------------------- | -------------- | --------------- |
+| `step plan { }` (block id)            | `name`         | `"plan"`        |
 | `name "Create plan"` (inner property) | `display_name` | `"Create plan"` |
 
 This convention is implemented in `transformStepProperties()` in `validate.ts`. The `name` key inside the step block is re-keyed to `display_name` before Zod validation, so `WorkflowStepSchema.name` always holds the programmer-facing identifier and `display_name` holds the human label.
@@ -162,7 +164,7 @@ This produces the same `BlockValue` structure with `__name: "my_method"`. Future
 type ArtifactRef = {
   name: string;
   description: string;
-}
+};
 ```
 
 In the DSL:

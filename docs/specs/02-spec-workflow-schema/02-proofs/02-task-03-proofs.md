@@ -22,10 +22,13 @@
 
 **What it proves:** All completion forms, on_reject constraint, name/display_name mapping, and artifact arrays work end-to-end through the validator.
 **Command:**
+
 ```bash
 bun test packages/core/src/__tests__/validate.test.ts
 ```
+
 **Result summary:** 22 pass, 0 fail.
+
 ```
 (pass) validate — workflows > bare completion identifier (user_confirm) round-trips correctly
 (pass) validate — workflows > named block completion (plan_created) round-trips correctly

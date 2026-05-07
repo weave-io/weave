@@ -464,23 +464,23 @@ Zod schemas are the source of truth for config validation. Every schema change �
 
 **Rule: schema change = test change, always in the same commit.**
 
-| Change type | Required test update |
-| --- | --- |
-| New field added | Accept valid value; reject invalid value |
-| Field made required (`.optional()` removed) | Omit field → assert rejection with correct path |
-| New `.refine()` or cross-field constraint | Valid case passes; violation case rejected with readable message |
-| New enum variant | New variant accepted; existing variants still pass |
-| New discriminated union variant | Valid input for each variant; invalid discriminant rejected |
-| Field removed | Remove or update all tests that referenced it |
+| Change type                                 | Required test update                                             |
+| ------------------------------------------- | ---------------------------------------------------------------- |
+| New field added                             | Accept valid value; reject invalid value                         |
+| Field made required (`.optional()` removed) | Omit field → assert rejection with correct path                  |
+| New `.refine()` or cross-field constraint   | Valid case passes; violation case rejected with readable message |
+| New enum variant                            | New variant accepted; existing variants still pass               |
+| New discriminated union variant             | Valid input for each variant; invalid discriminant rejected      |
+| Field removed                               | Remove or update all tests that referenced it                    |
 
 The test files that must be kept in sync with each schema layer:
 
-| Schema layer | Test file |
-| --- | --- |
-| `packages/core/src/schema.ts` | `packages/core/src/__tests__/schema.test.ts` |
-| Parser behaviour (`parser.ts`) | `packages/core/src/__tests__/parser.test.ts` |
-| Validator / AST transform (`validate.ts`) | `packages/core/src/__tests__/validate.test.ts` |
-| Full pipeline (`parse-config.ts`) | `packages/core/src/__tests__/parse_config.test.ts` |
+| Schema layer                              | Test file                                          |
+| ----------------------------------------- | -------------------------------------------------- |
+| `packages/core/src/schema.ts`             | `packages/core/src/__tests__/schema.test.ts`       |
+| Parser behaviour (`parser.ts`)            | `packages/core/src/__tests__/parser.test.ts`       |
+| Validator / AST transform (`validate.ts`) | `packages/core/src/__tests__/validate.test.ts`     |
+| Full pipeline (`parse-config.ts`)         | `packages/core/src/__tests__/parse_config.test.ts` |
 
 For any change that touches `schema.ts`, add coverage at **all four levels** — unit (schema), transform (validate), and E2E (parse_config) — not just the schema test. The E2E test is the regression guard that catches wiring errors the unit test cannot.
 
@@ -516,12 +516,12 @@ it("spawns agents", async () => {
 
 What to mock at each layer:
 
-| Module under test | What to mock |
-| --- | --- |
-| `WeaveRunner` | `HarnessAdapter` — implement the interface with in-memory stubs |
-| `HarnessAdapter` implementations | File system (`Bun.file` → string fixtures), process (`Bun.spawn` → stub returning controlled output) |
-| Config loader (`loader.ts`) | Pass source strings directly; stub `Bun.file()` reads with known content |
-| Any code calling external services | Replace the client with a minimal in-memory stub |
+| Module under test                  | What to mock                                                                                         |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `WeaveRunner`                      | `HarnessAdapter` — implement the interface with in-memory stubs                                      |
+| `HarnessAdapter` implementations   | File system (`Bun.file` → string fixtures), process (`Bun.spawn` → stub returning controlled output) |
+| Config loader (`loader.ts`)        | Pass source strings directly; stub `Bun.file()` reads with known content                             |
+| Any code calling external services | Replace the client with a minimal in-memory stub                                                     |
 
 **Every critical module must have at least one isolated test file** — with all external dependencies replaced by mocks. "Critical" means any module in `packages/engine/`, any `HarnessAdapter` implementation, and any module that owns state or coordinates multiple components.
 

@@ -21,10 +21,13 @@ Six new Zod schemas were added to `packages/core/src/schema.ts`: `WorkflowStepTy
 **What it proves:** Every new schema correctly validates and rejects inputs according to spec.
 **Why it matters:** Confirms all five completion method variants, on_reject gate constraint, and WorkflowConfig shape are enforced by Zod.
 **Command:**
+
 ```bash
 bun test packages/core/src/__tests__/schema.test.ts
 ```
+
 **Result summary:** 27 pass, 0 fail.
+
 ```
 (pass) WorkflowStepTypeSchema > accepts valid step types
 (pass) WorkflowStepTypeSchema > rejects invalid step type
@@ -64,10 +67,13 @@ Ran 27 tests across 1 file.
 
 **What it proves:** Schema changes introduce no TypeScript errors.
 **Command:**
+
 ```bash
 bun run typecheck
 ```
+
 **Result summary:** Zero errors.
+
 ```
 @weave/core typecheck: Exited with code 0
 @weave/engine typecheck: Exited with code 0

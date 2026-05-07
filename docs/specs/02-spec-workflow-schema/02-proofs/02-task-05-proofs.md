@@ -16,10 +16,13 @@
 **What it proves:** All packages compile cleanly with the new narrowed `workflows` type.
 **Why it matters:** Ensures no downstream consumers silently broke when `z.unknown()` became `WorkflowConfigSchema`.
 **Command:**
+
 ```bash
 bun run typecheck
 ```
+
 **Result summary:** Zero errors across all three packages.
+
 ```
 @weave/core typecheck: Exited with code 0
 @weave/engine typecheck: Exited with code 0
@@ -30,10 +33,13 @@ bun run typecheck
 
 **What it proves:** All tests still pass after barrel export changes.
 **Command:**
+
 ```bash
 bun test packages/core/
 ```
+
 **Result summary:** 122 pass, 0 fail.
+
 ```
  122 pass
  0 fail
