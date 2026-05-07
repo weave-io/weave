@@ -51,20 +51,32 @@ export { parse } from "./parser.js";
 // ---------------------------------------------------------------------------
 export type {
   AgentConfig,
+  ArtifactRef,
   CategoryConfig,
+  CompletionMethod,
   DelegationTrigger,
+  OnReject,
   ToolPermission,
   WeaveConfig,
+  WorkflowConfig,
+  WorkflowStep,
+  WorkflowStepType,
 } from "./schema.js";
 // ---------------------------------------------------------------------------
 // Schemas (Zod objects — useful for re-validation or extension)
 // ---------------------------------------------------------------------------
 export {
   AgentConfigSchema,
+  ArtifactRefSchema,
   CategoryConfigSchema,
+  CompletionMethodSchema,
   DelegationTriggerSchema,
+  OnRejectSchema,
   ToolPermissionSchema,
   WeaveConfigSchema,
+  WorkflowConfigSchema,
+  WorkflowStepSchema,
+  WorkflowStepTypeSchema,
 } from "./schema.js";
 // ---------------------------------------------------------------------------
 // Token types

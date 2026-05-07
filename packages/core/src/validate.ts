@@ -5,7 +5,13 @@
 
 import { err, ok, type Result } from "neverthrow";
 import type { ZodError } from "zod";
-import type { AstNode, AstValue, Property } from "./ast.js";
+import type {
+  AstNode,
+  AstValue,
+  BlockValue,
+  IdentifierValue,
+  Property,
+} from "./ast.js";
 import type { ValidationError } from "./errors.js";
 import { type WeaveConfig, WeaveConfigSchema } from "./schema.js";
 
@@ -45,6 +51,49 @@ function propertiesToObject(props: Property[]): Record<string, unknown> {
 }
 
 /**
+ * Transform a step's properties into a plain object shaped for `WorkflowStepSchema`.
+ *
+ * Mapping rules:
+ * - The step's block name (e.g. `step plan { }` → `"plan"`) maps to `name`.
+ * - The inner `name "..."` property maps to `display_name` to avoid collision.
+ * - A bare `completion user_confirm` (IdentifierValue) maps to `{ method: "user_confirm" }`.
+ * - A named block `completion plan_created { plan_name "x" }` (BlockValue with `__name`)
+ *   maps to `{ method: "plan_created", plan_name: "x" }`.
+ * - All other properties are converted with `astValueToPlain`.
+ */
+function transformStepProperties(
+  stepName: string,
+  properties: Property[],
+): Record<string, unknown> {
+  const obj: Record<string, unknown> = {};
+  obj.name = stepName;
+
+  for (const prop of properties) {
+    if (prop.key === "name") {
+      obj.display_name = astValueToPlain(prop.value);
+      continue;
+    }
+
+    if (prop.key === "completion") {
+      if (prop.value.kind === "identifier") {
+        const iv = prop.value as IdentifierValue;
+        obj.completion = { method: iv.value };
+      } else if (prop.value.kind === "block") {
+        const bv = prop.value as BlockValue;
+        const blockObj = propertiesToObject(bv.properties);
+        const { __name: methodRaw, ...params } = blockObj;
+        obj.completion = { method: methodRaw as string, ...params };
+      }
+      continue;
+    }
+
+    obj[prop.key] = astValueToPlain(prop.value);
+  }
+
+  return obj;
+}
+
+/**
  * Walk `AstNode[]` and build a plain object shaped for `WeaveConfigSchema`.
  */
 function astToPlainObject(nodes: AstNode[]): Record<string, unknown> {
@@ -67,10 +116,9 @@ function astToPlainObject(nodes: AstNode[]): Record<string, unknown> {
       case "workflow":
         workflows[node.name] = {
           ...propertiesToObject(node.properties),
-          steps: node.steps.map((s) => ({
-            name: s.name,
-            ...propertiesToObject(s.properties),
-          })),
+          steps: node.steps.map((s) =>
+            transformStepProperties(s.name, s.properties),
+          ),
         };
         break;
 

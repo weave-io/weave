@@ -89,6 +89,101 @@ export const DisabledConfigSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
+// Workflow step type
+// ---------------------------------------------------------------------------
+
+/** The execution mode of a workflow step. */
+export const WorkflowStepTypeSchema = z.enum([
+  "autonomous",
+  "interactive",
+  "gate",
+]);
+
+// ---------------------------------------------------------------------------
+// Completion method (discriminated union on `method`)
+// ---------------------------------------------------------------------------
+
+/**
+ * Describes how a workflow step signals that it is done.
+ *
+ * Each variant is a discriminated union member keyed on `method`:
+ * - `agent_signal`   — the agent emits a done signal
+ * - `user_confirm`   — the user explicitly approves
+ * - `plan_created`   — a named plan file was written
+ * - `plan_complete`  — a named plan was fully executed
+ * - `review_verdict` — a gate agent returns approve/reject
+ */
+export const CompletionMethodSchema = z.discriminatedUnion("method", [
+  z.object({ method: z.literal("agent_signal") }),
+  z.object({ method: z.literal("user_confirm") }),
+  z.object({ method: z.literal("plan_created"), plan_name: z.string() }),
+  z.object({ method: z.literal("plan_complete"), plan_name: z.string() }),
+  z.object({ method: z.literal("review_verdict") }),
+]);
+
+// ---------------------------------------------------------------------------
+// Artifact references (inputs / outputs)
+// ---------------------------------------------------------------------------
+
+/** A named artifact produced or consumed by a workflow step. */
+export const ArtifactRefSchema = z.object({
+  name: z.string(),
+  description: z.string(),
+});
+
+// ---------------------------------------------------------------------------
+// on_reject policy
+// ---------------------------------------------------------------------------
+
+/** Behaviour when a gate step rejects. Only valid on `type: "gate"` steps. */
+export const OnRejectSchema = z.enum(["pause", "fail", "retry"]);
+
+// ---------------------------------------------------------------------------
+// Workflow step
+// ---------------------------------------------------------------------------
+
+/**
+ * A single step inside a workflow.
+ *
+ * Field mapping notes:
+ * - `name`         — the step's block identifier in the DSL (e.g. `step plan { }` → `"plan"`)
+ * - `display_name` — the human-readable label from the inner `name "..."` property
+ * - `on_reject`    — only valid when `type` is `"gate"` (enforced by `.refine()`)
+ */
+export const WorkflowStepSchema = z
+  .object({
+    name: z.string(),
+    display_name: z.string().optional(),
+    type: WorkflowStepTypeSchema,
+    agent: z.string(),
+    prompt: z.string(),
+    completion: CompletionMethodSchema,
+    inputs: z.array(ArtifactRefSchema).optional(),
+    outputs: z.array(ArtifactRefSchema).optional(),
+    on_reject: OnRejectSchema.optional(),
+  })
+  .refine((data) => data.on_reject === undefined || data.type === "gate", {
+    message: "on_reject is only valid for gate steps",
+  });
+
+// ---------------------------------------------------------------------------
+// Workflow config
+// ---------------------------------------------------------------------------
+
+/**
+ * A named workflow definition containing an ordered list of steps.
+ *
+ * - `version` — positive integer; used for future migration
+ * - `steps`   — at least one step is required
+ */
+export const WorkflowConfigSchema = z.object({
+  name: z.string().optional(),
+  description: z.string().optional(),
+  version: z.number().int().positive(),
+  steps: z.array(WorkflowStepSchema).min(1),
+});
+
+// ---------------------------------------------------------------------------
 // Top-level WeaveConfig
 // ---------------------------------------------------------------------------
 
@@ -99,7 +194,7 @@ export const WeaveConfigSchema = z.object({
   log_level: z
     .enum(["TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL"])
     .optional(),
-  workflows: z.record(z.string(), z.unknown()).optional(),
+  workflows: z.record(z.string(), WorkflowConfigSchema).default({}),
 });
 
 // ---------------------------------------------------------------------------
@@ -112,4 +207,16 @@ export type ToolPolicy = z.infer<typeof ToolPolicySchema>;
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
 export type CategoryConfig = z.infer<typeof CategoryConfigSchema>;
 export type DisabledConfig = z.infer<typeof DisabledConfigSchema>;
+/** Step execution mode. */
+export type WorkflowStepType = z.infer<typeof WorkflowStepTypeSchema>;
+/** Discriminated union describing how a step signals completion. */
+export type CompletionMethod = z.infer<typeof CompletionMethodSchema>;
+/** A named artifact produced or consumed by a step. */
+export type ArtifactRef = z.infer<typeof ArtifactRefSchema>;
+/** Behaviour when a gate step rejects. */
+export type OnReject = z.infer<typeof OnRejectSchema>;
+/** A fully-validated workflow step. */
+export type WorkflowStep = z.infer<typeof WorkflowStepSchema>;
+/** A fully-validated workflow definition. */
+export type WorkflowConfig = z.infer<typeof WorkflowConfigSchema>;
 export type WeaveConfig = z.infer<typeof WeaveConfigSchema>;
