@@ -14,6 +14,7 @@
 - `packages/engine/src/runner.ts` — imported by **2** files
 - `packages/engine/src/logger.ts` — imported by **2** files
 - `packages/engine/src/__tests__/mock-adapter.ts` — imported by **1** files
+- `scripts/validate-config.ts` — imported by **1** files
 
 ## Import Map (who imports what)
 

@@ -36,9 +36,10 @@ async function main(): Promise<void> {
   );
 }
 
-function printSummary(config: WeaveConfig): void {
+export function printSummary(config: WeaveConfig): void {
   const agents = Object.keys(config.agents);
   const categories = Object.keys(config.categories);
+  const workflows = Object.entries(config.workflows);
   const disabledAgents = config.disabled.agents;
   const disabledHooks = config.disabled.hooks;
   const disabledSkills = config.disabled.skills;
@@ -46,6 +47,16 @@ function printSummary(config: WeaveConfig): void {
   console.log(`✓ ${CONFIG_PATH}\n`);
   console.log(`  agents     (${agents.length}): ${agents.join(", ")}`);
   console.log(`  categories (${categories.length}): ${categories.join(", ")}`);
+
+  if (workflows.length > 0) {
+    const names = workflows
+      .map(([name, wf]) => {
+        const n = wf.steps.length;
+        return `${name} [${n} ${n === 1 ? "step" : "steps"}]`;
+      })
+      .join(", ");
+    console.log(`  workflows  (${workflows.length}): ${names}`);
+  }
 
   const disabledAll = [...disabledAgents, ...disabledHooks, ...disabledSkills];
   if (disabledAll.length > 0) {
@@ -59,4 +70,6 @@ function printSummary(config: WeaveConfig): void {
   }
 }
 
-main();
+if (import.meta.main) {
+  main();
+}
