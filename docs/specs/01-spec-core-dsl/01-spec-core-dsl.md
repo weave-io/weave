@@ -195,6 +195,6 @@ The DSL must be expressive enough that built-in agents (Loom, Tapestry, Shuttle,
 
 ## Open Questions
 
-- **Workflow validation depth**: Workflow blocks are structurally parsed but not Zod-validated in this spec. Should the parser enforce structural constraints on steps (e.g. required `agent`, `prompt`, `completion` fields) even before Zod validation, or leave that entirely to a future spec?
+- ~~**Workflow validation depth**: Workflow blocks are structurally parsed but not Zod-validated in this spec.~~ **Resolved by Spec 02.** Full `WorkflowConfigSchema` Zod validation (step types, completion methods, artifact refs, `on_reject`) is delivered by [spec 02](../02-spec-workflow-schema/02-spec-workflow-schema.md). See [`docs/workflow-schema.md`](../../workflow-schema.md) for field semantics and design decisions.
 - **Multi-line string indentation**: Should triple-quoted strings (`"""..."""`) strip common leading indentation (like Kotlin's `trimIndent()`) or preserve whitespace exactly? Recommendation: strip common indentation — prompts will be heavily indented inside agent blocks and shouldn't carry that indentation into the actual prompt text.
 - **Array trailing commas**: Should the parser accept trailing commas in arrays (`["a", "b",]`)? Recommendation: yes, for authoring convenience — it's trivial to support and reduces diff noise.

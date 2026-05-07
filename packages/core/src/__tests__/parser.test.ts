@@ -218,6 +218,80 @@ log_level INFO`;
   });
 });
 
+describe("Parser — named block value", () => {
+  it("completion plan_created { plan_name '...' } produces a BlockValue with __name", () => {
+    const src = `workflow w {
+  step plan {
+    completion plan_created {
+      plan_name "{{instance.slug}}"
+    }
+  }
+}`;
+    const result = parseSource(src);
+    expect(result.isOk()).toBe(true);
+    const wf = result._unsafeUnwrap()[0] as WorkflowBlock;
+    const step = wf.steps[0];
+    const completionProp = step?.properties.find((p) => p.key === "completion");
+    expect(completionProp?.value.kind).toBe("block");
+    const block = completionProp?.value as BlockValue;
+    // First property must be __name
+    expect(block.properties[0]).toMatchObject({
+      key: "__name",
+      value: { kind: "identifier", value: "plan_created" },
+    });
+    // Second property is the param
+    expect(block.properties[1]).toMatchObject({
+      key: "plan_name",
+      value: { kind: "string", value: "{{instance.slug}}" },
+    });
+  });
+
+  it("completion user_confirm (no block) still produces an IdentifierValue", () => {
+    const src = `workflow w {
+  step review {
+    completion user_confirm
+  }
+}`;
+    const result = parseSource(src);
+    expect(result.isOk()).toBe(true);
+    const wf = result._unsafeUnwrap()[0] as WorkflowBlock;
+    const step = wf.steps[0];
+    const completionProp = step?.properties.find((p) => p.key === "completion");
+    expect(completionProp?.value.kind).toBe("identifier");
+    expect(completionProp?.value).toMatchObject({
+      kind: "identifier",
+      value: "user_confirm",
+    });
+  });
+
+  it("named block value pattern works for non-completion properties too (general purpose)", () => {
+    const src = `agent loom {
+  some_key my_method {
+    param1 "value1"
+    param2 42
+  }
+}`;
+    const result = parseSource(src);
+    expect(result.isOk()).toBe(true);
+    const agent = result._unsafeUnwrap()[0] as AgentBlock;
+    const prop = agent.properties.find((p) => p.key === "some_key");
+    expect(prop?.value.kind).toBe("block");
+    const block = prop?.value as BlockValue;
+    expect(block.properties[0]).toMatchObject({
+      key: "__name",
+      value: { kind: "identifier", value: "my_method" },
+    });
+    expect(block.properties[1]).toMatchObject({
+      key: "param1",
+      value: { kind: "string", value: "value1" },
+    });
+    expect(block.properties[2]).toMatchObject({
+      key: "param2",
+      value: { kind: "number", value: 42 },
+    });
+  });
+});
+
 describe("Parser — errors", () => {
   it("reports UnclosedBlock for missing closing brace", () => {
     const result = parseSource("agent loom {");

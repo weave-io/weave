@@ -194,6 +194,228 @@ describe("parseConfig — validation errors", () => {
   });
 });
 
+describe("parseConfig — workflows", () => {
+  it("secure-feature workflow (4 steps) parses end-to-end with correct typed shape", () => {
+    const src = `workflow secure-feature {
+  description "Plan, implement, build, and review a feature with security audit"
+  version 1
+
+  step plan {
+    name "Create implementation plan"
+    type autonomous
+    agent pattern
+    prompt "Create a detailed implementation plan for: {{instance.goal}}"
+
+    completion plan_created {
+      plan_name "{{instance.slug}}"
+    }
+
+    outputs [
+      { name "plan_path" description "Path to the generated plan file" }
+    ]
+  }
+
+  step review-plan {
+    name "Review the plan"
+    type interactive
+    agent shuttle
+    prompt "Review the plan at {{artifacts.plan_path}} for: {{instance.goal}}"
+    completion user_confirm
+  }
+
+  step implement {
+    name "Execute the plan"
+    type autonomous
+    agent shuttle
+    prompt "Execute the plan at {{artifacts.plan_path}} for: {{instance.goal}}"
+
+    completion plan_complete {
+      plan_name "{{instance.slug}}"
+    }
+
+    inputs [
+      { name "plan_path" description "Path to the plan to execute" }
+    ]
+  }
+
+  step security-review {
+    name "Security audit"
+    type gate
+    agent warp
+    prompt "Perform a security audit of all changes for: {{instance.goal}}"
+    completion review_verdict
+    on_reject pause
+  }
+}`;
+
+    const result = parseConfig(src);
+    expect(result.isOk()).toBe(true);
+    const config = result._unsafeUnwrap();
+    const wf = config.workflows["secure-feature"];
+    expect(wf).toBeDefined();
+    expect(wf?.version).toBe(1);
+    expect(wf?.description).toBe(
+      "Plan, implement, build, and review a feature with security audit",
+    );
+    expect(wf?.steps).toHaveLength(4);
+
+    // Step 1: plan
+    const stepPlan = wf?.steps[0];
+    expect(stepPlan?.name).toBe("plan");
+    expect(stepPlan?.display_name).toBe("Create implementation plan");
+    expect(stepPlan?.type).toBe("autonomous");
+    expect(stepPlan?.agent).toBe("pattern");
+    expect(stepPlan?.completion).toEqual({
+      method: "plan_created",
+      plan_name: "{{instance.slug}}",
+    });
+    expect(stepPlan?.outputs).toEqual([
+      { name: "plan_path", description: "Path to the generated plan file" },
+    ]);
+
+    // Step 2: review-plan
+    const stepReview = wf?.steps[1];
+    expect(stepReview?.name).toBe("review-plan");
+    expect(stepReview?.display_name).toBe("Review the plan");
+    expect(stepReview?.type).toBe("interactive");
+    expect(stepReview?.agent).toBe("shuttle");
+    expect(stepReview?.completion).toEqual({ method: "user_confirm" });
+
+    // Step 3: implement
+    const stepImpl = wf?.steps[2];
+    expect(stepImpl?.name).toBe("implement");
+    expect(stepImpl?.display_name).toBe("Execute the plan");
+    expect(stepImpl?.completion).toEqual({
+      method: "plan_complete",
+      plan_name: "{{instance.slug}}",
+    });
+    expect(stepImpl?.inputs).toEqual([
+      { name: "plan_path", description: "Path to the plan to execute" },
+    ]);
+
+    // Step 4: security-review
+    const stepSec = wf?.steps[3];
+    expect(stepSec?.name).toBe("security-review");
+    expect(stepSec?.display_name).toBe("Security audit");
+    expect(stepSec?.type).toBe("gate");
+    expect(stepSec?.agent).toBe("warp");
+    expect(stepSec?.completion).toEqual({ method: "review_verdict" });
+    expect(stepSec?.on_reject).toBe("pause");
+  });
+
+  it("quick-fix workflow (2 steps) parses end-to-end correctly", () => {
+    const src = `workflow quick-fix {
+  description "Fix a bug and get it reviewed"
+  version 1
+
+  step fix {
+    name "Implement the fix"
+    type autonomous
+    agent shuttle
+    prompt "Fix the following issue: {{instance.goal}}"
+    completion agent_signal
+  }
+
+  step review {
+    name "Code review"
+    type gate
+    agent weft
+    prompt "Review the fix for: {{instance.goal}}"
+    completion review_verdict
+    on_reject pause
+  }
+}`;
+
+    const result = parseConfig(src);
+    expect(result.isOk()).toBe(true);
+    const wf = result._unsafeUnwrap().workflows["quick-fix"];
+    expect(wf).toBeDefined();
+    expect(wf?.steps).toHaveLength(2);
+
+    const stepFix = wf?.steps[0];
+    expect(stepFix?.name).toBe("fix");
+    expect(stepFix?.completion).toEqual({ method: "agent_signal" });
+
+    const stepReview = wf?.steps[1];
+    expect(stepReview?.name).toBe("review");
+    expect(stepReview?.type).toBe("gate");
+    expect(stepReview?.completion).toEqual({ method: "review_verdict" });
+    expect(stepReview?.on_reject).toBe("pause");
+  });
+
+  it("invalid step type returns err with ValidationError", () => {
+    const src = `workflow w {
+  version 1
+
+  step bad {
+    name "Bad step"
+    type background
+    agent shuttle
+    prompt "Do it."
+    completion agent_signal
+  }
+}`;
+    const result = parseConfig(src);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    expect(errors.some((e) => e.type === "ValidationError")).toBe(true);
+  });
+
+  it("malformed completion block (no method identifier) returns err with ValidationError", () => {
+    // `completion { plan_name \"x\" }` — plain block with no leading identifier means __name
+    // is absent, so CompletionMethodSchema discriminated union cannot match.
+    const src = `workflow w {
+  version 1
+
+  step bad {
+    name "Bad step"
+    type autonomous
+    agent shuttle
+    prompt "Do it."
+    completion {
+      plan_name "x"
+    }
+  }
+}`;
+    const result = parseConfig(src);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    expect(errors.some((e) => e.type === "ValidationError")).toBe(true);
+  });
+
+  it("workflow mixed with agents and categories parses correctly", () => {
+    const src = `agent loom {
+  prompt "You are loom."
+  models ["claude-sonnet-4-5"]
+}
+
+category backend {
+  patterns ["src/api/**"]
+}
+
+workflow quick-fix {
+  description "Quick bug fix"
+  version 1
+
+  step fix {
+    name "Fix the bug"
+    type autonomous
+    agent shuttle
+    prompt "Fix it."
+    completion agent_signal
+  }
+}`;
+
+    const result = parseConfig(src);
+    expect(result.isOk()).toBe(true);
+    const config = result._unsafeUnwrap();
+    expect(config.agents.loom).toBeDefined();
+    expect(config.categories.backend).toBeDefined();
+    expect(config.workflows["quick-fix"]).toBeDefined();
+    expect(config.workflows["quick-fix"]?.steps).toHaveLength(1);
+  });
+});
+
 describe("parseConfig — source positions in errors", () => {
   it("errors include line numbers where possible", () => {
     // Lex error on line 2

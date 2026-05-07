@@ -198,6 +198,163 @@ describe("validate — disable directives", () => {
   });
 });
 
+describe("validate — workflows", () => {
+  it("bare completion identifier (user_confirm) round-trips correctly", () => {
+    const src = `workflow quick-fix {
+  version 1
+
+  step fix {
+    name "Implement the fix"
+    type autonomous
+    agent shuttle
+    prompt "Fix the issue."
+    completion user_confirm
+  }
+}`;
+    const result = validateSource(src);
+    expect(result.isOk()).toBe(true);
+    const config = result._unsafeUnwrap();
+    const wf = config.workflows["quick-fix"];
+    expect(wf).toBeDefined();
+    expect(wf?.version).toBe(1);
+    expect(wf?.steps).toHaveLength(1);
+    const step = wf?.steps[0];
+    expect(step?.name).toBe("fix");
+    expect(step?.display_name).toBe("Implement the fix");
+    expect(step?.type).toBe("autonomous");
+    expect(step?.agent).toBe("shuttle");
+    expect(step?.completion).toEqual({ method: "user_confirm" });
+  });
+
+  it("named block completion (plan_created) round-trips correctly", () => {
+    const src = `workflow feature {
+  version 1
+
+  step plan {
+    name "Create plan"
+    type autonomous
+    agent pattern
+    prompt "Plan the feature."
+    completion plan_created {
+      plan_name "my-plan"
+    }
+  }
+}`;
+    const result = validateSource(src);
+    expect(result.isOk()).toBe(true);
+    const step = result._unsafeUnwrap().workflows["feature"]?.steps[0];
+    expect(step?.completion).toEqual({
+      method: "plan_created",
+      plan_name: "my-plan",
+    });
+  });
+
+  it("on_reject pause on a gate step is accepted", () => {
+    const src = `workflow w {
+  version 1
+
+  step review {
+    name "Security audit"
+    type gate
+    agent warp
+    prompt "Audit the changes."
+    completion review_verdict
+    on_reject pause
+  }
+}`;
+    const result = validateSource(src);
+    expect(result.isOk()).toBe(true);
+    const step = result._unsafeUnwrap().workflows["w"]?.steps[0];
+    expect(step?.on_reject).toBe("pause");
+  });
+
+  it("on_reject on a non-gate step is rejected", () => {
+    const src = `workflow w {
+  version 1
+
+  step work {
+    name "Do work"
+    type autonomous
+    agent shuttle
+    prompt "Do it."
+    completion agent_signal
+    on_reject pause
+  }
+}`;
+    const result = validateSource(src);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    expect(errors.some((e) => e.message.includes("on_reject"))).toBe(true);
+  });
+
+  it("missing required agent field produces clear error path", () => {
+    const src = `workflow w {
+  version 1
+
+  step work {
+    name "Do work"
+    type autonomous
+    prompt "Do it."
+    completion agent_signal
+  }
+}`;
+    const result = validateSource(src);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    expect(errors.some((e) => e.path.includes("agent"))).toBe(true);
+  });
+
+  it("inputs and outputs arrays validate correctly", () => {
+    const src = `workflow w {
+  version 1
+
+  step implement {
+    name "Implement"
+    type autonomous
+    agent shuttle
+    prompt "Do the work."
+    completion plan_complete {
+      plan_name "my-plan"
+    }
+    inputs [
+      { name "plan_path" description "Path to the plan" }
+    ]
+    outputs [
+      { name "result_path" description "Path to the result" }
+    ]
+  }
+}`;
+    const result = validateSource(src);
+    expect(result.isOk()).toBe(true);
+    const step = result._unsafeUnwrap().workflows["w"]?.steps[0];
+    expect(step?.inputs).toEqual([
+      { name: "plan_path", description: "Path to the plan" },
+    ]);
+    expect(step?.outputs).toEqual([
+      { name: "result_path", description: "Path to the result" },
+    ]);
+  });
+
+  it("step block name maps to name; inner name property maps to display_name", () => {
+    const src = `workflow w {
+  version 1
+
+  step my-step {
+    name "My Display Name"
+    type autonomous
+    agent shuttle
+    prompt "Do work."
+    completion agent_signal
+  }
+}`;
+    const result = validateSource(src);
+    expect(result.isOk()).toBe(true);
+    const step = result._unsafeUnwrap().workflows["w"]?.steps[0];
+    expect(step?.name).toBe("my-step");
+    expect(step?.display_name).toBe("My Display Name");
+  });
+});
+
 describe("validate — log_level setting", () => {
   it("valid log_level is included in config", () => {
     const result = validateSource("log_level INFO");

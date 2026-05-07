@@ -420,6 +420,28 @@ export class Parser {
           pos: { line: token.line, column: token.column },
         } satisfies BooleanValue;
       }
+      // Named block value pattern: `identifier { ... }` — e.g. `completion plan_created { plan_name "x" }`.
+      // The identifier is injected as a synthetic `__name` property so the validator can recover the
+      // method name from the resulting BlockValue without introducing new AST types.
+      if (this.#current().type === TokenType.LBrace) {
+        const block = this.#parseBlockLiteral();
+        if (!block) return null;
+        const pos: SourcePos = { line: token.line, column: token.column };
+        const nameProp: Property = {
+          key: "__name",
+          value: {
+            kind: "identifier",
+            value: token.value,
+            pos,
+          } satisfies IdentifierValue,
+          pos,
+        };
+        return {
+          kind: "block",
+          properties: [nameProp, ...block.properties],
+          pos,
+        } satisfies BlockValue;
+      }
       return {
         kind: "identifier",
         value: token.value,
