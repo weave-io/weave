@@ -18,7 +18,8 @@
     { "path": "./packages/engine" },
     { "path": "./packages/adapters/opencode" },
     { "path": "./packages/adapters/claude-code" },
-    { "path": "./packages/adapters/pi" }
+    { "path": "./packages/adapters/pi" },
+    { "path": "./packages/config" }
   ],
   "files": []
 }

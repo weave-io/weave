@@ -5,6 +5,7 @@
   "workspaces": [
     "packages/core",
     "packages/engine",
+    "packages/config",
     "packages/adapters/*"
   ],
   "scripts": {

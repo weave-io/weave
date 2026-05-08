@@ -23,6 +23,18 @@
         "typescript": "^5.4.5",
       },
     },
+    "packages/config": {
+      "name": "@weave/config",
+      "version": "0.0.1",
+      "dependencies": {
+        "@weave/core": "workspace:*",
+        "neverthrow": "^8.2.0",
+        "pino": "^9.6.0",
+      },
+      "devDependencies": {
+        "typescript": "^5.4.5",
+      },
+    },
     "packages/core": {
       "name": "@weave/core",
       "version": "0.0.1",
@@ -73,6 +85,8 @@
     "@types/node": ["@types/node@20.19.39", "", { "dependencies": { "undici-types": "~6.21.0" } }, "sha512-orrrD74MBUyK8jOAD/r0+lfa1I2MO6I+vAkmAWzMYbCcgrN4lCrmK52gRFQq/JRxfYPfonkr4b0jcY7Olqdqbw=="],
 
     "@weave/adapter-opencode": ["@weave/adapter-opencode@workspace:packages/adapters/opencode"],
+
+    "@weave/config": ["@weave/config@workspace:packages/config"],
 
     "@weave/core": ["@weave/core@workspace:packages/core"],
 
