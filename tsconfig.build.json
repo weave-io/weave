@@ -14,12 +14,10 @@
     "resolveJsonModule": true
   },
   "references": [
-    { "path": "./packages/core" },
-    { "path": "./packages/engine" },
-    { "path": "./packages/adapters/opencode" },
-    { "path": "./packages/adapters/claude-code" },
-    { "path": "./packages/adapters/pi" },
-    { "path": "./packages/config" }
+    { "path": "./packages/core/tsconfig.build.json" },
+    { "path": "./packages/engine/tsconfig.build.json" },
+    { "path": "./packages/config/tsconfig.build.json" },
+    { "path": "./packages/adapters/opencode/tsconfig.build.json" }
   ],
   "files": []
 }

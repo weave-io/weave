@@ -30,10 +30,13 @@ by this change).
 **What it proves:** `packages/config/` exists with all required files.
 **Why it matters:** Correct file layout is required for workspace resolution and TypeScript path mappings.
 **Command:**
+
 ```bash
 find packages/config -type f | sort
 ```
+
 **Result summary:** All scaffold files present.
+
 ```
 packages/config/package.json
 packages/config/prompts/loom.md
@@ -69,10 +72,13 @@ packages/config/tsconfig.json
 **What it proves:** The new `@weave/config` package is recognized as a workspace member and all dependencies resolve.
 **Why it matters:** If `bun install` fails, no code in `@weave/config` can be imported by other packages.
 **Command:**
+
 ```bash
 bun install
 ```
+
 **Result summary:** All 58 installs resolve, no changes needed; husky hook runs successfully.
+
 ```
 bun install v1.3.13 (bf2e2cec)
 
@@ -88,10 +94,13 @@ Checked 58 installs across 64 packages (no changes) [93.00ms]
 **What it proves:** `@weave/config` path mappings are correct, all source files type-check, and no cross-package type errors were introduced.
 **Why it matters:** Type errors here would indicate broken imports, incorrect type exports, or misconfigured `tsconfig.json`.
 **Command:**
+
 ```bash
 bun run typecheck
 ```
+
 **Result summary:** All four packages (`@weave/core`, `@weave/engine`, `@weave/config`, `@weave/adapter-opencode`) exit with code 0.
+
 ```
 $ tsc --noEmit -p tsconfig.json && bun run --filter '*' typecheck
 @weave/core typecheck: Exited with code 0
@@ -107,10 +116,13 @@ $ tsc --noEmit -p tsconfig.json && bun run --filter '*' typecheck
 **What it proves:** The package can be bundled for runtime; the public API is importable.
 **Why it matters:** The bundled `dist/index.js` is what downstream packages consume at runtime.
 **Command:**
+
 ```bash
 cd packages/config && bun run build
 ```
+
 **Result summary:** `bun build` succeeds and produces `dist/index.js` (0.72 MB). The subsequent `tsc --emitDeclarationOnly` step fails with the same pre-existing `TS6306`/`TS6310` error that affects `@weave/engine` and `@weave/core` — caused by `packages/core/tsconfig.build.json` not having `composite: true` recognized via `extends`. This is not introduced by this task.
+
 ```
 $ bun build ./src/index.ts --outdir ./dist --target bun && tsc -p tsconfig.build.json --emitDeclarationOnly
 Bundled 124 modules in 20ms

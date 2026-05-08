@@ -27,10 +27,13 @@ invalid DSL, and error aggregation across both scopes.
 **What it proves:** All discovery scenarios — both files, one file, no files, read error, parse error, aggregation — behave correctly.
 **Why it matters:** Discovery is the gate between the filesystem and the merge pipeline. Incorrect behaviour here would either silently skip configs or crash on expected missing files.
 **Command:**
+
 ```bash
 bun test packages/config/src/__tests__/discovery.test.ts
 ```
+
 **Result summary:** 8 pass, 0 fail.
+
 ```
 packages/config/src/__tests__/discovery.test.ts:
 (pass) discoverAndParse > (a) both files exist → returns 2 entries, global first [1.97ms]
@@ -54,10 +57,13 @@ Ran 8 tests across 1 file. [82.00ms]
 
 **What it proves:** `discovery.ts` is correctly typed, including the `FileReader` interface and `ResultAsync` composition.
 **Command:**
+
 ```bash
 bun run typecheck
 ```
+
 **Result summary:** All packages exit 0.
+
 ```
 @weave/core typecheck: Exited with code 0
 @weave/engine typecheck: Exited with code 0

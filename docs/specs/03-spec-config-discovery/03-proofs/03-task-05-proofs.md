@@ -30,10 +30,13 @@ pipeline. Full suite: 193 pass, 0 fail. Typecheck: clean. Biome: clean.
 
 **What it proves:** Prompt paths are resolved correctly for builtin, global, and project scopes; agents without `prompt_file` are unchanged; input is not mutated.
 **Command:**
+
 ```bash
 bun test packages/config/src/__tests__/resolve.test.ts
 ```
+
 **Result summary:** 6 pass, 0 fail.
+
 ```
 packages/config/src/__tests__/resolve.test.ts:
 (pass) resolvePromptPaths > (a) builtin scope: resolves prompt_file relative to rootDir/prompts/ [3.47ms]
@@ -54,10 +57,13 @@ packages/config/src/__tests__/resolve.test.ts:
 
 **What it proves:** The full `loadConfig()` pipeline is correct end-to-end: zero-config, project override, global custom agent, three-layer merge, parse error propagation, I/O error propagation, and absolute prompt paths.
 **Command:**
+
 ```bash
 bun test packages/config/src/__tests__/load_config.test.ts
 ```
+
 **Result summary:** 8 pass, 0 fail.
+
 ```
 packages/config/src/__tests__/load_config.test.ts:
 (pass) loadConfig > (a) zero-config: no user files → returns ok with all 8 builtin agents [5.02ms]
@@ -81,10 +87,13 @@ packages/config/src/__tests__/load_config.test.ts:
 **What it proves:** No regressions were introduced across the entire workspace.
 **Why it matters:** The `@weave/config` package imports from `@weave/core` — any type or behaviour breakage would surface here.
 **Command:**
+
 ```bash
 bun test --recursive
 ```
+
 **Result summary:** 193 pass, 0 fail across 14 files.
+
 ```
  193 pass
  0 fail
@@ -98,10 +107,13 @@ Ran 193 tests across 14 files. [90.00ms]
 
 **What it proves:** All new modules are correctly typed; the full barrel exports are valid.
 **Command:**
+
 ```bash
 bun run typecheck
 ```
+
 **Result summary:** All 4 packages exit 0.
+
 ```
 @weave/core typecheck: Exited with code 0
 @weave/engine typecheck: Exited with code 0
@@ -113,12 +125,15 @@ bun run typecheck
 
 ## Artifact: Biome check — no errors
 
-**What it proves:** All new files conform to the project's lint rules (no console.*, no explicit any, useLiteralKeys, organizeImports, useNodejsImportProtocol).
+**What it proves:** All new files conform to the project's lint rules (no console.\*, no explicit any, useLiteralKeys, organizeImports, useNodejsImportProtocol).
 **Command:**
+
 ```bash
 npx @biomejs/biome check packages/config/
 ```
+
 **Result summary:** No errors. No fixes applied.
+
 ```
 Checked 18 files in 7ms. No fixes applied.
 ```
@@ -129,10 +144,13 @@ Checked 18 files in 7ms. No fixes applied.
 
 **What it proves:** Living documentation is up to date with the implementation.
 **Command:**
+
 ```bash
 grep "^## " docs/config-loading.md
 ```
+
 **Result summary:** All required sections present.
+
 ```
 ## Three-Layer Merge
 ## Builtin Agents

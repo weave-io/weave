@@ -25,10 +25,10 @@ Configuration is assembled from three layers in priority order (lowest → highe
 
 ### Merge Rules
 
-| Value type | Behaviour |
-|---|---|
-| **Scalar** (string, number, boolean, enum) | Last-defined wins — project overrides global overrides builtin |
-| **Object** (e.g. `agents`, `tool_policy`) | Recursive deep-merge — only keys present in the override are updated; all other keys are preserved from lower layers |
+| Value type                                   | Behaviour                                                                                                                                                                 |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Scalar** (string, number, boolean, enum)   | Last-defined wins — project overrides global overrides builtin                                                                                                            |
+| **Object** (e.g. `agents`, `tool_policy`)    | Recursive deep-merge — only keys present in the override are updated; all other keys are preserved from lower layers                                                      |
 | **Array** (e.g. `models`, `disabled.agents`) | Union-merge — override entries come first, then base entries not already present (deduped by `JSON.stringify` equality); order reflects priority (highest-priority first) |
 
 **Example:** a project config with `agent loom { temperature 0.5 }` leaves all other loom fields (models, prompt_file, tool_policy) intact from the builtin layer.
@@ -43,16 +43,16 @@ See [`packages/config/src/merge.ts`](../packages/config/src/merge.ts) for the im
 
 Eight built-in agents are shipped with `@weave/config`:
 
-| Agent | Mode | Temperature | Role |
-|---|---|---|---|
-| `loom` | primary | 0.1 | Main orchestrator |
-| `tapestry` | primary | 0.1 | Plan execution |
-| `shuttle` | all | 0.2 | Domain specialist |
-| `pattern` | subagent | 0.3 | Strategic planner |
-| `thread` | subagent | 0.0 | Codebase explorer |
-| `spindle` | subagent | 0.1 | External researcher |
-| `weft` | subagent | 0.1 | Reviewer |
-| `warp` | subagent | 0.1 | Security auditor |
+| Agent      | Mode     | Temperature | Role                |
+| ---------- | -------- | ----------- | ------------------- |
+| `loom`     | primary  | 0.1         | Main orchestrator   |
+| `tapestry` | primary  | 0.1         | Plan execution      |
+| `shuttle`  | all      | 0.2         | Domain specialist   |
+| `pattern`  | subagent | 0.3         | Strategic planner   |
+| `thread`   | subagent | 0.0         | Codebase explorer   |
+| `spindle`  | subagent | 0.1         | External researcher |
+| `weft`     | subagent | 0.1         | Reviewer            |
+| `warp`     | subagent | 0.1         | Security auditor    |
 
 **DSL-first:** Builtins are declared as a `.weave` DSL string in [`packages/config/src/builtins.ts`](../packages/config/src/builtins.ts) — there is no separate code path. They flow through the same `parseConfig` pipeline as user-authored configs. This means:
 
@@ -67,9 +67,9 @@ Placeholder prompt files ship in [`packages/config/prompts/`](../packages/config
 
 `discoverAndParse()` in [`packages/config/src/discovery.ts`](../packages/config/src/discovery.ts) checks two locations:
 
-| Scope | Path | Behaviour |
-|---|---|---|
-| Global | `~/.weave/config.weave` | Checked first; missing file is silently skipped |
+| Scope   | Path                                | Behaviour                                        |
+| ------- | ----------------------------------- | ------------------------------------------------ |
+| Global  | `~/.weave/config.weave`             | Checked first; missing file is silently skipped  |
 | Project | `<projectRoot>/.weave/config.weave` | Checked second; missing file is silently skipped |
 
 **Missing files are non-errors.** Only actual I/O failures or parse failures produce errors.
@@ -78,10 +78,10 @@ Placeholder prompt files ship in [`packages/config/prompts/`](../packages/config
 
 ### Error types
 
-| Type | When |
-|---|---|
-| `FileReadError` | File exists but could not be read from disk |
-| `ParseError` | File was read but the DSL could not be parsed or validated |
+| Type                | When                                                                      |
+| ------------------- | ------------------------------------------------------------------------- |
+| `FileReadError`     | File exists but could not be read from disk                               |
+| `ParseError`        | File was read but the DSL could not be parsed or validated                |
 | `BuiltinParseError` | The built-in DSL source string itself failed to parse (always a code bug) |
 
 See [`packages/config/src/errors.ts`](../packages/config/src/errors.ts).
@@ -121,7 +121,8 @@ result.match(
     for (const e of errors) {
       if (e.type === "ParseError") console.error(`${e.path}: parse failed`);
       if (e.type === "FileReadError") console.error(`${e.path}: read failed`);
-      if (e.type === "BuiltinParseError") console.error("BUG: builtin DSL invalid");
+      if (e.type === "BuiltinParseError")
+        console.error("BUG: builtin DSL invalid");
     }
     process.exit(1);
   },
@@ -134,12 +135,12 @@ All exports are available from the package barrel:
 
 ```ts
 import {
-  loadConfig,           // Full pipeline
-  getBuiltinConfig,     // Builtins only
-  discoverAndParse,     // Discovery only
-  mergeConfigs,         // Merge only
-  resolvePromptPaths,   // Path resolution only
-  BUILTIN_AGENT_NAMES,  // ["loom", "tapestry", ...]
+  loadConfig, // Full pipeline
+  getBuiltinConfig, // Builtins only
+  discoverAndParse, // Discovery only
+  mergeConfigs, // Merge only
+  resolvePromptPaths, // Path resolution only
+  BUILTIN_AGENT_NAMES, // ["loom", "tapestry", ...]
 } from "@weave/config";
 ```
 
@@ -158,11 +159,13 @@ AGENTS.md (package structure table) describes a `loader.ts` inside `@weave/engin
 ### Consequences
 
 **Positive:**
+
 - Config logic is independently testable without an engine harness.
 - Future adapters (or CLI tools) can call `loadConfig()` without pulling in engine dependencies.
 - The builtin DSL-first approach is clean — `@weave/config` ships the DSL source and the `prompts/` files together in the same package.
 
 **Negative:**
+
 - The AGENTS.md package structure table is slightly stale (still lists `loader.ts` in `engine`). A future PR should update it.
 
 **Mitigation:** The ADR is documented here; anyone reading AGENTS.md will be directed to check this doc.

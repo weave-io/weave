@@ -10,7 +10,7 @@
   ],
   "scripts": {
     "validate-config": "bun run scripts/validate-config.ts",
-    "build": "bun run --filter '*' build",
+    "build": "bun run --filter '@weave/core' build && bun run --filter '@weave/engine' --filter '@weave/config' build && bun run --filter '@weave/adapter-*' build",
     "test": "bun run --filter '*' test",
     "typecheck": "tsc --noEmit -p tsconfig.json && bun run --filter '*' typecheck",
     "lint": "biome lint packages/",

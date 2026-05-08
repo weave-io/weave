@@ -30,10 +30,13 @@ mutated.
 **What it proves:** All merge semantics — scalar override, deep-merge, array union-merge, dedup, immutability, edge cases — are correct.
 **Why it matters:** Incorrect merge semantics would silently produce wrong config (e.g. project fields lost, wrong model priority order, or inputs mutated between runs).
 **Command:**
+
 ```bash
 bun test packages/config/src/__tests__/merge.test.ts
 ```
+
 **Result summary:** 12 pass, 0 fail.
+
 ```
 packages/config/src/__tests__/merge.test.ts:
 (pass) mergeConfigs > (a) scalar override: last-defined log_level wins [1.57ms]
@@ -61,10 +64,13 @@ Ran 12 tests across 1 file. [40.00ms]
 
 **What it proves:** `merge.ts` is correctly typed with no `any` escapes.
 **Command:**
+
 ```bash
 bun run typecheck
 ```
+
 **Result summary:** All packages exit 0.
+
 ```
 @weave/core typecheck: Exited with code 0
 @weave/engine typecheck: Exited with code 0

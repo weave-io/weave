@@ -26,10 +26,13 @@ DSL-first principle: builtins use exactly the same pipeline as user configs.
 **What it proves:** `getBuiltinConfig()` correctly parses all 8 built-in agents with the right properties.
 **Why it matters:** Any regression in the builtin DSL string will surface as a test failure here before it can affect users.
 **Command:**
+
 ```bash
 bun test packages/config/src/__tests__/builtins.test.ts
 ```
+
 **Result summary:** 8 pass, 0 fail.
+
 ```
 packages/config/src/__tests__/builtins.test.ts:
 (pass) getBuiltinConfig > (a) returns ok — not err [4.01ms]
@@ -54,10 +57,13 @@ Ran 8 tests across 1 file. [45.00ms]
 **What it proves:** All 8 placeholder prompt files are present in `packages/config/prompts/`.
 **Why it matters:** `resolvePromptPaths()` will construct absolute paths pointing to these files; missing files would cause runtime errors when a harness tries to read them.
 **Command:**
+
 ```bash
 ls packages/config/prompts/
 ```
+
 **Result summary:** All 8 files present.
+
 ```
 loom.md     pattern.md  shuttle.md  spindle.md
 tapestry.md thread.md   warp.md     weft.md
@@ -69,10 +75,13 @@ tapestry.md thread.md   warp.md     weft.md
 
 **What it proves:** `builtins.ts` is correctly typed; all imports from `@weave/core` resolve.
 **Command:**
+
 ```bash
 bun run typecheck
 ```
+
 **Result summary:** All packages exit 0.
+
 ```
 @weave/core typecheck: Exited with code 0
 @weave/engine typecheck: Exited with code 0
