@@ -156,6 +156,36 @@ describe("mergeConfigs", () => {
     expect(base.agents.loom?.prompt_file).toBe(originalBasePromptFile);
   });
 
+  it("(m) three-layer agent deep-merge: each layer contributes distinct fields", () => {
+    // Builtin: full loom definition
+    const builtin = cfg(`
+      agent loom {
+        prompt_file "loom.md"
+        models ["claude-sonnet-4-5"]
+        temperature 0.1
+        mode primary
+        tool_policy { read allow write allow }
+      }
+    `);
+    // Global: overrides models only
+    const global = cfg(`agent loom { models ["gpt-4o"] }`);
+    // Project: overrides temperature only
+    const project = cfg(`agent loom { temperature 0.9 }`);
+
+    const merged = mergeConfigs(builtin, global, project);
+    const loom = merged.agents.loom;
+
+    // Project wins on temperature
+    expect(loom?.temperature).toBe(0.9);
+    // Global adds gpt-4o (project-first union-merge: project has nothing, so global "gpt-4o" first, then builtin)
+    expect(loom?.models).toEqual(["gpt-4o", "claude-sonnet-4-5"]);
+    // Builtin values preserved for fields neither global nor project touched
+    expect(loom?.prompt_file).toBe("loom.md");
+    expect(loom?.mode).toBe("primary");
+    expect(loom?.tool_policy?.read).toBe("allow");
+    expect(loom?.tool_policy?.write).toBe("allow");
+  });
+
   it("(l) tool_policy deep-merge: base policy + extra key from override, all keys present", () => {
     const base = cfg(`
       agent loom {

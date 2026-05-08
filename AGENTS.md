@@ -292,6 +292,8 @@ packages/
 - Types: `bun-types` — never `@types/node`, `ts-node`, or `nodemon`
 - File I/O: `Bun.file()` &nbsp;|&nbsp; Process: `Bun.spawn()` / `Bun.spawnSync()`
 
+> **Note — `node:path` and `node:os` are allowed.** Bun implements these as built-in compatibility modules. Use `import { resolve } from "node:path"` for path manipulation and `import { homedir } from "node:os"` for home-directory resolution. What is forbidden is the Node.js *runtime surface*: `fs`, `child_process`, `@types/node`, `ts-node`, and so on. The `node:` protocol prefix is the signal that Bun has explicitly adopted the module.
+
 ## Error Handling — `neverthrow`
 
 All functions and methods that can fail **must** return `Result<T, E>` (sync) or `ResultAsync<T, E>` (async) from the `neverthrow` library. Never throw exceptions for expected failure paths.
