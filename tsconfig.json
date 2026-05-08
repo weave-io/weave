@@ -19,7 +19,9 @@
       "@weave/engine/*": ["./packages/engine/src/*"],
       "@weave/adapter-opencode": ["./packages/adapters/opencode/src/index.ts"],
       "@weave/adapter-claude-code": ["./packages/adapters/claude-code/src/index.ts"],
-      "@weave/adapter-pi": ["./packages/adapters/pi/src/index.ts"]
+      "@weave/adapter-pi": ["./packages/adapters/pi/src/index.ts"],
+      "@weave/config": ["./packages/config/src/index.ts"],
+      "@weave/config/*": ["./packages/config/src/*"]
     }
   },
   "include": [

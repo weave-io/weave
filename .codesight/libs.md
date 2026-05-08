@@ -1,5 +1,17 @@
 # Libraries
 
+- `packages/config/src/builtins.ts`
+  - function getBuiltinConfig: () => Result<WeaveConfig, ConfigError[]>
+  - const BUILTIN_AGENT_NAMES: readonly string[]
+  - const BUILTIN_WEAVE_SOURCE
+- `packages/config/src/discovery.ts`
+  - function discoverAndParse: (projectRoot?, fileReader) => ResultAsync<DiscoveredConfig[], ConfigLoadError[]>
+  - interface FileReader
+  - type DiscoveredConfig
+  - const bunFileReader: FileReader
+- `packages/config/src/loader.ts` — function loadConfig: (projectRoot?, fileReader) => ResultAsync<import("@weave/core").WeaveConfig, ConfigLoadError[]>
+- `packages/config/src/merge.ts` — function mergeConfigs: (...configs) => WeaveConfig
+- `packages/config/src/resolve.ts` — function resolvePromptPaths: (config, scope) => WeaveConfig
 - `packages/core/src/errors.ts`
   - function formatError: (error) => string
   - type LexError

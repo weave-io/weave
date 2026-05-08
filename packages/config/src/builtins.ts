@@ -1,0 +1,170 @@
+import type { ConfigError, WeaveConfig } from "@weave/core";
+import { parseConfig } from "@weave/core";
+import type { Result } from "neverthrow";
+
+/**
+ * Ordered list of all built-in agent names.
+ *
+ * These names match the `agent` blocks in `BUILTIN_WEAVE_SOURCE` and are
+ * exported so consumers can check whether a given name is a builtin without
+ * needing to call `getBuiltinConfig()`.
+ */
+export const BUILTIN_AGENT_NAMES: readonly string[] = [
+  "loom",
+  "tapestry",
+  "shuttle",
+  "pattern",
+  "thread",
+  "spindle",
+  "weft",
+  "warp",
+];
+
+/**
+ * The canonical `.weave` DSL source that declares all 8 built-in agents.
+ *
+ * This constant is the single source of truth for default agent configuration.
+ * It is parsed through the same `parseConfig` pipeline used for user-authored
+ * configs, validating the DSL-first principle: built-ins are just well-known
+ * named entries — there is no separate code path for them.
+ *
+ * Prompt file paths are relative to the `prompts/` directory shipped inside
+ * `packages/config/`. They are resolved to absolute paths by
+ * `resolvePromptPaths()` before merging.
+ */
+export const BUILTIN_WEAVE_SOURCE = `
+agent loom {
+  description "Loom (Main Orchestrator)"
+  prompt_file "loom.md"
+  models ["claude-sonnet-4-5"]
+  mode primary
+  temperature 0.1
+
+  tool_policy {
+    read allow
+    write allow
+    edit allow
+    delegate allow
+    search ask
+  }
+}
+
+agent tapestry {
+  description "Tapestry (Plan Execution)"
+  prompt_file "tapestry.md"
+  models ["claude-sonnet-4-5"]
+  mode primary
+  temperature 0.1
+
+  tool_policy {
+    read allow
+    write allow
+    edit allow
+    delegate allow
+  }
+}
+
+agent shuttle {
+  description "Shuttle (Domain Specialist)"
+  prompt_file "shuttle.md"
+  models ["claude-sonnet-4-5"]
+  mode all
+  temperature 0.2
+
+  tool_policy {
+    read allow
+    write allow
+    edit allow
+    delegate deny
+  }
+}
+
+agent pattern {
+  description "Pattern (Strategic Planner)"
+  prompt_file "pattern.md"
+  models ["claude-sonnet-4-5"]
+  mode subagent
+  temperature 0.3
+
+  tool_policy {
+    read allow
+    write allow
+    edit deny
+    delegate deny
+  }
+}
+
+agent thread {
+  description "Thread (Codebase Explorer)"
+  prompt_file "thread.md"
+  models ["claude-sonnet-4-5"]
+  mode subagent
+  temperature 0.0
+
+  tool_policy {
+    read allow
+    write deny
+    edit deny
+    delegate deny
+  }
+}
+
+agent spindle {
+  description "Spindle (External Researcher)"
+  prompt_file "spindle.md"
+  models ["claude-sonnet-4-5"]
+  mode subagent
+  temperature 0.1
+
+  tool_policy {
+    read allow
+    write deny
+    edit deny
+    delegate deny
+  }
+}
+
+agent weft {
+  description "Weft (Reviewer)"
+  prompt_file "weft.md"
+  models ["claude-sonnet-4-5"]
+  mode subagent
+  temperature 0.1
+
+  tool_policy {
+    read allow
+    write deny
+    edit deny
+    delegate deny
+  }
+}
+
+agent warp {
+  description "Warp (Security Auditor)"
+  prompt_file "warp.md"
+  models ["claude-sonnet-4-5"]
+  mode subagent
+  temperature 0.1
+
+  tool_policy {
+    read allow
+    write deny
+    edit deny
+    delegate deny
+  }
+}
+`;
+
+/**
+ * Parse and return the built-in agent configuration.
+ *
+ * Calls `parseConfig(BUILTIN_WEAVE_SOURCE)` and returns the result directly.
+ * An `err` result always indicates a bug in this file — the built-in DSL
+ * must be valid at all times.
+ *
+ * @returns `ok(WeaveConfig)` with all 8 built-in agents, or
+ *          `err(ConfigError[])` if the DSL is malformed (indicates a bug).
+ */
+export function getBuiltinConfig(): Result<WeaveConfig, ConfigError[]> {
+  return parseConfig(BUILTIN_WEAVE_SOURCE);
+}
