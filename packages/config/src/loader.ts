@@ -9,6 +9,7 @@ import {
 import type { ConfigLoadError } from "./errors.js";
 import { logger } from "./logger.js";
 import { mergeConfigs } from "./merge.js";
+import { normalizePath } from "./normalize-path.js";
 import { resolvePromptPaths } from "./resolve.js";
 import type { ConfigScope } from "./types.js";
 
@@ -21,7 +22,7 @@ const log = logger.child({ module: "loader" });
  * `import.meta.dir` is the directory of this source file (`packages/config/src/`).
  * We resolve one level up to reach `packages/config/` where `prompts/` lives.
  */
-const BUILTIN_ROOT_DIR = resolve(import.meta.dir, "..");
+const BUILTIN_ROOT_DIR = normalizePath(resolve(import.meta.dir, ".."));
 
 /**
  * Load the final merged `WeaveConfig` for a project.

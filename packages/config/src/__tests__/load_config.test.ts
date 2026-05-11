@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { isAbsolute } from "node:path";
 import { errAsync, okAsync } from "neverthrow";
 import { BUILTIN_AGENT_NAMES } from "../builtins.js";
 import type { FileReader } from "../discovery.js";
@@ -65,7 +66,7 @@ describe("loadConfig", () => {
 
     for (const [, agent] of Object.entries(config.agents)) {
       if (agent.prompt_file !== undefined) {
-        expect(agent.prompt_file.startsWith("/")).toBe(true);
+        expect(isAbsolute(agent.prompt_file)).toBe(true);
       }
     }
   });
@@ -83,9 +84,7 @@ describe("loadConfig", () => {
     expect(loom?.temperature).toBe(0.5);
     // prompt_file should come from builtin (absolute path), not overridden
     expect(loom?.prompt_file).toBeDefined();
-    // project prompt_file path wins — but since project didn't set prompt_file,
-    // the builtin's resolved absolute path wins
-    expect(loom?.prompt_file?.startsWith("/")).toBe(true);
+    expect(isAbsolute(loom!.prompt_file!)).toBe(true);
   });
 
   it("(c) global custom agent: merged config contains all 8 builtins + custom agent", async () => {
@@ -169,7 +168,7 @@ describe("loadConfig", () => {
 
     for (const [, agent] of Object.entries(config.agents)) {
       if (agent.prompt_file !== undefined) {
-        expect(agent.prompt_file.startsWith("/")).toBe(true);
+        expect(isAbsolute(agent.prompt_file)).toBe(true);
       }
     }
   });

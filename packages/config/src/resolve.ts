@@ -1,5 +1,6 @@
-import { resolve } from "node:path";
+import { posix } from "node:path";
 import type { WeaveConfig } from "@weave/core";
+import { normalizePath } from "./normalize-path.js";
 import type { ConfigScope } from "./types.js";
 
 /**
@@ -38,7 +39,13 @@ export function resolvePromptPaths(
       continue;
     }
 
-    const absolutePath = resolve(scope.rootDir, "prompts", agent.prompt_file);
+    const absolutePath = normalizePath(
+      posix.join(
+        normalizePath(scope.rootDir),
+        "prompts",
+        agent.prompt_file,
+      ),
+    );
     resolvedAgents[name] = { ...agent, prompt_file: absolutePath };
   }
 
