@@ -40,11 +40,7 @@ export function resolvePromptPaths(
     }
 
     const absolutePath = normalizePath(
-      posix.join(
-        normalizePath(scope.rootDir),
-        "prompts",
-        agent.prompt_file,
-      ),
+      posix.join(normalizePath(scope.rootDir), "prompts", agent.prompt_file),
     );
     resolvedAgents[name] = { ...agent, prompt_file: absolutePath };
   }

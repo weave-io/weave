@@ -242,7 +242,7 @@ describe("validate — workflows", () => {
 }`;
     const result = validateSource(src);
     expect(result.isOk()).toBe(true);
-    const step = result._unsafeUnwrap().workflows["feature"]?.steps[0];
+    const step = result._unsafeUnwrap().workflows.feature?.steps[0];
     expect(step?.completion).toEqual({
       method: "plan_created",
       plan_name: "my-plan",
@@ -264,7 +264,7 @@ describe("validate — workflows", () => {
 }`;
     const result = validateSource(src);
     expect(result.isOk()).toBe(true);
-    const step = result._unsafeUnwrap().workflows["w"]?.steps[0];
+    const step = result._unsafeUnwrap().workflows.w?.steps[0];
     expect(step?.on_reject).toBe("pause");
   });
 
@@ -326,7 +326,7 @@ describe("validate — workflows", () => {
 }`;
     const result = validateSource(src);
     expect(result.isOk()).toBe(true);
-    const step = result._unsafeUnwrap().workflows["w"]?.steps[0];
+    const step = result._unsafeUnwrap().workflows.w?.steps[0];
     expect(step?.inputs).toEqual([
       { name: "plan_path", description: "Path to the plan" },
     ]);
@@ -349,7 +349,7 @@ describe("validate — workflows", () => {
 }`;
     const result = validateSource(src);
     expect(result.isOk()).toBe(true);
-    const step = result._unsafeUnwrap().workflows["w"]?.steps[0];
+    const step = result._unsafeUnwrap().workflows.w?.steps[0];
     expect(step?.name).toBe("my-step");
     expect(step?.display_name).toBe("My Display Name");
   });
