@@ -1,11 +1,11 @@
 # @weave/engine
 
-The Weave orchestration engine. Drives agent lifecycle management, hook registration, skill loading, and sub-agent spawning through a harness-agnostic adapter interface.
+The Weave engine manages normalized agent lifecycle concerns and the adapter boundary. It consumes validated `WeaveConfig` and passes agent intent to harness adapters; adapters own harness-specific plugin/config generation, UI state, model selection, tools, commands, and runtime wiring.
 
 ## Overview
 
-- **`HarnessAdapter`** — interface that every harness adapter must implement
-- **`WeaveRunner`** — main entry point; accepts a `WeaveConfig` and a `HarnessAdapter` and orchestrates execution
+- **`HarnessAdapter`** — interface that every harness adapter must implement to translate Weave intent into harness behavior
+- **`WeaveRunner`** — main entry point; accepts a `WeaveConfig` and a `HarnessAdapter` and passes normalized agent config through the adapter boundary
 
 ## Usage
 
@@ -22,7 +22,7 @@ await runner.run();
 
 ## Adapter Contract
 
-Harness adapters must implement `HarnessAdapter`:
+Harness adapters must implement `HarnessAdapter`. The adapter is where harness UI state, concrete model fields, tool names, commands, and runtime behavior are resolved:
 
 ```ts
 import type { HarnessAdapter } from "@weave/engine";

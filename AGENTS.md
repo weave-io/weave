@@ -2,17 +2,20 @@
 
 ## What is Weave?
 
-Weave is a **harness-agnostic multi-agent orchestration framework** built in TypeScript, run exclusively on **Bun**. A custom `.weave` DSL declares agents, categories, workflows, and settings; the engine parses the DSL, validates the config, and drives the full agent lifecycle through whichever harness adapter is active — OpenCode, Claude Code, Pi, or any future target.
+Weave is a **harness-agnostic prompt and agent-configuration API** built in TypeScript, run exclusively on **Bun**. A custom `.weave` DSL declares agents, categories, workflows, prompts, delegation intent, model preferences, and settings. Weave parses and normalizes that intent; adapters translate it into concrete harness plugins/configuration for OpenCode, Claude Code, Pi, Codex, or any future target.
 
-> **Reference**: `docs/legacy-architecture.md` documents the alpha, OpenCode-exclusive version of Weave (`opencode-weave`). That document is the source of truth for understanding what we are porting away from. The framework being built here is the harness-agnostic successor.
+Think of Weave like **Neovim's API layer**: Weave provides primitives and normalized configuration; adapters and users compose those primitives into a concrete harness experience.
+
+> **Product vision**: `docs/product-vision.md` is the source of truth for the harness-agnostic successor. `docs/legacy-architecture.md` documents the alpha, OpenCode-exclusive version of Weave (`opencode-weave`) and should be used as migration context only. When legacy OpenCode behavior conflicts with `docs/product-vision.md`, prefer the product vision.
 
 > **DSL-first agents**: Built-in agents (Loom, Tapestry, Shuttle, etc.) are defined using the same `.weave` DSL that end users use for custom agents. There is no separate code path for builtins — they are just well-known named entries in a config file. This means the DSL must be expressive enough to declare the full behaviour of any agent, and that users can replicate, extend, or replace any builtin by writing equivalent DSL config.
 
-| Layer        | Package            | Responsibility                                                         |
-| ------------ | ------------------ | ---------------------------------------------------------------------- |
-| **Core**     | `@weave/core`      | DSL lexer, parser, AST, Zod schema validation, config types            |
-| **Engine**   | `@weave/engine`    | `WeaveRunner`, `HarnessAdapter` interface, config loading, pino logger |
-| **Adapters** | `@weave/adapter-*` | Harness-specific `HarnessAdapter` implementations                      |
+| Layer        | Package            | Responsibility                                                                                           |
+| ------------ | ------------------ | -------------------------------------------------------------------------------------------------------- |
+| **Core**     | `@weave/core`      | DSL lexer, parser, AST, Zod schema validation, config types                                              |
+| **Config**   | `@weave/config`    | Builtin DSL defaults, config discovery, merge semantics, prompt path resolution                          |
+| **Engine**   | `@weave/engine`    | Normalized agent lifecycle, descriptor/prompt-building boundary, `HarnessAdapter` interface, pino logger |
+| **Adapters** | `@weave/adapter-*` | Harness-specific translation into plugins/configs/tools/UI/runtime behavior                              |
 
 ## The `.weave` DSL
 
@@ -101,8 +104,8 @@ agent shuttle {
 - `prompt` — inline prompt text (string)
 - `prompt_file` — path to a `.md` file, resolved relative to the config scope's `prompts/` directory (e.g. `"loom.md"` → `.weave/prompts/loom.md`)
 - `prompt` and `prompt_file` are **mutually exclusive**
-- `models` — ordered preference list; first available wins
-- `mode` — `primary` (respects UI model selection), `subagent` (uses own fallback chain), or `all` (both)
+- `models` — ordered model preference list for adapters to translate; concrete availability checks are adapter-owned
+- `mode` — adapter-facing context hint: `primary` (main/user-facing agent), `subagent` (delegated specialist), or `all` (usable in both contexts)
 - `tool_policy` — abstract capability map with `allow` / `deny` / `ask` permissions; adapters map to harness-specific tool names and permission models
 - `triggers` — delegation metadata for router agents (e.g. Loom's delegation table)
 
@@ -271,9 +274,14 @@ packages/
 │   ├── errors.ts         Parse/validation error types
 │   ├── validate.ts       AST → validated WeaveConfig (via Zod)
 │   └── index.ts          barrel
+├── config/src/
+│   ├── builtins.ts       Builtin agents declared as .weave DSL
+│   ├── discovery.ts      Config file discovery and parsing
+│   ├── merge.ts          Deep merge semantics
+│   ├── resolve.ts        prompt_file path resolution
+│   └── index.ts          barrel
 ├── engine/src/
 │   ├── adapter.ts        HarnessAdapter interface
-│   ├── loader.ts         Config file discovery, reading, merge
 │   ├── logger.ts         shared pino instance
 │   ├── runner.ts         WeaveRunner class
 │   └── index.ts          barrel
@@ -292,7 +300,7 @@ packages/
 - Types: `bun-types` — never `@types/node`, `ts-node`, or `nodemon`
 - File I/O: `Bun.file()` &nbsp;|&nbsp; Process: `Bun.spawn()` / `Bun.spawnSync()`
 
-> **Note — `node:path` and `node:os` are allowed.** Bun implements these as built-in compatibility modules. Use `import { resolve } from "node:path"` for path manipulation and `import { homedir } from "node:os"` for home-directory resolution. What is forbidden is the Node.js *runtime surface*: `fs`, `child_process`, `@types/node`, `ts-node`, and so on. The `node:` protocol prefix is the signal that Bun has explicitly adopted the module.
+> **Note — `node:path` and `node:os` are allowed.** Bun implements these as built-in compatibility modules. Use `import { resolve } from "node:path"` for path manipulation and `import { homedir } from "node:os"` for home-directory resolution. What is forbidden is the Node.js _runtime surface_: `fs`, `child_process`, `@types/node`, `ts-node`, and so on. The `node:` protocol prefix is the signal that Bun has explicitly adopted the module.
 
 ## Error Handling — `neverthrow`
 
@@ -522,7 +530,7 @@ What to mock at each layer:
 | ---------------------------------- | ---------------------------------------------------------------------------------------------------- |
 | `WeaveRunner`                      | `HarnessAdapter` — implement the interface with in-memory stubs                                      |
 | `HarnessAdapter` implementations   | File system (`Bun.file` → string fixtures), process (`Bun.spawn` → stub returning controlled output) |
-| Config loader (`loader.ts`)        | Pass source strings directly; stub `Bun.file()` reads with known content                             |
+| Config loader (`@weave/config`)    | Pass source strings directly; stub `Bun.file()` reads with known content                             |
 | Any code calling external services | Replace the client with a minimal in-memory stub                                                     |
 
 **Every critical module must have at least one isolated test file** — with all external dependencies replaced by mocks. "Critical" means any module in `packages/engine/`, any `HarnessAdapter` implementation, and any module that owns state or coordinates multiple components.
@@ -578,7 +586,7 @@ docs/
 
 ### How to write docs
 
-- **Link liberally** — every doc should cross-link to related docs, source files, and specs. Use relative Markdown links (`[loader](../engine/src/loader.ts)`, `[DSL spec](specs/01-spec-core-dsl/index.md)`).
+- **Link liberally** — every doc should cross-link to related docs, source files, and specs. Use relative Markdown links (`[config loader](../packages/config/src/loader.ts)`, `[DSL spec](specs/01-spec-core-dsl/01-spec-core-dsl.md)`).
 - **Write for agents** — be explicit about _why_ a decision was made, not just _what_ was decided. Agents lack the conversation history; the doc is their only context.
 - **Keep docs close to the change** — if you change `packages/core/src/lexer.ts`, update or create a doc that describes the lexer's responsibilities and any invariants it enforces.
 - **Use ADR format for decisions** — when a choice has meaningful trade-offs, document it as a lightweight ADR: _Context → Decision → Consequences_.
