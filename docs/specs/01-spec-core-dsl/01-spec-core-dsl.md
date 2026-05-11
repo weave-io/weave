@@ -147,7 +147,7 @@ The DSL must be expressive enough that built-in agents (Loom, Tapestry, Shuttle,
 - **Continuation, analytics, background config schemas** — Top-level settings blocks (`continuation { ... }`, `analytics { ... }`) are parsed as generic `SettingAssignment` AST nodes. Zod schemas for these are future specs.
 - **Prompt composition engine** — How the engine resolves `prompt_file`, reads files, appends `prompt_append`, or injects skills is engine logic.
 - **Adapter tool name mapping** — How adapters map `allow`/`deny`/`ask` to harness-specific permission formats is an adapter concern.
-- **Model resolution logic** — How the engine resolves the `models` fallback chain is engine logic.
+- **Concrete model resolution logic** — `.weave` declares ordered `models` preferences. How those preferences map to a concrete harness model is adapter translation logic, optionally using shared adapter-facing helpers.
 - **LSP / editor support** — Language server, syntax highlighting, or IDE extensions for `.weave` files are future work.
 
 ## Design Considerations

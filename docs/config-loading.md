@@ -2,7 +2,7 @@
 
 `@weave/config` owns the config-discovery, merge, and loading pipeline for Weave. It is the single entry point for reading agent configuration from disk and producing the final merged `WeaveConfig` consumed by the engine.
 
-**Related:** [Spec 03 — Config Discovery](specs/03-spec-config-discovery/03-spec-config-discovery.md) · [AGENTS.md](../AGENTS.md) · [Legacy Architecture](legacy-architecture.md) · [`packages/config/src/loader.ts`](../packages/config/src/loader.ts)
+**Related:** [Product Vision](product-vision.md) · [Model Resolution](model-resolution.md) · [Spec 03 — Config Discovery](specs/03-spec-config-discovery/03-spec-config-discovery.md) · [AGENTS.md](../AGENTS.md) · [Legacy Architecture](legacy-architecture.md) · [`packages/config/src/loader.ts`](../packages/config/src/loader.ts)
 
 ---
 
@@ -150,11 +150,11 @@ import {
 
 ### Context
 
-AGENTS.md (package structure table) describes a `loader.ts` inside `@weave/engine`. The original alpha used a flat loader there. As the config pipeline grew — builtins, three-layer merge, prompt resolution — it became a distinct concern from engine orchestration.
+The original alpha used a flat loader inside the OpenCode plugin. As the harness-agnostic successor matured, config loading became separate from both engine lifecycle and adapter translation: builtins, three-layer merge, and prompt path resolution are reusable inputs to any adapter or CLI.
 
 ### Decision
 
-`@weave/config` is a separate workspace package that `@weave/engine` (and future harness adapters) can depend on. The engine's old `loader.ts` is superseded.
+`@weave/config` is a separate workspace package that `@weave/engine`, adapters, and future CLI tools can depend on. Config loading is not a harness concern and does not query harness UI/runtime state.
 
 ### Consequences
 
@@ -163,9 +163,10 @@ AGENTS.md (package structure table) describes a `loader.ts` inside `@weave/engin
 - Config logic is independently testable without an engine harness.
 - Future adapters (or CLI tools) can call `loadConfig()` without pulling in engine dependencies.
 - The builtin DSL-first approach is clean — `@weave/config` ships the DSL source and the `prompts/` files together in the same package.
+- The package boundary reinforces the product vision: Weave normalizes intent; adapters materialize it for a harness.
 
 **Negative:**
 
-- The AGENTS.md package structure table is slightly stale (still lists `loader.ts` in `engine`). A future PR should update it.
+- Contributors must understand that config loading, engine lifecycle, and adapter translation are separate layers.
 
-**Mitigation:** The ADR is documented here; anyone reading AGENTS.md will be directed to check this doc.
+**Mitigation:** AGENTS.md and the product-vision docs list `@weave/config` explicitly and point contributors to this ADR.

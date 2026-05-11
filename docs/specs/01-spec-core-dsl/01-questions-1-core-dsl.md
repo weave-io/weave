@@ -10,7 +10,7 @@ How should agents declare their system prompts in the DSL? This is the core desi
 - [ ] (B) **Simple string + append** — `prompt: "full prompt text"` with optional `prompt_append: "extra"` — Keep it simple like the current `AgentConfig`. Builtin agents construct their full prompt string in their config declaration using helper functions. No first-class section concept in the type system.
 - [ ] (C) **Hybrid** — `prompt: string | PromptSection[]` — Support both a simple string (for basic agents) and a section array (for complex composition). The engine normalises both to sections before composing the final prompt.
 - [x] (D) Other (describe): it can be either a string, or a file path to a
-  prompts file. (.weave/prompts/prompt_a.md)
+      prompts file. (.weave/prompts/prompt_a.md)
 
 **Recommended answer(s):** (C)
 
@@ -73,7 +73,7 @@ Should `@weave/core` include Zod schemas for runtime validation of config, or on
 
 ## 5. Agent Mode
 
-The legacy system has agent modes (`primary`, `subagent`, `all`) that affect model resolution. Should this be part of the DSL?
+The legacy system has agent modes (`primary`, `subagent`, `all`) that affected OpenCode model resolution. In the harness-agnostic successor, mode remains part of the DSL as adapter-facing agent intent, not as a requirement that core Weave query harness UI state. Should this be part of the DSL?
 
 - [x] (A) **Yes, include `mode`** — Add `mode: "primary" | "subagent" | "all"` to `AgentConfig`. Builtin agents use this to declare their model resolution behaviour. Adapters interpret it for their harness.
 - [ ] (B) **No, defer to engine** — Mode is a resolution concern, not a declaration concern. The DSL declares the model/fallback chain; the engine decides resolution strategy.
@@ -83,7 +83,7 @@ The legacy system has agent modes (`primary`, `subagent`, `all`) that affect mod
 
 **Why these are recommended:**
 
-- **(A)** makes mode a first-class declaration. Builtin agent definitions need to express "I'm a subagent that ignores UI model selection" vs "I'm a primary agent that respects it." This is agent identity, not resolution logic. It belongs in the DSL alongside model and temperature.
+- **(A)** makes mode a first-class declaration. Builtin agent definitions need to express whether an agent is main/user-facing, delegated/specialist, or both. This is agent identity and adapter-facing intent, not a requirement that core Weave resolve UI-selected models. It belongs in the DSL alongside model preferences and temperature.
 - **(B)** means builtin agents can't fully self-describe in the DSL — the engine would need out-of-band knowledge of which agents are primary vs subagent, violating the DSL-first principle.
 
 ## 6. Model Fallback Chains
@@ -91,7 +91,7 @@ The legacy system has agent modes (`primary`, `subagent`, `all`) that affect mod
 How should agents declare model preferences when the primary model is unavailable?
 
 - [ ] (A) **`model` + `fallback_models`** — `model: "claude-sonnet-4-5"`, `fallback_models: ["gpt-4o", "gemini-2-flash"]` — Matches the legacy custom agent config shape.
-- [x] (B) **`models` array** — `models: ["claude-sonnet-4-5", "gpt-4o", "gemini-2-flash"]` — Single ordered preference list; first available wins.
+- [x] (B) **`models` array** — `models: ["claude-sonnet-4-5", "gpt-4o", "gemini-2-flash"]` — Single ordered preference list; adapters can translate it using harness-specific availability/default behavior.
 - [ ] (C) **Both** — `model?: string` (single preferred) + `models?: string[]` (full fallback chain). If `model` is set, it's prepended to `models`.
 - [ ] (D) Other (describe)
 
