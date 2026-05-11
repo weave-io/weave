@@ -51,7 +51,10 @@ export function generateCategoryShuttles(
       overrides.temperature = category.temperature;
     }
     if (category.prompt_append !== undefined) {
-      overrides.prompt_append = category.prompt_append;
+      const existing = base.prompt_append;
+      overrides.prompt_append = existing
+        ? `${existing}\n${category.prompt_append}`
+        : category.prompt_append;
     }
     if (category.tool_policy !== undefined) {
       overrides.tool_policy = { ...base.tool_policy, ...category.tool_policy };

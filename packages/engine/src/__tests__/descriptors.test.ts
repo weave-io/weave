@@ -169,7 +169,40 @@ describe("generateCategoryShuttles", () => {
       });
     });
 
-    it("(e) fields not set in category (e.g. temperature) keep their base shuttle value", () => {
+    it("(e) category prompt_append composes with base prompt_append", () => {
+      const result = shuttles(`
+        agent shuttle {
+          prompt "Base shuttle."
+          models ["claude-sonnet-4-5"]
+          prompt_append "Base append."
+        }
+        category frontend {
+          patterns ["src/components/**"]
+          prompt_append "Focus on accessibility."
+        }
+      `);
+
+      expect(result["shuttle-frontend"]?.prompt_append).toBe(
+        "Base append.\nFocus on accessibility.",
+      );
+    });
+
+    it("(f) base prompt_append is preserved when category has no prompt_append", () => {
+      const result = shuttles(`
+        agent shuttle {
+          prompt "Base shuttle."
+          models ["claude-sonnet-4-5"]
+          prompt_append "Base append."
+        }
+        category frontend {
+          patterns ["src/components/**"]
+        }
+      `);
+
+      expect(result["shuttle-frontend"]?.prompt_append).toBe("Base append.");
+    });
+
+    it("(g) fields not set in category (e.g. temperature) keep their base shuttle value", () => {
       const result = shuttles(`
         agent shuttle {
           prompt "Base shuttle."
