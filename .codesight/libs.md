@@ -27,5 +27,11 @@
   - type Env
   - const envSchema
   - const env: Env
+- `packages/engine/src/model-resolution.ts`
+  - function resolveAdapterModelIntent: (input) => ModelResolutionResult
+  - interface ModelResolutionInput
+  - interface ModelResolutionResult
+  - type ResolutionSource
+  - const DEFAULT_FALLBACK_MODEL
 - `packages/engine/src/runner.ts` — class WeaveRunner
 - `scripts/validate-config.ts` — function printSummary: (config, configPath) => void

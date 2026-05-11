@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weave/core, @weave/engine, @weave/config, @weave/adapter-opencode
 
-> 0 routes | 0 models | 0 components | 13 lib files | 2 env vars | 0 middleware | 0% test coverage
-> **Token savings:** this file is ~1,600 tokens. Without it, AI exploration would cost ~12,700 tokens. **Saves ~11,100 tokens per conversation.**
-> **Last scanned:** 2026-05-11 17:59 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 14 lib files | 2 env vars | 0 middleware | 0% test coverage
+> **Token savings:** this file is ~1,700 tokens. Without it, AI exploration would cost ~13,000 tokens. **Saves ~11,300 tokens per conversation.**
+> **Last scanned:** 2026-05-11 20:16 — re-run after significant changes
 
 ---
 
@@ -38,6 +38,12 @@
   - type Env
   - const envSchema
   - const env: Env
+- `packages/engine/src/model-resolution.ts`
+  - function resolveAdapterModelIntent: (input) => ModelResolutionResult
+  - interface ModelResolutionInput
+  - interface ModelResolutionResult
+  - type ResolutionSource
+  - const DEFAULT_FALLBACK_MODEL
 - `packages/engine/src/runner.ts` — class WeaveRunner
 - `scripts/validate-config.ts` — function printSummary: (config, configPath) => void
 
@@ -99,7 +105,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 15 test files found
+> 16 test files found
 
 ---
 
