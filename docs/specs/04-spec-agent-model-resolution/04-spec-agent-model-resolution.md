@@ -111,6 +111,7 @@ This feature ports the useful parts of legacy `resolveAgentModel()` by moving mo
   - `category.tool_policy` merges over the base shuttle `tool_policy` when defined.
 - The generated category shuttle descriptor shall have effective mode `subagent` unless a future spec introduces a different category-agent mode rule.
 - The system shall skip a category shuttle when either the base `shuttle` agent is disabled or `disabled.agents` contains the generated `shuttle-{categoryName}` name.
+- The system shall return an error when a config explicitly declares an agent whose name matches a would-be generated shuttle name (e.g. `agent shuttle-frontend {}` and `category frontend {}` coexist); this is always a configuration mistake.
 - The system shall leave category glob matching and runtime routing decisions out of scope; this unit only creates descriptors that prompts and adapters can reference.
 
 **Proof Artifacts:**

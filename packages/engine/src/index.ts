@@ -1,4 +1,6 @@
 export type { HarnessAdapter } from "./adapter.js";
+export type { CategoryShuttleConflictError } from "./descriptors.js";
+export { generateCategoryShuttles } from "./descriptors.js";
 export type { Env } from "./env.js";
 export { env, envSchema, parseEnv } from "./env.js";
 export { logger } from "./logger.js";

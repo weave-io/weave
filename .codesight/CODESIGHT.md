@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weave/core, @weave/engine, @weave/config, @weave/adapter-opencode
 
-> 0 routes | 0 models | 0 components | 14 lib files | 2 env vars | 0 middleware | 0% test coverage
-> **Token savings:** this file is ~1,700 tokens. Without it, AI exploration would cost ~13,000 tokens. **Saves ~11,300 tokens per conversation.**
-> **Last scanned:** 2026-05-11 20:16 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 15 lib files | 2 env vars | 0 middleware | 0% test coverage
+> **Token savings:** this file is ~1,700 tokens. Without it, AI exploration would cost ~13,300 tokens. **Saves ~11,500 tokens per conversation.**
+> **Last scanned:** 2026-05-11 20:20 — re-run after significant changes
 
 ---
 
@@ -33,6 +33,7 @@
 - `packages/core/src/parse-config.ts` — function parseConfig: (source) => Result<WeaveConfig, ConfigError[]>
 - `packages/core/src/parser.ts` — function parse: (tokens) => Result<AstNode[], ParseError[]>, class Parser
 - `packages/core/src/validate.ts` — function validate: (ast) => Result<WeaveConfig, ValidationError[]>
+- `packages/engine/src/descriptors.ts` — function generateCategoryShuttles: (config) => Result<Record<string, AgentConfig>, CategoryShuttleConflictError>, type CategoryShuttleConflictError
 - `packages/engine/src/env.ts`
   - function parseEnv: (raw) => Env
   - type Env
@@ -72,6 +73,7 @@
 - `packages/config/src/types.ts` — imported by **5** files
 - `packages/core/src/lexer.ts` — imported by **5** files
 - `packages/core/src/parser.ts` — imported by **4** files
+- `packages/engine/src/descriptors.ts` — imported by **4** files
 - `packages/engine/src/env.ts` — imported by **4** files
 - `packages/config/src/builtins.ts` — imported by **3** files
 - `packages/config/src/merge.ts` — imported by **3** files
@@ -85,7 +87,6 @@
 - `packages/core/src/schema.ts` — imported by **2** files
 - `packages/engine/src/runner.ts` — imported by **2** files
 - `packages/engine/src/logger.ts` — imported by **2** files
-- `packages/engine/src/__tests__/mock-adapter.ts` — imported by **1** files
 
 ## Import Map (who imports what)
 
@@ -95,17 +96,17 @@
 - `packages/config/src/types.ts` ← `packages/config/src/__tests__/resolve.test.ts`, `packages/config/src/discovery.ts`, `packages/config/src/index.ts`, `packages/config/src/loader.ts`, `packages/config/src/resolve.ts`
 - `packages/core/src/lexer.ts` ← `packages/core/src/__tests__/lexer.test.ts`, `packages/core/src/__tests__/parser.test.ts`, `packages/core/src/__tests__/validate.test.ts`, `packages/core/src/index.ts`, `packages/core/src/parse-config.ts`
 - `packages/core/src/parser.ts` ← `packages/core/src/__tests__/parser.test.ts`, `packages/core/src/__tests__/validate.test.ts`, `packages/core/src/index.ts`, `packages/core/src/parse-config.ts`
+- `packages/engine/src/descriptors.ts` ← `packages/engine/src/__tests__/descriptors.test.ts`, `packages/engine/src/index.ts`, `packages/engine/src/index.ts`, `packages/engine/src/runner.ts`
 - `packages/engine/src/env.ts` ← `packages/engine/src/__tests__/env.test.ts`, `packages/engine/src/index.ts`, `packages/engine/src/index.ts`, `packages/engine/src/logger.ts`
 - `packages/config/src/builtins.ts` ← `packages/config/src/__tests__/load_config.test.ts`, `packages/config/src/index.ts`, `packages/config/src/loader.ts`
 - `packages/config/src/merge.ts` ← `packages/config/src/__tests__/merge.test.ts`, `packages/config/src/index.ts`, `packages/config/src/loader.ts`
-- `packages/config/src/resolve.ts` ← `packages/config/src/__tests__/resolve.test.ts`, `packages/config/src/index.ts`, `packages/config/src/loader.ts`
 
 ---
 
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 16 test files found
+> 17 test files found
 
 ---
 

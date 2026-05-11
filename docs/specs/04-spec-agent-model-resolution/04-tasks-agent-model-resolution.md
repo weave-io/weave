@@ -170,7 +170,7 @@ provenance field so adapter tests can verify which priority branch won.
 
 ---
 
-### [ ] 2.0 Implement Category Shuttle Descriptor Generation and Runner Integration
+### [x] 2.0 Implement Category Shuttle Descriptor Generation and Runner Integration
 
 **Purpose:** Create a pure `generateCategoryShuttles()` function that produces
 `shuttle-{categoryName}` agent descriptors from `WeaveConfig.categories`, and
@@ -197,7 +197,7 @@ explicitly declared agents.
 
 #### 2.0 Tasks
 
-- [ ] 2.1 Create `packages/engine/src/descriptors.ts`. Define the
+- [x] 2.1 Create `packages/engine/src/descriptors.ts`. Define the
       `CategoryShuttleConflictError` discriminated-union type and the function
       signature for `generateCategoryShuttles()` with the two early-return guard
       cases (no base shuttle agent, base shuttle disabled). The function is now
@@ -236,7 +236,7 @@ explicitly declared agents.
   }
   ```
 
-- [ ] 2.2 Implement the descriptor generation loop inside `generateCategoryShuttles()`.
+- [x] 2.2 Implement the descriptor generation loop inside `generateCategoryShuttles()`.
       **Before building any descriptor**, check whether the generated name already
       exists as an explicitly declared agent — if so, return an error immediately.
       Then build the descriptor for non-conflicting, non-disabled categories:
@@ -287,10 +287,10 @@ explicitly declared agents.
   return ok(result);
   ```
 
-- [ ] 2.3 Export `generateCategoryShuttles` **and** `CategoryShuttleConflictError`
+- [x] 2.3 Export `generateCategoryShuttles` **and** `CategoryShuttleConflictError`
       from `packages/engine/src/index.ts`.
 
-- [ ] 2.4 Create `packages/engine/src/__tests__/descriptors.test.ts`. Add a
+- [x] 2.4 Create `packages/engine/src/__tests__/descriptors.test.ts`. Add a
       `cfg()` helper (identical to the one in `runner.test.ts`). Write tests for
       **correct generation and naming**:
 
@@ -316,7 +316,7 @@ explicitly declared agents.
   }
   ```
 
-- [ ] 2.5 In the same test file, write tests for **inheritance and overrides**:
+- [x] 2.5 In the same test file, write tests for **inheritance and overrides**:
 
   ```
   describe("inheritance", () => {
@@ -333,7 +333,7 @@ explicitly declared agents.
   })
   ```
 
-- [ ] 2.6 In the same test file, write tests for **disabling rules** and the
+- [x] 2.6 In the same test file, write tests for **disabling rules** and the
       new **conflict error**:
 
   ```
@@ -362,7 +362,7 @@ explicitly declared agents.
   Call `generateCategoryShuttles(cfg(...))` and assert the result `isErr()`
   with the expected fields.
 
-- [ ] 2.7 Update `packages/engine/src/runner.ts` to call `generateCategoryShuttles()`
+- [x] 2.7 Update `packages/engine/src/runner.ts` to call `generateCategoryShuttles()`
       and handle the `Result` at the framework boundary. `run()` keeps its
       `Promise<void>` signature; convert the error to a thrown `Error` using
       `.match()` — this is the AGENTS.md-sanctioned pattern for framework-boundary
@@ -394,7 +394,7 @@ explicitly declared agents.
   }
   ```
 
-- [ ] 2.8 Add new tests to `packages/engine/src/__tests__/runner.test.ts` in a
+- [x] 2.8 Add new tests to `packages/engine/src/__tests__/runner.test.ts` in a
       new `describe("category shuttle spawning")` block:
 
   ```
@@ -413,7 +413,7 @@ explicitly declared agents.
   For the conflict test, use `expect(runner.run()).rejects.toThrow()` and
   assert the error message names both the conflicting agent and the category.
 
-- [ ] 2.9 Run `bun test packages/engine` and fix any failures. All previous
+- [x] 2.9 Run `bun test packages/engine` and fix any failures. All previous
       engine tests must still pass.
 
 ---
