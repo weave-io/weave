@@ -24,13 +24,13 @@ This task adds `resolveAdapterModelIntent()` in `@weave/engine` so adapters can 
 
 **Command:**
 
-~~~bash
+```bash
 bun test packages/engine
-~~~
+```
 
 **Result summary:** The engine test suite passed, including 16 new model-resolution tests.
 
-~~~text
+```text
 packages/engine/src/__tests__/model-resolution.test.ts:
 (pass) resolveAdapterModelIntent > priority 1: override > (a) overrideModel wins over all other inputs
 (pass) resolveAdapterModelIntent > priority 1: override > (b) overrideModel wins even when uiSelectedModel is also provided
@@ -53,7 +53,7 @@ packages/engine/src/__tests__/model-resolution.test.ts:
 0 fail
 48 expect() calls
 Ran 30 tests across 3 files.
-~~~
+```
 
 ## Artifact: Workspace typecheck
 
@@ -63,19 +63,19 @@ Ran 30 tests across 3 files.
 
 **Command:**
 
-~~~bash
+```bash
 bun run typecheck
-~~~
+```
 
 **Result summary:** TypeScript completed with zero errors for core, engine, config, and adapter packages.
 
-~~~text
+```text
 $ tsc --noEmit -p tsconfig.json && bun run --filter '*' typecheck
 @weave/core typecheck: Exited with code 0
 @weave/engine typecheck: Exited with code 0
 @weave/config typecheck: Exited with code 0
 @weave/adapter-opencode typecheck: Exited with code 0
-~~~
+```
 
 ## Reviewer Conclusion
 

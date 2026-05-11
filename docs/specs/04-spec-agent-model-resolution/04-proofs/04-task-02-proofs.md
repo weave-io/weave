@@ -26,13 +26,13 @@ This task adds `generateCategoryShuttles()` and updates `WeaveRunner` to spawn g
 
 **Command:**
 
-~~~bash
+```bash
 bun test packages/engine
-~~~
+```
 
 **Result summary:** The engine suite passed with 55 tests, including the new descriptor and runner category-shuttle coverage.
 
-~~~text
+```text
 packages/engine/src/__tests__/descriptors.test.ts:
 (pass) generateCategoryShuttles > generation > (a) returns empty object when config has no categories
 (pass) generateCategoryShuttles > generation > (b) returns empty object when base shuttle agent is absent
@@ -66,7 +66,7 @@ packages/engine/src/__tests__/runner.test.ts:
 0 fail
 85 expect() calls
 Ran 55 tests across 4 files.
-~~~
+```
 
 ## Artifact: Workspace typecheck
 
@@ -76,19 +76,19 @@ Ran 55 tests across 4 files.
 
 **Command:**
 
-~~~bash
+```bash
 bun run typecheck
-~~~
+```
 
 **Result summary:** TypeScript completed with zero errors for all packages.
 
-~~~text
+```text
 $ tsc --noEmit -p tsconfig.json && bun run --filter '*' typecheck
 @weave/core typecheck: Exited with code 0
 @weave/engine typecheck: Exited with code 0
 @weave/config typecheck: Exited with code 0
 @weave/adapter-opencode typecheck: Exited with code 0
-~~~
+```
 
 ## Artifact: Repository lint gate
 
@@ -98,18 +98,18 @@ $ tsc --noEmit -p tsconfig.json && bun run --filter '*' typecheck
 
 **Command:**
 
-~~~bash
+```bash
 bun run lint
-~~~
+```
 
 **Result summary:** Biome completed without errors. It reported only pre-existing fixable warnings/infos in unrelated core test/declaration files.
 
-~~~text
+```text
 $ biome lint packages/
 Checked 66 files in 45ms. No fixes applied.
 Found 2 warnings.
 Found 4 infos.
-~~~
+```
 
 ## Reviewer Conclusion
 

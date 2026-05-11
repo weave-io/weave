@@ -105,8 +105,9 @@ provenance field so adapter tests can verify which priority branch won.
   6. Return `DEFAULT_FALLBACK_MODEL` with source `"constant-fallback"`.
 
   The availability check helper: if `availableModels` is provided, a model is
-  available only if it appears in the set; if `availableModels` is `undefined`
-  or empty, every model passes.
+  available only if it appears in the set. If `availableModels` is `undefined`,
+  every model passes; if it is an empty set, no model passes and resolution
+  falls through to `systemDefault` or `DEFAULT_FALLBACK_MODEL`.
 
   ```ts
   export const DEFAULT_FALLBACK_MODEL = "claude-sonnet-4-5";

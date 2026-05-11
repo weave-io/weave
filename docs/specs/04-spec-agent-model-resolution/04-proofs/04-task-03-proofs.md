@@ -27,19 +27,19 @@ This task verifies the engine-to-adapter boundary stays harness-agnostic, docume
 
 **Command:**
 
-~~~bash
+```bash
 rg -n "getSelectedModel|getAvailableModels|SelectedModel|AvailableModels" packages/engine/src/adapter.ts packages/engine/src
-~~~
+```
 
 **Result summary:** No matching UI-query method exists in `adapter.ts`. Matches are limited to explicit helper input naming and tests.
 
-~~~text
+```text
 packages/engine/src/model-resolution.ts:22:  uiSelectedModel?: string;
 packages/engine/src/model-resolution.ts:57:  if (input.uiSelectedModel !== undefined && input.agentMode !== "subagent") {
 packages/engine/src/model-resolution.ts:58:    return { model: input.uiSelectedModel, source: "ui-selected" };
 packages/engine/src/__tests__/model-resolution.test.ts:16:        uiSelectedModel: "ui-model",
 ...
-~~~
+```
 
 ## Artifact: Documentation update
 
@@ -59,18 +59,18 @@ packages/engine/src/__tests__/model-resolution.test.ts:16:        uiSelectedMode
 
 **Command:**
 
-~~~bash
+```bash
 bun run lint
-~~~
+```
 
 **Result summary:** Biome completed without errors. The reported warnings/infos are pre-existing and outside the new engine files.
 
-~~~text
+```text
 $ biome lint packages/
 Checked 66 files in 43ms. No fixes applied.
 Found 2 warnings.
 Found 4 infos.
-~~~
+```
 
 ## Artifact: Workspace typecheck
 
@@ -80,19 +80,19 @@ Found 4 infos.
 
 **Command:**
 
-~~~bash
+```bash
 bun run typecheck
-~~~
+```
 
 **Result summary:** TypeScript completed with zero errors for all packages.
 
-~~~text
+```text
 $ tsc --noEmit -p tsconfig.json && bun run --filter '*' typecheck
 @weave/core typecheck: Exited with code 0
 @weave/config typecheck: Exited with code 0
 @weave/engine typecheck: Exited with code 0
 @weave/adapter-opencode typecheck: Exited with code 0
-~~~
+```
 
 ## Artifact: Full test suite
 
@@ -102,18 +102,18 @@ $ tsc --noEmit -p tsconfig.json && bun run --filter '*' typecheck
 
 **Command:**
 
-~~~bash
+```bash
 bun test
-~~~
+```
 
 **Result summary:** All 235 tests passed across scripts, core, config, and engine.
 
-~~~text
+```text
 235 pass
 0 fail
 623 expect() calls
 Ran 235 tests across 16 files.
-~~~
+```
 
 ## Artifact: Pre-commit dry-run commands
 
@@ -123,17 +123,17 @@ Ran 235 tests across 16 files.
 
 **Command:**
 
-~~~bash
+```bash
 git add docs/model-resolution.md docs/specs/04-spec-agent-model-resolution/04-tasks-agent-model-resolution.md && \
   bunx lint-staged && \
   bun run typecheck && \
   bun run validate-config && \
   bun test --recursive
-~~~
+```
 
 **Result summary:** `lint-staged` had no matching staged TS/JS/JSON files in this documentation-only task state; typecheck, config validation, and recursive tests all passed.
 
-~~~text
+```text
 → lint-staged could not find any staged files matching configured tasks.
 @weave/core typecheck: Exited with code 0
 @weave/config typecheck: Exited with code 0
@@ -144,7 +144,7 @@ git add docs/model-resolution.md docs/specs/04-spec-agent-model-resolution/04-ta
 0 fail
 623 expect() calls
 Ran 235 tests across 16 files.
-~~~
+```
 
 ## Reviewer Conclusion
 
