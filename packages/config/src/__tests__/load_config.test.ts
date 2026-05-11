@@ -84,7 +84,7 @@ describe("loadConfig", () => {
     expect(loom?.temperature).toBe(0.5);
     // prompt_file should come from builtin (absolute path), not overridden
     expect(loom?.prompt_file).toBeDefined();
-    expect(isAbsolute(loom!.prompt_file!)).toBe(true);
+    expect(isAbsolute(loom?.prompt_file ?? "")).toBe(true);
   });
 
   it("(c) global custom agent: merged config contains all 8 builtins + custom agent", async () => {
