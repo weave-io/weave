@@ -184,4 +184,92 @@ describe("WeaveRunner", () => {
       expect(initIdx).toBeLessThan(spawnIdx);
     });
   });
+
+  // -------------------------------------------------------------------------
+  // Category shuttle spawning
+  // -------------------------------------------------------------------------
+
+  describe("category shuttle spawning", () => {
+    it("spawns a generated shuttle-{name} agent when a category is configured", async () => {
+      const config = cfg(`
+        agent shuttle { prompt "Specialist." models ["claude-sonnet-4-5"] }
+        category frontend { patterns ["src/components/**"] models ["gpt-5"] }
+      `);
+
+      await new WeaveRunner(config, adapter).run();
+
+      const names = adapter.callsTo("spawnSubagent").map((c) => c.name);
+      expect(names).toContain("shuttle");
+      expect(names).toContain("shuttle-frontend");
+    });
+
+    it("spawns multiple generated shuttles for multiple categories", async () => {
+      const config = cfg(`
+        agent shuttle { prompt "Specialist." models ["claude-sonnet-4-5"] }
+        category frontend { patterns ["src/components/**"] models ["gpt-5"] }
+        category backend { patterns ["src/api/**"] models ["gpt-4o"] }
+      `);
+
+      await new WeaveRunner(config, adapter).run();
+
+      const names = adapter.callsTo("spawnSubagent").map((c) => c.name);
+      expect(names).toContain("shuttle-frontend");
+      expect(names).toContain("shuttle-backend");
+    });
+
+    it("does not spawn a category shuttle when the base shuttle is disabled", async () => {
+      const config = cfg(`
+        agent shuttle { prompt "Specialist." models ["claude-sonnet-4-5"] }
+        category frontend { patterns ["src/components/**"] models ["gpt-5"] }
+        disable agents ["shuttle"]
+      `);
+
+      await new WeaveRunner(config, adapter).run();
+
+      const names = adapter.callsTo("spawnSubagent").map((c) => c.name);
+      expect(names).not.toContain("shuttle");
+      expect(names).not.toContain("shuttle-frontend");
+    });
+
+    it("does not spawn a specific category shuttle when its name is in disabled.agents", async () => {
+      const config = cfg(`
+        agent shuttle { prompt "Specialist." models ["claude-sonnet-4-5"] }
+        category frontend { patterns ["src/components/**"] models ["gpt-5"] }
+        category backend { patterns ["src/api/**"] models ["gpt-4o"] }
+        disable agents ["shuttle-frontend"]
+      `);
+
+      await new WeaveRunner(config, adapter).run();
+
+      const names = adapter.callsTo("spawnSubagent").map((c) => c.name);
+      expect(names).not.toContain("shuttle-frontend");
+      expect(names).toContain("shuttle-backend");
+    });
+
+    it("category shuttle descriptor carries category models", async () => {
+      const config = cfg(`
+        agent shuttle { prompt "Specialist." models ["claude-sonnet-4-5"] }
+        category frontend { patterns ["src/components/**"] models ["gpt-5"] }
+      `);
+
+      await new WeaveRunner(config, adapter).run();
+
+      const spawned = adapter
+        .callsTo("spawnSubagent")
+        .find((c) => c.name === "shuttle-frontend");
+      expect(spawned?.config.models).toEqual(["gpt-5"]);
+    });
+
+    it("throws when a category would generate a name that is already explicitly declared", async () => {
+      const config = cfg(`
+        agent shuttle { prompt "Specialist." models ["claude-sonnet-4-5"] }
+        agent shuttle-frontend { prompt "Explicit." models ["gpt-4o"] }
+        category frontend { patterns ["src/components/**"] models ["gpt-5"] }
+      `);
+
+      await expect(new WeaveRunner(config, adapter).run()).rejects.toThrow(
+        /shuttle-frontend.*frontend/,
+      );
+    });
+  });
 });

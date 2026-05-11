@@ -1,5 +1,7 @@
 # Weave — Agent Guide
 
+**Always** mention the related issue when creating a Pull Request.
+
 ## What is Weave?
 
 Weave is a **harness-agnostic prompt and agent-configuration API** built in TypeScript, run exclusively on **Bun**. A custom `.weave` DSL declares agents, categories, workflows, prompts, delegation intent, model preferences, and settings. Weave parses and normalizes that intent; adapters translate it into concrete harness plugins/configuration for OpenCode, Claude Code, Pi, Codex, or any future target.

@@ -63,6 +63,33 @@ Those descriptors carry category model preferences as intent. The adapter decide
 
 ---
 
+## Category Shuttles and Adapter Translation
+
+Each generated `shuttle-{categoryName}` descriptor carries `models` from the matching `category.models` declaration as ordered model preferences. This is still intent only: the descriptor does not contain a concrete harness model, and the engine does not query harness UI state.
+
+When an adapter translates a generated category shuttle, it should pass those category preferences to `resolveAdapterModelIntent()` as `categoryModels`. If the adapter also has access to the base `shuttle` agent preferences, it can pass those as `agentModels` so the helper tries category preferences before inherited/base agent preferences, after any adapter override and after any applicable UI-selected model.
+
+Because generated category shuttles always have `mode: "subagent"`, `resolveAdapterModelIntent()` skips `uiSelectedModel` for them and resolves directly from explicit category or agent model preferences before falling back to adapter defaults.
+
+```ts
+import { resolveAdapterModelIntent } from "@weave/engine";
+
+const resolved = resolveAdapterModelIntent({
+  agentName: "shuttle-frontend",
+  agentMode: categoryShuttle.mode, // always "subagent" for generated shuttles
+  categoryModels: categoryShuttle.models,
+  agentModels: baseShuttle.models,
+  overrideModel: adapterOverrides["shuttle-frontend"],
+  uiSelectedModel: harnessSelectedModel,
+  systemDefault: harnessDefaultModel,
+  availableModels: harnessAvailableModels,
+});
+```
+
+Adapters are not required to use this helper if their harness has a stronger native model-selection mechanism, but they should preserve the same boundary: Weave provides ordered model intent, and the adapter owns concrete model translation.
+
+---
+
 ## Why This Boundary Exists
 
 Weave is intended to be reusable across OpenCode, Pi, Claude Code, Codex, and future harnesses. Some harnesses have a visible selected model; some may not. Some expose available model lists; some may rely on config-time validation or provider errors.

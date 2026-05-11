@@ -1,5 +1,6 @@
 import type { AgentConfig, WeaveConfig } from "@weave/core";
 import type { HarnessAdapter } from "./adapter.js";
+import { generateCategoryShuttles } from "./descriptors.js";
 import { logger } from "./logger.js";
 
 const log = logger.child({ module: "runner" });
@@ -39,7 +40,7 @@ export class WeaveRunner {
    * 4. Spawn all agents that are not disabled.
    */
   async run(): Promise<void> {
-    const { agents, disabled } = this.config;
+    const { disabled } = this.config;
 
     // 1. Initialise the adapter.
     log.info("Initialising harness adapter");
@@ -52,8 +53,23 @@ export class WeaveRunner {
     // 3. TODO: restore hook registration when hook config surfaces are specced.
     // Hooks are not part of the .weave DSL spec in @weave/core at this time.
 
+    const shuttlesResult = generateCategoryShuttles(this.config);
+    if (shuttlesResult.isErr()) {
+      const conflict = shuttlesResult.error;
+      log.error(
+        { conflict: conflict.shuttleName, category: conflict.categoryName },
+        conflict.message,
+      );
+      throw new Error(conflict.message);
+    }
+
+    const allAgents: Record<string, AgentConfig> = {
+      ...this.config.agents,
+      ...shuttlesResult.value,
+    };
+
     // 4. Spawn agents (skip any that appear in the disabled.agents list).
-    for (const [name, agentConfig] of Object.entries(agents) as [
+    for (const [name, agentConfig] of Object.entries(allAgents) as [
       string,
       AgentConfig,
     ][]) {

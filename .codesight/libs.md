@@ -22,10 +22,17 @@
 - `packages/core/src/parse-config.ts` — function parseConfig: (source) => Result<WeaveConfig, ConfigError[]>
 - `packages/core/src/parser.ts` — function parse: (tokens) => Result<AstNode[], ParseError[]>, class Parser
 - `packages/core/src/validate.ts` — function validate: (ast) => Result<WeaveConfig, ValidationError[]>
+- `packages/engine/src/descriptors.ts` — function generateCategoryShuttles: (config) => Result<Record<string, AgentConfig>, CategoryShuttleConflictError>, type CategoryShuttleConflictError
 - `packages/engine/src/env.ts`
   - function parseEnv: (raw) => Env
   - type Env
   - const envSchema
   - const env: Env
+- `packages/engine/src/model-resolution.ts`
+  - function resolveAdapterModelIntent: (input) => ModelResolutionResult
+  - interface ModelResolutionInput
+  - interface ModelResolutionResult
+  - type ResolutionSource
+  - const DEFAULT_FALLBACK_MODEL
 - `packages/engine/src/runner.ts` — class WeaveRunner
 - `scripts/validate-config.ts` — function printSummary: (config, configPath) => void
