@@ -418,7 +418,7 @@ explicitly declared agents.
 
 ---
 
-### [ ] 3.0 Finalize Documentation, Verify Adapter Boundary, and Run Full Integration
+### [x] 3.0 Finalize Documentation, Verify Adapter Boundary, and Run Full Integration
 
 **Purpose:** Update `docs/model-resolution.md` with category shuttle adapter
 guidance, confirm that `HarnessAdapter` carries no UI-query methods, and
@@ -439,13 +439,13 @@ place.
 
 #### 3.0 Tasks
 
-- [ ] 3.1 Open `packages/engine/src/adapter.ts` and verify that `HarnessAdapter`
+- [x] 3.1 Open `packages/engine/src/adapter.ts` and verify that `HarnessAdapter`
       has no `getSelectedModel()`, `getAvailableModels()`, or any other method that
       queries harness UI state. This is a read-only verification step — make no
       changes unless you find such a method (in which case, remove it and note it
       in the commit message).
 
-- [ ] 3.2 Open `docs/model-resolution.md` and add a new section after the existing
+- [x] 3.2 Open `docs/model-resolution.md` and add a new section after the existing
       "Category Shuttles" section. Name the new section
       **"Category Shuttles and Adapter Translation"**. The section should explain:
   - Each generated `shuttle-{categoryName}` descriptor carries `models` from
@@ -460,22 +460,22 @@ place.
   - Example snippet showing how an adapter would call
     `resolveAdapterModelIntent()` for a generated category shuttle.
 
-- [ ] 3.3 Run `bun run lint` (runs Biome across all packages) and fix any lint
+- [x] 3.3 Run `bun run lint` (runs Biome across all packages) and fix any lint
       errors in the new files. Common issues to watch for:
   - `noExplicitAny` — never use `any`; use specific types or `unknown`.
   - `noConsole` — never use `console.*`; use the pino logger.
   - Filename casing — `model-resolution.ts` and `descriptors.ts` are already
     kebab-case, which is correct.
 
-- [ ] 3.4 Run `bun run typecheck` from the repo root and fix any remaining type
+- [x] 3.4 Run `bun run typecheck` from the repo root and fix any remaining type
       errors across all packages. Pay attention to the `@weave/engine` package
       since that is where all new code lives.
 
-- [ ] 3.5 Run `bun test` from the repo root to execute all tests across all
+- [x] 3.5 Run `bun test` from the repo root to execute all tests across all
       packages. Confirm the count of passing tests is 194 plus the number of new
       tests added in tasks 1.5, 1.6, 2.4, 2.5, 2.6, and 2.8. Fix any failures.
 
-- [ ] 3.6 Stage all changes and do a dry-run of the pre-commit checks:
+- [x] 3.6 Stage all changes and do a dry-run of the pre-commit checks:
 
   ```bash
   bunx lint-staged
@@ -486,7 +486,7 @@ place.
 
   Fix any issues before committing.
 
-- [ ] 3.7 Commit all changes with a Conventional Commits message. Because this
+- [x] 3.7 Commit all changes with a Conventional Commits message. Because this
       spans multiple packages and closes two issues, use a multi-scope message:
 
   ```
