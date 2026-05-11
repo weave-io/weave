@@ -4,6 +4,7 @@ import { parseConfig } from "@weave/core";
 import { err, ok, ResultAsync } from "neverthrow";
 import type { ConfigLoadError } from "./errors.js";
 import { logger } from "./logger.js";
+import { normalizePath } from "./normalize-path.js";
 import type { ConfigScope } from "./types.js";
 
 const log = logger.child({ module: "discovery" });
@@ -89,8 +90,8 @@ export function discoverAndParse(
   const root = projectRoot ?? process.cwd();
 
   const scopes: ConfigScope[] = [
-    { kind: "global", rootDir: `${home}/.weave` },
-    { kind: "project", rootDir: `${root}/.weave` },
+    { kind: "global", rootDir: normalizePath(`${home}/.weave`) },
+    { kind: "project", rootDir: normalizePath(`${root}/.weave`) },
   ];
 
   return ResultAsync.fromPromise(

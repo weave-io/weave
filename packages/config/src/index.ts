@@ -12,5 +12,6 @@ export { discoverAndParse } from "./discovery.js";
 export type { ConfigLoadError } from "./errors.js";
 export { loadConfig } from "./loader.js";
 export { mergeConfigs } from "./merge.js";
+export { normalizePath } from "./normalize-path.js";
 export { resolvePromptPaths } from "./resolve.js";
 export type { ConfigScope } from "./types.js";
