@@ -35,7 +35,7 @@ pnpm dlx @weave/cli --help
 
 ## Theme and accessibility
 
-`weave --help` renders a checked-in ASCII Weave logo and a cyan/blue/purple/magenta terminal theme when color is supported. Automation and accessibility fallbacks are supported through standard terminal conventions:
+`weave --help` renders a checked-in ASCII-style line-art logo derived from the app mark at `tryweave.io/assets/weave_logo.png`, preserving the interlaced ribbon silhouette and title-case wordmark in plain terminals. It uses a cyan/blue/purple/magenta terminal theme when color is supported. Automation and accessibility fallbacks are supported through standard terminal conventions:
 
 ```bash
 NO_COLOR=1 weave --help
