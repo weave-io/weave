@@ -1,16 +1,88 @@
 # @weave — AI Context Map
 
 > **Stack:** raw-http | none | unknown | typescript
-> **Monorepo:** @weave/core, @weave/engine, @weave/config, @weave/adapter-opencode
+> **Monorepo:** @weave/core, @weave/engine, @weave/config, @weave/cli, @weave/adapter-opencode
 
-> 0 routes | 0 models | 0 components | 16 lib files | 2 env vars | 0 middleware | 0% test coverage
-> **Token savings:** this file is ~1,800 tokens. Without it, AI exploration would cost ~13,500 tokens. **Saves ~11,700 tokens per conversation.**
-> **Last scanned:** 2026-05-12 14:10 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 34 lib files | 4 env vars | 0 middleware | 0% test coverage
+> **Token savings:** this file is ~2,800 tokens. Without it, AI exploration would cost ~18,500 tokens. **Saves ~15,700 tokens per conversation.**
+> **Last scanned:** 2026-05-12 20:15 — re-run after significant changes
 
 ---
 
 # Libraries
 
+- `packages/cli/src/args.ts`
+  - function parseArgs: (argv) => Result<ParsedArgs, ArgParseError>
+  - interface ParsedArgs
+  - type Command
+  - type ArgParseError
+- `packages/cli/src/cli.ts` — function run: (deps?) => Promise<Result<number, CliError>>, interface CliDeps
+- `packages/cli/src/commands/init.ts` — function runInit: (ctx) => Promise<Result<number, CliError>>, interface InitContext
+- `packages/cli/src/commands/run.ts` — function runRun: (ctx) => Result<number, CliError>, interface RunContext
+- `packages/cli/src/commands/validate.ts`
+  - function validateExplicitPath: (path, fs) => ResultAsync<ValidatedConfig, ValidateError>
+  - function formatSummary: (config) => string
+  - function runValidate: (ctx) => Promise<Result<number, CliError>>
+  - interface ValidateContext
+- `packages/cli/src/config/starter-config.ts` — function starterConfig: (scope) => string
+- `packages/cli/src/detect/index.ts`
+  - function detectHarnesses: (probes) => void
+  - function formatDetectionSummary: (harnesses) => string[]
+  - type SupportedHarnessId
+  - type DetectedHarness
+  - type DetectionError
+- `packages/cli/src/detect/probes.ts`
+  - class BunDetectionProbes
+  - class MemoryDetectionProbes
+  - interface DetectionProbes
+  - type ProbeError
+- `packages/cli/src/errors.ts`
+  - function formatCliError: (error) => string
+  - type CliError
+  - type InvalidArgsError
+  - type MissingFileError
+  - type FileReadError
+  - type ParseFailureError
+  - _...2 more_
+- `packages/cli/src/fs/file-system.ts`
+  - class BunFileSystem
+  - class MemoryFileSystem
+  - interface FileSystem
+  - type FileSystemError
+- `packages/cli/src/installers/index.ts`
+  - function installerRegistry: (fs) => Record<SupportedHarnessId, HarnessInstaller>
+  - function unsupportedInstaller: (id) => HarnessInstaller
+  - function skipUnsupported: (id) => InstallResult
+  - function installAllSupported: (input, string[]>;
+}) => ResultAsync<InstallResult[], InstallError>
+  - interface HarnessInstaller
+  - type AdapterModule
+  - _...3 more_
+- `packages/cli/src/installers/opencode.ts` — class OpenCodeInstaller
+- `packages/cli/src/installers/unsupported.ts` — function unsupportedHarnessInstall: (harness) => ResultAsync<InstallResult, InstallError>, function undetectedHarnessInstall: (harness) => ResultAsync<InstallResult, InstallError>
+- `packages/cli/src/io/terminal.ts`
+  - class RealTerminal
+  - class BufferTerminal
+  - interface TerminalIO
+- `packages/cli/src/prompt/index.ts`
+  - class ClackPromptAdapter
+  - class StaticPromptAdapter
+  - interface PromptAdapter
+  - type PromptError
+  - type PromptOption
+- `packages/cli/src/theme/ascii-logo.ts`
+  - function renderLogo: (theme) => string[]
+  - const PLAIN_LOGO_LINES: string[]
+  - const LOGO_WIDTH
+- `packages/cli/src/theme/colors.ts`
+  - function supportsColor: () => boolean
+  - function getTheme: (colorEnabled?) => ThemeColors
+  - interface ThemeColors
+- `packages/cli/src/theme/render.ts`
+  - function getVersion: () => string
+  - function renderBanner: (theme) => string[]
+  - function renderHelp: (theme) => string[]
+  - function renderVersion: () => string
 - `packages/config/src/builtins.ts`
   - function getBuiltinConfig: () => Result<WeaveConfig, ConfigError[]>
   - const BUILTIN_AGENT_NAMES: readonly string[]
@@ -55,8 +127,10 @@
 
 ## Environment Variables
 
-- `HOME` **required** — packages/config/src/__tests__/discovery.test.ts
+- `FORCE_COLOR` **required** — packages/cli/src/theme/colors.ts
+- `HOME` **required** — packages/cli/src/detect/probes.ts
 - `LOG_LEVEL` **required** — packages/config/src/logger.ts
+- `NO_COLOR` **required** — packages/cli/src/theme/colors.ts
 
 ## Config Files
 
@@ -68,46 +142,46 @@
 
 ## Most Imported Files (change these carefully)
 
+- `packages/cli/src/theme/colors.ts` — imported by **11** files
+- `packages/cli/src/io/terminal.ts` — imported by **9** files
 - `packages/core/src/tokens.ts` — imported by **8** files
+- `packages/cli/src/fs/file-system.ts` — imported by **7** files
 - `packages/core/src/errors.ts` — imported by **6** files
+- `packages/cli/src/args.ts` — imported by **5** files
+- `packages/cli/src/errors.ts` — imported by **5** files
 - `packages/config/src/discovery.ts` — imported by **5** files
 - `packages/config/src/types.ts` — imported by **5** files
 - `packages/core/src/lexer.ts` — imported by **5** files
+- `packages/cli/src/cli.ts` — imported by **4** files
 - `packages/config/src/normalize-path.ts` — imported by **4** files
 - `packages/core/src/parser.ts` — imported by **4** files
 - `packages/engine/src/descriptors.ts` — imported by **4** files
 - `packages/engine/src/env.ts` — imported by **4** files
-- `packages/config/src/builtins.ts` — imported by **3** files
-- `packages/config/src/merge.ts` — imported by **3** files
-- `packages/config/src/resolve.ts` — imported by **3** files
-- `packages/config/src/errors.ts` — imported by **3** files
-- `packages/core/src/validate.ts` — imported by **3** files
-- `packages/engine/src/adapter.ts` — imported by **3** files
-- `packages/config/src/loader.ts` — imported by **2** files
-- `packages/config/src/logger.ts` — imported by **2** files
-- `packages/core/src/parse-config.ts` — imported by **2** files
-- `packages/core/src/schema.ts` — imported by **2** files
-- `packages/engine/src/runner.ts` — imported by **2** files
+- `packages/cli/src/commands/validate.ts` — imported by **3** files
+- `packages/cli/src/detect/probes.ts` — imported by **3** files
+- `packages/cli/src/prompt/index.ts` — imported by **3** files
+- `packages/cli/src/installers/index.ts` — imported by **3** files
+- `packages/cli/src/detect/index.ts` — imported by **3** files
 
 ## Import Map (who imports what)
 
+- `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/validate.test.ts`, `packages/cli/src/commands/init.ts` +6 more
+- `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/validate.test.ts`, `packages/cli/src/commands/init.ts` +4 more
 - `packages/core/src/tokens.ts` ← `packages/core/src/__tests__/lexer.test.ts`, `packages/core/src/ast.ts`, `packages/core/src/ast.ts`, `packages/core/src/index.ts`, `packages/core/src/index.ts` +3 more
+- `packages/cli/src/fs/file-system.ts` ← `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/validate.test.ts`, `packages/cli/src/commands/init.ts`, `packages/cli/src/commands/validate.ts`, `packages/cli/src/installers/__tests__/installers.test.ts` +2 more
 - `packages/core/src/errors.ts` ← `packages/core/src/__tests__/errors.test.ts`, `packages/core/src/index.ts`, `packages/core/src/lexer.ts`, `packages/core/src/parse-config.ts`, `packages/core/src/parser.ts` +1 more
+- `packages/cli/src/args.ts` ← `packages/cli/src/cli.ts`, `packages/cli/src/commands/init.ts`, `packages/cli/src/commands/validate.ts`, `packages/cli/src/index.ts`, `packages/cli/src/index.ts`
+- `packages/cli/src/errors.ts` ← `packages/cli/src/cli.ts`, `packages/cli/src/commands/init.ts`, `packages/cli/src/commands/run.ts`, `packages/cli/src/commands/validate.ts`, `packages/cli/src/index.ts`
 - `packages/config/src/discovery.ts` ← `packages/config/src/__tests__/discovery.test.ts`, `packages/config/src/__tests__/discovery.test.ts`, `packages/config/src/__tests__/load_config.test.ts`, `packages/config/src/index.ts`, `packages/config/src/index.ts`
 - `packages/config/src/types.ts` ← `packages/config/src/__tests__/resolve.test.ts`, `packages/config/src/discovery.ts`, `packages/config/src/index.ts`, `packages/config/src/loader.ts`, `packages/config/src/resolve.ts`
 - `packages/core/src/lexer.ts` ← `packages/core/src/__tests__/lexer.test.ts`, `packages/core/src/__tests__/parser.test.ts`, `packages/core/src/__tests__/validate.test.ts`, `packages/core/src/index.ts`, `packages/core/src/parse-config.ts`
-- `packages/config/src/normalize-path.ts` ← `packages/config/src/discovery.ts`, `packages/config/src/index.ts`, `packages/config/src/loader.ts`, `packages/config/src/resolve.ts`
-- `packages/core/src/parser.ts` ← `packages/core/src/__tests__/parser.test.ts`, `packages/core/src/__tests__/validate.test.ts`, `packages/core/src/index.ts`, `packages/core/src/parse-config.ts`
-- `packages/engine/src/descriptors.ts` ← `packages/engine/src/__tests__/descriptors.test.ts`, `packages/engine/src/index.ts`, `packages/engine/src/index.ts`, `packages/engine/src/runner.ts`
-- `packages/engine/src/env.ts` ← `packages/engine/src/__tests__/env.test.ts`, `packages/engine/src/index.ts`, `packages/engine/src/index.ts`, `packages/engine/src/logger.ts`
-- `packages/config/src/builtins.ts` ← `packages/config/src/__tests__/load_config.test.ts`, `packages/config/src/index.ts`, `packages/config/src/loader.ts`
 
 ---
 
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 17 test files found
+> 24 test files found
 
 ---
 

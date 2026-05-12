@@ -1,0 +1,34 @@
+agent helper {
+  description "Fixture helper"
+  prompt "Help validate Weave configs."
+  models ["claude-sonnet-4-5"]
+  mode subagent
+  temperature 0.2
+}
+
+category docs {
+  description "Documentation"
+  models ["claude-sonnet-4-5"]
+  patterns ["docs/**", "**/*.md"]
+  prompt_append "Keep docs clear."
+}
+
+workflow review-docs {
+  description "Review documentation changes"
+  version 1
+
+  step review {
+    name "Review docs"
+    type gate
+    agent helper
+    prompt "Review docs for: {{instance.goal}}"
+    completion review_verdict
+    on_reject pause
+  }
+}
+
+disable agents []
+disable hooks []
+disable skills []
+
+log_level INFO

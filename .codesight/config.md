@@ -2,8 +2,10 @@
 
 ## Environment Variables
 
-- `HOME` **required** — packages/config/src/__tests__/discovery.test.ts
+- `FORCE_COLOR` **required** — packages/cli/src/theme/colors.ts
+- `HOME` **required** — packages/cli/src/detect/probes.ts
 - `LOG_LEVEL` **required** — packages/config/src/logger.ts
+- `NO_COLOR` **required** — packages/cli/src/theme/colors.ts
 
 ## Config Files
 

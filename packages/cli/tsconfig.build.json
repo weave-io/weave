@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.build.json",
+  "compilerOptions": {
+    "composite": false,
+    "incremental": false,
+    "rootDir": "./src",
+    "outDir": "./dist",
+    "types": ["bun-types"]
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist", "src/__tests__", "src/**/__tests__"]
+}

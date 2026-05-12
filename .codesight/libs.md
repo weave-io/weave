@@ -1,5 +1,77 @@
 # Libraries
 
+- `packages/cli/src/args.ts`
+  - function parseArgs: (argv) => Result<ParsedArgs, ArgParseError>
+  - interface ParsedArgs
+  - type Command
+  - type ArgParseError
+- `packages/cli/src/cli.ts` — function run: (deps?) => Promise<Result<number, CliError>>, interface CliDeps
+- `packages/cli/src/commands/init.ts` — function runInit: (ctx) => Promise<Result<number, CliError>>, interface InitContext
+- `packages/cli/src/commands/run.ts` — function runRun: (ctx) => Result<number, CliError>, interface RunContext
+- `packages/cli/src/commands/validate.ts`
+  - function validateExplicitPath: (path, fs) => ResultAsync<ValidatedConfig, ValidateError>
+  - function formatSummary: (config) => string
+  - function runValidate: (ctx) => Promise<Result<number, CliError>>
+  - interface ValidateContext
+- `packages/cli/src/config/starter-config.ts` — function starterConfig: (scope) => string
+- `packages/cli/src/detect/index.ts`
+  - function detectHarnesses: (probes) => void
+  - function formatDetectionSummary: (harnesses) => string[]
+  - type SupportedHarnessId
+  - type DetectedHarness
+  - type DetectionError
+- `packages/cli/src/detect/probes.ts`
+  - class BunDetectionProbes
+  - class MemoryDetectionProbes
+  - interface DetectionProbes
+  - type ProbeError
+- `packages/cli/src/errors.ts`
+  - function formatCliError: (error) => string
+  - type CliError
+  - type InvalidArgsError
+  - type MissingFileError
+  - type FileReadError
+  - type ParseFailureError
+  - _...2 more_
+- `packages/cli/src/fs/file-system.ts`
+  - class BunFileSystem
+  - class MemoryFileSystem
+  - interface FileSystem
+  - type FileSystemError
+- `packages/cli/src/installers/index.ts`
+  - function installerRegistry: (fs) => Record<SupportedHarnessId, HarnessInstaller>
+  - function unsupportedInstaller: (id) => HarnessInstaller
+  - function skipUnsupported: (id) => InstallResult
+  - function installAllSupported: (input, string[]>;
+}) => ResultAsync<InstallResult[], InstallError>
+  - interface HarnessInstaller
+  - type AdapterModule
+  - _...3 more_
+- `packages/cli/src/installers/opencode.ts` — class OpenCodeInstaller
+- `packages/cli/src/installers/unsupported.ts` — function unsupportedHarnessInstall: (harness) => ResultAsync<InstallResult, InstallError>, function undetectedHarnessInstall: (harness) => ResultAsync<InstallResult, InstallError>
+- `packages/cli/src/io/terminal.ts`
+  - class RealTerminal
+  - class BufferTerminal
+  - interface TerminalIO
+- `packages/cli/src/prompt/index.ts`
+  - class ClackPromptAdapter
+  - class StaticPromptAdapter
+  - interface PromptAdapter
+  - type PromptError
+  - type PromptOption
+- `packages/cli/src/theme/ascii-logo.ts`
+  - function renderLogo: (theme) => string[]
+  - const PLAIN_LOGO_LINES: string[]
+  - const LOGO_WIDTH
+- `packages/cli/src/theme/colors.ts`
+  - function supportsColor: () => boolean
+  - function getTheme: (colorEnabled?) => ThemeColors
+  - interface ThemeColors
+- `packages/cli/src/theme/render.ts`
+  - function getVersion: () => string
+  - function renderBanner: (theme) => string[]
+  - function renderHelp: (theme) => string[]
+  - function renderVersion: () => string
 - `packages/config/src/builtins.ts`
   - function getBuiltinConfig: () => Result<WeaveConfig, ConfigError[]>
   - const BUILTIN_AGENT_NAMES: readonly string[]

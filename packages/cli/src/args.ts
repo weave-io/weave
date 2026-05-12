@@ -1,0 +1,212 @@
+/**
+ * Argument parsing for the Weave CLI.
+ *
+ * Parses `Bun.argv` (or a provided array) into a structured
+ * command + flags object. Intentionally minimal — no external
+ * arg-parsing library required.
+ */
+
+import { err, ok, type Result } from "neverthrow";
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export type Command =
+  | "help"
+  | "version"
+  | "init"
+  | "validate"
+  | "run"
+  | "unknown";
+
+export interface ParsedArgs {
+  command: Command;
+  /** The raw unknown command string (only set when command === "unknown"). */
+  unknownCommand?: string;
+  /** Remaining positional and flag arguments after the command. */
+  rest: string[];
+  /** Global flags parsed from anywhere in argv. */
+  flags: {
+    help: boolean;
+    version: boolean;
+    json: boolean;
+    yes: boolean;
+    force: boolean;
+    /** --scope global|local */
+    scope?: "global" | "local";
+    /** --path <file> */
+    path?: string;
+    /** --install-dir <dir> */
+    installDir?: string;
+    /** --harness <name> */
+    harness?: string;
+    /** --all-harnesses */
+    allHarnesses: boolean;
+    /** --project flag for validate */
+    project: boolean;
+    /** --global flag for validate */
+    global: boolean;
+  };
+}
+
+export type ArgParseError = {
+  type: "MissingFlagValue";
+  flag: string;
+  message: string;
+};
+
+// ---------------------------------------------------------------------------
+// Parser
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse a raw argv array into structured CLI arguments.
+ * Expects the standard `[runtime, script, ...userArgs]` format.
+ */
+export function parseArgs(argv: string[]): Result<ParsedArgs, ArgParseError> {
+  // Strip runtime and script path
+  const args = argv.slice(2);
+
+  const flags: ParsedArgs["flags"] = {
+    help: false,
+    version: false,
+    json: false,
+    yes: false,
+    force: false,
+    allHarnesses: false,
+    project: false,
+    global: false,
+  };
+
+  let command: Command | undefined;
+  let unknownCommand: string | undefined;
+  const rest: string[] = [];
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+
+    // Global flags
+    if (arg === "--help" || arg === "-h") {
+      flags.help = true;
+      continue;
+    }
+    if (arg === "--version" || arg === "-V") {
+      flags.version = true;
+      continue;
+    }
+    if (arg === "--json") {
+      flags.json = true;
+      continue;
+    }
+    if (arg === "--yes" || arg === "-y") {
+      flags.yes = true;
+      continue;
+    }
+    if (arg === "--force") {
+      flags.force = true;
+      continue;
+    }
+    if (arg === "--all-harnesses") {
+      flags.allHarnesses = true;
+      continue;
+    }
+    if (arg === "--project") {
+      flags.project = true;
+      continue;
+    }
+    if (arg === "--global") {
+      flags.global = true;
+      continue;
+    }
+
+    // Value flags
+    if (arg === "--scope") {
+      const val = args[++i];
+      if (!val || val.startsWith("-")) {
+        return err({
+          type: "MissingFlagValue" as const,
+          flag: "--scope",
+          message: "--scope requires a value: global or local",
+        });
+      }
+      if (val === "global" || val === "local") {
+        flags.scope = val;
+      }
+      continue;
+    }
+    if (arg === "--path") {
+      const val = args[++i];
+      if (!val || val.startsWith("-")) {
+        return err({
+          type: "MissingFlagValue" as const,
+          flag: "--path",
+          message: "--path requires a file path",
+        });
+      }
+      flags.path = val;
+      continue;
+    }
+    if (arg === "--install-dir") {
+      const val = args[++i];
+      if (!val || val.startsWith("-")) {
+        return err({
+          type: "MissingFlagValue" as const,
+          flag: "--install-dir",
+          message: "--install-dir requires a directory path",
+        });
+      }
+      flags.installDir = val;
+      continue;
+    }
+    if (arg === "--harness") {
+      const val = args[++i];
+      if (!val || val.startsWith("-")) {
+        return err({
+          type: "MissingFlagValue" as const,
+          flag: "--harness",
+          message: "--harness requires a harness name",
+        });
+      }
+      flags.harness = val;
+      continue;
+    }
+
+    // Commands
+    if (!command) {
+      switch (arg) {
+        case "init":
+          command = "init";
+          break;
+        case "validate":
+          command = "validate";
+          break;
+        case "run":
+          command = "run";
+          break;
+        default:
+          command = "unknown";
+          unknownCommand = arg;
+          break;
+      }
+      continue;
+    }
+
+    // Everything else goes into rest
+    rest.push(arg);
+  }
+
+  // --help or --version as top-level override
+  if (flags.help) {
+    command = "help";
+  } else if (flags.version && !command) {
+    command = "version";
+  }
+
+  return ok({
+    command: command ?? "help",
+    unknownCommand,
+    rest,
+    flags,
+  });
+}
