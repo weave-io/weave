@@ -1,5 +1,7 @@
 # 01-tasks-core-dsl
 
+> **Architecture note:** This completed task list predates the explicit [Adapter Boundary](../../adapter-boundary.md) guide. References to local engine `HookConfig`/`SkillConfig` types were transitional cleanup from legacy core types, not a decision that the engine owns concrete hook registration or harness skill discovery/loading. Current boundary guidance lives in [`../../adapter-boundary.md`](../../adapter-boundary.md).
+
 ## Relevant Files
 
 | File                                               | Why It Is Relevant                                                                                                                        |
@@ -17,8 +19,8 @@
 | `packages/core/src/agent.ts`                       | **Delete.** Replaced by Zod-inferred `AgentConfig` from `schema.ts`                                                                       |
 | `packages/core/src/config.ts`                      | **Delete.** Replaced by Zod-inferred `WeaveConfig` from `schema.ts`                                                                       |
 | `packages/core/src/dsl.ts`                         | **Delete.** `defineConfig()` no longer exists                                                                                             |
-| `packages/core/src/hook.ts`                        | **Delete.** `HookConfig` interface moves to Zod schema or is deferred                                                                     |
-| `packages/core/src/skill.ts`                       | **Delete.** `SkillConfig` interface moves to Zod schema or is deferred                                                                    |
+| `packages/core/src/hook.ts`                        | **Delete.** `HookConfig` interface is removed from core; any remaining engine type is transitional until lifecycle policy specs land      |
+| `packages/core/src/skill.ts`                       | **Delete.** `SkillConfig` interface is removed from core; skills remain name references until adapter-provided skill resolution lands     |
 | `packages/engine/src/adapter.ts`                   | Update imports — use new Zod-inferred types from `@weave/core`                                                                            |
 | `packages/engine/src/runner.ts`                    | Update imports and destructuring — use new `WeaveConfig` shape                                                                            |
 | `packages/engine/src/index.ts`                     | Verify re-exports still compile after type changes                                                                                        |
@@ -243,11 +245,11 @@
   - `agent.ts` — replaced by `AgentConfig` from `schema.ts`
   - `config.ts` — replaced by `WeaveConfig` from `schema.ts`
   - `dsl.ts` — `defineConfig()` no longer exists
-  - `hook.ts` — `HookConfig` no longer needed in core (hooks are not part of the `.weave` DSL in this spec; engine will handle hooks directly)
-  - `skill.ts` — `SkillConfig` no longer needed in core (skills are referenced by name in agent config; full skill config is an engine concern)
+  - `hook.ts` — `HookConfig` no longer needed in core (hooks are not part of the `.weave` DSL in this spec; lifecycle handling remains an engine/adapter boundary concern)
+  - `skill.ts` — `SkillConfig` no longer needed in core (skills are referenced by name in agent config; harness skill discovery/loading is adapter-owned)
 - [x] 6.2 Update `packages/engine/src/adapter.ts`:
   - Change `import type { AgentConfig, HookConfig, SkillConfig } from "@weave/core"` to import only `AgentConfig` from `@weave/core`
-  - For `HookConfig` and `SkillConfig`, define local interface types in the engine package (or a new `packages/engine/src/types.ts`) since these types are no longer exported from core. Keep the same shape as the current interfaces.
+  - For any temporary `HookConfig` and `SkillConfig` placeholders, define local interface types in the engine package (or a new `packages/engine/src/types.ts`) since these types are no longer exported from core. Treat them as transitional until dedicated lifecycle and skill-resolution specs replace them.
   - Update `spawnSubagent` parameter type to use the new Zod-inferred `AgentConfig`
 - [x] 6.3 Update `packages/engine/src/runner.ts`:
   - Update `import type { AgentConfig, WeaveConfig } from "@weave/core"` to use new types

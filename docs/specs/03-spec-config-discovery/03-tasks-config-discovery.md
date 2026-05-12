@@ -234,7 +234,7 @@ Implement `resolvePromptPaths()` for all three scopes, wire the full `loadConfig
 - [x] 5.8 Run `bun test packages/config/src/__tests__/resolve.test.ts` and `bun test packages/config/src/__tests__/load_config.test.ts` — all pass.
 - [x] 5.9 Run full suite: `bun test --recursive` — all tests pass. Run `bun run typecheck` — zero errors. Run `biome check packages/config/` — no lint errors.
 - [x] 5.10 Create `docs/config-loading.md` with:
-  - **Overview**: `@weave/config` owns the config-loading pipeline; links to [spec](specs/03-spec-config-discovery/03-spec-config-discovery.md)
+  - **Overview**: `@weave/config` owns the config-loading pipeline; links to [spec](03-spec-config-discovery.md)
   - **Three-Layer Merge**: diagram showing `builtins → global → project`, merge rules (scalar override, object deep-merge, array union-merge)
   - **Builtin Agents**: list of 8 agents with default properties; link to `packages/config/src/builtins.ts`; explanation that builtins use the same `.weave` DSL pipeline
   - **Config Discovery**: file paths, missing file behavior, error types

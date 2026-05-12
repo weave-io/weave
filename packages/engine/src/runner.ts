@@ -6,11 +6,14 @@ import { logger } from "./logger.js";
 const log = logger.child({ module: "runner" });
 
 /**
- * `WeaveRunner` is the central orchestrator of the Weave engine.
+ * `WeaveRunner` is the current transitional orchestration entry point for the
+ * Weave engine.
  *
  * It accepts a parsed `WeaveConfig` and a harness-specific `HarnessAdapter`,
- * then drives the full agent lifecycle: initialising the adapter, loading
- * skills, registering hooks, and spawning configured agents.
+ * then passes normalized Weave intent through the adapter boundary. It must not
+ * discover harness-owned resources (skills, available models, selected model
+ * state) or register concrete harness callbacks directly; adapters own those
+ * details and provide explicit context to engine composition APIs.
  *
  * @example
  * ```ts
@@ -32,12 +35,12 @@ export class WeaveRunner {
   }
 
   /**
-   * Execute the full Weave orchestration lifecycle:
+   * Execute the current adapter materialisation lifecycle:
    *
    * 1. Initialise the harness adapter.
-   * 2. Load all skills that are not disabled.  (deferred — see TODO)
-   * 3. Register all enabled hooks.             (deferred — see TODO)
-   * 4. Spawn all agents that are not disabled.
+   * 2. Resolve adapter-provided skill context.      (deferred — see TODO)
+   * 3. Wire abstract lifecycle policy surfaces.     (deferred — see TODO)
+   * 4. Materialise all agents that are not disabled.
    */
   async run(): Promise<void> {
     const { disabled } = this.config;
@@ -46,12 +49,13 @@ export class WeaveRunner {
     log.info("Initialising harness adapter");
     await this.adapter.init();
 
-    // 2. TODO: restore skill loading when skill config surfaces are specced.
-    // Skills are referenced by name in agent config but full SkillConfig
-    // (path, scope) is an engine concern not yet part of the .weave DSL spec.
+    // 2. TODO(#12): resolve skills from adapter-provided SkillInfo values.
+    // Skill discovery/loading is adapter-owned; the engine only matches agent
+    // skill references against explicit harness context and disabled.skills.
 
-    // 3. TODO: restore hook registration when hook config surfaces are specced.
-    // Hooks are not part of the .weave DSL spec in @weave/core at this time.
+    // 3. TODO(#9): wire abstract lifecycle policy surfaces.
+    // Concrete hook registration is adapter-owned; adapters map harness events
+    // into engine policy handlers.
 
     const shuttlesResult = generateCategoryShuttles(this.config);
     if (shuttlesResult.isErr()) {
@@ -68,7 +72,7 @@ export class WeaveRunner {
       ...shuttlesResult.value,
     };
 
-    // 4. Spawn agents (skip any that appear in the disabled.agents list).
+    // 4. Materialise agents through the adapter boundary (skip disabled).
     for (const [name, agentConfig] of Object.entries(allAgents) as [
       string,
       AgentConfig,

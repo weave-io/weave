@@ -1,5 +1,7 @@
 # 04-tasks-agent-model-resolution.md
 
+> **Architecture note:** This completed task list uses the then-current `spawnSubagent()` runner surface. Read "spawn" as "materialise normalized descriptors through the adapter boundary." It must not be used as precedent for engine-owned harness resource discovery or concrete hook/model/skill runtime access; see [`../../adapter-boundary.md`](../../adapter-boundary.md).
+
 ## Relevant Files
 
 | File                                                     | Why It Is Relevant                                                                                                                |
@@ -8,8 +10,8 @@
 | `packages/engine/src/__tests__/model-resolution.test.ts` | **New.** Unit tests covering all 6 resolution priority branches and availability filtering.                                       |
 | `packages/engine/src/descriptors.ts`                     | **New.** Pure `generateCategoryShuttles()` function producing `shuttle-{name}` descriptors from `WeaveConfig.categories`.         |
 | `packages/engine/src/__tests__/descriptors.test.ts`      | **New.** Unit tests for descriptor generation, inheritance, category overrides, and disabling rules.                              |
-| `packages/engine/src/runner.ts`                          | **Modify.** Call `generateCategoryShuttles()` and include generated shuttles in the agent spawn loop.                             |
-| `packages/engine/src/__tests__/runner.test.ts`           | **Modify.** Add tests proving the runner spawns generated category shuttles and respects disabling.                               |
+| `packages/engine/src/runner.ts`                          | **Modify.** Call `generateCategoryShuttles()` and include generated shuttles in adapter materialisation.                          |
+| `packages/engine/src/__tests__/runner.test.ts`           | **Modify.** Add tests proving the runner passes generated category shuttles through the adapter boundary and respects disabling.  |
 | `packages/engine/src/adapter.ts`                         | **Verify only.** Confirm `HarnessAdapter` has no `getSelectedModel()` / `getAvailableModels()` methods (no code change expected). |
 | `packages/engine/src/index.ts`                           | **Modify.** Export `resolveAdapterModelIntent`, `generateCategoryShuttles`, and their public types.                               |
 | `docs/model-resolution.md`                               | **Modify.** Add a "Category Shuttles and Adapter Translation" section.                                                            |
@@ -175,8 +177,8 @@ provenance field so adapter tests can verify which priority branch won.
 
 **Purpose:** Create a pure `generateCategoryShuttles()` function that produces
 `shuttle-{categoryName}` agent descriptors from `WeaveConfig.categories`, and
-update `WeaveRunner` to spawn those generated descriptors alongside the
-explicitly declared agents.
+update `WeaveRunner` to pass those generated descriptors through the adapter
+boundary alongside the explicitly declared agents.
 
 #### 2.0 Proof Artifact(s)
 
@@ -192,7 +194,7 @@ explicitly declared agents.
   with a `CategoryShuttleConflictError`.
 - Test: `bun test packages/engine` — updated
   `packages/engine/src/__tests__/runner.test.ts` includes tests proving the
-  runner spawns generated category shuttles alongside declared agents,
+  runner materialises generated category shuttles alongside declared agents,
   disabling rules are respected, and the runner throws a descriptive error
   when a conflict is detected.
 
@@ -223,7 +225,7 @@ explicitly declared agents.
    * Returns `err(CategoryShuttleConflictError)` when an explicitly declared
    * agent name collides with a would-be generated shuttle name (e.g. the config
    * declares `agent shuttle-frontend {}` AND has `category frontend {}`).
-   * Callers must handle this error before spawning agents.
+   * Callers must handle this error before materialising agents through an adapter.
    */
   export function generateCategoryShuttles(
     config: WeaveConfig,
@@ -372,7 +374,7 @@ explicitly declared agents.
   ```ts
   import { generateCategoryShuttles } from "./descriptors.js";
 
-  // Inside run(), after adapter.init() and before the spawn loop:
+  // Inside run(), after adapter.init() and before adapter materialisation:
   const shuttlesResult = generateCategoryShuttles(this.config);
   if (shuttlesResult.isErr()) {
     const e = shuttlesResult.error;
@@ -390,20 +392,23 @@ explicitly declared agents.
       log.debug({ agent: name }, "Skipping disabled agent");
       continue;
     }
-    log.info({ agent: name, model: agentConfig.models?.[0] }, "Spawning agent");
+    log.info(
+      { agent: name, model: agentConfig.models?.[0] },
+      "Materialising agent",
+    );
     await this.adapter.spawnSubagent(name, agentConfig);
   }
   ```
 
 - [x] 2.8 Add new tests to `packages/engine/src/__tests__/runner.test.ts` in a
-      new `describe("category shuttle spawning")` block:
+      new `describe("category shuttle materialisation")` block:
 
   ```
-  describe("category shuttle spawning", () => {
-    it("spawns a generated shuttle-{name} agent when a category is configured")
-    it("spawns multiple generated shuttles for multiple categories")
-    it("does not spawn a category shuttle when the base shuttle is disabled")
-    it("does not spawn a specific category shuttle when its name is in disabled.agents")
+  describe("category shuttle materialisation", () => {
+    it("materialises a generated shuttle-{name} agent when a category is configured")
+    it("materialises multiple generated shuttles for multiple categories")
+    it("does not materialise a category shuttle when the base shuttle is disabled")
+    it("does not materialise a specific category shuttle when its name is in disabled.agents")
     it("category shuttle descriptor carries category models")
     it("throws when a category would generate a name that is already explicitly declared")
   })
@@ -495,7 +500,7 @@ place.
 
   - resolveAdapterModelIntent(): pure 6-priority adapter-facing helper
   - generateCategoryShuttles(): produces shuttle-{name} descriptors from categories
-  - WeaveRunner now spawns generated category shuttles alongside declared agents
+  - WeaveRunner now materialises generated category shuttles alongside declared agents
   - docs/model-resolution.md updated with category shuttle adapter guidance
 
   Closes #7, closes #8

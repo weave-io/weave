@@ -88,7 +88,7 @@ This feature ports the useful parts of legacy `resolveAgentModel()` by moving mo
 - The system shall preserve adapter ownership of harness interactions, including UI-selected model lookup, model availability lookup, and harness-specific default selection.
 - The system shall document that adapters may use the adapter-facing resolution helper internally, but are not required to if the harness has a different native model-selection mechanism.
 - The system shall keep Weave-generated agent config immutable from the adapter's perspective: adapters translate the config, they do not mutate the normalized Weave source of truth.
-- The system shall update any runner or adapter tests that previously assumed the engine resolves a concrete model before spawning agents.
+- The system shall update any runner or adapter tests that previously assumed the engine resolves a concrete model before adapter materialisation.
 
 **Proof Artifacts:**
 

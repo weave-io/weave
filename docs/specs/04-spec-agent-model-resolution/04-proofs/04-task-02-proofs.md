@@ -2,15 +2,17 @@
 
 ## Task Summary
 
-This task adds `generateCategoryShuttles()` and updates `WeaveRunner` to spawn generated `shuttle-{categoryName}` descriptors alongside declared agents. It also adds conflict detection for explicit agents whose names collide with generated category shuttle names.
+This task adds `generateCategoryShuttles()` and updates `WeaveRunner` to pass generated `shuttle-{categoryName}` descriptors through the adapter boundary alongside declared agents. It also adds conflict detection for explicit agents whose names collide with generated category shuttle names.
+
+> **Architecture note:** The proof uses the current `spawnSubagent()` test surface. Treat that as adapter materialisation of normalized descriptors, not as a precedent for engine-owned harness resource discovery.
 
 ## What This Task Proves
 
 - Category shuttles are generated only when a base `shuttle` agent exists and is enabled.
 - Generated descriptors inherit base shuttle fields and apply category overrides for `models`, `temperature`, `prompt_append`, and `tool_policy`.
 - Disabled generated shuttles are skipped, while disabled base `shuttle` suppresses all category shuttles.
-- Explicit `agent shuttle-{name}` declarations conflict with matching `category {name}` blocks and are surfaced as `CategoryShuttleConflictError` before spawning.
-- `WeaveRunner` includes generated category shuttles in adapter spawning and preserves existing disabled-agent behavior.
+- Explicit `agent shuttle-{name}` declarations conflict with matching `category {name}` blocks and are surfaced as `CategoryShuttleConflictError` before adapter materialisation.
+- `WeaveRunner` includes generated category shuttles in adapter materialisation and preserves existing disabled-agent behavior.
 
 ## Evidence Summary
 

@@ -1,6 +1,6 @@
 # Workflow Schema
 
-This document describes the typed workflow schema introduced by [spec 02](specs/02-spec-workflow-schema/index.md). It covers field semantics, the completion method model, validation constraints, the `name`/`display_name` mapping convention, and the `__name` parser pattern that makes parameterised completion syntax possible.
+This document describes the typed workflow schema introduced by [spec 02](specs/02-spec-workflow-schema/02-spec-workflow-schema.md). It covers field semantics, the completion method model, validation constraints, the `name`/`display_name` mapping convention, and the `__name` parser pattern that makes parameterised completion syntax possible.
 
 **Related source files:**
 

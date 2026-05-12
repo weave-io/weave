@@ -4,7 +4,7 @@
 > **Source**: `~/projects/opencode-weave` (v0.8.0, `@opencode_weave/weave`)
 > **Purpose**: Inform a rewrite into a harness-agnostic multi-agent orchestration framework.
 >
-> **Important**: This document describes the OpenCode-specific alpha. It is migration context, not current product vision. For the harness-agnostic successor, prefer [Product Vision](product-vision.md) and [Model Resolution](model-resolution.md) whenever this document implies that core Weave should own harness UI state, concrete model selection, or runtime plugin behavior.
+> **Important**: This document describes the OpenCode-specific alpha. It is migration context, not current product vision. For the harness-agnostic successor, prefer [Product Vision](product-vision.md), [Adapter Boundary](adapter-boundary.md), and [Model Resolution](model-resolution.md) whenever this document implies that core Weave should own harness UI state, concrete model selection, skill discovery/loading, concrete hook registration, or runtime plugin behavior.
 
 ---
 
@@ -953,13 +953,14 @@ WeaveConfig
 │  3. Compose or describe prompts/delegation sections                  │
 │  4. Apply config-level overrides and disabled-agent filtering        │
 │  5. Preserve abstract tool/capability policy                         │
-│  6. Produce normalized agent descriptors for adapter translation     │
+│  6. Resolve adapter-provided skills against agent skill references   │
+│  7. Produce normalized agent descriptors for adapter translation     │
 │                                                                      │
 │  What moves here:                                                    │
 │  - composeLoomPrompt(), composeTapestryPrompt() section assembly     │
 │  - model-resolution.ts                                               │
 │  - config merge + validation                                         │
-│  - Skill resolution and injection                                    │
+│  - Skill matching/filtering and prompt injection (adapter provides skill content) │
 │  - stripDisabledAgentReferences()                                    │
 │  - Continuation config resolution                                    │
 │  - Fingerprint generation                                            │
@@ -1011,24 +1012,24 @@ WeaveConfig
 
 ### 7.4 What's Already Harness-Agnostic (Can Lift Directly)
 
-| Component               | Location                                          | Assessment                                                                                   |
-| ----------------------- | ------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| Prompt composers        | `src/agents/{loom,tapestry}/prompt-composer.ts`   | ✅ Pure functions, no OpenCode imports                                                       |
-| Static agent prompts    | `src/agents/{name}/default.ts`                    | ✅ Pure data                                                                                 |
-| Dynamic prompt builder  | `src/agents/dynamic-prompt-builder.ts`            | ✅ Pure functions                                                                            |
-| Model-resolution policy | `src/agents/model-resolution.ts`                  | ⚠️ Useful as adapter-facing policy only; UI/default/availability inputs are harness concerns |
-| Config schema           | `src/config/schema.ts`                            | ✅ Zod schema, no harness coupling                                                           |
-| Config merge            | `src/config/merge.ts`                             | ✅ Pure function                                                                             |
-| Continuation config     | `src/config/continuation.ts`                      | ✅ Pure resolution                                                                           |
-| Agent metadata          | `src/agents/builtin-agents.ts` (`AGENT_METADATA`) | ✅ Pure data                                                                                 |
-| Prompt utils            | `src/agents/prompt-utils.ts`                      | ✅ Pure utility                                                                              |
-| Agent builder           | `src/agents/agent-builder.ts`                     | ⚠️ Mostly pure, but `AgentConfig` type from SDK                                              |
-| Plan service            | `src/domain/plans/`                               | ✅ Pure domain logic                                                                         |
-| Workflow service        | `src/domain/workflows/`                           | ✅ Pure domain logic                                                                         |
-| Policy engine           | `src/application/policy/policy-engine.ts`         | ✅ Pure policy composition                                                                   |
-| Execution lease         | `src/domain/session/execution-lease.ts`           | ✅ Pure domain logic                                                                         |
-| Skill loader            | `src/features/skill-loader/`                      | ⚠️ Mostly pure, but `fetchSkillsFromOpenCode()`                                              |
-| Analytics               | `src/features/analytics/`                         | ✅ Pure metrics                                                                              |
+| Component               | Location                                          | Assessment                                                                                                                           |
+| ----------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Prompt composers        | `src/agents/{loom,tapestry}/prompt-composer.ts`   | ✅ Pure functions, no OpenCode imports                                                                                               |
+| Static agent prompts    | `src/agents/{name}/default.ts`                    | ✅ Pure data                                                                                                                         |
+| Dynamic prompt builder  | `src/agents/dynamic-prompt-builder.ts`            | ✅ Pure functions                                                                                                                    |
+| Model-resolution policy | `src/agents/model-resolution.ts`                  | ⚠️ Useful as adapter-facing policy only; UI/default/availability inputs are harness concerns                                         |
+| Config schema           | `src/config/schema.ts`                            | ✅ Zod schema, no harness coupling                                                                                                   |
+| Config merge            | `src/config/merge.ts`                             | ✅ Pure function                                                                                                                     |
+| Continuation config     | `src/config/continuation.ts`                      | ✅ Pure resolution                                                                                                                   |
+| Agent metadata          | `src/agents/builtin-agents.ts` (`AGENT_METADATA`) | ✅ Pure data                                                                                                                         |
+| Prompt utils            | `src/agents/prompt-utils.ts`                      | ✅ Pure utility                                                                                                                      |
+| Agent builder           | `src/agents/agent-builder.ts`                     | ⚠️ Mostly pure, but `AgentConfig` type from SDK                                                                                      |
+| Plan service            | `src/domain/plans/`                               | ✅ Pure domain logic                                                                                                                 |
+| Workflow service        | `src/domain/workflows/`                           | ✅ Pure domain logic                                                                                                                 |
+| Policy engine           | `src/application/policy/policy-engine.ts`         | ✅ Pure policy composition                                                                                                           |
+| Execution lease         | `src/domain/session/execution-lease.ts`           | ✅ Pure domain logic                                                                                                                 |
+| Skill loader            | `src/features/skill-loader/`                      | ⚠️ Legacy OpenCode-specific discovery; successor should keep discovery in adapters and only lift pure matching/filtering into engine |
+| Analytics               | `src/features/analytics/`                         | ✅ Pure metrics                                                                                                                      |
 
 ### 7.5 What Must Stay in the Adapter
 

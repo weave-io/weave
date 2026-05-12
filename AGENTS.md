@@ -8,16 +8,25 @@ Weave is a **harness-agnostic prompt and agent-configuration API** built in Type
 
 Think of Weave like **Neovim's API layer**: Weave provides primitives and normalized configuration; adapters and users compose those primitives into a concrete harness experience.
 
-> **Product vision**: `docs/product-vision.md` is the source of truth for the harness-agnostic successor. `docs/legacy-architecture.md` documents the alpha, OpenCode-exclusive version of Weave (`opencode-weave`) and should be used as migration context only. When legacy OpenCode behavior conflicts with `docs/product-vision.md`, prefer the product vision.
+> **Product vision**: `docs/product-vision.md` is the source of truth for the harness-agnostic successor. `docs/adapter-boundary.md` defines the engine/adapter ownership rules and must be followed when adding APIs. `docs/legacy-architecture.md` documents the alpha, OpenCode-exclusive version of Weave (`opencode-weave`) and should be used as migration context only. When legacy OpenCode behavior conflicts with `docs/product-vision.md` or `docs/adapter-boundary.md`, prefer the new docs.
 
 > **DSL-first agents**: Built-in agents (Loom, Tapestry, Shuttle, etc.) are defined using the same `.weave` DSL that end users use for custom agents. There is no separate code path for builtins — they are just well-known named entries in a config file. This means the DSL must be expressive enough to declare the full behaviour of any agent, and that users can replicate, extend, or replace any builtin by writing equivalent DSL config.
 
-| Layer        | Package            | Responsibility                                                                                           |
-| ------------ | ------------------ | -------------------------------------------------------------------------------------------------------- |
-| **Core**     | `@weave/core`      | DSL lexer, parser, AST, Zod schema validation, config types                                              |
-| **Config**   | `@weave/config`    | Builtin DSL defaults, config discovery, merge semantics, prompt path resolution                          |
-| **Engine**   | `@weave/engine`    | Normalized agent lifecycle, descriptor/prompt-building boundary, `HarnessAdapter` interface, pino logger |
-| **Adapters** | `@weave/adapter-*` | Harness-specific translation into plugins/configs/tools/UI/runtime behavior                              |
+| Layer        | Package            | Responsibility                                                                                                  |
+| ------------ | ------------------ | --------------------------------------------------------------------------------------------------------------- |
+| **Core**     | `@weave/core`      | DSL lexer, parser, AST, Zod schema validation, config types                                                     |
+| **Config**   | `@weave/config`    | Builtin DSL defaults, config discovery, merge semantics, prompt path resolution                                 |
+| **Engine**   | `@weave/engine`    | Composition APIs (skill resolution, model resolution, prompt building), `HarnessAdapter` interface, pino logger |
+| **Adapters** | `@weave/adapter-*` | Harness-specific translation into plugins/configs/tools/UI/runtime behavior                                     |
+
+### Engine / Adapter Boundary Guard
+
+Before adding or changing an engine API, read `docs/adapter-boundary.md` and verify the change follows these rules:
+
+- Weave may own `.weave` config loading, normalized descriptors, prompt composition, skill matching/filtering, model intent helpers, and abstract policy decisions.
+- Adapters own harness resource discovery, available-model lookup, selected-model lookup, skill file discovery/loading, concrete hook registration, concrete tool names, and feature-gap emulation.
+- Engine APIs should accept explicit harness context from adapters and return normalized results. They must not scan harness-owned directories, query harness UI/runtime APIs, or register concrete harness callbacks.
+- Transitional methods in `HarnessAdapter` (notably `loadSkill()` and `registerHook()`) are not architectural precedent; future specs should move them toward adapter-provided context and abstract lifecycle surfaces.
 
 ## The `.weave` DSL
 
@@ -138,7 +147,7 @@ category frontend {
 }
 ```
 
-Categories automatically spawn `shuttle-{name}` agents (e.g. `shuttle-backend`, `shuttle-frontend`) that inherit from the base `shuttle` agent with category-specific overrides.
+Categories automatically generate `shuttle-{name}` agent descriptors (e.g. `shuttle-backend`, `shuttle-frontend`) that inherit from the base `shuttle` agent with category-specific overrides. Adapters decide how those descriptors are materialised in a concrete harness.
 
 #### Workflows
 
@@ -283,9 +292,11 @@ packages/
 │   ├── resolve.ts        prompt_file path resolution
 │   └── index.ts          barrel
 ├── engine/src/
-│   ├── adapter.ts        HarnessAdapter interface
+│   ├── adapter.ts        HarnessAdapter boundary (transitional; see docs/adapter-boundary.md)
+│   ├── descriptors.ts    normalized agent descriptor helpers
+│   ├── model-resolution.ts adapter-facing model intent helper
 │   ├── logger.ts         shared pino instance
-│   ├── runner.ts         WeaveRunner class
+│   ├── runner.ts         transitional orchestration entry point
 │   └── index.ts          barrel
 └── adapters/
     ├── opencode/src/
@@ -356,14 +367,14 @@ Guard at the top and keep the happy path unindented. Never bury logic inside an 
 
 ```ts
 // ✅
-if (!skill.path) return;
-if (disabled.includes(skill.name)) return;
-register(skill);
+if (agent.prompt === undefined && agent.prompt_file === undefined) return;
+if (disabledAgents.includes(agentName)) return;
+registerAgent(agentName, agent);
 
 // ❌
-if (skill.path) {
-  if (!disabled.includes(skill.name)) {
-    register(skill);
+if (agent.prompt !== undefined || agent.prompt_file !== undefined) {
+  if (!disabledAgents.includes(agentName)) {
+    registerAgent(agentName, agent);
   }
 }
 ```
@@ -500,10 +511,10 @@ For any change that touches `schema.ts`, add coverage at **all four levels** —
 
 When building or extending a module that crosses a package or process boundary — a `HarnessAdapter`, file I/O, process spawning, network calls, or any interface defined in another package — **write the tests against a mock, not the real implementation**. Never start a real harness, write real files, or spawn real processes in unit or integration tests.
 
-Mocks live alongside the tests they support. Create a `Mock*` class or inline stub that satisfies the interface's minimum surface for the test at hand.
+Mocks live alongside the tests they support. Create a `Mock*` class or inline stub that satisfies the interface's minimum surface for the test at hand. Mock adapter examples should prove the adapter boundary without implying that engine code owns harness resource discovery.
 
 ```ts
-// ✅ — mock adapter; no real harness, no file I/O
+// ✅ — mock adapter; no real harness, no file I/O, no harness resource discovery
 class MockAdapter implements HarnessAdapter {
   readonly calls: string[] = [];
   async init(): Promise<void> {}
@@ -512,7 +523,7 @@ class MockAdapter implements HarnessAdapter {
   }
 }
 
-it("spawns all agents in config order", async () => {
+it("materializes all agent descriptors in config order", async () => {
   const adapter = new MockAdapter();
   const runner = new WeaveRunner(config, adapter);
   await runner.run();
@@ -520,7 +531,7 @@ it("spawns all agents in config order", async () => {
 });
 
 // ❌ — starts a real harness process
-it("spawns agents", async () => {
+it("materializes agents", async () => {
   const adapter = new OpenCodeAdapter(); // needs a live OpenCode process
   ...
 });
@@ -528,16 +539,16 @@ it("spawns agents", async () => {
 
 What to mock at each layer:
 
-| Module under test                  | What to mock                                                                                         |
-| ---------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `WeaveRunner`                      | `HarnessAdapter` — implement the interface with in-memory stubs                                      |
-| `HarnessAdapter` implementations   | File system (`Bun.file` → string fixtures), process (`Bun.spawn` → stub returning controlled output) |
-| Config loader (`@weave/config`)    | Pass source strings directly; stub `Bun.file()` reads with known content                             |
-| Any code calling external services | Replace the client with a minimal in-memory stub                                                     |
+| Module under test                  | What to mock                                                                                                     |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `WeaveRunner`                      | `HarnessAdapter` — implement the interface with in-memory stubs; adapter-supplied context should be fixture data |
+| `HarnessAdapter` implementations   | File system (`Bun.file` → string fixtures), process (`Bun.spawn` → stub returning controlled output)             |
+| Config loader (`@weave/config`)    | Pass source strings directly; stub `Bun.file()` reads with known content                                         |
+| Any code calling external services | Replace the client with a minimal in-memory stub                                                                 |
 
 **Every critical module must have at least one isolated test file** — with all external dependencies replaced by mocks. "Critical" means any module in `packages/engine/`, any `HarnessAdapter` implementation, and any module that owns state or coordinates multiple components.
 
-The existing `packages/engine/src/__tests__/runner.test.ts` is the canonical example: it exercises `WeaveRunner` fully via `MockAdapter` with no real harness involved.
+The existing `packages/engine/src/__tests__/runner.test.ts` is the canonical example for the current runner surface: it exercises `WeaveRunner` fully via `MockAdapter` with no real harness involved. New engine composition APIs should prefer pure-function tests with explicit harness context fixtures.
 
 ## Logging
 
@@ -548,7 +559,7 @@ import { logger } from "@weave/engine";
 const log = logger.child({ module: "adapter-pi" });
 
 // ✅ structured — fields are queryable in log aggregators
-log.info({ agent: name, model: config.model }, "Spawning agent");
+log.info({ agent: name, model: config.models?.[0] }, "Spawning agent");
 log.error({ err }, "Unexpected failure");
 
 // ❌ interpolated string — don't do this
@@ -588,7 +599,7 @@ docs/
 
 ### How to write docs
 
-- **Link liberally** — every doc should cross-link to related docs, source files, and specs. Use relative Markdown links (`[config loader](../packages/config/src/loader.ts)`, `[DSL spec](specs/01-spec-core-dsl/01-spec-core-dsl.md)`).
+- **Link liberally** — every doc should cross-link to related docs, source files, and specs. Use relative Markdown links from the current file (`[config loader](../packages/config/src/discovery.ts)` from a doc under `docs/`, `[DSL spec](docs/specs/01-spec-core-dsl/01-spec-core-dsl.md)` from this guide).
 - **Write for agents** — be explicit about _why_ a decision was made, not just _what_ was decided. Agents lack the conversation history; the doc is their only context.
 - **Keep docs close to the change** — if you change `packages/core/src/lexer.ts`, update or create a doc that describes the lexer's responsibilities and any invariants it enforces.
 - **Use ADR format for decisions** — when a choice has meaningful trade-offs, document it as a lightweight ADR: _Context → Decision → Consequences_.

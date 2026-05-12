@@ -1,35 +1,68 @@
 # @weave/core
 
-Core DSL types, schema definitions, and config parser for the Weave multi-agent orchestration framework.
+Core DSL lexer, parser, AST, Zod schemas, validation, and `parseConfig()` pipeline for Weave.
+
+`@weave/core` is intentionally harness-agnostic. It understands the `.weave` DSL and produces validated `WeaveConfig` values; it does **not** know about OpenCode, Pi, Claude Code, harness UI state, concrete tool names, skill file locations, or runtime plugin behavior.
 
 ## Overview
 
-This package provides the foundational type contracts used across the entire Weave ecosystem:
+This package provides the foundational config pipeline used by the rest of Weave:
 
-- **`WeaveConfig`** — top-level configuration shape (agents, hooks, skills, disabled lists)
-- **`AgentConfig`** — per-agent configuration (name, model, temperature, tools, skills, prompt)
-- **`SkillConfig`** — skill configuration (name, path, scope)
-- **`HookConfig`** — hook configuration (name, enabled flag)
-- **`defineConfig()`** — DSL identity helper for ergonomic config authoring with full type inference
+- **Lexer** — tokenizes `.weave` source
+- **Parser** — converts tokens into a DSL AST
+- **Validator** — converts AST into validated config through Zod schemas
+- **`parseConfig()`** — end-to-end `tokenize → parse → validate` pipeline
+- **Zod-inferred types** — `WeaveConfig`, `AgentConfig`, `CategoryConfig`, workflow types, and supporting enums
+
+## Boundary Rules
+
+`@weave/core` owns only DSL structure and validation.
+
+It does **not**:
+
+- discover skills from disk
+- load skill content
+- query available models or selected UI models
+- register harness lifecycle hooks
+- spawn agents in a harness
+- expose `defineConfig()` or JavaScript object config APIs
+
+Skill and model declarations are **intent**. Adapters provide harness-owned context to `@weave/engine` composition APIs, which resolve that intent for a specific harness.
 
 ## Usage
 
 ```ts
-import { defineConfig } from "@weave/core";
+import { parseConfig } from "@weave/core";
 
-export default defineConfig({
-  agents: {
-    coder: {
-      name: "coder",
-      model: "claude-sonnet-4-5",
-      temperature: 0.2,
-      tools: ["read", "edit", "bash"],
-      skills: ["tdd"],
-      prompt_append: "Always write tests first.",
-    },
+const source = `
+agent coder {
+  prompt "You are a focused coding agent."
+  models ["claude-sonnet-4-5", "gpt-4o"]
+  mode subagent
+  skills ["tdd"]
+
+  tool_policy {
+    read allow
+    write allow
+    edit allow
+    delegate deny
+  }
+}
+
+disable skills ["experimental-skill"]
+`;
+
+const result = parseConfig(source);
+
+result.match(
+  (config) => {
+    // config.agents.coder.skills is ["tdd"] — a skill reference, not loaded content.
+    // Adapters provide available skill content to @weave/engine later.
   },
-  hooks: [{ name: "on-task-start", enabled: true }],
-  skills: [{ name: "tdd", path: "./skills/tdd", scope: "project" }],
-  disabled: [],
-});
+  (errors) => {
+    // Surface parse/validation errors to the caller.
+  },
+);
 ```
+
+See [../../docs/adapter-boundary.md](../../docs/adapter-boundary.md) for how parsed config flows into engine composition APIs and adapters.
