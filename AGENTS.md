@@ -74,9 +74,9 @@ agent loom {
   tool_policy {
     read allow
     write allow
-    edit allow
+    execute allow
     delegate allow
-    search ask
+    network ask
   }
 
   triggers [
@@ -106,7 +106,7 @@ agent shuttle {
   tool_policy {
     read allow
     write allow
-    edit allow
+    execute allow
     delegate deny
   }
 }

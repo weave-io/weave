@@ -26,9 +26,9 @@ describe("validate — valid agent", () => {
   tool_policy {
     read allow
     write allow
-    edit allow
+    execute allow
     delegate allow
-    search ask
+    network ask
   }
   triggers [
     { domain "Orchestration" trigger "Complex tasks" }

@@ -43,11 +43,12 @@ agent loom {
   tool_policy {
     read allow
     write allow
-    edit allow
+    execute allow
+    network ask
     delegate allow
-    search ask
   }
 }
+
 
 agent tapestry {
   description "Tapestry (Plan Execution)"
@@ -59,7 +60,8 @@ agent tapestry {
   tool_policy {
     read allow
     write allow
-    edit allow
+    execute allow
+    network deny
     delegate allow
   }
 }
@@ -74,7 +76,8 @@ agent shuttle {
   tool_policy {
     read allow
     write allow
-    edit allow
+    execute allow
+    network deny
     delegate deny
   }
 }
@@ -89,7 +92,8 @@ agent pattern {
   tool_policy {
     read allow
     write allow
-    edit deny
+    execute deny
+    network deny
     delegate deny
   }
 }
@@ -104,7 +108,8 @@ agent thread {
   tool_policy {
     read allow
     write deny
-    edit deny
+    execute deny
+    network deny
     delegate deny
   }
 }
@@ -119,7 +124,8 @@ agent spindle {
   tool_policy {
     read allow
     write deny
-    edit deny
+    execute deny
+    network allow
     delegate deny
   }
 }
@@ -134,7 +140,8 @@ agent weft {
   tool_policy {
     read allow
     write deny
-    edit deny
+    execute deny
+    network deny
     delegate deny
   }
 }
@@ -149,7 +156,8 @@ agent warp {
   tool_policy {
     read allow
     write deny
-    edit deny
+    execute deny
+    network deny
     delegate deny
   }
 }

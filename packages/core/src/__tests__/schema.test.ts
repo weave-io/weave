@@ -2,10 +2,53 @@ import { describe, expect, it } from "bun:test";
 import {
   CompletionMethodSchema,
   OnRejectSchema,
+  ToolPolicySchema,
   WorkflowConfigSchema,
   WorkflowStepSchema,
   WorkflowStepTypeSchema,
 } from "../schema.js";
+
+// ---------------------------------------------------------------------------
+// ToolPolicySchema
+// ---------------------------------------------------------------------------
+
+describe("ToolPolicySchema", () => {
+  it("accepts valid tool policy keys", () => {
+    const r = ToolPolicySchema.safeParse({
+      read: "allow",
+      write: "deny",
+      execute: "ask",
+      network: "deny",
+      delegate: "allow",
+    });
+
+    expect(r.success).toBe(true);
+  });
+
+  it("accepts execute and network permissions", () => {
+    const r = ToolPolicySchema.safeParse({
+      execute: "allow",
+      network: "deny",
+    });
+
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data).toEqual({ execute: "allow", network: "deny" });
+    }
+  });
+
+  it("rejects unknown keys such as edit", () => {
+    const r = ToolPolicySchema.safeParse({ edit: "allow" });
+
+    expect(r.success).toBe(false);
+  });
+
+  it("rejects unknown keys such as search", () => {
+    const r = ToolPolicySchema.safeParse({ search: "ask" });
+
+    expect(r.success).toBe(false);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // WorkflowStepTypeSchema

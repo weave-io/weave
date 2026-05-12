@@ -39,8 +39,8 @@ describe("Parser — agent block", () => {
   it("parses agent with nested tool_policy block", () => {
     const src = `agent shuttle {
   tool_policy {
-    read allow
-    write deny
+    execute allow
+    network deny
   }
 }`;
     const result = parseSource(src);
@@ -52,11 +52,11 @@ describe("Parser — agent block", () => {
     const block = policy?.value as BlockValue;
     expect(block.properties).toHaveLength(2);
     expect(block.properties[0]).toMatchObject({
-      key: "read",
+      key: "execute",
       value: { kind: "identifier", value: "allow" },
     });
     expect(block.properties[1]).toMatchObject({
-      key: "write",
+      key: "network",
       value: { kind: "identifier", value: "deny" },
     });
   });

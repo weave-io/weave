@@ -77,7 +77,7 @@ describe("generateCategoryShuttles", () => {
           tool_policy {
             read allow
             write allow
-            edit deny
+            execute deny
           }
         }
         category frontend { patterns ["src/components/**"] }
@@ -86,7 +86,7 @@ describe("generateCategoryShuttles", () => {
       expect(result["shuttle-frontend"]?.tool_policy).toEqual({
         read: "allow",
         write: "allow",
-        edit: "deny",
+        execute: "deny",
       });
     });
 
@@ -149,7 +149,7 @@ describe("generateCategoryShuttles", () => {
           tool_policy {
             read allow
             write ask
-            edit deny
+            execute deny
           }
         }
         category frontend {
@@ -164,7 +164,7 @@ describe("generateCategoryShuttles", () => {
       expect(result["shuttle-frontend"]?.tool_policy).toEqual({
         read: "allow",
         write: "allow",
-        edit: "deny",
+        execute: "deny",
         delegate: "deny",
       });
     });

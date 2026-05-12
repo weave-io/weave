@@ -85,14 +85,14 @@ Define all 8 builtin agents as `.weave` DSL source strings, parse them through `
 
 - [x] 2.1 Create 8 placeholder prompt files in `packages/config/prompts/`: `loom.md`, `tapestry.md`, `shuttle.md`, `pattern.md`, `thread.md`, `spindle.md`, `weft.md`, `warp.md`. Each contains a single line: `# <AgentName>` followed by a blank line and `Placeholder — full prompt content is a future deliverable.`
 - [x] 2.2 Create `packages/config/src/builtins.ts`. Define a `BUILTIN_WEAVE_SOURCE` constant containing a single `.weave` DSL string that declares all 8 agents. Use the agent properties from the legacy architecture doc and AGENTS.md examples:
-  - `loom`: description `"Loom (Main Orchestrator)"`, prompt_file `"loom.md"`, models `["claude-sonnet-4-5"]`, mode `primary`, temperature `0.1`, tool_policy `{ read allow, write allow, edit allow, delegate allow, search ask }`
-  - `tapestry`: description `"Tapestry (Plan Execution)"`, prompt_file `"tapestry.md"`, models `["claude-sonnet-4-5"]`, mode `primary`, temperature `0.1`, tool_policy `{ read allow, write allow, edit allow, delegate allow }`
-  - `shuttle`: description `"Shuttle (Domain Specialist)"`, prompt_file `"shuttle.md"`, models `["claude-sonnet-4-5"]`, mode `all`, temperature `0.2`, tool_policy `{ read allow, write allow, edit allow, delegate deny }`
-  - `pattern`: description `"Pattern (Strategic Planner)"`, prompt_file `"pattern.md"`, models `["claude-sonnet-4-5"]`, mode `subagent`, temperature `0.3`, tool_policy `{ read allow, write allow, edit deny, delegate deny }`
-  - `thread`: description `"Thread (Codebase Explorer)"`, prompt_file `"thread.md"`, models `["claude-sonnet-4-5"]`, mode `subagent`, temperature `0.0`, tool_policy `{ read allow, write deny, edit deny, delegate deny }`
-  - `spindle`: description `"Spindle (External Researcher)"`, prompt_file `"spindle.md"`, models `["claude-sonnet-4-5"]`, mode `subagent`, temperature `0.1`, tool_policy `{ read allow, write deny, edit deny, delegate deny }`
-  - `weft`: description `"Weft (Reviewer)"`, prompt_file `"weft.md"`, models `["claude-sonnet-4-5"]`, mode `subagent`, temperature `0.1`, tool_policy `{ read allow, write deny, edit deny, delegate deny }`
-  - `warp`: description `"Warp (Security Auditor)"`, prompt_file `"warp.md"`, models `["claude-sonnet-4-5"]`, mode `subagent`, temperature `0.1`, tool_policy `{ read allow, write deny, edit deny, delegate deny }`
+  - `loom`: description `"Loom (Main Orchestrator)"`, prompt_file `"loom.md"`, models `["claude-sonnet-4-5"]`, mode `primary`, temperature `0.1`, tool_policy `{ read allow, write allow, execute allow, delegate allow, network ask }`
+  - `tapestry`: description `"Tapestry (Plan Execution)"`, prompt_file `"tapestry.md"`, models `["claude-sonnet-4-5"]`, mode `primary`, temperature `0.1`, tool_policy `{ read allow, write allow, execute allow, network deny, delegate allow }`
+  - `shuttle`: description `"Shuttle (Domain Specialist)"`, prompt_file `"shuttle.md"`, models `["claude-sonnet-4-5"]`, mode `all`, temperature `0.2`, tool_policy `{ read allow, write allow, execute allow, network deny, delegate deny }`
+  - `pattern`: description `"Pattern (Strategic Planner)"`, prompt_file `"pattern.md"`, models `["claude-sonnet-4-5"]`, mode `subagent`, temperature `0.3`, tool_policy `{ read allow, write allow, execute deny, network deny, delegate deny }`
+  - `thread`: description `"Thread (Codebase Explorer)"`, prompt_file `"thread.md"`, models `["claude-sonnet-4-5"]`, mode `subagent`, temperature `0.0`, tool_policy `{ read allow, write deny, execute deny, network deny, delegate deny }`
+  - `spindle`: description `"Spindle (External Researcher)"`, prompt_file `"spindle.md"`, models `["claude-sonnet-4-5"]`, mode `subagent`, temperature `0.1`, tool_policy `{ read allow, write deny, execute deny, network allow, delegate deny }`
+  - `weft`: description `"Weft (Reviewer)"`, prompt_file `"weft.md"`, models `["claude-sonnet-4-5"]`, mode `subagent`, temperature `0.1`, tool_policy `{ read allow, write deny, execute deny, network deny, delegate deny }`
+  - `warp`: description `"Warp (Security Auditor)"`, prompt_file `"warp.md"`, models `["claude-sonnet-4-5"]`, mode `subagent`, temperature `0.1`, tool_policy `{ read allow, write deny, execute deny, network deny, delegate deny }`
 - [x] 2.3 In `builtins.ts`, implement and export `getBuiltinConfig(): Result<WeaveConfig, ConfigError[]>` that calls `parseConfig(BUILTIN_WEAVE_SOURCE)` and returns the result directly. Import `parseConfig`, `WeaveConfig`, `ConfigError` from `@weave/core` and `Result` from `neverthrow`. Add JSDoc.
 - [x] 2.4 Export `BUILTIN_AGENT_NAMES` as a `readonly string[]` constant listing all 8 agent names: `["loom", "tapestry", "shuttle", "pattern", "thread", "spindle", "weft", "warp"]`.
 - [x] 2.5 Update `packages/config/src/index.ts` to re-export `getBuiltinConfig` and `BUILTIN_AGENT_NAMES` from `./builtins.js`.
@@ -178,7 +178,7 @@ Implement `mergeConfigs(...configs: WeaveConfig[]): WeaveConfig` — a pure, var
   - (i) **Single config**: `mergeConfigs(cfg)` → returns equivalent config
   - (j) **Zero configs**: `mergeConfigs()` → returns default empty `WeaveConfig`
   - (k) **Immutability**: deep-freeze inputs before merge, verify no mutation (or clone inputs, merge, verify originals unchanged)
-  - (l) **tool_policy deep-merge**: builtin loom has `read: allow, write: allow`, project adds `search: ask` → merged has all three
+  - (l) **tool_policy deep-merge**: builtin loom has `read: allow, write: allow`, project adds `network: ask` → merged has all three
 - [x] 4.6 Run `bun test packages/config/src/__tests__/merge.test.ts` — all pass. Run `bun run typecheck` — zero errors.
 
 ---

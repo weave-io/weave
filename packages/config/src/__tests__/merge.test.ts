@@ -200,7 +200,7 @@ describe("mergeConfigs", () => {
       agent loom {
         prompt "x"
         tool_policy {
-          search ask
+          network ask
         }
       }
     `);
@@ -208,6 +208,6 @@ describe("mergeConfigs", () => {
     const policy = merged.agents.loom?.tool_policy;
     expect(policy?.read).toBe("allow");
     expect(policy?.write).toBe("allow");
-    expect(policy?.search).toBe("ask");
+    expect(policy?.network).toBe("ask");
   });
 });
