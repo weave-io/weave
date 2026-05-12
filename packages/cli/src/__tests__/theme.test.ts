@@ -4,7 +4,7 @@ import {
   PLAIN_LOGO_LINES,
   renderLogo,
 } from "../theme/ascii-logo.js";
-import { getTheme } from "../theme/colors.js";
+import { getTheme, supportsColor } from "../theme/colors.js";
 import {
   getVersion,
   renderBanner,
@@ -36,6 +36,33 @@ describe("theme colors", () => {
     const ESC = String.fromCharCode(0x1b);
     const escCount = result.split(ESC).length - 1;
     expect(escCount).toBeGreaterThanOrEqual(2);
+  });
+
+  it("treats FORCE_COLOR=0 and false as color disabled", () => {
+    const originalForceColor = Bun.env.FORCE_COLOR;
+    const originalNoColor = Bun.env.NO_COLOR;
+    delete Bun.env.NO_COLOR;
+
+    Bun.env.FORCE_COLOR = "0";
+    expect(supportsColor()).toBe(false);
+
+    Bun.env.FORCE_COLOR = "false";
+    expect(supportsColor()).toBe(false);
+
+    Bun.env.FORCE_COLOR = "1";
+    expect(supportsColor()).toBe(true);
+
+    if (originalForceColor === undefined) {
+      delete Bun.env.FORCE_COLOR;
+    } else {
+      Bun.env.FORCE_COLOR = originalForceColor;
+    }
+
+    if (originalNoColor === undefined) {
+      delete Bun.env.NO_COLOR;
+    } else {
+      Bun.env.NO_COLOR = originalNoColor;
+    }
   });
 });
 

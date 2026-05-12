@@ -42,13 +42,24 @@ const HARNESS_PROBES: HarnessProbe[] = [
 export function detectHarnesses(
   probes: DetectionProbes = new BunDetectionProbes(),
 ): ResultAsync<DetectedHarness[], DetectionError> {
-  return ResultAsync.fromPromise(
-    detectAll(probes),
-    (cause): DetectionError => ({
-      type: "UnknownDetectionError",
-      cause,
-    }),
-  ).andThen((detected) => okAsync(detected));
+  return ResultAsync.fromPromise(detectAll(probes), (cause): DetectionError => {
+    if (isDetectionError(cause)) return cause;
+    return { type: "UnknownDetectionError", cause };
+  }).andThen((detected) => okAsync(detected));
+}
+
+function isDetectionError(cause: unknown): cause is DetectionError {
+  if (typeof cause !== "object" || cause === null) return false;
+  if (!("type" in cause)) return false;
+  const type = cause.type;
+  return type === "ProbeFailed" || type === "UnknownDetectionError";
+}
+
+function probeFailed(
+  harness: SupportedHarnessId,
+  error: ProbeError,
+): DetectionError {
+  return { type: "ProbeFailed", harness, error };
 }
 
 async function detectAll(probes: DetectionProbes): Promise<DetectedHarness[]> {
@@ -59,8 +70,8 @@ async function detectAll(probes: DetectionProbes): Promise<DetectedHarness[]> {
     const exists = await probes.exists(configPath);
     const binaryPath = await probes.binaryOnPath(harness.binary);
 
-    if (exists.isErr()) continue;
-    if (binaryPath.isErr()) continue;
+    if (exists.isErr()) throw probeFailed(harness.id, exists.error);
+    if (binaryPath.isErr()) throw probeFailed(harness.id, binaryPath.error);
     if (!exists.value && binaryPath.value === undefined) continue;
 
     const readable = await probes.readable(configPath);

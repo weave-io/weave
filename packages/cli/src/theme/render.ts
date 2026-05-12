@@ -39,6 +39,8 @@ export function renderHelp(theme: ThemeColors): string[] {
     `    ${theme.cyan("--scope")} global|local ${theme.dim("Choose init scope")}`,
     `    ${theme.cyan("--install-dir")} <dir> ${theme.dim("Choose init config directory")}`,
     `    ${theme.cyan("--path")} <file>       ${theme.dim("Validate an explicit .weave file")}`,
+    `    ${theme.cyan("--project")}           ${theme.dim("Validate ./.weave/config.weave")}`,
+    `    ${theme.cyan("--global")}            ${theme.dim("Validate ~/.weave/config.weave")}`,
     `    ${theme.cyan("--json")}             ${theme.dim("Emit machine-readable validation output")}`,
     `    ${theme.cyan("--yes, -y")}          ${theme.dim("Accept safe non-interactive defaults")}`,
     "",

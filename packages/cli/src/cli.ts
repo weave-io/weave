@@ -25,7 +25,7 @@ export interface CliDeps {
 
 function defaultDeps(): CliDeps {
   return {
-    argv: typeof Bun !== "undefined" ? Bun.argv : process.argv,
+    argv: Bun.argv,
     terminal: new RealTerminal(),
   };
 }

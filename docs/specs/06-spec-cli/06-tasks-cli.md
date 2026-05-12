@@ -23,7 +23,7 @@
 | `packages/cli/src/theme/render.ts`                         | Banner/help rendering helpers for themed and plain-text output.                                                   |
 | `packages/cli/src/commands/validate.ts`                    | `weave validate` implementation.                                                                                  |
 | `packages/cli/src/commands/init.ts`                        | `weave init` orchestration for scope/location selection, scaffolding, prompts, detection, and installer handoff.  |
-| `packages/cli/src/commands/run.ts`                         | Optional compatibility shim that rejects `weave run` with a product-vision-aligned message.                       |
+| `packages/cli/src/cli.ts`                                  | Top-level command router, including optional compatibility behavior that rejects `weave run`.                     |
 | `packages/cli/src/config/starter-config.ts`                | Generated starter `.weave` DSL template for global, local, or custom-location config scaffolding.                 |
 | `packages/cli/src/fs/file-system.ts`                       | Injectable file-system abstraction for Bun-backed and in-memory implementations.                                  |
 | `packages/cli/src/prompt/index.ts`                         | Prompt wrapper around interactive prompt library behavior returning `Result` values.                              |
@@ -167,7 +167,7 @@
 - [x] 5.5 Integrate installer and optional module selection into `weave init` with no arguments, `weave init --harness <name>`, `weave init --all-harnesses`, interactive multi-select, `--force`, and `--yes` flows.
 - [x] 5.6 Ensure real harness and adapter module file writes happen only after interactive confirmation or explicit non-interactive flags.
 - [x] 5.7 Add installer idempotency checks so repeated installs without `--force` do not duplicate Weave entries or adapter module entries/files.
-- [x] 5.8 Add optional `packages/cli/src/commands/run.ts` compatibility behavior that exits `1` with a message explaining Weave configures harnesses through `weave init` and does not run harness runtimes directly.
+- [x] 5.8 Add optional router compatibility behavior that exits `1` for `weave run` with a message explaining Weave configures harnesses through `weave init` and does not run harness runtimes directly.
 - [x] 5.9 Add `packages/cli/src/installers/__tests__/installers.test.ts` covering successful supported install, optional adapter module install, idempotent repeat install, forced reinstall, unsupported explicit harness, undetected explicit harness, and bulk install skip behavior.
 - [x] 5.10 Update `README.md` and/or create `docs/cli.md` with local PATH installation, package-runner commands, `init`, `--scope`, `--install-dir`, global vs local installation descriptions, `validate`, no direct runtime execution, theme/NO_COLOR behavior, and safe proof artifact guidance.
 - [x] 5.11 Verify proof artifacts for task 5.0 with installer tests, fixture-backed init commands, run compatibility behavior, docs review, `bun run lint`, `bun run typecheck`, `bun run build`, and `bun run test`.

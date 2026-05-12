@@ -28,14 +28,17 @@ function toError(
 
 export class BunFileSystem implements FileSystem {
   cwd(): string {
-    return process.cwd();
+    const runtime = Bun as typeof Bun & { cwd?: string };
+    return runtime.cwd ?? ".";
   }
 
   home(): string {
-    return process.env.HOME ?? "";
+    return Bun.env.HOME ?? "/tmp";
   }
 
   resolvePath(path: string): string {
+    if (path === "~") return this.home();
+    if (path.startsWith("~/")) return resolve(this.home(), path.slice(2));
     return resolve(path);
   }
 
@@ -100,7 +103,10 @@ export class MemoryFileSystem implements FileSystem {
   }
 
   resolvePath(path: string): string {
-    if (path.startsWith("~")) return resolve(this.homeDirectory, path.slice(2));
+    if (path === "~") return this.homeDirectory;
+    if (path.startsWith("~/")) {
+      return resolve(this.homeDirectory, path.slice(2));
+    }
     return resolve(this.currentDirectory, path);
   }
 

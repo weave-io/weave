@@ -14,19 +14,19 @@ export interface TerminalIO {
 }
 
 /**
- * Real terminal writer backed by `process.stdout` / `process.stderr`.
- * Biome `noConsole` is bypassed here intentionally — this is the
- * single authorised output boundary.
+ * Real terminal writer backed by Bun stdout/stderr writers.
  */
 export class RealTerminal implements TerminalIO {
   stdout(msg: string): void {
-    // biome-ignore lint/suspicious/noConsole: authorised output boundary
-    console.log(msg);
+    const writer = Bun.stdout.writer();
+    writer.write(`${msg}\n`);
+    writer.flush();
   }
 
   stderr(msg: string): void {
-    // biome-ignore lint/suspicious/noConsole: authorised output boundary
-    console.error(msg);
+    const writer = Bun.stderr.writer();
+    writer.write(`${msg}\n`);
+    writer.flush();
   }
 }
 

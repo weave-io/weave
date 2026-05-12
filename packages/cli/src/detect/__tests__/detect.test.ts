@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
+import { errAsync } from "neverthrow";
 import { detectHarnesses } from "../index.js";
-import { MemoryDetectionProbes } from "../probes.js";
+import { MemoryDetectionProbes, type ProbeError } from "../probes.js";
 
 const files = {
   "/home/user/.config/opencode/config.json": { readable: true },
@@ -82,5 +83,35 @@ describe("harness detection", () => {
     });
     await detectHarnesses(probes);
     expect(probes.writes).toEqual([]);
+  });
+
+  it("returns ProbeFailed when required probes fail", async () => {
+    class FailingProbes extends MemoryDetectionProbes {
+      exists(path: string) {
+        return errAsync<boolean, ProbeError>({
+          type: "ProbeError",
+          operation: "exists",
+          path,
+          cause: "fixture probe failure",
+        });
+      }
+    }
+
+    const result = await detectHarnesses(new FailingProbes());
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().type).toBe("ProbeFailed");
+  });
+
+  it("expands only bare tilde and slash-prefixed tilde paths", () => {
+    const probes = new MemoryDetectionProbes({ home: "/home/example" });
+    expect(probes.resolvePath("~")).toBe("/home/example");
+    expect(probes.resolvePath("~/.config/tool.json")).toBe(
+      "/home/example/.config/tool.json",
+    );
+    expect(
+      probes
+        .resolvePath("~user/.config/tool.json")
+        .endsWith("/~user/.config/tool.json"),
+    ).toBe(true);
   });
 });

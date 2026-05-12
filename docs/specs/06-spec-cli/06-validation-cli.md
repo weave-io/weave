@@ -70,7 +70,7 @@
 | U4-FR8 Harness writes require confirmation or explicit flags                                    | Verified | `init.ts` uses selected harnesses only for explicit `--harness`/`--all-harnesses` or interactive confirmation; detection-only proof does not mutate config.                |
 | U4-FR9 Installers are idempotent                                                                | Verified | `OpenCodeInstaller`; installer idempotency test and `06-task-05-proofs.md`.                                                                                                |
 | U4-FR10 Unsupported/undetected explicit harnesses report clear errors and exit `1`              | Verified | `weave init --harness pi --yes` proof exits `1`; unsupported installer tests.                                                                                              |
-| U4-FR11 `weave run` is not a runtime command                                                    | Verified | `packages/cli/src/commands/run.ts`, router message, `06-task-05-proofs.md` exits `1`.                                                                                      |
+| U4-FR11 `weave run` is not a runtime command                                                    | Verified | `packages/cli/src/cli.ts` router message, `06-task-05-proofs.md` exits `1`.                                                                                                |
 
 ### Repository Standards
 
@@ -79,7 +79,7 @@
 | Bun-only runtime/package/test workflow   | Verified | `bun run lint`, `bun run typecheck`, `bun run build`, `bun test` all pass; package scripts use Bun.                            |
 | `neverthrow` fallible APIs               | Verified | CLI command helpers and filesystem/detection/installers use `Result`/`ResultAsync`; typecheck passes.                          |
 | Mockable file/process/harness boundaries | Verified | `MemoryFileSystem`, `MemoryDetectionProbes`, `StaticPromptAdapter`; tests use fixtures and no real harness process.            |
-| No scattered `console.*`                 | Verified | Output centralized in `packages/cli/src/io/terminal.ts` with Biome ignore at the boundary; `bun run lint` passes.              |
+| No scattered `console.*`                 | Verified | Output centralized in `packages/cli/src/io/terminal.ts` through Bun stdout/stderr writers; `bun run lint` passes.              |
 | Adapter boundary compliance              | Verified | Detection/installer logic remains in `@weave/cli`; no core/engine harness discovery changes.                                   |
 | Tests alongside modules                  | Verified | CLI tests live under `packages/cli/src/**/__tests__/`; full suite passes 298 tests.                                            |
 | Documentation updated                    | Verified | `docs/cli.md` and `README.md` cover CLI install, package runners, `init`, `validate`, no runtime execution, security guidance. |

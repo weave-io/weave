@@ -12,13 +12,13 @@
 
 /** Returns true when ANSI colors should be applied. */
 export function supportsColor(): boolean {
-  if (typeof process !== "undefined") {
-    if (process.env.NO_COLOR !== undefined) return false;
-    if (process.env.FORCE_COLOR !== undefined) return true;
-    if (process.stdout && "isTTY" in process.stdout) {
-      return !!process.stdout.isTTY;
-    }
+  if (Bun.env.NO_COLOR !== undefined) return false;
+
+  const forceColor = Bun.env.FORCE_COLOR;
+  if (forceColor !== undefined) {
+    return forceColor !== "" && forceColor !== "0" && forceColor !== "false";
   }
+
   return false;
 }
 

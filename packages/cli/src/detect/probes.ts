@@ -26,11 +26,12 @@ function probeError(
 
 export class BunDetectionProbes implements DetectionProbes {
   home(): string {
-    return process.env.HOME ?? "";
+    return Bun.env.HOME ?? "/tmp";
   }
 
   resolvePath(path: string): string {
-    if (path.startsWith("~")) return resolve(this.home(), path.slice(2));
+    if (path === "~") return this.home();
+    if (path.startsWith("~/")) return resolve(this.home(), path.slice(2));
     return resolve(path);
   }
 
@@ -93,7 +94,8 @@ export class MemoryDetectionProbes implements DetectionProbes {
   }
 
   resolvePath(path: string): string {
-    if (path.startsWith("~")) return resolve(this.home(), path.slice(2));
+    if (path === "~") return this.home();
+    if (path.startsWith("~/")) return resolve(this.home(), path.slice(2));
     return resolve(path);
   }
 
