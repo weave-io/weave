@@ -21,9 +21,9 @@ agent orchestrator {
   tool_policy {
     read     allow
     write    allow
-    edit     allow
+    execute  ask
+    network  ask
     delegate allow
-    search   ask
   }
 
   triggers [
@@ -46,9 +46,9 @@ agent specialist {
   tool_policy {
     read     allow
     write    deny
-    edit     deny
+    execute  deny
+    network  allow
     delegate deny
-    search   allow
   }
 
   triggers [
@@ -67,9 +67,10 @@ agent hybrid {
   temperature 2.0
 
   tool_policy {
-    read  allow
-    write ask
-    edit  ask
+    read     allow
+    write    ask
+    execute  ask
+    network  deny
   }
 }
 
@@ -93,9 +94,9 @@ category full-cat {
   tool_policy {
     read     allow
     write    allow
-    edit     allow
+    execute  deny
+    network  deny
     delegate deny
-    search   ask
   }
 
   prompt_append "Focus on API contracts, data integrity, and backwards compatibility."

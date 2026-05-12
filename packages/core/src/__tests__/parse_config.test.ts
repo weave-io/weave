@@ -25,7 +25,7 @@ describe("parseConfig — valid sources", () => {
     read allow
     write allow
     delegate allow
-    search ask
+    network ask
   }
   triggers [
     { domain "Orchestration" trigger "Complex multi-step tasks" }
@@ -42,7 +42,7 @@ agent shuttle {
   tool_policy {
     read allow
     write allow
-    edit allow
+    execute allow
     delegate deny
   }
 }
@@ -105,9 +105,9 @@ log_level INFO`;
   tool_policy {
     read allow
     write allow
-    edit allow
+    execute allow
     delegate allow
-    search ask
+    network ask
   }
 
   triggers [

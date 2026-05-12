@@ -24,8 +24,8 @@ How should agents declare their system prompts in the DSL? This is the core desi
 
 How should agents declare which tools they can use?
 
-- [ ] (A) **String array** (current) — `tools: ["read", "edit", "bash"]` — Simple allowlist of tool names.
-- [x] (B) **Capability map** — `toolPolicy: { read: true, write: true, edit: true, delegate: true }` — Boolean map of abstract capabilities. Adapters map capabilities to harness-specific tool names. Follows §7.2/§7.3 recommendation.
+- [ ] (A) **String array** (current) — `tools: ["read", "execute", "bash"]` — Simple allowlist of tool names.
+- [x] (B) **Capability map** — `toolPolicy: { read: "allow", write: "allow", execute: "allow", delegate: "deny" }` — Map of abstract capabilities to `allow`/`deny`/`ask`. Adapters map capabilities to harness-specific tool names. Follows §7.2/§7.3 recommendation.
 - [ ] (C) **Both** — `tools?: string[]` for quick declarations + `toolPolicy?: Record<string, boolean>` for fine-grained control. If both are provided, `toolPolicy` wins.
 - [ ] (D) Other (describe)
 

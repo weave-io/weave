@@ -22,9 +22,9 @@ export const ToolPolicySchema = z
   .object({
     read: ToolPermissionSchema.optional(),
     write: ToolPermissionSchema.optional(),
-    edit: ToolPermissionSchema.optional(),
+    execute: ToolPermissionSchema.optional(),
     delegate: ToolPermissionSchema.optional(),
-    search: ToolPermissionSchema.optional(),
+    network: ToolPermissionSchema.optional(),
   })
   .strict();
 

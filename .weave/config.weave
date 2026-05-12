@@ -18,9 +18,9 @@ agent loom {
   tool_policy {
     read     allow
     write    allow
-    edit     allow
+    execute  allow
+    network  ask
     delegate allow
-    search   ask
   }
 
   triggers [
@@ -42,9 +42,9 @@ agent tapestry {
   tool_policy {
     read     allow
     write    allow
-    edit     allow
+    execute  allow
+    network  deny
     delegate allow
-    search   ask
   }
 
   triggers [
@@ -66,9 +66,9 @@ agent shuttle {
   tool_policy {
     read     allow
     write    allow
-    edit     allow
+    execute  allow
+    network  deny
     delegate deny
-    search   ask
   }
 
   triggers [
@@ -89,9 +89,9 @@ agent pattern {
   tool_policy {
     read     allow
     write    allow
-    edit     allow
+    execute  deny
+    network  deny
     delegate deny
-    search   ask
   }
 
   triggers [
@@ -110,9 +110,9 @@ agent thread {
   tool_policy {
     read     allow
     write    deny
-    edit     deny
+    execute  deny
+    network  deny
     delegate deny
-    search   ask
   }
 
   triggers [
@@ -131,9 +131,9 @@ agent spindle {
   tool_policy {
     read     allow
     write    deny
-    edit     deny
+    execute  deny
+    network  allow
     delegate deny
-    search   allow
   }
 
   triggers [
@@ -152,9 +152,9 @@ agent weft {
   tool_policy {
     read     allow
     write    deny
-    edit     deny
+    execute  deny
+    network  deny
     delegate deny
-    search   deny
   }
 
   triggers [
@@ -173,9 +173,9 @@ agent warp {
   tool_policy {
     read     allow
     write    deny
-    edit     deny
+    execute  deny
+    network  deny
     delegate deny
-    search   deny
   }
 
   triggers [
@@ -199,7 +199,8 @@ category core {
   tool_policy {
     read     allow
     write    allow
-    edit     allow
+    execute  deny
+    network  deny
     delegate deny
   }
 }
@@ -214,7 +215,8 @@ category engine {
   tool_policy {
     read     allow
     write    allow
-    edit     allow
+    execute  deny
+    network  deny
     delegate deny
   }
 }
@@ -229,7 +231,8 @@ category adapters {
   tool_policy {
     read     allow
     write    allow
-    edit     allow
+    execute  deny
+    network  deny
     delegate deny
   }
 }
@@ -244,7 +247,8 @@ category docs {
   tool_policy {
     read     allow
     write    allow
-    edit     allow
+    execute  deny
+    network  deny
     delegate deny
   }
 }
@@ -259,7 +263,8 @@ category scripts {
   tool_policy {
     read     allow
     write    allow
-    edit     allow
+    execute  deny
+    network  deny
     delegate deny
   }
 }

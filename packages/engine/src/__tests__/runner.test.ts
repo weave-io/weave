@@ -109,6 +109,8 @@ describe("WeaveRunner", () => {
           tool_policy {
             read  allow
             write allow
+            execute ask
+            network deny
             delegate deny
           }
         }
@@ -119,6 +121,8 @@ describe("WeaveRunner", () => {
       const spawned = adapter.callsTo("spawnSubagent");
       expect(spawned[0]?.config.tool_policy?.read).toBe("allow");
       expect(spawned[0]?.config.tool_policy?.write).toBe("allow");
+      expect(spawned[0]?.config.tool_policy?.execute).toBe("ask");
+      expect(spawned[0]?.config.tool_policy?.network).toBe("deny");
       expect(spawned[0]?.config.tool_policy?.delegate).toBe("deny");
     });
   });
