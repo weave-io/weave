@@ -42,6 +42,12 @@ describe("ToolPolicySchema", () => {
 
     expect(r.success).toBe(false);
   });
+
+  it("rejects unknown keys such as search", () => {
+    const r = ToolPolicySchema.safeParse({ search: "ask" });
+
+    expect(r.success).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
