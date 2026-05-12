@@ -83,10 +83,10 @@ weave init --scope local --install-dir ./custom-weave --yes
 
 Scope defaults:
 
-| Scope | Default directory | Purpose |
-| --- | --- | --- |
-| `global` | `~/.weave` | Shared user-level defaults across projects |
-| `local` | `<projectRoot>/.weave` | Project-level configuration for the current repository |
+| Scope    | Default directory      | Purpose                                                |
+| -------- | ---------------------- | ------------------------------------------------------ |
+| `global` | `~/.weave`             | Shared user-level defaults across projects             |
+| `local`  | `<projectRoot>/.weave` | Project-level configuration for the current repository |
 
 Safety behavior:
 
