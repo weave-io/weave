@@ -1,5 +1,31 @@
-import { describe, expect, it } from "bun:test";
-import { MemoryFileSystem } from "../fs/file-system.js";
+import { afterEach, describe, expect, it } from "bun:test";
+import { BunFileSystem, MemoryFileSystem } from "../fs/file-system.js";
+
+describe("BunFileSystem", () => {
+  const originalFile = Bun.file;
+
+  afterEach(() => {
+    Bun.file = originalFile;
+  });
+
+  it("uses typed missing-file causes", async () => {
+    const missingFile = {
+      text: () =>
+        Promise.reject(
+          Object.assign(new Error("ENOENT: no such file or directory"), {
+            code: "ENOENT",
+          }),
+        ),
+    } as ReturnType<typeof Bun.file>;
+    Bun.file = (() => missingFile) as typeof Bun.file;
+
+    const fileSystem = new BunFileSystem();
+    const result = await fileSystem.readText("/project/missing.weave");
+
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().cause.kind).toBe("MissingFile");
+  });
+});
 
 describe("MemoryFileSystem", () => {
   it("creates ancestor directories for initial files", async () => {

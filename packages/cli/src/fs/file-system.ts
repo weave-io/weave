@@ -42,6 +42,15 @@ function normalizeRuntimeFailure(cause: unknown): FileSystemErrorCause {
   return { kind: "RuntimeFailure", message: String(cause) };
 }
 
+function isMissingFileCause(cause: unknown): boolean {
+  if (cause instanceof Error && cause.message.includes("ENOENT")) return true;
+  if (typeof cause !== "object" || cause === null) return false;
+
+  const error = cause as { code?: unknown; errno?: unknown };
+  if (error.code === "ENOENT") return true;
+  return error.errno === -2;
+}
+
 function toError(
   operation: FileSystemError["operation"],
   path: string,
@@ -52,6 +61,21 @@ function toError(
     path,
     cause: normalizeRuntimeFailure(cause),
   });
+}
+
+function toReadError(path: string): (cause: unknown) => FileSystemError {
+  return (cause) => {
+    if (isMissingFileCause(cause)) {
+      return {
+        type: "FileSystemError",
+        operation: "read",
+        path,
+        cause: { kind: "MissingFile" },
+      };
+    }
+
+    return toError("read", path)(cause);
+  };
 }
 
 export class BunFileSystem implements FileSystem {
@@ -82,7 +106,7 @@ export class BunFileSystem implements FileSystem {
     const resolved = this.resolvePath(path);
     return ResultAsync.fromPromise(
       Bun.file(resolved).text(),
-      toError("read", resolved),
+      toReadError(resolved),
     );
   }
 
