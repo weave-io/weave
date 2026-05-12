@@ -4,11 +4,10 @@ import { BufferTerminal } from "../../io/terminal.js";
 import { getTheme } from "../../theme/colors.js";
 import { runValidate } from "../validate.js";
 
-const validConfig = await Bun.file(
-  "packages/cli/src/__fixtures__/valid.weave",
-).text();
+const fixtureRoot = new URL("../../__fixtures__/", import.meta.url);
+const validConfig = await Bun.file(new URL("valid.weave", fixtureRoot)).text();
 const invalidConfig = await Bun.file(
-  "packages/cli/src/__fixtures__/invalid.weave",
+  new URL("invalid.weave", fixtureRoot),
 ).text();
 
 function flags(
