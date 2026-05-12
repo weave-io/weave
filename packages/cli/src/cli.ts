@@ -10,8 +10,8 @@ import { ok, type Result } from "neverthrow";
 import { parseArgs } from "./args.js";
 import { type CliError, formatCliError } from "./errors.js";
 import { RealTerminal, type TerminalIO } from "./io/terminal.js";
-import { getTheme } from "./theme/colors.js";
-import { renderHelp, renderVersion } from "./theme/render.js";
+import { defaultThemeManager } from "./theme/colors.js";
+import { defaultThemeRenderer } from "./theme/render.js";
 
 // ---------------------------------------------------------------------------
 // Dependencies — injectable for testing
@@ -46,7 +46,7 @@ export async function run(
     ...deps,
   };
 
-  const theme = getTheme(colorEnabled);
+  const theme = defaultThemeManager.getTheme(colorEnabled);
 
   const parsed = parseArgs(argv);
   if (parsed.isErr()) {
@@ -63,13 +63,13 @@ export async function run(
 
   switch (command) {
     case "help": {
-      const lines = renderHelp(theme);
+      const lines = defaultThemeRenderer.renderHelp(theme);
       terminal.stdout(lines.join("\n"));
       return ok(0);
     }
 
     case "version": {
-      terminal.stdout(renderVersion());
+      terminal.stdout(defaultThemeRenderer.renderVersion());
       return ok(0);
     }
 
@@ -115,7 +115,7 @@ export async function run(
     }
 
     default: {
-      const lines = renderHelp(theme);
+      const lines = defaultThemeRenderer.renderHelp(theme);
       terminal.stdout(lines.join("\n"));
       return ok(0);
     }

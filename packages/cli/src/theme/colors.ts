@@ -1,58 +1,10 @@
 /**
  * Weave CLI theme tokens and terminal color helpers.
  *
- * Honors `NO_COLOR` (https://no-color.org/) and non-TTY detection.
+ * Honors `FORCE_COLOR`, `NO_COLOR` (https://no-color.org/), and TTY detection.
  * When color is disabled, all formatting functions return their input
  * unmodified.
  */
-
-// ---------------------------------------------------------------------------
-// Color decision
-// ---------------------------------------------------------------------------
-
-/** Returns true when ANSI colors should be applied. */
-export function supportsColor(): boolean {
-  if (Bun.env.NO_COLOR !== undefined) return false;
-
-  const forceColor = Bun.env.FORCE_COLOR;
-  if (forceColor !== undefined) {
-    return forceColor !== "" && forceColor !== "0" && forceColor !== "false";
-  }
-
-  return false;
-}
-
-// ---------------------------------------------------------------------------
-// ANSI helpers
-// ---------------------------------------------------------------------------
-
-const ESC = "\x1b[";
-const RESET = `${ESC}0m`;
-
-function ansi(code: string): (text: string) => string {
-  return (text: string) => `${ESC}${code}m${text}${RESET}`;
-}
-
-// ---------------------------------------------------------------------------
-// Weave brand palette
-// ---------------------------------------------------------------------------
-
-const _cyan = ansi("36");
-const _blue = ansi("34");
-const _purple = ansi("35");
-const _magenta = ansi("95");
-const _green = ansi("32");
-const _yellow = ansi("33");
-const _red = ansi("31");
-const _dim = ansi("2");
-const _bold = ansi("1");
-const _boldCyan = (t: string) => _bold(_cyan(t));
-const _boldPurple = (t: string) => _bold(_purple(t));
-const _boldGreen = (t: string) => _bold(_green(t));
-const _boldRed = (t: string) => _bold(_red(t));
-const _boldYellow = (t: string) => _bold(_yellow(t));
-
-const identity = (t: string) => t;
 
 export interface ThemeColors {
   cyan: (t: string) => string;
@@ -71,41 +23,94 @@ export interface ThemeColors {
   boldYellow: (t: string) => string;
 }
 
-/** Returns themed color functions or identity pass-throughs. */
-export function getTheme(colorEnabled?: boolean): ThemeColors {
-  const enabled = colorEnabled ?? supportsColor();
-  if (!enabled) {
+export interface ThemeManagerDeps {
+  env?: Record<string, string | undefined>;
+  isTty?: () => boolean;
+}
+
+export class ThemeManager {
+  private readonly esc = "\x1b[";
+  private readonly reset = `${this.esc}0m`;
+
+  constructor(private readonly deps: ThemeManagerDeps = {}) {}
+
+  supportsColor(): boolean {
+    const env = this.deps.env ?? Bun.env;
+    const forceColor = env.FORCE_COLOR;
+    if (forceColor !== undefined) {
+      return forceColor !== "" && forceColor !== "0" && forceColor !== "false";
+    }
+
+    if (env.NO_COLOR !== undefined) return false;
+    return this.isTty();
+  }
+
+  getTheme(colorEnabled?: boolean): ThemeColors {
+    const enabled = colorEnabled ?? this.supportsColor();
+    if (!enabled) return this.disabledTheme();
+    return this.enabledTheme();
+  }
+
+  private ansi(code: string): (text: string) => string {
+    return (text: string) => `${this.esc}${code}m${text}${this.reset}`;
+  }
+
+  private identity(text: string): string {
+    return text;
+  }
+
+  private isTty(): boolean {
+    if (this.deps.isTty !== undefined) return this.deps.isTty();
+    return Boolean(process.stdout?.isTTY);
+  }
+
+  private disabledTheme(): ThemeColors {
     return {
-      cyan: identity,
-      blue: identity,
-      purple: identity,
-      magenta: identity,
-      green: identity,
-      yellow: identity,
-      red: identity,
-      dim: identity,
-      bold: identity,
-      boldCyan: identity,
-      boldPurple: identity,
-      boldGreen: identity,
-      boldRed: identity,
-      boldYellow: identity,
+      cyan: this.identity,
+      blue: this.identity,
+      purple: this.identity,
+      magenta: this.identity,
+      green: this.identity,
+      yellow: this.identity,
+      red: this.identity,
+      dim: this.identity,
+      bold: this.identity,
+      boldCyan: this.identity,
+      boldPurple: this.identity,
+      boldGreen: this.identity,
+      boldRed: this.identity,
+      boldYellow: this.identity,
     };
   }
-  return {
-    cyan: _cyan,
-    blue: _blue,
-    purple: _purple,
-    magenta: _magenta,
-    green: _green,
-    yellow: _yellow,
-    red: _red,
-    dim: _dim,
-    bold: _bold,
-    boldCyan: _boldCyan,
-    boldPurple: _boldPurple,
-    boldGreen: _boldGreen,
-    boldRed: _boldRed,
-    boldYellow: _boldYellow,
-  };
+
+  private enabledTheme(): ThemeColors {
+    const cyan = this.ansi("36");
+    const blue = this.ansi("34");
+    const purple = this.ansi("35");
+    const magenta = this.ansi("95");
+    const green = this.ansi("32");
+    const yellow = this.ansi("33");
+    const red = this.ansi("31");
+    const dim = this.ansi("2");
+    const bold = this.ansi("1");
+
+    return {
+      cyan,
+      blue,
+      purple,
+      magenta,
+      green,
+      yellow,
+      red,
+      dim,
+      bold,
+      boldCyan: (text: string) => bold(cyan(text)),
+      boldPurple: (text: string) => bold(purple(text)),
+      boldGreen: (text: string) => bold(green(text)),
+      boldRed: (text: string) => bold(red(text)),
+      boldYellow: (text: string) => bold(yellow(text)),
+    };
+  }
 }
+
+export const defaultThemeManager = new ThemeManager();

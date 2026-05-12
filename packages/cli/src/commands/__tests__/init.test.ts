@@ -3,8 +3,11 @@ import { MemoryDetectionProbes } from "../../detect/probes.js";
 import { MemoryFileSystem } from "../../fs/file-system.js";
 import { BufferTerminal } from "../../io/terminal.js";
 import { StaticPromptAdapter } from "../../prompt/index.js";
-import { getTheme } from "../../theme/colors.js";
+import { ThemeManager } from "../../theme/colors.js";
 import { runInit } from "../init.js";
+
+const themeManager = new ThemeManager({ isTty: () => false });
+
 import { runValidate } from "../validate.js";
 
 function flags(
@@ -36,7 +39,7 @@ function initContext(input: {
     fs,
     ctx: {
       terminal,
-      theme: getTheme(false),
+      theme: themeManager.getTheme(false),
       flags: flags(input.overrides),
       fs,
       prompt: input.prompt,
@@ -128,7 +131,7 @@ describe("init command", () => {
     const terminal = new BufferTerminal();
     const result = await runValidate({
       terminal,
-      theme: getTheme(false),
+      theme: themeManager.getTheme(false),
       flags: flags({ project: true }),
       fs,
     });

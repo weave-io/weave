@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weave/core, @weave/engine, @weave/config, @weave/cli, @weave/adapter-opencode
 
-> 0 routes | 0 models | 0 components | 33 lib files | 4 env vars | 0 middleware | 0% test coverage
-> **Token savings:** this file is ~2,800 tokens. Without it, AI exploration would cost ~18,200 tokens. **Saves ~15,400 tokens per conversation.**
-> **Last scanned:** 2026-05-12 21:11 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 33 lib files | 2 env vars | 0 middleware | 0% test coverage
+> **Token savings:** this file is ~2,700 tokens. Without it, AI exploration would cost ~17,900 tokens. **Saves ~15,200 tokens per conversation.**
+> **Last scanned:** 2026-05-12 21:31 — re-run after significant changes
 
 ---
 
@@ -44,9 +44,11 @@
   - type ParseFailureError
   - _...2 more_
 - `packages/cli/src/fs/file-system.ts`
+  - function describeFileSystemError: (error) => string
   - class BunFileSystem
   - class MemoryFileSystem
   - interface FileSystem
+  - type FileSystemErrorCause
   - type FileSystemError
 - `packages/cli/src/installers/index.ts`
   - function installerRegistry: (fs) => Record<SupportedHarnessId, HarnessInstaller>
@@ -74,14 +76,14 @@
   - const PLAIN_LOGO_LINES: string[]
   - const LOGO_WIDTH
 - `packages/cli/src/theme/colors.ts`
-  - function supportsColor: () => boolean
-  - function getTheme: (colorEnabled?) => ThemeColors
+  - class ThemeManager
   - interface ThemeColors
+  - interface ThemeManagerDeps
+  - const defaultThemeManager
 - `packages/cli/src/theme/render.ts`
-  - function getVersion: () => string
-  - function renderBanner: (theme) => string[]
-  - function renderHelp: (theme) => string[]
-  - function renderVersion: () => string
+  - class ThemeRenderer
+  - interface VersionSource
+  - const defaultThemeRenderer
 - `packages/config/src/builtins.ts`
   - function getBuiltinConfig: () => Result<WeaveConfig, ConfigError[]>
   - const BUILTIN_AGENT_NAMES: readonly string[]
@@ -126,10 +128,8 @@
 
 ## Environment Variables
 
-- `FORCE_COLOR` **required** — packages/cli/src/__tests__/theme.test.ts
 - `HOME` **required** — packages/cli/src/detect/probes.ts
 - `LOG_LEVEL` **required** — packages/config/src/logger.ts
-- `NO_COLOR` **required** — packages/cli/src/__tests__/theme.test.ts
 
 ## Config Files
 
@@ -146,6 +146,7 @@
 - `packages/core/src/tokens.ts` — imported by **8** files
 - `packages/cli/src/fs/file-system.ts` — imported by **7** files
 - `packages/core/src/errors.ts` — imported by **6** files
+- `packages/cli/src/theme/render.ts` — imported by **5** files
 - `packages/cli/src/args.ts` — imported by **5** files
 - `packages/config/src/discovery.ts` — imported by **5** files
 - `packages/config/src/types.ts` — imported by **5** files
@@ -160,27 +161,26 @@
 - `packages/cli/src/detect/probes.ts` — imported by **3** files
 - `packages/cli/src/prompt/index.ts` — imported by **3** files
 - `packages/cli/src/installers/index.ts` — imported by **3** files
-- `packages/cli/src/detect/index.ts` — imported by **3** files
 
 ## Import Map (who imports what)
 
 - `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/validate.test.ts`, `packages/cli/src/commands/init.ts` +5 more
 - `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/validate.test.ts`, `packages/cli/src/commands/init.ts` +3 more
 - `packages/core/src/tokens.ts` ← `packages/core/src/__tests__/lexer.test.ts`, `packages/core/src/ast.ts`, `packages/core/src/ast.ts`, `packages/core/src/index.ts`, `packages/core/src/index.ts` +3 more
-- `packages/cli/src/fs/file-system.ts` ← `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/validate.test.ts`, `packages/cli/src/commands/init.ts`, `packages/cli/src/commands/validate.ts`, `packages/cli/src/installers/__tests__/installers.test.ts` +2 more
+- `packages/cli/src/fs/file-system.ts` ← `packages/cli/src/__tests__/file-system.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/validate.test.ts`, `packages/cli/src/commands/validate.ts`, `packages/cli/src/installers/__tests__/installers.test.ts` +2 more
 - `packages/core/src/errors.ts` ← `packages/core/src/__tests__/errors.test.ts`, `packages/core/src/index.ts`, `packages/core/src/lexer.ts`, `packages/core/src/parse-config.ts`, `packages/core/src/parser.ts` +1 more
+- `packages/cli/src/theme/render.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/init.ts`, `packages/cli/src/index.ts`, `packages/cli/src/index.ts`
 - `packages/cli/src/args.ts` ← `packages/cli/src/cli.ts`, `packages/cli/src/commands/init.ts`, `packages/cli/src/commands/validate.ts`, `packages/cli/src/index.ts`, `packages/cli/src/index.ts`
 - `packages/config/src/discovery.ts` ← `packages/config/src/__tests__/discovery.test.ts`, `packages/config/src/__tests__/discovery.test.ts`, `packages/config/src/__tests__/load_config.test.ts`, `packages/config/src/index.ts`, `packages/config/src/index.ts`
 - `packages/config/src/types.ts` ← `packages/config/src/__tests__/resolve.test.ts`, `packages/config/src/discovery.ts`, `packages/config/src/index.ts`, `packages/config/src/loader.ts`, `packages/config/src/resolve.ts`
 - `packages/core/src/lexer.ts` ← `packages/core/src/__tests__/lexer.test.ts`, `packages/core/src/__tests__/parser.test.ts`, `packages/core/src/__tests__/validate.test.ts`, `packages/core/src/index.ts`, `packages/core/src/parse-config.ts`
-- `packages/cli/src/cli.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/index.ts`, `packages/cli/src/index.ts`, `packages/cli/src/main.ts`
 
 ---
 
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 24 test files found
+> 25 test files found
 
 ---
 

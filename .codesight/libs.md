@@ -33,9 +33,11 @@
   - type ParseFailureError
   - _...2 more_
 - `packages/cli/src/fs/file-system.ts`
+  - function describeFileSystemError: (error) => string
   - class BunFileSystem
   - class MemoryFileSystem
   - interface FileSystem
+  - type FileSystemErrorCause
   - type FileSystemError
 - `packages/cli/src/installers/index.ts`
   - function installerRegistry: (fs) => Record<SupportedHarnessId, HarnessInstaller>
@@ -63,14 +65,14 @@
   - const PLAIN_LOGO_LINES: string[]
   - const LOGO_WIDTH
 - `packages/cli/src/theme/colors.ts`
-  - function supportsColor: () => boolean
-  - function getTheme: (colorEnabled?) => ThemeColors
+  - class ThemeManager
   - interface ThemeColors
+  - interface ThemeManagerDeps
+  - const defaultThemeManager
 - `packages/cli/src/theme/render.ts`
-  - function getVersion: () => string
-  - function renderBanner: (theme) => string[]
-  - function renderHelp: (theme) => string[]
-  - function renderVersion: () => string
+  - class ThemeRenderer
+  - interface VersionSource
+  - const defaultThemeRenderer
 - `packages/config/src/builtins.ts`
   - function getBuiltinConfig: () => Result<WeaveConfig, ConfigError[]>
   - const BUILTIN_AGENT_NAMES: readonly string[]

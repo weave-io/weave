@@ -78,10 +78,10 @@
 | ---------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | Bun-only runtime/package/test workflow   | Verified | `bun run lint`, `bun run typecheck`, `bun run build`, `bun test` all pass; package scripts use Bun.                            |
 | `neverthrow` fallible APIs               | Verified | CLI command helpers and filesystem/detection/installers use `Result`/`ResultAsync`; typecheck passes.                          |
-| Mockable file/process/harness boundaries | Verified | `MemoryFileSystem`, `MemoryDetectionProbes`, `StaticPromptAdapter`; tests use fixtures and no real harness process.            |
+| Mockable file/process/harness boundaries | Verified | `MemoryFileSystem`, `MemoryDetectionProbes`, `StaticPromptAdapter`; tests use fixtures and no real harness process. `MemoryFileSystem` matches recursive directory semantics used by runtime writes. |
 | No scattered `console.*`                 | Verified | Output centralized in `packages/cli/src/io/terminal.ts` through Bun stdout/stderr writers; `bun run lint` passes.              |
 | Adapter boundary compliance              | Verified | Detection/installer logic remains in `@weave/cli`; no core/engine harness discovery changes.                                   |
-| Tests alongside modules                  | Verified | CLI tests live under `packages/cli/src/**/__tests__/`; full suite passes 298 tests.                                            |
+| Tests alongside modules                  | Verified | CLI tests live under `packages/cli/src/**/__tests__/`; full suite passes 307 tests.                                            |
 | Documentation updated                    | Verified | `docs/cli.md` and `README.md` cover CLI install, package runners, `init`, `validate`, no runtime execution, security guidance. |
 | Proof security                           | Verified | Secret grep over proof docs found no credential patterns; only documentation mentions placeholders/security terms.             |
 

@@ -10,12 +10,16 @@ import {
 } from "../detect/index.js";
 import type { DetectionProbes } from "../detect/probes.js";
 import type { CliError } from "../errors.js";
-import { BunFileSystem, type FileSystem } from "../fs/file-system.js";
+import {
+  BunFileSystem,
+  describeFileSystemError,
+  type FileSystem,
+} from "../fs/file-system.js";
 import { installerRegistry } from "../installers/index.js";
 import type { TerminalIO } from "../io/terminal.js";
 import { ClackPromptAdapter, type PromptAdapter } from "../prompt/index.js";
 import type { ThemeColors } from "../theme/colors.js";
-import { renderBanner, renderVersion } from "../theme/render.js";
+import { defaultThemeRenderer } from "../theme/render.js";
 
 export interface InitContext {
   terminal: TerminalIO;
@@ -120,8 +124,8 @@ async function createPlan(input: {
     };
   }
 
-  ctx.terminal.stdout(renderBanner(ctx.theme).join("\n"));
-  ctx.terminal.stdout(`Weave CLI v${renderVersion()}`);
+  ctx.terminal.stdout(defaultThemeRenderer.renderBanner(ctx.theme).join("\n"));
+  ctx.terminal.stdout(`Weave CLI v${defaultThemeRenderer.renderVersion()}`);
   ctx.terminal.stdout(
     "Choose global config for shared defaults or local config for this project.",
   );
@@ -239,14 +243,14 @@ function scaffoldConfig(
 
   return fs
     .exists(configPath)
-    .mapErr((error) => ({ message: String(error.cause) }))
+    .mapErr((error) => ({ message: describeFileSystemError(error) }))
     .andThen((exists) => {
       const messages: string[] = [];
       if (exists && !force) {
         messages.push(`Skipped existing config: ${configPath}`);
         return fs
           .mkdir(promptsPath)
-          .mapErr((error) => ({ message: String(error.cause) }))
+          .mapErr((error) => ({ message: describeFileSystemError(error) }))
           .map(() => ({
             configPath,
             promptsPath,
@@ -258,16 +262,16 @@ function scaffoldConfig(
         ? fs.copyFile(configPath, `${configPath}.bak`)
         : ResultAsync.fromSafePromise(Promise.resolve());
       return backup
-        .mapErr((error) => ({ message: String(error.cause) }))
+        .mapErr((error) => ({ message: describeFileSystemError(error) }))
         .andThen(() =>
           fs
             .writeText(configPath, starterConfig(plan.scope))
-            .mapErr((error) => ({ message: String(error.cause) })),
+            .mapErr((error) => ({ message: describeFileSystemError(error) })),
         )
         .andThen(() =>
           fs
             .mkdir(promptsPath)
-            .mapErr((error) => ({ message: String(error.cause) })),
+            .mapErr((error) => ({ message: describeFileSystemError(error) })),
         )
         .map(() => {
           if (exists)

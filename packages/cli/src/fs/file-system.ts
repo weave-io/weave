@@ -1,11 +1,15 @@
 import { dirname, resolve } from "node:path";
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
 
+export type FileSystemErrorCause =
+  | { kind: "MissingFile" }
+  | { kind: "RuntimeFailure"; message: string };
+
 export type FileSystemError = {
   type: "FileSystemError";
   operation: "exists" | "read" | "write" | "mkdir" | "copy";
   path: string;
-  cause: unknown;
+  cause: FileSystemErrorCause;
 };
 
 export interface FileSystem {
@@ -19,11 +23,35 @@ export interface FileSystem {
   resolvePath(path: string): string;
 }
 
+export function describeFileSystemError(error: FileSystemError): string {
+  switch (error.cause.kind) {
+    case "MissingFile":
+      return `Missing file: ${error.path}`;
+    case "RuntimeFailure":
+      return error.cause.message;
+  }
+}
+
+function normalizeRuntimeFailure(cause: unknown): FileSystemErrorCause {
+  if (cause instanceof Error) {
+    return { kind: "RuntimeFailure", message: cause.message };
+  }
+  if (typeof cause === "string") {
+    return { kind: "RuntimeFailure", message: cause };
+  }
+  return { kind: "RuntimeFailure", message: String(cause) };
+}
+
 function toError(
   operation: FileSystemError["operation"],
   path: string,
 ): (cause: unknown) => FileSystemError {
-  return (cause) => ({ type: "FileSystemError", operation, path, cause });
+  return (cause) => ({
+    type: "FileSystemError",
+    operation,
+    path,
+    cause: normalizeRuntimeFailure(cause),
+  });
 }
 
 export class BunFileSystem implements FileSystem {
@@ -39,36 +67,40 @@ export class BunFileSystem implements FileSystem {
   resolvePath(path: string): string {
     if (path === "~") return this.home();
     if (path.startsWith("~/")) return resolve(this.home(), path.slice(2));
-    return resolve(path);
+    return resolve(this.cwd(), path);
   }
 
   exists(path: string): ResultAsync<boolean, FileSystemError> {
+    const resolved = this.resolvePath(path);
     return ResultAsync.fromPromise(
-      Bun.file(path).exists(),
-      toError("exists", path),
+      Bun.file(resolved).exists(),
+      toError("exists", resolved),
     );
   }
 
   readText(path: string): ResultAsync<string, FileSystemError> {
+    const resolved = this.resolvePath(path);
     return ResultAsync.fromPromise(
-      Bun.file(path).text(),
-      toError("read", path),
+      Bun.file(resolved).text(),
+      toError("read", resolved),
     );
   }
 
   writeText(path: string, content: string): ResultAsync<void, FileSystemError> {
-    return this.mkdir(dirname(path)).andThen(() =>
+    const resolved = this.resolvePath(path);
+    return this.mkdir(dirname(resolved)).andThen(() =>
       ResultAsync.fromPromise(
-        Bun.write(path, content).then(() => undefined),
-        toError("write", path),
+        Bun.write(resolved, content).then(() => undefined),
+        toError("write", resolved),
       ),
     );
   }
 
   mkdir(path: string): ResultAsync<void, FileSystemError> {
+    const resolved = this.resolvePath(path);
     return ResultAsync.fromPromise(
-      Bun.$`mkdir -p ${path}`.quiet().then(() => undefined),
-      toError("mkdir", path),
+      Bun.$`mkdir -p ${resolved}`.quiet().then(() => undefined),
+      toError("mkdir", resolved),
     );
   }
 
@@ -89,8 +121,9 @@ export class MemoryFileSystem implements FileSystem {
     private readonly homeDirectory = "/home/user",
   ) {
     for (const [path, content] of Object.entries(initialFiles)) {
-      this.files.set(resolve(path), content);
-      this.dirs.add(dirname(resolve(path)));
+      const resolved = this.resolvePath(path);
+      this.files.set(resolved, content);
+      this.ensureDirsExist(dirname(resolved));
     }
   }
 
@@ -123,7 +156,7 @@ export class MemoryFileSystem implements FileSystem {
         type: "FileSystemError",
         operation: "read",
         path: resolved,
-        cause: "missing file",
+        cause: { kind: "MissingFile" },
       });
     }
     return okAsync(content);
@@ -131,13 +164,13 @@ export class MemoryFileSystem implements FileSystem {
 
   writeText(path: string, content: string): ResultAsync<void, FileSystemError> {
     const resolved = this.resolvePath(path);
-    this.dirs.add(dirname(resolved));
+    this.ensureDirsExist(dirname(resolved));
     this.files.set(resolved, content);
     return okAsync(undefined);
   }
 
   mkdir(path: string): ResultAsync<void, FileSystemError> {
-    this.dirs.add(this.resolvePath(path));
+    this.ensureDirsExist(this.resolvePath(path));
     return okAsync(undefined);
   }
 
@@ -149,5 +182,15 @@ export class MemoryFileSystem implements FileSystem {
 
   snapshot(): Record<string, string> {
     return Object.fromEntries(this.files.entries());
+  }
+
+  private ensureDirsExist(path: string): void {
+    let current = resolve(path);
+    while (!this.dirs.has(current)) {
+      this.dirs.add(current);
+      const parent = dirname(current);
+      if (parent === current) return;
+      current = parent;
+    }
   }
 }

@@ -41,14 +41,10 @@ export {
   PLAIN_LOGO_LINES,
   renderLogo,
 } from "./theme/ascii-logo.js";
-export type { ThemeColors } from "./theme/colors.js";
+export type { ThemeColors, ThemeManagerDeps } from "./theme/colors.js";
 // ---------------------------------------------------------------------------
 // Theme
 // ---------------------------------------------------------------------------
-export { getTheme, supportsColor } from "./theme/colors.js";
-export {
-  getVersion,
-  renderBanner,
-  renderHelp,
-  renderVersion,
-} from "./theme/render.js";
+export { defaultThemeManager, ThemeManager } from "./theme/colors.js";
+export type { VersionSource } from "./theme/render.js";
+export { defaultThemeRenderer, ThemeRenderer } from "./theme/render.js";

@@ -4,24 +4,22 @@ import {
   PLAIN_LOGO_LINES,
   renderLogo,
 } from "../theme/ascii-logo.js";
-import { getTheme, supportsColor } from "../theme/colors.js";
-import {
-  getVersion,
-  renderBanner,
-  renderHelp,
-  renderVersion,
-} from "../theme/render.js";
+import { ThemeManager } from "../theme/colors.js";
+import { ThemeRenderer } from "../theme/render.js";
+
+const themeManager = new ThemeManager({ isTty: () => false });
+const themeRenderer = new ThemeRenderer();
 
 describe("theme colors", () => {
   it("returns identity functions when color is disabled", () => {
-    const theme = getTheme(false);
+    const theme = themeManager.getTheme(false);
     expect(theme.cyan("hello")).toBe("hello");
     expect(theme.bold("world")).toBe("world");
     expect(theme.boldPurple("test")).toBe("test");
   });
 
   it("returns ANSI-wrapped strings when color is enabled", () => {
-    const theme = getTheme(true);
+    const theme = themeManager.getTheme(true);
     const result = theme.cyan("hello");
     expect(result).toContain("\x1b[");
     expect(result).toContain("hello");
@@ -29,40 +27,45 @@ describe("theme colors", () => {
   });
 
   it("bold composites apply both bold and color", () => {
-    const theme = getTheme(true);
+    const theme = themeManager.getTheme(true);
     const result = theme.boldCyan("test");
     expect(result).toContain("test");
-    // Should contain at least two escape sequences (bold + color)
     const ESC = String.fromCharCode(0x1b);
     const escCount = result.split(ESC).length - 1;
     expect(escCount).toBeGreaterThanOrEqual(2);
   });
 
-  it("treats FORCE_COLOR=0 and false as color disabled", () => {
-    const originalForceColor = Bun.env.FORCE_COLOR;
-    const originalNoColor = Bun.env.NO_COLOR;
-    delete Bun.env.NO_COLOR;
+  it("treats FORCE_COLOR false values as color disabled", () => {
+    expect(
+      new ThemeManager({
+        env: { FORCE_COLOR: "0" },
+        isTty: () => true,
+      }).supportsColor(),
+    ).toBe(false);
+    expect(
+      new ThemeManager({
+        env: { FORCE_COLOR: "false" },
+        isTty: () => true,
+      }).supportsColor(),
+    ).toBe(false);
+  });
 
-    Bun.env.FORCE_COLOR = "0";
-    expect(supportsColor()).toBe(false);
+  it("lets FORCE_COLOR override NO_COLOR", () => {
+    expect(
+      new ThemeManager({
+        env: { FORCE_COLOR: "1", NO_COLOR: "1" },
+        isTty: () => false,
+      }).supportsColor(),
+    ).toBe(true);
+  });
 
-    Bun.env.FORCE_COLOR = "false";
-    expect(supportsColor()).toBe(false);
-
-    Bun.env.FORCE_COLOR = "1";
-    expect(supportsColor()).toBe(true);
-
-    if (originalForceColor === undefined) {
-      delete Bun.env.FORCE_COLOR;
-    } else {
-      Bun.env.FORCE_COLOR = originalForceColor;
-    }
-
-    if (originalNoColor === undefined) {
-      delete Bun.env.NO_COLOR;
-    } else {
-      Bun.env.NO_COLOR = originalNoColor;
-    }
+  it("falls back to TTY detection when color env vars are unset", () => {
+    expect(
+      new ThemeManager({ env: {}, isTty: () => true }).supportsColor(),
+    ).toBe(true);
+    expect(
+      new ThemeManager({ env: {}, isTty: () => false }).supportsColor(),
+    ).toBe(false);
   });
 });
 
@@ -77,24 +80,23 @@ describe("ASCII logo", () => {
   });
 
   it("renderLogo returns same number of lines as PLAIN_LOGO_LINES", () => {
-    const theme = getTheme(false);
+    const theme = themeManager.getTheme(false);
     const lines = renderLogo(theme);
     expect(lines.length).toBe(PLAIN_LOGO_LINES.length);
   });
 
   it("renderLogo with color produces ANSI sequences", () => {
-    const theme = getTheme(true);
+    const theme = themeManager.getTheme(true);
     const lines = renderLogo(theme);
     const allText = lines.join("\n");
     expect(allText).toContain("\x1b[");
   });
 
   it("renderLogo without color produces plain text", () => {
-    const theme = getTheme(false);
+    const theme = themeManager.getTheme(false);
     const lines = renderLogo(theme);
     const allText = lines.join("\n");
     expect(allText).not.toContain("\x1b[");
-    // Should match the plain lines
     for (let i = 0; i < lines.length; i++) {
       expect(lines[i]).toBe(PLAIN_LOGO_LINES[i]);
     }
@@ -103,17 +105,16 @@ describe("ASCII logo", () => {
 
 describe("banner and help rendering", () => {
   it("renderBanner includes logo lines and version", () => {
-    const theme = getTheme(false);
-    const banner = renderBanner(theme);
+    const theme = themeManager.getTheme(false);
+    const banner = themeRenderer.renderBanner(theme);
     const text = banner.join("\n");
-    // Should contain at least some logo character
     expect(text).toContain("╭");
     expect(text).toContain("{weave}");
   });
 
   it("renderHelp includes banner, commands, and examples", () => {
-    const theme = getTheme(false);
-    const help = renderHelp(theme);
+    const theme = themeManager.getTheme(false);
+    const help = themeRenderer.renderHelp(theme);
     const text = help.join("\n");
     expect(text).toContain("USAGE");
     expect(text).toContain("COMMANDS");
@@ -126,27 +127,26 @@ describe("banner and help rendering", () => {
   });
 
   it("renderHelp with NO_COLOR produces no ANSI escapes", () => {
-    const theme = getTheme(false);
-    const help = renderHelp(theme);
+    const theme = themeManager.getTheme(false);
+    const help = themeRenderer.renderHelp(theme);
     const text = help.join("\n");
     expect(text).not.toContain("\x1b[");
   });
 
   it("renderHelp with color produces ANSI escapes", () => {
-    const theme = getTheme(true);
-    const help = renderHelp(theme);
+    const theme = themeManager.getTheme(true);
+    const help = themeRenderer.renderHelp(theme);
     const text = help.join("\n");
     expect(text).toContain("\x1b[");
   });
 
-  it("getVersion returns a semver-like string", () => {
-    const v = getVersion();
+  it("renderVersion returns a semver-like string", () => {
+    const v = themeRenderer.renderVersion();
     expect(v).toMatch(/^\d+\.\d+\.\d+/);
   });
 
-  it("renderVersion returns the version string", () => {
-    const v = renderVersion();
-    expect(v).toMatch(/^\d+\.\d+\.\d+/);
-    expect(v).toBe(getVersion());
+  it("uses the injected version source", () => {
+    const renderer = new ThemeRenderer({ version: "9.8.7" });
+    expect(renderer.renderVersion()).toBe("9.8.7");
   });
 });

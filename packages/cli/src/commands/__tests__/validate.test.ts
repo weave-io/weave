@@ -1,8 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import { MemoryFileSystem } from "../../fs/file-system.js";
 import { BufferTerminal } from "../../io/terminal.js";
-import { getTheme } from "../../theme/colors.js";
+import { ThemeManager } from "../../theme/colors.js";
 import { runValidate } from "../validate.js";
+
+const themeManager = new ThemeManager({ isTty: () => false });
 
 const fixtureRoot = new URL("../../__fixtures__/", import.meta.url);
 const validConfig = await Bun.file(new URL("valid.weave", fixtureRoot)).text();
@@ -35,7 +37,7 @@ function context(
     terminal,
     ctx: {
       terminal,
-      theme: getTheme(false),
+      theme: themeManager.getTheme(false),
       flags: flags(overrides),
       fs,
     },
