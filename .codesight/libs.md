@@ -11,6 +11,7 @@
   - const bunFileReader: FileReader
 - `packages/config/src/loader.ts` — function loadConfig: (projectRoot?, fileReader) => ResultAsync<import("@weave/core").WeaveConfig, ConfigLoadError[]>
 - `packages/config/src/merge.ts` — function mergeConfigs: (...configs) => WeaveConfig
+- `packages/config/src/normalize-path.ts` — function normalizePath: (p) => string
 - `packages/config/src/resolve.ts` — function resolvePromptPaths: (config, scope) => WeaveConfig
 - `packages/core/src/errors.ts`
   - function formatError: (error) => string

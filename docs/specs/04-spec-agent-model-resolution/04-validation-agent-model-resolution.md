@@ -1,5 +1,7 @@
 # 04-validation-agent-model-resolution.md
 
+> **Architecture note:** This validation artifact predates the explicit [Adapter Boundary](../../adapter-boundary.md) guide. Its statements about the then-current `HarnessAdapter` surface are historical evidence for Spec 04 only. Do not treat placeholder methods such as `loadSkill()` or `registerHook()` as product-architecture precedent; current boundary guidance lives in [`../../adapter-boundary.md`](../../adapter-boundary.md).
+
 ## 1) Executive Summary
 
 - **Overall:** PASS — no CRITICAL or HIGH issues found; Gates A–F satisfied.

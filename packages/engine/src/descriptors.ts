@@ -17,7 +17,7 @@ export type CategoryShuttleConflictError = {
  *
  * Returns `err(CategoryShuttleConflictError)` when an explicitly declared
  * agent name collides with a would-be generated shuttle name. Callers must
- * handle this error before spawning agents.
+ * handle this error before materialising agents through an adapter.
  */
 export function generateCategoryShuttles(
   config: WeaveConfig,

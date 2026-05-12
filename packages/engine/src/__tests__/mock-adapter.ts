@@ -3,7 +3,7 @@
  *
  * Records every method call in a typed `calls` log so tests can assert on
  * what the runner invoked, in what order, and with what arguments — without
- * requiring a real harness.
+ * requiring a real harness or performing harness resource discovery.
  *
  * Usage:
  * ```ts
@@ -17,6 +17,10 @@
 
 import type { AgentConfig } from "@weave/core";
 import type { HarnessAdapter, HookConfig, SkillConfig } from "../adapter.js";
+
+// `HookConfig` and `SkillConfig` are transitional adapter-boundary types.
+// Tests should not treat them as proof that engine code owns concrete hook
+// registration or harness skill discovery/loading.
 
 // ---------------------------------------------------------------------------
 // Typed call record

@@ -1,5 +1,7 @@
 # 01-validation-core-dsl
 
+> **Architecture note:** This validation artifact predates the explicit [Adapter Boundary](../../adapter-boundary.md) guide. References to local `HookConfig`/`SkillConfig` placeholders are historical cleanup evidence, not a decision that engine owns concrete hook registration or harness skill discovery/loading.
+
 ## 1) Executive Summary
 
 | Item                          | Result                                                                                                              |

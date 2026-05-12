@@ -4,7 +4,7 @@ Weave is a harness-agnostic agent orchestration framework and API for building a
 
 It is closer to Neovim's API layer than to a finished editor: Weave defines the primitives, config model, prompt/delegation structure, and policy intent that adapters compose into concrete harness integrations.
 
-**Related:** [Model Resolution](model-resolution.md) · [Config Loading](config-loading.md) · [Spec 04 — Agent Model Resolution](specs/04-spec-agent-model-resolution/04-spec-agent-model-resolution.md) · [Legacy Architecture](legacy-architecture.md)
+**Related:** [Adapter Boundary](adapter-boundary.md) · [Model Resolution](model-resolution.md) · [Config Loading](config-loading.md) · [Spec 04 — Agent Model Resolution](specs/04-spec-agent-model-resolution/04-spec-agent-model-resolution.md) · [Spec 05 — Skill Resolution](specs/05-spec-skill-loader/05-spec-skill-loader.md) · [Legacy Architecture](legacy-architecture.md)
 
 ---
 
@@ -23,7 +23,7 @@ harness runtime/plugin/config
 (OpenCode, Pi, Claude Code, Codex, ...)
 ```
 
-Weave's responsibility is to describe **what agent system should exist**:
+Weave's responsibility is to describe **what agent system should exist** and provide **APIs that compose harness-provided context with declared config** to produce normalized output:
 
 - agent topology and names
 - prompts and prompt appendices
@@ -31,15 +31,18 @@ Weave's responsibility is to describe **what agent system should exist**:
 - categories and generated category shuttle descriptors
 - abstract tool/capability policy
 - ordered model preferences
+- skill references and resolution
 - workflow intent
+- **composition APIs** that accept harness context (available models, loaded skills, etc.) and return resolved agent descriptors, prompts, and configurations
 
-Adapters are responsible for deciding **how that intent becomes harness behavior**:
+Adapters are responsible for deciding **how that intent becomes harness behavior** and for **supplying harness-owned context to Weave's APIs**:
 
 - enabling Weave inside a specific harness
 - harness plugin/config generation
 - filling feature gaps when a harness lacks native functionality
 - UI-selected model lookup and interpretation
-- available model discovery
+- available model discovery and passing it to Weave's resolution APIs
+- **skill discovery** — scanning harness skill directories, loading skill content, and passing it to Weave's skill resolution API
 - concrete model field selection
 - harness-specific tool names and permissions
 - command/event/hook registration
@@ -57,15 +60,45 @@ Adapters are responsible for deciding **how that intent becomes harness behavior
 - Resolve prompt file paths and produce normalized config.
 - Build or describe prompts and delegation instructions.
 - Generate descriptors for declared agents and category shuttles.
+- **Accept harness-provided context** (available skills, available models, etc.) and **return resolved/composed output** (resolved skills for an agent, composed prompts, resolved models).
 - Expose adapter-facing helpers for common translation policies when useful.
 
 ### Weave Does Not
 
 - Query a harness user's currently selected UI model.
 - Require harnesses to expose a selected model or available model registry.
+- **Discover or load skills from disk** — skill file discovery is a harness/adapter concern; Weave receives skill data and resolves it against agent config.
 - Mutate harness runtime state directly.
 - Decide how a specific harness represents agents, commands, tools, or display names.
 - Treat legacy OpenCode plugin behavior as universal core behavior.
+
+---
+
+## Adapter-to-Weave API Pattern
+
+Weave’s engine exposes **pure composition APIs** that adapters call by pushing harness-owned context in and receiving normalized output back. This is the fundamental interaction pattern between adapters and core Weave:
+
+```txt
+Adapter                          Weave API                        Output
+──────────────────────────────────────────────────────────────────────────────────
+ availableModels      ──▶  resolveAdapterModelIntent()  ──▶  resolved model
+ uiSelectedModel
+
+ availableSkills      ──▶  resolveSkillsForAgent()      ──▶  matched skills
+ agentConfig
+
+ resolvedSkills       ──▶  composeAgentPrompt()         ──▶  final prompt string
+ agentConfig             (future — #6)
+ promptFileContent
+```
+
+Key principles:
+
+- **Adapters own discovery.** The harness knows where skills live, what models are available, and what the user has selected. The adapter gathers this context and passes it to Weave.
+- **Weave owns composition.** Given harness context + declared config, Weave resolves, matches, filters, and composes the output. This logic is pure, testable, and harness-agnostic.
+- **No harness-specific side effects in core.** Weave’s resolution and composition APIs must not query harness UI state, scan harness-owned resource directories, register concrete harness hooks, or mutate harness runtime state. They accept explicit input and return `Result<T, E>` or normalized output.
+
+This pattern ensures the same Weave API works identically regardless of whether the adapter is for OpenCode, Pi, Claude Code, or any future harness. See [Adapter Boundary](adapter-boundary.md) for ownership rules, correct data-flow examples, and anti-patterns.
 
 ---
 

@@ -2,13 +2,15 @@
 
 ## Task Summary
 
-Task 6.0 removes the five legacy files that preceded the DSL pipeline (`agent.ts`, `config.ts`, `dsl.ts`, `hook.ts`, `skill.ts`), updates `engine/adapter.ts` to define `HookConfig` and `SkillConfig` locally (they are engine concerns, not part of the `.weave` DSL spec), and rewrites `engine/runner.ts` to consume the new `WeaveConfig` shape — using `disabled.agents` instead of a flat `disabled` array and `models?.[0]` instead of `model` for logging.
+Task 6.0 removes the five legacy files that preceded the DSL pipeline (`agent.ts`, `config.ts`, `dsl.ts`, `hook.ts`, `skill.ts`), updates `engine/adapter.ts` to define temporary `HookConfig` and `SkillConfig` placeholders locally (they are not part of the `.weave` DSL spec), and rewrites `engine/runner.ts` to consume the new `WeaveConfig` shape — using `disabled.agents` instead of a flat `disabled` array and `models?.[0]` instead of `model` for logging.
+
+> **Architecture note:** This proof predates the explicit [Adapter Boundary](../../../adapter-boundary.md) guide. Local placeholder types are not a decision that engine owns concrete hook registration or harness skill discovery/loading.
 
 ## What This Task Proves
 
 - The five legacy `@weave/core` files are deleted; no file in the workspace imports them.
 - `defineConfig()` and all legacy DSL exports are gone with zero references remaining.
-- `engine/adapter.ts` imports only `AgentConfig` from `@weave/core`; `HookConfig` and `SkillConfig` are defined as local engine interfaces with TODO markers for future spec coverage.
+- `engine/adapter.ts` imports only `AgentConfig` from `@weave/core`; `HookConfig` and `SkillConfig` are defined as local transitional interfaces with TODO markers for future spec coverage.
 - `engine/runner.ts` correctly uses the new `WeaveConfig` shape: `disabled.agents.includes(name)` for agent-disable checks, `agentConfig.models?.[0]` for model logging, and TODO comments for deferred hook/skill loading.
 - The full workspace typechecks with zero errors after all deletions.
 - All 85 tests pass after the cleanup.

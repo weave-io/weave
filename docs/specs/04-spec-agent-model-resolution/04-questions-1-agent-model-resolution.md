@@ -1,6 +1,6 @@
 # 04 Questions Round 1 - Agent Model Resolution
 
-> **Superseded architecture note:** This questions file is preserved as a clarification artifact, but the initial framing assumed core Weave or `HarnessAdapter` would query harness UI-selected model state. That is no longer the product direction. Current guidance lives in [`04-spec-agent-model-resolution.md`](04-spec-agent-model-resolution.md), [`../../../model-resolution.md`](../../../model-resolution.md), and [`../../../product-vision.md`](../../../product-vision.md): Weave declares normalized model intent; adapters own UI-selected model lookup, available-model discovery, and concrete harness model translation.
+> **Superseded architecture note:** This questions file is preserved as a clarification artifact, but the initial framing assumed core Weave or `HarnessAdapter` would query harness UI-selected model state. That is no longer the product direction. Current guidance lives in [`04-spec-agent-model-resolution.md`](04-spec-agent-model-resolution.md), [`../../model-resolution.md`](../../model-resolution.md), [`../../adapter-boundary.md`](../../adapter-boundary.md), and [`../../product-vision.md`](../../product-vision.md): Weave declares normalized model intent; adapters own UI-selected model lookup, available-model discovery, and concrete harness model translation.
 
 Please answer each question below (select one or more options, or add your own notes). Feel free to add additional context under any question.
 
@@ -98,8 +98,8 @@ The current `CategoryConfigSchema` uses `models [...]`, and AGENTS.md says categ
 
 - [x] (A) **Superseded answer — originally add `resolvedModel` to the spawn call** — This was answered before the architecture correction. Current direction: Weave passes normalized config/model intent; adapters translate to concrete harness model fields.
 - [ ] (B) **Add an engine-local `ResolvedAgentConfig` type** — Keep `spawnSubagent(name, config)`, but pass a config object augmented with `resolved_model` or `model`.
-- [ ] (C) **Rewrite `config.models` before spawning** — Clone the agent config and set `models` to `[resolvedModel, ...remainingModels]` before calling the adapter.
-- [ ] (D) **Adapters call `resolveAgentModel()` themselves** — Engine exposes helper utilities, but each adapter resolves during spawn.
+- [ ] (C) **Rewrite `config.models` before adapter materialisation** — Clone the agent config and set `models` to `[resolvedModel, ...remainingModels]` before calling the adapter.
+- [ ] (D) **Adapters call `resolveAgentModel()` themselves** — Engine exposes helper utilities, but each adapter resolves during materialisation.
 - [ ] (E) Other (describe)
 
 **Recommended answer(s):** (A)
@@ -118,7 +118,7 @@ The issue lists `(5) system default`, but the current config schema has no syste
 - [ ] (A) **Adapter provides system default too** — Add `getDefaultModel()` or return both selected/default model from the new UI model method.
 - [ ] (B) **Engine constant fallback** — Define a documented engine constant such as `DEFAULT_MODEL = "claude-sonnet-4-5"` for final fallback.
 - [x] (C) **Config-provided setting later; engine constant now** — Use an engine constant for this spec and leave a future DSL setting for configurable defaults.
-- [ ] (D) **No hardcoded fallback** — If no model can be resolved, return a typed resolution error and skip spawning that agent.
+- [ ] (D) **No hardcoded fallback** — If no model can be resolved, return a typed resolution error and skip materialising that agent.
 - [ ] (E) Other (describe)
 
 **Recommended answer(s):** (C)
