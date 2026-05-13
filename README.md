@@ -6,6 +6,8 @@ Weave is a TypeScript-first framework for describing multi-agent systems that ca
 
 Think of Weave like Neovim's API layer: Weave provides primitives, normalized configuration, and pure composition APIs; adapters supply harness-owned context (available skills, models, lifecycle events) and materialize the result inside a concrete harness.
 
+For a high-level flow diagram of configuration → engine → adapter → harness, see [System Architecture](./docs/system-architecture.md).
+
 ## Packages
 
 | Package                                                         | Description                                                                                |
