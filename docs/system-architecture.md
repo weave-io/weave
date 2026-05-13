@@ -15,22 +15,37 @@ Weave turns a declarative `.weave` configuration into normalized agent intent, l
 ## System Diagram
 
 ```mermaid
-flowchart LR
-  User[User or Project] --> ConfigSources[Configuration Sources<br/>built-ins + global + project]
-  ConfigSources --> ConfigLayer[Config Layer<br/>parse, validate, resolve, merge]
-  ConfigLayer --> NormalizedConfig[Normalized Weave Config<br/>single source of declared intent]
+architecture-beta
+  group configuration(cloud)[Configuration]
+  group weave(cloud)[Weave Core]
+  group target(cloud)[Target Harness]
 
-  NormalizedConfig --> Engine[Engine<br/>compose agents, prompts,<br/>categories, workflows,<br/>policies, model and skill intent]
+  service user(server)[User or Project] in configuration
+  service sources(database)[Built-ins Global Project] in configuration
 
-  HarnessContext[Harness-Owned Context<br/>available models, selected model,<br/>available skills, lifecycle events] --> Adapter[Adapter<br/>target-specific translator]
-  Adapter -. supplies explicit context .-> Engine
-  Engine --> Adapter
+  service configLayer(server)[Config Layer Parse Validate Resolve Merge] in weave
+  service normalized(database)[Normalized Weave Config] in weave
+  service engine(server)[Engine Compose Intent] in weave
 
-  Adapter --> HarnessArtifacts[Harness Artifacts<br/>plugins, config, commands,<br/>tools, permissions, runtime wiring]
-  HarnessArtifacts --> Harness[Harness Runtime<br/>OpenCode, Pi, Claude Code,<br/>Codex, or future targets]
+  service adapter(server)[Adapter Translator] in target
+  service context(database)[Harness Context Models Skills Events] in target
+  service artifacts(disk)[Harness Artifacts Plugins Config Tools Hooks] in target
+  service harness(internet)[Harness Runtime] in target
+  service agents(server)[Running Agent Experience] in target
 
-  Harness -. events and capabilities .-> Adapter
-  Harness --> RunningAgents[Running Agent Experience<br/>primary agents, delegated specialists,<br/>reviews, audits, workflows]
+  user:R --> L:sources
+  sources:R --> L:configLayer
+  configLayer:R --> L:normalized
+  normalized:R --> L:engine
+  engine:R --> L:adapter
+
+  context:B --> T:adapter
+  adapter:L --> R:engine
+
+  adapter:R --> L:artifacts
+  artifacts:R --> L:harness
+  harness:R --> L:agents
+  harness:T --> B:adapter
 ```
 
 ---
