@@ -1,0 +1,33 @@
+{
+  "name": "@weave/cli",
+  "version": "0.0.1",
+  "description": "Weave CLI for config scaffolding, validation, and harness installation",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "module": "./dist/index.js",
+  "bin": {
+    "weave": "./dist/main.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "bun build ./src/index.ts ./src/main.ts --outdir ./dist --target bun && tsc -p tsconfig.build.json --emitDeclarationOnly",
+    "test": "bun test ./src/__tests__ ./src/commands/__tests__ ./src/prompt/__tests__ ./src/detect/__tests__ ./src/installers/__tests__",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@weave/core": "workspace:*",
+    "@weave/config": "workspace:*",
+    "@weave/engine": "workspace:*",
+    "@clack/prompts": "^0.10.0",
+    "neverthrow": "^8.2.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5"
+  }
+}

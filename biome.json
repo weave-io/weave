@@ -33,7 +33,12 @@
     }
   },
   "files": {
-    "includes": ["packages/**/*.ts", "packages/**/*.tsx", "scripts/**/*.ts"]
+    "includes": [
+      "packages/**/*.ts",
+      "packages/**/*.tsx",
+      "scripts/**/*.ts",
+      "!packages/**/dist"
+    ]
   },
   "overrides": [
     {

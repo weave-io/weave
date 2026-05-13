@@ -2,7 +2,7 @@
 
 ## Environment Variables
 
-- `HOME` **required** — packages/config/src/__tests__/discovery.test.ts
+- `HOME` **required** — packages/cli/src/detect/probes.ts
 - `LOG_LEVEL` **required** — packages/config/src/logger.ts
 
 ## Config Files

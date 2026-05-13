@@ -1,0 +1,3 @@
+agent broken {
+  prompt "Missing closing brace"
+  models ["claude-sonnet-4-5"]

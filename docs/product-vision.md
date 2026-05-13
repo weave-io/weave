@@ -4,7 +4,7 @@ Weave is a harness-agnostic agent orchestration framework and API for building a
 
 It is closer to Neovim's API layer than to a finished editor: Weave defines the primitives, config model, prompt/delegation structure, and policy intent that adapters compose into concrete harness integrations.
 
-**Related:** [Adapter Boundary](adapter-boundary.md) · [Model Resolution](model-resolution.md) · [Config Loading](config-loading.md) · [Spec 04 — Agent Model Resolution](specs/04-spec-agent-model-resolution/04-spec-agent-model-resolution.md) · [Spec 05 — Skill Resolution](specs/05-spec-skill-loader/05-spec-skill-loader.md) · [Legacy Architecture](legacy-architecture.md)
+**Related:** [System Architecture](system-architecture.md) · [Adapter Boundary](adapter-boundary.md) · [Model Resolution](model-resolution.md) · [Config Loading](config-loading.md) · [Spec 04 — Agent Model Resolution](specs/04-spec-agent-model-resolution/04-spec-agent-model-resolution.md) · [Spec 05 — Skill Resolution](specs/05-spec-skill-loader/05-spec-skill-loader.md) · [Legacy Architecture](legacy-architecture.md)
 
 ---
 

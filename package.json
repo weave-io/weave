@@ -6,11 +6,12 @@
     "packages/core",
     "packages/engine",
     "packages/config",
+    "packages/cli",
     "packages/adapters/*"
   ],
   "scripts": {
-    "validate-config": "bun run scripts/validate-config.ts",
-    "build": "bun run --filter '@weave/core' build && bun run --filter '@weave/engine' --filter '@weave/config' build && bun run --filter '@weave/adapter-*' build",
+    "validate-config": "bun packages/cli/src/main.ts validate --project",
+    "build": "bun run --filter '@weave/core' build && bun run --filter '@weave/engine' --filter '@weave/config' build && bun run --filter '@weave/cli' build && bun run --filter '@weave/adapter-*' build",
     "test": "bun run --filter '*' test",
     "typecheck": "tsc --noEmit -p tsconfig.json && bun run --filter '*' typecheck",
     "lint": "biome lint packages/",
