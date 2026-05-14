@@ -13,12 +13,12 @@ Agents and categories declare ordered model preferences:
 ```weave
 agent loom {
   mode primary
-  models ["claude-sonnet-4-5", "gpt-4o"]
+  models ["github-copilot/claude-sonnet-4.5", "gpt-4o"]
 }
 
 category frontend {
   patterns ["src/components/**", "**/*.tsx"]
-  models ["gpt-5", "claude-sonnet-4-5"]
+  models ["gpt-5", "github-copilot/claude-sonnet-4.5"]
 }
 ```
 

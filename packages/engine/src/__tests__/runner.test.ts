@@ -58,7 +58,7 @@ describe("WeaveRunner", () => {
   // -------------------------------------------------------------------------
 
   describe("agent spawning", () => {
-    it("spawns a single agent with correct name and config", async () => {
+    it("spawns a single agent with correct name and descriptor", async () => {
       const config = cfg(`
         agent loom {
           prompt "You are loom."
@@ -72,8 +72,8 @@ describe("WeaveRunner", () => {
       const spawned = adapter.callsTo("spawnSubagent");
       expect(spawned).toHaveLength(1);
       expect(spawned[0]?.name).toBe("loom");
-      expect(spawned[0]?.config.models).toEqual(["claude-sonnet-4-5"]);
-      expect(spawned[0]?.config.temperature).toBe(0.1);
+      expect(spawned[0]?.descriptor.models).toEqual(["claude-sonnet-4-5"]);
+      expect(spawned[0]?.descriptor.temperature).toBe(0.1);
     });
 
     it("spawns all agents in a multi-agent config", async () => {
@@ -119,11 +119,11 @@ describe("WeaveRunner", () => {
       await new WeaveRunner(config, adapter).run();
 
       const spawned = adapter.callsTo("spawnSubagent");
-      expect(spawned[0]?.config.tool_policy?.read).toBe("allow");
-      expect(spawned[0]?.config.tool_policy?.write).toBe("allow");
-      expect(spawned[0]?.config.tool_policy?.execute).toBe("ask");
-      expect(spawned[0]?.config.tool_policy?.network).toBe("deny");
-      expect(spawned[0]?.config.tool_policy?.delegate).toBe("deny");
+      expect(spawned[0]?.descriptor.toolPolicy.read).toBe("allow");
+      expect(spawned[0]?.descriptor.toolPolicy.write).toBe("allow");
+      expect(spawned[0]?.descriptor.toolPolicy.execute).toBe("ask");
+      expect(spawned[0]?.descriptor.toolPolicy.network).toBe("deny");
+      expect(spawned[0]?.descriptor.toolPolicy.delegate).toBe("deny");
     });
   });
 
@@ -261,7 +261,7 @@ describe("WeaveRunner", () => {
       const spawned = adapter
         .callsTo("spawnSubagent")
         .find((c) => c.name === "shuttle-frontend");
-      expect(spawned?.config.models).toEqual(["gpt-5"]);
+      expect(spawned?.descriptor.models).toEqual(["gpt-5"]);
     });
 
     it("throws when a category would generate a name that is already explicitly declared", async () => {

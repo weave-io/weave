@@ -14,7 +14,7 @@
 agent orchestrator {
   description "Primary orchestrator — all agent fields exercised"
   prompt "You are the orchestrator."
-  models ["claude-sonnet-4-5", "gpt-4o", "gemini-pro"]
+  models ["github-copilot/claude-sonnet-4.5", "gpt-4o", "gemini-pro"]
   mode primary
   temperature 0.1
 
@@ -39,7 +39,7 @@ agent orchestrator {
 agent specialist {
   description "Subagent backed by a prompt file"
   prompt_file "specialist.md"
-  models ["claude-sonnet-4-5"]
+  models ["github-copilot/claude-sonnet-4.5"]
   mode subagent
   temperature 0.3
 
@@ -77,7 +77,7 @@ agent hybrid {
 # Bare minimum — only required fields
 agent bare {
   prompt "Minimal agent with only required fields."
-  models ["claude-sonnet-4-5"]
+  models ["github-copilot/claude-sonnet-4.5"]
 }
 
 # ===========================================================================
@@ -87,7 +87,7 @@ agent bare {
 # All category fields including prompt_append and multiple patterns
 category full-cat {
   description "Category with every field set"
-  models ["claude-sonnet-4-5", "gpt-4o"]
+  models ["github-copilot/claude-sonnet-4.5", "gpt-4o"]
   patterns ["src/api/**", "src/server/**", "**/*.ts", "**/*.go"]
   temperature 0.2
 

@@ -85,4 +85,23 @@ describe("resolvePromptPaths", () => {
 
     expect(config.agents.loom?.prompt_file).toBe(originalPromptFile);
   });
+
+  it("(g) path traversal: prompt_file escaping prompts directory is not resolved", () => {
+    const config: WeaveConfig = {
+      agents: {
+        attacker: {
+          prompt_file: "../../etc/passwd",
+          models: ["gpt-4o"],
+        },
+      },
+      categories: {},
+      disabled: { agents: [], hooks: [], skills: [] },
+      workflows: {},
+    };
+    const scope: ConfigScope = { kind: "project", rootDir: "/proj/.weave" };
+    const resolved = resolvePromptPaths(config, scope);
+
+    expect(resolved.agents.attacker).toEqual(config.agents.attacker);
+    expect(resolved.agents.attacker?.prompt_file).toBe("../../etc/passwd");
+  });
 });

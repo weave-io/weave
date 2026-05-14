@@ -67,7 +67,7 @@ Weave uses a **custom configuration language** (`.weave` files) designed for rea
 agent loom {
   description "Loom (Main Orchestrator)"
   prompt_file "loom.md"
-  models ["claude-sonnet-4-5", "gpt-4o"]
+  models ["github-copilot/claude-sonnet-4.5", "gpt-4o"]
   mode primary
   temperature 0.1
 
@@ -90,7 +90,7 @@ agent loom {
 # Simple agent — minimal config with inline prompt
 agent my-helper {
   prompt "You are a helpful assistant that answers questions concisely."
-  models ["claude-sonnet-4-5"]
+  models ["github-copilot/claude-sonnet-4.5"]
   mode subagent
   temperature 0.3
 }
@@ -99,7 +99,7 @@ agent my-helper {
 agent shuttle {
   description "Shuttle (Domain Specialist)"
   prompt_file "shuttle.md"
-  models ["claude-sonnet-4-5"]
+  models ["github-copilot/claude-sonnet-4.5"]
   mode all
   temperature 0.2
 
@@ -127,7 +127,7 @@ Categories define domain routing — glob patterns that direct work to specialis
 ```weave
 category backend {
   description "Backend APIs, services, persistence"
-  models ["anthropic/claude-sonnet-4-5"]
+  models ["anthropic/github-copilot/claude-sonnet-4.5"]
   patterns ["src/api/**", "src/server/**", "src/db/**", "**/*.go"]
   prompt_append "Focus on API contracts, data integrity, and backwards compatibility."
   temperature 0.2

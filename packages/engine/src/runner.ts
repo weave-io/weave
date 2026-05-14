@@ -1,5 +1,6 @@
 import type { AgentConfig, WeaveConfig } from "@weave/core";
 import type { HarnessAdapter } from "./adapter.js";
+import { composeAgentDescriptor } from "./compose.js";
 import { generateCategoryShuttles } from "./descriptors.js";
 import { logger } from "./logger.js";
 
@@ -81,11 +82,22 @@ export class WeaveRunner {
         log.debug({ agent: name }, "Skipping disabled agent");
         continue;
       }
-      log.info(
-        { agent: name, model: agentConfig.models?.[0] },
-        "Spawning agent",
+      // SPIKE: compose descriptors in the runner before adapter handoff.
+      const descriptorResult = await composeAgentDescriptor(
+        name,
+        agentConfig,
+        this.config,
       );
-      await this.adapter.spawnSubagent(name, agentConfig);
+
+      if (descriptorResult.isErr()) {
+        const error = descriptorResult.error;
+        log.error({ agent: name, error }, error.message);
+        continue;
+      }
+
+      const descriptor = descriptorResult.value;
+      log.info({ agent: name, model: descriptor.models[0] }, "Spawning agent");
+      await this.adapter.spawnSubagent(name, descriptor);
     }
 
     log.info("Weave run complete");

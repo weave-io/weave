@@ -4,7 +4,7 @@ import type { AgentConfig } from "@weave/core";
  * Last-resort model used only when adapters provide no override, UI-selected
  * model, Weave model preferences, or system default.
  */
-export const DEFAULT_FALLBACK_MODEL = "claude-sonnet-4-5";
+export const DEFAULT_FALLBACK_MODEL = "github-copilot/claude-sonnet-4.5";
 
 /** Explicit model intent plus adapter-owned harness context. */
 export interface ModelResolutionInput {

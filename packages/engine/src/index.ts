@@ -1,4 +1,10 @@
-export type { HarnessAdapter } from "./adapter.js";
+export type { HarnessAdapter, HookConfig, SkillConfig } from "./adapter.js";
+export type {
+  AgentDescriptor,
+  ComposeError,
+  DelegationTarget,
+} from "./compose.js";
+export { composeAgentDescriptor } from "./compose.js";
 export type { CategoryShuttleConflictError } from "./descriptors.js";
 export { generateCategoryShuttles } from "./descriptors.js";
 export type { Env } from "./env.js";

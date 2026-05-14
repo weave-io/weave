@@ -18,7 +18,8 @@
   },
   "dependencies": {
     "@weave/core": "workspace:*",
-    "@weave/engine": "workspace:*"
+    "@weave/engine": "workspace:*",
+    "neverthrow": "^8.2.0"
   },
   "devDependencies": {
     "typescript": "^5.4.5"

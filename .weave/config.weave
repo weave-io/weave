@@ -11,7 +11,7 @@
 agent loom {
   description "Loom (Main Orchestrator)"
   prompt_file "loom.md"
-  models ["claude-sonnet-4-5", "gpt-4o"]
+  models ["github-copilot/claude-sonnet-4.5", "gpt-4o"]
   mode primary
   temperature 0.1
 
@@ -35,7 +35,7 @@ agent loom {
 agent tapestry {
   description "Tapestry (Plan Execution Coordinator)"
   prompt_file "tapestry.md"
-  models ["claude-sonnet-4-5", "gpt-4o"]
+  models ["github-copilot/claude-sonnet-4.5", "gpt-4o"]
   mode primary
   temperature 0.1
 
@@ -59,7 +59,7 @@ agent tapestry {
 agent shuttle {
   description "Shuttle (Domain Specialist)"
   prompt_file "shuttle.md"
-  models ["claude-sonnet-4-5", "gpt-4o"]
+  models ["github-copilot/claude-sonnet-4.5", "gpt-4o"]
   mode all
   temperature 0.2
 
@@ -82,7 +82,7 @@ agent shuttle {
 agent pattern {
   description "Pattern (Strategic Planner)"
   prompt_file "pattern.md"
-  models ["claude-sonnet-4-5"]
+  models ["github-copilot/claude-sonnet-4.5"]
   mode subagent
   temperature 0.3
 
@@ -103,7 +103,7 @@ agent pattern {
 agent thread {
   description "Thread (Codebase Explorer)"
   prompt_file "thread.md"
-  models ["claude-sonnet-4-5"]
+  models ["github-copilot/claude-sonnet-4.5"]
   mode subagent
   temperature 0.0
 
@@ -124,7 +124,7 @@ agent thread {
 agent spindle {
   description "Spindle (External Researcher)"
   prompt_file "spindle.md"
-  models ["claude-sonnet-4-5"]
+  models ["github-copilot/claude-sonnet-4.5"]
   mode subagent
   temperature 0.1
 
@@ -145,7 +145,7 @@ agent spindle {
 agent weft {
   description "Weft (Reviewer)"
   prompt_file "weft.md"
-  models ["claude-sonnet-4-5"]
+  models ["github-copilot/claude-sonnet-4.5"]
   mode subagent
   temperature 0.1
 
@@ -166,7 +166,7 @@ agent weft {
 agent warp {
   description "Warp (Security Auditor)"
   prompt_file "warp.md"
-  models ["claude-sonnet-4-5"]
+  models ["github-copilot/claude-sonnet-4.5"]
   mode subagent
   temperature 0.1
 
@@ -191,7 +191,7 @@ agent warp {
 
 category core {
   description "DSL lexer, parser, AST, Zod schemas — @weave/core"
-  models ["claude-sonnet-4-5"]
+  models ["github-copilot/claude-sonnet-4.5"]
   patterns ["packages/core/**"]
   temperature 0.1
   prompt_append "This is the parsing and type layer. Preserve neverthrow Result return types, keep all exported types Zod-inferred, and maintain the lexer/parser/validate separation."
@@ -207,7 +207,7 @@ category core {
 
 category engine {
   description "WeaveRunner, HarnessAdapter, config loader — @weave/engine"
-  models ["claude-sonnet-4-5"]
+  models ["github-copilot/claude-sonnet-4.5"]
   patterns ["packages/engine/**"]
   temperature 0.1
   prompt_append "This is the orchestration layer. The runner must stay adapter-agnostic. All fallible paths return Result types. Pino logger is the only logging mechanism."
@@ -223,7 +223,7 @@ category engine {
 
 category adapters {
   description "Harness adapter implementations — @weave/adapter-*"
-  models ["claude-sonnet-4-5"]
+  models ["github-copilot/claude-sonnet-4.5"]
   patterns ["packages/adapters/**"]
   temperature 0.2
   prompt_append "Each adapter implements HarnessAdapter exactly. No adapter should import from another adapter. Keep harness-specific logic fully contained."
@@ -239,7 +239,7 @@ category adapters {
 
 category docs {
   description "Specs, ADRs, proof artifacts, and guides"
-  models ["claude-sonnet-4-5"]
+  models ["github-copilot/claude-sonnet-4.5"]
   patterns ["docs/**", "*.md"]
   temperature 0.2
   prompt_append "Documentation is a first-class deliverable. Every non-trivial change must be reflected in docs/. Specs live in docs/specs/, ADRs in docs/. Cross-link liberally."
@@ -255,7 +255,7 @@ category docs {
 
 category scripts {
   description "Build scripts, validation tooling, and dev utilities"
-  models ["claude-sonnet-4-5"]
+  models ["github-copilot/claude-sonnet-4.5"]
   patterns ["scripts/**"]
   temperature 0.1
   prompt_append "Scripts run with Bun. Use Bun.file() for I/O, never Node.js fs. CLI entry points convert Result to process.exit at the boundary."

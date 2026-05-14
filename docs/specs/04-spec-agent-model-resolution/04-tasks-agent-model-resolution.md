@@ -112,7 +112,7 @@ provenance field so adapter tests can verify which priority branch won.
   falls through to `systemDefault` or `DEFAULT_FALLBACK_MODEL`.
 
   ```ts
-  export const DEFAULT_FALLBACK_MODEL = "claude-sonnet-4-5";
+  export const DEFAULT_FALLBACK_MODEL = "github-copilot/claude-sonnet-4.5";
 
   export function resolveAdapterModelIntent(
     input: ModelResolutionInput,
@@ -312,7 +312,7 @@ boundary alongside the explicitly declared agents.
   DSL for a test:
 
   ```weave
-  agent shuttle { prompt "Base shuttle." models ["claude-sonnet-4-5"] }
+  agent shuttle { prompt "Base shuttle." models ["github-copilot/claude-sonnet-4.5"] }
   category frontend {
     patterns ["src/components/**"]
     models ["gpt-5"]
@@ -357,7 +357,7 @@ boundary alongside the explicitly declared agents.
   declaration and a matching category — e.g.:
 
   ```weave
-  agent shuttle { prompt "Base." models ["claude-sonnet-4-5"] }
+  agent shuttle { prompt "Base." models ["github-copilot/claude-sonnet-4.5"] }
   agent shuttle-frontend { prompt "Explicit." models ["gpt-4o"] }
   category frontend { patterns ["src/**"] models ["gpt-5"] }
   ```

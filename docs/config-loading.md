@@ -100,6 +100,8 @@ Each scope has a `rootDir` (see [`packages/config/src/types.ts`](../packages/con
 
 A `prompt_file: "loom.md"` in scope `{ rootDir: "/my/project/.weave" }` resolves to `/my/project/.weave/prompts/loom.md`.
 
+As a defense-in-depth measure, `resolvePromptPaths()` also canonicalizes the final path and verifies it still lives under that scope's `prompts/` directory. If a malformed config somehow reaches this layer with traversal segments, Weave leaves that agent unchanged and logs a warning instead of resolving a path outside `prompts/`.
+
 Resolution happens before merging so that when two layers both define the same agent's `prompt_file`, the winning value is already an absolute path pointing to the correct scope's `prompts/` directory.
 
 ---
@@ -143,6 +145,21 @@ import {
   BUILTIN_AGENT_NAMES, // ["loom", "tapestry", ...]
 } from "@weave/config";
 ```
+
+---
+
+## Spike Composition CLI
+
+The project-local [`scripts/spike-compose.ts`](../scripts/spike-compose.ts) script is the current end-to-end spike runner for adapter materialisation.
+
+- It reads `<cwd>/.weave/config.weave` directly and parses it with [`parseConfig`](../packages/core/src/parse-config.ts) from `@weave/core`.
+- It resolves project-scoped `prompt_file` entries with [`resolvePromptPaths`](../packages/config/src/resolve.ts) from `@weave/config` using `<cwd>/.weave` as the scope root.
+- It narrows the config to the spike agents `loom` and `thread` before constructing [`WeaveRunner`](../packages/engine/src/runner.ts), so the runner does not materialize unrelated agents or category-generated shuttles.
+- `--harness opencode` now runs the adapter, calls `toPlugin()`, and simulates the plugin `config` hook against an empty config object so the resulting `agent[...]` registrations can be inspected.
+- `--harness pi` now runs the adapter, calls `toExtension()`, and simulates extension startup with a mocked Pi API so the registered tools and hook events can be inspected.
+- The spike CLI no longer checks for emitted files because adapter materialisation is now in-memory and adapter-owned. Those harness-specific registration details remain adapter-owned as described in [Adapter Boundary](adapter-boundary.md).
+
+This script is intentionally a thin composition layer over the public package APIs. It is not a second config-loading implementation.
 
 ---
 

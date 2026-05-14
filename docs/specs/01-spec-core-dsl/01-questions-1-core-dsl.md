@@ -90,8 +90,8 @@ The legacy system has agent modes (`primary`, `subagent`, `all`) that affected O
 
 How should agents declare model preferences when the primary model is unavailable?
 
-- [ ] (A) **`model` + `fallback_models`** — `model: "claude-sonnet-4-5"`, `fallback_models: ["gpt-4o", "gemini-2-flash"]` — Matches the legacy custom agent config shape.
-- [x] (B) **`models` array** — `models: ["claude-sonnet-4-5", "gpt-4o", "gemini-2-flash"]` — Single ordered preference list; adapters can translate it using harness-specific availability/default behavior.
+- [ ] (A) **`model` + `fallback_models`** — `model: "github-copilot/claude-sonnet-4.5"`, `fallback_models: ["gpt-4o", "gemini-2-flash"]` — Matches the legacy custom agent config shape.
+- [x] (B) **`models` array** — `models: ["github-copilot/claude-sonnet-4.5", "gpt-4o", "gemini-2-flash"]` — Single ordered preference list; adapters can translate it using harness-specific availability/default behavior.
 - [ ] (C) **Both** — `model?: string` (single preferred) + `models?: string[]` (full fallback chain). If `model` is set, it's prepended to `models`.
 - [ ] (D) Other (describe)
 

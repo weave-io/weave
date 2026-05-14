@@ -1,4 +1,4 @@
-import type { AgentConfig } from "@weave/core";
+import type { AgentDescriptor } from "./compose.js";
 
 // ---------------------------------------------------------------------------
 // Transitional adapter-boundary types
@@ -63,9 +63,10 @@ export interface HarnessAdapter {
    * names, model fields, tool names, and feature-gap emulation).
    *
    * @param name   - Logical agent name (key from `WeaveConfig.agents`).
-   * @param config - Full normalized agent configuration to materialise.
+   * @param descriptor - Full normalized agent descriptor to materialise.
    */
-  spawnSubagent(name: string, config: AgentConfig): Promise<void>;
+  // SPIKE: pass composed agent descriptors across the adapter boundary.
+  spawnSubagent(name: string, descriptor: AgentDescriptor): Promise<void>;
 
   /**
    * Register a lifecycle hook with the harness so that it fires at the

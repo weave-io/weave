@@ -85,14 +85,14 @@ Define all 8 builtin agents as `.weave` DSL source strings, parse them through `
 
 - [x] 2.1 Create 8 placeholder prompt files in `packages/config/prompts/`: `loom.md`, `tapestry.md`, `shuttle.md`, `pattern.md`, `thread.md`, `spindle.md`, `weft.md`, `warp.md`. Each contains a single line: `# <AgentName>` followed by a blank line and `Placeholder — full prompt content is a future deliverable.`
 - [x] 2.2 Create `packages/config/src/builtins.ts`. Define a `BUILTIN_WEAVE_SOURCE` constant containing a single `.weave` DSL string that declares all 8 agents. Use the agent properties from the legacy architecture doc and AGENTS.md examples:
-  - `loom`: description `"Loom (Main Orchestrator)"`, prompt_file `"loom.md"`, models `["claude-sonnet-4-5"]`, mode `primary`, temperature `0.1`, tool_policy `{ read allow, write allow, execute allow, delegate allow, network ask }`
-  - `tapestry`: description `"Tapestry (Plan Execution)"`, prompt_file `"tapestry.md"`, models `["claude-sonnet-4-5"]`, mode `primary`, temperature `0.1`, tool_policy `{ read allow, write allow, execute allow, network deny, delegate allow }`
-  - `shuttle`: description `"Shuttle (Domain Specialist)"`, prompt_file `"shuttle.md"`, models `["claude-sonnet-4-5"]`, mode `all`, temperature `0.2`, tool_policy `{ read allow, write allow, execute allow, network deny, delegate deny }`
-  - `pattern`: description `"Pattern (Strategic Planner)"`, prompt_file `"pattern.md"`, models `["claude-sonnet-4-5"]`, mode `subagent`, temperature `0.3`, tool_policy `{ read allow, write allow, execute deny, network deny, delegate deny }`
-  - `thread`: description `"Thread (Codebase Explorer)"`, prompt_file `"thread.md"`, models `["claude-sonnet-4-5"]`, mode `subagent`, temperature `0.0`, tool_policy `{ read allow, write deny, execute deny, network deny, delegate deny }`
-  - `spindle`: description `"Spindle (External Researcher)"`, prompt_file `"spindle.md"`, models `["claude-sonnet-4-5"]`, mode `subagent`, temperature `0.1`, tool_policy `{ read allow, write deny, execute deny, network allow, delegate deny }`
-  - `weft`: description `"Weft (Reviewer)"`, prompt_file `"weft.md"`, models `["claude-sonnet-4-5"]`, mode `subagent`, temperature `0.1`, tool_policy `{ read allow, write deny, execute deny, network deny, delegate deny }`
-  - `warp`: description `"Warp (Security Auditor)"`, prompt_file `"warp.md"`, models `["claude-sonnet-4-5"]`, mode `subagent`, temperature `0.1`, tool_policy `{ read allow, write deny, execute deny, network deny, delegate deny }`
+  - `loom`: description `"Loom (Main Orchestrator)"`, prompt_file `"loom.md"`, models `["github-copilot/claude-sonnet-4.5"]`, mode `primary`, temperature `0.1`, tool_policy `{ read allow, write allow, execute allow, delegate allow, network ask }`
+  - `tapestry`: description `"Tapestry (Plan Execution)"`, prompt_file `"tapestry.md"`, models `["github-copilot/claude-sonnet-4.5"]`, mode `primary`, temperature `0.1`, tool_policy `{ read allow, write allow, execute allow, network deny, delegate allow }`
+  - `shuttle`: description `"Shuttle (Domain Specialist)"`, prompt_file `"shuttle.md"`, models `["github-copilot/claude-sonnet-4.5"]`, mode `all`, temperature `0.2`, tool_policy `{ read allow, write allow, execute allow, network deny, delegate deny }`
+  - `pattern`: description `"Pattern (Strategic Planner)"`, prompt_file `"pattern.md"`, models `["github-copilot/claude-sonnet-4.5"]`, mode `subagent`, temperature `0.3`, tool_policy `{ read allow, write allow, execute deny, network deny, delegate deny }`
+  - `thread`: description `"Thread (Codebase Explorer)"`, prompt_file `"thread.md"`, models `["github-copilot/claude-sonnet-4.5"]`, mode `subagent`, temperature `0.0`, tool_policy `{ read allow, write deny, execute deny, network deny, delegate deny }`
+  - `spindle`: description `"Spindle (External Researcher)"`, prompt_file `"spindle.md"`, models `["github-copilot/claude-sonnet-4.5"]`, mode `subagent`, temperature `0.1`, tool_policy `{ read allow, write deny, execute deny, network allow, delegate deny }`
+  - `weft`: description `"Weft (Reviewer)"`, prompt_file `"weft.md"`, models `["github-copilot/claude-sonnet-4.5"]`, mode `subagent`, temperature `0.1`, tool_policy `{ read allow, write deny, execute deny, network deny, delegate deny }`
+  - `warp`: description `"Warp (Security Auditor)"`, prompt_file `"warp.md"`, models `["github-copilot/claude-sonnet-4.5"]`, mode `subagent`, temperature `0.1`, tool_policy `{ read allow, write deny, execute deny, network deny, delegate deny }`
 - [x] 2.3 In `builtins.ts`, implement and export `getBuiltinConfig(): Result<WeaveConfig, ConfigError[]>` that calls `parseConfig(BUILTIN_WEAVE_SOURCE)` and returns the result directly. Import `parseConfig`, `WeaveConfig`, `ConfigError` from `@weave/core` and `Result` from `neverthrow`. Add JSDoc.
 - [x] 2.4 Export `BUILTIN_AGENT_NAMES` as a `readonly string[]` constant listing all 8 agent names: `["loom", "tapestry", "shuttle", "pattern", "thread", "spindle", "weft", "warp"]`.
 - [x] 2.5 Update `packages/config/src/index.ts` to re-export `getBuiltinConfig` and `BUILTIN_AGENT_NAMES` from `./builtins.js`.
@@ -169,11 +169,11 @@ Implement `mergeConfigs(...configs: WeaveConfig[]): WeaveConfig` — a pure, var
 - [x] 4.5 Create `packages/config/src/__tests__/merge.test.ts` with a `cfg(source)` helper (matching `@weave/engine` runner test pattern) and tests:
   - (a) **Scalar override**: `mergeConfigs(cfg('log_level INFO'), cfg('log_level DEBUG'))` → `log_level` is `"DEBUG"`
   - (b) **Three-layer scalar**: `mergeConfigs(cfgA, cfgB, cfgC)` where only `cfgC` sets `log_level` → `cfgC`'s value wins
-  - (c) **Agent deep-merge (partial override)**: builtin loom (temperature 0.1, prompt_file "loom.md", models ["claude-sonnet-4-5"]) + project loom (temperature 0.5 only) → merged loom has `temperature: 0.5`, `prompt_file: "loom.md"`, `models: ["claude-sonnet-4-5"]`
+  - (c) **Agent deep-merge (partial override)**: builtin loom (temperature 0.1, prompt_file "loom.md", models ["github-copilot/claude-sonnet-4.5"]) + project loom (temperature 0.5 only) → merged loom has `temperature: 0.5`, `prompt_file: "loom.md"`, `models: ["github-copilot/claude-sonnet-4.5"]`
   - (d) **Agent addition**: builtin defines loom, project defines `my-helper` → merged config has both agents
-  - (e) **Array union-merge (models)**: global loom models `["gpt-4o"]`, project loom models `["claude-sonnet-4-5"]` → merged `["claude-sonnet-4-5", "gpt-4o"]` (project first)
+  - (e) **Array union-merge (models)**: global loom models `["gpt-4o"]`, project loom models `["github-copilot/claude-sonnet-4.5"]` → merged `["github-copilot/claude-sonnet-4.5", "gpt-4o"]` (project first)
   - (f) **Array union-merge (disabled.agents)**: global disables `["warp"]`, project disables `["spindle"]` → merged `["spindle", "warp"]` (project first, deduped)
-  - (g) **Array union-merge dedup**: both layers have `"claude-sonnet-4-5"` in models → appears once
+  - (g) **Array union-merge dedup**: both layers have `"github-copilot/claude-sonnet-4.5"` in models → appears once
   - (h) **Empty config merge**: `mergeConfigs(emptyConfig, emptyConfig)` → valid empty config
   - (i) **Single config**: `mergeConfigs(cfg)` → returns equivalent config
   - (j) **Zero configs**: `mergeConfigs()` → returns default empty `WeaveConfig`

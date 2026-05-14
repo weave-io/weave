@@ -59,6 +59,22 @@ const resolved = resolveAdapterModelIntent({
 
 Weave does **not** query the harness UI or model registry itself.
 
+### Prompt Composition
+
+Engine prompt composition should produce normalized `AgentDescriptor` values:
+
+- `composedPrompt` — full prompt text after file loading and appends
+- `models` / `mode` / `toolPolicy` — adapter-facing intent metadata
+- `delegationTargets` — normalized delegation metadata for prompt sections or adapter translation
+
+The current engine entry point for this normalization is `composeAgentDescriptor()` in [`packages/engine/src/compose.ts`](../packages/engine/src/compose.ts). It resolves either inline `prompt` text or an already-resolved `prompt_file`, appends a `## Delegation` section when delegation is allowed, and then appends any `prompt_append` content.
+
+Adapters consume those descriptors and translate them into concrete harness configuration. Weave does **not** embed harness-specific prompt wrappers, tool identifiers, or runtime registration details during composition.
+
+Current spike adapters materialize descriptor output directly. For example, the Pi adapter now collects `AgentDescriptor` values in memory, exposes a Pi extension factory that registers a Weave-owned `delegate` tool, maps Weave tool policy to Pi active tool names, returns the primary descriptor's composed system prompt from `before_agent_start`, and emulates delegated subprocess runs with Pi's concrete CLI flags by writing the composed prompt to a temporary file passed through `--append-system-prompt`. Because Pi loads the extension through a Node.js-compatible loader, that adapter-owned file I/O path uses `node:fs/promises` rather than Bun-only file helpers. Pi is treated as a single-agent harness at that boundary, so the adapter does not probe the event for agent identity or mutate the incoming event object. This keeps prompt composition engine-owned while Pi extension registration details stay adapter-owned.
+
+For example, the current OpenCode adapter spike collects `AgentDescriptor` values in memory and exposes a minimal plugin hooks object whose `config` callback mutates `cfg.agent[name]` for each descriptor. The adapter maps `composedPrompt` to `prompt`, the first model preference to `model`, collapses Weave `all` mode to OpenCode `primary`, and translates supported tool permissions into OpenCode's boolean `tools` map. That plugin hook contract is adapter-owned, not engine-owned.
+
 ### Skill Resolution
 
 Adapters discover and load harness skills, then pass them to Weave:

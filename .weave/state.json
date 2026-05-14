@@ -1,0 +1,11 @@
+{
+  "active_plan": "C:\\source\\weave-vnext\\.weave\\plans\\pi-spike-alignment.md",
+  "started_at": "2026-05-14T12:05:46.231Z",
+  "session_ids": [
+    "ses_1da0b635affeUGekOROi92eQsK"
+  ],
+  "plan_name": "pi-spike-alignment",
+  "agent": "tapestry",
+  "start_sha": "142b0c4a32b3136031e00f67fcc620f1489e4829",
+  "paused": true
+}

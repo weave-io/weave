@@ -116,7 +116,7 @@ The current `CategoryConfigSchema` uses `models [...]`, and AGENTS.md says categ
 The issue lists `(5) system default`, but the current config schema has no system-default model field. Adapter calls for UI model discovery may also fail or return no value.
 
 - [ ] (A) **Adapter provides system default too** — Add `getDefaultModel()` or return both selected/default model from the new UI model method.
-- [ ] (B) **Engine constant fallback** — Define a documented engine constant such as `DEFAULT_MODEL = "claude-sonnet-4-5"` for final fallback.
+- [ ] (B) **Engine constant fallback** — Define a documented engine constant such as `DEFAULT_MODEL = "github-copilot/claude-sonnet-4.5"` for final fallback.
 - [x] (C) **Config-provided setting later; engine constant now** — Use an engine constant for this spec and leave a future DSL setting for configurable defaults.
 - [ ] (D) **No hardcoded fallback** — If no model can be resolved, return a typed resolution error and skip materialising that agent.
 - [ ] (E) Other (describe)

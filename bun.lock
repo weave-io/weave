@@ -18,6 +18,20 @@
       "dependencies": {
         "@weave/core": "workspace:*",
         "@weave/engine": "workspace:*",
+        "neverthrow": "^8.2.0",
+      },
+      "devDependencies": {
+        "typescript": "^5.4.5",
+      },
+    },
+    "packages/adapters/pi": {
+      "name": "@weave/adapter-pi",
+      "version": "0.0.1",
+      "dependencies": {
+        "@weave/core": "workspace:*",
+        "@weave/engine": "workspace:*",
+        "neverthrow": "^8.2.0",
+        "typebox": "^1.1.38",
       },
       "devDependencies": {
         "typescript": "^5.4.5",
@@ -108,6 +122,8 @@
 
     "@weave/adapter-opencode": ["@weave/adapter-opencode@workspace:packages/adapters/opencode"],
 
+    "@weave/adapter-pi": ["@weave/adapter-pi@workspace:packages/adapters/pi"],
+
     "@weave/cli": ["@weave/cli@workspace:packages/cli"],
 
     "@weave/config": ["@weave/config@workspace:packages/config"],
@@ -197,6 +213,8 @@
     "thread-stream": ["thread-stream@3.1.0", "", { "dependencies": { "real-require": "^0.2.0" } }, "sha512-OqyPZ9u96VohAyMfJykzmivOrY2wfMSf3C5TtFJVgN+Hm6aj+voFhlK+kZEIv2FBh1X6Xp3DlnCOfEQ3B2J86A=="],
 
     "tinyexec": ["tinyexec@1.1.2", "", {}, "sha512-dAqSqE/RabpBKI8+h26GfLq6Vb3JVXs30XYQjdMjaj/c2tS8IYYMbIzP599KtRj7c57/wYApb3QjgRgXmrCukA=="],
+
+    "typebox": ["typebox@1.1.38", "", {}, "sha512-pZ0aQPmMmXoUvSbeuWf/Hzsc+avNw/Zd6VeE8CFgkVGWyuHPJvqeJJDeJqLve+K70LvjYIoleGcoJHPT17cWoA=="],
 
     "typescript": ["typescript@5.9.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw=="],
 

@@ -19,7 +19,7 @@ describe("generateCategoryShuttles", () => {
   describe("generation", () => {
     it("(a) returns empty object when config has no categories", () => {
       const result = shuttles(`
-        agent shuttle { prompt "Base shuttle." models ["claude-sonnet-4-5"] }
+        agent shuttle { prompt "Base shuttle." models ["github-copilot/claude-sonnet-4.5"] }
       `);
 
       expect(result).toEqual({});
@@ -38,7 +38,7 @@ describe("generateCategoryShuttles", () => {
 
     it("(c) produces a shuttle-{name} key for each category", () => {
       const result = shuttles(`
-        agent shuttle { prompt "Base shuttle." models ["claude-sonnet-4-5"] }
+        agent shuttle { prompt "Base shuttle." models ["github-copilot/claude-sonnet-4.5"] }
         category frontend { patterns ["src/components/**"] models ["gpt-5"] }
         category backend { patterns ["src/api/**"] models ["gpt-4o"] }
       `);
@@ -51,7 +51,7 @@ describe("generateCategoryShuttles", () => {
 
     it("(d) generated descriptor name field matches the key", () => {
       const result = shuttles(`
-        agent shuttle { prompt "Base shuttle." models ["claude-sonnet-4-5"] }
+        agent shuttle { prompt "Base shuttle." models ["github-copilot/claude-sonnet-4.5"] }
         category frontend { patterns ["src/components/**"] models ["gpt-5"] }
       `);
 
@@ -62,7 +62,7 @@ describe("generateCategoryShuttles", () => {
   describe("inheritance", () => {
     it("(a) generated descriptor inherits base shuttle prompt", () => {
       const result = shuttles(`
-        agent shuttle { prompt "Base shuttle prompt." models ["claude-sonnet-4-5"] }
+        agent shuttle { prompt "Base shuttle prompt." models ["github-copilot/claude-sonnet-4.5"] }
         category frontend { patterns ["src/components/**"] }
       `);
 
@@ -73,7 +73,7 @@ describe("generateCategoryShuttles", () => {
       const result = shuttles(`
         agent shuttle {
           prompt "Base shuttle."
-          models ["claude-sonnet-4-5"]
+          models ["github-copilot/claude-sonnet-4.5"]
           tool_policy {
             read allow
             write allow
@@ -94,7 +94,7 @@ describe("generateCategoryShuttles", () => {
       const result = shuttles(`
         agent shuttle {
           prompt "Base shuttle."
-          models ["claude-sonnet-4-5"]
+          models ["github-copilot/claude-sonnet-4.5"]
           mode all
         }
         category frontend { patterns ["src/components/**"] }
@@ -107,7 +107,7 @@ describe("generateCategoryShuttles", () => {
   describe("category overrides", () => {
     it("(a) category models replace the inherited models field", () => {
       const result = shuttles(`
-        agent shuttle { prompt "Base shuttle." models ["claude-sonnet-4-5"] }
+        agent shuttle { prompt "Base shuttle." models ["github-copilot/claude-sonnet-4.5"] }
         category frontend { patterns ["src/components/**"] models ["gpt-5"] }
       `);
 
@@ -118,7 +118,7 @@ describe("generateCategoryShuttles", () => {
       const result = shuttles(`
         agent shuttle {
           prompt "Base shuttle."
-          models ["claude-sonnet-4-5"]
+          models ["github-copilot/claude-sonnet-4.5"]
           temperature 0.2
         }
         category frontend { patterns ["src/components/**"] temperature 0.7 }
@@ -129,7 +129,7 @@ describe("generateCategoryShuttles", () => {
 
     it("(c) category prompt_append is set on the descriptor", () => {
       const result = shuttles(`
-        agent shuttle { prompt "Base shuttle." models ["claude-sonnet-4-5"] }
+        agent shuttle { prompt "Base shuttle." models ["github-copilot/claude-sonnet-4.5"] }
         category frontend {
           patterns ["src/components/**"]
           prompt_append "Focus on accessibility."
@@ -145,7 +145,7 @@ describe("generateCategoryShuttles", () => {
       const result = shuttles(`
         agent shuttle {
           prompt "Base shuttle."
-          models ["claude-sonnet-4-5"]
+          models ["github-copilot/claude-sonnet-4.5"]
           tool_policy {
             read allow
             write ask
@@ -173,7 +173,7 @@ describe("generateCategoryShuttles", () => {
       const result = shuttles(`
         agent shuttle {
           prompt "Base shuttle."
-          models ["claude-sonnet-4-5"]
+          models ["github-copilot/claude-sonnet-4.5"]
           prompt_append "Base append."
         }
         category frontend {
@@ -191,7 +191,7 @@ describe("generateCategoryShuttles", () => {
       const result = shuttles(`
         agent shuttle {
           prompt "Base shuttle."
-          models ["claude-sonnet-4-5"]
+          models ["github-copilot/claude-sonnet-4.5"]
           prompt_append "Base append."
         }
         category frontend {
@@ -206,7 +206,7 @@ describe("generateCategoryShuttles", () => {
       const result = shuttles(`
         agent shuttle {
           prompt "Base shuttle."
-          models ["claude-sonnet-4-5"]
+          models ["github-copilot/claude-sonnet-4.5"]
           temperature 0.2
         }
         category frontend { patterns ["src/components/**"] models ["gpt-5"] }
@@ -220,7 +220,7 @@ describe("generateCategoryShuttles", () => {
     it("(a) returns ok({}) when base shuttle is in disabled.agents", () => {
       const result = generateCategoryShuttles(
         cfg(`
-          agent shuttle { prompt "Base." models ["claude-sonnet-4-5"] }
+          agent shuttle { prompt "Base." models ["github-copilot/claude-sonnet-4.5"] }
           category frontend { patterns ["src/**"] models ["gpt-5"] }
           disable agents ["shuttle"]
         `),
@@ -232,7 +232,7 @@ describe("generateCategoryShuttles", () => {
 
     it("(b) skips only the disabled category shuttle; others are still generated", () => {
       const result = shuttles(`
-        agent shuttle { prompt "Base." models ["claude-sonnet-4-5"] }
+        agent shuttle { prompt "Base." models ["github-copilot/claude-sonnet-4.5"] }
         category frontend { patterns ["src/components/**"] models ["gpt-5"] }
         category backend { patterns ["src/api/**"] models ["gpt-4o"] }
         disable agents ["shuttle-frontend"]
@@ -243,7 +243,7 @@ describe("generateCategoryShuttles", () => {
 
     it("(c) base shuttle disabled suppresses ALL category shuttles", () => {
       const result = shuttles(`
-        agent shuttle { prompt "Base." models ["claude-sonnet-4-5"] }
+        agent shuttle { prompt "Base." models ["github-copilot/claude-sonnet-4.5"] }
         category frontend { patterns ["src/components/**"] models ["gpt-5"] }
         category backend { patterns ["src/api/**"] models ["gpt-4o"] }
         disable agents ["shuttle"]
@@ -257,7 +257,7 @@ describe("generateCategoryShuttles", () => {
     it("(a) returns err(CategoryShuttleConflictError) when shuttle-{name} is explicitly declared", () => {
       const result = generateCategoryShuttles(
         cfg(`
-          agent shuttle { prompt "Base." models ["claude-sonnet-4-5"] }
+          agent shuttle { prompt "Base." models ["github-copilot/claude-sonnet-4.5"] }
           agent shuttle-frontend { prompt "Explicit." models ["gpt-4o"] }
           category frontend { patterns ["src/**"] models ["gpt-5"] }
         `),
@@ -271,7 +271,7 @@ describe("generateCategoryShuttles", () => {
     it("(b) error contains the correct shuttleName and categoryName fields", () => {
       const result = generateCategoryShuttles(
         cfg(`
-          agent shuttle { prompt "Base." models ["claude-sonnet-4-5"] }
+          agent shuttle { prompt "Base." models ["github-copilot/claude-sonnet-4.5"] }
           agent shuttle-frontend { prompt "Explicit." models ["gpt-4o"] }
           category frontend { patterns ["src/**"] models ["gpt-5"] }
         `),
@@ -286,7 +286,7 @@ describe("generateCategoryShuttles", () => {
     it("(c) error message is human-readable and names both the agent and the category", () => {
       const result = generateCategoryShuttles(
         cfg(`
-          agent shuttle { prompt "Base." models ["claude-sonnet-4-5"] }
+          agent shuttle { prompt "Base." models ["github-copilot/claude-sonnet-4.5"] }
           agent shuttle-frontend { prompt "Explicit." models ["gpt-4o"] }
           category frontend { patterns ["src/**"] models ["gpt-5"] }
         `),
@@ -302,7 +302,7 @@ describe("generateCategoryShuttles", () => {
     it("(d) returns ok when shuttle-{name} is in disabled.agents but not explicitly declared", () => {
       const result = generateCategoryShuttles(
         cfg(`
-          agent shuttle { prompt "Base." models ["claude-sonnet-4-5"] }
+          agent shuttle { prompt "Base." models ["github-copilot/claude-sonnet-4.5"] }
           category frontend { patterns ["src/**"] models ["gpt-5"] }
           disable agents ["shuttle-frontend"]
         `),

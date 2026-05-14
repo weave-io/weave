@@ -78,7 +78,7 @@ No findings.
 | `models` ordering in union-merge                 | Adopted recommendation: higher-priority first, then lower-priority not already present | Task 4.1, 4.5(e)         |
 | `@weave/config` vs `@weave/engine` loader        | Adopted: separate package; ADR in `docs/config-loading.md`                             | Task 5.10                |
 | Logger dependency                                | Adopted: direct `pino` dependency with local logger                                    | Task 1.9                 |
-| Builtin agent `models` defaults                  | Adopted: `["claude-sonnet-4-5"]` placeholder for all builtins                          | Task 2.2                 |
+| Builtin agent `models` defaults                  | Adopted: `["github-copilot/claude-sonnet-4.5"]` placeholder for all builtins                          | Task 2.2                 |
 | Builtin prompt file shipping strategy            | Adopted: placeholder `.md` files in `packages/config/prompts/`                         | Task 2.1                 |
 | Category `prompt_append` resolution              | Confirmed: no path resolution needed for categories                                    | Task 5.1 (explicit note) |
 

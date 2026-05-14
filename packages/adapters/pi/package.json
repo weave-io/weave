@@ -1,0 +1,28 @@
+{
+  "name": "@weave/adapter-pi",
+  "version": "0.0.1",
+  "description": "Pi adapter for the Weave orchestration framework",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "module": "./dist/index.js",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "bun build ./src/index.ts --outdir ./dist --target node && tsc -p tsconfig.build.json --emitDeclarationOnly",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@weave/core": "workspace:*",
+    "@weave/engine": "workspace:*",
+    "neverthrow": "^8.2.0",
+    "typebox": "^1.1.38"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5"
+  }
+}

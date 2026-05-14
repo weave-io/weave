@@ -176,7 +176,7 @@ describe("resolveAdapterModelIntent", () => {
     it("(b) returned model equals DEFAULT_FALLBACK_MODEL constant value", () => {
       const result = resolveAdapterModelIntent({ agentName: "loom" });
 
-      expect(result.model).toBe("claude-sonnet-4-5");
+      expect(result.model).toBe("github-copilot/claude-sonnet-4.5");
       expect(result.model).toBe(DEFAULT_FALLBACK_MODEL);
     });
   });

@@ -157,7 +157,7 @@ loom.prompt_file: /Users/jose/projects/weave/packages/config/prompts/loom.md  (a
 ```
 temperature: 0.5          ← from project
 prompt_file: loom.md      ← from builtin (preserved)
-models: ["claude-sonnet-4-5"]  ← from builtin (preserved)
+models: ["github-copilot/claude-sonnet-4.5"]  ← from builtin (preserved)
 mode: primary             ← from builtin (preserved)
 ```
 

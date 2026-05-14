@@ -50,7 +50,7 @@ describe("printSummary", () => {
     const config = cfg(`
       agent loom {
         prompt "You are loom."
-        models ["claude-sonnet-4-5"]
+        models ["github-copilot/claude-sonnet-4.5"]
       }
       category backend {
         patterns ["src/api/**"]
@@ -296,7 +296,7 @@ describe("printSummary", () => {
     const config = cfg(`
       agent shuttle {
         prompt "You are shuttle."
-        models ["claude-sonnet-4-5"]
+        models ["github-copilot/claude-sonnet-4.5"]
       }
 
       category core {

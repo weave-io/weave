@@ -1,4 +1,5 @@
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { errAsync, type ResultAsync } from "neverthrow";
 import { getBuiltinConfig } from "./builtins.js";
 import {
@@ -22,7 +23,13 @@ const log = logger.child({ module: "loader" });
  * `import.meta.dir` is the directory of this source file (`packages/config/src/`).
  * We resolve one level up to reach `packages/config/` where `prompts/` lives.
  */
-const BUILTIN_ROOT_DIR = normalizePath(resolve(import.meta.dir, ".."));
+// SPIKE: Computed lazily inside loadConfig() so that bundling for Node.js
+// (where import.meta.dir is undefined) does not crash at module load time.
+// import.meta.dir is Bun-specific; in Node ESM it is undefined.
+function getBuiltinRootDir(): string {
+  const dir = import.meta.dir ?? dirname(fileURLToPath(import.meta.url));
+  return normalizePath(resolve(dir, ".."));
+}
 
 /**
  * Load the final merged `WeaveConfig` for a project.
@@ -75,7 +82,7 @@ export function loadConfig(
     // Step 3: Resolve prompt paths for each layer
     const builtinScope: ConfigScope = {
       kind: "builtin",
-      rootDir: BUILTIN_ROOT_DIR,
+      rootDir: getBuiltinRootDir(),
     };
     const resolvedBuiltins = resolvePromptPaths(builtinConfig, builtinScope);
 

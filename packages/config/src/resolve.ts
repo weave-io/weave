@@ -1,7 +1,10 @@
 import { posix } from "node:path";
 import type { WeaveConfig } from "@weave/core";
+import { logger } from "./logger.js";
 import { normalizePath } from "./normalize-path.js";
 import type { ConfigScope } from "./types.js";
+
+const log = logger.child({ module: "resolve" });
 
 /**
  * Resolve `prompt_file` values in a `WeaveConfig` to absolute paths for the
@@ -32,6 +35,9 @@ export function resolvePromptPaths(
   scope: ConfigScope,
 ): WeaveConfig {
   const resolvedAgents: WeaveConfig["agents"] = {};
+  const promptsDir = normalizePath(
+    posix.join(normalizePath(scope.rootDir), "prompts"),
+  );
 
   for (const [name, agent] of Object.entries(config.agents)) {
     if (agent.prompt_file === undefined) {
@@ -39,9 +45,23 @@ export function resolvePromptPaths(
       continue;
     }
 
-    const absolutePath = normalizePath(
-      posix.join(normalizePath(scope.rootDir), "prompts", agent.prompt_file),
-    );
+    const absolutePath = normalizePath(posix.join(promptsDir, agent.prompt_file));
+
+    if (!absolutePath.startsWith(`${promptsDir}/`) && absolutePath !== promptsDir) {
+      log.warn(
+        {
+          agent: name,
+          promptFile: agent.prompt_file,
+          promptsDir,
+          resolvedPath: absolutePath,
+          scope: scope.kind,
+        },
+        "Skipping prompt_file resolution outside prompts directory",
+      );
+      resolvedAgents[name] = agent;
+      continue;
+    }
+
     resolvedAgents[name] = { ...agent, prompt_file: absolutePath };
   }
 
