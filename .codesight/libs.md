@@ -119,7 +119,10 @@
 - `packages/engine/src/runner.ts` — class WeaveRunner
 - `packages/engine/src/tool-policy.ts`
   - function evaluateEffectiveToolPolicy: (policy) => EffectiveToolPolicy
+  - function resolveToolDecisions: (toolIds, classifications, effectivePolicy) => ToolDecision[]
   - type EffectiveToolPolicy
-  - const ABSTRACT_CAPABILITIES: (keyof ToolPolicy)[]
-  - const DEFAULT_PERMISSION: ToolPermission
+  - type ConcreteToolClassification
+  - type MappedToolDecision
+  - type UnmappedToolDecision
+  - _...3 more_
 - `scripts/validate-config.ts` — function printSummary: (config, configPath) => void

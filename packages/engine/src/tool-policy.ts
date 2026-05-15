@@ -93,3 +93,139 @@ export function evaluateEffectiveToolPolicy(
     network: policy?.network ?? DEFAULT_PERMISSION,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Adapter-facing concrete tool classification contract
+// ---------------------------------------------------------------------------
+//
+// This section defines the input shape adapters use to supply concrete tool
+// identifiers and their abstract capability classification, plus the per-tool
+// decision union the engine returns after combining those classifications with
+// an EffectiveToolPolicy.
+//
+// Alignment: this contract maps directly to the `tool-policy-mapping`
+// capability defined in Spec 07 (docs/specs/07-spec-adapter-capability-contract/).
+// Adapters that declare `tool-policy-mapping` as `native` or `emulated` are
+// expected to supply ConcreteToolClassification entries and consume ToolDecision
+// results to enforce Weave policy using harness-specific mechanisms.
+//
+// Concrete tool identifiers are opaque strings owned by adapters. The engine
+// never inspects, hard-codes, or branches on specific harness tool names.
+
+/**
+ * A single adapter-supplied classification entry that pairs a concrete tool
+ * identifier (opaque string, harness-owned) with the abstract capability it
+ * maps to.
+ *
+ * Adapters construct these entries during their initialisation phase and pass
+ * them to `resolveToolDecisions` together with an `EffectiveToolPolicy`.
+ *
+ * @example
+ * // Adapter-internal — concrete id is opaque to the engine
+ * const entry: ConcreteToolClassification = {
+ *   toolId: "synthetic.read-tool",
+ *   capability: "read",
+ * };
+ */
+export type ConcreteToolClassification = {
+  /** Opaque concrete tool identifier supplied by the adapter. */
+  readonly toolId: string;
+  /** The abstract capability this tool maps to. */
+  readonly capability: keyof ToolPolicy;
+};
+
+// ---------------------------------------------------------------------------
+// Per-tool decision union
+// ---------------------------------------------------------------------------
+
+/**
+ * A mapped tool decision: the concrete tool was classified against a known
+ * abstract capability and the effective policy for that capability has been
+ * resolved.
+ *
+ * Adapters should use `permission` to enforce the Weave intent using
+ * harness-specific mechanisms (e.g. allow-list, deny-list, prompt-for-approval).
+ */
+export type MappedToolDecision = {
+  readonly kind: "mapped";
+  /** The concrete tool identifier as supplied by the adapter. */
+  readonly toolId: string;
+  /** The abstract capability this tool was classified under. */
+  readonly capability: keyof ToolPolicy;
+  /** The effective permission resolved from the agent's EffectiveToolPolicy. */
+  readonly permission: ToolPermission;
+};
+
+/**
+ * An unmapped tool decision: the concrete tool identifier was not present in
+ * the adapter-supplied classification list.
+ *
+ * This outcome is **explicit** — the engine never silently allows an
+ * unclassified tool. Adapters must decide how to handle unmapped tools
+ * (typically: deny or ask) using their own harness-specific logic.
+ */
+export type UnmappedToolDecision = {
+  readonly kind: "unmapped";
+  /** The concrete tool identifier that had no classification entry. */
+  readonly toolId: string;
+};
+
+/**
+ * A per-tool decision produced by `resolveToolDecisions`.
+ *
+ * The `kind` discriminant distinguishes classified tools (`"mapped"`) from
+ * tools the adapter did not classify (`"unmapped"`). Adapters must handle
+ * both variants — there is no implicit `allow` for unmapped tools.
+ */
+export type ToolDecision = MappedToolDecision | UnmappedToolDecision;
+
+// ---------------------------------------------------------------------------
+// Classification helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Combines adapter-supplied concrete tool classifications with an
+ * `EffectiveToolPolicy` to produce a deterministic per-tool decision for
+ * every tool identifier in `toolIds`.
+ *
+ * **Pure and deterministic** — no I/O, no harness names, no adapter calls.
+ * Aligned with Spec 07 `tool-policy-mapping` capability
+ * (see `docs/specs/07-spec-adapter-capability-contract/`).
+ *
+ * Rules:
+ * - A tool id present in `classifications` → `MappedToolDecision` with the
+ *   effective permission for its abstract capability.
+ * - A tool id absent from `classifications` → `UnmappedToolDecision` (no
+ *   permission value; adapters must not treat this as implicit `allow`).
+ *
+ * @param toolIds - The concrete tool identifiers to resolve decisions for.
+ *   Supplied by the adapter; opaque strings to the engine.
+ * @param classifications - Adapter-supplied mappings from concrete tool id to
+ *   abstract capability. May be a subset of `toolIds`.
+ * @param effectivePolicy - The fully-resolved effective tool policy for the
+ *   agent being materialised.
+ * @returns An array of `ToolDecision` entries in the same order as `toolIds`.
+ */
+export function resolveToolDecisions(
+  toolIds: readonly string[],
+  classifications: readonly ConcreteToolClassification[],
+  effectivePolicy: EffectiveToolPolicy,
+): ToolDecision[] {
+  const classificationMap = new Map<string, keyof ToolPolicy>();
+  for (const entry of classifications) {
+    classificationMap.set(entry.toolId, entry.capability);
+  }
+
+  return toolIds.map((toolId): ToolDecision => {
+    const capability = classificationMap.get(toolId);
+    if (capability === undefined) {
+      return { kind: "unmapped", toolId };
+    }
+    return {
+      kind: "mapped",
+      toolId,
+      capability,
+      permission: effectivePolicy[capability],
+    };
+  });
+}

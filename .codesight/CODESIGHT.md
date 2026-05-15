@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 35 lib files | 2 env vars | 0 middleware | 0% test coverage
 > **Token savings:** this file is ~2,900 tokens. Without it, AI exploration would cost ~18,500 tokens. **Saves ~15,500 tokens per conversation.**
-> **Last scanned:** 2026-05-15 19:42 — re-run after significant changes
+> **Last scanned:** 2026-05-15 19:46 — re-run after significant changes
 
 ---
 
@@ -130,9 +130,12 @@
 - `packages/engine/src/runner.ts` — class WeaveRunner
 - `packages/engine/src/tool-policy.ts`
   - function evaluateEffectiveToolPolicy: (policy) => EffectiveToolPolicy
+  - function resolveToolDecisions: (toolIds, classifications, effectivePolicy) => ToolDecision[]
   - type EffectiveToolPolicy
-  - const ABSTRACT_CAPABILITIES: (keyof ToolPolicy)[]
-  - const DEFAULT_PERMISSION: ToolPermission
+  - type ConcreteToolClassification
+  - type MappedToolDecision
+  - type UnmappedToolDecision
+  - _...3 more_
 - `scripts/validate-config.ts` — function printSummary: (config, configPath) => void
 
 ---
