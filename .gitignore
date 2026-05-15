@@ -3,6 +3,8 @@ node_modules/
 ~/
 .bun/
 
+.weave/runtime/
+
 # Build output
 dist/
 *.tsbuildinfo
