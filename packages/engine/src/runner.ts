@@ -4,6 +4,7 @@ import { type AgentDescriptor, composeAgentDescriptor } from "./compose.js";
 import { generateCategoryShuttles } from "./descriptors.js";
 import { logger } from "./logger.js";
 import type { RunAgentEffect } from "./run-agent-effects.js";
+import { resolveSkillsForConfig } from "./skill-resolution.js";
 
 const log = logger.child({ module: "runner" });
 
@@ -22,8 +23,9 @@ export interface WeaveRunnerOptions {
    * Called once per agent immediately before `adapter.spawnSubagent`.
    *
    * Receives a `RunAgentEffect` carrying the engine-computed
-   * `effectiveToolPolicy` (all five capabilities resolved) and the raw
-   * `rawToolPolicy` (the agent's declared `tool_policy`, or `undefined`).
+   * `effectiveToolPolicy` (all five capabilities resolved), the raw
+   * `rawToolPolicy` (the agent's declared `tool_policy`, or `undefined`),
+   * and `resolvedSkills` (ordered list of resolved skill names for this agent).
    *
    * The callback is synchronous. If it throws, the error is logged and
    * agent materialization continues uninterrupted.
@@ -86,7 +88,7 @@ export class WeaveRunner {
    * Execute the current adapter materialisation lifecycle:
    *
    * 1. Initialise the harness adapter.
-   * 2. Resolve adapter-provided skill context.      (deferred — see TODO)
+   * 2. Resolve adapter-provided skill context via `loadAvailableSkills()`.
    * 3. Wire abstract lifecycle policy surfaces.     (deferred — see TODO)
    * 4. Materialise all agents that are not disabled.
    */
@@ -97,9 +99,33 @@ export class WeaveRunner {
     log.info("Initialising harness adapter");
     await this.adapter.init();
 
-    // 2. TODO(#12): resolve skills from adapter-provided SkillInfo values.
+    // 2. Resolve skills from adapter-provided SkillInfo values.
     // Skill discovery/loading is adapter-owned; the engine only matches agent
     // skill references against explicit harness context and disabled.skills.
+    const availableSkills = await this.adapter.loadAvailableSkills();
+    const skillResolutionResult = resolveSkillsForConfig({
+      config: this.config,
+      availableSkills,
+    });
+
+    // Log any missing-skill errors but do not abort — adapters may handle
+    // partial resolution gracefully. The resolved map defaults to empty arrays
+    // for agents with no skills or resolution errors.
+    const resolvedSkillsMap: Record<string, readonly string[]> = {};
+    if (skillResolutionResult.isOk()) {
+      for (const [agentName, skills] of Object.entries(
+        skillResolutionResult.value,
+      )) {
+        resolvedSkillsMap[agentName] = skills.map((s) => s.name);
+      }
+    } else {
+      for (const error of skillResolutionResult.error) {
+        log.warn(
+          { agent: error.agentName, skill: error.skillName },
+          "Skill declared by agent is not available in harness",
+        );
+      }
+    }
 
     // 3. TODO(#9): wire abstract lifecycle policy surfaces.
     // Concrete hook registration is adapter-owned; adapters map harness events
@@ -146,6 +172,8 @@ export class WeaveRunner {
       }
 
       const descriptor: AgentDescriptor = descriptorResult.value;
+      // Resolved skill names for this agent — only names, no adapter metadata.
+      const resolvedSkills: readonly string[] = resolvedSkillsMap[name] ?? [];
 
       try {
         this.options.onEffect?.({
@@ -154,6 +182,7 @@ export class WeaveRunner {
           agentDescriptor: descriptor,
           effectiveToolPolicy: descriptor.effectiveToolPolicy,
           rawToolPolicy: descriptor.rawToolPolicy,
+          resolvedSkills,
         });
       } catch (error) {
         log.warn(

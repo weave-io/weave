@@ -1,4 +1,5 @@
 import type { AgentDescriptor } from "./compose.js";
+import type { SkillInfo } from "./skill-resolution.js";
 
 // ---------------------------------------------------------------------------
 // Transitional adapter-boundary types
@@ -28,8 +29,9 @@ export interface HookConfig {
 /**
  * Transitional configuration for a skill loadable by the harness.
  *
- * TODO(#12): replace this with adapter-provided SkillInfo input and engine-side
- * skill resolution. Weave must not discover or load harness skill files itself.
+ * @deprecated Use `loadAvailableSkills()` instead. Skill discovery/loading is
+ * adapter-owned; the engine receives adapter-provided `SkillInfo` values and
+ * resolves them against `AgentConfig.skills` and `disabled.skills`.
  */
 export interface SkillConfig {
   name: string;
@@ -80,10 +82,30 @@ export interface HarnessAdapter {
    * Load a skill into the harness so that it becomes available to any
    * agent that references it in its `AgentConfig.skills` list.
    *
-   * @deprecated Transitional method. Skill discovery/loading is adapter-owned;
-   * the engine should receive adapter-provided SkillInfo values and resolve
-   * them against `AgentConfig.skills` and `disabled.skills`.
+   * @deprecated Transitional method. Use `loadAvailableSkills()` instead.
+   * Skill discovery/loading is adapter-owned; the engine should receive
+   * adapter-provided SkillInfo values and resolve them against
+   * `AgentConfig.skills` and `disabled.skills`.
    * @param skill - The skill configuration to load.
    */
   loadSkill(skill: SkillConfig): Promise<void>;
+
+  /**
+   * Return the list of skills available in this harness instance.
+   *
+   * The engine calls this once during `WeaveRunner.run()` — after `init()` and
+   * before agent materialisation — to obtain the adapter-provided skill context
+   * used for skill resolution. The engine matches each agent's declared
+   * `skills [...]` entries against `SkillInfo.name` values in the returned
+   * list.
+   *
+   * Adapters own all discovery: filesystem scanning, scope resolution, content
+   * loading, and harness-specific mounting details. The engine only uses
+   * `SkillInfo.name` for matching; all other fields are adapter-owned
+   * pass-through metadata preserved in `ResolvedSkill.skillInfo`.
+   *
+   * Return an empty array when no skills are available or when the harness does
+   * not support skills.
+   */
+  loadAvailableSkills(): Promise<SkillInfo[]>;
 }
