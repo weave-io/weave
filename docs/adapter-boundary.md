@@ -5,7 +5,7 @@ Weave is a harness-agnostic orchestration framework with two cooperating halves:
 1. **Core Weave API** (`@weave/core`, `@weave/config`, `@weave/engine`) parses DSL config, normalizes agent intent, resolves/composes prompt and policy data, and exposes pure helper APIs.
 2. **Adapters** (`@weave/adapter-opencode`, `@weave/adapter-pi`, etc.) enable Weave inside a concrete harness by discovering harness-owned resources, translating normalized intent, and filling feature gaps when the harness lacks native support.
 
-**Related:** [Product Vision](product-vision.md) · [Model Resolution](model-resolution.md) · [Config Loading](config-loading.md) · [Spec 05 — Skill Resolution](specs/05-spec-skill-loader/05-spec-skill-loader.md) · [Legacy Architecture](legacy-architecture.md)
+**Related:** [Product Vision](product-vision.md) · [Model Resolution](model-resolution.md) · [Config Loading](config-loading.md) · [Spec 05 — Skill Resolution](specs/05-spec-skill-loader/05-spec-skill-loader.md) · [Spec 07 — Adapter Capability Contract](specs/07-spec-adapter-capability-contract/07-spec-adapter-capability-contract.md) · [Legacy Architecture](legacy-architecture.md)
 
 ---
 
@@ -129,3 +129,40 @@ Future specs should move toward this boundary:
 - adapters materialize those outputs in the concrete harness
 
 When a legacy issue or proof artifact conflicts with this document, prefer this document and [Product Vision](product-vision.md).
+
+---
+
+## Adapter Capability Contract
+
+The **Adapter Capability Contract** (Spec 07) extends this boundary with a
+structured readiness vocabulary. Adapters declare which Weave behaviors they
+support (`native`, `emulated`, `degraded`, `unsupported`) and supply runtime
+probe results. The engine evaluates those declarations against the Core
+Readiness Profile without performing harness I/O.
+
+**Ownership rules for capability declarations:**
+
+| Concern                                      | Owner   | Why                                                          |
+| -------------------------------------------- | ------- | ------------------------------------------------------------ |
+| Static capability declarations               | Adapter | Adapters know what their harness supports                    |
+| Runtime probe results (file/env/version checks) | Adapter | Harness-specific checks belong in adapters                   |
+| Core Readiness Profile evaluation            | Engine  | Pure function; accepts explicit adapter-supplied inputs      |
+| Health report construction                   | Engine  | `buildAdapterHealthReport` is pure; no harness I/O           |
+| Renderer-ready row structures                | Engine  | `buildHumanRows`, `buildToonRows`, `toJson` are pure helpers |
+| Terminal presentation (CLI output)           | CLI     | Concrete display is a CLI concern                            |
+
+**Safe Adapter Init** is the read-only path where an adapter gathers
+`SafeAdapterInitInput` (static declarations + probe results) before passing it
+to `buildAdapterHealthReport`. Safe Adapter Init:
+
+- MUST NOT materialize agents.
+- MUST NOT register lifecycle hooks.
+- MUST NOT launch workflows or workflow steps.
+- MUST NOT mutate harness configuration or state.
+- MUST NOT write generated config files.
+- MUST NOT start harness runtimes or processes.
+- MAY perform read-only harness environment checks (file existence, env vars,
+  version queries) and report results as `CapabilityProbeResult` entries.
+
+See [Spec 07 — Adapter Capability Contract](specs/07-spec-adapter-capability-contract/07-spec-adapter-capability-contract.md)
+for the full vocabulary, readiness gate semantics, and proof artifacts.

@@ -21,10 +21,11 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@weave/core": "workspace:*",
-    "@weave/config": "workspace:*",
-    "@weave/engine": "workspace:*",
     "@clack/prompts": "^0.10.0",
+    "@weave/config": "workspace:*",
+    "@weave/core": "workspace:*",
+    "@weave/engine": "workspace:*",
+    "figlet": "^1.11.0",
     "neverthrow": "^8.2.0"
   },
   "devDependencies": {

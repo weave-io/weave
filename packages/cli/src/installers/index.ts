@@ -32,8 +32,26 @@ export type InstallError =
       cause: unknown;
     };
 
+/**
+ * Installer interface for a supported harness.
+ *
+ * @deprecated `supported: boolean` is a legacy binary installer-support signal.
+ * Future adapter work should implement `AdapterCapabilityContract` from
+ * `@weave/engine` instead, which provides richer `native`/`emulated`/
+ * `degraded`/`unsupported` readiness levels evaluated by
+ * `evaluateCoreReadinessProfile`. The boolean can be derived from
+ * `ProfileEvaluationResult.ready` when capability readiness is available.
+ *
+ * See: docs/specs/07-spec-adapter-capability-contract/07-spec-adapter-capability-contract.md
+ * See: docs/product-vision.md#adapter-capability-contract
+ */
 export interface HarnessInstaller {
   readonly id: SupportedHarnessId;
+  /**
+   * @deprecated Legacy binary installer-support signal. Use
+   * `AdapterCapabilityContract` + `evaluateCoreReadinessProfile` from
+   * `@weave/engine` for richer readiness reporting.
+   */
   readonly supported: boolean;
   readonly optionalModules: AdapterModule[];
   install(request: InstallRequest): ResultAsync<InstallResult, InstallError>;
