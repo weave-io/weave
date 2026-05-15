@@ -2,8 +2,38 @@ import type { AgentConfig, WeaveConfig } from "@weave/core";
 import type { HarnessAdapter } from "./adapter.js";
 import { generateCategoryShuttles } from "./descriptors.js";
 import { logger } from "./logger.js";
+import type { RunAgentEffect } from "./run-agent-effects.js";
+import { evaluateEffectiveToolPolicy } from "./tool-policy.js";
 
 const log = logger.child({ module: "runner" });
+
+// ---------------------------------------------------------------------------
+// Options
+// ---------------------------------------------------------------------------
+
+/**
+ * Optional configuration for `WeaveRunner`.
+ *
+ * All fields are optional — existing callers that construct `WeaveRunner`
+ * without an options object continue to work unchanged.
+ */
+export interface WeaveRunnerOptions {
+  /**
+   * Called once per agent immediately before `adapter.spawnSubagent`.
+   *
+   * Receives a `RunAgentEffect` carrying the engine-computed
+   * `effectiveToolPolicy` (all five capabilities resolved) and the raw
+   * `rawToolPolicy` (the agent's declared `tool_policy`, or `undefined`).
+   *
+   * The callback is synchronous and must not throw. Errors inside the
+   * callback are the caller's responsibility.
+   */
+  onEffect?: (effect: RunAgentEffect) => void;
+}
+
+// ---------------------------------------------------------------------------
+// WeaveRunner
+// ---------------------------------------------------------------------------
 
 /**
  * `WeaveRunner` is the current transitional orchestration entry point for the
@@ -24,14 +54,32 @@ const log = logger.child({ module: "runner" });
  * const runner = new WeaveRunner(config, new PiAdapter());
  * await runner.run();
  * ```
+ *
+ * @example With effect observation:
+ * ```ts
+ * const runner = new WeaveRunner(config, new PiAdapter(), {
+ *   onEffect(effect) {
+ *     if (effect.kind === "run-agent") {
+ *       log.info({ agent: effect.agentName, policy: effect.effectiveToolPolicy }, "Agent effect");
+ *     }
+ *   },
+ * });
+ * await runner.run();
+ * ```
  */
 export class WeaveRunner {
   private readonly config: WeaveConfig;
   private readonly adapter: HarnessAdapter;
+  private readonly options: WeaveRunnerOptions;
 
-  constructor(config: WeaveConfig, adapter: HarnessAdapter) {
+  constructor(
+    config: WeaveConfig,
+    adapter: HarnessAdapter,
+    options: WeaveRunnerOptions = {},
+  ) {
     this.config = config;
     this.adapter = adapter;
+    this.options = options;
   }
 
   /**
@@ -81,6 +129,21 @@ export class WeaveRunner {
         log.debug({ agent: name }, "Skipping disabled agent");
         continue;
       }
+
+      // Evaluate the effective tool policy for this agent and emit an effect
+      // before delegating to the adapter. The raw tool_policy is passed to the
+      // adapter unchanged so adapters can apply harness-specific translation.
+      const effectiveToolPolicy = evaluateEffectiveToolPolicy(
+        agentConfig.tool_policy,
+      );
+
+      this.options.onEffect?.({
+        kind: "run-agent",
+        agentName: name,
+        effectiveToolPolicy,
+        rawToolPolicy: agentConfig.tool_policy,
+      });
+
       log.info(
         { agent: name, model: agentConfig.models?.[0] },
         "Spawning agent",

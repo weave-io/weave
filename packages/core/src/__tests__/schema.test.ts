@@ -1,12 +1,59 @@
 import { describe, expect, it } from "bun:test";
+import { ToolPermissionSchema, ToolPolicySchema } from "@weave/core";
 import {
   CompletionMethodSchema,
   OnRejectSchema,
-  ToolPolicySchema,
   WorkflowConfigSchema,
   WorkflowStepSchema,
   WorkflowStepTypeSchema,
 } from "../schema.js";
+
+// ---------------------------------------------------------------------------
+// @weave/core barrel — public API assertions
+// ---------------------------------------------------------------------------
+
+describe("@weave/core barrel exports", () => {
+  it("exports ToolPermissionSchema as a Zod enum with allow/deny/ask", () => {
+    expect(ToolPermissionSchema).toBeDefined();
+    expect(ToolPermissionSchema.safeParse("allow").success).toBe(true);
+    expect(ToolPermissionSchema.safeParse("deny").success).toBe(true);
+    expect(ToolPermissionSchema.safeParse("ask").success).toBe(true);
+    expect(ToolPermissionSchema.safeParse("unknown").success).toBe(false);
+  });
+
+  it("exports ToolPolicySchema as a Zod object with all five capabilities", () => {
+    expect(ToolPolicySchema).toBeDefined();
+    const r = ToolPolicySchema.safeParse({
+      read: "allow",
+      write: "deny",
+      execute: "ask",
+      delegate: "allow",
+      network: "deny",
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it("ToolPolicy type is importable (type-level assertion via ToolPolicySchema inference)", () => {
+    // If ToolPolicy is not exported, this file would fail to compile.
+    // We verify the runtime shape matches the expected structure.
+    const r = ToolPolicySchema.safeParse({ read: "allow" });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      const policy: import("@weave/core").ToolPolicy = r.data;
+      expect(policy.read).toBe("allow");
+    }
+  });
+
+  it("ToolPermission type is importable (type-level assertion via ToolPermissionSchema inference)", () => {
+    // If ToolPermission is not exported, this file would fail to compile.
+    const parsed = ToolPermissionSchema.safeParse("allow");
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      const perm: import("@weave/core").ToolPermission = parsed.data;
+      expect(perm).toBe("allow");
+    }
+  });
+});
 
 // ---------------------------------------------------------------------------
 // ToolPolicySchema

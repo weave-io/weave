@@ -4,7 +4,7 @@ Weave is a harness-agnostic agent orchestration framework and API for building a
 
 It is closer to Neovim's API layer than to a finished editor: Weave defines the primitives, config model, prompt/delegation structure, and policy intent that adapters compose into concrete harness integrations.
 
-**Related:** [System Architecture](system-architecture.md) · [Adapter Boundary](adapter-boundary.md) · [Model Resolution](model-resolution.md) · [Config Loading](config-loading.md) · [Spec 04 — Agent Model Resolution](specs/04-spec-agent-model-resolution/04-spec-agent-model-resolution.md) · [Spec 05 — Skill Resolution](specs/05-spec-skill-loader/05-spec-skill-loader.md) · [Spec 07 — Adapter Capability Contract](specs/07-spec-adapter-capability-contract/07-spec-adapter-capability-contract.md) · [Legacy Architecture](legacy-architecture.md)
+**Related:** [System Architecture](system-architecture.md) · [Adapter Boundary](adapter-boundary.md) · [Model Resolution](model-resolution.md) · [Config Loading](config-loading.md) · [Tool Policy Evaluation](tool-policy-evaluation.md) · [Spec 04 — Agent Model Resolution](specs/04-spec-agent-model-resolution/04-spec-agent-model-resolution.md) · [Spec 05 — Skill Resolution](specs/05-spec-skill-loader/05-spec-skill-loader.md) · [Spec 07 — Adapter Capability Contract](specs/07-spec-adapter-capability-contract/07-spec-adapter-capability-contract.md) · [Spec 08 — Abstract Tool Policy Evaluation](specs/08-spec-abstract-tool-policy-evaluation/08-spec-abstract-tool-policy-evaluation.md) · [Legacy Architecture](legacy-architecture.md)
 
 ---
 
@@ -141,12 +141,12 @@ Adapters do not need perfect feature parity on day one, but they must make
 partial support **explicit and structured**. The **Adapter Capability Contract**
 (Spec 07) provides the vocabulary:
 
-| Readiness level | Meaning                                                                  |
-| --------------- | ------------------------------------------------------------------------ |
-| `native`        | The harness implements the capability directly.                          |
+| Readiness level | Meaning                                                                    |
+| --------------- | -------------------------------------------------------------------------- |
+| `native`        | The harness implements the capability directly.                            |
 | `emulated`      | The adapter provides equivalent behavior; satisfies required capabilities. |
-| `degraded`      | Partial support only; behavior may be incomplete or unreliable.          |
-| `unsupported`   | The harness does not support this capability at all.                     |
+| `degraded`      | Partial support only; behavior may be incomplete or unreliable.            |
+| `unsupported`   | The harness does not support this capability at all.                       |
 
 The **Core Readiness Profile** evaluates these declarations:
 
@@ -163,6 +163,26 @@ status reporting in future adapter work.
 
 See [Spec 07 — Adapter Capability Contract](specs/07-spec-adapter-capability-contract/07-spec-adapter-capability-contract.md)
 and [Adapter Boundary](adapter-boundary.md) for implementation details.
+
+---
+
+## Abstract Tool Policy Evaluation
+
+Weave evaluates abstract `tool_policy` declarations in the engine layer, producing
+a fully-resolved `EffectiveToolPolicy` for every agent before it is materialised
+by an adapter. The five abstract capabilities (`read`, `write`, `execute`,
+`delegate`, `network`) are harness-agnostic; adapters own the mapping to concrete
+harness tool names.
+
+The engine emits a `RunAgentEffect` (via the optional `onEffect` callback on
+`WeaveRunnerOptions`) once per agent, carrying both the engine-computed
+`effectiveToolPolicy` and the raw `rawToolPolicy` for adapter-side translation.
+Adapters receive the raw `tool_policy` unchanged via `spawnSubagent`.
+
+See [Tool Policy Evaluation](tool-policy-evaluation.md) for the full vocabulary,
+evaluation rules, and adapter contract. See
+[Spec 08 — Abstract Tool Policy Evaluation](specs/08-spec-abstract-tool-policy-evaluation/08-spec-abstract-tool-policy-evaluation.md)
+for the formal spec and proof artifacts.
 
 ---
 

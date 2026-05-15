@@ -116,5 +116,13 @@
   - interface ModelResolutionResult
   - type ResolutionSource
   - const DEFAULT_FALLBACK_MODEL
-- `packages/engine/src/runner.ts` — class WeaveRunner
+- `packages/engine/src/runner.ts` — class WeaveRunner, interface WeaveRunnerOptions
+- `packages/engine/src/tool-policy.ts`
+  - function evaluateEffectiveToolPolicy: (policy) => EffectiveToolPolicy
+  - function resolveToolDecisions: (toolIds, classifications, effectivePolicy) => ToolDecision[]
+  - type EffectiveToolPolicy
+  - type ConcreteToolClassification
+  - type MappedToolDecision
+  - type UnmappedToolDecision
+  - _...3 more_
 - `scripts/validate-config.ts` — function printSummary: (config, configPath) => void
