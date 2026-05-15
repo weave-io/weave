@@ -79,7 +79,7 @@
 - [x] 3.5 Accumulate missing non-disabled skill errors across all agents instead of returning only the first error.
 - [x] 3.6 Add tests for declared-agent batch output, generated category shuttle output, disabled-skill behavior in batch mode, and multiple accumulated missing-skill errors.
 
-### [ ] 4.0 Wire resolved skills into runner and adapter-facing effects
+### [x] 4.0 Wire resolved skills into runner and adapter-facing effects
 
 #### 4.0 Proof Artifact(s)
 
@@ -88,17 +88,18 @@
 - Test: `bun test packages/engine/src/__tests__/runner.test.ts` passes sanitized-effect coverage demonstrating serialized run-agent effects do not expose adapter-owned skill paths, skill contents, API keys, tokens, or `.env` values.
 - Test: `bun test packages/engine/src/__tests__/mock-adapter.ts` compiles through `bun run typecheck`, demonstrating the mock adapter no longer depends on engine-driven `loadSkill()` as the skill-resolution path.
 - Code review artifact: `packages/engine/src/runner.ts` contains no directory scanning, skill-file reads, or harness-specific skill lookup, demonstrating adapters provide skill context explicitly.
+- Full proof: `docs/specs/09-spec-adapter-provided-skill-resolution/09-proofs/09-task-04-proofs.md`
 
 #### 4.0 Tasks
 
-- [ ] 4.1 Replace the runner's `TODO(#12)` placeholder with skill resolution based on explicit adapter-provided available skill context.
-- [ ] 4.2 Update the transitional adapter surface to provide available skills without engine-driven `loadSkill()` as the resolution path.
-- [ ] 4.3 Update `RunAgentEffect` or an equivalent adapter-facing materialization structure to include `resolvedSkills` for each spawned agent.
-- [ ] 4.4 Ensure disabled agents do not emit resolved-skill effects or require missing-skill checks during materialization.
-- [ ] 4.5 Ensure generated category shuttles receive resolved-skill data before `spawnSubagent`.
-- [ ] 4.6 Update `MockAdapter` and runner tests for the new skill context flow without starting a real harness.
-- [ ] 4.7 Add a runner test proving no harness-specific skill lookup, directory scanning, or skill-file read is required by engine code.
-- [ ] 4.8 Add sanitized-effect coverage proving adapter-provided skill metadata such as paths, content, tokens, API keys, and `.env` values is not emitted by engine debug/effect data.
+- [x] 4.1 Replace the runner's `TODO(#12)` placeholder with skill resolution based on explicit adapter-provided available skill context.
+- [x] 4.2 Update the transitional adapter surface to provide available skills without engine-driven `loadSkill()` as the resolution path.
+- [x] 4.3 Update `RunAgentEffect` or an equivalent adapter-facing materialization structure to include `resolvedSkills` for each spawned agent.
+- [x] 4.4 Ensure disabled agents do not emit resolved-skill effects or require missing-skill checks during materialization.
+- [x] 4.5 Ensure generated category shuttles receive resolved-skill data before `spawnSubagent`.
+- [x] 4.6 Update `MockAdapter` and runner tests for the new skill context flow without starting a real harness.
+- [x] 4.7 Add a runner test proving no harness-specific skill lookup, directory scanning, or skill-file read is required by engine code.
+- [x] 4.8 Add sanitized-effect coverage proving adapter-provided skill metadata such as paths, content, tokens, API keys, and `.env` values is not emitted by engine debug/effect data.
 
 ### [ ] 5.0 Update documentation and boundary references
 
