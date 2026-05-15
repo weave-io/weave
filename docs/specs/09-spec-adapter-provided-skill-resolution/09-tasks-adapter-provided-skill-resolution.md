@@ -101,19 +101,20 @@
 - [x] 4.7 Add a runner test proving no harness-specific skill lookup, directory scanning, or skill-file read is required by engine code.
 - [x] 4.8 Add sanitized-effect coverage proving adapter-provided skill metadata such as paths, content, tokens, API keys, and `.env` values is not emitted by engine debug/effect data.
 
-### [ ] 5.0 Update documentation and boundary references
+### [x] 5.0 Update documentation and boundary references
 
 #### 5.0 Proof Artifact(s)
 
 - Diff: `docs/adapter-boundary.md`, `docs/product-vision.md`, and `packages/engine/README.md` link to `docs/specs/09-spec-adapter-provided-skill-resolution/09-spec-adapter-provided-skill-resolution.md`, demonstrating dead Spec 05 skill-loader references are corrected.
 - Test: `bun run lint` passes demonstrating Markdown-adjacent repository changes do not introduce lint failures in configured source paths.
 - Security review artifact: Warp review notes for issue #12 changes confirm no secrets, local skill contents, or harness-owned skill paths are exposed in debug/effect data.
+- Full proof: `docs/specs/09-spec-adapter-provided-skill-resolution/09-proofs/09-task-05-proofs.md`
 
 #### 5.0 Tasks
 
-- [ ] 5.1 Update `docs/adapter-boundary.md` to link skill-resolution references to Spec 09 instead of the dead Spec 05 path.
-- [ ] 5.2 Update `docs/product-vision.md` to link skill-resolution references to Spec 09 instead of the dead Spec 05 path.
-- [ ] 5.3 Update `packages/engine/README.md` so the skill-resolution API description names Spec 09 and the new adapter-provided context flow.
-- [ ] 5.4 Document any final transitional adapter-surface decision made during implementation, especially if the method is named `loadAvailableSkills()` or if context is supplied through runner options.
-- [ ] 5.5 Run `bun run lint` to verify source formatting/linting remains clean.
-- [ ] 5.6 Request Warp security review for issue #12 implementation changes before considering implementation complete.
+- [x] 5.1 Update `docs/adapter-boundary.md` to link skill-resolution references to Spec 09 instead of the dead Spec 05 path.
+- [x] 5.2 Update `docs/product-vision.md` to link skill-resolution references to Spec 09 instead of the dead Spec 05 path.
+- [x] 5.3 Update `packages/engine/README.md` so the skill-resolution API description names Spec 09 and the new adapter-provided context flow.
+- [x] 5.4 Document any final transitional adapter-surface decision made during implementation, especially if the method is named `loadAvailableSkills()` or if context is supplied through runner options.
+- [x] 5.5 Run `bun run lint` to verify source formatting/linting remains clean.
+- [x] 5.6 Request Warp security review for issue #12 implementation changes before considering implementation complete. (NOTE: Warp review is pending — Tapestry will handle separately. See 09-task-05-proofs.md §5.6.)
