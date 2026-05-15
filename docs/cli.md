@@ -35,7 +35,7 @@ pnpm dlx @weave/cli --help
 
 ## Theme and accessibility
 
-`weave --help` renders a checked-in ASCII-style line-art logo derived from the app mark at `tryweave.io/assets/weave_logo.png`, preserving the interlaced ribbon silhouette and title-case wordmark in plain terminals. It uses a cyan/blue/purple/magenta terminal theme when color is supported. Automation and accessibility fallbacks are supported through standard terminal conventions:
+`weave --help` renders a left-indented `WEAVE` banner generated through the npm `figlet` package with the `Larry 3D` FIGlet font. When terminal color is supported, the CLI applies an in-process lolcat-style rainbow equivalent to `figlet -f "larry3d" WEAVE | lolcat -S 27 --spread 2`, avoiding shelling out to external `figlet` or `lolcat` binaries. Automation and accessibility fallbacks are supported through standard terminal conventions:
 
 ```bash
 NO_COLOR=1 weave --help

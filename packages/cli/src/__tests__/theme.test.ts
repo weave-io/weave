@@ -96,10 +96,21 @@ describe("ASCII logo", () => {
     const theme = themeManager.getTheme(false);
     const lines = renderLogo(theme);
     const allText = lines.join("\n");
+    expect(allText).toContain("____");
+    expect(allText).not.toContain("⣿");
     expect(allText).not.toContain("\x1b[");
     for (let i = 0; i < lines.length; i++) {
       expect(lines[i]).toBe(PLAIN_LOGO_LINES[i]);
     }
+  });
+
+  it("renderLogo with color keeps the figlet mark and does not toggle cursor", () => {
+    const theme = themeManager.getTheme(true);
+    const allText = renderLogo(theme).join("\n");
+    expect(allText).toContain("\x1b[38;2;");
+    expect(allText).not.toContain("⣿");
+    expect(allText).not.toContain("\x1b[?25l");
+    expect(allText).not.toContain("\x1b[?25h");
   });
 });
 
@@ -108,7 +119,7 @@ describe("banner and help rendering", () => {
     const theme = themeManager.getTheme(false);
     const banner = themeRenderer.renderBanner(theme);
     const text = banner.join("\n");
-    expect(text).toContain("╭");
+    expect(text).toContain("____");
     expect(text).toContain("{weave}");
   });
 

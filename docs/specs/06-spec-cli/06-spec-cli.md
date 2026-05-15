@@ -37,8 +37,8 @@ The primary goal is to make Weave usable both as a `weave` executable on the use
 - The system shall document package-runner invocation examples for the publishable package, including `bunx <package> --help`, `npx <package> --help`, `npm exec <package> -- --help`, and `pnpm dlx <package> --help`.
 - The system shall keep command behavior identical whether invoked through a PATH-installed `weave` binary or through a package runner.
 - The system shall print usage information for `weave --help` that lists supported commands and global flags.
-- The system shall render a Weave-branded CLI banner that includes ASCII art derived from `https://tryweave.io/assets/weave_logo.png` on primary entry points such as top-level help and interactive init.
-- The system shall apply the Weave visual theme from `/Users/jose/Library/Application Support/CleanShot/media/media_pUm4rPPMAW/CleanShot 2026-05-12 at 15.17.15.png` when terminal color is supported.
+- The system shall render a left-indented Weave-branded CLI banner from the npm `figlet` package using the `Larry 3D` font on primary entry points such as top-level help and interactive init.
+- The system shall apply an in-process lolcat-style rainbow equivalent to `figlet -f "larry3d" WEAVE | lolcat -S 27 --spread 2` to the `WEAVE` figlet text when terminal color is supported.
 - The system shall provide a readable plain-text fallback when color is disabled, unsupported, or inappropriate for automation.
 - The system shall print the CLI package version for `weave --version`.
 - The system shall return exit code `0` for successful `--help` and `--version` invocations, and exit code `1` for unknown commands.
