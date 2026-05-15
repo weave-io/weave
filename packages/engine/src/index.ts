@@ -51,6 +51,13 @@ export type { RunAgentEffect } from "./run-agent-effects.js";
 export type { WeaveRunnerOptions } from "./runner.js";
 export { WeaveRunner } from "./runner.js";
 export type {
+  ResolvedSkill,
+  SkillInfo,
+  SkillResolutionError,
+  SkillResolutionInput,
+} from "./skill-resolution.js";
+export { resolveSkillsForAgent } from "./skill-resolution.js";
+export type {
   ConcreteToolClassification,
   EffectiveToolPolicy,
   MappedToolDecision,

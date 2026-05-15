@@ -117,6 +117,12 @@
   - type ResolutionSource
   - const DEFAULT_FALLBACK_MODEL
 - `packages/engine/src/runner.ts` — class WeaveRunner, interface WeaveRunnerOptions
+- `packages/engine/src/skill-resolution.ts`
+  - function resolveSkillsForAgent: (input) => Result<ResolvedSkill[], SkillResolutionError[]>
+  - interface SkillInfo
+  - interface ResolvedSkill
+  - interface SkillResolutionInput
+  - type SkillResolutionError
 - `packages/engine/src/tool-policy.ts`
   - function evaluateEffectiveToolPolicy: (policy) => EffectiveToolPolicy
   - function resolveToolDecisions: (toolIds, classifications, effectivePolicy) => ToolDecision[]

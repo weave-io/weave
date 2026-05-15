@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weave/core, @weave/engine, @weave/config, @weave/cli, @weave/adapter-opencode
 
-> 0 routes | 0 models | 0 components | 35 lib files | 2 env vars | 0 middleware | 0% test coverage
-> **Token savings:** this file is ~3,000 tokens. Without it, AI exploration would cost ~18,500 tokens. **Saves ~15,500 tokens per conversation.**
-> **Last scanned:** 2026-05-15 20:43 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 36 lib files | 2 env vars | 0 middleware | 0% test coverage
+> **Token savings:** this file is ~3,000 tokens. Without it, AI exploration would cost ~18,700 tokens. **Saves ~15,700 tokens per conversation.**
+> **Last scanned:** 2026-05-15 21:51 — re-run after significant changes
 
 ---
 
@@ -128,6 +128,12 @@
   - type ResolutionSource
   - const DEFAULT_FALLBACK_MODEL
 - `packages/engine/src/runner.ts` — class WeaveRunner, interface WeaveRunnerOptions
+- `packages/engine/src/skill-resolution.ts`
+  - function resolveSkillsForAgent: (input) => Result<ResolvedSkill[], SkillResolutionError[]>
+  - interface SkillInfo
+  - interface ResolvedSkill
+  - interface SkillResolutionInput
+  - type SkillResolutionError
 - `packages/engine/src/tool-policy.ts`
   - function evaluateEffectiveToolPolicy: (policy) => EffectiveToolPolicy
   - function resolveToolDecisions: (toolIds, classifications, effectivePolicy) => ToolDecision[]
@@ -196,7 +202,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 30 test files found
+> 31 test files found
 
 ---
 
