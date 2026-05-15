@@ -1,4 +1,32 @@
 export type { HarnessAdapter } from "./adapter.js";
+export type {
+  AdapterCapabilityContract,
+  AdapterHealthReport,
+  CapabilityEntry,
+  CapabilityId,
+  CapabilityProbeResult,
+  CapabilityReadiness,
+  HumanReadinessRow,
+  ProfileEvaluationResult,
+  ReadinessOutcome,
+  ReadinessVerdict,
+  SafeAdapterInitInput,
+  ToonReadinessRow,
+} from "./capability-contract.js";
+export {
+  AdapterCapabilityContractSchema,
+  ALL_CAPABILITY_IDS,
+  buildAdapterHealthReport,
+  buildHumanRows,
+  buildToonRows,
+  CapabilityEntrySchema,
+  CapabilityIdSchema,
+  CapabilityReadinessSchema,
+  evaluateCoreReadinessProfile,
+  OPTIONAL_CAPABILITIES,
+  REQUIRED_CAPABILITIES,
+  toJson,
+} from "./capability-contract.js";
 export type { CategoryShuttleConflictError } from "./descriptors.js";
 export { generateCategoryShuttles } from "./descriptors.js";
 export type { Env } from "./env.js";
