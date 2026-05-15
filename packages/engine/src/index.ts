@@ -46,4 +46,5 @@ export type { EffectiveToolPolicy } from "./tool-policy.js";
 export {
   ABSTRACT_CAPABILITIES,
   DEFAULT_PERMISSION,
+  evaluateEffectiveToolPolicy,
 } from "./tool-policy.js";

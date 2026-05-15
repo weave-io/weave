@@ -117,4 +117,9 @@
   - type ResolutionSource
   - const DEFAULT_FALLBACK_MODEL
 - `packages/engine/src/runner.ts` — class WeaveRunner
+- `packages/engine/src/tool-policy.ts`
+  - function evaluateEffectiveToolPolicy: (policy) => EffectiveToolPolicy
+  - type EffectiveToolPolicy
+  - const ABSTRACT_CAPABILITIES: (keyof ToolPolicy)[]
+  - const DEFAULT_PERMISSION: ToolPermission
 - `scripts/validate-config.ts` — function printSummary: (config, configPath) => void

@@ -1,7 +1,11 @@
 import { describe, expect, it } from "bun:test";
 import type { ToolPermission, ToolPolicy } from "@weave/core";
 import type { EffectiveToolPolicy } from "../tool-policy.js";
-import { ABSTRACT_CAPABILITIES, DEFAULT_PERMISSION } from "../tool-policy.js";
+import {
+  ABSTRACT_CAPABILITIES,
+  DEFAULT_PERMISSION,
+  evaluateEffectiveToolPolicy,
+} from "../tool-policy.js";
 
 // ---------------------------------------------------------------------------
 // ABSTRACT_CAPABILITIES
@@ -148,5 +152,227 @@ describe("DEFAULT_PERMISSION", () => {
     // 'allow' would be too permissive; 'deny' would break workflows silently.
     expect(DEFAULT_PERMISSION).not.toBe("allow");
     expect(DEFAULT_PERMISSION).not.toBe("deny");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// evaluateEffectiveToolPolicy
+// ---------------------------------------------------------------------------
+
+describe("evaluateEffectiveToolPolicy", () => {
+  // -------------------------------------------------------------------------
+  // undefined policy — all capabilities default to 'ask'
+  // -------------------------------------------------------------------------
+
+  it("returns all-ask when policy is undefined", () => {
+    const result = evaluateEffectiveToolPolicy(undefined);
+    expect(result).toEqual({
+      read: "ask",
+      write: "ask",
+      execute: "ask",
+      delegate: "ask",
+      network: "ask",
+    });
+  });
+
+  it("returns a complete object (all five keys) when policy is undefined", () => {
+    const result = evaluateEffectiveToolPolicy(undefined);
+    for (const cap of ABSTRACT_CAPABILITIES) {
+      expect(result).toHaveProperty(cap);
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // partial policy — omitted fields default to 'ask', configured fields preserved
+  // -------------------------------------------------------------------------
+
+  it("preserves read:allow and defaults the rest to ask", () => {
+    const result = evaluateEffectiveToolPolicy({ read: "allow" });
+    expect(result).toEqual({
+      read: "allow",
+      write: "ask",
+      execute: "ask",
+      delegate: "ask",
+      network: "ask",
+    });
+  });
+
+  it("preserves write:deny and defaults the rest to ask", () => {
+    const result = evaluateEffectiveToolPolicy({ write: "deny" });
+    expect(result).toEqual({
+      read: "ask",
+      write: "deny",
+      execute: "ask",
+      delegate: "ask",
+      network: "ask",
+    });
+  });
+
+  it("preserves execute:allow and defaults the rest to ask", () => {
+    const result = evaluateEffectiveToolPolicy({ execute: "allow" });
+    expect(result).toEqual({
+      read: "ask",
+      write: "ask",
+      execute: "allow",
+      delegate: "ask",
+      network: "ask",
+    });
+  });
+
+  it("preserves delegate:deny and defaults the rest to ask", () => {
+    const result = evaluateEffectiveToolPolicy({ delegate: "deny" });
+    expect(result).toEqual({
+      read: "ask",
+      write: "ask",
+      execute: "ask",
+      delegate: "deny",
+      network: "ask",
+    });
+  });
+
+  it("preserves network:allow and defaults the rest to ask", () => {
+    const result = evaluateEffectiveToolPolicy({ network: "allow" });
+    expect(result).toEqual({
+      read: "ask",
+      write: "ask",
+      execute: "ask",
+      delegate: "ask",
+      network: "allow",
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // full policy — all configured values preserved exactly
+  // -------------------------------------------------------------------------
+
+  it("preserves all values when full policy is provided", () => {
+    const policy: ToolPolicy = {
+      read: "allow",
+      write: "deny",
+      execute: "ask",
+      delegate: "allow",
+      network: "deny",
+    };
+    const result = evaluateEffectiveToolPolicy(policy);
+    expect(result).toEqual({
+      read: "allow",
+      write: "deny",
+      execute: "ask",
+      delegate: "allow",
+      network: "deny",
+    });
+  });
+
+  it("preserves all-allow policy", () => {
+    const policy: ToolPolicy = {
+      read: "allow",
+      write: "allow",
+      execute: "allow",
+      delegate: "allow",
+      network: "allow",
+    };
+    const result = evaluateEffectiveToolPolicy(policy);
+    expect(result).toEqual({
+      read: "allow",
+      write: "allow",
+      execute: "allow",
+      delegate: "allow",
+      network: "allow",
+    });
+  });
+
+  it("preserves all-deny policy", () => {
+    const policy: ToolPolicy = {
+      read: "deny",
+      write: "deny",
+      execute: "deny",
+      delegate: "deny",
+      network: "deny",
+    };
+    const result = evaluateEffectiveToolPolicy(policy);
+    expect(result).toEqual({
+      read: "deny",
+      write: "deny",
+      execute: "deny",
+      delegate: "deny",
+      network: "deny",
+    });
+  });
+
+  it("preserves all-ask policy", () => {
+    const policy: ToolPolicy = {
+      read: "ask",
+      write: "ask",
+      execute: "ask",
+      delegate: "ask",
+      network: "ask",
+    };
+    const result = evaluateEffectiveToolPolicy(policy);
+    expect(result).toEqual({
+      read: "ask",
+      write: "ask",
+      execute: "ask",
+      delegate: "ask",
+      network: "ask",
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Table-driven: each capability × each permission value
+  // -------------------------------------------------------------------------
+
+  const capabilities: (keyof ToolPolicy)[] = [
+    "read",
+    "write",
+    "execute",
+    "delegate",
+    "network",
+  ];
+  const permissions: ToolPermission[] = ["allow", "deny", "ask"];
+
+  for (const cap of capabilities) {
+    for (const perm of permissions) {
+      it(`preserves ${cap}:${perm} when explicitly configured`, () => {
+        const policy: ToolPolicy = { [cap]: perm };
+        const result = evaluateEffectiveToolPolicy(policy);
+        expect(result[cap]).toBe(perm);
+      });
+
+      it(`other capabilities default to ask when only ${cap}:${perm} is set`, () => {
+        const policy: ToolPolicy = { [cap]: perm };
+        const result = evaluateEffectiveToolPolicy(policy);
+        for (const other of capabilities) {
+          if (other === cap) continue;
+          expect(result[other]).toBe("ask");
+        }
+      });
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Return type completeness — always returns all five keys
+  // -------------------------------------------------------------------------
+
+  it("always returns exactly five keys regardless of input", () => {
+    const inputs: Array<ToolPolicy | undefined> = [
+      undefined,
+      {},
+      { read: "allow" },
+      { read: "allow", write: "deny" },
+      {
+        read: "allow",
+        write: "deny",
+        execute: "ask",
+        delegate: "allow",
+        network: "deny",
+      },
+    ];
+    for (const input of inputs) {
+      const result = evaluateEffectiveToolPolicy(input);
+      expect(Object.keys(result)).toHaveLength(5);
+      for (const cap of ABSTRACT_CAPABILITIES) {
+        expect(result).toHaveProperty(cap);
+      }
+    }
   });
 });

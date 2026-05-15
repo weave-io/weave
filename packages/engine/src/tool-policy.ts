@@ -61,3 +61,35 @@ export type EffectiveToolPolicy = {
  * an approved spec update (see `docs/specs/08-spec-abstract-tool-policy-evaluation/`).
  */
 export const DEFAULT_PERMISSION: ToolPermission = "ask";
+
+// ---------------------------------------------------------------------------
+// Effective policy evaluation
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolves a raw (possibly partial or undefined) `ToolPolicy` into a fully
+ * populated `EffectiveToolPolicy`.
+ *
+ * Rules:
+ * - If `policy` is `undefined`, every capability defaults to `DEFAULT_PERMISSION`.
+ * - For each capability, the configured value is preserved when present;
+ *   otherwise `DEFAULT_PERMISSION` is applied.
+ *
+ * This function is **pure and deterministic** — it has no side effects, no
+ * I/O, no adapter calls, and no harness-specific knowledge. It never throws.
+ *
+ * @param policy - The raw tool policy from a `.weave` agent or category block,
+ *   or `undefined` when no `tool_policy` block was declared.
+ * @returns A complete `EffectiveToolPolicy` with all five capabilities set.
+ */
+export function evaluateEffectiveToolPolicy(
+  policy: ToolPolicy | undefined,
+): EffectiveToolPolicy {
+  return {
+    read: policy?.read ?? DEFAULT_PERMISSION,
+    write: policy?.write ?? DEFAULT_PERMISSION,
+    execute: policy?.execute ?? DEFAULT_PERMISSION,
+    delegate: policy?.delegate ?? DEFAULT_PERMISSION,
+    network: policy?.network ?? DEFAULT_PERMISSION,
+  };
+}

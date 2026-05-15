@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weave/core, @weave/engine, @weave/config, @weave/cli, @weave/adapter-opencode
 
-> 0 routes | 0 models | 0 components | 34 lib files | 2 env vars | 0 middleware | 0% test coverage
-> **Token savings:** this file is ~2,800 tokens. Without it, AI exploration would cost ~18,200 tokens. **Saves ~15,400 tokens per conversation.**
-> **Last scanned:** 2026-05-15 19:40 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 35 lib files | 2 env vars | 0 middleware | 0% test coverage
+> **Token savings:** this file is ~2,900 tokens. Without it, AI exploration would cost ~18,500 tokens. **Saves ~15,500 tokens per conversation.**
+> **Last scanned:** 2026-05-15 19:42 — re-run after significant changes
 
 ---
 
@@ -128,6 +128,11 @@
   - type ResolutionSource
   - const DEFAULT_FALLBACK_MODEL
 - `packages/engine/src/runner.ts` — class WeaveRunner
+- `packages/engine/src/tool-policy.ts`
+  - function evaluateEffectiveToolPolicy: (policy) => EffectiveToolPolicy
+  - type EffectiveToolPolicy
+  - const ABSTRACT_CAPABILITIES: (keyof ToolPolicy)[]
+  - const DEFAULT_PERMISSION: ToolPermission
 - `scripts/validate-config.ts` — function printSummary: (config, configPath) => void
 
 ---
