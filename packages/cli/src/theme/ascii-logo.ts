@@ -38,7 +38,7 @@ export const LOGO_WIDTH = Math.max(...PLAIN_LOGO_LINES.map((l) => l.length));
  * `figlet -f "larry3d" WEAVE | lolcat -S 27 --spread 2`.
  */
 export function renderLogo(theme: ThemeColors): string[] {
-  if (!isColorEnabled(theme)) return PLAIN_LOGO_LINES;
+  if (!isColorEnabled(theme)) return [...PLAIN_LOGO_LINES];
 
   return PLAIN_FIGLET_LINES.map(
     (line, lineIndex) =>
