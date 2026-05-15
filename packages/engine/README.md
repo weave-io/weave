@@ -8,7 +8,7 @@ Harness-agnostic composition APIs and adapter-boundary helpers for Weave.
 
 - **Descriptor generation** — derives normalized agent descriptors such as `shuttle-{category}` from config intent
 - **Model resolution helper** — `resolveAdapterModelIntent()` resolves model preferences using adapter-supplied harness context
-- **Skill resolution API** — planned by [Spec 05](../../docs/specs/05-spec-skill-loader/05-spec-skill-loader.md); adapters provide available skills, engine matches/filter them
+- **Skill resolution API** — implemented by [Spec 09](../../docs/specs/09-spec-adapter-provided-skill-resolution/09-spec-adapter-provided-skill-resolution.md); adapters provide available skills via `loadAvailableSkills()`, engine matches/filters them via `resolveSkillsForAgent()` and `resolveSkillsForConfig()`
 - **Prompt composition APIs** — future APIs that combine prompt files, prompt appendices, delegation metadata, and resolved skills
 - **Policy/lifecycle surfaces** — future abstract lifecycle APIs; adapters map harness events into those surfaces
 - **`WeaveRunner`** — current transitional orchestration entry point that passes normalized intent through a `HarnessAdapter`
@@ -58,12 +58,38 @@ await configResult.match(
 );
 ```
 
+## Skill Resolution API
+
+Implemented in [Spec 09](../../docs/specs/09-spec-adapter-provided-skill-resolution/09-spec-adapter-provided-skill-resolution.md). The engine exposes two pure helpers:
+
+- **`resolveSkillsForAgent(input)`** — resolves one agent's declared `skills [...]` against adapter-provided available skills. Returns `Result<ResolvedSkill[], SkillResolutionError[]>`.
+- **`resolveSkillsForConfig(input)`** — batch resolution across all declared agents and generated `shuttle-{category}` descriptors. Accumulates errors across all agents.
+
+**Adapter-provided context flow:**
+
+```ts
+// Adapter discovers skills from harness-specific directories.
+const availableSkills = await adapter.loadAvailableSkills();
+
+// Engine resolves references — pure, no harness I/O.
+const result = resolveSkillsForConfig({ config, availableSkills });
+```
+
+`WeaveRunner` calls `loadAvailableSkills()` before agent materialization and attaches `resolvedSkills` to each `RunAgentEffect`. Adapters receive resolved skill references; they own the concrete mounting/loading of skill content.
+
+**Invariants:**
+
+- The engine never scans skill directories. `loadAvailableSkills()` is adapter-owned.
+- `RunAgentEffect.resolvedSkills` carries only engine-resolved references — no paths, content, tokens, or harness-specific metadata.
+- Disabled skills (via `config.disabled.skills`) are filtered before missing-skill validation.
+
 ## Transitional Adapter Interface
 
-`HarnessAdapter` currently contains early placeholder methods such as `loadSkill()` and `registerHook()`. Treat those methods as transitional, not architectural precedent:
+`HarnessAdapter` currently contains early placeholder methods. Treat those as transitional, not architectural precedent:
 
-- `loadSkill()` will be replaced by an adapter-provided skill context flow (`getAvailableSkills()` or equivalent) and engine-side skill resolution.
-- `registerHook()` will be replaced or reframed around adapter-owned lifecycle event mapping into engine policy surfaces.
+- **`loadAvailableSkills(): Promise<SkillInfo[]>`** — the current adapter surface for skill context (Spec 09). Adapters return a flat list of `SkillInfo` descriptors; the engine resolves references against it. This replaces the deprecated `loadSkill()` method.
+- **`loadSkill()`** — deprecated. Superseded by `loadAvailableSkills()`. Will be removed in a future spec.
+- **`registerHook()`** — will be replaced or reframed around adapter-owned lifecycle event mapping into engine policy surfaces.
 - Agent materialization methods such as `spawnSubagent()` are acceptable only when they receive normalized, harness-agnostic intent and the adapter owns concrete harness translation.
 
 When adding new engine APIs, prefer pure helpers that accept explicit harness context and return normalized results.
