@@ -42,3 +42,8 @@ export {
   resolveAdapterModelIntent,
 } from "./model-resolution.js";
 export { WeaveRunner } from "./runner.js";
+export type { EffectiveToolPolicy } from "./tool-policy.js";
+export {
+  ABSTRACT_CAPABILITIES,
+  DEFAULT_PERMISSION,
+} from "./tool-policy.js";
