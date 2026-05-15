@@ -114,7 +114,7 @@
 - [x] 2.12 Add a sanitized JSON fixture assertion showing blocking entries and warning entries in deterministic order for downstream CLI consumption.
 - [x] 2.13 Run `bun test packages/engine/src/__tests__/capability-readiness.test.ts` and `bun run typecheck` as the proof commands for this parent task.
 
-### [ ] 3.0 Define adapter-owned declarations, runtime health reports, and Safe Adapter Init inputs
+### [x] 3.0 Define adapter-owned declarations, runtime health reports, and Safe Adapter Init inputs
 
 #### 3.0 Scope
 
@@ -138,17 +138,17 @@
 
 #### 3.0 Tasks
 
-- [ ] 3.1 Define adapter-owned static declaration input types that let adapters provide baseline capability entries and implementation notes without the engine discovering harness resources.
-- [ ] 3.2 Define adapter-owned runtime probe result types for current environment status, including supplier component, runtime status, blocking impact, sanitized details, and remediation hints.
-- [ ] 3.3 Define `AdapterHealthReport` output that combines declaration and runtime probe data into a CLI-ready health summary without exposing secrets or local harness config contents.
-- [ ] 3.4 Define the Safe Adapter Init shape as an adapter-owned readiness provider/input that performs read-only checks and returns declarations/probes; do not require full agent materialization or workflow startup.
-- [ ] 3.5 Add documentation comments that Safe Adapter Init must not materialize agents, register hooks, launch workflows, mutate harness config, write files, or start harness runtimes.
-- [ ] 3.6 Model fallible runtime probe collection with `Result` or `ResultAsync` error unions so expected missing/unavailable harness state does not throw.
-- [ ] 3.7 Implement pure engine helper behavior that accepts adapter-provided declaration/probe values and returns normalized health/evaluation output without calling `Bun.file`, launching processes, scanning directories, or calling harness APIs.
-- [ ] 3.8 Add mock adapter/readiness-provider fixtures that supply successful probes, blocking probe failures, warning-only probe gaps, and sanitized remediation hints.
-- [ ] 3.9 Add `packages/engine/src/__tests__/adapter-health-report.test.ts` covering explicit adapter input, `Result`/`ResultAsync` failure mapping, supplier attribution, blocking/warning health details, and sanitized output.
-- [ ] 3.10 Review `packages/engine/src/adapter.ts` changes, if any, to ensure transitional `registerHook()` and `loadSkill()` remain documented as non-precedent and are not used by the new evaluator.
-- [ ] 3.11 Run `bun test packages/engine/src/__tests__/adapter-health-report.test.ts` and `bun run typecheck` as the proof commands for this parent task.
+- [x] 3.1 Define adapter-owned static declaration input types that let adapters provide baseline capability entries and implementation notes without the engine discovering harness resources.
+- [x] 3.2 Define adapter-owned runtime probe result types for current environment status, including supplier component, runtime status, blocking impact, sanitized details, and remediation hints.
+- [x] 3.3 Define `AdapterHealthReport` output that combines declaration and runtime probe data into a CLI-ready health summary without exposing secrets or local harness config contents.
+- [x] 3.4 Define the Safe Adapter Init shape as an adapter-owned readiness provider/input that performs read-only checks and returns declarations/probes; do not require full agent materialization or workflow startup.
+- [x] 3.5 Add documentation comments that Safe Adapter Init must not materialize agents, register hooks, launch workflows, mutate harness config, write files, or start harness runtimes.
+- [x] 3.6 Model fallible runtime probe collection with `Result` or `ResultAsync` error unions so expected missing/unavailable harness state does not throw.
+- [x] 3.7 Implement pure engine helper behavior that accepts adapter-provided declaration/probe values and returns normalized health/evaluation output without calling `Bun.file`, launching processes, scanning directories, or calling harness APIs.
+- [x] 3.8 Add mock adapter/readiness-provider fixtures that supply successful probes, blocking probe failures, warning-only probe gaps, and sanitized remediation hints.
+- [x] 3.9 Add `packages/engine/src/__tests__/adapter-health-report.test.ts` covering explicit adapter input, `Result`/`ResultAsync` failure mapping, supplier attribution, blocking/warning health details, and sanitized output.
+- [x] 3.10 Review `packages/engine/src/adapter.ts` changes, if any, to ensure transitional `registerHook()` and `loadSkill()` remain documented as non-precedent and are not used by the new evaluator.
+- [x] 3.11 Run `bun test packages/engine/src/__tests__/adapter-health-report.test.ts` and `bun run typecheck` as the proof commands for this parent task.
 
 ### [ ] 4.0 Provide renderer-ready readiness report structures and deterministic CLI fixtures
 
