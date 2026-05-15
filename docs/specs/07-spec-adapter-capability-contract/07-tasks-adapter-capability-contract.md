@@ -150,7 +150,7 @@
 - [x] 3.10 Review `packages/engine/src/adapter.ts` changes, if any, to ensure transitional `registerHook()` and `loadSkill()` remain documented as non-precedent and are not used by the new evaluator.
 - [x] 3.11 Run `bun test packages/engine/src/__tests__/adapter-health-report.test.ts` and `bun run typecheck` as the proof commands for this parent task.
 
-### [ ] 4.0 Provide renderer-ready readiness report structures and deterministic CLI fixtures
+### [x] 4.0 Provide renderer-ready readiness report structures and deterministic CLI fixtures
 
 #### 4.0 Scope
 
@@ -173,17 +173,17 @@
 
 #### 4.0 Tasks
 
-- [ ] 4.1 Define a normalized readiness report model in the engine that includes adapter id, profile id, overall readiness status, capability rows, blocking failures, warnings, health details, and generated-at/ordering rules that remain deterministic in tests.
-- [ ] 4.2 Add a pure engine helper that converts profile evaluation plus health report data into the normalized report model without re-running probes or mutating harness state.
-- [ ] 4.3 Define JSON interchange output as the canonical machine-readable representation of the normalized report model.
-- [ ] 4.4 Define a stable human-row DTO with status, capability name, readiness, blocking impact, runtime status, and remediation hint so CLI presentation can render readable rows later.
-- [ ] 4.5 Define TOON-ready output rules or a serializer with stable key order, stable row order, and compact deterministic formatting for LLM-oriented consumption.
-- [ ] 4.6 Add sanitized fixture data that includes at least one pass, one blocking failure, one optional warning, one runtime health detail, and one token-usage applicability example.
-- [ ] 4.7 Add `packages/engine/src/__tests__/capability-reporting.test.ts` covering normalized report generation, deterministic ordering, parseable JSON data, TOON-ready deterministic data, and no probe re-execution.
-- [ ] 4.8 If CLI presentation helpers are added, create `packages/cli/src/readiness/render.ts` to render human, JSON, and TOON fixture output from engine report models without adding full `doctor`, `status`, or `debug` commands.
-- [ ] 4.9 If CLI presentation helpers are added, create `packages/cli/src/readiness/__tests__/render.test.ts` covering human rows, JSON parseability, repeated TOON output equality, and no `console.*` usage outside the terminal boundary.
-- [ ] 4.10 Verify every renderer fixture is sanitized: synthetic adapter ids, synthetic paths such as `<redacted>`, no credentials, no real command output, and no local harness configuration contents.
-- [ ] 4.11 Run `bun test packages/engine/src/__tests__/capability-reporting.test.ts`, any CLI readiness render tests, and `bun run typecheck` as the proof commands for this parent task.
+- [x] 4.1 Define a normalized readiness report model in the engine that includes adapter id, profile id, overall readiness status, capability rows, blocking failures, warnings, health details, and generated-at/ordering rules that remain deterministic in tests.
+- [x] 4.2 Add a pure engine helper that converts profile evaluation plus health report data into the normalized report model without re-running probes or mutating harness state.
+- [x] 4.3 Define JSON interchange output as the canonical machine-readable representation of the normalized report model.
+- [x] 4.4 Define a stable human-row DTO with status, capability name, readiness, blocking impact, runtime status, and remediation hint so CLI presentation can render readable rows later.
+- [x] 4.5 Define TOON-ready output rules or a serializer with stable key order, stable row order, and compact deterministic formatting for LLM-oriented consumption.
+- [x] 4.6 Add sanitized fixture data that includes at least one pass, one blocking failure, one optional warning, one runtime health detail, and one token-usage applicability example.
+- [x] 4.7 Add `packages/engine/src/__tests__/capability-reporting.test.ts` covering normalized report generation, deterministic ordering, parseable JSON data, TOON-ready deterministic data, and no probe re-execution.
+- [x] 4.8 If CLI presentation helpers are added, create `packages/cli/src/readiness/render.ts` to render human, JSON, and TOON fixture output from engine report models without adding full `doctor`, `status`, or `debug` commands.
+- [x] 4.9 If CLI presentation helpers are added, create `packages/cli/src/readiness/__tests__/render.test.ts` covering human rows, JSON parseability, repeated TOON output equality, and no `console.*` usage outside the terminal boundary.
+- [x] 4.10 Verify every renderer fixture is sanitized: synthetic adapter ids, synthetic paths such as `<redacted>`, no credentials, no real command output, and no local harness configuration contents.
+- [x] 4.11 Run `bun test packages/engine/src/__tests__/capability-reporting.test.ts`, any CLI readiness render tests, and `bun run typecheck` as the proof commands for this parent task.
 
 ### [ ] 5.0 Document readiness gates and the installer-support migration boundary
 
