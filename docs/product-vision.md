@@ -4,7 +4,7 @@ Weave is a harness-agnostic agent orchestration framework and API for building a
 
 It is closer to Neovim's API layer than to a finished editor: Weave defines the primitives, config model, prompt/delegation structure, and policy intent that adapters compose into concrete harness integrations.
 
-**Related:** [System Architecture](system-architecture.md) · [Adapter Boundary](adapter-boundary.md) · [Model Resolution](model-resolution.md) · [Config Loading](config-loading.md) · [Spec 04 — Agent Model Resolution](specs/04-spec-agent-model-resolution/04-spec-agent-model-resolution.md) · [Spec 05 — Skill Resolution](specs/05-spec-skill-loader/05-spec-skill-loader.md) · [Legacy Architecture](legacy-architecture.md)
+**Related:** [System Architecture](system-architecture.md) · [Adapter Boundary](adapter-boundary.md) · [Model Resolution](model-resolution.md) · [Config Loading](config-loading.md) · [Spec 04 — Agent Model Resolution](specs/04-spec-agent-model-resolution/04-spec-agent-model-resolution.md) · [Spec 05 — Skill Resolution](specs/05-spec-skill-loader/05-spec-skill-loader.md) · [Spec 07 — Adapter Capability Contract](specs/07-spec-adapter-capability-contract/07-spec-adapter-capability-contract.md) · [Legacy Architecture](legacy-architecture.md)
 
 ---
 
@@ -132,6 +132,37 @@ Weave's target is broad harness portability, but support should grow from the ha
 3. **Claude Code / Hermes / others later** — explore once the core API and first adapters stabilize. These adapters may start with partial support if a harness lacks non-critical capabilities.
 
 A harness adapter does not need perfect feature parity on day one. It must clearly document supported, emulated, degraded, and unsupported capabilities so users understand what the single `.weave` config can do in that harness.
+
+---
+
+## Adapter Capability Contract
+
+Adapters do not need perfect feature parity on day one, but they must make
+partial support **explicit and structured**. The **Adapter Capability Contract**
+(Spec 07) provides the vocabulary:
+
+| Readiness level | Meaning                                                                  |
+| --------------- | ------------------------------------------------------------------------ |
+| `native`        | The harness implements the capability directly.                          |
+| `emulated`      | The adapter provides equivalent behavior; satisfies required capabilities. |
+| `degraded`      | Partial support only; behavior may be incomplete or unreliable.          |
+| `unsupported`   | The harness does not support this capability at all.                     |
+
+The **Core Readiness Profile** evaluates these declarations:
+
+- Required + `native` or `emulated` → **pass**
+- Required + `degraded` or `unsupported` → **fail** (blocks readiness)
+- Optional + `degraded` or `unsupported` → **warning** (non-blocking)
+- Missing required capability → **fail**
+- Missing optional capability → **warning**
+
+This replaces the binary `HarnessInstaller.supported: boolean` signal in
+`packages/cli/src/installers/index.ts`. That boolean is a legacy installer
+signal that capability readiness complements now and may supersede for richer
+status reporting in future adapter work.
+
+See [Spec 07 — Adapter Capability Contract](specs/07-spec-adapter-capability-contract/07-spec-adapter-capability-contract.md)
+and [Adapter Boundary](adapter-boundary.md) for implementation details.
 
 ---
 

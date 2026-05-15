@@ -185,7 +185,7 @@
 - [x] 4.10 Verify every renderer fixture is sanitized: synthetic adapter ids, synthetic paths such as `<redacted>`, no credentials, no real command output, and no local harness configuration contents.
 - [x] 4.11 Run `bun test packages/engine/src/__tests__/capability-reporting.test.ts`, any CLI readiness render tests, and `bun run typecheck` as the proof commands for this parent task.
 
-### [ ] 5.0 Document readiness gates and the installer-support migration boundary
+### [x] 5.0 Document readiness gates and the installer-support migration boundary
 
 #### 5.0 Scope
 
@@ -207,13 +207,13 @@
 
 #### 5.0 Tasks
 
-- [ ] 5.1 Update `docs/adapter-boundary.md` to link to the Adapter Capability Contract spec and explain that capability declarations/probes are adapter-owned inputs consumed by pure engine evaluators.
-- [ ] 5.2 Update `docs/product-vision.md` to link to the Adapter Capability Contract spec and summarize how readiness levels make partial harness support explicit.
-- [ ] 5.3 Update the capability contract spec or a linked companion section to document Core Readiness Profile semantics: required `native`/equivalent `emulated` passes, required `degraded`/`unsupported` fails, and optional gaps warn only.
-- [ ] 5.4 Document the conditional token-usage assumption: token reporting is required only when adapter-provided context says the harness exposes usage data, and the report must carry explicit applicability/status.
-- [ ] 5.5 Document Safe Adapter Init as read-only and adapter-owned: no agent materialization, hook registration, workflow launch, harness-state mutation, generated config writes, or harness runtime startup.
-- [ ] 5.6 Add a migration note near `HarnessInstaller.supported` documentation or comments explaining that it is a legacy binary installer-support signal that capability readiness complements now and may supersede for richer status reporting later.
-- [ ] 5.7 Add proof-artifact redaction guidance covering runtime health details, JSON output, TOON output, local paths, command output, credentials, API keys, tokens, `.env` values, and harness config contents.
-- [ ] 5.8 Update `CONTEXT.md` only if the active branch already owns context documentation updates or maintainers confirm it should summarize the new capability contract.
-- [ ] 5.9 Verify documentation links resolve and that docs do not reference deleted historical spec paths as new required reading.
-- [ ] 5.10 Run targeted documentation review plus `bun run lint`, `bun run typecheck`, `bun run build`, and `bun run test` as the final planned verification set for the implementation phase.
+- [x] 5.1 Update `docs/adapter-boundary.md` to link to the Adapter Capability Contract spec and explain that capability declarations/probes are adapter-owned inputs consumed by pure engine evaluators.
+- [x] 5.2 Update `docs/product-vision.md` to link to the Adapter Capability Contract spec and summarize how readiness levels make partial harness support explicit.
+- [x] 5.3 Update the capability contract spec or a linked companion section to document Core Readiness Profile semantics: required `native`/equivalent `emulated` passes, required `degraded`/`unsupported` fails, and optional gaps warn only.
+- [x] 5.4 Document the conditional token-usage assumption: token reporting is required only when adapter-provided context says the harness exposes usage data, and the report must carry explicit applicability/status.
+- [x] 5.5 Document Safe Adapter Init as read-only and adapter-owned: no agent materialization, hook registration, workflow launch, harness-state mutation, generated config writes, or harness runtime startup.
+- [x] 5.6 Add a migration note near `HarnessInstaller.supported` documentation or comments explaining that it is a legacy binary installer-support signal that capability readiness complements now and may supersede for richer status reporting later.
+- [x] 5.7 Add proof-artifact redaction guidance covering runtime health details, JSON output, TOON output, local paths, command output, credentials, API keys, tokens, `.env` values, and harness config contents.
+- [x] 5.8 Update `CONTEXT.md` only if the active branch already owns context documentation updates or maintainers confirm it should summarize the new capability contract.
+- [x] 5.9 Verify documentation links resolve and that docs do not reference deleted historical spec paths as new required reading.
+- [x] 5.10 Run targeted documentation review plus `bun run lint`, `bun run typecheck`, `bun run build`, and `bun run test` as the final planned verification set for the implementation phase.
