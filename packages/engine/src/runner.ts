@@ -60,7 +60,7 @@ export interface WeaveRunnerOptions {
  * const runner = new WeaveRunner(config, new PiAdapter(), {
  *   onEffect(effect) {
  *     if (effect.kind === "run-agent") {
- *       console.log(effect.agentName, effect.effectiveToolPolicy);
+ *       log.info({ agent: effect.agentName, policy: effect.effectiveToolPolicy }, "Agent effect");
  *     }
  *   },
  * });

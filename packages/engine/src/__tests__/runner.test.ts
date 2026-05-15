@@ -650,14 +650,14 @@ describe("WeaveRunner", () => {
   describe("non-breaking: no onEffect option", () => {
     it("runner works normally when no options object is provided", async () => {
       const config = cfg(`
-        agent pi-worker { prompt "Pi worker." models ["model-pi"] }
+        agent test-worker { prompt "Test worker." models ["model-test"] }
       `);
 
       // No options argument — must not throw
       await new WeaveRunner(config, adapter).run();
 
       expect(adapter.callsTo("spawnSubagent")).toHaveLength(1);
-      expect(adapter.callsTo("spawnSubagent")[0]?.name).toBe("pi-worker");
+      expect(adapter.callsTo("spawnSubagent")[0]?.name).toBe("test-worker");
     });
 
     it("runner works normally when options object has no onEffect", async () => {
