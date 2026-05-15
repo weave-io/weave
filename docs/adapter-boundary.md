@@ -5,7 +5,7 @@ Weave is a harness-agnostic orchestration framework with two cooperating halves:
 1. **Core Weave API** (`@weave/core`, `@weave/config`, `@weave/engine`) parses DSL config, normalizes agent intent, resolves/composes prompt and policy data, and exposes pure helper APIs.
 2. **Adapters** (`@weave/adapter-opencode`, `@weave/adapter-pi`, etc.) enable Weave inside a concrete harness by discovering harness-owned resources, translating normalized intent, and filling feature gaps when the harness lacks native support.
 
-**Related:** [Product Vision](product-vision.md) · [Model Resolution](model-resolution.md) · [Config Loading](config-loading.md) · [Spec 05 — Skill Resolution](specs/05-spec-skill-loader/05-spec-skill-loader.md) · [Spec 07 — Adapter Capability Contract](specs/07-spec-adapter-capability-contract/07-spec-adapter-capability-contract.md) · [Legacy Architecture](legacy-architecture.md)
+**Related:** [Product Vision](product-vision.md) · [Model Resolution](model-resolution.md) · [Config Loading](config-loading.md) · [Tool Policy Evaluation](tool-policy-evaluation.md) · [Spec 05 — Skill Resolution](specs/05-spec-skill-loader/05-spec-skill-loader.md) · [Spec 07 — Adapter Capability Contract](specs/07-spec-adapter-capability-contract/07-spec-adapter-capability-contract.md) · [Spec 08 — Abstract Tool Policy Evaluation](specs/08-spec-abstract-tool-policy-evaluation/08-spec-abstract-tool-policy-evaluation.md) · [Legacy Architecture](legacy-architecture.md)
 
 ---
 
@@ -166,3 +166,27 @@ to `buildAdapterHealthReport`. Safe Adapter Init:
 
 See [Spec 07 — Adapter Capability Contract](specs/07-spec-adapter-capability-contract/07-spec-adapter-capability-contract.md)
 for the full vocabulary, readiness gate semantics, and proof artifacts.
+
+---
+
+## Abstract Tool Policy Evaluation
+
+The engine evaluates abstract `tool_policy` declarations into a fully-resolved
+`EffectiveToolPolicy` before passing agent config to adapters. Adapters receive
+the **raw** `tool_policy` unchanged via `spawnSubagent`; the engine-computed
+effective policy is surfaced via the `onEffect` callback on `WeaveRunnerOptions`.
+
+Key rules:
+- The engine owns `evaluateEffectiveToolPolicy` — a pure, deterministic helper
+  that fills missing capabilities with `DEFAULT_PERMISSION` (`"ask"`).
+- Adapters own the mapping from abstract capabilities (`read`, `write`,
+  `execute`, `delegate`, `network`) to concrete harness tool names.
+- No harness-specific tool identifiers appear in engine code or emitted effects.
+- Category shuttle agents (`shuttle-{category}`) have their category's
+  `tool_policy` evaluated and emitted the same way as regular agents.
+
+See [Tool Policy Evaluation](tool-policy-evaluation.md) for the full vocabulary,
+`EffectiveToolPolicy`, `DEFAULT_PERMISSION`, `evaluateEffectiveToolPolicy`,
+`RunAgentEffect`, and the adapter contract. See
+[Spec 08 — Abstract Tool Policy Evaluation](specs/08-spec-abstract-tool-policy-evaluation/08-spec-abstract-tool-policy-evaluation.md)
+for the formal spec and proof artifacts.

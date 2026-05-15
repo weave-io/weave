@@ -41,6 +41,8 @@ export {
   DEFAULT_FALLBACK_MODEL,
   resolveAdapterModelIntent,
 } from "./model-resolution.js";
+export type { RunAgentEffect } from "./run-agent-effects.js";
+export type { WeaveRunnerOptions } from "./runner.js";
 export { WeaveRunner } from "./runner.js";
 export type {
   ConcreteToolClassification,
