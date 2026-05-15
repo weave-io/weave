@@ -43,23 +43,24 @@
 - [x] 1.4 Export all public skill-resolution types and functions from `packages/engine/src/index.ts`.
 - [x] 1.5 Run `bun run typecheck` to verify the new public API is importable across the workspace.
 
-### [ ] 2.0 Implement single-agent skill resolution
+### [x] 2.0 Implement single-agent skill resolution
 
 #### 2.0 Proof Artifact(s)
 
 - Test: `bun test packages/engine/src/__tests__/skill-resolution.test.ts` passes cases for resolving an available requested skill, preserving declaration order, and returning `ok([])` for no skills.
 - Test: `bun test packages/engine/src/__tests__/skill-resolution.test.ts` passes disabled-skill coverage demonstrating `disabled.skills ["tdd"]` filters `skills ["tdd"]` without a missing-skill error.
 - Test: `bun test packages/engine/src/__tests__/skill-resolution.test.ts` passes missing-skill coverage demonstrating a non-disabled unknown skill returns a typed `err` with `agentName` and `skillName`.
+- Full proof: `docs/specs/09-spec-adapter-provided-skill-resolution/09-proofs/09-task-02-proofs.md`
 
 #### 2.0 Tasks
 
-- [ ] 2.1 Implement `resolveSkillsForAgent(input)` as a pure function returning `Result<ResolvedSkill[], SkillResolutionError[]>` or an equivalent explicit `neverthrow` result shape.
-- [ ] 2.2 Match requested `agentSkills` to `availableSkills` by exact `SkillInfo.name`.
-- [ ] 2.3 Preserve the order of non-disabled requested skills in the returned resolved-skill list.
-- [ ] 2.4 Filter any requested skill present in `disabledSkills` before missing-skill validation.
-- [ ] 2.5 Return `ok([])` for missing, undefined, or empty `agentSkills` inputs.
-- [ ] 2.6 Return typed `err` entries containing at least `type`, `agentName`, and `skillName` for missing non-disabled skills.
-- [ ] 2.7 Add focused tests for available skill resolution, declaration order, disabled-skill filtering, no-skills input, and missing non-disabled skill errors.
+- [x] 2.1 Implement `resolveSkillsForAgent(input)` as a pure function returning `Result<ResolvedSkill[], SkillResolutionError[]>` or an equivalent explicit `neverthrow` result shape.
+- [x] 2.2 Match requested `agentSkills` to `availableSkills` by exact `SkillInfo.name`.
+- [x] 2.3 Preserve the order of non-disabled requested skills in the returned resolved-skill list.
+- [x] 2.4 Filter any requested skill present in `disabledSkills` before missing-skill validation.
+- [x] 2.5 Return `ok([])` for missing, undefined, or empty `agentSkills` inputs.
+- [x] 2.6 Return typed `err` entries containing at least `type`, `agentName`, and `skillName` for missing non-disabled skills.
+- [x] 2.7 Add focused tests for available skill resolution, declaration order, disabled-skill filtering, no-skills input, and missing non-disabled skill errors.
 
 ### [ ] 3.0 Implement config-wide resolution including generated category shuttles
 
