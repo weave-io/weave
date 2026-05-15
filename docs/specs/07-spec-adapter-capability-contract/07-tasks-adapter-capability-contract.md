@@ -75,7 +75,7 @@
 - [x] 1.9 Add `packages/engine/src/__tests__/capability-contract.test.ts` covering readiness values, required fields, optional runtime-status fields, blocking-impact fields, tool-policy references, and export usability.
 - [x] 1.10 Run `bun test packages/engine/src/__tests__/capability-contract.test.ts` and `bun run typecheck` as the proof commands for this parent task.
 
-### [ ] 2.0 Implement the Core Readiness Profile evaluator
+### [x] 2.0 Implement the Core Readiness Profile evaluator
 
 #### 2.0 Scope
 
@@ -100,19 +100,19 @@
 
 #### 2.0 Tasks
 
-- [ ] 2.1 Define a `CORE_READINESS_PROFILE` constant with stable profile id, display metadata, required capability ids, optional capability ids, and deterministic ordering.
-- [ ] 2.2 Add every required capability from the spec to the profile: config materialization, agent materialization, primary/default agent selection, delegated specialist execution/subagents, prompt composition/injection/run-agent support, tool policy mapping/enforcement, workflow persistence, workflow step dispatch, plan-file compatibility, command entrypoints, event logging/debug traces, and conditional token usage reporting.
-- [ ] 2.3 Add every optional capability from the spec to the profile: idle continuation, compaction recovery, context-window monitor, analytics dashboard, eval integration, static artifact generation, and multiple active workflows.
-- [ ] 2.4 Define profile evaluation input that accepts adapter declarations plus an explicit adapter-provided token-usage applicability flag/status for harnesses that expose usage metrics.
-- [ ] 2.5 Implement pure readiness evaluation that marks required `native` and equivalent `emulated` entries as passing.
-- [ ] 2.6 Implement required-capability failure behavior so required `degraded` and `unsupported` entries produce blocking failures and fail the overall profile.
-- [ ] 2.7 Implement optional-capability warning behavior so optional `degraded` and `unsupported` entries produce non-blocking warnings and do not fail the overall profile.
-- [ ] 2.8 Implement missing-capability handling with deterministic blocking failures for missing required entries and deterministic warnings for missing optional entries.
-- [ ] 2.9 Include structured evaluation output fields for profile id, adapter id, overall status, per-capability results, blocking failures, non-blocking warnings, applicability details, and sanitized remediation hints.
-- [ ] 2.10 Add a coverage-guard test that compares the profile's required and optional ids against the full list from the approved spec so future edits cannot silently drop a capability.
-- [ ] 2.11 Add tests proving required `degraded` fails, required `unsupported` fails, required equivalent `emulated` passes, optional gaps warn only, missing required entries fail, and token usage is required only when the adapter says the harness exposes usage.
-- [ ] 2.12 Add a sanitized JSON fixture assertion showing blocking entries and warning entries in deterministic order for downstream CLI consumption.
-- [ ] 2.13 Run `bun test packages/engine/src/__tests__/capability-readiness.test.ts` and `bun run typecheck` as the proof commands for this parent task.
+- [x] 2.1 Define a `CORE_READINESS_PROFILE` constant with stable profile id, display metadata, required capability ids, optional capability ids, and deterministic ordering.
+- [x] 2.2 Add every required capability from the spec to the profile: config materialization, agent materialization, primary/default agent selection, delegated specialist execution/subagents, prompt composition/injection/run-agent support, tool policy mapping/enforcement, workflow persistence, workflow step dispatch, plan-file compatibility, command entrypoints, event logging/debug traces, and conditional token usage reporting.
+- [x] 2.3 Add every optional capability from the spec to the profile: idle continuation, compaction recovery, context-window monitor, analytics dashboard, eval integration, static artifact generation, and multiple active workflows.
+- [x] 2.4 Define profile evaluation input that accepts adapter declarations plus an explicit adapter-provided token-usage applicability flag/status for harnesses that expose usage metrics.
+- [x] 2.5 Implement pure readiness evaluation that marks required `native` and equivalent `emulated` entries as passing.
+- [x] 2.6 Implement required-capability failure behavior so required `degraded` and `unsupported` entries produce blocking failures and fail the overall profile.
+- [x] 2.7 Implement optional-capability warning behavior so optional `degraded` and `unsupported` entries produce non-blocking warnings and do not fail the overall profile.
+- [x] 2.8 Implement missing-capability handling with deterministic blocking failures for missing required entries and deterministic warnings for missing optional entries.
+- [x] 2.9 Include structured evaluation output fields for profile id, adapter id, overall status, per-capability results, blocking failures, non-blocking warnings, applicability details, and sanitized remediation hints.
+- [x] 2.10 Add a coverage-guard test that compares the profile's required and optional ids against the full list from the approved spec so future edits cannot silently drop a capability.
+- [x] 2.11 Add tests proving required `degraded` fails, required `unsupported` fails, required equivalent `emulated` passes, optional gaps warn only, missing required entries fail, and token usage is required only when the adapter says the harness exposes usage.
+- [x] 2.12 Add a sanitized JSON fixture assertion showing blocking entries and warning entries in deterministic order for downstream CLI consumption.
+- [x] 2.13 Run `bun test packages/engine/src/__tests__/capability-readiness.test.ts` and `bun run typecheck` as the proof commands for this parent task.
 
 ### [ ] 3.0 Define adapter-owned declarations, runtime health reports, and Safe Adapter Init inputs
 
