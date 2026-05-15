@@ -18,8 +18,8 @@ anything to an adapter.
 
 This separation ensures:
 
-- Adapters receive a fully-resolved policy they can apply without re-implementing
-  default-filling logic.
+- Adapters can access a fully-resolved policy (via `RunAgentEffect` or
+  `evaluateEffectiveToolPolicy`) without re-implementing default-filling logic.
 - The raw declared policy is also available so adapters can apply harness-specific
   translation (e.g. mapping abstract capabilities to concrete tool names).
 - Policy evaluation is pure, deterministic, and testable without a live harness.
