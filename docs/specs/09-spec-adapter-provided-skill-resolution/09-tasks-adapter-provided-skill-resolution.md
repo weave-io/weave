@@ -62,7 +62,7 @@
 - [x] 2.6 Return typed `err` entries containing at least `type`, `agentName`, and `skillName` for missing non-disabled skills.
 - [x] 2.7 Add focused tests for available skill resolution, declaration order, disabled-skill filtering, no-skills input, and missing non-disabled skill errors.
 
-### [ ] 3.0 Implement config-wide resolution including generated category shuttles
+### [x] 3.0 Implement config-wide resolution including generated category shuttles
 
 #### 3.0 Proof Artifact(s)
 
@@ -72,12 +72,12 @@
 
 #### 3.0 Tasks
 
-- [ ] 3.1 Implement `resolveSkillsForConfig(input)` using `WeaveConfig`, adapter-provided `availableSkills`, and `config.disabled.skills`.
-- [ ] 3.2 Reuse `generateCategoryShuttles(config)` so generated category shuttle behavior matches runner materialization semantics.
-- [ ] 3.3 Include declared agents and generated category shuttles in the batch result with stable agent-name keys.
-- [ ] 3.4 Skip disabled generated shuttles consistently with existing descriptor behavior.
-- [ ] 3.5 Accumulate missing non-disabled skill errors across all agents instead of returning only the first error.
-- [ ] 3.6 Add tests for declared-agent batch output, generated category shuttle output, disabled-skill behavior in batch mode, and multiple accumulated missing-skill errors.
+- [x] 3.1 Implement `resolveSkillsForConfig(input)` using `WeaveConfig`, adapter-provided `availableSkills`, and `config.disabled.skills`.
+- [x] 3.2 Reuse `generateCategoryShuttles(config)` so generated category shuttle behavior matches runner materialization semantics.
+- [x] 3.3 Include declared agents and generated category shuttles in the batch result with stable agent-name keys.
+- [x] 3.4 Skip disabled generated shuttles consistently with existing descriptor behavior.
+- [x] 3.5 Accumulate missing non-disabled skill errors across all agents instead of returning only the first error.
+- [x] 3.6 Add tests for declared-agent batch output, generated category shuttle output, disabled-skill behavior in batch mode, and multiple accumulated missing-skill errors.
 
 ### [ ] 4.0 Wire resolved skills into runner and adapter-facing effects
 
