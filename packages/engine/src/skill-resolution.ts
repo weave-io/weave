@@ -90,13 +90,27 @@ export interface ResolvedSkill {
  * included. Engine errors must not expose adapter-owned file paths, skill
  * contents, API keys, tokens, or harness-private mounting details.
  */
-export type SkillResolutionError = {
-  type: "MissingSkill";
-  /** The logical agent name from the normalized Weave config. */
-  agentName: string;
-  /** The skill name that could not be resolved. */
-  skillName: string;
-};
+export type SkillResolutionError =
+  | {
+      type: "MissingSkill";
+      /** The logical agent name from the normalized Weave config. */
+      agentName: string;
+      /** The skill name that could not be resolved. */
+      skillName: string;
+    }
+  | {
+      type: "ShuttleConflict";
+      /** The conflicting shuttle name. */
+      agentName: string;
+      /** The conflicting shuttle name (same as agentName). */
+      shuttleName: string;
+      /** The full conflict details from generateCategoryShuttles. */
+      detail: {
+        shuttleName: string;
+        categoryName: string;
+        message: string;
+      };
+    };
 
 // ---------------------------------------------------------------------------
 // SkillResolutionInput — explicit input for single-agent resolution
@@ -233,15 +247,12 @@ export type ConfigSkillResolutionResult = Record<string, ResolvedSkill[]>;
  * Resolution rules:
  * 1. Collect all declared agents from `config.agents`.
  * 2. Generate category shuttle descriptors via `generateCategoryShuttles(config)`.
- *    - If shuttle generation returns a conflict error, propagate it as a
- *      `SkillResolutionError` with `agentName: shuttleName` and
- *      `skillName: "__category_shuttle_conflict__"`.
+ *    - If shuttle generation returns a conflict error, include it in the error array.
  * 3. For each agent (declared + generated), call `resolveSkillsForAgent` with
  *    `config.disabled.skills` as the disabled list.
- * 4. Accumulate all `MissingSkill` errors across all agents.
- * 5. If any errors were accumulated, return `err(allErrors)`.
- * 6. Otherwise, return `ok(result)` where `result` is a record keyed by
- *    agent name with the resolved skills for each agent.
+ * 4. Accumulate all `MissingSkill` errors across all agents in the error array.
+ * 5. Accumulate successful resolutions in the value map.
+ * 6. Return both the partial success map and the error array (best-effort resolution).
  *
  * Disabled agents (in `config.disabled.agents`) are excluded from resolution
  * entirely — consistent with `generateCategoryShuttles` which already skips
@@ -252,7 +263,10 @@ export type ConfigSkillResolutionResult = Record<string, ResolvedSkill[]>;
  */
 export function resolveSkillsForConfig(
   input: SkillResolutionConfigInput,
-): Result<ConfigSkillResolutionResult, SkillResolutionError[]> {
+): {
+  value: ConfigSkillResolutionResult;
+  error: SkillResolutionError[];
+} {
   const { config, availableSkills } = input;
   const disabledSkills = config.disabled.skills;
   const disabledAgents = config.disabled.agents;
@@ -266,28 +280,28 @@ export function resolveSkillsForConfig(
 
   // Generate category shuttle descriptors — reuse existing semantics
   const shuttlesResult = generateCategoryShuttles(config);
-  if (shuttlesResult.isErr()) {
-    // Propagate conflict as a typed error
-    const conflict = shuttlesResult.error;
-    return err([
-      {
-        type: "MissingSkill",
-        agentName: conflict.shuttleName,
-        skillName: "__category_shuttle_conflict__",
-      },
-    ]);
-  }
-
-  // Add generated shuttles (generateCategoryShuttles already skips disabled ones)
-  for (const [shuttleName, shuttleConfig] of Object.entries(
-    shuttlesResult.value,
-  )) {
-    agentEntries.push([shuttleName, shuttleConfig.skills]);
-  }
-
-  // Resolve skills for each agent, accumulating all errors
-  const result: ConfigSkillResolutionResult = {};
   const allErrors: SkillResolutionError[] = [];
+
+  if (shuttlesResult.isErr()) {
+    // Include conflict as a typed error in the error array
+    const conflict = shuttlesResult.error;
+    allErrors.push({
+      type: "ShuttleConflict",
+      agentName: conflict.shuttleName,
+      shuttleName: conflict.shuttleName,
+      detail: conflict,
+    });
+  } else {
+    // Add generated shuttles (generateCategoryShuttles already skips disabled ones)
+    for (const [shuttleName, shuttleConfig] of Object.entries(
+      shuttlesResult.value,
+    )) {
+      agentEntries.push([shuttleName, shuttleConfig.skills]);
+    }
+  }
+
+  // Resolve skills for each agent, accumulating all errors and successes
+  const result: ConfigSkillResolutionResult = {};
 
   for (const [agentName, agentSkills] of agentEntries) {
     const agentResult = resolveSkillsForAgent({
@@ -305,6 +319,5 @@ export function resolveSkillsForConfig(
     result[agentName] = agentResult.value;
   }
 
-  if (allErrors.length > 0) return err(allErrors);
-  return ok(result);
+  return { value: result, error: allErrors };
 }

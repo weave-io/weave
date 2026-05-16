@@ -74,7 +74,7 @@ export class MockAdapter implements HarnessAdapter {
   private readonly _availableSkills: SkillInfo[];
 
   constructor(options: MockAdapterOptions = {}) {
-    this._availableSkills = options.availableSkills ?? [];
+    this._availableSkills = [...(options.availableSkills ?? [])];
   }
 
   async init(): Promise<void> {
@@ -105,7 +105,7 @@ export class MockAdapter implements HarnessAdapter {
    */
   async loadAvailableSkills(): Promise<SkillInfo[]> {
     this.calls.push({ method: "loadAvailableSkills" });
-    return this._availableSkills;
+    return [...this._availableSkills];
   }
 
   /**

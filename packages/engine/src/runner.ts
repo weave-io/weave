@@ -112,18 +112,30 @@ export class WeaveRunner {
     // partial resolution gracefully. The resolved map defaults to empty arrays
     // for agents with no skills or resolution errors.
     const resolvedSkillsMap: Record<string, readonly string[]> = {};
-    if (skillResolutionResult.isOk()) {
+
+    // Always populate resolvedSkillsMap from successful resolutions
+    if (skillResolutionResult.value) {
       for (const [agentName, skills] of Object.entries(
         skillResolutionResult.value,
       )) {
         resolvedSkillsMap[agentName] = skills.map((s) => s.name);
       }
-    } else {
+    }
+
+    // Separately log any errors that occurred
+    if (skillResolutionResult.error) {
       for (const error of skillResolutionResult.error) {
-        log.warn(
-          { agent: error.agentName, skill: error.skillName },
-          "Skill declared by agent is not available in harness",
-        );
+        if (error.type === "MissingSkill") {
+          log.warn(
+            { agent: error.agentName, skill: error.skillName },
+            "Skill declared by agent is not available in harness",
+          );
+        } else if (error.type === "ShuttleConflict") {
+          log.warn(
+            { shuttle: error.shuttleName, category: error.detail.categoryName },
+            error.detail.message,
+          );
+        }
       }
     }
 

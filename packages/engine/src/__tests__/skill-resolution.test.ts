@@ -140,8 +140,8 @@ describe("ResolvedSkill — adapter metadata preserved", () => {
 
     const result = resolveSkillsForAgent(input);
 
-    expect(result.isOk()).toBe(true);
-    const resolved = result._unsafeUnwrap();
+    expect(result.error).toHaveLength(0);
+    const resolved = result.value;
     expect(resolved).toHaveLength(1);
     expect(resolved[0]!.name).toBe("tdd");
     // The original SkillInfo reference is preserved — engine did not copy or transform it
@@ -163,8 +163,8 @@ describe("ResolvedSkill — adapter metadata preserved", () => {
       availableSkills: [skillInfo],
     });
 
-    expect(result.isOk()).toBe(true);
-    const resolved = result._unsafeUnwrap();
+    expect(result.error).toHaveLength(0);
+    const resolved = result.value;
     // Adapter can recover its own metadata from the resolved skill
     expect(resolved[0]!.skillInfo.metadata).toBe(harnessData);
   });
@@ -177,8 +177,8 @@ describe("resolveSkillsForAgent — type-level result shape", () => {
       availableSkills: [{ name: "tdd" }],
     });
 
-    expect(result.isOk()).toBe(true);
-    expect(result._unsafeUnwrap()).toEqual([]);
+    expect(result.error).toHaveLength(0);
+    expect(result.value).toEqual([]);
   });
 
   it("(b) returns ok([]) when agentSkills is empty", () => {
@@ -188,8 +188,8 @@ describe("resolveSkillsForAgent — type-level result shape", () => {
       availableSkills: [{ name: "tdd" }],
     });
 
-    expect(result.isOk()).toBe(true);
-    expect(result._unsafeUnwrap()).toEqual([]);
+    expect(result.error).toHaveLength(0);
+    expect(result.value).toEqual([]);
   });
 
   it("(c) returns ok with resolved skill when name matches", () => {
@@ -199,8 +199,8 @@ describe("resolveSkillsForAgent — type-level result shape", () => {
       availableSkills: [{ name: "tdd" }],
     });
 
-    expect(result.isOk()).toBe(true);
-    const resolved = result._unsafeUnwrap();
+    expect(result.error).toHaveLength(0);
+    const resolved = result.value;
     expect(resolved).toHaveLength(1);
     expect(resolved[0]!.name).toBe("tdd");
   });
@@ -212,8 +212,8 @@ describe("resolveSkillsForAgent — type-level result shape", () => {
       availableSkills: [],
     });
 
-    expect(result.isErr()).toBe(true);
-    const errors = result._unsafeUnwrapErr();
+    expect(result.error.length).toBeGreaterThan(0);
+    const errors = result.error;
     expect(errors).toHaveLength(1);
     expect(errors[0]!.type).toBe("MissingSkill");
     expect(errors[0]!.agentName).toBe("loom");
@@ -228,8 +228,8 @@ describe("resolveSkillsForAgent — type-level result shape", () => {
       disabledSkills: ["tdd"],
     });
 
-    expect(result.isOk()).toBe(true);
-    expect(result._unsafeUnwrap()).toEqual([]);
+    expect(result.error).toHaveLength(0);
+    expect(result.value).toEqual([]);
   });
 
   it("(f) SkillResolutionError contains only type, agentName, skillName — no paths or secrets", () => {
@@ -239,8 +239,8 @@ describe("resolveSkillsForAgent — type-level result shape", () => {
       availableSkills: [],
     });
 
-    expect(result.isErr()).toBe(true);
-    const errors = result._unsafeUnwrapErr();
+    expect(result.error.length).toBeGreaterThan(0);
+    const errors = result.error;
     const error = errors[0]!;
 
     // Only these three fields — no file paths, no content, no harness details
@@ -290,8 +290,8 @@ describe("resolveSkillsForAgent — name is the only matching key", () => {
       availableSkills: available,
     });
 
-    expect(result.isOk()).toBe(true);
-    const resolved = result._unsafeUnwrap();
+    expect(result.error).toHaveLength(0);
+    const resolved = result.value;
     expect(resolved).toHaveLength(2);
     expect(resolved[0]!.name).toBe("tdd");
     expect(resolved[1]!.name).toBe("code-review");
@@ -323,8 +323,8 @@ describe("resolveSkillsForAgent — available skill resolution", () => {
       availableSkills: available,
     });
 
-    expect(result.isOk()).toBe(true);
-    const resolved = result._unsafeUnwrap();
+    expect(result.error).toHaveLength(0);
+    const resolved = result.value;
     expect(resolved).toHaveLength(1);
     expect(resolved[0]!.name).toBe("tdd");
     expect(resolved[0]!.skillInfo).toBe(available[0]);
@@ -343,8 +343,8 @@ describe("resolveSkillsForAgent — available skill resolution", () => {
       availableSkills: available,
     });
 
-    expect(result.isOk()).toBe(true);
-    const resolved = result._unsafeUnwrap();
+    expect(result.error).toHaveLength(0);
+    const resolved = result.value;
     expect(resolved).toHaveLength(2);
     expect(resolved.map((r) => r.name)).toEqual(["tdd", "security-audit"]);
   });
@@ -362,8 +362,8 @@ describe("resolveSkillsForAgent — available skill resolution", () => {
       availableSkills: [tddInfo, reviewInfo],
     });
 
-    expect(result.isOk()).toBe(true);
-    const resolved = result._unsafeUnwrap();
+    expect(result.error).toHaveLength(0);
+    const resolved = result.value;
     expect(resolved[0]!.skillInfo).toBe(tddInfo);
     expect(resolved[1]!.skillInfo).toBe(reviewInfo);
   });
@@ -384,8 +384,8 @@ describe("resolveSkillsForAgent — declaration order preserved", () => {
       availableSkills: available,
     });
 
-    expect(result.isOk()).toBe(true);
-    const resolved = result._unsafeUnwrap();
+    expect(result.error).toHaveLength(0);
+    const resolved = result.value;
     expect(resolved.map((r) => r.name)).toEqual([
       "tdd",
       "code-review",
@@ -407,8 +407,8 @@ describe("resolveSkillsForAgent — declaration order preserved", () => {
       availableSkills: available,
     });
 
-    expect(result.isOk()).toBe(true);
-    const resolved = result._unsafeUnwrap();
+    expect(result.error).toHaveLength(0);
+    const resolved = result.value;
     // Order follows agentSkills: code-review first, then tdd
     expect(resolved[0]!.name).toBe("code-review");
     expect(resolved[1]!.name).toBe("tdd");
@@ -431,8 +431,8 @@ describe("resolveSkillsForAgent — declaration order preserved", () => {
       disabledSkills: ["code-review"],
     });
 
-    expect(result.isOk()).toBe(true);
-    const resolved = result._unsafeUnwrap();
+    expect(result.error).toHaveLength(0);
+    const resolved = result.value;
     expect(resolved.map((r) => r.name)).toEqual(["tdd", "security-audit"]);
   });
 });
@@ -446,8 +446,8 @@ describe("resolveSkillsForAgent — disabled-skill filtering", () => {
       disabledSkills: ["tdd"],
     });
 
-    expect(result.isOk()).toBe(true);
-    expect(result._unsafeUnwrap()).toEqual([]);
+    expect(result.error).toHaveLength(0);
+    expect(result.value).toEqual([]);
   });
 
   it("filters multiple disabled skills, resolves remaining available skills", () => {
@@ -463,8 +463,8 @@ describe("resolveSkillsForAgent — disabled-skill filtering", () => {
       disabledSkills: ["code-review"],
     });
 
-    expect(result.isOk()).toBe(true);
-    const resolved = result._unsafeUnwrap();
+    expect(result.error).toHaveLength(0);
+    const resolved = result.value;
     expect(resolved.map((r) => r.name)).toEqual(["tdd", "security-audit"]);
   });
 
@@ -478,8 +478,8 @@ describe("resolveSkillsForAgent — disabled-skill filtering", () => {
       disabledSkills: ["tdd"], // disabled even though available
     });
 
-    expect(result.isOk()).toBe(true);
-    expect(result._unsafeUnwrap()).toEqual([]);
+    expect(result.error).toHaveLength(0);
+    expect(result.value).toEqual([]);
   });
 
   it("disabledSkills undefined behaves the same as empty array", () => {
@@ -490,8 +490,8 @@ describe("resolveSkillsForAgent — disabled-skill filtering", () => {
       // disabledSkills omitted
     });
 
-    expect(result.isOk()).toBe(true);
-    expect(result._unsafeUnwrap()).toHaveLength(1);
+    expect(result.error).toHaveLength(0);
+    expect(result.value).toHaveLength(1);
   });
 });
 
@@ -503,8 +503,8 @@ describe("resolveSkillsForAgent — no-skills input", () => {
       // agentSkills omitted
     });
 
-    expect(result.isOk()).toBe(true);
-    expect(result._unsafeUnwrap()).toEqual([]);
+    expect(result.error).toHaveLength(0);
+    expect(result.value).toEqual([]);
   });
 
   it("returns ok([]) when agentSkills is an empty array", () => {
@@ -514,8 +514,8 @@ describe("resolveSkillsForAgent — no-skills input", () => {
       availableSkills: [{ name: "tdd" }],
     });
 
-    expect(result.isOk()).toBe(true);
-    expect(result._unsafeUnwrap()).toEqual([]);
+    expect(result.error).toHaveLength(0);
+    expect(result.value).toEqual([]);
   });
 
   it("returns ok([]) when agentSkills is undefined and availableSkills is also empty", () => {
@@ -524,8 +524,8 @@ describe("resolveSkillsForAgent — no-skills input", () => {
       availableSkills: [],
     });
 
-    expect(result.isOk()).toBe(true);
-    expect(result._unsafeUnwrap()).toEqual([]);
+    expect(result.error).toHaveLength(0);
+    expect(result.value).toEqual([]);
   });
 });
 
@@ -537,8 +537,8 @@ describe("resolveSkillsForAgent — missing non-disabled skill errors", () => {
       availableSkills: [],
     });
 
-    expect(result.isErr()).toBe(true);
-    const errors = result._unsafeUnwrapErr();
+    expect(result.error.length).toBeGreaterThan(0);
+    const errors = result.error;
     expect(errors).toHaveLength(1);
     expect(errors[0]!.type).toBe("MissingSkill");
     expect(errors[0]!.agentName).toBe("loom");
@@ -552,8 +552,8 @@ describe("resolveSkillsForAgent — missing non-disabled skill errors", () => {
       availableSkills: [],
     });
 
-    expect(result.isErr()).toBe(true);
-    const errors = result._unsafeUnwrapErr();
+    expect(result.error.length).toBeGreaterThan(0);
+    const errors = result.error;
     expect(errors).toHaveLength(3);
     expect(errors.map((e) => e.skillName)).toEqual([
       "missing-a",
@@ -574,8 +574,8 @@ describe("resolveSkillsForAgent — missing non-disabled skill errors", () => {
       disabledSkills: ["missing-disabled"],
     });
 
-    expect(result.isErr()).toBe(true);
-    const errors = result._unsafeUnwrapErr();
+    expect(result.error.length).toBeGreaterThan(0);
+    const errors = result.error;
     // Only missing-active should produce an error; missing-disabled is silently filtered
     expect(errors).toHaveLength(1);
     expect(errors[0]!.skillName).toBe("missing-active");
@@ -588,8 +588,8 @@ describe("resolveSkillsForAgent — missing non-disabled skill errors", () => {
       availableSkills: [],
     });
 
-    expect(result.isErr()).toBe(true);
-    const error = result._unsafeUnwrapErr()[0]!;
+    expect(result.error.length).toBeGreaterThan(0);
+    const error = result.error[0]!;
     expect(Object.keys(error).sort()).toEqual([
       "agentName",
       "skillName",
@@ -609,8 +609,8 @@ describe("resolveSkillsForAgent — missing non-disabled skill errors", () => {
       availableSkills: available,
     });
 
-    expect(result.isErr()).toBe(true);
-    const errors = result._unsafeUnwrapErr();
+    expect(result.error.length).toBeGreaterThan(0);
+    const errors = result.error;
     expect(errors).toHaveLength(2);
     expect(errors.map((e) => e.skillName)).toEqual([
       "ghost-skill",
@@ -650,10 +650,10 @@ void _configInput;
 const _configResult: ConfigSkillResolutionResult = {};
 void _configResult;
 
-const _configResultType: Result<
-  ConfigSkillResolutionResult,
-  SkillResolutionError[]
-> = resolveSkillsForConfig({ config: makeConfig(), availableSkills: [] });
+const _configResultType: {
+  value: ConfigSkillResolutionResult;
+  error: SkillResolutionError[];
+} = resolveSkillsForConfig({ config: makeConfig(), availableSkills: [] });
 void _configResultType;
 
 // ---------------------------------------------------------------------------
@@ -667,8 +667,8 @@ describe("resolveSkillsForConfig — declared-agent batch output", () => {
       availableSkills: [],
     });
 
-    expect(result.isOk()).toBe(true);
-    expect(result._unsafeUnwrap()).toEqual({});
+    expect(result.error).toHaveLength(0);
+    expect(result.value).toEqual({});
   });
 
   it("includes all declared agents in the result keyed by agent name", () => {
@@ -686,8 +686,8 @@ describe("resolveSkillsForConfig — declared-agent batch output", () => {
       availableSkills: available,
     });
 
-    expect(result.isOk()).toBe(true);
-    const resolved = result._unsafeUnwrap();
+    expect(result.error).toHaveLength(0);
+    const resolved = result.value;
     expect(Object.keys(resolved).sort()).toEqual(["loom", "shuttle"]);
     expect(resolved["loom"]!.map((r) => r.name)).toEqual(["tdd"]);
     expect(resolved["shuttle"]!.map((r) => r.name)).toEqual(["code-review"]);
@@ -706,8 +706,8 @@ describe("resolveSkillsForConfig — declared-agent batch output", () => {
       availableSkills: [{ name: "tdd" }],
     });
 
-    expect(result.isOk()).toBe(true);
-    const resolved = result._unsafeUnwrap();
+    expect(result.error).toHaveLength(0);
+    const resolved = result.value;
     expect(resolved["loom"]).toEqual([]);
     expect(resolved["shuttle"]!.map((r) => r.name)).toEqual(["tdd"]);
   });
@@ -724,8 +724,8 @@ describe("resolveSkillsForConfig — declared-agent batch output", () => {
       availableSkills: [tddInfo],
     });
 
-    expect(result.isOk()).toBe(true);
-    const resolved = result._unsafeUnwrap();
+    expect(result.error).toHaveLength(0);
+    const resolved = result.value;
     expect(resolved["loom"]![0]!.skillInfo).toBe(tddInfo);
   });
 });
@@ -750,8 +750,8 @@ describe("resolveSkillsForConfig — generated category shuttle output", () => {
       availableSkills: [{ name: "tdd" }],
     });
 
-    expect(result.isOk()).toBe(true);
-    const resolved = result._unsafeUnwrap();
+    expect(result.error).toHaveLength(0);
+    const resolved = result.value;
     // Both the base shuttle and the generated shuttle-backend should be present
     expect("shuttle" in resolved).toBe(true);
     expect("shuttle-backend" in resolved).toBe(true);
@@ -774,8 +774,8 @@ describe("resolveSkillsForConfig — generated category shuttle output", () => {
       availableSkills: [tddInfo],
     });
 
-    expect(result.isOk()).toBe(true);
-    const resolved = result._unsafeUnwrap();
+    expect(result.error).toHaveLength(0);
+    const resolved = result.value;
     // shuttle-frontend inherits shuttle's skills
     expect(resolved["shuttle-frontend"]!.map((r) => r.name)).toEqual(["tdd"]);
   });
@@ -797,8 +797,8 @@ describe("resolveSkillsForConfig — generated category shuttle output", () => {
       availableSkills: [],
     });
 
-    expect(result.isOk()).toBe(true);
-    const resolved = result._unsafeUnwrap();
+    expect(result.error).toHaveLength(0);
+    const resolved = result.value;
     expect("shuttle-backend" in resolved).toBe(true);
     expect("shuttle-frontend" in resolved).toBe(true);
     expect("shuttle-infra" in resolved).toBe(true);
@@ -818,8 +818,8 @@ describe("resolveSkillsForConfig — generated category shuttle output", () => {
       availableSkills: [],
     });
 
-    expect(result.isOk()).toBe(true);
-    const resolved = result._unsafeUnwrap();
+    expect(result.error).toHaveLength(0);
+    const resolved = result.value;
     expect(Object.keys(resolved).sort()).toEqual(["loom", "shuttle"]);
   });
 
@@ -836,8 +836,8 @@ describe("resolveSkillsForConfig — generated category shuttle output", () => {
       availableSkills: [],
     });
 
-    expect(result.isOk()).toBe(true);
-    const resolved = result._unsafeUnwrap();
+    expect(result.error).toHaveLength(0);
+    const resolved = result.value;
     // No shuttle base → generateCategoryShuttles returns {} → no shuttle-backend
     expect("shuttle-backend" in resolved).toBe(false);
     expect(Object.keys(resolved)).toEqual(["loom"]);
@@ -869,8 +869,8 @@ describe("resolveSkillsForConfig — disabled-skill behavior in batch mode", () 
       availableSkills: available,
     });
 
-    expect(result.isOk()).toBe(true);
-    const resolved = result._unsafeUnwrap();
+    expect(result.error).toHaveLength(0);
+    const resolved = result.value;
     // tdd is disabled globally — filtered from both agents
     expect(resolved["loom"]!.map((r) => r.name)).toEqual(["code-review"]);
     expect(resolved["shuttle"]!.map((r) => r.name)).toEqual(["security-audit"]);
@@ -890,8 +890,8 @@ describe("resolveSkillsForConfig — disabled-skill behavior in batch mode", () 
       availableSkills: [],
     });
 
-    expect(result.isOk()).toBe(true);
-    expect(result._unsafeUnwrap()["loom"]).toEqual([]);
+    expect(result.error).toHaveLength(0);
+    expect(result.value["loom"]).toEqual([]);
   });
 
   it("disabled agents are excluded from resolution entirely", () => {
@@ -908,8 +908,8 @@ describe("resolveSkillsForConfig — disabled-skill behavior in batch mode", () 
       availableSkills: [{ name: "tdd" }],
     });
 
-    expect(result.isOk()).toBe(true);
-    const resolved = result._unsafeUnwrap();
+    expect(result.error).toHaveLength(0);
+    const resolved = result.value;
     // warp is disabled — excluded entirely, no missing-skill error
     expect("warp" in resolved).toBe(false);
     expect("loom" in resolved).toBe(true);
@@ -931,8 +931,8 @@ describe("resolveSkillsForConfig — disabled-skill behavior in batch mode", () 
       availableSkills: [{ name: "tdd" }],
     });
 
-    expect(result.isOk()).toBe(true);
-    const resolved = result._unsafeUnwrap();
+    expect(result.error).toHaveLength(0);
+    const resolved = result.value;
     // shuttle-backend is disabled — generateCategoryShuttles skips it
     expect("shuttle-backend" in resolved).toBe(false);
     // base shuttle is still present
@@ -955,8 +955,8 @@ describe("resolveSkillsForConfig — disabled-skill behavior in batch mode", () 
       availableSkills: [{ name: "tdd" }],
     });
 
-    expect(result.isOk()).toBe(true);
-    const resolved = result._unsafeUnwrap();
+    expect(result.error).toHaveLength(0);
+    const resolved = result.value;
     // shuttle is disabled → generateCategoryShuttles returns {} → no shuttle-backend
     // shuttle itself is also excluded from declared agents
     expect("shuttle" in resolved).toBe(false);
@@ -982,8 +982,8 @@ describe("resolveSkillsForConfig — accumulated missing-skill errors", () => {
       availableSkills: [],
     });
 
-    expect(result.isErr()).toBe(true);
-    const errors = result._unsafeUnwrapErr();
+    expect(result.error.length).toBeGreaterThan(0);
+    const errors = result.error;
     expect(errors).toHaveLength(2);
     const skillNames = errors.map((e) => e.skillName).sort();
     expect(skillNames).toEqual(["missing-a", "missing-b"]);
@@ -1004,8 +1004,8 @@ describe("resolveSkillsForConfig — accumulated missing-skill errors", () => {
       availableSkills: [],
     });
 
-    expect(result.isErr()).toBe(true);
-    const errors = result._unsafeUnwrapErr();
+    expect(result.error.length).toBeGreaterThan(0);
+    const errors = result.error;
     expect(errors).toHaveLength(3);
     expect(errors.map((e) => e.skillName)).toEqual([
       "missing-a",
@@ -1033,8 +1033,8 @@ describe("resolveSkillsForConfig — accumulated missing-skill errors", () => {
       availableSkills: [],
     });
 
-    expect(result.isErr()).toBe(true);
-    const errors = result._unsafeUnwrapErr();
+    expect(result.error.length).toBeGreaterThan(0);
+    const errors = result.error;
     // loom: missing-loom, shuttle: missing-shuttle, shuttle-backend: missing-shuttle (inherited)
     expect(errors.length).toBeGreaterThanOrEqual(3);
     const agentNames = new Set(errors.map((e) => e.agentName));
@@ -1056,13 +1056,16 @@ describe("resolveSkillsForConfig — accumulated missing-skill errors", () => {
       availableSkills: [{ name: "tdd" }],
     });
 
-    // shuttle has a missing skill → overall err
-    expect(result.isErr()).toBe(true);
-    const errors = result._unsafeUnwrapErr();
+    // shuttle has a missing skill → error list contains it, but loom is still resolved
+    expect(result.error.length).toBeGreaterThan(0);
+    const errors = result.error;
     // Only shuttle's missing skill is in the error list
     expect(errors).toHaveLength(1);
     expect(errors[0]!.agentName).toBe("shuttle");
     expect(errors[0]!.skillName).toBe("missing-skill");
+    // loom should still be in the value map with resolved skills
+    expect(result.value["loom"]).toHaveLength(1);
+    expect(result.value["loom"]![0]!.name).toBe("tdd");
   });
 
   it("MissingSkill errors contain exactly type, agentName, skillName — no extra fields", () => {
@@ -1077,8 +1080,8 @@ describe("resolveSkillsForConfig — accumulated missing-skill errors", () => {
       availableSkills: [],
     });
 
-    expect(result.isErr()).toBe(true);
-    const error = result._unsafeUnwrapErr()[0]!;
+    expect(result.error.length).toBeGreaterThan(0);
+    const error = result.error[0]!;
     expect(Object.keys(error).sort()).toEqual([
       "agentName",
       "skillName",

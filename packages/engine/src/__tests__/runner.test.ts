@@ -948,6 +948,7 @@ describe("WeaveRunner", () => {
         agent disabled-agent {
           prompt "Disabled."
           models ["model-disabled"]
+          skills ["missing-skill"]
         }
         disable agents ["disabled-agent"]
       `);
