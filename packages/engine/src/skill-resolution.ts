@@ -263,10 +263,7 @@ export type ConfigSkillResolutionResult = Record<string, ResolvedSkill[]>;
  */
 export function resolveSkillsForConfig(
   input: SkillResolutionConfigInput,
-): {
-  value: ConfigSkillResolutionResult;
-  error: SkillResolutionError[];
-} {
+): Result<ConfigSkillResolutionResult, SkillResolutionError[]> {
   const { config, availableSkills } = input;
   const disabledSkills = config.disabled.skills;
   const disabledAgents = config.disabled.agents;
@@ -319,5 +316,6 @@ export function resolveSkillsForConfig(
     result[agentName] = agentResult.value;
   }
 
-  return { value: result, error: allErrors };
+  if (allErrors.length > 0) return err(allErrors);
+  return ok(result);
 }

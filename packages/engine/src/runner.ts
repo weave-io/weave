@@ -113,31 +113,31 @@ export class WeaveRunner {
     // for agents with no skills or resolution errors.
     const resolvedSkillsMap: Record<string, readonly string[]> = {};
 
-    // Always populate resolvedSkillsMap from successful resolutions
-    if (skillResolutionResult.value) {
-      for (const [agentName, skills] of Object.entries(
-        skillResolutionResult.value,
-      )) {
-        resolvedSkillsMap[agentName] = skills.map((s) => s.name);
-      }
-    }
-
-    // Separately log any errors that occurred
-    if (skillResolutionResult.error) {
-      for (const error of skillResolutionResult.error) {
-        if (error.type === "MissingSkill") {
-          log.warn(
-            { agent: error.agentName, skill: error.skillName },
-            "Skill declared by agent is not available in harness",
-          );
-        } else if (error.type === "ShuttleConflict") {
-          log.warn(
-            { shuttle: error.shuttleName, category: error.detail.categoryName },
-            error.detail.message,
-          );
+    skillResolutionResult.match(
+      (resolved) => {
+        for (const [agentName, skills] of Object.entries(resolved)) {
+          resolvedSkillsMap[agentName] = skills.map((s) => s.name);
         }
-      }
-    }
+      },
+      (errors) => {
+        for (const error of errors) {
+          if (error.type === "MissingSkill") {
+            log.warn(
+              { agent: error.agentName, skill: error.skillName },
+              "Skill declared by agent is not available in harness",
+            );
+          } else if (error.type === "ShuttleConflict") {
+            log.warn(
+              {
+                shuttle: error.shuttleName,
+                category: error.detail.categoryName,
+              },
+              error.detail.message,
+            );
+          }
+        }
+      },
+    );
 
     // 3. TODO(#9): wire abstract lifecycle policy surfaces.
     // Concrete hook registration is adapter-owned; adapters map harness events
