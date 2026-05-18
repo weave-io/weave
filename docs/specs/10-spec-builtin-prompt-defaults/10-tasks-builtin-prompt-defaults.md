@@ -57,7 +57,7 @@
 - [x] 1.4 Ensure shipped Loom guidance allows small/simple/local work directly while steering multi-step, specialist, review, and security-sensitive work toward delegation.
 - [x] 1.5 Add or extend config-package tests so shipped builtin prompts are asserted to be present, non-empty, non-placeholder, and free of banned tokens such as `AGENTS.md`, `bun run`, `neverthrow`, `Zod`, `Task`, and `TodoWrite`/`todowrite`.
 
-### [ ] 2.0 Promote builtin delegation triggers and prove composition works end-to-end
+### [x] 2.0 Promote builtin delegation triggers and prove composition works end-to-end
 
 #### 2.0 Proof Artifact(s)
 
@@ -69,11 +69,11 @@
 
 #### 2.0 Tasks
 
-- [ ] 2.1 Add useful shipped `triggers` blocks to `BUILTIN_WEAVE_SOURCE` in `packages/config/src/builtins.ts` so zero-config users receive delegation guidance from canonical builtin config.
-- [ ] 2.2 Keep prompt files free of hand-maintained delegation inventories and rely on composer-generated `## Delegation` output instead.
-- [ ] 2.3 Extend builtin config tests to cover the presence and intent of shipped builtin `triggers` without snapshotting full generated prompt text.
-- [ ] 2.4 Add a config-owned integration smoke test that loads builtins through the public config API and composes each builtin descriptor through the public engine API.
-- [ ] 2.5 Assert in the smoke test that all builtins compose to non-empty prompts, that delegating agents with shipped triggers produce generated `## Delegation` output according to the current composer rules, and that non-delegating builtins do not emit delegation sections.
+- [x] 2.1 Add useful shipped `triggers` blocks to `BUILTIN_WEAVE_SOURCE` in `packages/config/src/builtins.ts` so zero-config users receive delegation guidance from canonical builtin config.
+- [x] 2.2 Keep prompt files free of hand-maintained delegation inventories and rely on composer-generated `## Delegation` output instead.
+- [x] 2.3 Extend builtin config tests to cover the presence and intent of shipped builtin `triggers` without snapshotting full generated prompt text.
+- [x] 2.4 Add a config-owned integration smoke test that loads builtins through the public config API and composes each builtin descriptor through the public engine API.
+- [x] 2.5 Assert in the smoke test that all builtins compose to non-empty prompts, that delegating agents with shipped triggers produce generated `## Delegation` output according to the current composer rules, and that non-delegating builtins do not emit delegation sections.
 
 ### [x] 3.0 Reduce dogfood drift to true local overrides and refresh validation docs
 

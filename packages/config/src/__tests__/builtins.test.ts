@@ -64,4 +64,52 @@ describe("getBuiltinConfig", () => {
     const result = parseConfig(BUILTIN_WEAVE_SOURCE);
     expect(result.isOk()).toBe(true);
   });
+
+  // ---------------------------------------------------------------------------
+  // Trigger assertions
+  // ---------------------------------------------------------------------------
+
+  const SPECIALIST_AGENTS = [
+    "shuttle",
+    "pattern",
+    "thread",
+    "spindle",
+    "weft",
+    "warp",
+  ] as const;
+
+  const ORCHESTRATOR_AGENTS = ["loom", "tapestry"] as const;
+
+  it("(i) specialist agents (shuttle, pattern, thread, spindle, weft, warp) each have at least one trigger", () => {
+    const config = getBuiltinConfig()._unsafeUnwrap();
+    for (const name of SPECIALIST_AGENTS) {
+      const agent = config.agents[name];
+      expect(agent).toBeDefined();
+      expect(agent?.triggers).toBeDefined();
+      expect(agent?.triggers?.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("(j) orchestrator agents (loom, tapestry) do NOT have triggers", () => {
+    const config = getBuiltinConfig()._unsafeUnwrap();
+    for (const name of ORCHESTRATOR_AGENTS) {
+      const agent = config.agents[name];
+      expect(agent).toBeDefined();
+      // triggers should be undefined or empty for orchestrators
+      const hasTriggers =
+        agent?.triggers !== undefined && agent.triggers.length > 0;
+      expect(hasTriggers).toBe(false);
+    }
+  });
+
+  it("(k) each specialist trigger has non-empty domain and trigger strings", () => {
+    const config = getBuiltinConfig()._unsafeUnwrap();
+    for (const name of SPECIALIST_AGENTS) {
+      const agent = config.agents[name];
+      for (const t of agent?.triggers ?? []) {
+        expect(t.domain.trim().length).toBeGreaterThan(0);
+        expect(t.trigger.trim().length).toBeGreaterThan(0);
+      }
+    }
+  });
 });
