@@ -1,9 +1,9 @@
 import type { AgentConfig, WeaveConfig } from "@weave/core";
 import type { HarnessAdapter } from "./adapter.js";
+import { type AgentDescriptor, composeAgentDescriptor } from "./compose.js";
 import { generateCategoryShuttles } from "./descriptors.js";
 import { logger } from "./logger.js";
 import type { RunAgentEffect } from "./run-agent-effects.js";
-import { evaluateEffectiveToolPolicy } from "./tool-policy.js";
 
 const log = logger.child({ module: "runner" });
 
@@ -130,25 +130,33 @@ export class WeaveRunner {
         continue;
       }
 
-      // Evaluate the effective tool policy for this agent and emit an effect
-      // before delegating to the adapter. The raw tool_policy is passed to the
-      // adapter unchanged so adapters can apply harness-specific translation.
-      const effectiveToolPolicy = evaluateEffectiveToolPolicy(
-        agentConfig.tool_policy,
+      const descriptorResult = await composeAgentDescriptor(
+        name,
+        agentConfig,
+        this.config,
+        allAgents,
       );
+
+      if (descriptorResult.isErr()) {
+        log.error(
+          { agent: name, error: descriptorResult.error },
+          "Failed to compose agent descriptor; skipping agent",
+        );
+        continue;
+      }
+
+      const descriptor: AgentDescriptor = descriptorResult.value;
 
       this.options.onEffect?.({
         kind: "run-agent",
         agentName: name,
-        effectiveToolPolicy,
-        rawToolPolicy: agentConfig.tool_policy,
+        agentDescriptor: descriptor,
+        effectiveToolPolicy: descriptor.effectiveToolPolicy,
+        rawToolPolicy: descriptor.rawToolPolicy,
       });
 
-      log.info(
-        { agent: name, model: agentConfig.models?.[0] },
-        "Spawning agent",
-      );
-      await this.adapter.spawnSubagent(name, agentConfig);
+      log.info({ agent: name, model: descriptor.models[0] }, "Spawning agent");
+      await this.adapter.spawnSubagent(descriptor);
     }
 
     log.info("Weave run complete");

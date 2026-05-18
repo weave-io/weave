@@ -15,8 +15,8 @@
  * ```
  */
 
-import type { AgentConfig } from "@weave/core";
 import type { HarnessAdapter, HookConfig, SkillConfig } from "../adapter.js";
+import type { AgentDescriptor } from "../compose.js";
 
 // `HookConfig` and `SkillConfig` are transitional adapter-boundary types.
 // Tests should not treat them as proof that engine code owns concrete hook
@@ -29,7 +29,7 @@ import type { HarnessAdapter, HookConfig, SkillConfig } from "../adapter.js";
 /** One entry per adapter method call, in the order they were made. */
 export type MockCall =
   | { method: "init" }
-  | { method: "spawnSubagent"; name: string; config: AgentConfig }
+  | { method: "spawnSubagent"; descriptor: AgentDescriptor }
   | { method: "registerHook"; hook: HookConfig }
   | { method: "loadSkill"; skill: SkillConfig };
 
@@ -45,8 +45,8 @@ export class MockAdapter implements HarnessAdapter {
     this.calls.push({ method: "init" });
   }
 
-  async spawnSubagent(name: string, config: AgentConfig): Promise<void> {
-    this.calls.push({ method: "spawnSubagent", name, config });
+  async spawnSubagent(descriptor: AgentDescriptor): Promise<void> {
+    this.calls.push({ method: "spawnSubagent", descriptor });
   }
 
   async registerHook(hook: HookConfig): Promise<void> {

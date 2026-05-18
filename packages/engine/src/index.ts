@@ -27,6 +27,12 @@ export {
   REQUIRED_CAPABILITIES,
   toJson,
 } from "./capability-contract.js";
+export type {
+  AgentDescriptor,
+  ComposeError,
+  DelegationTarget,
+} from "./compose.js";
+export { composeAgentDescriptor } from "./compose.js";
 export type { CategoryShuttleConflictError } from "./descriptors.js";
 export { generateCategoryShuttles } from "./descriptors.js";
 export type { Env } from "./env.js";
