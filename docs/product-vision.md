@@ -4,7 +4,7 @@ Weave is a harness-agnostic agent orchestration framework and API for building a
 
 It is closer to Neovim's API layer than to a finished editor: Weave defines the primitives, config model, prompt/delegation structure, and policy intent that adapters compose into concrete harness integrations.
 
-**Related:** [System Architecture](system-architecture.md) · [Adapter Boundary](adapter-boundary.md) · [Model Resolution](model-resolution.md) · [Config Loading](config-loading.md) · [Tool Policy Evaluation](tool-policy-evaluation.md) · [Spec 04 — Agent Model Resolution](specs/04-spec-agent-model-resolution/04-spec-agent-model-resolution.md) · [Spec 09 — Adapter-Provided Skill Resolution](specs/09-spec-adapter-provided-skill-resolution/09-spec-adapter-provided-skill-resolution.md) · [Spec 07 — Adapter Capability Contract](specs/07-spec-adapter-capability-contract/07-spec-adapter-capability-contract.md) · [Spec 08 — Abstract Tool Policy Evaluation](specs/08-spec-abstract-tool-policy-evaluation/08-spec-abstract-tool-policy-evaluation.md) · [Legacy Architecture](legacy-architecture.md)
+**Related:** [System Architecture](system-architecture.md) · [Adapter Boundary](adapter-boundary.md) · [Claude Code Adapter](claude-code-adapter.md) · [Model Resolution](model-resolution.md) · [Config Loading](config-loading.md) · [Tool Policy Evaluation](tool-policy-evaluation.md) · [Spec 04 — Agent Model Resolution](specs/04-spec-agent-model-resolution/04-spec-agent-model-resolution.md) · [Spec 09 — Adapter-Provided Skill Resolution](specs/09-spec-adapter-provided-skill-resolution/09-spec-adapter-provided-skill-resolution.md) · [Spec 07 — Adapter Capability Contract](specs/07-spec-adapter-capability-contract/07-spec-adapter-capability-contract.md) · [Spec 08 — Abstract Tool Policy Evaluation](specs/08-spec-abstract-tool-policy-evaluation/08-spec-abstract-tool-policy-evaluation.md) · [Legacy Architecture](legacy-architecture.md)
 
 ---
 
@@ -129,7 +129,8 @@ Weave's target is broad harness portability, but support should grow from the ha
 
 1. **OpenCode first** — highest priority because it is the legacy implementation target and the clearest migration path.
 2. **Pi next** — high priority because it is actively used and may require adapter-built features such as sub-agent behavior.
-3. **Claude Code / Hermes / others later** — explore once the core API and first adapters stabilize. These adapters may start with partial support if a harness lacks non-critical capabilities.
+3. **Claude Code as a materialization adapter** — useful near-term for generated `.claude/agents/*.md`, `.claude/commands/*.md`, model/tool-policy translation, and documented partial capability support. See [Claude Code Adapter](claude-code-adapter.md).
+4. **Hermes / others later** — explore once the core API and first adapters stabilize. These adapters may start with partial support if a harness lacks non-critical capabilities.
 
 A harness adapter does not need perfect feature parity on day one. It must clearly document supported, emulated, degraded, and unsupported capabilities so users understand what the single `.weave` config can do in that harness.
 
