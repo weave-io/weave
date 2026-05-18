@@ -1,10 +1,14 @@
 /**
  * Integration smoke test: builtin config → compose pipeline.
  *
- * Loads all 8 builtin agents through the public `@weave/config` API
- * (`loadConfig`) and composes each one through the public `@weave/engine` API
- * (`composeAgentDescriptor`). This test crosses the package boundary to prove
- * the full zero-config pipeline works end-to-end without any harness.
+ * Composes all 8 builtin agents through the public `@weave/config` API
+ * (`getBuiltinConfig` + `resolvePromptPaths`) and the public `@weave/engine`
+ * API (`composeAgentDescriptor`). This test crosses the package boundary to
+ * prove the full zero-config pipeline works end-to-end without any harness.
+ *
+ * Isolation: this test deliberately does NOT call `loadConfig()` so that no
+ * project `.weave/config.weave` overrides are applied. It composes exactly the
+ * shipped builtin agents — nothing more.
  *
  * Key assertions:
  * - All 8 builtins compose to non-empty prompts.
@@ -15,33 +19,39 @@
  */
 
 import { beforeAll, describe, expect, it } from "bun:test";
+import { resolve } from "node:path";
 import type { WeaveConfig } from "@weave/core";
 import type { AgentDescriptor } from "@weave/engine";
 import { composeAgentDescriptor } from "@weave/engine";
-import { loadConfig } from "../loader.js";
+import { getBuiltinConfig, resolvePromptPaths } from "../index.js";
 
 // ---------------------------------------------------------------------------
-// Fixture: load builtins once for all tests
+// Fixture: compose builtins once for all tests (no project config loaded)
 // ---------------------------------------------------------------------------
 
 let config: WeaveConfig;
 const descriptors = new Map<string, AgentDescriptor>();
 
 beforeAll(async () => {
-  // loadConfig with no arguments uses process.cwd() as project root and the
-  // real filesystem. Since there is no .weave/config.weave in the test
-  // environment (or if there is, it only adds deltas), the result will always
-  // contain all 8 builtins with absolute prompt_file paths resolved to
-  // packages/config/prompts/*.md.
-  const result = await loadConfig();
-  if (result.isErr()) {
+  // Step 1: Parse the builtin DSL source — no filesystem discovery, no project
+  // overrides. An err here indicates a bug in builtins.ts.
+  const builtinResult = getBuiltinConfig();
+  if (builtinResult.isErr()) {
     throw new Error(
-      `loadConfig failed: ${JSON.stringify(result.error, null, 2)}`,
+      `getBuiltinConfig failed: ${JSON.stringify(builtinResult.error, null, 2)}`,
     );
   }
-  config = result.value;
 
-  // Compose every agent in the loaded config
+  // Step 2: Resolve prompt_file paths to absolute paths using the builtin
+  // root directory (packages/config/), matching what loadConfig() does
+  // internally for the builtin layer.
+  const builtinRootDir = resolve(import.meta.dir, "../..");
+  config = resolvePromptPaths(builtinResult.value, {
+    kind: "builtin",
+    rootDir: builtinRootDir,
+  });
+
+  // Step 3: Compose every builtin agent
   for (const [name, agentConfig] of Object.entries(config.agents)) {
     const descriptorResult = await composeAgentDescriptor(
       name,
