@@ -1,0 +1,255 @@
+# Prompt Composition
+
+Weave composes each agent's final prompt in the engine layer before handing the
+agent to an adapter. The output of that composition step is an
+`AgentDescriptor`: a normalized, harness-agnostic record containing the final
+prompt text plus the other adapter-facing fields derived during composition.
+
+**Related:** [Adapter Boundary](adapter-boundary.md) · [Tool Policy Evaluation](tool-policy-evaluation.md) · [Agent Guide / neverthrow rules](../AGENTS.md)
+
+---
+
+## Purpose
+
+Prompt composition is engine-owned because it is a pure interpretation of Weave
+config, not a harness concern.
+
+The engine is responsible for:
+
+- loading the configured prompt source
+- composing delegation guidance into prompt text
+- appending `prompt_append` text
+- evaluating abstract tool policy into `EffectiveToolPolicy`
+- returning a normalized descriptor adapters can consume directly
+
+Adapters are responsible for materializing that descriptor inside a concrete
+harness. They do not re-implement prompt composition rules.
+
+This boundary follows [Adapter Boundary](adapter-boundary.md): the engine owns
+prompt composition because the rules are reusable, deterministic, and free of
+harness-specific assumptions.
+
+---
+
+## `AgentDescriptor`
+
+`composeAgentDescriptor()` returns this descriptor shape:
+
+```ts
+interface AgentDescriptor {
+  name: string;
+  description?: string;
+  composedPrompt: string;
+  models: string[];
+  mode: "primary" | "subagent" | "all";
+  temperature?: number;
+  effectiveToolPolicy: EffectiveToolPolicy;
+  rawToolPolicy: ToolPolicy | undefined;
+  delegationTargets: DelegationTarget[];
+  skills: string[];
+}
+
+interface DelegationTarget {
+  name: string;
+  description?: string;
+  triggers: DelegationTrigger[];
+}
+```
+
+### Field meanings
+
+| Field | Meaning |
+| --- | --- |
+| `name` | Logical agent name being composed. |
+| `description` | Optional agent description passed through from config. |
+| `composedPrompt` | Final prompt text after prompt loading, delegation section formatting, and `prompt_append` composition. |
+| `models` | Ordered model preference list from config, defaulting to `[]`. |
+| `mode` | Adapter-facing mode hint, defaulting to `"subagent"` when omitted. |
+| `temperature` | Optional temperature passed through unchanged. |
+| `effectiveToolPolicy` | Fully-resolved abstract tool policy computed by `evaluateEffectiveToolPolicy()`. See [Tool Policy Evaluation](tool-policy-evaluation.md). |
+| `rawToolPolicy` | Original declared `tool_policy`, or `undefined` when absent. |
+| `delegationTargets` | Filtered list of eligible delegation targets, used both for prompt composition and adapter-side routing if needed. |
+| `skills` | Declared skill names passed through unchanged as a future composition input. |
+
+---
+
+## Composition Pipeline
+
+`composeAgentDescriptor(agentName, agentConfig, config, allAgents)` runs this
+pipeline:
+
+1. **Build delegation targets**
+   - Delegation targets are computed first from `allAgents`.
+   - If `agentConfig.tool_policy?.delegate !== "allow"`, the list is empty.
+
+2. **Load prompt source**
+   - If `agentConfig.prompt` is defined, use it directly.
+   - Otherwise read `agentConfig.prompt_file` from disk.
+   - If neither exists, return `PromptSourceMissingError`.
+   - If file reading fails, return `PromptFileReadError`.
+
+3. **Format delegation guidance**
+   - When delegation targets exist, the engine renders a markdown block starting
+     with `## Delegation`.
+   - Each target becomes a bullet.
+   - Each trigger becomes an indented bullet under that target.
+
+4. **Append `prompt_append`**
+   - If `prompt_append` is present, it is appended after the prompt source and
+     after the delegation section.
+
+5. **Resolve tool policy**
+   - The engine calls `evaluateEffectiveToolPolicy(agentConfig.tool_policy)`.
+   - This produces a complete `EffectiveToolPolicy` with all five abstract
+     capabilities resolved. See [Tool Policy Evaluation](tool-policy-evaluation.md).
+
+6. **Assemble the descriptor**
+   - The engine returns an `AgentDescriptor` containing the composed prompt,
+     delegation targets, resolved policy, raw policy, passthrough metadata, and
+     declared skills.
+
+The implementation lives in
+[`packages/engine/src/compose.ts`](../packages/engine/src/compose.ts).
+
+---
+
+## Delegation Filtering Rules
+
+Delegation targets are included only when delegation is explicitly allowed for
+the composing agent.
+
+Current filtering rules:
+
+1. **Exclude self**
+   - An agent cannot delegate to itself.
+
+2. **Exclude disabled agents**
+   - Any agent listed in `config.disabled.agents` is removed.
+
+3. **Exclude `mode: "primary"` agents**
+   - Primary agents are not treated as delegation targets.
+
+4. **Exclude shared/category shuttle targets when composing shuttle agents**
+   - If the target name starts with `shuttle-` and the composing agent is either
+     `shuttle` or already a `shuttle-*` agent, that target is excluded.
+   - This prevents the shared shuttle agent and generated category shuttles from
+     advertising one another as delegation targets.
+
+These rules are engine-owned because they define normalized delegation topology,
+not harness behavior.
+
+---
+
+## Delegation Section Format
+
+When at least one delegation target survives filtering, the engine appends this
+markdown structure to the prompt:
+
+```md
+## Delegation
+
+- agent-name: Optional description
+  - Domain: Trigger text
+  - Domain: Trigger text
+```
+
+If a target has no description, only the agent name is shown. If a target has no
+triggers, only the top-level bullet is emitted.
+
+If there are no eligible delegation targets, no delegation section is added.
+
+---
+
+## Skills Extension Point
+
+`skills` is currently a passthrough field on `AgentDescriptor`.
+
+The current composition phase does **not** resolve, load, or filter skills. It
+simply copies `agentConfig.skills ?? []` onto the descriptor so downstream code
+has a stable place to read declared skill intent.
+
+This is an intentional extension point for issue #12. The planned direction is:
+
+- skill discovery/loading remains adapter-owned
+- skill matching/filtering remains engine-owned
+- resolved skills will become an additional composition phase before delegation
+
+That future work must continue to respect the ownership rules in
+[Adapter Boundary](adapter-boundary.md).
+
+---
+
+## Adapter Consumption
+
+Adapters receive the composed descriptor via
+`HarnessAdapter.spawnSubagent(descriptor)`.
+
+They are expected to consume these fields as follows:
+
+- `descriptor.composedPrompt` — final prompt string to write into the harness
+- `descriptor.effectiveToolPolicy` — resolved abstract capability policy for
+  concrete tool-permission mapping
+- `descriptor.rawToolPolicy` — original declared policy if the harness needs the
+  raw values
+- `descriptor.models` — ordered model intent for adapter-side model selection
+- `descriptor.delegationTargets` — normalized routing metadata if the harness
+  needs additional delegation setup
+
+`RunAgentEffect` also carries the full `agentDescriptor` immediately before the
+adapter spawn call, alongside `effectiveToolPolicy` and `rawToolPolicy`. See
+[`packages/engine/src/run-agent-effects.ts`](../packages/engine/src/run-agent-effects.ts).
+
+---
+
+## Error Handling
+
+Prompt composition follows the repository rule that fallible logic returns
+`neverthrow` results rather than throwing expected errors. See the
+[Agent Guide / neverthrow rules](../AGENTS.md).
+
+`composeAgentDescriptor()` returns:
+
+```ts
+ResultAsync<AgentDescriptor, ComposeError>
+```
+
+`ComposeError` currently has two variants:
+
+```ts
+type ComposeError =
+  | {
+      type: "PromptSourceMissingError";
+      agentName: string;
+      message: string;
+    }
+  | {
+      type: "PromptFileReadError";
+      agentName: string;
+      promptFilePath: string;
+      cause: unknown;
+      message: string;
+    };
+```
+
+### `PromptSourceMissingError`
+
+Returned when an agent declares neither inline `prompt` nor `prompt_file`.
+
+### `PromptFileReadError`
+
+Returned when the configured prompt file cannot be read. The error includes the
+logical `agentName`, the attempted `promptFilePath`, the original `cause`, and a
+human-readable `message`.
+
+Because composition returns `ResultAsync`, callers can compose prompt loading
+with the rest of the engine pipeline without `try/catch` control flow.
+
+---
+
+## Source Files
+
+| File | Contents |
+| --- | --- |
+| [`packages/engine/src/compose.ts`](../packages/engine/src/compose.ts) | `AgentDescriptor`, `DelegationTarget`, `ComposeError`, `composeAgentDescriptor()` |
+| [`packages/engine/src/run-agent-effects.ts`](../packages/engine/src/run-agent-effects.ts) | `RunAgentEffect` carrying the composed descriptor |
+| [`packages/engine/src/tool-policy.ts`](../packages/engine/src/tool-policy.ts) | `evaluateEffectiveToolPolicy()` and `EffectiveToolPolicy` |

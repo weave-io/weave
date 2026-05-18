@@ -12,6 +12,7 @@
  */
 
 import type { ToolPolicy } from "@weave/core";
+import type { AgentDescriptor } from "./compose.js";
 import type { EffectiveToolPolicy } from "./tool-policy.js";
 
 // ---------------------------------------------------------------------------
@@ -30,10 +31,12 @@ import type { EffectiveToolPolicy } from "./tool-policy.js";
  * - `rawToolPolicy` — the raw `tool_policy` from the agent's config, or
  *   `undefined` when no `tool_policy` block was declared. Passed through to
  *   the adapter unchanged so adapters can apply harness-specific translation.
+ * - `agentDescriptor` — the fully composed descriptor passed to the adapter.
  */
 export type RunAgentEffect = {
   readonly kind: "run-agent";
   readonly agentName: string;
+  readonly agentDescriptor: AgentDescriptor;
   readonly effectiveToolPolicy: EffectiveToolPolicy;
   readonly rawToolPolicy: ToolPolicy | undefined;
 };

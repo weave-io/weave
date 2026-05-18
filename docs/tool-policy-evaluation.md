@@ -136,6 +136,7 @@ evaluateEffectiveToolPolicy({
 type RunAgentEffect = {
   readonly kind: "run-agent";
   readonly agentName: string;
+  readonly agentDescriptor: AgentDescriptor;
   readonly effectiveToolPolicy: EffectiveToolPolicy;
   readonly rawToolPolicy: ToolPolicy | undefined;
 };
@@ -145,8 +146,9 @@ type RunAgentEffect = {
 immediately before `adapter.spawnSubagent` is called.
 
 **When it is emitted:** For every non-disabled agent (including generated
-`shuttle-{category}` agents), the runner calls `evaluateEffectiveToolPolicy` and
-emits a `RunAgentEffect` via the optional `onEffect` callback on
+`shuttle-{category}` agents), the runner composes an `AgentDescriptor` via
+`composeAgentDescriptor` (which internally calls `evaluateEffectiveToolPolicy`)
+and emits a `RunAgentEffect` via the optional `onEffect` callback on
 `WeaveRunnerOptions`.
 
 **Fields:**
@@ -155,13 +157,14 @@ emits a `RunAgentEffect` via the optional `onEffect` callback on
 | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `kind`                 | Always `"run-agent"`. Discriminant for future union variants.                                                                                               |
 | `agentName`            | Logical agent name (key from `WeaveConfig.agents` or a generated `shuttle-{category}` name).                                                                |
+| `agentDescriptor`      | The fully composed `AgentDescriptor` passed to the adapter. Contains `composedPrompt`, `delegationTargets`, `effectiveToolPolicy`, `rawToolPolicy`, etc.     |
 | `effectiveToolPolicy`  | Fully-resolved policy computed by `evaluateEffectiveToolPolicy`. All five capabilities are present; missing declarations default to `DEFAULT_PERMISSION`.    |
 | `rawToolPolicy`        | The raw `tool_policy` from the agent's config, or `undefined` when no `tool_policy` block was declared. Passed through to the adapter unchanged.            |
 
-**`rawToolPolicy` purpose:** Adapters receive the raw policy via `spawnSubagent`
-(as part of `AgentConfig`) so they can apply harness-specific translation — for
-example, mapping abstract capabilities to concrete tool names. The engine never
-modifies the raw policy before passing it to the adapter.
+**`rawToolPolicy` purpose:** Adapters receive the raw policy via the
+`AgentDescriptor` passed to `spawnSubagent` so they can apply harness-specific
+translation — for example, mapping abstract capabilities to concrete tool names.
+The engine never modifies the raw policy before passing it to the adapter.
 
 ---
 
@@ -169,15 +172,15 @@ modifies the raw policy before passing it to the adapter.
 
 The adapter contract for tool policy is:
 
-1. **Adapters receive raw `tool_policy` unchanged.** The runner passes
-   `agentConfig` (including its `tool_policy` field) to `adapter.spawnSubagent`
-   without modification. The engine does not replace `tool_policy` with the
-   computed `EffectiveToolPolicy`.
+1. **Adapters receive the composed `AgentDescriptor`.** The runner passes a
+   fully-composed descriptor (including `rawToolPolicy` and `effectiveToolPolicy`)
+   to `adapter.spawnSubagent(descriptor)`. The descriptor carries both the raw
+   declared policy and the engine-computed effective policy.
 
-2. **Effective policy is engine-computed.** Adapters that need a fully-resolved
-   policy (e.g. for tool allow/deny enforcement) should use the `effectiveToolPolicy`
-   from the `RunAgentEffect` emitted via `onEffect`, or call
-   `evaluateEffectiveToolPolicy(agentConfig.tool_policy)` directly.
+2. **Effective policy is engine-computed.** The engine computes
+   `effectiveToolPolicy` during descriptor composition via
+   `evaluateEffectiveToolPolicy(agentConfig.tool_policy)`. Adapters can read it
+   directly from the descriptor or from the `RunAgentEffect` emitted via `onEffect`.
 
 3. **No harness tool names in engine code.** The engine never hard-codes or
    branches on concrete harness tool identifiers (e.g. `bash`, `computer`,
