@@ -16,12 +16,12 @@
 - `packages/engine/src/descriptors.ts` — imported by **5** files
 - `packages/cli/src/cli.ts` — imported by **4** files
 - `packages/cli/src/errors.ts` — imported by **4** files
+- `packages/config/src/builtins.ts` — imported by **4** files
 - `packages/config/src/normalize-path.ts` — imported by **4** files
 - `packages/core/src/parser.ts` — imported by **4** files
 - `packages/engine/src/env.ts` — imported by **4** files
 - `packages/cli/src/commands/validate.ts` — imported by **3** files
 - `packages/cli/src/detect/probes.ts` — imported by **3** files
-- `packages/cli/src/prompt/index.ts` — imported by **3** files
 
 ## Import Map (who imports what)
 
