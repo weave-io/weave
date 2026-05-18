@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weave/core, @weave/engine, @weave/config, @weave/cli, @weave/adapter-opencode
 
-> 0 routes | 0 models | 0 components | 36 lib files | 2 env vars | 0 middleware | 0% test coverage
-> **Token savings:** this file is ~3,100 tokens. Without it, AI exploration would cost ~18,700 tokens. **Saves ~15,700 tokens per conversation.**
-> **Last scanned:** 2026-05-18 16:03 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 37 lib files | 2 env vars | 0 middleware | 0% test coverage
+> **Token savings:** this file is ~3,100 tokens. Without it, AI exploration would cost ~19,000 tokens. **Saves ~15,800 tokens per conversation.**
+> **Last scanned:** 2026-05-18 20:06 — re-run after significant changes
 
 ---
 
@@ -115,6 +115,11 @@
   - function toJson: (report) => string
   - interface CapabilityEntry
   - _...18 more_
+- `packages/engine/src/compose.ts`
+  - function composeAgentDescriptor: (agentName, agentConfig, config, allAgents, AgentConfig>) => ResultAsync<AgentDescriptor, ComposeError>
+  - interface AgentDescriptor
+  - interface DelegationTarget
+  - type ComposeError
 - `packages/engine/src/descriptors.ts` — function generateCategoryShuttles: (config) => Result<Record<string, AgentConfig>, CategoryShuttleConflictError>, type CategoryShuttleConflictError
 - `packages/engine/src/env.ts`
   - function parseEnv: (raw) => Env
@@ -170,6 +175,7 @@
 - `packages/core/src/tokens.ts` — imported by **8** files
 - `packages/cli/src/fs/file-system.ts` — imported by **7** files
 - `packages/core/src/errors.ts` — imported by **6** files
+- `packages/engine/src/compose.ts` — imported by **6** files
 - `packages/cli/src/theme/render.ts` — imported by **5** files
 - `packages/cli/src/args.ts` — imported by **5** files
 - `packages/config/src/discovery.ts` — imported by **5** files
@@ -184,7 +190,6 @@
 - `packages/cli/src/commands/validate.ts` — imported by **3** files
 - `packages/cli/src/detect/probes.ts` — imported by **3** files
 - `packages/cli/src/prompt/index.ts` — imported by **3** files
-- `packages/cli/src/installers/index.ts` — imported by **3** files
 
 ## Import Map (who imports what)
 
@@ -193,18 +198,18 @@
 - `packages/core/src/tokens.ts` ← `packages/core/src/__tests__/lexer.test.ts`, `packages/core/src/ast.ts`, `packages/core/src/ast.ts`, `packages/core/src/index.ts`, `packages/core/src/index.ts` +3 more
 - `packages/cli/src/fs/file-system.ts` ← `packages/cli/src/__tests__/file-system.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/validate.test.ts`, `packages/cli/src/commands/validate.ts`, `packages/cli/src/installers/__tests__/installers.test.ts` +2 more
 - `packages/core/src/errors.ts` ← `packages/core/src/__tests__/errors.test.ts`, `packages/core/src/index.ts`, `packages/core/src/lexer.ts`, `packages/core/src/parse-config.ts`, `packages/core/src/parser.ts` +1 more
+- `packages/engine/src/compose.ts` ← `packages/engine/src/__tests__/compose.test.ts`, `packages/engine/src/__tests__/mock-adapter.ts`, `packages/engine/src/adapter.ts`, `packages/engine/src/index.ts`, `packages/engine/src/run-agent-effects.ts` +1 more
 - `packages/cli/src/theme/render.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/init.ts`, `packages/cli/src/index.ts`, `packages/cli/src/index.ts`
 - `packages/cli/src/args.ts` ← `packages/cli/src/cli.ts`, `packages/cli/src/commands/init.ts`, `packages/cli/src/commands/validate.ts`, `packages/cli/src/index.ts`, `packages/cli/src/index.ts`
 - `packages/config/src/discovery.ts` ← `packages/config/src/__tests__/discovery.test.ts`, `packages/config/src/__tests__/discovery.test.ts`, `packages/config/src/__tests__/load_config.test.ts`, `packages/config/src/index.ts`, `packages/config/src/index.ts`
 - `packages/config/src/types.ts` ← `packages/config/src/__tests__/resolve.test.ts`, `packages/config/src/discovery.ts`, `packages/config/src/index.ts`, `packages/config/src/loader.ts`, `packages/config/src/resolve.ts`
-- `packages/core/src/lexer.ts` ← `packages/core/src/__tests__/lexer.test.ts`, `packages/core/src/__tests__/parser.test.ts`, `packages/core/src/__tests__/validate.test.ts`, `packages/core/src/index.ts`, `packages/core/src/parse-config.ts`
 
 ---
 
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 31 test files found
+> 32 test files found
 
 ---
 

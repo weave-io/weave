@@ -125,7 +125,10 @@ describe("composeAgentDescriptor", () => {
       expect(result.error.message).toBe(
         `Failed to read prompt file for agent "unreadable-file-agent": ${promptFilePath}`,
       );
-      expect(result.error.cause).toBeDefined();
+      if (result.error.type !== "PromptFileReadError")
+        throw new Error("wrong error type");
+      expect(result.error.fileErrorMessage).toBeTypeOf("string");
+      expect(result.error.fileErrorMessage.length).toBeGreaterThan(0);
     });
   });
 
