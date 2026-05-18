@@ -1,4 +1,3 @@
-import { readFile } from "node:fs/promises";
 import type {
   AgentConfig,
   DelegationTrigger,
@@ -43,8 +42,8 @@ export type ComposeError =
       type: "PromptFileReadError";
       agentName: string;
       promptFilePath: string;
-      cause: unknown;
       message: string;
+      fileErrorMessage: string;
     };
 
 function loadPromptSource(
@@ -63,18 +62,14 @@ function loadPromptSource(
 
   const promptFilePath = agentConfig.prompt_file;
 
-  return ResultAsync.fromPromise(
-    readFile(promptFilePath, "utf-8"),
-    (cause) => ({
-      type: "PromptFileReadError" as const,
-      agentName,
-      promptFilePath,
-      cause,
-      message:
-        `Failed to read prompt file for agent "${agentName}": ` +
-        promptFilePath,
-    }),
-  );
+  return ResultAsync.fromPromise(Bun.file(promptFilePath).text(), (cause) => ({
+    type: "PromptFileReadError" as const,
+    agentName,
+    promptFilePath,
+    message:
+      `Failed to read prompt file for agent "${agentName}": ` + promptFilePath,
+    fileErrorMessage: cause instanceof Error ? cause.message : String(cause),
+  }));
 }
 
 function shouldExcludeSharedShuttleTarget(
