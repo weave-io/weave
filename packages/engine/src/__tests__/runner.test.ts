@@ -456,19 +456,16 @@ describe("WeaveRunner", () => {
       `);
 
       const order: string[] = [];
+      const originalSpawn = adapter.spawnSubagent.bind(adapter);
+      adapter.spawnSubagent = async (descriptor) => {
+        order.push(`spawn:${descriptor.name}`);
+        return originalSpawn(descriptor);
+      };
       await new WeaveRunner(config, adapter, {
         onEffect: (e) => order.push(`effect:${e.agentName}`),
       }).run();
 
-      // Reconstruct full order including adapter spawn calls
-      const spawnOrder = adapter
-        .callsTo("spawnSubagent")
-        .map((c) => `spawn:${c.descriptor.name}`);
-
-      // effect must appear before spawn in the combined sequence
-      const effectIdx = order.indexOf("effect:theta-worker");
-      expect(effectIdx).toBeGreaterThanOrEqual(0);
-      expect(spawnOrder).toContain("spawn:theta-worker");
+      expect(order).toEqual(["effect:theta-worker", "spawn:theta-worker"]);
     });
 
     it("no harness-specific tool names appear in any emitted effect", async () => {
@@ -706,7 +703,7 @@ describe("WeaveRunner", () => {
     it("composition error for one agent does not prevent others from spawning", async () => {
       const config = cfg(`
         agent tau-one { prompt "Tau one." models ["model-tau-1"] }
-        agent tau-two { prompt "Tau two." models ["model-tau-2"] }
+        agent tau-two { prompt_file "nonexistent/missing-prompt.md" models ["model-tau-2"] }
       `);
 
       await new WeaveRunner(config, adapter).run();
@@ -715,7 +712,7 @@ describe("WeaveRunner", () => {
         .callsTo("spawnSubagent")
         .map((c) => c.descriptor.name);
       expect(names).toContain("tau-one");
-      expect(names).toContain("tau-two");
+      expect(names).not.toContain("tau-two");
     });
 
     it("effect carries the composed agentDescriptor", async () => {
