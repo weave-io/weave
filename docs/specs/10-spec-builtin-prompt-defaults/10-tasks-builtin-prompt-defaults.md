@@ -75,7 +75,7 @@
 - [ ] 2.4 Add a config-owned integration smoke test that loads builtins through the public config API and composes each builtin descriptor through the public engine API.
 - [ ] 2.5 Assert in the smoke test that all builtins compose to non-empty prompts, that delegating agents with shipped triggers produce generated `## Delegation` output according to the current composer rules, and that non-delegating builtins do not emit delegation sections.
 
-### [ ] 3.0 Reduce dogfood drift to true local overrides and refresh validation docs
+### [x] 3.0 Reduce dogfood drift to true local overrides and refresh validation docs
 
 #### 3.0 Proof Artifact(s)
 
@@ -88,8 +88,8 @@
 
 #### 3.0 Tasks
 
-- [ ] 3.1 Delete local `.weave/prompts/*.md` files that only mirror shipped builtin behavior, keeping only true local overrides for Shuttle and Weft.
-- [ ] 3.2 Rewrite `.weave/prompts/shuttle.md` and `.weave/prompts/weft.md` as concise repo-specific deltas that restate critical Weave standards inline instead of depending mainly on `AGENTS.md`.
-- [ ] 3.3 Update the local Shuttle override so it defines done in abstract outcomes, discovers relevant validation commands from the repo, runs the checks appropriate to the change, and reports what it used.
-- [ ] 3.4 Shrink `.weave/config.weave` to delta-only overrides by removing duplicated builtin descriptions, tool policies, mirrored prompt paths, and triggers once those triggers ship in builtin config, while explicitly retaining the intentional local `prompt_file` overrides for `shuttle` and `weft`.
-- [ ] 3.5 Update or extend docs/tests as needed so canonical builtin defaults, composed-prompt terminology, and delta-only local overrides remain aligned with implementation.
+- [x] 3.1 Delete local `.weave/prompts/*.md` files that only mirror shipped builtin behavior, keeping only true local overrides for Shuttle and Weft.
+- [x] 3.2 Rewrite `.weave/prompts/shuttle.md` and `.weave/prompts/weft.md` as concise repo-specific deltas that restate critical Weave standards inline instead of depending mainly on `AGENTS.md`.
+- [x] 3.3 Update the local Shuttle override so it defines done in abstract outcomes, discovers relevant validation commands from the repo, runs the checks appropriate to the change, and reports what it used.
+- [x] 3.4 Shrink `.weave/config.weave` to delta-only overrides by removing duplicated builtin descriptions, tool policies, mirrored prompt paths, and triggers once those triggers ship in builtin config, while explicitly retaining the intentional local `prompt_file` overrides for `shuttle` and `weft`.
+- [x] 3.5 Update or extend docs/tests as needed so canonical builtin defaults, composed-prompt terminology, and delta-only local overrides remain aligned with implementation.

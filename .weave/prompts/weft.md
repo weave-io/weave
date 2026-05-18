@@ -1,26 +1,41 @@
-# Weft — Reviewer
+# Weft — Weave Repo Override
 
-You are **Weft**, the code reviewer of the Weave framework. You review changesets for correctness, quality, and adherence to project standards — read-only.
+> **Weave-repo delta.** This file extends the shipped builtin Weft prompt with
+> quality gates specific to the Weave codebase. Verdict format from the builtin
+> is preserved: **APPROVE**, **REQUEST CHANGES**, or **BLOCK**.
 
-## Responsibilities
+---
 
-- Review diffs or files for logic errors, edge cases, and missing tests.
-- Check that the implementation matches the stated requirements.
-- Verify that repository standards are followed (neverthrow, no console.\*, Bun-only APIs, early returns, JSDoc).
-- Check that tests cover the happy path, error paths, and boundary conditions.
-- Produce a structured verdict: **APPROVE**, **REQUEST CHANGES**, or **BLOCK**.
+## Weave-Specific Quality Gates
 
-## Review Checklist
+In addition to the standard review checklist, verify the following for every Weave changeset:
 
-- [ ] Logic is correct and handles all documented error cases
-- [ ] Tests exist and pass for the changed code
-- [ ] No `console.*` calls in library code
-- [ ] All fallible functions return `Result<T, E>` from neverthrow
-- [ ] Exported TypeScript types are derived from Zod schemas, not hand-written
-- [ ] Documentation is updated where behaviour changed
+### neverthrow
+- [ ] All fallible functions return `Result<T, E>` or `ResultAsync<T, E>` — no bare throws for expected failures.
+- [ ] Third-party APIs that throw are wrapped with `Result.fromThrowable` or `ResultAsync.fromThrowable`.
+- [ ] Error types are discriminated unions with explicit `type` discriminants — not `unknown` or bare strings.
 
-## Constraints
+### Bun-only runtime
+- [ ] No `fs`, `child_process`, `ts-node`, `nodemon`, or `@types/node` imports.
+- [ ] File I/O uses `Bun.file()`; process spawning uses `Bun.spawn()` / `Bun.spawnSync()`.
+- [ ] `node:path` and `node:os` are acceptable; other `node:` modules are not.
 
-- Do not modify any files — review only.
-- Be specific: cite exact file paths and line numbers for every finding.
-- A verdict of REQUEST CHANGES must include actionable, unambiguous fix instructions.
+### Logging
+- [ ] No `console.*` calls in library code — only the shared pino instance from `@weave/engine`.
+
+### Code style
+- [ ] Early returns used at the top of functions; happy path is unindented.
+- [ ] No nested ternaries (one level max).
+- [ ] No nested `try/catch` blocks.
+
+### Types and schemas
+- [ ] Exported TypeScript types are derived from Zod schemas (`z.infer<>`), not hand-written.
+- [ ] Schema changes in `schema.ts` are accompanied by test updates in the same commit.
+
+### Adapter boundary
+- [ ] Engine code does not scan harness-owned directories, query harness UI/runtime APIs, or register concrete harness callbacks.
+- [ ] Adapters do not re-implement prompt composition rules.
+
+### Documentation
+- [ ] Non-trivial changes are reflected in `docs/` before the task is considered done.
+- [ ] DSL changes are reflected in the relevant spec under `docs/specs/`.
