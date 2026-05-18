@@ -450,6 +450,24 @@ describe("WeaveRunner", () => {
       expect(names).not.toContain("eta-disabled");
     });
 
+    it("continues agent materialization when onEffect throws", async () => {
+      const config = cfg(`
+        agent phi-worker { prompt "Phi worker." models ["model-phi"] }
+      `);
+
+      await new WeaveRunner(config, adapter, {
+        onEffect: () => {
+          throw new Error("observer exploded");
+        },
+      }).run();
+
+      // Agent should still be spawned despite the callback throwing
+      const names = adapter
+        .callsTo("spawnSubagent")
+        .map((c) => c.descriptor.name);
+      expect(names).toContain("phi-worker");
+    });
+
     it("effect is emitted before adapter.spawnSubagent is called", async () => {
       const config = cfg(`
         agent theta-worker { prompt "Theta worker." models ["model-theta"] }

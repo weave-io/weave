@@ -25,8 +25,8 @@ export interface WeaveRunnerOptions {
    * `effectiveToolPolicy` (all five capabilities resolved) and the raw
    * `rawToolPolicy` (the agent's declared `tool_policy`, or `undefined`).
    *
-   * The callback is synchronous and must not throw. Errors inside the
-   * callback are the caller's responsibility.
+   * The callback is synchronous. If it throws, the error is logged and
+   * agent materialization continues uninterrupted.
    */
   onEffect?: (effect: RunAgentEffect) => void;
 }
@@ -147,13 +147,20 @@ export class WeaveRunner {
 
       const descriptor: AgentDescriptor = descriptorResult.value;
 
-      this.options.onEffect?.({
-        kind: "run-agent",
-        agentName: name,
-        agentDescriptor: descriptor,
-        effectiveToolPolicy: descriptor.effectiveToolPolicy,
-        rawToolPolicy: descriptor.rawToolPolicy,
-      });
+      try {
+        this.options.onEffect?.({
+          kind: "run-agent",
+          agentName: name,
+          agentDescriptor: descriptor,
+          effectiveToolPolicy: descriptor.effectiveToolPolicy,
+          rawToolPolicy: descriptor.rawToolPolicy,
+        });
+      } catch (error) {
+        log.warn(
+          { agent: name, error },
+          "onEffect callback threw; continuing agent materialization",
+        );
+      }
 
       log.info({ agent: name, model: descriptor.models[0] }, "Spawning agent");
       await this.adapter.spawnSubagent(descriptor);

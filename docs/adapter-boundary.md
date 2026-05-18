@@ -172,9 +172,11 @@ for the full vocabulary, readiness gate semantics, and proof artifacts.
 ## Abstract Tool Policy Evaluation
 
 The engine evaluates abstract `tool_policy` declarations into a fully-resolved
-`EffectiveToolPolicy` before passing agent config to adapters. Adapters receive
-the **raw** `tool_policy` unchanged via `spawnSubagent`; the engine-computed
-effective policy is surfaced via the `onEffect` callback on `WeaveRunnerOptions`.
+`EffectiveToolPolicy` before passing the composed `AgentDescriptor` to adapters.
+Adapters receive the **raw** `tool_policy` unchanged as `descriptor.rawToolPolicy`
+via `spawnSubagent(descriptor: AgentDescriptor)`; the engine-computed effective
+policy is surfaced both on the descriptor (`descriptor.effectiveToolPolicy`) and
+via the `onEffect` callback on `WeaveRunnerOptions`.
 
 Key rules:
 
