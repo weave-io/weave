@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 37 lib files | 2 env vars | 0 middleware | 0% test coverage
 > **Token savings:** this file is ~3,100 tokens. Without it, AI exploration would cost ~19,000 tokens. **Saves ~15,800 tokens per conversation.**
-> **Last scanned:** 2026-05-18 20:06 — re-run after significant changes
+> **Last scanned:** 2026-05-18 20:17 — re-run after significant changes
 
 ---
 
@@ -184,12 +184,12 @@
 - `packages/engine/src/descriptors.ts` — imported by **5** files
 - `packages/cli/src/cli.ts` — imported by **4** files
 - `packages/cli/src/errors.ts` — imported by **4** files
+- `packages/config/src/builtins.ts` — imported by **4** files
 - `packages/config/src/normalize-path.ts` — imported by **4** files
 - `packages/core/src/parser.ts` — imported by **4** files
 - `packages/engine/src/env.ts` — imported by **4** files
 - `packages/cli/src/commands/validate.ts` — imported by **3** files
 - `packages/cli/src/detect/probes.ts` — imported by **3** files
-- `packages/cli/src/prompt/index.ts` — imported by **3** files
 
 ## Import Map (who imports what)
 
@@ -209,7 +209,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 32 test files found
+> 33 test files found
 
 ---
 
