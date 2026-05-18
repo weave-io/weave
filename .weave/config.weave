@@ -1,192 +1,27 @@
-# Weave — project configuration
+# Weave — project configuration (delta-only)
 #
-# This file is the canonical declaration of all built-in agents and the
-# framework development categories used when building Weave itself.
-# It is validated on every commit via `bun run validate-config`.
+# This file contains only intentional overrides of shipped builtin defaults.
+# Builtin agent descriptions, tool policies, and triggers are authoritative in
+# packages/config/src/builtins.ts — do not duplicate them here.
+#
+# Validated on every commit via `bun run validate-config`.
 
 # ---------------------------------------------------------------------------
-# Built-in agents
+# Local prompt overrides
+# (Only shuttle and weft have Weave-repo-specific prompt deltas)
 # ---------------------------------------------------------------------------
-
-agent loom {
-  description "Loom (Main Orchestrator)"
-  prompt_file "loom.md"
-  models ["claude-sonnet-4-5", "gpt-4o"]
-  mode primary
-  temperature 0.1
-
-  tool_policy {
-    read     allow
-    write    allow
-    execute  allow
-    network  ask
-    delegate allow
-  }
-
-  triggers [
-    { domain "Orchestration" trigger "Complex multi-step tasks requiring coordination across agents" }
-    { domain "Architecture"  trigger "System design, ADRs, and cross-cutting technical decisions" }
-    { domain "Triage"        trigger "Unclear requests that need decomposition before acting" }
-  ]
-
-  skills ["tdd", "code-review"]
-}
-
-agent tapestry {
-  description "Tapestry (Plan Execution Coordinator)"
-  prompt_file "tapestry.md"
-  models ["claude-sonnet-4-5", "gpt-4o"]
-  mode primary
-  temperature 0.1
-
-  tool_policy {
-    read     allow
-    write    allow
-    execute  allow
-    network  deny
-    delegate allow
-  }
-
-  triggers [
-    { domain "Execution"    trigger "Driving a plan to completion step by step" }
-    { domain "Coordination" trigger "Sequencing sub-tasks across multiple shuttle agents" }
-    { domain "Resumption"   trigger "Continuing work after an idle or compaction event" }
-  ]
-
-  skills ["tdd"]
-}
 
 agent shuttle {
-  description "Shuttle (Domain Specialist)"
   prompt_file "shuttle.md"
-  models ["claude-sonnet-4-5", "gpt-4o"]
-  mode all
-  temperature 0.2
-
-  tool_policy {
-    read     allow
-    write    allow
-    execute  allow
-    network  deny
-    delegate deny
-  }
-
-  triggers [
-    { domain "Implementation" trigger "Writing, editing, or refactoring code in a specific domain" }
-    { domain "Debugging"      trigger "Diagnosing and fixing a known issue in a scoped area" }
-  ]
-
-  skills ["tdd", "code-review"]
-}
-
-agent pattern {
-  description "Pattern (Strategic Planner)"
-  prompt_file "pattern.md"
-  models ["claude-sonnet-4-5"]
-  mode subagent
-  temperature 0.3
-
-  tool_policy {
-    read     allow
-    write    allow
-    execute  deny
-    network  deny
-    delegate deny
-  }
-
-  triggers [
-    { domain "Planning"  trigger "Breaking a goal into a structured, file-backed implementation plan" }
-    { domain "Scoping"   trigger "Estimating complexity and identifying unknowns before implementation" }
-  ]
-}
-
-agent thread {
-  description "Thread (Codebase Explorer)"
-  prompt_file "thread.md"
-  models ["claude-sonnet-4-5"]
-  mode subagent
-  temperature 0.0
-
-  tool_policy {
-    read     allow
-    write    deny
-    execute  deny
-    network  deny
-    delegate deny
-  }
-
-  triggers [
-    { domain "Exploration" trigger "Navigating unfamiliar code, tracing call graphs, understanding structure" }
-    { domain "Discovery"   trigger "Finding all usages, definitions, or dependents of a symbol" }
-  ]
-}
-
-agent spindle {
-  description "Spindle (External Researcher)"
-  prompt_file "spindle.md"
-  models ["claude-sonnet-4-5"]
-  mode subagent
-  temperature 0.1
-
-  tool_policy {
-    read     allow
-    write    deny
-    execute  deny
-    network  allow
-    delegate deny
-  }
-
-  triggers [
-    { domain "Research"      trigger "Looking up external documentation, RFCs, or library APIs" }
-    { domain "Benchmarking"  trigger "Comparing approaches using external evidence and prior art" }
-  ]
 }
 
 agent weft {
-  description "Weft (Reviewer)"
   prompt_file "weft.md"
-  models ["claude-sonnet-4-5"]
-  mode subagent
-  temperature 0.1
-
-  tool_policy {
-    read     allow
-    write    deny
-    execute  deny
-    network  deny
-    delegate deny
-  }
-
-  triggers [
-    { domain "Review"   trigger "Code review, correctness checks, and quality gate enforcement" }
-    { domain "Critique" trigger "Identifying logic errors, edge cases, and missing tests" }
-  ]
-}
-
-agent warp {
-  description "Warp (Security Auditor)"
-  prompt_file "warp.md"
-  models ["claude-sonnet-4-5"]
-  mode subagent
-  temperature 0.1
-
-  tool_policy {
-    read     allow
-    write    deny
-    execute  deny
-    network  deny
-    delegate deny
-  }
-
-  triggers [
-    { domain "Security"      trigger "Auditing changes for vulnerabilities, injection risks, or secret exposure" }
-    { domain "Threat-model"  trigger "Reviewing trust boundaries and attack surface of new features" }
-  ]
 }
 
 # ---------------------------------------------------------------------------
 # Framework development categories
-# (These define domain routing when building Weave itself)
+# (Project-specific domain routing when building Weave itself)
 # ---------------------------------------------------------------------------
 
 category core {
