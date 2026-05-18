@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weave/core, @weave/engine, @weave/config, @weave/cli, @weave/adapter-opencode
 
-> 0 routes | 0 models | 0 components | 35 lib files | 2 env vars | 0 middleware | 0% test coverage
-> **Token savings:** this file is ~3,000 tokens. Without it, AI exploration would cost ~18,500 tokens. **Saves ~15,500 tokens per conversation.**
-> **Last scanned:** 2026-05-15 20:43 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 36 lib files | 2 env vars | 0 middleware | 0% test coverage
+> **Token savings:** this file is ~3,100 tokens. Without it, AI exploration would cost ~18,700 tokens. **Saves ~15,700 tokens per conversation.**
+> **Last scanned:** 2026-05-18 16:03 — re-run after significant changes
 
 ---
 
@@ -128,6 +128,14 @@
   - type ResolutionSource
   - const DEFAULT_FALLBACK_MODEL
 - `packages/engine/src/runner.ts` — class WeaveRunner, interface WeaveRunnerOptions
+- `packages/engine/src/skill-resolution.ts`
+  - function resolveSkillsForAgent: (input) => Result<ResolvedSkill[], SkillResolutionError[]>
+  - function resolveSkillsForConfig: (input) => Result<ConfigSkillResolutionResult, SkillResolutionError[]>
+  - interface SkillInfo
+  - interface ResolvedSkill
+  - interface SkillResolutionInput
+  - interface SkillResolutionConfigInput
+  - _...2 more_
 - `packages/engine/src/tool-policy.ts`
   - function evaluateEffectiveToolPolicy: (policy) => EffectiveToolPolicy
   - function resolveToolDecisions: (toolIds, classifications, effectivePolicy) => ToolDecision[]
@@ -167,11 +175,11 @@
 - `packages/config/src/discovery.ts` — imported by **5** files
 - `packages/config/src/types.ts` — imported by **5** files
 - `packages/core/src/lexer.ts` — imported by **5** files
+- `packages/engine/src/descriptors.ts` — imported by **5** files
 - `packages/cli/src/cli.ts` — imported by **4** files
 - `packages/cli/src/errors.ts` — imported by **4** files
 - `packages/config/src/normalize-path.ts` — imported by **4** files
 - `packages/core/src/parser.ts` — imported by **4** files
-- `packages/engine/src/descriptors.ts` — imported by **4** files
 - `packages/engine/src/env.ts` — imported by **4** files
 - `packages/cli/src/commands/validate.ts` — imported by **3** files
 - `packages/cli/src/detect/probes.ts` — imported by **3** files
@@ -196,7 +204,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 30 test files found
+> 31 test files found
 
 ---
 

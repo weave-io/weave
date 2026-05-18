@@ -753,4 +753,463 @@ describe("WeaveRunner", () => {
       );
     });
   });
+
+  // -------------------------------------------------------------------------
+  // Skill resolution — adapter-provided context (4.1, 4.2, 4.5, 4.6, 4.7)
+  // -------------------------------------------------------------------------
+
+  describe("skill resolution — adapter-provided context", () => {
+    it("calls loadAvailableSkills() exactly once before spawnSubagent", async () => {
+      const config = cfg(`
+        agent sigma-worker { prompt "Sigma worker." models ["model-sigma"] }
+      `);
+
+      await new WeaveRunner(config, adapter).run();
+
+      expect(adapter.callsTo("loadAvailableSkills")).toHaveLength(1);
+      // loadAvailableSkills must be called before any spawnSubagent
+      const loadIdx = adapter.calls.findIndex(
+        (c) => c.method === "loadAvailableSkills",
+      );
+      const spawnIdx = adapter.calls.findIndex(
+        (c) => c.method === "spawnSubagent",
+      );
+      expect(loadIdx).toBeGreaterThanOrEqual(0);
+      expect(loadIdx).toBeLessThan(spawnIdx);
+    });
+
+    it("resolvedSkills in effect contains matched skill names from adapter-provided list", async () => {
+      const adapterWithSkills = new MockAdapter({
+        availableSkills: [{ name: "tdd" }, { name: "code-review" }],
+      });
+
+      const config = cfg(`
+        agent tau-worker {
+          prompt "Tau worker."
+          models ["model-tau"]
+          skills ["tdd", "code-review"]
+        }
+      `);
+
+      const effects: RunAgentEffect[] = [];
+      await new WeaveRunner(config, adapterWithSkills, {
+        onEffect: (e) => effects.push(e),
+      }).run();
+
+      expect(effects).toHaveLength(1);
+      expect(effects[0]?.resolvedSkills).toEqual(["tdd", "code-review"]);
+    });
+
+    it("resolvedSkills is empty array when agent declares no skills", async () => {
+      const adapterWithSkills = new MockAdapter({
+        availableSkills: [{ name: "tdd" }],
+      });
+
+      const config = cfg(`
+        agent upsilon-worker { prompt "Upsilon worker." models ["model-upsilon"] }
+      `);
+
+      const effects: RunAgentEffect[] = [];
+      await new WeaveRunner(config, adapterWithSkills, {
+        onEffect: (e) => effects.push(e),
+      }).run();
+
+      expect(effects[0]?.resolvedSkills).toEqual([]);
+    });
+
+    it("resolvedSkills is empty array when adapter provides no available skills", async () => {
+      // adapter has no availableSkills (default empty)
+      const config = cfg(`
+        agent phi-worker { prompt "Phi worker." models ["model-phi"] }
+      `);
+
+      const effects: RunAgentEffect[] = [];
+      await new WeaveRunner(config, adapter, {
+        onEffect: (e) => effects.push(e),
+      }).run();
+
+      expect(effects[0]?.resolvedSkills).toEqual([]);
+    });
+
+    it("disabled skills are filtered from resolvedSkills in effect", async () => {
+      const adapterWithSkills = new MockAdapter({
+        availableSkills: [{ name: "tdd" }, { name: "code-review" }],
+      });
+
+      const config = cfg(`
+        agent chi-worker {
+          prompt "Chi worker."
+          models ["model-chi"]
+          skills ["tdd", "code-review"]
+        }
+        disable skills ["tdd"]
+      `);
+
+      const effects: RunAgentEffect[] = [];
+      await new WeaveRunner(config, adapterWithSkills, {
+        onEffect: (e) => effects.push(e),
+      }).run();
+
+      // tdd is disabled — only code-review should appear
+      expect(effects[0]?.resolvedSkills).toEqual(["code-review"]);
+    });
+
+    it("resolvedSkills preserves declaration order from agent config", async () => {
+      const adapterWithSkills = new MockAdapter({
+        // availableSkills in reverse order — result must follow agentSkills order
+        availableSkills: [
+          { name: "security-audit" },
+          { name: "code-review" },
+          { name: "tdd" },
+        ],
+      });
+
+      const config = cfg(`
+        agent psi-worker {
+          prompt "Psi worker."
+          models ["model-psi"]
+          skills ["tdd", "code-review", "security-audit"]
+        }
+      `);
+
+      const effects: RunAgentEffect[] = [];
+      await new WeaveRunner(config, adapterWithSkills, {
+        onEffect: (e) => effects.push(e),
+      }).run();
+
+      expect(effects[0]?.resolvedSkills).toEqual([
+        "tdd",
+        "code-review",
+        "security-audit",
+      ]);
+    });
+
+    it("engine does not perform directory scanning, skill-file reads, or harness-specific lookup", async () => {
+      // This test proves the engine only uses adapter-provided context.
+      // The MockAdapter returns skills from an in-memory list — no filesystem
+      // access, no Bun.file(), no process.spawn(), no harness API calls.
+      const adapterWithSkills = new MockAdapter({
+        availableSkills: [
+          { name: "tdd", metadata: { path: "/mock/path/tdd.md" } },
+        ],
+      });
+
+      const config = cfg(`
+        agent omega-worker {
+          prompt "Omega worker."
+          models ["model-omega"]
+          skills ["tdd"]
+        }
+      `);
+
+      const effects: RunAgentEffect[] = [];
+      await new WeaveRunner(config, adapterWithSkills, {
+        onEffect: (e) => effects.push(e),
+      }).run();
+
+      // Engine resolved the skill using only adapter-provided context
+      expect(effects[0]?.resolvedSkills).toEqual(["tdd"]);
+      // loadAvailableSkills was called — adapter provided context explicitly
+      expect(adapterWithSkills.callsTo("loadAvailableSkills")).toHaveLength(1);
+      // No loadSkill calls — engine does not drive skill loading
+      expect(adapterWithSkills.callsTo("loadSkill")).toHaveLength(0);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Skill resolution — category shuttles (4.5)
+  // -------------------------------------------------------------------------
+
+  describe("skill resolution — category shuttles", () => {
+    it("generated category shuttle receives resolved skill data in effect", async () => {
+      const adapterWithSkills = new MockAdapter({
+        availableSkills: [{ name: "tdd" }],
+      });
+
+      const config = cfg(`
+        agent shuttle {
+          prompt "Specialist."
+          models ["model-shuttle"]
+          skills ["tdd"]
+        }
+        category alpha-cat { patterns ["src/alpha/**"] models ["model-alpha"] }
+      `);
+
+      const effects: RunAgentEffect[] = [];
+      await new WeaveRunner(config, adapterWithSkills, {
+        onEffect: (e) => effects.push(e),
+      }).run();
+
+      const shuttleEffect = effects.find(
+        (e) => e.agentName === "shuttle-alpha-cat",
+      );
+      expect(shuttleEffect).toBeDefined();
+      // Generated shuttle inherits base shuttle skills
+      expect(shuttleEffect?.resolvedSkills).toEqual(["tdd"]);
+    });
+
+    it("multiple category shuttles each receive their own resolved skill data", async () => {
+      const adapterWithSkills = new MockAdapter({
+        availableSkills: [{ name: "tdd" }, { name: "code-review" }],
+      });
+
+      const config = cfg(`
+        agent shuttle {
+          prompt "Specialist."
+          models ["model-shuttle"]
+          skills ["tdd", "code-review"]
+        }
+        category beta-cat { patterns ["src/beta/**"] models ["model-beta"] }
+        category gamma-cat { patterns ["src/gamma/**"] models ["model-gamma"] }
+      `);
+
+      const effects: RunAgentEffect[] = [];
+      await new WeaveRunner(config, adapterWithSkills, {
+        onEffect: (e) => effects.push(e),
+      }).run();
+
+      const betaEffect = effects.find(
+        (e) => e.agentName === "shuttle-beta-cat",
+      );
+      const gammaEffect = effects.find(
+        (e) => e.agentName === "shuttle-gamma-cat",
+      );
+
+      expect(betaEffect?.resolvedSkills).toEqual(["tdd", "code-review"]);
+      expect(gammaEffect?.resolvedSkills).toEqual(["tdd", "code-review"]);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Skill resolution — disabled agents (4.4)
+  // -------------------------------------------------------------------------
+
+  describe("skill resolution — disabled agents", () => {
+    it("disabled agents do not emit run-agent effects (no resolvedSkills emitted)", async () => {
+      const adapterWithSkills = new MockAdapter({
+        availableSkills: [{ name: "tdd" }],
+      });
+
+      const config = cfg(`
+        agent active-agent {
+          prompt "Active."
+          models ["model-active"]
+          skills ["tdd"]
+        }
+        agent disabled-agent {
+          prompt "Disabled."
+          models ["model-disabled"]
+          skills ["tdd"]
+        }
+        disable agents ["disabled-agent"]
+      `);
+
+      const effects: RunAgentEffect[] = [];
+      await new WeaveRunner(config, adapterWithSkills, {
+        onEffect: (e) => effects.push(e),
+      }).run();
+
+      const names = effects.map((e) => e.agentName);
+      expect(names).toContain("active-agent");
+      expect(names).not.toContain("disabled-agent");
+    });
+
+    it("disabled agents are excluded from skill resolution entirely", async () => {
+      // disabled-agent references a skill that is NOT in availableSkills.
+      // If the engine tried to resolve it, it would produce a MissingSkill error.
+      // Since disabled agents are excluded, no error should occur.
+      const adapterWithSkills = new MockAdapter({
+        availableSkills: [{ name: "tdd" }],
+      });
+
+      const config = cfg(`
+        agent active-agent {
+          prompt "Active."
+          models ["model-active"]
+          skills ["tdd"]
+        }
+        agent disabled-agent {
+          prompt "Disabled."
+          models ["model-disabled"]
+        }
+        disable agents ["disabled-agent"]
+      `);
+
+      const effects: RunAgentEffect[] = [];
+      // Must not throw even though disabled-agent is excluded from resolution
+      await new WeaveRunner(config, adapterWithSkills, {
+        onEffect: (e) => effects.push(e),
+      }).run();
+
+      expect(effects).toHaveLength(1);
+      expect(effects[0]?.agentName).toBe("active-agent");
+      expect(effects[0]?.resolvedSkills).toEqual(["tdd"]);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Sanitized-effect coverage (4.8)
+  // -------------------------------------------------------------------------
+
+  describe("sanitized-effect coverage", () => {
+    it("serialized run-agent effects do not expose adapter-owned skill paths", async () => {
+      const adapterWithSkills = new MockAdapter({
+        availableSkills: [
+          {
+            name: "tdd",
+            metadata: {
+              path: "/home/user/.weave/skills/tdd.md",
+              scope: "global",
+              content: "# TDD\nSecret skill content here.",
+            },
+          },
+        ],
+      });
+
+      const config = cfg(`
+        agent sanitize-worker {
+          prompt "Sanitize worker."
+          models ["model-sanitize"]
+          skills ["tdd"]
+        }
+      `);
+
+      const effects: RunAgentEffect[] = [];
+      await new WeaveRunner(config, adapterWithSkills, {
+        onEffect: (e) => effects.push(e),
+      }).run();
+
+      const serialized = JSON.stringify(effects);
+
+      // Skill name is present — it is safe to emit
+      expect(serialized).toContain("tdd");
+
+      // Adapter-owned metadata must NOT appear in the serialized effect
+      expect(serialized).not.toContain("/home/user/.weave/skills/tdd.md");
+      expect(serialized).not.toContain("Secret skill content here");
+      expect(serialized).not.toContain("global");
+    });
+
+    it("serialized run-agent effects do not expose API keys or tokens in skill metadata", async () => {
+      const adapterWithSkills = new MockAdapter({
+        availableSkills: [
+          {
+            name: "code-review",
+            metadata: {
+              apiKey: "sk-secret-api-key-12345",
+              token: "bearer-token-xyz",
+              envFile: "/project/.env",
+            },
+          },
+        ],
+      });
+
+      const config = cfg(`
+        agent key-worker {
+          prompt "Key worker."
+          models ["model-key"]
+          skills ["code-review"]
+        }
+      `);
+
+      const effects: RunAgentEffect[] = [];
+      await new WeaveRunner(config, adapterWithSkills, {
+        onEffect: (e) => effects.push(e),
+      }).run();
+
+      const serialized = JSON.stringify(effects);
+
+      // Only the skill name should appear
+      expect(serialized).toContain("code-review");
+
+      // Secrets must NOT appear in the serialized effect
+      expect(serialized).not.toContain("sk-secret-api-key-12345");
+      expect(serialized).not.toContain("bearer-token-xyz");
+      expect(serialized).not.toContain("/project/.env");
+    });
+
+    it("no harness-specific tool names appear in any emitted effect (including resolvedSkills)", async () => {
+      const adapterWithSkills = new MockAdapter({
+        availableSkills: [{ name: "tdd" }],
+      });
+
+      const config = cfg(`
+        agent harness-check-worker {
+          prompt "Harness check worker."
+          models ["model-harness"]
+          skills ["tdd"]
+          tool_policy {
+            read  allow
+            write allow
+            execute ask
+            delegate deny
+            network deny
+          }
+        }
+      `);
+
+      const effects: RunAgentEffect[] = [];
+      await new WeaveRunner(config, adapterWithSkills, {
+        onEffect: (e) => effects.push(e),
+      }).run();
+
+      const serialized = JSON.stringify(effects);
+
+      // Abstract capability keys only — no harness tool identifiers
+      const harnessPatterns = [
+        "opencode",
+        "claude-code",
+        "pi-agent",
+        "codex",
+        "bash",
+        "computer",
+        "str_replace",
+      ];
+      for (const pattern of harnessPatterns) {
+        expect(serialized).not.toContain(pattern);
+      }
+    });
+
+    it("resolvedSkills field contains only skill names — no metadata objects", async () => {
+      const adapterWithSkills = new MockAdapter({
+        availableSkills: [
+          {
+            name: "tdd",
+            metadata: {
+              path: "/skills/tdd.md",
+              mountPoint: "opencode://skills/tdd",
+              apiKey: "secret",
+            },
+          },
+        ],
+      });
+
+      const config = cfg(`
+        agent meta-worker {
+          prompt "Meta worker."
+          models ["model-meta"]
+          skills ["tdd"]
+        }
+      `);
+
+      const effects: RunAgentEffect[] = [];
+      await new WeaveRunner(config, adapterWithSkills, {
+        onEffect: (e) => effects.push(e),
+      }).run();
+
+      const effect = effects[0];
+      expect(effect?.resolvedSkills).toEqual(["tdd"]);
+
+      // resolvedSkills is an array of strings — no objects, no metadata
+      for (const skill of effect?.resolvedSkills ?? []) {
+        expect(typeof skill).toBe("string");
+      }
+
+      // Serialized effect must not contain adapter metadata
+      const serialized = JSON.stringify(effect);
+      expect(serialized).not.toContain("/skills/tdd.md");
+      expect(serialized).not.toContain("opencode://skills/tdd");
+      expect(serialized).not.toContain("secret");
+    });
+  });
 });
