@@ -120,6 +120,50 @@ agent shuttle {
 - `tool_policy` — abstract capability map with `allow` / `deny` / `ask` permissions; adapters map to harness-specific tool names and permission models
 - `triggers` — delegation metadata for router agents (e.g. Loom's delegation table)
 
+#### Prompt Templates and Template Context
+
+Every `prompt`, `prompt_file`, and `prompt_append` value is a **Prompt Template** rendered by the engine with Mustache before adapters receive the final composed prompt. This lets prompt files reference engine-computed data without duplicating config.
+
+**Key placeholder**: `{{{delegation.section}}}` — renders the full delegation guidance block (Mermaid diagram + compact bullets) at the location you choose. Use triple braces because the value contains Markdown.
+
+```md
+You are {{agent.name}}.
+
+{{{delegation.section}}}
+```
+
+If the primary prompt source does not reference any `delegation.*` path, the engine appends `delegation.section` automatically as a fallback. Static prompts without Mustache tags are unaffected.
+
+**Available Template Context fields**:
+
+| Path | Type | Description |
+| --- | --- | --- |
+| `{{agent.name}}` | string | Logical agent name |
+| `{{agent.description}}` | string? | Agent description (optional) |
+| `{{agent.mode}}` | `primary`\|`subagent`\|`all` | Adapter-facing mode hint |
+| `{{agent.skills}}` | string[] | Declared skill names |
+| `{{agent.isCategory}}` | boolean | `true` for category shuttle agents |
+| `{{category.name}}` | string? | Category name (category shuttles only) |
+| `{{category.description}}` | string? | Category description (category shuttles only) |
+| `{{toolPolicy.effective.read}}` | `allow`\|`deny`\|`ask` | Resolved read permission |
+| `{{toolPolicy.effective.write}}` | `allow`\|`deny`\|`ask` | Resolved write permission |
+| `{{toolPolicy.effective.execute}}` | `allow`\|`deny`\|`ask` | Resolved execute permission |
+| `{{toolPolicy.effective.delegate}}` | `allow`\|`deny`\|`ask` | Resolved delegate permission |
+| `{{toolPolicy.effective.network}}` | `allow`\|`deny`\|`ask` | Resolved network permission |
+| `{{{delegation.section}}}` | string? | Full `## Delegation` Markdown block with Mermaid diagram and bullets |
+| `{{{delegation.mermaid}}}` | string? | Mermaid diagram block only |
+| `{{#delegation.targets}}` | array | Iterate over eligible delegation targets |
+| `{{name}}` | string | Target agent name (inside `delegation.targets`) |
+| `{{description}}` | string? | Target description (inside `delegation.targets`) |
+| `{{domains}}` | string[] | Deduplicated trigger domains (inside `delegation.targets`) |
+| `{{#triggers}}` | array | Iterate over triggers (inside `delegation.targets`) |
+
+**Fallback suppression**: placing any real `delegation.*` reference in the primary prompt source (not in `prompt_append`) suppresses the automatic fallback. Use `\{{delegation.section}}` (backslash-escaped) to render the literal text `{{delegation.section}}` without triggering suppression.
+
+**Unsupported features**: partials (`{{> footer}}`), delimiter changes, helpers, and lambdas are rejected at composition time with a typed `PromptTemplateError`.
+
+See [`docs/prompt-composition.md`](docs/prompt-composition.md) for the full specification and [`docs/adr/0001-prompt-composition-templates.md`](docs/adr/0001-prompt-composition-templates.md) for the design rationale.
+
 #### Categories
 
 Categories define domain routing — glob patterns that direct work to specialised shuttle agents.
