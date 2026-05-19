@@ -217,6 +217,47 @@ describe("builtin compose smoke", () => {
   });
 
   // ---------------------------------------------------------------------------
+  // Workflow-sequence Mermaid diagrams
+  // ---------------------------------------------------------------------------
+
+  it("loom composedPrompt contains subgraph blocks (workflow-sequence diagram)", () => {
+    const descriptor = getDescriptor("loom");
+    expect(descriptor.composedPrompt).toContain("subgraph");
+  });
+
+  it("tapestry composedPrompt contains subgraph blocks (workflow-sequence diagram)", () => {
+    const descriptor = getDescriptor("tapestry");
+    expect(descriptor.composedPrompt).toContain("subgraph");
+  });
+
+  it("loom diagram contains plan-and-execute subgraph", () => {
+    const descriptor = getDescriptor("loom");
+    expect(descriptor.composedPrompt).toContain("subgraph plan-and-execute");
+  });
+
+  it("loom diagram contains quick-fix subgraph", () => {
+    const descriptor = getDescriptor("loom");
+    expect(descriptor.composedPrompt).toContain("subgraph quick-fix");
+  });
+
+  it("tapestry diagram contains tapestry-execution subgraph", () => {
+    const descriptor = getDescriptor("tapestry");
+    expect(descriptor.composedPrompt).toContain("subgraph tapestry-execution");
+  });
+
+  it("gate agents (weft, warp) appear with hexagon {{}} syntax in loom diagram", () => {
+    const descriptor = getDescriptor("loom");
+    expect(descriptor.composedPrompt).toContain('{{"weft"}}');
+    expect(descriptor.composedPrompt).toContain('{{"warp"}}');
+  });
+
+  it("gate agents (weft, warp) appear with hexagon {{}} syntax in tapestry diagram", () => {
+    const descriptor = getDescriptor("tapestry");
+    expect(descriptor.composedPrompt).toContain('{{"weft"}}');
+    expect(descriptor.composedPrompt).toContain('{{"warp"}}');
+  });
+
+  // ---------------------------------------------------------------------------
   // No unresolved Mustache tags in any composed prompt
   // ---------------------------------------------------------------------------
 
@@ -228,9 +269,14 @@ describe("builtin compose smoke", () => {
   });
 
   it("no unresolved unescaped double-brace Mustache tags remain in any composed prompt", () => {
+    // Use the same precise regex as the renderer: only match Mustache-style
+    // identifiers (letters, digits, dots, underscores, hyphens with optional
+    // section prefix). This avoids false positives from Mermaid hexagon syntax
+    // like {{"weft"}} which contains quotes and is not a Mustache tag.
+    const mustacheTagPattern = /\{\{[#^/!>&]?[\w.-][\w.-]*\}\}/;
     for (const name of ALL_BUILTINS) {
       const descriptor = getDescriptor(name);
-      expect(descriptor.composedPrompt).not.toMatch(/\{\{[^}]+\}\}/);
+      expect(descriptor.composedPrompt).not.toMatch(mustacheTagPattern);
     }
   });
 

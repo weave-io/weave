@@ -458,7 +458,15 @@ function checkUnresolvedTags(
 ): Result<void, RendererError> {
   // After Mustache renders, any remaining {{ or {{{ are unresolved tags.
   // Our placeholders don't contain {{ so they won't match.
-  const unresolvedMatch = renderedBeforeRestore.match(/\{\{[^}]*\}\}/);
+  //
+  // We use a precise regex that matches only Mustache-style identifiers:
+  // - Optional section/partial/comment prefix: #, ^, /, !, >, &
+  // - Followed by an identifier: letters, digits, underscores, dots, hyphens
+  //
+  // This avoids false positives from Mermaid hexagon node syntax like
+  // {{"weft"}} which contains quotes and is not a Mustache tag.
+  const mustacheTagPattern = /\{\{[#^/!>&]?[\w.-][\w.-]*\}\}/;
+  const unresolvedMatch = renderedBeforeRestore.match(mustacheTagPattern);
   if (unresolvedMatch !== null) {
     const tag = unresolvedMatch[0];
     return err({
@@ -468,8 +476,9 @@ function checkUnresolvedTags(
     });
   }
 
-  // Also check for triple-brace unresolved
-  const unresolvedTriple = renderedBeforeRestore.match(/\{\{\{[^}]*\}\}\}/);
+  // Also check for triple-brace unresolved (same precision)
+  const mustacheTriplePattern = /\{\{\{[#^/!>&]?[\w.-][\w.-]*\}\}\}/;
+  const unresolvedTriple = renderedBeforeRestore.match(mustacheTriplePattern);
   if (unresolvedTriple !== null) {
     const tag = unresolvedTriple[0];
     return err({

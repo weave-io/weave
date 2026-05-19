@@ -269,14 +269,52 @@ target name. Scalar lists such as `agent.skills` can render items with `{{.}}`.
 ## Delegation Diagram
 
 When at least one delegation target survives filtering, the engine generates a
-Delegation Diagram plus compact bullets. The diagram is Mermaid `flowchart TD`
-and starts as a current-agent star: the current agent points to each eligible
-delegation target.
+Delegation Diagram plus compact bullets.
 
-`delegation.mermaid` contains only the Mermaid code block content. It uses stable
-synthetic node IDs and escaped labels so arbitrary agent names and trigger labels
-do not break Mermaid parsing. Edge labels use deduplicated trigger domains when
-available, falling back to target description or name.
+### Workflow-sequence diagram (default when workflows are defined)
+
+When the config includes workflow definitions, the engine generates a
+**workflow-sequence diagram** instead of the flat star. Each workflow is rendered
+as a labelled `subgraph`. Steps are connected in order (step[i] → step[i+1])
+with the step name as the edge label. Gate steps use Mermaid hexagon `{{"agent"}}`
+syntax; autonomous/interactive steps use rectangle `["agent"]` syntax.
+
+Only workflows where at least one step's agent matches a delegation target (or
+the current agent itself) are included. This filters out irrelevant workflows.
+
+Node IDs use a prefix derived from the workflow name: the first character of each
+hyphen/space-separated word, uppercased, followed by `_` and the agent name
+(e.g. `quick-fix` → `QF_shuttle`, `tapestry-execution` → `TE_weft`).
+
+Example for an agent with `quick-fix` and `plan-and-execute` workflows:
+
+````md
+```mermaid
+flowchart TD
+    subgraph quick-fix["quick-fix: Fix a bug and get it reviewed"]
+        QF_shuttle["shuttle"]
+        QF_weft{{"weft"}}
+        QF_shuttle -->|"review"| QF_weft
+    end
+    subgraph plan-and-execute["plan-and-execute: Research, plan, implement, and review"]
+        PAE_thread["thread"]
+        PAE_pattern["pattern"]
+        PAE_weft{{"weft"}}
+        PAE_thread -->|"plan"| PAE_pattern
+        PAE_pattern -->|"review"| PAE_weft
+    end
+```
+````
+
+### Flat star fallback (no workflows)
+
+When no workflows are defined, the diagram falls back to a current-agent star:
+the current agent (`A0`) points to each eligible delegation target (`A1`, `A2`, …).
+Edge labels use deduplicated trigger domains when available.
+
+`delegation.mermaid` contains only the Mermaid code block content (no code fence).
+It uses stable synthetic node IDs and escaped labels so arbitrary agent names and
+trigger labels do not break Mermaid parsing.
 
 `delegation.section` contains the canonical Markdown section: heading, Mermaid
 diagram, and compact bullets:
@@ -299,6 +337,14 @@ If a target has no description, only the agent name is shown. If a target has no
 triggers, only the top-level bullet is emitted. If there are no eligible targets,
 `delegation.targets` is empty and `delegation.section` / `delegation.mermaid` are
 omitted.
+
+### Mermaid hexagon syntax and Mustache compatibility
+
+Mermaid hexagon nodes use `{{"agent"}}` syntax (double braces with quoted label).
+This is distinct from Mustache `{{variable}}` syntax because the content starts
+with a quote character. The engine's post-render unresolved-tag check uses a
+precise regex that only matches Mustache-style identifiers (letters, digits, dots,
+underscores, hyphens), so Mermaid hexagon syntax does not trigger false positives.
 
 ---
 

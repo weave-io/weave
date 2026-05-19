@@ -300,6 +300,7 @@ export function composeAgentDescriptor(
     category,
     effectiveToolPolicy,
     delegationTargets,
+    workflows: config.workflows,
   });
 
   if (contextResult.isErr()) {

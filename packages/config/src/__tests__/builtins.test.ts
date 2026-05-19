@@ -51,13 +51,20 @@ describe("getBuiltinConfig", () => {
     expect(pattern?.temperature).toBe(0.3);
   });
 
-  it("(g) builtin config has no categories, workflows, or disabled entries", () => {
+  it("(g) builtin config has no categories or disabled entries", () => {
     const config = getBuiltinConfig()._unsafeUnwrap();
     expect(Object.keys(config.categories)).toHaveLength(0);
-    expect(Object.keys(config.workflows ?? {})).toHaveLength(0);
     expect(config.disabled.agents).toHaveLength(0);
     expect(config.disabled.hooks).toHaveLength(0);
     expect(config.disabled.skills).toHaveLength(0);
+  });
+
+  it("(g2) builtin config has 3 standard workflows", () => {
+    const config = getBuiltinConfig()._unsafeUnwrap();
+    expect(Object.keys(config.workflows)).toHaveLength(3);
+    expect(config.workflows["plan-and-execute"]).toBeDefined();
+    expect(config.workflows["quick-fix"]).toBeDefined();
+    expect(config.workflows["tapestry-execution"]).toBeDefined();
   });
 
   it("(h) BUILTIN_WEAVE_SOURCE is valid DSL — parseConfig returns no errors", () => {

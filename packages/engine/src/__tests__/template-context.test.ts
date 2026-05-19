@@ -16,6 +16,7 @@
 
 import { describe, expect, it } from "bun:test";
 
+import type { WorkflowConfig } from "@weave/core";
 import type { DelegationTarget } from "../compose.js";
 import {
   type AgentPromptTemplateContext,
@@ -674,5 +675,238 @@ describe("buildTemplateContext — Result type", () => {
     expect(ctx).toHaveProperty("agent");
     expect(ctx).toHaveProperty("toolPolicy");
     expect(ctx).toHaveProperty("delegation");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Workflow-aware Mermaid diagram generation
+// ---------------------------------------------------------------------------
+
+function makeWorkflow(
+  description: string,
+  steps: Array<{
+    name: string;
+    displayName?: string;
+    type: "autonomous" | "interactive" | "gate";
+    agent: string;
+  }>,
+): WorkflowConfig {
+  return {
+    description,
+    version: 1,
+    steps: steps.map((s) => ({
+      name: s.name,
+      display_name: s.displayName,
+      type: s.type,
+      agent: s.agent,
+      prompt: `Do ${s.name}`,
+      completion: { method: "agent_signal" as const },
+    })),
+  };
+}
+
+describe("buildTemplateContext — workflow-aware Mermaid diagram", () => {
+  it("uses workflow subgraph diagram when workflows are provided", () => {
+    const ctx = build({
+      agentName: "loom",
+      delegationTargets: [makeTarget("shuttle"), makeTarget("weft")],
+      workflows: {
+        "quick-fix": makeWorkflow("Fix a bug and get it reviewed", [
+          { name: "fix", type: "autonomous", agent: "shuttle" },
+          { name: "review", type: "gate", agent: "weft" },
+        ]),
+      },
+    });
+    expect(ctx.delegation.mermaid).toContain("subgraph");
+    expect(ctx.delegation.mermaid).toContain("quick-fix");
+  });
+
+  it("gate steps use hexagon {{}} syntax", () => {
+    const ctx = build({
+      agentName: "loom",
+      delegationTargets: [makeTarget("shuttle"), makeTarget("weft")],
+      workflows: {
+        "quick-fix": makeWorkflow("Fix a bug", [
+          { name: "fix", type: "autonomous", agent: "shuttle" },
+          { name: "review", type: "gate", agent: "weft" },
+        ]),
+      },
+    });
+    // Gate steps use {{"agent"}} hexagon syntax
+    expect(ctx.delegation.mermaid).toContain('{{"weft"}}');
+  });
+
+  it('autonomous steps use rectangle [""] syntax', () => {
+    const ctx = build({
+      agentName: "loom",
+      delegationTargets: [makeTarget("shuttle"), makeTarget("weft")],
+      workflows: {
+        "quick-fix": makeWorkflow("Fix a bug", [
+          { name: "fix", type: "autonomous", agent: "shuttle" },
+          { name: "review", type: "gate", agent: "weft" },
+        ]),
+      },
+    });
+    // Autonomous steps use ["agent"] rectangle syntax
+    expect(ctx.delegation.mermaid).toContain('["shuttle"]');
+  });
+
+  it("steps are connected in sequence order with step name as edge label", () => {
+    const ctx = build({
+      agentName: "loom",
+      delegationTargets: [
+        makeTarget("shuttle"),
+        makeTarget("weft"),
+        makeTarget("warp"),
+      ],
+      workflows: {
+        "plan-and-execute": makeWorkflow("Plan and execute", [
+          { name: "implement", type: "autonomous", agent: "shuttle" },
+          { name: "review", type: "gate", agent: "weft" },
+          { name: "security", type: "gate", agent: "warp" },
+        ]),
+      },
+    });
+    // step[0] → step[1] labelled with step[1].name
+    expect(ctx.delegation.mermaid).toContain('-->|"review"|');
+    // step[1] → step[2] labelled with step[2].name
+    expect(ctx.delegation.mermaid).toContain('-->|"security"|');
+  });
+
+  it("workflow prefix is derived from workflow name words", () => {
+    const ctx = build({
+      agentName: "loom",
+      delegationTargets: [makeTarget("shuttle"), makeTarget("weft")],
+      workflows: {
+        "quick-fix": makeWorkflow("Fix a bug", [
+          { name: "fix", type: "autonomous", agent: "shuttle" },
+          { name: "review", type: "gate", agent: "weft" },
+        ]),
+      },
+    });
+    // quick-fix → QF prefix
+    expect(ctx.delegation.mermaid).toContain("QF_shuttle");
+    expect(ctx.delegation.mermaid).toContain("QF_weft");
+  });
+
+  it("filters out workflows with no relevant steps", () => {
+    const ctx = build({
+      agentName: "loom",
+      delegationTargets: [makeTarget("shuttle")],
+      workflows: {
+        "irrelevant-workflow": makeWorkflow("Irrelevant", [
+          { name: "step1", type: "autonomous", agent: "some-other-agent" },
+        ]),
+        "relevant-workflow": makeWorkflow("Relevant", [
+          { name: "step1", type: "autonomous", agent: "shuttle" },
+        ]),
+      },
+    });
+    expect(ctx.delegation.mermaid).not.toContain("irrelevant-workflow");
+    expect(ctx.delegation.mermaid).toContain("relevant-workflow");
+  });
+
+  it("includes workflow where current agent itself appears in a step", () => {
+    const ctx = build({
+      agentName: "tapestry",
+      delegationTargets: [makeTarget("shuttle")],
+      workflows: {
+        "tapestry-execution": makeWorkflow("Tapestry execution", [
+          { name: "execute", type: "autonomous", agent: "tapestry" },
+          { name: "review", type: "gate", agent: "shuttle" },
+        ]),
+      },
+    });
+    expect(ctx.delegation.mermaid).toContain("tapestry-execution");
+  });
+
+  it("falls back to flat star when no workflows provided", () => {
+    const ctx = build({
+      agentName: "loom",
+      delegationTargets: [makeTarget("shuttle"), makeTarget("weft")],
+      // no workflows field
+    });
+    // Flat star uses A0, A1, A2 node IDs
+    expect(ctx.delegation.mermaid).toContain('A0["loom"]');
+    expect(ctx.delegation.mermaid).toContain('A1["shuttle"]');
+    expect(ctx.delegation.mermaid).toContain("A0 --> A1");
+    expect(ctx.delegation.mermaid).not.toContain("subgraph");
+  });
+
+  it("falls back to flat star when empty workflows object provided", () => {
+    const ctx = build({
+      agentName: "loom",
+      delegationTargets: [makeTarget("shuttle")],
+      workflows: {},
+    });
+    expect(ctx.delegation.mermaid).toContain('A0["loom"]');
+    expect(ctx.delegation.mermaid).not.toContain("subgraph");
+  });
+
+  it("workflow diagram starts with flowchart TD", () => {
+    const ctx = build({
+      agentName: "loom",
+      delegationTargets: [makeTarget("shuttle")],
+      workflows: {
+        "quick-fix": makeWorkflow("Fix a bug", [
+          { name: "fix", type: "autonomous", agent: "shuttle" },
+        ]),
+      },
+    });
+    expect(ctx.delegation.mermaid).toMatch(/^flowchart TD/);
+  });
+
+  it("subgraph label includes workflow name and description", () => {
+    const ctx = build({
+      agentName: "loom",
+      delegationTargets: [makeTarget("shuttle"), makeTarget("weft")],
+      workflows: {
+        "quick-fix": makeWorkflow("Fix a bug and get it reviewed", [
+          { name: "fix", type: "autonomous", agent: "shuttle" },
+          { name: "review", type: "gate", agent: "weft" },
+        ]),
+      },
+    });
+    expect(ctx.delegation.mermaid).toContain(
+      '"quick-fix: Fix a bug and get it reviewed"',
+    );
+  });
+
+  it("multiple workflows produce multiple subgraphs", () => {
+    const ctx = build({
+      agentName: "loom",
+      delegationTargets: [makeTarget("shuttle"), makeTarget("weft")],
+      workflows: {
+        "quick-fix": makeWorkflow("Fix a bug", [
+          { name: "fix", type: "autonomous", agent: "shuttle" },
+          { name: "review", type: "gate", agent: "weft" },
+        ]),
+        "plan-and-execute": makeWorkflow("Plan and execute", [
+          { name: "implement", type: "autonomous", agent: "shuttle" },
+          { name: "review", type: "gate", agent: "weft" },
+        ]),
+      },
+    });
+    expect(ctx.delegation.mermaid).toContain("subgraph quick-fix");
+    expect(ctx.delegation.mermaid).toContain("subgraph plan-and-execute");
+  });
+
+  it("is deterministic across multiple calls with same workflow input", () => {
+    const input = makeInput({
+      agentName: "loom",
+      delegationTargets: [makeTarget("shuttle"), makeTarget("weft")],
+      workflows: {
+        "quick-fix": makeWorkflow("Fix a bug", [
+          { name: "fix", type: "autonomous", agent: "shuttle" },
+          { name: "review", type: "gate", agent: "weft" },
+        ]),
+      },
+    });
+
+    const ctx1 = buildTemplateContext(input);
+    const ctx2 = buildTemplateContext(input);
+
+    if (ctx1.isErr() || ctx2.isErr()) throw new Error("build failed");
+    expect(ctx1.value.delegation.mermaid).toBe(ctx2.value.delegation.mermaid);
   });
 });
