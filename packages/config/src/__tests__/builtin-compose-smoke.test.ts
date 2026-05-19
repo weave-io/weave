@@ -14,8 +14,13 @@
  * - All 8 builtins compose to non-empty prompts.
  * - Loom and Tapestry (delegate allow + non-primary targets with triggers)
  *   produce a `## Delegation` section in their composedPrompt.
+ * - Delegating agents include a Mermaid code block with `flowchart TD`.
+ * - Delegating agents list all specialist agent names in their composed prompt.
  * - Shuttle, Pattern, Thread, Spindle, Weft, Warp (delegate deny) do NOT
  *   produce a `## Delegation` section.
+ * - No unresolved unescaped Mustache tags remain in any composed prompt.
+ * - No raw config objects, model lists, prompt file paths, harness tool names,
+ *   secrets, or environment data appear in any composed prompt.
  */
 
 import { beforeAll, describe, expect, it } from "bun:test";
@@ -118,6 +123,10 @@ describe("builtin compose smoke", () => {
     }
   });
 
+  // ---------------------------------------------------------------------------
+  // Delegating agents: ## Delegation, Mermaid, specialist names
+  // ---------------------------------------------------------------------------
+
   it("loom composedPrompt contains ## Delegation section", () => {
     const descriptor = getDescriptor("loom");
     expect(descriptor.composedPrompt).toContain("## Delegation");
@@ -126,6 +135,26 @@ describe("builtin compose smoke", () => {
   it("tapestry composedPrompt contains ## Delegation section", () => {
     const descriptor = getDescriptor("tapestry");
     expect(descriptor.composedPrompt).toContain("## Delegation");
+  });
+
+  it("loom composedPrompt contains a Mermaid code block", () => {
+    const descriptor = getDescriptor("loom");
+    expect(descriptor.composedPrompt).toContain("```mermaid");
+  });
+
+  it("tapestry composedPrompt contains a Mermaid code block", () => {
+    const descriptor = getDescriptor("tapestry");
+    expect(descriptor.composedPrompt).toContain("```mermaid");
+  });
+
+  it("loom composedPrompt contains flowchart TD", () => {
+    const descriptor = getDescriptor("loom");
+    expect(descriptor.composedPrompt).toContain("flowchart TD");
+  });
+
+  it("tapestry composedPrompt contains flowchart TD", () => {
+    const descriptor = getDescriptor("tapestry");
+    expect(descriptor.composedPrompt).toContain("flowchart TD");
   });
 
   it("loom delegation targets include specialist agents with triggers", () => {
@@ -144,6 +173,20 @@ describe("builtin compose smoke", () => {
       expect(target.triggers.length).toBeGreaterThan(0);
     }
   });
+
+  it("all delegating agents' composedPrompts list specialist agent names", () => {
+    for (const name of DELEGATING_AGENTS) {
+      const descriptor = getDescriptor(name);
+      // Each specialist should appear in the delegation section
+      for (const specialist of NON_DELEGATING_AGENTS) {
+        expect(descriptor.composedPrompt).toContain(specialist);
+      }
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Non-delegating agents: no ## Delegation section
+  // ---------------------------------------------------------------------------
 
   for (const name of NON_DELEGATING_AGENTS) {
     it(`${name} composedPrompt does NOT contain ## Delegation section`, () => {
@@ -173,13 +216,63 @@ describe("builtin compose smoke", () => {
     }
   });
 
-  it("all delegating agents' composedPrompts list specialist agent names", () => {
-    for (const name of DELEGATING_AGENTS) {
+  // ---------------------------------------------------------------------------
+  // No unresolved Mustache tags in any composed prompt
+  // ---------------------------------------------------------------------------
+
+  it("no unresolved unescaped triple-brace Mustache tags remain in any composed prompt", () => {
+    for (const name of ALL_BUILTINS) {
       const descriptor = getDescriptor(name);
-      // Each specialist should appear in the delegation section
-      for (const specialist of NON_DELEGATING_AGENTS) {
-        expect(descriptor.composedPrompt).toContain(specialist);
-      }
+      expect(descriptor.composedPrompt).not.toMatch(/\{\{\{[^}]+\}\}\}/);
     }
   });
+
+  it("no unresolved unescaped double-brace Mustache tags remain in any composed prompt", () => {
+    for (const name of ALL_BUILTINS) {
+      const descriptor = getDescriptor(name);
+      expect(descriptor.composedPrompt).not.toMatch(/\{\{[^}]+\}\}/);
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Sanitized review: no raw config/model/path/harness/secret exposure
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Tokens that must NOT appear in any rendered (composed) prompt.
+   * These indicate raw config objects, model identifiers, file paths,
+   * harness-specific tool names, or secret/environment data leaking through.
+   */
+  const RENDERED_BANNED_TOKENS = [
+    // Raw model identifiers
+    "claude-sonnet",
+    "gpt-4",
+    "anthropic/",
+    "openai/",
+    // Absolute or repo-relative paths
+    "packages/config",
+    "packages/engine",
+    "prompts/",
+    ".weave/",
+    // Harness-specific tool names
+    "TodoWrite",
+    "todowrite",
+    // Secret / environment data patterns
+    "process.env",
+    "API_KEY",
+    "SECRET",
+    // Weave-repo implementation details
+    "neverthrow",
+    "AGENTS.md",
+    "bun run",
+  ] as const;
+
+  for (const token of RENDERED_BANNED_TOKENS) {
+    it(`no composed prompt exposes raw token: "${token}"`, () => {
+      for (const name of ALL_BUILTINS) {
+        const descriptor = getDescriptor(name);
+        expect(descriptor.composedPrompt).not.toContain(token);
+      }
+    });
+  }
 });

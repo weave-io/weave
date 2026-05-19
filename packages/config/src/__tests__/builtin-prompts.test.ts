@@ -6,6 +6,8 @@
  * 2. No file contains the placeholder text shipped before real prompts existed.
  * 3. No file contains banned tokens that would indicate Weave-repo-only policy
  *    or harness-specific tool names leaking into product-level defaults.
+ * 4. Intentional Mustache placeholders (e.g. {{{delegation.section}}}) are
+ *    allowed — they are resolved at compose time, not in the source file.
  */
 
 import { describe, expect, it } from "bun:test";
@@ -19,19 +21,51 @@ import { BUILTIN_AGENT_NAMES } from "../builtins.js";
  * - `bun run`     — harness/repo-specific CLI invocation
  * - `neverthrow`  — Weave-repo implementation detail
  * - `Zod`         — Weave-repo implementation detail
- * - `Task`        — OpenCode-specific harness tool name
  * - `TodoWrite`   — OpenCode-specific harness tool name
  * - `todowrite`   — lowercase variant of the above
+ *
+ * Note: "Task" is intentionally NOT banned here — it is a common English word
+ * that appears legitimately in prompt prose (e.g. "a task is done when...").
+ * Harness-specific tool names like "TodoWrite" are banned instead.
  */
 const BANNED_TOKENS = [
   "AGENTS.md",
   "bun run",
   "neverthrow",
   "Zod",
-  "Task",
   "TodoWrite",
   "todowrite",
 ] as const;
+
+/**
+ * Tokens that indicate raw config, model, path, or harness data leaking into
+ * a prompt source file. These must not appear in any builtin prompt file.
+ */
+const BANNED_LEAKAGE_TOKENS = [
+  // Raw model identifiers
+  "claude-sonnet",
+  "gpt-4",
+  "anthropic/",
+  "openai/",
+  // Absolute or repo-relative paths
+  "packages/config",
+  "packages/engine",
+  "prompts/",
+  ".weave/",
+  // Harness-specific tool names
+  "opencode",
+  "OpenCode",
+  // Secret / environment data patterns
+  "process.env",
+  "API_KEY",
+  "SECRET",
+] as const;
+
+/**
+ * Intentional Mustache placeholders that ARE allowed in source prompt files.
+ * These are resolved at compose time by the template renderer.
+ */
+const ALLOWED_MUSTACHE_PLACEHOLDERS = ["{{{delegation.section}}}"] as const;
 
 const PLACEHOLDER_TEXT =
   "Placeholder — full prompt content is a future deliverable.";
@@ -75,6 +109,25 @@ describe("builtin prompt files", () => {
           expect(content).not.toContain(token);
         });
       }
+
+      for (const token of BANNED_LEAKAGE_TOKENS) {
+        it(`does not leak raw config/model/path/harness token: "${token}"`, async () => {
+          const content = await Bun.file(filePath).text();
+          expect(content).not.toContain(token);
+        });
+      }
+
+      it("does not contain unintended raw Mustache tags (only allowed placeholders permitted)", async () => {
+        const content = await Bun.file(filePath).text();
+        // Strip all allowed placeholders, then check no raw {{ or {{{ remain
+        let stripped = content;
+        for (const placeholder of ALLOWED_MUSTACHE_PLACEHOLDERS) {
+          stripped = stripped.split(placeholder).join("");
+        }
+        // After removing allowed placeholders, no unescaped Mustache tags should remain
+        expect(stripped).not.toMatch(/\{\{\{[^}]+\}\}\}/);
+        expect(stripped).not.toMatch(/\{\{[^}]+\}\}/);
+      });
     });
   }
 
@@ -125,5 +178,46 @@ describe("builtin prompt files", () => {
         content.includes("hand off");
       expect(hasDelegation).toBe(true);
     });
+
+    it("contains the delegation.section template placeholder", async () => {
+      const content = await Bun.file(join(PROMPTS_DIR, "loom.md")).text();
+      expect(content).toContain("{{{delegation.section}}}");
+    });
+  });
+
+  describe("tapestry.md — plan execution and delegation guidance", () => {
+    it("contains the delegation.section template placeholder", async () => {
+      const content = await Bun.file(join(PROMPTS_DIR, "tapestry.md")).text();
+      expect(content).toContain("{{{delegation.section}}}");
+    });
+
+    it("describes step-by-step plan execution", async () => {
+      const content = await Bun.file(join(PROMPTS_DIR, "tapestry.md")).text();
+      const hasExecution =
+        content.includes("step") ||
+        content.includes("plan") ||
+        content.includes("execute");
+      expect(hasExecution).toBe(true);
+    });
+  });
+
+  describe("non-delegating prompts — no artificial template tags", () => {
+    const NON_DELEGATING = [
+      "shuttle",
+      "pattern",
+      "thread",
+      "spindle",
+      "weft",
+      "warp",
+    ] as const;
+
+    for (const agentName of NON_DELEGATING) {
+      it(`${agentName}.md does not contain delegation.section placeholder`, async () => {
+        const content = await Bun.file(
+          join(PROMPTS_DIR, `${agentName}.md`),
+        ).text();
+        expect(content).not.toContain("{{{delegation.section}}}");
+      });
+    }
   });
 });
