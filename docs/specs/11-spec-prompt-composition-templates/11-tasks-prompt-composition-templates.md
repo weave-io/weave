@@ -56,7 +56,7 @@
 - [x] 1.11 Add `packages/engine/src/__tests__/template-renderer.test.ts` covering supported tags, nested sections, comments, `{{.}}`, escaped literals, unknown paths, unsafe paths, function values, unsupported tags, malformed syntax, and unresolved tags.
 - [x] 1.12 Run `bun run --filter '@weave/engine' test` and record the passing renderer proof artifact.
 
-### [ ] 2.0 Define the bounded Template Context and delegation guidance generator
+### [x] 2.0 Define the bounded Template Context and delegation guidance generator
 
 #### 2.0 Proof Artifact(s)
 
@@ -67,18 +67,18 @@
 
 #### 2.0 Tasks
 
-- [ ] 2.1 Create `packages/engine/src/template-context.ts` with `AgentPromptTemplateContext`, delegation context types, and exported template context/error types intended for the public engine barrel.
-- [ ] 2.2 Define explicit allowed-path metadata for `agent`, optional `category`, `toolPolicy.effective`, `delegation`, nested `delegation.targets`, nested `triggers`, scalar `domains`, and `{{.}}` item contexts.
-- [ ] 2.3 Implement an agent context builder that projects only `agent.name`, optional `description`, `mode`, `skills`, and `isCategory` from composition inputs.
-- [ ] 2.4 Implement category context projection for generated category shuttle agents only, including `category.name` and optional `category.description` while omitting `category` for non-category agents.
-- [ ] 2.5 Project only resolved effective tool policy values under `toolPolicy.effective` and avoid exposing raw tool policy.
-- [ ] 2.6 Project `delegation.targets` to include `name`, optional `description`, deduplicated `domains`, and trigger `{ domain, trigger }` details.
-- [ ] 2.7 Generate deterministic Mermaid `flowchart TD` as a current-agent star with stable synthetic node IDs, escaped quoted labels, and deduplicated domain edge labels.
-- [ ] 2.8 Generate canonical `delegation.section` Markdown containing `## Delegation`, the Mermaid block, and compact bullets with nested trigger lines.
-- [ ] 2.9 Omit `delegation.section` and `delegation.mermaid` when there are no eligible delegation targets while keeping `delegation.targets` as an empty array.
-- [ ] 2.10 Add `packages/engine/src/__tests__/template-context.test.ts` covering context shape, no raw config/model/temperature/path exposure, optional category behavior, allowed optional paths, Mermaid escaping, domain labels, bullets, and no-target omission.
-- [ ] 2.11 Export only the intended Template Context and error types from `packages/engine/src/index.ts`; keep low-level renderer functions internal.
-- [ ] 2.12 Run `bun run --filter '@weave/engine' typecheck` and record the passing type proof artifact.
+- [x] 2.1 Create `packages/engine/src/template-context.ts` with `AgentPromptTemplateContext`, delegation context types, and exported template context/error types intended for the public engine barrel.
+- [x] 2.2 Define explicit allowed-path metadata for `agent`, optional `category`, `toolPolicy.effective`, `delegation`, nested `delegation.targets`, nested `triggers`, scalar `domains`, and `{{.}}` item contexts.
+- [x] 2.3 Implement an agent context builder that projects only `agent.name`, optional `description`, `mode`, `skills`, and `isCategory` from composition inputs.
+- [x] 2.4 Implement category context projection for generated category shuttle agents only, including `category.name` and optional `category.description` while omitting `category` for non-category agents.
+- [x] 2.5 Project only resolved effective tool policy values under `toolPolicy.effective` and avoid exposing raw tool policy.
+- [x] 2.6 Project `delegation.targets` to include `name`, optional `description`, deduplicated `domains`, and trigger `{ domain, trigger }` details.
+- [x] 2.7 Generate deterministic Mermaid `flowchart TD` as a current-agent star with stable synthetic node IDs, escaped quoted labels, and deduplicated domain edge labels.
+- [x] 2.8 Generate canonical `delegation.section` Markdown containing `## Delegation`, the Mermaid block, and compact bullets with nested trigger lines.
+- [x] 2.9 Omit `delegation.section` and `delegation.mermaid` when there are no eligible delegation targets while keeping `delegation.targets` as an empty array.
+- [x] 2.10 Add `packages/engine/src/__tests__/template-context.test.ts` covering context shape, no raw config/model/temperature/path exposure, optional category behavior, allowed optional paths, Mermaid escaping, domain labels, bullets, and no-target omission.
+- [x] 2.11 Export only the intended Template Context and error types from `packages/engine/src/index.ts`; keep low-level renderer functions internal.
+- [x] 2.12 Run `bun run --filter '@weave/engine' typecheck` and record the passing type proof artifact.
 
 ### [ ] 3.0 Integrate template rendering into `composeAgentDescriptor()`
 
