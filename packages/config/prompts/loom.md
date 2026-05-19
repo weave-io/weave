@@ -30,6 +30,8 @@ Delegate when the work is:
 - **Code quality review** — hand off to the code reviewer
 - **Security audit** — hand off to the security auditor
 
+{{{delegation.section}}}
+
 ## Constraints
 
 - Do not make assumptions about intent — ask one focused clarifying question if needed.

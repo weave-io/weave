@@ -103,7 +103,7 @@
 - [x] 3.10 Extend `packages/engine/src/__tests__/compose.test.ts` for inline template rendering, prompt-file template rendering, rendered append, fallback placement, source-only suppression, append no-suppress behavior, static prompt compatibility, and typed template error metadata.
 - [x] 3.11 Run `bun run --filter '@weave/engine' test` and record the passing compose proof artifact.
 
-### [ ] 4.0 Align builtin prompts and config smoke coverage with rendered templates
+### [x] 4.0 Align builtin prompts and config smoke coverage with rendered templates
 
 #### 4.0 Proof Artifact(s)
 
@@ -114,15 +114,15 @@
 
 #### 4.0 Tasks
 
-- [ ] 4.1 Update `packages/config/prompts/loom.md` to place `{{{delegation.section}}}` where routing guidance naturally belongs.
-- [ ] 4.2 Update `packages/config/prompts/tapestry.md` to place `{{{delegation.section}}}` where routing guidance naturally belongs.
-- [ ] 4.3 Review all `packages/config/prompts/*.md` files and avoid artificial template tags in prompts where Template Context fields do not improve clarity.
-- [ ] 4.4 Update `packages/config/src/__tests__/builtin-prompts.test.ts` so source prompt checks allow intentional Mustache placeholders while preserving banned repo/harness leakage tokens.
-- [ ] 4.5 Update `packages/config/src/__tests__/builtin-compose-smoke.test.ts` to assert all built-ins compose after rendering and no unresolved unescaped Mustache tags remain.
-- [ ] 4.6 Update builtin smoke assertions so delegating built-ins include `## Delegation`, a Mermaid code block, `flowchart TD`, and expected specialist names.
-- [ ] 4.7 Keep non-delegating builtin assertions proving no fallback `## Delegation` section is emitted.
-- [ ] 4.8 Add or update sanitized review checks so rendered built-in prompts do not expose raw config objects, prompt file paths, model lists, repo-only policy, harness tool names, secrets, environment, or process data.
-- [ ] 4.9 Run `bun test packages/config/src/__tests__/builtin-prompts.test.ts` and `bun test packages/config/src/__tests__/builtin-compose-smoke.test.ts`; record both passing proof artifacts.
+- [x] 4.1 Update `packages/config/prompts/loom.md` to place `{{{delegation.section}}}` where routing guidance naturally belongs.
+- [x] 4.2 Update `packages/config/prompts/tapestry.md` to place `{{{delegation.section}}}` where routing guidance naturally belongs.
+- [x] 4.3 Review all `packages/config/prompts/*.md` files and avoid artificial template tags in prompts where Template Context fields do not improve clarity.
+- [x] 4.4 Update `packages/config/src/__tests__/builtin-prompts.test.ts` so source prompt checks allow intentional Mustache placeholders while preserving banned repo/harness leakage tokens.
+- [x] 4.5 Update `packages/config/src/__tests__/builtin-compose-smoke.test.ts` to assert all built-ins compose after rendering and no unresolved unescaped Mustache tags remain.
+- [x] 4.6 Update builtin smoke assertions so delegating built-ins include `## Delegation`, a Mermaid code block, `flowchart TD`, and expected specialist names.
+- [x] 4.7 Keep non-delegating builtin assertions proving no fallback `## Delegation` section is emitted.
+- [x] 4.8 Add or update sanitized review checks so rendered built-in prompts do not expose raw config objects, prompt file paths, model lists, repo-only policy, harness tool names, secrets, environment, or process data.
+- [x] 4.9 Run `bun test packages/config/src/__tests__/builtin-prompts.test.ts` and `bun test packages/config/src/__tests__/builtin-compose-smoke.test.ts`; record both passing proof artifacts.
 
 ### [ ] 5.0 Finalize documentation, verification gates, and security audit
 
