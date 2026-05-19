@@ -124,7 +124,7 @@
 - [x] 4.8 Add or update sanitized review checks so rendered built-in prompts do not expose raw config objects, prompt file paths, model lists, repo-only policy, harness tool names, secrets, environment, or process data.
 - [x] 4.9 Run `bun test packages/config/src/__tests__/builtin-prompts.test.ts` and `bun test packages/config/src/__tests__/builtin-compose-smoke.test.ts`; record both passing proof artifacts.
 
-### [ ] 5.0 Finalize documentation, verification gates, and security audit
+### [x] 5.0 Finalize documentation, verification gates, and security audit
 
 #### 5.0 Proof Artifact(s)
 
@@ -135,12 +135,12 @@
 
 #### 5.0 Tasks
 
-- [ ] 5.1 Re-read `docs/prompt-composition.md`, `docs/adr/0001-prompt-composition-templates.md`, and `CONTEXT.md` after implementation and patch any drift from actual behavior.
-- [ ] 5.2 Verify the final implementation still excludes workflow step prompt templating, raw config exposure, partials, delimiter changes, helpers, lambdas, new DSL opt-in fields, and full delegation graph modeling.
-- [ ] 5.3 Run `bun run lint` and fix style issues without mixing unrelated formatting changes.
-- [ ] 5.4 Run `bun run typecheck` and fix TypeScript errors.
-- [ ] 5.5 Run `bun test` and fix failing tests.
-- [ ] 5.6 Run `bun run build` if typecheck/tests pass, to prove bundled packages and declarations still emit.
-- [ ] 5.7 Request Warp security review for template rendering, unsafe path/prototype traversal, function value rejection, unresolved tag checks, and new dependency risk.
-- [ ] 5.8 Address any Warp REQUIRED findings and re-run affected tests.
-- [ ] 5.9 Update `docs/specs/11-spec-prompt-composition-templates/11-audit-prompt-composition-templates.md` or validation notes with final proof artifact commands and security review status.
+- [x] 5.1 Re-read `docs/prompt-composition.md`, `docs/adr/0001-prompt-composition-templates.md`, and `CONTEXT.md` after implementation and patch any drift from actual behavior.
+- [x] 5.2 Verify the final implementation still excludes workflow step prompt templating, raw config exposure, partials, delimiter changes, helpers, lambdas, new DSL opt-in fields, and full delegation graph modeling.
+- [x] 5.3 Run `bun run lint` and fix style issues without mixing unrelated formatting changes.
+- [x] 5.4 Run `bun run typecheck` and fix TypeScript errors.
+- [x] 5.5 Run `bun test` and fix failing tests.
+- [x] 5.6 Run `bun run build` if typecheck/tests pass, to prove bundled packages and declarations still emit.
+- [x] 5.7 Request Warp security review for template rendering, unsafe path/prototype traversal, function value rejection, unresolved tag checks, and new dependency risk.
+- [x] 5.8 Address any Warp REQUIRED findings and re-run affected tests.
+- [x] 5.9 Update `docs/specs/11-spec-prompt-composition-templates/11-audit-prompt-composition-templates.md` or validation notes with final proof artifact commands and security review status.
