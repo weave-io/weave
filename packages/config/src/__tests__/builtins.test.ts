@@ -113,7 +113,10 @@ describe("getBuiltinConfig", () => {
     const config = getBuiltinConfig()._unsafeUnwrap();
     for (const name of SPECIALIST_AGENTS) {
       const agent = config.agents[name];
-      for (const t of agent?.triggers ?? []) {
+      expect(agent).toBeDefined();
+      const triggers = agent?.triggers ?? [];
+      expect(triggers.length).toBeGreaterThan(0);
+      for (const t of triggers) {
         expect(t.domain.trim().length).toBeGreaterThan(0);
         expect(t.trigger.trim().length).toBeGreaterThan(0);
       }

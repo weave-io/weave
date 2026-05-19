@@ -87,28 +87,32 @@ function getDescriptor(name: string): AgentDescriptor {
 // Tests
 // ---------------------------------------------------------------------------
 
+// Static list used only for dynamic `it()` name generation at describe-time
+// (before beforeAll runs). Must stay in sync with the builtin agent set.
+const NON_DELEGATING_AGENTS_STATIC = [
+  "shuttle",
+  "pattern",
+  "thread",
+  "spindle",
+  "weft",
+  "warp",
+] as const;
+
 describe("builtin compose smoke", () => {
-  const ALL_BUILTINS = [
-    "loom",
-    "tapestry",
-    "shuttle",
-    "pattern",
-    "thread",
-    "spindle",
-    "weft",
-    "warp",
-  ] as const;
+  // Derived from the loaded config at test-run time — avoids hardcoded drift.
+  let ALL_BUILTINS: string[];
+  let DELEGATING_AGENTS: string[];
+  let NON_DELEGATING_AGENTS: string[];
 
-  const DELEGATING_AGENTS = ["loom", "tapestry"] as const;
-
-  const NON_DELEGATING_AGENTS = [
-    "shuttle",
-    "pattern",
-    "thread",
-    "spindle",
-    "weft",
-    "warp",
-  ] as const;
+  beforeAll(() => {
+    ALL_BUILTINS = Object.keys(config.agents);
+    DELEGATING_AGENTS = ALL_BUILTINS.filter(
+      (name) => config.agents[name]?.tool_policy?.delegate === "allow",
+    );
+    NON_DELEGATING_AGENTS = ALL_BUILTINS.filter(
+      (name) => !DELEGATING_AGENTS.includes(name),
+    );
+  });
 
   it("all 8 builtins are present in the loaded config", () => {
     for (const name of ALL_BUILTINS) {
@@ -188,7 +192,7 @@ describe("builtin compose smoke", () => {
   // Non-delegating agents: no ## Delegation section
   // ---------------------------------------------------------------------------
 
-  for (const name of NON_DELEGATING_AGENTS) {
+  for (const name of NON_DELEGATING_AGENTS_STATIC) {
     it(`${name} composedPrompt does NOT contain ## Delegation section`, () => {
       const descriptor = getDescriptor(name);
       expect(descriptor.composedPrompt).not.toContain("## Delegation");

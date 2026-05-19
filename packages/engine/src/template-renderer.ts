@@ -285,7 +285,11 @@ function validateTokens(
     // then recursively validate children with the resolved section prefix
     if (type === "#" || type === "^") {
       // Resolve the section path against the current prefix
-      const resolvedSectionPath = resolvePath(value, sectionPrefix);
+      const resolvedSectionPath = resolvePath(
+        value,
+        sectionPrefix,
+        allowedPaths,
+      );
 
       const pathCheck = validatePath(resolvedSectionPath, allowedPaths);
       if (pathCheck.isErr()) return pathCheck;
@@ -314,7 +318,7 @@ function validateTokens(
       if (value === ".") continue;
 
       // Resolve the path against the current section prefix
-      const resolvedPath = resolvePath(value, sectionPrefix);
+      const resolvedPath = resolvePath(value, sectionPrefix, allowedPaths);
 
       const pathCheck = validatePath(resolvedPath, allowedPaths);
       if (pathCheck.isErr()) return pathCheck;
@@ -327,20 +331,38 @@ function validateTokens(
 /**
  * Resolve a template path against a section prefix.
  *
- * Rules:
- * - If the path contains a dot (already a dotted path like "agent.description"),
- *   it is treated as an absolute path and returned as-is. Mustache resolves
- *   dotted paths from the root context, not relative to the section.
- * - If the path is a single segment (like "name") and there is a section prefix,
- *   it is resolved relative to the prefix: "delegation.targets.name".
+ * Mustache.js resolves names through the context stack: it starts from the
+ * current section context and walks upward toward the root. This function
+ * mirrors that behaviour for path validation:
+ *
+ * - If there is a section prefix AND the value contains a dot (e.g.
+ *   `info.name` inside `{{#agent}}`), the section-relative path
+ *   (`agent.info.name`) is tried first. If that is not in allowedPaths,
+ *   the root-absolute path is used as a fallback, matching Mustache's
+ *   context-stack lookup semantics.
+ * - If the path is a single segment (like "name") and there is a section
+ *   prefix, it is resolved relative to the prefix: "delegation.targets.name".
  * - If there is no section prefix, the path is returned as-is.
+ *
+ * @param value - the raw path from the template token
+ * @param sectionPrefix - the current section context path (empty at top level)
+ * @param allowedPaths - the set of allowed paths for fallback resolution
  */
-function resolvePath(value: string, sectionPrefix: string): string {
-  // Dotted paths are absolute in Mustache — resolve from root
-  if (value.includes(".")) return value;
-  // Single-segment paths inside a section are relative to the section context
+function resolvePath(
+  value: string,
+  sectionPrefix: string,
+  allowedPaths: Set<string>,
+): string {
   if (sectionPrefix === "") return value;
-  return `${sectionPrefix}.${value}`;
+  // Single-segment paths inside a section are always relative to the section context.
+  // Mustache resolves single-segment names from the current context object first.
+  if (!value.includes(".")) return `${sectionPrefix}.${value}`;
+  // Dotted paths inside a section: try section-relative first (Mustache stack semantics),
+  // then fall back to root-absolute if the section-relative path is not allowed.
+  const sectionRelative = `${sectionPrefix}.${value}`;
+  if (allowedPaths.has(sectionRelative)) return sectionRelative;
+  // Fallback: root-absolute (for paths like {{agent.name}} inside {{#agent.description}})
+  return value;
 }
 
 /**

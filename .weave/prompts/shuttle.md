@@ -16,7 +16,7 @@ A task is done when all of the following hold:
 1. **Implementation complete** — all acceptance criteria from the task description are met.
 2. **Type checking passes** — run `bun run typecheck`; zero errors.
 3. **Tests pass** — run `bun test`; all tests green across affected packages.
-4. **Build succeeds** — run `bun run build`; no build errors.
+4. **Build succeeds (when relevant)** — if package exports or types changed, run `bun run build`; no build errors.
 5. **Config valid** — if `.weave/config.weave` or `packages/config/src/builtins.ts` was touched, run `bun run validate-config`; exits 0.
 6. **Documentation updated** — if behavior changed, relevant `docs/` files are updated.
 

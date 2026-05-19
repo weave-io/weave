@@ -463,7 +463,7 @@ describe("buildTemplateContext — Mermaid diagram", () => {
       delegationTargets: [makeTarget("shuttle")],
     });
     expect(ctx.delegation.mermaid).toContain(
-      'A0["agent-with-#quot;quotes#quot;"]',
+      'A0["agent-with-&quot;quotes&quot;"]',
     );
   });
 
@@ -472,7 +472,7 @@ describe("buildTemplateContext — Mermaid diagram", () => {
       agentName: "loom",
       delegationTargets: [makeTarget('target-"quoted"')],
     });
-    expect(ctx.delegation.mermaid).toContain('A1["target-#quot;quoted#quot;"]');
+    expect(ctx.delegation.mermaid).toContain('A1["target-&quot;quoted&quot;"]');
   });
 
   it("escapes double quotes in domain edge labels", () => {
@@ -485,7 +485,7 @@ describe("buildTemplateContext — Mermaid diagram", () => {
       ],
     });
     expect(ctx.delegation.mermaid).toContain(
-      'A0 -->|"Domain #quot;X#quot;"| A1',
+      'A0 -->|"Domain &quot;X&quot;"| A1',
     );
   });
 

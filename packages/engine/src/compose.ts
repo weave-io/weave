@@ -80,6 +80,11 @@ export type ComposeError =
       promptFilePath?: string;
       message: string;
       reason: PromptTemplateReason;
+    }
+  | {
+      type: "TemplateContextBuildError";
+      agentName: string;
+      message: string;
     };
 
 function loadPromptSource(
@@ -305,7 +310,7 @@ export function composeAgentDescriptor(
 
   if (contextResult.isErr()) {
     return errAsync({
-      type: "PromptSourceMissingError",
+      type: "TemplateContextBuildError",
       agentName,
       message: `Failed to build template context for agent "${agentName}": ${contextResult.error.message}`,
     });

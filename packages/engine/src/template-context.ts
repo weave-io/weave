@@ -202,10 +202,10 @@ export interface TemplateContextInput {
  * Escape a label string for use inside a Mermaid quoted label.
  *
  * Mermaid uses double-quoted labels. Any `"` inside the label must be
- * replaced with the HTML entity `#quot;` to avoid breaking the diagram.
+ * replaced with the HTML entity `&quot;` to avoid breaking the diagram.
  */
 function escapeMermaidLabel(label: string): string {
-  return label.replace(/"/g, "#quot;");
+  return label.replace(/"/g, "&quot;");
 }
 
 /**
