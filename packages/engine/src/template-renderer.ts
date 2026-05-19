@@ -240,19 +240,23 @@ function collectTokens(tokens: MustacheToken[]): MustacheToken[] {
  * 3. All referenced paths are in the allowed set (or are "." for list items)
  *
  * Section-relative paths: child tokens within a section are relative to the
- * section's context object. When inside `{{#agent}}`, child paths like
- * `{{name}}` refer to `agent.name` — they are allowed because `agent` is
- * in the allowed set. We track whether we are inside a section to allow
- * child paths without requiring them to be in the top-level allowed set.
+ * section's context object. When inside `{{#delegation.targets}}`, a child
+ * path like `{{name}}` (single segment) is resolved as `delegation.targets.name`
+ * and validated against the allowed set.
+ *
+ * Absolute dotted paths (e.g. `{{agent.description}}` inside a section) are
+ * validated as-is — Mustache resolves them from the root context, not relative
+ * to the section.
  *
  * @param tokens - tokens to validate (may be section children)
  * @param allowedPaths - top-level allowed paths
- * @param insideSection - true when validating children of a section token
+ * @param sectionPrefix - dotted path prefix for the current section context
+ *   (empty string at top level, e.g. "delegation.targets" inside that section)
  */
 function validateTokens(
   tokens: MustacheToken[],
   allowedPaths: Set<string>,
-  insideSection = false,
+  sectionPrefix = "",
 ): Result<void, RendererError> {
   for (const token of tokens) {
     const [type, value] = token;
@@ -278,25 +282,21 @@ function validateTokens(
     }
 
     // For sections and inverted sections: validate the section name itself,
-    // then recursively validate children with insideSection=true
+    // then recursively validate children with the resolved section prefix
     if (type === "#" || type === "^") {
-      if (!insideSection) {
-        // Top-level section: validate against allowed paths
-        const pathCheck = validatePath(value, allowedPaths);
-        if (pathCheck.isErr()) return pathCheck;
-      } else {
-        // Nested section: only check for unsafe paths
-        const unsafeCheck = checkUnsafePath(value);
-        if (unsafeCheck.isErr()) return unsafeCheck;
-      }
+      // Resolve the section path against the current prefix
+      const resolvedSectionPath = resolvePath(value, sectionPrefix);
 
-      // Recursively validate children — they are section-relative
+      const pathCheck = validatePath(resolvedSectionPath, allowedPaths);
+      if (pathCheck.isErr()) return pathCheck;
+
+      // Recursively validate children with the resolved section path as prefix
       const children = token[4];
       if (Array.isArray(children) && children.length > 0) {
         const childResult = validateTokens(
           children as MustacheToken[],
           allowedPaths,
-          true,
+          resolvedSectionPath,
         );
         if (childResult.isErr()) return childResult;
       }
@@ -313,16 +313,11 @@ function validateTokens(
       // "." is the current-item reference — always allowed in list contexts
       if (value === ".") continue;
 
-      if (insideSection) {
-        // Inside a section: only check for unsafe paths
-        // Child paths are relative to the section context object
-        const unsafeCheck = checkUnsafePath(value);
-        if (unsafeCheck.isErr()) return unsafeCheck;
-      } else {
-        // Top-level: validate against allowed paths
-        const pathCheck = validatePath(value, allowedPaths);
-        if (pathCheck.isErr()) return pathCheck;
-      }
+      // Resolve the path against the current section prefix
+      const resolvedPath = resolvePath(value, sectionPrefix);
+
+      const pathCheck = validatePath(resolvedPath, allowedPaths);
+      if (pathCheck.isErr()) return pathCheck;
     }
   }
 
@@ -330,21 +325,22 @@ function validateTokens(
 }
 
 /**
- * Check a path for unsafe segments only (no allowed-path check).
- * Used for tokens inside sections where paths are context-relative.
+ * Resolve a template path against a section prefix.
+ *
+ * Rules:
+ * - If the path contains a dot (already a dotted path like "agent.description"),
+ *   it is treated as an absolute path and returned as-is. Mustache resolves
+ *   dotted paths from the root context, not relative to the section.
+ * - If the path is a single segment (like "name") and there is a section prefix,
+ *   it is resolved relative to the prefix: "delegation.targets.name".
+ * - If there is no section prefix, the path is returned as-is.
  */
-function checkUnsafePath(path: string): Result<void, RendererError> {
-  const segments = path.split(".");
-  for (const segment of segments) {
-    if (UNSAFE_PATH_SEGMENTS.has(segment)) {
-      return err({
-        type: "UnsafePath",
-        path,
-        message: `Unsafe path segment "${segment}" in path "${path}" — prototype traversal is not allowed`,
-      });
-    }
-  }
-  return ok(undefined);
+function resolvePath(value: string, sectionPrefix: string): string {
+  // Dotted paths are absolute in Mustache — resolve from root
+  if (value.includes(".")) return value;
+  // Single-segment paths inside a section are relative to the section context
+  if (sectionPrefix === "") return value;
+  return `${sectionPrefix}.${value}`;
 }
 
 /**
@@ -354,8 +350,11 @@ function checkUnsafePath(path: string): Result<void, RendererError> {
  * - Reject any segment that is an unsafe prototype key
  * - Accept "." (current item)
  * - Accept if the full dotted path is in allowedPaths
- * - Accept if the root segment is in allowedPaths (section-relative access)
  * - Otherwise reject as UnknownPath
+ *
+ * Note: section-relative path resolution is handled by the caller
+ * (`validateTokens`), which prepends the section prefix before calling here.
+ * This function only checks the already-resolved full path.
  */
 function validatePath(
   path: string,
@@ -374,14 +373,8 @@ function validatePath(
     }
   }
 
-  // Full path allowed
+  // Full path must be explicitly in the allowed set
   if (allowedPaths.has(path)) return ok(undefined);
-
-  // Root segment allowed (section-relative access like agent.name when "agent" is allowed)
-  const rootSegment = segments[0];
-  if (rootSegment !== undefined && allowedPaths.has(rootSegment)) {
-    return ok(undefined);
-  }
 
   return err({
     type: "UnknownPath",

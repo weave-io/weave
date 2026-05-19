@@ -170,7 +170,8 @@ describe("renderTemplate — nested sections", () => {
     const output = render(
       "{{#agent}}Name: {{name}}{{/agent}}",
       { agent: { name: "loom" } },
-      allowed("agent"),
+      // "agent.name" must be in allowedPaths because child "name" resolves to "agent.name"
+      allowed("agent", "agent.name"),
     );
     expect(output).toBe("Name: loom");
   });
@@ -179,7 +180,8 @@ describe("renderTemplate — nested sections", () => {
     const output = render(
       "{{#outer}}{{#inner}}{{value}}{{/inner}}{{/outer}}",
       { outer: { inner: { value: "deep" } } },
-      allowed("outer"),
+      // "outer.inner" and "outer.inner.value" must be in allowedPaths
+      allowed("outer", "outer.inner", "outer.inner.value"),
     );
     expect(output).toBe("deep");
   });
@@ -188,7 +190,8 @@ describe("renderTemplate — nested sections", () => {
     const output = render(
       "{{#items}}{{name}} {{/items}}",
       { items: [{ name: "a" }, { name: "b" }, { name: "c" }] },
-      allowed("items"),
+      // "items.name" must be in allowedPaths because child "name" resolves to "items.name"
+      allowed("items", "items.name"),
     );
     expect(output).toBe("a b c ");
   });
@@ -278,16 +281,30 @@ describe("renderTemplate — unknown paths", () => {
     }
   });
 
-  it("allows dotted path when root segment is in allowedPaths", () => {
+  it("allows full dotted path when explicitly in allowedPaths", () => {
     const output = render(
       "{{agent.name}}",
       { agent: { name: "loom" } },
-      allowed("agent"),
+      allowed("agent.name"),
     );
     expect(output).toBe("loom");
   });
 
-  it("allows full dotted path when explicitly in allowedPaths", () => {
+  it("rejects dotted path when only root segment is in allowedPaths (strict full-path check)", () => {
+    // With strict full-path validation, "agent.name" requires "agent.name" in allowedPaths,
+    // not just "agent". This is the fix for the typo-detection bug.
+    const error = renderErr(
+      "{{agent.name}}",
+      { agent: { name: "loom" } },
+      allowed("agent"),
+    );
+    expect(error.type).toBe("UnknownPath");
+    if (error.type === "UnknownPath") {
+      expect(error.path).toBe("agent.name");
+    }
+  });
+
+  it("allows full dotted path when explicitly in allowedPaths (toolPolicy)", () => {
     const output = render(
       "{{toolPolicy.effective}}",
       { toolPolicy: { effective: "allow" } },
@@ -383,7 +400,8 @@ describe("renderTemplate — function values", () => {
     const error = renderErr(
       "{{agent.name}}",
       { agent: { name: lambda as unknown as string } },
-      allowed("agent"),
+      // "agent.name" must be in allowedPaths for strict full-path validation
+      allowed("agent.name"),
     );
     expect(error.type).toBe("FunctionValue");
     if (error.type === "FunctionValue") {
@@ -566,7 +584,26 @@ Skills:
 {{/agent.skills}}
 `.trim();
 
-    const output = render(template, context, allowed("agent", "toolPolicy"));
+    // Use the full ALLOWED_TEMPLATE_PATHS-style set with all explicit paths
+    const output = render(
+      template,
+      context,
+      allowed(
+        "agent",
+        "agent.name",
+        "agent.description",
+        "agent.mode",
+        "agent.skills",
+        "agent.isCategory",
+        "toolPolicy",
+        "toolPolicy.effective",
+        "toolPolicy.effective.read",
+        "toolPolicy.effective.write",
+        "toolPolicy.effective.execute",
+        "toolPolicy.effective.delegate",
+        "toolPolicy.effective.network",
+      ),
+    );
     expect(output).toContain("Agent: shuttle");
     expect(output).toContain("Description: Domain specialist");
     expect(output).toContain("Mode: subagent");
@@ -585,9 +622,107 @@ Skills:
     const output = render(
       "Prompt text.\n\n{{{delegation.section}}}",
       context,
-      allowed("delegation"),
+      // "delegation.section" must be explicitly in allowedPaths
+      allowed("delegation", "delegation.section"),
     );
     expect(output).toContain("## Delegation");
     expect(output).toContain("- shuttle: Domain specialist");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Strict full-path validation (typo detection)
+// ---------------------------------------------------------------------------
+
+describe("renderTemplate — strict full-path validation", () => {
+  it("rejects {{agent.nmae}} (typo) as UnknownPath", () => {
+    // "agent.nmae" is not in ALLOWED_TEMPLATE_PATHS — only "agent.name" is.
+    // With strict full-path checking, typos are caught at validation time.
+    const error = renderErr(
+      "{{agent.nmae}}",
+      { agent: { name: "loom" } },
+      // Simulate ALLOWED_TEMPLATE_PATHS: "agent" and "agent.name" are allowed,
+      // but "agent.nmae" is not.
+      allowed("agent", "agent.name", "agent.description", "agent.mode"),
+    );
+    expect(error.type).toBe("UnknownPath");
+    if (error.type === "UnknownPath") {
+      expect(error.path).toBe("agent.nmae");
+    }
+  });
+
+  it("rejects {{#delegation.targets}}{{bogus}}{{/delegation.targets}} as UnknownPath", () => {
+    // Inside {{#delegation.targets}}, child "bogus" resolves to
+    // "delegation.targets.bogus" which is not in ALLOWED_TEMPLATE_PATHS.
+    const error = renderErr(
+      "{{#delegation.targets}}{{bogus}}{{/delegation.targets}}",
+      { delegation: { targets: [{ name: "shuttle" }] } },
+      allowed(
+        "delegation",
+        "delegation.targets",
+        "delegation.targets.name",
+        "delegation.targets.description",
+        "delegation.targets.domains",
+        "delegation.targets.triggers",
+        "delegation.targets.triggers.domain",
+        "delegation.targets.triggers.trigger",
+      ),
+    );
+    expect(error.type).toBe("UnknownPath");
+    if (error.type === "UnknownPath") {
+      expect(error.path).toBe("delegation.targets.bogus");
+    }
+  });
+
+  it("allows {{#delegation.targets}}{{name}}{{/delegation.targets}} (valid child path)", () => {
+    // Inside {{#delegation.targets}}, child "name" resolves to
+    // "delegation.targets.name" which IS in ALLOWED_TEMPLATE_PATHS.
+    const output = render(
+      "{{#delegation.targets}}{{name}}{{/delegation.targets}}",
+      { delegation: { targets: [{ name: "shuttle" }, { name: "warp" }] } },
+      allowed(
+        "delegation",
+        "delegation.targets",
+        "delegation.targets.name",
+        "delegation.targets.description",
+        "delegation.targets.domains",
+        "delegation.targets.triggers",
+        "delegation.targets.triggers.domain",
+        "delegation.targets.triggers.trigger",
+      ),
+    );
+    expect(output).toBe("shuttlewarp");
+  });
+
+  it("allows nested valid paths: {{#delegation.targets}}{{#triggers}}{{domain}}{{/triggers}}{{/delegation.targets}}", () => {
+    // Inside {{#delegation.targets}}{{#triggers}}, child "domain" resolves to
+    // "delegation.targets.triggers.domain" which IS in ALLOWED_TEMPLATE_PATHS.
+    const output = render(
+      "{{#delegation.targets}}{{#triggers}}{{domain}}:{{trigger}} {{/triggers}}{{/delegation.targets}}",
+      {
+        delegation: {
+          targets: [
+            {
+              name: "shuttle",
+              triggers: [
+                { domain: "Backend", trigger: "API work" },
+                { domain: "Frontend", trigger: "UI work" },
+              ],
+            },
+          ],
+        },
+      },
+      allowed(
+        "delegation",
+        "delegation.targets",
+        "delegation.targets.name",
+        "delegation.targets.description",
+        "delegation.targets.domains",
+        "delegation.targets.triggers",
+        "delegation.targets.triggers.domain",
+        "delegation.targets.triggers.trigger",
+      ),
+    );
+    expect(output).toBe("Backend:API work Frontend:UI work ");
   });
 });
