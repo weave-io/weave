@@ -31,6 +31,7 @@ export type {
   AgentDescriptor,
   ComposeError,
   DelegationTarget,
+  PromptTemplateReason,
 } from "./compose.js";
 export { composeAgentDescriptor } from "./compose.js";
 export type { CategoryShuttleConflictError } from "./descriptors.js";

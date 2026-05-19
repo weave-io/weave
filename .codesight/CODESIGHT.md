@@ -4,7 +4,7 @@
 > **Monorepo:** @weave/core, @weave/engine, @weave/config, @weave/cli, @weave/adapter-opencode
 
 > 0 routes | 0 models | 0 components | 39 lib files | 2 env vars | 0 middleware | 0% test coverage
-> **Token savings:** this file is ~3,300 tokens. Without it, AI exploration would cost ~19,500 tokens. **Saves ~16,200 tokens per conversation.**
+> **Token savings:** this file is ~3,400 tokens. Without it, AI exploration would cost ~19,500 tokens. **Saves ~16,100 tokens per conversation.**
 > **Last scanned:** 2026-05-19 17:14 — re-run after significant changes
 
 ---
@@ -116,9 +116,10 @@
   - interface CapabilityEntry
   - _...18 more_
 - `packages/engine/src/compose.ts`
-  - function composeAgentDescriptor: (agentName, agentConfig, config, allAgents, AgentConfig>) => ResultAsync<AgentDescriptor, ComposeError>
+  - function composeAgentDescriptor: (agentName, agentConfig, config, allAgents, AgentConfig>, category?) => ResultAsync<AgentDescriptor, ComposeError>
   - interface AgentDescriptor
   - interface DelegationTarget
+  - type PromptTemplateReason
   - type ComposeError
 - `packages/engine/src/descriptors.ts` — function generateCategoryShuttles: (config) => Result<Record<string, AgentConfig>, CategoryShuttleConflictError>, type CategoryShuttleConflictError
 - `packages/engine/src/env.ts`
