@@ -130,6 +130,14 @@
   - interface SkillResolutionInput
   - interface SkillResolutionConfigInput
   - _...2 more_
+- `packages/engine/src/template-context.ts`
+  - function buildTemplateContext: (input) => Result<AgentPromptTemplateContext, TemplateContextError>
+  - interface AgentContextEntry
+  - interface CategoryContextEntry
+  - interface ToolPolicyContextEntry
+  - interface DelegationTargetContextEntry
+  - interface DelegationContextEntry
+  - _...5 more_
 - `packages/engine/src/template-renderer.ts`
   - function renderTemplate: (source, context, options) => Result<string, RendererError>
   - function extractTemplatePaths: (source) => Result<string[], RendererError>

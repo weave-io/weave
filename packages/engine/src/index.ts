@@ -63,6 +63,21 @@ export {
   resolveSkillsForConfig,
 } from "./skill-resolution.js";
 export type {
+  AgentContextEntry,
+  AgentPromptTemplateContext,
+  CategoryContextEntry,
+  CategoryInput,
+  DelegationContextEntry,
+  DelegationTargetContextEntry,
+  TemplateContextError,
+  TemplateContextInput,
+  ToolPolicyContextEntry,
+} from "./template-context.js";
+export {
+  ALLOWED_TEMPLATE_PATHS,
+  buildTemplateContext,
+} from "./template-context.js";
+export type {
   ConcreteToolClassification,
   EffectiveToolPolicy,
   MappedToolDecision,
