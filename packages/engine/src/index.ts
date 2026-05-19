@@ -31,6 +31,7 @@ export type {
   AgentDescriptor,
   ComposeError,
   DelegationTarget,
+  PromptTemplateReason,
 } from "./compose.js";
 export { composeAgentDescriptor } from "./compose.js";
 export type { CategoryShuttleConflictError } from "./descriptors.js";
@@ -62,6 +63,21 @@ export {
   resolveSkillsForAgent,
   resolveSkillsForConfig,
 } from "./skill-resolution.js";
+export type {
+  AgentContextEntry,
+  AgentPromptTemplateContext,
+  CategoryContextEntry,
+  CategoryInput,
+  DelegationContextEntry,
+  DelegationTargetContextEntry,
+  TemplateContextError,
+  TemplateContextInput,
+  ToolPolicyContextEntry,
+} from "./template-context.js";
+export {
+  ALLOWED_TEMPLATE_PATHS,
+  buildTemplateContext,
+} from "./template-context.js";
 export type {
   ConcreteToolClassification,
   EffectiveToolPolicy,

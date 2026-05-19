@@ -104,6 +104,12 @@
   - function toJson: (report) => string
   - interface CapabilityEntry
   - _...18 more_
+- `packages/engine/src/compose.ts`
+  - function composeAgentDescriptor: (agentName, agentConfig, config, allAgents, AgentConfig>, category?) => ResultAsync<AgentDescriptor, ComposeError>
+  - interface AgentDescriptor
+  - interface DelegationTarget
+  - type PromptTemplateReason
+  - type ComposeError
 - `packages/engine/src/descriptors.ts` — function generateCategoryShuttles: (config) => Result<Record<string, AgentConfig>, CategoryShuttleConflictError>, type CategoryShuttleConflictError
 - `packages/engine/src/env.ts`
   - function parseEnv: (raw) => Env
@@ -125,6 +131,21 @@
   - interface SkillResolutionInput
   - interface SkillResolutionConfigInput
   - _...2 more_
+- `packages/engine/src/template-context.ts`
+  - function buildTemplateContext: (input) => Result<AgentPromptTemplateContext, TemplateContextError>
+  - interface AgentContextEntry
+  - interface CategoryContextEntry
+  - interface ToolPolicyContextEntry
+  - interface DelegationTargetContextEntry
+  - interface DelegationContextEntry
+  - _...5 more_
+- `packages/engine/src/template-renderer.ts`
+  - function renderTemplate: (source, context, options) => Result<string, RendererError>
+  - function extractTemplatePaths: (source) => Result<string[], RendererError>
+  - interface TemplateContext
+  - interface RenderOptions
+  - type RendererError
+  - type TemplateContextValue
 - `packages/engine/src/tool-policy.ts`
   - function evaluateEffectiveToolPolicy: (policy) => EffectiveToolPolicy
   - function resolveToolDecisions: (toolIds, classifications, effectivePolicy) => ToolDecision[]

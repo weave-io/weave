@@ -19,11 +19,13 @@
   },
   "dependencies": {
     "@weave/core": "workspace:*",
+    "mustache": "^4.2.0",
     "neverthrow": "^8.2.0",
     "pino": "^9.6.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@types/mustache": "^4.2.6",
     "typescript": "^5.4.5"
   }
 }

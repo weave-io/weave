@@ -52,6 +52,22 @@ _Avoid_: JSON, prose report, general serialization format
 A read-only preparation pass that lets an adapter verify local readiness without performing run side effects.
 _Avoid_: Full adapter init, harness launch, deep health check
 
+**Composed Prompt**:
+The final prompt text produced by the engine from an agent's prompt source (inline `prompt` or `prompt_file`) plus any generated sections such as the `## Delegation` block and appended `prompt_append` text.
+_Avoid_: System prompt, raw prompt, assembled prompt
+
+**Prompt Template**:
+A prompt source that contains placeholders resolved by Weave during prompt composition before it becomes a **Composed Prompt**.
+_Avoid_: Prompt syntax, dynamic prompt, Handlebars prompt
+
+**Template Context**:
+The bounded data object Weave exposes to a **Prompt Template** for placeholder resolution.
+_Avoid_: Prompt globals, runtime state, agent internals
+
+**Delegation Diagram**:
+A Mermaid representation of the delegation routes available from the current agent to eligible target agents.
+_Avoid_: Delegation table, routing chart, agent map
+
 ## Relationships
 
 - A **WorkflowInstance** stores active execution metadata and artifacts for one workflow run.
@@ -64,6 +80,16 @@ _Avoid_: Full adapter init, harness launch, deep health check
 - An **Adapter Health Report** complements an **Adapter Capability Contract** by describing current runtime usability.
 - **TOON Output** presents Weave status data without replacing JSON as the machine-readable interchange format.
 - **Safe Adapter Init** precedes an **Adapter Health Report** when doctor checks adapter readiness.
+- A **Composed Prompt** is the output of the engine's prompt composition step; it is what adapters write into the harness, not the raw prompt source.
+- A **Prompt Template** is rendered with a **Template Context** during prompt composition to produce prompt text that participates in the **Composed Prompt**.
+- Delegation data inside a **Composed Prompt** is computed from agent `triggers`; a **Prompt Template** may decide where and how that delegation guidance is rendered.
+- A **Delegation Diagram** starts as a current-agent star: the current agent points to each eligible delegation target.
+
+## Prompt Composition Templates
+
+Prompt composition templates are a first-class engine feature. Every agent `prompt`, `prompt_file`, and `prompt_append` value is a **Prompt Template** rendered with a bounded **Template Context** before adapters receive the final **Composed Prompt**. The Template Context exposes agent identity, effective tool policy, and generated delegation data — including `delegation.section` (a Mermaid diagram plus compact bullets) and `delegation.mermaid` (the diagram alone). Prompt authors use `{{{delegation.section}}}` to control where delegation guidance appears; prompts that omit any `delegation.*` reference receive the fallback delegation section automatically. Static prompts without Mustache tags are unaffected.
+
+See [Prompt Composition Guide](docs/prompt-composition.md) and [ADR 0001](docs/adr/0001-prompt-composition-templates.md) for the full specification and rationale.
 
 ## Example dialogue
 

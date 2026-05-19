@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@weave/core": "workspace:*",
+    "@weave/engine": "workspace:*",
     "neverthrow": "^8.2.0",
     "pino": "^9.6.0"
   },
