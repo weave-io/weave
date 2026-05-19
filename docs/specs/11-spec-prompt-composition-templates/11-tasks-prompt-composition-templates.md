@@ -80,7 +80,7 @@
 - [x] 2.11 Export only the intended Template Context and error types from `packages/engine/src/index.ts`; keep low-level renderer functions internal.
 - [x] 2.12 Run `bun run --filter '@weave/engine' typecheck` and record the passing type proof artifact.
 
-### [ ] 3.0 Integrate template rendering into `composeAgentDescriptor()`
+### [x] 3.0 Integrate template rendering into `composeAgentDescriptor()`
 
 #### 3.0 Proof Artifact(s)
 
@@ -91,17 +91,17 @@
 
 #### 3.0 Tasks
 
-- [ ] 3.1 Extend `ComposeError` in `packages/engine/src/compose.ts` with a single `PromptTemplateError` variant and nested reason discriminants for malformed syntax, unsupported tags, unknown paths, unsafe paths, function values, section mismatch, and unresolved tags.
-- [ ] 3.2 Replace old flat delegation-section formatting with Template Context construction from the current agent, effective tool policy, category metadata, and filtered delegation targets.
-- [ ] 3.3 Render the primary `prompt` or `prompt_file` source as a Mustache template before any fallback delegation is inserted.
-- [ ] 3.4 Render merged `prompt_append` as a Mustache template with the same Template Context and report append errors with `sourceKind: "prompt_append"` line/column in the merged append text.
-- [ ] 3.5 Detect fallback suppression only from parsed primary-source real tokens whose path starts with `delegation`, excluding comments, escaped literals, raw text, and all `prompt_append` references.
-- [ ] 3.6 Assemble final prompt text in the order rendered primary source, optional fallback `delegation.section`, then rendered `prompt_append`.
-- [ ] 3.7 Preserve existing static prompt behavior when sources contain no Mustache tags and no eligible delegation fallback applies.
-- [ ] 3.8 Map renderer/context errors into `PromptTemplateError` with `agentName`, `sourceKind`, optional `promptFilePath`, message, path/tag, and line/column where available.
-- [ ] 3.9 Keep `composeAgentDescriptor()` returning `ResultAsync<AgentDescriptor, ComposeError>` and avoid expected-failure `try/catch` control flow.
-- [ ] 3.10 Extend `packages/engine/src/__tests__/compose.test.ts` for inline template rendering, prompt-file template rendering, rendered append, fallback placement, source-only suppression, append no-suppress behavior, static prompt compatibility, and typed template error metadata.
-- [ ] 3.11 Run `bun run --filter '@weave/engine' test` and record the passing compose proof artifact.
+- [x] 3.1 Extend `ComposeError` in `packages/engine/src/compose.ts` with a single `PromptTemplateError` variant and nested reason discriminants for malformed syntax, unsupported tags, unknown paths, unsafe paths, function values, section mismatch, and unresolved tags.
+- [x] 3.2 Replace old flat delegation-section formatting with Template Context construction from the current agent, effective tool policy, category metadata, and filtered delegation targets.
+- [x] 3.3 Render the primary `prompt` or `prompt_file` source as a Mustache template before any fallback delegation is inserted.
+- [x] 3.4 Render merged `prompt_append` as a Mustache template with the same Template Context and report append errors with `sourceKind: "prompt_append"` line/column in the merged append text.
+- [x] 3.5 Detect fallback suppression only from parsed primary-source real tokens whose path starts with `delegation`, excluding comments, escaped literals, raw text, and all `prompt_append` references.
+- [x] 3.6 Assemble final prompt text in the order rendered primary source, optional fallback `delegation.section`, then rendered `prompt_append`.
+- [x] 3.7 Preserve existing static prompt behavior when sources contain no Mustache tags and no eligible delegation fallback applies.
+- [x] 3.8 Map renderer/context errors into `PromptTemplateError` with `agentName`, `sourceKind`, optional `promptFilePath`, message, path/tag, and line/column where available.
+- [x] 3.9 Keep `composeAgentDescriptor()` returning `ResultAsync<AgentDescriptor, ComposeError>` and avoid expected-failure `try/catch` control flow.
+- [x] 3.10 Extend `packages/engine/src/__tests__/compose.test.ts` for inline template rendering, prompt-file template rendering, rendered append, fallback placement, source-only suppression, append no-suppress behavior, static prompt compatibility, and typed template error metadata.
+- [x] 3.11 Run `bun run --filter '@weave/engine' test` and record the passing compose proof artifact.
 
 ### [ ] 4.0 Align builtin prompts and config smoke coverage with rendered templates
 
