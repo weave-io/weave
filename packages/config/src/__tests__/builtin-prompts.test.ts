@@ -65,7 +65,32 @@ const BANNED_LEAKAGE_TOKENS = [
  * Intentional Mustache placeholders that ARE allowed in source prompt files.
  * These are resolved at compose time by the template renderer.
  */
-const ALLOWED_MUSTACHE_PLACEHOLDERS = ["{{{delegation.section}}}"] as const;
+const ALLOWED_MUSTACHE_PLACEHOLDERS = [
+  // Triple-brace (unescaped HTML) placeholders
+  "{{{delegation.section}}}",
+  "{{{delegation.mermaid}}}",
+  // Double-brace scalar placeholders
+  "{{agent.name}}",
+  "{{agent.description}}",
+  "{{agent.mode}}",
+  "{{agent.skills}}",
+  "{{agent.isCategory}}",
+  "{{category.name}}",
+  "{{category.description}}",
+  "{{toolPolicy.effective.read}}",
+  "{{toolPolicy.effective.write}}",
+  "{{toolPolicy.effective.execute}}",
+  "{{toolPolicy.effective.delegate}}",
+  "{{toolPolicy.effective.network}}",
+  // Section/loop placeholders (Mustache block tags)
+  "{{#delegation.targets}}",
+  "{{/delegation.targets}}",
+  "{{#agent.skills}}",
+  "{{/agent.skills}}",
+  "{{name}}",
+  "{{description}}",
+  "{{domains}}",
+] as const;
 
 const PLACEHOLDER_TEXT =
   "Placeholder — full prompt content is a future deliverable.";
@@ -179,16 +204,22 @@ describe("builtin prompt files", () => {
       expect(hasDelegation).toBe(true);
     });
 
-    it("contains the delegation.section template placeholder", async () => {
+    it("contains the delegation.section or delegation.mermaid template placeholder", async () => {
       const content = await Bun.file(join(PROMPTS_DIR, "loom.md")).text();
-      expect(content).toContain("{{{delegation.section}}}");
+      const hasDelegationPlaceholder =
+        content.includes("{{{delegation.section}}}") ||
+        content.includes("{{{delegation.mermaid}}}");
+      expect(hasDelegationPlaceholder).toBe(true);
     });
   });
 
   describe("tapestry.md — plan execution and delegation guidance", () => {
-    it("contains the delegation.section template placeholder", async () => {
+    it("contains the delegation.section or delegation.mermaid template placeholder", async () => {
       const content = await Bun.file(join(PROMPTS_DIR, "tapestry.md")).text();
-      expect(content).toContain("{{{delegation.section}}}");
+      const hasDelegationPlaceholder =
+        content.includes("{{{delegation.section}}}") ||
+        content.includes("{{{delegation.mermaid}}}");
+      expect(hasDelegationPlaceholder).toBe(true);
     });
 
     it("describes step-by-step plan execution", async () => {
