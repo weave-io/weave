@@ -130,6 +130,13 @@
   - interface SkillResolutionInput
   - interface SkillResolutionConfigInput
   - _...2 more_
+- `packages/engine/src/template-renderer.ts`
+  - function renderTemplate: (source, context, options) => Result<string, RendererError>
+  - function extractTemplatePaths: (source) => Result<string[], RendererError>
+  - interface TemplateContext
+  - interface RenderOptions
+  - type RendererError
+  - type TemplateContextValue
 - `packages/engine/src/tool-policy.ts`
   - function evaluateEffectiveToolPolicy: (policy) => EffectiveToolPolicy
   - function resolveToolDecisions: (toolIds, classifications, effectivePolicy) => ToolDecision[]
