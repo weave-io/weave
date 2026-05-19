@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weave/core, @weave/engine, @weave/config, @weave/cli, @weave/adapter-opencode
 
-> 0 routes | 0 models | 0 components | 37 lib files | 2 env vars | 0 middleware | 0% test coverage
-> **Token savings:** this file is ~3,100 tokens. Without it, AI exploration would cost ~19,000 tokens. **Saves ~15,800 tokens per conversation.**
-> **Last scanned:** 2026-05-18 20:34 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 38 lib files | 2 env vars | 0 middleware | 0% test coverage
+> **Token savings:** this file is ~3,200 tokens. Without it, AI exploration would cost ~19,200 tokens. **Saves ~16,000 tokens per conversation.**
+> **Last scanned:** 2026-05-19 16:27 — re-run after significant changes
 
 ---
 
@@ -141,6 +141,13 @@
   - interface SkillResolutionInput
   - interface SkillResolutionConfigInput
   - _...2 more_
+- `packages/engine/src/template-renderer.ts`
+  - function renderTemplate: (source, context, options) => Result<string, RendererError>
+  - function extractTemplatePaths: (source) => Result<string[], RendererError>
+  - interface TemplateContext
+  - interface RenderOptions
+  - type RendererError
+  - type TemplateContextValue
 - `packages/engine/src/tool-policy.ts`
   - function evaluateEffectiveToolPolicy: (policy) => EffectiveToolPolicy
   - function resolveToolDecisions: (toolIds, classifications, effectivePolicy) => ToolDecision[]
@@ -209,7 +216,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 34 test files found
+> 35 test files found
 
 ---
 
