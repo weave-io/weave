@@ -104,6 +104,11 @@
   - function toJson: (report) => string
   - interface CapabilityEntry
   - _...18 more_
+- `packages/engine/src/compose.ts`
+  - function composeAgentDescriptor: (agentName, agentConfig, config, allAgents, AgentConfig>) => ResultAsync<AgentDescriptor, ComposeError>
+  - interface AgentDescriptor
+  - interface DelegationTarget
+  - type ComposeError
 - `packages/engine/src/descriptors.ts` — function generateCategoryShuttles: (config) => Result<Record<string, AgentConfig>, CategoryShuttleConflictError>, type CategoryShuttleConflictError
 - `packages/engine/src/env.ts`
   - function parseEnv: (raw) => Env

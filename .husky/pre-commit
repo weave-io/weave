@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+echo "▶ codesight..."
+npx codesight
+git add .codesight/
+
 echo "▶ lint-staged..."
 bunx lint-staged
 
@@ -15,9 +19,5 @@ bun run scripts/validate-config.ts scripts/fixtures/full-config.weave
 
 echo "▶ test..."
 bun test --recursive
-
-echo "▶ codesight..."
-npx codesight
-git add .codesight/
 
 echo "✔ all checks passed"
