@@ -87,7 +87,7 @@ describe("printSummary", () => {
     expect(logLines.every((l) => !l.includes("disabled"))).toBe(true);
   });
 
-  it("omits log_level line when not set (regression)", () => {
+  it("omits log_level line when at default INFO (regression)", () => {
     const config = cfg(`agent a { prompt "x" models ["m"] }`);
     printSummary(config);
     expect(logLines.every((l) => !l.includes("log_level"))).toBe(true);
@@ -266,10 +266,10 @@ describe("printSummary", () => {
     expect(disabledLine).toContain("tdd");
   });
 
-  it("prints log_level when set", () => {
-    const config = cfg("log_level INFO");
+  it("prints log_level when set to non-default (DEBUG)", () => {
+    const config = cfg("settings { log_level DEBUG }");
     printSummary(config);
-    expect(logLines.some((l) => l.includes("log_level: INFO"))).toBe(true);
+    expect(logLines.some((l) => l.includes("log_level: DEBUG"))).toBe(true);
   });
 
   // -------------------------------------------------------------------------
@@ -326,7 +326,9 @@ describe("printSummary", () => {
 
       disable agents ["warp"]
 
-      log_level DEBUG
+      settings {
+        log_level DEBUG
+      }
     `);
 
     printSummary(config);

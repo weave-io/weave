@@ -355,15 +355,87 @@ describe("validate — workflows", () => {
   });
 });
 
-describe("validate — log_level setting", () => {
-  it("valid log_level is included in config", () => {
-    const result = validateSource("log_level INFO");
+describe("validate — settings block", () => {
+  it("settings { log_level INFO } is accepted and reflected in config", () => {
+    const src = `settings {
+  log_level INFO
+}`;
+    const result = validateSource(src);
     expect(result.isOk()).toBe(true);
-    expect(result._unsafeUnwrap().log_level).toBe("INFO");
+    expect(result._unsafeUnwrap().settings.log_level).toBe("INFO");
   });
 
-  it("invalid log_level → err", () => {
-    const result = validateSource("log_level verbose");
+  it("settings { log_level DEBUG } is accepted", () => {
+    const src = `settings {
+  log_level DEBUG
+}`;
+    const result = validateSource(src);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().settings.log_level).toBe("DEBUG");
+  });
+
+  it("settings block with all valid log levels", () => {
+    const levels = [
+      "TRACE",
+      "DEBUG",
+      "INFO",
+      "WARN",
+      "ERROR",
+      "FATAL",
+    ] as const;
+    for (const level of levels) {
+      const result = validateSource(`settings {\n  log_level ${level}\n}`);
+      expect(result.isOk()).toBe(true);
+      expect(result._unsafeUnwrap().settings.log_level).toBe(level);
+    }
+  });
+
+  it("settings { runtime { journal { strict true } } } is accepted", () => {
+    const src = `settings {
+  runtime {
+    journal {
+      strict true
+    }
+  }
+}`;
+    const result = validateSource(src);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().settings.runtime.journal.strict).toBe(true);
+  });
+
+  it("default runtime.journal.strict is false when not specified", () => {
+    const src = `settings {
+  log_level INFO
+}`;
+    const result = validateSource(src);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().settings.runtime.journal.strict).toBe(false);
+  });
+
+  it("default settings when no settings block is present", () => {
+    const result = validate([]);
+    expect(result.isOk()).toBe(true);
+    const config = result._unsafeUnwrap();
+    expect(config.settings.log_level).toBe("INFO");
+    expect(config.settings.runtime.journal.strict).toBe(false);
+  });
+
+  it("invalid log_level inside settings block → err", () => {
+    const src = `settings {
+  log_level verbose
+}`;
+    const result = validateSource(src);
     expect(result.isErr()).toBe(true);
+  });
+
+  it("top-level log_level → err (must be inside settings block)", () => {
+    const result = validateSource("log_level INFO");
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    expect(
+      errors.some(
+        (e) => e.path === "log_level" && e.message.includes("settings"),
+      ),
+    ).toBe(true);
   });
 });

@@ -2,7 +2,11 @@ import { describe, expect, it } from "bun:test";
 import { ToolPermissionSchema, ToolPolicySchema } from "@weave/core";
 import {
   CompletionMethodSchema,
+  LogLevelSchema,
   OnRejectSchema,
+  RuntimeSettingsSchema,
+  SettingsConfigSchema,
+  WeaveConfigSchema,
   WorkflowConfigSchema,
   WorkflowStepSchema,
   WorkflowStepTypeSchema,
@@ -338,5 +342,173 @@ describe("WorkflowConfigSchema", () => {
       steps: [validStep],
     });
     expect(r.success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// LogLevelSchema
+// ---------------------------------------------------------------------------
+
+describe("LogLevelSchema", () => {
+  it("accepts all valid log levels", () => {
+    for (const level of ["TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL"]) {
+      expect(LogLevelSchema.safeParse(level).success).toBe(true);
+    }
+  });
+
+  it("rejects lowercase log levels", () => {
+    expect(LogLevelSchema.safeParse("info").success).toBe(false);
+    expect(LogLevelSchema.safeParse("debug").success).toBe(false);
+  });
+
+  it("rejects invalid log level strings", () => {
+    expect(LogLevelSchema.safeParse("verbose").success).toBe(false);
+    expect(LogLevelSchema.safeParse("ALL").success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// RuntimeSettingsSchema
+// ---------------------------------------------------------------------------
+
+describe("RuntimeSettingsSchema", () => {
+  it("accepts explicit journal.strict true", () => {
+    const r = RuntimeSettingsSchema.safeParse({
+      journal: { strict: true },
+    });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.journal.strict).toBe(true);
+    }
+  });
+
+  it("defaults journal.strict to false when omitted", () => {
+    const r = RuntimeSettingsSchema.safeParse({});
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.journal.strict).toBe(false);
+    }
+  });
+
+  it("defaults entire runtime settings when undefined", () => {
+    const r = RuntimeSettingsSchema.safeParse(undefined);
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.journal.strict).toBe(false);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SettingsConfigSchema
+// ---------------------------------------------------------------------------
+
+describe("SettingsConfigSchema", () => {
+  it("accepts valid settings with log_level INFO", () => {
+    const r = SettingsConfigSchema.safeParse({ log_level: "INFO" });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.log_level).toBe("INFO");
+      expect(r.data.runtime.journal.strict).toBe(false);
+    }
+  });
+
+  it("accepts all valid log levels", () => {
+    for (const level of ["TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL"]) {
+      const r = SettingsConfigSchema.safeParse({ log_level: level });
+      expect(r.success).toBe(true);
+    }
+  });
+
+  it("defaults log_level to INFO when omitted", () => {
+    const r = SettingsConfigSchema.safeParse({});
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.log_level).toBe("INFO");
+    }
+  });
+
+  it("defaults runtime.journal.strict to false when not specified", () => {
+    const r = SettingsConfigSchema.safeParse({ log_level: "DEBUG" });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.runtime.journal.strict).toBe(false);
+    }
+  });
+
+  it("accepts runtime.journal.strict true", () => {
+    const r = SettingsConfigSchema.safeParse({
+      log_level: "INFO",
+      runtime: { journal: { strict: true } },
+    });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.runtime.journal.strict).toBe(true);
+    }
+  });
+
+  it("rejects invalid log_level value", () => {
+    const r = SettingsConfigSchema.safeParse({ log_level: "verbose" });
+    expect(r.success).toBe(false);
+  });
+
+  it("rejects lowercase log_level", () => {
+    const r = SettingsConfigSchema.safeParse({ log_level: "info" });
+    expect(r.success).toBe(false);
+  });
+
+  it("defaults entire settings when undefined", () => {
+    const r = SettingsConfigSchema.safeParse(undefined);
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.log_level).toBe("INFO");
+      expect(r.data.runtime.journal.strict).toBe(false);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WeaveConfigSchema — settings integration
+// ---------------------------------------------------------------------------
+
+describe("WeaveConfigSchema — settings integration", () => {
+  it("accepts settings block with log_level", () => {
+    const r = WeaveConfigSchema.safeParse({
+      settings: { log_level: "INFO" },
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it("accepts settings block with runtime.journal.strict true", () => {
+    const r = WeaveConfigSchema.safeParse({
+      settings: { log_level: "DEBUG", runtime: { journal: { strict: true } } },
+    });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.settings.runtime.journal.strict).toBe(true);
+    }
+  });
+
+  it("accepts empty config with default settings", () => {
+    const r = WeaveConfigSchema.safeParse({});
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.settings.log_level).toBe("INFO");
+      expect(r.data.settings.runtime.journal.strict).toBe(false);
+    }
+  });
+
+  it("top-level log_level is stripped (not in schema) — rejection enforced at validate layer", () => {
+    // WeaveConfigSchema uses z.object() which strips unknown keys.
+    // Top-level log_level rejection is enforced in validate.ts (AST layer),
+    // not at the Zod schema level. This test documents that behavior.
+    const r = WeaveConfigSchema.safeParse({ log_level: "INFO" });
+    // The schema strips log_level (unknown key) and succeeds with defaults.
+    // The validate() function rejects it before reaching Zod.
+    expect(r.success).toBe(true);
+    if (r.success) {
+      // log_level is not present in the parsed output (stripped)
+      expect("log_level" in r.data).toBe(false);
+    }
   });
 });

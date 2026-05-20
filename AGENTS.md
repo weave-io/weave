@@ -284,7 +284,9 @@ disable agents ["warp", "spindle"]
 disable hooks ["on-session-idle"]
 disable skills ["tdd"]
 
-log_level INFO
+settings {
+  log_level INFO
+}
 
 continuation {
   recovery {

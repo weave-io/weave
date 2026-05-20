@@ -105,11 +105,11 @@ describe("loadConfig", () => {
     expect(config.agents["my-helper"]?.prompt).toBe("I help");
   });
 
-  it("(d) both configs: three-layer merge — project log_level and loom temperature win", async () => {
+  it("(d) both configs: three-layer merge — project settings.log_level and loom temperature win", async () => {
     const reader = mockReader({
-      [GLOBAL_PATH]: `log_level INFO`,
+      [GLOBAL_PATH]: `settings { log_level INFO }`,
       [PROJECT_PATH]: `
-        log_level DEBUG
+        settings { log_level DEBUG }
         agent loom { temperature 0.9 }
       `,
     });
@@ -118,7 +118,7 @@ describe("loadConfig", () => {
     expect(result.isOk()).toBe(true);
     const config = result._unsafeUnwrap();
 
-    expect(config.log_level).toBe("DEBUG");
+    expect(config.settings.log_level).toBe("DEBUG");
     expect(config.agents.loom?.temperature).toBe(0.9);
     // builtin models still present (not overridden)
     expect(config.agents.loom?.models).toContain("claude-sonnet-4-5");

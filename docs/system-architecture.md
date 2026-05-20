@@ -2,7 +2,7 @@
 
 This diagram is intentionally high level. It describes the conceptual flow of Weave without relying on specific source files or implementation details.
 
-**Related:** [Product Vision](product-vision.md) · [Adapter Boundary](adapter-boundary.md) · [Config Loading](config-loading.md) · [Model Resolution](model-resolution.md)
+**Related:** [Product Vision](product-vision.md) · [Adapter Boundary](adapter-boundary.md) · [Config Loading](config-loading.md) · [Model Resolution](model-resolution.md) · [Runtime Persistence Spec](specs/12-spec-runtime-persistence/12-spec-runtime-persistence.md)
 
 ---
 
@@ -111,8 +111,9 @@ It takes normalized configuration and produces higher-level Weave concepts such 
 - skill matching decisions from adapter-provided skill context
 - abstract policy and lifecycle decisions
 - workflow execution intent
+- durable Runtime Store records under `.weave/runtime/**`
 
-The engine does not inspect harness UI state, discover harness resources, or register concrete runtime hooks. When it needs harness facts, the adapter passes those facts in explicitly.
+The engine does not inspect harness UI state, discover harness resources, or register concrete runtime hooks. When it needs harness facts, the adapter passes those facts in explicitly. The one filesystem-side-effect exception is Weave-owned Runtime Store state under `.weave/runtime/**`, which remains distinct from harness-owned runtime state.
 
 ### 4. The adapter translates intent for one harness (`@weave/adapter-*`)
 
