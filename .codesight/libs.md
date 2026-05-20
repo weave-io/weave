@@ -7,6 +7,10 @@
   - type ArgParseError
 - `packages/cli/src/cli.ts` — function run: (deps?) => Promise<Result<number, CliError>>, interface CliDeps
 - `packages/cli/src/commands/init.ts` — function runInit: (ctx) => Promise<Result<number, CliError>>, interface InitContext
+- `packages/cli/src/commands/runtime.ts`
+  - function runRuntime: (ctx) => Promise<Result<number, CliError>>
+  - interface RuntimeCommandContext
+  - const DEFAULT_RUNTIME_DB_PATH
 - `packages/cli/src/commands/validate.ts`
   - function validateExplicitPath: (path, fs) => ResultAsync<ValidatedConfig, ValidateError>
   - function formatSummary: (config) => string

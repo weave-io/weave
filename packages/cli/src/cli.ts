@@ -104,6 +104,28 @@ export async function run(
       return runInit({ terminal, theme, flags });
     }
 
+    case "runtime": {
+      const { runRuntime } = await import("./commands/runtime.js");
+      const subcommand = flags.runtimeSubcommand;
+      if (!subcommand) {
+        terminal.stderr(
+          [
+            `${theme.boldYellow("Usage:")} weave runtime <subcommand>`,
+            "",
+            `  ${theme.cyan("weave runtime status")}              ${theme.dim("Show runtime store status")}`,
+            `  ${theme.cyan("weave runtime journal")} ${theme.dim("[--limit <n>]")}  ${theme.dim("Show recent journal entries")}`,
+          ].join("\n"),
+        );
+        return ok(1);
+      }
+      return runRuntime({
+        terminal,
+        theme,
+        subcommand,
+        limit: flags.limit,
+      });
+    }
+
     case "unknown": {
       const errMsg = formatCliError({
         type: "UnknownCommand",

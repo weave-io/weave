@@ -90,6 +90,11 @@ export {
   sanitizeJournalData,
   sanitizeSnapshotMetadata,
 } from "./runtime/sanitizer.js";
+export type { SqliteRuntimeStoreOptions } from "./runtime/sqlite/store.js";
+export {
+  createSqliteRuntimeStore,
+  SqliteRuntimeStore,
+} from "./runtime/sqlite/store.js";
 export type {
   AcquireLeaseInput,
   CreateWorkflowInstanceInput,

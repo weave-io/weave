@@ -18,6 +18,7 @@ export type Command =
   | "init"
   | "validate"
   | "run"
+  | "runtime"
   | "unknown";
 
 export interface ParsedArgs {
@@ -47,6 +48,10 @@ export interface ParsedArgs {
     project: boolean;
     /** --global flag for validate */
     global: boolean;
+    /** --limit <n> for runtime journal */
+    limit?: number;
+    /** runtime subcommand: status | journal */
+    runtimeSubcommand?: "status" | "journal";
   };
 }
 
@@ -171,6 +176,21 @@ export function parseArgs(argv: string[]): Result<ParsedArgs, ArgParseError> {
       flags.harness = val;
       continue;
     }
+    if (arg === "--limit") {
+      const val = args[++i];
+      if (!val || val.startsWith("-")) {
+        return err({
+          type: "MissingFlagValue" as const,
+          flag: "--limit",
+          message: "--limit requires a positive integer",
+        });
+      }
+      const parsed = parseInt(val, 10);
+      if (!Number.isNaN(parsed) && parsed > 0) {
+        flags.limit = parsed;
+      }
+      continue;
+    }
 
     // Commands
     if (!command) {
@@ -184,12 +204,23 @@ export function parseArgs(argv: string[]): Result<ParsedArgs, ArgParseError> {
         case "run":
           command = "run";
           break;
+        case "runtime":
+          command = "runtime";
+          break;
         default:
           command = "unknown";
           unknownCommand = arg;
           break;
       }
       continue;
+    }
+
+    // runtime subcommands: status, journal
+    if (command === "runtime" && flags.runtimeSubcommand === undefined) {
+      if (arg === "status" || arg === "journal") {
+        flags.runtimeSubcommand = arg;
+        continue;
+      }
     }
 
     // Everything else goes into rest

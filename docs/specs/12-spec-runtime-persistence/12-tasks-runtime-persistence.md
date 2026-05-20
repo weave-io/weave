@@ -154,7 +154,7 @@
 - [x] 5.6 Add contract tests shared with or mirroring SQLite behavior for common repository semantics.
 - [x] 5.7 Add typecheck coverage proving downstream tests can import the utility from the public engine package entry point.
 
-### [ ] 6.0 Add read-only runtime inspection CLI commands
+### [x] 6.0 Add read-only runtime inspection CLI commands
 
 #### 6.0 Proof Artifact(s)
 
@@ -163,11 +163,11 @@
 
 #### 6.0 Tasks
 
-- [ ] 6.1 Extend CLI argument parsing/routing for `weave runtime status` and `weave runtime journal --limit <n>` with default limit `50`.
-- [ ] 6.2 Implement a read-only runtime command module that opens the default Runtime Store path without creating or mutating state for inspection-only flows unless the store already exists.
-- [ ] 6.3 Render `runtime status` with DB path, schema version, active lease summary, and recent/resumable workflow instance summaries.
-- [ ] 6.4 Render `runtime journal --limit <n>` with recent fixed-envelope entries in deterministic text suitable for TOON-style LLM consumption.
-- [ ] 6.5 Ensure CLI output never includes raw prompts, completions, transcripts, credentials, cookies, authorization headers, tokens, or raw provider payloads.
-- [ ] 6.6 Add missing-runtime behavior that reports no Runtime Store found without creating `.weave/runtime/weave.db`.
-- [ ] 6.7 Add CLI command tests for status output, journal limit behavior, missing runtime, sanitized deterministic output, routing/help, and read-only behavior.
-- [ ] 6.8 Run CLI targeted tests and build proof artifact.
+- [x] 6.1 Extend CLI argument parsing/routing for `weave runtime status` and `weave runtime journal --limit <n>` with default limit `50`.
+- [x] 6.2 Implement a read-only runtime command module that opens the default Runtime Store path without creating or mutating state for inspection-only flows unless the store already exists.
+- [x] 6.3 Render `runtime status` with DB path, schema version, active lease summary, and recent/resumable workflow instance summaries.
+- [x] 6.4 Render `runtime journal --limit <n>` with recent fixed-envelope entries in deterministic text suitable for TOON-style LLM consumption.
+- [x] 6.5 Ensure CLI output never includes raw prompts, completions, transcripts, credentials, cookies, authorization headers, tokens, or raw provider payloads.
+- [x] 6.6 Add missing-runtime behavior that reports no Runtime Store found without creating `.weave/runtime/weave.db`.
+- [x] 6.7 Add CLI command tests for status output, journal limit behavior, missing runtime, sanitized deterministic output, routing/help, and read-only behavior.
+- [x] 6.8 Run CLI targeted tests and build proof artifact.
