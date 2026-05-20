@@ -131,6 +131,15 @@
   - function notFoundError: (entity, id, message?) => RuntimeStoreNotFoundError
   - function conflictError: (entity, message, conflictingId?) => RuntimeStoreConflictError
   - _...11 more_
+- `packages/engine/src/runtime/sqlite/kysely-bun-sqlite.ts` — class BunSqliteDialect
+- `packages/engine/src/runtime/sqlite/migrations.ts`
+  - function runMigrations: (db) => Result<void, RuntimeStoreError>
+  - function readSchemaVersion: (db) => number
+  - const CURRENT_SCHEMA_VERSION
+- `packages/engine/src/runtime/sqlite/store.ts`
+  - function createSqliteRuntimeStore: (options) => SqliteRuntimeStore
+  - class SqliteRuntimeStore
+  - interface SqliteRuntimeStoreOptions
 - `packages/engine/src/runtime/types.ts`
   - function createWorkflowInstanceId: (raw) => WorkflowInstanceId
   - function createExecutionLeaseId: (raw) => ExecutionLeaseId

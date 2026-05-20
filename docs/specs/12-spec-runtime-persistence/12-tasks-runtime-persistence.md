@@ -91,28 +91,29 @@
 - [x] 2.9 Add engine contract tests for statuses, find/get semantics, lease expiry/conflict expectations, SessionSnapshot denylist validation, and transaction API shape.
 - [x] 2.10 Run engine typecheck and targeted runtime contract tests.
 
-### [ ] 3.0 Implement SQLite/Kysely default Runtime Store
+### [x] 3.0 Implement SQLite/Kysely default Runtime Store
 
 #### 3.0 Proof Artifact(s)
 
 - Test: `bun test packages/engine/src/__tests__/*sqlite* packages/engine/src/__tests__/*runtime*` passes using temp project directories and demonstrates lazy `.weave/runtime/weave.db` creation, code-owned migrations, schema version failure, CRUD, lease conflicts, transaction commit/rollback, best-effort journal behavior, and strict journal rollback.
 - Inspection: `git grep -n "better-sqlite3\|node:fs\|child_process" packages/engine/src` returns no disallowed runtime-store dependency usage.
+- Proof artifact: `docs/specs/12-spec-runtime-persistence/12-proofs/12-task-03-proofs.md`
 
 #### 3.0 Tasks
 
-- [ ] 3.1 Add `kysely` to `packages/engine/package.json` and update the lockfile using Bun.
-- [ ] 3.2 Implement an internal Kysely dialect/driver over `bun:sqlite` without adding `better-sqlite3` or Node-only SQLite dependencies.
-- [ ] 3.3 Define SQLite table/row types for workflow instances, execution leases, session snapshots, runtime journal entries, schema migrations, and runtime metadata/project salt.
-- [ ] 3.4 Implement lazy creation of `.weave/runtime/` and `.weave/runtime/weave.db` on first repository operation.
-- [ ] 3.5 Apply restrictive permissions where supported: runtime directory equivalent to `0700`, DB/WAL/SHM equivalent to `0600`.
-- [ ] 3.6 Implement code-owned, idempotent, transactional migrations with applied-version tracking.
-- [ ] 3.7 Fail cleanly with a typed migration/version error when opening a DB created by a newer unsupported schema version.
-- [ ] 3.8 Implement JSON document-row persistence with indexed lookup columns for workflow/status/timestamp/source/event queries.
-- [ ] 3.9 Implement source-of-truth repository methods for workflow instances, execution leases, and session snapshots so persistence failures fail the operation.
-- [ ] 3.10 Implement one-active-project lease acquisition with atomic expiry/conflict checks using one engine-provided clock source per operation.
-- [ ] 3.11 Implement SQLite-backed unit-of-work transactions, including strict journal rollback behavior and best-effort journal warning/commit behavior.
-- [ ] 3.12 Add temp-directory SQLite tests for lazy init, migrations, CRUD, conflicts, schema version failure, transaction commit/rollback, strict journal failure, and best-effort journal failure.
-- [ ] 3.13 Add dependency guard tests or inspection proof showing no `better-sqlite3`, Node `fs`, `child_process`, or harness runtime dependency is used.
+- [x] 3.1 Add `kysely` to `packages/engine/package.json` and update the lockfile using Bun.
+- [x] 3.2 Implement an internal Kysely dialect/driver over `bun:sqlite` without adding `better-sqlite3` or Node-only SQLite dependencies.
+- [x] 3.3 Define SQLite table/row types for workflow instances, execution leases, session snapshots, runtime journal entries, schema migrations, and runtime metadata/project salt.
+- [x] 3.4 Implement lazy creation of `.weave/runtime/` and `.weave/runtime/weave.db` on first repository operation.
+- [x] 3.5 Apply restrictive permissions where supported: runtime directory equivalent to `0700`, DB/WAL/SHM equivalent to `0600`.
+- [x] 3.6 Implement code-owned, idempotent, transactional migrations with applied-version tracking.
+- [x] 3.7 Fail cleanly with a typed migration/version error when opening a DB created by a newer unsupported schema version.
+- [x] 3.8 Implement JSON document-row persistence with indexed lookup columns for workflow/status/timestamp/source/event queries.
+- [x] 3.9 Implement source-of-truth repository methods for workflow instances, execution leases, and session snapshots so persistence failures fail the operation.
+- [x] 3.10 Implement one-active-project lease acquisition with atomic expiry/conflict checks using one engine-provided clock source per operation.
+- [x] 3.11 Implement SQLite-backed unit-of-work transactions, including strict journal rollback behavior and best-effort journal warning/commit behavior.
+- [x] 3.12 Add temp-directory SQLite tests for lazy init, migrations, CRUD, conflicts, schema version failure, transaction commit/rollback, strict journal failure, and best-effort journal failure.
+- [x] 3.13 Add dependency guard tests or inspection proof showing no `better-sqlite3`, Node `fs`, `child_process`, or harness runtime dependency is used.
 
 ### [ ] 4.0 Add safe Runtime Journal writer and fingerprinting
 

@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weave/core, @weave/engine, @weave/config, @weave/cli, @weave/adapter-opencode
 
-> 0 routes | 0 models | 0 components | 41 lib files | 2 env vars | 0 middleware | 0% test coverage
-> **Token savings:** this file is ~3,600 tokens. Without it, AI exploration would cost ~20,000 tokens. **Saves ~16,400 tokens per conversation.**
-> **Last scanned:** 2026-05-20 18:33 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 44 lib files | 2 env vars | 0 middleware | 0% test coverage
+> **Token savings:** this file is ~3,800 tokens. Without it, AI exploration would cost ~20,800 tokens. **Saves ~17,000 tokens per conversation.**
+> **Last scanned:** 2026-05-20 18:51 — re-run after significant changes
 
 ---
 
@@ -142,6 +142,15 @@
   - function notFoundError: (entity, id, message?) => RuntimeStoreNotFoundError
   - function conflictError: (entity, message, conflictingId?) => RuntimeStoreConflictError
   - _...11 more_
+- `packages/engine/src/runtime/sqlite/kysely-bun-sqlite.ts` — class BunSqliteDialect
+- `packages/engine/src/runtime/sqlite/migrations.ts`
+  - function runMigrations: (db) => Result<void, RuntimeStoreError>
+  - function readSchemaVersion: (db) => number
+  - const CURRENT_SCHEMA_VERSION
+- `packages/engine/src/runtime/sqlite/store.ts`
+  - function createSqliteRuntimeStore: (options) => SqliteRuntimeStore
+  - class SqliteRuntimeStore
+  - interface SqliteRuntimeStoreOptions
 - `packages/engine/src/runtime/types.ts`
   - function createWorkflowInstanceId: (raw) => WorkflowInstanceId
   - function createExecutionLeaseId: (raw) => ExecutionLeaseId
@@ -214,13 +223,13 @@
 - `packages/config/src/types.ts` — imported by **5** files
 - `packages/core/src/lexer.ts` — imported by **5** files
 - `packages/engine/src/descriptors.ts` — imported by **5** files
+- `packages/engine/src/logger.ts` — imported by **5** files
 - `packages/cli/src/cli.ts` — imported by **4** files
 - `packages/cli/src/errors.ts` — imported by **4** files
 - `packages/config/src/builtins.ts` — imported by **4** files
 - `packages/config/src/normalize-path.ts` — imported by **4** files
 - `packages/core/src/parser.ts` — imported by **4** files
 - `packages/engine/src/env.ts` — imported by **4** files
-- `packages/engine/src/logger.ts` — imported by **4** files
 - `packages/cli/src/commands/validate.ts` — imported by **3** files
 
 ## Import Map (who imports what)
@@ -241,7 +250,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 37 test files found
+> 38 test files found
 
 ---
 
