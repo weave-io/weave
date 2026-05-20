@@ -231,4 +231,6 @@ disable skills ["unused-skill"]
 # Settings
 # ===========================================================================
 
-log_level DEBUG
+settings {
+  log_level DEBUG
+}

@@ -184,16 +184,61 @@ export const WorkflowConfigSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
+// Settings
+// ---------------------------------------------------------------------------
+
+/** Valid log level values (uppercase bare identifiers in DSL). */
+export const LogLevelSchema = z.enum([
+  "TRACE",
+  "DEBUG",
+  "INFO",
+  "WARN",
+  "ERROR",
+  "FATAL",
+]);
+
+/** Runtime-specific settings nested inside `settings { runtime { ... } }`. */
+export const RuntimeSettingsSchema = z
+  .object({
+    journal: z
+      .object({
+        strict: z.boolean().default(false),
+      })
+      .default({ strict: false }),
+  })
+  .default({ journal: { strict: false } });
+
+/**
+ * The `settings { ... }` block — canonical home for log level and runtime
+ * configuration. Top-level `log_level` is rejected; use `settings { log_level INFO }`.
+ */
+export const SettingsConfigSchema = z
+  .object({
+    log_level: LogLevelSchema.default("INFO"),
+    runtime: RuntimeSettingsSchema,
+  })
+  .default({ log_level: "INFO", runtime: { journal: { strict: false } } });
+
+// ---------------------------------------------------------------------------
 // Top-level WeaveConfig
 // ---------------------------------------------------------------------------
 
+/**
+ * Top-level Weave configuration schema.
+ *
+ * Note: top-level `log_level` is rejected at the AST validation layer
+ * (`validate.ts`) before reaching this schema. The `settings` block is the
+ * canonical home for `log_level` and `runtime.journal.strict`.
+ */
 export const WeaveConfigSchema = z.object({
   agents: z.record(z.string(), AgentConfigSchema).default({}),
   categories: z.record(z.string(), CategoryConfigSchema).default({}),
-  disabled: DisabledConfigSchema.default({ agents: [], hooks: [], skills: [] }),
-  log_level: z
-    .enum(["TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL"])
-    .optional(),
+  disabled: DisabledConfigSchema.default({
+    agents: [],
+    hooks: [],
+    skills: [],
+  }),
+  settings: SettingsConfigSchema,
   workflows: z.record(z.string(), WorkflowConfigSchema).default({}),
 });
 
@@ -219,4 +264,10 @@ export type OnReject = z.infer<typeof OnRejectSchema>;
 export type WorkflowStep = z.infer<typeof WorkflowStepSchema>;
 /** A fully-validated workflow definition. */
 export type WorkflowConfig = z.infer<typeof WorkflowConfigSchema>;
+/** Valid log level string. */
+export type LogLevel = z.infer<typeof LogLevelSchema>;
+/** Runtime-specific settings (journal.strict, etc.). */
+export type RuntimeSettings = z.infer<typeof RuntimeSettingsSchema>;
+/** The `settings { ... }` block config shape. */
+export type SettingsConfig = z.infer<typeof SettingsConfigSchema>;
 export type WeaveConfig = z.infer<typeof WeaveConfigSchema>;

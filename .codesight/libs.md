@@ -7,6 +7,10 @@
   - type ArgParseError
 - `packages/cli/src/cli.ts` — function run: (deps?) => Promise<Result<number, CliError>>, interface CliDeps
 - `packages/cli/src/commands/init.ts` — function runInit: (ctx) => Promise<Result<number, CliError>>, interface InitContext
+- `packages/cli/src/commands/runtime.ts`
+  - function runRuntime: (ctx) => Promise<Result<number, CliError>>
+  - interface RuntimeCommandContext
+  - const DEFAULT_RUNTIME_DB_PATH
 - `packages/cli/src/commands/validate.ts`
   - function validateExplicitPath: (path, fs) => ResultAsync<ValidatedConfig, ValidateError>
   - function formatSummary: (config) => string
@@ -123,6 +127,39 @@
   - type ResolutionSource
   - const DEFAULT_FALLBACK_MODEL
 - `packages/engine/src/runner.ts` — class WeaveRunner, interface WeaveRunnerOptions
+- `packages/engine/src/runtime/errors.ts`
+  - function initializationError: (message, cause?) => RuntimeStoreInitializationError
+  - function migrationVersionError: (foundVersion, supportedVersion, message) => RuntimeStoreMigrationVersionError
+  - function serializationError: (message, cause?) => RuntimeStoreSerializationError
+  - function queryError: (message, cause?) => RuntimeStoreQueryError
+  - function notFoundError: (entity, id, message?) => RuntimeStoreNotFoundError
+  - function conflictError: (entity, message, conflictingId?) => RuntimeStoreConflictError
+  - _...12 more_
+- `packages/engine/src/runtime/fingerprint.ts` — function createProjectSalt: () => string, function fingerprintContent: (salt, content) => ResultAsync<string, RuntimeStoreError>
+- `packages/engine/src/runtime/journal-writer.ts` — class RuntimeJournalWriter, interface WriteJournalEntryInput
+- `packages/engine/src/runtime/memory-store.ts`
+  - function createInMemoryRuntimeStore: (options) => InMemoryRuntimeStore
+  - class InMemoryRuntimeStore
+  - interface InMemoryRuntimeStoreFailureConfig
+  - interface InMemoryRuntimeStoreOptions
+- `packages/engine/src/runtime/sanitizer.ts` — function sanitizeJournalData: (data) => Result<JsonObject, RuntimeStoreError>, function sanitizeSnapshotMetadata: (metadata, string | number | boolean>) => Result<Record<string, string | number | boolean>, RuntimeStoreError>
+- `packages/engine/src/runtime/sqlite/kysely-bun-sqlite.ts` — class BunSqliteDialect
+- `packages/engine/src/runtime/sqlite/migrations.ts`
+  - function runMigrations: (db) => Result<void, RuntimeStoreError>
+  - function readSchemaVersion: (db) => number
+  - const CURRENT_SCHEMA_VERSION
+- `packages/engine/src/runtime/sqlite/store.ts`
+  - function createSqliteRuntimeStore: (options) => SqliteRuntimeStore
+  - class SqliteRuntimeStore
+  - interface SqliteRuntimeStoreOptions
+- `packages/engine/src/runtime/types.ts`
+  - function createWorkflowInstanceId: (raw) => WorkflowInstanceId
+  - function createExecutionLeaseId: (raw) => ExecutionLeaseId
+  - function createSessionSnapshotId: (raw) => SessionSnapshotId
+  - function createRuntimeJournalEntryId: (raw) => RuntimeJournalEntryId
+  - function createOwnerId: (raw) => OwnerId
+  - interface JsonObject
+  - _...18 more_
 - `packages/engine/src/skill-resolution.ts`
   - function resolveSkillsForAgent: (input) => Result<ResolvedSkill[], SkillResolutionError[]>
   - function resolveSkillsForConfig: (input) => Result<ConfigSkillResolutionResult, SkillResolutionError[]>

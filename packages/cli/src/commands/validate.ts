@@ -85,7 +85,7 @@ export function formatSummary(config: WeaveConfig): string {
     `categories: ${Object.keys(config.categories).length}`,
     `workflows: ${Object.keys(config.workflows).length}`,
     `disabled: ${disabledTotal}`,
-    `log_level: ${config.log_level ?? "INFO"}`,
+    `log_level: ${config.settings.log_level}`,
   ].join("\n");
 }
 

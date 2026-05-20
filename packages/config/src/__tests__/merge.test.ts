@@ -25,19 +25,19 @@ describe("mergeConfigs", () => {
   // Scalars
   // -------------------------------------------------------------------------
 
-  it("(a) scalar override: last-defined log_level wins", () => {
-    const a = cfg("log_level INFO");
-    const b = cfg("log_level DEBUG");
+  it("(a) scalar override: last-defined settings.log_level wins", () => {
+    const a = cfg("settings { log_level INFO }");
+    const b = cfg("settings { log_level DEBUG }");
     const merged = mergeConfigs(a, b);
-    expect(merged.log_level).toBe("DEBUG");
+    expect(merged.settings.log_level).toBe("DEBUG");
   });
 
-  it("(b) three-layer scalar: only third layer sets log_level → third value wins", () => {
+  it("(b) three-layer scalar: only third layer sets settings.log_level → third value wins", () => {
     const a = cfg("");
     const b = cfg("");
-    const c = cfg("log_level WARN");
+    const c = cfg("settings { log_level WARN }");
     const merged = mergeConfigs(a, b, c);
-    expect(merged.log_level).toBe("WARN");
+    expect(merged.settings.log_level).toBe("WARN");
   });
 
   // -------------------------------------------------------------------------

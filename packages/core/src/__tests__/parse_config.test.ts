@@ -14,7 +14,7 @@ describe("parseConfig — valid sources", () => {
     expect(config.agents.helper?.prompt).toBe("You are a helpful assistant.");
   });
 
-  it("full valid source: agents, categories, disable, log_level", () => {
+  it("full valid source: agents, categories, disable, settings block", () => {
     const src = `agent loom {
   description "Loom (Main Orchestrator)"
   prompt "You are loom."
@@ -68,7 +68,9 @@ disable agents ["warp", "spindle"]
 disable hooks ["on-session-idle"]
 disable skills ["tdd"]
 
-log_level INFO`;
+settings {
+  log_level INFO
+}`;
 
     const result = parseConfig(src);
     expect(result.isOk()).toBe(true);
@@ -90,8 +92,9 @@ log_level INFO`;
     expect(config.disabled.hooks).toEqual(["on-session-idle"]);
     expect(config.disabled.skills).toEqual(["tdd"]);
 
-    // Log level
-    expect(config.log_level).toBe("INFO");
+    // Settings
+    expect(config.settings.log_level).toBe("INFO");
+    expect(config.settings.runtime.journal.strict).toBe(false);
   });
 
   it("AGENTS.md example: loom agent with tool_policy and triggers", () => {
@@ -413,6 +416,66 @@ workflow quick-fix {
     expect(config.categories.backend).toBeDefined();
     expect(config.workflows["quick-fix"]).toBeDefined();
     expect(config.workflows["quick-fix"]?.steps).toHaveLength(1);
+  });
+});
+
+describe("parseConfig — settings block", () => {
+  it("settings { log_level INFO } parses and reflects in config.settings", () => {
+    const src = `settings {
+  log_level INFO
+}`;
+    const result = parseConfig(src);
+    expect(result.isOk()).toBe(true);
+    const config = result._unsafeUnwrap();
+    expect(config.settings.log_level).toBe("INFO");
+    expect(config.settings.runtime.journal.strict).toBe(false);
+  });
+
+  it("settings { log_level WARN runtime { journal { strict true } } } parses correctly", () => {
+    const src = `settings {
+  log_level WARN
+  runtime {
+    journal {
+      strict true
+    }
+  }
+}`;
+    const result = parseConfig(src);
+    expect(result.isOk()).toBe(true);
+    const config = result._unsafeUnwrap();
+    expect(config.settings.log_level).toBe("WARN");
+    expect(config.settings.runtime.journal.strict).toBe(true);
+  });
+
+  it("empty source has default settings (log_level INFO, strict false)", () => {
+    const result = parseConfig("");
+    expect(result.isOk()).toBe(true);
+    const config = result._unsafeUnwrap();
+    expect(config.settings.log_level).toBe("INFO");
+    expect(config.settings.runtime.journal.strict).toBe(false);
+  });
+
+  it("top-level log_level → err with ValidationError", () => {
+    const result = parseConfig("log_level INFO");
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    expect(errors.some((e) => e.type === "ValidationError")).toBe(true);
+    expect(
+      errors.some(
+        (e) =>
+          e.type === "ValidationError" && "path" in e && e.path === "log_level",
+      ),
+    ).toBe(true);
+  });
+
+  it("invalid log_level inside settings block → err with ValidationError", () => {
+    const src = `settings {
+  log_level verbose
+}`;
+    const result = parseConfig(src);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    expect(errors.some((e) => e.type === "ValidationError")).toBe(true);
   });
 });
 

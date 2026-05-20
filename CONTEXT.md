@@ -8,12 +8,32 @@ Weave is a harness-agnostic prompt and agent-configuration system that turns dec
 A durable record of a workflow run's execution state, coordination metadata, and artifact references.
 _Avoid_: Run state, workflow state blob, plan progress
 
+**ExecutionLease**:
+A coordination record that grants one actor permission to actively drive a workflow run.
+_Avoid_: Workflow status, active flag, lock file
+
+**Runtime Store**:
+The Weave-owned durable state space for workflow execution records, coordination records, and runtime observations.
+_Avoid_: Harness storage, adapter storage, config state
+
+**Runtime Journal**:
+A chronological record of runtime observations used for debugging, audit, and correlation.
+_Avoid_: Event-sourced state, replay log, source of truth
+
+**SessionSnapshot**:
+A normalized record of Weave-visible harness session observations associated with runtime execution.
+_Avoid_: Raw harness dump, transcript archive, prompt log
+
 **Paused Workflow**:
 A workflow run that intentionally stops at a resumable point while waiting for user or policy direction.
 _Avoid_: Blocked workflow, failed workflow
 
 **Blocked Workflow**:
 A workflow run that cannot proceed because a required input, artifact, or harness capability is unavailable.
+_Avoid_: Paused workflow, failed workflow
+
+**Cancelled Workflow**:
+A workflow run that was intentionally stopped before completion and should not be resumed.
 _Avoid_: Paused workflow, failed workflow
 
 **Completion Signal**:
@@ -71,6 +91,11 @@ _Avoid_: Delegation table, routing chart, agent map
 ## Relationships
 
 - A **WorkflowInstance** stores active execution metadata and artifacts for one workflow run.
+- An **ExecutionLease** controls active ownership of a **WorkflowInstance** without replacing its lifecycle state.
+- A **Cancelled Workflow** is terminal, while a **Paused Workflow** is intentionally resumable.
+- The **Runtime Store** contains **WorkflowInstance** records and related runtime coordination data.
+- A **Runtime Journal** records observations about **WorkflowInstance** execution without replacing repository state.
+- A **SessionSnapshot** may describe harness session context for a **WorkflowInstance** without storing raw harness-private state.
 - **Plan Markdown** remains the source for task-list progress in plan-compatible workflows during dogfooding.
 - A **WorkflowInstance** may reference **Plan Markdown** as an artifact.
 - An **Adapter Capability Contract** describes adapter readiness independently of any specific workflow run.
@@ -100,3 +125,7 @@ See [Prompt Composition Guide](docs/prompt-composition.md) and [ADR 0001](docs/a
 
 - "plan state" can mean either human-visible checklist progress or runtime execution metadata; resolved: use **Plan Markdown** for checklist progress and **WorkflowInstance** for runtime metadata.
 - "dogfood" is issue-tracking context, not a canonical readiness term; resolved: use **Core Readiness Profile** for adapter readiness gates.
+- "runtime storage" can sound harness-owned; resolved: use **Runtime Store** for Weave-owned durable execution state, distinct from adapter-owned harness resources.
+- "active execution pointer" suggests a separate concept; resolved: a valid **ExecutionLease** identifies the actively driven **WorkflowInstance**.
+- "event log" can imply event sourcing; resolved: use **Runtime Journal** for observational runtime history that is not the source of truth.
+- "session runtime snapshot" can imply raw harness state capture; resolved: use **SessionSnapshot** for normalized Weave-visible observations only.

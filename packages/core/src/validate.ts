@@ -95,13 +95,22 @@ function transformStepProperties(
 
 /**
  * Walk `AstNode[]` and build a plain object shaped for `WeaveConfigSchema`.
+ *
+ * Top-level `log_level` is rejected with a `ValidationError` — it must be
+ * placed inside a `settings { log_level INFO }` block instead.
  */
-function astToPlainObject(nodes: AstNode[]): Record<string, unknown> {
+function astToPlainObject(nodes: AstNode[]): {
+  plain: Record<string, unknown>;
+  topLevelLogLevel: boolean;
+  invalidSettingsShape: boolean;
+} {
   const agents: Record<string, unknown> = {};
   const categories: Record<string, unknown> = {};
   const disabled: Record<string, string[]> = {};
   const workflows: Record<string, unknown> = {};
-  const settings: Record<string, unknown> = {};
+  let settingsBlock: Record<string, unknown> | undefined;
+  let topLevelLogLevel = false;
+  let invalidSettingsShape = false;
 
   for (const node of nodes) {
     switch (node.type) {
@@ -130,18 +139,30 @@ function astToPlainObject(nodes: AstNode[]): Record<string, unknown> {
         break;
 
       case "setting":
-        settings[node.key] = astValueToPlain(node.value);
+        if (node.key === "log_level") {
+          // Top-level log_level is rejected — must be inside settings { }
+          topLevelLogLevel = true;
+        } else if (node.key === "settings") {
+          // settings { ... } block — extract as nested object
+          if (node.value.kind === "block") {
+            settingsBlock = propertiesToObject(node.value.properties);
+          } else {
+            invalidSettingsShape = true;
+          }
+        }
+        // All other top-level settings are silently ignored (not part of schema)
         break;
     }
   }
 
-  const result: Record<string, unknown> = { ...settings };
+  const result: Record<string, unknown> = {};
   if (Object.keys(agents).length > 0) result.agents = agents;
   if (Object.keys(categories).length > 0) result.categories = categories;
   if (Object.keys(disabled).length > 0) result.disabled = disabled;
   if (Object.keys(workflows).length > 0) result.workflows = workflows;
+  if (settingsBlock !== undefined) result.settings = settingsBlock;
 
-  return result;
+  return { plain: result, topLevelLogLevel, invalidSettingsShape };
 }
 
 // ---------------------------------------------------------------------------
@@ -163,11 +184,37 @@ function zodErrorToValidationErrors(zodError: ZodError): ValidationError[] {
 /**
  * Validates an `AstNode[]` against the `WeaveConfigSchema`.
  * Returns a fully-typed `WeaveConfig` or an array of `ValidationError`s.
+ *
+ * Top-level `log_level` is rejected with a `ValidationError` — it must be
+ * placed inside a `settings { log_level INFO }` block.
  */
 export function validate(
   ast: AstNode[],
 ): Result<WeaveConfig, ValidationError[]> {
-  const plain = astToPlainObject(ast);
+  const { plain, topLevelLogLevel, invalidSettingsShape } =
+    astToPlainObject(ast);
+
+  if (invalidSettingsShape) {
+    return err([
+      {
+        type: "ValidationError",
+        path: "settings",
+        message: "settings must be a block: settings { ... }",
+      },
+    ]);
+  }
+
+  if (topLevelLogLevel) {
+    return err([
+      {
+        type: "ValidationError",
+        path: "log_level",
+        message:
+          "top-level log_level is not allowed; use settings { log_level INFO } instead",
+      },
+    ]);
+  }
+
   const parsed = WeaveConfigSchema.safeParse(plain);
 
   if (!parsed.success) {

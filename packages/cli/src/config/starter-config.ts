@@ -89,7 +89,9 @@ disable agents []
 disable hooks []
 disable skills []
 
-log_level INFO
+settings {
+  log_level INFO
+}
 
 continuation {
   recovery {

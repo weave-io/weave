@@ -70,8 +70,10 @@ export function printSummary(
     );
   }
 
-  if (config.log_level) {
-    console.log(`  log_level: ${config.log_level}`);
+  const logLevel = config.settings.log_level;
+  if (logLevel !== "INFO") {
+    // Only print when non-default to reduce noise; INFO is the default
+    console.log(`  log_level: ${logLevel}`);
   }
 }
 

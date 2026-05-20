@@ -52,6 +52,96 @@ export type { RunAgentEffect } from "./run-agent-effects.js";
 export type { WeaveRunnerOptions } from "./runner.js";
 export { WeaveRunner } from "./runner.js";
 export type {
+  RuntimeStoreConflictError,
+  RuntimeStoreError,
+  RuntimeStoreInitializationError,
+  RuntimeStoreJournalWriteError,
+  RuntimeStoreMigrationVersionError,
+  RuntimeStoreNotFoundError,
+  RuntimeStoreQueryError,
+  RuntimeStoreSerializationError,
+  RuntimeStoreValidationError,
+} from "./runtime/errors.js";
+export {
+  conflictError,
+  initializationError,
+  journalWriteError,
+  migrationVersionError,
+  notFoundError,
+  queryError,
+  serializationError,
+  validationError,
+} from "./runtime/errors.js";
+export {
+  createProjectSalt,
+  fingerprintContent,
+} from "./runtime/fingerprint.js";
+export type { WriteJournalEntryInput } from "./runtime/journal-writer.js";
+export { RuntimeJournalWriter } from "./runtime/journal-writer.js";
+export type {
+  InMemoryRuntimeStoreFailureConfig,
+  InMemoryRuntimeStoreOptions,
+} from "./runtime/memory-store.js";
+export {
+  createInMemoryRuntimeStore,
+  InMemoryRuntimeStore,
+} from "./runtime/memory-store.js";
+export {
+  sanitizeJournalData,
+  sanitizeSnapshotMetadata,
+} from "./runtime/sanitizer.js";
+export {
+  CURRENT_SCHEMA_VERSION,
+  readSchemaVersion,
+  runMigrations,
+} from "./runtime/sqlite/migrations.js";
+export type { SqliteRuntimeStoreOptions } from "./runtime/sqlite/store.js";
+export {
+  createSqliteRuntimeStore,
+  SqliteRuntimeStore,
+} from "./runtime/sqlite/store.js";
+export type {
+  AcquireLeaseInput,
+  CreateWorkflowInstanceInput,
+  ExecutionLeaseRepository,
+  RecordSessionSnapshotInput,
+  RuntimeJournalRepository,
+  RuntimeStore,
+  RuntimeStoreTransaction,
+  SessionSnapshotRepository,
+  TransactionCallback,
+  UpdateWorkflowInstanceInput,
+  WorkflowInstanceRepository,
+} from "./runtime/store.js";
+export type {
+  ArtifactRef,
+  ExecutionLease,
+  ExecutionLeaseId,
+  JournalEntrySource,
+  JournalQueryFilter,
+  JournalSeverity,
+  JsonObject,
+  JsonPrimitive,
+  JsonValue,
+  OwnerId,
+  RuntimeJournalEntry,
+  RuntimeJournalEntryId,
+  SessionSnapshot,
+  SessionSnapshotId,
+  WorkflowInstance,
+  WorkflowInstanceId,
+  WorkflowInstanceStatus,
+} from "./runtime/types.js";
+export {
+  createExecutionLeaseId,
+  createOwnerId,
+  createRuntimeJournalEntryId,
+  createSessionSnapshotId,
+  createWorkflowInstanceId,
+  JOURNAL_SEVERITIES,
+  WORKFLOW_INSTANCE_STATUSES,
+} from "./runtime/types.js";
+export type {
   ConfigSkillResolutionResult,
   ResolvedSkill,
   SkillInfo,

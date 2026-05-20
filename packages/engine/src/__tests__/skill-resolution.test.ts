@@ -632,6 +632,10 @@ function makeConfig(overrides: Partial<WeaveConfig> = {}): WeaveConfig {
     agents: {},
     categories: {},
     disabled: { agents: [], hooks: [], skills: [] },
+    settings: {
+      log_level: "INFO",
+      runtime: { journal: { strict: false } },
+    },
     workflows: {},
     ...overrides,
   };

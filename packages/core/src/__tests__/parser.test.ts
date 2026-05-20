@@ -292,6 +292,63 @@ describe("Parser — named block value", () => {
   });
 });
 
+describe("Parser — settings block", () => {
+  it("parses settings { log_level INFO } as a SettingAssignment with block value", () => {
+    const src = `settings {
+  log_level INFO
+}`;
+    const result = parseSource(src);
+    expect(result.isOk()).toBe(true);
+    const node = result._unsafeUnwrap()[0] as SettingAssignment;
+    expect(node.type).toBe("setting");
+    expect(node.key).toBe("settings");
+    expect(node.value.kind).toBe("block");
+    const block = node.value as BlockValue;
+    expect(block.properties).toHaveLength(1);
+    expect(block.properties[0]).toMatchObject({
+      key: "log_level",
+      value: { kind: "identifier", value: "INFO" },
+    });
+  });
+
+  it("parses settings { runtime { journal { strict true } } } as nested blocks", () => {
+    const src = `settings {
+  log_level WARN
+  runtime {
+    journal {
+      strict true
+    }
+  }
+}`;
+    const result = parseSource(src);
+    expect(result.isOk()).toBe(true);
+    const node = result._unsafeUnwrap()[0] as SettingAssignment;
+    expect(node.type).toBe("setting");
+    expect(node.key).toBe("settings");
+    expect(node.value.kind).toBe("block");
+    const outer = node.value as BlockValue;
+    // log_level and runtime
+    expect(outer.properties).toHaveLength(2);
+    const logLevelProp = outer.properties.find((p) => p.key === "log_level");
+    expect(logLevelProp?.value).toMatchObject({
+      kind: "identifier",
+      value: "WARN",
+    });
+    const runtimeProp = outer.properties.find((p) => p.key === "runtime");
+    expect(runtimeProp?.value.kind).toBe("block");
+    const runtimeBlock = runtimeProp?.value as BlockValue;
+    const journalProp = runtimeBlock.properties.find(
+      (p) => p.key === "journal",
+    );
+    expect(journalProp?.value.kind).toBe("block");
+    const journalBlock = journalProp?.value as BlockValue;
+    expect(journalBlock.properties[0]).toMatchObject({
+      key: "strict",
+      value: { kind: "boolean", value: true },
+    });
+  });
+});
+
 describe("Parser — errors", () => {
   it("reports UnclosedBlock for missing closing brace", () => {
     const result = parseSource("agent loom {");

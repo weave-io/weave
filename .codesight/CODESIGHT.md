@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weave/core, @weave/engine, @weave/config, @weave/cli, @weave/adapter-opencode
 
-> 0 routes | 0 models | 0 components | 39 lib files | 2 env vars | 0 middleware | 0% test coverage
-> **Token savings:** this file is ~3,400 tokens. Without it, AI exploration would cost ~19,500 tokens. **Saves ~16,100 tokens per conversation.**
-> **Last scanned:** 2026-05-19 20:22 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 49 lib files | 2 env vars | 0 middleware | 0% test coverage
+> **Token savings:** this file is ~4,100 tokens. Without it, AI exploration would cost ~22,100 tokens. **Saves ~18,000 tokens per conversation.**
+> **Last scanned:** 2026-05-20 21:08 — re-run after significant changes
 
 ---
 
@@ -18,6 +18,10 @@
   - type ArgParseError
 - `packages/cli/src/cli.ts` — function run: (deps?) => Promise<Result<number, CliError>>, interface CliDeps
 - `packages/cli/src/commands/init.ts` — function runInit: (ctx) => Promise<Result<number, CliError>>, interface InitContext
+- `packages/cli/src/commands/runtime.ts`
+  - function runRuntime: (ctx) => Promise<Result<number, CliError>>
+  - interface RuntimeCommandContext
+  - const DEFAULT_RUNTIME_DB_PATH
 - `packages/cli/src/commands/validate.ts`
   - function validateExplicitPath: (path, fs) => ResultAsync<ValidatedConfig, ValidateError>
   - function formatSummary: (config) => string
@@ -134,6 +138,39 @@
   - type ResolutionSource
   - const DEFAULT_FALLBACK_MODEL
 - `packages/engine/src/runner.ts` — class WeaveRunner, interface WeaveRunnerOptions
+- `packages/engine/src/runtime/errors.ts`
+  - function initializationError: (message, cause?) => RuntimeStoreInitializationError
+  - function migrationVersionError: (foundVersion, supportedVersion, message) => RuntimeStoreMigrationVersionError
+  - function serializationError: (message, cause?) => RuntimeStoreSerializationError
+  - function queryError: (message, cause?) => RuntimeStoreQueryError
+  - function notFoundError: (entity, id, message?) => RuntimeStoreNotFoundError
+  - function conflictError: (entity, message, conflictingId?) => RuntimeStoreConflictError
+  - _...12 more_
+- `packages/engine/src/runtime/fingerprint.ts` — function createProjectSalt: () => string, function fingerprintContent: (salt, content) => ResultAsync<string, RuntimeStoreError>
+- `packages/engine/src/runtime/journal-writer.ts` — class RuntimeJournalWriter, interface WriteJournalEntryInput
+- `packages/engine/src/runtime/memory-store.ts`
+  - function createInMemoryRuntimeStore: (options) => InMemoryRuntimeStore
+  - class InMemoryRuntimeStore
+  - interface InMemoryRuntimeStoreFailureConfig
+  - interface InMemoryRuntimeStoreOptions
+- `packages/engine/src/runtime/sanitizer.ts` — function sanitizeJournalData: (data) => Result<JsonObject, RuntimeStoreError>, function sanitizeSnapshotMetadata: (metadata, string | number | boolean>) => Result<Record<string, string | number | boolean>, RuntimeStoreError>
+- `packages/engine/src/runtime/sqlite/kysely-bun-sqlite.ts` — class BunSqliteDialect
+- `packages/engine/src/runtime/sqlite/migrations.ts`
+  - function runMigrations: (db) => Result<void, RuntimeStoreError>
+  - function readSchemaVersion: (db) => number
+  - const CURRENT_SCHEMA_VERSION
+- `packages/engine/src/runtime/sqlite/store.ts`
+  - function createSqliteRuntimeStore: (options) => SqliteRuntimeStore
+  - class SqliteRuntimeStore
+  - interface SqliteRuntimeStoreOptions
+- `packages/engine/src/runtime/types.ts`
+  - function createWorkflowInstanceId: (raw) => WorkflowInstanceId
+  - function createExecutionLeaseId: (raw) => ExecutionLeaseId
+  - function createSessionSnapshotId: (raw) => SessionSnapshotId
+  - function createRuntimeJournalEntryId: (raw) => RuntimeJournalEntryId
+  - function createOwnerId: (raw) => OwnerId
+  - interface JsonObject
+  - _...18 more_
 - `packages/engine/src/skill-resolution.ts`
   - function resolveSkillsForAgent: (input) => Result<ResolvedSkill[], SkillResolutionError[]>
   - function resolveSkillsForConfig: (input) => Result<ConfigSkillResolutionResult, SkillResolutionError[]>
@@ -186,46 +223,46 @@
 
 ## Most Imported Files (change these carefully)
 
-- `packages/cli/src/theme/colors.ts` — imported by **10** files
-- `packages/cli/src/io/terminal.ts` — imported by **8** files
+- `packages/cli/src/theme/colors.ts` — imported by **12** files
+- `packages/cli/src/io/terminal.ts` — imported by **10** files
+- `packages/engine/src/runtime/errors.ts` — imported by **10** files
 - `packages/core/src/tokens.ts` — imported by **8** files
 - `packages/engine/src/compose.ts` — imported by **8** files
 - `packages/cli/src/fs/file-system.ts` — imported by **7** files
+- `packages/cli/src/args.ts` — imported by **6** files
 - `packages/core/src/errors.ts` — imported by **6** files
+- `packages/engine/src/logger.ts` — imported by **6** files
+- `packages/cli/src/cli.ts` — imported by **5** files
 - `packages/cli/src/theme/render.ts` — imported by **5** files
-- `packages/cli/src/args.ts` — imported by **5** files
+- `packages/cli/src/errors.ts` — imported by **5** files
 - `packages/config/src/discovery.ts` — imported by **5** files
 - `packages/config/src/types.ts` — imported by **5** files
 - `packages/core/src/lexer.ts` — imported by **5** files
 - `packages/engine/src/descriptors.ts` — imported by **5** files
-- `packages/cli/src/cli.ts` — imported by **4** files
-- `packages/cli/src/errors.ts` — imported by **4** files
 - `packages/config/src/builtins.ts` — imported by **4** files
 - `packages/config/src/normalize-path.ts` — imported by **4** files
 - `packages/core/src/parser.ts` — imported by **4** files
 - `packages/engine/src/env.ts` — imported by **4** files
-- `packages/engine/src/logger.ts` — imported by **4** files
-- `packages/cli/src/commands/validate.ts` — imported by **3** files
 
 ## Import Map (who imports what)
 
-- `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/validate.test.ts`, `packages/cli/src/commands/init.ts` +5 more
-- `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/validate.test.ts`, `packages/cli/src/commands/init.ts` +3 more
+- `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/runtime.test.ts`, `packages/cli/src/commands/__tests__/validate.test.ts` +7 more
+- `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/runtime.test.ts`, `packages/cli/src/commands/__tests__/validate.test.ts` +5 more
+- `packages/engine/src/runtime/errors.ts` ← `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-journal.test.ts`, `packages/engine/src/__tests__/runtime-journal.test.ts`, `packages/engine/src/runtime/fingerprint.ts`, `packages/engine/src/runtime/fingerprint.ts` +5 more
 - `packages/core/src/tokens.ts` ← `packages/core/src/__tests__/lexer.test.ts`, `packages/core/src/ast.ts`, `packages/core/src/ast.ts`, `packages/core/src/index.ts`, `packages/core/src/index.ts` +3 more
 - `packages/engine/src/compose.ts` ← `packages/engine/src/__tests__/compose.test.ts`, `packages/engine/src/__tests__/mock-adapter.ts`, `packages/engine/src/__tests__/template-context.test.ts`, `packages/engine/src/adapter.ts`, `packages/engine/src/index.ts` +3 more
 - `packages/cli/src/fs/file-system.ts` ← `packages/cli/src/__tests__/file-system.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/validate.test.ts`, `packages/cli/src/commands/validate.ts`, `packages/cli/src/installers/__tests__/installers.test.ts` +2 more
+- `packages/cli/src/args.ts` ← `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/runtime.test.ts`, `packages/cli/src/commands/init.ts`, `packages/cli/src/commands/validate.ts`, `packages/cli/src/index.ts` +1 more
 - `packages/core/src/errors.ts` ← `packages/core/src/__tests__/errors.test.ts`, `packages/core/src/index.ts`, `packages/core/src/lexer.ts`, `packages/core/src/parse-config.ts`, `packages/core/src/parser.ts` +1 more
-- `packages/cli/src/theme/render.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/init.ts`, `packages/cli/src/index.ts`, `packages/cli/src/index.ts`
-- `packages/cli/src/args.ts` ← `packages/cli/src/cli.ts`, `packages/cli/src/commands/init.ts`, `packages/cli/src/commands/validate.ts`, `packages/cli/src/index.ts`, `packages/cli/src/index.ts`
-- `packages/config/src/discovery.ts` ← `packages/config/src/__tests__/discovery.test.ts`, `packages/config/src/__tests__/discovery.test.ts`, `packages/config/src/__tests__/load_config.test.ts`, `packages/config/src/index.ts`, `packages/config/src/index.ts`
-- `packages/config/src/types.ts` ← `packages/config/src/__tests__/resolve.test.ts`, `packages/config/src/discovery.ts`, `packages/config/src/index.ts`, `packages/config/src/loader.ts`, `packages/config/src/resolve.ts`
+- `packages/engine/src/logger.ts` ← `packages/engine/src/index.ts`, `packages/engine/src/runner.ts`, `packages/engine/src/runtime/journal-writer.ts`, `packages/engine/src/runtime/sqlite/store.ts`, `packages/engine/src/template-context.ts` +1 more
+- `packages/cli/src/cli.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/commands/__tests__/runtime.test.ts`, `packages/cli/src/index.ts`, `packages/cli/src/index.ts`, `packages/cli/src/main.ts`
 
 ---
 
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 36 test files found
+> 41 test files found
 
 ---
 
