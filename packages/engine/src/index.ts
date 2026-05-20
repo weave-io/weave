@@ -72,6 +72,16 @@ export {
   serializationError,
   validationError,
 } from "./runtime/errors.js";
+export {
+  createProjectSalt,
+  fingerprintContent,
+} from "./runtime/fingerprint.js";
+export type { WriteJournalEntryInput } from "./runtime/journal-writer.js";
+export { RuntimeJournalWriter } from "./runtime/journal-writer.js";
+export {
+  sanitizeJournalData,
+  sanitizeSnapshotMetadata,
+} from "./runtime/sanitizer.js";
 export type {
   AcquireLeaseInput,
   CreateWorkflowInstanceInput,

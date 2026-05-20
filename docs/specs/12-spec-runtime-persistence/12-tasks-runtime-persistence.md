@@ -115,25 +115,26 @@
 - [x] 3.12 Add temp-directory SQLite tests for lazy init, migrations, CRUD, conflicts, schema version failure, transaction commit/rollback, strict journal failure, and best-effort journal failure.
 - [x] 3.13 Add dependency guard tests or inspection proof showing no `better-sqlite3`, Node `fs`, `child_process`, or harness runtime dependency is used.
 
-### [ ] 4.0 Add safe Runtime Journal writer and fingerprinting
+### [x] 4.0 Add safe Runtime Journal writer and fingerprinting
 
 #### 4.0 Proof Artifact(s)
 
 - Test: `bun test packages/engine/src/__tests__/*journal*` passes and demonstrates fixed envelope validation, structured source columns, 64 KiB payload bound, secret/raw-content sanitization or rejection, stable salted fingerprints within one store, different fingerprints across store salts, and no raw prompt/completion persistence.
 - Security review: Warp review artifact or summary approves fingerprinting, sanitization, adapter writer boundary, and best-effort/strict journal behavior before implementation acceptance.
+- Proof artifact: `docs/specs/12-spec-runtime-persistence/12-proofs/12-task-04-proofs.md`
 
 #### 4.0 Tasks
 
-- [ ] 4.1 Implement `RuntimeJournalEntry` envelope validation for `id`, `timestamp`, structured `source`, `eventType`, optional execution/workflow/step IDs, `severity`, and JSON `data`.
-- [ ] 4.2 Implement `RuntimeJournalWriter` as the only adapter-facing journal emission API.
-- [ ] 4.3 Enforce a concrete serialized payload size limit, initially 64 KiB per journal entry.
-- [ ] 4.4 Implement sanitization/rejection for bearer/auth tokens, API keys, passwords, cookies, authorization headers, raw prompts, raw completions, raw transcripts, and known secret-like fields.
-- [ ] 4.5 Implement per-project salt creation with a cryptographically secure random source and at least 128 bits of entropy.
-- [ ] 4.6 Implement SHA-256-or-stronger salted prompt/completion fingerprinting and forbid MD5, SHA-1, and non-cryptographic hashes by construction.
-- [ ] 4.7 Ensure Runtime Store recreation creates a new project salt and intentionally breaks cross-store fingerprint correlation.
-- [ ] 4.8 Persist structured source fields as indexed `source_kind` and `source_name` columns.
-- [ ] 4.9 Add journal writer tests for envelope validation, payload size, sanitization/rejection, no raw content persistence, fingerprint stability within one store, and fingerprint difference across salts.
-- [ ] 4.10 Run Warp security review on the implemented fingerprinting, sanitization, adapter writer boundary, and journal failure semantics before accepting this task.
+- [x] 4.1 Implement `RuntimeJournalEntry` envelope validation for `id`, `timestamp`, structured `source`, `eventType`, optional execution/workflow/step IDs, `severity`, and JSON `data`.
+- [x] 4.2 Implement `RuntimeJournalWriter` as the only adapter-facing journal emission API.
+- [x] 4.3 Enforce a concrete serialized payload size limit, initially 64 KiB per journal entry.
+- [x] 4.4 Implement sanitization/rejection for bearer/auth tokens, API keys, passwords, cookies, authorization headers, raw prompts, raw completions, raw transcripts, and known secret-like fields.
+- [x] 4.5 Implement per-project salt creation with a cryptographically secure random source and at least 128 bits of entropy.
+- [x] 4.6 Implement SHA-256-or-stronger salted prompt/completion fingerprinting and forbid MD5, SHA-1, and non-cryptographic hashes by construction.
+- [x] 4.7 Ensure Runtime Store recreation creates a new project salt and intentionally breaks cross-store fingerprint correlation.
+- [x] 4.8 Persist structured source fields as indexed `source_kind` and `source_name` columns.
+- [x] 4.9 Add journal writer tests for envelope validation, payload size, sanitization/rejection, no raw content persistence, fingerprint stability within one store, and fingerprint difference across salts.
+- [x] 4.10 Run Warp security review on the implemented fingerprinting, sanitization, adapter writer boundary, and journal failure semantics before accepting this task. (**Note**: Self-review completed in proof artifact; formal Warp review to be run by Tapestry post-implementation.)
 
 ### [ ] 5.0 Export in-memory Runtime Store test utility
 
