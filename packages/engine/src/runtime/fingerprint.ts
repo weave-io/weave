@@ -2,14 +2,13 @@
  * CSPRNG salt creation and SHA-256 salted fingerprinting for the Runtime Journal.
  *
  * - Salt creation uses `crypto.getRandomValues` (available in Bun) for ≥128 bits entropy.
- * - Fingerprinting uses `node:crypto` SHA-256 (FIPS-approved; MD5/SHA-1 forbidden by construction).
+ * - Fingerprinting uses `crypto.subtle.digest` (Web Crypto API, available in Bun).
  * - Fingerprints replace raw prompt/completion content — raw content is never stored.
  *
  * @see docs/specs/12-spec-runtime-persistence/12-spec-runtime-persistence.md
  */
 
-import { createHash } from "node:crypto";
-import { err, ok, type Result } from "neverthrow";
+import { ResultAsync } from "neverthrow";
 import type { RuntimeStoreError } from "./errors.js";
 import { journalWriteError } from "./errors.js";
 
@@ -36,7 +35,9 @@ const SALT_BYTE_LENGTH = 16;
 export function createProjectSalt(): string {
   const bytes = new Uint8Array(SALT_BYTE_LENGTH);
   crypto.getRandomValues(bytes);
-  return Buffer.from(bytes).toString("hex");
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 // ---------------------------------------------------------------------------
@@ -48,27 +49,31 @@ export function createProjectSalt(): string {
  *
  * The fingerprint is `SHA-256(salt + content)` encoded as a hex string.
  * MD5, SHA-1, and non-cryptographic hashes are forbidden by construction —
- * only `sha256` is passed to `createHash`.
+ * only `SHA-256` is passed to `crypto.subtle.digest`.
+ *
+ * Uses the Web Crypto API (`crypto.subtle.digest`), which is available in Bun
+ * and all modern runtimes without importing `node:crypto`.
  *
  * Use this to store a correlation handle for prompt/completion content
  * without persisting the raw content itself.
  *
  * @param salt - The per-project hex salt from `runtime_metadata`.
  * @param content - The raw content to fingerprint (never stored).
- * @returns `Result<string, RuntimeStoreError>` — hex fingerprint or error.
+ * @returns `ResultAsync<string, RuntimeStoreError>` — hex fingerprint or error.
  */
 export function fingerprintContent(
   salt: string,
   content: string,
-): Result<string, RuntimeStoreError> {
-  try {
-    const hash = createHash("sha256");
-    hash.update(salt);
-    hash.update(content);
-    return ok(hash.digest("hex"));
-  } catch (cause) {
-    return err(
+): ResultAsync<string, RuntimeStoreError> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(salt + content);
+  return ResultAsync.fromPromise(
+    crypto.subtle.digest("SHA-256", data).then((hashBuffer) =>
+      Array.from(new Uint8Array(hashBuffer))
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join(""),
+    ),
+    (cause) =>
       journalWriteError("Failed to compute SHA-256 fingerprint", cause),
-    );
-  }
+  );
 }

@@ -15,7 +15,14 @@
  * @see docs/specs/12-spec-runtime-persistence/12-spec-runtime-persistence.md
  */
 
-import { err, errAsync, ok, type Result, type ResultAsync } from "neverthrow";
+import {
+  err,
+  errAsync,
+  ok,
+  okAsync,
+  type Result,
+  type ResultAsync,
+} from "neverthrow";
 import { logger } from "../logger.js";
 import type { RuntimeStoreError } from "./errors.js";
 import { journalWriteError } from "./errors.js";
@@ -158,7 +165,7 @@ function checkPayloadSize(
     );
   }
 
-  const byteLength = Buffer.byteLength(serialized, "utf8");
+  const byteLength = new TextEncoder().encode(serialized).byteLength;
   if (byteLength > MAX_DATA_BYTES) {
     return err(
       journalWriteError(
@@ -185,9 +192,10 @@ function checkPayloadSize(
  *
  * Adapters must use this writer — they must not call the repository directly.
  *
- * In best-effort mode (default), write failures are logged as warnings and
- * the error is returned to the caller for optional handling.
- * In strict mode, write failures propagate as `journal_write` errors.
+ * In best-effort mode (default), pre-flight validation failures are logged and
+ * returned as errors. Repository `append()` failures are logged and swallowed
+ * (returning `ok(undefined)`) so the surrounding transaction can still commit.
+ * In strict mode, all failures propagate as `journal_write` errors.
  */
 export class RuntimeJournalWriter {
   private readonly strictMode: boolean;
@@ -203,53 +211,73 @@ export class RuntimeJournalWriter {
    * Write a journal entry after validating the envelope, checking the payload
    * size limit, and sanitizing the `data` field.
    *
-   * Returns `ResultAsync<RuntimeJournalEntry, RuntimeStoreError>`.
+   * Returns `ResultAsync<RuntimeJournalEntry | undefined, RuntimeStoreError>`.
    *
-   * In best-effort mode, validation/sanitization failures are logged as warnings
-   * and the error is returned. In strict mode, all failures propagate.
+   * In best-effort mode:
+   * - Pre-flight failures (validation, sanitization, size) are logged and returned as errors.
+   * - Repository `append()` failures are logged and swallowed — returns `ok(undefined)`
+   *   so the surrounding transaction can commit.
+   *
+   * In strict mode, all failures propagate as errors.
    */
   write(
     input: WriteJournalEntryInput,
-  ): ResultAsync<RuntimeJournalEntry, RuntimeStoreError> {
+  ): ResultAsync<RuntimeJournalEntry | undefined, RuntimeStoreError> {
     // 1. Validate envelope
     const envelopeResult = validateEnvelope(input);
     if (envelopeResult.isErr()) {
-      return this.handleWriteError(envelopeResult.error);
+      return this.handlePreflightError(envelopeResult.error);
     }
 
     // 2. Sanitize data
     const sanitizeResult = sanitizeJournalData(input.data);
     if (sanitizeResult.isErr()) {
-      return this.handleWriteError(sanitizeResult.error);
+      return this.handlePreflightError(sanitizeResult.error);
     }
 
     // 3. Check payload size
     const sizeResult = checkPayloadSize(input.data);
     if (sizeResult.isErr()) {
-      return this.handleWriteError(sizeResult.error);
+      return this.handlePreflightError(sizeResult.error);
     }
 
-    // 4. Delegate to repository
-    return this.repository.append({
-      source: input.source,
-      eventType: input.eventType,
-      executionId: input.executionId,
-      workflowInstanceId: input.workflowInstanceId,
-      stepId: input.stepId,
-      severity: input.severity,
-      data: sanitizeResult.value,
-    });
+    // 4. Delegate to repository — handle failures per strict/best-effort mode
+    return this.repository
+      .append({
+        source: input.source,
+        eventType: input.eventType,
+        executionId: input.executionId,
+        workflowInstanceId: input.workflowInstanceId,
+        stepId: input.stepId,
+        severity: input.severity,
+        data: sanitizeResult.value,
+      })
+      .orElse((error) => {
+        if (this.strictMode) {
+          return errAsync(error);
+        }
+        log.warn(
+          { err: error },
+          "Journal append failed (best-effort mode): " +
+            (error.type === "journal_write" ? error.message : error.type),
+        );
+        return okAsync(undefined);
+      });
   }
 
   /**
-   * Handle a write error according to the strict/best-effort mode.
+   * Handle a pre-flight validation/sanitization/size error.
    *
    * In best-effort mode: log a warning and return the error.
    * In strict mode: return the error directly.
+   *
+   * Pre-flight errors always propagate as errors (unlike repository failures
+   * which are swallowed in best-effort mode) because they indicate a programming
+   * error in the caller, not a transient infrastructure failure.
    */
-  private handleWriteError(
+  private handlePreflightError(
     error: RuntimeStoreError,
-  ): ResultAsync<RuntimeJournalEntry, RuntimeStoreError> {
+  ): ResultAsync<RuntimeJournalEntry | undefined, RuntimeStoreError> {
     if (!this.strictMode) {
       log.warn(
         { err: error },

@@ -57,6 +57,7 @@ import {
   type RuntimeStoreError,
   serializationError,
 } from "../errors.js";
+import { sanitizeSnapshotMetadata } from "../sanitizer.js";
 import type {
   AcquireLeaseInput,
   CreateWorkflowInstanceInput,
@@ -646,9 +647,15 @@ class SqliteSessionSnapshotRepository implements SessionSnapshotRepository {
     const id = newId();
     const now = new Date().toISOString();
 
+    const sanitizeResult = sanitizeSnapshotMetadata(input.metadata);
+    if (sanitizeResult.isErr()) {
+      return errAsync(sanitizeResult.error);
+    }
+    const sanitizedMetadata = sanitizeResult.value;
+
     let metadataJson: string;
     try {
-      metadataJson = JSON.stringify(input.metadata);
+      metadataJson = JSON.stringify(sanitizedMetadata);
     } catch (cause) {
       return errAsync(
         serializationError("Failed to serialize metadata", cause),
@@ -753,10 +760,7 @@ class SqliteSessionSnapshotRepository implements SessionSnapshotRepository {
 // ---------------------------------------------------------------------------
 
 class SqliteRuntimeJournalRepository implements RuntimeJournalRepository {
-  constructor(
-    private readonly db: Kysely<WeaveDatabase>,
-    private readonly strictMode: boolean,
-  ) {}
+  constructor(private readonly db: Kysely<WeaveDatabase>) {}
 
   append(
     entry: Omit<RuntimeJournalEntry, "id" | "timestamp">,
@@ -768,18 +772,9 @@ class SqliteRuntimeJournalRepository implements RuntimeJournalRepository {
     try {
       dataJson = JSON.stringify(entry.data);
     } catch (cause) {
-      const writeErr = journalWriteError(
-        "Failed to serialize journal entry data",
-        cause,
+      return errAsync(
+        journalWriteError("Failed to serialize journal entry data", cause),
       );
-      if (this.strictMode) {
-        return errAsync(writeErr);
-      }
-      log.warn(
-        { err: cause },
-        "Journal entry data serialization failed (best-effort mode)",
-      );
-      return errAsync(writeErr);
     }
 
     return ResultAsync.fromPromise(
@@ -904,15 +899,11 @@ class SqliteRuntimeStoreTransaction implements RuntimeStoreTransaction {
   readonly snapshots: SessionSnapshotRepository;
   readonly journal: RuntimeJournalRepository;
 
-  constructor(
-    txDb: Kysely<WeaveDatabase>,
-    clock: () => Date,
-    strictJournal: boolean,
-  ) {
+  constructor(txDb: Kysely<WeaveDatabase>, clock: () => Date) {
     this.instances = new SqliteWorkflowInstanceRepository(txDb);
     this.leases = new SqliteExecutionLeaseRepository(txDb, clock);
     this.snapshots = new SqliteSessionSnapshotRepository(txDb);
-    this.journal = new SqliteRuntimeJournalRepository(txDb, strictJournal);
+    this.journal = new SqliteRuntimeJournalRepository(txDb);
   }
 }
 
@@ -942,7 +933,6 @@ export interface SqliteRuntimeStoreOptions {
 export class SqliteRuntimeStore implements RuntimeStore {
   private db: Kysely<WeaveDatabase> | null = null;
   private initialized = false;
-  private readonly strictJournal: boolean;
   private readonly clock: () => Date;
 
   readonly instances: WorkflowInstanceRepository;
@@ -951,7 +941,6 @@ export class SqliteRuntimeStore implements RuntimeStore {
   readonly journal: RuntimeJournalRepository;
 
   constructor(private readonly options: SqliteRuntimeStoreOptions) {
-    this.strictJournal = options.strictJournal ?? false;
     this.clock = options.clock ?? (() => new Date());
 
     // Repositories are lazy — they call ensureInitialized() on first use
@@ -1023,11 +1012,7 @@ export class SqliteRuntimeStore implements RuntimeStore {
     return this.ensureInitialized().andThen((db) => {
       return ResultAsync.fromPromise(
         db.transaction().execute(async (txDb) => {
-          const tx = new SqliteRuntimeStoreTransaction(
-            txDb,
-            this.clock,
-            this.strictJournal,
-          );
+          const tx = new SqliteRuntimeStoreTransaction(txDb, this.clock);
 
           const result = await callback(tx);
 
@@ -1240,13 +1225,7 @@ class LazyRuntimeJournalRepository implements RuntimeJournalRepository {
   > {
     return this.store
       .ensureInitialized()
-      .map(
-        (db) =>
-          new SqliteRuntimeJournalRepository(
-            db,
-            (this.store as unknown as { strictJournal: boolean }).strictJournal,
-          ),
-      );
+      .map((db) => new SqliteRuntimeJournalRepository(db));
   }
 
   append(

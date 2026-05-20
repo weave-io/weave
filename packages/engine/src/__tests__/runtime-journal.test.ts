@@ -376,7 +376,7 @@ describe("RuntimeJournalWriter — sanitization", () => {
     const repo = new StubJournalRepository();
     const writer = new RuntimeJournalWriter(repo);
     const salt = createProjectSalt();
-    const fp = fingerprintContent(salt, "some prompt content");
+    const fp = await fingerprintContent(salt, "some prompt content");
     expect(fp.isOk()).toBe(true);
     const result = await writer.write(
       makeValidInput({
@@ -419,7 +419,7 @@ describe("RuntimeJournalWriter — no raw content persistence", () => {
     const repo = new StubJournalRepository();
     const writer = new RuntimeJournalWriter(repo);
     const salt = createProjectSalt();
-    const fp = fingerprintContent(salt, "You are a helpful assistant.");
+    const fp = await fingerprintContent(salt, "You are a helpful assistant.");
     expect(fp.isOk()).toBe(true);
 
     const result = await writer.write(
@@ -441,11 +441,11 @@ describe("RuntimeJournalWriter — no raw content persistence", () => {
 // ---------------------------------------------------------------------------
 
 describe("fingerprintContent — stability and cross-salt difference", () => {
-  it("produces the same fingerprint for the same salt and content", () => {
+  it("produces the same fingerprint for the same salt and content", async () => {
     const salt = createProjectSalt();
     const content = "You are a helpful assistant.";
-    const fp1 = fingerprintContent(salt, content);
-    const fp2 = fingerprintContent(salt, content);
+    const fp1 = await fingerprintContent(salt, content);
+    const fp2 = await fingerprintContent(salt, content);
     expect(fp1.isOk()).toBe(true);
     expect(fp2.isOk()).toBe(true);
     if (fp1.isOk() && fp2.isOk()) {
@@ -453,12 +453,12 @@ describe("fingerprintContent — stability and cross-salt difference", () => {
     }
   });
 
-  it("produces different fingerprints for different salts (same content)", () => {
+  it("produces different fingerprints for different salts (same content)", async () => {
     const salt1 = createProjectSalt();
     const salt2 = createProjectSalt();
     const content = "You are a helpful assistant.";
-    const fp1 = fingerprintContent(salt1, content);
-    const fp2 = fingerprintContent(salt2, content);
+    const fp1 = await fingerprintContent(salt1, content);
+    const fp2 = await fingerprintContent(salt2, content);
     expect(fp1.isOk()).toBe(true);
     expect(fp2.isOk()).toBe(true);
     if (fp1.isOk() && fp2.isOk()) {
@@ -467,10 +467,10 @@ describe("fingerprintContent — stability and cross-salt difference", () => {
     }
   });
 
-  it("produces different fingerprints for different content (same salt)", () => {
+  it("produces different fingerprints for different content (same salt)", async () => {
     const salt = createProjectSalt();
-    const fp1 = fingerprintContent(salt, "content A");
-    const fp2 = fingerprintContent(salt, "content B");
+    const fp1 = await fingerprintContent(salt, "content A");
+    const fp2 = await fingerprintContent(salt, "content B");
     expect(fp1.isOk()).toBe(true);
     expect(fp2.isOk()).toBe(true);
     if (fp1.isOk() && fp2.isOk()) {
@@ -478,9 +478,9 @@ describe("fingerprintContent — stability and cross-salt difference", () => {
     }
   });
 
-  it("produces a 64-character hex string (SHA-256)", () => {
+  it("produces a 64-character hex string (SHA-256)", async () => {
     const salt = createProjectSalt();
-    const fp = fingerprintContent(salt, "test content");
+    const fp = await fingerprintContent(salt, "test content");
     expect(fp.isOk()).toBe(true);
     if (fp.isOk()) {
       expect(fp.value).toMatch(/^[0-9a-f]{64}$/);
@@ -601,16 +601,27 @@ describe("RuntimeJournalWriter — strict vs best-effort mode", () => {
     }
   });
 
-  it("propagates repository errors in both modes", async () => {
-    for (const strictMode of [false, true]) {
-      const repo = new StubJournalRepository();
-      const writer = new RuntimeJournalWriter(repo, { strictMode });
-      repo.injectFailure();
-      const result = await writer.write(makeValidInput());
-      expect(result.isErr()).toBe(true);
-      if (result.isErr()) {
-        expect(result.error.type).toBe("journal_write");
-      }
+  it("best-effort mode: swallows repository errors (returns ok)", async () => {
+    const repo = new StubJournalRepository();
+    const writer = new RuntimeJournalWriter(repo, { strictMode: false });
+    repo.injectFailure();
+    const result = await writer.write(makeValidInput());
+    // In best-effort mode, repository failures are swallowed so the
+    // surrounding transaction can still commit.
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value).toBeUndefined();
+    }
+  });
+
+  it("strict mode: propagates repository errors", async () => {
+    const repo = new StubJournalRepository();
+    const writer = new RuntimeJournalWriter(repo, { strictMode: true });
+    repo.injectFailure();
+    const result = await writer.write(makeValidInput());
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error.type).toBe("journal_write");
     }
   });
 });
