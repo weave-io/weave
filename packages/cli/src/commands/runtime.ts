@@ -11,12 +11,15 @@
  * cookies, authorization headers, tokens, or raw provider payloads.
  */
 
+import { Database } from "bun:sqlite";
 import { resolve } from "node:path";
 import {
+  CURRENT_SCHEMA_VERSION,
   createSqliteRuntimeStore,
   type ExecutionLease,
   type RuntimeJournalEntry,
   type RuntimeStore,
+  readSchemaVersion,
   type WorkflowInstance,
 } from "@weave/engine";
 import { ok, type Result } from "neverthrow";
@@ -54,6 +57,12 @@ export interface RuntimeCommandContext {
    * the DB "exists" without real filesystem access.
    */
   dbExists?: (dbPath: string) => Promise<boolean>;
+  /**
+   * Optional schema version override — used in tests to inject a known
+   * schema version without reading from a real SQLite DB.
+   * If omitted, the schema version is read from the DB at `dbPath`.
+   */
+  schemaVersion?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -212,6 +221,7 @@ async function runRuntimeStatus(
   ctx: RuntimeCommandContext,
   dbPath: string,
   store: RuntimeStore,
+  schemaVersion: number,
 ): Promise<Result<number, CliError>> {
   const { terminal, theme } = ctx;
 
@@ -225,6 +235,7 @@ async function runRuntimeStatus(
     `${theme.boldCyan("Runtime Store Status")}`,
     "",
     `  DB path:       ${dbPath}`,
+    `  Schema version: ${schemaVersion}`,
     "",
   ];
 
@@ -365,7 +376,20 @@ export async function runRuntime(
   const store = factory(dbPath);
 
   if (ctx.subcommand === "status") {
-    return runRuntimeStatus(ctx, dbPath, store);
+    // Resolve schema version: use injected value (tests) or read from DB
+    let schemaVersion: number;
+    if (ctx.schemaVersion !== undefined) {
+      schemaVersion = ctx.schemaVersion;
+    } else {
+      try {
+        const db = new Database(dbPath, { readonly: true });
+        schemaVersion = readSchemaVersion(db);
+        db.close();
+      } catch {
+        schemaVersion = CURRENT_SCHEMA_VERSION;
+      }
+    }
+    return runRuntimeStatus(ctx, dbPath, store, schemaVersion);
   }
 
   return runRuntimeJournal(ctx, dbPath, store);

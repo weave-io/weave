@@ -997,6 +997,94 @@ describe("InMemoryRuntimeStore — failure injection", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Tests: strictJournal wiring
+// ---------------------------------------------------------------------------
+
+describe("InMemoryRuntimeStore — strictJournal wiring", () => {
+  it("best-effort mode: transaction commits despite journal append failure", async () => {
+    // In best-effort mode, a journal append failure inside a transaction
+    // should be swallowed so the transaction can still commit.
+    const store = createInMemoryRuntimeStore({
+      strictJournal: false,
+      failOn: { journalAppend: journalWriteError("injected journal failure") },
+    });
+
+    const result = await store.transaction((tx) => {
+      return tx.instances
+        .create({
+          workflowName: "wf",
+          goal: "best-effort-goal",
+          slug: "best-effort-goal",
+        })
+        .andThen((instance) => {
+          // Journal append will fail (injected), but in best-effort mode
+          // the writer swallows it and returns ok(synthetic)
+          return tx.journal
+            .append({
+              source: { kind: "engine", name: "runner" },
+              eventType: "instance.created",
+              severity: "info",
+              data: { instanceId: instance.id as string },
+            })
+            .map(() => instance);
+        });
+    });
+
+    // Transaction should commit despite journal failure
+    expect(result.isOk()).toBe(true);
+    const instances = (await store.instances.list())._unsafeUnwrap();
+    expect(instances).toHaveLength(1);
+    expect(instances[0].goal).toBe("best-effort-goal");
+  });
+
+  it("strict mode: transaction rolls back when journal append fails", async () => {
+    // In strict mode, a journal append failure inside a transaction
+    // should propagate as an error and roll back the transaction.
+    const store = createInMemoryRuntimeStore({
+      strictJournal: true,
+      failOn: { journalAppend: journalWriteError("injected journal failure") },
+    });
+
+    // Pre-create an instance outside the transaction
+    await store.instances.create({
+      workflowName: "wf",
+      goal: "pre-existing",
+      slug: "pre-existing",
+    });
+    // Clear the journal failure for the pre-create (it's not in a transaction)
+    // Actually the pre-create doesn't use the journal, so it's fine.
+
+    const result = await store.transaction((tx) => {
+      return tx.instances
+        .create({
+          workflowName: "wf",
+          goal: "in-tx",
+          slug: "in-tx",
+        })
+        .andThen((instance) => {
+          // Journal append will fail (injected), and in strict mode
+          // the error propagates
+          return tx.journal.append({
+            source: { kind: "engine", name: "runner" },
+            eventType: "instance.created",
+            severity: "info",
+            data: { instanceId: instance.id as string },
+          });
+        });
+    });
+
+    // Transaction should have rolled back due to journal failure
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().type).toBe("journal_write");
+
+    // The in-tx instance should have been rolled back
+    const instances = (await store.instances.list())._unsafeUnwrap();
+    expect(instances).toHaveLength(1);
+    expect(instances[0].goal).toBe("pre-existing");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tests: No filesystem access
 // ---------------------------------------------------------------------------
 

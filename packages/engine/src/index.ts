@@ -90,6 +90,11 @@ export {
   sanitizeJournalData,
   sanitizeSnapshotMetadata,
 } from "./runtime/sanitizer.js";
+export {
+  CURRENT_SCHEMA_VERSION,
+  readSchemaVersion,
+  runMigrations,
+} from "./runtime/sqlite/migrations.js";
 export type { SqliteRuntimeStoreOptions } from "./runtime/sqlite/store.js";
 export {
   createSqliteRuntimeStore,

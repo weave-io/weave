@@ -198,6 +198,71 @@ describe("migrations", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Project salt lifecycle
+// ---------------------------------------------------------------------------
+
+describe("project salt lifecycle", () => {
+  it("creates a project salt on first initialization", async () => {
+    const store = makeStore(testDir);
+    await store.instances.list(); // trigger initialization
+    expect(store.projectSalt).toBeDefined();
+    expect(typeof store.projectSalt).toBe("string");
+    expect(store.projectSalt.length).toBe(32); // 16 bytes = 32 hex chars
+    await store.close();
+  });
+
+  it("returns the same salt on second open of the same DB", async () => {
+    const store1 = makeStore(testDir);
+    await store1.instances.list();
+    const salt1 = store1.projectSalt;
+    await store1.close();
+
+    const store2 = makeStore(testDir);
+    await store2.instances.list();
+    const salt2 = store2.projectSalt;
+    await store2.close();
+
+    expect(salt1).toBe(salt2);
+  });
+
+  it("new DB gets a different salt", async () => {
+    const dir2 = makeTempDir();
+    try {
+      const store1 = makeStore(testDir);
+      await store1.instances.list();
+      const salt1 = store1.projectSalt;
+      await store1.close();
+
+      const store2 = makeStore(dir2);
+      await store2.instances.list();
+      const salt2 = store2.projectSalt;
+      await store2.close();
+
+      // Salts should be different (with overwhelming probability)
+      expect(salt1).not.toBe(salt2);
+    } finally {
+      Bun.spawnSync(["rm", "-rf", dir2]);
+    }
+  });
+
+  it("persists salt in runtime_metadata table", async () => {
+    const store = makeStore(testDir);
+    await store.instances.list();
+    const salt = store.projectSalt;
+    await store.close();
+
+    const db = new Database(makeDbPath(testDir));
+    const row = db
+      .prepare("SELECT value FROM runtime_metadata WHERE key = 'project_salt'")
+      .get() as { value: string } | null;
+    db.close();
+
+    expect(row).not.toBeNull();
+    expect(row?.value).toBe(salt);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // WorkflowInstance CRUD
 // ---------------------------------------------------------------------------
 
@@ -826,42 +891,53 @@ describe("transaction commit and rollback", () => {
 
 describe("strict journal mode", () => {
   it("journal write failure in strict mode rolls back the transaction", async () => {
-    // In strict mode, journal write failures should propagate as errors
-    // We test this by verifying the journal append error type
     const store = makeStore(testDir, { strictJournal: true });
 
-    // Create an instance to ensure the DB is initialized
-    await store.instances.create({ workflowName: "wf", goal: "g", slug: "g" });
-
-    // Close the DB to simulate a write failure
-    await store.close();
-
-    // Re-open with a corrupted/closed state — journal append should fail
-    // We verify the error type is journal_write
-    const store2 = makeStore(testDir, { strictJournal: true });
-    const appendResult = await store2.journal.append({
-      source: { kind: "engine", name: "runner" },
-      eventType: "test",
-      severity: "info",
-      data: {},
-    });
-    // This should succeed since the DB is valid
-    expect(appendResult.isOk()).toBe(true);
-    await store2.close();
-  });
-
-  it("transaction with strict journal rolls back when journal fails", async () => {
-    const store = makeStore(testDir, { strictJournal: true });
-
-    // Create a workflow instance first
+    // Create a workflow instance first (outside transaction)
     await store.instances.create({
       workflowName: "wf",
       goal: "pre-tx",
       slug: "pre-tx",
     });
 
-    // Run a transaction that creates an instance and then returns an error
-    // (simulating a journal write failure causing rollback)
+    // Run a transaction that creates an instance and then appends an invalid
+    // journal entry. The invalid entry (bad source.kind) will be rejected by
+    // the RuntimeJournalWriter in strict mode, propagating the error and
+    // rolling back the transaction.
+    const result = await store.transaction((tx) => {
+      return tx.instances
+        .create({ workflowName: "wf", goal: "in-tx", slug: "in-tx" })
+        .andThen(() => {
+          // Pass an invalid source.kind to trigger writer validation failure
+          return tx.journal.append({
+            source: { kind: "invalid-kind" as "engine", name: "runner" },
+            eventType: "test",
+            severity: "info",
+            data: {},
+          });
+        });
+    });
+
+    expect(result.isErr()).toBe(true);
+    const error = result._unsafeUnwrapErr();
+    expect(error.type).toBe("journal_write");
+
+    // The in-tx instance should have been rolled back
+    const list = (await store.instances.list())._unsafeUnwrap();
+    expect(list).toHaveLength(1);
+    expect(list[0].goal).toBe("pre-tx");
+    await store.close();
+  });
+
+  it("transaction with strict journal rolls back when journal error returned from callback", async () => {
+    const store = makeStore(testDir, { strictJournal: true });
+
+    await store.instances.create({
+      workflowName: "wf",
+      goal: "pre-tx",
+      slug: "pre-tx",
+    });
+
     const result = await store.transaction((tx) => {
       return tx.instances
         .create({ workflowName: "wf", goal: "in-tx", slug: "in-tx" })
@@ -874,10 +950,8 @@ describe("strict journal mode", () => {
     });
 
     expect(result.isErr()).toBe(true);
-    const error = result._unsafeUnwrapErr();
-    expect(error.type).toBe("journal_write");
+    expect(result._unsafeUnwrapErr().type).toBe("journal_write");
 
-    // The in-tx instance should have been rolled back
     const list = (await store.instances.list())._unsafeUnwrap();
     expect(list).toHaveLength(1);
     expect(list[0].goal).toBe("pre-tx");
@@ -902,14 +976,39 @@ describe("best-effort journal mode (default)", () => {
     await store.close();
   });
 
-  it("transaction commits state even when journal error is returned in best-effort mode", async () => {
-    // In best-effort mode, a transaction that creates state and then
-    // returns a journal_write error should still commit the state
-    // (the journal error is treated as a warning, not a rollback trigger)
-    // However, since the callback returns Err, the transaction will rollback.
-    // Best-effort means: if journal.append() fails internally, it logs a warning
-    // and the surrounding transaction can still commit.
-    // We test this by verifying that a successful transaction commits.
+  it("best-effort mode: transaction commits with valid journal entry", async () => {
+    // In best-effort mode, a successful journal append inside a transaction
+    // should not affect the transaction commit.
+    const store = makeStore(testDir, { strictJournal: false });
+
+    const result = await store.transaction((tx) => {
+      return tx.instances
+        .create({
+          workflowName: "wf",
+          goal: "best-effort",
+          slug: "best-effort",
+        })
+        .andThen((instance) => {
+          return tx.journal
+            .append({
+              source: { kind: "engine", name: "runner" },
+              eventType: "instance.created",
+              severity: "info",
+              data: { instanceId: instance.id as string },
+            })
+            .map(() => instance);
+        });
+    });
+
+    // Transaction should commit
+    expect(result.isOk()).toBe(true);
+    const list = (await store.instances.list())._unsafeUnwrap();
+    expect(list).toHaveLength(1);
+    expect(list[0].goal).toBe("best-effort");
+    await store.close();
+  });
+
+  it("transaction commits state with valid journal entry in best-effort mode", async () => {
     const store = makeStore(testDir, { strictJournal: false });
 
     const result = await store.transaction((tx) => {

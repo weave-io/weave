@@ -57,6 +57,8 @@ import {
   type RuntimeStoreError,
   serializationError,
 } from "../errors.js";
+import { createProjectSalt } from "../fingerprint.js";
+import { RuntimeJournalWriter } from "../journal-writer.js";
 import { sanitizeSnapshotMetadata } from "../sanitizer.js";
 import type {
   AcquireLeaseInput,
@@ -886,6 +888,82 @@ class SqliteRuntimeJournalRepository implements RuntimeJournalRepository {
 }
 
 // ---------------------------------------------------------------------------
+// JournalWriterRepository
+// ---------------------------------------------------------------------------
+
+/**
+ * Adapts a `RuntimeJournalWriter` to the `RuntimeJournalRepository` interface
+ * so it can be used inside a `RuntimeStoreTransaction`.
+ *
+ * The writer enforces strict/best-effort semantics:
+ * - Best-effort: `append()` failures are logged and swallowed → returns `ok(entry)`
+ *   with a synthetic entry so the surrounding transaction can commit.
+ * - Strict: `append()` failures propagate as errors → transaction rolls back.
+ *
+ * Non-append operations (findById, getById, query) delegate directly to the
+ * underlying repository.
+ */
+class JournalWriterRepository implements RuntimeJournalRepository {
+  private readonly writer: RuntimeJournalWriter;
+
+  constructor(
+    private readonly inner: SqliteRuntimeJournalRepository,
+    strictMode: boolean,
+  ) {
+    this.writer = new RuntimeJournalWriter(inner, { strictMode });
+  }
+
+  append(
+    entry: Omit<RuntimeJournalEntry, "id" | "timestamp">,
+  ): ResultAsync<RuntimeJournalEntry, RuntimeStoreError> {
+    return this.writer
+      .write({
+        source: entry.source,
+        eventType: entry.eventType,
+        executionId: entry.executionId,
+        workflowInstanceId: entry.workflowInstanceId,
+        stepId: entry.stepId,
+        severity: entry.severity,
+        data: entry.data as Record<string, unknown>,
+      })
+      .andThen((result) => {
+        if (result === undefined) {
+          // Best-effort mode swallowed the error — return a synthetic entry
+          // so the transaction callback sees ok() and can commit.
+          const synthetic: RuntimeJournalEntry = {
+            id: createRuntimeJournalEntryId("swallowed"),
+            timestamp: new Date().toISOString(),
+            source: entry.source,
+            eventType: entry.eventType,
+            severity: entry.severity,
+            data: entry.data as Record<string, unknown>,
+          };
+          return okAsync(synthetic);
+        }
+        return okAsync(result);
+      });
+  }
+
+  findById(
+    id: RuntimeJournalEntryId,
+  ): ResultAsync<RuntimeJournalEntry | null, RuntimeStoreError> {
+    return this.inner.findById(id);
+  }
+
+  getById(
+    id: RuntimeJournalEntryId,
+  ): ResultAsync<RuntimeJournalEntry, RuntimeStoreError> {
+    return this.inner.getById(id);
+  }
+
+  query(
+    filter?: JournalQueryFilter,
+  ): ResultAsync<readonly RuntimeJournalEntry[], RuntimeStoreError> {
+    return this.inner.query(filter);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // SqliteRuntimeStoreTransaction
 // ---------------------------------------------------------------------------
 
@@ -899,11 +977,16 @@ class SqliteRuntimeStoreTransaction implements RuntimeStoreTransaction {
   readonly snapshots: SessionSnapshotRepository;
   readonly journal: RuntimeJournalRepository;
 
-  constructor(txDb: Kysely<WeaveDatabase>, clock: () => Date) {
+  constructor(
+    txDb: Kysely<WeaveDatabase>,
+    clock: () => Date,
+    strictJournal: boolean,
+  ) {
     this.instances = new SqliteWorkflowInstanceRepository(txDb);
     this.leases = new SqliteExecutionLeaseRepository(txDb, clock);
     this.snapshots = new SqliteSessionSnapshotRepository(txDb);
-    this.journal = new SqliteRuntimeJournalRepository(txDb);
+    const rawJournal = new SqliteRuntimeJournalRepository(txDb);
+    this.journal = new JournalWriterRepository(rawJournal, strictJournal);
   }
 }
 
@@ -934,11 +1017,22 @@ export class SqliteRuntimeStore implements RuntimeStore {
   private db: Kysely<WeaveDatabase> | null = null;
   private initialized = false;
   private readonly clock: () => Date;
+  private _projectSalt: string | null = null;
 
   readonly instances: WorkflowInstanceRepository;
   readonly leases: ExecutionLeaseRepository;
   readonly snapshots: SessionSnapshotRepository;
   readonly journal: RuntimeJournalRepository;
+
+  /** The per-project CSPRNG salt stored in `runtime_metadata`. */
+  get projectSalt(): string {
+    if (!this._projectSalt) {
+      throw new Error(
+        "projectSalt accessed before store initialization. Call ensureInitialized() first.",
+      );
+    }
+    return this._projectSalt;
+  }
 
   constructor(private readonly options: SqliteRuntimeStoreOptions) {
     this.clock = options.clock ?? (() => new Date());
@@ -992,6 +1086,31 @@ export class SqliteRuntimeStore implements RuntimeStore {
         return errAsync(migrationResult.error);
       }
 
+      // Initialize or read the project salt from runtime_metadata
+      try {
+        const saltRow = rawDb
+          .prepare(
+            "SELECT value FROM runtime_metadata WHERE key = 'project_salt'",
+          )
+          .get() as { value: string } | null;
+
+        if (saltRow) {
+          this._projectSalt = saltRow.value;
+        } else {
+          const newSalt = createProjectSalt();
+          rawDb
+            .prepare(
+              "INSERT INTO runtime_metadata (key, value) VALUES ('project_salt', ?)",
+            )
+            .run(newSalt);
+          this._projectSalt = newSalt;
+        }
+      } catch (cause) {
+        return errAsync(
+          initializationError("Failed to initialize project salt", cause),
+        );
+      }
+
       // Apply restrictive permissions to the DB file (best-effort)
       Bun.spawnSync(["chmod", "600", this.options.dbPath]);
       Bun.spawnSync(["chmod", "600", `${this.options.dbPath}-wal`]);
@@ -1012,7 +1131,11 @@ export class SqliteRuntimeStore implements RuntimeStore {
     return this.ensureInitialized().andThen((db) => {
       return ResultAsync.fromPromise(
         db.transaction().execute(async (txDb) => {
-          const tx = new SqliteRuntimeStoreTransaction(txDb, this.clock);
+          const tx = new SqliteRuntimeStoreTransaction(
+            txDb,
+            this.clock,
+            this.options.strictJournal ?? false,
+          );
 
           const result = await callback(tx);
 

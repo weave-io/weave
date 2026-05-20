@@ -38,6 +38,7 @@ function makeContext(
     subcommand,
     storeFactory: () => store,
     dbExists: async () => true,
+    schemaVersion: 1,
     ...overrides,
   };
   return { terminal, ctx };
@@ -194,12 +195,28 @@ describe("runtime status", () => {
 
   it("does not mutate the store (read-only)", async () => {
     const store = createInMemoryRuntimeStore();
-    const { ctx } = makeContextWithStore("status", store);
+    const { ctx } = makeContextWithStore("status", store, { schemaVersion: 1 });
     await runRuntime(ctx);
 
     // Verify no instances were created
     const instances = await store.instances.list();
     expect(instances._unsafeUnwrap()).toHaveLength(0);
+  });
+
+  it("shows schema version in status output", async () => {
+    const { terminal, ctx } = makeContext("status", { schemaVersion: 1 });
+    const result = await runRuntime(ctx);
+    expect(result._unsafeUnwrap()).toBe(0);
+    const out = terminal.out.join("\n");
+    expect(out).toContain("Schema version: 1");
+  });
+
+  it("shows injected schema version in status output", async () => {
+    const { terminal, ctx } = makeContext("status", { schemaVersion: 42 });
+    const result = await runRuntime(ctx);
+    expect(result._unsafeUnwrap()).toBe(0);
+    const out = terminal.out.join("\n");
+    expect(out).toContain("Schema version: 42");
   });
 });
 

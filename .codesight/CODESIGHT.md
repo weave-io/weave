@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 49 lib files | 2 env vars | 0 middleware | 0% test coverage
 > **Token savings:** this file is ~4,100 tokens. Without it, AI exploration would cost ~22,100 tokens. **Saves ~18,000 tokens per conversation.**
-> **Last scanned:** 2026-05-20 19:15 — re-run after significant changes
+> **Last scanned:** 2026-05-20 20:06 — re-run after significant changes
 
 ---
 
@@ -146,7 +146,7 @@
   - function notFoundError: (entity, id, message?) => RuntimeStoreNotFoundError
   - function conflictError: (entity, message, conflictingId?) => RuntimeStoreConflictError
   - _...11 more_
-- `packages/engine/src/runtime/fingerprint.ts` — function createProjectSalt: () => string, function fingerprintContent: (salt, content) => Result<string, RuntimeStoreError>
+- `packages/engine/src/runtime/fingerprint.ts` — function createProjectSalt: () => string, function fingerprintContent: (salt, content) => ResultAsync<string, RuntimeStoreError>
 - `packages/engine/src/runtime/journal-writer.ts` — class RuntimeJournalWriter, interface WriteJournalEntryInput
 - `packages/engine/src/runtime/memory-store.ts`
   - function createInMemoryRuntimeStore: (options) => InMemoryRuntimeStore

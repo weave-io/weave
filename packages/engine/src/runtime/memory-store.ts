@@ -17,6 +17,8 @@ import {
   queryError,
   type RuntimeStoreError,
 } from "./errors.js";
+import { RuntimeJournalWriter } from "./journal-writer.js";
+import { sanitizeSnapshotMetadata } from "./sanitizer.js";
 import type {
   AcquireLeaseInput,
   CreateWorkflowInstanceInput,
@@ -458,6 +460,10 @@ class InMemorySessionSnapshotRepository implements SessionSnapshotRepository {
     if (this.failures.snapshotRecord) {
       return errAsync(this.failures.snapshotRecord);
     }
+    const sanitizeResult = sanitizeSnapshotMetadata(input.metadata);
+    if (sanitizeResult.isErr()) {
+      return errAsync(sanitizeResult.error);
+    }
     const snapshot: SessionSnapshot = {
       id: createSessionSnapshotId(newId()),
       workflowInstanceId: input.workflowInstanceId,
@@ -469,7 +475,7 @@ class InMemorySessionSnapshotRepository implements SessionSnapshotRepository {
       ...(input.stepName ? { stepName: input.stepName } : {}),
       sessionStatus: input.sessionStatus,
       recordedAt: new Date().toISOString(),
-      metadata: { ...input.metadata },
+      metadata: { ...sanitizeResult.value },
     };
     this.store.set(snapshot.id, snapshot);
     return okAsync(snapshot);
@@ -531,14 +537,9 @@ class InMemorySessionSnapshotRepository implements SessionSnapshotRepository {
 class InMemoryRuntimeJournalRepository implements RuntimeJournalRepository {
   private readonly store = new Map<string, RuntimeJournalEntry>();
   private failures: InMemoryRuntimeStoreFailureConfig;
-  private readonly strictMode: boolean;
 
-  constructor(
-    failures: InMemoryRuntimeStoreFailureConfig,
-    strictMode: boolean,
-  ) {
+  constructor(failures: InMemoryRuntimeStoreFailureConfig) {
     this.failures = failures;
-    this.strictMode = strictMode;
   }
 
   /** Update the shared failure config reference. */
@@ -550,12 +551,7 @@ class InMemoryRuntimeJournalRepository implements RuntimeJournalRepository {
     entry: Omit<RuntimeJournalEntry, "id" | "timestamp">,
   ): ResultAsync<RuntimeJournalEntry, RuntimeStoreError> {
     if (this.failures.journalAppend) {
-      const writeErr = this.failures.journalAppend;
-      if (!this.strictMode) {
-        // best-effort: return the error but callers may choose to ignore it
-        return errAsync(writeErr);
-      }
-      return errAsync(writeErr);
+      return errAsync(this.failures.journalAppend);
     }
     const full: RuntimeJournalEntry = {
       ...entry,
@@ -650,14 +646,89 @@ class InMemoryRuntimeJournalRepository implements RuntimeJournalRepository {
  *
  * Supports configurable failure injection via `failureConfig`.
  */
+// ---------------------------------------------------------------------------
+// InMemoryJournalWriterRepository
+// ---------------------------------------------------------------------------
+
+/**
+ * Adapts a `RuntimeJournalWriter` to the `RuntimeJournalRepository` interface
+ * for use inside an `InMemoryRuntimeStore` transaction.
+ *
+ * In best-effort mode, journal append failures are swallowed so the
+ * surrounding transaction can commit. In strict mode, failures propagate
+ * and cause the transaction to roll back.
+ */
+class InMemoryJournalWriterRepository implements RuntimeJournalRepository {
+  private readonly writer: RuntimeJournalWriter;
+
+  constructor(
+    private readonly inner: InMemoryRuntimeJournalRepository,
+    strictMode: boolean,
+  ) {
+    this.writer = new RuntimeJournalWriter(inner, { strictMode });
+  }
+
+  append(
+    entry: Omit<RuntimeJournalEntry, "id" | "timestamp">,
+  ): ResultAsync<RuntimeJournalEntry, RuntimeStoreError> {
+    return this.writer
+      .write({
+        source: entry.source,
+        eventType: entry.eventType,
+        executionId: entry.executionId,
+        workflowInstanceId: entry.workflowInstanceId,
+        stepId: entry.stepId,
+        severity: entry.severity,
+        data: entry.data as Record<string, unknown>,
+      })
+      .andThen((result) => {
+        if (result === undefined) {
+          // Best-effort mode swallowed the error — return a synthetic entry
+          const synthetic: RuntimeJournalEntry = {
+            id: createRuntimeJournalEntryId("swallowed"),
+            timestamp: new Date().toISOString(),
+            source: entry.source,
+            eventType: entry.eventType,
+            severity: entry.severity,
+            data: entry.data as Record<string, unknown>,
+          };
+          return okAsync(synthetic);
+        }
+        return okAsync(result);
+      });
+  }
+
+  findById(
+    id: RuntimeJournalEntryId,
+  ): ResultAsync<RuntimeJournalEntry | null, RuntimeStoreError> {
+    return this.inner.findById(id);
+  }
+
+  getById(
+    id: RuntimeJournalEntryId,
+  ): ResultAsync<RuntimeJournalEntry, RuntimeStoreError> {
+    return this.inner.getById(id);
+  }
+
+  query(
+    filter?: JournalQueryFilter,
+  ): ResultAsync<readonly RuntimeJournalEntry[], RuntimeStoreError> {
+    return this.inner.query(filter);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// InMemoryRuntimeStore
+// ---------------------------------------------------------------------------
+
 export class InMemoryRuntimeStore implements RuntimeStore {
   readonly instances: InMemoryWorkflowInstanceRepository;
   readonly leases: InMemoryExecutionLeaseRepository;
   readonly snapshots: InMemorySessionSnapshotRepository;
   readonly journal: InMemoryRuntimeJournalRepository;
 
-  private readonly strictJournal: boolean;
   private readonly clock: () => Date;
+  private readonly strictJournal: boolean;
 
   /**
    * Mutable failure injection config.
@@ -667,8 +738,8 @@ export class InMemoryRuntimeStore implements RuntimeStore {
   failureConfig: InMemoryRuntimeStoreFailureConfig;
 
   constructor(options: InMemoryRuntimeStoreOptions = {}) {
-    this.strictJournal = options.strictJournal ?? false;
     this.clock = options.clock ?? (() => new Date());
+    this.strictJournal = options.strictJournal ?? false;
     this.failureConfig = { ...(options.failOn ?? {}) };
 
     this.instances = new InMemoryWorkflowInstanceRepository(this.failureConfig);
@@ -677,10 +748,7 @@ export class InMemoryRuntimeStore implements RuntimeStore {
       this.clock,
     );
     this.snapshots = new InMemorySessionSnapshotRepository(this.failureConfig);
-    this.journal = new InMemoryRuntimeJournalRepository(
-      this.failureConfig,
-      this.strictJournal,
-    );
+    this.journal = new InMemoryRuntimeJournalRepository(this.failureConfig);
   }
 
   /**
@@ -707,11 +775,17 @@ export class InMemoryRuntimeStore implements RuntimeStore {
     const snapshotsSnap = this.snapshots.snapshot();
     const journalSnap = this.journal.snapshot();
 
+    // Wrap the journal with a writer that enforces strict/best-effort semantics
+    const journalForTx = new InMemoryJournalWriterRepository(
+      this.journal,
+      this.strictJournal,
+    );
+
     const tx: RuntimeStoreTransaction = {
       instances: this.instances,
       leases: this.leases,
       snapshots: this.snapshots,
-      journal: this.journal,
+      journal: journalForTx,
     };
 
     return ResultAsync.fromPromise(Promise.resolve(callback(tx)), (cause) =>
