@@ -39,7 +39,8 @@ class BunSqliteConnection implements DatabaseConnection {
 
     // Determine whether this is a SELECT-like query (returns rows) or
     // a DML/DDL statement (returns metadata only).
-    // We detect by checking the SQL keyword prefix.
+    // We detect by checking the SQL keyword prefix, and also by checking
+    // for RETURNING clauses in DML statements (INSERT/UPDATE/DELETE ... RETURNING).
     const trimmed = sql.trimStart().toUpperCase();
     const isSelect =
       trimmed.startsWith("SELECT") ||
@@ -47,7 +48,11 @@ class BunSqliteConnection implements DatabaseConnection {
       trimmed.startsWith("PRAGMA") ||
       trimmed.startsWith("EXPLAIN");
 
-    if (isSelect) {
+    // Row-returning DML: INSERT/UPDATE/DELETE with a RETURNING clause.
+    // These start with a DML keyword but return rows, so must use stmt.all().
+    const isReturningDml = !isSelect && /\bRETURNING\b/i.test(sql);
+
+    if (isSelect || isReturningDml) {
       const rows = stmt.all(...params) as R[];
       return Promise.resolve({ rows });
     }

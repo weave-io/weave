@@ -37,6 +37,7 @@ import type {
   ExecutionLease,
   ExecutionLeaseId,
   JournalQueryFilter,
+  JsonObject,
   OwnerId,
   RuntimeJournalEntry,
   RuntimeJournalEntryId,
@@ -679,7 +680,7 @@ class InMemoryJournalWriterRepository implements RuntimeJournalRepository {
         workflowInstanceId: entry.workflowInstanceId,
         stepId: entry.stepId,
         severity: entry.severity,
-        data: entry.data as Record<string, unknown>,
+        data: entry.data as JsonObject,
       })
       .andThen((result) => {
         if (result === undefined) {
@@ -690,7 +691,7 @@ class InMemoryJournalWriterRepository implements RuntimeJournalRepository {
             source: entry.source,
             eventType: entry.eventType,
             severity: entry.severity,
-            data: entry.data as Record<string, unknown>,
+            data: entry.data as JsonObject,
           };
           return okAsync(synthetic);
         }

@@ -27,6 +27,7 @@ import {
 import type { RuntimeJournalRepository } from "../runtime/store.js";
 import type {
   JournalQueryFilter,
+  JsonObject,
   RuntimeJournalEntry,
   RuntimeJournalEntryId,
 } from "../runtime/types.js";
@@ -196,7 +197,7 @@ describe("RuntimeJournalWriter — envelope validation", () => {
     const repo = new StubJournalRepository();
     const writer = new RuntimeJournalWriter(repo);
     const result = await writer.write(
-      makeValidInput({ data: null as unknown as Record<string, unknown> }),
+      makeValidInput({ data: null as unknown as JsonObject }),
     );
     expect(result.isErr()).toBe(true);
     if (result.isErr()) {
@@ -208,7 +209,7 @@ describe("RuntimeJournalWriter — envelope validation", () => {
     const repo = new StubJournalRepository();
     const writer = new RuntimeJournalWriter(repo);
     const result = await writer.write(
-      makeValidInput({ data: [] as unknown as Record<string, unknown> }),
+      makeValidInput({ data: [] as unknown as JsonObject }),
     );
     expect(result.isErr()).toBe(true);
   });
@@ -551,6 +552,36 @@ describe("sanitizeJournalData", () => {
     });
     expect(result.isErr()).toBe(true);
   });
+
+  it("rejects data exceeding depth limit (depth > 10)", () => {
+    // Build an object nested 12 levels deep — beyond the depth-10 limit.
+    // The innermost value is clean (no denied keys), but the depth alone
+    // must cause rejection to prevent bypass via deep nesting.
+    const deep: JsonObject = { safe: "value" };
+    let wrapped: JsonObject = deep;
+    for (let i = 0; i < 12; i++) {
+      wrapped = { level: wrapped };
+    }
+    const result = sanitizeJournalData(wrapped);
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error.type).toBe("journal_write");
+      expect((result.error as { message: string }).message).toContain(
+        "nesting depth",
+      );
+    }
+  });
+
+  it("accepts data at exactly depth 10 (boundary — should pass)", () => {
+    // 10 levels of nesting is within the limit; must not be rejected.
+    const deep: JsonObject = { safe: "value" };
+    let wrapped: JsonObject = deep;
+    for (let i = 0; i < 9; i++) {
+      wrapped = { level: wrapped };
+    }
+    const result = sanitizeJournalData(wrapped);
+    expect(result.isOk()).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -575,6 +606,38 @@ describe("sanitizeSnapshotMetadata", () => {
   it("returns err for metadata with 'cookie' field", () => {
     const result = sanitizeSnapshotMetadata({ cookie: "session=xyz" });
     expect(result.isErr()).toBe(true);
+  });
+
+  it("rejects metadata exceeding depth limit (depth > 10)", () => {
+    // sanitizeSnapshotMetadata accepts Record<string, string|number|boolean>,
+    // but findDeniedKey operates on unknown — cast to exercise the depth path.
+    const deep: Record<string, unknown> = { safe: "value" };
+    let wrapped: Record<string, unknown> = deep;
+    for (let i = 0; i < 12; i++) {
+      wrapped = { level: wrapped };
+    }
+    const result = sanitizeSnapshotMetadata(
+      wrapped as Record<string, string | number | boolean>,
+    );
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error.type).toBe("journal_write");
+      expect((result.error as { message: string }).message).toContain(
+        "nesting depth",
+      );
+    }
+  });
+
+  it("accepts metadata at exactly depth 10 (boundary — should pass)", () => {
+    const deep: Record<string, unknown> = { safe: "value" };
+    let wrapped: Record<string, unknown> = deep;
+    for (let i = 0; i < 9; i++) {
+      wrapped = { level: wrapped };
+    }
+    const result = sanitizeSnapshotMetadata(
+      wrapped as Record<string, string | number | boolean>,
+    );
+    expect(result.isOk()).toBe(true);
   });
 });
 

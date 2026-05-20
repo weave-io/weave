@@ -313,7 +313,8 @@ async function runRuntimeJournal(
   store: RuntimeStore,
 ): Promise<Result<number, CliError>> {
   const { terminal, theme } = ctx;
-  const limit = ctx.limit ?? 50;
+  const rawLimit = ctx.limit ?? 50;
+  const limit = Number.isInteger(rawLimit) && rawLimit > 0 ? rawLimit : 50;
 
   const entriesResult = await store.journal.query({ limit });
 
@@ -383,9 +384,15 @@ export async function runRuntime(
     } else {
       try {
         const db = new Database(dbPath, { readonly: true });
-        schemaVersion = readSchemaVersion(db);
-        db.close();
+        try {
+          schemaVersion = readSchemaVersion(db);
+        } finally {
+          db.close();
+        }
       } catch {
+        terminal.stderr(
+          `${theme.dim("Could not read schema version; using current schema version.")}`,
+        );
         schemaVersion = CURRENT_SCHEMA_VERSION;
       }
     }

@@ -12,7 +12,14 @@
 
 import { dirname } from "node:path";
 import { Kysely } from "kysely";
-import { errAsync, okAsync, ResultAsync } from "neverthrow";
+import {
+  err,
+  errAsync,
+  ok,
+  okAsync,
+  type Result,
+  ResultAsync,
+} from "neverthrow";
 
 import { logger } from "../../logger.js";
 
@@ -78,6 +85,7 @@ import type {
   ExecutionLease,
   ExecutionLeaseId,
   JournalQueryFilter,
+  JsonObject,
   OwnerId,
   RuntimeJournalEntry,
   RuntimeJournalEntryId,
@@ -172,7 +180,7 @@ function rowToSessionSnapshot(row: SessionSnapshotRow): SessionSnapshot {
 }
 
 function rowToJournalEntry(row: RuntimeJournalEntryRow): RuntimeJournalEntry {
-  const data = JSON.parse(row.data_json) as Record<string, unknown>;
+  const data = JSON.parse(row.data_json) as JsonObject;
   return {
     id: createRuntimeJournalEntryId(row.id),
     timestamp: row.timestamp,
@@ -924,7 +932,7 @@ class JournalWriterRepository implements RuntimeJournalRepository {
         workflowInstanceId: entry.workflowInstanceId,
         stepId: entry.stepId,
         severity: entry.severity,
-        data: entry.data as Record<string, unknown>,
+        data: entry.data as JsonObject,
       })
       .andThen((result) => {
         if (result === undefined) {
@@ -936,7 +944,7 @@ class JournalWriterRepository implements RuntimeJournalRepository {
             source: entry.source,
             eventType: entry.eventType,
             severity: entry.severity,
-            data: entry.data as Record<string, unknown>,
+            data: entry.data as JsonObject,
           };
           return okAsync(synthetic);
         }
@@ -1016,6 +1024,8 @@ export interface SqliteRuntimeStoreOptions {
 export class SqliteRuntimeStore implements RuntimeStore {
   private db: Kysely<WeaveDatabase> | null = null;
   private initialized = false;
+  private initializingPromise: Promise<Result<void, RuntimeStoreError>> | null =
+    null;
   private readonly clock: () => Date;
   private _projectSalt: string | null = null;
 
@@ -1046,83 +1056,110 @@ export class SqliteRuntimeStore implements RuntimeStore {
 
   /**
    * Ensure the runtime directory and DB are created and migrations applied.
-   * Idempotent — safe to call multiple times.
+   * Idempotent — safe to call multiple times. Concurrent callers share the
+   * same in-flight initialization promise so initialization only runs once.
    */
   ensureInitialized(): ResultAsync<Kysely<WeaveDatabase>, RuntimeStoreError> {
     if (this.initialized && this.db) {
       return okAsync(this.db);
     }
 
-    return ResultAsync.fromPromise(
-      (async () => {
-        const dir = dirname(this.options.dbPath);
+    if (!this.initializingPromise) {
+      this.initializingPromise = this._doInitialize();
+    }
 
-        // Create runtime directory using Bun.spawnSync
-        const mkdirResult = Bun.spawnSync(["mkdir", "-p", dir]);
-        if (mkdirResult.exitCode !== 0) {
-          throw new Error(`Failed to create runtime directory: ${dir}`);
-        }
+    return new ResultAsync(
+      this.initializingPromise.then(
+        (result): Result<Kysely<WeaveDatabase>, RuntimeStoreError> => {
+          if (result.isErr()) return err(result.error);
+          // After successful initialization, db is guaranteed to be set
+          return ok(this.db as Kysely<WeaveDatabase>);
+        },
+      ),
+    );
+  }
 
-        // Apply restrictive permissions to the directory (best-effort)
-        Bun.spawnSync(["chmod", "700", dir]);
+  /**
+   * Internal initialization logic. On any failure, closes the DB handle
+   * (if open) and resets all state fields before returning the error.
+   */
+  private async _doInitialize(): Promise<Result<void, RuntimeStoreError>> {
+    const dir = dirname(this.options.dbPath);
 
-        return dir;
-      })(),
-      (cause) =>
+    // Create runtime directory using Bun.spawnSync
+    const mkdirResult = Bun.spawnSync(["mkdir", "-p", dir]);
+    if (mkdirResult.exitCode !== 0) {
+      this.initializingPromise = null;
+      return err(
         initializationError(
-          `Failed to create runtime directory: ${dirname(this.options.dbPath)}`,
-          cause,
+          `Failed to create runtime directory: ${dir}`,
+          new Error(`mkdir exited with code ${mkdirResult.exitCode}`),
         ),
-    ).andThen(() => {
-      // Create Kysely instance with BunSqliteDialect
-      const dialect = new BunSqliteDialect(this.options.dbPath);
-      const db = new Kysely<WeaveDatabase>({ dialect });
-      this.db = db;
-
-      // Run migrations using the raw bun:sqlite Database
-      const rawDb = dialect.getDatabase();
-      const migrationResult = runMigrations(rawDb);
-      if (migrationResult.isErr()) {
-        return errAsync(migrationResult.error);
-      }
-
-      // Initialize or read the project salt from runtime_metadata
-      try {
-        const saltRow = rawDb
-          .prepare(
-            "SELECT value FROM runtime_metadata WHERE key = 'project_salt'",
-          )
-          .get() as { value: string } | null;
-
-        if (saltRow) {
-          this._projectSalt = saltRow.value;
-        } else {
-          const newSalt = createProjectSalt();
-          rawDb
-            .prepare(
-              "INSERT INTO runtime_metadata (key, value) VALUES ('project_salt', ?)",
-            )
-            .run(newSalt);
-          this._projectSalt = newSalt;
-        }
-      } catch (cause) {
-        return errAsync(
-          initializationError("Failed to initialize project salt", cause),
-        );
-      }
-
-      // Apply restrictive permissions to the DB file (best-effort)
-      Bun.spawnSync(["chmod", "600", this.options.dbPath]);
-      Bun.spawnSync(["chmod", "600", `${this.options.dbPath}-wal`]);
-      Bun.spawnSync(["chmod", "600", `${this.options.dbPath}-shm`]);
-
-      this.initialized = true;
-      log.info(
-        { dbPath: this.options.dbPath, schemaVersion: CURRENT_SCHEMA_VERSION },
-        "Runtime store initialized",
       );
-      return okAsync(db);
-    });
+    }
+
+    // Apply restrictive permissions to the directory (best-effort)
+    Bun.spawnSync(["chmod", "700", dir]);
+
+    // Create Kysely instance with BunSqliteDialect
+    const dialect = new BunSqliteDialect(this.options.dbPath);
+    const db = new Kysely<WeaveDatabase>({ dialect });
+    this.db = db;
+
+    // Run migrations using the raw bun:sqlite Database
+    const rawDb = dialect.getDatabase();
+    const migrationResult = runMigrations(rawDb);
+    if (migrationResult.isErr()) {
+      await db.destroy().catch(() => undefined);
+      this.db = null;
+      this.initialized = false;
+      this._projectSalt = null;
+      this.initializingPromise = null;
+      return err(migrationResult.error);
+    }
+
+    // Initialize or read the project salt from runtime_metadata
+    try {
+      const saltRow = rawDb
+        .prepare(
+          "SELECT value FROM runtime_metadata WHERE key = 'project_salt'",
+        )
+        .get() as { value: string } | null;
+
+      if (saltRow) {
+        this._projectSalt = saltRow.value;
+      } else {
+        const newSalt = createProjectSalt();
+        rawDb
+          .prepare(
+            "INSERT INTO runtime_metadata (key, value) VALUES ('project_salt', ?)",
+          )
+          .run(newSalt);
+        this._projectSalt = newSalt;
+      }
+    } catch (cause) {
+      await db.destroy().catch(() => undefined);
+      this.db = null;
+      this.initialized = false;
+      this._projectSalt = null;
+      this.initializingPromise = null;
+      return err(
+        initializationError("Failed to initialize project salt", cause),
+      );
+    }
+
+    // Apply restrictive permissions to the DB file (best-effort)
+    Bun.spawnSync(["chmod", "600", this.options.dbPath]);
+    Bun.spawnSync(["chmod", "600", `${this.options.dbPath}-wal`]);
+    Bun.spawnSync(["chmod", "600", `${this.options.dbPath}-shm`]);
+
+    this.initialized = true;
+    this.initializingPromise = null;
+    log.info(
+      { dbPath: this.options.dbPath, schemaVersion: CURRENT_SCHEMA_VERSION },
+      "Runtime store initialized",
+    );
+    return ok(undefined);
   }
 
   transaction<T>(

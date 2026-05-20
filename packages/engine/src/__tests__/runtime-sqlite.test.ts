@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { errAsync, okAsync } from "neverthrow";
 import {
   CURRENT_SCHEMA_VERSION,
+  readSchemaVersion,
   runMigrations,
 } from "../runtime/sqlite/migrations.js";
 import {
@@ -91,6 +92,37 @@ describe("lazy initialization", () => {
     await store.instances.list();
     await store.instances.list();
     expect(pathExists(makeDbPath(testDir))).toBe(true);
+  });
+
+  it("concurrent ensureInitialized calls only initialize once", async () => {
+    const store = makeStore(testDir);
+
+    // Fire multiple concurrent initializations before any resolves
+    const [r1, r2, r3] = await Promise.all([
+      store.instances.list(),
+      store.instances.list(),
+      store.instances.list(),
+    ]);
+
+    // All should succeed
+    expect(r1.isOk()).toBe(true);
+    expect(r2.isOk()).toBe(true);
+    expect(r3.isOk()).toBe(true);
+
+    // DB file should exist exactly once (not corrupted by double-init)
+    expect(pathExists(makeDbPath(testDir))).toBe(true);
+
+    // Verify the DB is usable and consistent — only one schema_version row
+    const db = new Database(makeDbPath(testDir));
+    const rows = db
+      .prepare(
+        "SELECT COUNT(*) as cnt FROM runtime_metadata WHERE key = 'schema_version'",
+      )
+      .get() as { cnt: number };
+    db.close();
+    expect(rows.cnt).toBe(1);
+
+    await store.close();
   });
 
   it("close() succeeds even if never initialized", async () => {
@@ -173,6 +205,80 @@ describe("migrations", () => {
       expect(error.foundVersion).toBe(999);
       expect(error.supportedVersion).toBe(CURRENT_SCHEMA_VERSION);
     }
+  });
+
+  it("runMigrations returns initialization error when schema_version is non-integer", () => {
+    const dbPath = join(testDir, "corrupt-nan.db");
+    const db = new Database(dbPath);
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS runtime_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL, name TEXT NOT NULL);
+      INSERT OR REPLACE INTO runtime_metadata (key, value) VALUES ('schema_version', 'not-a-number');
+    `);
+
+    const result = runMigrations(db);
+    db.close();
+
+    expect(result.isErr()).toBe(true);
+    const error = result._unsafeUnwrapErr();
+    expect(error.type).toBe("initialization");
+    if (error.type === "initialization") {
+      expect(error.message).toContain("Invalid schema_version");
+      expect(error.message).toContain("not-a-number");
+    }
+  });
+
+  it("runMigrations returns initialization error when schema_version is negative", () => {
+    const dbPath = join(testDir, "corrupt-negative.db");
+    const db = new Database(dbPath);
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS runtime_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL, name TEXT NOT NULL);
+      INSERT OR REPLACE INTO runtime_metadata (key, value) VALUES ('schema_version', '-1');
+    `);
+
+    const result = runMigrations(db);
+    db.close();
+
+    expect(result.isErr()).toBe(true);
+    const error = result._unsafeUnwrapErr();
+    expect(error.type).toBe("initialization");
+    if (error.type === "initialization") {
+      expect(error.message).toContain("Invalid schema_version");
+      expect(error.message).toContain("-1");
+    }
+  });
+
+  it("readSchemaVersion returns 0 for non-integer schema_version", () => {
+    const dbPath = join(testDir, "corrupt-read-nan.db");
+    const db = new Database(dbPath);
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS runtime_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      INSERT OR REPLACE INTO runtime_metadata (key, value) VALUES ('schema_version', 'garbage');
+    `);
+
+    const version = readSchemaVersion(db);
+    db.close();
+
+    expect(version).toBe(0);
+  });
+
+  it("readSchemaVersion returns 0 for negative schema_version", () => {
+    const dbPath = join(testDir, "corrupt-read-neg.db");
+    const db = new Database(dbPath);
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS runtime_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      INSERT OR REPLACE INTO runtime_metadata (key, value) VALUES ('schema_version', '-5');
+    `);
+
+    const version = readSchemaVersion(db);
+    db.close();
+
+    expect(version).toBe(0);
   });
 
   it("SqliteRuntimeStore returns migration_version error on open with future DB", async () => {

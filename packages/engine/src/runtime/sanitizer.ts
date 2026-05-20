@@ -16,6 +16,7 @@
 import { err, ok, type Result } from "neverthrow";
 import type { RuntimeStoreError } from "./errors.js";
 import { journalWriteError } from "./errors.js";
+import type { JsonObject } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Denylist
@@ -81,14 +82,26 @@ function isDeniedKey(key: string): boolean {
   return DENIED_FIELD_NAMES.has(key.toLowerCase());
 }
 
+/** Sentinel returned by `findDeniedKey` when recursion exceeds the depth limit. */
+const DEPTH_LIMIT_EXCEEDED = "__depth_limit_exceeded__" as const;
+
 /**
  * Recursively scan a value for denied field names.
  *
- * Returns the first denied key found, or `null` if the value is clean.
+ * Returns the first denied key found, `"__depth_limit_exceeded__"` when the
+ * nesting depth exceeds the safety limit, or `null` if the value is clean.
+ *
+ * Exceeding the depth limit is treated as a rejection rather than a clean
+ * result — deeply nested objects could hide denied keys beyond the scan
+ * horizon and must not be silently persisted.
  */
-function findDeniedKey(value: unknown, depth = 0): string | null {
-  // Limit recursion depth to avoid stack overflow on deeply nested objects
-  if (depth > 10) return null;
+function findDeniedKey(
+  value: unknown,
+  depth = 0,
+): string | typeof DEPTH_LIMIT_EXCEEDED | null {
+  // Limit recursion depth to avoid stack overflow on deeply nested objects.
+  // Treat depth-limit as a rejection — denied keys could be hidden deeper.
+  if (depth > 10) return DEPTH_LIMIT_EXCEEDED;
   if (value === null || typeof value !== "object") return null;
 
   if (Array.isArray(value)) {
@@ -114,21 +127,26 @@ function findDeniedKey(value: unknown, depth = 0): string | null {
  * Returns `ok(data)` if clean, or `err(journal_write)` if a denied key is found.
  *
  * @param data - The journal entry `data` payload to validate.
- * @returns `Result<Record<string, unknown>, RuntimeStoreError>`
+ * @returns `Result<JsonObject, RuntimeStoreError>`
  */
 export function sanitizeJournalData(
-  data: Record<string, unknown>,
-): Result<Record<string, unknown>, RuntimeStoreError> {
+  data: JsonObject,
+): Result<JsonObject, RuntimeStoreError> {
   const deniedKey = findDeniedKey(data);
-  if (deniedKey !== null) {
+  if (deniedKey === null) return ok(data);
+  if (deniedKey === DEPTH_LIMIT_EXCEEDED) {
     return err(
       journalWriteError(
-        `Journal entry data contains a denied field: "${deniedKey}". ` +
-          "Raw prompts, completions, credentials, tokens, and secret-like fields must not be stored in journal entries.",
+        "Journal entry data exceeds maximum nesting depth for safe sanitization.",
       ),
     );
   }
-  return ok(data);
+  return err(
+    journalWriteError(
+      `Journal entry data contains a denied field: "${deniedKey}". ` +
+        "Raw prompts, completions, credentials, tokens, and secret-like fields must not be stored in journal entries.",
+    ),
+  );
 }
 
 /**
@@ -143,13 +161,18 @@ export function sanitizeSnapshotMetadata(
   metadata: Record<string, string | number | boolean>,
 ): Result<Record<string, string | number | boolean>, RuntimeStoreError> {
   const deniedKey = findDeniedKey(metadata);
-  if (deniedKey !== null) {
+  if (deniedKey === null) return ok(metadata);
+  if (deniedKey === DEPTH_LIMIT_EXCEEDED) {
     return err(
       journalWriteError(
-        `Session snapshot metadata contains a denied field: "${deniedKey}". ` +
-          "Credentials, tokens, and secret-like fields must not be stored in session snapshots.",
+        "Session snapshot metadata exceeds maximum nesting depth for safe sanitization.",
       ),
     );
   }
-  return ok(metadata);
+  return err(
+    journalWriteError(
+      `Session snapshot metadata contains a denied field: "${deniedKey}". ` +
+        "Credentials, tokens, and secret-like fields must not be stored in session snapshots.",
+    ),
+  );
 }

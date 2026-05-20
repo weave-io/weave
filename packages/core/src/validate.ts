@@ -102,6 +102,7 @@ function transformStepProperties(
 function astToPlainObject(nodes: AstNode[]): {
   plain: Record<string, unknown>;
   topLevelLogLevel: boolean;
+  invalidSettingsShape: boolean;
 } {
   const agents: Record<string, unknown> = {};
   const categories: Record<string, unknown> = {};
@@ -109,6 +110,7 @@ function astToPlainObject(nodes: AstNode[]): {
   const workflows: Record<string, unknown> = {};
   let settingsBlock: Record<string, unknown> | undefined;
   let topLevelLogLevel = false;
+  let invalidSettingsShape = false;
 
   for (const node of nodes) {
     switch (node.type) {
@@ -144,6 +146,8 @@ function astToPlainObject(nodes: AstNode[]): {
           // settings { ... } block — extract as nested object
           if (node.value.kind === "block") {
             settingsBlock = propertiesToObject(node.value.properties);
+          } else {
+            invalidSettingsShape = true;
           }
         }
         // All other top-level settings are silently ignored (not part of schema)
@@ -158,7 +162,7 @@ function astToPlainObject(nodes: AstNode[]): {
   if (Object.keys(workflows).length > 0) result.workflows = workflows;
   if (settingsBlock !== undefined) result.settings = settingsBlock;
 
-  return { plain: result, topLevelLogLevel };
+  return { plain: result, topLevelLogLevel, invalidSettingsShape };
 }
 
 // ---------------------------------------------------------------------------
@@ -187,7 +191,18 @@ function zodErrorToValidationErrors(zodError: ZodError): ValidationError[] {
 export function validate(
   ast: AstNode[],
 ): Result<WeaveConfig, ValidationError[]> {
-  const { plain, topLevelLogLevel } = astToPlainObject(ast);
+  const { plain, topLevelLogLevel, invalidSettingsShape } =
+    astToPlainObject(ast);
+
+  if (invalidSettingsShape) {
+    return err([
+      {
+        type: "ValidationError",
+        path: "settings",
+        message: "settings must be a block: settings { ... }",
+      },
+    ]);
+  }
 
   if (topLevelLogLevel) {
     return err([

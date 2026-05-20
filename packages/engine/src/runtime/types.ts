@@ -11,6 +11,27 @@
  */
 
 // ---------------------------------------------------------------------------
+// JSON domain types
+// ---------------------------------------------------------------------------
+
+/**
+ * A JSON primitive value: string, number, boolean, or null.
+ */
+export type JsonPrimitive = string | number | boolean | null;
+
+/**
+ * A JSON object with string keys and `JsonValue` values.
+ */
+export interface JsonObject {
+  readonly [key: string]: JsonValue;
+}
+
+/**
+ * Any valid JSON value: primitive, object, or array.
+ */
+export type JsonValue = JsonPrimitive | JsonObject | JsonValue[];
+
+// ---------------------------------------------------------------------------
 // Branded ID types
 // ---------------------------------------------------------------------------
 
@@ -304,7 +325,7 @@ export interface RuntimeJournalEntry {
    * Sanitized, size-bounded JSON data payload.
    * Must not contain raw prompts, completions, credentials, tokens, or PII.
    */
-  readonly data: Record<string, unknown>;
+  readonly data: JsonObject;
 }
 
 // ---------------------------------------------------------------------------
@@ -325,7 +346,7 @@ export interface JournalQueryFilter {
   readonly sourceName?: string;
   /** Filter by event type. */
   readonly eventType?: string;
-  /** Filter by minimum severity. */
+  /** Filter by exact severity. */
   readonly severity?: JournalSeverity;
   /** ISO 8601 timestamp — only entries after this time. */
   readonly after?: string;

@@ -134,7 +134,7 @@
   - function queryError: (message, cause?) => RuntimeStoreQueryError
   - function notFoundError: (entity, id, message?) => RuntimeStoreNotFoundError
   - function conflictError: (entity, message, conflictingId?) => RuntimeStoreConflictError
-  - _...11 more_
+  - _...12 more_
 - `packages/engine/src/runtime/fingerprint.ts` — function createProjectSalt: () => string, function fingerprintContent: (salt, content) => ResultAsync<string, RuntimeStoreError>
 - `packages/engine/src/runtime/journal-writer.ts` — class RuntimeJournalWriter, interface WriteJournalEntryInput
 - `packages/engine/src/runtime/memory-store.ts`
@@ -142,7 +142,7 @@
   - class InMemoryRuntimeStore
   - interface InMemoryRuntimeStoreFailureConfig
   - interface InMemoryRuntimeStoreOptions
-- `packages/engine/src/runtime/sanitizer.ts` — function sanitizeJournalData: (data, unknown>) => Result<Record<string, unknown>, RuntimeStoreError>, function sanitizeSnapshotMetadata: (metadata, string | number | boolean>) => Result<Record<string, string | number | boolean>, RuntimeStoreError>
+- `packages/engine/src/runtime/sanitizer.ts` — function sanitizeJournalData: (data) => Result<JsonObject, RuntimeStoreError>, function sanitizeSnapshotMetadata: (metadata, string | number | boolean>) => Result<Record<string, string | number | boolean>, RuntimeStoreError>
 - `packages/engine/src/runtime/sqlite/kysely-bun-sqlite.ts` — class BunSqliteDialect
 - `packages/engine/src/runtime/sqlite/migrations.ts`
   - function runMigrations: (db) => Result<void, RuntimeStoreError>
@@ -158,8 +158,8 @@
   - function createSessionSnapshotId: (raw) => SessionSnapshotId
   - function createRuntimeJournalEntryId: (raw) => RuntimeJournalEntryId
   - function createOwnerId: (raw) => OwnerId
-  - interface ArtifactRef
-  - _...15 more_
+  - interface JsonObject
+  - _...18 more_
 - `packages/engine/src/skill-resolution.ts`
   - function resolveSkillsForAgent: (input) => Result<ResolvedSkill[], SkillResolutionError[]>
   - function resolveSkillsForConfig: (input) => Result<ConfigSkillResolutionResult, SkillResolutionError[]>

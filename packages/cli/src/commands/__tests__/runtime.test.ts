@@ -218,6 +218,37 @@ describe("runtime status", () => {
     const out = terminal.out.join("\n");
     expect(out).toContain("Schema version: 42");
   });
+
+  it("surfaces schema-read failure to stderr and falls back to CURRENT_SCHEMA_VERSION", async () => {
+    // Use a cwd where the DB path resolves to a non-existent directory so that
+    // new Database(path, { readonly: true }) throws "unable to open database file".
+    // dbExists returns true (simulating the store exists) but the DB open fails.
+    // This exercises the outer catch: stderr warning + CURRENT_SCHEMA_VERSION fallback.
+    const terminal = new BufferTerminal();
+    const store = createInMemoryRuntimeStore();
+    const ctx: RuntimeCommandContext = {
+      terminal,
+      theme,
+      subcommand: "status",
+      storeFactory: () => store,
+      dbExists: async () => true,
+      // cwd points to a directory that doesn't contain .weave/runtime/weave.db
+      // so new Database(resolvedPath, { readonly: true }) will throw
+      cwd: "/nonexistent-weave-test-dir-that-does-not-exist",
+      // schemaVersion intentionally omitted — forces the real DB read path
+    };
+
+    const result = await runRuntime(ctx);
+    expect(result._unsafeUnwrap()).toBe(0);
+
+    // stderr must contain the fallback warning
+    const errOut = terminal.err.join("\n");
+    expect(errOut).toContain("Could not read schema version");
+
+    // stdout must still show the status output (command continues with fallback)
+    const stdOut = terminal.out.join("\n");
+    expect(stdOut).toContain("Runtime Store Status");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -392,6 +423,82 @@ describe("runtime — arg parsing", () => {
     const result = parseArgs(["bun", "weave", "runtime", "journal", "--limit"]);
     expect(result.isErr()).toBe(true);
     expect(result._unsafeUnwrapErr().flag).toBe("--limit");
+  });
+
+  it("returns InvalidFlagValue error for --limit abc", () => {
+    const result = parseArgs([
+      "bun",
+      "weave",
+      "runtime",
+      "journal",
+      "--limit",
+      "abc",
+    ]);
+    expect(result.isErr()).toBe(true);
+    const e = result._unsafeUnwrapErr();
+    expect(e.type).toBe("InvalidFlagValue");
+    expect(e.flag).toBe("--limit");
+    expect(e.message).toContain("positive integer");
+  });
+
+  it("returns InvalidFlagValue error for --limit 0", () => {
+    const result = parseArgs([
+      "bun",
+      "weave",
+      "runtime",
+      "journal",
+      "--limit",
+      "0",
+    ]);
+    expect(result.isErr()).toBe(true);
+    const e = result._unsafeUnwrapErr();
+    expect(e.type).toBe("InvalidFlagValue");
+    expect(e.flag).toBe("--limit");
+  });
+
+  it("returns InvalidFlagValue error for --limit -5", () => {
+    // Note: "-5" starts with "-" so it triggers MissingFlagValue (treated as
+    // a missing value / next flag). Both error types are acceptable here since
+    // the value is still rejected.
+    const result = parseArgs([
+      "bun",
+      "weave",
+      "runtime",
+      "journal",
+      "--limit",
+      "-5",
+    ]);
+    expect(result.isErr()).toBe(true);
+    const e = result._unsafeUnwrapErr();
+    expect(e.flag).toBe("--limit");
+  });
+
+  it("returns InvalidFlagValue error for --limit 10xyz (partial integer)", () => {
+    const result = parseArgs([
+      "bun",
+      "weave",
+      "runtime",
+      "journal",
+      "--limit",
+      "10xyz",
+    ]);
+    expect(result.isErr()).toBe(true);
+    const e = result._unsafeUnwrapErr();
+    expect(e.type).toBe("InvalidFlagValue");
+    expect(e.flag).toBe("--limit");
+  });
+
+  it("accepts --limit 1 (minimum valid positive integer)", () => {
+    const result = parseArgs([
+      "bun",
+      "weave",
+      "runtime",
+      "journal",
+      "--limit",
+      "1",
+    ]);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().flags.limit).toBe(1);
   });
 });
 

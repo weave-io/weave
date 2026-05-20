@@ -8,6 +8,37 @@
  */
 
 // ---------------------------------------------------------------------------
+// Typed cause — replaces `cause?: unknown` across all error variants
+// ---------------------------------------------------------------------------
+
+/**
+ * Normalized representation of an underlying error cause.
+ *
+ * Replaces `cause?: unknown` to satisfy the repo rule: "Use discriminated
+ * unions with explicit domain error types; never use `unknown` or bare strings."
+ */
+export interface RuntimeStoreErrorCause {
+  readonly name?: string;
+  readonly message: string;
+  readonly stack?: string;
+}
+
+/**
+ * Normalize an arbitrary thrown value into a `RuntimeStoreErrorCause`.
+ *
+ * - `undefined` → `undefined` (no cause)
+ * - `Error` instance → structured cause with `name`, `message`, `stack`
+ * - anything else → `{ message: String(cause) }`
+ */
+function normalizeCause(cause: unknown): RuntimeStoreErrorCause | undefined {
+  if (cause === undefined) return undefined;
+  if (cause instanceof Error) {
+    return { name: cause.name, message: cause.message, stack: cause.stack };
+  }
+  return { message: String(cause) };
+}
+
+// ---------------------------------------------------------------------------
 // RuntimeStoreError discriminated union
 // ---------------------------------------------------------------------------
 
@@ -20,7 +51,7 @@ export interface RuntimeStoreInitializationError {
   /** Human-readable description of the failure. */
   readonly message: string;
   /** Underlying cause, if available. */
-  readonly cause?: unknown;
+  readonly cause?: RuntimeStoreErrorCause;
 }
 
 /**
@@ -47,7 +78,7 @@ export interface RuntimeStoreSerializationError {
   /** Human-readable description of the failure. */
   readonly message: string;
   /** Underlying cause, if available. */
-  readonly cause?: unknown;
+  readonly cause?: RuntimeStoreErrorCause;
 }
 
 /**
@@ -58,7 +89,7 @@ export interface RuntimeStoreQueryError {
   /** Human-readable description of the failure. */
   readonly message: string;
   /** Underlying cause, if available. */
-  readonly cause?: unknown;
+  readonly cause?: RuntimeStoreErrorCause;
 }
 
 /**
@@ -120,7 +151,7 @@ export interface RuntimeStoreJournalWriteError {
   /** Human-readable description of the failure. */
   readonly message: string;
   /** Underlying cause, if available. */
-  readonly cause?: unknown;
+  readonly cause?: RuntimeStoreErrorCause;
 }
 
 /**
@@ -147,7 +178,7 @@ export function initializationError(
   message: string,
   cause?: unknown,
 ): RuntimeStoreInitializationError {
-  return { type: "initialization", message, cause };
+  return { type: "initialization", message, cause: normalizeCause(cause) };
 }
 
 /** Create a RuntimeStoreMigrationVersionError. */
@@ -164,7 +195,7 @@ export function serializationError(
   message: string,
   cause?: unknown,
 ): RuntimeStoreSerializationError {
-  return { type: "serialization", message, cause };
+  return { type: "serialization", message, cause: normalizeCause(cause) };
 }
 
 /** Create a RuntimeStoreQueryError. */
@@ -172,7 +203,7 @@ export function queryError(
   message: string,
   cause?: unknown,
 ): RuntimeStoreQueryError {
-  return { type: "query", message, cause };
+  return { type: "query", message, cause: normalizeCause(cause) };
 }
 
 /** Create a RuntimeStoreNotFoundError. */
@@ -211,5 +242,5 @@ export function journalWriteError(
   message: string,
   cause?: unknown,
 ): RuntimeStoreJournalWriteError {
-  return { type: "journal_write", message, cause };
+  return { type: "journal_write", message, cause: normalizeCause(cause) };
 }

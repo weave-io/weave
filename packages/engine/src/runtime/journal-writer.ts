@@ -32,6 +32,7 @@ import type {
   ExecutionLeaseId,
   JournalEntrySource,
   JournalSeverity,
+  JsonObject,
   RuntimeJournalEntry,
   WorkflowInstanceId,
 } from "./types.js";
@@ -74,7 +75,7 @@ export interface WriteJournalEntryInput {
    * Must not contain raw prompts, completions, credentials, tokens, or PII.
    * Fingerprints (SHA-256 hex strings) may be stored here instead of raw content.
    */
-  readonly data: Record<string, unknown>;
+  readonly data: JsonObject;
 }
 
 // ---------------------------------------------------------------------------
@@ -151,7 +152,7 @@ function validateEnvelope(
  * Returns `ok(undefined)` if within limit, or `err(journal_write)` if exceeded.
  */
 function checkPayloadSize(
-  data: Record<string, unknown>,
+  data: JsonObject,
 ): Result<undefined, RuntimeStoreError> {
   let serialized: string;
   try {
@@ -236,7 +237,7 @@ export class RuntimeJournalWriter {
     }
 
     // 3. Check payload size
-    const sizeResult = checkPayloadSize(input.data);
+    const sizeResult = checkPayloadSize(sanitizeResult.value);
     if (sizeResult.isErr()) {
       return this.handlePreflightError(sizeResult.error);
     }
@@ -257,9 +258,13 @@ export class RuntimeJournalWriter {
           return errAsync(error);
         }
         log.warn(
-          { err: error },
-          "Journal append failed (best-effort mode): " +
-            (error.type === "journal_write" ? error.message : error.type),
+          {
+            err: error,
+            errorType: error.type,
+            errorMessage:
+              error.type === "journal_write" ? error.message : undefined,
+          },
+          "Journal append failed (best-effort mode)",
         );
         return okAsync(undefined);
       });
@@ -280,9 +285,13 @@ export class RuntimeJournalWriter {
   ): ResultAsync<RuntimeJournalEntry | undefined, RuntimeStoreError> {
     if (!this.strictMode) {
       log.warn(
-        { err: error },
-        "Journal write rejected (best-effort mode): " +
-          (error.type === "journal_write" ? error.message : error.type),
+        {
+          err: error,
+          errorType: error.type,
+          errorMessage:
+            error.type === "journal_write" ? error.message : undefined,
+        },
+        "Journal write rejected (best-effort mode)",
       );
     }
     return errAsync(error);

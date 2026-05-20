@@ -216,7 +216,15 @@ export function runMigrations(db: Database): Result<void, RuntimeStoreError> {
       )
       .get() as { value: string } | null;
     if (row) {
-      storedVersion = parseInt(row.value, 10);
+      const parsed = Number.parseInt(row.value, 10);
+      if (!Number.isInteger(parsed) || parsed < 0) {
+        return err(
+          initializationError(
+            `Invalid schema_version in runtime_metadata: ${row.value}`,
+          ),
+        );
+      }
+      storedVersion = parsed;
     }
   } catch (cause) {
     return err(initializationError("Failed to read schema version", cause));
@@ -278,7 +286,9 @@ export function readSchemaVersion(db: Database): number {
         "SELECT value FROM runtime_metadata WHERE key = 'schema_version'",
       )
       .get() as { value: string } | null;
-    return row ? parseInt(row.value, 10) : 0;
+    if (!row) return 0;
+    const parsed = Number.parseInt(row.value, 10);
+    return Number.isInteger(parsed) && parsed >= 0 ? parsed : 0;
   } catch {
     return 0;
   }

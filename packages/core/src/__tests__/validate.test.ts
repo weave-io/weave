@@ -438,4 +438,15 @@ describe("validate — settings block", () => {
       ),
     ).toBe(true);
   });
+
+  it('settings "foo" (non-block) → err with path "settings"', () => {
+    const result = validateSource('settings "foo"');
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.path).toBe("settings");
+    expect(errors[0]?.message).toBe(
+      "settings must be a block: settings { ... }",
+    );
+  });
 });

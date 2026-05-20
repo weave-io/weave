@@ -55,11 +55,17 @@ export interface ParsedArgs {
   };
 }
 
-export type ArgParseError = {
-  type: "MissingFlagValue";
-  flag: string;
-  message: string;
-};
+export type ArgParseError =
+  | {
+      type: "MissingFlagValue";
+      flag: string;
+      message: string;
+    }
+  | {
+      type: "InvalidFlagValue";
+      flag: string;
+      message: string;
+    };
 
 // ---------------------------------------------------------------------------
 // Parser
@@ -186,9 +192,18 @@ export function parseArgs(argv: string[]): Result<ParsedArgs, ArgParseError> {
         });
       }
       const parsed = parseInt(val, 10);
-      if (!Number.isNaN(parsed) && parsed > 0) {
-        flags.limit = parsed;
+      if (
+        !Number.isInteger(parsed) ||
+        parsed <= 0 ||
+        String(parsed) !== val.trim()
+      ) {
+        return err({
+          type: "InvalidFlagValue" as const,
+          flag: "--limit",
+          message: "--limit requires a positive integer",
+        });
       }
+      flags.limit = parsed;
       continue;
     }
 
