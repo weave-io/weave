@@ -78,6 +78,14 @@ export {
 } from "./runtime/fingerprint.js";
 export type { WriteJournalEntryInput } from "./runtime/journal-writer.js";
 export { RuntimeJournalWriter } from "./runtime/journal-writer.js";
+export type {
+  InMemoryRuntimeStoreFailureConfig,
+  InMemoryRuntimeStoreOptions,
+} from "./runtime/memory-store.js";
+export {
+  createInMemoryRuntimeStore,
+  InMemoryRuntimeStore,
+} from "./runtime/memory-store.js";
 export {
   sanitizeJournalData,
   sanitizeSnapshotMetadata,

@@ -136,22 +136,23 @@
 - [x] 4.9 Add journal writer tests for envelope validation, payload size, sanitization/rejection, no raw content persistence, fingerprint stability within one store, and fingerprint difference across salts.
 - [x] 4.10 Run Warp security review on the implemented fingerprinting, sanitization, adapter writer boundary, and journal failure semantics before accepting this task. (**Note**: Self-review completed in proof artifact; formal Warp review to be run by Tapestry post-implementation.)
 
-### [ ] 5.0 Export in-memory Runtime Store test utility
+### [x] 5.0 Export in-memory Runtime Store test utility
 
 #### 5.0 Proof Artifact(s)
 
 - Test: `bun test packages/engine/src/__tests__/*memory* packages/engine/src/__tests__/*runtime*` passes and demonstrates the in-memory store satisfies the same Runtime Store contract, transaction behavior, conflict behavior, and injectable failure modes as the SQLite store where practical.
 - Typecheck: a downstream test import of `createInMemoryRuntimeStore` from `@weave/engine` typechecks without importing private engine files.
+- Proof artifact: `docs/specs/12-spec-runtime-persistence/12-proofs/12-task-05-proofs.md`
 
 #### 5.0 Tasks
 
-- [ ] 5.1 Implement `createInMemoryRuntimeStore()` in `packages/engine/src/runtime/memory-store.ts` using in-memory collections only.
-- [ ] 5.2 Match the Runtime Store repository interfaces, find/get semantics, lease conflict semantics, and transaction/unit-of-work API.
-- [ ] 5.3 Add configurable failure injection for persistence, journal, migration/initialization-like, and conflict test scenarios.
-- [ ] 5.4 Ensure the in-memory store performs no real filesystem writes, harness startup, harness resource reads, or adapter discovery.
-- [ ] 5.5 Export `createInMemoryRuntimeStore()` from `@weave/engine` as a supported test utility.
-- [ ] 5.6 Add contract tests shared with or mirroring SQLite behavior for common repository semantics.
-- [ ] 5.7 Add typecheck coverage proving downstream tests can import the utility from the public engine package entry point.
+- [x] 5.1 Implement `createInMemoryRuntimeStore()` in `packages/engine/src/runtime/memory-store.ts` using in-memory collections only.
+- [x] 5.2 Match the Runtime Store repository interfaces, find/get semantics, lease conflict semantics, and transaction/unit-of-work API.
+- [x] 5.3 Add configurable failure injection for persistence, journal, migration/initialization-like, and conflict test scenarios.
+- [x] 5.4 Ensure the in-memory store performs no real filesystem writes, harness startup, harness resource reads, or adapter discovery.
+- [x] 5.5 Export `createInMemoryRuntimeStore()` from `@weave/engine` as a supported test utility.
+- [x] 5.6 Add contract tests shared with or mirroring SQLite behavior for common repository semantics.
+- [x] 5.7 Add typecheck coverage proving downstream tests can import the utility from the public engine package entry point.
 
 ### [ ] 6.0 Add read-only runtime inspection CLI commands
 
