@@ -123,6 +123,22 @@
   - type ResolutionSource
   - const DEFAULT_FALLBACK_MODEL
 - `packages/engine/src/runner.ts` — class WeaveRunner, interface WeaveRunnerOptions
+- `packages/engine/src/runtime/errors.ts`
+  - function initializationError: (message, cause?) => RuntimeStoreInitializationError
+  - function migrationVersionError: (foundVersion, supportedVersion, message) => RuntimeStoreMigrationVersionError
+  - function serializationError: (message, cause?) => RuntimeStoreSerializationError
+  - function queryError: (message, cause?) => RuntimeStoreQueryError
+  - function notFoundError: (entity, id, message?) => RuntimeStoreNotFoundError
+  - function conflictError: (entity, message, conflictingId?) => RuntimeStoreConflictError
+  - _...11 more_
+- `packages/engine/src/runtime/types.ts`
+  - function createWorkflowInstanceId: (raw) => WorkflowInstanceId
+  - function createExecutionLeaseId: (raw) => ExecutionLeaseId
+  - function createSessionSnapshotId: (raw) => SessionSnapshotId
+  - function createRuntimeJournalEntryId: (raw) => RuntimeJournalEntryId
+  - function createOwnerId: (raw) => OwnerId
+  - interface ArtifactRef
+  - _...15 more_
 - `packages/engine/src/skill-resolution.ts`
   - function resolveSkillsForAgent: (input) => Result<ResolvedSkill[], SkillResolutionError[]>
   - function resolveSkillsForConfig: (input) => Result<ConfigSkillResolutionResult, SkillResolutionError[]>

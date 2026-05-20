@@ -52,6 +52,65 @@ export type { RunAgentEffect } from "./run-agent-effects.js";
 export type { WeaveRunnerOptions } from "./runner.js";
 export { WeaveRunner } from "./runner.js";
 export type {
+  RuntimeStoreConflictError,
+  RuntimeStoreError,
+  RuntimeStoreInitializationError,
+  RuntimeStoreJournalWriteError,
+  RuntimeStoreMigrationVersionError,
+  RuntimeStoreNotFoundError,
+  RuntimeStoreQueryError,
+  RuntimeStoreSerializationError,
+  RuntimeStoreValidationError,
+} from "./runtime/errors.js";
+export {
+  conflictError,
+  initializationError,
+  journalWriteError,
+  migrationVersionError,
+  notFoundError,
+  queryError,
+  serializationError,
+  validationError,
+} from "./runtime/errors.js";
+export type {
+  AcquireLeaseInput,
+  CreateWorkflowInstanceInput,
+  ExecutionLeaseRepository,
+  RecordSessionSnapshotInput,
+  RuntimeJournalRepository,
+  RuntimeStore,
+  RuntimeStoreTransaction,
+  SessionSnapshotRepository,
+  TransactionCallback,
+  UpdateWorkflowInstanceInput,
+  WorkflowInstanceRepository,
+} from "./runtime/store.js";
+export type {
+  ArtifactRef,
+  ExecutionLease,
+  ExecutionLeaseId,
+  JournalEntrySource,
+  JournalQueryFilter,
+  JournalSeverity,
+  OwnerId,
+  RuntimeJournalEntry,
+  RuntimeJournalEntryId,
+  SessionSnapshot,
+  SessionSnapshotId,
+  WorkflowInstance,
+  WorkflowInstanceId,
+  WorkflowInstanceStatus,
+} from "./runtime/types.js";
+export {
+  createExecutionLeaseId,
+  createOwnerId,
+  createRuntimeJournalEntryId,
+  createSessionSnapshotId,
+  createWorkflowInstanceId,
+  JOURNAL_SEVERITIES,
+  WORKFLOW_INSTANCE_STATUSES,
+} from "./runtime/types.js";
+export type {
   ConfigSkillResolutionResult,
   ResolvedSkill,
   SkillInfo,

@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weave/core, @weave/engine, @weave/config, @weave/cli, @weave/adapter-opencode
 
-> 0 routes | 0 models | 0 components | 39 lib files | 2 env vars | 0 middleware | 0% test coverage
-> **Token savings:** this file is ~3,400 tokens. Without it, AI exploration would cost ~19,500 tokens. **Saves ~16,100 tokens per conversation.**
-> **Last scanned:** 2026-05-20 18:23 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 41 lib files | 2 env vars | 0 middleware | 0% test coverage
+> **Token savings:** this file is ~3,600 tokens. Without it, AI exploration would cost ~20,000 tokens. **Saves ~16,400 tokens per conversation.**
+> **Last scanned:** 2026-05-20 18:33 — re-run after significant changes
 
 ---
 
@@ -134,6 +134,22 @@
   - type ResolutionSource
   - const DEFAULT_FALLBACK_MODEL
 - `packages/engine/src/runner.ts` — class WeaveRunner, interface WeaveRunnerOptions
+- `packages/engine/src/runtime/errors.ts`
+  - function initializationError: (message, cause?) => RuntimeStoreInitializationError
+  - function migrationVersionError: (foundVersion, supportedVersion, message) => RuntimeStoreMigrationVersionError
+  - function serializationError: (message, cause?) => RuntimeStoreSerializationError
+  - function queryError: (message, cause?) => RuntimeStoreQueryError
+  - function notFoundError: (entity, id, message?) => RuntimeStoreNotFoundError
+  - function conflictError: (entity, message, conflictingId?) => RuntimeStoreConflictError
+  - _...11 more_
+- `packages/engine/src/runtime/types.ts`
+  - function createWorkflowInstanceId: (raw) => WorkflowInstanceId
+  - function createExecutionLeaseId: (raw) => ExecutionLeaseId
+  - function createSessionSnapshotId: (raw) => SessionSnapshotId
+  - function createRuntimeJournalEntryId: (raw) => RuntimeJournalEntryId
+  - function createOwnerId: (raw) => OwnerId
+  - interface ArtifactRef
+  - _...15 more_
 - `packages/engine/src/skill-resolution.ts`
   - function resolveSkillsForAgent: (input) => Result<ResolvedSkill[], SkillResolutionError[]>
   - function resolveSkillsForConfig: (input) => Result<ConfigSkillResolutionResult, SkillResolutionError[]>
@@ -225,7 +241,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 36 test files found
+> 37 test files found
 
 ---
 

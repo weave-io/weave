@@ -71,7 +71,7 @@
 - [x] 1.8 Update DSL examples/docs that mention `log_level` so they use `settings { log_level INFO }`.
 - [x] 1.9 Run targeted core/config tests and record the proof artifact output.
 
-### [ ] 2.0 Define Runtime Store domain interfaces in engine
+### [x] 2.0 Define Runtime Store domain interfaces in engine
 
 #### 2.0 Proof Artifact(s)
 
@@ -80,16 +80,16 @@
 
 #### 2.0 Tasks
 
-- [ ] 2.1 Create `packages/engine/src/runtime/types.ts` for `WorkflowInstance`, `ExecutionLease`, `SessionSnapshot`, `RuntimeJournalEntry`, IDs, statuses, severity, and structured source types.
-- [ ] 2.2 Model `WorkflowInstance.status` as `created | running | paused | blocked | completed | failed | cancelled` and keep artifacts as references/metadata only.
-- [ ] 2.3 Model `ExecutionLease` with `executionId`, Weave-generated `ownerId`, `acquiredAt`, `expiresAt`, and optional `lastHeartbeatAt`.
-- [ ] 2.4 Define `SessionSnapshot` with normalized Weave-visible fields and deny raw harness dumps, transcripts, prompts, credentials, tokens, cookies, authorization headers, raw provider payloads, and PII-like harness-private fields.
-- [ ] 2.5 Create `RuntimeStoreError` variants for initialization, migration/version, serialization, query, not-found, conflict, validation, and journal write failures.
-- [ ] 2.6 Define repository interfaces with `ResultAsync`, paired `find*`/`get*` lookup semantics, source-of-truth write methods, lease acquire/heartbeat/release methods, and journal append/query methods.
-- [ ] 2.7 Define composed `RuntimeStore` and transaction/unit-of-work interfaces exposing focused sub-repositories.
-- [ ] 2.8 Export runtime public types/interfaces from `packages/engine/src/index.ts` without exposing SQLite internals.
-- [ ] 2.9 Add engine contract tests for statuses, find/get semantics, lease expiry/conflict expectations, SessionSnapshot denylist validation, and transaction API shape.
-- [ ] 2.10 Run engine typecheck and targeted runtime contract tests.
+- [x] 2.1 Create `packages/engine/src/runtime/types.ts` for `WorkflowInstance`, `ExecutionLease`, `SessionSnapshot`, `RuntimeJournalEntry`, IDs, statuses, severity, and structured source types.
+- [x] 2.2 Model `WorkflowInstance.status` as `created | running | paused | blocked | completed | failed | cancelled` and keep artifacts as references/metadata only.
+- [x] 2.3 Model `ExecutionLease` with `executionId`, Weave-generated `ownerId`, `acquiredAt`, `expiresAt`, and optional `lastHeartbeatAt`.
+- [x] 2.4 Define `SessionSnapshot` with normalized Weave-visible fields and deny raw harness dumps, transcripts, prompts, credentials, tokens, cookies, authorization headers, raw provider payloads, and PII-like harness-private fields.
+- [x] 2.5 Create `RuntimeStoreError` variants for initialization, migration/version, serialization, query, not-found, conflict, validation, and journal write failures.
+- [x] 2.6 Define repository interfaces with `ResultAsync`, paired `find*`/`get*` lookup semantics, source-of-truth write methods, lease acquire/heartbeat/release methods, and journal append/query methods.
+- [x] 2.7 Define composed `RuntimeStore` and transaction/unit-of-work interfaces exposing focused sub-repositories.
+- [x] 2.8 Export runtime public types/interfaces from `packages/engine/src/index.ts` without exposing SQLite internals.
+- [x] 2.9 Add engine contract tests for statuses, find/get semantics, lease expiry/conflict expectations, SessionSnapshot denylist validation, and transaction API shape.
+- [x] 2.10 Run engine typecheck and targeted runtime contract tests.
 
 ### [ ] 3.0 Implement SQLite/Kysely default Runtime Store
 
