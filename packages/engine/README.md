@@ -83,13 +83,57 @@ const result = resolveSkillsForConfig({ config, availableSkills });
 - `RunAgentEffect.resolvedSkills` carries only engine-resolved references — no paths, content, tokens, or harness-specific metadata.
 - Disabled skills (via `config.disabled.skills`) are filtered before missing-skill validation.
 
+## Execution Lifecycle Surface
+
+The engine owns the lifecycle decision logic. Adapters own harness event detection and mapping.
+
+```
+Harness event (adapter-owned)          Engine lifecycle function (engine-owned)
+─────────────────────────────          ────────────────────────────────────────
+Session started in harness         →   observeSession(input, store)
+User triggers workflow execution   →   startExecution(input, store)
+Paused execution resumes           →   resumeExecution(input, store)
+User presses Ctrl+C / stop         →   handleUserInterrupt(input, store)
+Adapter ready to run next step     →   dispatchStep(input, store)
+Step agent finishes                →   completeStep(input, store)
+Tool call about to execute         →   beforeTool(input)
+```
+
+**Adapter-owned**: detecting harness events, mapping them to lifecycle inputs, providing `RuntimeStore`, acting on returned `LifecycleEffect` values (e.g. spawning agents, pausing sessions).
+
+**Engine-owned**: policy decisions, state transitions, effect generation, `RuntimeStore` writes.
+
+All lifecycle functions return `ResultAsync<Output, LifecycleError>` — no exceptions, no concrete hook registration, no harness-specific callbacks.
+
+```ts
+// ✅ Adapter maps a harness event into an engine lifecycle call.
+// The adapter owns event detection; the engine owns the policy decision.
+async function onHarnessStepComplete(stepName: string) {
+  const result = await completeStep(
+    { workflowInstanceId, leaseId, stepName, completionSignal: { outcome: "success" } },
+    store,
+  );
+  result.match(
+    ({ effects }) => applyEffects(effects),
+    (err) => log.error({ err }, "completeStep failed"),
+  );
+}
+
+// ❌ Wrong: engine registering a concrete harness callback.
+adapter.registerHook({ name: "on-step-complete", event: "step:done", enabled: true });
+```
+
+### `registerHook()` — superseded
+
+`HarnessAdapter.registerHook()` is **superseded** by the execution lifecycle surface. Adapters should map concrete harness events into the 7 typed engine lifecycle functions listed above instead of registering hooks through this method. `registerHook()` will be removed once all adapters have migrated.
+
 ## Transitional Adapter Interface
 
 `HarnessAdapter` currently contains early placeholder methods. Treat those as transitional, not architectural precedent:
 
 - **`loadAvailableSkills(): Promise<SkillInfo[]>`** — the current adapter surface for skill context (Spec 09). Adapters return a flat list of `SkillInfo` descriptors; the engine resolves references against it. This replaces the deprecated `loadSkill()` method.
 - **`loadSkill()`** — deprecated. Superseded by `loadAvailableSkills()`. Will be removed in a future spec.
-- **`registerHook()`** — will be replaced or reframed around adapter-owned lifecycle event mapping into engine policy surfaces.
+- **`registerHook()`** — **superseded** by the execution lifecycle surface. See above.
 - Agent materialization methods such as `spawnSubagent()` are acceptable only when they receive normalized, harness-agnostic intent and the adapter owns concrete harness translation.
 
 When adding new engine APIs, prefer pure helpers that accept explicit harness context and return normalized results.

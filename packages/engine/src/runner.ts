@@ -128,8 +128,12 @@ export class WeaveRunner {
     }
 
     // 3. TODO(#9): wire abstract lifecycle policy surfaces.
-    // Concrete hook registration is adapter-owned; adapters map harness events
-    // into engine policy handlers.
+    // The execution lifecycle surface (execution-lifecycle.ts) provides 7 typed
+    // engine functions that adapters call after mapping concrete harness events:
+    //   observeSession, startExecution, resumeExecution, handleUserInterrupt,
+    //   dispatchStep, completeStep, beforeTool.
+    // These supersede registerHook(). Full workflow engine integration is deferred
+    // to a future spec; the runner currently handles only agent materialisation.
 
     const shuttlesResult = generateCategoryShuttles(this.config);
     if (shuttlesResult.isErr()) {

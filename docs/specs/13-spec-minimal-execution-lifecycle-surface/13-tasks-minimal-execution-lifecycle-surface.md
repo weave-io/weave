@@ -107,7 +107,7 @@
 - [ ] 4.5 Add a security-focused test or fixture proving `beforeTool` input/output records do not include credentials, tokens, raw tool payloads, or harness-private state.
 - [ ] 4.6 Document that adapters own concrete tool-name mapping and the engine owns abstract policy decisions.
 
-### [ ] 5.0 Reframe adapter integration and transitional runner behavior
+### [x] 5.0 Reframe adapter integration and transitional runner behavior
 
 #### 5.0 Proof Artifact(s)
 

@@ -72,8 +72,26 @@ export interface HarnessAdapter {
    * Register a lifecycle hook with the harness so that it fires at the
    * appropriate point in the agent's execution lifecycle.
    *
-   * @deprecated Transitional method. Future policy work should expose an
-   * abstract lifecycle surface that adapters call from concrete harness events.
+   * @deprecated **Superseded** by the Execution Lifecycle Surface in
+   * `execution-lifecycle.ts`. Adapters should map concrete harness events into
+   * the 7 typed engine lifecycle functions instead of registering hooks through
+   * this method:
+   *
+   * - `observeSession`      — adapter reports a normalized session observation
+   * - `startExecution`      — adapter signals a new workflow execution begins
+   * - `resumeExecution`     — adapter signals a paused execution resumes
+   * - `handleUserInterrupt` — adapter signals a user-initiated interrupt
+   * - `dispatchStep`        — adapter requests dispatch of the next workflow step
+   * - `completeStep`        — adapter signals that a step has finished
+   * - `beforeTool`          — adapter signals that a tool call is about to execute
+   *
+   * The lifecycle surface accepts a `RuntimeStore` and returns typed
+   * `ResultAsync<Output, LifecycleError>` values — no concrete hook
+   * registration, no harness-specific callback wiring.
+   *
+   * This method will be removed once all adapters have migrated to the
+   * execution lifecycle surface.
+   *
    * @param hook - The hook configuration to register.
    */
   registerHook(hook: HookConfig): Promise<void>;
