@@ -15,6 +15,7 @@ import type { RunAgentEffect } from "@weave/engine";
 import {
   type BeforeToolInput,
   type BeforeToolOutput,
+  beforeTool,
   type CompleteStepInput,
   type CompleteStepOutput,
   completeStep,
@@ -27,6 +28,7 @@ import {
   type DispatchStepInput,
   type DispatchStepOutput,
   dispatchStep,
+  evaluateEffectiveToolPolicy,
   type HandleUserInterruptInput,
   type HandleUserInterruptOutput,
   handleUserInterrupt,
@@ -539,6 +541,14 @@ describe("CompleteStepInput / CompleteStepOutput", () => {
 // ---------------------------------------------------------------------------
 
 describe("BeforeToolInput / BeforeToolOutput", () => {
+  const allAllowPolicy = evaluateEffectiveToolPolicy({
+    read: "allow",
+    write: "allow",
+    execute: "allow",
+    delegate: "allow",
+    network: "allow",
+  });
+
   it("accepts all abstract capability categories", () => {
     const capabilities: BeforeToolInput["toolCapability"][] = [
       "read",
@@ -554,6 +564,7 @@ describe("BeforeToolInput / BeforeToolOutput", () => {
         agentName: "shuttle",
         toolCapability,
         toolName: `mock-${toolCapability}-tool`,
+        effectiveToolPolicy: allAllowPolicy,
       };
       expect(input.toolCapability).toBe(toolCapability);
     }
@@ -566,6 +577,7 @@ describe("BeforeToolInput / BeforeToolOutput", () => {
       agentName: "loom",
       toolCapability: "write",
       toolName: "edit_file",
+      effectiveToolPolicy: allAllowPolicy,
       metadata: { filePath: "src/index.ts" },
     };
     expect(input.metadata?.filePath).toBe("src/index.ts");
@@ -1827,5 +1839,229 @@ describe("completeStep (Runtime Store)", () => {
     if (result.error.type === "validation") {
       expect(result.error.field).toBe("stepName");
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// beforeTool — policy evaluation
+// ---------------------------------------------------------------------------
+
+describe("beforeTool", () => {
+  // Helper: build a minimal valid BeforeToolInput
+  function makeInput(
+    overrides: Partial<BeforeToolInput> = {},
+  ): BeforeToolInput {
+    return {
+      workflowInstanceId: wfId,
+      leaseId,
+      agentName: "shuttle",
+      toolCapability: "read",
+      toolName: "read_file",
+      effectiveToolPolicy: evaluateEffectiveToolPolicy({
+        read: "allow",
+        write: "deny",
+        execute: "ask",
+        delegate: "deny",
+        network: "ask",
+      }),
+      ...overrides,
+    };
+  }
+
+  it("allow decision: effectiveToolPolicy.read = 'allow', toolCapability = 'read'", async () => {
+    const result = await beforeTool(
+      makeInput({
+        toolCapability: "read",
+        effectiveToolPolicy: evaluateEffectiveToolPolicy({ read: "allow" }),
+      }),
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    expect(result.value.decision).toBe("allow");
+  });
+
+  it("deny decision: effectiveToolPolicy.write = 'deny', toolCapability = 'write'", async () => {
+    const result = await beforeTool(
+      makeInput({
+        toolCapability: "write",
+        toolName: "write_file",
+        effectiveToolPolicy: evaluateEffectiveToolPolicy({ write: "deny" }),
+      }),
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    expect(result.value.decision).toBe("deny");
+  });
+
+  it("ask decision: effectiveToolPolicy.network = 'ask', toolCapability = 'network'", async () => {
+    const result = await beforeTool(
+      makeInput({
+        toolCapability: "network",
+        toolName: "fetch_url",
+        effectiveToolPolicy: evaluateEffectiveToolPolicy({ network: "ask" }),
+      }),
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    expect(result.value.decision).toBe("ask");
+  });
+
+  it("allow decision for execute capability", async () => {
+    const result = await beforeTool(
+      makeInput({
+        toolCapability: "execute",
+        toolName: "run_command",
+        effectiveToolPolicy: evaluateEffectiveToolPolicy({ execute: "allow" }),
+      }),
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    expect(result.value.decision).toBe("allow");
+  });
+
+  it("deny decision for delegate capability", async () => {
+    const result = await beforeTool(
+      makeInput({
+        toolCapability: "delegate",
+        toolName: "spawn_subagent",
+        effectiveToolPolicy: evaluateEffectiveToolPolicy({ delegate: "deny" }),
+      }),
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    expect(result.value.decision).toBe("deny");
+  });
+
+  it("unknown capability: returns LifecycleValidationError", async () => {
+    const result = await beforeTool(
+      makeInput({
+        toolCapability: "unknown" as BeforeToolInput["toolCapability"],
+      }),
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+    if (result.error.type === "validation") {
+      expect(result.error.field).toBe("toolCapability");
+    }
+  });
+
+  it("missing toolCapability: returns LifecycleValidationError", async () => {
+    const input = makeInput();
+    // Simulate missing toolCapability at runtime
+    const inputWithoutCapability = {
+      ...input,
+      toolCapability: "" as BeforeToolInput["toolCapability"],
+    };
+    const result = await beforeTool(inputWithoutCapability);
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+    if (result.error.type === "validation") {
+      expect(result.error.field).toBe("toolCapability");
+    }
+  });
+
+  it("missing workflowInstanceId: returns LifecycleValidationError", async () => {
+    const result = await beforeTool(
+      makeInput({
+        workflowInstanceId: "" as typeof wfId,
+      }),
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+    if (result.error.type === "validation") {
+      expect(result.error.field).toBe("workflowInstanceId");
+    }
+  });
+
+  it("missing leaseId: returns LifecycleValidationError", async () => {
+    const result = await beforeTool(
+      makeInput({
+        leaseId: "" as typeof leaseId,
+      }),
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+    if (result.error.type === "validation") {
+      expect(result.error.field).toBe("leaseId");
+    }
+  });
+
+  it("output contains only decision and optional reason — no raw tool payload fields", () => {
+    // TypeScript structural test: BeforeToolOutput must only have decision and reason.
+    // This verifies the type does not accidentally include credential or payload fields.
+    const output: BeforeToolOutput = { decision: "allow" };
+
+    // These fields must NOT exist on BeforeToolOutput (compile-time + runtime check)
+    expect("token" in output).toBe(false);
+    expect("apiKey" in output).toBe(false);
+    expect("password" in output).toBe(false);
+    expect("secret" in output).toBe(false);
+    expect("authorization" in output).toBe(false);
+    expect("toolArguments" in output).toBe(false);
+    expect("rawPayload" in output).toBe(false);
+
+    // Only decision (and optional reason) are present
+    const keys = Object.keys(output);
+    expect(keys).toContain("decision");
+    for (const key of keys) {
+      expect(["decision", "reason"]).toContain(key);
+    }
+  });
+
+  it("BeforeToolInput does not accept credential fields (structural security test)", () => {
+    // Verify that a valid BeforeToolInput object has no credential-named fields.
+    // This is a runtime structural check — TypeScript prevents adding extra fields,
+    // but we also verify at runtime that no credential keys leak into the input.
+    const input: BeforeToolInput = makeInput();
+
+    expect("token" in input).toBe(false);
+    expect("apiKey" in input).toBe(false);
+    expect("password" in input).toBe(false);
+    expect("secret" in input).toBe(false);
+    expect("authorization" in input).toBe(false);
+    expect("rawPayload" in input).toBe(false);
+    expect("toolArguments" in input).toBe(false);
+  });
+
+  it("toolName is present in input but engine does not use it for policy (audit-only)", async () => {
+    // Two inputs with different toolNames but same capability and policy
+    // must produce the same decision — proving toolName is audit-only.
+    const policy = evaluateEffectiveToolPolicy({ read: "allow" });
+
+    const result1 = await beforeTool(
+      makeInput({
+        toolCapability: "read",
+        toolName: "read_file",
+        effectiveToolPolicy: policy,
+      }),
+    );
+    const result2 = await beforeTool(
+      makeInput({
+        toolCapability: "read",
+        toolName: "some_other_harness_read_tool",
+        effectiveToolPolicy: policy,
+      }),
+    );
+
+    expect(result1.isOk()).toBe(true);
+    expect(result2.isOk()).toBe(true);
+    if (!result1.isOk() || !result2.isOk()) return;
+
+    // Same capability + same policy → same decision regardless of toolName
+    expect(result1.value.decision).toBe(result2.value.decision);
+    expect(result1.value.decision).toBe("allow");
   });
 });

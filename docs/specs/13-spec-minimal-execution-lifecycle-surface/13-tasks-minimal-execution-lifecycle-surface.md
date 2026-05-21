@@ -90,7 +90,7 @@
 - [ ] 3.6 Implement `completeStep` to persist the structured outcome, update workflow status/current step, and return typed state/effect output.
 - [ ] 3.7 Add tests for pause, dispatch state update, safe dispatch payload contents, completion outcomes, and non-goal boundaries that avoid full workflow graph semantics.
 
-### [ ] 4.0 Implement `beforeTool` policy lifecycle point
+### [x] 4.0 Implement `beforeTool` policy lifecycle point
 
 #### 4.0 Proof Artifact(s)
 

@@ -74,6 +74,7 @@ export type {
   StepCompletionSignal,
 } from "./execution-lifecycle.js";
 export {
+  beforeTool,
   completeStep,
   dispatchStep,
   handleUserInterrupt,

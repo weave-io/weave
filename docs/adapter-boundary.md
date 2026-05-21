@@ -245,6 +245,40 @@ All types are exported from `@weave/engine` under `packages/engine/src/execution
 
 **Engine responsibility**: evaluate policy, update Runtime Store state, and return typed `LifecycleEffect` values. The engine does not register harness callbacks or inspect harness-specific state.
 
+### `beforeTool` — Adapter/Engine Boundary
+
+`beforeTool` is the lifecycle point called immediately before a tool executes. The boundary is strict:
+
+**Adapters own concrete tool-name mapping:**
+- The adapter knows which harness tools exist and what abstract capability each maps to.
+- The adapter maps the concrete harness tool name (e.g. `"edit_file"`, `"bash"`, `"read_file"`) to an abstract capability (`"read"`, `"write"`, `"execute"`, `"delegate"`, `"network"`) and passes it as `toolCapability` in `BeforeToolInput`.
+- The engine never inspects, hard-codes, or branches on `toolName` for policy decisions.
+
+**The engine owns abstract policy decisions:**
+- The engine reads `effectiveToolPolicy[toolCapability]` from the adapter-supplied `EffectiveToolPolicy` and returns the corresponding `allow` / `deny` / `ask` decision.
+- The engine does not re-derive or re-evaluate the policy — it trusts the adapter-supplied `effectiveToolPolicy`.
+- `toolName` in `BeforeToolInput` is for audit/logging only — it is opaque to the engine.
+
+```ts
+// ✅ Correct: adapter maps concrete tool → abstract capability; engine reads policy
+const result = await beforeTool({
+  workflowInstanceId: event.workflowInstanceId,
+  leaseId: event.leaseId,
+  agentName: event.agentName,
+  toolCapability: adapterToolMap.get(event.toolName) ?? "execute", // adapter-owned mapping
+  toolName: event.toolName,                                         // audit only
+  effectiveToolPolicy: agentDescriptor.effectiveToolPolicy,         // adapter-supplied
+});
+
+// ❌ Wrong: engine inspects concrete tool name for policy
+if (input.toolName === "bash") { /* harness-specific logic */ }
+```
+
+**Security invariants for `beforeTool`:**
+- `BeforeToolInput` structurally excludes credentials, tokens, raw tool arguments, and harness-private state. Only `workflowInstanceId`, `leaseId`, `agentName`, `toolCapability`, `toolName` (audit), `effectiveToolPolicy`, and optional `SafeMetadata` are accepted.
+- `BeforeToolOutput` contains only `decision` (`"allow"` | `"deny"` | `"ask"`) and an optional `reason` string. No raw payloads, credentials, or harness state appear in the output.
+- `beforeTool` does NOT access the Runtime Store — it is a pure policy evaluation wrapped in `ResultAsync` for interface consistency.
+
 ### `registerHook()` is Superseded
 
 The `registerHook()` method on `HarnessAdapter` is deprecated and will be removed in a future spec. Adapters should map harness events into the lifecycle surface instead:

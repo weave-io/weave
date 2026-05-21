@@ -43,6 +43,10 @@ import type {
   WorkflowInstanceId,
 } from "./runtime/types.js";
 import { createOwnerId } from "./runtime/types.js";
+import {
+  ABSTRACT_CAPABILITIES,
+  type EffectiveToolPolicy,
+} from "./tool-policy.js";
 
 // ---------------------------------------------------------------------------
 // SafeMetadata — structurally sanitized metadata type
@@ -562,6 +566,8 @@ export interface BeforeToolInput {
   /**
    * The abstract capability category of the tool being called.
    * Adapters map concrete harness tool names to these abstract categories.
+   * Adapters own the mapping from concrete harness tool names to abstract
+   * capabilities — the engine never inspects or hard-codes harness tool names.
    */
   readonly toolCapability:
     | "read"
@@ -570,10 +576,18 @@ export interface BeforeToolInput {
     | "delegate"
     | "network";
   /**
-   * The harness-specific tool name (for logging/audit only).
+   * The harness-specific tool name (for audit/logging only).
+   * The engine does NOT use this field for policy decisions — it is opaque.
    * Must not contain raw arguments, credentials, or sensitive data.
    */
   readonly toolName: string;
+  /**
+   * The fully-resolved effective tool policy for the agent making the call.
+   * Supplied by the adapter after evaluating the agent's declared `tool_policy`.
+   * The engine reads `effectiveToolPolicy[toolCapability]` to determine the
+   * policy decision — it does not re-evaluate or re-derive the policy.
+   */
+  readonly effectiveToolPolicy: EffectiveToolPolicy;
   /** Optional structured metadata about the tool call context. */
   readonly metadata?: SafeMetadata;
 }
@@ -627,7 +641,7 @@ export type DispatchStepResult = Result<DispatchStepOutput, LifecycleError>;
 export type CompleteStepResult = Result<CompleteStepOutput, LifecycleError>;
 
 /** Result type for `beforeTool`. */
-export type BeforeToolResult = Result<BeforeToolOutput, LifecycleError>;
+export type BeforeToolResult = ResultAsync<BeforeToolOutput, LifecycleError>;
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -1218,4 +1232,77 @@ export function resumeExecution(
       leaseId: lease.id,
       effects: [] as LifecycleEffect[],
     }));
+}
+
+// ---------------------------------------------------------------------------
+// 7. beforeTool — implementation
+// ---------------------------------------------------------------------------
+
+/**
+ * Evaluate the abstract tool policy for a tool call that is about to execute.
+ *
+ * This is a pure policy evaluation — it does NOT access the Runtime Store.
+ * The adapter has already mapped the concrete harness tool name to an abstract
+ * capability (`toolCapability`) and supplied the fully-resolved
+ * `effectiveToolPolicy`. The engine reads `effectiveToolPolicy[toolCapability]`
+ * and returns the corresponding `allow` / `deny` / `ask` decision.
+ *
+ * ## Adapter / Engine Boundary
+ *
+ * - **Adapters own** concrete tool-name mapping: the adapter decides which
+ *   abstract capability a harness tool corresponds to and passes it as
+ *   `toolCapability`. The engine never inspects `toolName` for policy purposes.
+ * - **The engine owns** abstract policy decisions: it reads the pre-computed
+ *   `EffectiveToolPolicy` and returns the decision for the given capability.
+ * - `toolName` in `BeforeToolInput` is for audit/logging only — the engine
+ *   does not branch on it.
+ *
+ * @param input - Tool call context from the adapter.
+ * @returns `okAsync({ decision })` on success, or a typed `LifecycleError`.
+ */
+export function beforeTool(input: BeforeToolInput): BeforeToolResult {
+  if (!input.workflowInstanceId) {
+    return errAsync(
+      lifecycleValidationError(
+        "workflowInstanceId is required",
+        "workflowInstanceId",
+      ),
+    );
+  }
+  if (!input.leaseId) {
+    return errAsync(lifecycleValidationError("leaseId is required", "leaseId"));
+  }
+  if (!input.toolCapability) {
+    return errAsync(
+      lifecycleValidationError("toolCapability is required", "toolCapability"),
+    );
+  }
+  if (!input.toolName) {
+    return errAsync(
+      lifecycleValidationError("toolName is required", "toolName"),
+    );
+  }
+  if (!input.effectiveToolPolicy) {
+    return errAsync(
+      lifecycleValidationError(
+        "effectiveToolPolicy is required",
+        "effectiveToolPolicy",
+      ),
+    );
+  }
+
+  if (
+    !(ABSTRACT_CAPABILITIES as readonly string[]).includes(input.toolCapability)
+  ) {
+    return errAsync(
+      lifecycleValidationError(
+        `toolCapability '${input.toolCapability}' is not a recognized abstract capability`,
+        "toolCapability",
+      ),
+    );
+  }
+
+  const decision = input.effectiveToolPolicy[input.toolCapability];
+
+  return okAsync({ decision });
 }
