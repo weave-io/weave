@@ -75,7 +75,7 @@
 - [ ] 2.7 Emit `DispatchAgentEffect` with agent name, prompt metadata or sanitized prompt representation, expected completion method, interaction intent from step type, correlation ID, effective policy, raw policy, resolved model, and resolved skills.
 - [ ] 2.8 Add tests for configured agent dispatch, prompt rendering, artifact input validation, missing step, missing agent, and absence of concrete harness tool/session data in effects.
 
-### [ ] 3.0 Complete successful steps, persist artifacts, and auto-advance
+### [x] 3.0 Complete successful steps, persist artifacts, and auto-advance
 
 #### 3.0 Proof Artifact(s)
 

@@ -45,6 +45,7 @@ import type { RuntimeStoreConflictError } from "./runtime/errors.js";
 import type { RuntimeStore } from "./runtime/store.js";
 import type {
   ArtifactRef,
+  ExecutionLease,
   ExecutionLeaseId,
   SessionSnapshotId,
   WorkflowInstance,
@@ -704,6 +705,15 @@ export interface DispatchStepOutput {
  * the completion, updates the workflow instance, and returns the next
  * lifecycle effects (e.g. dispatch the next step, pause, or complete).
  *
+ * When `context` is provided and `outcome` is `"success"`:
+ * - Output artifacts are validated against the step's declared `outputs`.
+ * - Validated artifacts are persisted via `store.instances.addArtifact()`.
+ * - The engine auto-advances: if a next step exists it emits a
+ *   `dispatch-agent` effect; if this is the final step it transitions the
+ *   instance to `completed`, releases the lease, and emits `complete-execution`.
+ *
+ * When `context` is omitted the engine falls back to legacy behaviour.
+ *
  * EXCLUDED: raw prompts, completions, transcripts, credentials, tokens,
  * cookies, authorization headers, raw provider payloads.
  */
@@ -718,6 +728,15 @@ export interface CompleteStepInput {
   readonly completionSignal: StepCompletionSignal;
   /** Optional structured metadata about the completion event. */
   readonly metadata?: SafeMetadata;
+  /**
+   * Optional workflow execution context.
+   *
+   * When provided and `outcome` is `"success"`, the engine validates output
+   * artifacts, persists them, and auto-advances to the next step (or completes
+   * the workflow if this is the final step).
+   * When omitted the engine uses legacy behaviour (no auto-advance).
+   */
+  readonly context?: WorkflowExecutionContext;
 }
 
 /**
@@ -1702,20 +1721,212 @@ export function dispatchStep(
 }
 
 // ---------------------------------------------------------------------------
+// 6. completeStep — helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Map a step outcome to the corresponding `UpdateWorkflowInstanceInput`.
+ * For `"success"` with configured auto-advance the caller overrides status
+ * after this call, so `"running"` is the correct interim value.
+ */
+function buildUpdateInput(
+  outcome: StepCompletionSignal["outcome"],
+  message: string | undefined,
+): import("./runtime/store.js").UpdateWorkflowInstanceInput {
+  if (outcome === "success") return { status: "running" };
+  if (outcome === "blocked") return { status: "blocked" };
+  if (outcome === "failed") {
+    return {
+      status: "failed",
+      ...(message !== undefined ? { errorMessage: message } : {}),
+    };
+  }
+  // outcome === "paused"
+  return { status: "paused" };
+}
+
+/**
+ * Build legacy (no-context) effects for a completed step.
+ * Only emits `pause-execution` for paused outcome; all other outcomes return [].
+ */
+function buildLegacyCompleteStepEffects(
+  outcome: StepCompletionSignal["outcome"],
+  workflowInstanceId: WorkflowInstanceId,
+): readonly LifecycleEffect[] {
+  if (outcome === "paused") {
+    return [{ kind: "pause-execution", workflowInstanceId }];
+  }
+  return [];
+}
+
+/**
+ * Persist a list of artifact references sequentially.
+ * Returns `ok(undefined)` when all artifacts are stored, or the first
+ * persistence error encountered.
+ */
+function addArtifactsSequentially(
+  store: RuntimeStore,
+  workflowInstanceId: WorkflowInstanceId,
+  artifacts: readonly ArtifactRef[],
+): ResultAsync<undefined, LifecycleError> {
+  const first = artifacts[0];
+  if (!first) return okAsync(undefined);
+
+  return store.instances
+    .addArtifact(workflowInstanceId, {
+      name: first.name,
+      path: first.path,
+      ...(first.mimeType ? { mimeType: first.mimeType } : {}),
+      ...(first.description ? { description: first.description } : {}),
+    })
+    .mapErr(
+      (storeError): LifecycleError =>
+        lifecyclePersistenceError(storeError.message, {
+          type: storeError.type,
+          message: storeError.message,
+        }),
+    )
+    .andThen(() =>
+      addArtifactsSequentially(store, workflowInstanceId, artifacts.slice(1)),
+    );
+}
+
+/**
+ * Validate that every provided artifact is declared in `step.outputs`.
+ *
+ * Returns `ok(undefined)` when all artifacts are declared, or a typed
+ * `validation` error naming the first undeclared artifact.
+ * Returns `ok(undefined)` immediately when the step declares no outputs
+ * (no restriction) or when no artifacts are provided.
+ */
+function validateOutputArtifacts(
+  step: WorkflowStep,
+  artifacts: readonly ArtifactRef[] | undefined,
+): Result<undefined, LifecycleError> {
+  if (!artifacts || artifacts.length === 0) return ok(undefined);
+  if (!step.outputs || step.outputs.length === 0) return ok(undefined);
+
+  const declaredNames = new Set(step.outputs.map((o) => o.name));
+  for (const artifact of artifacts) {
+    if (!declaredNames.has(artifact.name)) {
+      return err(
+        lifecycleValidationError(
+          `Artifact "${artifact.name}" is not declared in step "${step.name}" outputs`,
+          "completionSignal.artifacts",
+        ),
+      );
+    }
+  }
+  return ok(undefined);
+}
+
+/**
+ * Build the auto-advance effects for a successful configured step completion.
+ *
+ * - If a next step exists: updates `currentStepName`, renders the next step's
+ *   prompt with the updated instance (including newly persisted artifacts),
+ *   and returns a `dispatch-agent` effect.
+ * - If this is the final step: updates status to `completed`, releases the
+ *   active lease, and returns a `complete-execution` effect.
+ */
+function buildAutoAdvanceEffects(
+  store: RuntimeStore,
+  workflowInstanceId: WorkflowInstanceId,
+  activeLease: ExecutionLease,
+  workflowConfig: WorkflowConfig,
+  completedStepName: string,
+): ResultAsync<readonly LifecycleEffect[], LifecycleError> {
+  const currentIndex = workflowConfig.steps.findIndex(
+    (s) => s.name === completedStepName,
+  );
+  const nextStep =
+    currentIndex >= 0 ? workflowConfig.steps[currentIndex + 1] : undefined;
+
+  if (nextStep === undefined) {
+    // Final step — complete the workflow and release the lease.
+    return store.instances
+      .update(workflowInstanceId, { status: "completed" })
+      .mapErr(
+        (storeError): LifecycleError =>
+          lifecyclePersistenceError(storeError.message, {
+            type: storeError.type,
+            message: storeError.message,
+          }),
+      )
+      .andThen(() =>
+        store.leases.release(activeLease.id, activeLease.ownerId).mapErr(
+          (storeError): LifecycleError =>
+            lifecyclePersistenceError(storeError.message, {
+              type: storeError.type,
+              message: storeError.message,
+            }),
+        ),
+      )
+      .map((): readonly LifecycleEffect[] => [
+        { kind: "complete-execution", workflowInstanceId },
+      ]);
+  }
+
+  // Non-final step — advance to next step and emit dispatch-agent effect.
+  return store.instances
+    .update(workflowInstanceId, { currentStepName: nextStep.name })
+    .mapErr(
+      (storeError): LifecycleError =>
+        lifecyclePersistenceError(storeError.message, {
+          type: storeError.type,
+          message: storeError.message,
+        }),
+    )
+    .andThen(() =>
+      // Fetch the updated instance (with newly persisted artifacts) for prompt rendering.
+      store.instances.getById(workflowInstanceId).mapErr(
+        (storeError): LifecycleError =>
+          lifecyclePersistenceError(storeError.message, {
+            type: storeError.type,
+            message: storeError.message,
+          }),
+      ),
+    )
+    .andThen((updatedInstance) => {
+      const artifactNames = updatedInstance.artifacts.map((a) => a.name);
+      const promptContext = buildStepPromptContext(updatedInstance, nextStep);
+      const promptResult = renderStepPrompt(
+        nextStep.prompt,
+        promptContext,
+        artifactNames,
+      );
+      if (promptResult.isErr()) return errAsync(promptResult.error);
+      const promptMetadata = promptResult.value;
+
+      const runAgent = buildConfiguredRunAgentEffect(nextStep, promptMetadata);
+      return okAsync([
+        { kind: "dispatch-agent" as const, runAgent },
+      ] as readonly LifecycleEffect[]);
+    });
+}
+
+// ---------------------------------------------------------------------------
 // 6. completeStep — implementation
 // ---------------------------------------------------------------------------
 
 /**
  * Record the completion of a workflow step and advance the workflow state.
  *
- * Maps `completionSignal.outcome` to workflow status:
- * - `"success"` → `"running"` (more steps may follow) — no effects for MVP
- * - `"blocked"` → `"blocked"` — no effects
- * - `"failed"`  → `"failed"` — sets `errorMessage`, store auto-sets `completedAt`
- * - `"paused"`  → `"paused"` — returns `PauseExecutionEffect`
+ * **With `input.context`** and `outcome === "success"`:
+ * 1. Validates output artifacts against `step.outputs` (all-or-nothing).
+ * 2. Persists validated artifacts via `store.instances.addArtifact()`.
+ * 3. Auto-advances:
+ *    - Non-final step: updates `currentStepName`, emits `dispatch-agent` for next step.
+ *    - Final step: transitions to `completed`, releases lease, emits `complete-execution`.
  *
- * If `completionSignal.artifacts` is provided, each artifact is added to the
- * instance via `store.instances.addArtifact()`.
+ * **Without `input.context`** (legacy):
+ * - Maps `outcome` to status, persists any provided artifacts, returns legacy effects.
+ *
+ * Outcome → status mapping:
+ * - `"success"` → `"running"` (or `"completed"` for final step with context)
+ * - `"blocked"` → `"blocked"`
+ * - `"failed"`  → `"failed"` (sets `errorMessage`)
+ * - `"paused"`  → `"paused"` (emits `PauseExecutionEffect`)
  *
  * @param input - Step completion parameters from the adapter.
  * @param store - Runtime Store instance.
@@ -1792,9 +2003,10 @@ export function completeStep(
           ),
         );
       }
-      return okAsync(undefined as undefined);
+      // Thread the active lease through for potential release on final step.
+      return okAsync(activeLease);
     })
-    .andThen(() =>
+    .andThen((activeLease) =>
       store.instances
         .findById(input.workflowInstanceId)
         .mapErr(
@@ -1816,6 +2028,72 @@ export function completeStep(
 
           const { outcome, message, artifacts } = input.completionSignal;
 
+          // Configured success path: validate outputs, persist, auto-advance.
+          if (outcome === "success" && input.context !== undefined) {
+            const workflowConfig =
+              input.context.workflows[existing.workflowName] ??
+              input.context.workflows[input.context.workflowName];
+
+            if (workflowConfig === undefined) {
+              return errAsync(
+                lifecycleNotFoundError(
+                  "workflow",
+                  existing.workflowName,
+                  `Workflow "${existing.workflowName}" not found in provided workflow map`,
+                ),
+              );
+            }
+
+            const stepConfig = workflowConfig.steps.find(
+              (s) => s.name === input.stepName,
+            );
+            if (stepConfig === undefined) {
+              return errAsync(
+                lifecycleNotFoundError(
+                  "WorkflowStep",
+                  input.stepName,
+                  `Step "${input.stepName}" not found in workflow`,
+                ),
+              );
+            }
+
+            // Validate output artifacts before any writes (all-or-nothing).
+            const outputCheck = validateOutputArtifacts(stepConfig, artifacts);
+            if (outputCheck.isErr()) return errAsync(outputCheck.error);
+
+            // Update status to running (interim; may be overridden to completed).
+            return store.instances
+              .update(input.workflowInstanceId, { status: "running" })
+              .mapErr(
+                (storeError): LifecycleError =>
+                  lifecyclePersistenceError(storeError.message, {
+                    type: storeError.type,
+                    message: storeError.message,
+                  }),
+              )
+              .andThen(() => {
+                if (!artifacts || artifacts.length === 0) {
+                  return okAsync(undefined);
+                }
+                return addArtifactsSequentially(
+                  store,
+                  input.workflowInstanceId,
+                  artifacts,
+                );
+              })
+              .andThen(() =>
+                buildAutoAdvanceEffects(
+                  store,
+                  input.workflowInstanceId,
+                  activeLease,
+                  workflowConfig,
+                  input.stepName,
+                ),
+              )
+              .map((effects): CompleteStepOutput => ({ effects }));
+          }
+
+          // Legacy / non-success path: update status, persist artifacts, return legacy effects.
           const updateInput = buildUpdateInput(outcome, message);
 
           return store.instances
@@ -1837,71 +2115,15 @@ export function completeStep(
                 artifacts,
               );
             })
-            .map((): CompleteStepOutput => {
-              const effects = buildCompleteStepEffects(
-                outcome,
-                input.workflowInstanceId,
-              );
-              return { effects };
-            });
+            .map(
+              (): CompleteStepOutput => ({
+                effects: buildLegacyCompleteStepEffects(
+                  outcome,
+                  input.workflowInstanceId,
+                ),
+              }),
+            );
         }),
-    );
-}
-
-// ---------------------------------------------------------------------------
-// Internal helpers for completeStep
-// ---------------------------------------------------------------------------
-
-function buildUpdateInput(
-  outcome: StepCompletionSignal["outcome"],
-  message: string | undefined,
-): import("./runtime/store.js").UpdateWorkflowInstanceInput {
-  if (outcome === "success") return { status: "running" };
-  if (outcome === "blocked") return { status: "blocked" };
-  if (outcome === "failed") {
-    return {
-      status: "failed",
-      ...(message !== undefined ? { errorMessage: message } : {}),
-    };
-  }
-  // outcome === "paused"
-  return { status: "paused" };
-}
-
-function buildCompleteStepEffects(
-  outcome: StepCompletionSignal["outcome"],
-  workflowInstanceId: WorkflowInstanceId,
-): readonly LifecycleEffect[] {
-  if (outcome === "paused") {
-    return [{ kind: "pause-execution", workflowInstanceId }];
-  }
-  return [];
-}
-
-function addArtifactsSequentially(
-  store: RuntimeStore,
-  workflowInstanceId: WorkflowInstanceId,
-  artifacts: readonly ArtifactRef[],
-): ResultAsync<undefined, LifecycleError> {
-  const first = artifacts[0];
-  if (!first) return okAsync(undefined);
-
-  return store.instances
-    .addArtifact(workflowInstanceId, {
-      name: first.name,
-      path: first.path,
-      ...(first.mimeType ? { mimeType: first.mimeType } : {}),
-      ...(first.description ? { description: first.description } : {}),
-    })
-    .mapErr(
-      (storeError): LifecycleError =>
-        lifecyclePersistenceError(storeError.message, {
-          type: storeError.type,
-          message: storeError.message,
-        }),
-    )
-    .andThen(() =>
-      addArtifactsSequentially(store, workflowInstanceId, artifacts.slice(1)),
     );
 }
 

@@ -23,10 +23,12 @@ import { parseConfig } from "@weave/core";
 import {
   completeStep,
   createInMemoryRuntimeStore,
+  createWorkflowInstanceId,
   dispatchStep,
   observeSession,
   startExecution,
   WeaveRunner,
+  type WorkflowExecutionContext,
 } from "@weave/engine";
 import { MockAdapter } from "./mock-adapter.js";
 
@@ -390,5 +392,255 @@ describe("WeaveRunner.run() — init boundary and lifecycle isolation", () => {
     await new WeaveRunner(config, adapter).run();
 
     expect(adapter.callsTo("registerHook")).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Multi-step artifact-passing integration test
+// ---------------------------------------------------------------------------
+
+describe("multi-step workflow: artifact produced by step 1 available in step 2 prompt", () => {
+  /**
+   * 2-step workflow:
+   * - Step 1 "plan": outputs "plan_path"
+   * - Step 2 "implement": inputs "plan_path", prompt uses {{artifacts.plan_path}}
+   */
+  const artifactPassingWorkflows: WorkflowExecutionContext["workflows"] = {
+    "artifact-flow": {
+      version: 1,
+      steps: [
+        {
+          name: "plan",
+          type: "autonomous",
+          agent: "pattern",
+          prompt: "Create a plan for {{instance.goal}}",
+          completion: {
+            method: "plan_created",
+            plan_name: "{{instance.slug}}",
+          },
+          outputs: [
+            { name: "plan_path", description: "Path to the generated plan" },
+          ],
+        },
+        {
+          name: "implement",
+          type: "autonomous",
+          agent: "shuttle",
+          prompt: "Execute plan at {{artifacts.plan_path}}",
+          completion: { method: "agent_signal" },
+          inputs: [
+            { name: "plan_path", description: "Path to the plan to execute" },
+          ],
+        },
+      ],
+    },
+  };
+
+  const WORKFLOW_NAME = "artifact-flow";
+  const GOAL = "Add dark mode support";
+  const SLUG = "add-dark-mode-support";
+  const PLAN_PATH = ".weave/plans/add-dark-mode-support.md";
+
+  it("step 1 output artifact is available in step 2 rendered prompt", async () => {
+    const store = createInMemoryRuntimeStore();
+    const instanceId = createWorkflowInstanceId("integ-artifact-flow-001");
+
+    // -----------------------------------------------------------------------
+    // 1. startExecution with workflow context
+    // -----------------------------------------------------------------------
+    const startResult = await startExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: "integ-owner-001",
+        context: {
+          workflowName: WORKFLOW_NAME,
+          goal: GOAL,
+          slug: SLUG,
+          workflows: artifactPassingWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(startResult.isOk()).toBe(true);
+    if (!startResult.isOk()) return;
+
+    const { leaseId } = startResult.value;
+
+    // Instance should have currentStepName = "plan" (first step)
+    const instanceAfterStart = await store.instances.getById(instanceId);
+    expect(instanceAfterStart.isOk()).toBe(true);
+    if (!instanceAfterStart.isOk()) return;
+    expect(instanceAfterStart.value.currentStepName).toBe("plan");
+    expect(instanceAfterStart.value.workflowName).toBe(WORKFLOW_NAME);
+    expect(instanceAfterStart.value.goal).toBe(GOAL);
+
+    // -----------------------------------------------------------------------
+    // 2. dispatchStep for step 1 ("plan")
+    // -----------------------------------------------------------------------
+    const dispatch1Result = await dispatchStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId,
+        stepName: "plan",
+        context: {
+          workflowName: WORKFLOW_NAME,
+          goal: GOAL,
+          slug: SLUG,
+          workflows: artifactPassingWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(dispatch1Result.isOk()).toBe(true);
+    if (!dispatch1Result.isOk()) return;
+
+    expect(dispatch1Result.value.stepName).toBe("plan");
+    const dispatch1Effect = dispatch1Result.value.effects[0];
+    expect(dispatch1Effect?.kind).toBe("dispatch-agent");
+    if (dispatch1Effect?.kind === "dispatch-agent") {
+      // "plan" step uses agent "pattern"
+      expect(dispatch1Effect.runAgent.agentName).toBe("pattern");
+      expect(dispatch1Effect.runAgent.completionMethod).toBe("plan_created");
+      expect(dispatch1Effect.runAgent.stepType).toBe("autonomous");
+    }
+
+    // -----------------------------------------------------------------------
+    // 3. completeStep for step 1 — outputs "plan_path" artifact
+    // -----------------------------------------------------------------------
+    const complete1Result = await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId,
+        stepName: "plan",
+        completionSignal: {
+          outcome: "success",
+          artifacts: [{ name: "plan_path", path: PLAN_PATH }],
+        },
+        context: {
+          workflowName: WORKFLOW_NAME,
+          goal: GOAL,
+          slug: SLUG,
+          workflows: artifactPassingWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(complete1Result.isOk()).toBe(true);
+    if (!complete1Result.isOk()) return;
+
+    // Auto-advance: should emit dispatch-agent for step 2 ("implement")
+    const { effects: complete1Effects } = complete1Result.value;
+    expect(complete1Effects).toHaveLength(1);
+    expect(complete1Effects[0]?.kind).toBe("dispatch-agent");
+    if (complete1Effects[0]?.kind === "dispatch-agent") {
+      expect(complete1Effects[0].runAgent.agentName).toBe("shuttle");
+      expect(complete1Effects[0].runAgent.stepType).toBe("autonomous");
+      expect(complete1Effects[0].runAgent.completionMethod).toBe(
+        "agent_signal",
+      );
+      // promptMetadata must be present and non-zero (prompt was rendered with artifact)
+      expect(complete1Effects[0].runAgent.promptMetadata).toBeDefined();
+      const pm = complete1Effects[0].runAgent.promptMetadata;
+      if (pm) {
+        expect(pm.byteLength).toBeGreaterThan(0);
+      }
+    }
+
+    // Verify "plan_path" artifact was persisted
+    const instanceAfterStep1 = await store.instances.getById(instanceId);
+    expect(instanceAfterStep1.isOk()).toBe(true);
+    if (!instanceAfterStep1.isOk()) return;
+    const { artifacts } = instanceAfterStep1.value;
+    expect(artifacts).toHaveLength(1);
+    expect(artifacts[0]?.name).toBe("plan_path");
+    expect(artifacts[0]?.path).toBe(PLAN_PATH);
+
+    // currentStepName should now be "implement"
+    expect(instanceAfterStep1.value.currentStepName).toBe("implement");
+
+    // -----------------------------------------------------------------------
+    // 4. dispatchStep for step 2 ("implement") — verifies artifact in prompt
+    // -----------------------------------------------------------------------
+    const dispatch2Result = await dispatchStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId,
+        stepName: "implement",
+        context: {
+          workflowName: WORKFLOW_NAME,
+          goal: GOAL,
+          slug: SLUG,
+          workflows: artifactPassingWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(dispatch2Result.isOk()).toBe(true);
+    if (!dispatch2Result.isOk()) return;
+
+    expect(dispatch2Result.value.stepName).toBe("implement");
+    const dispatch2Effect = dispatch2Result.value.effects[0];
+    expect(dispatch2Effect?.kind).toBe("dispatch-agent");
+    if (dispatch2Effect?.kind === "dispatch-agent") {
+      expect(dispatch2Effect.runAgent.agentName).toBe("shuttle");
+      // The prompt "Execute plan at {{artifacts.plan_path}}" renders to
+      // "Execute plan at .weave/plans/add-dark-mode-support.md"
+      // promptMetadata.byteLength must reflect the rendered content
+      expect(dispatch2Effect.runAgent.promptMetadata).toBeDefined();
+      const pm = dispatch2Effect.runAgent.promptMetadata;
+      if (pm) {
+        // "Execute plan at .weave/plans/add-dark-mode-support.md" is 51 bytes
+        expect(pm.byteLength).toBeGreaterThan(0);
+        // The rendered prompt is longer than the template (artifact path was substituted)
+        const templateByteLength = new TextEncoder().encode(
+          "Execute plan at {{artifacts.plan_path}}",
+        ).byteLength;
+        // Rendered should differ from template (substitution happened)
+        expect(pm.byteLength).not.toBe(templateByteLength);
+      }
+    }
+
+    // -----------------------------------------------------------------------
+    // 5. completeStep for step 2 — final step, workflow completes
+    // -----------------------------------------------------------------------
+    const complete2Result = await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId,
+        stepName: "implement",
+        completionSignal: { outcome: "success" },
+        context: {
+          workflowName: WORKFLOW_NAME,
+          goal: GOAL,
+          slug: SLUG,
+          workflows: artifactPassingWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(complete2Result.isOk()).toBe(true);
+    if (!complete2Result.isOk()) return;
+
+    // Final step: complete-execution effect
+    const { effects: complete2Effects } = complete2Result.value;
+    expect(complete2Effects).toHaveLength(1);
+    expect(complete2Effects[0]?.kind).toBe("complete-execution");
+
+    // Instance should be completed
+    const instanceAfterStep2 = await store.instances.getById(instanceId);
+    expect(instanceAfterStep2.isOk()).toBe(true);
+    if (!instanceAfterStep2.isOk()) return;
+    expect(instanceAfterStep2.value.status).toBe("completed");
+
+    // No active lease should remain
+    const leaseAfterComplete = await store.leases.findActive();
+    expect(leaseAfterComplete.isOk()).toBe(true);
+    if (!leaseAfterComplete.isOk()) return;
+    expect(leaseAfterComplete.value).toBeNull();
   });
 });

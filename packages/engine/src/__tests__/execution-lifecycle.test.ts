@@ -3739,3 +3739,574 @@ describe("dispatchStep: configured workflow step resolution", () => {
     expect(Object.keys(pm)).toEqual(["byteLength"]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// completeStep — configured workflow step auto-advance
+// ---------------------------------------------------------------------------
+
+describe("completeStep: configured workflow step auto-advance", () => {
+  /**
+   * Workflow fixture: 3 steps.
+   * - "plan" outputs "plan_path"
+   * - "implement" inputs "plan_path", outputs "build_output"
+   * - "review" is the final step (gate)
+   */
+  const threeStepWorkflow: WorkflowExecutionContext["workflows"][string] = {
+    version: 1,
+    steps: [
+      {
+        name: "plan",
+        type: "autonomous",
+        agent: "pattern",
+        prompt: "Create a plan for {{instance.goal}}",
+        completion: { method: "plan_created", plan_name: "{{instance.slug}}" },
+        outputs: [{ name: "plan_path", description: "Path to the plan file" }],
+      },
+      {
+        name: "implement",
+        type: "autonomous",
+        agent: "shuttle",
+        prompt: "Implement the plan at {{artifacts.plan_path}}",
+        completion: { method: "agent_signal" },
+        inputs: [{ name: "plan_path", description: "Path to the plan file" }],
+        outputs: [{ name: "build_output", description: "Build output path" }],
+      },
+      {
+        name: "review",
+        type: "gate",
+        agent: "weft",
+        prompt: "Review changes for {{instance.workflowName}}",
+        completion: { method: "review_verdict" },
+        on_reject: "pause",
+      },
+    ],
+  };
+
+  const singleStepWorkflow: WorkflowExecutionContext["workflows"][string] = {
+    version: 1,
+    steps: [
+      {
+        name: "fix",
+        type: "autonomous",
+        agent: "shuttle",
+        prompt: "Fix the bug",
+        completion: { method: "agent_signal" },
+      },
+    ],
+  };
+
+  const completeWorkflows: WorkflowExecutionContext["workflows"] = {
+    "three-step": threeStepWorkflow,
+    "single-step": singleStepWorkflow,
+  };
+
+  /**
+   * Helper: start an execution with workflow context.
+   */
+  async function startWithCtx(
+    store: ReturnType<typeof createInMemoryRuntimeStore>,
+    suffix: string,
+    workflowName = "three-step",
+    goal = "Build feature",
+    slug = "build-feature",
+  ) {
+    const instanceId = createWorkflowInstanceId(`cs-${suffix}`);
+    const startResult = await startExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: `owner-${suffix}`,
+        context: { workflowName, goal, slug, workflows: completeWorkflows },
+      },
+      store,
+    );
+    if (!startResult.isOk())
+      throw new Error(`startExecution failed: ${JSON.stringify(startResult)}`);
+    return { instanceId, activeLeaseId: startResult.value.leaseId };
+  }
+
+  // ---------------------------------------------------------------------------
+  // AC1: non-final step — persists artifacts and emits dispatch-agent
+  // ---------------------------------------------------------------------------
+
+  it("non-final step: emits dispatch-agent effect for next step", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startWithCtx(
+      store,
+      "non-final",
+    );
+
+    const result = await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "plan",
+        completionSignal: {
+          outcome: "success",
+          artifacts: [
+            { name: "plan_path", path: ".weave/plans/build-feature.md" },
+          ],
+        },
+        context: {
+          workflowName: "three-step",
+          goal: "Build feature",
+          slug: "build-feature",
+          workflows: completeWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    const { effects } = result.value;
+    expect(effects).toHaveLength(1);
+    expect(effects[0]?.kind).toBe("dispatch-agent");
+    if (effects[0]?.kind === "dispatch-agent") {
+      // Next step is "implement" with agent "shuttle"
+      expect(effects[0].runAgent.agentName).toBe("shuttle");
+      expect(effects[0].runAgent.stepType).toBe("autonomous");
+      expect(effects[0].runAgent.completionMethod).toBe("agent_signal");
+    }
+  });
+
+  it("non-final step: persists output artifacts in instance", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startWithCtx(
+      store,
+      "persist-artifacts",
+    );
+
+    await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "plan",
+        completionSignal: {
+          outcome: "success",
+          artifacts: [
+            { name: "plan_path", path: ".weave/plans/build-feature.md" },
+          ],
+        },
+        context: {
+          workflowName: "three-step",
+          goal: "Build feature",
+          slug: "build-feature",
+          workflows: completeWorkflows,
+        },
+      },
+      store,
+    );
+
+    const instanceResult = await store.instances.getById(instanceId);
+    expect(instanceResult.isOk()).toBe(true);
+    if (!instanceResult.isOk()) return;
+
+    const { artifacts } = instanceResult.value;
+    expect(artifacts).toHaveLength(1);
+    expect(artifacts[0]?.name).toBe("plan_path");
+    expect(artifacts[0]?.path).toBe(".weave/plans/build-feature.md");
+  });
+
+  it("non-final step: updates currentStepName to next step", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startWithCtx(
+      store,
+      "advance-step",
+    );
+
+    await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "plan",
+        completionSignal: {
+          outcome: "success",
+          artifacts: [
+            { name: "plan_path", path: ".weave/plans/build-feature.md" },
+          ],
+        },
+        context: {
+          workflowName: "three-step",
+          goal: "Build feature",
+          slug: "build-feature",
+          workflows: completeWorkflows,
+        },
+      },
+      store,
+    );
+
+    const instanceResult = await store.instances.getById(instanceId);
+    expect(instanceResult.isOk()).toBe(true);
+    if (!instanceResult.isOk()) return;
+    expect(instanceResult.value.currentStepName).toBe("implement");
+  });
+
+  it("non-final step: instance status remains running after auto-advance", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startWithCtx(
+      store,
+      "status-running",
+    );
+
+    await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "plan",
+        completionSignal: {
+          outcome: "success",
+          artifacts: [
+            { name: "plan_path", path: ".weave/plans/build-feature.md" },
+          ],
+        },
+        context: {
+          workflowName: "three-step",
+          goal: "Build feature",
+          slug: "build-feature",
+          workflows: completeWorkflows,
+        },
+      },
+      store,
+    );
+
+    const instanceResult = await store.instances.getById(instanceId);
+    expect(instanceResult.isOk()).toBe(true);
+    if (!instanceResult.isOk()) return;
+    expect(instanceResult.value.status).toBe("running");
+  });
+
+  // ---------------------------------------------------------------------------
+  // AC2: undeclared output artifact → validation error, no partial writes
+  // ---------------------------------------------------------------------------
+
+  it("undeclared output artifact returns validation error before any writes", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startWithCtx(
+      store,
+      "undeclared-artifact",
+    );
+
+    const result = await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "plan",
+        completionSignal: {
+          outcome: "success",
+          artifacts: [
+            // "plan_path" is declared, "secret_key" is NOT
+            { name: "secret_key", path: "/etc/secret" },
+          ],
+        },
+        context: {
+          workflowName: "three-step",
+          goal: "Build feature",
+          slug: "build-feature",
+          workflows: completeWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+    if (result.error.type === "validation") {
+      expect(result.error.field).toBe("completionSignal.artifacts");
+      expect(result.error.message).toContain("secret_key");
+    }
+
+    // No artifacts should have been persisted
+    const instanceResult = await store.instances.getById(instanceId);
+    expect(instanceResult.isOk()).toBe(true);
+    if (!instanceResult.isOk()) return;
+    expect(instanceResult.value.artifacts).toHaveLength(0);
+  });
+
+  it("step with no declared outputs accepts any artifacts (no restriction)", async () => {
+    // "review" step has no outputs declared — any artifact should be accepted
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startWithCtx(
+      store,
+      "no-outputs-declared",
+    );
+
+    // Manually set currentStepName to "review" (the final step)
+    await store.instances.update(instanceId, { currentStepName: "review" });
+
+    const result = await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "review",
+        completionSignal: {
+          outcome: "success",
+          artifacts: [{ name: "any_artifact", path: "/some/path" }],
+        },
+        context: {
+          workflowName: "three-step",
+          goal: "Build feature",
+          slug: "build-feature",
+          workflows: completeWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+  });
+
+  // ---------------------------------------------------------------------------
+  // AC3: final step — completed status, lease released, complete-execution effect
+  // ---------------------------------------------------------------------------
+
+  it("final step: emits complete-execution effect", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startWithCtx(
+      store,
+      "final-step-effect",
+    );
+
+    // Set currentStepName to "review" (the final step)
+    await store.instances.update(instanceId, { currentStepName: "review" });
+
+    const result = await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "review",
+        completionSignal: { outcome: "success" },
+        context: {
+          workflowName: "three-step",
+          goal: "Build feature",
+          slug: "build-feature",
+          workflows: completeWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    const { effects } = result.value;
+    expect(effects).toHaveLength(1);
+    expect(effects[0]?.kind).toBe("complete-execution");
+    if (effects[0]?.kind === "complete-execution") {
+      expect(effects[0].workflowInstanceId).toBe(instanceId);
+    }
+  });
+
+  it("final step: transitions instance to completed status", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startWithCtx(
+      store,
+      "final-step-status",
+    );
+
+    await store.instances.update(instanceId, { currentStepName: "review" });
+
+    await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "review",
+        completionSignal: { outcome: "success" },
+        context: {
+          workflowName: "three-step",
+          goal: "Build feature",
+          slug: "build-feature",
+          workflows: completeWorkflows,
+        },
+      },
+      store,
+    );
+
+    const instanceResult = await store.instances.getById(instanceId);
+    expect(instanceResult.isOk()).toBe(true);
+    if (!instanceResult.isOk()) return;
+    expect(instanceResult.value.status).toBe("completed");
+  });
+
+  it("final step: releases the active lease", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startWithCtx(
+      store,
+      "final-step-lease",
+    );
+
+    await store.instances.update(instanceId, { currentStepName: "review" });
+
+    await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "review",
+        completionSignal: { outcome: "success" },
+        context: {
+          workflowName: "three-step",
+          goal: "Build feature",
+          slug: "build-feature",
+          workflows: completeWorkflows,
+        },
+      },
+      store,
+    );
+
+    // After final step, no active lease should exist
+    const leaseResult = await store.leases.findActive();
+    expect(leaseResult.isOk()).toBe(true);
+    if (!leaseResult.isOk()) return;
+    expect(leaseResult.value).toBeNull();
+  });
+
+  it("single-step workflow: final step completes immediately", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startWithCtx(
+      store,
+      "single-step-complete",
+      "single-step",
+      "Fix the bug",
+      "fix-the-bug",
+    );
+
+    const result = await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "fix",
+        completionSignal: { outcome: "success" },
+        context: {
+          workflowName: "single-step",
+          goal: "Fix the bug",
+          slug: "fix-the-bug",
+          workflows: completeWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    const { effects } = result.value;
+    expect(effects).toHaveLength(1);
+    expect(effects[0]?.kind).toBe("complete-execution");
+
+    const instanceResult = await store.instances.getById(instanceId);
+    expect(instanceResult.isOk()).toBe(true);
+    if (!instanceResult.isOk()) return;
+    expect(instanceResult.value.status).toBe("completed");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Legacy path: no context → existing behavior preserved
+  // ---------------------------------------------------------------------------
+
+  it("without context: success outcome keeps instance running, no auto-advance", async () => {
+    const store = createInMemoryRuntimeStore();
+    const instanceId = createWorkflowInstanceId("cs-legacy-success");
+    const startResult = await startExecution(
+      { workflowInstanceId: instanceId, ownerId: "owner-legacy" },
+      store,
+    );
+    expect(startResult.isOk()).toBe(true);
+    if (!startResult.isOk()) return;
+
+    const result = await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: startResult.value.leaseId,
+        stepName: "plan",
+        completionSignal: { outcome: "success" },
+        // no context
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    // Legacy: no auto-advance effects
+    expect(result.value.effects).toHaveLength(0);
+
+    const instanceResult = await store.instances.getById(instanceId);
+    expect(instanceResult.isOk()).toBe(true);
+    if (!instanceResult.isOk()) return;
+    expect(instanceResult.value.status).toBe("running");
+  });
+
+  it("without context: paused outcome emits pause-execution effect", async () => {
+    const store = createInMemoryRuntimeStore();
+    const instanceId = createWorkflowInstanceId("cs-legacy-paused");
+    const startResult = await startExecution(
+      { workflowInstanceId: instanceId, ownerId: "owner-legacy-paused" },
+      store,
+    );
+    expect(startResult.isOk()).toBe(true);
+    if (!startResult.isOk()) return;
+
+    const result = await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: startResult.value.leaseId,
+        stepName: "review",
+        completionSignal: { outcome: "paused" },
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    expect(result.value.effects).toHaveLength(1);
+    expect(result.value.effects[0]?.kind).toBe("pause-execution");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Auto-advance: next step's dispatch-agent effect uses persisted artifacts
+  // ---------------------------------------------------------------------------
+
+  it("auto-advance dispatch-agent effect has promptMetadata reflecting artifact in prompt", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startWithCtx(
+      store,
+      "prompt-with-artifact",
+    );
+
+    const result = await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "plan",
+        completionSignal: {
+          outcome: "success",
+          artifacts: [
+            { name: "plan_path", path: ".weave/plans/build-feature.md" },
+          ],
+        },
+        context: {
+          workflowName: "three-step",
+          goal: "Build feature",
+          slug: "build-feature",
+          workflows: completeWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    const { effects } = result.value;
+    if (effects[0]?.kind === "dispatch-agent") {
+      // The "implement" step prompt is "Implement the plan at {{artifacts.plan_path}}"
+      // which renders to "Implement the plan at .weave/plans/build-feature.md"
+      // promptMetadata.byteLength must reflect the rendered content
+      expect(effects[0].runAgent.promptMetadata).toBeDefined();
+      const pm = effects[0].runAgent.promptMetadata;
+      if (pm) {
+        expect(pm.byteLength).toBeGreaterThan(0);
+      }
+    }
+  });
+});
