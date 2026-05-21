@@ -124,7 +124,7 @@
 - [ ] 5.5 Add tests proving `init()` remains read-only/probe-oriented and lifecycle methods are not called during adapter initialization.
 - [ ] 5.6 Update package docs to distinguish adapter-owned event mapping from engine-owned lifecycle decisions.
 
-### [ ] 6.0 Final quality gates, documentation, and security review
+### [x] 6.0 Final quality gates, documentation, and security review
 
 #### 6.0 Proof Artifact(s)
 
@@ -136,9 +136,9 @@
 
 #### 6.0 Tasks
 
-- [ ] 6.1 Run `bun run --filter '@weave/engine' test` and resolve engine lifecycle regressions.
-- [ ] 6.2 Run `bun run --filter '@weave/engine' typecheck` and resolve engine type/export issues.
-- [ ] 6.3 Run repository-level `bun run lint`, `bun run typecheck`, `bun run build`, and `bun run test`.
-- [ ] 6.4 Verify proof artifacts are sanitized and contain no real credentials, tokens, private identifiers, raw prompts, raw completions, transcripts, or harness-private payloads.
-- [ ] 6.5 Request Warp security review for tool policy, lifecycle input validation, Runtime Store writes, and adapter trust boundaries.
-- [ ] 6.6 Ensure final documentation links issue #44 and relevant specs/docs before implementation is marked complete.
+- [x] 6.1 Run `bun run --filter '@weave/engine' test` and resolve engine lifecycle regressions.
+- [x] 6.2 Run `bun run --filter '@weave/engine' typecheck` and resolve engine type/export issues.
+- [x] 6.3 Run repository-level `bun run lint`, `bun run typecheck`, `bun run build`, and `bun run test`.
+- [x] 6.4 Verify proof artifacts are sanitized and contain no real credentials, tokens, private identifiers, raw prompts, raw completions, transcripts, or harness-private payloads.
+- [x] 6.5 Request Warp security review for tool policy, lifecycle input validation, Runtime Store writes, and adapter trust boundaries.
+- [x] 6.6 Ensure final documentation links issue #44 and relevant specs/docs before implementation is marked complete.

@@ -85,6 +85,8 @@ const result = resolveSkillsForConfig({ config, availableSkills });
 
 ## Execution Lifecycle Surface
 
+> **Issue:** [#44 — Minimal Execution Lifecycle Surface](https://github.com/josevalim/weave/issues/44) · **Spec:** [Spec 13](../../docs/specs/13-spec-minimal-execution-lifecycle-surface/13-spec-minimal-execution-lifecycle-surface.md) · **Boundary:** [docs/adapter-boundary.md — Execution Lifecycle Surface](../../docs/adapter-boundary.md#execution-lifecycle-surface)
+
 The engine owns the lifecycle decision logic. Adapters own harness event detection and mapping.
 
 ```

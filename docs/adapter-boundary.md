@@ -225,6 +225,8 @@ for the formal spec and proof artifacts.
 
 ## Execution Lifecycle Surface
 
+> **Issue:** [#44 — Minimal Execution Lifecycle Surface](https://github.com/josevalim/weave/issues/44) · **Spec:** [Spec 13 — Minimal Execution Lifecycle Surface](specs/13-spec-minimal-execution-lifecycle-surface/13-spec-minimal-execution-lifecycle-surface.md)
+
 The **Execution Lifecycle Surface** is the engine-owned abstract API that adapters call after mapping concrete harness events into normalized lifecycle inputs. It supersedes the transitional `registerHook()` method on `HarnessAdapter`.
 
 All types are exported from `@weave/engine` under `packages/engine/src/execution-lifecycle.ts`.
