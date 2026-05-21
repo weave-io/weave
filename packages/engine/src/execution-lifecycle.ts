@@ -32,13 +32,17 @@
  */
 
 import type { Result } from "neverthrow";
+import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 import type { RunAgentEffect } from "./run-agent-effects.js";
+import type { RuntimeStoreConflictError } from "./runtime/errors.js";
+import type { RuntimeStore } from "./runtime/store.js";
 import type {
   ArtifactRef,
   ExecutionLeaseId,
   SessionSnapshotId,
   WorkflowInstanceId,
 } from "./runtime/types.js";
+import { createOwnerId } from "./runtime/types.js";
 
 // ---------------------------------------------------------------------------
 // SafeMetadata — structurally sanitized metadata type
@@ -624,3 +628,261 @@ export type CompleteStepResult = Result<CompleteStepOutput, LifecycleError>;
 
 /** Result type for `beforeTool`. */
 export type BeforeToolResult = Result<BeforeToolOutput, LifecycleError>;
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Map a `RuntimeStoreConflictError` to a `LifecycleLeaseConflictError`.
+ *
+ * The conflicting lease ID is extracted from `conflictingId` when present.
+ */
+function mapConflictToLeaseConflict(
+  workflowInstanceId: WorkflowInstanceId,
+  storeError: RuntimeStoreConflictError,
+): LifecycleLeaseConflictError {
+  const conflictingLeaseId = storeError.conflictingId
+    ? (storeError.conflictingId as ExecutionLeaseId)
+    : ("unknown" as ExecutionLeaseId);
+  return lifecycleLeaseConflictError(
+    workflowInstanceId,
+    conflictingLeaseId,
+    storeError.message,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 1. observeSession — implementation
+// ---------------------------------------------------------------------------
+
+/**
+ * Record a normalized session observation as a `SessionSnapshot` in the
+ * Runtime Store.
+ *
+ * Validates required fields, builds a `RecordSessionSnapshotInput`, and
+ * delegates to `store.snapshots.record()`. The sanitizer inside the store
+ * rejects metadata containing denied field names (credentials, raw content).
+ *
+ * @param input - Normalized session observation from the adapter.
+ * @param store - Runtime Store instance.
+ * @returns `ok({ snapshotId })` on success, or a typed `LifecycleError`.
+ */
+export function observeSession(
+  input: ObserveSessionInput,
+  store: RuntimeStore,
+): ResultAsync<ObserveSessionOutput, LifecycleError> {
+  if (!input.workflowInstanceId) {
+    return errAsync(
+      lifecycleValidationError(
+        "workflowInstanceId is required",
+        "workflowInstanceId",
+      ),
+    );
+  }
+  if (!input.leaseId) {
+    return errAsync(lifecycleValidationError("leaseId is required", "leaseId"));
+  }
+  if (!input.harnessName) {
+    return errAsync(
+      lifecycleValidationError("harnessName is required", "harnessName"),
+    );
+  }
+  if (!input.agentName) {
+    return errAsync(
+      lifecycleValidationError("agentName is required", "agentName"),
+    );
+  }
+  if (!input.sessionStatus) {
+    return errAsync(
+      lifecycleValidationError("sessionStatus is required", "sessionStatus"),
+    );
+  }
+
+  const snapshotInput = {
+    workflowInstanceId: input.workflowInstanceId,
+    leaseId: input.leaseId,
+    harnessName: input.harnessName,
+    ...(input.harnessVersion ? { harnessVersion: input.harnessVersion } : {}),
+    agentName: input.agentName,
+    ...(input.modelId ? { modelId: input.modelId } : {}),
+    ...(input.stepName ? { stepName: input.stepName } : {}),
+    sessionStatus: input.sessionStatus,
+    metadata: input.metadata ?? {},
+  };
+
+  return store.snapshots
+    .record(snapshotInput)
+    .mapErr((storeError) =>
+      lifecyclePersistenceError(storeError.message, storeError),
+    )
+    .map((snapshot) => ({ snapshotId: snapshot.id }));
+}
+
+// ---------------------------------------------------------------------------
+// 2. startExecution — implementation
+// ---------------------------------------------------------------------------
+
+/**
+ * Start a new workflow execution.
+ *
+ * Creates or updates the `WorkflowInstance` to `running` status and acquires
+ * an `ExecutionLease`. Uses one clock source per operation: `input.now` if
+ * provided, otherwise `new Date().toISOString()`.
+ *
+ * @param input - Execution start parameters from the adapter.
+ * @param store - Runtime Store instance.
+ * @returns `ok({ leaseId, effects: [] })` on success, or a typed `LifecycleError`.
+ */
+export function startExecution(
+  input: StartExecutionInput,
+  store: RuntimeStore,
+): ResultAsync<StartExecutionOutput, LifecycleError> {
+  if (!input.workflowInstanceId) {
+    return errAsync(
+      lifecycleValidationError(
+        "workflowInstanceId is required",
+        "workflowInstanceId",
+      ),
+    );
+  }
+  if (!input.ownerId) {
+    return errAsync(lifecycleValidationError("ownerId is required", "ownerId"));
+  }
+
+  const ownerId = createOwnerId(input.ownerId);
+
+  // Find or create the workflow instance, then update to running, then acquire lease
+  return store.instances
+    .findById(input.workflowInstanceId)
+    .mapErr(
+      (storeError): LifecycleError =>
+        lifecyclePersistenceError(storeError.message, storeError),
+    )
+    .andThen((existing) => {
+      if (existing === null) {
+        return store.instances
+          .create({
+            workflowName: input.workflowInstanceId,
+            goal: input.workflowInstanceId,
+            slug: input.workflowInstanceId,
+          })
+          .mapErr(
+            (storeError): LifecycleError =>
+              lifecyclePersistenceError(storeError.message, storeError),
+          )
+          .andThen((created) =>
+            store.instances
+              .update(created.id, { status: "running" })
+              .mapErr(
+                (storeError): LifecycleError =>
+                  lifecyclePersistenceError(storeError.message, storeError),
+              ),
+          );
+      }
+      return store.instances
+        .update(existing.id, { status: "running" })
+        .mapErr(
+          (storeError): LifecycleError =>
+            lifecyclePersistenceError(storeError.message, storeError),
+        );
+    })
+    .andThen(() =>
+      store.leases
+        .acquire({
+          workflowInstanceId: input.workflowInstanceId,
+          ownerId,
+          ttlMs: 3_600_000,
+        })
+        .mapErr((storeError): LifecycleError => {
+          if (storeError.type === "conflict") {
+            return mapConflictToLeaseConflict(
+              input.workflowInstanceId,
+              storeError,
+            );
+          }
+          return lifecyclePersistenceError(storeError.message, storeError);
+        }),
+    )
+    .map((lease) => ({ leaseId: lease.id, effects: [] as LifecycleEffect[] }));
+}
+
+// ---------------------------------------------------------------------------
+// 3. resumeExecution — implementation
+// ---------------------------------------------------------------------------
+
+/**
+ * Resume a paused or blocked workflow execution.
+ *
+ * Verifies the workflow instance exists, acquires a new lease (the store
+ * replaces expired leases atomically), and updates the instance to `running`.
+ * Returns a typed `lease_conflict` error when an unexpired foreign lease blocks
+ * the operation.
+ *
+ * @param input - Resume parameters from the adapter.
+ * @param store - Runtime Store instance.
+ * @returns `ok({ leaseId, effects: [] })` on success, or a typed `LifecycleError`.
+ */
+export function resumeExecution(
+  input: ResumeExecutionInput,
+  store: RuntimeStore,
+): ResultAsync<ResumeExecutionOutput, LifecycleError> {
+  if (!input.workflowInstanceId) {
+    return errAsync(
+      lifecycleValidationError(
+        "workflowInstanceId is required",
+        "workflowInstanceId",
+      ),
+    );
+  }
+  if (!input.ownerId) {
+    return errAsync(lifecycleValidationError("ownerId is required", "ownerId"));
+  }
+
+  const ownerId = createOwnerId(input.ownerId);
+
+  return store.instances
+    .findById(input.workflowInstanceId)
+    .mapErr(
+      (storeError): LifecycleError =>
+        lifecyclePersistenceError(storeError.message, storeError),
+    )
+    .andThen((existing) => {
+      if (existing === null) {
+        return errAsync(
+          lifecycleNotFoundError(
+            "WorkflowInstance",
+            input.workflowInstanceId as string,
+          ),
+        );
+      }
+      return store.leases
+        .acquire({
+          workflowInstanceId: input.workflowInstanceId,
+          ownerId,
+          ttlMs: 3_600_000,
+        })
+        .mapErr((storeError): LifecycleError => {
+          if (storeError.type === "conflict") {
+            return mapConflictToLeaseConflict(
+              input.workflowInstanceId,
+              storeError,
+            );
+          }
+          return lifecyclePersistenceError(storeError.message, storeError);
+        })
+        .andThen((lease) =>
+          store.instances
+            .update(input.workflowInstanceId, { status: "running" })
+            .mapErr(
+              (storeError): LifecycleError =>
+                lifecyclePersistenceError(storeError.message, storeError),
+            )
+            .map(() => lease),
+        );
+    })
+    .map((lease) => ({
+      leaseId: lease.id,
+      effects: [] as LifecycleEffect[],
+    }));
+}

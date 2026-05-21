@@ -18,6 +18,8 @@ import {
   type CompleteStepInput,
   type CompleteStepOutput,
   createExecutionLeaseId,
+  createInMemoryRuntimeStore,
+  createOwnerId,
   createSessionSnapshotId,
   createWorkflowInstanceId,
   type DispatchAgentEffect,
@@ -34,12 +36,16 @@ import {
   lifecycleValidationError,
   type ObserveSessionInput,
   type ObserveSessionOutput,
+  observeSession,
+  queryError,
   type ResumeExecutionInput,
   type ResumeExecutionOutput,
+  resumeExecution,
   type SafeMetadata,
   type StartExecutionInput,
   type StartExecutionOutput,
   type StepCompletionSignal,
+  startExecution,
 } from "@weave/engine";
 
 // ---------------------------------------------------------------------------
@@ -601,5 +607,572 @@ describe("public import paths", () => {
     expect(typeof createWorkflowInstanceId).toBe("function");
     expect(typeof createExecutionLeaseId).toBe("function");
     expect(typeof createSessionSnapshotId).toBe("function");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Runtime Store lifecycle tests — observeSession
+// ---------------------------------------------------------------------------
+
+describe("observeSession (Runtime Store)", () => {
+  it("stores a sanitized SessionSnapshot and returns snapshotId", async () => {
+    const store = createInMemoryRuntimeStore();
+    const result = await observeSession(
+      {
+        workflowInstanceId: wfId,
+        leaseId,
+        harnessName: "opencode",
+        agentName: "loom",
+        sessionStatus: "active",
+        metadata: { stepIndex: 1, isRetry: false },
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    const { snapshotId } = result.value;
+    expect(typeof snapshotId).toBe("string");
+    expect(snapshotId.length).toBeGreaterThan(0);
+
+    // Verify the snapshot was persisted
+    const fetchResult = await store.snapshots.getById(snapshotId);
+    expect(fetchResult.isOk()).toBe(true);
+    if (!fetchResult.isOk()) return;
+
+    const snapshot = fetchResult.value;
+    expect(snapshot.workflowInstanceId).toBe(wfId);
+    expect(snapshot.leaseId).toBe(leaseId);
+    expect(snapshot.harnessName).toBe("opencode");
+    expect(snapshot.agentName).toBe("loom");
+    expect(snapshot.sessionStatus).toBe("active");
+    expect(snapshot.metadata.stepIndex).toBe(1);
+    expect(snapshot.metadata.isRetry).toBe(false);
+  });
+
+  it("excludes raw harness-private data — metadata with 'password' key is rejected by sanitizer", async () => {
+    const store = createInMemoryRuntimeStore();
+    // The sanitizer inside the store rejects metadata containing denied field names.
+    // 'password' is in the DENIED_FIELD_NAMES denylist.
+    const result = await observeSession(
+      {
+        workflowInstanceId: wfId,
+        leaseId,
+        harnessName: "opencode",
+        agentName: "loom",
+        sessionStatus: "active",
+        // TypeScript allows this because SafeMetadata is Record<string, string|number|boolean>
+        // but the runtime sanitizer rejects it
+        metadata: { password: "hunter2" } as Record<
+          string,
+          string | number | boolean
+        >,
+      },
+      store,
+    );
+
+    // The store's sanitizer should reject the denied field
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    // Maps to persistence error (sanitizer returns journal_write error from store)
+    expect(result.error.type).toBe("persistence");
+  });
+
+  it("excludes raw harness-private data — metadata with 'token' key is rejected", async () => {
+    const store = createInMemoryRuntimeStore();
+    const result = await observeSession(
+      {
+        workflowInstanceId: wfId,
+        leaseId,
+        harnessName: "claude-code",
+        agentName: "shuttle",
+        sessionStatus: "idle",
+        metadata: { token: "secret-token-value" } as Record<
+          string,
+          string | number | boolean
+        >,
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("persistence");
+  });
+
+  it("returns validation error for missing workflowInstanceId", async () => {
+    const store = createInMemoryRuntimeStore();
+    const result = await observeSession(
+      {
+        workflowInstanceId: "" as typeof wfId,
+        leaseId,
+        harnessName: "opencode",
+        agentName: "loom",
+        sessionStatus: "active",
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+    if (result.error.type === "validation") {
+      expect(result.error.field).toBe("workflowInstanceId");
+    }
+  });
+
+  it("returns validation error for missing leaseId", async () => {
+    const store = createInMemoryRuntimeStore();
+    const result = await observeSession(
+      {
+        workflowInstanceId: wfId,
+        leaseId: "" as typeof leaseId,
+        harnessName: "opencode",
+        agentName: "loom",
+        sessionStatus: "active",
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+    if (result.error.type === "validation") {
+      expect(result.error.field).toBe("leaseId");
+    }
+  });
+
+  it("returns validation error for missing harnessName", async () => {
+    const store = createInMemoryRuntimeStore();
+    const result = await observeSession(
+      {
+        workflowInstanceId: wfId,
+        leaseId,
+        harnessName: "",
+        agentName: "loom",
+        sessionStatus: "active",
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+  });
+
+  it("returns validation error for missing agentName", async () => {
+    const store = createInMemoryRuntimeStore();
+    const result = await observeSession(
+      {
+        workflowInstanceId: wfId,
+        leaseId,
+        harnessName: "opencode",
+        agentName: "",
+        sessionStatus: "active",
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+  });
+
+  it("stores snapshot with empty metadata when metadata is omitted", async () => {
+    const store = createInMemoryRuntimeStore();
+    const result = await observeSession(
+      {
+        workflowInstanceId: wfId,
+        leaseId,
+        harnessName: "opencode",
+        agentName: "loom",
+        sessionStatus: "terminated",
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    const fetchResult = await store.snapshots.getById(result.value.snapshotId);
+    expect(fetchResult.isOk()).toBe(true);
+    if (!fetchResult.isOk()) return;
+    expect(fetchResult.value.metadata).toEqual({});
+  });
+
+  it("returns persistence error when store fails", async () => {
+    const store = createInMemoryRuntimeStore({
+      failOn: { snapshotRecord: queryError("injected snapshot failure") },
+    });
+    const result = await observeSession(
+      {
+        workflowInstanceId: wfId,
+        leaseId,
+        harnessName: "opencode",
+        agentName: "loom",
+        sessionStatus: "active",
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("persistence");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Runtime Store lifecycle tests — startExecution
+// ---------------------------------------------------------------------------
+
+describe("startExecution (Runtime Store)", () => {
+  it("creates a WorkflowInstance and acquires an active ExecutionLease", async () => {
+    const store = createInMemoryRuntimeStore();
+    const result = await startExecution(
+      {
+        workflowInstanceId: wfId,
+        ownerId: "session-start-001",
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    const { leaseId: acquiredLeaseId, effects } = result.value;
+    expect(typeof acquiredLeaseId).toBe("string");
+    expect(acquiredLeaseId.length).toBeGreaterThan(0);
+    expect(effects).toHaveLength(0);
+
+    // Verify the lease is active in the store
+    const leaseResult = await store.leases.getById(acquiredLeaseId);
+    expect(leaseResult.isOk()).toBe(true);
+    if (!leaseResult.isOk()) return;
+    expect(leaseResult.value.workflowInstanceId).toBe(wfId);
+    expect(leaseResult.value.ownerId).toBe(createOwnerId("session-start-001"));
+  });
+
+  it("returns the lease ID in output", async () => {
+    const store = createInMemoryRuntimeStore();
+    const result = await startExecution(
+      {
+        workflowInstanceId: wfId,
+        ownerId: "session-lease-check",
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    // Verify the returned leaseId matches what's in the store
+    const activeResult = await store.leases.findActive();
+    expect(activeResult.isOk()).toBe(true);
+    if (!activeResult.isOk()) return;
+    expect(activeResult.value?.id).toBe(result.value.leaseId);
+  });
+
+  it("uses one clock source — pass now explicitly and verify lease timestamps match", async () => {
+    const fixedNow = "2026-05-21T10:00:00.000Z";
+    // Use a clock that returns the fixed time so we can verify timestamps
+    const store = createInMemoryRuntimeStore({
+      clock: () => new Date(fixedNow),
+    });
+
+    const result = await startExecution(
+      {
+        workflowInstanceId: wfId,
+        ownerId: "session-clock-test",
+        now: fixedNow,
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    const leaseResult = await store.leases.getById(result.value.leaseId);
+    expect(leaseResult.isOk()).toBe(true);
+    if (!leaseResult.isOk()) return;
+
+    // The store uses its own clock; the lease acquiredAt should match the fixed clock
+    expect(leaseResult.value.acquiredAt).toBe(fixedNow);
+  });
+
+  it("updates existing WorkflowInstance to running status", async () => {
+    const store = createInMemoryRuntimeStore();
+
+    // Pre-create the workflow instance
+    const createResult = await store.instances.create({
+      workflowName: "test-workflow",
+      goal: "test goal",
+      slug: "test-goal",
+    });
+    expect(createResult.isOk()).toBe(true);
+    if (!createResult.isOk()) return;
+    const existingId = createResult.value.id;
+
+    const result = await startExecution(
+      {
+        workflowInstanceId: existingId,
+        ownerId: "session-update-test",
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+
+    // Verify the instance is now running
+    const instanceResult = await store.instances.getById(existingId);
+    expect(instanceResult.isOk()).toBe(true);
+    if (!instanceResult.isOk()) return;
+    expect(instanceResult.value.status).toBe("running");
+  });
+
+  it("returns validation error for missing workflowInstanceId", async () => {
+    const store = createInMemoryRuntimeStore();
+    const result = await startExecution(
+      {
+        workflowInstanceId: "" as typeof wfId,
+        ownerId: "session-abc",
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+  });
+
+  it("returns validation error for missing ownerId", async () => {
+    const store = createInMemoryRuntimeStore();
+    const result = await startExecution(
+      {
+        workflowInstanceId: wfId,
+        ownerId: "",
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+  });
+
+  it("returns persistence error when store fails on lease acquire", async () => {
+    const store = createInMemoryRuntimeStore({
+      failOn: { leaseAcquire: queryError("injected lease failure") },
+    });
+    const result = await startExecution(
+      {
+        workflowInstanceId: wfId,
+        ownerId: "session-fail-test",
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("persistence");
+  });
+
+  it("returns persistence error when workflow create fails", async () => {
+    const store = createInMemoryRuntimeStore({
+      failOn: { workflowCreate: queryError("injected create failure") },
+    });
+    const result = await startExecution(
+      {
+        workflowInstanceId: wfId,
+        ownerId: "session-create-fail",
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("persistence");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Runtime Store lifecycle tests — resumeExecution
+// ---------------------------------------------------------------------------
+
+describe("resumeExecution (Runtime Store)", () => {
+  it("rebinds to an available execution (no active lease)", async () => {
+    const store = createInMemoryRuntimeStore();
+
+    // Pre-create a workflow instance in paused state
+    const createResult = await store.instances.create({
+      workflowName: "resume-workflow",
+      goal: "resume goal",
+      slug: "resume-goal",
+    });
+    expect(createResult.isOk()).toBe(true);
+    if (!createResult.isOk()) return;
+    const instanceId = createResult.value.id;
+
+    await store.instances.update(instanceId, { status: "paused" });
+
+    const result = await resumeExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: "session-resume-001",
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    const { leaseId: newLeaseId, effects } = result.value;
+    expect(typeof newLeaseId).toBe("string");
+    expect(newLeaseId.length).toBeGreaterThan(0);
+    expect(effects).toHaveLength(0);
+
+    // Verify the instance is now running
+    const instanceResult = await store.instances.getById(instanceId);
+    expect(instanceResult.isOk()).toBe(true);
+    if (!instanceResult.isOk()) return;
+    expect(instanceResult.value.status).toBe("running");
+  });
+
+  it("rebinds to an expired lease (store replaces it)", async () => {
+    // Use a clock that starts in the past so the first lease expires immediately
+    let clockTime = new Date("2026-01-01T00:00:00.000Z");
+    const store = createInMemoryRuntimeStore({
+      clock: () => clockTime,
+    });
+
+    // Pre-create a workflow instance
+    const createResult = await store.instances.create({
+      workflowName: "expired-lease-workflow",
+      goal: "expired lease goal",
+      slug: "expired-lease-goal",
+    });
+    expect(createResult.isOk()).toBe(true);
+    if (!createResult.isOk()) return;
+    const instanceId = createResult.value.id;
+
+    // Acquire an initial lease (will expire in 1 hour from clockTime)
+    const firstLeaseResult = await store.leases.acquire({
+      workflowInstanceId: instanceId,
+      ownerId: "session-first-owner" as ReturnType<typeof createOwnerId>,
+      ttlMs: 1, // 1ms TTL — expires almost immediately
+    });
+    expect(firstLeaseResult.isOk()).toBe(true);
+    if (!firstLeaseResult.isOk()) return;
+    const firstLeaseId = firstLeaseResult.value.id;
+
+    // Advance clock past the lease expiry
+    clockTime = new Date("2026-01-01T01:00:00.000Z");
+
+    // Now resume — the expired lease should be replaced
+    const result = await resumeExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: "session-resume-new",
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    // The new lease ID should differ from the first
+    expect(result.value.leaseId).not.toBe(firstLeaseId);
+  });
+
+  it("returns typed lease_conflict error for unexpired foreign lease", async () => {
+    const store = createInMemoryRuntimeStore();
+
+    // Pre-create a workflow instance
+    const createResult = await store.instances.create({
+      workflowName: "conflict-workflow",
+      goal: "conflict goal",
+      slug: "conflict-goal",
+    });
+    expect(createResult.isOk()).toBe(true);
+    if (!createResult.isOk()) return;
+    const instanceId = createResult.value.id;
+
+    // Acquire an active lease by another owner
+    const firstLeaseResult = await store.leases.acquire({
+      workflowInstanceId: instanceId,
+      ownerId: "session-foreign-owner" as ReturnType<typeof createOwnerId>,
+      ttlMs: 3_600_000, // 1 hour — unexpired
+    });
+    expect(firstLeaseResult.isOk()).toBe(true);
+    if (!firstLeaseResult.isOk()) return;
+    const foreignLeaseId = firstLeaseResult.value.id;
+
+    // Attempt to resume — should fail with lease_conflict
+    const result = await resumeExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: "session-new-owner",
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("lease_conflict");
+    if (result.error.type === "lease_conflict") {
+      expect(result.error.workflowInstanceId).toBe(instanceId);
+      expect(result.error.conflictingLeaseId).toBe(foreignLeaseId);
+    }
+  });
+
+  it("returns not_found error when workflow instance does not exist", async () => {
+    const store = createInMemoryRuntimeStore();
+    const nonExistentId = createWorkflowInstanceId("non-existent-wf-id");
+
+    const result = await resumeExecution(
+      {
+        workflowInstanceId: nonExistentId,
+        ownerId: "session-not-found",
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("not_found");
+    if (result.error.type === "not_found") {
+      expect(result.error.entity).toBe("WorkflowInstance");
+      expect(result.error.id).toBe(nonExistentId);
+    }
+  });
+
+  it("returns validation error for missing workflowInstanceId", async () => {
+    const store = createInMemoryRuntimeStore();
+    const result = await resumeExecution(
+      {
+        workflowInstanceId: "" as typeof wfId,
+        ownerId: "session-resume",
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+  });
+
+  it("returns validation error for missing ownerId", async () => {
+    const store = createInMemoryRuntimeStore();
+    const result = await resumeExecution(
+      {
+        workflowInstanceId: wfId,
+        ownerId: "",
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
   });
 });

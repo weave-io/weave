@@ -126,8 +126,8 @@
   - function lifecycleLeaseConflictError: (workflowInstanceId, conflictingLeaseId, message) => LifecycleLeaseConflictError
   - function lifecyclePersistenceError: (message, cause?) => LifecyclePersistenceError
   - function lifecyclePolicyDecisionError: (message, rule?) => LifecyclePolicyDecisionError
-  - interface LifecycleValidationError
-  - _...32 more_
+  - function observeSession: (input, store) => ResultAsync<ObserveSessionOutput, LifecycleError>
+  - _...35 more_
 - `packages/engine/src/model-resolution.ts`
   - function resolveAdapterModelIntent: (input) => ModelResolutionResult
   - interface ModelResolutionInput

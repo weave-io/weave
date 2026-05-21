@@ -52,7 +52,7 @@
 - [ ] 1.6 Add focused type/unit tests proving valid lifecycle inputs, typed error variants, and public import paths compile.
 - [ ] 1.7 Document the lifecycle vocabulary and method responsibilities in `docs/adapter-boundary.md` and/or `packages/engine/README.md`.
 
-### [ ] 2.0 Implement session observation and execution start/resume
+### [x] 2.0 Implement session observation and execution start/resume
 
 #### 2.0 Proof Artifact(s)
 

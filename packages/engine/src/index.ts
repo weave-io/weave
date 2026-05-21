@@ -79,6 +79,9 @@ export {
   lifecyclePersistenceError,
   lifecyclePolicyDecisionError,
   lifecycleValidationError,
+  observeSession,
+  resumeExecution,
+  startExecution,
 } from "./execution-lifecycle.js";
 export { logger } from "./logger.js";
 export type {
