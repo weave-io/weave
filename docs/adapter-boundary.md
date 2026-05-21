@@ -317,7 +317,7 @@ Adapters receive these effects and apply harness-specific materialisation (e.g. 
 
 ### `LifecycleError` Discriminated Union
 
-All lifecycle methods return `Result<T, LifecycleError>` from neverthrow — errors are never thrown.
+All lifecycle methods return `ResultAsync<T, LifecycleError>` from neverthrow — errors are never thrown.
 
 | Discriminant | Meaning |
 | --- | --- |
@@ -335,7 +335,7 @@ All lifecycle input types accept an optional `metadata?: SafeMetadata` field. `S
 
 The lifecycle surface is the engine-owned write path into the Runtime Store for session observations and step completions. Adapters do not write to the Runtime Store directly — they call lifecycle methods and the engine handles persistence.
 
-```
+```text
 Adapter (harness event) → lifecycle method → engine policy → Runtime Store write → LifecycleEffect[]
                                                                                          ↓
                                                                               Adapter materialises effects

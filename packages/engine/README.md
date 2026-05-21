@@ -89,7 +89,7 @@ const result = resolveSkillsForConfig({ config, availableSkills });
 
 The engine owns the lifecycle decision logic. Adapters own harness event detection and mapping.
 
-```
+```text
 Harness event (adapter-owned)          Engine lifecycle function (engine-owned)
 ─────────────────────────────          ────────────────────────────────────────
 Session started in harness         →   observeSession(input, store)

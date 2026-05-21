@@ -23,7 +23,7 @@
  *
  * ## Error Handling
  *
- * All lifecycle errors are returned as `Result<T, LifecycleError>` from
+ * All lifecycle errors are returned as `ResultAsync<T, LifecycleError>` from
  * neverthrow — never thrown. The `LifecycleError` discriminated union covers
  * the five failure modes: `validation`, `not_found`, `lease_conflict`,
  * `persistence`, and `policy_decision`.
@@ -246,7 +246,7 @@ export interface LifecyclePolicyDecisionError {
 /**
  * Discriminated union of all lifecycle error variants.
  *
- * All lifecycle methods return `Result<T, LifecycleError>` from neverthrow.
+ * All lifecycle methods return `ResultAsync<T, LifecycleError>` from neverthrow.
  * Errors are never thrown.
  */
 export type LifecycleError =
@@ -725,28 +725,40 @@ export interface BeforeToolOutput {
 // ---------------------------------------------------------------------------
 
 /** Result type for `observeSession`. */
-export type ObserveSessionResult = Result<ObserveSessionOutput, LifecycleError>;
+export type ObserveSessionResult = ResultAsync<
+  ObserveSessionOutput,
+  LifecycleError
+>;
 
 /** Result type for `startExecution`. */
-export type StartExecutionResult = Result<StartExecutionOutput, LifecycleError>;
+export type StartExecutionResult = ResultAsync<
+  StartExecutionOutput,
+  LifecycleError
+>;
 
 /** Result type for `resumeExecution`. */
-export type ResumeExecutionResult = Result<
+export type ResumeExecutionResult = ResultAsync<
   ResumeExecutionOutput,
   LifecycleError
 >;
 
 /** Result type for `handleUserInterrupt`. */
-export type HandleUserInterruptResult = Result<
+export type HandleUserInterruptResult = ResultAsync<
   HandleUserInterruptOutput,
   LifecycleError
 >;
 
 /** Result type for `dispatchStep`. */
-export type DispatchStepResult = Result<DispatchStepOutput, LifecycleError>;
+export type DispatchStepResult = ResultAsync<
+  DispatchStepOutput,
+  LifecycleError
+>;
 
 /** Result type for `completeStep`. */
-export type CompleteStepResult = Result<CompleteStepOutput, LifecycleError>;
+export type CompleteStepResult = ResultAsync<
+  CompleteStepOutput,
+  LifecycleError
+>;
 
 /** Result type for `beforeTool`. */
 export type BeforeToolResult = ResultAsync<BeforeToolOutput, LifecycleError>;
