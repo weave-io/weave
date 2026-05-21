@@ -5,7 +5,7 @@ Weave is a harness-agnostic orchestration framework with two cooperating halves:
 1. **Core Weave API** (`@weave/core`, `@weave/config`, `@weave/engine`) parses DSL config, normalizes agent intent, resolves/composes prompt and policy data, and exposes pure helper APIs.
 2. **Adapters** (`@weave/adapter-opencode`, `@weave/adapter-pi`, etc.) enable Weave inside a concrete harness by discovering harness-owned resources, translating normalized intent, and filling feature gaps when the harness lacks native support.
 
-**Related:** [Product Vision](product-vision.md) · [Claude Code Adapter](claude-code-adapter.md) · [Model Resolution](model-resolution.md) · [Config Loading](config-loading.md) · [Prompt Composition](prompt-composition.md) · [Tool Policy Evaluation](tool-policy-evaluation.md) · [Runtime Persistence Spec](specs/12-spec-runtime-persistence/12-spec-runtime-persistence.md) · [ADR 0002 — Runtime Persistence Store](adr/0002-runtime-persistence-store.md) · [Spec 05 — Skill Resolution](specs/05-spec-skill-loader/05-spec-skill-loader.md) · [Spec 07 — Adapter Capability Contract](specs/07-spec-adapter-capability-contract/07-spec-adapter-capability-contract.md) · [Spec 08 — Abstract Tool Policy Evaluation](specs/08-spec-abstract-tool-policy-evaluation/08-spec-abstract-tool-policy-evaluation.md) · [Spec 09 — Adapter-Provided Skill Resolution](specs/09-spec-adapter-provided-skill-resolution/09-spec-adapter-provided-skill-resolution.md) · [Legacy Architecture](legacy-architecture.md)
+**Related:** [Product Vision](product-vision.md) · [Claude Code Adapter](claude-code-adapter.md) · [Model Resolution](model-resolution.md) · [Config Loading](config-loading.md) · [Prompt Composition](prompt-composition.md) · [Tool Policy Evaluation](tool-policy-evaluation.md) · [Runtime Persistence Spec](specs/12-spec-runtime-persistence/12-spec-runtime-persistence.md) · [ADR 0002 — Runtime Persistence Store](adr/0002-runtime-persistence-store.md) · [Spec 05 — Skill Resolution](specs/05-spec-skill-loader/05-spec-skill-loader.md) · [Spec 07 — Adapter Capability Contract](specs/07-spec-adapter-capability-contract/07-spec-adapter-capability-contract.md) · [Spec 08 — Abstract Tool Policy Evaluation](specs/08-spec-abstract-tool-policy-evaluation/08-spec-abstract-tool-policy-evaluation.md) · [Spec 09 — Adapter-Provided Skill Resolution](specs/09-spec-adapter-provided-skill-resolution/09-spec-adapter-provided-skill-resolution.md) · [Execution Lifecycle Surface](#execution-lifecycle-surface) · [Legacy Architecture](legacy-architecture.md)
 
 ---
 
@@ -220,3 +220,89 @@ See [Tool Policy Evaluation](tool-policy-evaluation.md) for the full vocabulary,
 `RunAgentEffect`, and the adapter contract. See
 [Spec 08 — Abstract Tool Policy Evaluation](specs/08-spec-abstract-tool-policy-evaluation/08-spec-abstract-tool-policy-evaluation.md)
 for the formal spec and proof artifacts.
+
+---
+
+## Execution Lifecycle Surface
+
+The **Execution Lifecycle Surface** is the engine-owned abstract API that adapters call after mapping concrete harness events into normalized lifecycle inputs. It supersedes the transitional `registerHook()` method on `HarnessAdapter`.
+
+All types are exported from `@weave/engine` under `packages/engine/src/execution-lifecycle.ts`.
+
+### The 7 Lifecycle Methods
+
+| Method | Adapter calls this when… | Engine responsibility |
+| --- | --- | --- |
+| `observeSession` | A harness session observation is available | Record a `SessionSnapshot` in the Runtime Store |
+| `startExecution` | A new workflow execution begins | Acquire an execution lease; transition instance to `running` |
+| `resumeExecution` | A paused or blocked execution resumes | Acquire a new lease (replacing expired); transition to `running` |
+| `handleUserInterrupt` | The user explicitly cancels or pauses | Evaluate interrupt policy; return pause/complete effects |
+| `dispatchStep` | The next workflow step should be dispatched | Resolve step agent and policy; return a `DispatchAgentEffect` |
+| `completeStep` | A workflow step has finished | Record completion; determine next effects (dispatch/pause/complete) |
+| `beforeTool` | A tool call is about to execute | Evaluate abstract tool policy; return `allow`/`deny`/`ask` decision |
+
+**Adapter responsibility**: map concrete harness events (session events, user signals, tool invocations) into these abstract inputs. The engine does not know about harness-specific event names, payloads, or callback registration.
+
+**Engine responsibility**: evaluate policy, update Runtime Store state, and return typed `LifecycleEffect` values. The engine does not register harness callbacks or inspect harness-specific state.
+
+### `registerHook()` is Superseded
+
+The `registerHook()` method on `HarnessAdapter` is deprecated and will be removed in a future spec. Adapters should map harness events into the lifecycle surface instead:
+
+```ts
+// ❌ Old: engine registers a concrete harness hook
+await adapter.registerHook({ name: "on-session-idle", enabled: true, event: "session.idle" });
+
+// ✅ New: adapter maps harness event → lifecycle surface
+harnessRuntime.on("session.idle", async (event) => {
+  const result = await lifecycleSurface.observeSession({
+    workflowInstanceId: event.workflowInstanceId,
+    leaseId: event.leaseId,
+    harnessName: "opencode",
+    agentName: event.agentName,
+    sessionStatus: "idle",
+  });
+  // handle result...
+});
+```
+
+### `LifecycleEffect` Union
+
+`dispatchStep` and `completeStep` return `LifecycleEffect[]`. The dispatch variant wraps `RunAgentEffect`:
+
+```ts
+type LifecycleEffect =
+  | { kind: "dispatch-agent"; runAgent: RunAgentEffect }  // wraps RunAgentEffect
+  | { kind: "pause-execution"; workflowInstanceId: WorkflowInstanceId; reason?: string }
+  | { kind: "complete-execution"; workflowInstanceId: WorkflowInstanceId };
+```
+
+Adapters receive these effects and apply harness-specific materialisation (e.g. spawning an agent, pausing a session, updating UI state).
+
+### `LifecycleError` Discriminated Union
+
+All lifecycle methods return `Result<T, LifecycleError>` from neverthrow — errors are never thrown.
+
+| Discriminant | Meaning |
+| --- | --- |
+| `validation` | Invalid lifecycle input (missing field, denied metadata key) |
+| `not_found` | Referenced workflow instance, step, or session not found |
+| `lease_conflict` | Unexpired foreign lease blocks the operation |
+| `persistence` | Underlying Runtime Store write failed |
+| `policy_decision` | Policy evaluation failed |
+
+### `SafeMetadata` Constraint
+
+All lifecycle input types accept an optional `metadata?: SafeMetadata` field. `SafeMetadata` is typed as `Record<string, string | number | boolean>` — structurally preventing nested objects, arrays, raw prompts, and credential payloads. The runtime sanitizer additionally rejects known credential field names (e.g. `token`, `apiKey`, `password`).
+
+### Runtime Store Relationship
+
+The lifecycle surface is the engine-owned write path into the Runtime Store for session observations and step completions. Adapters do not write to the Runtime Store directly — they call lifecycle methods and the engine handles persistence.
+
+```
+Adapter (harness event) → lifecycle method → engine policy → Runtime Store write → LifecycleEffect[]
+                                                                                         ↓
+                                                                              Adapter materialises effects
+```
+
+See [`packages/engine/src/execution-lifecycle.ts`](../packages/engine/src/execution-lifecycle.ts) for the full type definitions and factory helpers.

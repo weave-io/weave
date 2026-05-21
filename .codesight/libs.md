@@ -120,6 +120,14 @@
   - type Env
   - const envSchema
   - const env: Env
+- `packages/engine/src/execution-lifecycle.ts`
+  - function lifecycleValidationError: (message, field?) => LifecycleValidationError
+  - function lifecycleNotFoundError: (entity, id, message?) => LifecycleNotFoundError
+  - function lifecycleLeaseConflictError: (workflowInstanceId, conflictingLeaseId, message) => LifecycleLeaseConflictError
+  - function lifecyclePersistenceError: (message, cause?) => LifecyclePersistenceError
+  - function lifecyclePolicyDecisionError: (message, rule?) => LifecyclePolicyDecisionError
+  - interface LifecycleValidationError
+  - _...32 more_
 - `packages/engine/src/model-resolution.ts`
   - function resolveAdapterModelIntent: (input) => ModelResolutionResult
   - interface ModelResolutionInput

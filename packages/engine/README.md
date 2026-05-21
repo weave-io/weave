@@ -10,7 +10,7 @@ Harness-agnostic composition APIs and adapter-boundary helpers for Weave.
 - **Model resolution helper** — `resolveAdapterModelIntent()` resolves model preferences using adapter-supplied harness context
 - **Skill resolution API** — implemented by [Spec 09](../../docs/specs/09-spec-adapter-provided-skill-resolution/09-spec-adapter-provided-skill-resolution.md); adapters provide available skills via `loadAvailableSkills()`, engine matches/filters them via `resolveSkillsForAgent()` and `resolveSkillsForConfig()`
 - **Prompt composition APIs** — future APIs that combine prompt files, prompt appendices, delegation metadata, and resolved skills
-- **Policy/lifecycle surfaces** — future abstract lifecycle APIs; adapters map harness events into those surfaces
+- **Execution Lifecycle Surface** — abstract lifecycle API (`execution-lifecycle.ts`); adapters map harness events into 7 typed lifecycle methods (`observeSession`, `startExecution`, `resumeExecution`, `handleUserInterrupt`, `dispatchStep`, `completeStep`, `beforeTool`); supersedes `registerHook()`
 - **`WeaveRunner`** — current transitional orchestration entry point that passes normalized intent through a `HarnessAdapter`
 
 ## Boundary Rule

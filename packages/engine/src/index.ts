@@ -38,6 +38,48 @@ export type { CategoryShuttleConflictError } from "./descriptors.js";
 export { generateCategoryShuttles } from "./descriptors.js";
 export type { Env } from "./env.js";
 export { env, envSchema, parseEnv } from "./env.js";
+export type {
+  BeforeToolInput,
+  BeforeToolOutput,
+  BeforeToolResult,
+  CompleteExecutionEffect,
+  CompleteStepInput,
+  CompleteStepOutput,
+  CompleteStepResult,
+  DispatchAgentEffect,
+  DispatchStepInput,
+  DispatchStepOutput,
+  DispatchStepResult,
+  HandleUserInterruptInput,
+  HandleUserInterruptOutput,
+  HandleUserInterruptResult,
+  LifecycleEffect,
+  LifecycleError,
+  LifecycleLeaseConflictError,
+  LifecycleNotFoundError,
+  LifecyclePersistenceError,
+  LifecyclePolicyDecisionError,
+  LifecycleValidationError,
+  ObserveSessionInput,
+  ObserveSessionOutput,
+  ObserveSessionResult,
+  PauseExecutionEffect,
+  ResumeExecutionInput,
+  ResumeExecutionOutput,
+  ResumeExecutionResult,
+  SafeMetadata,
+  StartExecutionInput,
+  StartExecutionOutput,
+  StartExecutionResult,
+  StepCompletionSignal,
+} from "./execution-lifecycle.js";
+export {
+  lifecycleLeaseConflictError,
+  lifecycleNotFoundError,
+  lifecyclePersistenceError,
+  lifecyclePolicyDecisionError,
+  lifecycleValidationError,
+} from "./execution-lifecycle.js";
 export { logger } from "./logger.js";
 export type {
   ModelResolutionInput,

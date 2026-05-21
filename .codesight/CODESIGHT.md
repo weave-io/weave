@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weave/core, @weave/engine, @weave/config, @weave/cli, @weave/adapter-opencode
 
-> 0 routes | 0 models | 0 components | 49 lib files | 2 env vars | 0 middleware | 0% test coverage
-> **Token savings:** this file is ~4,100 tokens. Without it, AI exploration would cost ~22,100 tokens. **Saves ~18,000 tokens per conversation.**
-> **Last scanned:** 2026-05-20 21:08 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 50 lib files | 2 env vars | 0 middleware | 0% test coverage
+> **Token savings:** this file is ~4,300 tokens. Without it, AI exploration would cost ~22,400 tokens. **Saves ~18,100 tokens per conversation.**
+> **Last scanned:** 2026-05-21 16:03 — re-run after significant changes
 
 ---
 
@@ -131,6 +131,14 @@
   - type Env
   - const envSchema
   - const env: Env
+- `packages/engine/src/execution-lifecycle.ts`
+  - function lifecycleValidationError: (message, field?) => LifecycleValidationError
+  - function lifecycleNotFoundError: (entity, id, message?) => LifecycleNotFoundError
+  - function lifecycleLeaseConflictError: (workflowInstanceId, conflictingLeaseId, message) => LifecycleLeaseConflictError
+  - function lifecyclePersistenceError: (message, cause?) => LifecyclePersistenceError
+  - function lifecyclePolicyDecisionError: (message, rule?) => LifecyclePolicyDecisionError
+  - interface LifecycleValidationError
+  - _...32 more_
 - `packages/engine/src/model-resolution.ts`
   - function resolveAdapterModelIntent: (input) => ModelResolutionResult
   - interface ModelResolutionInput
@@ -262,7 +270,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 41 test files found
+> 42 test files found
 
 ---
 
