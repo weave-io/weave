@@ -95,7 +95,7 @@
 - [ ] 3.7 Add unit tests for non-final auto-advance, output artifact persistence, malformed/undeclared artifacts, final-step completion, and lease release.
 - [ ] 3.8 Add an integration test for a multi-step workflow where one step outputs an artifact consumed by a later rendered prompt.
 
-### [ ] 4.0 Evaluate completion methods and gate rejection policies
+### [x] 4.0 Evaluate completion methods and gate rejection policies
 
 #### 4.0 Proof Artifact(s)
 

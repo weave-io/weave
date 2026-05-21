@@ -4310,3 +4310,917 @@ describe("completeStep: configured workflow step auto-advance", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// completeStep — completion method validation and gate logic
+// ---------------------------------------------------------------------------
+
+describe("completeStep: completion method validation and gate logic", () => {
+  /**
+   * Workflow fixture covering all 5 completion methods and gate rejection policies.
+   */
+  const methodWorkflows: WorkflowExecutionContext["workflows"] = {
+    "method-test": {
+      version: 1,
+      steps: [
+        {
+          name: "agent-step",
+          type: "autonomous",
+          agent: "shuttle",
+          prompt: "Do the work",
+          completion: { method: "agent_signal" },
+        },
+        {
+          name: "confirm-step",
+          type: "interactive",
+          agent: "loom",
+          prompt: "Confirm the plan",
+          completion: { method: "user_confirm" },
+        },
+        {
+          name: "gate-pause",
+          type: "gate",
+          agent: "weft",
+          prompt: "Review the changes",
+          completion: { method: "review_verdict" },
+          on_reject: "pause",
+        },
+        {
+          name: "gate-fail",
+          type: "gate",
+          agent: "weft",
+          prompt: "Security audit",
+          completion: { method: "review_verdict" },
+          on_reject: "fail",
+        },
+        {
+          name: "gate-retry",
+          type: "gate",
+          agent: "weft",
+          prompt: "Quality check",
+          completion: { method: "review_verdict" },
+          on_reject: "retry",
+        },
+        {
+          name: "plan-created-step",
+          type: "autonomous",
+          agent: "pattern",
+          prompt: "Create the plan",
+          completion: {
+            method: "plan_created",
+            plan_name: "{{instance.slug}}",
+          },
+        },
+        {
+          name: "plan-complete-step",
+          type: "autonomous",
+          agent: "shuttle",
+          prompt: "Execute the plan",
+          completion: {
+            method: "plan_complete",
+            plan_name: "{{instance.slug}}",
+          },
+        },
+      ],
+    },
+  };
+
+  /**
+   * Helper: start an execution and return instanceId + leaseId.
+   */
+  async function startForMethod(
+    store: ReturnType<typeof createInMemoryRuntimeStore>,
+    suffix: string,
+    goal = "Test goal",
+    slug = "test-goal",
+  ) {
+    const instanceId = createWorkflowInstanceId(`method-${suffix}`);
+    const startResult = await startExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: `owner-${suffix}`,
+        context: {
+          workflowName: "method-test",
+          goal,
+          slug,
+          workflows: methodWorkflows,
+        },
+      },
+      store,
+    );
+    if (!startResult.isOk())
+      throw new Error(`startExecution failed: ${JSON.stringify(startResult)}`);
+    return { instanceId, activeLeaseId: startResult.value.leaseId };
+  }
+
+  // ---------------------------------------------------------------------------
+  // AC1: completion method validation — mismatch returns typed error
+  // ---------------------------------------------------------------------------
+
+  it("method mismatch: agent_signal signal on user_confirm step returns validation error", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startForMethod(
+      store,
+      "mismatch-agent",
+    );
+
+    const result = await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "confirm-step",
+        completionSignal: {
+          outcome: "success",
+          method: "agent_signal", // wrong — step declares user_confirm
+        },
+        context: {
+          workflowName: "method-test",
+          goal: "Test goal",
+          slug: "test-goal",
+          workflows: methodWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+    if (result.error.type === "validation") {
+      expect(result.error.field).toBe("completion.method");
+      expect(result.error.message).toContain("agent_signal");
+      expect(result.error.message).toContain("user_confirm");
+    }
+  });
+
+  it("method mismatch: review_verdict on agent_signal step returns validation error", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startForMethod(
+      store,
+      "mismatch-review",
+    );
+
+    const result = await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "agent-step",
+        completionSignal: {
+          outcome: "success",
+          method: "review_verdict",
+          approved: true,
+        },
+        context: {
+          workflowName: "method-test",
+          goal: "Test goal",
+          slug: "test-goal",
+          workflows: methodWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+    if (result.error.type === "validation") {
+      expect(result.error.field).toBe("completion.method");
+    }
+  });
+
+  it("no method in signal: skips method validation (legacy path)", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startForMethod(
+      store,
+      "no-method",
+    );
+
+    // No method field — should succeed without validation
+    const result = await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "agent-step",
+        completionSignal: { outcome: "success" }, // no method
+        context: {
+          workflowName: "method-test",
+          goal: "Test goal",
+          slug: "test-goal",
+          workflows: methodWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+  });
+
+  // ---------------------------------------------------------------------------
+  // AC1: agent_signal and user_confirm — accepted when matching
+  // ---------------------------------------------------------------------------
+
+  it("agent_signal: accepted when step declares agent_signal", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startForMethod(
+      store,
+      "agent-signal-ok",
+    );
+
+    const result = await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "agent-step",
+        completionSignal: { outcome: "success", method: "agent_signal" },
+        context: {
+          workflowName: "method-test",
+          goal: "Test goal",
+          slug: "test-goal",
+          workflows: methodWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    // Should auto-advance to next step (confirm-step)
+    const { effects } = result.value;
+    expect(effects).toHaveLength(1);
+    expect(effects[0]?.kind).toBe("dispatch-agent");
+    if (effects[0]?.kind === "dispatch-agent") {
+      expect(effects[0].runAgent.agentName).toBe("loom"); // confirm-step agent
+    }
+  });
+
+  it("user_confirm: accepted when step declares user_confirm", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startForMethod(
+      store,
+      "user-confirm-ok",
+    );
+
+    // Manually set currentStepName to confirm-step
+    await store.instances.update(instanceId, {
+      currentStepName: "confirm-step",
+    });
+
+    const result = await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "confirm-step",
+        completionSignal: { outcome: "success", method: "user_confirm" },
+        context: {
+          workflowName: "method-test",
+          goal: "Test goal",
+          slug: "test-goal",
+          workflows: methodWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    // Should auto-advance to gate-pause
+    const { effects } = result.value;
+    expect(effects).toHaveLength(1);
+    expect(effects[0]?.kind).toBe("dispatch-agent");
+  });
+
+  // ---------------------------------------------------------------------------
+  // AC4: approved review_verdict gate — advances normally
+  // ---------------------------------------------------------------------------
+
+  it("review_verdict approved: advances to next step (same as success)", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startForMethod(
+      store,
+      "gate-approved",
+    );
+
+    await store.instances.update(instanceId, { currentStepName: "gate-pause" });
+
+    const result = await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "gate-pause",
+        completionSignal: {
+          outcome: "success",
+          method: "review_verdict",
+          approved: true,
+        },
+        context: {
+          workflowName: "method-test",
+          goal: "Test goal",
+          slug: "test-goal",
+          workflows: methodWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    // Should advance to gate-fail (next step)
+    const { effects } = result.value;
+    expect(effects).toHaveLength(1);
+    expect(effects[0]?.kind).toBe("dispatch-agent");
+    if (effects[0]?.kind === "dispatch-agent") {
+      expect(effects[0].runAgent.agentName).toBe("weft"); // gate-fail agent
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // AC5: rejected gate — on_reject: "pause"
+  // ---------------------------------------------------------------------------
+
+  it("review_verdict rejected + on_reject:pause → paused status, pause-execution effect", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startForMethod(
+      store,
+      "gate-reject-pause",
+    );
+
+    await store.instances.update(instanceId, { currentStepName: "gate-pause" });
+
+    const result = await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "gate-pause",
+        completionSignal: {
+          outcome: "success",
+          method: "review_verdict",
+          approved: false,
+          message: "Changes need revision",
+        },
+        context: {
+          workflowName: "method-test",
+          goal: "Test goal",
+          slug: "test-goal",
+          workflows: methodWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    const { effects } = result.value;
+    expect(effects).toHaveLength(1);
+    expect(effects[0]?.kind).toBe("pause-execution");
+    if (effects[0]?.kind === "pause-execution") {
+      expect(effects[0].workflowInstanceId).toBe(instanceId);
+    }
+
+    // Instance should be paused
+    const instanceResult = await store.instances.getById(instanceId);
+    expect(instanceResult.isOk()).toBe(true);
+    if (!instanceResult.isOk()) return;
+    expect(instanceResult.value.status).toBe("paused");
+  });
+
+  // ---------------------------------------------------------------------------
+  // AC5: rejected gate — on_reject: "fail"
+  // ---------------------------------------------------------------------------
+
+  it("review_verdict rejected + on_reject:fail → failed status, lease released, complete-execution effect", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startForMethod(
+      store,
+      "gate-reject-fail",
+    );
+
+    await store.instances.update(instanceId, { currentStepName: "gate-fail" });
+
+    const result = await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "gate-fail",
+        completionSignal: {
+          outcome: "success",
+          method: "review_verdict",
+          approved: false,
+          message: "Security audit failed",
+        },
+        context: {
+          workflowName: "method-test",
+          goal: "Test goal",
+          slug: "test-goal",
+          workflows: methodWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    const { effects } = result.value;
+    expect(effects).toHaveLength(1);
+    expect(effects[0]?.kind).toBe("complete-execution");
+    if (effects[0]?.kind === "complete-execution") {
+      expect(effects[0].workflowInstanceId).toBe(instanceId);
+    }
+
+    // Instance should be failed
+    const instanceResult = await store.instances.getById(instanceId);
+    expect(instanceResult.isOk()).toBe(true);
+    if (!instanceResult.isOk()) return;
+    expect(instanceResult.value.status).toBe("failed");
+
+    // Lease should be released
+    const leaseResult = await store.leases.findActive();
+    expect(leaseResult.isOk()).toBe(true);
+    if (!leaseResult.isOk()) return;
+    expect(leaseResult.value).toBeNull();
+  });
+
+  it("review_verdict rejected + on_reject:fail → errorMessage set from signal.message", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startForMethod(
+      store,
+      "gate-fail-msg",
+    );
+
+    await store.instances.update(instanceId, { currentStepName: "gate-fail" });
+
+    await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "gate-fail",
+        completionSignal: {
+          outcome: "success",
+          method: "review_verdict",
+          approved: false,
+          message: "Critical security vulnerability found",
+        },
+        context: {
+          workflowName: "method-test",
+          goal: "Test goal",
+          slug: "test-goal",
+          workflows: methodWorkflows,
+        },
+      },
+      store,
+    );
+
+    const instanceResult = await store.instances.getById(instanceId);
+    expect(instanceResult.isOk()).toBe(true);
+    if (!instanceResult.isOk()) return;
+    expect(instanceResult.value.errorMessage).toBe(
+      "Critical security vulnerability found",
+    );
+  });
+
+  // ---------------------------------------------------------------------------
+  // AC5: rejected gate — on_reject: "retry"
+  // ---------------------------------------------------------------------------
+
+  it("review_verdict rejected + on_reject:retry → dispatch-agent effect for same step", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startForMethod(
+      store,
+      "gate-reject-retry",
+    );
+
+    await store.instances.update(instanceId, {
+      currentStepName: "gate-retry",
+    });
+
+    const result = await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "gate-retry",
+        completionSignal: {
+          outcome: "success",
+          method: "review_verdict",
+          approved: false,
+          message: "Quality check failed — please revise",
+        },
+        context: {
+          workflowName: "method-test",
+          goal: "Test goal",
+          slug: "test-goal",
+          workflows: methodWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    const { effects } = result.value;
+    expect(effects).toHaveLength(1);
+    expect(effects[0]?.kind).toBe("dispatch-agent");
+    if (effects[0]?.kind === "dispatch-agent") {
+      // Re-dispatches the SAME gate step (gate-retry uses agent "weft")
+      expect(effects[0].runAgent.agentName).toBe("weft");
+      expect(effects[0].runAgent.stepType).toBe("gate");
+      expect(effects[0].runAgent.completionMethod).toBe("review_verdict");
+      // Fresh correlation ID
+      expect(typeof effects[0].runAgent.correlationId).toBe("string");
+      expect(effects[0].runAgent.correlationId).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      );
+    }
+  });
+
+  it("review_verdict rejected + on_reject:retry → instance stays running (not paused/failed)", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startForMethod(
+      store,
+      "gate-retry-status",
+    );
+
+    await store.instances.update(instanceId, {
+      currentStepName: "gate-retry",
+    });
+
+    await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "gate-retry",
+        completionSignal: {
+          outcome: "success",
+          method: "review_verdict",
+          approved: false,
+        },
+        context: {
+          workflowName: "method-test",
+          goal: "Test goal",
+          slug: "test-goal",
+          workflows: methodWorkflows,
+        },
+      },
+      store,
+    );
+
+    const instanceResult = await store.instances.getById(instanceId);
+    expect(instanceResult.isOk()).toBe(true);
+    if (!instanceResult.isOk()) return;
+    // Retry keeps the instance running (re-dispatches same step)
+    expect(instanceResult.value.status).toBe("running");
+  });
+
+  it("review_verdict rejected + on_reject:retry → each retry has a unique correlationId", async () => {
+    const store1 = createInMemoryRuntimeStore();
+    const { instanceId: id1, activeLeaseId: lease1 } = await startForMethod(
+      store1,
+      "retry-unique-a",
+    );
+    await store1.instances.update(id1, { currentStepName: "gate-retry" });
+
+    const store2 = createInMemoryRuntimeStore();
+    const { instanceId: id2, activeLeaseId: lease2 } = await startForMethod(
+      store2,
+      "retry-unique-b",
+    );
+    await store2.instances.update(id2, { currentStepName: "gate-retry" });
+
+    const r1 = await completeStep(
+      {
+        workflowInstanceId: id1,
+        leaseId: lease1,
+        stepName: "gate-retry",
+        completionSignal: {
+          outcome: "success",
+          method: "review_verdict",
+          approved: false,
+        },
+        context: {
+          workflowName: "method-test",
+          goal: "Test goal",
+          slug: "test-goal",
+          workflows: methodWorkflows,
+        },
+      },
+      store1,
+    );
+
+    const r2 = await completeStep(
+      {
+        workflowInstanceId: id2,
+        leaseId: lease2,
+        stepName: "gate-retry",
+        completionSignal: {
+          outcome: "success",
+          method: "review_verdict",
+          approved: false,
+        },
+        context: {
+          workflowName: "method-test",
+          goal: "Test goal",
+          slug: "test-goal",
+          workflows: methodWorkflows,
+        },
+      },
+      store2,
+    );
+
+    expect(r1.isOk()).toBe(true);
+    expect(r2.isOk()).toBe(true);
+    if (!r1.isOk() || !r2.isOk()) return;
+
+    const cid1 =
+      r1.value.effects[0]?.kind === "dispatch-agent"
+        ? r1.value.effects[0].runAgent.correlationId
+        : undefined;
+    const cid2 =
+      r2.value.effects[0]?.kind === "dispatch-agent"
+        ? r2.value.effects[0].runAgent.correlationId
+        : undefined;
+
+    expect(cid1).toBeDefined();
+    expect(cid2).toBeDefined();
+    expect(cid1).not.toBe(cid2);
+  });
+
+  // ---------------------------------------------------------------------------
+  // AC2: plan_created — checks plan file exists
+  // ---------------------------------------------------------------------------
+
+  it("plan_created: returns not_found when plan file does not exist", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startForMethod(
+      store,
+      "plan-created-missing",
+      "Test goal",
+      "nonexistent-plan-slug",
+    );
+
+    await store.instances.update(instanceId, {
+      currentStepName: "plan-created-step",
+    });
+
+    const result = await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "plan-created-step",
+        completionSignal: {
+          outcome: "success",
+          method: "plan_created",
+        },
+        context: {
+          workflowName: "method-test",
+          goal: "Test goal",
+          slug: "nonexistent-plan-slug",
+          workflows: methodWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("not_found");
+    if (result.error.type === "not_found") {
+      expect(result.error.entity).toBe("plan_file");
+      expect(result.error.id).toContain("nonexistent-plan-slug");
+    }
+  });
+
+  it("plan_created: succeeds when plan file exists", async () => {
+    // Create a temp plan file
+    const planSlug = `test-plan-created-${Date.now()}`;
+    const planDir = ".weave/plans";
+    const planPath = `${planDir}/${planSlug}.md`;
+
+    // Ensure directory exists and write the plan file
+    await Bun.write(planPath, "# Test Plan\n\n- [x] Task 1\n");
+
+    try {
+      const store = createInMemoryRuntimeStore();
+      const { instanceId, activeLeaseId } = await startForMethod(
+        store,
+        `plan-created-ok-${Date.now()}`,
+        "Test goal",
+        planSlug,
+      );
+
+      await store.instances.update(instanceId, {
+        currentStepName: "plan-created-step",
+      });
+
+      const result = await completeStep(
+        {
+          workflowInstanceId: instanceId,
+          leaseId: activeLeaseId,
+          stepName: "plan-created-step",
+          completionSignal: {
+            outcome: "success",
+            method: "plan_created",
+          },
+          context: {
+            workflowName: "method-test",
+            goal: "Test goal",
+            slug: planSlug,
+            workflows: methodWorkflows,
+          },
+        },
+        store,
+      );
+
+      expect(result.isOk()).toBe(true);
+    } finally {
+      // Clean up temp file
+      const file = Bun.file(planPath);
+      if (await file.exists()) {
+        await Bun.$`rm -f ${planPath}`;
+      }
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // AC3: plan_complete — checks no incomplete checkboxes
+  // ---------------------------------------------------------------------------
+
+  it("plan_complete: returns validation error when plan has incomplete checkboxes", async () => {
+    const planSlug = `test-plan-incomplete-${Date.now()}`;
+    const planPath = `.weave/plans/${planSlug}.md`;
+
+    // Write a plan with incomplete checkboxes
+    await Bun.write(
+      planPath,
+      "# Test Plan\n\n- [x] Task 1\n- [ ] Task 2 (incomplete)\n- [x] Task 3\n",
+    );
+
+    try {
+      const store = createInMemoryRuntimeStore();
+      const { instanceId, activeLeaseId } = await startForMethod(
+        store,
+        `plan-incomplete-${Date.now()}`,
+        "Test goal",
+        planSlug,
+      );
+
+      await store.instances.update(instanceId, {
+        currentStepName: "plan-complete-step",
+      });
+
+      const result = await completeStep(
+        {
+          workflowInstanceId: instanceId,
+          leaseId: activeLeaseId,
+          stepName: "plan-complete-step",
+          completionSignal: {
+            outcome: "success",
+            method: "plan_complete",
+          },
+          context: {
+            workflowName: "method-test",
+            goal: "Test goal",
+            slug: planSlug,
+            workflows: methodWorkflows,
+          },
+        },
+        store,
+      );
+
+      expect(result.isErr()).toBe(true);
+      if (!result.isErr()) return;
+      expect(result.error.type).toBe("validation");
+      if (result.error.type === "validation") {
+        expect(result.error.field).toBe("plan_complete");
+        expect(result.error.message).toContain("incomplete");
+      }
+    } finally {
+      await Bun.$`rm -f ${planPath}`;
+    }
+  });
+
+  it("plan_complete: succeeds when all checkboxes are checked", async () => {
+    const planSlug = `test-plan-complete-${Date.now()}`;
+    const planPath = `.weave/plans/${planSlug}.md`;
+
+    // Write a plan with ALL checkboxes checked
+    await Bun.write(
+      planPath,
+      "# Test Plan\n\n- [x] Task 1\n- [x] Task 2\n- [x] Task 3\n",
+    );
+
+    try {
+      const store = createInMemoryRuntimeStore();
+      const { instanceId, activeLeaseId } = await startForMethod(
+        store,
+        `plan-complete-ok-${Date.now()}`,
+        "Test goal",
+        planSlug,
+      );
+
+      await store.instances.update(instanceId, {
+        currentStepName: "plan-complete-step",
+      });
+
+      const result = await completeStep(
+        {
+          workflowInstanceId: instanceId,
+          leaseId: activeLeaseId,
+          stepName: "plan-complete-step",
+          completionSignal: {
+            outcome: "success",
+            method: "plan_complete",
+          },
+          context: {
+            workflowName: "method-test",
+            goal: "Test goal",
+            slug: planSlug,
+            workflows: methodWorkflows,
+          },
+        },
+        store,
+      );
+
+      expect(result.isOk()).toBe(true);
+    } finally {
+      await Bun.$`rm -f ${planPath}`;
+    }
+  });
+
+  it("plan_complete: returns not_found when plan file does not exist", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startForMethod(
+      store,
+      "plan-complete-missing",
+      "Test goal",
+      "no-such-plan-slug",
+    );
+
+    await store.instances.update(instanceId, {
+      currentStepName: "plan-complete-step",
+    });
+
+    const result = await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "plan-complete-step",
+        completionSignal: {
+          outcome: "success",
+          method: "plan_complete",
+        },
+        context: {
+          workflowName: "method-test",
+          goal: "Test goal",
+          slug: "no-such-plan-slug",
+          workflows: methodWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    // plan_complete reads the file — missing file returns persistence error
+    // (Bun.file().text() throws on missing file)
+    expect(["not_found", "persistence"]).toContain(result.error.type);
+  });
+
+  // ---------------------------------------------------------------------------
+  // StepCompletionSignal type: new fields are importable
+  // ---------------------------------------------------------------------------
+
+  it("StepCompletionSignal accepts method and approved fields", () => {
+    const agentSignal: StepCompletionSignal = {
+      outcome: "success",
+      method: "agent_signal",
+    };
+    expect(agentSignal.method).toBe("agent_signal");
+
+    const reviewApproved: StepCompletionSignal = {
+      outcome: "success",
+      method: "review_verdict",
+      approved: true,
+    };
+    expect(reviewApproved.approved).toBe(true);
+
+    const reviewRejected: StepCompletionSignal = {
+      outcome: "success",
+      method: "review_verdict",
+      approved: false,
+    };
+    expect(reviewRejected.approved).toBe(false);
+
+    const planCreated: StepCompletionSignal = {
+      outcome: "success",
+      method: "plan_created",
+    };
+    expect(planCreated.method).toBe("plan_created");
+
+    const planComplete: StepCompletionSignal = {
+      outcome: "success",
+      method: "plan_complete",
+    };
+    expect(planComplete.method).toBe("plan_complete");
+  });
+});

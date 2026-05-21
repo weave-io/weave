@@ -38,7 +38,7 @@ import {
   ok,
   okAsync,
   type Result,
-  type ResultAsync,
+  ResultAsync,
 } from "neverthrow";
 import type { RunAgentEffect } from "./run-agent-effects.js";
 import type { RuntimeStoreConflictError } from "./runtime/errors.js";
@@ -389,14 +389,53 @@ export type LifecycleEffect =
  * Used as the `completionSignal` field in `CompleteStepInput`.
  *
  * Fields:
- * - `outcome` — the terminal state of the step
- * - `message` — optional safe human-readable message (no raw prompts/completions)
+ * - `outcome`  — the terminal state of the step
+ * - `method`   — the completion method being signalled (optional; when present
+ *                the engine validates it against the step's declared method)
+ * - `approved` — for `review_verdict` signals: `true` = approved, `false` = rejected
+ * - `message`  — optional safe human-readable message (no raw prompts/completions)
  * - `artifacts` — optional artifact references produced by the step
  * - `nextStepHint` — optional hint for the engine about which step to dispatch next
+ *
+ * ## Completion method semantics
+ *
+ * | `method`         | Required fields | Engine behaviour                                   |
+ * |------------------|-----------------|----------------------------------------------------|
+ * | `agent_signal`   | —               | Treat as success; auto-advance                     |
+ * | `user_confirm`   | —               | Treat as success; auto-advance                     |
+ * | `review_verdict` | `approved`      | `true` → advance; `false` → apply `on_reject` policy |
+ * | `plan_created`   | —               | Check `.weave/plans/<plan_name>.md` exists         |
+ * | `plan_complete`  | —               | Check plan file has no `- [ ]` checkboxes          |
+ *
+ * When `method` is omitted the engine skips method validation (legacy path).
  */
 export interface StepCompletionSignal {
   /** Terminal outcome of the step. */
   readonly outcome: "success" | "blocked" | "failed" | "paused";
+  /**
+   * The completion method being signalled.
+   *
+   * When provided and `context` is present in `CompleteStepInput`, the engine
+   * validates this value against the step's declared `completion.method`.
+   * A mismatch returns a typed `validation` error before any state changes.
+   *
+   * When omitted the engine skips method validation (legacy / adapter-driven path).
+   */
+  readonly method?:
+    | "agent_signal"
+    | "user_confirm"
+    | "review_verdict"
+    | "plan_created"
+    | "plan_complete";
+  /**
+   * Gate verdict for `review_verdict` signals.
+   *
+   * - `true`  — the gate approved; the engine advances to the next step.
+   * - `false` — the gate rejected; the engine applies the step's `on_reject` policy.
+   *
+   * Required when `method === "review_verdict"`. Ignored for other methods.
+   */
+  readonly approved?: boolean;
   /**
    * Optional safe human-readable message describing the outcome.
    * Must not contain raw prompts, completions, credentials, or tokens.
@@ -1725,6 +1764,220 @@ export function dispatchStep(
 // ---------------------------------------------------------------------------
 
 /**
+ * Validate that the signal's `method` matches the step's declared
+ * `completion.method`.
+ *
+ * Returns `ok(undefined)` when:
+ * - `signal.method` is absent (legacy path — skip validation)
+ * - `signal.method` matches `step.completion.method`
+ *
+ * Returns a typed `validation` error when the methods differ.
+ */
+function validateCompletionMethod(
+  signal: StepCompletionSignal,
+  step: WorkflowStep,
+): Result<undefined, LifecycleError> {
+  if (signal.method === undefined) return ok(undefined);
+  if (signal.method === step.completion.method) return ok(undefined);
+  return err(
+    lifecycleValidationError(
+      `Completion method mismatch: signal has "${signal.method}" but step "${step.name}" declares "${step.completion.method}"`,
+      "completion.method",
+    ),
+  );
+}
+
+/**
+ * Render the `plan_name` template from a step's completion config.
+ *
+ * The `plan_name` field may contain Mustache placeholders (e.g.
+ * `{{instance.slug}}`). This function renders it with the instance context
+ * and returns the resolved plan name string.
+ */
+function renderPlanName(
+  planNameTemplate: string,
+  instance: WorkflowInstance,
+): Result<string, LifecycleError> {
+  const context: TemplateContext = {
+    instance: {
+      goal: instance.goal,
+      slug: instance.slug,
+      workflowName: instance.workflowName,
+      currentStepName: instance.currentStepName ?? "",
+    },
+  };
+  const allowedPaths = new Set([
+    "instance.goal",
+    "instance.slug",
+    "instance.workflowName",
+    "instance.currentStepName",
+  ]);
+  const renderResult = renderTemplate(planNameTemplate, context, {
+    allowedPaths,
+  });
+  if (renderResult.isErr()) {
+    return err(
+      lifecycleValidationError(
+        `plan_name template error: ${renderResult.error.message}`,
+        "completion.plan_name",
+      ),
+    );
+  }
+  return ok(renderResult.value);
+}
+
+/**
+ * Check that the plan file `.weave/plans/<planName>.md` exists.
+ *
+ * Returns `ok(undefined)` when the file exists, or a typed `not_found` error.
+ */
+function checkPlanFileExists(
+  planName: string,
+): ResultAsync<undefined, LifecycleError> {
+  const planPath = `.weave/plans/${planName}.md`;
+  return ResultAsync.fromPromise(
+    Bun.file(planPath).exists(),
+    (cause): LifecycleError =>
+      lifecyclePersistenceError(
+        `Failed to check plan file existence: ${planPath}`,
+        { type: "query", message: String(cause) },
+      ),
+  ).andThen((exists) => {
+    if (!exists) {
+      return errAsync(
+        lifecycleNotFoundError(
+          "plan_file",
+          planPath,
+          `Plan file "${planPath}" does not exist`,
+        ),
+      );
+    }
+    return okAsync(undefined);
+  });
+}
+
+/**
+ * Check that the plan file `.weave/plans/<planName>.md` has no incomplete
+ * checkboxes (`- [ ]`).
+ *
+ * Returns `ok(undefined)` when the file is fully complete, or a typed
+ * `validation` error listing the count of incomplete items.
+ */
+function checkPlanComplete(
+  planName: string,
+): ResultAsync<undefined, LifecycleError> {
+  const planPath = `.weave/plans/${planName}.md`;
+  return ResultAsync.fromPromise(
+    Bun.file(planPath).text(),
+    (cause): LifecycleError =>
+      lifecyclePersistenceError(`Failed to read plan file: ${planPath}`, {
+        type: "query",
+        message: String(cause),
+      }),
+  ).andThen((content) => {
+    const incompleteMatches = content.match(/- \[ \]/g);
+    const incompleteCount = incompleteMatches?.length ?? 0;
+    if (incompleteCount > 0) {
+      return errAsync(
+        lifecycleValidationError(
+          `Plan "${planPath}" has ${incompleteCount} incomplete checkbox(es) — all tasks must be checked off`,
+          "plan_complete",
+        ),
+      );
+    }
+    return okAsync(undefined);
+  });
+}
+
+/**
+ * Apply the gate rejection policy for a rejected `review_verdict` signal.
+ *
+ * - `"pause"` — updates instance to `paused`, emits `pause-execution`
+ * - `"fail"`  — updates instance to `failed`, releases lease, emits `complete-execution`
+ * - `"retry"` — re-dispatches the same gate step with a fresh correlation ID
+ *
+ * When `on_reject` is undefined, defaults to `"pause"`.
+ */
+function applyGateRejection(
+  store: RuntimeStore,
+  workflowInstanceId: WorkflowInstanceId,
+  activeLease: ExecutionLease,
+  step: WorkflowStep,
+  message: string | undefined,
+): ResultAsync<readonly LifecycleEffect[], LifecycleError> {
+  const policy = step.on_reject ?? "pause";
+
+  if (policy === "pause") {
+    return store.instances
+      .update(workflowInstanceId, { status: "paused" })
+      .mapErr(
+        (storeError): LifecycleError =>
+          lifecyclePersistenceError(storeError.message, {
+            type: storeError.type,
+            message: storeError.message,
+          }),
+      )
+      .map((): readonly LifecycleEffect[] => [
+        { kind: "pause-execution", workflowInstanceId },
+      ]);
+  }
+
+  if (policy === "fail") {
+    return store.instances
+      .update(workflowInstanceId, {
+        status: "failed",
+        ...(message !== undefined ? { errorMessage: message } : {}),
+      })
+      .mapErr(
+        (storeError): LifecycleError =>
+          lifecyclePersistenceError(storeError.message, {
+            type: storeError.type,
+            message: storeError.message,
+          }),
+      )
+      .andThen(() =>
+        store.leases.release(activeLease.id, activeLease.ownerId).mapErr(
+          (storeError): LifecycleError =>
+            lifecyclePersistenceError(storeError.message, {
+              type: storeError.type,
+              message: storeError.message,
+            }),
+        ),
+      )
+      .map((): readonly LifecycleEffect[] => [
+        { kind: "complete-execution", workflowInstanceId },
+      ]);
+  }
+
+  // policy === "retry" — re-dispatch the same gate step with a fresh correlation ID.
+  // Fetch the current instance for prompt rendering context.
+  return store.instances
+    .getById(workflowInstanceId)
+    .mapErr(
+      (storeError): LifecycleError =>
+        lifecyclePersistenceError(storeError.message, {
+          type: storeError.type,
+          message: storeError.message,
+        }),
+    )
+    .andThen((instance) => {
+      const artifactNames = instance.artifacts.map((a) => a.name);
+      const promptContext = buildStepPromptContext(instance, step);
+      const promptResult = renderStepPrompt(
+        step.prompt,
+        promptContext,
+        artifactNames,
+      );
+      if (promptResult.isErr()) return errAsync(promptResult.error);
+      const promptMetadata = promptResult.value;
+      const runAgent = buildConfiguredRunAgentEffect(step, promptMetadata);
+      return okAsync([
+        { kind: "dispatch-agent" as const, runAgent },
+      ] as readonly LifecycleEffect[]);
+    });
+}
+
+/**
  * Map a step outcome to the corresponding `UpdateWorkflowInstanceInput`.
  * For `"success"` with configured auto-advance the caller overrides status
  * after this call, so `"running"` is the correct interim value.
@@ -2028,8 +2281,9 @@ export function completeStep(
 
           const { outcome, message, artifacts } = input.completionSignal;
 
-          // Configured success path: validate outputs, persist, auto-advance.
-          if (outcome === "success" && input.context !== undefined) {
+          // Configured path: context provided — validate method, handle gate logic,
+          // run plan checks, persist artifacts, auto-advance.
+          if (input.context !== undefined) {
             const workflowConfig =
               input.context.workflows[existing.workflowName] ??
               input.context.workflows[input.context.workflowName];
@@ -2057,19 +2311,114 @@ export function completeStep(
               );
             }
 
-            // Validate output artifacts before any writes (all-or-nothing).
-            const outputCheck = validateOutputArtifacts(stepConfig, artifacts);
-            if (outputCheck.isErr()) return errAsync(outputCheck.error);
+            // Validate completion method BEFORE any state changes.
+            const methodCheck = validateCompletionMethod(
+              input.completionSignal,
+              stepConfig,
+            );
+            if (methodCheck.isErr()) return errAsync(methodCheck.error);
 
-            // Update status to running (interim; may be overridden to completed).
-            return store.instances
-              .update(input.workflowInstanceId, { status: "running" })
-              .mapErr(
-                (storeError): LifecycleError =>
-                  lifecyclePersistenceError(storeError.message, {
-                    type: storeError.type,
-                    message: storeError.message,
+            // Handle review_verdict gate rejection (approved === false).
+            if (
+              input.completionSignal.method === "review_verdict" &&
+              input.completionSignal.approved === false
+            ) {
+              return applyGateRejection(
+                store,
+                input.workflowInstanceId,
+                activeLease,
+                stepConfig,
+                message,
+              ).map((effects): CompleteStepOutput => ({ effects }));
+            }
+
+            // For non-success outcomes (blocked, failed, paused) with context:
+            // apply status update and legacy effects, no auto-advance.
+            if (outcome !== "success") {
+              const updateInput = buildUpdateInput(outcome, message);
+              return store.instances
+                .update(input.workflowInstanceId, updateInput)
+                .mapErr(
+                  (storeError): LifecycleError =>
+                    lifecyclePersistenceError(storeError.message, {
+                      type: storeError.type,
+                      message: storeError.message,
+                    }),
+                )
+                .andThen(() => {
+                  if (!artifacts || artifacts.length === 0) {
+                    return okAsync(undefined);
+                  }
+                  return addArtifactsSequentially(
+                    store,
+                    input.workflowInstanceId,
+                    artifacts,
+                  );
+                })
+                .map(
+                  (): CompleteStepOutput => ({
+                    effects: buildLegacyCompleteStepEffects(
+                      outcome,
+                      input.workflowInstanceId,
+                    ),
                   }),
+                );
+            }
+
+            // Success path: run plan checks (only when signal.method is present),
+            // validate outputs, persist artifacts, and auto-advance.
+
+            // Plan checks are only performed when the signal explicitly carries
+            // the completion method. When method is absent (legacy path), skip.
+            const planCheck: ResultAsync<undefined, LifecycleError> = (() => {
+              if (
+                input.completionSignal.method === "plan_created" &&
+                stepConfig.completion.method === "plan_created"
+              ) {
+                const planNameResult = renderPlanName(
+                  stepConfig.completion.plan_name,
+                  existing,
+                );
+                if (planNameResult.isErr())
+                  return errAsync(planNameResult.error);
+                return checkPlanFileExists(planNameResult.value);
+              }
+              if (
+                input.completionSignal.method === "plan_complete" &&
+                stepConfig.completion.method === "plan_complete"
+              ) {
+                const planNameResult = renderPlanName(
+                  stepConfig.completion.plan_name,
+                  existing,
+                );
+                if (planNameResult.isErr())
+                  return errAsync(planNameResult.error);
+                return checkPlanComplete(planNameResult.value);
+              }
+              return okAsync(undefined);
+            })();
+
+            return planCheck
+              .andThen(() => {
+                // Validate output artifacts before any writes (all-or-nothing).
+                const outputCheck = validateOutputArtifacts(
+                  stepConfig,
+                  artifacts,
+                );
+                if (outputCheck.isErr()) return errAsync(outputCheck.error);
+                return okAsync(undefined);
+              })
+              .andThen(() =>
+                // Update status to running (interim; may be overridden to completed).
+                store.instances
+                  .update(input.workflowInstanceId, { status: "running" })
+                  .mapErr(
+                    (storeError): LifecycleError =>
+                      lifecyclePersistenceError(storeError.message, {
+                        type: storeError.type,
+                        message: storeError.message,
+                      }),
+                  ),
               )
               .andThen(() => {
                 if (!artifacts || artifacts.length === 0) {
@@ -2093,7 +2442,7 @@ export function completeStep(
               .map((effects): CompleteStepOutput => ({ effects }));
           }
 
-          // Legacy / non-success path: update status, persist artifacts, return legacy effects.
+          // Legacy path (no context): update status, persist artifacts, return legacy effects.
           const updateInput = buildUpdateInput(outcome, message);
 
           return store.instances
