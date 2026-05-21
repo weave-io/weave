@@ -35,6 +35,11 @@ import type {
  * Input for creating a new WorkflowInstance.
  */
 export interface CreateWorkflowInstanceInput {
+  /**
+   * Optional caller-supplied ID. When provided, the store uses this ID instead
+   * of generating a new one. The caller is responsible for ensuring uniqueness.
+   */
+  readonly id?: WorkflowInstanceId;
   readonly workflowName: string;
   readonly goal: string;
   readonly slug: string;

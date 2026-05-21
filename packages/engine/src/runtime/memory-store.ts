@@ -143,7 +143,7 @@ class InMemoryWorkflowInstanceRepository implements WorkflowInstanceRepository {
     }
     const now = new Date().toISOString();
     const instance: WorkflowInstance = {
-      id: createWorkflowInstanceId(newId()),
+      id: input.id ?? createWorkflowInstanceId(newId()),
       workflowName: input.workflowName,
       goal: input.goal,
       slug: input.slug,
