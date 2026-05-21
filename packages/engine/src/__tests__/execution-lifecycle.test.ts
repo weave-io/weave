@@ -42,6 +42,7 @@ import {
   type ObserveSessionInput,
   type ObserveSessionOutput,
   observeSession,
+  type PromptMetadata,
   queryError,
   type ResumeExecutionInput,
   type ResumeExecutionOutput,
@@ -2956,5 +2957,785 @@ describe("startExecution: WorkflowExecutionContext", () => {
     expect(instance.slug).toBe(instanceId);
     // No currentStepName set in legacy path
     expect(instance.currentStepName).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// dispatchStep — configured workflow step resolution
+// ---------------------------------------------------------------------------
+
+describe("dispatchStep: configured workflow step resolution", () => {
+  /**
+   * Shared workflow fixtures for dispatch tests.
+   * The "plan" step uses agent "pattern", "implement" uses "shuttle".
+   */
+  const dispatchWorkflows: WorkflowExecutionContext["workflows"] = {
+    "my-feature": {
+      version: 1,
+      steps: [
+        {
+          name: "plan",
+          type: "autonomous",
+          agent: "pattern",
+          prompt:
+            "Create a plan for {{instance.goal}} (slug: {{instance.slug}})",
+          completion: {
+            method: "plan_created",
+            plan_name: "{{instance.slug}}",
+          },
+        },
+        {
+          name: "implement",
+          type: "autonomous",
+          agent: "shuttle",
+          prompt: "Implement the plan at {{artifacts.plan_path}}",
+          completion: { method: "agent_signal" },
+          inputs: [{ name: "plan_path", description: "Path to the plan file" }],
+        },
+        {
+          name: "review",
+          type: "gate",
+          agent: "weft",
+          prompt: "Review the changes for {{instance.workflowName}}",
+          completion: { method: "review_verdict" },
+          on_reject: "pause",
+        },
+      ],
+    },
+    "interactive-flow": {
+      version: 1,
+      steps: [
+        {
+          name: "confirm",
+          type: "interactive",
+          agent: "loom",
+          prompt: "Confirm the goal: {{instance.goal}}",
+          completion: { method: "user_confirm" },
+        },
+      ],
+    },
+  };
+
+  /**
+   * Helper: start an execution with workflow context and return instance ID + lease ID.
+   */
+  async function startWithContext(
+    store: ReturnType<typeof createInMemoryRuntimeStore>,
+    suffix: string,
+    workflowName = "my-feature",
+    goal = "Add dark mode",
+    slug = "add-dark-mode",
+  ) {
+    const instanceId = createWorkflowInstanceId(`cfg-dispatch-${suffix}`);
+    const startResult = await startExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: `owner-${suffix}`,
+        context: {
+          workflowName,
+          goal,
+          slug,
+          workflows: dispatchWorkflows,
+        },
+      },
+      store,
+    );
+    if (!startResult.isOk())
+      throw new Error(`startExecution failed: ${JSON.stringify(startResult)}`);
+    return { instanceId, activeLeaseId: startResult.value.leaseId };
+  }
+
+  // ---------------------------------------------------------------------------
+  // AC1: step resolution order
+  // ---------------------------------------------------------------------------
+
+  it("resolves step by explicit stepName from input", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startWithContext(
+      store,
+      "resolve-explicit",
+    );
+
+    const result = await dispatchStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "review",
+        context: {
+          workflowName: "my-feature",
+          goal: "Add dark mode",
+          slug: "add-dark-mode",
+          workflows: dispatchWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    expect(result.value.stepName).toBe("review");
+  });
+
+  it("resolves step by instance.currentStepName when no stepName in input", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startWithContext(
+      store,
+      "resolve-current",
+    );
+
+    // Set currentStepName to "implement"
+    await store.instances.update(instanceId, { currentStepName: "implement" });
+
+    // Add the required artifact for "implement" step
+    await store.instances.addArtifact(instanceId, {
+      name: "plan_path",
+      path: ".weave/plans/add-dark-mode.md",
+    });
+
+    const result = await dispatchStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        // no stepName — should use instance.currentStepName
+        context: {
+          workflowName: "my-feature",
+          goal: "Add dark mode",
+          slug: "add-dark-mode",
+          workflows: dispatchWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    expect(result.value.stepName).toBe("implement");
+  });
+
+  it("resolves to first step when neither stepName nor currentStepName is set", async () => {
+    const store = createInMemoryRuntimeStore();
+    // Create instance without currentStepName
+    const instanceId = createWorkflowInstanceId("cfg-dispatch-first-step");
+    const startResult = await startExecution(
+      { workflowInstanceId: instanceId, ownerId: "owner-first-step" },
+      store,
+    );
+    if (!startResult.isOk()) throw new Error("startExecution failed");
+    const activeLeaseId = startResult.value.leaseId;
+
+    // Clear currentStepName
+    await store.instances.update(instanceId, { currentStepName: null });
+
+    const result = await dispatchStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        context: {
+          workflowName: "my-feature",
+          goal: "Add dark mode",
+          slug: "add-dark-mode",
+          workflows: dispatchWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    // First step of "my-feature" is "plan"
+    expect(result.value.stepName).toBe("plan");
+  });
+
+  // ---------------------------------------------------------------------------
+  // AC1: not_found when step doesn't exist in workflow config
+  // ---------------------------------------------------------------------------
+
+  it("returns not_found when step name does not exist in workflow config", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startWithContext(
+      store,
+      "missing-step",
+    );
+
+    const result = await dispatchStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "nonexistent-step",
+        context: {
+          workflowName: "my-feature",
+          goal: "Add dark mode",
+          slug: "add-dark-mode",
+          workflows: dispatchWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("not_found");
+    if (result.error.type === "not_found") {
+      expect(result.error.entity).toBe("WorkflowStep");
+      expect(result.error.id).toBe("nonexistent-step");
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // AC2: uses step.agent (not step name) as agent name
+  // ---------------------------------------------------------------------------
+
+  it("uses step.agent as agentName in emitted effect (not step name)", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startWithContext(
+      store,
+      "agent-name",
+    );
+
+    const result = await dispatchStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "plan",
+        context: {
+          workflowName: "my-feature",
+          goal: "Add dark mode",
+          slug: "add-dark-mode",
+          workflows: dispatchWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    const { effects } = result.value;
+    expect(effects).toHaveLength(1);
+    expect(effects[0]?.kind).toBe("dispatch-agent");
+    if (effects[0]?.kind === "dispatch-agent") {
+      // "plan" step has agent "pattern" — NOT "plan"
+      expect(effects[0].runAgent.agentName).toBe("pattern");
+      expect(effects[0].runAgent.agentDescriptor.name).toBe("pattern");
+    }
+  });
+
+  it("uses step.agent 'shuttle' for implement step", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startWithContext(
+      store,
+      "agent-shuttle",
+    );
+
+    // Add required artifact
+    await store.instances.addArtifact(instanceId, {
+      name: "plan_path",
+      path: ".weave/plans/add-dark-mode.md",
+    });
+
+    const result = await dispatchStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "implement",
+        context: {
+          workflowName: "my-feature",
+          goal: "Add dark mode",
+          slug: "add-dark-mode",
+          workflows: dispatchWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    const { effects } = result.value;
+    if (effects[0]?.kind === "dispatch-agent") {
+      expect(effects[0].runAgent.agentName).toBe("shuttle");
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // AC3: prompt rendering with instance context and artifact references
+  // ---------------------------------------------------------------------------
+
+  it("renders step.prompt with {{instance.goal}} and {{instance.slug}}", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startWithContext(
+      store,
+      "prompt-render",
+      "my-feature",
+      "Add dark mode support",
+      "add-dark-mode-support",
+    );
+
+    const result = await dispatchStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "plan",
+        context: {
+          workflowName: "my-feature",
+          goal: "Add dark mode support",
+          slug: "add-dark-mode-support",
+          workflows: dispatchWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    const { effects } = result.value;
+    if (effects[0]?.kind === "dispatch-agent") {
+      // promptMetadata must be present and have a positive byteLength
+      // (the rendered prompt "Create a plan for Add dark mode support (slug: add-dark-mode-support)"
+      //  is non-empty)
+      expect(effects[0].runAgent.promptMetadata).toBeDefined();
+      const pm = effects[0].runAgent.promptMetadata as PromptMetadata;
+      expect(pm.byteLength).toBeGreaterThan(0);
+    }
+  });
+
+  it("renders step.prompt with {{artifacts.plan_path}} artifact reference", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startWithContext(
+      store,
+      "prompt-artifact",
+    );
+
+    // Add the artifact that the "implement" step references
+    await store.instances.addArtifact(instanceId, {
+      name: "plan_path",
+      path: ".weave/plans/add-dark-mode.md",
+    });
+
+    const result = await dispatchStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "implement",
+        context: {
+          workflowName: "my-feature",
+          goal: "Add dark mode",
+          slug: "add-dark-mode",
+          workflows: dispatchWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    const { effects } = result.value;
+    if (effects[0]?.kind === "dispatch-agent") {
+      // The rendered prompt "Implement the plan at .weave/plans/add-dark-mode.md"
+      // is non-empty — promptMetadata.byteLength reflects this
+      expect(effects[0].runAgent.promptMetadata).toBeDefined();
+      const pm = effects[0].runAgent.promptMetadata as PromptMetadata;
+      expect(pm.byteLength).toBeGreaterThan(0);
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // AC4: missing required input artifact → not_found error before dispatch
+  // ---------------------------------------------------------------------------
+
+  it("returns not_found error when required input artifact is missing", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startWithContext(
+      store,
+      "missing-artifact",
+    );
+
+    // "implement" step requires "plan_path" artifact — do NOT add it
+
+    const result = await dispatchStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "implement",
+        context: {
+          workflowName: "my-feature",
+          goal: "Add dark mode",
+          slug: "add-dark-mode",
+          workflows: dispatchWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("not_found");
+    if (result.error.type === "not_found") {
+      expect(result.error.entity).toBe("artifact");
+      expect(result.error.id).toBe("plan_path");
+    }
+  });
+
+  it("succeeds when all required input artifacts are present", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startWithContext(
+      store,
+      "all-artifacts-present",
+    );
+
+    // Add the required artifact
+    await store.instances.addArtifact(instanceId, {
+      name: "plan_path",
+      path: ".weave/plans/add-dark-mode.md",
+    });
+
+    const result = await dispatchStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "implement",
+        context: {
+          workflowName: "my-feature",
+          goal: "Add dark mode",
+          slug: "add-dark-mode",
+          workflows: dispatchWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+  });
+
+  // ---------------------------------------------------------------------------
+  // AC5: emitted effect contains completionMethod, stepType, correlationId,
+  //       promptMetadata — NO concrete harness tool names, NO session mutations
+  // ---------------------------------------------------------------------------
+
+  it("emitted effect carries completionMethod from step.completion.method", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startWithContext(
+      store,
+      "completion-method",
+    );
+
+    const result = await dispatchStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "plan",
+        context: {
+          workflowName: "my-feature",
+          goal: "Add dark mode",
+          slug: "add-dark-mode",
+          workflows: dispatchWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    const { effects } = result.value;
+    if (effects[0]?.kind === "dispatch-agent") {
+      // "plan" step has completion method "plan_created"
+      expect(effects[0].runAgent.completionMethod).toBe("plan_created");
+    }
+  });
+
+  it("emitted effect carries stepType from step.type", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startWithContext(
+      store,
+      "step-type",
+    );
+
+    const result = await dispatchStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "review",
+        context: {
+          workflowName: "my-feature",
+          goal: "Add dark mode",
+          slug: "add-dark-mode",
+          workflows: dispatchWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    const { effects } = result.value;
+    if (effects[0]?.kind === "dispatch-agent") {
+      // "review" step has type "gate"
+      expect(effects[0].runAgent.stepType).toBe("gate");
+    }
+  });
+
+  it("emitted effect carries a correlationId (UUID format)", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startWithContext(
+      store,
+      "correlation-id",
+    );
+
+    const result = await dispatchStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "plan",
+        context: {
+          workflowName: "my-feature",
+          goal: "Add dark mode",
+          slug: "add-dark-mode",
+          workflows: dispatchWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    const { effects } = result.value;
+    if (effects[0]?.kind === "dispatch-agent") {
+      const { correlationId } = effects[0].runAgent;
+      expect(typeof correlationId).toBe("string");
+      // UUID v4 format: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
+      expect(correlationId).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      );
+    }
+  });
+
+  it("each dispatch generates a unique correlationId", async () => {
+    // Use two independent stores so each has its own active lease
+    const store1 = createInMemoryRuntimeStore();
+    const { instanceId: instanceId1, activeLeaseId: leaseId1 } =
+      await startWithContext(store1, "unique-correlation-a");
+
+    const store2 = createInMemoryRuntimeStore();
+    const { instanceId: instanceId2, activeLeaseId: leaseId2 } =
+      await startWithContext(store2, "unique-correlation-b");
+
+    const result1 = await dispatchStep(
+      {
+        workflowInstanceId: instanceId1,
+        leaseId: leaseId1,
+        stepName: "plan",
+        context: {
+          workflowName: "my-feature",
+          goal: "Add dark mode",
+          slug: "add-dark-mode",
+          workflows: dispatchWorkflows,
+        },
+      },
+      store1,
+    );
+
+    const result2 = await dispatchStep(
+      {
+        workflowInstanceId: instanceId2,
+        leaseId: leaseId2,
+        stepName: "plan",
+        context: {
+          workflowName: "my-feature",
+          goal: "Add dark mode",
+          slug: "add-dark-mode",
+          workflows: dispatchWorkflows,
+        },
+      },
+      store2,
+    );
+
+    expect(result1.isOk()).toBe(true);
+    expect(result2.isOk()).toBe(true);
+    if (!result1.isOk() || !result2.isOk()) return;
+
+    const id1 =
+      result1.value.effects[0]?.kind === "dispatch-agent"
+        ? result1.value.effects[0].runAgent.correlationId
+        : undefined;
+    const id2 =
+      result2.value.effects[0]?.kind === "dispatch-agent"
+        ? result2.value.effects[0].runAgent.correlationId
+        : undefined;
+
+    expect(id1).toBeDefined();
+    expect(id2).toBeDefined();
+    expect(id1).not.toBe(id2);
+  });
+
+  it("composedPrompt is always empty string — no raw prompt in effect", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startWithContext(
+      store,
+      "no-raw-prompt",
+    );
+
+    const result = await dispatchStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "plan",
+        context: {
+          workflowName: "my-feature",
+          goal: "Add dark mode",
+          slug: "add-dark-mode",
+          workflows: dispatchWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    const { effects } = result.value;
+    if (effects[0]?.kind === "dispatch-agent") {
+      // Security invariant: composedPrompt must never contain raw prompt text
+      expect(effects[0].runAgent.agentDescriptor.composedPrompt).toBe("");
+    }
+  });
+
+  it("effect contains no concrete harness tool names or session data", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startWithContext(
+      store,
+      "no-harness-data",
+    );
+
+    const result = await dispatchStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "plan",
+        context: {
+          workflowName: "my-feature",
+          goal: "Add dark mode",
+          slug: "add-dark-mode",
+          workflows: dispatchWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    const { effects } = result.value;
+    if (effects[0]?.kind === "dispatch-agent") {
+      const { runAgent } = effects[0];
+      // No harness-specific tool names
+      expect("toolName" in runAgent).toBe(false);
+      expect("harnessToolName" in runAgent).toBe(false);
+      expect("sessionId" in runAgent).toBe(false);
+      expect("token" in runAgent).toBe(false);
+      expect("apiKey" in runAgent).toBe(false);
+      // resolvedSkills contains only names (empty for MVP dispatch)
+      expect(runAgent.resolvedSkills).toHaveLength(0);
+      // agentDescriptor has no harness-private fields
+      expect("promptFilePath" in runAgent.agentDescriptor).toBe(false);
+    }
+  });
+
+  it("promptMetadata carries byteLength but not raw prompt text", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startWithContext(
+      store,
+      "prompt-metadata-shape",
+      "my-feature",
+      "Build the feature",
+      "build-the-feature",
+    );
+
+    const result = await dispatchStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "plan",
+        context: {
+          workflowName: "my-feature",
+          goal: "Build the feature",
+          slug: "build-the-feature",
+          workflows: dispatchWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    const { effects } = result.value;
+    if (effects[0]?.kind === "dispatch-agent") {
+      const pm = effects[0].runAgent.promptMetadata;
+      expect(pm).toBeDefined();
+      if (!pm) return;
+
+      // Only byteLength is present — no raw text
+      const pmKeys = Object.keys(pm);
+      expect(pmKeys).toContain("byteLength");
+      expect(pmKeys).not.toContain("text");
+      expect(pmKeys).not.toContain("content");
+      expect(pmKeys).not.toContain("prompt");
+      expect(pm.byteLength).toBeGreaterThan(0);
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Interactive and gate step types
+  // ---------------------------------------------------------------------------
+
+  it("interactive step: stepType is 'interactive'", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startWithContext(
+      store,
+      "interactive-type",
+      "interactive-flow",
+      "Confirm the plan",
+      "confirm-the-plan",
+    );
+
+    const result = await dispatchStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "confirm",
+        context: {
+          workflowName: "interactive-flow",
+          goal: "Confirm the plan",
+          slug: "confirm-the-plan",
+          workflows: dispatchWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    const { effects } = result.value;
+    if (effects[0]?.kind === "dispatch-agent") {
+      expect(effects[0].runAgent.stepType).toBe("interactive");
+      expect(effects[0].runAgent.completionMethod).toBe("user_confirm");
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // PromptMetadata type is importable from @weave/engine
+  // ---------------------------------------------------------------------------
+
+  it("PromptMetadata type is importable and structurally correct", () => {
+    const pm: PromptMetadata = { byteLength: 42 };
+    expect(pm.byteLength).toBe(42);
+    // Only byteLength field
+    expect(Object.keys(pm)).toEqual(["byteLength"]);
   });
 });

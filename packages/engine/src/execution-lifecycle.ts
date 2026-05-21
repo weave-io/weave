@@ -31,7 +31,7 @@
  * @see docs/adapter-boundary.md — Execution Lifecycle Surface section
  */
 
-import type { WorkflowConfig } from "@weave/core";
+import type { WorkflowConfig, WorkflowStep } from "@weave/core";
 import {
   err,
   errAsync,
@@ -47,12 +47,19 @@ import type {
   ArtifactRef,
   ExecutionLeaseId,
   SessionSnapshotId,
+  WorkflowInstance,
   WorkflowInstanceId,
 } from "./runtime/types.js";
 import { createOwnerId } from "./runtime/types.js";
 import {
+  type RendererError,
+  renderTemplate,
+  type TemplateContext,
+} from "./template-renderer.js";
+import {
   ABSTRACT_CAPABILITIES,
   type EffectiveToolPolicy,
+  evaluateEffectiveToolPolicy,
 } from "./tool-policy.js";
 
 // ---------------------------------------------------------------------------
@@ -638,6 +645,15 @@ export interface HandleUserInterruptOutput {
  * step. The engine evaluates the workflow topology, resolves the step's agent
  * and policy, and returns a `DispatchAgentEffect` wrapping a `RunAgentEffect`.
  *
+ * When `context` is provided the engine resolves the step from
+ * `context.workflows`, uses `step.agent` as the agent name, renders
+ * `step.prompt` with instance context and artifact references, validates
+ * declared `step.inputs` artifacts, and emits a fully-populated effect with
+ * `completionMethod`, `stepType`, `correlationId`, and `promptMetadata`.
+ *
+ * When `context` is omitted the engine falls back to legacy behaviour: the
+ * step name is used as the agent name with a minimal allow-all policy.
+ *
  * EXCLUDED: raw prompts, completions, transcripts, credentials, tokens,
  * cookies, authorization headers, raw provider payloads.
  */
@@ -653,6 +669,15 @@ export interface DispatchStepInput {
   readonly stepName?: string;
   /** Optional structured metadata about the dispatch request. */
   readonly metadata?: SafeMetadata;
+  /**
+   * Optional workflow execution context.
+   *
+   * When provided the engine resolves the step from the workflow config,
+   * uses `step.agent` as the agent name, renders `step.prompt`, validates
+   * declared inputs, and emits a fully-populated `RunAgentEffect`.
+   * When omitted the engine uses the step name as the agent name (legacy).
+   */
+  readonly context?: WorkflowExecutionContext;
 }
 
 /**
@@ -1258,20 +1283,237 @@ export function handleUserInterrupt(
 }
 
 // ---------------------------------------------------------------------------
+// 5. dispatchStep — helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Allowed template paths for workflow step prompt rendering.
+ *
+ * These paths are the only ones the engine exposes to step prompts.
+ * Adapters may not inject additional paths — the set is engine-owned.
+ */
+const STEP_PROMPT_ALLOWED_PATHS: ReadonlySet<string> = new Set([
+  "instance.goal",
+  "instance.slug",
+  "instance.workflowName",
+  "instance.currentStepName",
+  "step.name",
+  "step.type",
+  "step.agent",
+  "artifacts",
+]);
+
+/**
+ * Resolve a `WorkflowStep` from a workflow config by step name.
+ *
+ * Returns `ok(step)` when found, or a typed `not_found` error.
+ */
+function resolveWorkflowStep(
+  workflowConfig: WorkflowConfig,
+  stepName: string,
+): Result<WorkflowStep, LifecycleError> {
+  const step = workflowConfig.steps.find((s) => s.name === stepName);
+  if (step === undefined) {
+    return err(
+      lifecycleNotFoundError(
+        "WorkflowStep",
+        stepName,
+        `Step "${stepName}" not found in workflow`,
+      ),
+    );
+  }
+  return ok(step);
+}
+
+/**
+ * Validate that all declared `step.inputs` artifacts are present in the
+ * instance's persisted artifacts.
+ *
+ * Returns `ok(undefined)` when all inputs are satisfied, or a typed
+ * `not_found` error naming the first missing artifact.
+ */
+function validateStepInputs(
+  step: WorkflowStep,
+  instance: WorkflowInstance,
+): Result<undefined, LifecycleError> {
+  if (!step.inputs || step.inputs.length === 0) return ok(undefined);
+
+  const artifactNames = new Set(instance.artifacts.map((a) => a.name));
+  for (const input of step.inputs) {
+    if (!artifactNames.has(input.name)) {
+      return err(
+        lifecycleNotFoundError(
+          "artifact",
+          input.name,
+          `Required input artifact "${input.name}" is missing from workflow instance`,
+        ),
+      );
+    }
+  }
+  return ok(undefined);
+}
+
+/**
+ * Build the Mustache template context for a workflow step prompt.
+ *
+ * Exposes instance fields and artifact references under the allowed paths.
+ * Never exposes raw prompt content, credentials, or harness-private data.
+ */
+function buildStepPromptContext(
+  instance: WorkflowInstance,
+  step: WorkflowStep,
+): TemplateContext {
+  // Build artifacts map: { [name]: path } for {{artifacts.plan_path}} etc.
+  const artifactsMap: TemplateContext = {};
+  for (const artifact of instance.artifacts) {
+    artifactsMap[artifact.name] = artifact.path;
+  }
+
+  return {
+    instance: {
+      goal: instance.goal,
+      slug: instance.slug,
+      workflowName: instance.workflowName,
+      currentStepName: instance.currentStepName ?? "",
+    },
+    step: {
+      name: step.name,
+      type: step.type,
+      agent: step.agent,
+    },
+    artifacts: artifactsMap,
+  };
+}
+
+/**
+ * Render a step prompt template and return sanitized prompt metadata.
+ *
+ * The rendered prompt text is NOT stored in the effect — only its byte length
+ * is returned as `PromptMetadata`. This preserves the security invariant that
+ * raw prompts never appear in lifecycle effects.
+ *
+ * Artifact names from the instance are added to the allowed paths set as
+ * `artifacts.<name>` so that templates like `{{artifacts.plan_path}}` resolve
+ * correctly without requiring a static allowlist of artifact names.
+ *
+ * Maps `RendererError` to a `LifecycleError` with type `validation`.
+ */
+function renderStepPrompt(
+  promptTemplate: string,
+  context: TemplateContext,
+  artifactNames: readonly string[],
+): Result<{ byteLength: number }, LifecycleError> {
+  // Build the allowed paths set, adding dynamic artifact paths.
+  const allowedPaths = new Set(STEP_PROMPT_ALLOWED_PATHS);
+  for (const name of artifactNames) {
+    allowedPaths.add(`artifacts.${name}`);
+  }
+
+  const renderResult = renderTemplate(promptTemplate, context, {
+    allowedPaths,
+  });
+  if (renderResult.isErr()) {
+    const re: RendererError = renderResult.error;
+    return err(
+      lifecycleValidationError(
+        `Step prompt template error: ${re.message}`,
+        "step.prompt",
+      ),
+    );
+  }
+  const rendered = renderResult.value;
+  const byteLength = new TextEncoder().encode(rendered).byteLength;
+  return ok({ byteLength });
+}
+
+/**
+ * Build a legacy (no-context) `RunAgentEffect` using the step name as agent
+ * name and a minimal allow-all policy.
+ *
+ * Preserved for backward compatibility when no `WorkflowExecutionContext` is
+ * provided to `dispatchStep`.
+ */
+function buildLegacyRunAgentEffect(stepName: string): RunAgentEffect {
+  const minimalPolicy = evaluateEffectiveToolPolicy({
+    read: "allow",
+    write: "allow",
+    execute: "allow",
+    delegate: "deny",
+    network: "ask",
+  });
+  return {
+    kind: "run-agent",
+    agentName: stepName,
+    agentDescriptor: {
+      name: stepName,
+      composedPrompt: "",
+      models: [],
+      mode: "subagent",
+      effectiveToolPolicy: minimalPolicy,
+      rawToolPolicy: undefined,
+      delegationTargets: [],
+      skills: [],
+    },
+    effectiveToolPolicy: minimalPolicy,
+    rawToolPolicy: undefined,
+    resolvedSkills: [],
+  };
+}
+
+/**
+ * Build a configured `RunAgentEffect` from a resolved `WorkflowStep`.
+ *
+ * Uses `step.agent` as the agent name, emits `completionMethod`, `stepType`,
+ * `correlationId`, and `promptMetadata`. `composedPrompt` is always `""` —
+ * the security invariant is preserved.
+ */
+function buildConfiguredRunAgentEffect(
+  step: WorkflowStep,
+  promptMetadata: { byteLength: number },
+): RunAgentEffect {
+  const effectivePolicy = evaluateEffectiveToolPolicy(undefined);
+  return {
+    kind: "run-agent",
+    agentName: step.agent,
+    agentDescriptor: {
+      name: step.agent,
+      composedPrompt: "",
+      models: [],
+      mode: "subagent",
+      effectiveToolPolicy: effectivePolicy,
+      rawToolPolicy: undefined,
+      delegationTargets: [],
+      skills: [],
+    },
+    effectiveToolPolicy: effectivePolicy,
+    rawToolPolicy: undefined,
+    resolvedSkills: [],
+    completionMethod: step.completion.method,
+    stepType: step.type,
+    correlationId: crypto.randomUUID(),
+    promptMetadata,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // 5. dispatchStep — implementation
 // ---------------------------------------------------------------------------
 
 /**
  * Dispatch the next (or a specific) workflow step.
  *
- * Resolves the step name from `input.stepName`, then `instance.currentStepName`,
- * then falls back to `"default"`. Updates `currentStepName` on the instance and
- * returns a `DispatchAgentEffect` wrapping a minimal `RunAgentEffect`.
+ * **With `input.context`** (configured dispatch):
+ * 1. Resolves the step from `context.workflows[instance.workflowName].steps`
+ *    using `input.stepName`, `instance.currentStepName`, or the first step.
+ * 2. Returns `not_found` if the step doesn't exist in the workflow config.
+ * 3. Validates declared `step.inputs` artifacts are present in the instance.
+ * 4. Renders `step.prompt` with instance context and artifact references.
+ * 5. Emits a `DispatchAgentEffect` with `step.agent` as agent name,
+ *    `completionMethod`, `stepType`, `correlationId`, and `promptMetadata`.
  *
- * Security invariant: the emitted `RunAgentEffect` contains no raw prompts,
- * credentials, tokens, or harness-private paths. `agentDescriptor.composedPrompt`
- * is an empty string for the MVP dispatch — the actual prompt is resolved by
- * the adapter.
+ * **Without `input.context`** (legacy dispatch):
+ * - Uses step name as agent name with a minimal allow-all policy.
+ * - `composedPrompt` is always `""` (security invariant).
  *
  * @param input - Dispatch parameters from the adapter.
  * @param store - Runtime Store instance.
@@ -1360,8 +1602,80 @@ export function dispatchStep(
           const stepName =
             input.stepName ?? existing.currentStepName ?? "default";
 
+          // When no context is provided, use legacy dispatch (step name = agent name).
+          if (input.context === undefined) {
+            return store.instances
+              .update(input.workflowInstanceId, { currentStepName: stepName })
+              .mapErr(
+                (storeError): LifecycleError =>
+                  lifecyclePersistenceError(storeError.message, {
+                    type: storeError.type,
+                    message: storeError.message,
+                  }),
+              )
+              .map(
+                (): DispatchStepOutput => ({
+                  stepName,
+                  effects: [
+                    {
+                      kind: "dispatch-agent",
+                      runAgent: buildLegacyRunAgentEffect(stepName),
+                    },
+                  ],
+                }),
+              );
+          }
+
+          // Configured dispatch: resolve step from workflow config.
+          const workflowConfig =
+            input.context.workflows[existing.workflowName] ??
+            input.context.workflows[input.context.workflowName];
+
+          if (workflowConfig === undefined) {
+            return errAsync(
+              lifecycleNotFoundError(
+                "workflow",
+                existing.workflowName,
+                `Workflow "${existing.workflowName}" not found in provided workflow map`,
+              ),
+            );
+          }
+
+          // Resolve the step — prefer explicit stepName, then currentStepName,
+          // then first step in the workflow.
+          const resolvedStepName =
+            input.stepName ??
+            existing.currentStepName ??
+            workflowConfig.steps[0]?.name ??
+            "default";
+
+          const stepResult = resolveWorkflowStep(
+            workflowConfig,
+            resolvedStepName,
+          );
+          if (stepResult.isErr()) return errAsync(stepResult.error);
+          const step = stepResult.value;
+
+          // Validate declared inputs are present in the instance.
+          const inputsCheck = validateStepInputs(step, existing);
+          if (inputsCheck.isErr()) return errAsync(inputsCheck.error);
+
+          // Render the step prompt and compute prompt metadata.
+          const promptContext = buildStepPromptContext(existing, step);
+          const artifactNames = existing.artifacts.map((a) => a.name);
+          const promptResult = renderStepPrompt(
+            step.prompt,
+            promptContext,
+            artifactNames,
+          );
+          if (promptResult.isErr()) return errAsync(promptResult.error);
+          const promptMetadata = promptResult.value;
+
+          // Update currentStepName on the instance.
           return store.instances
-            .update(input.workflowInstanceId, { currentStepName: stepName })
+            .update(input.workflowInstanceId, {
+              currentStepName: resolvedStepName,
+            })
             .mapErr(
               (storeError): LifecycleError =>
                 lifecyclePersistenceError(storeError.message, {
@@ -1369,36 +1683,20 @@ export function dispatchStep(
                   message: storeError.message,
                 }),
             )
-            .map((): DispatchStepOutput => {
-              const minimalPolicy = {
-                read: "allow" as const,
-                write: "allow" as const,
-                execute: "allow" as const,
-                delegate: "deny" as const,
-                network: "ask" as const,
-              };
-              const runAgent: RunAgentEffect = {
-                kind: "run-agent",
-                agentName: stepName,
-                agentDescriptor: {
-                  name: stepName,
-                  composedPrompt: "",
-                  models: [],
-                  mode: "subagent",
-                  effectiveToolPolicy: minimalPolicy,
-                  rawToolPolicy: minimalPolicy,
-                  delegationTargets: [],
-                  skills: [],
-                },
-                effectiveToolPolicy: minimalPolicy,
-                rawToolPolicy: minimalPolicy,
-                resolvedSkills: [],
-              };
-              return {
-                stepName,
-                effects: [{ kind: "dispatch-agent", runAgent }],
-              };
-            });
+            .map(
+              (): DispatchStepOutput => ({
+                stepName: resolvedStepName,
+                effects: [
+                  {
+                    kind: "dispatch-agent",
+                    runAgent: buildConfiguredRunAgentEffect(
+                      step,
+                      promptMetadata,
+                    ),
+                  },
+                ],
+              }),
+            );
         }),
     );
 }

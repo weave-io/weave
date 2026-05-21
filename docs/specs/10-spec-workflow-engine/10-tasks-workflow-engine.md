@@ -55,7 +55,7 @@
 - [ ] 1.5 Add tests for unknown workflow rejection, valid workflow instance creation, first-step initialization, lease acquisition, and active-lease conflict behavior.
 - [ ] 1.6 Export any new execution context or lifecycle input types from `packages/engine/src/index.ts`.
 
-### [ ] 2.0 Dispatch configured workflow steps as abstract effects
+### [x] 2.0 Dispatch configured workflow steps as abstract effects
 
 #### 2.0 Proof Artifact(s)
 
