@@ -1162,7 +1162,14 @@ export function startExecution(
             );
           });
       }
-      return store.instances.update(existing.id, { status: "running" }).mapErr(
+      const existingUpdateInput =
+        fields.currentStepName !== undefined
+          ? {
+              status: "running" as const,
+              currentStepName: fields.currentStepName,
+            }
+          : { status: "running" as const };
+      return store.instances.update(existing.id, existingUpdateInput).mapErr(
         (storeError): LifecycleError =>
           lifecyclePersistenceError(storeError.message, {
             type: storeError.type,

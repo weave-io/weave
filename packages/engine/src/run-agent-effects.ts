@@ -16,7 +16,7 @@
  * from the effect payload.
  */
 
-import type { ToolPolicy } from "@weave/core";
+import type { CompletionMethod, ToolPolicy } from "@weave/core";
 import type { AgentDescriptor } from "./compose.js";
 import type { EffectiveToolPolicy } from "./tool-policy.js";
 
@@ -85,7 +85,7 @@ export type RunAgentEffect = {
    * Expected completion method for this step.
    * Present when dispatched from a configured workflow step.
    */
-  readonly completionMethod?: string;
+  readonly completionMethod?: CompletionMethod["method"];
   /**
    * Interaction intent of the step.
    * Present when dispatched from a configured workflow step.
