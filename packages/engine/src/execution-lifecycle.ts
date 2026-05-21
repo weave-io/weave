@@ -808,6 +808,339 @@ export function startExecution(
 }
 
 // ---------------------------------------------------------------------------
+// 4. handleUserInterrupt — implementation
+// ---------------------------------------------------------------------------
+
+/**
+ * Handle a user-initiated interrupt of an in-progress execution.
+ *
+ * - `pause` signal: updates instance to `paused` status, returns `PauseExecutionEffect`.
+ *   Does NOT set `completedAt` — the instance remains resumable.
+ * - `cancel` signal: updates instance to `cancelled` status (terminal), returns
+ *   `CompleteExecutionEffect`. The store automatically sets `completedAt` for
+ *   terminal statuses.
+ *
+ * @param input - Interrupt parameters from the adapter.
+ * @param store - Runtime Store instance.
+ * @returns `ok({ effects })` on success, or a typed `LifecycleError`.
+ */
+export function handleUserInterrupt(
+  input: HandleUserInterruptInput,
+  store: RuntimeStore,
+): ResultAsync<HandleUserInterruptOutput, LifecycleError> {
+  if (!input.workflowInstanceId) {
+    return errAsync(
+      lifecycleValidationError(
+        "workflowInstanceId is required",
+        "workflowInstanceId",
+      ),
+    );
+  }
+  if (!input.leaseId) {
+    return errAsync(lifecycleValidationError("leaseId is required", "leaseId"));
+  }
+  if (!input.signal) {
+    return errAsync(lifecycleValidationError("signal is required", "signal"));
+  }
+
+  return store.instances
+    .findById(input.workflowInstanceId)
+    .mapErr(
+      (storeError): LifecycleError =>
+        lifecyclePersistenceError(storeError.message, storeError),
+    )
+    .andThen((existing) => {
+      if (existing === null) {
+        return errAsync(
+          lifecycleNotFoundError(
+            "WorkflowInstance",
+            input.workflowInstanceId as string,
+          ),
+        );
+      }
+
+      if (input.signal === "pause") {
+        return store.instances
+          .update(input.workflowInstanceId, { status: "paused" })
+          .mapErr(
+            (storeError): LifecycleError =>
+              lifecyclePersistenceError(storeError.message, storeError),
+          )
+          .map(
+            (): HandleUserInterruptOutput => ({
+              effects: [
+                {
+                  kind: "pause-execution",
+                  workflowInstanceId: input.workflowInstanceId,
+                },
+              ],
+            }),
+          );
+      }
+
+      // signal === "cancel" — terminal status
+      return store.instances
+        .update(input.workflowInstanceId, { status: "cancelled" })
+        .mapErr(
+          (storeError): LifecycleError =>
+            lifecyclePersistenceError(storeError.message, storeError),
+        )
+        .map(
+          (): HandleUserInterruptOutput => ({
+            effects: [
+              {
+                kind: "complete-execution",
+                workflowInstanceId: input.workflowInstanceId,
+              },
+            ],
+          }),
+        );
+    });
+}
+
+// ---------------------------------------------------------------------------
+// 5. dispatchStep — implementation
+// ---------------------------------------------------------------------------
+
+/**
+ * Dispatch the next (or a specific) workflow step.
+ *
+ * Resolves the step name from `input.stepName`, then `instance.currentStepName`,
+ * then falls back to `"default"`. Updates `currentStepName` on the instance and
+ * returns a `DispatchAgentEffect` wrapping a minimal `RunAgentEffect`.
+ *
+ * Security invariant: the emitted `RunAgentEffect` contains no raw prompts,
+ * credentials, tokens, or harness-private paths. `agentDescriptor.composedPrompt`
+ * is an empty string for the MVP dispatch — the actual prompt is resolved by
+ * the adapter.
+ *
+ * @param input - Dispatch parameters from the adapter.
+ * @param store - Runtime Store instance.
+ * @returns `ok({ stepName, effects })` on success, or a typed `LifecycleError`.
+ */
+export function dispatchStep(
+  input: DispatchStepInput,
+  store: RuntimeStore,
+): ResultAsync<DispatchStepOutput, LifecycleError> {
+  if (!input.workflowInstanceId) {
+    return errAsync(
+      lifecycleValidationError(
+        "workflowInstanceId is required",
+        "workflowInstanceId",
+      ),
+    );
+  }
+  if (!input.leaseId) {
+    return errAsync(lifecycleValidationError("leaseId is required", "leaseId"));
+  }
+
+  return store.instances
+    .findById(input.workflowInstanceId)
+    .mapErr(
+      (storeError): LifecycleError =>
+        lifecyclePersistenceError(storeError.message, storeError),
+    )
+    .andThen((existing) => {
+      if (existing === null) {
+        return errAsync(
+          lifecycleNotFoundError(
+            "WorkflowInstance",
+            input.workflowInstanceId as string,
+          ),
+        );
+      }
+
+      const stepName = input.stepName ?? existing.currentStepName ?? "default";
+
+      return store.instances
+        .update(input.workflowInstanceId, { currentStepName: stepName })
+        .mapErr(
+          (storeError): LifecycleError =>
+            lifecyclePersistenceError(storeError.message, storeError),
+        )
+        .map((): DispatchStepOutput => {
+          const minimalPolicy = {
+            read: "allow" as const,
+            write: "allow" as const,
+            execute: "allow" as const,
+            delegate: "deny" as const,
+            network: "ask" as const,
+          };
+          const runAgent: RunAgentEffect = {
+            kind: "run-agent",
+            agentName: stepName,
+            agentDescriptor: {
+              name: stepName,
+              composedPrompt: "",
+              models: [],
+              mode: "subagent",
+              effectiveToolPolicy: minimalPolicy,
+              rawToolPolicy: minimalPolicy,
+              delegationTargets: [],
+              skills: [],
+            },
+            effectiveToolPolicy: minimalPolicy,
+            rawToolPolicy: minimalPolicy,
+            resolvedSkills: [],
+          };
+          return {
+            stepName,
+            effects: [{ kind: "dispatch-agent", runAgent }],
+          };
+        });
+    });
+}
+
+// ---------------------------------------------------------------------------
+// 6. completeStep — implementation
+// ---------------------------------------------------------------------------
+
+/**
+ * Record the completion of a workflow step and advance the workflow state.
+ *
+ * Maps `completionSignal.outcome` to workflow status:
+ * - `"success"` → `"running"` (more steps may follow) — no effects for MVP
+ * - `"blocked"` → `"blocked"` — no effects
+ * - `"failed"`  → `"failed"` — sets `errorMessage`, store auto-sets `completedAt`
+ * - `"paused"`  → `"paused"` — returns `PauseExecutionEffect`
+ *
+ * If `completionSignal.artifacts` is provided, each artifact is added to the
+ * instance via `store.instances.addArtifact()`.
+ *
+ * @param input - Step completion parameters from the adapter.
+ * @param store - Runtime Store instance.
+ * @returns `ok({ effects })` on success, or a typed `LifecycleError`.
+ */
+export function completeStep(
+  input: CompleteStepInput,
+  store: RuntimeStore,
+): ResultAsync<CompleteStepOutput, LifecycleError> {
+  if (!input.workflowInstanceId) {
+    return errAsync(
+      lifecycleValidationError(
+        "workflowInstanceId is required",
+        "workflowInstanceId",
+      ),
+    );
+  }
+  if (!input.leaseId) {
+    return errAsync(lifecycleValidationError("leaseId is required", "leaseId"));
+  }
+  if (!input.stepName) {
+    return errAsync(
+      lifecycleValidationError("stepName is required", "stepName"),
+    );
+  }
+  if (!input.completionSignal) {
+    return errAsync(
+      lifecycleValidationError(
+        "completionSignal is required",
+        "completionSignal",
+      ),
+    );
+  }
+
+  return store.instances
+    .findById(input.workflowInstanceId)
+    .mapErr(
+      (storeError): LifecycleError =>
+        lifecyclePersistenceError(storeError.message, storeError),
+    )
+    .andThen((existing) => {
+      if (existing === null) {
+        return errAsync(
+          lifecycleNotFoundError(
+            "WorkflowInstance",
+            input.workflowInstanceId as string,
+          ),
+        );
+      }
+
+      const { outcome, message, artifacts } = input.completionSignal;
+
+      const updateInput = buildUpdateInput(outcome, message);
+
+      return store.instances
+        .update(input.workflowInstanceId, updateInput)
+        .mapErr(
+          (storeError): LifecycleError =>
+            lifecyclePersistenceError(storeError.message, storeError),
+        )
+        .andThen(() => {
+          if (!artifacts || artifacts.length === 0) {
+            return okAsync(undefined);
+          }
+          return addArtifactsSequentially(
+            store,
+            input.workflowInstanceId,
+            artifacts,
+          );
+        })
+        .map((): CompleteStepOutput => {
+          const effects = buildCompleteStepEffects(
+            outcome,
+            input.workflowInstanceId,
+          );
+          return { effects };
+        });
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Internal helpers for completeStep
+// ---------------------------------------------------------------------------
+
+function buildUpdateInput(
+  outcome: StepCompletionSignal["outcome"],
+  message: string | undefined,
+): import("./runtime/store.js").UpdateWorkflowInstanceInput {
+  if (outcome === "success") return { status: "running" };
+  if (outcome === "blocked") return { status: "blocked" };
+  if (outcome === "failed") {
+    return {
+      status: "failed",
+      ...(message !== undefined ? { errorMessage: message } : {}),
+    };
+  }
+  // outcome === "paused"
+  return { status: "paused" };
+}
+
+function buildCompleteStepEffects(
+  outcome: StepCompletionSignal["outcome"],
+  workflowInstanceId: WorkflowInstanceId,
+): readonly LifecycleEffect[] {
+  if (outcome === "paused") {
+    return [{ kind: "pause-execution", workflowInstanceId }];
+  }
+  return [];
+}
+
+function addArtifactsSequentially(
+  store: RuntimeStore,
+  workflowInstanceId: WorkflowInstanceId,
+  artifacts: readonly ArtifactRef[],
+): ResultAsync<undefined, LifecycleError> {
+  const first = artifacts[0];
+  if (!first) return okAsync(undefined);
+
+  return store.instances
+    .addArtifact(workflowInstanceId, {
+      name: first.name,
+      path: first.path,
+      ...(first.mimeType ? { mimeType: first.mimeType } : {}),
+      ...(first.description ? { description: first.description } : {}),
+    })
+    .mapErr(
+      (storeError): LifecycleError =>
+        lifecyclePersistenceError(storeError.message, storeError),
+    )
+    .andThen(() =>
+      addArtifactsSequentially(store, workflowInstanceId, artifacts.slice(1)),
+    );
+}
+
+// ---------------------------------------------------------------------------
 // 3. resumeExecution — implementation
 // ---------------------------------------------------------------------------
 

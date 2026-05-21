@@ -127,7 +127,7 @@
   - function lifecyclePersistenceError: (message, cause?) => LifecyclePersistenceError
   - function lifecyclePolicyDecisionError: (message, rule?) => LifecyclePolicyDecisionError
   - function observeSession: (input, store) => ResultAsync<ObserveSessionOutput, LifecycleError>
-  - _...35 more_
+  - _...38 more_
 - `packages/engine/src/model-resolution.ts`
   - function resolveAdapterModelIntent: (input) => ModelResolutionResult
   - interface ModelResolutionInput

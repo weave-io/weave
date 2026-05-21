@@ -71,7 +71,7 @@
 - [ ] 2.6 Map unexpired active lease conflicts to a typed lifecycle error without throwing.
 - [ ] 2.7 Add in-memory Runtime Store tests for sanitized session snapshots, start execution state, lease acquisition, expired lease replacement, and active foreign lease conflict.
 
-### [ ] 3.0 Implement interrupt, dispatch, and completion lifecycle flow
+### [x] 3.0 Implement interrupt, dispatch, and completion lifecycle flow
 
 #### 3.0 Proof Artifact(s)
 

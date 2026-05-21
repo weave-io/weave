@@ -74,6 +74,9 @@ export type {
   StepCompletionSignal,
 } from "./execution-lifecycle.js";
 export {
+  completeStep,
+  dispatchStep,
+  handleUserInterrupt,
   lifecycleLeaseConflictError,
   lifecycleNotFoundError,
   lifecyclePersistenceError,

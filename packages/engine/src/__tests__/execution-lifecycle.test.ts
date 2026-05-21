@@ -17,6 +17,7 @@ import {
   type BeforeToolOutput,
   type CompleteStepInput,
   type CompleteStepOutput,
+  completeStep,
   createExecutionLeaseId,
   createInMemoryRuntimeStore,
   createOwnerId,
@@ -25,8 +26,10 @@ import {
   type DispatchAgentEffect,
   type DispatchStepInput,
   type DispatchStepOutput,
+  dispatchStep,
   type HandleUserInterruptInput,
   type HandleUserInterruptOutput,
+  handleUserInterrupt,
   type LifecycleEffect,
   type LifecycleError,
   lifecycleLeaseConflictError,
@@ -1174,5 +1177,655 @@ describe("resumeExecution (Runtime Store)", () => {
     expect(result.isErr()).toBe(true);
     if (!result.isErr()) return;
     expect(result.error.type).toBe("validation");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Runtime Store lifecycle tests — handleUserInterrupt
+// ---------------------------------------------------------------------------
+
+describe("handleUserInterrupt (Runtime Store)", () => {
+  it("pause signal: updates instance to paused status, returns PauseExecutionEffect", async () => {
+    const store = createInMemoryRuntimeStore();
+
+    // Pre-create a running workflow instance
+    const createResult = await store.instances.create({
+      workflowName: "interrupt-workflow",
+      goal: "interrupt goal",
+      slug: "interrupt-goal",
+    });
+    expect(createResult.isOk()).toBe(true);
+    if (!createResult.isOk()) return;
+    const instanceId = createResult.value.id;
+    await store.instances.update(instanceId, { status: "running" });
+
+    const result = await handleUserInterrupt(
+      {
+        workflowInstanceId: instanceId,
+        leaseId,
+        signal: "pause",
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    const { effects } = result.value;
+    expect(effects).toHaveLength(1);
+    expect(effects[0]?.kind).toBe("pause-execution");
+    if (effects[0]?.kind === "pause-execution") {
+      expect(effects[0].workflowInstanceId).toBe(instanceId);
+    }
+
+    // Verify instance is paused
+    const instanceResult = await store.instances.getById(instanceId);
+    expect(instanceResult.isOk()).toBe(true);
+    if (!instanceResult.isOk()) return;
+    expect(instanceResult.value.status).toBe("paused");
+  });
+
+  it("cancel signal: updates instance to cancelled status, returns CompleteExecutionEffect", async () => {
+    const store = createInMemoryRuntimeStore();
+
+    const createResult = await store.instances.create({
+      workflowName: "cancel-workflow",
+      goal: "cancel goal",
+      slug: "cancel-goal",
+    });
+    expect(createResult.isOk()).toBe(true);
+    if (!createResult.isOk()) return;
+    const instanceId = createResult.value.id;
+    await store.instances.update(instanceId, { status: "running" });
+
+    const result = await handleUserInterrupt(
+      {
+        workflowInstanceId: instanceId,
+        leaseId,
+        signal: "cancel",
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    const { effects } = result.value;
+    expect(effects).toHaveLength(1);
+    expect(effects[0]?.kind).toBe("complete-execution");
+    if (effects[0]?.kind === "complete-execution") {
+      expect(effects[0].workflowInstanceId).toBe(instanceId);
+    }
+
+    // Verify instance is cancelled
+    const instanceResult = await store.instances.getById(instanceId);
+    expect(instanceResult.isOk()).toBe(true);
+    if (!instanceResult.isOk()) return;
+    expect(instanceResult.value.status).toBe("cancelled");
+  });
+
+  it("pause does NOT set completedAt — preserves resumability", async () => {
+    const store = createInMemoryRuntimeStore();
+
+    const createResult = await store.instances.create({
+      workflowName: "pause-no-complete-workflow",
+      goal: "pause no complete goal",
+      slug: "pause-no-complete-goal",
+    });
+    expect(createResult.isOk()).toBe(true);
+    if (!createResult.isOk()) return;
+    const instanceId = createResult.value.id;
+    await store.instances.update(instanceId, { status: "running" });
+
+    const result = await handleUserInterrupt(
+      {
+        workflowInstanceId: instanceId,
+        leaseId,
+        signal: "pause",
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+
+    const instanceResult = await store.instances.getById(instanceId);
+    expect(instanceResult.isOk()).toBe(true);
+    if (!instanceResult.isOk()) return;
+    // paused is not a terminal status — completedAt must not be set
+    expect(instanceResult.value.completedAt).toBeUndefined();
+  });
+
+  it("returns not_found for missing instance", async () => {
+    const store = createInMemoryRuntimeStore();
+    const nonExistentId = createWorkflowInstanceId("non-existent-interrupt-id");
+
+    const result = await handleUserInterrupt(
+      {
+        workflowInstanceId: nonExistentId,
+        leaseId,
+        signal: "pause",
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("not_found");
+    if (result.error.type === "not_found") {
+      expect(result.error.entity).toBe("WorkflowInstance");
+      expect(result.error.id).toBe(nonExistentId);
+    }
+  });
+
+  it("returns validation error for missing workflowInstanceId", async () => {
+    const store = createInMemoryRuntimeStore();
+    const result = await handleUserInterrupt(
+      {
+        workflowInstanceId: "" as ReturnType<typeof createWorkflowInstanceId>,
+        leaseId,
+        signal: "pause",
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+    if (result.error.type === "validation") {
+      expect(result.error.field).toBe("workflowInstanceId");
+    }
+  });
+
+  it("returns validation error for missing leaseId", async () => {
+    const store = createInMemoryRuntimeStore();
+    const result = await handleUserInterrupt(
+      {
+        workflowInstanceId: wfId,
+        leaseId: "" as ReturnType<typeof createExecutionLeaseId>,
+        signal: "cancel",
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+    if (result.error.type === "validation") {
+      expect(result.error.field).toBe("leaseId");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Runtime Store lifecycle tests — dispatchStep
+// ---------------------------------------------------------------------------
+
+describe("dispatchStep (Runtime Store)", () => {
+  it("uses explicit stepName from input when provided", async () => {
+    const store = createInMemoryRuntimeStore();
+
+    const createResult = await store.instances.create({
+      workflowName: "dispatch-workflow",
+      goal: "dispatch goal",
+      slug: "dispatch-goal",
+    });
+    expect(createResult.isOk()).toBe(true);
+    if (!createResult.isOk()) return;
+    const instanceId = createResult.value.id;
+
+    const result = await dispatchStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId,
+        stepName: "implement",
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    expect(result.value.stepName).toBe("implement");
+  });
+
+  it("falls back to instance.currentStepName when no stepName in input", async () => {
+    const store = createInMemoryRuntimeStore();
+
+    const createResult = await store.instances.create({
+      workflowName: "dispatch-fallback-workflow",
+      goal: "dispatch fallback goal",
+      slug: "dispatch-fallback-goal",
+    });
+    expect(createResult.isOk()).toBe(true);
+    if (!createResult.isOk()) return;
+    const instanceId = createResult.value.id;
+
+    // Set currentStepName on the instance
+    await store.instances.update(instanceId, { currentStepName: "plan" });
+
+    const result = await dispatchStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId,
+        // no stepName — should fall back to instance.currentStepName
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    expect(result.value.stepName).toBe("plan");
+  });
+
+  it("falls back to 'default' when neither input.stepName nor instance.currentStepName is set", async () => {
+    const store = createInMemoryRuntimeStore();
+
+    const createResult = await store.instances.create({
+      workflowName: "dispatch-default-workflow",
+      goal: "dispatch default goal",
+      slug: "dispatch-default-goal",
+    });
+    expect(createResult.isOk()).toBe(true);
+    if (!createResult.isOk()) return;
+    const instanceId = createResult.value.id;
+
+    const result = await dispatchStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId,
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    expect(result.value.stepName).toBe("default");
+  });
+
+  it("updates currentStepName on the workflow instance", async () => {
+    const store = createInMemoryRuntimeStore();
+
+    const createResult = await store.instances.create({
+      workflowName: "dispatch-update-workflow",
+      goal: "dispatch update goal",
+      slug: "dispatch-update-goal",
+    });
+    expect(createResult.isOk()).toBe(true);
+    if (!createResult.isOk()) return;
+    const instanceId = createResult.value.id;
+
+    await dispatchStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId,
+        stepName: "security-review",
+      },
+      store,
+    );
+
+    const instanceResult = await store.instances.getById(instanceId);
+    expect(instanceResult.isOk()).toBe(true);
+    if (!instanceResult.isOk()) return;
+    expect(instanceResult.value.currentStepName).toBe("security-review");
+  });
+
+  it("returned DispatchAgentEffect has kind: 'dispatch-agent' and runAgent.kind: 'run-agent'", async () => {
+    const store = createInMemoryRuntimeStore();
+
+    const createResult = await store.instances.create({
+      workflowName: "dispatch-effect-workflow",
+      goal: "dispatch effect goal",
+      slug: "dispatch-effect-goal",
+    });
+    expect(createResult.isOk()).toBe(true);
+    if (!createResult.isOk()) return;
+    const instanceId = createResult.value.id;
+
+    const result = await dispatchStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId,
+        stepName: "plan",
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    const { effects } = result.value;
+    expect(effects).toHaveLength(1);
+    expect(effects[0]?.kind).toBe("dispatch-agent");
+    if (effects[0]?.kind === "dispatch-agent") {
+      expect(effects[0].runAgent.kind).toBe("run-agent");
+      expect(effects[0].runAgent.agentName).toBe("plan");
+    }
+  });
+
+  it("emitted effect contains no raw prompts, credentials, or tokens (composedPrompt === '')", async () => {
+    const store = createInMemoryRuntimeStore();
+
+    const createResult = await store.instances.create({
+      workflowName: "dispatch-security-workflow",
+      goal: "dispatch security goal",
+      slug: "dispatch-security-goal",
+    });
+    expect(createResult.isOk()).toBe(true);
+    if (!createResult.isOk()) return;
+    const instanceId = createResult.value.id;
+
+    const result = await dispatchStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId,
+        stepName: "implement",
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    const { effects } = result.value;
+    if (effects[0]?.kind === "dispatch-agent") {
+      // Security invariant: composedPrompt must be empty string for MVP dispatch
+      expect(effects[0].runAgent.agentDescriptor.composedPrompt).toBe("");
+      // No credentials or tokens in resolvedSkills
+      expect(effects[0].runAgent.resolvedSkills).toHaveLength(0);
+    }
+  });
+
+  it("returns not_found for missing instance", async () => {
+    const store = createInMemoryRuntimeStore();
+    const nonExistentId = createWorkflowInstanceId("non-existent-dispatch-id");
+
+    const result = await dispatchStep(
+      {
+        workflowInstanceId: nonExistentId,
+        leaseId,
+        stepName: "plan",
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("not_found");
+    if (result.error.type === "not_found") {
+      expect(result.error.entity).toBe("WorkflowInstance");
+    }
+  });
+
+  it("returns validation error for missing workflowInstanceId", async () => {
+    const store = createInMemoryRuntimeStore();
+    const result = await dispatchStep(
+      {
+        workflowInstanceId: "" as ReturnType<typeof createWorkflowInstanceId>,
+        leaseId,
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+    if (result.error.type === "validation") {
+      expect(result.error.field).toBe("workflowInstanceId");
+    }
+  });
+
+  it("returns validation error for missing leaseId", async () => {
+    const store = createInMemoryRuntimeStore();
+    const result = await dispatchStep(
+      {
+        workflowInstanceId: wfId,
+        leaseId: "" as ReturnType<typeof createExecutionLeaseId>,
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+    if (result.error.type === "validation") {
+      expect(result.error.field).toBe("leaseId");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Runtime Store lifecycle tests — completeStep
+// ---------------------------------------------------------------------------
+
+describe("completeStep (Runtime Store)", () => {
+  async function createRunningInstance(
+    store: ReturnType<typeof createInMemoryRuntimeStore>,
+    suffix: string,
+  ) {
+    const createResult = await store.instances.create({
+      workflowName: `complete-workflow-${suffix}`,
+      goal: `complete goal ${suffix}`,
+      slug: `complete-goal-${suffix}`,
+    });
+    if (!createResult.isOk()) throw new Error("Failed to create instance");
+    const instanceId = createResult.value.id;
+    await store.instances.update(instanceId, { status: "running" });
+    return instanceId;
+  }
+
+  it("success outcome: updates instance to running status", async () => {
+    const store = createInMemoryRuntimeStore();
+    const instanceId = await createRunningInstance(store, "success");
+
+    const result = await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId,
+        stepName: "plan",
+        completionSignal: { outcome: "success" },
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    expect(result.value.effects).toHaveLength(0);
+
+    const instanceResult = await store.instances.getById(instanceId);
+    expect(instanceResult.isOk()).toBe(true);
+    if (!instanceResult.isOk()) return;
+    expect(instanceResult.value.status).toBe("running");
+  });
+
+  it("blocked outcome: updates instance to blocked status", async () => {
+    const store = createInMemoryRuntimeStore();
+    const instanceId = await createRunningInstance(store, "blocked");
+
+    const result = await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId,
+        stepName: "security-review",
+        completionSignal: { outcome: "blocked" },
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    expect(result.value.effects).toHaveLength(0);
+
+    const instanceResult = await store.instances.getById(instanceId);
+    expect(instanceResult.isOk()).toBe(true);
+    if (!instanceResult.isOk()) return;
+    expect(instanceResult.value.status).toBe("blocked");
+  });
+
+  it("failed outcome: updates instance to failed status with errorMessage", async () => {
+    const store = createInMemoryRuntimeStore();
+    const instanceId = await createRunningInstance(store, "failed");
+
+    const result = await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId,
+        stepName: "implement",
+        completionSignal: { outcome: "failed", message: "Build failed" },
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    expect(result.value.effects).toHaveLength(0);
+
+    const instanceResult = await store.instances.getById(instanceId);
+    expect(instanceResult.isOk()).toBe(true);
+    if (!instanceResult.isOk()) return;
+    expect(instanceResult.value.status).toBe("failed");
+    expect(instanceResult.value.errorMessage).toBe("Build failed");
+    // failed is terminal — completedAt should be set
+    expect(instanceResult.value.completedAt).toBeDefined();
+  });
+
+  it("paused outcome: updates instance to paused status, returns PauseExecutionEffect", async () => {
+    const store = createInMemoryRuntimeStore();
+    const instanceId = await createRunningInstance(store, "paused");
+
+    const result = await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId,
+        stepName: "review-plan",
+        completionSignal: { outcome: "paused" },
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    const { effects } = result.value;
+    expect(effects).toHaveLength(1);
+    expect(effects[0]?.kind).toBe("pause-execution");
+    if (effects[0]?.kind === "pause-execution") {
+      expect(effects[0].workflowInstanceId).toBe(instanceId);
+    }
+
+    const instanceResult = await store.instances.getById(instanceId);
+    expect(instanceResult.isOk()).toBe(true);
+    if (!instanceResult.isOk()) return;
+    expect(instanceResult.value.status).toBe("paused");
+  });
+
+  it("artifacts from signal are merged into instance", async () => {
+    const store = createInMemoryRuntimeStore();
+    const instanceId = await createRunningInstance(store, "artifacts");
+
+    const result = await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId,
+        stepName: "plan",
+        completionSignal: {
+          outcome: "success",
+          artifacts: [
+            { name: "plan_path", path: ".weave/plans/my-feature.md" },
+          ],
+        },
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+
+    const instanceResult = await store.instances.getById(instanceId);
+    expect(instanceResult.isOk()).toBe(true);
+    if (!instanceResult.isOk()) return;
+    const artifacts = instanceResult.value.artifacts;
+    expect(artifacts).toHaveLength(1);
+    expect(artifacts[0]?.name).toBe("plan_path");
+    expect(artifacts[0]?.path).toBe(".weave/plans/my-feature.md");
+  });
+
+  it("returns not_found for missing instance", async () => {
+    const store = createInMemoryRuntimeStore();
+    const nonExistentId = createWorkflowInstanceId("non-existent-complete-id");
+
+    const result = await completeStep(
+      {
+        workflowInstanceId: nonExistentId,
+        leaseId,
+        stepName: "plan",
+        completionSignal: { outcome: "success" },
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("not_found");
+    if (result.error.type === "not_found") {
+      expect(result.error.entity).toBe("WorkflowInstance");
+    }
+  });
+
+  it("returns validation error for missing workflowInstanceId", async () => {
+    const store = createInMemoryRuntimeStore();
+    const result = await completeStep(
+      {
+        workflowInstanceId: "" as ReturnType<typeof createWorkflowInstanceId>,
+        leaseId,
+        stepName: "plan",
+        completionSignal: { outcome: "success" },
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+    if (result.error.type === "validation") {
+      expect(result.error.field).toBe("workflowInstanceId");
+    }
+  });
+
+  it("returns validation error for missing leaseId", async () => {
+    const store = createInMemoryRuntimeStore();
+    const result = await completeStep(
+      {
+        workflowInstanceId: wfId,
+        leaseId: "" as ReturnType<typeof createExecutionLeaseId>,
+        stepName: "plan",
+        completionSignal: { outcome: "success" },
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+    if (result.error.type === "validation") {
+      expect(result.error.field).toBe("leaseId");
+    }
+  });
+
+  it("returns validation error for missing stepName", async () => {
+    const store = createInMemoryRuntimeStore();
+    const result = await completeStep(
+      {
+        workflowInstanceId: wfId,
+        leaseId,
+        stepName: "",
+        completionSignal: { outcome: "success" },
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+    if (result.error.type === "validation") {
+      expect(result.error.field).toBe("stepName");
+    }
   });
 });
