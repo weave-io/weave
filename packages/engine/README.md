@@ -125,6 +125,32 @@ async function onHarnessStepComplete(stepName: string) {
 adapter.registerHook({ name: "on-step-complete", event: "step:done", enabled: true });
 ```
 
+### Workflow Engine Behavior
+
+The execution lifecycle surface implements the **workflow engine** — the engine-owned subsystem that drives multi-step workflow execution. The engine consumes `WorkflowConfig` (from `@weave/core`) and `WorkflowExecutionContext` (adapter-provided) to:
+
+1. **Validate workflow topology** — `startExecution` validates `context.workflowName` against `context.workflows`, sets `currentStepName` to the first step, and acquires an execution lease.
+2. **Dispatch steps** — `dispatchStep` resolves the step from `WorkflowConfig.steps`, uses `step.agent` as the agent name, renders `step.prompt` via `renderTemplate()`, validates declared `step.inputs` artifacts, and emits a `RunAgentEffect` with `completionMethod`, `stepType`, `correlationId`, and `promptMetadata` (byte length only — no raw prompt).
+3. **Complete steps and auto-advance** — `completeStep` validates output artifacts against `step.outputs` (all-or-nothing), persists them via `store.instances.addArtifact()`, then either dispatches the next step or transitions to `completed` + releases the lease for the final step.
+4. **Evaluate completion methods** — all 5 methods are supported: `agent_signal`, `user_confirm`, `review_verdict`, `plan_created`, `plan_complete`. Gate rejection (`review_verdict` with `approved: false`) applies the step's `on_reject` policy: `pause` → paused + pause-execution effect; `fail` → failed + complete-execution effect; `retry` → re-dispatch same step with fresh `correlationId`.
+
+**Required adapter-provided context** — `WorkflowExecutionContext`:
+
+```ts
+interface WorkflowExecutionContext {
+  workflowName: string;           // logical workflow name (must exist in workflows map)
+  goal: string;                   // human-readable goal for this execution instance
+  slug: string;                   // URL-safe slug for this execution instance
+  workflows: Record<string, WorkflowConfig>; // narrow slice of WeaveConfig.workflows
+}
+```
+
+Adapters pass `WorkflowExecutionContext` to `startExecution`, `dispatchStep`, and `completeStep`. The engine validates `workflowName` against the `workflows` map and reads step definitions from `WorkflowConfig.steps`. The engine never reads `WeaveConfig` directly — adapters supply the narrow slice it needs.
+
+**Security invariants**: `promptMetadata` in `RunAgentEffect` carries only `byteLength` — no raw prompt text appears in emitted effects or the Runtime Store. `StepCompletionSignal` structurally excludes raw prompts, completions, transcripts, credentials, and tokens.
+
+See [`docs/adapter-boundary.md — Workflow Engine`](../../docs/adapter-boundary.md#workflow-engine) for the full ownership matrix and [`docs/workflow-schema.md — Execution Semantics`](../../docs/workflow-schema.md#execution-semantics) for step-by-step runtime behavior.
+
 ### `registerHook()` — superseded
 
 `HarnessAdapter.registerHook()` is **superseded** by the execution lifecycle surface. Adapters should map concrete harness events into the 7 typed engine lifecycle functions listed above instead of registering hooks through this method. `registerHook()` will be removed once all adapters have migrated.

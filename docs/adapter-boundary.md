@@ -342,3 +342,65 @@ Adapter (harness event) → lifecycle method → engine policy → Runtime Store
 ```
 
 See [`packages/engine/src/execution-lifecycle.ts`](../packages/engine/src/execution-lifecycle.ts) for the full type definitions and factory helpers.
+
+---
+
+## Workflow Engine
+
+> **Spec:** [Spec 10 — Workflow Engine](specs/10-spec-workflow-engine/10-spec-workflow-engine.md)
+
+The workflow engine is the engine-owned subsystem that drives multi-step workflow execution. It is implemented inside the Execution Lifecycle Surface (`execution-lifecycle.ts`) and operates exclusively through the 7 lifecycle methods described above.
+
+### Ownership Matrix — Workflow Engine
+
+| Concern | Owner | Why |
+| --- | --- | --- |
+| Workflow topology (step order, step count, final-step detection) | Engine | Derived from `WorkflowConfig.steps` — a Weave-owned data structure |
+| Artifact resolution (validating declared `inputs`/`outputs`, persisting artifacts) | Engine | Artifact state is Weave runtime state stored in the Runtime Store |
+| Completion method evaluation (`agent_signal`, `user_confirm`, `review_verdict`, `plan_created`, `plan_complete`) | Engine | Completion semantics are defined by the Weave DSL schema |
+| Gate decisions (approve/reject, `on_reject` policy: `pause`/`fail`/`retry`) | Engine | Policy evaluation is harness-neutral; the engine reads `on_reject` from `WorkflowStep` |
+| Abstract lifecycle effects (`dispatch-agent`, `pause-execution`, `complete-execution`) | Engine | Effects are pure data records; the engine emits them, adapters apply them |
+| Harness event detection and mapping into lifecycle inputs | Adapter | Event names, payloads, and callback registration are harness-specific |
+| Materializing lifecycle effects in the concrete harness | Adapter | Spawning agents, pausing sessions, updating UI state are harness-specific |
+
+### Engine Responsibilities in Detail
+
+**Workflow topology**: The engine reads `WorkflowConfig.steps` (an ordered array) to determine step sequence. `startExecution` sets `currentStepName` to `steps[0].name`. `completeStep` advances to the next step by index, or transitions to `completed` when the final step finishes.
+
+**Artifact resolution**: `dispatchStep` validates that all artifacts declared in `step.inputs` are present in the instance's artifact store before emitting the dispatch effect. `completeStep` validates that all artifacts declared in `step.outputs` are present in the completion signal before persisting them via `store.instances.addArtifact()`. Validation is all-or-nothing — a missing artifact returns a `validation` error before any state changes.
+
+**Completion method evaluation**: The engine validates the `completionSignal.method` in `CompleteStepInput` against the step's declared `completion.method`. Each method has defined semantics:
+- `agent_signal` / `user_confirm` — treat as success; auto-advance
+- `review_verdict` — `approved: true` → advance; `approved: false` → apply `on_reject` policy
+- `plan_created` / `plan_complete` — check plan file state (`.weave/plans/<plan_name>.md`)
+
+**Gate decisions**: When a `review_verdict` signal arrives with `approved: false`, the engine reads `step.on_reject`:
+- `pause` → transitions instance to `paused`, releases lease, emits `pause-execution`
+- `fail` → transitions instance to `failed`, releases lease, emits `complete-execution`
+- `retry` → re-dispatches the same step with a fresh `correlationId`
+
+**Abstract effects**: The engine emits `LifecycleEffect[]` — pure data records. Adapters receive these and apply harness-specific materialisation. The engine never spawns agents, pauses harness sessions, or updates harness UI state directly.
+
+### Adapter Responsibilities
+
+Adapters own:
+- Detecting harness events (step completion signals, user interrupts, tool calls) and mapping them to lifecycle inputs
+- Providing `WorkflowExecutionContext` (with `workflowName`, `goal`, `slug`, and the `workflows` map) to lifecycle methods that require it
+- Applying returned `LifecycleEffect` values: spawning agents for `dispatch-agent`, pausing sessions for `pause-execution`, cleaning up for `complete-execution`
+
+### Anti-Patterns
+
+```ts
+// ❌ Wrong: engine inspects harness-specific step completion event format
+if (harnessEvent.type === "opencode:step:done") { ... }
+
+// ❌ Wrong: engine spawns an agent directly
+await harnessRuntime.spawnAgent(stepConfig.agent, prompt);
+
+// ✅ Correct: adapter maps harness event → lifecycle input; engine returns effects
+const result = await completeStep({ workflowInstanceId, leaseId, stepName, completionSignal }, store);
+result.match(
+  ({ effects }) => adapter.applyEffects(effects),
+  (err) => log.error({ err }, "completeStep failed"),
+);
+```

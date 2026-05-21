@@ -179,6 +179,72 @@ Both `name` and `description` are required. Artifact names are used as template 
 
 ---
 
+## Execution Semantics
+
+> **Implementation:** [`packages/engine/src/execution-lifecycle.ts`](../packages/engine/src/execution-lifecycle.ts) · **Boundary:** [`docs/adapter-boundary.md — Workflow Engine`](adapter-boundary.md#workflow-engine)
+
+This section describes how the engine consumes the workflow schema at runtime. The engine drives execution through the Execution Lifecycle Surface — adapters map harness events into lifecycle calls; the engine evaluates policy and returns typed effects.
+
+### Step Ordering
+
+Steps are executed in declaration order. The `steps` array in `WorkflowConfig` is the authoritative sequence:
+
+1. `startExecution` sets `currentStepName` to `steps[0].name` (the first step's block identifier).
+2. `completeStep` advances to the next step by index. When the completed step is the last in the array, the engine transitions the instance to `completed`, releases the execution lease, and emits a `complete-execution` effect.
+3. There is no branching or conditional routing — step order is fixed by the DSL declaration.
+
+### Input/Output Artifact Passing
+
+Artifacts flow between steps through the Runtime Store:
+
+- **`outputs`** — declared on the producing step. When `completeStep` is called with `outcome: "success"`, the engine validates that every artifact named in `step.outputs` is present in `completionSignal.artifacts`. Validation is all-or-nothing: a missing artifact returns a `validation` error before any state changes. Validated artifacts are persisted via `store.instances.addArtifact()`.
+- **`inputs`** — declared on the consuming step. When `dispatchStep` is called, the engine validates that every artifact named in `step.inputs` is already present in the instance's artifact store. A missing input artifact returns a `validation` error before the dispatch effect is emitted.
+- Artifact names are used as template variables in downstream step prompts via `{{artifacts.<name>}}`. The engine renders `step.prompt` with the current artifact map before emitting the `RunAgentEffect`.
+
+### Completion Method Evaluation
+
+The `completion` field on each step declares the expected completion contract. When `completeStep` receives a `completionSignal` with a `method` field, the engine validates it against the step's declared `completion.method`:
+
+| Method | Signal requirements | Engine behaviour |
+| --- | --- | --- |
+| `agent_signal` | `outcome: "success"` | Treat as success; auto-advance to next step |
+| `user_confirm` | `outcome: "success"` | Treat as success; auto-advance to next step |
+| `review_verdict` | `outcome: "success"`, `approved: boolean` | `approved: true` → advance; `approved: false` → apply `on_reject` policy |
+| `plan_created` | `outcome: "success"` | Check `.weave/plans/<plan_name>.md` exists |
+| `plan_complete` | `outcome: "success"` | Check plan file has no `- [ ]` checkboxes remaining |
+
+A method mismatch (signal method ≠ declared method) returns a `validation` error before any state changes. When `method` is omitted from the signal, the engine skips method validation (legacy path).
+
+### `on_reject` Handling
+
+`on_reject` is only valid on `type: "gate"` steps. When a `review_verdict` signal arrives with `approved: false`, the engine reads `step.on_reject` and applies the corresponding policy:
+
+| `on_reject` value | Engine action |
+| --- | --- |
+| `pause` | Transitions instance to `paused` status, releases the execution lease, emits `pause-execution` effect. The instance remains resumable via `resumeExecution`. |
+| `fail` | Transitions instance to `failed` status (terminal), releases the execution lease, emits `complete-execution` effect. |
+| `retry` | Re-dispatches the same step with a fresh `correlationId`. The instance status remains `running`; the step is not advanced. |
+
+When `on_reject` is absent and a gate rejects, the engine defaults to `pause` behaviour.
+
+### Prompt Template Rendering
+
+`step.prompt` is a Mustache template rendered by the engine before the `RunAgentEffect` is emitted. Available template variables include:
+
+- `{{instance.goal}}` — the human-readable goal for this execution
+- `{{instance.slug}}` — the URL-safe slug for this execution
+- `{{artifacts.<name>}}` — artifact values produced by previous steps
+
+The rendered prompt is never included in `RunAgentEffect` directly — only `promptMetadata` (byte length) is surfaced in the effect. The raw rendered prompt is passed to the agent through the harness-owned dispatch path.
+
+### Security Invariants
+
+- `StepCompletionSignal` structurally excludes raw prompts, completions, transcripts, credentials, and tokens. Only `outcome`, `method`, `approved`, `message` (safe human-readable), `artifacts`, and `nextStepHint` are accepted.
+- `promptMetadata` in `RunAgentEffect` carries only `byteLength` — no raw prompt text appears in emitted effects or the Runtime Store.
+- `SafeMetadata` on all lifecycle inputs is validated against a credential denylist before any state changes.
+
+---
+
 ## Complete Example
 
 From `AGENTS.md`:
