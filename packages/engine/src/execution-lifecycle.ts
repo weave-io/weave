@@ -91,6 +91,7 @@ export type SafeMetadata = Record<string, string | number | boolean>;
  * that are specific to the lifecycle surface (e.g. authHeader, jwt, sessionId).
  */
 const LIFECYCLE_DENIED_METADATA_KEYS: ReadonlySet<string> = new Set([
+  // Existing credential/token keys
   "token",
   "apikey",
   "api_key",
@@ -110,6 +111,36 @@ const LIFECYCLE_DENIED_METADATA_KEYS: ReadonlySet<string> = new Set([
   "jwt",
   "cookie",
   "cookies",
+  // Raw prompt/completion/transcript keys
+  "prompt",
+  "completion",
+  "transcript",
+  "message",
+  "content",
+  "rawprompt",
+  "raw_prompt",
+  "rawcompletion",
+  "raw_completion",
+  "rawtranscript",
+  "raw_transcript",
+  // Common token variants
+  "accesstoken",
+  "access_token",
+  "refreshtoken",
+  "refresh_token",
+  "idtoken",
+  "id_token",
+  "oauthtoken",
+  "oauth_token",
+  "bearertoken",
+  "bearer_token",
+  // Additional credential variants
+  "privatekey",
+  "private_key",
+  "clientsecret",
+  "client_secret",
+  "x-api-key",
+  "xapikey",
 ]);
 
 /**
@@ -995,6 +1026,15 @@ export function handleUserInterrupt(
           ),
         );
       }
+      if (activeLease.workflowInstanceId !== input.workflowInstanceId) {
+        return errAsync(
+          lifecycleLeaseConflictError(
+            input.workflowInstanceId,
+            activeLease.id,
+            `Lease ${input.leaseId} belongs to workflow ${activeLease.workflowInstanceId}, not ${input.workflowInstanceId}`,
+          ),
+        );
+      }
       return okAsync(undefined as undefined);
     })
     .andThen(() =>
@@ -1129,6 +1169,15 @@ export function dispatchStep(
             input.workflowInstanceId,
             activeLease.id,
             "Provided lease ID does not match the active lease",
+          ),
+        );
+      }
+      if (activeLease.workflowInstanceId !== input.workflowInstanceId) {
+        return errAsync(
+          lifecycleLeaseConflictError(
+            input.workflowInstanceId,
+            activeLease.id,
+            `Lease ${input.leaseId} belongs to workflow ${activeLease.workflowInstanceId}, not ${input.workflowInstanceId}`,
           ),
         );
       }
@@ -1279,6 +1328,15 @@ export function completeStep(
             input.workflowInstanceId,
             activeLease.id,
             "Provided lease ID does not match the active lease",
+          ),
+        );
+      }
+      if (activeLease.workflowInstanceId !== input.workflowInstanceId) {
+        return errAsync(
+          lifecycleLeaseConflictError(
+            input.workflowInstanceId,
+            activeLease.id,
+            `Lease ${input.leaseId} belongs to workflow ${activeLease.workflowInstanceId}, not ${input.workflowInstanceId}`,
           ),
         );
       }

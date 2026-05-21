@@ -1347,14 +1347,21 @@ describe("handleUserInterrupt (Runtime Store)", () => {
 
   it("returns not_found for missing instance", async () => {
     const store = createInMemoryRuntimeStore();
-    // Acquire a real lease so the lease check passes
-    const { activeLeaseId } = await startInstance(store, "not-found-setup");
+    // Acquire a lease bound directly to the non-existent instance ID so the
+    // workflowInstanceId binding check passes and the not_found check fires.
     const nonExistentId = createWorkflowInstanceId("non-existent-interrupt-id");
+    const leaseResult = await store.leases.acquire({
+      workflowInstanceId: nonExistentId,
+      ownerId: createOwnerId("owner-not-found-setup"),
+      ttlMs: 3_600_000,
+    });
+    if (!leaseResult.isOk()) throw new Error("lease acquire failed");
+    const boundLeaseId = leaseResult.value.id;
 
     const result = await handleUserInterrupt(
       {
         workflowInstanceId: nonExistentId,
-        leaseId: activeLeaseId,
+        leaseId: boundLeaseId,
         signal: "pause",
       },
       store,
@@ -1418,6 +1425,30 @@ describe("handleUserInterrupt (Runtime Store)", () => {
       {
         workflowInstanceId: instanceId,
         leaseId: fakeLeaseId,
+        signal: "pause",
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("lease_conflict");
+  });
+
+  it("returns lease_conflict when lease belongs to a different workflow instance", async () => {
+    const store = createInMemoryRuntimeStore();
+    // Start two separate workflow instances
+    const { instanceId: instanceA, activeLeaseId: leaseA } =
+      await startInstance(store, "cross-wf-a");
+    const instanceB = createWorkflowInstanceId("interrupt-wf-cross-wf-b");
+    // instanceB is not started — we just want to use leaseA with instanceB's ID
+    // (leaseA is bound to instanceA)
+    void instanceA; // used to acquire leaseA
+
+    const result = await handleUserInterrupt(
+      {
+        workflowInstanceId: instanceB,
+        leaseId: leaseA,
         signal: "pause",
       },
       store,
@@ -1587,14 +1618,21 @@ describe("dispatchStep (Runtime Store)", () => {
 
   it("returns not_found for missing instance", async () => {
     const store = createInMemoryRuntimeStore();
-    // Acquire a real lease so the lease check passes
-    const { activeLeaseId } = await startInstance(store, "not-found-setup");
+    // Acquire a lease bound directly to the non-existent instance ID so the
+    // workflowInstanceId binding check passes and the not_found check fires.
     const nonExistentId = createWorkflowInstanceId("non-existent-dispatch-id");
+    const leaseResult = await store.leases.acquire({
+      workflowInstanceId: nonExistentId,
+      ownerId: createOwnerId("owner-not-found-setup"),
+      ttlMs: 3_600_000,
+    });
+    if (!leaseResult.isOk()) throw new Error("lease acquire failed");
+    const boundLeaseId = leaseResult.value.id;
 
     const result = await dispatchStep(
       {
         workflowInstanceId: nonExistentId,
-        leaseId: activeLeaseId,
+        leaseId: boundLeaseId,
         stepName: "plan",
       },
       store,
@@ -1655,6 +1693,29 @@ describe("dispatchStep (Runtime Store)", () => {
       {
         workflowInstanceId: instanceId,
         leaseId: fakeLeaseId,
+        stepName: "plan",
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("lease_conflict");
+  });
+
+  it("returns lease_conflict when lease belongs to a different workflow instance", async () => {
+    const store = createInMemoryRuntimeStore();
+    // Start two separate workflow instances
+    const { instanceId: instanceA, activeLeaseId: leaseA } =
+      await startInstance(store, "cross-wf-a");
+    const instanceB = createWorkflowInstanceId("dispatch-wf-cross-wf-b");
+    // instanceB is not started — leaseA is bound to instanceA
+    void instanceA;
+
+    const result = await dispatchStep(
+      {
+        workflowInstanceId: instanceB,
+        leaseId: leaseA,
         stepName: "plan",
       },
       store,
@@ -1828,14 +1889,21 @@ describe("completeStep (Runtime Store)", () => {
 
   it("returns not_found for missing instance", async () => {
     const store = createInMemoryRuntimeStore();
-    // Acquire a real lease so the lease check passes
-    const { activeLeaseId } = await startInstance(store, "not-found-setup");
+    // Acquire a lease bound directly to the non-existent instance ID so the
+    // workflowInstanceId binding check passes and the not_found check fires.
     const nonExistentId = createWorkflowInstanceId("non-existent-complete-id");
+    const leaseResult = await store.leases.acquire({
+      workflowInstanceId: nonExistentId,
+      ownerId: createOwnerId("owner-not-found-setup"),
+      ttlMs: 3_600_000,
+    });
+    if (!leaseResult.isOk()) throw new Error("lease acquire failed");
+    const boundLeaseId = leaseResult.value.id;
 
     const result = await completeStep(
       {
         workflowInstanceId: nonExistentId,
-        leaseId: activeLeaseId,
+        leaseId: boundLeaseId,
         stepName: "plan",
         completionSignal: { outcome: "success" },
       },
@@ -1921,6 +1989,30 @@ describe("completeStep (Runtime Store)", () => {
       {
         workflowInstanceId: instanceId,
         leaseId: fakeLeaseId,
+        stepName: "plan",
+        completionSignal: { outcome: "success" },
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("lease_conflict");
+  });
+
+  it("returns lease_conflict when lease belongs to a different workflow instance", async () => {
+    const store = createInMemoryRuntimeStore();
+    // Start two separate workflow instances
+    const { instanceId: instanceA, activeLeaseId: leaseA } =
+      await startInstance(store, "cross-wf-a");
+    const instanceB = createWorkflowInstanceId("complete-wf-cross-wf-b");
+    // instanceB is not started — leaseA is bound to instanceA
+    void instanceA;
+
+    const result = await completeStep(
+      {
+        workflowInstanceId: instanceB,
+        leaseId: leaseA,
         stepName: "plan",
         completionSignal: { outcome: "success" },
       },
@@ -2249,6 +2341,71 @@ describe("sanitizeMetadata", () => {
     expect(result.isErr()).toBe(true);
     if (!result.isErr()) return;
     expect(result.error.type).toBe("validation");
+  });
+
+  // New tests for extended denylist — raw prompt/completion/transcript keys
+  it("sanitizeMetadata: rejects prompt key", () => {
+    const result = sanitizeMetadata({ prompt: "You are a helpful assistant." });
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+    expect(result.error.message).toContain("prompt");
+  });
+
+  it("sanitizeMetadata: rejects completion key", () => {
+    const result = sanitizeMetadata({ completion: "Here is my answer." });
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+    expect(result.error.message).toContain("completion");
+  });
+
+  it("sanitizeMetadata: rejects transcript key", () => {
+    const result = sanitizeMetadata({
+      transcript: "User: hello\nAssistant: hi",
+    });
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+    expect(result.error.message).toContain("transcript");
+  });
+
+  it("sanitizeMetadata: rejects accessToken key (case-insensitive)", () => {
+    const result = sanitizeMetadata({ accessToken: "eyJhbGci..." });
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+    expect(result.error.message).toContain("accessToken");
+  });
+
+  it("sanitizeMetadata: rejects refreshToken key", () => {
+    const result = sanitizeMetadata({ refreshToken: "rt-abc123" });
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+    expect(result.error.message).toContain("refreshToken");
+  });
+
+  it("sanitizeMetadata: rejects privateKey key", () => {
+    const result = sanitizeMetadata({
+      privateKey: "-----BEGIN RSA PRIVATE KEY-----",
+    });
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+    expect(result.error.message).toContain("privateKey");
+  });
+
+  it("sanitizeMetadata: accepts safe keys like stepName, duration, retryCount", () => {
+    const meta: SafeMetadata = {
+      stepName: "implement",
+      duration: 1234,
+      retryCount: 0,
+    };
+    const result = sanitizeMetadata(meta);
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    expect(result.value).toEqual(meta);
   });
 });
 
