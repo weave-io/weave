@@ -375,7 +375,7 @@ The workflow engine is the engine-owned subsystem that drives multi-step workflo
 - `plan_created` / `plan_complete` — check plan file state (`.weave/plans/<plan_name>.md`)
 
 **Gate decisions**: When a `review_verdict` signal arrives with `approved: false`, the engine reads `step.on_reject`:
-- `pause` → transitions instance to `paused`, releases lease, emits `pause-execution`
+- `pause` → transitions instance to `paused`, emits `pause-execution` (lease remains held)
 - `fail` → transitions instance to `failed`, releases lease, emits `complete-execution`
 - `retry` → re-dispatches the same step with a fresh `correlationId`
 

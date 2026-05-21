@@ -198,7 +198,7 @@ Steps are executed in declaration order. The `steps` array in `WorkflowConfig` i
 Artifacts flow between steps through the Runtime Store:
 
 - **`outputs`** — declared on the producing step. When `completeStep` is called with `outcome: "success"`, the engine validates that every artifact named in `step.outputs` is present in `completionSignal.artifacts`. Validation is all-or-nothing: a missing artifact returns a `validation` error before any state changes. Validated artifacts are persisted via `store.instances.addArtifact()`.
-- **`inputs`** — declared on the consuming step. When `dispatchStep` is called, the engine validates that every artifact named in `step.inputs` is already present in the instance's artifact store. A missing input artifact returns a `validation` error before the dispatch effect is emitted.
+- **`inputs`** — declared on the consuming step. When `dispatchStep` is called, the engine validates that every artifact named in `step.inputs` is already present in the instance's artifact store. A missing input artifact returns a `not_found` error before the dispatch effect is emitted.
 - Artifact names are used as template variables in downstream step prompts via `{{artifacts.<name>}}`. The engine renders `step.prompt` with the current artifact map before emitting the `RunAgentEffect`.
 
 ### Completion Method Evaluation
@@ -221,7 +221,7 @@ A method mismatch (signal method ≠ declared method) returns a `validation` err
 
 | `on_reject` value | Engine action |
 | --- | --- |
-| `pause` | Transitions instance to `paused` status, releases the execution lease, emits `pause-execution` effect. The instance remains resumable via `resumeExecution`. |
+| `pause` | Transitions instance to `paused` status, emits `pause-execution` effect (lease remains held). The instance remains resumable via `resumeExecution`. |
 | `fail` | Transitions instance to `failed` status (terminal), releases the execution lease, emits `complete-execution` effect. |
 | `retry` | Re-dispatches the same step with a fresh `correlationId`. The instance status remains `running`; the step is not advanced. |
 
