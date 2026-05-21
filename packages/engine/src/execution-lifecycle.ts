@@ -31,6 +31,7 @@
  * @see docs/adapter-boundary.md — Execution Lifecycle Surface section
  */
 
+import type { WorkflowConfig } from "@weave/core";
 import {
   err,
   errAsync,
@@ -454,11 +455,57 @@ export interface ObserveSessionOutput {
 // ---------------------------------------------------------------------------
 
 /**
+ * Workflow execution context passed to `startExecution`.
+ *
+ * Provides the engine with the information it needs to:
+ * 1. Validate that `workflowName` exists in the known workflow map.
+ * 2. Populate the `WorkflowInstance` with the correct `workflowName`, `goal`,
+ *    `slug`, and `currentStepName` (the name of the first step).
+ *
+ * The `workflows` map is a narrow slice of `WeaveConfig.workflows` — adapters
+ * pass only what the engine needs rather than the full config object.
+ */
+export interface WorkflowExecutionContext {
+  /**
+   * The logical name of the workflow to execute (must exist in `workflows`).
+   * Used as `workflowName` on the created `WorkflowInstance`.
+   */
+  readonly workflowName: string;
+  /**
+   * Human-readable goal for this execution instance.
+   * Used as `goal` on the created `WorkflowInstance`.
+   */
+  readonly goal: string;
+  /**
+   * URL-safe slug for this execution instance (e.g. derived from the goal).
+   * Used as `slug` on the created `WorkflowInstance`.
+   */
+  readonly slug: string;
+  /**
+   * Map of known workflow definitions, keyed by workflow name.
+   * The engine validates `workflowName` against this map and reads the first
+   * step name to initialize `currentStepName` on the instance.
+   *
+   * Accepts `WeaveConfig["workflows"]` directly — the type is compatible.
+   */
+  readonly workflows: Record<string, WorkflowConfig>;
+}
+
+/**
  * Input for `startExecution`.
  *
  * Adapters call this when a new workflow execution begins. The engine
  * acquires an execution lease and transitions the workflow instance to
  * `running` status.
+ *
+ * When `context` is provided the engine validates `context.workflowName`
+ * against `context.workflows` before creating any instance. An unknown
+ * workflow name returns a `not_found` error; a missing `workflowName` returns
+ * a `validation` error. On success the instance is created with the correct
+ * `workflowName`, `goal`, `slug`, and `currentStepName` (first step).
+ *
+ * When `context` is omitted the engine falls back to legacy behaviour:
+ * `workflowInstanceId` is used as a placeholder for all three name fields.
  *
  * EXCLUDED: raw prompts, completions, transcripts, credentials, tokens,
  * cookies, authorization headers, raw provider payloads.
@@ -472,6 +519,14 @@ export interface StartExecutionInput {
   readonly now?: string;
   /** Optional structured metadata about the execution start. */
   readonly metadata?: SafeMetadata;
+  /**
+   * Optional workflow execution context.
+   *
+   * When provided the engine validates the workflow name, initializes the
+   * instance with proper fields, and sets `currentStepName` to the first step.
+   * When omitted the engine uses `workflowInstanceId` as a placeholder (legacy).
+   */
+  readonly context?: WorkflowExecutionContext;
 }
 
 /**
@@ -866,7 +921,77 @@ export function observeSession(
 // ---------------------------------------------------------------------------
 
 /**
+ * Validate the workflow execution context and resolve the instance creation
+ * fields (`workflowName`, `goal`, `slug`, `currentStepName`).
+ *
+ * Returns `ok` with the resolved fields, or a typed `LifecycleError` when:
+ * - `context.workflowName` is empty → `validation` error
+ * - `context.workflowName` is not in `context.workflows` → `not_found` error
+ */
+function resolveInstanceFields(
+  workflowInstanceId: WorkflowInstanceId,
+  context: WorkflowExecutionContext | undefined,
+): Result<
+  {
+    workflowName: string;
+    goal: string;
+    slug: string;
+    currentStepName: string | undefined;
+  },
+  LifecycleError
+> {
+  if (context === undefined) {
+    // Legacy fallback: use workflowInstanceId as placeholder for all fields.
+    return ok({
+      workflowName: workflowInstanceId,
+      goal: workflowInstanceId,
+      slug: workflowInstanceId,
+      currentStepName: undefined,
+    });
+  }
+
+  if (!context.workflowName) {
+    return err(
+      lifecycleValidationError(
+        "context.workflowName is required",
+        "context.workflowName",
+      ),
+    );
+  }
+
+  const workflowConfig = context.workflows[context.workflowName];
+  if (workflowConfig === undefined) {
+    return err(
+      lifecycleNotFoundError(
+        "workflow",
+        context.workflowName,
+        `Workflow "${context.workflowName}" not found in provided workflow map`,
+      ),
+    );
+  }
+
+  const firstStep = workflowConfig.steps[0];
+  const currentStepName = firstStep?.name;
+
+  return ok({
+    workflowName: context.workflowName,
+    goal: context.goal,
+    slug: context.slug,
+    currentStepName,
+  });
+}
+
+/**
  * Start a new workflow execution.
+ *
+ * When `input.context` is provided the engine validates `context.workflowName`
+ * against `context.workflows` before creating any instance. On success the
+ * instance is created with the correct `workflowName`, `goal`, `slug`, and
+ * `currentStepName` (first step name). An unknown workflow name returns a
+ * `not_found` error; a missing `workflowName` returns a `validation` error.
+ *
+ * When `input.context` is omitted the engine falls back to legacy behaviour:
+ * `workflowInstanceId` is used as a placeholder for all three name fields.
  *
  * Creates or updates the `WorkflowInstance` to `running` status and acquires
  * an `ExecutionLease`. Uses one clock source per operation: `input.now` if
@@ -897,6 +1022,14 @@ export function startExecution(
     if (metaCheck.isErr()) return errAsync(metaCheck.error);
   }
 
+  // Validate workflow context and resolve instance fields before any store I/O.
+  const fieldsResult = resolveInstanceFields(
+    input.workflowInstanceId,
+    input.context,
+  );
+  if (fieldsResult.isErr()) return errAsync(fieldsResult.error);
+  const fields = fieldsResult.value;
+
   const ownerId = createOwnerId(input.ownerId);
 
   // Find or create the workflow instance using input.workflowInstanceId as the
@@ -916,9 +1049,9 @@ export function startExecution(
         return store.instances
           .create({
             id: input.workflowInstanceId,
-            workflowName: input.workflowInstanceId,
-            goal: input.workflowInstanceId,
-            slug: input.workflowInstanceId,
+            workflowName: fields.workflowName,
+            goal: fields.goal,
+            slug: fields.slug,
           })
           .mapErr(
             (storeError): LifecycleError =>
@@ -927,15 +1060,24 @@ export function startExecution(
                 message: storeError.message,
               }),
           )
-          .andThen((created) =>
-            store.instances.update(created.id, { status: "running" }).mapErr(
+          .andThen((created) => {
+            // Build the update: always set status to running; also set
+            // currentStepName when the context provides a first step.
+            const updateInput =
+              fields.currentStepName !== undefined
+                ? {
+                    status: "running" as const,
+                    currentStepName: fields.currentStepName,
+                  }
+                : { status: "running" as const };
+            return store.instances.update(created.id, updateInput).mapErr(
               (storeError): LifecycleError =>
                 lifecyclePersistenceError(storeError.message, {
                   type: storeError.type,
                   message: storeError.message,
                 }),
-            ),
-          );
+            );
+          });
       }
       return store.instances.update(existing.id, { status: "running" }).mapErr(
         (storeError): LifecycleError =>

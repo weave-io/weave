@@ -37,7 +37,7 @@
 
 ## Tasks
 
-### [ ] 1.0 Validate workflow start and execution context
+### [x] 1.0 Validate workflow start and execution context
 
 #### 1.0 Proof Artifact(s)
 

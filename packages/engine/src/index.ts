@@ -72,6 +72,7 @@ export type {
   StartExecutionOutput,
   StartExecutionResult,
   StepCompletionSignal,
+  WorkflowExecutionContext,
 } from "./execution-lifecycle.js";
 export {
   beforeTool,

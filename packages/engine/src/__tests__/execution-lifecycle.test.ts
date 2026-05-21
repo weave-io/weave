@@ -52,6 +52,7 @@ import {
   type StepCompletionSignal,
   sanitizeMetadata,
   startExecution,
+  type WorkflowExecutionContext,
 } from "@weave/engine";
 
 // ---------------------------------------------------------------------------
@@ -2583,5 +2584,377 @@ describe("LifecyclePersistenceError.cause narrowed type", () => {
         }
       }
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// startExecution — WorkflowExecutionContext validation and instance init
+// ---------------------------------------------------------------------------
+
+describe("startExecution: WorkflowExecutionContext", () => {
+  /**
+   * Minimal workflow fixture with two steps.
+   * Compatible with WeaveConfig["workflows"] value type.
+   */
+  const twoStepWorkflow: WorkflowExecutionContext["workflows"][string] = {
+    version: 1,
+    steps: [
+      {
+        name: "plan",
+        type: "autonomous",
+        agent: "shuttle",
+        prompt: "Create a plan",
+        completion: { method: "agent_signal" },
+      },
+      {
+        name: "implement",
+        type: "autonomous",
+        agent: "shuttle",
+        prompt: "Implement the plan",
+        completion: { method: "agent_signal" },
+      },
+    ],
+  };
+
+  const singleStepWorkflow: WorkflowExecutionContext["workflows"][string] = {
+    version: 1,
+    steps: [
+      {
+        name: "fix",
+        type: "autonomous",
+        agent: "shuttle",
+        prompt: "Fix the bug",
+        completion: { method: "agent_signal" },
+      },
+    ],
+  };
+
+  const knownWorkflows: WorkflowExecutionContext["workflows"] = {
+    "my-feature": twoStepWorkflow,
+    "quick-fix": singleStepWorkflow,
+  };
+
+  // ---------------------------------------------------------------------------
+  // AC1: unknown workflow name → not_found error before any instance creation
+  // ---------------------------------------------------------------------------
+
+  it("returns not_found error for unknown workflowName — no instance created", async () => {
+    const store = createInMemoryRuntimeStore();
+    const instanceId = createWorkflowInstanceId("ctx-unknown-wf-001");
+
+    const result = await startExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: "session-ctx-001",
+        context: {
+          workflowName: "does-not-exist",
+          goal: "do something",
+          slug: "do-something",
+          workflows: knownWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("not_found");
+    if (result.error.type === "not_found") {
+      expect(result.error.entity).toBe("workflow");
+      expect(result.error.id).toBe("does-not-exist");
+    }
+
+    // No instance should have been created
+    const instanceResult = await store.instances.findById(instanceId);
+    expect(instanceResult.isOk()).toBe(true);
+    if (!instanceResult.isOk()) return;
+    expect(instanceResult.value).toBeNull();
+  });
+
+  it("returns validation error for empty workflowName in context", async () => {
+    const store = createInMemoryRuntimeStore();
+    const instanceId = createWorkflowInstanceId("ctx-empty-wf-name-001");
+
+    const result = await startExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: "session-ctx-002",
+        context: {
+          workflowName: "",
+          goal: "do something",
+          slug: "do-something",
+          workflows: knownWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+    if (result.error.type === "validation") {
+      expect(result.error.field).toBe("context.workflowName");
+    }
+
+    // No instance should have been created
+    const instanceResult = await store.instances.findById(instanceId);
+    expect(instanceResult.isOk()).toBe(true);
+    if (!instanceResult.isOk()) return;
+    expect(instanceResult.value).toBeNull();
+  });
+
+  // ---------------------------------------------------------------------------
+  // AC2: valid workflow → instance with correct workflowName, goal, slug, currentStepName
+  // ---------------------------------------------------------------------------
+
+  it("creates WorkflowInstance with correct workflowName, goal, slug, and currentStepName", async () => {
+    const store = createInMemoryRuntimeStore();
+    const instanceId = createWorkflowInstanceId("ctx-valid-wf-001");
+
+    const result = await startExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: "session-ctx-003",
+        context: {
+          workflowName: "my-feature",
+          goal: "Add dark mode support",
+          slug: "add-dark-mode-support",
+          workflows: knownWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    // Verify the instance was created with the correct fields
+    const instanceResult = await store.instances.getById(instanceId);
+    expect(instanceResult.isOk()).toBe(true);
+    if (!instanceResult.isOk()) return;
+
+    const instance = instanceResult.value;
+    expect(instance.workflowName).toBe("my-feature");
+    expect(instance.goal).toBe("Add dark mode support");
+    expect(instance.slug).toBe("add-dark-mode-support");
+    expect(instance.status).toBe("running");
+  });
+
+  // ---------------------------------------------------------------------------
+  // AC2 (first-step): currentStepName is set to the first step name
+  // ---------------------------------------------------------------------------
+
+  it("sets currentStepName to the first step of the workflow", async () => {
+    const store = createInMemoryRuntimeStore();
+    const instanceId = createWorkflowInstanceId("ctx-first-step-001");
+
+    const result = await startExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: "session-ctx-004",
+        context: {
+          workflowName: "my-feature",
+          goal: "Implement feature X",
+          slug: "implement-feature-x",
+          workflows: knownWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    const instanceResult = await store.instances.getById(instanceId);
+    expect(instanceResult.isOk()).toBe(true);
+    if (!instanceResult.isOk()) return;
+
+    // "my-feature" workflow has "plan" as first step
+    expect(instanceResult.value.currentStepName).toBe("plan");
+  });
+
+  it("sets currentStepName to the single step for a single-step workflow", async () => {
+    const store = createInMemoryRuntimeStore();
+    const instanceId = createWorkflowInstanceId("ctx-single-step-001");
+
+    const result = await startExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: "session-ctx-005",
+        context: {
+          workflowName: "quick-fix",
+          goal: "Fix the null pointer bug",
+          slug: "fix-null-pointer-bug",
+          workflows: knownWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    const instanceResult = await store.instances.getById(instanceId);
+    expect(instanceResult.isOk()).toBe(true);
+    if (!instanceResult.isOk()) return;
+
+    // "quick-fix" workflow has "fix" as its only step
+    expect(instanceResult.value.currentStepName).toBe("fix");
+  });
+
+  // ---------------------------------------------------------------------------
+  // AC2 (lease): ExecutionLease is acquired on success
+  // ---------------------------------------------------------------------------
+
+  it("acquires an ExecutionLease on successful start with context", async () => {
+    const store = createInMemoryRuntimeStore();
+    const instanceId = createWorkflowInstanceId("ctx-lease-001");
+
+    const result = await startExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: "session-ctx-006",
+        context: {
+          workflowName: "my-feature",
+          goal: "Build the thing",
+          slug: "build-the-thing",
+          workflows: knownWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    const { leaseId: acquiredLeaseId } = result.value;
+    expect(typeof acquiredLeaseId).toBe("string");
+    expect(acquiredLeaseId.length).toBeGreaterThan(0);
+
+    // Verify the lease is active and bound to the correct instance
+    const leaseResult = await store.leases.getById(acquiredLeaseId);
+    expect(leaseResult.isOk()).toBe(true);
+    if (!leaseResult.isOk()) return;
+    expect(leaseResult.value.workflowInstanceId).toBe(instanceId);
+  });
+
+  // ---------------------------------------------------------------------------
+  // AC3: single-active-execution invariant — second call returns lease_conflict
+  // ---------------------------------------------------------------------------
+
+  it("returns lease_conflict when a second startExecution is called while a lease is active", async () => {
+    const store = createInMemoryRuntimeStore();
+    const instanceId = createWorkflowInstanceId("ctx-lease-conflict-001");
+
+    // First call — should succeed and acquire a lease
+    const firstResult = await startExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: "session-ctx-first",
+        context: {
+          workflowName: "my-feature",
+          goal: "First execution",
+          slug: "first-execution",
+          workflows: knownWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(firstResult.isOk()).toBe(true);
+    if (!firstResult.isOk()) return;
+    const firstLeaseId = firstResult.value.leaseId;
+
+    // Second call — same instance, different owner, lease still active
+    const secondResult = await startExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: "session-ctx-second",
+        context: {
+          workflowName: "my-feature",
+          goal: "Second execution attempt",
+          slug: "second-execution-attempt",
+          workflows: knownWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(secondResult.isErr()).toBe(true);
+    if (!secondResult.isErr()) return;
+    expect(secondResult.error.type).toBe("lease_conflict");
+    if (secondResult.error.type === "lease_conflict") {
+      expect(secondResult.error.workflowInstanceId).toBe(instanceId);
+      expect(secondResult.error.conflictingLeaseId).toBe(firstLeaseId);
+    }
+  });
+
+  it("returns lease_conflict on second call even without context (legacy path)", async () => {
+    const store = createInMemoryRuntimeStore();
+    const instanceId = createWorkflowInstanceId(
+      "ctx-lease-conflict-legacy-001",
+    );
+
+    // First call acquires a lease
+    const firstResult = await startExecution(
+      { workflowInstanceId: instanceId, ownerId: "session-legacy-first" },
+      store,
+    );
+    expect(firstResult.isOk()).toBe(true);
+
+    // Second call — no context, same instance, lease still active
+    const secondResult = await startExecution(
+      { workflowInstanceId: instanceId, ownerId: "session-legacy-second" },
+      store,
+    );
+
+    expect(secondResult.isErr()).toBe(true);
+    if (!secondResult.isErr()) return;
+    expect(secondResult.error.type).toBe("lease_conflict");
+  });
+
+  // ---------------------------------------------------------------------------
+  // WorkflowExecutionContext type is importable from @weave/engine
+  // ---------------------------------------------------------------------------
+
+  it("WorkflowExecutionContext type is importable and structurally correct", () => {
+    const ctx: WorkflowExecutionContext = {
+      workflowName: "my-feature",
+      goal: "Test goal",
+      slug: "test-goal",
+      workflows: knownWorkflows,
+    };
+    expect(ctx.workflowName).toBe("my-feature");
+    expect(ctx.goal).toBe("Test goal");
+    expect(ctx.slug).toBe("test-goal");
+    expect(Object.keys(ctx.workflows)).toContain("my-feature");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Legacy path: no context → workflowInstanceId used as placeholder (backward compat)
+  // ---------------------------------------------------------------------------
+
+  it("without context: workflowName, goal, slug all equal workflowInstanceId (legacy)", async () => {
+    const store = createInMemoryRuntimeStore();
+    const instanceId = createWorkflowInstanceId("legacy-placeholder-001");
+
+    const result = await startExecution(
+      { workflowInstanceId: instanceId, ownerId: "session-legacy" },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    const instanceResult = await store.instances.getById(instanceId);
+    expect(instanceResult.isOk()).toBe(true);
+    if (!instanceResult.isOk()) return;
+
+    const instance = instanceResult.value;
+    expect(instance.workflowName).toBe(instanceId);
+    expect(instance.goal).toBe(instanceId);
+    expect(instance.slug).toBe(instanceId);
+    // No currentStepName set in legacy path
+    expect(instance.currentStepName).toBeUndefined();
   });
 });
