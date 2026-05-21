@@ -31,8 +31,14 @@
  * @see docs/adapter-boundary.md — Execution Lifecycle Surface section
  */
 
-import type { Result } from "neverthrow";
-import { errAsync, okAsync, type ResultAsync } from "neverthrow";
+import {
+  err,
+  errAsync,
+  ok,
+  okAsync,
+  type Result,
+  type ResultAsync,
+} from "neverthrow";
 import type { RunAgentEffect } from "./run-agent-effects.js";
 import type { RuntimeStoreConflictError } from "./runtime/errors.js";
 import type { RuntimeStore } from "./runtime/store.js";
@@ -72,6 +78,65 @@ import {
  * but the field names are validated at runtime by the sanitizer.
  */
 export type SafeMetadata = Record<string, string | number | boolean>;
+
+// ---------------------------------------------------------------------------
+// Metadata sanitization — runtime enforcement
+// ---------------------------------------------------------------------------
+
+/**
+ * Denylist of field name fragments (lowercased) that must not appear in
+ * lifecycle metadata. Checked case-insensitively against each key.
+ *
+ * Extends the store-layer denylist with additional credential-like names
+ * that are specific to the lifecycle surface (e.g. authHeader, jwt, sessionId).
+ */
+const LIFECYCLE_DENIED_METADATA_KEYS: ReadonlySet<string> = new Set([
+  "token",
+  "apikey",
+  "api_key",
+  "password",
+  "secret",
+  "credential",
+  "authorization",
+  "bearer",
+  "authheader",
+  "auth_header",
+  "apitoken",
+  "api_token",
+  "accesskey",
+  "access_key",
+  "sessionid",
+  "session_id",
+  "jwt",
+  "cookie",
+  "cookies",
+]);
+
+/**
+ * Runtime sanitization for lifecycle metadata.
+ *
+ * Checks each key in `metadata` against the denylist (case-insensitive).
+ * Returns `ok(metadata)` if all keys are safe, or
+ * `err(LifecycleValidationError)` if any denied key is found.
+ *
+ * @param metadata - The SafeMetadata record to validate.
+ * @returns `Result<SafeMetadata, LifecycleValidationError>`
+ */
+export function sanitizeMetadata(
+  metadata: SafeMetadata,
+): Result<SafeMetadata, LifecycleValidationError> {
+  for (const key of Object.keys(metadata)) {
+    if (LIFECYCLE_DENIED_METADATA_KEYS.has(key.toLowerCase())) {
+      return err(
+        lifecycleValidationError(
+          `Metadata contains a denied field: ${key}`,
+          "metadata",
+        ),
+      );
+    }
+  }
+  return ok(metadata);
+}
 
 // ---------------------------------------------------------------------------
 // LifecycleError — discriminated union
@@ -128,8 +193,11 @@ export interface LifecyclePersistenceError {
   readonly type: "persistence";
   /** Human-readable description of the failure. */
   readonly message: string;
-  /** Underlying cause, if available. */
-  readonly cause?: unknown;
+  /**
+   * Narrowed cause — preserves type discriminant and message only.
+   * Prevents raw store internals (SQL, file paths, stack traces) from leaking.
+   */
+  readonly cause?: { readonly type: string; readonly message: string };
 }
 
 /**
@@ -200,7 +268,7 @@ export function lifecycleLeaseConflictError(
 /** Create a LifecyclePersistenceError. */
 export function lifecyclePersistenceError(
   message: string,
-  cause?: unknown,
+  cause?: { readonly type: string; readonly message: string },
 ): LifecyclePersistenceError {
   return { type: "persistence", message, cause };
 }
@@ -378,9 +446,18 @@ export interface StartExecutionInput {
 /**
  * Output from `startExecution`.
  *
- * Returns the acquired execution lease ID and the initial lifecycle effects.
+ * Returns the workflow instance ID, the acquired execution lease ID, and the
+ * initial lifecycle effects.
+ *
+ * Invariant: `workflowInstanceId` always matches the ID of the instance that
+ * was created or updated AND the `workflowInstanceId` on the acquired lease.
  */
 export interface StartExecutionOutput {
+  /**
+   * The ID of the workflow instance that was created or updated.
+   * Always matches the `workflowInstanceId` on the acquired lease.
+   */
+  readonly workflowInstanceId: WorkflowInstanceId;
   /** The ID of the acquired execution lease. */
   readonly leaseId: ExecutionLeaseId;
   /** Initial lifecycle effects to apply (e.g. dispatch the first step). */
@@ -713,6 +790,11 @@ export function observeSession(
     );
   }
 
+  if (input.metadata !== undefined && input.metadata !== null) {
+    const metaCheck = sanitizeMetadata(input.metadata);
+    if (metaCheck.isErr()) return errAsync(metaCheck.error);
+  }
+
   const snapshotInput = {
     workflowInstanceId: input.workflowInstanceId,
     leaseId: input.leaseId,
@@ -728,7 +810,10 @@ export function observeSession(
   return store.snapshots
     .record(snapshotInput)
     .mapErr((storeError) =>
-      lifecyclePersistenceError(storeError.message, storeError),
+      lifecyclePersistenceError(storeError.message, {
+        type: storeError.type,
+        message: storeError.message,
+      }),
     )
     .map((snapshot) => ({ snapshotId: snapshot.id }));
 }
@@ -764,61 +849,81 @@ export function startExecution(
     return errAsync(lifecycleValidationError("ownerId is required", "ownerId"));
   }
 
+  if (input.metadata !== undefined && input.metadata !== null) {
+    const metaCheck = sanitizeMetadata(input.metadata);
+    if (metaCheck.isErr()) return errAsync(metaCheck.error);
+  }
+
   const ownerId = createOwnerId(input.ownerId);
 
-  // Find or create the workflow instance, then update to running, then acquire lease
+  // Find or create the workflow instance using input.workflowInstanceId as the
+  // canonical ID, then update to running, then acquire a lease for that same ID.
+  // Invariant: created/updated instance ID === leased workflowInstanceId === output ID.
   return store.instances
     .findById(input.workflowInstanceId)
     .mapErr(
       (storeError): LifecycleError =>
-        lifecyclePersistenceError(storeError.message, storeError),
+        lifecyclePersistenceError(storeError.message, {
+          type: storeError.type,
+          message: storeError.message,
+        }),
     )
     .andThen((existing) => {
       if (existing === null) {
         return store.instances
           .create({
+            id: input.workflowInstanceId,
             workflowName: input.workflowInstanceId,
             goal: input.workflowInstanceId,
             slug: input.workflowInstanceId,
           })
           .mapErr(
             (storeError): LifecycleError =>
-              lifecyclePersistenceError(storeError.message, storeError),
+              lifecyclePersistenceError(storeError.message, {
+                type: storeError.type,
+                message: storeError.message,
+              }),
           )
           .andThen((created) =>
-            store.instances
-              .update(created.id, { status: "running" })
-              .mapErr(
-                (storeError): LifecycleError =>
-                  lifecyclePersistenceError(storeError.message, storeError),
-              ),
+            store.instances.update(created.id, { status: "running" }).mapErr(
+              (storeError): LifecycleError =>
+                lifecyclePersistenceError(storeError.message, {
+                  type: storeError.type,
+                  message: storeError.message,
+                }),
+            ),
           );
       }
-      return store.instances
-        .update(existing.id, { status: "running" })
-        .mapErr(
-          (storeError): LifecycleError =>
-            lifecyclePersistenceError(storeError.message, storeError),
-        );
+      return store.instances.update(existing.id, { status: "running" }).mapErr(
+        (storeError): LifecycleError =>
+          lifecyclePersistenceError(storeError.message, {
+            type: storeError.type,
+            message: storeError.message,
+          }),
+      );
     })
-    .andThen(() =>
+    .andThen((instance) =>
       store.leases
         .acquire({
-          workflowInstanceId: input.workflowInstanceId,
+          workflowInstanceId: instance.id,
           ownerId,
           ttlMs: 3_600_000,
         })
         .mapErr((storeError): LifecycleError => {
           if (storeError.type === "conflict") {
-            return mapConflictToLeaseConflict(
-              input.workflowInstanceId,
-              storeError,
-            );
+            return mapConflictToLeaseConflict(instance.id, storeError);
           }
-          return lifecyclePersistenceError(storeError.message, storeError);
+          return lifecyclePersistenceError(storeError.message, {
+            type: storeError.type,
+            message: storeError.message,
+          });
         }),
     )
-    .map((lease) => ({ leaseId: lease.id, effects: [] as LifecycleEffect[] }));
+    .map((lease) => ({
+      workflowInstanceId: lease.workflowInstanceId,
+      leaseId: lease.id,
+      effects: [] as LifecycleEffect[],
+    }));
 }
 
 // ---------------------------------------------------------------------------
@@ -857,59 +962,105 @@ export function handleUserInterrupt(
     return errAsync(lifecycleValidationError("signal is required", "signal"));
   }
 
-  return store.instances
-    .findById(input.workflowInstanceId)
+  if (input.metadata !== undefined && input.metadata !== null) {
+    const metaCheck = sanitizeMetadata(input.metadata);
+    if (metaCheck.isErr()) return errAsync(metaCheck.error);
+  }
+
+  return store.leases
+    .findActive()
     .mapErr(
       (storeError): LifecycleError =>
-        lifecyclePersistenceError(storeError.message, storeError),
+        lifecyclePersistenceError(storeError.message, {
+          type: storeError.type,
+          message: storeError.message,
+        }),
     )
-    .andThen((existing) => {
-      if (existing === null) {
+    .andThen((activeLease) => {
+      if (activeLease === null) {
         return errAsync(
-          lifecycleNotFoundError(
-            "WorkflowInstance",
-            input.workflowInstanceId as string,
+          lifecycleLeaseConflictError(
+            input.workflowInstanceId,
+            "none" as ExecutionLeaseId,
+            "No active lease for this workflow instance",
           ),
         );
       }
-
-      if (input.signal === "pause") {
-        return store.instances
-          .update(input.workflowInstanceId, { status: "paused" })
-          .mapErr(
-            (storeError): LifecycleError =>
-              lifecyclePersistenceError(storeError.message, storeError),
-          )
-          .map(
-            (): HandleUserInterruptOutput => ({
-              effects: [
-                {
-                  kind: "pause-execution",
-                  workflowInstanceId: input.workflowInstanceId,
-                },
-              ],
-            }),
-          );
+      if (activeLease.id !== input.leaseId) {
+        return errAsync(
+          lifecycleLeaseConflictError(
+            input.workflowInstanceId,
+            activeLease.id,
+            "Provided lease ID does not match the active lease",
+          ),
+        );
       }
-
-      // signal === "cancel" — terminal status
-      return store.instances
-        .update(input.workflowInstanceId, { status: "cancelled" })
+      return okAsync(undefined as undefined);
+    })
+    .andThen(() =>
+      store.instances
+        .findById(input.workflowInstanceId)
         .mapErr(
           (storeError): LifecycleError =>
-            lifecyclePersistenceError(storeError.message, storeError),
+            lifecyclePersistenceError(storeError.message, {
+              type: storeError.type,
+              message: storeError.message,
+            }),
         )
-        .map(
-          (): HandleUserInterruptOutput => ({
-            effects: [
-              {
-                kind: "complete-execution",
-                workflowInstanceId: input.workflowInstanceId,
-              },
-            ],
-          }),
-        );
-    });
+        .andThen((existing) => {
+          if (existing === null) {
+            return errAsync(
+              lifecycleNotFoundError(
+                "WorkflowInstance",
+                input.workflowInstanceId as string,
+              ),
+            );
+          }
+
+          if (input.signal === "pause") {
+            return store.instances
+              .update(input.workflowInstanceId, { status: "paused" })
+              .mapErr(
+                (storeError): LifecycleError =>
+                  lifecyclePersistenceError(storeError.message, {
+                    type: storeError.type,
+                    message: storeError.message,
+                  }),
+              )
+              .map(
+                (): HandleUserInterruptOutput => ({
+                  effects: [
+                    {
+                      kind: "pause-execution",
+                      workflowInstanceId: input.workflowInstanceId,
+                    },
+                  ],
+                }),
+              );
+          }
+
+          // signal === "cancel" — terminal status
+          return store.instances
+            .update(input.workflowInstanceId, { status: "cancelled" })
+            .mapErr(
+              (storeError): LifecycleError =>
+                lifecyclePersistenceError(storeError.message, {
+                  type: storeError.type,
+                  message: storeError.message,
+                }),
+            )
+            .map(
+              (): HandleUserInterruptOutput => ({
+                effects: [
+                  {
+                    kind: "complete-execution",
+                    workflowInstanceId: input.workflowInstanceId,
+                  },
+                ],
+              }),
+            );
+        }),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -948,61 +1099,105 @@ export function dispatchStep(
     return errAsync(lifecycleValidationError("leaseId is required", "leaseId"));
   }
 
-  return store.instances
-    .findById(input.workflowInstanceId)
+  if (input.metadata !== undefined && input.metadata !== null) {
+    const metaCheck = sanitizeMetadata(input.metadata);
+    if (metaCheck.isErr()) return errAsync(metaCheck.error);
+  }
+
+  return store.leases
+    .findActive()
     .mapErr(
       (storeError): LifecycleError =>
-        lifecyclePersistenceError(storeError.message, storeError),
+        lifecyclePersistenceError(storeError.message, {
+          type: storeError.type,
+          message: storeError.message,
+        }),
     )
-    .andThen((existing) => {
-      if (existing === null) {
+    .andThen((activeLease) => {
+      if (activeLease === null) {
         return errAsync(
-          lifecycleNotFoundError(
-            "WorkflowInstance",
-            input.workflowInstanceId as string,
+          lifecycleLeaseConflictError(
+            input.workflowInstanceId,
+            "none" as ExecutionLeaseId,
+            "No active lease for this workflow instance",
           ),
         );
       }
-
-      const stepName = input.stepName ?? existing.currentStepName ?? "default";
-
-      return store.instances
-        .update(input.workflowInstanceId, { currentStepName: stepName })
+      if (activeLease.id !== input.leaseId) {
+        return errAsync(
+          lifecycleLeaseConflictError(
+            input.workflowInstanceId,
+            activeLease.id,
+            "Provided lease ID does not match the active lease",
+          ),
+        );
+      }
+      return okAsync(undefined as undefined);
+    })
+    .andThen(() =>
+      store.instances
+        .findById(input.workflowInstanceId)
         .mapErr(
           (storeError): LifecycleError =>
-            lifecyclePersistenceError(storeError.message, storeError),
+            lifecyclePersistenceError(storeError.message, {
+              type: storeError.type,
+              message: storeError.message,
+            }),
         )
-        .map((): DispatchStepOutput => {
-          const minimalPolicy = {
-            read: "allow" as const,
-            write: "allow" as const,
-            execute: "allow" as const,
-            delegate: "deny" as const,
-            network: "ask" as const,
-          };
-          const runAgent: RunAgentEffect = {
-            kind: "run-agent",
-            agentName: stepName,
-            agentDescriptor: {
-              name: stepName,
-              composedPrompt: "",
-              models: [],
-              mode: "subagent",
-              effectiveToolPolicy: minimalPolicy,
-              rawToolPolicy: minimalPolicy,
-              delegationTargets: [],
-              skills: [],
-            },
-            effectiveToolPolicy: minimalPolicy,
-            rawToolPolicy: minimalPolicy,
-            resolvedSkills: [],
-          };
-          return {
-            stepName,
-            effects: [{ kind: "dispatch-agent", runAgent }],
-          };
-        });
-    });
+        .andThen((existing) => {
+          if (existing === null) {
+            return errAsync(
+              lifecycleNotFoundError(
+                "WorkflowInstance",
+                input.workflowInstanceId as string,
+              ),
+            );
+          }
+
+          const stepName =
+            input.stepName ?? existing.currentStepName ?? "default";
+
+          return store.instances
+            .update(input.workflowInstanceId, { currentStepName: stepName })
+            .mapErr(
+              (storeError): LifecycleError =>
+                lifecyclePersistenceError(storeError.message, {
+                  type: storeError.type,
+                  message: storeError.message,
+                }),
+            )
+            .map((): DispatchStepOutput => {
+              const minimalPolicy = {
+                read: "allow" as const,
+                write: "allow" as const,
+                execute: "allow" as const,
+                delegate: "deny" as const,
+                network: "ask" as const,
+              };
+              const runAgent: RunAgentEffect = {
+                kind: "run-agent",
+                agentName: stepName,
+                agentDescriptor: {
+                  name: stepName,
+                  composedPrompt: "",
+                  models: [],
+                  mode: "subagent",
+                  effectiveToolPolicy: minimalPolicy,
+                  rawToolPolicy: minimalPolicy,
+                  delegationTargets: [],
+                  skills: [],
+                },
+                effectiveToolPolicy: minimalPolicy,
+                rawToolPolicy: minimalPolicy,
+                resolvedSkills: [],
+              };
+              return {
+                stepName,
+                effects: [{ kind: "dispatch-agent", runAgent }],
+              };
+            });
+        }),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1054,50 +1249,93 @@ export function completeStep(
     );
   }
 
-  return store.instances
-    .findById(input.workflowInstanceId)
+  if (input.metadata !== undefined && input.metadata !== null) {
+    const metaCheck = sanitizeMetadata(input.metadata);
+    if (metaCheck.isErr()) return errAsync(metaCheck.error);
+  }
+
+  return store.leases
+    .findActive()
     .mapErr(
       (storeError): LifecycleError =>
-        lifecyclePersistenceError(storeError.message, storeError),
+        lifecyclePersistenceError(storeError.message, {
+          type: storeError.type,
+          message: storeError.message,
+        }),
     )
-    .andThen((existing) => {
-      if (existing === null) {
+    .andThen((activeLease) => {
+      if (activeLease === null) {
         return errAsync(
-          lifecycleNotFoundError(
-            "WorkflowInstance",
-            input.workflowInstanceId as string,
+          lifecycleLeaseConflictError(
+            input.workflowInstanceId,
+            "none" as ExecutionLeaseId,
+            "No active lease for this workflow instance",
           ),
         );
       }
-
-      const { outcome, message, artifacts } = input.completionSignal;
-
-      const updateInput = buildUpdateInput(outcome, message);
-
-      return store.instances
-        .update(input.workflowInstanceId, updateInput)
+      if (activeLease.id !== input.leaseId) {
+        return errAsync(
+          lifecycleLeaseConflictError(
+            input.workflowInstanceId,
+            activeLease.id,
+            "Provided lease ID does not match the active lease",
+          ),
+        );
+      }
+      return okAsync(undefined as undefined);
+    })
+    .andThen(() =>
+      store.instances
+        .findById(input.workflowInstanceId)
         .mapErr(
           (storeError): LifecycleError =>
-            lifecyclePersistenceError(storeError.message, storeError),
+            lifecyclePersistenceError(storeError.message, {
+              type: storeError.type,
+              message: storeError.message,
+            }),
         )
-        .andThen(() => {
-          if (!artifacts || artifacts.length === 0) {
-            return okAsync(undefined);
+        .andThen((existing) => {
+          if (existing === null) {
+            return errAsync(
+              lifecycleNotFoundError(
+                "WorkflowInstance",
+                input.workflowInstanceId as string,
+              ),
+            );
           }
-          return addArtifactsSequentially(
-            store,
-            input.workflowInstanceId,
-            artifacts,
-          );
-        })
-        .map((): CompleteStepOutput => {
-          const effects = buildCompleteStepEffects(
-            outcome,
-            input.workflowInstanceId,
-          );
-          return { effects };
-        });
-    });
+
+          const { outcome, message, artifacts } = input.completionSignal;
+
+          const updateInput = buildUpdateInput(outcome, message);
+
+          return store.instances
+            .update(input.workflowInstanceId, updateInput)
+            .mapErr(
+              (storeError): LifecycleError =>
+                lifecyclePersistenceError(storeError.message, {
+                  type: storeError.type,
+                  message: storeError.message,
+                }),
+            )
+            .andThen(() => {
+              if (!artifacts || artifacts.length === 0) {
+                return okAsync(undefined);
+              }
+              return addArtifactsSequentially(
+                store,
+                input.workflowInstanceId,
+                artifacts,
+              );
+            })
+            .map((): CompleteStepOutput => {
+              const effects = buildCompleteStepEffects(
+                outcome,
+                input.workflowInstanceId,
+              );
+              return { effects };
+            });
+        }),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1147,7 +1385,10 @@ function addArtifactsSequentially(
     })
     .mapErr(
       (storeError): LifecycleError =>
-        lifecyclePersistenceError(storeError.message, storeError),
+        lifecyclePersistenceError(storeError.message, {
+          type: storeError.type,
+          message: storeError.message,
+        }),
     )
     .andThen(() =>
       addArtifactsSequentially(store, workflowInstanceId, artifacts.slice(1)),
@@ -1186,13 +1427,21 @@ export function resumeExecution(
     return errAsync(lifecycleValidationError("ownerId is required", "ownerId"));
   }
 
+  if (input.metadata !== undefined && input.metadata !== null) {
+    const metaCheck = sanitizeMetadata(input.metadata);
+    if (metaCheck.isErr()) return errAsync(metaCheck.error);
+  }
+
   const ownerId = createOwnerId(input.ownerId);
 
   return store.instances
     .findById(input.workflowInstanceId)
     .mapErr(
       (storeError): LifecycleError =>
-        lifecyclePersistenceError(storeError.message, storeError),
+        lifecyclePersistenceError(storeError.message, {
+          type: storeError.type,
+          message: storeError.message,
+        }),
     )
     .andThen((existing) => {
       if (existing === null) {
@@ -1216,14 +1465,20 @@ export function resumeExecution(
               storeError,
             );
           }
-          return lifecyclePersistenceError(storeError.message, storeError);
+          return lifecyclePersistenceError(storeError.message, {
+            type: storeError.type,
+            message: storeError.message,
+          });
         })
         .andThen((lease) =>
           store.instances
             .update(input.workflowInstanceId, { status: "running" })
             .mapErr(
               (storeError): LifecycleError =>
-                lifecyclePersistenceError(storeError.message, storeError),
+                lifecyclePersistenceError(storeError.message, {
+                  type: storeError.type,
+                  message: storeError.message,
+                }),
             )
             .map(() => lease),
         );
@@ -1300,6 +1555,11 @@ export function beforeTool(input: BeforeToolInput): BeforeToolResult {
         "toolCapability",
       ),
     );
+  }
+
+  if (input.metadata !== undefined && input.metadata !== null) {
+    const metaCheck = sanitizeMetadata(input.metadata);
+    if (metaCheck.isErr()) return errAsync(metaCheck.error);
   }
 
   const decision = input.effectiveToolPolicy[input.toolCapability];

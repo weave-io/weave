@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 50 lib files | 2 env vars | 0 middleware | 0% test coverage
 > **Token savings:** this file is ~4,300 tokens. Without it, AI exploration would cost ~22,400 tokens. **Saves ~18,100 tokens per conversation.**
-> **Last scanned:** 2026-05-21 16:04 — re-run after significant changes
+> **Last scanned:** 2026-05-21 16:05 — re-run after significant changes
 
 ---
 
@@ -132,13 +132,13 @@
   - const envSchema
   - const env: Env
 - `packages/engine/src/execution-lifecycle.ts`
+  - function sanitizeMetadata: (metadata) => Result<SafeMetadata, LifecycleValidationError>
   - function lifecycleValidationError: (message, field?) => LifecycleValidationError
   - function lifecycleNotFoundError: (entity, id, message?) => LifecycleNotFoundError
   - function lifecycleLeaseConflictError: (workflowInstanceId, conflictingLeaseId, message) => LifecycleLeaseConflictError
   - function lifecyclePersistenceError: (message, cause?) => LifecyclePersistenceError
   - function lifecyclePolicyDecisionError: (message, rule?) => LifecyclePolicyDecisionError
-  - function observeSession: (input, store) => ResultAsync<ObserveSessionOutput, LifecycleError>
-  - _...39 more_
+  - _...40 more_
 - `packages/engine/src/model-resolution.ts`
   - function resolveAdapterModelIntent: (input) => ModelResolutionResult
   - interface ModelResolutionInput

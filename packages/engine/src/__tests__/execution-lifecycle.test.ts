@@ -50,6 +50,7 @@ import {
   type StartExecutionInput,
   type StartExecutionOutput,
   type StepCompletionSignal,
+  sanitizeMetadata,
   startExecution,
 } from "@weave/engine";
 
@@ -145,7 +146,7 @@ describe("LifecycleError discriminants", () => {
   });
 
   it("lifecyclePersistenceError produces type: 'persistence'", () => {
-    const cause = new Error("DB write failed");
+    const cause = { type: "query" as const, message: "DB write failed" };
     const e = lifecyclePersistenceError("Store write failed", cause);
     expect(e.type).toBe("persistence");
     expect(e.message).toBe("Store write failed");
@@ -377,11 +378,13 @@ describe("StartExecutionInput / StartExecutionOutput", () => {
     expect(input.metadata).toBeUndefined();
   });
 
-  it("StartExecutionOutput carries leaseId and effects array", () => {
+  it("StartExecutionOutput carries workflowInstanceId, leaseId and effects array", () => {
     const output: StartExecutionOutput = {
+      workflowInstanceId: wfId,
       leaseId,
       effects: [],
     };
+    expect(output.workflowInstanceId).toBe(wfId);
     expect(output.leaseId).toBe(leaseId);
     expect(output.effects).toHaveLength(0);
   });
@@ -668,8 +671,8 @@ describe("observeSession (Runtime Store)", () => {
 
   it("excludes raw harness-private data — metadata with 'password' key is rejected by sanitizer", async () => {
     const store = createInMemoryRuntimeStore();
-    // The sanitizer inside the store rejects metadata containing denied field names.
-    // 'password' is in the DENIED_FIELD_NAMES denylist.
+    // The lifecycle sanitizer rejects metadata containing denied field names
+    // before the store is called. 'password' is in the denylist.
     const result = await observeSession(
       {
         workflowInstanceId: wfId,
@@ -687,11 +690,10 @@ describe("observeSession (Runtime Store)", () => {
       store,
     );
 
-    // The store's sanitizer should reject the denied field
+    // The lifecycle sanitizer rejects the denied field with a validation error
     expect(result.isErr()).toBe(true);
     if (!result.isErr()) return;
-    // Maps to persistence error (sanitizer returns journal_write error from store)
-    expect(result.error.type).toBe("persistence");
+    expect(result.error.type).toBe("validation");
   });
 
   it("excludes raw harness-private data — metadata with 'token' key is rejected", async () => {
@@ -713,7 +715,7 @@ describe("observeSession (Runtime Store)", () => {
 
     expect(result.isErr()).toBe(true);
     if (!result.isErr()) return;
-    expect(result.error.type).toBe("persistence");
+    expect(result.error.type).toBe("validation");
   });
 
   it("returns validation error for missing workflowInstanceId", async () => {
@@ -1008,6 +1010,50 @@ describe("startExecution (Runtime Store)", () => {
     if (!result.isErr()) return;
     expect(result.error.type).toBe("persistence");
   });
+
+  it("startExecution: returned workflowInstanceId matches the created instance and acquired lease", async () => {
+    // Regression test for the ID mismatch bug:
+    // Previously, store.instances.create() generated a new UUID while the lease
+    // was acquired for input.workflowInstanceId — two different IDs.
+    // Now all three must be identical.
+    const store = createInMemoryRuntimeStore();
+    const targetId = createWorkflowInstanceId("regression-id-match-001");
+
+    const result = await startExecution(
+      {
+        workflowInstanceId: targetId,
+        ownerId: "session-regression-test",
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    const output = result.value;
+
+    // 1. output.workflowInstanceId must equal the input ID
+    expect(output.workflowInstanceId).toBe(targetId);
+
+    // 2. The instance in the store must have the same ID
+    const instanceResult = await store.instances.getById(targetId);
+    expect(instanceResult.isOk()).toBe(true);
+    if (!instanceResult.isOk()) return;
+    const instance = instanceResult.value;
+    expect(instance.id).toBe(targetId);
+
+    // 3. The acquired lease must reference the same workflowInstanceId
+    const leaseResult = await store.leases.getById(output.leaseId);
+    expect(leaseResult.isOk()).toBe(true);
+    if (!leaseResult.isOk()) return;
+    const lease = leaseResult.value;
+    expect(lease.workflowInstanceId).toBe(targetId);
+
+    // Invariant: output.workflowInstanceId === lease.workflowInstanceId === instance.id
+    expect(output.workflowInstanceId).toBe(lease.workflowInstanceId);
+    expect(output.workflowInstanceId).toBe(instance.id);
+    expect(lease.workflowInstanceId).toBe(instance.id);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1197,24 +1243,31 @@ describe("resumeExecution (Runtime Store)", () => {
 // ---------------------------------------------------------------------------
 
 describe("handleUserInterrupt (Runtime Store)", () => {
+  /**
+   * Helper: start an execution for a new workflow instance and return both
+   * the instance ID and the acquired lease ID.
+   */
+  async function startInstance(
+    store: ReturnType<typeof createInMemoryRuntimeStore>,
+    suffix: string,
+  ) {
+    const instanceId = createWorkflowInstanceId(`interrupt-wf-${suffix}`);
+    const startResult = await startExecution(
+      { workflowInstanceId: instanceId, ownerId: `owner-${suffix}` },
+      store,
+    );
+    if (!startResult.isOk()) throw new Error("startExecution failed");
+    return { instanceId, activeLeaseId: startResult.value.leaseId };
+  }
+
   it("pause signal: updates instance to paused status, returns PauseExecutionEffect", async () => {
     const store = createInMemoryRuntimeStore();
-
-    // Pre-create a running workflow instance
-    const createResult = await store.instances.create({
-      workflowName: "interrupt-workflow",
-      goal: "interrupt goal",
-      slug: "interrupt-goal",
-    });
-    expect(createResult.isOk()).toBe(true);
-    if (!createResult.isOk()) return;
-    const instanceId = createResult.value.id;
-    await store.instances.update(instanceId, { status: "running" });
+    const { instanceId, activeLeaseId } = await startInstance(store, "pause");
 
     const result = await handleUserInterrupt(
       {
         workflowInstanceId: instanceId,
-        leaseId,
+        leaseId: activeLeaseId,
         signal: "pause",
       },
       store,
@@ -1239,21 +1292,12 @@ describe("handleUserInterrupt (Runtime Store)", () => {
 
   it("cancel signal: updates instance to cancelled status, returns CompleteExecutionEffect", async () => {
     const store = createInMemoryRuntimeStore();
-
-    const createResult = await store.instances.create({
-      workflowName: "cancel-workflow",
-      goal: "cancel goal",
-      slug: "cancel-goal",
-    });
-    expect(createResult.isOk()).toBe(true);
-    if (!createResult.isOk()) return;
-    const instanceId = createResult.value.id;
-    await store.instances.update(instanceId, { status: "running" });
+    const { instanceId, activeLeaseId } = await startInstance(store, "cancel");
 
     const result = await handleUserInterrupt(
       {
         workflowInstanceId: instanceId,
-        leaseId,
+        leaseId: activeLeaseId,
         signal: "cancel",
       },
       store,
@@ -1278,21 +1322,15 @@ describe("handleUserInterrupt (Runtime Store)", () => {
 
   it("pause does NOT set completedAt — preserves resumability", async () => {
     const store = createInMemoryRuntimeStore();
-
-    const createResult = await store.instances.create({
-      workflowName: "pause-no-complete-workflow",
-      goal: "pause no complete goal",
-      slug: "pause-no-complete-goal",
-    });
-    expect(createResult.isOk()).toBe(true);
-    if (!createResult.isOk()) return;
-    const instanceId = createResult.value.id;
-    await store.instances.update(instanceId, { status: "running" });
+    const { instanceId, activeLeaseId } = await startInstance(
+      store,
+      "pause-no-complete",
+    );
 
     const result = await handleUserInterrupt(
       {
         workflowInstanceId: instanceId,
-        leaseId,
+        leaseId: activeLeaseId,
         signal: "pause",
       },
       store,
@@ -1309,12 +1347,14 @@ describe("handleUserInterrupt (Runtime Store)", () => {
 
   it("returns not_found for missing instance", async () => {
     const store = createInMemoryRuntimeStore();
+    // Acquire a real lease so the lease check passes
+    const { activeLeaseId } = await startInstance(store, "not-found-setup");
     const nonExistentId = createWorkflowInstanceId("non-existent-interrupt-id");
 
     const result = await handleUserInterrupt(
       {
         workflowInstanceId: nonExistentId,
-        leaseId,
+        leaseId: activeLeaseId,
         signal: "pause",
       },
       store,
@@ -1366,6 +1406,27 @@ describe("handleUserInterrupt (Runtime Store)", () => {
       expect(result.error.field).toBe("leaseId");
     }
   });
+
+  it("returns lease_conflict when leaseId does not match active lease", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId } = await startInstance(store, "lease-conflict");
+    const fakeLeaseId = createExecutionLeaseId(
+      "fake-lease-id-that-does-not-match",
+    );
+
+    const result = await handleUserInterrupt(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: fakeLeaseId,
+        signal: "pause",
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("lease_conflict");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1373,22 +1434,34 @@ describe("handleUserInterrupt (Runtime Store)", () => {
 // ---------------------------------------------------------------------------
 
 describe("dispatchStep (Runtime Store)", () => {
+  /**
+   * Helper: start an execution for a new workflow instance and return both
+   * the instance ID and the acquired lease ID.
+   */
+  async function startInstance(
+    store: ReturnType<typeof createInMemoryRuntimeStore>,
+    suffix: string,
+  ) {
+    const instanceId = createWorkflowInstanceId(`dispatch-wf-${suffix}`);
+    const startResult = await startExecution(
+      { workflowInstanceId: instanceId, ownerId: `owner-${suffix}` },
+      store,
+    );
+    if (!startResult.isOk()) throw new Error("startExecution failed");
+    return { instanceId, activeLeaseId: startResult.value.leaseId };
+  }
+
   it("uses explicit stepName from input when provided", async () => {
     const store = createInMemoryRuntimeStore();
-
-    const createResult = await store.instances.create({
-      workflowName: "dispatch-workflow",
-      goal: "dispatch goal",
-      slug: "dispatch-goal",
-    });
-    expect(createResult.isOk()).toBe(true);
-    if (!createResult.isOk()) return;
-    const instanceId = createResult.value.id;
+    const { instanceId, activeLeaseId } = await startInstance(
+      store,
+      "explicit",
+    );
 
     const result = await dispatchStep(
       {
         workflowInstanceId: instanceId,
-        leaseId,
+        leaseId: activeLeaseId,
         stepName: "implement",
       },
       store,
@@ -1401,15 +1474,10 @@ describe("dispatchStep (Runtime Store)", () => {
 
   it("falls back to instance.currentStepName when no stepName in input", async () => {
     const store = createInMemoryRuntimeStore();
-
-    const createResult = await store.instances.create({
-      workflowName: "dispatch-fallback-workflow",
-      goal: "dispatch fallback goal",
-      slug: "dispatch-fallback-goal",
-    });
-    expect(createResult.isOk()).toBe(true);
-    if (!createResult.isOk()) return;
-    const instanceId = createResult.value.id;
+    const { instanceId, activeLeaseId } = await startInstance(
+      store,
+      "fallback",
+    );
 
     // Set currentStepName on the instance
     await store.instances.update(instanceId, { currentStepName: "plan" });
@@ -1417,7 +1485,7 @@ describe("dispatchStep (Runtime Store)", () => {
     const result = await dispatchStep(
       {
         workflowInstanceId: instanceId,
-        leaseId,
+        leaseId: activeLeaseId,
         // no stepName — should fall back to instance.currentStepName
       },
       store,
@@ -1430,20 +1498,12 @@ describe("dispatchStep (Runtime Store)", () => {
 
   it("falls back to 'default' when neither input.stepName nor instance.currentStepName is set", async () => {
     const store = createInMemoryRuntimeStore();
-
-    const createResult = await store.instances.create({
-      workflowName: "dispatch-default-workflow",
-      goal: "dispatch default goal",
-      slug: "dispatch-default-goal",
-    });
-    expect(createResult.isOk()).toBe(true);
-    if (!createResult.isOk()) return;
-    const instanceId = createResult.value.id;
+    const { instanceId, activeLeaseId } = await startInstance(store, "default");
 
     const result = await dispatchStep(
       {
         workflowInstanceId: instanceId,
-        leaseId,
+        leaseId: activeLeaseId,
       },
       store,
     );
@@ -1455,20 +1515,12 @@ describe("dispatchStep (Runtime Store)", () => {
 
   it("updates currentStepName on the workflow instance", async () => {
     const store = createInMemoryRuntimeStore();
-
-    const createResult = await store.instances.create({
-      workflowName: "dispatch-update-workflow",
-      goal: "dispatch update goal",
-      slug: "dispatch-update-goal",
-    });
-    expect(createResult.isOk()).toBe(true);
-    if (!createResult.isOk()) return;
-    const instanceId = createResult.value.id;
+    const { instanceId, activeLeaseId } = await startInstance(store, "update");
 
     await dispatchStep(
       {
         workflowInstanceId: instanceId,
-        leaseId,
+        leaseId: activeLeaseId,
         stepName: "security-review",
       },
       store,
@@ -1482,20 +1534,12 @@ describe("dispatchStep (Runtime Store)", () => {
 
   it("returned DispatchAgentEffect has kind: 'dispatch-agent' and runAgent.kind: 'run-agent'", async () => {
     const store = createInMemoryRuntimeStore();
-
-    const createResult = await store.instances.create({
-      workflowName: "dispatch-effect-workflow",
-      goal: "dispatch effect goal",
-      slug: "dispatch-effect-goal",
-    });
-    expect(createResult.isOk()).toBe(true);
-    if (!createResult.isOk()) return;
-    const instanceId = createResult.value.id;
+    const { instanceId, activeLeaseId } = await startInstance(store, "effect");
 
     const result = await dispatchStep(
       {
         workflowInstanceId: instanceId,
-        leaseId,
+        leaseId: activeLeaseId,
         stepName: "plan",
       },
       store,
@@ -1515,20 +1559,15 @@ describe("dispatchStep (Runtime Store)", () => {
 
   it("emitted effect contains no raw prompts, credentials, or tokens (composedPrompt === '')", async () => {
     const store = createInMemoryRuntimeStore();
-
-    const createResult = await store.instances.create({
-      workflowName: "dispatch-security-workflow",
-      goal: "dispatch security goal",
-      slug: "dispatch-security-goal",
-    });
-    expect(createResult.isOk()).toBe(true);
-    if (!createResult.isOk()) return;
-    const instanceId = createResult.value.id;
+    const { instanceId, activeLeaseId } = await startInstance(
+      store,
+      "security",
+    );
 
     const result = await dispatchStep(
       {
         workflowInstanceId: instanceId,
-        leaseId,
+        leaseId: activeLeaseId,
         stepName: "implement",
       },
       store,
@@ -1548,12 +1587,14 @@ describe("dispatchStep (Runtime Store)", () => {
 
   it("returns not_found for missing instance", async () => {
     const store = createInMemoryRuntimeStore();
+    // Acquire a real lease so the lease check passes
+    const { activeLeaseId } = await startInstance(store, "not-found-setup");
     const nonExistentId = createWorkflowInstanceId("non-existent-dispatch-id");
 
     const result = await dispatchStep(
       {
         workflowInstanceId: nonExistentId,
-        leaseId,
+        leaseId: activeLeaseId,
         stepName: "plan",
       },
       store,
@@ -1602,6 +1643,27 @@ describe("dispatchStep (Runtime Store)", () => {
       expect(result.error.field).toBe("leaseId");
     }
   });
+
+  it("returns lease_conflict when leaseId does not match active lease", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId } = await startInstance(store, "lease-conflict");
+    const fakeLeaseId = createExecutionLeaseId(
+      "fake-lease-id-that-does-not-match",
+    );
+
+    const result = await dispatchStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: fakeLeaseId,
+        stepName: "plan",
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("lease_conflict");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1609,29 +1671,31 @@ describe("dispatchStep (Runtime Store)", () => {
 // ---------------------------------------------------------------------------
 
 describe("completeStep (Runtime Store)", () => {
-  async function createRunningInstance(
+  /**
+   * Helper: start an execution for a new workflow instance and return both
+   * the instance ID and the acquired lease ID.
+   */
+  async function startInstance(
     store: ReturnType<typeof createInMemoryRuntimeStore>,
     suffix: string,
   ) {
-    const createResult = await store.instances.create({
-      workflowName: `complete-workflow-${suffix}`,
-      goal: `complete goal ${suffix}`,
-      slug: `complete-goal-${suffix}`,
-    });
-    if (!createResult.isOk()) throw new Error("Failed to create instance");
-    const instanceId = createResult.value.id;
-    await store.instances.update(instanceId, { status: "running" });
-    return instanceId;
+    const instanceId = createWorkflowInstanceId(`complete-wf-${suffix}`);
+    const startResult = await startExecution(
+      { workflowInstanceId: instanceId, ownerId: `owner-${suffix}` },
+      store,
+    );
+    if (!startResult.isOk()) throw new Error("startExecution failed");
+    return { instanceId, activeLeaseId: startResult.value.leaseId };
   }
 
   it("success outcome: updates instance to running status", async () => {
     const store = createInMemoryRuntimeStore();
-    const instanceId = await createRunningInstance(store, "success");
+    const { instanceId, activeLeaseId } = await startInstance(store, "success");
 
     const result = await completeStep(
       {
         workflowInstanceId: instanceId,
-        leaseId,
+        leaseId: activeLeaseId,
         stepName: "plan",
         completionSignal: { outcome: "success" },
       },
@@ -1650,12 +1714,12 @@ describe("completeStep (Runtime Store)", () => {
 
   it("blocked outcome: updates instance to blocked status", async () => {
     const store = createInMemoryRuntimeStore();
-    const instanceId = await createRunningInstance(store, "blocked");
+    const { instanceId, activeLeaseId } = await startInstance(store, "blocked");
 
     const result = await completeStep(
       {
         workflowInstanceId: instanceId,
-        leaseId,
+        leaseId: activeLeaseId,
         stepName: "security-review",
         completionSignal: { outcome: "blocked" },
       },
@@ -1674,12 +1738,12 @@ describe("completeStep (Runtime Store)", () => {
 
   it("failed outcome: updates instance to failed status with errorMessage", async () => {
     const store = createInMemoryRuntimeStore();
-    const instanceId = await createRunningInstance(store, "failed");
+    const { instanceId, activeLeaseId } = await startInstance(store, "failed");
 
     const result = await completeStep(
       {
         workflowInstanceId: instanceId,
-        leaseId,
+        leaseId: activeLeaseId,
         stepName: "implement",
         completionSignal: { outcome: "failed", message: "Build failed" },
       },
@@ -1701,12 +1765,12 @@ describe("completeStep (Runtime Store)", () => {
 
   it("paused outcome: updates instance to paused status, returns PauseExecutionEffect", async () => {
     const store = createInMemoryRuntimeStore();
-    const instanceId = await createRunningInstance(store, "paused");
+    const { instanceId, activeLeaseId } = await startInstance(store, "paused");
 
     const result = await completeStep(
       {
         workflowInstanceId: instanceId,
-        leaseId,
+        leaseId: activeLeaseId,
         stepName: "review-plan",
         completionSignal: { outcome: "paused" },
       },
@@ -1731,12 +1795,15 @@ describe("completeStep (Runtime Store)", () => {
 
   it("artifacts from signal are merged into instance", async () => {
     const store = createInMemoryRuntimeStore();
-    const instanceId = await createRunningInstance(store, "artifacts");
+    const { instanceId, activeLeaseId } = await startInstance(
+      store,
+      "artifacts",
+    );
 
     const result = await completeStep(
       {
         workflowInstanceId: instanceId,
-        leaseId,
+        leaseId: activeLeaseId,
         stepName: "plan",
         completionSignal: {
           outcome: "success",
@@ -1761,12 +1828,14 @@ describe("completeStep (Runtime Store)", () => {
 
   it("returns not_found for missing instance", async () => {
     const store = createInMemoryRuntimeStore();
+    // Acquire a real lease so the lease check passes
+    const { activeLeaseId } = await startInstance(store, "not-found-setup");
     const nonExistentId = createWorkflowInstanceId("non-existent-complete-id");
 
     const result = await completeStep(
       {
         workflowInstanceId: nonExistentId,
-        leaseId,
+        leaseId: activeLeaseId,
         stepName: "plan",
         completionSignal: { outcome: "success" },
       },
@@ -1839,6 +1908,28 @@ describe("completeStep (Runtime Store)", () => {
     if (result.error.type === "validation") {
       expect(result.error.field).toBe("stepName");
     }
+  });
+
+  it("returns lease_conflict when leaseId does not match active lease", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId } = await startInstance(store, "lease-conflict");
+    const fakeLeaseId = createExecutionLeaseId(
+      "fake-lease-id-that-does-not-match",
+    );
+
+    const result = await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: fakeLeaseId,
+        stepName: "plan",
+        completionSignal: { outcome: "success" },
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("lease_conflict");
   });
 });
 
@@ -2063,5 +2154,277 @@ describe("beforeTool", () => {
     // Same capability + same policy → same decision regardless of toolName
     expect(result1.value.decision).toBe(result2.value.decision);
     expect(result1.value.decision).toBe("allow");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// sanitizeMetadata — runtime enforcement tests
+// ---------------------------------------------------------------------------
+
+describe("sanitizeMetadata", () => {
+  it("sanitizeMetadata: rejects token key", () => {
+    const result = sanitizeMetadata({ token: "secret-value" });
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+    expect(result.error.message).toContain("token");
+    expect(result.error.field).toBe("metadata");
+  });
+
+  it("sanitizeMetadata: rejects authHeader key (case-insensitive)", () => {
+    const result = sanitizeMetadata({ authHeader: "Bearer xyz" });
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+    expect(result.error.message).toContain("authHeader");
+  });
+
+  it("sanitizeMetadata: rejects jwt key", () => {
+    const result = sanitizeMetadata({ jwt: "eyJhbGciOiJIUzI1NiJ9" });
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+    expect(result.error.message).toContain("jwt");
+  });
+
+  it("sanitizeMetadata: rejects apiKey key (case-insensitive)", () => {
+    const result = sanitizeMetadata({ apiKey: "sk-abc123" });
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+    expect(result.error.message).toContain("apiKey");
+  });
+
+  it("sanitizeMetadata: rejects password key", () => {
+    const result = sanitizeMetadata({ password: "hunter2" });
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+    expect(result.error.message).toContain("password");
+  });
+
+  it("sanitizeMetadata: rejects sessionId key", () => {
+    const result = sanitizeMetadata({ sessionId: "sess-abc" });
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+    expect(result.error.message).toContain("sessionId");
+  });
+
+  it("sanitizeMetadata: rejects cookie key", () => {
+    const result = sanitizeMetadata({ cookie: "session=abc" });
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+    expect(result.error.message).toContain("cookie");
+  });
+
+  it("sanitizeMetadata: accepts safe metadata", () => {
+    const meta: SafeMetadata = {
+      agentName: "loom",
+      stepIndex: 1,
+      isRetry: false,
+      modelId: "claude-sonnet-4-5",
+    };
+    const result = sanitizeMetadata(meta);
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    expect(result.value).toEqual(meta);
+  });
+
+  it("sanitizeMetadata: accepts empty metadata", () => {
+    const result = sanitizeMetadata({});
+    expect(result.isOk()).toBe(true);
+  });
+
+  it("sanitizeMetadata: case-insensitive check — AUTH_HEADER rejected", () => {
+    const result = sanitizeMetadata({ AUTH_HEADER: "Bearer xyz" });
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+  });
+
+  it("sanitizeMetadata: case-insensitive check — TOKEN rejected", () => {
+    const result = sanitizeMetadata({ TOKEN: "abc" });
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// observeSession — metadata sanitization integration
+// ---------------------------------------------------------------------------
+
+describe("observeSession: metadata sanitization", () => {
+  it("observeSession: returns validation error when metadata contains token key", async () => {
+    const store = createInMemoryRuntimeStore();
+    const result = await observeSession(
+      {
+        workflowInstanceId: wfId,
+        leaseId,
+        harnessName: "opencode",
+        agentName: "loom",
+        sessionStatus: "active",
+        metadata: { token: "secret-token" } as SafeMetadata,
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+    if (result.error.type === "validation") {
+      expect(result.error.message).toContain("token");
+      expect(result.error.field).toBe("metadata");
+    }
+  });
+
+  it("observeSession: returns validation error when metadata contains jwt key", async () => {
+    const store = createInMemoryRuntimeStore();
+    const result = await observeSession(
+      {
+        workflowInstanceId: wfId,
+        leaseId,
+        harnessName: "opencode",
+        agentName: "loom",
+        sessionStatus: "active",
+        metadata: { jwt: "eyJhbGciOiJIUzI1NiJ9" } as SafeMetadata,
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// beforeTool — metadata sanitization integration
+// ---------------------------------------------------------------------------
+
+describe("beforeTool: metadata sanitization", () => {
+  function makeBeforeToolInput(
+    overrides: Partial<BeforeToolInput> = {},
+  ): BeforeToolInput {
+    return {
+      workflowInstanceId: wfId,
+      leaseId,
+      agentName: "shuttle",
+      toolCapability: "read",
+      toolName: "read_file",
+      effectiveToolPolicy: evaluateEffectiveToolPolicy({
+        read: "allow",
+        write: "deny",
+        execute: "ask",
+        delegate: "deny",
+        network: "ask",
+      }),
+      ...overrides,
+    };
+  }
+
+  it("beforeTool: returns validation error when metadata contains password key", async () => {
+    const result = await beforeTool(
+      makeBeforeToolInput({
+        metadata: { password: "hunter2" } as SafeMetadata,
+      }),
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+    if (result.error.type === "validation") {
+      expect(result.error.message).toContain("password");
+      expect(result.error.field).toBe("metadata");
+    }
+  });
+
+  it("beforeTool: returns validation error when metadata contains apiToken key", async () => {
+    const result = await beforeTool(
+      makeBeforeToolInput({
+        metadata: { apiToken: "sk-abc" } as SafeMetadata,
+      }),
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+  });
+
+  it("beforeTool: proceeds normally with safe metadata", async () => {
+    const result = await beforeTool(
+      makeBeforeToolInput({
+        metadata: { filePath: "src/index.ts", attempt: 1 },
+      }),
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    expect(result.value.decision).toBe("allow");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// LifecyclePersistenceError.cause — narrowed type test
+// ---------------------------------------------------------------------------
+
+describe("LifecyclePersistenceError.cause narrowed type", () => {
+  it("LifecyclePersistenceError.cause is narrowed to safe type (no raw store internals)", () => {
+    // The cause must only carry { type, message } — no SQL, file paths, or stack traces.
+    const cause = { type: "query" as const, message: "DB write failed" };
+    const e = lifecyclePersistenceError("Store write failed", cause);
+
+    expect(e.type).toBe("persistence");
+    expect(e.cause).toBeDefined();
+    if (!e.cause) return;
+
+    // Only type and message are present — no raw store internals
+    const causeKeys = Object.keys(e.cause);
+    expect(causeKeys).toContain("type");
+    expect(causeKeys).toContain("message");
+    // Verify no extra fields that could carry SQL or file paths
+    for (const key of causeKeys) {
+      expect(["type", "message"]).toContain(key);
+    }
+
+    expect(e.cause.type).toBe("query");
+    expect(e.cause.message).toBe("DB write failed");
+  });
+
+  it("LifecyclePersistenceError.cause is undefined when not provided", () => {
+    const e = lifecyclePersistenceError("Store write failed");
+    expect(e.cause).toBeUndefined();
+  });
+
+  it("persistence error from observeSession store failure has narrowed cause", async () => {
+    const store = createInMemoryRuntimeStore({
+      failOn: { snapshotRecord: queryError("injected snapshot failure") },
+    });
+    const result = await observeSession(
+      {
+        workflowInstanceId: wfId,
+        leaseId,
+        harnessName: "opencode",
+        agentName: "loom",
+        sessionStatus: "active",
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("persistence");
+
+    if (result.error.type === "persistence") {
+      // cause must be narrowed — only type and message
+      if (result.error.cause !== undefined) {
+        const causeKeys = Object.keys(result.error.cause);
+        for (const key of causeKeys) {
+          expect(["type", "message"]).toContain(key);
+        }
+      }
+    }
   });
 });

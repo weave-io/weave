@@ -216,7 +216,7 @@ class SqliteWorkflowInstanceRepository implements WorkflowInstanceRepository {
     input: CreateWorkflowInstanceInput,
   ): ResultAsync<WorkflowInstance, RuntimeStoreError> {
     const now = new Date().toISOString();
-    const id = newId();
+    const id = input.id ? (input.id as string) : newId();
     return ResultAsync.fromPromise(
       this.db
         .insertInto("workflow_instances")

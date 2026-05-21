@@ -85,6 +85,7 @@ export {
   lifecycleValidationError,
   observeSession,
   resumeExecution,
+  sanitizeMetadata,
   startExecution,
 } from "./execution-lifecycle.js";
 export { logger } from "./logger.js";
