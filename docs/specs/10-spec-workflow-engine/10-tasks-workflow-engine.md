@@ -117,7 +117,7 @@
 - [ ] 4.9 Implement `on_reject: "retry"` by recording the rejected attempt and re-dispatching the same gate step with a fresh correlation ID.
 - [ ] 4.10 Add tests for all five completion methods, completion-method mismatch, approved gate, and rejected gate pause/fail/retry behavior.
 
-### [ ] 5.0 Document workflow engine behavior and pass quality gates
+### [x] 5.0 Document workflow engine behavior and pass quality gates
 
 #### 5.0 Proof Artifact(s)
 

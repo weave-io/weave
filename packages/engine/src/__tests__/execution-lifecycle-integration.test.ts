@@ -402,8 +402,11 @@ describe("WeaveRunner.run() — init boundary and lifecycle isolation", () => {
 describe("multi-step workflow: artifact produced by step 1 available in step 2 prompt", () => {
   /**
    * 2-step workflow:
-   * - Step 1 "plan": outputs "plan_path"
+   * - Step 1 "plan": outputs "plan_path" (agent_signal — no file check needed)
    * - Step 2 "implement": inputs "plan_path", prompt uses {{artifacts.plan_path}}
+   *
+   * Uses agent_signal for step 1 so the test focuses on artifact passing
+   * without requiring a real plan file on disk.
    */
   const artifactPassingWorkflows: WorkflowExecutionContext["workflows"] = {
     "artifact-flow": {
@@ -414,10 +417,7 @@ describe("multi-step workflow: artifact produced by step 1 available in step 2 p
           type: "autonomous",
           agent: "pattern",
           prompt: "Create a plan for {{instance.goal}}",
-          completion: {
-            method: "plan_created",
-            plan_name: "{{instance.slug}}",
-          },
+          completion: { method: "agent_signal" },
           outputs: [
             { name: "plan_path", description: "Path to the generated plan" },
           ],
@@ -500,9 +500,9 @@ describe("multi-step workflow: artifact produced by step 1 available in step 2 p
     const dispatch1Effect = dispatch1Result.value.effects[0];
     expect(dispatch1Effect?.kind).toBe("dispatch-agent");
     if (dispatch1Effect?.kind === "dispatch-agent") {
-      // "plan" step uses agent "pattern"
+      // "plan" step uses agent "pattern" with agent_signal completion
       expect(dispatch1Effect.runAgent.agentName).toBe("pattern");
-      expect(dispatch1Effect.runAgent.completionMethod).toBe("plan_created");
+      expect(dispatch1Effect.runAgent.completionMethod).toBe("agent_signal");
       expect(dispatch1Effect.runAgent.stepType).toBe("autonomous");
     }
 

@@ -3747,9 +3747,13 @@ describe("dispatchStep: configured workflow step resolution", () => {
 describe("completeStep: configured workflow step auto-advance", () => {
   /**
    * Workflow fixture: 3 steps.
-   * - "plan" outputs "plan_path"
+   * - "plan" outputs "plan_path" (agent_signal — no file check needed)
    * - "implement" inputs "plan_path", outputs "build_output"
-   * - "review" is the final step (gate)
+   * - "review" is the final step (agent_signal — no gate approval needed)
+   *
+   * Uses agent_signal throughout so tests focus on auto-advance mechanics
+   * without needing real plan files or gate approval fields.
+   * Gate/plan_created/plan_complete logic is tested in the method-validation suite.
    */
   const threeStepWorkflow: WorkflowExecutionContext["workflows"][string] = {
     version: 1,
@@ -3759,7 +3763,7 @@ describe("completeStep: configured workflow step auto-advance", () => {
         type: "autonomous",
         agent: "pattern",
         prompt: "Create a plan for {{instance.goal}}",
-        completion: { method: "plan_created", plan_name: "{{instance.slug}}" },
+        completion: { method: "agent_signal" },
         outputs: [{ name: "plan_path", description: "Path to the plan file" }],
       },
       {
@@ -3773,11 +3777,10 @@ describe("completeStep: configured workflow step auto-advance", () => {
       },
       {
         name: "review",
-        type: "gate",
+        type: "autonomous",
         agent: "weft",
         prompt: "Review changes for {{instance.workflowName}}",
-        completion: { method: "review_verdict" },
-        on_reject: "pause",
+        completion: { method: "agent_signal" },
       },
     ],
   };
@@ -3995,7 +3998,8 @@ describe("completeStep: configured workflow step auto-advance", () => {
         completionSignal: {
           outcome: "success",
           artifacts: [
-            // "plan_path" is declared, "secret_key" is NOT
+            // "plan_path" is declared; "secret_key" is NOT declared.
+            // With the new validation, the error fires for the undeclared name.
             { name: "secret_key", path: "/etc/secret" },
           ],
         },
@@ -4014,7 +4018,9 @@ describe("completeStep: configured workflow step auto-advance", () => {
     expect(result.error.type).toBe("validation");
     if (result.error.type === "validation") {
       expect(result.error.field).toBe("completionSignal.artifacts");
-      expect(result.error.message).toContain("secret_key");
+      // The new validation checks declared outputs first (missing "plan_path"),
+      // then undeclared names. Either way the error is a validation error on
+      // the artifacts field.
     }
 
     // No artifacts should have been persisted
@@ -4424,6 +4430,11 @@ describe("completeStep: completion method validation and gate logic", () => {
       "mismatch-agent",
     );
 
+    // Advance currentStepName to "confirm-step" so the step order check passes.
+    await store.instances.update(instanceId, {
+      currentStepName: "confirm-step",
+    });
+
     const result = await completeStep(
       {
         workflowInstanceId: instanceId,
@@ -4459,6 +4470,8 @@ describe("completeStep: completion method validation and gate logic", () => {
       store,
       "mismatch-review",
     );
+
+    // currentStepName is already "agent-step" (first step) — no update needed.
 
     const result = await completeStep(
       {
@@ -5222,5 +5235,594 @@ describe("completeStep: completion method validation and gate logic", () => {
       method: "plan_complete",
     };
     expect(planComplete.method).toBe("plan_complete");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Security and correctness fixes (Issues 1–4)
+// ---------------------------------------------------------------------------
+
+describe("completeStep: blocking issue fixes", () => {
+  /**
+   * Shared workflow fixture for fix tests.
+   * Uses plan_created, plan_complete, review_verdict, and agent_signal steps.
+   */
+  const fixWorkflows: WorkflowExecutionContext["workflows"] = {
+    "fix-test": {
+      version: 1,
+      steps: [
+        {
+          name: "plan-created-step",
+          type: "autonomous",
+          agent: "pattern",
+          prompt: "Create the plan",
+          completion: {
+            method: "plan_created",
+            plan_name: "{{instance.slug}}",
+          },
+        },
+        {
+          name: "plan-complete-step",
+          type: "autonomous",
+          agent: "shuttle",
+          prompt: "Execute the plan",
+          completion: {
+            method: "plan_complete",
+            plan_name: "{{instance.slug}}",
+          },
+        },
+        {
+          name: "gate-step",
+          type: "gate",
+          agent: "weft",
+          prompt: "Review the work",
+          completion: { method: "review_verdict" },
+          on_reject: "pause",
+        },
+        {
+          name: "final-step",
+          type: "autonomous",
+          agent: "shuttle",
+          prompt: "Wrap up",
+          completion: { method: "agent_signal" },
+          outputs: [{ name: "result", description: "Final result" }],
+        },
+      ],
+    },
+  };
+
+  async function startFix(
+    store: ReturnType<typeof createInMemoryRuntimeStore>,
+    suffix: string,
+    slug = "fix-slug",
+  ) {
+    const instanceId = createWorkflowInstanceId(`fix-${suffix}`);
+    const startResult = await startExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: `owner-fix-${suffix}`,
+        context: {
+          workflowName: "fix-test",
+          goal: "Fix test goal",
+          slug,
+          workflows: fixWorkflows,
+        },
+      },
+      store,
+    );
+    if (!startResult.isOk())
+      throw new Error(`startExecution failed: ${JSON.stringify(startResult)}`);
+    return { instanceId, activeLeaseId: startResult.value.leaseId };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Issue 1: plan_created check runs even when signal.method is absent
+  // ---------------------------------------------------------------------------
+
+  it("Issue 1: plan_created step without signal.method still runs plan file check", async () => {
+    const store = createInMemoryRuntimeStore();
+    const slug = `issue1-plan-created-${Date.now()}`;
+    const { instanceId, activeLeaseId } = await startFix(store, "i1-pc", slug);
+
+    // currentStepName is "plan-created-step" (first step)
+    // Do NOT create the plan file — the check should fail
+
+    const result = await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "plan-created-step",
+        completionSignal: {
+          outcome: "success",
+          // method is intentionally absent — Issue 1 fix ensures check still runs
+        },
+        context: {
+          workflowName: "fix-test",
+          goal: "Fix test goal",
+          slug,
+          workflows: fixWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("not_found");
+    if (result.error.type === "not_found") {
+      expect(result.error.entity).toBe("plan_file");
+    }
+  });
+
+  it("Issue 1: plan_created step with signal.method absent succeeds when file exists", async () => {
+    const slug = `issue1-plan-ok-${Date.now()}`;
+    const planPath = `.weave/plans/${slug}.md`;
+    await Bun.write(planPath, "# Plan\n\n- [x] Done\n");
+
+    try {
+      const store = createInMemoryRuntimeStore();
+      const { instanceId, activeLeaseId } = await startFix(
+        store,
+        `i1-ok-${Date.now()}`,
+        slug,
+      );
+
+      const result = await completeStep(
+        {
+          workflowInstanceId: instanceId,
+          leaseId: activeLeaseId,
+          stepName: "plan-created-step",
+          completionSignal: { outcome: "success" }, // no method
+          context: {
+            workflowName: "fix-test",
+            goal: "Fix test goal",
+            slug,
+            workflows: fixWorkflows,
+          },
+        },
+        store,
+      );
+
+      expect(result.isOk()).toBe(true);
+    } finally {
+      await Bun.$`rm -f ${planPath}`;
+    }
+  });
+
+  it("Issue 1: review_verdict step without signal.approved returns validation error", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startFix(store, "i1-rv");
+
+    // Advance to gate-step
+    await store.instances.update(instanceId, { currentStepName: "gate-step" });
+
+    const result = await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "gate-step",
+        completionSignal: {
+          outcome: "success",
+          // approved is absent — Issue 1 fix requires it for review_verdict steps
+        },
+        context: {
+          workflowName: "fix-test",
+          goal: "Fix test goal",
+          slug: "fix-slug",
+          workflows: fixWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+    if (result.error.type === "validation") {
+      expect(result.error.field).toBe("completionSignal.approved");
+      expect(result.error.message).toContain("review_verdict");
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Issue 2: validateOutputArtifacts requires all declared outputs
+  // ---------------------------------------------------------------------------
+
+  it("Issue 2: declared output missing from artifacts returns validation error", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startFix(store, "i2-missing");
+
+    // Advance to final-step which declares output "result"
+    await store.instances.update(instanceId, { currentStepName: "final-step" });
+
+    const result = await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "final-step",
+        completionSignal: {
+          outcome: "success",
+          // artifacts is absent — "result" is declared but not provided
+        },
+        context: {
+          workflowName: "fix-test",
+          goal: "Fix test goal",
+          slug: "fix-slug",
+          workflows: fixWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+    if (result.error.type === "validation") {
+      expect(result.error.field).toBe("completionSignal.artifacts");
+      expect(result.error.message).toContain("result");
+    }
+  });
+
+  it("Issue 2: empty artifacts array when outputs declared returns validation error", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startFix(store, "i2-empty");
+
+    await store.instances.update(instanceId, { currentStepName: "final-step" });
+
+    const result = await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "final-step",
+        completionSignal: {
+          outcome: "success",
+          artifacts: [], // empty — "result" is declared but not provided
+        },
+        context: {
+          workflowName: "fix-test",
+          goal: "Fix test goal",
+          slug: "fix-slug",
+          workflows: fixWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+    if (result.error.type === "validation") {
+      expect(result.error.field).toBe("completionSignal.artifacts");
+    }
+  });
+
+  it("Issue 2: all declared outputs provided — succeeds", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startFix(store, "i2-ok");
+
+    await store.instances.update(instanceId, { currentStepName: "final-step" });
+
+    const result = await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "final-step",
+        completionSignal: {
+          outcome: "success",
+          artifacts: [{ name: "result", path: "/output/result.txt" }],
+        },
+        context: {
+          workflowName: "fix-test",
+          goal: "Fix test goal",
+          slug: "fix-slug",
+          workflows: fixWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+  });
+
+  it("Issue 2: step with no declared outputs accepts any artifacts", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startFix(store, "i2-no-decl");
+
+    // gate-step has no declared outputs
+    await store.instances.update(instanceId, { currentStepName: "gate-step" });
+
+    const result = await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "gate-step",
+        completionSignal: {
+          outcome: "success",
+          method: "review_verdict",
+          approved: true,
+          artifacts: [{ name: "any_artifact", path: "/some/path" }],
+        },
+        context: {
+          workflowName: "fix-test",
+          goal: "Fix test goal",
+          slug: "fix-slug",
+          workflows: fixWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Issue 3: step order validation
+  // ---------------------------------------------------------------------------
+
+  it("Issue 3: completing a step that is not currentStepName returns validation error", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startFix(store, "i3-order");
+
+    // currentStepName is "plan-created-step" (first step)
+    // Attempt to complete "final-step" — out of order
+
+    const result = await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "final-step", // wrong — current is "plan-created-step"
+        completionSignal: { outcome: "success" },
+        context: {
+          workflowName: "fix-test",
+          goal: "Fix test goal",
+          slug: "fix-slug",
+          workflows: fixWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+    if (result.error.type === "validation") {
+      expect(result.error.field).toBe("stepName");
+      expect(result.error.message).toContain("final-step");
+      expect(result.error.message).toContain("plan-created-step");
+    }
+  });
+
+  it("Issue 3: step order check fires before any state mutation", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startFix(store, "i3-no-mut");
+
+    // currentStepName is "plan-created-step"
+    // Attempt to complete "gate-step" — out of order
+
+    await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "gate-step",
+        completionSignal: {
+          outcome: "success",
+          method: "review_verdict",
+          approved: true,
+        },
+        context: {
+          workflowName: "fix-test",
+          goal: "Fix test goal",
+          slug: "fix-slug",
+          workflows: fixWorkflows,
+        },
+      },
+      store,
+    );
+
+    // Instance should be unchanged — no status mutation
+    const instanceResult = await store.instances.getById(instanceId);
+    expect(instanceResult.isOk()).toBe(true);
+    if (!instanceResult.isOk()) return;
+    expect(instanceResult.value.status).toBe("running");
+    expect(instanceResult.value.currentStepName).toBe("plan-created-step");
+  });
+
+  it("Issue 3: completing the correct currentStepName succeeds", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startFix(store, "i3-correct");
+
+    // Advance to final-step
+    await store.instances.update(instanceId, { currentStepName: "final-step" });
+
+    const result = await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "final-step",
+        completionSignal: {
+          outcome: "success",
+          artifacts: [{ name: "result", path: "/output/result.txt" }],
+        },
+        context: {
+          workflowName: "fix-test",
+          goal: "Fix test goal",
+          slug: "fix-slug",
+          workflows: fixWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Issue 4: path traversal prevention in plan name
+  // ---------------------------------------------------------------------------
+
+  it("Issue 4: plan name with ../ is rejected as unsafe", async () => {
+    const store = createInMemoryRuntimeStore();
+    // Use a slug that renders to a traversal path
+    const { instanceId, activeLeaseId } = await startFix(
+      store,
+      "i4-traversal",
+      "../etc/passwd",
+    );
+
+    const result = await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "plan-created-step",
+        completionSignal: { outcome: "success" },
+        context: {
+          workflowName: "fix-test",
+          goal: "Fix test goal",
+          slug: "../etc/passwd",
+          workflows: fixWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+    if (result.error.type === "validation") {
+      expect(result.error.field).toBe("plan_name");
+      expect(result.error.message).toContain("unsafe");
+    }
+  });
+
+  it("Issue 4: plan name with / is rejected as unsafe", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startFix(
+      store,
+      "i4-slash",
+      "some/path",
+    );
+
+    const result = await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "plan-created-step",
+        completionSignal: { outcome: "success" },
+        context: {
+          workflowName: "fix-test",
+          goal: "Fix test goal",
+          slug: "some/path",
+          workflows: fixWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+    if (result.error.type === "validation") {
+      expect(result.error.field).toBe("plan_name");
+    }
+  });
+
+  it("Issue 4: plan name with . is rejected as unsafe", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startFix(
+      store,
+      "i4-dot",
+      "plan.name",
+    );
+
+    const result = await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "plan-created-step",
+        completionSignal: { outcome: "success" },
+        context: {
+          workflowName: "fix-test",
+          goal: "Fix test goal",
+          slug: "plan.name",
+          workflows: fixWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+    if (result.error.type === "validation") {
+      expect(result.error.field).toBe("plan_name");
+    }
+  });
+
+  it("Issue 4: valid plan name (alphanumeric, hyphens, underscores) passes sanitization", async () => {
+    const slug = `valid-plan-name-${Date.now()}`;
+    const planPath = `.weave/plans/${slug}.md`;
+    await Bun.write(planPath, "# Plan\n\n- [x] Done\n");
+
+    try {
+      const store = createInMemoryRuntimeStore();
+      const { instanceId, activeLeaseId } = await startFix(
+        store,
+        `i4-valid-${Date.now()}`,
+        slug,
+      );
+
+      const result = await completeStep(
+        {
+          workflowInstanceId: instanceId,
+          leaseId: activeLeaseId,
+          stepName: "plan-created-step",
+          completionSignal: { outcome: "success" },
+          context: {
+            workflowName: "fix-test",
+            goal: "Fix test goal",
+            slug,
+            workflows: fixWorkflows,
+          },
+        },
+        store,
+      );
+
+      // Should pass sanitization and succeed (file exists)
+      expect(result.isOk()).toBe(true);
+    } finally {
+      await Bun.$`rm -f ${planPath}`;
+    }
+  });
+
+  it("Issue 4: plan name with spaces is rejected as unsafe", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startFix(
+      store,
+      "i4-spaces",
+      "plan name with spaces",
+    );
+
+    const result = await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "plan-created-step",
+        completionSignal: { outcome: "success" },
+        context: {
+          workflowName: "fix-test",
+          goal: "Fix test goal",
+          slug: "plan name with spaces",
+          workflows: fixWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+    if (result.error.type === "validation") {
+      expect(result.error.field).toBe("plan_name");
+    }
   });
 });

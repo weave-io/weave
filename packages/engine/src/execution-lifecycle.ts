@@ -1788,6 +1788,25 @@ function validateCompletionMethod(
 }
 
 /**
+ * Validate that a rendered plan name contains only safe characters.
+ *
+ * Allowed: alphanumeric characters, hyphens, and underscores.
+ * Rejected: slashes, dots, backslashes, or any other character that could
+ * enable path traversal attacks.
+ *
+ * Returns `ok(planName)` when safe, or a typed `validation` error.
+ */
+function validatePlanName(planName: string): Result<string, LifecycleError> {
+  if (/^[a-zA-Z0-9_-]+$/.test(planName)) return ok(planName);
+  return err(
+    lifecycleValidationError(
+      `plan name "${planName}" contains unsafe characters — only alphanumeric characters, hyphens, and underscores are allowed`,
+      "plan_name",
+    ),
+  );
+}
+
+/**
  * Render the `plan_name` template from a step's completion config.
  *
  * The `plan_name` field may contain Mustache placeholders (e.g.
@@ -1829,11 +1848,17 @@ function renderPlanName(
 /**
  * Check that the plan file `.weave/plans/<planName>.md` exists.
  *
- * Returns `ok(undefined)` when the file exists, or a typed `not_found` error.
+ * Validates `planName` against the safe-name allowlist before constructing
+ * the path to prevent path traversal attacks.
+ *
+ * Returns `ok(undefined)` when the file exists, or a typed error.
  */
 function checkPlanFileExists(
   planName: string,
 ): ResultAsync<undefined, LifecycleError> {
+  const nameCheck = validatePlanName(planName);
+  if (nameCheck.isErr()) return errAsync(nameCheck.error);
+
   const planPath = `.weave/plans/${planName}.md`;
   return ResultAsync.fromPromise(
     Bun.file(planPath).exists(),
@@ -1860,12 +1885,17 @@ function checkPlanFileExists(
  * Check that the plan file `.weave/plans/<planName>.md` has no incomplete
  * checkboxes (`- [ ]`).
  *
- * Returns `ok(undefined)` when the file is fully complete, or a typed
- * `validation` error listing the count of incomplete items.
+ * Validates `planName` against the safe-name allowlist before constructing
+ * the path to prevent path traversal attacks.
+ *
+ * Returns `ok(undefined)` when the file is fully complete, or a typed error.
  */
 function checkPlanComplete(
   planName: string,
 ): ResultAsync<undefined, LifecycleError> {
+  const nameCheck = validatePlanName(planName);
+  if (nameCheck.isErr()) return errAsync(nameCheck.error);
+
   const planPath = `.weave/plans/${planName}.md`;
   return ResultAsync.fromPromise(
     Bun.file(planPath).text(),
@@ -2045,22 +2075,41 @@ function addArtifactsSequentially(
 }
 
 /**
- * Validate that every provided artifact is declared in `step.outputs`.
+ * Validate output artifacts against the step's declared `outputs`.
  *
- * Returns `ok(undefined)` when all artifacts are declared, or a typed
- * `validation` error naming the first undeclared artifact.
- * Returns `ok(undefined)` immediately when the step declares no outputs
- * (no restriction) or when no artifacts are provided.
+ * Rules:
+ * - When `step.outputs` is empty or undefined: no restriction — any artifacts
+ *   (or none) are accepted.
+ * - When `step.outputs` is non-empty: every declared output name MUST be
+ *   present in `artifacts`. Missing declared outputs return a `validation`
+ *   error. Undeclared artifact names also return a `validation` error.
+ *
+ * This is an all-or-nothing check: no writes occur if validation fails.
  */
 function validateOutputArtifacts(
   step: WorkflowStep,
   artifacts: readonly ArtifactRef[] | undefined,
 ): Result<undefined, LifecycleError> {
-  if (!artifacts || artifacts.length === 0) return ok(undefined);
+  // No declared outputs — no restriction.
   if (!step.outputs || step.outputs.length === 0) return ok(undefined);
 
+  const providedNames = new Set((artifacts ?? []).map((a) => a.name));
+
+  // Every declared output must be present in the provided artifacts.
+  for (const declared of step.outputs) {
+    if (!providedNames.has(declared.name)) {
+      return err(
+        lifecycleValidationError(
+          `Declared output "${declared.name}" is missing from completionSignal.artifacts for step "${step.name}"`,
+          "completionSignal.artifacts",
+        ),
+      );
+    }
+  }
+
+  // No undeclared artifact names allowed when outputs are declared.
   const declaredNames = new Set(step.outputs.map((o) => o.name));
-  for (const artifact of artifacts) {
+  for (const artifact of artifacts ?? []) {
     if (!declaredNames.has(artifact.name)) {
       return err(
         lifecycleValidationError(
@@ -2070,6 +2119,7 @@ function validateOutputArtifacts(
       );
     }
   }
+
   return ok(undefined);
 }
 
@@ -2281,8 +2331,8 @@ export function completeStep(
 
           const { outcome, message, artifacts } = input.completionSignal;
 
-          // Configured path: context provided — validate method, handle gate logic,
-          // run plan checks, persist artifacts, auto-advance.
+          // Configured path: context provided — validate step order, validate method,
+          // handle gate logic, run plan checks, persist artifacts, auto-advance.
           if (input.context !== undefined) {
             const workflowConfig =
               input.context.workflows[existing.workflowName] ??
@@ -2311,6 +2361,20 @@ export function completeStep(
               );
             }
 
+            // Issue 3: Verify step order — input.stepName must match instance.currentStepName.
+            // This prevents out-of-order completions from corrupting workflow state.
+            if (
+              existing.currentStepName !== undefined &&
+              existing.currentStepName !== input.stepName
+            ) {
+              return errAsync(
+                lifecycleValidationError(
+                  `Out-of-order completion: step "${input.stepName}" cannot be completed while instance is on step "${existing.currentStepName}"`,
+                  "stepName",
+                ),
+              );
+            }
+
             // Validate completion method BEFORE any state changes.
             const methodCheck = validateCompletionMethod(
               input.completionSignal,
@@ -2318,18 +2382,28 @@ export function completeStep(
             );
             if (methodCheck.isErr()) return errAsync(methodCheck.error);
 
-            // Handle review_verdict gate rejection (approved === false).
-            if (
-              input.completionSignal.method === "review_verdict" &&
-              input.completionSignal.approved === false
-            ) {
-              return applyGateRejection(
-                store,
-                input.workflowInstanceId,
-                activeLease,
-                stepConfig,
-                message,
-              ).map((effects): CompleteStepOutput => ({ effects }));
+            // Issue 1: When stepConfig.completion.method is review_verdict,
+            // require completionSignal.approved to be explicitly set.
+            if (stepConfig.completion.method === "review_verdict") {
+              if (input.completionSignal.approved === undefined) {
+                return errAsync(
+                  lifecycleValidationError(
+                    `Step "${stepConfig.name}" uses review_verdict completion — completionSignal.approved must be true or false`,
+                    "completionSignal.approved",
+                  ),
+                );
+              }
+              // Handle gate rejection (approved === false).
+              if (input.completionSignal.approved === false) {
+                return applyGateRejection(
+                  store,
+                  input.workflowInstanceId,
+                  activeLease,
+                  stepConfig,
+                  message,
+                ).map((effects): CompleteStepOutput => ({ effects }));
+              }
+              // approved === true falls through to the success path below.
             }
 
             // For non-success outcomes (blocked, failed, paused) with context:
@@ -2365,16 +2439,11 @@ export function completeStep(
                 );
             }
 
-            // Success path: run plan checks (only when signal.method is present),
-            // validate outputs, persist artifacts, and auto-advance.
-
-            // Plan checks are only performed when the signal explicitly carries
-            // the completion method. When method is absent (legacy path), skip.
+            // Success path: run plan checks based on stepConfig.completion.method
+            // (Issue 1: always evaluate the step's declared method, not just when
+            // signal.method is present).
             const planCheck: ResultAsync<undefined, LifecycleError> = (() => {
-              if (
-                input.completionSignal.method === "plan_created" &&
-                stepConfig.completion.method === "plan_created"
-              ) {
+              if (stepConfig.completion.method === "plan_created") {
                 const planNameResult = renderPlanName(
                   stepConfig.completion.plan_name,
                   existing,
@@ -2383,10 +2452,7 @@ export function completeStep(
                   return errAsync(planNameResult.error);
                 return checkPlanFileExists(planNameResult.value);
               }
-              if (
-                input.completionSignal.method === "plan_complete" &&
-                stepConfig.completion.method === "plan_complete"
-              ) {
+              if (stepConfig.completion.method === "plan_complete") {
                 const planNameResult = renderPlanName(
                   stepConfig.completion.plan_name,
                   existing,
