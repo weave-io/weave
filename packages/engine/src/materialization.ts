@@ -1,5 +1,5 @@
 import type { AgentConfig, WeaveConfig } from "@weave/core";
-import { errAsync, okAsync, type ResultAsync } from "neverthrow";
+import { okAsync, ResultAsync } from "neverthrow";
 
 import {
   type AgentDescriptor,
@@ -30,9 +30,22 @@ export interface MaterializedAgent {
 export interface MaterializationPlan {
   /** Ordered resolved agents, preserving config order followed by generated shuttles. */
   agents: MaterializedAgent[];
+  /**
+   * Per-agent failures collected during materialization. Values are accumulated
+   * rather than returned as a top-level rejection — the ResultAsync only rejects
+   * on a truly irrecoverable upstream failure (none currently exist).
+   */
+  errors: readonly MaterializationError[];
 }
 
-/** Public materialization failures exposed to adapters. */
+/**
+ * Public materialization failures exposed to adapters.
+ *
+ * These values are collected into `MaterializationPlan.errors[]` rather than
+ * returned as a top-level ResultAsync rejection. Adapters should inspect
+ * `plan.errors` after a successful `materializeAgents` call to detect partial
+ * failures.
+ */
 export type MaterializationError =
   | {
       type: "CategoryShuttleConflict";
@@ -44,26 +57,11 @@ export type MaterializationError =
       cause: ComposeError;
     };
 
-function mergeMaterializableAgents(
-  config: WeaveConfig,
-  generatedShuttles: Record<string, GeneratedCategoryShuttle>,
-): Record<string, AgentConfig> {
-  const explicitAgents = Object.fromEntries(
-    Object.entries(config.agents).filter(
-      ([agentName]) => !config.disabled.agents.includes(agentName),
-    ),
-  );
-
-  const generatedAgentConfigs = Object.fromEntries(
-    Object.entries(generatedShuttles)
-      .filter(([agentName]) => !config.disabled.agents.includes(agentName))
-      .map(([agentName, generated]) => [agentName, generated.config]),
-  );
-
-  return {
-    ...explicitAgents,
-    ...generatedAgentConfigs,
-  };
+function filterDisabled(
+  entries: [string, AgentConfig][],
+  disabled: readonly string[],
+): [string, AgentConfig][] {
+  return entries.filter(([agentName]) => !disabled.includes(agentName));
 }
 
 /**
@@ -71,51 +69,96 @@ function mergeMaterializableAgents(
  *
  * The plan order is deterministic: explicit agents keep resolved config order,
  * followed by generated category shuttle agents in category declaration order.
+ * Disabled agents are filtered before iteration.
+ *
+ * Per-agent failures are accumulated into `plan.errors[]`. The ResultAsync
+ * itself only rejects on a truly irrecoverable upstream failure — currently
+ * none exist, so the returned promise always resolves to `ok`.
  */
 export function materializeAgents(
   input: MaterializationInput,
-): ResultAsync<MaterializationPlan, MaterializationError> {
-  const generatedShuttlesResult = generateCategoryShuttles(input.config);
+): ResultAsync<MaterializationPlan, never> {
+  const { config } = input;
+  const disabled = config.disabled.agents;
 
-  if (generatedShuttlesResult.isErr()) {
-    return errAsync({
-      type: "CategoryShuttleConflict",
-      conflict: generatedShuttlesResult.error,
-    });
-  }
+  const generatedShuttlesResult = generateCategoryShuttles(config);
 
-  const allAgents = mergeMaterializableAgents(
-    input.config,
-    generatedShuttlesResult.value,
+  // CategoryShuttleConflict is a per-agent failure — collect it and continue
+  // with an empty generated-shuttle set so explicit agents still materialise.
+  const generatedShuttles: Record<string, GeneratedCategoryShuttle> =
+    generatedShuttlesResult.isOk() ? generatedShuttlesResult.value : {};
+
+  const conflictErrors: MaterializationError[] = generatedShuttlesResult.isErr()
+    ? [
+        {
+          type: "CategoryShuttleConflict",
+          conflict: generatedShuttlesResult.error,
+        },
+      ]
+    : [];
+
+  const explicitEntries = filterDisabled(
+    Object.entries(config.agents),
+    disabled,
   );
-  const materializedAgents: MaterializedAgent[] = [];
 
-  let plan = okAsync<MaterializationPlan, MaterializationError>({ agents: [] });
+  const generatedEntries = filterDisabled(
+    Object.entries(generatedShuttles).map(
+      ([agentName, generated]) =>
+        [agentName, generated.config] as [string, AgentConfig],
+    ),
+    disabled,
+  );
 
-  for (const [agentName, agentConfig] of Object.entries(allAgents)) {
-    const category = generatedShuttlesResult.value[agentName]?.categoryMeta;
+  const allEntries: [string, AgentConfig][] = [
+    ...explicitEntries,
+    ...generatedEntries,
+  ];
 
-    plan = plan.andThen(() =>
-      composeAgentDescriptor(
-        agentName,
-        agentConfig,
-        input.config,
-        allAgents,
-        category,
-      )
-        .mapErr(
-          (cause): MaterializationError => ({
-            type: "DescriptorCompositionFailure",
-            agentName,
-            cause,
-          }),
-        )
-        .map((descriptor): MaterializationPlan => {
-          materializedAgents.push({ agentName, descriptor });
-          return { agents: [...materializedAgents] };
-        }),
+  const allAgents = Object.fromEntries(allEntries);
+
+  const compositionPromises = allEntries.map(([agentName, agentConfig]) => {
+    const category = generatedShuttles[agentName]?.categoryMeta;
+    return composeAgentDescriptor(
+      agentName,
+      agentConfig,
+      config,
+      allAgents,
+      category,
+    ).match<
+      | { ok: true; agentName: string; descriptor: AgentDescriptor }
+      | { ok: false; error: MaterializationError }
+    >(
+      (descriptor) => ({ ok: true, agentName, descriptor }),
+      (cause) => ({
+        ok: false,
+        error: { type: "DescriptorCompositionFailure", agentName, cause },
+      }),
     );
-  }
+  });
 
-  return plan;
+  return ResultAsync.fromSafePromise(Promise.all(compositionPromises)).andThen(
+    (composed) => {
+      const agents: MaterializedAgent[] = [];
+      const compositionErrors: MaterializationError[] = [];
+
+      for (const result of composed) {
+        if (result.ok) {
+          agents.push({
+            agentName: result.agentName,
+            descriptor: result.descriptor,
+          });
+        } else {
+          compositionErrors.push(result.error);
+        }
+      }
+
+      const errors: readonly MaterializationError[] = [
+        ...conflictErrors,
+        ...compositionErrors,
+      ];
+
+      return okAsync<MaterializationPlan, never>({ agents, errors });
+    },
+  );
 }

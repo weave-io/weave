@@ -53,7 +53,6 @@
   - type AdapterModule
   - _...3 more_
 - `packages/cli/src/installers/opencode.ts` — class OpenCodeInstaller
-- `packages/cli/src/installers/unsupported.ts` — function unsupportedHarnessInstall: (harness) => ResultAsync<InstallResult, InstallError>, function undetectedHarnessInstall: (harness) => ResultAsync<InstallResult, InstallError>
 - `packages/cli/src/io/terminal.ts`
   - class RealTerminal
   - class BufferTerminal
@@ -134,7 +133,7 @@
   - function lifecyclePolicyDecisionError: (message, rule?) => LifecyclePolicyDecisionError
   - _...41 more_
 - `packages/engine/src/materialization.ts`
-  - function materializeAgents: (input) => ResultAsync<MaterializationPlan, MaterializationError>
+  - function materializeAgents: (input) => ResultAsync<MaterializationPlan, never>
   - interface MaterializationInput
   - interface MaterializedAgent
   - interface MaterializationPlan
@@ -214,4 +213,3 @@
   - type MappedToolDecision
   - type UnmappedToolDecision
   - _...3 more_
-- `scripts/validate-config.ts` — function printSummary: (config, configPath) => void
