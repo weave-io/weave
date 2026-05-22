@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weave/core, @weave/engine, @weave/config, @weave/cli, @weave/adapter-opencode
 
-> 0 routes | 0 models | 0 components | 50 lib files | 2 env vars | 0 middleware | 0% test coverage
-> **Token savings:** this file is ~4,300 tokens. Without it, AI exploration would cost ~22,400 tokens. **Saves ~18,100 tokens per conversation.**
-> **Last scanned:** 2026-05-22 19:11 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 51 lib files | 2 env vars | 0 middleware | 0% test coverage
+> **Token savings:** this file is ~4,400 tokens. Without it, AI exploration would cost ~22,600 tokens. **Saves ~18,200 tokens per conversation.**
+> **Last scanned:** 2026-05-22 19:57 — re-run after significant changes
 
 ---
 
@@ -143,13 +143,23 @@
   - function lifecyclePersistenceError: (message, cause?) => LifecyclePersistenceError
   - function lifecyclePolicyDecisionError: (message, rule?) => LifecyclePolicyDecisionError
   - _...41 more_
+- `packages/engine/src/materialization.ts`
+  - function materializeAgents: (input) => ResultAsync<MaterializationPlan, MaterializationError>
+  - interface MaterializationInput
+  - interface MaterializedAgent
+  - interface MaterializationPlan
+  - type MaterializationError
 - `packages/engine/src/model-resolution.ts`
   - function resolveAdapterModelIntent: (input) => ModelResolutionResult
   - interface ModelResolutionInput
   - interface ModelResolutionResult
   - type ResolutionSource
   - const DEFAULT_FALLBACK_MODEL
-- `packages/engine/src/runner.ts` — class WeaveRunner, interface WeaveRunnerOptions
+- `packages/engine/src/runner.ts`
+  - class WeaveRunner
+  - interface WeaveRunnerOptions
+  - type WeaveRunnerAdapterError
+  - type WeaveRunnerError
 - `packages/engine/src/runtime/errors.ts`
   - function initializationError: (message, cause?) => RuntimeStoreInitializationError
   - function migrationVersionError: (foundVersion, supportedVersion, message) => RuntimeStoreMigrationVersionError
@@ -250,10 +260,10 @@
 - `packages/config/src/discovery.ts` — imported by **5** files
 - `packages/config/src/types.ts` — imported by **5** files
 - `packages/core/src/lexer.ts` — imported by **5** files
-- `packages/engine/src/descriptors.ts` — imported by **5** files
 - `packages/config/src/builtins.ts` — imported by **4** files
 - `packages/config/src/normalize-path.ts` — imported by **4** files
 - `packages/core/src/parser.ts` — imported by **4** files
+- `packages/engine/src/descriptors.ts` — imported by **4** files
 - `packages/engine/src/env.ts` — imported by **4** files
 
 ## Import Map (who imports what)
@@ -274,7 +284,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 43 test files found
+> 44 test files found
 
 ---
 

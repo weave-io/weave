@@ -960,6 +960,38 @@ describe("WeaveRunner", () => {
       ]);
     });
 
+    it("missing skills for one agent do not clear other agents' resolved skills", async () => {
+      const adapterWithSkills = new MockAdapter({
+        availableSkills: [{ name: "tdd" }],
+      });
+
+      const config = cfg(`
+        agent valid-worker {
+          prompt "Valid worker."
+          models ["model-valid"]
+          skills ["tdd"]
+        }
+        agent invalid-worker {
+          prompt "Invalid worker."
+          models ["model-invalid"]
+          skills ["missing-skill"]
+        }
+      `);
+
+      const effects: RunAgentEffect[] = [];
+      await new WeaveRunner(config, adapterWithSkills, {
+        onEffect: (e) => effects.push(e),
+      }).run();
+
+      const validEffect = effects.find((e) => e.agentName === "valid-worker");
+      const invalidEffect = effects.find(
+        (e) => e.agentName === "invalid-worker",
+      );
+
+      expect(validEffect?.resolvedSkills).toEqual(["tdd"]);
+      expect(invalidEffect?.resolvedSkills).toEqual([]);
+    });
+
     it("engine does not perform directory scanning, skill-file reads, or harness-specific lookup", async () => {
       // This test proves the engine only uses adapter-provided context.
       // The MockAdapter returns skills from an in-memory list — no filesystem

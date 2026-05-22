@@ -132,13 +132,23 @@
   - function lifecyclePersistenceError: (message, cause?) => LifecyclePersistenceError
   - function lifecyclePolicyDecisionError: (message, rule?) => LifecyclePolicyDecisionError
   - _...41 more_
+- `packages/engine/src/materialization.ts`
+  - function materializeAgents: (input) => ResultAsync<MaterializationPlan, MaterializationError>
+  - interface MaterializationInput
+  - interface MaterializedAgent
+  - interface MaterializationPlan
+  - type MaterializationError
 - `packages/engine/src/model-resolution.ts`
   - function resolveAdapterModelIntent: (input) => ModelResolutionResult
   - interface ModelResolutionInput
   - interface ModelResolutionResult
   - type ResolutionSource
   - const DEFAULT_FALLBACK_MODEL
-- `packages/engine/src/runner.ts` — class WeaveRunner, interface WeaveRunnerOptions
+- `packages/engine/src/runner.ts`
+  - class WeaveRunner
+  - interface WeaveRunnerOptions
+  - type WeaveRunnerAdapterError
+  - type WeaveRunnerError
 - `packages/engine/src/runtime/errors.ts`
   - function initializationError: (message, cause?) => RuntimeStoreInitializationError
   - function migrationVersionError: (foundVersion, supportedVersion, message) => RuntimeStoreMigrationVersionError

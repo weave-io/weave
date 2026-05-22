@@ -12,7 +12,7 @@ import {
 } from "./descriptors.js";
 import { logger } from "./logger.js";
 import type { RunAgentEffect } from "./run-agent-effects.js";
-import { resolveSkillsForConfig } from "./skill-resolution.js";
+import { resolveSkillsForAgent } from "./skill-resolution.js";
 
 const log = logger.child({ module: "runner" });
 
@@ -138,40 +138,23 @@ export class WeaveRunner {
         ),
       )
       .andThen((availableSkills) => {
-        // 2. Resolve skills from adapter-provided SkillInfo values.
-        // Skill discovery/loading is adapter-owned; the engine only matches agent
-        // skill references against explicit harness context and disabled.skills.
-        const skillResolutionResult = resolveSkillsForConfig({
-          config: this.config,
-          availableSkills,
-        });
-
-        // Log any missing-skill errors but do not abort — adapters may handle
-        // partial resolution gracefully. The resolved map defaults to empty arrays
-        // for agents with no skills or resolution errors.
-        const resolvedSkillsMap: Record<string, readonly string[]> = {};
-        if (skillResolutionResult.isOk()) {
-          for (const [agentName, skills] of Object.entries(
-            skillResolutionResult.value,
-          )) {
-            resolvedSkillsMap[agentName] = skills.map((s) => s.name);
-          }
-        } else {
-          for (const error of skillResolutionResult.error) {
-            log.warn(
-              { agent: error.agentName, skill: error.skillName },
-              "Skill declared by agent is not available in harness",
-            );
-          }
-        }
-
-        // 3. TODO(#9): wire abstract lifecycle policy surfaces.
+        // 2. TODO(#9): wire abstract lifecycle policy surfaces.
         // The execution lifecycle surface (execution-lifecycle.ts) provides 7 typed
         // engine functions that adapters call after mapping concrete harness events:
         //   observeSession, startExecution, resumeExecution, handleUserInterrupt,
         //   dispatchStep, completeStep, beforeTool.
         // These supersede registerHook(). Full workflow engine integration is deferred
         // to a future spec; the runner currently handles only agent materialisation.
+
+        // Compatibility note: `materializeAgents()` is the preferred adapter-facing
+        // pure materialization API, but this transitional runner intentionally keeps
+        // the existing manual loop. `WeaveRunner.run()` returns typed category shuttle
+        // conflict errors and continues after descriptor composition failures so later
+        // agents can still spawn. `materializeAgents()` stops on the first descriptor
+        // composition failure. A future runner refactor must either add partial-failure
+        // materialization support or explicitly convert those typed results back into
+        // the runner's observable skip-and-continue behavior before replacing this
+        // code path.
 
         const shuttlesResult = generateCategoryShuttles(this.config);
         if (shuttlesResult.isErr()) {
@@ -191,6 +174,41 @@ export class WeaveRunner {
         for (const [name, generated] of Object.entries(shuttlesResult.value)) {
           allAgents[name] = generated.config;
           categoryMetaMap[name] = generated.categoryMeta;
+        }
+
+        // 3. Resolve skills from adapter-provided SkillInfo values.
+        // Skill discovery/loading is adapter-owned; the engine only matches agent
+        // skill references against explicit harness context and disabled.skills.
+        // Resolve per agent so one missing skill cannot wipe successful entries
+        // for other agents. Agents with resolution errors simply receive the
+        // materialization default of an empty resolvedSkills array.
+        const resolvedSkillsMap: Record<string, readonly string[]> = {};
+        for (const [agentName, agentConfig] of Object.entries(allAgents) as [
+          string,
+          AgentConfig,
+        ][]) {
+          if (disabled.agents.includes(agentName)) continue;
+
+          const skillResolutionResult = resolveSkillsForAgent({
+            agentName,
+            agentSkills: agentConfig.skills,
+            availableSkills,
+            disabledSkills: this.config.disabled.skills,
+          });
+
+          if (skillResolutionResult.isOk()) {
+            resolvedSkillsMap[agentName] = skillResolutionResult.value.map(
+              (s) => s.name,
+            );
+            continue;
+          }
+
+          for (const error of skillResolutionResult.error) {
+            log.warn(
+              { agent: error.agentName, skill: error.skillName },
+              "Skill declared by agent is not available in harness",
+            );
+          }
         }
 
         return ResultAsync.fromPromise(
