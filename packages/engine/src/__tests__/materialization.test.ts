@@ -250,14 +250,10 @@ describe("materializeAgents", () => {
       if (result.isOk()) expect(agentNames(result.value)).toEqual(["loom"]);
     });
 
-    it("materializeAgents does not call spawnSubagent", async () => {
-      let spawnSubagentCalls = 0;
-      const adapterLike = {
-        spawnSubagent() {
-          spawnSubagentCalls += 1;
-        },
-      };
-
+    it("materializeAgents returns a plan without requiring a HarnessAdapter", async () => {
+      // materializeAgents accepts no HarnessAdapter parameter — the only way to
+      // verify it never calls spawnSubagent is to confirm the public API has no
+      // adapter parameter and that the returned plan contains the expected agents.
       const result = await materializeAgents({
         config: cfg(`
           agent loom { prompt "Loom" models ["model-loom"] }
@@ -266,9 +262,20 @@ describe("materializeAgents", () => {
         `),
       });
 
-      expect(adapterLike).toBeDefined();
       expect(result.isOk()).toBe(true);
-      expect(spawnSubagentCalls).toBe(0);
+      if (result.isOk()) {
+        // Declared agents appear before generated category shuttles.
+        expect(agentNames(result.value)).toEqual([
+          "loom",
+          "shuttle",
+          "shuttle-frontend",
+        ]);
+        // Each entry carries a composed descriptor — no adapter side-effects needed.
+        for (const { agentName, descriptor } of result.value.agents) {
+          expect(descriptor.name).toBe(agentName);
+          expect(descriptor.composedPrompt.length).toBeGreaterThan(0);
+        }
+      }
     });
   });
 
