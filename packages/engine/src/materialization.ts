@@ -81,12 +81,16 @@ export function materializeAgents(
     input.config,
     generatedShuttlesResult.value,
   );
+  const generatedShuttleNames = new Set(
+    Object.keys(generatedShuttlesResult.value),
+  );
   const materializedAgents: MaterializedAgent[] = [];
 
   let plan = okAsync<MaterializationPlan, MaterializationError>({ agents: [] });
 
   for (const [agentName, agentConfig] of Object.entries(allAgents)) {
-    const categoryName = agentName.startsWith("shuttle-")
+    const isGeneratedShuttle = generatedShuttleNames.has(agentName);
+    const categoryName = isGeneratedShuttle
       ? agentName.slice("shuttle-".length)
       : undefined;
     const categoryConfig =

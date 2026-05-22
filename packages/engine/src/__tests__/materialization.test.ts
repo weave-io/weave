@@ -161,6 +161,42 @@ describe("materializeAgents", () => {
         "model-frontend-b",
       ]);
     });
+
+    it("does not mark explicit shuttle-* agents as category shuttles by prefix", async () => {
+      const plan = await materializeConfig(`
+        agent shuttle-frontend {
+          prompt "{{#agent.isCategory}}category{{/agent.isCategory}}{{^agent.isCategory}}not-category{{/agent.isCategory}}|{{#category}}category={{category.name}}{{/category}}{{^category}}no-category{{/category}}"
+          models ["model-explicit"]
+        }
+      `);
+
+      expect(agentNames(plan)).toEqual(["shuttle-frontend"]);
+      expect(plan.agents[0]?.descriptor.composedPrompt).toBe(
+        "not-category|no-category",
+      );
+    });
+
+    it("does not mark explicit shuttle-* agents as generated when base shuttle is disabled", async () => {
+      const plan = await materializeConfig(`
+        agent shuttle { prompt "Base shuttle" models ["model-shuttle"] mode all }
+        agent shuttle-frontend {
+          prompt "{{#agent.isCategory}}category{{/agent.isCategory}}{{^agent.isCategory}}not-category{{/agent.isCategory}}|{{#category}}category={{category.name}}{{/category}}{{^category}}no-category{{/category}}"
+          models ["model-explicit"]
+        }
+
+        category frontend {
+          patterns ["src/**/*.tsx"]
+          models ["model-frontend"]
+        }
+
+        disable agents ["shuttle"]
+      `);
+
+      expect(agentNames(plan)).toEqual(["shuttle-frontend"]);
+      expect(plan.agents[0]?.descriptor.composedPrompt).toBe(
+        "not-category|no-category",
+      );
+    });
   });
 
   describe("disabled agents", () => {
