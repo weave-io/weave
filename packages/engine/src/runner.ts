@@ -5,6 +5,7 @@ import { generateCategoryShuttles } from "./descriptors.js";
 import { logger } from "./logger.js";
 import type { RunAgentEffect } from "./run-agent-effects.js";
 import { resolveSkillsForConfig } from "./skill-resolution.js";
+import type { CategoryInput } from "./template-context.js";
 
 const log = logger.child({ module: "runner" });
 
@@ -82,6 +83,20 @@ export class WeaveRunner {
     this.config = config;
     this.adapter = adapter;
     this.options = options;
+  }
+
+  private categoryForGeneratedShuttle(name: string): CategoryInput | undefined {
+    if (!name.startsWith("shuttle-")) return undefined;
+
+    const categoryName = name.slice("shuttle-".length);
+    const category = this.config.categories[categoryName];
+    if (category === undefined) return undefined;
+
+    return {
+      name: categoryName,
+      description: category.description,
+      patterns: category.patterns,
+    };
   }
 
   /**
@@ -165,6 +180,7 @@ export class WeaveRunner {
         agentConfig,
         this.config,
         allAgents,
+        this.categoryForGeneratedShuttle(name),
       );
 
       if (descriptorResult.isErr()) {

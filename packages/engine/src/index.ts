@@ -29,6 +29,7 @@ export {
 } from "./capability-contract.js";
 export type {
   AgentDescriptor,
+  AgentDescriptorCategory,
   ComposeError,
   DelegationTarget,
   PromptTemplateReason,

@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 50 lib files | 2 env vars | 0 middleware | 0% test coverage
 > **Token savings:** this file is ~4,300 tokens. Without it, AI exploration would cost ~22,400 tokens. **Saves ~18,100 tokens per conversation.**
-> **Last scanned:** 2026-05-22 19:51 — re-run after significant changes
+> **Last scanned:** 2026-05-22 19:55 — re-run after significant changes
 
 ---
 
@@ -122,6 +122,7 @@
 - `packages/engine/src/compose.ts`
   - function composeAgentDescriptor: (agentName, agentConfig, config, allAgents, AgentConfig>, category?) => ResultAsync<AgentDescriptor, ComposeError>
   - interface AgentDescriptor
+  - interface AgentDescriptorCategory
   - interface DelegationTarget
   - type PromptTemplateReason
   - type ComposeError
@@ -239,6 +240,7 @@
 - `packages/cli/src/fs/file-system.ts` — imported by **7** files
 - `packages/cli/src/args.ts` — imported by **6** files
 - `packages/core/src/errors.ts` — imported by **6** files
+- `packages/engine/src/descriptors.ts` — imported by **6** files
 - `packages/engine/src/logger.ts` — imported by **6** files
 - `packages/cli/src/cli.ts` — imported by **5** files
 - `packages/cli/src/theme/render.ts` — imported by **5** files
@@ -246,7 +248,6 @@
 - `packages/config/src/discovery.ts` — imported by **5** files
 - `packages/config/src/types.ts` — imported by **5** files
 - `packages/core/src/lexer.ts` — imported by **5** files
-- `packages/engine/src/descriptors.ts` — imported by **5** files
 - `packages/config/src/builtins.ts` — imported by **4** files
 - `packages/config/src/normalize-path.ts` — imported by **4** files
 - `packages/core/src/parser.ts` — imported by **4** files
@@ -262,8 +263,8 @@
 - `packages/cli/src/fs/file-system.ts` ← `packages/cli/src/__tests__/file-system.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/validate.test.ts`, `packages/cli/src/commands/validate.ts`, `packages/cli/src/installers/__tests__/installers.test.ts` +2 more
 - `packages/cli/src/args.ts` ← `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/runtime.test.ts`, `packages/cli/src/commands/init.ts`, `packages/cli/src/commands/validate.ts`, `packages/cli/src/index.ts` +1 more
 - `packages/core/src/errors.ts` ← `packages/core/src/__tests__/errors.test.ts`, `packages/core/src/index.ts`, `packages/core/src/lexer.ts`, `packages/core/src/parse-config.ts`, `packages/core/src/parser.ts` +1 more
+- `packages/engine/src/descriptors.ts` ← `packages/engine/src/__tests__/compose.test.ts`, `packages/engine/src/__tests__/descriptors.test.ts`, `packages/engine/src/index.ts`, `packages/engine/src/index.ts`, `packages/engine/src/runner.ts` +1 more
 - `packages/engine/src/logger.ts` ← `packages/engine/src/index.ts`, `packages/engine/src/runner.ts`, `packages/engine/src/runtime/journal-writer.ts`, `packages/engine/src/runtime/sqlite/store.ts`, `packages/engine/src/template-context.ts` +1 more
-- `packages/cli/src/cli.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/commands/__tests__/runtime.test.ts`, `packages/cli/src/index.ts`, `packages/cli/src/index.ts`, `packages/cli/src/main.ts`
 
 ---
 

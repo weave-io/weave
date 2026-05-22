@@ -277,6 +277,48 @@ describe("WeaveRunner", () => {
       expect(spawned?.descriptor.models).toEqual(["gpt-5"]);
     });
 
+    it("adapter-facing descriptors omit disabled agents and include category metadata only for generated shuttles", async () => {
+      const config = cfg(`
+        agent loom { prompt "Orchestrator." models ["model-loom"] }
+        agent warp { prompt "Reviewer." models ["model-warp"] }
+        agent shuttle { prompt "Specialist." models ["model-shuttle"] }
+        category frontend {
+          description "Frontend UI"
+          patterns ["src/components/**", "src/pages/**/*.tsx"]
+          models ["model-frontend"]
+        }
+        category backend {
+          description "Backend APIs"
+          patterns ["src/api/**"]
+          models ["model-backend"]
+        }
+        disable agents ["warp", "shuttle-backend"]
+      `);
+
+      await new WeaveRunner(config, adapter).run();
+
+      const descriptors = adapter
+        .callsTo("spawnSubagent")
+        .map((c) => c.descriptor);
+      const names = descriptors.map((descriptor) => descriptor.name);
+      const loom = descriptors.find((descriptor) => descriptor.name === "loom");
+      const frontend = descriptors.find(
+        (descriptor) => descriptor.name === "shuttle-frontend",
+      );
+
+      expect(names).toContain("loom");
+      expect(names).toContain("shuttle");
+      expect(names).toContain("shuttle-frontend");
+      expect(names).not.toContain("warp");
+      expect(names).not.toContain("shuttle-backend");
+      expect(loom?.category).toBeUndefined();
+      expect(frontend?.category).toEqual({
+        name: "frontend",
+        description: "Frontend UI",
+        patterns: ["src/components/**", "src/pages/**/*.tsx"],
+      });
+    });
+
     it("throws when a category would generate a name that is already explicitly declared", async () => {
       const config = cfg(`
         agent shuttle { prompt "Specialist." models ["claude-sonnet-4-5"] }

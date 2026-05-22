@@ -35,6 +35,7 @@ export interface AgentDescriptor {
   name: string;
   displayName?: string;
   description?: string;
+  category?: AgentDescriptorCategory;
   composedPrompt: string;
   models: string[];
   mode: AgentMode;
@@ -43,6 +44,12 @@ export interface AgentDescriptor {
   rawToolPolicy: ToolPolicy | undefined;
   delegationTargets: DelegationTarget[];
   skills: string[];
+}
+
+export interface AgentDescriptorCategory {
+  name: string;
+  description?: string;
+  patterns: string[];
 }
 
 export interface DelegationTarget {
@@ -376,6 +383,14 @@ export function composeAgentDescriptor(
         name: agentName,
         displayName: agentConfig.display_name,
         description: agentConfig.description,
+        category:
+          category === undefined
+            ? undefined
+            : {
+                name: category.name,
+                description: category.description,
+                patterns: category.patterns ?? [],
+              },
         composedPrompt,
         models: agentConfig.models ?? [],
         mode: agentConfig.mode ?? "subagent",

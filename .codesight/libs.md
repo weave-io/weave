@@ -111,6 +111,7 @@
 - `packages/engine/src/compose.ts`
   - function composeAgentDescriptor: (agentName, agentConfig, config, allAgents, AgentConfig>, category?) => ResultAsync<AgentDescriptor, ComposeError>
   - interface AgentDescriptor
+  - interface AgentDescriptorCategory
   - interface DelegationTarget
   - type PromptTemplateReason
   - type ComposeError

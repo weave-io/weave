@@ -59,7 +59,7 @@
 - [x] 2.4 Update `docs/adapter-boundary.md` to state that model availability, selected-model lookup, concrete model field formatting, concrete tool mapping, and harness resource generation remain adapter-owned.
 - [x] 2.5 Confirm descriptor skill data remains requested skill names only and does not include resolved skill payloads, paths, contents, or adapter-private metadata.
 
-### [ ] 3.0 Represent category metadata and disabled entries in descriptors
+### [x] 3.0 Represent category metadata and disabled entries in descriptors
 
 #### 3.0 Proof Artifact(s)
 
@@ -69,12 +69,12 @@
 
 #### 3.0 Tasks
 
-- [ ] 3.1 Add a normalized optional category metadata shape to `AgentDescriptor` that includes category name, optional description, and declared patterns only.
-- [ ] 3.2 Preserve category metadata from category shuttle generation through descriptor composition without duplicating Spec 14's category-generation responsibilities.
-- [ ] 3.3 Add `descriptors.test.ts` coverage proving generated shuttles can be associated with source category metadata and disabled generated shuttles remain omitted.
-- [ ] 3.4 Add `compose.test.ts` coverage proving generated category shuttle descriptors include category metadata and regular agents omit it.
-- [ ] 3.5 Add runner or materialization-focused coverage proving disabled declared agents and suppressed generated shuttles are omitted from adapter-facing descriptor output.
-- [ ] 3.6 Verify category patterns are preserved exactly as declared and no engine code expands globs or scans project files.
+- [x] 3.1 Add a normalized optional category metadata shape to `AgentDescriptor` that includes category name, optional description, and declared patterns only.
+- [x] 3.2 Preserve category metadata from category shuttle generation through descriptor composition without duplicating Spec 14's category-generation responsibilities.
+- [x] 3.3 Add `descriptors.test.ts` coverage proving generated shuttles can be associated with source category metadata and disabled generated shuttles remain omitted.
+- [x] 3.4 Add `compose.test.ts` coverage proving generated category shuttle descriptors include category metadata and regular agents omit it.
+- [x] 3.5 Add runner or materialization-focused coverage proving disabled declared agents and suppressed generated shuttles are omitted from adapter-facing descriptor output.
+- [x] 3.6 Verify category patterns are preserved exactly as declared and no engine code expands globs or scans project files.
 
 ### [ ] 4.0 Document descriptor contract and preserve compatibility
 
