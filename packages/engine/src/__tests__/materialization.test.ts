@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { parseConfig, type WeaveConfig } from "@weave/core";
 
 import {
+  composeAgentDescriptor,
   type MaterializationError,
   type MaterializationInput,
   type MaterializationPlan,
@@ -281,6 +282,122 @@ describe("materializeAgents", () => {
         "shuttle-backend",
         "shuttle-docs",
       ]);
+    });
+  });
+
+  describe("typed failures", () => {
+    it("returns CategoryShuttleConflict error when explicit agent collides with generated shuttle", async () => {
+      const result = await materializeAgents({
+        config: cfg(`
+          agent shuttle { prompt "Base shuttle" models ["model-shuttle"] mode all }
+          agent shuttle-frontend { prompt "Explicit frontend" models ["model-explicit"] }
+
+          category frontend { patterns ["src/**/*.tsx"] models ["model-frontend"] }
+        `),
+      });
+
+      expect(result.isErr()).toBe(true);
+      if (result.isOk()) return;
+      expect(result.error.type).toBe("CategoryShuttleConflict");
+      if (result.error.type !== "CategoryShuttleConflict") return;
+      expect(result.error.conflict).toEqual({
+        type: "CategoryShuttleConflictError",
+        shuttleName: "shuttle-frontend",
+        categoryName: "frontend",
+        message:
+          'Agent "shuttle-frontend" is explicitly declared and would also be generated from category "frontend". Remove the explicit agent declaration or rename the category.',
+      });
+    });
+
+    it("returns DescriptorCompositionFailure when agent has no prompt source", async () => {
+      const result = await materializeAgents({
+        config: cfg(`
+          agent broken { models ["model-broken"] }
+        `),
+      });
+
+      expect(result.isErr()).toBe(true);
+      if (result.isOk()) return;
+      expect(result.error.type).toBe("DescriptorCompositionFailure");
+      if (result.error.type !== "DescriptorCompositionFailure") return;
+      expect(result.error.agentName).toBe("broken");
+      expect(result.error.cause.type).toBe("PromptSourceMissingError");
+      expect(result.error.cause.agentName).toBe("broken");
+    });
+
+    it("DescriptorCompositionFailure includes the affected agentName", async () => {
+      const result = await materializeAgents({
+        config: cfg(`
+          agent alpha { prompt "Alpha" models ["model-alpha"] }
+          agent broken { models ["model-broken"] }
+          agent omega { prompt "Omega" models ["model-omega"] }
+        `),
+      });
+
+      expect(result.isErr()).toBe(true);
+      if (result.isOk()) return;
+      expect(result.error).toMatchObject({
+        type: "DescriptorCompositionFailure",
+        agentName: "broken",
+        cause: { agentName: "broken" },
+      });
+    });
+
+    it("does not throw on category shuttle conflict — returns err instead", async () => {
+      const result = await materializeAgents({
+        config: cfg(`
+          agent shuttle { prompt "Base shuttle" models ["model-shuttle"] mode all }
+          agent shuttle-frontend { prompt "Explicit frontend" models ["model-explicit"] }
+
+          category frontend { patterns ["src/**/*.tsx"] models ["model-frontend"] }
+        `),
+      });
+
+      expect(result.isErr()).toBe(true);
+      if (result.isOk()) return;
+      expect(result.error.type).toBe("CategoryShuttleConflict");
+    });
+  });
+
+  describe("descriptor compatibility", () => {
+    it("materialized descriptor fields match direct composeAgentDescriptor output", async () => {
+      const config = cfg(`
+        agent representative {
+          prompt "Representative {{agent.name}} uses {{toolPolicy.effective.read}} reads."
+          models ["model-a", "model-b"]
+          mode subagent
+          temperature 0.2
+
+          tool_policy {
+            read allow
+            write ask
+            execute deny
+            delegate deny
+          }
+        }
+      `);
+
+      const materialized = await materializeAgents({ config });
+      const direct = await composeAgentDescriptor(
+        "representative",
+        config.agents.representative!,
+        config,
+        config.agents,
+      );
+
+      expect(materialized.isOk()).toBe(true);
+      expect(direct.isOk()).toBe(true);
+      if (materialized.isErr() || direct.isErr()) return;
+
+      const descriptor = materialized.value.agents[0]?.descriptor;
+      expect(descriptor).toBeDefined();
+      expect(descriptor?.name).toBe(direct.value.name);
+      expect(descriptor?.models).toEqual(direct.value.models);
+      expect(descriptor?.mode).toBe(direct.value.mode);
+      expect(descriptor?.composedPrompt).toBe(direct.value.composedPrompt);
+      expect(descriptor?.effectiveToolPolicy).toEqual(
+        direct.value.effectiveToolPolicy,
+      );
     });
   });
 });
