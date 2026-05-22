@@ -16,13 +16,26 @@
  * from the effect payload.
  */
 
-import type { ToolPolicy } from "@weave/core";
+import type { CompletionMethod, ToolPolicy } from "@weave/core";
 import type { AgentDescriptor } from "./compose.js";
 import type { EffectiveToolPolicy } from "./tool-policy.js";
 
 // ---------------------------------------------------------------------------
 // RunAgentEffect discriminated union
 // ---------------------------------------------------------------------------
+
+/**
+ * Sanitized metadata about the rendered step prompt.
+ *
+ * Carries only structural information — never the raw prompt text.
+ * Adapters may use `byteLength` for telemetry or size-limit enforcement.
+ *
+ * Security invariant: raw prompt content is never stored in effects.
+ */
+export interface PromptMetadata {
+  /** Byte length of the rendered prompt (UTF-8). */
+  readonly byteLength: number;
+}
 
 /**
  * Emitted once per agent immediately before the adapter's `spawnSubagent` call.
@@ -42,6 +55,17 @@ import type { EffectiveToolPolicy } from "./tool-policy.js";
  *   Contains only skill names — no adapter-owned paths, content, or metadata.
  *   Empty array when the agent declares no skills or all declared skills are
  *   disabled.
+ * - `completionMethod` — the expected completion method for this step (from
+ *   `WorkflowStep.completion.method`). Present when dispatched from a
+ *   configured workflow step; absent for legacy/fallback dispatch.
+ * - `stepType` — the interaction intent of the step (`"autonomous"`,
+ *   `"interactive"`, or `"gate"`). Present when dispatched from a configured
+ *   workflow step; absent for legacy/fallback dispatch.
+ * - `correlationId` — a UUID generated at dispatch time for correlating this
+ *   effect with downstream events (session observations, step completions).
+ *   Present when dispatched from a configured workflow step.
+ * - `promptMetadata` — sanitized structural metadata about the rendered prompt.
+ *   Never contains raw prompt text. Present when a step prompt was rendered.
  */
 export type RunAgentEffect = {
   readonly kind: "run-agent";
@@ -57,4 +81,25 @@ export type RunAgentEffect = {
    * is never emitted in this field.
    */
   readonly resolvedSkills: readonly string[];
+  /**
+   * Expected completion method for this step.
+   * Present when dispatched from a configured workflow step.
+   */
+  readonly completionMethod?: CompletionMethod["method"];
+  /**
+   * Interaction intent of the step.
+   * Present when dispatched from a configured workflow step.
+   */
+  readonly stepType?: "autonomous" | "interactive" | "gate";
+  /**
+   * Correlation ID (UUID) generated at dispatch time.
+   * Present when dispatched from a configured workflow step.
+   */
+  readonly correlationId?: string;
+  /**
+   * Sanitized structural metadata about the rendered step prompt.
+   * Never contains raw prompt text.
+   * Present when a step prompt was rendered.
+   */
+  readonly promptMetadata?: PromptMetadata;
 };
