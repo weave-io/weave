@@ -22,7 +22,7 @@ import {
   readSchemaVersion,
   type WorkflowInstance,
 } from "@weave/engine";
-import { ok, type Result } from "neverthrow";
+import { fromThrowable, ok, type Result } from "neverthrow";
 import type { CliError } from "../errors.js";
 import type { TerminalIO } from "../io/terminal.js";
 import type { ThemeColors } from "../theme/colors.js";
@@ -75,6 +75,31 @@ function defaultDbExists(dbPath: string): Promise<boolean> {
 
 function defaultStoreFactory(dbPath: string): RuntimeStore {
   return createSqliteRuntimeStore({ dbPath });
+}
+
+/**
+ * Read the schema version from a SQLite DB at `dbPath`.
+ *
+ * Opens the DB in read-only mode, reads the version, then closes it.
+ * The `finally` block guarantees `db.close()` runs even when
+ * `readSchemaVersion` throws. The outer `fromThrowable` captures any thrown
+ * error (bad path, corrupt DB, missing table) and maps it to a typed
+ * `ReadFailed` error so callers never see a raw exception.
+ */
+function readSchemaVersionFromDb(
+  dbPath: string,
+): Result<number, { type: "ReadFailed" }> {
+  return fromThrowable(
+    () => {
+      const db = new Database(dbPath, { readonly: true });
+      try {
+        return readSchemaVersion(db);
+      } finally {
+        db.close();
+      }
+    },
+    () => ({ type: "ReadFailed" as const }),
+  )();
 }
 
 function formatLease(lease: ExecutionLease, theme: ThemeColors): string {
@@ -378,23 +403,20 @@ export async function runRuntime(
 
   if (ctx.subcommand === "status") {
     // Resolve schema version: use injected value (tests) or read from DB
-    let schemaVersion: number;
+    let schemaVersion: number = CURRENT_SCHEMA_VERSION;
     if (ctx.schemaVersion !== undefined) {
       schemaVersion = ctx.schemaVersion;
     } else {
-      try {
-        const db = new Database(dbPath, { readonly: true });
-        try {
-          schemaVersion = readSchemaVersion(db);
-        } finally {
-          db.close();
-        }
-      } catch {
-        terminal.stderr(
-          `${theme.dim("Could not read schema version; using current schema version.")}`,
-        );
-        schemaVersion = CURRENT_SCHEMA_VERSION;
-      }
+      readSchemaVersionFromDb(dbPath).match(
+        (version) => {
+          schemaVersion = version;
+        },
+        () => {
+          terminal.stderr(
+            `${theme.dim("Could not read schema version; using current schema version.")}`,
+          );
+        },
+      );
     }
     return runRuntimeStatus(ctx, dbPath, store, schemaVersion);
   }
