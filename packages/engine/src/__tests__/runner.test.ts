@@ -319,16 +319,23 @@ describe("WeaveRunner", () => {
       });
     });
 
-    it("throws when a category would generate a name that is already explicitly declared", async () => {
+    it("returns an err when a category would generate a name that is already explicitly declared", async () => {
       const config = cfg(`
         agent shuttle { prompt "Specialist." models ["claude-sonnet-4-5"] }
         agent shuttle-frontend { prompt "Explicit." models ["gpt-4o"] }
         category frontend { patterns ["src/components/**"] models ["gpt-5"] }
       `);
 
-      await expect(new WeaveRunner(config, adapter).run()).rejects.toThrow(
-        /shuttle-frontend.*frontend/,
-      );
+      const result = await new WeaveRunner(config, adapter).run();
+
+      expect(result.isErr()).toBe(true);
+      if (result.isErr()) {
+        expect(result.error.type).toBe("CategoryShuttleConflictError");
+        if (result.error.type === "CategoryShuttleConflictError") {
+          expect(result.error.shuttleName).toBe("shuttle-frontend");
+          expect(result.error.categoryName).toBe("frontend");
+        }
+      }
     });
   });
 
@@ -668,6 +675,41 @@ describe("WeaveRunner", () => {
       expect(shuttleEffect?.rawToolPolicy?.network).toBe("deny");
     });
 
+    it("onEffect receives category metadata matching the spawned descriptor", async () => {
+      const config = cfg(`
+        agent worker { prompt "Regular." models ["model-worker"] }
+        agent shuttle { prompt "Specialist." models ["model-shuttle"] }
+        category frontend {
+          description "Frontend UI, styling, accessibility"
+          patterns ["src/components/**", "**/*.tsx"]
+          models ["model-frontend"]
+        }
+      `);
+
+      const effects: RunAgentEffect[] = [];
+      await new WeaveRunner(config, adapter, {
+        onEffect: (e) => effects.push(e),
+      }).run();
+
+      const spawned = adapter
+        .callsTo("spawnSubagent")
+        .find((c) => c.descriptor.name === "shuttle-frontend");
+      const shuttleEffect = effects.find(
+        (e) => e.agentName === "shuttle-frontend",
+      );
+      const regularEffect = effects.find((e) => e.agentName === "worker");
+
+      expect(shuttleEffect?.agentDescriptor.category).toEqual(
+        spawned?.descriptor.category,
+      );
+      expect(shuttleEffect?.agentDescriptor.category).toEqual({
+        name: "frontend",
+        description: "Frontend UI, styling, accessibility",
+        patterns: ["src/components/**", "**/*.tsx"],
+      });
+      expect(regularEffect?.agentDescriptor.category).toBeUndefined();
+    });
+
     it("category shuttle with no tool_policy: rawToolPolicy is undefined", async () => {
       const config = cfg(`
         agent shuttle { prompt "Specialist." models ["model-shuttle"] }
@@ -924,6 +966,38 @@ describe("WeaveRunner", () => {
         "code-review",
         "security-audit",
       ]);
+    });
+
+    it("missing skills for one agent do not clear other agents' resolved skills", async () => {
+      const adapterWithSkills = new MockAdapter({
+        availableSkills: [{ name: "tdd" }],
+      });
+
+      const config = cfg(`
+        agent valid-worker {
+          prompt "Valid worker."
+          models ["model-valid"]
+          skills ["tdd"]
+        }
+        agent invalid-worker {
+          prompt "Invalid worker."
+          models ["model-invalid"]
+          skills ["missing-skill"]
+        }
+      `);
+
+      const effects: RunAgentEffect[] = [];
+      await new WeaveRunner(config, adapterWithSkills, {
+        onEffect: (e) => effects.push(e),
+      }).run();
+
+      const validEffect = effects.find((e) => e.agentName === "valid-worker");
+      const invalidEffect = effects.find(
+        (e) => e.agentName === "invalid-worker",
+      );
+
+      expect(validEffect?.resolvedSkills).toEqual(["tdd"]);
+      expect(invalidEffect?.resolvedSkills).toEqual([]);
     });
 
     it("engine does not perform directory scanning, skill-file reads, or harness-specific lookup", async () => {

@@ -4,9 +4,8 @@ import { join } from "node:path";
 import type { AgentConfig, WeaveConfig } from "@weave/core";
 import { parseConfig } from "@weave/core";
 
-import { composeAgentDescriptor } from "../compose.js";
+import { type CategoryMetadata, composeAgentDescriptor } from "../compose.js";
 import { generateCategoryShuttles } from "../descriptors.js";
-import type { CategoryInput } from "../template-context.js";
 
 const tempPromptFilePath = join(
   tmpdir(),
@@ -24,7 +23,7 @@ async function descriptorFor(
   agentConfig: AgentConfig,
   config: WeaveConfig,
   allAgents: Record<string, AgentConfig>,
-  category?: CategoryInput,
+  category?: CategoryMetadata,
 ) {
   const result = await composeAgentDescriptor(
     agentName,
@@ -498,6 +497,104 @@ describe("composeAgentDescriptor", () => {
     });
   });
 
+  describe("category metadata", () => {
+    it("Descriptor_composed_with_category_input_carries_category_metadata", async () => {
+      const config = cfg(`
+        agent shuttle {
+          prompt "Frontend specialist."
+        }
+      `);
+
+      const descriptor = await descriptorFor(
+        "shuttle-frontend",
+        config.agents.shuttle,
+        config,
+        { "shuttle-frontend": config.agents.shuttle },
+        {
+          name: "frontend",
+          description: "Frontend UI, styling, accessibility",
+          patterns: ["src/components/**", "**/*.tsx"],
+          isCategory: true,
+        },
+      );
+
+      expect(descriptor.category).toEqual({
+        name: "frontend",
+        description: "Frontend UI, styling, accessibility",
+        patterns: ["src/components/**", "**/*.tsx"],
+      });
+    });
+
+    it("Descriptor_composed_without_category_input_has_undefined_category", async () => {
+      const config = cfg(`
+        agent loom {
+          prompt "Regular agent."
+        }
+      `);
+
+      const descriptor = await descriptorFor(
+        "loom",
+        config.agents.loom,
+        config,
+        config.agents,
+      );
+
+      expect(descriptor.category).toBeUndefined();
+    });
+
+    it("Category_context_renders_in_prompt_for_category_shuttles", async () => {
+      const config = cfg(`
+        agent shuttle {
+          prompt "Category? {{agent.isCategory}}. Name: {{category.name}}. Description: {{category.description}}."
+        }
+      `);
+
+      const descriptor = await descriptorFor(
+        "shuttle-frontend",
+        config.agents.shuttle,
+        config,
+        { "shuttle-frontend": config.agents.shuttle },
+        {
+          name: "frontend",
+          description: "Frontend UI",
+          patterns: ["src/components/**"],
+          isCategory: true,
+        },
+      );
+
+      expect(descriptor.composedPrompt).toBe(
+        "Category? true. Name: frontend. Description: Frontend UI.",
+      );
+    });
+
+    it("Regular_agents_and_base_shuttle_have_no_category_context", async () => {
+      const config = cfg(`
+        agent loom {
+          prompt "Regular."
+        }
+        agent shuttle {
+          prompt "Base shuttle."
+        }
+      `);
+
+      const loom = await descriptorFor(
+        "loom",
+        config.agents.loom,
+        config,
+        config.agents,
+      );
+      const shuttle = await descriptorFor(
+        "shuttle",
+        config.agents.shuttle,
+        config,
+        config.agents,
+      );
+
+      expect(loom.category).toBeUndefined();
+      expect(shuttle.category).toBeUndefined();
+    });
+  });
+
   describe("tool policy", () => {
     it("EffectiveToolPolicy_resolves_all_5_capabilities_when_all_declared", async () => {
       const config = cfg(`
@@ -737,17 +834,24 @@ describe("composeAgentDescriptor", () => {
       `);
       const shuttlesResult = generateCategoryShuttles(config);
       if (shuttlesResult.isErr()) throw new Error(shuttlesResult.error.message);
-      const allAgents = { ...config.agents, ...shuttlesResult.value };
+      const generatedAgents = Object.fromEntries(
+        Object.entries(shuttlesResult.value).map(([name, generated]) => [
+          name,
+          generated.config,
+        ]),
+      );
+      const allAgents = { ...config.agents, ...generatedAgents };
 
       const descriptor = await descriptorFor(
         "shuttle-frontend",
-        shuttlesResult.value["shuttle-frontend"],
+        shuttlesResult.value["shuttle-frontend"].config,
         config,
         allAgents,
         {
           name: "frontend",
           description: config.categories.frontend?.description,
           patterns: config.categories.frontend?.patterns,
+          isCategory: true,
         },
       );
 

@@ -31,6 +31,7 @@ The primary goal of this feature is to preserve category metadata from `.weave` 
 - The system shall define a category metadata shape for generated category shuttles that includes source category name, category description when present, category file patterns, and whether the descriptor is category-derived.
 - The system shall expose that metadata on `AgentDescriptor` or an intentionally equivalent adapter-facing descriptor passed to `HarnessAdapter.spawnSubagent()`.
 - The system shall preserve category file patterns exactly as parsed from the validated `CategoryConfig` without expanding globs or applying harness-specific matching rules in the engine.
+- The system shall clone category file pattern arrays before exposing them through adapter-facing metadata so adapters cannot mutate the source config array by reference.
 - The system shall keep the descriptor shape free of harness-specific routing fields, concrete harness tool names, and adapter-private state.
 
 **Proof Artifacts:**
@@ -103,6 +104,7 @@ Any user-visible or proof-artifact output should use stable, readable labels suc
 - Follow [`docs/product-vision.md`](../../product-vision.md): Weave describes agent topology, categories, delegation metadata, and normalized descriptors; adapters translate that intent into harness behavior.
 - Use Bun exclusively for runtime, package scripts, typechecking, and tests.
 - Use `neverthrow` result types for fallible generation/composition paths and keep expected errors typed.
+- `WeaveRunner.run()` shall return a `ResultAsync` for expected category shuttle conflicts instead of converting those conflicts into thrown exceptions.
 - Add isolated engine tests using mocks such as `MockAdapter`; do not launch a real harness or scan harness-owned resource directories.
 - Keep prompt template context bounded to safe, documented fields in `template-context.ts`.
 - Update documentation for this adapter-facing contract change before implementation is considered complete.

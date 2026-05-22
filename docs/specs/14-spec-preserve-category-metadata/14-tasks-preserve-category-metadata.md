@@ -48,7 +48,7 @@
 
 ## Tasks
 
-### [ ] 1.0 Define category metadata on adapter-facing descriptors
+### [x] 1.0 Define category metadata on adapter-facing descriptors
 
 #### 1.0 Proof Artifact(s)
 
@@ -58,14 +58,14 @@
 
 #### 1.0 Tasks
 
-- [ ] 1.1 Add a normalized category metadata type for adapter-facing descriptors in `packages/engine/src/compose.ts` or a nearby engine-owned type module.
-- [ ] 1.2 Add optional category metadata to `AgentDescriptor` using the planned `category` field name.
-- [ ] 1.3 Include source category name, optional description, declared patterns, and category-derived identity in the descriptor metadata shape.
-- [ ] 1.4 Ensure the metadata shape does not include harness-specific routing decisions, expanded file lists, concrete tool names, adapter-private state, or secrets.
-- [ ] 1.5 Export the metadata type from `packages/engine/src/index.ts` if adapter authors need to reference it directly.
-- [ ] 1.6 Add or update descriptor-composition tests proving the metadata shape is present for category shuttles and absent or explicitly non-category for regular agents.
+- [x] 1.1 Add a normalized category metadata type for adapter-facing descriptors in `packages/engine/src/compose.ts` or a nearby engine-owned type module.
+- [x] 1.2 Add optional category metadata to `AgentDescriptor` using the planned `category` field name.
+- [x] 1.3 Include source category name, optional description, declared patterns, and category-derived identity in the descriptor metadata shape.
+- [x] 1.4 Ensure the metadata shape does not include harness-specific routing decisions, expanded file lists, concrete tool names, adapter-private state, or secrets.
+- [x] 1.5 Export the metadata type from `packages/engine/src/index.ts` if adapter authors need to reference it directly.
+- [x] 1.6 Add or update descriptor-composition tests proving the metadata shape is present for category shuttles and absent or explicitly non-category for regular agents.
 
-### [ ] 2.0 Preserve source category context during shuttle generation
+### [x] 2.0 Preserve source category context during shuttle generation
 
 #### 2.0 Proof Artifact(s)
 
@@ -75,14 +75,14 @@
 
 #### 2.0 Tasks
 
-- [ ] 2.1 Update `packages/engine/src/descriptors.ts` so category shuttle generation records each generated shuttle's source category context in a typed, testable shape.
-- [ ] 2.2 Preserve existing base `shuttle` inheritance behavior for prompt, models, mode, skills, and tool policy defaults.
-- [ ] 2.3 Preserve category overrides for `models`, `temperature`, `prompt_append`, and merged `tool_policy`.
-- [ ] 2.4 Preserve existing disabled behavior for missing base shuttle, disabled base shuttle, and disabled generated shuttle names.
-- [ ] 2.5 Preserve existing explicit-agent collision behavior and `CategoryShuttleConflictError` result semantics.
-- [ ] 2.6 Extend `packages/engine/src/__tests__/descriptors.test.ts` to cover source category name, optional description, and patterns for generated shuttles without weakening existing regression tests.
+- [x] 2.1 Update `packages/engine/src/descriptors.ts` so category shuttle generation records each generated shuttle's source category context in a typed, testable shape.
+- [x] 2.2 Preserve existing base `shuttle` inheritance behavior for prompt, models, mode, skills, and tool policy defaults.
+- [x] 2.3 Preserve category overrides for `models`, `temperature`, `prompt_append`, and merged `tool_policy`.
+- [x] 2.4 Preserve existing disabled behavior for missing base shuttle, disabled base shuttle, and disabled generated shuttle names.
+- [x] 2.5 Preserve existing explicit-agent collision behavior and `CategoryShuttleConflictError` result semantics.
+- [x] 2.6 Extend `packages/engine/src/__tests__/descriptors.test.ts` to cover source category name, optional description, and patterns for generated shuttles without weakening existing regression tests.
 
-### [ ] 3.0 Wire category context into prompt composition
+### [x] 3.0 Wire category context into prompt composition
 
 #### 3.0 Proof Artifact(s)
 
@@ -92,14 +92,14 @@
 
 #### 3.0 Tasks
 
-- [ ] 3.1 Update the composition path so generated category shuttles pass category context into `composeAgentDescriptor()`.
-- [ ] 3.2 Keep `CategoryInput` for prompt rendering bounded to safe template fields unless tests and docs justify an explicit addition.
-- [ ] 3.3 Ensure `agent.isCategory` renders `true` only for generated category shuttles.
-- [ ] 3.4 Ensure regular agents and the base `shuttle` render without category context or with an explicit non-category state according to existing renderer behavior.
-- [ ] 3.5 Add prompt-composition tests for `agent.isCategory`, `category.name`, `category.description`, and category `prompt_append` behavior.
-- [ ] 3.6 Confirm unknown or raw category fields remain unavailable to templates unless intentionally documented.
+- [x] 3.1 Update the composition path so generated category shuttles pass category context into `composeAgentDescriptor()`.
+- [x] 3.2 Keep `CategoryInput` for prompt rendering bounded to safe template fields unless tests and docs justify an explicit addition.
+- [x] 3.3 Ensure `agent.isCategory` renders `true` only for generated category shuttles.
+- [x] 3.4 Ensure regular agents and the base `shuttle` render without category context or with an explicit non-category state according to existing renderer behavior.
+- [x] 3.5 Add prompt-composition tests for `agent.isCategory`, `category.name`, `category.description`, and category `prompt_append` behavior.
+- [x] 3.6 Confirm unknown or raw category fields remain unavailable to templates unless intentionally documented.
 
-### [ ] 4.0 Expose category metadata through runner effects and adapter materialization
+### [x] 4.0 Expose category metadata through runner effects and adapter materialization
 
 #### 4.0 Proof Artifact(s)
 
@@ -109,14 +109,14 @@
 
 #### 4.0 Tasks
 
-- [ ] 4.1 Update `packages/engine/src/runner.ts` to track generated shuttle source category context alongside generated `AgentConfig` values.
-- [ ] 4.2 Pass the correct category context when composing generated category shuttle descriptors in `WeaveRunner.run()`.
-- [ ] 4.3 Ensure the descriptor passed to `adapter.spawnSubagent()` includes category metadata for generated category shuttles.
-- [ ] 4.4 Ensure `RunAgentEffect.agentDescriptor` carries the same category metadata without duplicating effect-specific category fields.
-- [ ] 4.5 Extend runner tests to assert `MockAdapter.spawnSubagent()` receives category name, optional description, patterns, and category-derived identity.
-- [ ] 4.6 Extend runner `onEffect` tests to assert effect descriptor metadata matches the spawned descriptor metadata.
+- [x] 4.1 Update `packages/engine/src/runner.ts` to track generated shuttle source category context alongside generated `AgentConfig` values.
+- [x] 4.2 Pass the correct category context when composing generated category shuttle descriptors in `WeaveRunner.run()`.
+- [x] 4.3 Ensure the descriptor passed to `adapter.spawnSubagent()` includes category metadata for generated category shuttles.
+- [x] 4.4 Ensure `RunAgentEffect.agentDescriptor` carries the same category metadata without duplicating effect-specific category fields.
+- [x] 4.5 Extend runner tests to assert `MockAdapter.spawnSubagent()` receives category name, optional description, patterns, and category-derived identity.
+- [x] 4.6 Extend runner `onEffect` tests to assert effect descriptor metadata matches the spawned descriptor metadata.
 
-### [ ] 5.0 Document adapter usage and run quality gates
+### [x] 5.0 Document adapter usage and run quality gates
 
 #### 5.0 Proof Artifact(s)
 
@@ -127,10 +127,10 @@
 
 #### 5.0 Tasks
 
-- [ ] 5.1 Update `docs/adapter-boundary.md` to state that the engine preserves category metadata on generated category shuttle descriptors and adapters own concrete routing/config generation.
-- [ ] 5.2 Update `packages/engine/README.md` or `docs/product-vision.md` with a concise description of the category metadata descriptor contract.
-- [ ] 5.3 Document that adapters may use declared `patterns` for harness routing, but the engine must not expand globs, scan files, or inspect harness-owned resources.
-- [ ] 5.4 Run `bun run lint` and capture the passing command output as the lint proof artifact.
-- [ ] 5.5 Run `bun run typecheck` and capture the passing command output as the typecheck proof artifact.
-- [ ] 5.6 Run `bun run test` and capture the passing command output as the regression proof artifact.
-- [ ] 5.7 Ensure the eventual pull request mentions issue #71.
+- [x] 5.1 Update `docs/adapter-boundary.md` to state that the engine preserves category metadata on generated category shuttle descriptors and adapters own concrete routing/config generation.
+- [x] 5.2 Update `packages/engine/README.md` or `docs/product-vision.md` with a concise description of the category metadata descriptor contract.
+- [x] 5.3 Document that adapters may use declared `patterns` for harness routing, but the engine must not expand globs, scan files, or inspect harness-owned resources.
+- [x] 5.4 Run `bun run lint` and capture the passing command output as the lint proof artifact.
+- [x] 5.5 Run `bun run typecheck` and capture the passing command output as the typecheck proof artifact.
+- [x] 5.6 Run `bun run test` and capture the passing command output as the regression proof artifact.
+- [x] 5.7 Ensure the eventual pull request mentions issue #71.

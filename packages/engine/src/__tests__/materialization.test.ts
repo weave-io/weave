@@ -122,6 +122,11 @@ describe("materializeAgents", () => {
       expect(agentNames(plan)).toEqual(["loom", "shuttle", "shuttle-frontend"]);
       expect(plan.agents[2]?.descriptor.name).toBe("shuttle-frontend");
       expect(plan.agents[2]?.descriptor.mode).toBe("subagent");
+      expect(plan.agents[2]?.descriptor.category).toEqual({
+        name: "frontend",
+        description: undefined,
+        patterns: ["src/**/*.tsx"],
+      });
     });
 
     it("multiple categories produce multiple shuttles in stable order", async () => {

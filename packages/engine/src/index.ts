@@ -30,6 +30,7 @@ export {
 export type {
   AgentDescriptor,
   AgentDescriptorCategory,
+  CategoryMetadata,
   ComposeError,
   DelegationTarget,
   PromptTemplateReason,
@@ -108,7 +109,11 @@ export {
   resolveAdapterModelIntent,
 } from "./model-resolution.js";
 export type { PromptMetadata, RunAgentEffect } from "./run-agent-effects.js";
-export type { WeaveRunnerOptions } from "./runner.js";
+export type {
+  WeaveRunnerAdapterError,
+  WeaveRunnerError,
+  WeaveRunnerOptions,
+} from "./runner.js";
 export { WeaveRunner } from "./runner.js";
 export type {
   RuntimeStoreConflictError,

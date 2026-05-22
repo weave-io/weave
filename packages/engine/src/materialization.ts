@@ -8,6 +8,7 @@ import {
 } from "./compose.js";
 import {
   type CategoryShuttleConflictError,
+  type GeneratedCategoryShuttle,
   generateCategoryShuttles,
 } from "./descriptors.js";
 
@@ -45,7 +46,7 @@ export type MaterializationError =
 
 function mergeMaterializableAgents(
   config: WeaveConfig,
-  generatedShuttles: Record<string, AgentConfig>,
+  generatedShuttles: Record<string, GeneratedCategoryShuttle>,
 ): Record<string, AgentConfig> {
   const explicitAgents = Object.fromEntries(
     Object.entries(config.agents).filter(
@@ -53,9 +54,15 @@ function mergeMaterializableAgents(
     ),
   );
 
+  const generatedAgentConfigs = Object.fromEntries(
+    Object.entries(generatedShuttles)
+      .filter(([agentName]) => !config.disabled.agents.includes(agentName))
+      .map(([agentName, generated]) => [agentName, generated.config]),
+  );
+
   return {
     ...explicitAgents,
-    ...generatedShuttles,
+    ...generatedAgentConfigs,
   };
 }
 
@@ -81,26 +88,12 @@ export function materializeAgents(
     input.config,
     generatedShuttlesResult.value,
   );
-  const generatedShuttleNames = new Set(
-    Object.keys(generatedShuttlesResult.value),
-  );
   const materializedAgents: MaterializedAgent[] = [];
 
   let plan = okAsync<MaterializationPlan, MaterializationError>({ agents: [] });
 
   for (const [agentName, agentConfig] of Object.entries(allAgents)) {
-    const isGeneratedShuttle = generatedShuttleNames.has(agentName);
-    const categoryName = isGeneratedShuttle
-      ? agentName.slice("shuttle-".length)
-      : undefined;
-    const categoryConfig =
-      categoryName === undefined
-        ? undefined
-        : input.config.categories[categoryName];
-    const category =
-      categoryName === undefined || categoryConfig === undefined
-        ? undefined
-        : { name: categoryName, description: categoryConfig.description };
+    const category = generatedShuttlesResult.value[agentName]?.categoryMeta;
 
     plan = plan.andThen(() =>
       composeAgentDescriptor(

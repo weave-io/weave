@@ -1,5 +1,6 @@
 import type { AgentConfig, WeaveConfig } from "@weave/core";
 import { err, ok, type Result } from "neverthrow";
+import type { CategoryMetadata } from "./compose.js";
 
 /** Error raised when an explicit agent collides with a generated category shuttle. */
 export type CategoryShuttleConflictError = {
@@ -12,6 +13,11 @@ export type CategoryShuttleConflictError = {
   message: string;
 };
 
+export interface GeneratedCategoryShuttle {
+  config: AgentConfig;
+  categoryMeta: CategoryMetadata;
+}
+
 /**
  * Generate category shuttle agent descriptors from the merged WeaveConfig.
  *
@@ -21,12 +27,15 @@ export type CategoryShuttleConflictError = {
  */
 export function generateCategoryShuttles(
   config: WeaveConfig,
-): Result<Record<string, AgentConfig>, CategoryShuttleConflictError> {
+): Result<
+  Record<string, GeneratedCategoryShuttle>,
+  CategoryShuttleConflictError
+> {
   const base = config.agents.shuttle;
   if (base === undefined) return ok({});
   if (config.disabled.agents.includes("shuttle")) return ok({});
 
-  const result: Record<string, AgentConfig> = {};
+  const result: Record<string, GeneratedCategoryShuttle> = {};
 
   for (const [categoryName, category] of Object.entries(config.categories)) {
     const shuttleName = `shuttle-${categoryName}`;
@@ -61,10 +70,18 @@ export function generateCategoryShuttles(
     }
 
     result[shuttleName] = {
-      ...base,
-      name: shuttleName,
-      mode: "subagent",
-      ...overrides,
+      config: {
+        ...base,
+        name: shuttleName,
+        mode: "subagent",
+        ...overrides,
+      },
+      categoryMeta: {
+        name: categoryName,
+        description: category.description,
+        patterns: [...(category.patterns ?? [])],
+        isCategory: true,
+      },
     };
   }
 

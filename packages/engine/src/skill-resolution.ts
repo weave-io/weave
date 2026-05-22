@@ -279,10 +279,8 @@ export function resolveSkillsForConfig(
   }
 
   // Add generated shuttles (generateCategoryShuttles already skips disabled ones)
-  for (const [shuttleName, shuttleConfig] of Object.entries(
-    shuttlesResult.value,
-  )) {
-    agentEntries.push([shuttleName, shuttleConfig.skills]);
+  for (const [shuttleName, generated] of Object.entries(shuttlesResult.value)) {
+    agentEntries.push([shuttleName, generated.config.skills]);
   }
 
   // Resolve skills for each agent, accumulating all errors
