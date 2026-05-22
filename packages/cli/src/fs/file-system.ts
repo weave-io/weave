@@ -1,7 +1,7 @@
 import { dirname, resolve } from "node:path";
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
 
-export type FileSystemErrorCause =
+type FileSystemErrorCause =
   | { kind: "MissingFile" }
   | { kind: "RuntimeFailure"; message: string };
 

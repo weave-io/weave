@@ -32,7 +32,7 @@ import type { ThemeColors } from "../theme/colors.js";
 // ---------------------------------------------------------------------------
 
 /** Default Runtime Store DB path relative to the project root. */
-export const DEFAULT_RUNTIME_DB_PATH = ".weave/runtime/weave.db";
+const DEFAULT_RUNTIME_DB_PATH = ".weave/runtime/weave.db";
 
 // ---------------------------------------------------------------------------
 // Context

@@ -127,7 +127,7 @@ export const CategoryConfigSchema = z
 // Disabled
 // ---------------------------------------------------------------------------
 
-export const DisabledConfigSchema = z.object({
+const DisabledConfigSchema = z.object({
   agents: z.array(z.string()).default([]),
   hooks: z.array(z.string()).default([]),
   skills: z.array(z.string()).default([]),
@@ -296,7 +296,6 @@ export type DelegationTrigger = z.infer<typeof DelegationTriggerSchema>;
 export type ToolPolicy = z.infer<typeof ToolPolicySchema>;
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
 export type CategoryConfig = z.infer<typeof CategoryConfigSchema>;
-export type DisabledConfig = z.infer<typeof DisabledConfigSchema>;
 /** Step execution mode. */
 export type WorkflowStepType = z.infer<typeof WorkflowStepTypeSchema>;
 /** Discriminated union describing how a step signals completion. */

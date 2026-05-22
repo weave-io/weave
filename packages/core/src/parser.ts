@@ -28,7 +28,7 @@ import type { ParseError } from "./errors.js";
 import type { SourcePos } from "./tokens.js";
 import { type Token, TokenType } from "./tokens.js";
 
-export class Parser {
+class Parser {
   readonly #tokens: Token[];
   #cursor = 0;
   readonly #errors: ParseError[] = [];

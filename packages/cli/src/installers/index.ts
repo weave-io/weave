@@ -67,7 +67,7 @@ export function installerRegistry(
   };
 }
 
-export function unsupportedInstaller(id: SupportedHarnessId): HarnessInstaller {
+function unsupportedInstaller(id: SupportedHarnessId): HarnessInstaller {
   return {
     id,
     supported: false,
@@ -81,7 +81,7 @@ export function unsupportedInstaller(id: SupportedHarnessId): HarnessInstaller {
   };
 }
 
-export function skipUnsupported(id: SupportedHarnessId): InstallResult {
+function skipUnsupported(id: SupportedHarnessId): InstallResult {
   return {
     harness: id,
     changed: false,
