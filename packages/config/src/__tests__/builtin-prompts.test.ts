@@ -204,12 +204,12 @@ describe("builtin prompt files", () => {
       expect(hasDelegation).toBe(true);
     });
 
-    it("contains the delegation.section or delegation.mermaid template placeholder", async () => {
+    it("contains a delegation.targets loop for the specialist agents list", async () => {
       const content = await Bun.file(join(PROMPTS_DIR, "loom.md")).text();
-      const hasDelegationPlaceholder =
-        content.includes("{{{delegation.section}}}") ||
-        content.includes("{{{delegation.mermaid}}}");
-      expect(hasDelegationPlaceholder).toBe(true);
+      // loom uses a prose-first template: specialist agents are listed via
+      // {{#delegation.targets}} loop rather than an embedded Mermaid diagram
+      expect(content).toContain("{{#delegation.targets}}");
+      expect(content).toContain("{{/delegation.targets}}");
     });
   });
 
