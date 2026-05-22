@@ -1,11 +1,15 @@
 import type { AgentConfig, WeaveConfig } from "@weave/core";
+import { errAsync, ResultAsync } from "neverthrow";
 import type { HarnessAdapter } from "./adapter.js";
 import {
   type AgentDescriptor,
   type CategoryMetadata,
   composeAgentDescriptor,
 } from "./compose.js";
-import { generateCategoryShuttles } from "./descriptors.js";
+import {
+  type CategoryShuttleConflictError,
+  generateCategoryShuttles,
+} from "./descriptors.js";
 import { logger } from "./logger.js";
 import type { RunAgentEffect } from "./run-agent-effects.js";
 import { resolveSkillsForConfig } from "./skill-resolution.js";
@@ -35,6 +39,30 @@ export interface WeaveRunnerOptions {
    * agent materialization continues uninterrupted.
    */
   onEffect?: (effect: RunAgentEffect) => void;
+}
+
+export type WeaveRunnerAdapterError = {
+  type: "WeaveRunnerAdapterError";
+  phase: "init" | "loadAvailableSkills" | "materializeAgents";
+  message: string;
+  cause?: string;
+};
+
+export type WeaveRunnerError =
+  | CategoryShuttleConflictError
+  | WeaveRunnerAdapterError;
+
+function toRunnerAdapterError(
+  phase: WeaveRunnerAdapterError["phase"],
+  cause: unknown,
+): WeaveRunnerAdapterError {
+  const causeMessage = cause instanceof Error ? cause.message : String(cause);
+  return {
+    type: "WeaveRunnerAdapterError",
+    phase,
+    message: `Adapter failed during ${phase}`,
+    cause: causeMessage,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -96,67 +124,93 @@ export class WeaveRunner {
    * 3. Wire abstract lifecycle policy surfaces.     (deferred — see TODO)
    * 4. Materialise all agents that are not disabled.
    */
-  async run(): Promise<void> {
+  run(): ResultAsync<void, WeaveRunnerError> {
     const { disabled } = this.config;
 
     // 1. Initialise the adapter.
     log.info("Initialising harness adapter");
-    await this.adapter.init();
+    return ResultAsync.fromPromise(this.adapter.init(), (cause) =>
+      toRunnerAdapterError("init", cause),
+    )
+      .andThen(() =>
+        ResultAsync.fromPromise(this.adapter.loadAvailableSkills(), (cause) =>
+          toRunnerAdapterError("loadAvailableSkills", cause),
+        ),
+      )
+      .andThen((availableSkills) => {
+        // 2. Resolve skills from adapter-provided SkillInfo values.
+        // Skill discovery/loading is adapter-owned; the engine only matches agent
+        // skill references against explicit harness context and disabled.skills.
+        const skillResolutionResult = resolveSkillsForConfig({
+          config: this.config,
+          availableSkills,
+        });
 
-    // 2. Resolve skills from adapter-provided SkillInfo values.
-    // Skill discovery/loading is adapter-owned; the engine only matches agent
-    // skill references against explicit harness context and disabled.skills.
-    const availableSkills = await this.adapter.loadAvailableSkills();
-    const skillResolutionResult = resolveSkillsForConfig({
-      config: this.config,
-      availableSkills,
-    });
+        // Log any missing-skill errors but do not abort — adapters may handle
+        // partial resolution gracefully. The resolved map defaults to empty arrays
+        // for agents with no skills or resolution errors.
+        const resolvedSkillsMap: Record<string, readonly string[]> = {};
+        if (skillResolutionResult.isOk()) {
+          for (const [agentName, skills] of Object.entries(
+            skillResolutionResult.value,
+          )) {
+            resolvedSkillsMap[agentName] = skills.map((s) => s.name);
+          }
+        } else {
+          for (const error of skillResolutionResult.error) {
+            log.warn(
+              { agent: error.agentName, skill: error.skillName },
+              "Skill declared by agent is not available in harness",
+            );
+          }
+        }
 
-    // Log any missing-skill errors but do not abort — adapters may handle
-    // partial resolution gracefully. The resolved map defaults to empty arrays
-    // for agents with no skills or resolution errors.
-    const resolvedSkillsMap: Record<string, readonly string[]> = {};
-    if (skillResolutionResult.isOk()) {
-      for (const [agentName, skills] of Object.entries(
-        skillResolutionResult.value,
-      )) {
-        resolvedSkillsMap[agentName] = skills.map((s) => s.name);
-      }
-    } else {
-      for (const error of skillResolutionResult.error) {
-        log.warn(
-          { agent: error.agentName, skill: error.skillName },
-          "Skill declared by agent is not available in harness",
+        // 3. TODO(#9): wire abstract lifecycle policy surfaces.
+        // The execution lifecycle surface (execution-lifecycle.ts) provides 7 typed
+        // engine functions that adapters call after mapping concrete harness events:
+        //   observeSession, startExecution, resumeExecution, handleUserInterrupt,
+        //   dispatchStep, completeStep, beforeTool.
+        // These supersede registerHook(). Full workflow engine integration is deferred
+        // to a future spec; the runner currently handles only agent materialisation.
+
+        const shuttlesResult = generateCategoryShuttles(this.config);
+        if (shuttlesResult.isErr()) {
+          const conflict = shuttlesResult.error;
+          log.error(
+            { conflict: conflict.shuttleName, category: conflict.categoryName },
+            conflict.message,
+          );
+          return errAsync(conflict);
+        }
+
+        const allAgents: Record<string, AgentConfig> = {
+          ...this.config.agents,
+        };
+        const categoryMetaMap: Record<string, CategoryMetadata> = {};
+
+        for (const [name, generated] of Object.entries(shuttlesResult.value)) {
+          allAgents[name] = generated.config;
+          categoryMetaMap[name] = generated.categoryMeta;
+        }
+
+        return ResultAsync.fromPromise(
+          this.materializeAgents(
+            disabled,
+            allAgents,
+            categoryMetaMap,
+            resolvedSkillsMap,
+          ),
+          (cause) => toRunnerAdapterError("materializeAgents", cause),
         );
-      }
-    }
+      });
+  }
 
-    // 3. TODO(#9): wire abstract lifecycle policy surfaces.
-    // The execution lifecycle surface (execution-lifecycle.ts) provides 7 typed
-    // engine functions that adapters call after mapping concrete harness events:
-    //   observeSession, startExecution, resumeExecution, handleUserInterrupt,
-    //   dispatchStep, completeStep, beforeTool.
-    // These supersede registerHook(). Full workflow engine integration is deferred
-    // to a future spec; the runner currently handles only agent materialisation.
-
-    const shuttlesResult = generateCategoryShuttles(this.config);
-    if (shuttlesResult.isErr()) {
-      const conflict = shuttlesResult.error;
-      log.error(
-        { conflict: conflict.shuttleName, category: conflict.categoryName },
-        conflict.message,
-      );
-      throw new Error(conflict.message);
-    }
-
-    const allAgents: Record<string, AgentConfig> = { ...this.config.agents };
-    const categoryMetaMap: Record<string, CategoryMetadata> = {};
-
-    for (const [name, generated] of Object.entries(shuttlesResult.value)) {
-      allAgents[name] = generated.config;
-      categoryMetaMap[name] = generated.categoryMeta;
-    }
-
+  private async materializeAgents(
+    disabled: WeaveConfig["disabled"],
+    allAgents: Record<string, AgentConfig>,
+    categoryMetaMap: Record<string, CategoryMetadata>,
+    resolvedSkillsMap: Record<string, readonly string[]>,
+  ): Promise<void> {
     // 4. Materialise agents through the adapter boundary (skip disabled).
     for (const [name, agentConfig] of Object.entries(allAgents) as [
       string,

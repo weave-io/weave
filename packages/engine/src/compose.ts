@@ -385,7 +385,7 @@ export function composeAgentDescriptor(
             ? {
                 name: category.name,
                 description: category.description,
-                patterns: category.patterns,
+                patterns: [...(category.patterns ?? [])],
                 isCategory: true,
               }
             : undefined,

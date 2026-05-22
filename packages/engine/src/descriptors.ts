@@ -79,7 +79,7 @@ export function generateCategoryShuttles(
       categoryMeta: {
         name: categoryName,
         description: category.description,
-        patterns: category.patterns ?? [],
+        patterns: [...(category.patterns ?? [])],
         isCategory: true,
       },
     };

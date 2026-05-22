@@ -310,16 +310,23 @@ describe("WeaveRunner", () => {
       expect(baseShuttle?.descriptor.category).toBeUndefined();
     });
 
-    it("throws when a category would generate a name that is already explicitly declared", async () => {
+    it("returns an err when a category would generate a name that is already explicitly declared", async () => {
       const config = cfg(`
         agent shuttle { prompt "Specialist." models ["claude-sonnet-4-5"] }
         agent shuttle-frontend { prompt "Explicit." models ["gpt-4o"] }
         category frontend { patterns ["src/components/**"] models ["gpt-5"] }
       `);
 
-      await expect(new WeaveRunner(config, adapter).run()).rejects.toThrow(
-        /shuttle-frontend.*frontend/,
-      );
+      const result = await new WeaveRunner(config, adapter).run();
+
+      expect(result.isErr()).toBe(true);
+      if (result.isErr()) {
+        expect(result.error.type).toBe("CategoryShuttleConflictError");
+        if (result.error.type === "CategoryShuttleConflictError") {
+          expect(result.error.shuttleName).toBe("shuttle-frontend");
+          expect(result.error.categoryName).toBe("frontend");
+        }
+      }
     });
   });
 
