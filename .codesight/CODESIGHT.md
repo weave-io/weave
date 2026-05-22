@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weave/core, @weave/engine, @weave/config, @weave/cli, @weave/adapter-opencode
 
-> 0 routes | 0 models | 0 components | 50 lib files | 2 env vars | 0 middleware | 0% test coverage
-> **Token savings:** this file is ~4,300 tokens. Without it, AI exploration would cost ~22,400 tokens. **Saves ~18,100 tokens per conversation.**
-> **Last scanned:** 2026-05-22 20:05 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 51 lib files | 2 env vars | 0 middleware | 0% test coverage
+> **Token savings:** this file is ~4,400 tokens. Without it, AI exploration would cost ~22,600 tokens. **Saves ~18,200 tokens per conversation.**
+> **Last scanned:** 2026-05-22 20:08 — re-run after significant changes
 
 ---
 
@@ -140,6 +140,12 @@
   - function lifecyclePersistenceError: (message, cause?) => LifecyclePersistenceError
   - function lifecyclePolicyDecisionError: (message, rule?) => LifecyclePolicyDecisionError
   - _...41 more_
+- `packages/engine/src/materialization.ts`
+  - function materializeAgents: (input) => ResultAsync<MaterializationPlan, MaterializationError>
+  - interface MaterializationInput
+  - interface MaterializedAgent
+  - interface MaterializationPlan
+  - type MaterializationError
 - `packages/engine/src/model-resolution.ts`
   - function resolveAdapterModelIntent: (input) => ModelResolutionResult
   - interface ModelResolutionInput
@@ -271,7 +277,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 43 test files found
+> 44 test files found
 
 ---
 

@@ -150,6 +150,15 @@ export class WeaveRunner {
     // These supersede registerHook(). Full workflow engine integration is deferred
     // to a future spec; the runner currently handles only agent materialisation.
 
+    // Compatibility note: `materializeAgents()` is the preferred adapter-facing
+    // pure materialization API, but this transitional runner intentionally keeps
+    // the existing manual loop. `WeaveRunner.run()` throws on category shuttle
+    // conflicts and continues after descriptor composition failures so later
+    // agents can still spawn. `materializeAgents()` returns typed conflict
+    // errors and stops on the first descriptor composition failure. A future
+    // runner refactor must either add partial-failure materialization support or
+    // explicitly convert those typed results back into the runner's observable
+    // throw/skip-and-continue behavior before replacing this code path.
     const shuttlesResult = generateCategoryShuttles(this.config);
     if (shuttlesResult.isErr()) {
       const conflict = shuttlesResult.error;

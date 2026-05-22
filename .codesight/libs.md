@@ -129,6 +129,12 @@
   - function lifecyclePersistenceError: (message, cause?) => LifecyclePersistenceError
   - function lifecyclePolicyDecisionError: (message, rule?) => LifecyclePolicyDecisionError
   - _...41 more_
+- `packages/engine/src/materialization.ts`
+  - function materializeAgents: (input) => ResultAsync<MaterializationPlan, MaterializationError>
+  - interface MaterializationInput
+  - interface MaterializedAgent
+  - interface MaterializationPlan
+  - type MaterializationError
 - `packages/engine/src/model-resolution.ts`
   - function resolveAdapterModelIntent: (input) => ModelResolutionResult
   - interface ModelResolutionInput

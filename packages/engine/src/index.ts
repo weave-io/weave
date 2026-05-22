@@ -92,6 +92,13 @@ export {
 } from "./execution-lifecycle.js";
 export { logger } from "./logger.js";
 export type {
+  MaterializationError,
+  MaterializationInput,
+  MaterializationPlan,
+  MaterializedAgent,
+} from "./materialization.js";
+export { materializeAgents } from "./materialization.js";
+export type {
   ModelResolutionInput,
   ModelResolutionResult,
   ResolutionSource,

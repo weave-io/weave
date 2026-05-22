@@ -442,3 +442,43 @@ result.match(
   (err) => log.error({ err }, "completeStep failed"),
 );
 ```
+
+---
+
+## Agent Materialization API
+
+> **Spec:** [Spec 15 — Adapter-Facing Materialization API](specs/15-spec-adapter-facing-materialization-api/)
+
+`materializeAgents(input)` is the engine-owned pure API for composing all adapter-facing agent descriptors from a resolved Weave config. It gives adapters one deterministic plan to translate into harness-specific plugin/config/runtime state without requiring the engine to know how any harness materializes agents.
+
+```text
+WeaveConfig → materializeAgents → MaterializationPlan → Adapter translates → Harness
+```
+
+### Data Contract
+
+- Input: `MaterializationInput { config: WeaveConfig }`. No `HarnessAdapter` is required; the engine receives only Weave-owned configuration.
+- Output: `MaterializationPlan { agents: MaterializedAgent[] }`, where each `MaterializedAgent` pairs `agentName` with an engine-composed `AgentDescriptor`.
+- Output order is deterministic: declared agents preserve resolved config order, followed by generated category shuttle agents in category declaration order, after disabled-agent filtering.
+- Failures are typed as `MaterializationError` values (`CategoryShuttleConflict` or `DescriptorCompositionFailure`) rather than harness-specific exceptions.
+
+### Engine Responsibilities
+
+The engine owns:
+
+- Descriptor composition through `composeAgentDescriptor`.
+- Category shuttle generation through `generateCategoryShuttles`.
+- Disabled-agent filtering before descriptors are returned.
+- Ordered `MaterializationPlan` construction.
+- Harness-neutral error vocabulary for materialization failures.
+
+### Adapter Responsibilities
+
+Adapters own everything after descriptors are returned:
+
+- Translating `MaterializedAgent.descriptor` into concrete harness plugin configuration, generated files, process state, or runtime registrations.
+- Spawning or emulating agents in the harness.
+- Mapping abstract descriptor fields (models, prompts, tool policy, skills, mode) onto harness-specific capabilities and fallback behavior.
+- Applying harness-specific materialization side effects and reporting any harness-specific failures outside the pure engine API.
+
+The engine must not write harness config files, spawn harness agents, discover harness resource locations, or register concrete harness callbacks as part of `materializeAgents()`.
