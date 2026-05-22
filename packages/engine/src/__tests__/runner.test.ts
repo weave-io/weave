@@ -302,6 +302,9 @@ describe("WeaveRunner", () => {
         .map((c) => c.descriptor);
       const names = descriptors.map((descriptor) => descriptor.name);
       const loom = descriptors.find((descriptor) => descriptor.name === "loom");
+      const base = descriptors.find(
+        (descriptor) => descriptor.name === "shuttle",
+      );
       const frontend = descriptors.find(
         (descriptor) => descriptor.name === "shuttle-frontend",
       );
@@ -312,6 +315,7 @@ describe("WeaveRunner", () => {
       expect(names).not.toContain("warp");
       expect(names).not.toContain("shuttle-backend");
       expect(loom?.category).toBeUndefined();
+      expect(base?.category).toBeUndefined();
       expect(frontend?.category).toEqual({
         name: "frontend",
         description: "Frontend UI",
