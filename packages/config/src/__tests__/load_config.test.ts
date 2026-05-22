@@ -1,9 +1,13 @@
 import { describe, expect, it } from "bun:test";
 import { isAbsolute } from "node:path";
 import { errAsync, okAsync } from "neverthrow";
-import { BUILTIN_AGENT_NAMES } from "../builtins.js";
+import { getBuiltinConfig } from "../builtins.js";
 import type { FileReader } from "../discovery.js";
 import { loadConfig } from "../loader.js";
+
+const BUILTIN_AGENT_NAMES = Object.keys(
+  getBuiltinConfig()._unsafeUnwrap().agents,
+).sort();
 
 // ---------------------------------------------------------------------------
 // Mock file reader helpers

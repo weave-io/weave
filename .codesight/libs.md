@@ -7,15 +7,8 @@
   - type ArgParseError
 - `packages/cli/src/cli.ts` — function run: (deps?) => Promise<Result<number, CliError>>, interface CliDeps
 - `packages/cli/src/commands/init.ts` — function runInit: (ctx) => Promise<Result<number, CliError>>, interface InitContext
-- `packages/cli/src/commands/runtime.ts`
-  - function runRuntime: (ctx) => Promise<Result<number, CliError>>
-  - interface RuntimeCommandContext
-  - const DEFAULT_RUNTIME_DB_PATH
-- `packages/cli/src/commands/validate.ts`
-  - function validateExplicitPath: (path, fs) => ResultAsync<ValidatedConfig, ValidateError>
-  - function formatSummary: (config) => string
-  - function runValidate: (ctx) => Promise<Result<number, CliError>>
-  - interface ValidateContext
+- `packages/cli/src/commands/runtime.ts` — function runRuntime: (ctx) => Promise<Result<number, CliError>>, interface RuntimeCommandContext
+- `packages/cli/src/commands/validate.ts` — function runValidate: (ctx) => Promise<Result<number, CliError>>, interface ValidateContext
 - `packages/cli/src/config/starter-config.ts` — function starterConfig: (scope) => string
 - `packages/cli/src/detect/index.ts`
   - function detectHarnesses: (probes) => void
@@ -45,13 +38,13 @@
   - type FileSystemError
 - `packages/cli/src/installers/index.ts`
   - function installerRegistry: (fs) => Record<SupportedHarnessId, HarnessInstaller>
-  - function unsupportedInstaller: (id) => HarnessInstaller
-  - function skipUnsupported: (id) => InstallResult
   - function installAllSupported: (input, string[]>;
 }) => ResultAsync<InstallResult[], InstallError>
   - interface HarnessInstaller
   - type AdapterModule
-  - _...3 more_
+  - type InstallRequest
+  - type InstallResult
+  - _...1 more_
 - `packages/cli/src/installers/opencode.ts` — class OpenCodeInstaller
 - `packages/cli/src/io/terminal.ts`
   - class RealTerminal
@@ -76,10 +69,7 @@
   - class ThemeRenderer
   - interface VersionSource
   - const defaultThemeRenderer
-- `packages/config/src/builtins.ts`
-  - function getBuiltinConfig: () => Result<WeaveConfig, ConfigError[]>
-  - const BUILTIN_AGENT_NAMES: readonly string[]
-  - const BUILTIN_WEAVE_SOURCE
+- `packages/config/src/builtins.ts` — function getBuiltinConfig: () => Result<WeaveConfig, ConfigError[]>, const BUILTIN_WEAVE_SOURCE
 - `packages/config/src/discovery.ts`
   - function discoverAndParse: (projectRoot?, fileReader) => ResultAsync<DiscoveredConfig[], ConfigLoadError[]>
   - interface FileReader

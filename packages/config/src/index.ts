@@ -6,7 +6,7 @@
  * downstream packages.
  */
 
-export { BUILTIN_AGENT_NAMES, getBuiltinConfig } from "./builtins.js";
+export { getBuiltinConfig } from "./builtins.js";
 export type { DiscoveredConfig, FileReader } from "./discovery.js";
 export { discoverAndParse } from "./discovery.js";
 export type { ConfigLoadError } from "./errors.js";

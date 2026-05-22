@@ -12,7 +12,7 @@
 
 import { describe, expect, it } from "bun:test";
 import { join } from "node:path";
-import { BUILTIN_AGENT_NAMES } from "../builtins.js";
+import { getBuiltinConfig } from "../builtins.js";
 
 /**
  * Tokens that must not appear in shipped builtin prompt files.
@@ -102,6 +102,10 @@ const PLACEHOLDER_TEXT =
  * Resolved relative to this test file: src/__tests__/ → src/ → packages/config/ → prompts/
  */
 const PROMPTS_DIR = join(import.meta.dir, "..", "..", "prompts");
+
+const BUILTIN_AGENT_NAMES = Object.keys(
+  getBuiltinConfig()._unsafeUnwrap().agents,
+).sort();
 
 describe("builtin prompt files", () => {
   for (const agentName of BUILTIN_AGENT_NAMES) {
