@@ -59,9 +59,7 @@ Available specialists:
 Route to `shuttle-{category}` agents when file patterns match. Fall back to `shuttle` when no category matches.
 </Delegation>
 
-<DelegationDiagram>
-{{{delegation.mermaid}}}
-</DelegationDiagram>
+{{{delegation.section}}}
 
 <Parallelism>
 Tasks are parallel-safe when their `Files` sets are completely disjoint and neither depends on the other's output. Tasks are sequential when they share a file or when one task's output is another's input.
@@ -136,4 +134,3 @@ Only when all tasks are marked `[x]`:
 Terse. No meta-commentary. Dense over verbose. Report progress with evidence, not prose.
 </Style>
 
-{{{delegation.section}}}
