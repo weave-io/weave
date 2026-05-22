@@ -62,7 +62,9 @@ could diverge from config.
 ```ts
 interface AgentDescriptor {
   name: string;
+  displayName?: string;
   description?: string;
+  category?: AgentDescriptorCategory;
   composedPrompt: string;
   models: string[];
   mode: "primary" | "subagent" | "all";
@@ -71,6 +73,12 @@ interface AgentDescriptor {
   rawToolPolicy: ToolPolicy | undefined;
   delegationTargets: DelegationTarget[];
   skills: string[];
+}
+
+interface AgentDescriptorCategory {
+  name: string;
+  description?: string;
+  patterns: string[];
 }
 
 interface DelegationTarget {
@@ -84,16 +92,18 @@ interface DelegationTarget {
 
 | Field | Meaning |
 | --- | --- |
-| `name` | Logical agent name being composed. |
+| `name` | Stable harness-neutral internal id for the logical agent being composed. |
+| `displayName` | Optional presentation metadata from agent `display_name`; not a stable id. |
 | `description` | Optional agent description passed through from config. |
+| `category` | Optional metadata for generated category shuttles: category name, optional description, and declared patterns only. Omitted for regular agents. |
 | `composedPrompt` | Final prompt text after prompt loading, delegation section formatting, and `prompt_append` composition. |
-| `models` | Ordered model preference list from config, defaulting to `[]`. |
+| `models` | Ordered model preference intent from config, defaulting to `[]`; availability and selected-model lookup are adapter-owned. |
 | `mode` | Adapter-facing mode hint, defaulting to `"subagent"` when omitted. |
 | `temperature` | Optional temperature passed through unchanged. |
 | `effectiveToolPolicy` | Fully-resolved abstract tool policy computed by `evaluateEffectiveToolPolicy()`. See [Tool Policy Evaluation](tool-policy-evaluation.md). |
 | `rawToolPolicy` | Original declared `tool_policy`, or `undefined` when absent. |
 | `delegationTargets` | Filtered list of eligible delegation targets, used both for prompt composition and adapter-side routing if needed. |
-| `skills` | Declared skill names passed through unchanged as a future composition input. |
+| `skills` | Requested skill names passed through unchanged; resolved skill payloads, paths, and contents are adapter-owned and not descriptor fields. |
 
 ---
 

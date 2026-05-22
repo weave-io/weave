@@ -6,7 +6,7 @@ Define the stable adapter-facing descriptor contract for Weave agent materializa
 
 The primary goal is to document and type `AgentDescriptor` as the stable adapter-facing contract that covers identity, prompts, model intent, abstract tool policy, delegation metadata, category metadata as an already-defined field family, disabled-entry behavior, and first-milestone exclusions such as workflow and command materialization.
 
-This spec is intentionally distinct from the category metadata spec. The category metadata spec owns the mechanics of preserving category provenance from `category` config through generated shuttles and prompt composition. This spec owns the broader adapter-facing descriptor contract and documents how category metadata fits into that contract without redefining category generation or routing behavior.
+This spec is intentionally distinct from [Spec 14 — Preserve Category Metadata](../14-spec-preserve-category-metadata/14-spec-preserve-category-metadata.md). Spec 14 owns the mechanics of preserving category provenance from `category` config through generated shuttles and prompt composition. This spec owns the broader adapter-facing descriptor contract and documents how category metadata fits into that contract without redefining category generation or routing behavior. It also complements [Spec 15 — Adapter-Facing Materialization API](../15-spec-adapter-facing-materialization-api/15-spec-adapter-facing-materialization-api.md), which owns the public API that returns materialized descriptors.
 
 ## Goals
 
@@ -98,8 +98,8 @@ This spec is intentionally distinct from the category metadata spec. The categor
 ## Non-Goals (Out of Scope)
 
 1. **Implementing OpenCode adapter generation**: This spec defines what adapters receive; it does not generate OpenCode plugin files, commands, agents, or config entries.
-2. **Replacing the materialization API spec**: This spec defines `AgentDescriptor` shape and semantics. The materialization API spec defines how adapters request descriptors from the engine.
-3. **Duplicating category metadata preservation**: This spec documents category metadata as part of the stable descriptor contract. The category metadata spec owns the preservation mechanics, prompt-context wiring, and generated-shuttle provenance behavior.
+2. **Replacing the materialization API spec**: This spec defines `AgentDescriptor` shape and semantics. [Spec 15 — Adapter-Facing Materialization API](../15-spec-adapter-facing-materialization-api/15-spec-adapter-facing-materialization-api.md) defines how adapters request descriptors from the engine.
+3. **Duplicating category metadata preservation**: This spec documents category metadata as part of the stable descriptor contract. [Spec 14 — Preserve Category Metadata](../14-spec-preserve-category-metadata/14-spec-preserve-category-metadata.md) owns the preservation mechanics, prompt-context wiring, and generated-shuttle provenance behavior.
 4. **Workflow and command materialization**: Workflow descriptors, command descriptors, hook registration, and runtime lifecycle wiring remain outside the first adapter descriptor contract.
 5. **Concrete model or tool resolution**: The engine shall not choose harness-specific model ids, inspect selected model state, or map abstract tool policy to concrete harness tool names in this feature.
 6. **Harness resource discovery or mutation**: The engine shall not scan harness-owned directories, read harness runtime state, write harness config files, or launch harness processes.
@@ -127,8 +127,8 @@ The developer experience should emphasize predictable, readable contract documen
 - Existing descriptor composition lives in `packages/engine/src/compose.ts`, where `AgentDescriptor` currently includes `name`, optional `description`, `composedPrompt`, `models`, `mode`, optional `temperature`, `effectiveToolPolicy`, `rawToolPolicy`, `delegationTargets`, and `skills`.
 - The stable contract should formalize `AgentDescriptor` rather than creating a parallel adapter descriptor shape.
 - `displayName` should be added as optional engine-owned presentation metadata on `AgentDescriptor`. Adapters must still treat `name` as the stable internal id and may apply harness-specific label formatting when needed.
-- Category metadata should align with the category metadata spec and should remain normalized: category name, optional description, and declared patterns only. This spec should not duplicate category-generation mechanics, and the engine must not expand globs or perform harness routing.
-- The adapter-facing materialization API spec should remain responsible for the function that returns descriptors. This spec should define the stable descriptor fields that API returns.
+- Category metadata should align with [Spec 14 — Preserve Category Metadata](../14-spec-preserve-category-metadata/14-spec-preserve-category-metadata.md) and should remain normalized: category name, optional description, and declared patterns only. This spec should not duplicate category-generation mechanics, and the engine must not expand globs or perform harness routing.
+- [Spec 15 — Adapter-Facing Materialization API](../15-spec-adapter-facing-materialization-api/15-spec-adapter-facing-materialization-api.md) should remain responsible for the function that returns descriptors. This spec should define the stable descriptor fields that API returns.
 - Disabled agents and suppressed category shuttles should be omitted from materialization output. Adapters should not need to handle descriptors that are present only to say they are disabled.
 - Trigger and delegation metadata should remain harness-neutral. Adapters decide whether that metadata becomes generated commands, subagent references, UI affordances, plugin configuration, or documented unsupported behavior.
 - Skill fields remain requested skill names only. They must not expose adapter-owned paths, raw skill contents, secrets, tokens, resolved skill payloads, or harness-specific skill metadata.

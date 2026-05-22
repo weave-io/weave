@@ -76,7 +76,7 @@
 - [x] 3.5 Add runner or materialization-focused coverage proving disabled declared agents and suppressed generated shuttles are omitted from adapter-facing descriptor output.
 - [x] 3.6 Verify category patterns are preserved exactly as declared and no engine code expands globs or scans project files.
 
-### [ ] 4.0 Document descriptor contract and preserve compatibility
+### [x] 4.0 Document descriptor contract and preserve compatibility
 
 #### 4.0 Proof Artifact(s)
 
@@ -86,9 +86,9 @@
 
 #### 4.0 Tasks
 
-- [ ] 4.1 Correct the stale `docs/adapter-boundary.md` link that currently points to a missing Spec 14 stable-descriptor path so it points to Spec 16.
-- [ ] 4.2 Add a compact descriptor field table to `docs/adapter-boundary.md` or a linked section that documents stable fields, ownership, and adapter responsibilities.
-- [ ] 4.3 Update `docs/prompt-composition.md` if it documents `AgentDescriptor` so the descriptor shape matches the stable contract.
-- [ ] 4.4 Add cross-links from Spec 16 to Spec 14 category metadata and Spec 15 materialization API to clarify boundaries.
-- [ ] 4.5 Run `bun test packages/engine/src/__tests__/runner.test.ts` to verify existing runner behavior remains compatible.
-- [ ] 4.6 Run `bun run lint && bun run typecheck && bun test packages/engine/src` and record sanitized command output as final proof.
+- [x] 4.1 Correct the stale `docs/adapter-boundary.md` link that currently points to a missing Spec 14 stable-descriptor path so it points to Spec 16.
+- [x] 4.2 Add a compact descriptor field table to `docs/adapter-boundary.md` or a linked section that documents stable fields, ownership, and adapter responsibilities.
+- [x] 4.3 Update `docs/prompt-composition.md` if it documents `AgentDescriptor` so the descriptor shape matches the stable contract.
+- [x] 4.4 Add cross-links from Spec 16 to Spec 14 category metadata and Spec 15 materialization API to clarify boundaries.
+- [x] 4.5 Run `bun test packages/engine/src/__tests__/runner.test.ts` to verify existing runner behavior remains compatible.
+- [x] 4.6 Run `bun run lint && bun run typecheck && bun test packages/engine/src` and record sanitized command output as final proof.
