@@ -63,8 +63,9 @@ function makeTarget(
   name: string,
   description?: string,
   triggers: Array<{ domain: string; trigger: string }> = [],
+  isCategory = false,
 ): DelegationTarget {
-  return { name, description, triggers };
+  return { name, description, triggers, isCategory };
 }
 
 // ---------------------------------------------------------------------------
@@ -121,6 +122,15 @@ describe("ALLOWED_TEMPLATE_PATHS", () => {
     ).toBe(true);
     expect(
       ALLOWED_TEMPLATE_PATHS.has("delegation.targets.triggers.trigger"),
+    ).toBe(true);
+    expect(ALLOWED_TEMPLATE_PATHS.has("delegation.targets.isCategory")).toBe(
+      true,
+    );
+    expect(
+      ALLOWED_TEMPLATE_PATHS.has("delegation.targets.isCategory.name"),
+    ).toBe(true);
+    expect(
+      ALLOWED_TEMPLATE_PATHS.has("delegation.targets.isCategory.description"),
     ).toBe(true);
   });
 
@@ -372,6 +382,35 @@ describe("buildTemplateContext — delegation with targets", () => {
       delegationTargets: [makeTarget("shuttle-backend")],
     });
     expect(ctx.delegation.targets[0]?.domains).toEqual([]);
+  });
+
+  it("projects isCategory=false for regular agents", () => {
+    const ctx = build({
+      delegationTargets: [makeTarget("thread", "Codebase explorer", [], false)],
+    });
+    expect(ctx.delegation.targets[0]?.isCategory).toBe(false);
+  });
+
+  it("projects isCategory=true for category shuttle agents", () => {
+    const ctx = build({
+      delegationTargets: [
+        makeTarget("shuttle-frontend", "Frontend specialist", [], true),
+      ],
+    });
+    expect(ctx.delegation.targets[0]?.isCategory).toBe(true);
+  });
+
+  it("correctly distinguishes category and non-category targets in same list", () => {
+    const ctx = build({
+      delegationTargets: [
+        makeTarget("thread", "Codebase explorer", [], false),
+        makeTarget("shuttle-core", "Core specialist", [], true),
+        makeTarget("pattern", "Planner", [], false),
+      ],
+    });
+    expect(ctx.delegation.targets[0]?.isCategory).toBe(false);
+    expect(ctx.delegation.targets[1]?.isCategory).toBe(true);
+    expect(ctx.delegation.targets[2]?.isCategory).toBe(false);
   });
 
   it("delegation.mermaid is present when targets exist", () => {

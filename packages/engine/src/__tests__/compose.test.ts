@@ -764,6 +764,7 @@ describe("composeAgentDescriptor", () => {
           name: "helper",
           description: "Implementation helper",
           triggers: [{ domain: "Code", trigger: "Small implementation" }],
+          isCategory: false,
         },
       ]);
     });

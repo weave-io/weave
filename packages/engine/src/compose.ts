@@ -61,6 +61,8 @@ export interface DelegationTarget {
   name: string;
   description?: string;
   triggers: DelegationTrigger[];
+  /** True when this target is a generated category shuttle agent. */
+  isCategory: boolean;
 }
 
 /** Reason discriminants for PromptTemplateError */
@@ -142,6 +144,11 @@ function buildDelegationTargets(
 ): DelegationTarget[] {
   if (agentConfig.tool_policy?.delegate !== "allow") return [];
 
+  // Build the set of generated category shuttle names from config categories
+  const categoryShuttleNames = new Set(
+    Object.keys(config.categories).map((name) => `shuttle-${name}`),
+  );
+
   const targets: DelegationTarget[] = [];
 
   for (const [targetName, targetConfig] of Object.entries(allAgents)) {
@@ -154,6 +161,7 @@ function buildDelegationTargets(
       name: targetName,
       description: targetConfig.description,
       triggers: targetConfig.triggers ?? [],
+      isCategory: categoryShuttleNames.has(targetName),
     });
   }
 

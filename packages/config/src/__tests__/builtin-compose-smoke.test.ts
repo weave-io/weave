@@ -12,7 +12,7 @@
  *
  * Key assertions:
  * - All 8 builtins compose to non-empty prompts.
- * - Loom (prose-first template) lists specialist agents under `# Specialist Agents`
+ * - Loom (prose-first template) lists specialist agents under `# Available Agents`
  *   without an embedded Mermaid diagram.
  * - Tapestry (delegate allow) produces a `## Delegation` section with a Mermaid
  *   workflow-sequence diagram.
@@ -132,9 +132,9 @@ describe("builtin compose smoke", () => {
   // Delegating agents: ## Delegation, Mermaid, specialist names
   // ---------------------------------------------------------------------------
 
-  it("loom composedPrompt contains # Specialist Agents section", () => {
+  it("loom composedPrompt contains # Available Agents section", () => {
     const descriptor = getDescriptor("loom");
-    expect(descriptor.composedPrompt).toContain("# Specialist Agents");
+    expect(descriptor.composedPrompt).toContain("# Available Agents");
   });
 
   it("tapestry composedPrompt contains ## Delegation section", () => {

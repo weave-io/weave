@@ -81,6 +81,12 @@ export const ALLOWED_TEMPLATE_PATHS: Set<string> = new Set([
   "delegation.targets.triggers",
   "delegation.targets.triggers.domain",
   "delegation.targets.triggers.trigger",
+  "delegation.targets.isCategory",
+
+  // Fields accessible inside {{#delegation.targets}}{{#isCategory}} sections
+  // (validator resolves {{name}} as delegation.targets.isCategory.name)
+  "delegation.targets.isCategory.name",
+  "delegation.targets.isCategory.description",
 
   // Current-item reference in list contexts
   ".",
@@ -124,6 +130,8 @@ export interface DelegationTargetContextEntry {
   domains: string[];
   /** Full trigger details. */
   triggers: Array<{ domain: string; trigger: string }>;
+  /** True when this target is a generated category shuttle agent. */
+  isCategory: boolean;
 }
 
 /** Delegation context projected into the template context. */
@@ -445,6 +453,7 @@ function projectDelegationTarget(
     name: target.name,
     domains,
     triggers,
+    isCategory: target.isCategory,
   };
 
   if (target.description !== undefined) {
