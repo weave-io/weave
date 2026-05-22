@@ -10,13 +10,18 @@
  * harness API calls, or directory scanning — proving the engine does not
  * need to discover skills itself.
  *
- * Usage:
+ * Usage (canonical bootstrap pattern):
  * ```ts
  * const adapter = new MockAdapter();
- * await new WeaveRunner(config, adapter).run();
+ * await adapter.init();
+ * await adapter.loadAvailableSkills();
+ * const plan = (await materializeAgents({ config })).value;
+ * for (const { descriptor } of plan.agents) {
+ *   await adapter.spawnSubagent(descriptor);
+ * }
  *
  * expect(adapter.callsTo("init")).toHaveLength(1);
- * expect(adapter.callsTo("spawnSubagent")[0]?.name).toBe("loom");
+ * expect(adapter.callsTo("spawnSubagent")[0]?.descriptor.name).toBe("loom");
  * ```
  *
  * With available skills:
@@ -24,7 +29,8 @@
  * const adapter = new MockAdapter({
  *   availableSkills: [{ name: "tdd" }, { name: "code-review" }],
  * });
- * await new WeaveRunner(config, adapter).run();
+ * const availableSkills = await adapter.loadAvailableSkills();
+ * const skillResult = resolveSkillsForConfig({ config, availableSkills });
  * ```
  */
 
