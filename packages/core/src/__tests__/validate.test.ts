@@ -610,3 +610,59 @@ describe("validate — settings block", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// validate — routing block
+// ---------------------------------------------------------------------------
+
+describe("validate — routing block", () => {
+  it("agent with routing.delegation_exclude round-trips correctly", () => {
+    const src = `agent router {
+  prompt "You are a router."
+  tool_policy {
+    delegate allow
+  }
+  routing {
+    delegation_exclude ["warp", "spindle"]
+  }
+}`;
+    const result = validateSource(src);
+    expect(result.isOk()).toBe(true);
+    const config = result._unsafeUnwrap();
+    expect(config.agents.router?.routing?.delegation_exclude).toEqual([
+      "warp",
+      "spindle",
+    ]);
+  });
+
+  it("agent without routing block has undefined routing", () => {
+    const src = `agent loom {
+  prompt "You are loom."
+}`;
+    const result = validateSource(src);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().agents.loom?.routing).toBeUndefined();
+  });
+
+  it("routing block with unknown key is rejected (strict)", () => {
+    const src = `agent bad {
+  prompt "You are bad."
+  routing {
+    delegation_exclude ["warp"]
+    unknown_key "value"
+  }
+}`;
+    const result = validateSource(src);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    // Zod strict() reports unknown keys in the message (not path)
+    expect(
+      errors.some(
+        (e) =>
+          e.path.includes("routing") ||
+          e.message.includes("unknown_key") ||
+          e.message.includes("Unrecognized"),
+      ),
+    ).toBe(true);
+  });
+});

@@ -78,6 +78,13 @@ export type StepBlock = {
 export type AgentBlock = {
   type: "agent";
   name: string;
+  /**
+   * Flat property bag for all agent fields.
+   *
+   * Notable nested blocks stored here as `BlockValue` properties:
+   * - `tool_policy` — capability permission map
+   * - `routing`     — per-agent routing knobs (e.g. `delegation_exclude`)
+   */
   properties: Property[];
   pos: SourcePos;
 };

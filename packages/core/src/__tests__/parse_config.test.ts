@@ -631,3 +631,51 @@ describe("parseConfig — source positions in errors", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// parseConfig — routing block end-to-end
+// ---------------------------------------------------------------------------
+
+describe("parseConfig — routing block", () => {
+  it("agent with routing.delegation_exclude parses end-to-end", () => {
+    const src = `agent router {
+  prompt "You are a router."
+  tool_policy {
+    delegate allow
+  }
+  routing {
+    delegation_exclude ["warp", "spindle"]
+  }
+}`;
+    const result = parseConfig(src);
+    expect(result.isOk()).toBe(true);
+    const config = result._unsafeUnwrap();
+    expect(config.agents.router?.routing?.delegation_exclude).toEqual([
+      "warp",
+      "spindle",
+    ]);
+  });
+
+  it("agent without routing block has undefined routing", () => {
+    const src = `agent loom {
+  prompt "You are loom."
+}`;
+    const result = parseConfig(src);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().agents.loom?.routing).toBeUndefined();
+  });
+
+  it("routing block with unknown key returns ValidationError (strict)", () => {
+    const src = `agent bad {
+  prompt "You are bad."
+  routing {
+    delegation_exclude ["warp"]
+    typo_key "value"
+  }
+}`;
+    const result = parseConfig(src);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    expect(errors.some((e) => e.type === "ValidationError")).toBe(true);
+  });
+});

@@ -29,6 +29,21 @@ export const ToolPolicySchema = z
   .strict();
 
 // ---------------------------------------------------------------------------
+// Routing
+// ---------------------------------------------------------------------------
+
+/**
+ * Per-agent routing knobs. Open for future fields (priority, fallback,
+ * weighted routes). Strict — unknown keys are rejected so typos surface
+ * clearly.
+ */
+export const RoutingConfigSchema = z
+  .object({
+    delegation_exclude: z.array(z.string()).optional(),
+  })
+  .strict();
+
+// ---------------------------------------------------------------------------
 // Agent
 // ---------------------------------------------------------------------------
 
@@ -45,6 +60,7 @@ export const AgentConfigSchema = z
     temperature: z.number().min(0).max(2).optional(),
     mode: z.enum(["primary", "subagent", "all"]).optional(),
     tool_policy: ToolPolicySchema.optional(),
+    routing: RoutingConfigSchema.optional(),
     skills: z.array(z.string()).optional(),
     triggers: z.array(DelegationTriggerSchema).optional(),
   })
@@ -323,6 +339,8 @@ export const WeaveConfigSchema = z.object({
 export type ToolPermission = z.infer<typeof ToolPermissionSchema>;
 export type DelegationTrigger = z.infer<typeof DelegationTriggerSchema>;
 export type ToolPolicy = z.infer<typeof ToolPolicySchema>;
+/** Per-agent routing configuration (delegation_exclude, etc.). */
+export type RoutingConfig = z.infer<typeof RoutingConfigSchema>;
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
 export type CategoryConfig = z.infer<typeof CategoryConfigSchema>;
 /** Step execution mode. */

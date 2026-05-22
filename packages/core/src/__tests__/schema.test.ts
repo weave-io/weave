@@ -6,6 +6,7 @@ import {
   CompletionMethodSchema,
   LogLevelSchema,
   OnRejectSchema,
+  RoutingConfigSchema,
   RuntimeSettingsSchema,
   SettingsConfigSchema,
   WeaveConfigSchema,
@@ -714,6 +715,99 @@ describe("CategoryConfigSchema — prompt_append_file", () => {
     if (!r.success) {
       const messages = r.error.issues.map((i) => i.message);
       expect(messages.some((m) => m.includes("relative path"))).toBe(true);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// RoutingConfigSchema
+// ---------------------------------------------------------------------------
+
+describe("RoutingConfigSchema", () => {
+  it("accepts empty routing block", () => {
+    const r = RoutingConfigSchema.safeParse({});
+    expect(r.success).toBe(true);
+  });
+
+  it("accepts delegation_exclude as an array of strings", () => {
+    const r = RoutingConfigSchema.safeParse({
+      delegation_exclude: ["warp", "spindle"],
+    });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.delegation_exclude).toEqual(["warp", "spindle"]);
+    }
+  });
+
+  it("accepts delegation_exclude as an empty array", () => {
+    const r = RoutingConfigSchema.safeParse({ delegation_exclude: [] });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.delegation_exclude).toEqual([]);
+    }
+  });
+
+  it("accepts omitted delegation_exclude (optional)", () => {
+    const r = RoutingConfigSchema.safeParse({});
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.delegation_exclude).toBeUndefined();
+    }
+  });
+
+  it("rejects unknown keys (strict block)", () => {
+    const r = RoutingConfigSchema.safeParse({
+      delegation_exclude: ["warp"],
+      priority: 1,
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      // Zod strict() reports unknown keys in the message, not the path
+      const msgs = r.error.issues.map((i) => i.message);
+      expect(msgs.some((m) => m.includes("priority"))).toBe(true);
+    }
+  });
+
+  it("rejects delegation_exclude with non-string elements", () => {
+    const r = RoutingConfigSchema.safeParse({ delegation_exclude: [42] });
+    expect(r.success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AgentConfigSchema — routing field
+// ---------------------------------------------------------------------------
+
+describe("AgentConfigSchema — routing field", () => {
+  it("accepts agent with routing.delegation_exclude", () => {
+    const r = AgentConfigSchema.safeParse({
+      prompt: "You are an agent.",
+      routing: { delegation_exclude: ["warp", "spindle"] },
+    });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.routing?.delegation_exclude).toEqual(["warp", "spindle"]);
+    }
+  });
+
+  it("accepts agent without routing (optional)", () => {
+    const r = AgentConfigSchema.safeParse({ prompt: "You are an agent." });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.routing).toBeUndefined();
+    }
+  });
+
+  it("rejects unknown keys inside routing block (strict)", () => {
+    const r = AgentConfigSchema.safeParse({
+      prompt: "You are an agent.",
+      routing: { delegation_exclude: ["warp"], fallback: "loom" },
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      // Zod strict() reports unknown keys in the message, not the path
+      const msgs = r.error.issues.map((i) => i.message);
+      expect(msgs.some((m) => m.includes("fallback"))).toBe(true);
     }
   });
 });

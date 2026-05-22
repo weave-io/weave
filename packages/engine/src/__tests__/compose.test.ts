@@ -751,6 +751,147 @@ describe("composeAgentDescriptor", () => {
     });
   });
 
+  describe("delegation_exclude routing", () => {
+    it("Excluded_target_absent_from_agent_delegation_list", async () => {
+      const config = cfg(`
+        agent router {
+          prompt "Router prompt."
+          tool_policy {
+            delegate allow
+          }
+          routing {
+            delegation_exclude ["warp"]
+          }
+        }
+        agent warp {
+          prompt "Warp prompt."
+        }
+        agent helper {
+          prompt "Helper prompt."
+        }
+      `);
+
+      const descriptor = await descriptorFor(
+        "router",
+        config.agents.router,
+        config,
+        config.agents,
+      );
+
+      const names = descriptor.delegationTargets.map((t) => t.name);
+      expect(names).not.toContain("warp");
+      expect(names).toContain("helper");
+    });
+
+    it("Excluded_target_still_appears_in_other_agents_delegation_list", async () => {
+      const config = cfg(`
+        agent router {
+          prompt "Router prompt."
+          tool_policy {
+            delegate allow
+          }
+          routing {
+            delegation_exclude ["warp"]
+          }
+        }
+        agent other-router {
+          prompt "Other router prompt."
+          tool_policy {
+            delegate allow
+          }
+        }
+        agent warp {
+          prompt "Warp prompt."
+        }
+        agent helper {
+          prompt "Helper prompt."
+        }
+      `);
+
+      // router excludes warp
+      const routerDescriptor = await descriptorFor(
+        "router",
+        config.agents.router,
+        config,
+        config.agents,
+      );
+      expect(
+        routerDescriptor.delegationTargets.map((t) => t.name),
+      ).not.toContain("warp");
+
+      // other-router does NOT exclude warp — warp should appear
+      const otherDescriptor = await descriptorFor(
+        "other-router",
+        config.agents["other-router"],
+        config,
+        config.agents,
+      );
+      expect(otherDescriptor.delegationTargets.map((t) => t.name)).toContain(
+        "warp",
+      );
+    });
+
+    it("Excluding_non_existent_target_is_a_noop", async () => {
+      const config = cfg(`
+        agent router {
+          prompt "Router prompt."
+          tool_policy {
+            delegate allow
+          }
+          routing {
+            delegation_exclude ["ghost-agent"]
+          }
+        }
+        agent helper {
+          prompt "Helper prompt."
+        }
+      `);
+
+      const descriptor = await descriptorFor(
+        "router",
+        config.agents.router,
+        config,
+        config.agents,
+      );
+
+      // ghost-agent doesn't exist — helper should still be present
+      expect(descriptor.delegationTargets.map((t) => t.name)).toEqual([
+        "helper",
+      ]);
+    });
+
+    it("Empty_delegation_exclude_includes_all_eligible_targets", async () => {
+      const config = cfg(`
+        agent router {
+          prompt "Router prompt."
+          tool_policy {
+            delegate allow
+          }
+          routing {
+            delegation_exclude []
+          }
+        }
+        agent helper {
+          prompt "Helper prompt."
+        }
+        agent reviewer {
+          prompt "Reviewer prompt."
+        }
+      `);
+
+      const descriptor = await descriptorFor(
+        "router",
+        config.agents.router,
+        config,
+        config.agents,
+      );
+
+      const names = descriptor.delegationTargets.map((t) => t.name);
+      expect(names).toContain("helper");
+      expect(names).toContain("reviewer");
+    });
+  });
+
   describe("tool policy", () => {
     it("EffectiveToolPolicy_resolves_all_5_capabilities_when_all_declared", async () => {
       const config = cfg(`

@@ -430,6 +430,73 @@ describe("Parser — settings block", () => {
   });
 });
 
+describe("Parser — routing block inside agent", () => {
+  it("parses routing { delegation_exclude [...] } as a BlockValue property", () => {
+    const src = `agent loom {
+  routing {
+    delegation_exclude ["warp", "spindle"]
+  }
+}`;
+    const result = parseSource(src);
+    expect(result.isOk()).toBe(true);
+    const agent = result._unsafeUnwrap()[0] as AgentBlock;
+    expect(agent.name).toBe("loom");
+    const routingProp = agent.properties.find((p) => p.key === "routing");
+    expect(routingProp?.value.kind).toBe("block");
+    const block = routingProp?.value as BlockValue;
+    expect(block.properties).toHaveLength(1);
+    expect(block.properties[0]).toMatchObject({
+      key: "delegation_exclude",
+    });
+    const excludeArr = block.properties[0]?.value as ArrayValue;
+    expect(excludeArr.kind).toBe("array");
+    expect(excludeArr.elements).toHaveLength(2);
+    expect(excludeArr.elements[0]).toMatchObject({
+      kind: "string",
+      value: "warp",
+    });
+    expect(excludeArr.elements[1]).toMatchObject({
+      kind: "string",
+      value: "spindle",
+    });
+  });
+
+  it("parses agent with both tool_policy and routing blocks", () => {
+    const src = `agent router {
+  tool_policy {
+    delegate allow
+  }
+  routing {
+    delegation_exclude ["warp"]
+  }
+}`;
+    const result = parseSource(src);
+    expect(result.isOk()).toBe(true);
+    const agent = result._unsafeUnwrap()[0] as AgentBlock;
+    const toolPolicyProp = agent.properties.find(
+      (p) => p.key === "tool_policy",
+    );
+    const routingProp = agent.properties.find((p) => p.key === "routing");
+    expect(toolPolicyProp?.value.kind).toBe("block");
+    expect(routingProp?.value.kind).toBe("block");
+  });
+
+  it("parses routing block with empty delegation_exclude array", () => {
+    const src = `agent loom {
+  routing {
+    delegation_exclude []
+  }
+}`;
+    const result = parseSource(src);
+    expect(result.isOk()).toBe(true);
+    const agent = result._unsafeUnwrap()[0] as AgentBlock;
+    const routingProp = agent.properties.find((p) => p.key === "routing");
+    const block = routingProp?.value as BlockValue;
+    const excludeArr = block.properties[0]?.value as ArrayValue;
+    expect(excludeArr.elements).toHaveLength(0);
+  });
+});
+
 describe("Parser — errors", () => {
   it("reports UnclosedBlock for missing closing brace", () => {
     const result = parseSource("agent loom {");
