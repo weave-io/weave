@@ -1,5 +1,7 @@
 # Task 3 Proof Artifact — Integrate Mustache Template Rendering into `composeAgentDescriptor()`
 
+> **Amendment:** The fallback `delegation-section` insertion logic and fallback suppression detection (`primarySourceReferencesDelegation()`) were subsequently removed from `compose.ts`. The prompt assembly order is now: rendered primary source, then rendered `prompt_append` (no fallback step). Notes 3 and 6 below reflect the original implementation and are preserved for historical reference.
+
 ## Test Output
 
 ```
@@ -38,17 +40,14 @@ The function uses `.andThen()` to chain the async prompt-load with synchronous t
 - `buildTemplateContext()` returns `Result<AgentPromptTemplateContext, TemplateContextError>`
 - All error paths use `err(...)` / `errAsync(...)` and early returns
 
-### 3. Prompt assembly order correct
+### 3. Prompt assembly order *(historical — subsequently amended)*
 
-The final prompt is assembled in this order:
-1. **Rendered primary source** — `renderPromptTemplate(promptSource, ...)` 
-2. **Optional fallback `delegation.section`** — inserted only when:
-   - `delegationTargets.length > 0`
-   - Primary source does NOT reference any `delegation.*` paths (checked via `extractTemplatePaths()`)
-   - `templateContext.delegation.section !== undefined`
+> **Amendment:** Step 2 (fallback `delegation-section` insertion) was removed. The current assembly order is: (1) rendered primary source, (2) rendered `prompt_append`. Sections are joined with `"\n\n"`.
+
+Original assembly order (preserved for reference):
+1. **Rendered primary source** — `renderPromptTemplate(promptSource, ...)`
+2. ~~**Optional fallback `delegation-section`**~~ — **REMOVED**
 3. **Rendered `prompt_append`** — `renderPromptTemplate(agentConfig.prompt_append, ...)` with `sourceKind: "prompt_append"`
-
-Sections are joined with `"\n\n"`.
 
 ### 4. `ComposeError` extended with `PromptTemplateError` variant
 
@@ -83,9 +82,11 @@ export type ComposeError =
 - `delegationTargets` from `buildDelegationTargets()`
 - Optional `category` passed through from the caller
 
-### 6. Fallback suppression detection
+### 6. Fallback suppression detection *(historical — feature removed)*
 
-`primarySourceReferencesDelegation()` uses `extractTemplatePaths()` (which only returns real variable/section/unescaped tokens — not comments, escaped literals, raw text, or close tokens) and checks if any path starts with `"delegation"`. This is called on the **primary source only**, not on `prompt_append`.
+> **Amendment:** `primarySourceReferencesDelegation()` and the fallback suppression check were removed from `compose.ts` along with the fallback-append logic. The following is preserved for historical reference only.
+
+`primarySourceReferencesDelegation()` used `extractTemplatePaths()` (which only returned real variable/section/unescaped tokens — not comments, escaped literals, raw text, or close tokens) and checked if any path started with `"delegation"`. This was called on the **primary source only**, not on `prompt_append`.
 
 ### 7. Static prompts work unchanged
 

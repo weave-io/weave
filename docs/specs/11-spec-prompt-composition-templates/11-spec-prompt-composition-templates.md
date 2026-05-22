@@ -10,7 +10,7 @@ The primary goal is to turn the ADR-defined prompt-template decision into a test
 
 - Render agent `prompt`, `prompt_file`, and `prompt_append` values as Mustache templates during `composeAgentDescriptor()`.
 - Expose a bounded, documented Template Context with agent identity, optional category identity, effective tool policy, and generated delegation data.
-- Generate delegation guidance as Mermaid plus compact bullets, and preserve fallback delegation for existing prompts that do not reference `delegation.*`.
+- Generate delegation guidance as `delegation.targets` data for prompt templates to iterate over via `{{#delegation.targets}}` loops.
 - Fail prompt composition with typed, source-aware `PromptTemplateError` errors for unsafe paths, unknown paths, unsupported Mustache features, malformed templates, function values, and unresolved tags.
 - Update built-in prompts and tests so rendered composed prompts contain no unresolved template tags and no repository- or harness-specific leakage.
 
@@ -53,14 +53,14 @@ The primary goal is to turn the ADR-defined prompt-template decision into a test
 - The Template Context shall include `agent.name`, optional `agent.description`, `agent.mode`, `agent.skills`, and `agent.isCategory`.
 - The Template Context shall include `category.name` and optional `category.description` only for generated category shuttle agents.
 - The Template Context shall include only effective tool policy values under `toolPolicy.effective.read`, `write`, `execute`, `delegate`, and `network`.
-- The Template Context shall include `delegation.targets`, and shall omit `delegation.section` and `delegation.mermaid` when no eligible delegation targets exist.
-- The system shall generate `delegation.mermaid` as a Mermaid `flowchart TD` current-agent star using stable synthetic node IDs, escaped labels, and deduplicated trigger-domain edge labels.
-- The system shall generate `delegation.section` as canonical Markdown containing a `## Delegation` heading, the Mermaid diagram, and compact bullets with target descriptions and trigger details.
+- The Template Context shall include `delegation.targets` as an array of eligible delegation targets; each target exposes `name`, optional `description`, deduplicated `domains`, and `triggers` details.
+- ~~The system shall generate `delegation-mermaid` as a Mermaid `flowchart TD` current-agent star using stable synthetic node IDs, escaped labels, and deduplicated trigger-domain edge labels.~~ **[SUPERSEDED — see Amendment below]**
+- ~~The system shall generate `delegation-section` as canonical Markdown containing a `## Delegation` heading, the Mermaid diagram, and compact bullets with target descriptions and trigger details.~~ **[SUPERSEDED — see Amendment below]**
 
 **Proof Artifacts:**
 
 - Test: `bun test packages/engine/src/__tests__/template-context.test.ts` demonstrates context shape, category omission, allowed optional paths, and no raw config exposure.
-- Test: delegation diagram tests demonstrate stable Mermaid output, escaped labels, domain edge labels, compact bullets, and omitted section/mermaid fields when no targets exist.
+- Test: delegation context tests demonstrate `delegation.targets` array shape, domain deduplication, trigger details, and empty array when no targets exist.
 - Typecheck: `bun run --filter '@weave/engine' typecheck` demonstrates exported context/error types compile without exposing renderer internals.
 
 ### Unit 3: Compose Pipeline Integration
@@ -70,16 +70,16 @@ The primary goal is to turn the ADR-defined prompt-template decision into a test
 **Functional Requirements:**
 
 - The system shall update `composeAgentDescriptor()` so the primary prompt source and merged `prompt_append` are rendered as Mustache templates with the same Template Context.
-- The system shall insert fallback `delegation.section` after the rendered primary source and before rendered `prompt_append` only when eligible delegation targets exist and the primary source has no real `delegation.*` token.
-- The system shall treat only parsed primary-source variable, section, or inverted-section tokens whose path starts with `delegation` as fallback-suppressing references.
-- The system shall not let `prompt_append` delegation references suppress fallback delegation.
+- ~~The system shall insert fallback `delegation-section` after the rendered primary source and before rendered `prompt_append` only when eligible delegation targets exist and the primary source has no real `delegation.*` token.~~ **[SUPERSEDED — see Amendment below]**
+- ~~The system shall treat only parsed primary-source variable, section, or inverted-section tokens whose path starts with `delegation` as fallback-suppressing references.~~ **[SUPERSEDED — see Amendment below]**
+- ~~The system shall not let `prompt_append` delegation references suppress fallback delegation.~~ **[SUPERSEDED — see Amendment below]**
 - The system shall preserve existing static prompt behavior when prompt sources contain no Mustache tags.
 - The system shall extend `ComposeError` with one `PromptTemplateError` variant containing `agentName`, `sourceKind`, optional `promptFilePath`, message, and nested reason discriminants.
 - The system shall continue returning `ResultAsync<AgentDescriptor, ComposeError>` and shall not use `try/catch` for expected composition failures.
 
 **Proof Artifacts:**
 
-- Test: updated `packages/engine/src/__tests__/compose.test.ts` demonstrates inline prompt rendering, prompt-file rendering, rendered append behavior, fallback delegation placement, source-only fallback suppression, and typed template errors.
+- Test: updated `packages/engine/src/__tests__/compose.test.ts` demonstrates inline prompt rendering, prompt-file rendering, rendered append behavior, `delegation.targets` iteration, and typed template errors.
 - Test: composed static prompt tests demonstrate backward compatibility for existing custom prompts without template tags.
 - CLI: `bun run --filter '@weave/engine' test` demonstrates the compose pipeline remains isolated from real harnesses.
 
@@ -90,7 +90,7 @@ The primary goal is to turn the ADR-defined prompt-template decision into a test
 **Functional Requirements:**
 
 - The system shall update built-in prompt Markdown only where Template Context fields improve clarity; prompts shall not contain artificial tags just to prove templating.
-- The system shall place `{{{delegation.section}}}` in built-in delegating prompts where those prompts should control routing guidance placement.
+- ~~The system shall place `{{{delegation-section}}}` in built-in delegating prompts where those prompts should control routing guidance placement.~~ **[SUPERSEDED — see Amendment below]** Built-in delegating prompts use `{{#delegation.targets}}` iteration loops instead.
 - The system shall update built-in prompt tests to allow Mustache placeholders in source files while continuing to reject repository-only or harness-specific leakage.
 - The system shall add rendered builtin composition tests that fail if unresolved unescaped Mustache tags remain in composed prompts.
 - The system shall keep `docs/prompt-composition.md`, ADR 0001, and `CONTEXT.md` aligned with the implemented behavior.
@@ -98,7 +98,7 @@ The primary goal is to turn the ADR-defined prompt-template decision into a test
 **Proof Artifacts:**
 
 - Test: `bun test packages/config/src/__tests__/builtin-prompts.test.ts` demonstrates source prompt files remain substantive and leakage-free while allowing intentional Mustache placeholders.
-- Test: `bun test packages/config/src/__tests__/builtin-compose-smoke.test.ts` demonstrates all built-ins compose successfully, delegating prompts include Mermaid-based delegation guidance, and no unresolved unescaped tags leak.
+- Test: `bun test packages/config/src/__tests__/builtin-compose-smoke.test.ts` demonstrates all built-ins compose successfully, delegating prompts include delegation guidance via `{{#delegation.targets}}` iteration, and no unresolved unescaped tags leak.
 - Documentation: `docs/prompt-composition.md` and `docs/adr/0001-prompt-composition-templates.md` demonstrate the implemented contract and rationale.
 
 ## Non-Goals (Out of Scope)
@@ -116,10 +116,11 @@ No UI design requirements identified. The user-facing design surface is Markdown
 
 Generated delegation guidance should be readable in plain Markdown and useful to LLMs:
 
-- Use a `## Delegation` heading for the canonical section.
-- Use Mermaid `flowchart TD` for the visual current-agent star.
-- Use compact bullets after the diagram so routing details remain understandable if Mermaid is not rendered.
-- Use triple braces for Markdown-rich context values such as `{{{delegation.section}}}`.
+- Use `{{#delegation.targets}}` iteration loops in prompt templates to render delegation guidance inline.
+- Each target exposes `name`, optional `description`, `domains`, and `triggers` for flexible formatting.
+- Use triple braces for Markdown-rich context values when needed (e.g. `{{{agent.description}}}`).
+
+> **Amendment**: `delegation-section` and `delegation-mermaid` were removed after initial implementation. The fallback-append logic was also removed. See the Amendment section below.
 
 ## Repository Standards
 
@@ -158,6 +159,35 @@ Generated delegation guidance should be readable in plain Markdown and useful to
 2. **Backward compatibility**: existing static prompts compose to equivalent text except for intentional Mermaid-based delegation formatting changes in delegating prompts.
 3. **Adapter boundary preservation**: adapters receive final composed prompts with no unresolved unescaped Mustache tags and no new adapter-side rendering responsibility.
 4. **Documentation alignment**: ADR 0001, `docs/prompt-composition.md`, and `CONTEXT.md` match the implemented behavior.
+
+## Amendment: Removal of `delegation-section`, `delegation-mermaid`, and Fallback-Append Logic
+
+**Date:** Post-implementation (after 2026-05-19)
+
+**Summary:** The following requirements were implemented and subsequently removed:
+
+- `delegation-section` — pre-rendered Markdown block containing `## Delegation`, a Mermaid diagram, and compact bullets
+- `delegation-mermaid` — pre-rendered Mermaid `flowchart TD` diagram string
+- Fallback-append logic — automatic insertion of `delegation-section` when the primary prompt source did not reference `delegation.*`
+- Fallback suppression detection — checking primary source tokens for `delegation.*` references
+
+**Reason:** The pre-rendered string approach was superseded. Prompt authors now use `{{#delegation.targets}}` iteration loops directly in their prompt Markdown, giving them full control over formatting without relying on engine-generated Markdown strings.
+
+**Current supported pattern:**
+
+```md
+{{#delegation.targets}}
+- **{{name}}**: {{description}}
+{{/delegation.targets}}
+```
+
+**What remains:**
+
+- `delegation.targets` — array of eligible delegation targets (always present, may be empty)
+- Each target: `name`, optional `description`, `domains` (deduplicated string array), `triggers` (array of `{ domain, trigger }`)
+- `{{#delegation.targets}}` / `{{/delegation.targets}}` — standard Mustache section iteration
+
+**Affected requirements:** Unit 2 (FR-2) requirements for `delegation-section`/`delegation-mermaid` generation, Unit 3 (FR-3) fallback-insertion and suppression requirements, and Unit 4 (FR-4) `{{{delegation-section}}}` placement in builtin prompts are all superseded by this amendment.
 
 ## Open Questions
 

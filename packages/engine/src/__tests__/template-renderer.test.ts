@@ -611,23 +611,6 @@ Skills:
     expect(output).toContain("- code-review");
     expect(output).not.toContain("This is a comment");
   });
-
-  it("renders delegation section with triple-brace (no HTML escaping)", () => {
-    const context: TemplateContext = {
-      delegation: {
-        section: "## Delegation\n\n- shuttle: Domain specialist",
-      },
-    };
-
-    const output = render(
-      "Prompt text.\n\n{{{delegation.section}}}",
-      context,
-      // "delegation.section" must be explicitly in allowedPaths
-      allowed("delegation", "delegation.section"),
-    );
-    expect(output).toContain("## Delegation");
-    expect(output).toContain("- shuttle: Domain specialist");
-  });
 });
 
 // ---------------------------------------------------------------------------

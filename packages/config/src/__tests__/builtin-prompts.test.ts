@@ -216,12 +216,10 @@ describe("builtin prompt files", () => {
   });
 
   describe("tapestry.md — plan execution and delegation guidance", () => {
-    it("contains the delegation.section or delegation.mermaid template placeholder", async () => {
+    it("contains the delegation.targets loop template placeholder", async () => {
       const content = await Bun.file(join(PROMPTS_DIR, "tapestry.md")).text();
-      const hasDelegationPlaceholder =
-        content.includes("{{{delegation.section}}}") ||
-        content.includes("{{{delegation.mermaid}}}");
-      expect(hasDelegationPlaceholder).toBe(true);
+      expect(content).toContain("{{#delegation.targets}}");
+      expect(content).toContain("{{/delegation.targets}}");
     });
 
     it("describes step-by-step plan execution", async () => {
