@@ -31,9 +31,15 @@ import {
 
 type AgentMode = NonNullable<AgentConfig["mode"]>;
 
+export interface CategoryMetadata extends CategoryInput {
+  patterns: string[];
+  isCategory: true;
+}
+
 export interface AgentDescriptor {
   name: string;
   description?: string;
+  category?: CategoryMetadata;
   composedPrompt: string;
   models: string[];
   mode: AgentMode;
@@ -283,7 +289,7 @@ export function composeAgentDescriptor(
   agentConfig: AgentConfig,
   config: WeaveConfig,
   allAgents: Record<string, AgentConfig>,
-  category?: CategoryInput,
+  category?: CategoryMetadata,
 ): ResultAsync<AgentDescriptor, ComposeError> {
   const delegationTargets = buildDelegationTargets(
     agentName,
@@ -374,6 +380,15 @@ export function composeAgentDescriptor(
       return ok({
         name: agentName,
         description: agentConfig.description,
+        category:
+          category !== undefined
+            ? {
+                name: category.name,
+                description: category.description,
+                patterns: [...(category.patterns ?? [])],
+                isCategory: true,
+              }
+            : undefined,
         composedPrompt,
         models: agentConfig.models ?? [],
         mode: agentConfig.mode ?? "subagent",

@@ -185,21 +185,21 @@ describe("buildTemplateContext — agent context", () => {
   it("does NOT expose models on agent context", () => {
     const ctx = build();
     expect(
-      (ctx.agent as unknown as Record<string, unknown>)["models"],
+      (ctx.agent as unknown as Record<string, unknown>).models,
     ).toBeUndefined();
   });
 
   it("does NOT expose temperature on agent context", () => {
     const ctx = build();
     expect(
-      (ctx.agent as unknown as Record<string, unknown>)["temperature"],
+      (ctx.agent as unknown as Record<string, unknown>).temperature,
     ).toBeUndefined();
   });
 
   it("does NOT expose prompt_file on agent context", () => {
     const ctx = build();
     expect(
-      (ctx.agent as unknown as Record<string, unknown>)["prompt_file"],
+      (ctx.agent as unknown as Record<string, unknown>).prompt_file,
     ).toBeUndefined();
   });
 });
@@ -235,9 +235,8 @@ describe("buildTemplateContext — category context", () => {
   it("does NOT expose category patterns or other raw fields", () => {
     const ctx = build({ category: { name: "backend" } });
     expect(
-      (ctx.category as unknown as Record<string, unknown> | undefined)?.[
-        "patterns"
-      ],
+      (ctx.category as unknown as Record<string, unknown> | undefined)
+        ?.patterns,
     ).toBeUndefined();
   });
 });
@@ -268,10 +267,10 @@ describe("buildTemplateContext — toolPolicy context", () => {
   it("does NOT expose raw tool policy", () => {
     const ctx = build();
     expect(
-      (ctx.toolPolicy as unknown as Record<string, unknown>)["raw"],
+      (ctx.toolPolicy as unknown as Record<string, unknown>).raw,
     ).toBeUndefined();
     expect(
-      (ctx.toolPolicy as unknown as Record<string, unknown>)["rawToolPolicy"],
+      (ctx.toolPolicy as unknown as Record<string, unknown>).rawToolPolicy,
     ).toBeUndefined();
   });
 
@@ -608,37 +607,33 @@ describe("buildTemplateContext — delegation.section Markdown", () => {
 describe("buildTemplateContext — no raw config exposure", () => {
   it("context does not contain models field at top level", () => {
     const ctx = build();
-    expect(
-      (ctx as unknown as Record<string, unknown>)["models"],
-    ).toBeUndefined();
+    expect((ctx as unknown as Record<string, unknown>).models).toBeUndefined();
   });
 
   it("context does not contain temperature field at top level", () => {
     const ctx = build();
     expect(
-      (ctx as unknown as Record<string, unknown>)["temperature"],
+      (ctx as unknown as Record<string, unknown>).temperature,
     ).toBeUndefined();
   });
 
   it("context does not contain prompt_file field at top level", () => {
     const ctx = build();
     expect(
-      (ctx as unknown as Record<string, unknown>)["prompt_file"],
+      (ctx as unknown as Record<string, unknown>).prompt_file,
     ).toBeUndefined();
   });
 
   it("context does not contain rawToolPolicy field", () => {
     const ctx = build();
     expect(
-      (ctx as unknown as Record<string, unknown>)["rawToolPolicy"],
+      (ctx as unknown as Record<string, unknown>).rawToolPolicy,
     ).toBeUndefined();
   });
 
   it("context does not contain config field", () => {
     const ctx = build();
-    expect(
-      (ctx as unknown as Record<string, unknown>)["config"],
-    ).toBeUndefined();
+    expect((ctx as unknown as Record<string, unknown>).config).toBeUndefined();
   });
 
   it("top-level context keys are only: agent, toolPolicy, delegation (and optional category)", () => {

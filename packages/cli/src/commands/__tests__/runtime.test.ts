@@ -7,12 +7,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import {
-  createExecutionLeaseId,
-  createInMemoryRuntimeStore,
-  createOwnerId,
-  createWorkflowInstanceId,
-} from "@weave/engine";
+import { createInMemoryRuntimeStore, createOwnerId } from "@weave/engine";
 import { parseArgs } from "../../args.js";
 import { run } from "../../cli.js";
 import { BufferTerminal } from "../../io/terminal.js";
@@ -509,7 +504,7 @@ describe("runtime — arg parsing", () => {
 describe("runtime — CLI router integration", () => {
   it("routes 'runtime status' through the CLI router", async () => {
     const terminal = new BufferTerminal();
-    const store = createInMemoryRuntimeStore();
+    const _store = createInMemoryRuntimeStore();
 
     // We can't easily inject the store through the CLI router, so we test
     // that the router correctly dispatches to the runtime command by checking

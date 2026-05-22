@@ -83,6 +83,14 @@ const result = resolveSkillsForConfig({ config, availableSkills });
 - `RunAgentEffect.resolvedSkills` carries only engine-resolved references — no paths, content, tokens, or harness-specific metadata.
 - Disabled skills (via `config.disabled.skills`) are filtered before missing-skill validation.
 
+## Category Metadata Descriptor Contract
+
+Generated category shuttles expose source category context on the adapter-facing `AgentDescriptor.category?: CategoryMetadata` field.
+
+`CategoryMetadata` contains the source category `name`, optional `description`, declared `patterns: string[]`, and `isCategory: true`. The `patterns` array is the list of glob strings authored in `.weave` config; the engine does not expand those globs into files.
+
+Adapters may consume `descriptor.category.patterns` to generate harness-specific routing rules, plugin configuration, or delegation metadata. The adapter owns the concrete interpretation for its harness. The engine must not expand globs, scan files, inspect harness-owned resources, or make concrete routing decisions.
+
 ## Execution Lifecycle Surface
 
 > **Issue:** [#44 — Minimal Execution Lifecycle Surface](https://github.com/josevalim/weave/issues/44) · **Spec:** [Spec 13](../../docs/specs/13-spec-minimal-execution-lifecycle-surface/13-spec-minimal-execution-lifecycle-surface.md) · **Boundary:** [docs/adapter-boundary.md — Execution Lifecycle Surface](../../docs/adapter-boundary.md#execution-lifecycle-surface)
