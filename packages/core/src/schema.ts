@@ -191,9 +191,15 @@ export const OnRejectSchema = z.enum(["pause", "fail", "retry"]);
  * A single step inside a workflow.
  *
  * Field mapping notes:
- * - `name`         — the step's block identifier in the DSL (e.g. `step plan { }` → `"plan"`)
- * - `display_name` — the human-readable label from the inner `name "..."` property
- * - `on_reject`    — only valid when `type` is `"gate"` (enforced by `.refine()`)
+ * - `name`          — the step's block identifier in the DSL (e.g. `step plan { }` → `"plan"`)
+ * - `display_name`  — the human-readable label from the inner `name "..."` property
+ * - `on_reject`     — only valid when `type` is `"gate"` (enforced by `.refine()`)
+ * - `insert_before` — position this step immediately before the named anchor step in the
+ *                     base workflow; only meaningful on extension workflows
+ * - `insert_after`  — position this step immediately after the named anchor step in the
+ *                     base workflow; only meaningful on extension workflows
+ *
+ * `insert_before` and `insert_after` are mutually exclusive (`BothInsertBeforeAndAfter`).
  */
 export const WorkflowStepSchema = z
   .object({
@@ -206,10 +212,22 @@ export const WorkflowStepSchema = z
     inputs: z.array(ArtifactDeclSchema).optional(),
     outputs: z.array(ArtifactDeclSchema).optional(),
     on_reject: OnRejectSchema.optional(),
+    /** Position this step immediately before the named anchor step in the base workflow. */
+    insert_before: z.string().optional(),
+    /** Position this step immediately after the named anchor step in the base workflow. */
+    insert_after: z.string().optional(),
   })
   .refine((data) => data.on_reject === undefined || data.type === "gate", {
     message: "on_reject is only valid for gate steps",
-  });
+  })
+  .refine(
+    (data) =>
+      !(data.insert_before !== undefined && data.insert_after !== undefined),
+    {
+      message:
+        "insert_before and insert_after are mutually exclusive (BothInsertBeforeAndAfter)",
+    },
+  );
 
 // ---------------------------------------------------------------------------
 // Workflow config
@@ -219,14 +237,25 @@ export const WorkflowStepSchema = z
  * A named workflow definition containing an ordered list of steps.
  *
  * - `version` — positive integer; used for future migration
- * - `steps`   — at least one step is required
+ * - `steps`   — at least one step is required unless `extends` is set
+ * - `extends` — optional name of a base workflow this workflow extends;
+ *               when set, `steps` may be empty (the extension may add steps
+ *               relative to the base via `insert_before` / `insert_after`)
  */
-export const WorkflowConfigSchema = z.object({
-  name: z.string().optional(),
-  description: z.string().optional(),
-  version: z.number().int().positive(),
-  steps: z.array(WorkflowStepSchema).min(1),
-});
+export const WorkflowConfigSchema = z
+  .object({
+    name: z.string().optional(),
+    description: z.string().optional(),
+    version: z.number().int().positive(),
+    steps: z.array(WorkflowStepSchema),
+    /** Name of the base workflow this workflow extends. */
+    extends: z.string().optional(),
+  })
+  .refine((data) => data.extends !== undefined || data.steps.length >= 1, {
+    message:
+      "steps must have at least one entry (or set extends to allow an empty steps list)",
+    path: ["steps"],
+  });
 
 // ---------------------------------------------------------------------------
 // Settings

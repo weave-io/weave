@@ -195,6 +195,87 @@ describe("Parser — workflow block", () => {
       value: "Fix a bug",
     });
   });
+
+  it("parses extends scalar inside workflow block", () => {
+    const src = `workflow my-ext {
+  extends "base-workflow"
+  version 1
+}`;
+    const result = parseSource(src);
+    expect(result.isOk()).toBe(true);
+    const wf = result._unsafeUnwrap()[0] as WorkflowBlock;
+    expect(wf.type).toBe("workflow");
+    expect(wf.name).toBe("my-ext");
+    // extends is extracted to the dedicated field, not left in properties
+    expect(wf.extends).toBe("base-workflow");
+    const extendsProp = wf.properties.find((p) => p.key === "extends");
+    expect(extendsProp).toBeUndefined();
+  });
+
+  it("parses insert_before scalar inside step block", () => {
+    const src = `workflow w {
+  step audit {
+    insert_before "review"
+    type autonomous
+    agent warp
+    prompt "Audit."
+    completion agent_signal
+  }
+}`;
+    const result = parseSource(src);
+    expect(result.isOk()).toBe(true);
+    const wf = result._unsafeUnwrap()[0] as WorkflowBlock;
+    const step = wf.steps[0];
+    expect(step?.name).toBe("audit");
+    // insert_before is extracted to the dedicated field
+    expect(step?.insert_before).toBe("review");
+    expect(step?.insert_after).toBeUndefined();
+    // insert_before must NOT appear in properties
+    const insertProp = step?.properties.find((p) => p.key === "insert_before");
+    expect(insertProp).toBeUndefined();
+  });
+
+  it("parses insert_after scalar inside step block", () => {
+    const src = `workflow w {
+  step audit {
+    insert_after "plan"
+    type autonomous
+    agent warp
+    prompt "Audit."
+    completion agent_signal
+  }
+}`;
+    const result = parseSource(src);
+    expect(result.isOk()).toBe(true);
+    const wf = result._unsafeUnwrap()[0] as WorkflowBlock;
+    const step = wf.steps[0];
+    expect(step?.insert_after).toBe("plan");
+    expect(step?.insert_before).toBeUndefined();
+    const insertProp = step?.properties.find((p) => p.key === "insert_after");
+    expect(insertProp).toBeUndefined();
+  });
+
+  it("parses workflow with extends and steps containing insert_before", () => {
+    const src = `workflow extended {
+  extends "base"
+  version 2
+
+  step security-check {
+    insert_before "deploy"
+    type gate
+    agent warp
+    prompt "Security check."
+    completion review_verdict
+  }
+}`;
+    const result = parseSource(src);
+    expect(result.isOk()).toBe(true);
+    const wf = result._unsafeUnwrap()[0] as WorkflowBlock;
+    expect(wf.extends).toBe("base");
+    expect(wf.steps).toHaveLength(1);
+    expect(wf.steps[0]?.insert_before).toBe("deploy");
+    expect(wf.steps[0]?.insert_after).toBeUndefined();
+  });
 });
 
 describe("Parser — multiple top-level blocks", () => {

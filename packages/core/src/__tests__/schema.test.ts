@@ -285,6 +285,52 @@ describe("WorkflowStepSchema", () => {
       expect(r.data.display_name).toBe("Create implementation plan");
     }
   });
+
+  it("accepts insert_before without insert_after", () => {
+    const r = WorkflowStepSchema.safeParse({
+      ...validStep,
+      insert_before: "review",
+    });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.insert_before).toBe("review");
+      expect(r.data.insert_after).toBeUndefined();
+    }
+  });
+
+  it("accepts insert_after without insert_before", () => {
+    const r = WorkflowStepSchema.safeParse({
+      ...validStep,
+      insert_after: "plan",
+    });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.insert_after).toBe("plan");
+      expect(r.data.insert_before).toBeUndefined();
+    }
+  });
+
+  it("rejects both insert_before and insert_after set simultaneously (BothInsertBeforeAndAfter)", () => {
+    const r = WorkflowStepSchema.safeParse({
+      ...validStep,
+      insert_before: "review",
+      insert_after: "plan",
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      const msg = r.error.issues[0]?.message ?? "";
+      expect(msg).toContain("BothInsertBeforeAndAfter");
+    }
+  });
+
+  it("accepts step with neither insert_before nor insert_after (normal step)", () => {
+    const r = WorkflowStepSchema.safeParse(validStep);
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.insert_before).toBeUndefined();
+      expect(r.data.insert_after).toBeUndefined();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -344,6 +390,54 @@ describe("WorkflowConfigSchema", () => {
       steps: [validStep],
     });
     expect(r.success).toBe(false);
+  });
+
+  it("accepts extends field with a non-empty string", () => {
+    const r = WorkflowConfigSchema.safeParse({
+      version: 1,
+      extends: "base-workflow",
+      steps: [validStep],
+    });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.extends).toBe("base-workflow");
+    }
+  });
+
+  it("accepts extends with empty steps array (extension workflow)", () => {
+    const r = WorkflowConfigSchema.safeParse({
+      version: 1,
+      extends: "base-workflow",
+      steps: [],
+    });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.extends).toBe("base-workflow");
+      expect(r.data.steps).toHaveLength(0);
+    }
+  });
+
+  it("rejects empty steps without extends (no extension to relax the constraint)", () => {
+    const r = WorkflowConfigSchema.safeParse({
+      version: 1,
+      steps: [],
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      const paths = r.error.issues.map((i) => i.path.join("."));
+      expect(paths.some((p) => p.includes("steps"))).toBe(true);
+    }
+  });
+
+  it("extends is optional — workflow without extends still works normally", () => {
+    const r = WorkflowConfigSchema.safeParse({
+      version: 1,
+      steps: [validStep],
+    });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.extends).toBeUndefined();
+    }
   });
 });
 

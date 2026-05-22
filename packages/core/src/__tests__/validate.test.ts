@@ -353,6 +353,90 @@ describe("validate — workflows", () => {
     expect(step?.name).toBe("my-step");
     expect(step?.display_name).toBe("My Display Name");
   });
+
+  it("workflow with extends field round-trips correctly", () => {
+    const src = `workflow my-ext {
+  extends "base-workflow"
+  version 1
+
+  step extra {
+    name "Extra step"
+    type autonomous
+    agent shuttle
+    prompt "Do extra work."
+    completion agent_signal
+    insert_after "plan"
+  }
+}`;
+    const result = validateSource(src);
+    expect(result.isOk()).toBe(true);
+    const wf = result._unsafeUnwrap().workflows["my-ext"];
+    expect(wf).toBeDefined();
+    expect(wf?.extends).toBe("base-workflow");
+    expect(wf?.steps).toHaveLength(1);
+    const step = wf?.steps[0];
+    expect(step?.name).toBe("extra");
+    expect(step?.insert_after).toBe("plan");
+    expect(step?.insert_before).toBeUndefined();
+  });
+
+  it("extension workflow with empty steps array is accepted when extends is set", () => {
+    const src = `workflow override-only {
+  extends "base"
+  version 1
+}`;
+    const result = validateSource(src);
+    expect(result.isOk()).toBe(true);
+    const wf = result._unsafeUnwrap().workflows["override-only"];
+    expect(wf?.extends).toBe("base");
+    expect(wf?.steps).toHaveLength(0);
+  });
+
+  it("step with insert_before round-trips correctly", () => {
+    const src = `workflow w {
+  extends "base"
+  version 1
+
+  step security-check {
+    name "Security audit"
+    type gate
+    agent warp
+    prompt "Audit."
+    completion review_verdict
+    insert_before "deploy"
+    on_reject pause
+  }
+}`;
+    const result = validateSource(src);
+    expect(result.isOk()).toBe(true);
+    const step = result._unsafeUnwrap().workflows.w?.steps[0];
+    expect(step?.insert_before).toBe("deploy");
+    expect(step?.insert_after).toBeUndefined();
+    expect(step?.on_reject).toBe("pause");
+  });
+
+  it("step with both insert_before and insert_after is rejected (BothInsertBeforeAndAfter)", () => {
+    const src = `workflow w {
+  extends "base"
+  version 1
+
+  step bad {
+    name "Bad step"
+    type autonomous
+    agent shuttle
+    prompt "Do it."
+    completion agent_signal
+    insert_before "review"
+    insert_after "plan"
+  }
+}`;
+    const result = validateSource(src);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    expect(
+      errors.some((e) => e.message.includes("BothInsertBeforeAndAfter")),
+    ).toBe(true);
+  });
 });
 
 describe("validate — prompt_append_file (agent)", () => {

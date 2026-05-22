@@ -214,6 +214,7 @@ class Parser {
 
     const properties: Property[] = [];
     const steps: StepBlock[] = [];
+    let extendsValue: string | undefined;
 
     while (true) {
       this.#skipNewlines();
@@ -227,7 +228,14 @@ class Parser {
       }
 
       const prop = this.#parseProperty();
-      if (prop) properties.push(prop);
+      if (!prop) continue;
+
+      if (prop.key === "extends" && prop.value.kind === "string") {
+        extendsValue = prop.value.value;
+        continue;
+      }
+
+      properties.push(prop);
     }
 
     if (this.#current().type !== TokenType.RBrace) {
@@ -240,7 +248,15 @@ class Parser {
       this.#advance();
     }
 
-    return { type: "workflow", name, properties, steps, pos };
+    const workflowBlock: WorkflowBlock = {
+      type: "workflow",
+      name,
+      properties,
+      steps,
+      pos,
+    };
+    if (extendsValue !== undefined) workflowBlock.extends = extendsValue;
+    return workflowBlock;
   }
 
   #parseStepBlock(): StepBlock | null {
@@ -270,7 +286,24 @@ class Parser {
       return null;
     }
 
-    const properties = this.#parseProperties();
+    // Parse all properties, extracting insert_before / insert_after into
+    // dedicated AST fields rather than leaving them in the generic properties bag.
+    const rawProperties = this.#parseProperties();
+    const properties: Property[] = [];
+    let insertBefore: string | undefined;
+    let insertAfter: string | undefined;
+
+    for (const prop of rawProperties) {
+      if (prop.key === "insert_before" && prop.value.kind === "string") {
+        insertBefore = prop.value.value;
+        continue;
+      }
+      if (prop.key === "insert_after" && prop.value.kind === "string") {
+        insertAfter = prop.value.value;
+        continue;
+      }
+      properties.push(prop);
+    }
 
     this.#skipNewlines();
     if (this.#current().type !== TokenType.RBrace) {
@@ -283,7 +316,10 @@ class Parser {
       this.#advance();
     }
 
-    return { name, properties, pos };
+    const stepBlock: StepBlock = { name, properties, pos };
+    if (insertBefore !== undefined) stepBlock.insert_before = insertBefore;
+    if (insertAfter !== undefined) stepBlock.insert_after = insertAfter;
+    return stepBlock;
   }
 
   #parseDisableDirective(): DisableDirective | null {
