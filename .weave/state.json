@@ -1,0 +1,11 @@
+{
+  "active_plan": "/Users/jose/projects/weave/.weave/plans/builtin-prompt-defaults-sdd-spec.md",
+  "started_at": "2026-05-22T16:04:36.583Z",
+  "session_ids": [
+    "ses_1af918c3bffe08AbVUh5EVl2Tr"
+  ],
+  "plan_name": "builtin-prompt-defaults-sdd-spec",
+  "agent": "tapestry",
+  "start_sha": "f55169c943bd03627e3879a02e031cf3501fc614",
+  "paused": true
+}
