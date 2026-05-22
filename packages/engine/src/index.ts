@@ -38,7 +38,7 @@ export type {
 export { composeAgentDescriptor } from "./compose.js";
 export type { CategoryShuttleConflictError } from "./descriptors.js";
 export { generateCategoryShuttles } from "./descriptors.js";
-export type { Env } from "./env.js";
+export type { Env, EnvValidationError } from "./env.js";
 export { env, envSchema, parseEnv } from "./env.js";
 export type {
   BeforeToolInput,

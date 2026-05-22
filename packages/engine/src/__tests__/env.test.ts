@@ -2,9 +2,32 @@ import { describe, expect, test } from "bun:test";
 import { parseEnv } from "../env.js";
 
 describe("parseEnv", () => {
-  test("defaults LOG_LEVEL to 'info' when not set", () => {
+  test("valid env returns ok(Env) with default 'info' log level", () => {
     const result = parseEnv({});
-    expect(result.LOG_LEVEL).toBe("info");
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.LOG_LEVEL).toBe("info");
+    }
+  });
+
+  test("invalid LOG_LEVEL returns err({ type: 'InvalidEnv', issues: [...] }) with non-empty issues", () => {
+    const result = parseEnv({ LOG_LEVEL: "bogus" });
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error.type).toBe("InvalidEnv");
+      expect(result.error.issues.length).toBeGreaterThan(0);
+      expect(result.error.issues[0]?.message).toContain(
+        "LOG_LEVEL must be one of:",
+      );
+    }
+  });
+
+  test("default value applied when LOG_LEVEL is undefined", () => {
+    const result = parseEnv({ LOG_LEVEL: undefined });
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.LOG_LEVEL).toBe("info");
+    }
   });
 
   test("accepts all valid log levels", () => {
@@ -20,24 +43,18 @@ describe("parseEnv", () => {
 
     for (const level of levels) {
       const result = parseEnv({ LOG_LEVEL: level });
-      expect(result.LOG_LEVEL).toBe(level);
+      expect(result.isOk()).toBe(true);
+      if (result.isOk()) {
+        expect(result.value.LOG_LEVEL).toBe(level);
+      }
     }
-  });
-
-  test("throws with a descriptive message for an invalid LOG_LEVEL", () => {
-    expect(() => parseEnv({ LOG_LEVEL: "verbose" })).toThrow(
-      "LOG_LEVEL must be one of:",
-    );
-  });
-
-  test("throws listing all invalid fields", () => {
-    expect(() => parseEnv({ LOG_LEVEL: "bad" })).toThrow(
-      "[weave] Invalid environment variables:",
-    );
   });
 
   test("ignores unrelated environment variables", () => {
     const result = parseEnv({ LOG_LEVEL: "debug", HOME: "/home/user" });
-    expect(result.LOG_LEVEL).toBe("debug");
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.LOG_LEVEL).toBe("debug");
+    }
   });
 });

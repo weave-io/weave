@@ -171,7 +171,7 @@ export const CompletionMethodSchema = z.discriminatedUnion("method", [
 // ---------------------------------------------------------------------------
 
 /** A named artifact produced or consumed by a workflow step. */
-export const ArtifactRefSchema = z.object({
+export const ArtifactDeclSchema = z.object({
   name: z.string(),
   description: z.string(),
 });
@@ -203,8 +203,8 @@ export const WorkflowStepSchema = z
     agent: z.string(),
     prompt: z.string(),
     completion: CompletionMethodSchema,
-    inputs: z.array(ArtifactRefSchema).optional(),
-    outputs: z.array(ArtifactRefSchema).optional(),
+    inputs: z.array(ArtifactDeclSchema).optional(),
+    outputs: z.array(ArtifactDeclSchema).optional(),
     on_reject: OnRejectSchema.optional(),
   })
   .refine((data) => data.on_reject === undefined || data.type === "gate", {
@@ -301,7 +301,7 @@ export type WorkflowStepType = z.infer<typeof WorkflowStepTypeSchema>;
 /** Discriminated union describing how a step signals completion. */
 export type CompletionMethod = z.infer<typeof CompletionMethodSchema>;
 /** A named artifact produced or consumed by a step. */
-export type ArtifactRef = z.infer<typeof ArtifactRefSchema>;
+export type ArtifactDecl = z.infer<typeof ArtifactDeclSchema>;
 /** Behaviour when a gate step rejects. */
 export type OnReject = z.infer<typeof OnRejectSchema>;
 /** A fully-validated workflow step. */

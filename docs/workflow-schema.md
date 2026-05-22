@@ -36,8 +36,8 @@ Each `step <name> { }` block inside a workflow produces a `WorkflowStep`.
 | `agent`        | `string`           | **yes**  | Name of the agent that runs this step                                   |
 | `prompt`       | `string`           | **yes**  | Instruction sent to the agent; may contain `{{template}}` variables     |
 | `completion`   | `CompletionMethod` | **yes**  | How the step signals that it is done (see below)                        |
-| `inputs`       | `ArtifactRef[]`    | no       | Named artifacts this step consumes from a previous step                 |
-| `outputs`      | `ArtifactRef[]`    | no       | Named artifacts this step produces for downstream steps                 |
+| `inputs`       | `ArtifactDecl[]`   | no       | Named artifacts this step consumes from a previous step                 |
+| `outputs`      | `ArtifactDecl[]`   | no       | Named artifacts this step produces for downstream steps                 |
 | `on_reject`    | `OnReject`         | no       | Behaviour when a gate step rejects (only valid when `type` is `"gate"`) |
 
 ### Step Type Enum
@@ -158,10 +158,10 @@ This produces the same `BlockValue` structure with `__name: "my_method"`. Future
 
 ## Artifact References
 
-`inputs` and `outputs` are arrays of `ArtifactRef`:
+`inputs` and `outputs` are arrays of `ArtifactDecl`:
 
 ```ts
-type ArtifactRef = {
+type ArtifactDecl = {
   name: string;
   description: string;
 };

@@ -51,7 +51,7 @@ export { parse } from "./parser.js";
 // ---------------------------------------------------------------------------
 export type {
   AgentConfig,
-  ArtifactRef,
+  ArtifactDecl,
   CategoryConfig,
   CompletionMethod,
   DelegationTrigger,
@@ -71,7 +71,7 @@ export type {
 // ---------------------------------------------------------------------------
 export {
   AgentConfigSchema,
-  ArtifactRefSchema,
+  ArtifactDeclSchema,
   CategoryConfigSchema,
   CompletionMethodSchema,
   DelegationTriggerSchema,

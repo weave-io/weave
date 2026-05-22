@@ -1,3 +1,5 @@
+import { err, ok, type Result } from "neverthrow";
+import pino from "pino";
 import { z } from "zod";
 
 /**
@@ -35,32 +37,55 @@ export const envSchema = z.object({
 export type Env = z.infer<typeof envSchema>;
 
 /**
+ * Typed error returned when environment validation fails.
+ */
+export type EnvValidationError = {
+  type: "InvalidEnv";
+  issues: { path: string; message: string }[];
+};
+
+/**
  * Parse and validate a raw environment object against the schema.
  *
  * Accepts an explicit `raw` argument so callers in tests can pass
  * arbitrary objects without mutating `process.env`.
  *
- * @throws {Error} with a formatted message listing every invalid field
- *   when validation fails — intended to crash the process at startup.
+ * Returns `ok(Env)` on success or `err(EnvValidationError)` on failure.
  */
-export function parseEnv(raw: NodeJS.ProcessEnv = process.env): Env {
+export function parseEnv(
+  raw: Record<string, string | undefined> = process.env,
+): Result<Env, EnvValidationError> {
   const result = envSchema.safeParse(raw);
 
   if (!result.success) {
-    const issues = result.error.issues
-      .map((issue) => `  ${String(issue.path.join("."))}: ${issue.message}`)
-      .join("\n");
-    throw new Error(`[weave] Invalid environment variables:\n${issues}`);
+    const issues = result.error.issues.map((issue) => ({
+      path: String(issue.path.join(".")),
+      message: issue.message,
+    }));
+    return err({ type: "InvalidEnv", issues });
   }
 
-  return result.data;
+  return ok(result.data);
 }
 
 /**
  * Validated, typed snapshot of `process.env` for @weave/engine.
  *
  * Evaluated once when the module is first imported. An invalid
- * environment throws synchronously, crashing the process before any
+ * environment logs a fatal message and exits the process before any
  * agents start.
+ *
+ * Note: uses pino directly (not the shared logger) to avoid a circular
+ * dependency — logger.ts imports env.ts to read LOG_LEVEL.
  */
-export const env: Env = parseEnv();
+export const env: Env = parseEnv().match(
+  (e) => e,
+  (envErr) => {
+    const startupLogger = pino({ name: "weave" });
+    startupLogger.fatal(
+      { err: envErr },
+      "[weave] Invalid environment variables",
+    );
+    process.exit(1);
+  },
+);

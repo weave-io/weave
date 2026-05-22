@@ -34,7 +34,6 @@
   - class BunFileSystem
   - class MemoryFileSystem
   - interface FileSystem
-  - type FileSystemErrorCause
   - type FileSystemError
 - `packages/cli/src/installers/index.ts`
   - function installerRegistry: (fs) => Record<SupportedHarnessId, HarnessInstaller>
@@ -85,9 +84,9 @@
   - type ParseError
   - type ValidationError
   - type ConfigError
-- `packages/core/src/lexer.ts` — function tokenize: (source) => Result<Token[], LexError[]>, class Lexer
+- `packages/core/src/lexer.ts` — function tokenize: (source) => Result<Token[], LexError[]>
 - `packages/core/src/parse-config.ts` — function parseConfig: (source) => Result<WeaveConfig, ConfigError[]>
-- `packages/core/src/parser.ts` — function parse: (tokens) => Result<AstNode[], ParseError[]>, class Parser
+- `packages/core/src/parser.ts` — function parse: (tokens) => Result<AstNode[], ParseError[]>
 - `packages/core/src/validate.ts` — function validate: (ast) => Result<WeaveConfig, ValidationError[]>
 - `packages/engine/src/capability-contract.ts`
   - function evaluateCoreReadinessProfile: (contract) => ProfileEvaluationResult
@@ -110,8 +109,9 @@
   - interface GeneratedCategoryShuttle
   - type CategoryShuttleConflictError
 - `packages/engine/src/env.ts`
-  - function parseEnv: (raw) => Env
+  - function parseEnv: (raw, string | undefined>) => Result<Env, EnvValidationError>
   - type Env
+  - type EnvValidationError
   - const envSchema
   - const env: Env
 - `packages/engine/src/execution-lifecycle.ts`
@@ -146,7 +146,7 @@
   - function queryError: (message, cause?) => RuntimeStoreQueryError
   - function notFoundError: (entity, id, message?) => RuntimeStoreNotFoundError
   - function conflictError: (entity, message, conflictingId?) => RuntimeStoreConflictError
-  - _...12 more_
+  - _...11 more_
 - `packages/engine/src/runtime/fingerprint.ts` — function createProjectSalt: () => string, function fingerprintContent: (salt, content) => ResultAsync<string, RuntimeStoreError>
 - `packages/engine/src/runtime/journal-writer.ts` — class RuntimeJournalWriter, interface WriteJournalEntryInput
 - `packages/engine/src/runtime/memory-store.ts`
@@ -194,7 +194,6 @@
   - interface TemplateContext
   - interface RenderOptions
   - type RendererError
-  - type TemplateContextValue
 - `packages/engine/src/tool-policy.ts`
   - function evaluateEffectiveToolPolicy: (policy) => EffectiveToolPolicy
   - function resolveToolDecisions: (toolIds, classifications, effectivePolicy) => ToolDecision[]

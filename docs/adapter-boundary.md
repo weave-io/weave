@@ -5,7 +5,7 @@ Weave is a harness-agnostic orchestration framework with two cooperating halves:
 1. **Core Weave API** (`@weave/core`, `@weave/config`, `@weave/engine`) parses DSL config, normalizes agent intent, resolves/composes prompt and policy data, and exposes pure helper APIs.
 2. **Adapters** (`@weave/adapter-opencode`, `@weave/adapter-pi`, etc.) enable Weave inside a concrete harness by discovering harness-owned resources, translating normalized intent, and filling feature gaps when the harness lacks native support.
 
-**Related:** [Product Vision](product-vision.md) · [Claude Code Adapter](claude-code-adapter.md) · [Model Resolution](model-resolution.md) · [Config Loading](config-loading.md) · [Prompt Composition](prompt-composition.md) · [Tool Policy Evaluation](tool-policy-evaluation.md) · [Runtime Persistence Spec](specs/12-spec-runtime-persistence/12-spec-runtime-persistence.md) · [ADR 0002 — Runtime Persistence Store](adr/0002-runtime-persistence-store.md) · [Spec 05 — Skill Resolution](specs/05-spec-skill-loader/05-spec-skill-loader.md) · [Spec 07 — Adapter Capability Contract](specs/07-spec-adapter-capability-contract/07-spec-adapter-capability-contract.md) · [Spec 08 — Abstract Tool Policy Evaluation](specs/08-spec-abstract-tool-policy-evaluation/08-spec-abstract-tool-policy-evaluation.md) · [Spec 09 — Adapter-Provided Skill Resolution](specs/09-spec-adapter-provided-skill-resolution/09-spec-adapter-provided-skill-resolution.md) · [Spec 16 — Stable Adapter Descriptor Contract](specs/16-spec-stable-adapter-descriptor-contract/16-spec-stable-adapter-descriptor-contract.md) · [Execution Lifecycle Surface](#execution-lifecycle-surface) · [Legacy Architecture](legacy-architecture.md)
+**Related:** [Product Vision](product-vision.md) · [Adapter Bootstrap Guide](adapter-bootstrap.md) · [Claude Code Adapter](claude-code-adapter.md) · [Model Resolution](model-resolution.md) · [Config Loading](config-loading.md) · [Prompt Composition](prompt-composition.md) · [Tool Policy Evaluation](tool-policy-evaluation.md) · [Runtime Persistence Spec](specs/12-spec-runtime-persistence/12-spec-runtime-persistence.md) · [ADR 0002 — Runtime Persistence Store](adr/0002-runtime-persistence-store.md) · [Spec 05 — Skill Resolution](specs/05-spec-skill-loader/05-spec-skill-loader.md) · [Spec 07 — Adapter Capability Contract](specs/07-spec-adapter-capability-contract/07-spec-adapter-capability-contract.md) · [Spec 08 — Abstract Tool Policy Evaluation](specs/08-spec-abstract-tool-policy-evaluation/08-spec-abstract-tool-policy-evaluation.md) · [Spec 09 — Adapter-Provided Skill Resolution](specs/09-spec-adapter-provided-skill-resolution/09-spec-adapter-provided-skill-resolution.md) · [Spec 16 — Stable Adapter Descriptor Contract](specs/16-spec-stable-adapter-descriptor-contract/16-spec-stable-adapter-descriptor-contract.md) · [Spec 17 — Workflow Extension DSL](specs/17-spec-workflow-extension/17-spec-workflow-extension.md) · [Execution Lifecycle Surface](#execution-lifecycle-surface) · [Legacy Architecture](legacy-architecture.md)
 
 ---
 
@@ -16,6 +16,17 @@ The key question is not "does the engine call the adapter?" The key question is:
 > **Is the engine making a harness-specific assumption?**
 
 Engine-to-adapter calls are acceptable when they use abstract, harness-agnostic intent. They are incorrect when they require the engine to know where a harness stores resources, how a harness registers lifecycle callbacks, or how a harness represents runtime state.
+
+---
+
+## Naming Conventions
+
+Type names in `@weave/core` and `@weave/engine` follow a suffix convention to prevent collisions between the DSL configuration layer and the engine runtime layer:
+
+- **`*Decl` suffix** — used for core/DSL types that describe **declarative configuration** authored in `.weave` files. These types are parsed from the DSL and validated by Zod schemas. Example: `ArtifactDecl` describes a named artifact input or output declared on a workflow step.
+- **`*Ref` suffix** — used for engine runtime types that describe **persisted handles** or live records in the Runtime Store. These types are created and managed at execution time. Example: `ArtifactRef` (in `@weave/engine`) is a persisted artifact record with a resolved path and content hash.
+
+When adding a new type that spans both layers (e.g. a concept declared in DSL config and also tracked at runtime), use `*Decl` for the core/DSL variant and `*Ref` for the engine runtime variant. Never share a single type name across both layers.
 
 ---
 
@@ -209,6 +220,8 @@ Future specs should move toward this boundary:
 - adapters materialize those outputs in the concrete harness
 
 When a legacy issue or proof artifact conflicts with this document, prefer this document and [Product Vision](product-vision.md).
+
+See [Adapter Bootstrap Guide](adapter-bootstrap.md) for the canonical `loadConfig` → `materializeAgents` → adapter loop pattern with a runnable `MockAdapter` example.
 
 ---
 

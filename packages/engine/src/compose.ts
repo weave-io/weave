@@ -132,11 +132,16 @@ function loadPromptSource(
 
 function shouldExcludeSharedShuttleTarget(
   agentName: string,
+  agentConfig: AgentConfig,
   targetName: string,
 ): boolean {
   if (!targetName.startsWith("shuttle-")) return false;
-  if (agentName === "shuttle") return true;
-  return agentName.startsWith("shuttle-");
+  // Category shuttle: any agent whose name starts with "shuttle-"
+  if (agentName.startsWith("shuttle-")) return true;
+  // Root shuttle equivalent: mode === "all" and no "shuttle-" prefix (generalist root)
+  if (agentConfig.mode === "all" && !agentName.startsWith("shuttle-"))
+    return true;
+  return false;
 }
 
 function buildDelegationTargets(
@@ -158,7 +163,8 @@ function buildDelegationTargets(
     if (targetName === agentName) continue;
     if (config.disabled.agents.includes(targetName)) continue;
     if (targetConfig.mode === "primary") continue;
-    if (shouldExcludeSharedShuttleTarget(agentName, targetName)) continue;
+    if (shouldExcludeSharedShuttleTarget(agentName, agentConfig, targetName))
+      continue;
 
     targets.push({
       name: targetName,
