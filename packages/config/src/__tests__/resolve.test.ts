@@ -85,4 +85,119 @@ describe("resolvePromptPaths", () => {
 
     expect(config.agents.loom?.prompt_file).toBe(originalPromptFile);
   });
+
+  // -------------------------------------------------------------------------
+  // prompt_append_file — agents
+  // -------------------------------------------------------------------------
+
+  it("(g) agent with prompt_append_file resolves to <rootDir>/prompts/<file>", () => {
+    const config = cfg(
+      `agent myagent { prompt "Base" prompt_append_file "extra.md" models ["gpt-4o"] }`,
+    );
+    const scope: ConfigScope = { kind: "project", rootDir: "/proj/.weave" };
+    const resolved = resolvePromptPaths(config, scope);
+    expect(resolved.agents.myagent?.prompt_append_file).toBe(
+      "/proj/.weave/prompts/extra.md",
+    );
+  });
+
+  it("(h) agent with both prompt_file and prompt_append_file resolves both", () => {
+    const config = cfg(
+      `agent myagent { prompt_file "base.md" prompt_append_file "extra.md" models ["gpt-4o"] }`,
+    );
+    const scope: ConfigScope = { kind: "project", rootDir: "/proj/.weave" };
+    const resolved = resolvePromptPaths(config, scope);
+    expect(resolved.agents.myagent?.prompt_file).toBe(
+      "/proj/.weave/prompts/base.md",
+    );
+    expect(resolved.agents.myagent?.prompt_append_file).toBe(
+      "/proj/.weave/prompts/extra.md",
+    );
+  });
+
+  it("(i) agent without prompt_append_file is left unchanged", () => {
+    const config = cfg(`agent myagent { prompt "Inline" models ["gpt-4o"] }`);
+    const scope: ConfigScope = { kind: "project", rootDir: "/proj/.weave" };
+    const resolved = resolvePromptPaths(config, scope);
+    expect(resolved.agents.myagent?.prompt_append_file).toBeUndefined();
+  });
+
+  it("(j) immutability: original agent prompt_append_file not mutated", () => {
+    const config = cfg(
+      `agent myagent { prompt "Base" prompt_append_file "extra.md" models ["gpt-4o"] }`,
+    );
+    const original = config.agents.myagent?.prompt_append_file;
+    const scope: ConfigScope = { kind: "project", rootDir: "/proj/.weave" };
+
+    resolvePromptPaths(config, scope);
+
+    expect(config.agents.myagent?.prompt_append_file).toBe(original);
+  });
+
+  // -------------------------------------------------------------------------
+  // prompt_append_file — categories
+  // -------------------------------------------------------------------------
+
+  it("(k) category with prompt_append_file resolves to <rootDir>/prompts/<file>", () => {
+    const config = cfg(`
+      category frontend {
+        patterns ["src/**/*.tsx"]
+        prompt_append_file "cat-extra.md"
+      }
+    `);
+    const scope: ConfigScope = { kind: "project", rootDir: "/proj/.weave" };
+    const resolved = resolvePromptPaths(config, scope);
+    expect(resolved.categories?.frontend?.prompt_append_file).toBe(
+      "/proj/.weave/prompts/cat-extra.md",
+    );
+  });
+
+  it("(l) category without prompt_append_file is left unchanged", () => {
+    const config = cfg(`
+      category backend {
+        patterns ["src/api/**"]
+        prompt_append "Focus on API contracts."
+      }
+    `);
+    const scope: ConfigScope = { kind: "project", rootDir: "/proj/.weave" };
+    const resolved = resolvePromptPaths(config, scope);
+    expect(resolved.categories?.backend?.prompt_append_file).toBeUndefined();
+    expect(resolved.categories?.backend?.prompt_append).toBe(
+      "Focus on API contracts.",
+    );
+  });
+
+  it("(m) mixed categories: only category with prompt_append_file is resolved", () => {
+    const config = cfg(`
+      category frontend {
+        patterns ["src/**/*.tsx"]
+        prompt_append_file "cat-extra.md"
+      }
+      category backend {
+        patterns ["src/api/**"]
+        prompt_append "Focus on API contracts."
+      }
+    `);
+    const scope: ConfigScope = { kind: "project", rootDir: "/proj/.weave" };
+    const resolved = resolvePromptPaths(config, scope);
+    expect(resolved.categories?.frontend?.prompt_append_file).toBe(
+      "/proj/.weave/prompts/cat-extra.md",
+    );
+    expect(resolved.categories?.backend?.prompt_append_file).toBeUndefined();
+  });
+
+  it("(n) immutability: original category prompt_append_file not mutated", () => {
+    const config = cfg(`
+      category frontend {
+        patterns ["src/**/*.tsx"]
+        prompt_append_file "cat-extra.md"
+      }
+    `);
+    const original = config.categories?.frontend?.prompt_append_file;
+    const scope: ConfigScope = { kind: "project", rootDir: "/proj/.weave" };
+
+    resolvePromptPaths(config, scope);
+
+    expect(config.categories?.frontend?.prompt_append_file).toBe(original);
+  });
 });

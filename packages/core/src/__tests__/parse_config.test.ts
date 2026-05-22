@@ -479,6 +479,47 @@ describe("parseConfig — settings block", () => {
   });
 });
 
+describe("parseConfig — prompt_append_file", () => {
+  it("agent with prompt_append_file parses successfully and field is present in output", () => {
+    const src = `agent myagent {
+  prompt "You are helpful."
+  models ["claude-sonnet-4-5"]
+  prompt_append_file "extra.md"
+}`;
+    const result = parseConfig(src);
+    expect(result.isOk()).toBe(true);
+    const config = result._unsafeUnwrap();
+    expect(config.agents.myagent).toBeDefined();
+    expect(config.agents.myagent?.prompt_append_file).toBe("extra.md");
+  });
+
+  it("category with prompt_append_file parses successfully and field is present in output", () => {
+    const src = `category frontend {
+  description "Frontend UI"
+  patterns ["src/components/**"]
+  prompt_append_file "cat-extra.md"
+}`;
+    const result = parseConfig(src);
+    expect(result.isOk()).toBe(true);
+    const config = result._unsafeUnwrap();
+    expect(config.categories.frontend).toBeDefined();
+    expect(config.categories.frontend?.prompt_append_file).toBe("cat-extra.md");
+  });
+
+  it("agent with both prompt_append and prompt_append_file → err (mutually exclusive)", () => {
+    const src = `agent bad {
+  prompt "You are helpful."
+  models ["claude-sonnet-4-5"]
+  prompt_append "inline extra"
+  prompt_append_file "extra.md"
+}`;
+    const result = parseConfig(src);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    expect(errors.some((e) => e.type === "ValidationError")).toBe(true);
+  });
+});
+
 describe("parseConfig — source positions in errors", () => {
   it("errors include line numbers where possible", () => {
     // Lex error on line 2

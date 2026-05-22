@@ -355,6 +355,82 @@ describe("validate — workflows", () => {
   });
 });
 
+describe("validate — prompt_append_file (agent)", () => {
+  it("agent with prompt_append_file → ok and field preserved", () => {
+    const src = `agent myagent {
+  prompt "You are helpful."
+  prompt_append_file "extra.md"
+}`;
+    const result = validateSource(src);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().agents.myagent?.prompt_append_file).toBe(
+      "extra.md",
+    );
+  });
+
+  it("agent with both prompt_append and prompt_append_file → err (mutually exclusive)", () => {
+    const src = `agent myagent {
+  prompt "You are helpful."
+  prompt_append "inline extra"
+  prompt_append_file "extra.md"
+}`;
+    const result = validateSource(src);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    expect(errors.some((e) => e.message.includes("mutually exclusive"))).toBe(
+      true,
+    );
+  });
+
+  it("agent with prompt_append_file '../bad.md' → err (relative path)", () => {
+    const src = `agent myagent {
+  prompt_append_file "../bad.md"
+}`;
+    const result = validateSource(src);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    expect(errors.some((e) => e.message.includes("relative path"))).toBe(true);
+  });
+
+  it("agent with prompt_append_file '/etc/passwd' → err (relative path)", () => {
+    const src = `agent myagent {
+  prompt_append_file "/etc/passwd"
+}`;
+    const result = validateSource(src);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    expect(errors.some((e) => e.message.includes("relative path"))).toBe(true);
+  });
+});
+
+describe("validate — prompt_append_file (category)", () => {
+  it("category with prompt_append_file → ok and field preserved", () => {
+    const src = `category frontend {
+  patterns ["src/components/**"]
+  prompt_append_file "cat-extra.md"
+}`;
+    const result = validateSource(src);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().categories.frontend?.prompt_append_file).toBe(
+      "cat-extra.md",
+    );
+  });
+
+  it("category with both prompt_append and prompt_append_file → err (mutually exclusive)", () => {
+    const src = `category frontend {
+  patterns ["src/components/**"]
+  prompt_append "inline extra"
+  prompt_append_file "cat-extra.md"
+}`;
+    const result = validateSource(src);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    expect(errors.some((e) => e.message.includes("mutually exclusive"))).toBe(
+      true,
+    );
+  });
+});
+
 describe("validate — settings block", () => {
   it("settings { log_level INFO } is accepted and reflected in config", () => {
     const src = `settings {

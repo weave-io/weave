@@ -17,9 +17,9 @@ config, not a harness concern.
 The engine is responsible for:
 
 - loading the configured prompt source (Markdown format)
-- rendering `prompt` / `prompt_file` and `prompt_append` as Mustache Prompt Templates
-- generating delegation guidance from the agent's `triggers` config
-- appending fallback delegation guidance and `prompt_append` text in composition order
+- rendering `prompt` / `prompt_file` and `prompt_append` / `prompt_append_file` as Mustache Prompt Templates
+- generating delegation targets from the agent's `triggers` config
+- appending `prompt_append` or `prompt_append_file` text after the rendered primary source
 - evaluating abstract tool policy into `EffectiveToolPolicy`
 - returning a normalized descriptor adapters can consume directly
 
@@ -46,12 +46,8 @@ They should:
   asking for concise top-level `APPROVE` / `BLOCK` review verdict wording)
 - use Template Context fields only where they improve prompt clarity; do not add
   artificial tags just to prove templating
-- place generated delegation guidance with `{{{delegation.section}}}` when the
-  prompt should control where routing guidance appears
-
-The Composer (engine) owns the delegation inventory. Prompt templates may decide
-where to render that inventory, but they should not hand-copy target lists that
-could diverge from config.
+- use `{{#delegation.targets}}` loops to render delegation routing guidance
+  where it matters; do not hand-copy target lists that could diverge from config
 
 ---
 
@@ -130,22 +126,18 @@ pipeline:
 
 4. **Render prompt templates**
    - The primary prompt source is rendered as Mustache.
-   - If `prompt_append` is present, it is also rendered as Mustache using the
-     same Template Context.
+   - If `prompt_append` is present, it is rendered as Mustache using the same
+     Template Context.
+   - If `prompt_append_file` is present (and `prompt_append` is absent), the
+     file is read from disk and rendered as Mustache using the same Template
+     Context. `prompt_append` and `prompt_append_file` are mutually exclusive.
 
-5. **Insert fallback delegation guidance**
-   - If eligible delegation targets exist and the primary prompt source does not
-     contain a real `delegation.*` Mustache reference, the engine inserts
-     `delegation.section` after the rendered primary source and before rendered
-     `prompt_append`.
-   - `prompt_append` may render `delegation.*`, but it does not suppress fallback.
-
-6. **Resolve tool policy**
+5. **Resolve tool policy**
    - The engine calls `evaluateEffectiveToolPolicy(agentConfig.tool_policy)`.
    - This produces a complete `EffectiveToolPolicy` with all five abstract
      capabilities resolved. See [Tool Policy Evaluation](tool-policy-evaluation.md).
 
-7. **Assemble the descriptor**
+6. **Assemble the descriptor**
    - The engine returns an `AgentDescriptor` containing the composed prompt,
      delegation targets, resolved policy, raw policy, passthrough metadata, and
      declared skills.
@@ -184,7 +176,7 @@ not harness behavior.
 
 ## Prompt Templates
 
-Agent `prompt`, `prompt_file`, and `prompt_append` values are Prompt Templates.
+Agent `prompt`, `prompt_file`, `prompt_append`, and `prompt_append_file` values are Prompt Templates.
 The engine renders them with the canonical `mustache` package behind a Weave
 wrapper before adapters receive the `Composed Prompt`.
 
@@ -207,13 +199,8 @@ Unsupported features fail composition with typed template errors:
 Use a backslash to render a literal tag opening. For example, `\{{agent.name}}`
 renders as `{{agent.name}}` and does not count as a template reference.
 
-Double braces use canonical Mustache HTML escaping. Markdown-rich values such as
-`delegation.section` and `delegation.mermaid` should be rendered with triple
-braces:
-
-```md
-{{{delegation.section}}}
-```
+Double braces use canonical Mustache HTML escaping. Markdown-rich values should
+be rendered with triple braces to avoid unwanted HTML escaping.
 
 ---
 
@@ -248,8 +235,6 @@ interface AgentPromptTemplateContext {
     };
   };
   delegation: {
-    section?: string;
-    mermaid?: string;
     targets: Array<{
       name: string;
       description?: string;
@@ -276,85 +261,24 @@ target name. Scalar lists such as `agent.skills` can render items with `{{.}}`.
 
 ---
 
-## Delegation Diagram
+## Delegation Targets
 
-When at least one delegation target survives filtering, the engine generates a
-Delegation Diagram plus compact bullets.
+When at least one delegation target survives filtering, the engine populates
+`delegation.targets` in the Template Context. Prompt templates can iterate over
+this list to render routing guidance in any format they choose.
 
-### Workflow-sequence diagram (default when workflows are defined)
+Example using a `{{#delegation.targets}}` loop:
 
-When the config includes workflow definitions, the engine generates a
-**workflow-sequence diagram** instead of the flat star. Each workflow is rendered
-as a labelled `subgraph`. Steps are connected in order (step[i] → step[i+1])
-with the step name as the edge label. Gate steps use Mermaid hexagon `{{"agent"}}`
-syntax; autonomous/interactive steps use rectangle `["agent"]` syntax.
-
-Only workflows where at least one step's agent matches a delegation target (or
-the current agent itself) are included. This filters out irrelevant workflows.
-
-Node IDs use a prefix derived from the workflow name: the first character of each
-hyphen/space-separated word, uppercased, followed by `_` and the agent name
-(e.g. `quick-fix` → `QF_shuttle`, `tapestry-execution` → `TE_weft`).
-
-Example for an agent with `quick-fix` and `plan-and-execute` workflows:
-
-````md
-```mermaid
-flowchart TD
-    subgraph quick-fix["quick-fix: Fix a bug and get it reviewed"]
-        QF_shuttle["shuttle"]
-        QF_weft{{"weft"}}
-        QF_shuttle -->|"review"| QF_weft
-    end
-    subgraph plan-and-execute["plan-and-execute: Research, plan, implement, and review"]
-        PAE_thread["thread"]
-        PAE_pattern["pattern"]
-        PAE_weft{{"weft"}}
-        PAE_thread -->|"plan"| PAE_pattern
-        PAE_pattern -->|"review"| PAE_weft
-    end
-```
-````
-
-### Flat star fallback (no workflows)
-
-When no workflows are defined, the diagram falls back to a current-agent star:
-the current agent (`A0`) points to each eligible delegation target (`A1`, `A2`, …).
-Edge labels use deduplicated trigger domains when available.
-
-`delegation.mermaid` contains only the Mermaid code block content (no code fence).
-It uses stable synthetic node IDs and escaped labels so arbitrary agent names and
-trigger labels do not break Mermaid parsing.
-
-`delegation.section` contains the canonical Markdown section: heading, Mermaid
-diagram, and compact bullets:
-
-````md
+```md
 ## Delegation
 
-```mermaid
-flowchart TD
-  A0["loom"]
-  A1["thread"]
-  A0 -->|Codebase| A1
+{{#delegation.targets}}
+- **{{name}}**{{#description}} — {{description}}{{/description}}
+{{/delegation.targets}}
 ```
 
-- thread — Fast codebase exploration
-  - Codebase: Search and summarize source files
-````
-
-If a target has no description, only the agent name is shown. If a target has no
-triggers, only the top-level bullet is emitted. If there are no eligible targets,
-`delegation.targets` is empty and `delegation.section` / `delegation.mermaid` are
-omitted.
-
-### Mermaid hexagon syntax and Mustache compatibility
-
-Mermaid hexagon nodes use `{{"agent"}}` syntax (double braces with quoted label).
-This is distinct from Mustache `{{variable}}` syntax because the content starts
-with a quote character. The engine's post-render unresolved-tag check uses a
-precise regex that only matches Mustache-style identifiers (letters, digits, dots,
-underscores, hyphens), so Mermaid hexagon syntax does not trigger false positives.
+If there are no eligible targets, `delegation.targets` is an empty array and
+any `{{#delegation.targets}}` section renders nothing.
 
 ---
 
@@ -363,24 +287,14 @@ underscores, hyphens), so Mermaid hexagon syntax does not trigger false positive
 Final prompt text is assembled in this order:
 
 1. rendered primary prompt source (`prompt` or `prompt_file`)
-2. fallback `delegation.section`, only when the primary source has no real
-   `delegation.*` reference and delegation targets exist
-3. rendered `prompt_append`, when present
+2. rendered append source (`prompt_append` or `prompt_append_file`), when present
 
-A real `delegation.*` reference means an actual parsed Mustache variable,
-section, or inverted-section token. Escaped literal tags and comments do not
-suppress fallback.
+`prompt_append` and `prompt_append_file` are mutually exclusive — only one may
+be declared per agent or category block. Both are resolved and rendered using
+the same Template Context as the primary source.
 
-Example custom placement:
-
-```md
-You are {{agent.name}}.
-
-{{{delegation.section}}}
-```
-
-Because the primary source references `delegation.section`, the engine does not
-append fallback delegation a second time.
+There is no automatic fallback delegation block. Delegation guidance must be
+explicitly placed in the prompt source using `{{#delegation.targets}}` loops.
 
 ---
 
@@ -393,13 +307,14 @@ path, unsafe path, function value, section mismatch, or unresolved rendered tag.
 Template errors include:
 
 - `agentName`
-- `sourceKind`: `prompt`, `prompt_file`, or `prompt_append`
-- `promptFilePath` when `sourceKind` is `prompt_file`
+- `sourceKind`: `prompt`, `prompt_file`, `prompt_append`, or `prompt_append_file`
+- `promptFilePath` when `sourceKind` is `prompt_file` or `prompt_append_file`
 - line/column where available
 - the offending tag/path when available
 
-`prompt_append` errors report line/column in the merged append text. The first
-slice does not preserve base-vs-category append fragment provenance.
+`prompt_append` and `prompt_append_file` errors report line/column in the
+append text. The first slice does not preserve base-vs-category append fragment
+provenance.
 
 Because rendering uses schema-aware strict paths:
 
@@ -417,11 +332,6 @@ literal tags produced from `\{{...}}` are allowed.
 
 Existing static prompts remain valid because every prompt source is rendered as a
 Prompt Template, but sources without Mustache tags render to the same text.
-
-Existing custom prompts that do not reference `delegation.*` continue to receive
-generated fallback delegation when their agent can delegate. To control placement
-manually, add a real `delegation.*` reference such as `{{{delegation.section}}}`
-to the primary prompt source.
 
 Workflow step prompt interpolation is conceptually aligned with Prompt Templates
 but not implemented in this slice. Future workflow rendering should reuse the
@@ -502,7 +412,7 @@ type ComposeError =
   | {
       type: "PromptTemplateError";
       agentName: string;
-      sourceKind: "prompt" | "prompt_file" | "prompt_append";
+      sourceKind: "prompt" | "prompt_file" | "prompt_append" | "prompt_append_file";
       promptFilePath?: string;
       message: string;
       reason:
@@ -531,8 +441,8 @@ read failure (`cause instanceof Error ? cause.message : String(cause)`).
 
 Returned when Mustache parsing, strict path validation, unsupported-feature
 validation, rendering, or rendered-output checks fail. The error identifies the
-logical source (`prompt`, `prompt_file`, or `prompt_append`) and maps library or
-wrapper failures into a typed nested reason.
+logical source (`prompt`, `prompt_file`, `prompt_append`, or `prompt_append_file`)
+and maps library or wrapper failures into a typed nested reason.
 
 Because composition returns `ResultAsync`, callers can compose prompt loading
 with the rest of the engine pipeline without `try/catch` control flow.
@@ -545,6 +455,6 @@ with the rest of the engine pipeline without `try/catch` control flow.
 | --- | --- |
 | [`packages/engine/src/compose.ts`](../packages/engine/src/compose.ts) | `AgentDescriptor`, `DelegationTarget`, `ComposeError`, `composeAgentDescriptor()` |
 | `packages/engine/src/template-renderer.ts` | Mustache wrapper, parse/render helpers, reference extraction, unsupported-feature and unresolved-tag checks |
-| `packages/engine/src/template-context.ts` | Agent prompt Template Context types, allowed paths, delegation projection, Mermaid and section generation |
+| `packages/engine/src/template-context.ts` | Agent prompt Template Context types, allowed paths, delegation target projection |
 | [`packages/engine/src/run-agent-effects.ts`](../packages/engine/src/run-agent-effects.ts) | `RunAgentEffect` carrying the composed descriptor |
 | [`packages/engine/src/tool-policy.ts`](../packages/engine/src/tool-policy.ts) | `evaluateEffectiveToolPolicy()` and `EffectiveToolPolicy` |
