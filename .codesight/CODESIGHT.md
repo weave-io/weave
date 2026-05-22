@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 51 lib files | 2 env vars | 0 middleware | 0% test coverage
 > **Token savings:** this file is ~4,400 tokens. Without it, AI exploration would cost ~22,600 tokens. **Saves ~18,200 tokens per conversation.**
-> **Last scanned:** 2026-05-22 20:05 — re-run after significant changes
+> **Last scanned:** 2026-05-22 20:19 — re-run after significant changes
 
 ---
 
@@ -123,9 +123,10 @@
   - function composeAgentDescriptor: (agentName, agentConfig, config, allAgents, AgentConfig>, category?) => ResultAsync<AgentDescriptor, ComposeError>
   - interface CategoryMetadata
   - interface AgentDescriptor
+  - interface AgentDescriptorCategory
   - interface DelegationTarget
   - type PromptTemplateReason
-  - type ComposeError
+  - _...1 more_
 - `packages/engine/src/descriptors.ts`
   - function generateCategoryShuttles: (config) => Result<
   - interface GeneratedCategoryShuttle
@@ -260,10 +261,10 @@
 - `packages/config/src/discovery.ts` — imported by **5** files
 - `packages/config/src/types.ts` — imported by **5** files
 - `packages/core/src/lexer.ts` — imported by **5** files
+- `packages/engine/src/descriptors.ts` — imported by **5** files
 - `packages/config/src/builtins.ts` — imported by **4** files
 - `packages/config/src/normalize-path.ts` — imported by **4** files
 - `packages/core/src/parser.ts` — imported by **4** files
-- `packages/engine/src/descriptors.ts` — imported by **4** files
 - `packages/engine/src/env.ts` — imported by **4** files
 
 ## Import Map (who imports what)

@@ -5,6 +5,7 @@ import type { AgentConfig, WeaveConfig } from "@weave/core";
 import { parseConfig } from "@weave/core";
 
 import { type CategoryMetadata, composeAgentDescriptor } from "../compose.js";
+import { generateCategoryShuttles } from "../descriptors.js";
 
 const tempPromptFilePath = join(
   tmpdir(),
@@ -41,6 +42,47 @@ beforeAll(async () => {
 });
 
 describe("composeAgentDescriptor", () => {
+  describe("identity fields", () => {
+    it("Builtin_descriptor_keeps_stable_name_and_optional_displayName", async () => {
+      const config = cfg(`
+        agent loom {
+          display_name "Loom"
+          prompt "You are loom."
+          models ["claude-sonnet-4-5"]
+        }
+      `);
+
+      const descriptor = await descriptorFor(
+        "loom",
+        config.agents.loom,
+        config,
+        config.agents,
+      );
+
+      expect(descriptor.name).toBe("loom");
+      expect(descriptor.displayName).toBe("Loom");
+    });
+
+    it("Builtin_descriptor_without_display_name_omits_displayName", async () => {
+      const config = cfg(`
+        agent shuttle {
+          prompt "Specialist."
+          models ["claude-sonnet-4-5"]
+        }
+      `);
+
+      const descriptor = await descriptorFor(
+        "shuttle",
+        config.agents.shuttle,
+        config,
+        config.agents,
+      );
+
+      expect(descriptor.name).toBe("shuttle");
+      expect(descriptor.displayName).toBeUndefined();
+    });
+  });
+
   describe("prompt source", () => {
     it("Inline_prompt_produces_correct_composedPrompt", async () => {
       const config = cfg(`
@@ -480,7 +522,6 @@ describe("composeAgentDescriptor", () => {
         name: "frontend",
         description: "Frontend UI, styling, accessibility",
         patterns: ["src/components/**", "**/*.tsx"],
-        isCategory: true,
       });
     });
 
@@ -653,6 +694,190 @@ describe("composeAgentDescriptor", () => {
       );
 
       expect(descriptor.rawToolPolicy).toBeUndefined();
+    });
+  });
+
+  describe("stable non-category descriptor contract", () => {
+    it("Custom_agent_descriptor_exposes_only_normalized_adapter_fields", async () => {
+      const config = cfg(`
+        agent router {
+          display_name "Task Router"
+          description "Routes implementation work"
+          prompt "Route with {{agent.name}}."
+          models ["model-primary", "model-fallback"]
+          mode all
+          temperature 0.4
+          skills ["tdd", "code-review"]
+          tool_policy {
+            read allow
+            write ask
+            execute deny
+            delegate allow
+            network deny
+          }
+          triggers [
+            { domain "Implementation" trigger "Build feature" }
+          ]
+        }
+        agent helper {
+          description "Implementation helper"
+          prompt "Help."
+          triggers [
+            { domain "Code" trigger "Small implementation" }
+          ]
+        }
+      `);
+
+      const descriptor = await descriptorFor(
+        "router",
+        config.agents.router,
+        config,
+        config.agents,
+      );
+
+      expect(descriptor).toMatchObject({
+        name: "router",
+        displayName: "Task Router",
+        description: "Routes implementation work",
+        composedPrompt: expect.stringContaining("Route with router."),
+        models: ["model-primary", "model-fallback"],
+        mode: "all",
+        temperature: 0.4,
+        rawToolPolicy: {
+          read: "allow",
+          write: "ask",
+          execute: "deny",
+          delegate: "allow",
+          network: "deny",
+        },
+        effectiveToolPolicy: {
+          read: "allow",
+          write: "ask",
+          execute: "deny",
+          delegate: "allow",
+          network: "deny",
+        },
+        skills: ["tdd", "code-review"],
+      });
+      expect(descriptor.delegationTargets).toEqual([
+        {
+          name: "helper",
+          description: "Implementation helper",
+          triggers: [{ domain: "Code", trigger: "Small implementation" }],
+        },
+      ]);
+    });
+
+    it("Descriptor_contains_composedPrompt_not_raw_prompt_sources", async () => {
+      const config = cfg(`
+        agent prompt-source-check {
+          prompt "Base {{agent.name}}."
+          prompt_append "Append {{agent.mode}}."
+        }
+      `);
+
+      const descriptor = await descriptorFor(
+        "prompt-source-check",
+        config.agents["prompt-source-check"],
+        config,
+        config.agents,
+      );
+      const descriptorRecord = descriptor as unknown as Record<string, unknown>;
+
+      expect(descriptor.composedPrompt).toBe(
+        "Base prompt-source-check.\n\nAppend subagent.",
+      );
+      expect("prompt" in descriptorRecord).toBe(false);
+      expect("prompt_file" in descriptorRecord).toBe(false);
+      expect("prompt_append" in descriptorRecord).toBe(false);
+    });
+
+    it("Descriptor_skills_are_requested_names_only", async () => {
+      const config = cfg(`
+        agent skill-check {
+          prompt "Skill check."
+          skills ["tdd", "security-review"]
+        }
+      `);
+
+      const descriptor = await descriptorFor(
+        "skill-check",
+        config.agents["skill-check"],
+        config,
+        config.agents,
+      );
+      const serialized = JSON.stringify(descriptor);
+
+      expect(descriptor.skills).toEqual(["tdd", "security-review"]);
+      for (const skill of descriptor.skills) {
+        expect(typeof skill).toBe("string");
+      }
+      expect(serialized).not.toContain("prompt_file");
+      expect(serialized).not.toContain("/skills/");
+      expect(serialized).not.toContain("contents");
+      expect(serialized).not.toContain("metadata");
+    });
+  });
+
+  describe("category metadata", () => {
+    it("Generated_category_shuttle_descriptor_includes_normalized_category_metadata", async () => {
+      const config = cfg(`
+        agent shuttle {
+          prompt "Specialist for {{category.name}}."
+          models ["model-shuttle"]
+        }
+        category frontend {
+          description "Frontend UI"
+          patterns ["src/components/**", "src/pages/**/*.tsx"]
+          models ["model-frontend"]
+        }
+      `);
+      const shuttlesResult = generateCategoryShuttles(config);
+      if (shuttlesResult.isErr()) throw new Error(shuttlesResult.error.message);
+      const generatedAgents = Object.fromEntries(
+        Object.entries(shuttlesResult.value).map(([name, generated]) => [
+          name,
+          generated.config,
+        ]),
+      );
+      const allAgents = { ...config.agents, ...generatedAgents };
+
+      const descriptor = await descriptorFor(
+        "shuttle-frontend",
+        shuttlesResult.value["shuttle-frontend"].config,
+        config,
+        allAgents,
+        {
+          name: "frontend",
+          description: config.categories.frontend?.description,
+          patterns: config.categories.frontend?.patterns,
+          isCategory: true,
+        },
+      );
+
+      expect(descriptor.name).toBe("shuttle-frontend");
+      expect(descriptor.category).toEqual({
+        name: "frontend",
+        description: "Frontend UI",
+        patterns: ["src/components/**", "src/pages/**/*.tsx"],
+      });
+    });
+
+    it("Regular_agent_descriptor_omits_category_metadata", async () => {
+      const config = cfg(`
+        agent helper {
+          prompt "General helper."
+        }
+      `);
+
+      const descriptor = await descriptorFor(
+        "helper",
+        config.agents.helper,
+        config,
+        config.agents,
+      );
+
+      expect(descriptor.category).toBeUndefined();
     });
   });
 

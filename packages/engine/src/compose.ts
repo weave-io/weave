@@ -38,8 +38,9 @@ export interface CategoryMetadata extends CategoryInput {
 
 export interface AgentDescriptor {
   name: string;
+  displayName?: string;
   description?: string;
-  category?: CategoryMetadata;
+  category?: AgentDescriptorCategory;
   composedPrompt: string;
   models: string[];
   mode: AgentMode;
@@ -48,6 +49,12 @@ export interface AgentDescriptor {
   rawToolPolicy: ToolPolicy | undefined;
   delegationTargets: DelegationTarget[];
   skills: string[];
+}
+
+export interface AgentDescriptorCategory {
+  name: string;
+  description?: string;
+  patterns: string[];
 }
 
 export interface DelegationTarget {
@@ -379,16 +386,16 @@ export function composeAgentDescriptor(
 
       return ok({
         name: agentName,
+        displayName: agentConfig.display_name,
         description: agentConfig.description,
         category:
-          category !== undefined
-            ? {
+          category === undefined
+            ? undefined
+            : {
                 name: category.name,
                 description: category.description,
                 patterns: [...(category.patterns ?? [])],
-                isCategory: true,
-              }
-            : undefined,
+              },
         composedPrompt,
         models: agentConfig.models ?? [],
         mode: agentConfig.mode ?? "subagent",

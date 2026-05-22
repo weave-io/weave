@@ -75,6 +75,28 @@ describe("generateCategoryShuttles", () => {
         isCategory: true,
       });
     });
+
+    it("(e) generated shuttle key is associated with source category metadata", () => {
+      const config = cfg(`
+        agent shuttle { prompt "Base shuttle." models ["claude-sonnet-4-5"] }
+        category frontend {
+          description "Frontend UI"
+          patterns ["src/components/**", "src/pages/**/*.tsx"]
+          models ["gpt-5"]
+        }
+      `);
+      const result = generateCategoryShuttles(config);
+      if (result.isErr()) throw new Error(result.error.message);
+
+      expect(result.value["shuttle-frontend"]?.config.name).toBe(
+        "shuttle-frontend",
+      );
+      expect(config.categories.frontend?.description).toBe("Frontend UI");
+      expect(config.categories.frontend?.patterns).toEqual([
+        "src/components/**",
+        "src/pages/**/*.tsx",
+      ]);
+    });
   });
 
   describe("inheritance", () => {

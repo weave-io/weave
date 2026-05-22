@@ -5,7 +5,7 @@ Weave is a harness-agnostic orchestration framework with two cooperating halves:
 1. **Core Weave API** (`@weave/core`, `@weave/config`, `@weave/engine`) parses DSL config, normalizes agent intent, resolves/composes prompt and policy data, and exposes pure helper APIs.
 2. **Adapters** (`@weave/adapter-opencode`, `@weave/adapter-pi`, etc.) enable Weave inside a concrete harness by discovering harness-owned resources, translating normalized intent, and filling feature gaps when the harness lacks native support.
 
-**Related:** [Product Vision](product-vision.md) · [Claude Code Adapter](claude-code-adapter.md) · [Model Resolution](model-resolution.md) · [Config Loading](config-loading.md) · [Prompt Composition](prompt-composition.md) · [Tool Policy Evaluation](tool-policy-evaluation.md) · [Runtime Persistence Spec](specs/12-spec-runtime-persistence/12-spec-runtime-persistence.md) · [ADR 0002 — Runtime Persistence Store](adr/0002-runtime-persistence-store.md) · [Spec 05 — Skill Resolution](specs/05-spec-skill-loader/05-spec-skill-loader.md) · [Spec 07 — Adapter Capability Contract](specs/07-spec-adapter-capability-contract/07-spec-adapter-capability-contract.md) · [Spec 08 — Abstract Tool Policy Evaluation](specs/08-spec-abstract-tool-policy-evaluation/08-spec-abstract-tool-policy-evaluation.md) · [Spec 09 — Adapter-Provided Skill Resolution](specs/09-spec-adapter-provided-skill-resolution/09-spec-adapter-provided-skill-resolution.md) · [Execution Lifecycle Surface](#execution-lifecycle-surface) · [Legacy Architecture](legacy-architecture.md)
+**Related:** [Product Vision](product-vision.md) · [Claude Code Adapter](claude-code-adapter.md) · [Model Resolution](model-resolution.md) · [Config Loading](config-loading.md) · [Prompt Composition](prompt-composition.md) · [Tool Policy Evaluation](tool-policy-evaluation.md) · [Runtime Persistence Spec](specs/12-spec-runtime-persistence/12-spec-runtime-persistence.md) · [ADR 0002 — Runtime Persistence Store](adr/0002-runtime-persistence-store.md) · [Spec 05 — Skill Resolution](specs/05-spec-skill-loader/05-spec-skill-loader.md) · [Spec 07 — Adapter Capability Contract](specs/07-spec-adapter-capability-contract/07-spec-adapter-capability-contract.md) · [Spec 08 — Abstract Tool Policy Evaluation](specs/08-spec-abstract-tool-policy-evaluation/08-spec-abstract-tool-policy-evaluation.md) · [Spec 09 — Adapter-Provided Skill Resolution](specs/09-spec-adapter-provided-skill-resolution/09-spec-adapter-provided-skill-resolution.md) · [Spec 16 — Stable Adapter Descriptor Contract](specs/16-spec-stable-adapter-descriptor-contract/16-spec-stable-adapter-descriptor-contract.md) · [Execution Lifecycle Surface](#execution-lifecycle-surface) · [Legacy Architecture](legacy-architecture.md)
 
 ---
 
@@ -154,6 +154,44 @@ Key rules:
 - The deprecated `loadSkill()` method on `HarnessAdapter` is superseded by `loadAvailableSkills()` and will be removed in a future spec.
 
 See [Spec 09 — Adapter-Provided Skill Resolution](specs/09-spec-adapter-provided-skill-resolution/09-spec-adapter-provided-skill-resolution.md) for the full vocabulary, resolution semantics, and proof artifacts.
+
+---
+
+## Stable Adapter Descriptor Contract
+
+`AgentDescriptor` is the stable adapter-facing materialization contract for agent descriptors. The engine owns descriptor construction from normalized Weave config: internal `name`, optional `displayName`, composed prompt, ordered model intent, abstract raw/effective tool policy, trigger/delegation metadata, raw requested skill names, and generated category metadata.
+
+Adapters own all concrete materialization derived from that descriptor: harness resource ids, generated files, plugin entries, concrete model availability checks, selected-model lookup, concrete model-field formatting, concrete tool-name mapping, permissions enforcement, harness resource generation, and feature-gap emulation.
+
+Key rules:
+
+- `descriptor.name` is the stable harness-neutral internal id; adapters use it for durable resource identity and must not rewrite it from labels.
+- `descriptor.displayName` is optional presentation metadata composed from Weave-owned config such as agent `display_name`; adapters may show it when supported, but it is not stable identity and must not replace `descriptor.name`.
+- `descriptor.composedPrompt` is the final prompt; raw `prompt`, `prompt_file`, and `prompt_append` are not adapter inputs.
+- `descriptor.models` is ordered model intent, not proof of model availability, not selected-model state, and not a harness-formatted model field.
+- `descriptor.rawToolPolicy` and `descriptor.effectiveToolPolicy` are abstract policy fields; adapters map them to concrete harness permissions.
+- `descriptor.category` is present only for generated category shuttles and carries category name, optional description, and patterns.
+- Disabled agents and suppressed category shuttles are omitted from materialization rather than emitted as disabled descriptors.
+- Workflow and command materialization are outside the `AgentDescriptor` contract.
+
+### Stable descriptor field table
+
+| Field | Owner | Stable meaning | Adapter responsibility |
+| --- | --- | --- | --- |
+| `name` | Engine | Stable harness-neutral internal id. | Use for durable resource identity; map to harness ids without changing Weave identity. |
+| `displayName` | Engine | Optional presentation metadata from Weave config. | Render when supported; apply harness-specific label formatting if needed. |
+| `description` | Engine | Optional user-authored description. | Surface as harness description/help text where supported. |
+| `composedPrompt` | Engine | Final rendered prompt after prompt source loading, delegation fallback, and `prompt_append`. | Materialize directly; do not re-read raw prompt sources. |
+| `models` | Engine | Ordered model intent from config/category declarations. | Check availability, selected model state, fallback choice, and concrete model-field formatting. |
+| `mode` | Engine | Harness-neutral context hint: `primary`, `subagent`, or `all`. | Translate into concrete harness agent roles or document unsupported behavior. |
+| `temperature` | Engine | Optional numeric generation preference. | Format or omit according to harness model settings. |
+| `rawToolPolicy` | Engine | Original abstract `tool_policy`, when declared. | Map abstract capabilities to concrete tool names and permission settings. |
+| `effectiveToolPolicy` | Engine | Abstract policy with every capability resolved. | Enforce through concrete harness permissions. |
+| `delegationTargets` | Engine | Harness-neutral eligible delegation targets and triggers. | Generate routing affordances, subagent references, commands, or unsupported notices. |
+| `skills` | Engine | Requested skill names only. | Resolve/load skill payloads through adapter-owned discovery; never expect paths/contents here. |
+| `category` | Engine | Optional generated-shuttle metadata: category name, optional description, declared patterns. | Apply harness routing/materialization conventions without expanding globs in the engine. |
+
+See [Spec 16 — Stable Adapter Descriptor Contract](specs/16-spec-stable-adapter-descriptor-contract/16-spec-stable-adapter-descriptor-contract.md) for the normative field table, examples, disabled-entry rules, and proof artifacts.
 
 ---
 

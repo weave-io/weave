@@ -112,9 +112,10 @@
   - function composeAgentDescriptor: (agentName, agentConfig, config, allAgents, AgentConfig>, category?) => ResultAsync<AgentDescriptor, ComposeError>
   - interface CategoryMetadata
   - interface AgentDescriptor
+  - interface AgentDescriptorCategory
   - interface DelegationTarget
   - type PromptTemplateReason
-  - type ComposeError
+  - _...1 more_
 - `packages/engine/src/descriptors.ts`
   - function generateCategoryShuttles: (config) => Result<
   - interface GeneratedCategoryShuttle

@@ -126,7 +126,6 @@ describe("materializeAgents", () => {
         name: "frontend",
         description: undefined,
         patterns: ["src/**/*.tsx"],
-        isCategory: true,
       });
     });
 

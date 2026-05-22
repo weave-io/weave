@@ -174,6 +174,7 @@ export type TemplateContextError = {
 export interface CategoryInput {
   name: string;
   description?: string;
+  patterns?: string[];
 }
 
 /** Inputs for building an `AgentPromptTemplateContext`. */
