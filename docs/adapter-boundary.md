@@ -146,14 +146,14 @@ See [Spec 09 — Adapter-Provided Skill Resolution](specs/09-spec-adapter-provid
 
 `AgentDescriptor` is the stable adapter-facing materialization contract for agent descriptors. The engine owns descriptor construction from normalized Weave config: internal `name`, optional `displayName`, composed prompt, ordered model intent, abstract raw/effective tool policy, trigger/delegation metadata, raw requested skill names, and generated category metadata.
 
-Adapters own all concrete materialization derived from that descriptor: harness resource ids, generated files, plugin entries, concrete model resolution, concrete tool-name mapping, permissions enforcement, and feature-gap emulation.
+Adapters own all concrete materialization derived from that descriptor: harness resource ids, generated files, plugin entries, concrete model availability checks, selected-model lookup, concrete model-field formatting, concrete tool-name mapping, permissions enforcement, harness resource generation, and feature-gap emulation.
 
 Key rules:
 
 - `descriptor.name` is the stable harness-neutral internal id; adapters use it for durable resource identity and must not rewrite it from labels.
 - `descriptor.displayName` is optional presentation metadata composed from Weave-owned config such as agent `display_name`; adapters may show it when supported, but it is not stable identity and must not replace `descriptor.name`.
 - `descriptor.composedPrompt` is the final prompt; raw `prompt`, `prompt_file`, and `prompt_append` are not adapter inputs.
-- `descriptor.models` is ordered model intent, not proof of model availability and not selected-model state.
+- `descriptor.models` is ordered model intent, not proof of model availability, not selected-model state, and not a harness-formatted model field.
 - `descriptor.rawToolPolicy` and `descriptor.effectiveToolPolicy` are abstract policy fields; adapters map them to concrete harness permissions.
 - `descriptor.category` is present only for generated category shuttles and carries category name, optional description, and patterns.
 - Disabled agents and suppressed category shuttles are omitted from materialization rather than emitted as disabled descriptors.

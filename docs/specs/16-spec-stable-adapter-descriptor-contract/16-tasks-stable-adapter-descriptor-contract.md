@@ -43,7 +43,7 @@
 - [x] 1.4 Verify `AgentDescriptor` remains exported from `packages/engine/src/index.ts` for adapter imports.
 - [x] 1.5 Document `name` versus `displayName` semantics in `docs/adapter-boundary.md`.
 
-### [ ] 2.0 Stabilize non-category descriptor contract fields
+### [x] 2.0 Stabilize non-category descriptor contract fields
 
 #### 2.0 Proof Artifact(s)
 
@@ -53,11 +53,11 @@
 
 #### 2.0 Tasks
 
-- [ ] 2.1 Review current `AgentDescriptor` fields in `compose.ts` against Spec 16 and keep the contract limited to composed prompt, ordered model intent, abstract policy, delegation targets, and requested skill names.
-- [ ] 2.2 Add `compose.test.ts` coverage for a custom agent with inline prompt, models, tool policy, requested skills, and delegation-capable configuration.
-- [ ] 2.3 Add `compose.test.ts` coverage proving raw prompt source fields are not present on returned descriptors.
-- [ ] 2.4 Update `docs/adapter-boundary.md` to state that model availability, selected-model lookup, concrete model field formatting, concrete tool mapping, and harness resource generation remain adapter-owned.
-- [ ] 2.5 Confirm descriptor skill data remains requested skill names only and does not include resolved skill payloads, paths, contents, or adapter-private metadata.
+- [x] 2.1 Review current `AgentDescriptor` fields in `compose.ts` against Spec 16 and keep the contract limited to composed prompt, ordered model intent, abstract policy, delegation targets, and requested skill names.
+- [x] 2.2 Add `compose.test.ts` coverage for a custom agent with inline prompt, models, tool policy, requested skills, and delegation-capable configuration.
+- [x] 2.3 Add `compose.test.ts` coverage proving raw prompt source fields are not present on returned descriptors.
+- [x] 2.4 Update `docs/adapter-boundary.md` to state that model availability, selected-model lookup, concrete model field formatting, concrete tool mapping, and harness resource generation remain adapter-owned.
+- [x] 2.5 Confirm descriptor skill data remains requested skill names only and does not include resolved skill payloads, paths, contents, or adapter-private metadata.
 
 ### [ ] 3.0 Represent category metadata and disabled entries in descriptors
 

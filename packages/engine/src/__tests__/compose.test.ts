@@ -596,6 +596,128 @@ describe("composeAgentDescriptor", () => {
     });
   });
 
+  describe("stable non-category descriptor contract", () => {
+    it("Custom_agent_descriptor_exposes_only_normalized_adapter_fields", async () => {
+      const config = cfg(`
+        agent router {
+          display_name "Task Router"
+          description "Routes implementation work"
+          prompt "Route with {{agent.name}}."
+          models ["model-primary", "model-fallback"]
+          mode all
+          temperature 0.4
+          skills ["tdd", "code-review"]
+          tool_policy {
+            read allow
+            write ask
+            execute deny
+            delegate allow
+            network deny
+          }
+          triggers [
+            { domain "Implementation" trigger "Build feature" }
+          ]
+        }
+        agent helper {
+          description "Implementation helper"
+          prompt "Help."
+          triggers [
+            { domain "Code" trigger "Small implementation" }
+          ]
+        }
+      `);
+
+      const descriptor = await descriptorFor(
+        "router",
+        config.agents.router,
+        config,
+        config.agents,
+      );
+
+      expect(descriptor).toMatchObject({
+        name: "router",
+        displayName: "Task Router",
+        description: "Routes implementation work",
+        composedPrompt: expect.stringContaining("Route with router."),
+        models: ["model-primary", "model-fallback"],
+        mode: "all",
+        temperature: 0.4,
+        rawToolPolicy: {
+          read: "allow",
+          write: "ask",
+          execute: "deny",
+          delegate: "allow",
+          network: "deny",
+        },
+        effectiveToolPolicy: {
+          read: "allow",
+          write: "ask",
+          execute: "deny",
+          delegate: "allow",
+          network: "deny",
+        },
+        skills: ["tdd", "code-review"],
+      });
+      expect(descriptor.delegationTargets).toEqual([
+        {
+          name: "helper",
+          description: "Implementation helper",
+          triggers: [{ domain: "Code", trigger: "Small implementation" }],
+        },
+      ]);
+    });
+
+    it("Descriptor_contains_composedPrompt_not_raw_prompt_sources", async () => {
+      const config = cfg(`
+        agent prompt-source-check {
+          prompt "Base {{agent.name}}."
+          prompt_append "Append {{agent.mode}}."
+        }
+      `);
+
+      const descriptor = await descriptorFor(
+        "prompt-source-check",
+        config.agents["prompt-source-check"],
+        config,
+        config.agents,
+      );
+      const descriptorRecord = descriptor as unknown as Record<string, unknown>;
+
+      expect(descriptor.composedPrompt).toBe(
+        "Base prompt-source-check.\n\nAppend subagent.",
+      );
+      expect("prompt" in descriptorRecord).toBe(false);
+      expect("prompt_file" in descriptorRecord).toBe(false);
+      expect("prompt_append" in descriptorRecord).toBe(false);
+    });
+
+    it("Descriptor_skills_are_requested_names_only", async () => {
+      const config = cfg(`
+        agent skill-check {
+          prompt "Skill check."
+          skills ["tdd", "security-review"]
+        }
+      `);
+
+      const descriptor = await descriptorFor(
+        "skill-check",
+        config.agents["skill-check"],
+        config,
+        config.agents,
+      );
+      const serialized = JSON.stringify(descriptor);
+
+      expect(descriptor.skills).toEqual(["tdd", "security-review"]);
+      for (const skill of descriptor.skills) {
+        expect(typeof skill).toBe("string");
+      }
+      expect(serialized).not.toContain("prompt_file");
+      expect(serialized).not.toContain("/skills/");
+      expect(serialized).not.toContain("contents");
+      expect(serialized).not.toContain("metadata");
+    });
+  });
+
   describe("template rendering", () => {
     it("Inline_template_renders_agent_name_into_composedPrompt", async () => {
       const config = cfg(`
