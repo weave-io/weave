@@ -76,6 +76,21 @@ const resolvedSkills = resolveSkillsForAgent({
 
 Weave does **not** scan `~/.weave/skills/`, `.weave/skills/`, OpenCode skill directories, Pi skill directories, or Claude Code skill directories. Those conventions belong to adapters.
 
+### Category Metadata on Generated Shuttles
+
+The engine preserves source category context on generated category shuttle descriptors through `AgentDescriptor.category?: CategoryMetadata`. This metadata is normalized, harness-agnostic intent for adapters that need to materialize category-aware routing or harness configuration.
+
+`CategoryMetadata` contains:
+
+- `name` — the source category name from `.weave` config.
+- `description?` — the category description when declared.
+- `patterns` — the category's declared glob strings exactly as authored; these are **not** expanded file lists.
+- `isCategory: true` — an explicit marker that the descriptor was generated from a category.
+
+Adapters MAY use `category.patterns` when generating harness-specific routing rules, plugin config, or delegation metadata. Concrete routing decisions remain adapter-owned because only adapters know the target harness' routing model and resource conventions.
+
+The engine MUST NOT expand category globs, scan project files to match patterns, inspect harness-owned resources, or infer concrete harness routes. It only carries declared strings forward on the descriptor.
+
 ### Runtime Store
 
 The engine owns durable Weave runtime state under `.weave/runtime/**`, including the default `.weave/runtime/weave.db` Runtime Store described in [ADR 0002](adr/0002-runtime-persistence-store.md).
