@@ -140,7 +140,6 @@ import {
   discoverAndParse, // Discovery only
   mergeConfigs, // Merge only
   resolvePromptPaths, // Path resolution only
-  BUILTIN_AGENT_NAMES, // ["loom", "tapestry", ...]
 } from "@weave/config";
 ```
 

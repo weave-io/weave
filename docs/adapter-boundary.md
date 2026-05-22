@@ -162,7 +162,7 @@ Key rules:
 - `loadAvailableSkills()` is adapter-owned — the engine never scans skill directories itself.
 - `resolveSkillsForAgent()` and `resolveSkillsForConfig()` are pure engine helpers — they accept explicit `availableSkills` input and return `Result<ResolvedSkill[], SkillResolutionError[]>`.
 - `RunAgentEffect.resolvedSkills` carries only engine-resolved skill references; adapter-owned metadata (paths, content, tokens) must not appear in emitted effects.
-- The deprecated `loadSkill()` method on `HarnessAdapter` is superseded by `loadAvailableSkills()` and will be removed in a future spec.
+- The deprecated `loadSkill()` method on `HarnessAdapter` was superseded by `loadAvailableSkills()`. It remains on the interface marked `@deprecated` for backward compatibility; new adapters should not implement it.
 
 See [Spec 09 — Adapter-Provided Skill Resolution](specs/09-spec-adapter-provided-skill-resolution/09-spec-adapter-provided-skill-resolution.md) for the full vocabulary, resolution semantics, and proof artifacts.
 
@@ -210,8 +210,8 @@ See [Spec 16 — Stable Adapter Descriptor Contract](specs/16-spec-stable-adapte
 
 Some current code still uses early placeholder methods such as `loadSkill()` or `registerHook()` on `HarnessAdapter`. Treat these as **transitional implementation details**, not product architecture precedent.
 
-- `loadSkill()` is deprecated and superseded by `loadAvailableSkills()` (see Spec 09 above). Adapters should provide the full available-skill list upfront; the engine resolves references against it.
-- `registerHook()` will be replaced or reframed around adapter-owned lifecycle event mapping into engine policy surfaces.
+- `loadSkill()` was deprecated and superseded by `loadAvailableSkills()` (see Spec 09 above). Adapters should provide the full available-skill list upfront; the engine resolves references against it. The method remains on the interface marked `@deprecated` for backward compatibility.
+- `registerHook()` was superseded by the Execution Lifecycle Surface (Spec 13). Adapters should map harness events into the 7 typed lifecycle functions instead. The method remains on the interface marked `@deprecated` for backward compatibility.
 
 Future specs should move toward this boundary:
 
@@ -349,7 +349,7 @@ if (input.toolName === "bash") { /* harness-specific logic */ }
 
 ### `registerHook()` is Superseded
 
-The `registerHook()` method on `HarnessAdapter` is deprecated and will be removed in a future spec. Adapters should map harness events into the lifecycle surface instead:
+The `registerHook()` method on `HarnessAdapter` was superseded by the Execution Lifecycle Surface (Spec 13). It remains on the interface marked `@deprecated` for backward compatibility. Adapters should map harness events into the lifecycle surface instead:
 
 ```ts
 // ❌ Old: engine registers a concrete harness hook
