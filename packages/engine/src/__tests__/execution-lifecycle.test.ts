@@ -1775,7 +1775,7 @@ describe("completeStep (Runtime Store)", () => {
     expect(instanceResult.value.status).toBe("running");
   });
 
-  it("blocked outcome: updates instance to blocked status", async () => {
+  it("blocked outcome: updates instance to blocked status and releases lease", async () => {
     const store = createInMemoryRuntimeStore();
     const { instanceId, activeLeaseId } = await startInstance(store, "blocked");
 
@@ -1791,7 +1791,9 @@ describe("completeStep (Runtime Store)", () => {
 
     expect(result.isOk()).toBe(true);
     if (!result.isOk()) return;
-    expect(result.value.effects).toHaveLength(0);
+    // blocked is terminal — lease is released and complete-execution is emitted.
+    expect(result.value.effects).toHaveLength(1);
+    expect(result.value.effects[0]?.kind).toBe("complete-execution");
 
     const instanceResult = await store.instances.getById(instanceId);
     expect(instanceResult.isOk()).toBe(true);
@@ -1799,7 +1801,7 @@ describe("completeStep (Runtime Store)", () => {
     expect(instanceResult.value.status).toBe("blocked");
   });
 
-  it("failed outcome: updates instance to failed status with errorMessage", async () => {
+  it("failed outcome: updates instance to failed status with errorMessage and releases lease", async () => {
     const store = createInMemoryRuntimeStore();
     const { instanceId, activeLeaseId } = await startInstance(store, "failed");
 
@@ -1815,7 +1817,9 @@ describe("completeStep (Runtime Store)", () => {
 
     expect(result.isOk()).toBe(true);
     if (!result.isOk()) return;
-    expect(result.value.effects).toHaveLength(0);
+    // failed is terminal — lease is released and complete-execution is emitted.
+    expect(result.value.effects).toHaveLength(1);
+    expect(result.value.effects[0]?.kind).toBe("complete-execution");
 
     const instanceResult = await store.instances.getById(instanceId);
     expect(instanceResult.isOk()).toBe(true);
@@ -3114,16 +3118,13 @@ describe("dispatchStep: configured workflow step resolution", () => {
 
   it("resolves to first step when neither stepName nor currentStepName is set", async () => {
     const store = createInMemoryRuntimeStore();
-    // Create instance without currentStepName
-    const instanceId = createWorkflowInstanceId("cfg-dispatch-first-step");
-    const startResult = await startExecution(
-      { workflowInstanceId: instanceId, ownerId: "owner-first-step" },
+    // Create instance with context so workflowName is correctly set on the instance.
+    const { instanceId, activeLeaseId } = await startWithContext(
       store,
+      "first-step",
     );
-    if (!startResult.isOk()) throw new Error("startExecution failed");
-    const activeLeaseId = startResult.value.leaseId;
 
-    // Clear currentStepName
+    // Clear currentStepName to simulate a fresh dispatch with no current step.
     await store.instances.update(instanceId, { currentStepName: null });
 
     const result = await dispatchStep(

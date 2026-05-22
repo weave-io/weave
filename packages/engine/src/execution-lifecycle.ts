@@ -1692,14 +1692,12 @@ export function dispatchStep(
           }
 
           // Configured dispatch: resolve step from workflow config.
-          const workflowConfig =
-            input.context.workflows[existing.workflowName] ??
-            input.context.workflows[input.context.workflowName];
+          const workflowConfig = input.context.workflows[existing.workflowName];
 
           if (workflowConfig === undefined) {
             return errAsync(
               lifecycleNotFoundError(
-                "workflow",
+                "WorkflowConfig",
                 existing.workflowName,
                 `Workflow "${existing.workflowName}" not found in provided workflow map`,
               ),
@@ -2036,20 +2034,6 @@ function buildUpdateInput(
 }
 
 /**
- * Build legacy (no-context) effects for a completed step.
- * Only emits `pause-execution` for paused outcome; all other outcomes return [].
- */
-function buildLegacyCompleteStepEffects(
-  outcome: StepCompletionSignal["outcome"],
-  workflowInstanceId: WorkflowInstanceId,
-): readonly LifecycleEffect[] {
-  if (outcome === "paused") {
-    return [{ kind: "pause-execution", workflowInstanceId }];
-  }
-  return [];
-}
-
-/**
  * Persist a list of artifact references sequentially.
  * Returns `ok(undefined)` when all artifacts are stored, or the first
  * persistence error encountered.
@@ -2177,9 +2161,10 @@ function buildAutoAdvanceEffects(
       ]);
   }
 
-  // Non-final step — advance to next step and emit dispatch-agent effect.
+  // Non-final step — validate next step inputs, advance, and emit dispatch-agent effect.
+  // Fetch the current instance (with newly persisted artifacts) before advancing.
   return store.instances
-    .update(workflowInstanceId, { currentStepName: nextStep.name })
+    .getById(workflowInstanceId)
     .mapErr(
       (storeError): LifecycleError =>
         lifecyclePersistenceError(storeError.message, {
@@ -2187,19 +2172,27 @@ function buildAutoAdvanceEffects(
           message: storeError.message,
         }),
     )
-    .andThen(() =>
-      // Fetch the updated instance (with newly persisted artifacts) for prompt rendering.
-      store.instances.getById(workflowInstanceId).mapErr(
-        (storeError): LifecycleError =>
-          lifecyclePersistenceError(storeError.message, {
-            type: storeError.type,
-            message: storeError.message,
-          }),
-      ),
+    .andThen((currentInstance) => {
+      // Validate next step's declared inputs are available before advancing.
+      const inputsCheck = validateStepInputs(nextStep, currentInstance);
+      if (inputsCheck.isErr()) return errAsync(inputsCheck.error);
+      return okAsync(currentInstance);
+    })
+    .andThen((currentInstance) =>
+      store.instances
+        .update(workflowInstanceId, { currentStepName: nextStep.name })
+        .mapErr(
+          (storeError): LifecycleError =>
+            lifecyclePersistenceError(storeError.message, {
+              type: storeError.type,
+              message: storeError.message,
+            }),
+        )
+        .map(() => currentInstance),
     )
-    .andThen((updatedInstance) => {
-      const artifactNames = updatedInstance.artifacts.map((a) => a.name);
-      const promptContext = buildStepPromptContext(updatedInstance, nextStep);
+    .andThen((currentInstance) => {
+      const artifactNames = currentInstance.artifacts.map((a) => a.name);
+      const promptContext = buildStepPromptContext(currentInstance, nextStep);
       const promptResult = renderStepPrompt(
         nextStep.prompt,
         promptContext,
@@ -2342,13 +2335,12 @@ export function completeStep(
           // handle gate logic, run plan checks, persist artifacts, auto-advance.
           if (input.context !== undefined) {
             const workflowConfig =
-              input.context.workflows[existing.workflowName] ??
-              input.context.workflows[input.context.workflowName];
+              input.context.workflows[existing.workflowName];
 
             if (workflowConfig === undefined) {
               return errAsync(
                 lifecycleNotFoundError(
-                  "workflow",
+                  "WorkflowConfig",
                   existing.workflowName,
                   `Workflow "${existing.workflowName}" not found in provided workflow map`,
                 ),
@@ -2414,7 +2406,8 @@ export function completeStep(
             }
 
             // For non-success outcomes (blocked, failed, paused) with context:
-            // apply status update and legacy effects, no auto-advance.
+            // apply status update, persist artifacts, release lease for terminal
+            // outcomes (blocked/failed), and emit the appropriate effect.
             if (outcome !== "success") {
               const updateInput = buildUpdateInput(outcome, message);
               return store.instances
@@ -2436,14 +2429,39 @@ export function completeStep(
                     artifacts,
                   );
                 })
-                .map(
-                  (): CompleteStepOutput => ({
-                    effects: buildLegacyCompleteStepEffects(
-                      outcome,
-                      input.workflowInstanceId,
-                    ),
-                  }),
-                );
+                .andThen(
+                  (): ResultAsync<
+                    readonly LifecycleEffect[],
+                    LifecycleError
+                  > => {
+                    // Paused is resumable — emit pause effect, keep lease held.
+                    if (outcome === "paused") {
+                      return okAsync([
+                        {
+                          kind: "pause-execution" as const,
+                          workflowInstanceId: input.workflowInstanceId,
+                        },
+                      ]);
+                    }
+                    // Blocked/failed are terminal — release lease and emit complete-execution.
+                    return store.leases
+                      .release(activeLease.id, activeLease.ownerId)
+                      .mapErr(
+                        (storeError): LifecycleError =>
+                          lifecyclePersistenceError(storeError.message, {
+                            type: storeError.type,
+                            message: storeError.message,
+                          }),
+                      )
+                      .map((): readonly LifecycleEffect[] => [
+                        {
+                          kind: "complete-execution",
+                          workflowInstanceId: input.workflowInstanceId,
+                        },
+                      ]);
+                  },
+                )
+                .map((effects): CompleteStepOutput => ({ effects }));
             }
 
             // Success path: run plan checks based on stepConfig.completion.method
@@ -2515,7 +2533,8 @@ export function completeStep(
               .map((effects): CompleteStepOutput => ({ effects }));
           }
 
-          // Legacy path (no context): update status, persist artifacts, return legacy effects.
+          // Legacy path (no context): update status, persist artifacts, release lease
+          // for terminal outcomes (blocked/failed), and return appropriate effects.
           const updateInput = buildUpdateInput(outcome, message);
 
           return store.instances
@@ -2537,14 +2556,41 @@ export function completeStep(
                 artifacts,
               );
             })
-            .map(
-              (): CompleteStepOutput => ({
-                effects: buildLegacyCompleteStepEffects(
-                  outcome,
-                  input.workflowInstanceId,
-                ),
-              }),
-            );
+            .andThen(
+              (): ResultAsync<readonly LifecycleEffect[], LifecycleError> => {
+                // Paused is resumable — emit pause effect, keep lease held.
+                if (outcome === "paused") {
+                  return okAsync([
+                    {
+                      kind: "pause-execution" as const,
+                      workflowInstanceId: input.workflowInstanceId,
+                    },
+                  ]);
+                }
+                // Success is handled by the auto-advance path above; this is the
+                // legacy no-context success case — no lease release needed here.
+                if (outcome === "success") {
+                  return okAsync([]);
+                }
+                // Blocked/failed are terminal — release lease and emit complete-execution.
+                return store.leases
+                  .release(activeLease.id, activeLease.ownerId)
+                  .mapErr(
+                    (storeError): LifecycleError =>
+                      lifecyclePersistenceError(storeError.message, {
+                        type: storeError.type,
+                        message: storeError.message,
+                      }),
+                  )
+                  .map((): readonly LifecycleEffect[] => [
+                    {
+                      kind: "complete-execution",
+                      workflowInstanceId: input.workflowInstanceId,
+                    },
+                  ]);
+              },
+            )
+            .map((effects): CompleteStepOutput => ({ effects }));
         }),
     );
 }
