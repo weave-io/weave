@@ -55,7 +55,25 @@ describe("generateCategoryShuttles", () => {
         category frontend { patterns ["src/components/**"] models ["gpt-5"] }
       `);
 
-      expect(result["shuttle-frontend"]?.name).toBe("shuttle-frontend");
+      expect(result["shuttle-frontend"]?.config.name).toBe("shuttle-frontend");
+    });
+
+    it("(e) generated shuttle carries source category metadata", () => {
+      const result = shuttles(`
+        agent shuttle { prompt "Base shuttle." models ["claude-sonnet-4-5"] }
+        category frontend {
+          description "Frontend UI, styling, accessibility"
+          patterns ["src/components/**", "**/*.tsx"]
+          models ["gpt-5"]
+        }
+      `);
+
+      expect(result["shuttle-frontend"]?.categoryMeta).toEqual({
+        name: "frontend",
+        description: "Frontend UI, styling, accessibility",
+        patterns: ["src/components/**", "**/*.tsx"],
+        isCategory: true,
+      });
     });
   });
 
@@ -66,7 +84,9 @@ describe("generateCategoryShuttles", () => {
         category frontend { patterns ["src/components/**"] }
       `);
 
-      expect(result["shuttle-frontend"]?.prompt).toBe("Base shuttle prompt.");
+      expect(result["shuttle-frontend"]?.config.prompt).toBe(
+        "Base shuttle prompt.",
+      );
     });
 
     it("(b) generated descriptor inherits base shuttle tool_policy when category has none", () => {
@@ -83,7 +103,7 @@ describe("generateCategoryShuttles", () => {
         category frontend { patterns ["src/components/**"] }
       `);
 
-      expect(result["shuttle-frontend"]?.tool_policy).toEqual({
+      expect(result["shuttle-frontend"]?.config.tool_policy).toEqual({
         read: "allow",
         write: "allow",
         execute: "deny",
@@ -100,7 +120,7 @@ describe("generateCategoryShuttles", () => {
         category frontend { patterns ["src/components/**"] }
       `);
 
-      expect(result["shuttle-frontend"]?.mode).toBe("subagent");
+      expect(result["shuttle-frontend"]?.config.mode).toBe("subagent");
     });
   });
 
@@ -111,7 +131,7 @@ describe("generateCategoryShuttles", () => {
         category frontend { patterns ["src/components/**"] models ["gpt-5"] }
       `);
 
-      expect(result["shuttle-frontend"]?.models).toEqual(["gpt-5"]);
+      expect(result["shuttle-frontend"]?.config.models).toEqual(["gpt-5"]);
     });
 
     it("(b) category temperature overrides base temperature", () => {
@@ -124,7 +144,7 @@ describe("generateCategoryShuttles", () => {
         category frontend { patterns ["src/components/**"] temperature 0.7 }
       `);
 
-      expect(result["shuttle-frontend"]?.temperature).toBe(0.7);
+      expect(result["shuttle-frontend"]?.config.temperature).toBe(0.7);
     });
 
     it("(c) category prompt_append is set on the descriptor", () => {
@@ -136,7 +156,7 @@ describe("generateCategoryShuttles", () => {
         }
       `);
 
-      expect(result["shuttle-frontend"]?.prompt_append).toBe(
+      expect(result["shuttle-frontend"]?.config.prompt_append).toBe(
         "Focus on accessibility.",
       );
     });
@@ -161,7 +181,7 @@ describe("generateCategoryShuttles", () => {
         }
       `);
 
-      expect(result["shuttle-frontend"]?.tool_policy).toEqual({
+      expect(result["shuttle-frontend"]?.config.tool_policy).toEqual({
         read: "allow",
         write: "allow",
         execute: "deny",
@@ -182,7 +202,7 @@ describe("generateCategoryShuttles", () => {
         }
       `);
 
-      expect(result["shuttle-frontend"]?.prompt_append).toBe(
+      expect(result["shuttle-frontend"]?.config.prompt_append).toBe(
         "Base append.\nFocus on accessibility.",
       );
     });
@@ -199,7 +219,9 @@ describe("generateCategoryShuttles", () => {
         }
       `);
 
-      expect(result["shuttle-frontend"]?.prompt_append).toBe("Base append.");
+      expect(result["shuttle-frontend"]?.config.prompt_append).toBe(
+        "Base append.",
+      );
     });
 
     it("(g) fields not set in category (e.g. temperature) keep their base shuttle value", () => {
@@ -212,7 +234,7 @@ describe("generateCategoryShuttles", () => {
         category frontend { patterns ["src/components/**"] models ["gpt-5"] }
       `);
 
-      expect(result["shuttle-frontend"]?.temperature).toBe(0.2);
+      expect(result["shuttle-frontend"]?.config.temperature).toBe(0.2);
     });
   });
 
@@ -239,6 +261,8 @@ describe("generateCategoryShuttles", () => {
       `);
 
       expect(Object.keys(result)).toEqual(["shuttle-backend"]);
+      expect(result["shuttle-frontend"]?.categoryMeta).toBeUndefined();
+      expect(result["shuttle-backend"]?.categoryMeta.name).toBe("backend");
     });
 
     it("(c) base shuttle disabled suppresses ALL category shuttles", () => {

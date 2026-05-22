@@ -143,9 +143,9 @@ describe("ResolvedSkill — adapter metadata preserved", () => {
     expect(result.isOk()).toBe(true);
     const resolved = result._unsafeUnwrap();
     expect(resolved).toHaveLength(1);
-    expect(resolved[0]!.name).toBe("tdd");
+    expect(resolved[0]?.name).toBe("tdd");
     // The original SkillInfo reference is preserved — engine did not copy or transform it
-    expect(resolved[0]!.skillInfo).toBe(skillInfo);
+    expect(resolved[0]?.skillInfo).toBe(skillInfo);
   });
 
   it("(b) adapter metadata is accessible from ResolvedSkill without engine inspection", () => {
@@ -166,7 +166,7 @@ describe("ResolvedSkill — adapter metadata preserved", () => {
     expect(result.isOk()).toBe(true);
     const resolved = result._unsafeUnwrap();
     // Adapter can recover its own metadata from the resolved skill
-    expect(resolved[0]!.skillInfo.metadata).toBe(harnessData);
+    expect(resolved[0]?.skillInfo.metadata).toBe(harnessData);
   });
 });
 
@@ -202,7 +202,7 @@ describe("resolveSkillsForAgent — type-level result shape", () => {
     expect(result.isOk()).toBe(true);
     const resolved = result._unsafeUnwrap();
     expect(resolved).toHaveLength(1);
-    expect(resolved[0]!.name).toBe("tdd");
+    expect(resolved[0]?.name).toBe("tdd");
   });
 
   it("(d) returns err with MissingSkill when skill is not available", () => {
@@ -215,9 +215,9 @@ describe("resolveSkillsForAgent — type-level result shape", () => {
     expect(result.isErr()).toBe(true);
     const errors = result._unsafeUnwrapErr();
     expect(errors).toHaveLength(1);
-    expect(errors[0]!.type).toBe("MissingSkill");
-    expect(errors[0]!.agentName).toBe("loom");
-    expect(errors[0]!.skillName).toBe("unknown-skill");
+    expect(errors[0]?.type).toBe("MissingSkill");
+    expect(errors[0]?.agentName).toBe("loom");
+    expect(errors[0]?.skillName).toBe("unknown-skill");
   });
 
   it("(e) disabled skill is filtered without error — no MissingSkill emitted", () => {
@@ -241,7 +241,9 @@ describe("resolveSkillsForAgent — type-level result shape", () => {
 
     expect(result.isErr()).toBe(true);
     const errors = result._unsafeUnwrapErr();
-    const error = errors[0]!;
+    const error = errors[0];
+    if (error === undefined)
+      throw new Error("expected one missing skill error");
 
     // Only these three fields — no file paths, no content, no harness details
     expect(Object.keys(error).sort()).toEqual([
@@ -275,7 +277,7 @@ describe("resolveSkillsForAgent — name is the only matching key", () => {
     });
 
     expect(result.isOk()).toBe(true);
-    expect(result._unsafeUnwrap()[0]!.name).toBe("tdd");
+    expect(result._unsafeUnwrap()[0]?.name).toBe("tdd");
   });
 
   it("(b) two skills with different names are matched independently", () => {
@@ -293,8 +295,8 @@ describe("resolveSkillsForAgent — name is the only matching key", () => {
     expect(result.isOk()).toBe(true);
     const resolved = result._unsafeUnwrap();
     expect(resolved).toHaveLength(2);
-    expect(resolved[0]!.name).toBe("tdd");
-    expect(resolved[1]!.name).toBe("code-review");
+    expect(resolved[0]?.name).toBe("tdd");
+    expect(resolved[1]?.name).toBe("code-review");
   });
 
   it("(c) name match is case-sensitive — 'TDD' does not match 'tdd'", () => {
@@ -305,7 +307,7 @@ describe("resolveSkillsForAgent — name is the only matching key", () => {
     });
 
     expect(result.isErr()).toBe(true);
-    expect(result._unsafeUnwrapErr()[0]!.skillName).toBe("TDD");
+    expect(result._unsafeUnwrapErr()[0]?.skillName).toBe("TDD");
   });
 });
 
@@ -326,8 +328,8 @@ describe("resolveSkillsForAgent — available skill resolution", () => {
     expect(result.isOk()).toBe(true);
     const resolved = result._unsafeUnwrap();
     expect(resolved).toHaveLength(1);
-    expect(resolved[0]!.name).toBe("tdd");
-    expect(resolved[0]!.skillInfo).toBe(available[0]);
+    expect(resolved[0]?.name).toBe("tdd");
+    expect(resolved[0]?.skillInfo).toBe(available[0]);
   });
 
   it("resolves multiple available skills in a single call", () => {
@@ -364,8 +366,8 @@ describe("resolveSkillsForAgent — available skill resolution", () => {
 
     expect(result.isOk()).toBe(true);
     const resolved = result._unsafeUnwrap();
-    expect(resolved[0]!.skillInfo).toBe(tddInfo);
-    expect(resolved[1]!.skillInfo).toBe(reviewInfo);
+    expect(resolved[0]?.skillInfo).toBe(tddInfo);
+    expect(resolved[1]?.skillInfo).toBe(reviewInfo);
   });
 });
 
@@ -410,10 +412,10 @@ describe("resolveSkillsForAgent — declaration order preserved", () => {
     expect(result.isOk()).toBe(true);
     const resolved = result._unsafeUnwrap();
     // Order follows agentSkills: code-review first, then tdd
-    expect(resolved[0]!.name).toBe("code-review");
-    expect(resolved[1]!.name).toBe("tdd");
+    expect(resolved[0]?.name).toBe("code-review");
+    expect(resolved[1]?.name).toBe("tdd");
     // tdd is resolved — declaration order is what the spec guarantees
-    expect(resolved[1]!.skillInfo.name).toBe("tdd");
+    expect(resolved[1]?.skillInfo.name).toBe("tdd");
   });
 
   it("disabled skills are removed without shifting the order of remaining skills", () => {
@@ -540,9 +542,9 @@ describe("resolveSkillsForAgent — missing non-disabled skill errors", () => {
     expect(result.isErr()).toBe(true);
     const errors = result._unsafeUnwrapErr();
     expect(errors).toHaveLength(1);
-    expect(errors[0]!.type).toBe("MissingSkill");
-    expect(errors[0]!.agentName).toBe("loom");
-    expect(errors[0]!.skillName).toBe("unknown-skill");
+    expect(errors[0]?.type).toBe("MissingSkill");
+    expect(errors[0]?.agentName).toBe("loom");
+    expect(errors[0]?.skillName).toBe("unknown-skill");
   });
 
   it("collects multiple MissingSkill errors in a single err result", () => {
@@ -578,7 +580,7 @@ describe("resolveSkillsForAgent — missing non-disabled skill errors", () => {
     const errors = result._unsafeUnwrapErr();
     // Only missing-active should produce an error; missing-disabled is silently filtered
     expect(errors).toHaveLength(1);
-    expect(errors[0]!.skillName).toBe("missing-active");
+    expect(errors[0]?.skillName).toBe("missing-active");
   });
 
   it("MissingSkill error contains exactly type, agentName, skillName — no extra fields", () => {
@@ -589,7 +591,9 @@ describe("resolveSkillsForAgent — missing non-disabled skill errors", () => {
     });
 
     expect(result.isErr()).toBe(true);
-    const error = result._unsafeUnwrapErr()[0]!;
+    const error = result._unsafeUnwrapErr()[0];
+    if (error === undefined)
+      throw new Error("expected one missing skill error");
     expect(Object.keys(error).sort()).toEqual([
       "agentName",
       "skillName",
@@ -693,8 +697,8 @@ describe("resolveSkillsForConfig — declared-agent batch output", () => {
     expect(result.isOk()).toBe(true);
     const resolved = result._unsafeUnwrap();
     expect(Object.keys(resolved).sort()).toEqual(["loom", "shuttle"]);
-    expect(resolved["loom"]!.map((r) => r.name)).toEqual(["tdd"]);
-    expect(resolved["shuttle"]!.map((r) => r.name)).toEqual(["code-review"]);
+    expect(resolved.loom?.map((r) => r.name)).toEqual(["tdd"]);
+    expect(resolved.shuttle?.map((r) => r.name)).toEqual(["code-review"]);
   });
 
   it("includes agents with no skills declaration as empty arrays", () => {
@@ -712,8 +716,8 @@ describe("resolveSkillsForConfig — declared-agent batch output", () => {
 
     expect(result.isOk()).toBe(true);
     const resolved = result._unsafeUnwrap();
-    expect(resolved["loom"]).toEqual([]);
-    expect(resolved["shuttle"]!.map((r) => r.name)).toEqual(["tdd"]);
+    expect(resolved.loom).toEqual([]);
+    expect(resolved.shuttle?.map((r) => r.name)).toEqual(["tdd"]);
   });
 
   it("preserves the original SkillInfo reference in batch results", () => {
@@ -730,7 +734,7 @@ describe("resolveSkillsForConfig — declared-agent batch output", () => {
 
     expect(result.isOk()).toBe(true);
     const resolved = result._unsafeUnwrap();
-    expect(resolved["loom"]![0]!.skillInfo).toBe(tddInfo);
+    expect(resolved.loom?.[0]?.skillInfo).toBe(tddInfo);
   });
 });
 
@@ -781,7 +785,7 @@ describe("resolveSkillsForConfig — generated category shuttle output", () => {
     expect(result.isOk()).toBe(true);
     const resolved = result._unsafeUnwrap();
     // shuttle-frontend inherits shuttle's skills
-    expect(resolved["shuttle-frontend"]!.map((r) => r.name)).toEqual(["tdd"]);
+    expect(resolved["shuttle-frontend"]?.map((r) => r.name)).toEqual(["tdd"]);
   });
 
   it("multiple categories produce multiple generated shuttles", () => {
@@ -876,8 +880,8 @@ describe("resolveSkillsForConfig — disabled-skill behavior in batch mode", () 
     expect(result.isOk()).toBe(true);
     const resolved = result._unsafeUnwrap();
     // tdd is disabled globally — filtered from both agents
-    expect(resolved["loom"]!.map((r) => r.name)).toEqual(["code-review"]);
-    expect(resolved["shuttle"]!.map((r) => r.name)).toEqual(["security-audit"]);
+    expect(resolved.loom?.map((r) => r.name)).toEqual(["code-review"]);
+    expect(resolved.shuttle?.map((r) => r.name)).toEqual(["security-audit"]);
   });
 
   it("disabled skill that is also missing does not produce a MissingSkill error", () => {
@@ -895,7 +899,7 @@ describe("resolveSkillsForConfig — disabled-skill behavior in batch mode", () 
     });
 
     expect(result.isOk()).toBe(true);
-    expect(result._unsafeUnwrap()["loom"]).toEqual([]);
+    expect(result._unsafeUnwrap().loom).toEqual([]);
   });
 
   it("disabled agents are excluded from resolution entirely", () => {
@@ -1065,8 +1069,8 @@ describe("resolveSkillsForConfig — accumulated missing-skill errors", () => {
     const errors = result._unsafeUnwrapErr();
     // Only shuttle's missing skill is in the error list
     expect(errors).toHaveLength(1);
-    expect(errors[0]!.agentName).toBe("shuttle");
-    expect(errors[0]!.skillName).toBe("missing-skill");
+    expect(errors[0]?.agentName).toBe("shuttle");
+    expect(errors[0]?.skillName).toBe("missing-skill");
   });
 
   it("MissingSkill errors contain exactly type, agentName, skillName — no extra fields", () => {
@@ -1082,7 +1086,9 @@ describe("resolveSkillsForConfig — accumulated missing-skill errors", () => {
     });
 
     expect(result.isErr()).toBe(true);
-    const error = result._unsafeUnwrapErr()[0]!;
+    const error = result._unsafeUnwrapErr()[0];
+    if (error === undefined)
+      throw new Error("expected one missing skill error");
     expect(Object.keys(error).sort()).toEqual([
       "agentName",
       "skillName",

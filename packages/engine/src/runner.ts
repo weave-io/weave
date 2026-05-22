@@ -1,6 +1,10 @@
 import type { AgentConfig, WeaveConfig } from "@weave/core";
 import type { HarnessAdapter } from "./adapter.js";
-import { type AgentDescriptor, composeAgentDescriptor } from "./compose.js";
+import {
+  type AgentDescriptor,
+  type CategoryMetadata,
+  composeAgentDescriptor,
+} from "./compose.js";
 import { generateCategoryShuttles } from "./descriptors.js";
 import { logger } from "./logger.js";
 import type { RunAgentEffect } from "./run-agent-effects.js";
@@ -145,10 +149,13 @@ export class WeaveRunner {
       throw new Error(conflict.message);
     }
 
-    const allAgents: Record<string, AgentConfig> = {
-      ...this.config.agents,
-      ...shuttlesResult.value,
-    };
+    const allAgents: Record<string, AgentConfig> = { ...this.config.agents };
+    const categoryMetaMap: Record<string, CategoryMetadata> = {};
+
+    for (const [name, generated] of Object.entries(shuttlesResult.value)) {
+      allAgents[name] = generated.config;
+      categoryMetaMap[name] = generated.categoryMeta;
+    }
 
     // 4. Materialise agents through the adapter boundary (skip disabled).
     for (const [name, agentConfig] of Object.entries(allAgents) as [
@@ -165,6 +172,7 @@ export class WeaveRunner {
         agentConfig,
         this.config,
         allAgents,
+        categoryMetaMap[name],
       );
 
       if (descriptorResult.isErr()) {
