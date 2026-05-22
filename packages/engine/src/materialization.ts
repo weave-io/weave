@@ -55,10 +55,9 @@ function mergeMaterializableAgents(
   );
 
   const generatedAgentConfigs = Object.fromEntries(
-    Object.entries(generatedShuttles).map(([agentName, generated]) => [
-      agentName,
-      generated.config,
-    ]),
+    Object.entries(generatedShuttles)
+      .filter(([agentName]) => !config.disabled.agents.includes(agentName))
+      .map(([agentName, generated]) => [agentName, generated.config]),
   );
 
   return {
