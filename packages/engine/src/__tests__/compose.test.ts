@@ -39,6 +39,47 @@ beforeAll(async () => {
 });
 
 describe("composeAgentDescriptor", () => {
+  describe("identity fields", () => {
+    it("Builtin_descriptor_keeps_stable_name_and_optional_displayName", async () => {
+      const config = cfg(`
+        agent loom {
+          display_name "Loom"
+          prompt "You are loom."
+          models ["claude-sonnet-4-5"]
+        }
+      `);
+
+      const descriptor = await descriptorFor(
+        "loom",
+        config.agents.loom,
+        config,
+        config.agents,
+      );
+
+      expect(descriptor.name).toBe("loom");
+      expect(descriptor.displayName).toBe("Loom");
+    });
+
+    it("Builtin_descriptor_without_display_name_omits_displayName", async () => {
+      const config = cfg(`
+        agent shuttle {
+          prompt "Specialist."
+          models ["claude-sonnet-4-5"]
+        }
+      `);
+
+      const descriptor = await descriptorFor(
+        "shuttle",
+        config.agents.shuttle,
+        config,
+        config.agents,
+      );
+
+      expect(descriptor.name).toBe("shuttle");
+      expect(descriptor.displayName).toBeUndefined();
+    });
+  });
+
   describe("prompt source", () => {
     it("Inline_prompt_produces_correct_composedPrompt", async () => {
       const config = cfg(`

@@ -33,6 +33,7 @@ type AgentMode = NonNullable<AgentConfig["mode"]>;
 
 export interface AgentDescriptor {
   name: string;
+  displayName?: string;
   description?: string;
   composedPrompt: string;
   models: string[];
@@ -373,6 +374,7 @@ export function composeAgentDescriptor(
 
       return ok({
         name: agentName,
+        displayName: agentConfig.display_name,
         description: agentConfig.description,
         composedPrompt,
         models: agentConfig.models ?? [],
