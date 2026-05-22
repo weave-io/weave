@@ -60,10 +60,10 @@ Ran 975 tests across 35 files. [117.00ms]
 
 | File | Status | Description |
 | --- | --- | --- |
-| `docs/prompt-composition.md` | Existing (comprehensive) | Conceptual guide covering Template Context fields, `{{{delegation.section}}}` usage, fallback suppression, static prompt compatibility, composition pipeline, delegation diagram, template errors, and adapter consumption |
+| `docs/prompt-composition.md` | Existing (comprehensive) | Conceptual guide covering Template Context fields, `{{{delegation-section}}}` usage, fallback suppression, static prompt compatibility, composition pipeline, delegation diagram, template errors, and adapter consumption |
 | `docs/adr/0001-prompt-composition-templates.md` | New (expanded) | ADR with Context, Decision, and Consequences sections documenting why Mustache was chosen, what the bounded context contains, and what is now possible/forbidden/deferred |
 | `CONTEXT.md` | Updated | Added "Prompt Composition Templates" section describing the feature as first-class engine capability with links to guide and ADR |
-| `AGENTS.md` | Updated | Added "Prompt Templates and Template Context" subsection under Agents DSL with `{{{delegation.section}}}` usage, full Template Context field table, fallback suppression rules, and links |
+| `AGENTS.md` | Updated | Added "Prompt Templates and Template Context" subsection under Agents DSL with `{{{delegation-section}}}` usage, full Template Context field table, fallback suppression rules, and links |
 
 ---
 

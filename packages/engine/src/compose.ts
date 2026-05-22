@@ -19,7 +19,6 @@ import {
   type CategoryInput,
 } from "./template-context.js";
 import {
-  extractTemplatePaths,
   type RendererError,
   renderTemplate,
   type TemplateContext,
@@ -61,6 +60,8 @@ export interface DelegationTarget {
   name: string;
   description?: string;
   triggers: DelegationTrigger[];
+  /** True when this target is a generated category shuttle agent. */
+  isCategory: boolean;
 }
 
 /** Reason discriminants for PromptTemplateError */
@@ -89,7 +90,11 @@ export type ComposeError =
   | {
       type: "PromptTemplateError";
       agentName: string;
-      sourceKind: "prompt" | "prompt_file" | "prompt_append";
+      sourceKind:
+        | "prompt"
+        | "prompt_file"
+        | "prompt_append"
+        | "prompt_append_file";
       promptFilePath?: string;
       message: string;
       reason: PromptTemplateReason;
@@ -142,6 +147,11 @@ function buildDelegationTargets(
 ): DelegationTarget[] {
   if (agentConfig.tool_policy?.delegate !== "allow") return [];
 
+  // Build the set of generated category shuttle names from config categories
+  const categoryShuttleNames = new Set(
+    Object.keys(config.categories).map((name) => `shuttle-${name}`),
+  );
+
   const targets: DelegationTarget[] = [];
 
   for (const [targetName, targetConfig] of Object.entries(allAgents)) {
@@ -154,6 +164,7 @@ function buildDelegationTargets(
       name: targetName,
       description: targetConfig.description,
       triggers: targetConfig.triggers ?? [],
+      isCategory: categoryShuttleNames.has(targetName),
     });
   }
 
@@ -220,7 +231,7 @@ function mapRendererErrorToReason(
  */
 function mapRendererError(
   agentName: string,
-  sourceKind: "prompt" | "prompt_file" | "prompt_append",
+  sourceKind: "prompt" | "prompt_file" | "prompt_append" | "prompt_append_file",
   rendererError: RendererError,
   promptFilePath?: string,
 ): ComposeError {
@@ -241,19 +252,33 @@ function mapRendererError(
 }
 
 /**
- * Detect whether the primary prompt source contains any delegation-related
- * template references. Only real variable/section/unescaped tokens whose
- * path starts with "delegation" count — comments, escaped literals, raw text,
- * and close tokens are excluded.
- *
- * Returns true if the primary source already references delegation paths,
- * meaning the fallback delegation.section should NOT be appended.
+ * Load the append source for an agent: returns the inline prompt_append string,
+ * the contents of prompt_append_file, or undefined if neither is set.
  */
-function primarySourceReferencesDelegation(source: string): boolean {
-  const pathsResult = extractTemplatePaths(source);
-  if (pathsResult.isErr()) return false;
+function loadAppendSource(
+  agentName: string,
+  agentConfig: AgentConfig,
+): ResultAsync<
+  { content: string; fromFile: boolean } | undefined,
+  ComposeError
+> {
+  if (agentConfig.prompt_append !== undefined) {
+    return okAsync({ content: agentConfig.prompt_append, fromFile: false });
+  }
 
-  return pathsResult.value.some((path) => path.startsWith("delegation"));
+  if (agentConfig.prompt_append_file === undefined) {
+    return okAsync(undefined);
+  }
+
+  const appendFilePath = agentConfig.prompt_append_file;
+
+  return ResultAsync.fromPromise(Bun.file(appendFilePath).text(), (cause) => ({
+    type: "PromptFileReadError" as const,
+    agentName,
+    promptFilePath: appendFilePath,
+    message: `Failed to read prompt_append_file for agent "${agentName}": ${appendFilePath}`,
+    fileErrorMessage: cause instanceof Error ? cause.message : String(cause),
+  })).map((content) => ({ content, fromFile: true }));
 }
 
 /**
@@ -268,7 +293,7 @@ function renderPromptTemplate(
   source: string,
   context: AgentPromptTemplateContext,
   agentName: string,
-  sourceKind: "prompt" | "prompt_file" | "prompt_append",
+  sourceKind: "prompt" | "prompt_file" | "prompt_append" | "prompt_append_file",
   promptFilePath?: string,
 ): Result<string, ComposeError> {
   const renderResult = renderTemplate(
@@ -318,7 +343,6 @@ export function composeAgentDescriptor(
     category,
     effectiveToolPolicy,
     delegationTargets,
-    workflows: config.workflows,
   });
 
   if (contextResult.isErr()) {
@@ -331,80 +355,70 @@ export function composeAgentDescriptor(
 
   const templateContext = contextResult.value;
   const promptFilePath = agentConfig.prompt_file;
-  const sourceKind: "prompt" | "prompt_file" =
+  const primarySourceKind: "prompt" | "prompt_file" =
     agentConfig.prompt !== undefined ? "prompt" : "prompt_file";
 
-  return loadPromptSource(agentName, agentConfig).andThen(
-    (promptSource): Result<AgentDescriptor, ComposeError> => {
-      // Render primary source as Mustache template
-      const renderedPrimaryResult = renderPromptTemplate(
-        promptSource,
-        templateContext,
-        agentName,
-        sourceKind,
-        promptFilePath,
-      );
-
-      if (renderedPrimaryResult.isErr())
-        return err(renderedPrimaryResult.error);
-      const renderedPrimary = renderedPrimaryResult.value;
-
-      // Detect fallback suppression: only from primary source delegation tokens
-      const hasDelegationInPrimary =
-        primarySourceReferencesDelegation(promptSource);
-
-      // Assemble sections: rendered primary → optional fallback delegation.section → rendered append
-      const sections: string[] = [renderedPrimary];
-
-      // Insert fallback delegation.section only when:
-      // 1. There are delegation targets
-      // 2. The primary source does NOT already reference delegation paths
-      if (
-        delegationTargets.length > 0 &&
-        !hasDelegationInPrimary &&
-        templateContext.delegation.section !== undefined
-      ) {
-        sections.push(templateContext.delegation.section);
-      }
-
-      // Render prompt_append if present
-      if (agentConfig.prompt_append !== undefined) {
-        const renderedAppendResult = renderPromptTemplate(
-          agentConfig.prompt_append,
+  return loadPromptSource(agentName, agentConfig)
+    .andThen(
+      (promptSource): Result<string, ComposeError> =>
+        renderPromptTemplate(
+          promptSource,
           templateContext,
           agentName,
-          "prompt_append",
-          undefined,
-        );
+          primarySourceKind,
+          promptFilePath,
+        ),
+    )
+    .andThen((renderedPrimary) =>
+      loadAppendSource(agentName, agentConfig).andThen(
+        (appendSource): Result<AgentDescriptor, ComposeError> => {
+          const sections: string[] = [renderedPrimary];
 
-        if (renderedAppendResult.isErr())
-          return err(renderedAppendResult.error);
-        sections.push(renderedAppendResult.value);
-      }
+          if (appendSource !== undefined) {
+            const appendSourceKind = appendSource.fromFile
+              ? ("prompt_append_file" as const)
+              : ("prompt_append" as const);
+            const appendFilePath = appendSource.fromFile
+              ? agentConfig.prompt_append_file
+              : undefined;
 
-      const composedPrompt = sections.join("\n\n");
+            const renderedAppendResult = renderPromptTemplate(
+              appendSource.content,
+              templateContext,
+              agentName,
+              appendSourceKind,
+              appendFilePath,
+            );
 
-      return ok({
-        name: agentName,
-        displayName: agentConfig.display_name,
-        description: agentConfig.description,
-        category:
-          category === undefined
-            ? undefined
-            : {
-                name: category.name,
-                description: category.description,
-                patterns: [...(category.patterns ?? [])],
-              },
-        composedPrompt,
-        models: agentConfig.models ?? [],
-        mode: agentConfig.mode ?? "subagent",
-        temperature: agentConfig.temperature,
-        effectiveToolPolicy,
-        rawToolPolicy: agentConfig.tool_policy,
-        delegationTargets,
-        skills: agentConfig.skills ?? [],
-      });
-    },
-  );
+            if (renderedAppendResult.isErr())
+              return err(renderedAppendResult.error);
+            sections.push(renderedAppendResult.value);
+          }
+
+          const composedPrompt = sections.join("\n\n");
+
+          return ok({
+            name: agentName,
+            displayName: agentConfig.display_name,
+            description: agentConfig.description,
+            category:
+              category === undefined
+                ? undefined
+                : {
+                    name: category.name,
+                    description: category.description,
+                    patterns: [...(category.patterns ?? [])],
+                  },
+            composedPrompt,
+            models: agentConfig.models ?? [],
+            mode: agentConfig.mode ?? "subagent",
+            temperature: agentConfig.temperature,
+            effectiveToolPolicy,
+            rawToolPolicy: agentConfig.tool_policy,
+            delegationTargets,
+            skills: agentConfig.skills ?? [],
+          });
+        },
+      ),
+    );
 }

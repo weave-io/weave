@@ -1,13 +1,17 @@
 # Task 04 Proofs — Align Builtin Prompts and Config Smoke Coverage
 
+> **Amendment:** `{{{delegation-section}}}` was subsequently removed from `loom.md` and `tapestry.md`. Both prompts now use `{{#delegation.targets}}` iteration loops instead. The fallback-append logic and fallback suppression detection were also removed from the engine. Sections 1 and the suppression mechanism note below reflect the original implementation and are preserved for historical reference.
+
 **Spec**: [11-spec-prompt-composition-templates](../11-spec-prompt-composition-templates.md)
 **Task**: 4/5 — Align builtin prompts and config smoke coverage with rendered templates
 
 ---
 
-## 1. Diffs — loom.md and tapestry.md
+## 1. Diffs — loom.md and tapestry.md *(historical — subsequently amended)*
 
-### loom.md
+> **Amendment:** The diffs below show the original `{{{delegation-section}}}` placement. This was subsequently removed. Both prompts now use `{{#delegation.targets}}` iteration loops. The diffs are preserved for historical reference.
+
+### loom.md (original diff — superseded)
 
 ```diff
 diff --git a/packages/config/prompts/loom.md b/packages/config/prompts/loom.md
@@ -18,16 +22,14 @@ index 435c085..e81aef0 100644
  - **Code quality review** — hand off to the code reviewer
  - **Security audit** — hand off to the security auditor
  
-+{{{delegation.section}}}
++{{{delegation-section}}}   <-- REMOVED in subsequent amendment
 +
  ## Constraints
  
  - Do not make assumptions about intent — ask one focused clarifying question if needed.
 ```
 
-**Placement rationale**: `{{{delegation.section}}}` is placed immediately after the "When to delegate" bullet list, where the rendered Mermaid diagram and specialist routing table naturally extend the delegation guidance. The `## Constraints` section follows, keeping the structural flow: responsibilities → direct handling → delegation guidance → rendered delegation map → constraints.
-
-### tapestry.md
+### tapestry.md (original diff — superseded)
 
 ```diff
 diff --git a/packages/config/prompts/tapestry.md b/packages/config/prompts/tapestry.md
@@ -38,14 +40,12 @@ index 24f2eb3..abbff14 100644
  - Surface blockers to the user immediately rather than proceeding past them.
  - Verify each step's completion criteria before marking it done.
  
-+{{{delegation.section}}}
++{{{delegation-section}}}   <-- REMOVED in subsequent amendment
 +
  ## Execution Rules
  
  - Never skip a step unless the user explicitly approves.
 ```
-
-**Placement rationale**: `{{{delegation.section}}}` is placed immediately after the "Responsibilities" list, where Tapestry's delegation routing table naturally extends the list of agents it coordinates. The `## Execution Rules` section follows, keeping the structural flow: role description → responsibilities → rendered delegation map → execution rules → resumption → constraints.
 
 ---
 
@@ -63,13 +63,13 @@ Ran 207 tests across 1 file. [26.00ms]
 **New tests added** (beyond the original 94):
 - Per-agent: `does not leak raw config/model/path/harness token: "<token>"` (16 tokens × 8 agents = 128 tests)
 - Per-agent: `does not contain unintended raw Mustache tags (only allowed placeholders permitted)` (8 tests)
-- `loom.md — contains the delegation.section template placeholder`
-- `tapestry.md — contains the delegation.section template placeholder`
+- ~~`loom.md — contains the delegation-section template placeholder`~~ — removed; now uses `{{#delegation.targets}}` loop
+- ~~`tapestry.md — contains the delegation-section template placeholder`~~ — removed; now uses `{{#delegation.targets}}` loop
 - `tapestry.md — describes step-by-step plan execution`
 - `non-delegating prompts — no artificial template tags` (6 agents × 1 test = 6 tests)
 
 **Key design decisions**:
-- `{{{delegation.section}}}` is explicitly allowed as an intentional Mustache placeholder — stripped before the unresolved-tag check
+- `{{{delegation-section}}}` is explicitly allowed as an intentional Mustache placeholder — stripped before the unresolved-tag check
 - `"Task"` was removed from `BANNED_TOKENS` (it is a common English word appearing legitimately in prompt prose); `"TodoWrite"` and `"todowrite"` remain banned as harness-specific tool names
 - `BANNED_LEAKAGE_TOKENS` covers: raw model identifiers (`claude-sonnet`, `gpt-4`, `anthropic/`, `openai/`), repo-relative paths (`packages/config`, `packages/engine`, `prompts/`, `.weave/`), harness names (`opencode`, `OpenCode`), and secret/env patterns (`process.env`, `API_KEY`, `SECRET`)
 
@@ -119,13 +119,15 @@ Same checks as loom — all pass ✓
 ### Non-delegating agents (shuttle, pattern, thread, spindle, weft, warp)
 
 - No `## Delegation` section in any composed prompt ✓
-- No `{{{delegation.section}}}` placeholder in source files ✓
+- No `{{{delegation-section}}}` placeholder in source files ✓
 - Empty `delegationTargets` arrays ✓
 - No unresolved Mustache tags ✓
 
-### Suppression mechanism confirmed
+### Suppression mechanism *(historical — feature removed)*
 
-Because `loom.md` and `tapestry.md` now contain `{{{delegation.section}}}`, the `primarySourceReferencesDelegation()` check in `compose.ts` returns `true` for these agents. This suppresses the fallback delegation section append — the delegation content is rendered inline at the placeholder position instead of being appended at the end. The result is a single, coherent composed prompt with the delegation map in its natural structural position.
+> **Amendment:** The fallback suppression mechanism (`primarySourceReferencesDelegation()`) and the fallback-append logic were removed from `compose.ts` along with `delegation-section`. The following is preserved for historical reference only.
+
+Because `loom.md` and `tapestry.md` contained `{{{delegation-section}}}`, the `primarySourceReferencesDelegation()` check in `compose.ts` returned `true` for these agents. This suppressed the fallback delegation section append. This mechanism no longer exists.
 
 ---
 

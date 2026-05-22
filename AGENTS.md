@@ -115,6 +115,9 @@ agent shuttle {
 - `prompt` — inline prompt text (string)
 - `prompt_file` — path to a `.md` file, resolved relative to the config scope's `prompts/` directory (e.g. `"loom.md"` → `.weave/prompts/loom.md`)
 - `prompt` and `prompt_file` are **mutually exclusive**
+- `prompt_append` — inline text appended after the primary prompt source; rendered as a Mustache template
+- `prompt_append_file` — path to a `.md` file appended after the primary prompt source, resolved relative to the config scope's `prompts/` directory; rendered as a Mustache template
+- `prompt_append` and `prompt_append_file` are **mutually exclusive**
 - `models` — ordered model preference list for adapters to translate; concrete availability checks are adapter-owned
 - `mode` — adapter-facing context hint: `primary` (main/user-facing agent), `subagent` (delegated specialist), or `all` (usable in both contexts)
 - `tool_policy` — abstract capability map with `allow` / `deny` / `ask` permissions; adapters map to harness-specific tool names and permission models
@@ -122,7 +125,7 @@ agent shuttle {
 
 #### Prompt Templates and Template Context
 
-Every `prompt`, `prompt_file`, and `prompt_append` value is a **Prompt Template** rendered by the engine with Mustache before adapters receive the final composed prompt. This lets prompt files reference engine-computed data without duplicating config.
+Every `prompt`, `prompt_file`, `prompt_append`, and `prompt_append_file` value is a **Prompt Template** rendered by the engine with Mustache before adapters receive the final composed prompt. This lets prompt files reference engine-computed data without duplicating config.
 
 **Key placeholder**: `{{{delegation.section}}}` — renders the full delegation guidance block (Mermaid diagram + compact bullets) at the location you choose. Use triple braces because the value contains Markdown.
 

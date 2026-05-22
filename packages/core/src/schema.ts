@@ -40,6 +40,7 @@ export const AgentConfigSchema = z
     prompt: z.string().optional(),
     prompt_file: z.string().optional(),
     prompt_append: z.string().optional(),
+    prompt_append_file: z.string().optional(),
     models: z.array(z.string()).optional(),
     temperature: z.number().min(0).max(2).optional(),
     mode: z.enum(["primary", "subagent", "all"]).optional(),
@@ -62,21 +63,65 @@ export const AgentConfigSchema = z
       message:
         "prompt_file must be a relative path without '..' or absolute paths",
     },
+  )
+  .refine(
+    (data) =>
+      !(
+        data.prompt_append !== undefined &&
+        data.prompt_append_file !== undefined
+      ),
+    { message: "prompt_append and prompt_append_file are mutually exclusive" },
+  )
+  .refine(
+    (data) => {
+      if (data.prompt_append_file === undefined) return true;
+      if (data.prompt_append_file.startsWith("/")) return false;
+      if (data.prompt_append_file.includes("..")) return false;
+      return true;
+    },
+    {
+      message:
+        "prompt_append_file must be a relative path without '..' or absolute paths",
+    },
   );
 
 // ---------------------------------------------------------------------------
 // Category
 // ---------------------------------------------------------------------------
 
-export const CategoryConfigSchema = z.object({
-  name: z.string().optional(),
-  description: z.string().optional(),
-  patterns: z.array(z.string()).min(1, "patterns must have at least one entry"),
-  models: z.array(z.string()).optional(),
-  temperature: z.number().min(0).max(2).optional(),
-  tool_policy: ToolPolicySchema.optional(),
-  prompt_append: z.string().optional(),
-});
+export const CategoryConfigSchema = z
+  .object({
+    name: z.string().optional(),
+    description: z.string().optional(),
+    patterns: z
+      .array(z.string())
+      .min(1, "patterns must have at least one entry"),
+    models: z.array(z.string()).optional(),
+    temperature: z.number().min(0).max(2).optional(),
+    tool_policy: ToolPolicySchema.optional(),
+    prompt_append: z.string().optional(),
+    prompt_append_file: z.string().optional(),
+  })
+  .refine(
+    (data) =>
+      !(
+        data.prompt_append !== undefined &&
+        data.prompt_append_file !== undefined
+      ),
+    { message: "prompt_append and prompt_append_file are mutually exclusive" },
+  )
+  .refine(
+    (data) => {
+      if (data.prompt_append_file === undefined) return true;
+      if (data.prompt_append_file.startsWith("/")) return false;
+      if (data.prompt_append_file.includes("..")) return false;
+      return true;
+    },
+    {
+      message:
+        "prompt_append_file must be a relative path without '..' or absolute paths",
+    },
+  );
 
 // ---------------------------------------------------------------------------
 // Disabled

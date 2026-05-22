@@ -25,9 +25,9 @@
 | Requirement ID/Name | Status | Evidence |
 | --- | --- | --- |
 | FR-1: Mustache renderer wrapper | Verified | `packages/engine/src/template-renderer.ts` exists; 55 tests pass in `template-renderer.test.ts`; `mustache ^4.2.0` in `packages/engine/package.json`; prototype traversal rejection confirmed at lines 44–46, 371 |
-| FR-2: Template Context + delegation diagram | Verified | `packages/engine/src/template-context.ts` exists; `AgentPromptTemplateContext`, `buildTemplateContext`, `ALLOWED_TEMPLATE_PATHS` exported from engine barrel; 64 tests pass in `template-context.test.ts`; `{{{delegation.section}}}` confirmed in `loom.md:33` and `tapestry.md:15` |
+| FR-2: Template Context + delegation diagram | Verified (amended) | `packages/engine/src/template-context.ts` exists; `AgentPromptTemplateContext`, `buildTemplateContext`, `ALLOWED_TEMPLATE_PATHS` exported from engine barrel; tests pass in `template-context.test.ts` (count reduced after `delegation-section`/`delegation-mermaid` removal); `{{{delegation-section}}}` was removed from `loom.md` and `tapestry.md` — both now use `{{#delegation.targets}}` iteration loops instead |
 | FR-3: Compose pipeline integration | Verified | `packages/engine/src/compose.ts` updated; `composeAgentDescriptor`, `ComposeError`, `PromptTemplateReason` exported from `index.ts`; 32 tests pass in `compose.test.ts`; `PromptTemplateError` discriminant variant confirmed in `compose.ts:77` |
-| FR-4: Builtin prompt alignment + docs | Verified | `loom.md` and `tapestry.md` use `{{{delegation.section}}}`; 207 tests pass in `builtin-prompts.test.ts`; 37 tests pass in `builtin-compose-smoke.test.ts`; `docs/prompt-composition.md`, `docs/adr/0001-prompt-composition-templates.md`, `CONTEXT.md`, `AGENTS.md` all updated |
+| FR-4: Builtin prompt alignment + docs | Verified (amended) | `loom.md` and `tapestry.md` previously used `{{{delegation-section}}}`; after amendment both use `{{#delegation.targets}}` iteration loops; `builtin-prompts.test.ts` and `builtin-compose-smoke.test.ts` updated accordingly; `docs/prompt-composition.md`, `docs/adr/0001-prompt-composition-templates.md`, `CONTEXT.md`, `AGENTS.md` all updated |
 
 ### Repository Standards
 
@@ -51,9 +51,9 @@
 | Unit/Task | Proof Artifact | Status | Verification Result |
 | --- | --- | --- | --- |
 | Task 1 — Mustache renderer wrapper | `11-proofs/11-task-01-proofs.md` | Verified | File exists; documents renderer tests (55 pass), prototype traversal rejection, unsupported-feature rejection, static-prompt passthrough |
-| Task 2 — Template Context + delegation | `11-proofs/11-task-02-proofs.md` | Verified | File exists; documents context builder tests (64 pass), delegation diagram generation, fallback suppression logic |
+| Task 2 — Template Context + delegation | `11-proofs/11-task-02-proofs.md` | Verified (amended) | File exists; documents context builder tests; `delegation-section`/`delegation-mermaid` generation and fallback suppression logic subsequently removed — `delegation.targets` iteration is the current supported pattern |
 | Task 3 — Compose pipeline integration | `11-proofs/11-task-03-proofs.md` | Verified | File exists; documents compose tests (32 pass), `PromptTemplateError` variant in `ComposeError`, end-to-end rendering through `composeAgentDescriptor` |
-| Task 4 — Builtin prompt alignment | `11-proofs/11-task-04-proofs.md` | Verified | File exists; documents `{{{delegation.section}}}` placement in `loom.md` and `tapestry.md`, builtin-prompts tests (207 pass), smoke tests (37 pass) |
+| Task 4 — Builtin prompt alignment | `11-proofs/11-task-04-proofs.md` | Verified (amended) | File exists; originally documented `{{{delegation-section}}}` placement in `loom.md` and `tapestry.md`; subsequently removed — both prompts now use `{{#delegation.targets}}` loops; test counts reflect post-amendment state |
 | Task 5 — Quality gates + docs + security | `11-proofs/11-task-05-proofs.md` | Verified | File exists; build exit 0, typecheck exit 0, 975 pass (now 980 with 5 additional tests added post-proof); security scan confirms no credentials in docs; all four documentation files updated |
 
 ---
@@ -132,12 +132,15 @@ Result: No matches — no credentials or sensitive data found.
 
 ### Delegation Placement in Builtin Prompts
 
+**Amendment:** `{{{delegation-section}}}` was subsequently removed from both `loom.md` and `tapestry.md`. Both prompts now use `{{#delegation.targets}}` iteration loops to render delegation guidance inline. The fallback-append logic and fallback suppression detection were also removed from the engine.
+
+The original placement evidence (recorded at validation time) was:
 ```
-packages/config/prompts/loom.md:33:     {{{delegation.section}}}
-packages/config/prompts/tapestry.md:15: {{{delegation.section}}}
+packages/config/prompts/loom.md:33:     {{{delegation-section}}}
+packages/config/prompts/tapestry.md:15: {{{delegation-section}}}
 ```
 
-Both builtin prompts use triple-brace syntax (unescaped HTML) at the correct location, suppressing the automatic fallback.
+This is no longer the current state. See the spec Amendment section for the current supported pattern.
 
 ---
 

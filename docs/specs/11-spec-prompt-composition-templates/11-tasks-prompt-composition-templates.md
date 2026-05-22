@@ -11,8 +11,8 @@
 | `packages/engine/src/__tests__/template-renderer.test.ts` | New focused tests for supported Mustache behavior, unsupported features, strict paths, escaped literals, and unresolved-tag checks. |
 | `packages/engine/src/__tests__/template-context.test.ts` | New focused tests for bounded context shape, allowed paths, category handling, and generated delegation guidance. |
 | `packages/engine/src/__tests__/compose.test.ts` | Existing compose tests to extend for template rendering, fallback placement, source-only suppression, append rendering, and typed errors. |
-| `packages/config/prompts/loom.md` | Built-in delegating prompt expected to place `{{{delegation.section}}}` naturally. |
-| `packages/config/prompts/tapestry.md` | Built-in delegating prompt expected to place `{{{delegation.section}}}` naturally. |
+| `packages/config/prompts/loom.md` | Built-in delegating prompt expected to place `{{{delegation-section}}}` naturally. |
+| `packages/config/prompts/tapestry.md` | Built-in delegating prompt expected to place `{{{delegation-section}}}` naturally. |
 | `packages/config/prompts/*.md` | Built-in prompt corpus that must remain substantive, product-level, and leakage-free. |
 | `packages/config/src/__tests__/builtin-prompts.test.ts` | Existing source-prompt leakage tests that must allow intentional Mustache placeholders without weakening banned-token checks. |
 | `packages/config/src/__tests__/builtin-compose-smoke.test.ts` | Existing cross-package smoke test that must prove rendered built-ins have Mermaid delegation and no unresolved tags. |
@@ -62,7 +62,7 @@
 
 - Diff: `packages/engine/src/template-context.ts` contains `AgentPromptTemplateContext`, allowed-path metadata, context builders, and delegation Markdown/Mermaid generation helpers.
 - Test: `bun test packages/engine/src/__tests__/template-context.test.ts` proves agent/category/tool-policy/delegation context shape, optional path behavior, and no raw config exposure.
-- Test: delegation output cases prove stable Mermaid `flowchart TD`, escaped labels, deduplicated domain edge labels, compact bullets, and omitted `delegation.section`/`delegation.mermaid` when no targets exist.
+- Test: delegation output cases prove stable Mermaid `flowchart TD`, escaped labels, deduplicated domain edge labels, compact bullets, and omitted `delegation-section`/`delegation-mermaid` when no targets exist.
 - Typecheck: `bun run --filter '@weave/engine' typecheck` proves exported context/error types compile without exporting renderer internals.
 
 #### 2.0 Tasks
@@ -73,9 +73,9 @@
 - [x] 2.4 Implement category context projection for generated category shuttle agents only, including `category.name` and optional `category.description` while omitting `category` for non-category agents.
 - [x] 2.5 Project only resolved effective tool policy values under `toolPolicy.effective` and avoid exposing raw tool policy.
 - [x] 2.6 Project `delegation.targets` to include `name`, optional `description`, deduplicated `domains`, and trigger `{ domain, trigger }` details.
-- [x] 2.7 Generate deterministic Mermaid `flowchart TD` as a current-agent star with stable synthetic node IDs, escaped quoted labels, and deduplicated domain edge labels.
-- [x] 2.8 Generate canonical `delegation.section` Markdown containing `## Delegation`, the Mermaid block, and compact bullets with nested trigger lines.
-- [x] 2.9 Omit `delegation.section` and `delegation.mermaid` when there are no eligible delegation targets while keeping `delegation.targets` as an empty array.
+- [x] 2.7 Generate deterministic Mermaid `flowchart TD` as a current-agent star with stable synthetic node IDs, escaped quoted labels, and deduplicated domain edge labels. **[SUPERSEDED — see Amendment in spec]**
+- [x] 2.8 Generate canonical `delegation-section` Markdown containing `## Delegation`, the Mermaid block, and compact bullets with nested trigger lines. **[SUPERSEDED — `delegation-section` was subsequently removed; `{{#delegation.targets}}` iteration is the supported pattern]**
+- [x] 2.9 Omit `delegation-section` and `delegation-mermaid` when there are no eligible delegation targets while keeping `delegation.targets` as an empty array. **[SUPERSEDED — `delegation-section` and `delegation-mermaid` were removed entirely]**
 - [x] 2.10 Add `packages/engine/src/__tests__/template-context.test.ts` covering context shape, no raw config/model/temperature/path exposure, optional category behavior, allowed optional paths, Mermaid escaping, domain labels, bullets, and no-target omission.
 - [x] 2.11 Export only the intended Template Context and error types from `packages/engine/src/index.ts`; keep low-level renderer functions internal.
 - [x] 2.12 Run `bun run --filter '@weave/engine' typecheck` and record the passing type proof artifact.
@@ -95,8 +95,8 @@
 - [x] 3.2 Replace old flat delegation-section formatting with Template Context construction from the current agent, effective tool policy, category metadata, and filtered delegation targets.
 - [x] 3.3 Render the primary `prompt` or `prompt_file` source as a Mustache template before any fallback delegation is inserted.
 - [x] 3.4 Render merged `prompt_append` as a Mustache template with the same Template Context and report append errors with `sourceKind: "prompt_append"` line/column in the merged append text.
-- [x] 3.5 Detect fallback suppression only from parsed primary-source real tokens whose path starts with `delegation`, excluding comments, escaped literals, raw text, and all `prompt_append` references.
-- [x] 3.6 Assemble final prompt text in the order rendered primary source, optional fallback `delegation.section`, then rendered `prompt_append`.
+- [x] 3.5 Detect fallback suppression only from parsed primary-source real tokens whose path starts with `delegation`, excluding comments, escaped literals, raw text, and all `prompt_append` references. **[SUPERSEDED — fallback suppression logic was removed along with `delegation-section`]**
+- [x] 3.6 Assemble final prompt text in the order rendered primary source, optional fallback `delegation-section`, then rendered `prompt_append`. **[SUPERSEDED — fallback `delegation-section` insertion was removed; assembly is now rendered primary source then rendered `prompt_append`]**
 - [x] 3.7 Preserve existing static prompt behavior when sources contain no Mustache tags and no eligible delegation fallback applies.
 - [x] 3.8 Map renderer/context errors into `PromptTemplateError` with `agentName`, `sourceKind`, optional `promptFilePath`, message, path/tag, and line/column where available.
 - [x] 3.9 Keep `composeAgentDescriptor()` returning `ResultAsync<AgentDescriptor, ComposeError>` and avoid expected-failure `try/catch` control flow.
@@ -107,15 +107,15 @@
 
 #### 4.0 Proof Artifact(s)
 
-- Diff: `packages/config/prompts/loom.md` and `packages/config/prompts/tapestry.md` use `{{{delegation.section}}}` only where natural; non-delegating prompts avoid artificial template tags.
+- Diff: `packages/config/prompts/loom.md` and `packages/config/prompts/tapestry.md` use `{{{delegation-section}}}` only where natural; non-delegating prompts avoid artificial template tags.
 - Test: `bun test packages/config/src/__tests__/builtin-prompts.test.ts` proves source prompts remain substantive, allow intentional Mustache placeholders, and still reject repo/harness leakage.
 - Test: `bun test packages/config/src/__tests__/builtin-compose-smoke.test.ts` proves all builtins compose, delegating prompts include Mermaid-based delegation guidance, non-delegating prompts omit delegation, and no unresolved unescaped tags leak.
 - Sanitized review artifact: rendered builtin prompts contain no raw config, prompt file paths, model lists, repo-only policy, harness tool names, secrets, or environment/process data.
 
 #### 4.0 Tasks
 
-- [x] 4.1 Update `packages/config/prompts/loom.md` to place `{{{delegation.section}}}` where routing guidance naturally belongs.
-- [x] 4.2 Update `packages/config/prompts/tapestry.md` to place `{{{delegation.section}}}` where routing guidance naturally belongs.
+- [x] 4.1 Update `packages/config/prompts/loom.md` to place `{{{delegation-section}}}` where routing guidance naturally belongs. **[SUPERSEDED — `{{{delegation-section}}}` was subsequently removed; `loom.md` now uses `{{#delegation.targets}}` iteration]**
+- [x] 4.2 Update `packages/config/prompts/tapestry.md` to place `{{{delegation-section}}}` where routing guidance naturally belongs. **[SUPERSEDED — `{{{delegation-section}}}` was subsequently removed; `tapestry.md` now uses `{{#delegation.targets}}` iteration]**
 - [x] 4.3 Review all `packages/config/prompts/*.md` files and avoid artificial template tags in prompts where Template Context fields do not improve clarity.
 - [x] 4.4 Update `packages/config/src/__tests__/builtin-prompts.test.ts` so source prompt checks allow intentional Mustache placeholders while preserving banned repo/harness leakage tokens.
 - [x] 4.5 Update `packages/config/src/__tests__/builtin-compose-smoke.test.ts` to assert all built-ins compose after rendering and no unresolved unescaped Mustache tags remain.

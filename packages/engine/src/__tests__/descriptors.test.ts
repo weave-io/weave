@@ -229,6 +229,35 @@ describe("generateCategoryShuttles", () => {
       );
     });
 
+    it("(f-file) category prompt_append_file is propagated to the generated shuttle config", () => {
+      const result = shuttles(`
+        agent shuttle { prompt "Base shuttle." models ["claude-sonnet-4-5"] }
+        category frontend {
+          patterns ["src/components/**"]
+          prompt_append_file "extra.md"
+        }
+      `);
+
+      expect(result["shuttle-frontend"]?.config.prompt_append_file).toBe(
+        "extra.md",
+      );
+    });
+
+    it("(f-file-no-base) category prompt_append_file is set when base has no prompt_append", () => {
+      const result = shuttles(`
+        agent shuttle { prompt "Base shuttle." models ["claude-sonnet-4-5"] }
+        category frontend {
+          patterns ["src/components/**"]
+          prompt_append_file "category-extra.md"
+        }
+      `);
+
+      expect(result["shuttle-frontend"]?.config.prompt_append_file).toBe(
+        "category-extra.md",
+      );
+      expect(result["shuttle-frontend"]?.config.prompt_append).toBeUndefined();
+    });
+
     it("(f) base prompt_append is preserved when category has no prompt_append", () => {
       const result = shuttles(`
         agent shuttle {

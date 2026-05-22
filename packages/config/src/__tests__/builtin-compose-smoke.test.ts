@@ -12,9 +12,10 @@
  *
  * Key assertions:
  * - All 8 builtins compose to non-empty prompts.
- * - Loom and Tapestry (delegate allow + non-primary targets with triggers)
- *   produce a `## Delegation` section in their composedPrompt.
- * - Delegating agents include a Mermaid code block with `flowchart TD`.
+ * - Loom (prose-first template) lists specialist agents under `# Available Agents`
+ *   without an embedded Mermaid diagram.
+ * - Tapestry (delegate allow) produces a `## Delegation` section with a Mermaid
+ *   workflow-sequence diagram.
  * - Delegating agents list all specialist agent names in their composed prompt.
  * - Shuttle, Pattern, Thread, Spindle, Weft, Warp (delegate deny) do NOT
  *   produce a `## Delegation` section.
@@ -131,34 +132,34 @@ describe("builtin compose smoke", () => {
   // Delegating agents: ## Delegation, Mermaid, specialist names
   // ---------------------------------------------------------------------------
 
-  it("loom composedPrompt contains ## Delegation section", () => {
+  it("loom composedPrompt contains # Available Agents section", () => {
     const descriptor = getDescriptor("loom");
-    expect(descriptor.composedPrompt).toContain("## Delegation");
+    expect(descriptor.composedPrompt).toContain("# Available Agents");
   });
 
-  it("tapestry composedPrompt contains ## Delegation section", () => {
+  it("tapestry composedPrompt does NOT contain ## Delegation section (uses delegation.targets loop instead)", () => {
     const descriptor = getDescriptor("tapestry");
-    expect(descriptor.composedPrompt).toContain("## Delegation");
+    expect(descriptor.composedPrompt).not.toContain("## Delegation");
   });
 
-  it("loom composedPrompt contains a Mermaid code block", () => {
+  it("loom composedPrompt does NOT contain a Mermaid code block (prose-first template)", () => {
     const descriptor = getDescriptor("loom");
-    expect(descriptor.composedPrompt).toContain("```mermaid");
+    expect(descriptor.composedPrompt).not.toContain("```mermaid");
   });
 
-  it("tapestry composedPrompt contains a Mermaid code block", () => {
+  it("tapestry composedPrompt does NOT contain a Mermaid code block (uses delegation.targets loop instead)", () => {
     const descriptor = getDescriptor("tapestry");
-    expect(descriptor.composedPrompt).toContain("```mermaid");
+    expect(descriptor.composedPrompt).not.toContain("```mermaid");
   });
 
-  it("loom composedPrompt contains flowchart TD", () => {
+  it("loom composedPrompt does NOT contain flowchart TD (prose-first template)", () => {
     const descriptor = getDescriptor("loom");
-    expect(descriptor.composedPrompt).toContain("flowchart TD");
+    expect(descriptor.composedPrompt).not.toContain("flowchart TD");
   });
 
-  it("tapestry composedPrompt contains flowchart TD", () => {
+  it("tapestry composedPrompt does NOT contain flowchart TD (uses delegation.targets loop instead)", () => {
     const descriptor = getDescriptor("tapestry");
-    expect(descriptor.composedPrompt).toContain("flowchart TD");
+    expect(descriptor.composedPrompt).not.toContain("flowchart TD");
   });
 
   it("loom delegation targets include specialist agents with triggers", () => {
@@ -224,41 +225,25 @@ describe("builtin compose smoke", () => {
   // Workflow-sequence Mermaid diagrams
   // ---------------------------------------------------------------------------
 
-  it("loom composedPrompt contains subgraph blocks (workflow-sequence diagram)", () => {
+  it("loom composedPrompt does NOT contain subgraph blocks (prose-first template, no embedded diagram)", () => {
     const descriptor = getDescriptor("loom");
-    expect(descriptor.composedPrompt).toContain("subgraph");
+    expect(descriptor.composedPrompt).not.toContain("subgraph");
   });
 
-  it("tapestry composedPrompt contains subgraph blocks (workflow-sequence diagram)", () => {
+  it("tapestry composedPrompt does NOT contain subgraph blocks (uses delegation.targets loop instead)", () => {
     const descriptor = getDescriptor("tapestry");
-    expect(descriptor.composedPrompt).toContain("subgraph");
+    expect(descriptor.composedPrompt).not.toContain("subgraph");
   });
 
-  it("loom diagram contains plan-and-execute subgraph", () => {
-    const descriptor = getDescriptor("loom");
-    expect(descriptor.composedPrompt).toContain("subgraph plan-and-execute");
-  });
-
-  it("loom diagram contains quick-fix subgraph", () => {
-    const descriptor = getDescriptor("loom");
-    expect(descriptor.composedPrompt).toContain("subgraph quick-fix");
-  });
-
-  it("tapestry diagram contains tapestry-execution subgraph", () => {
+  it("tapestry composedPrompt contains the Available specialists section from delegation.targets", () => {
     const descriptor = getDescriptor("tapestry");
-    expect(descriptor.composedPrompt).toContain("subgraph tapestry-execution");
+    expect(descriptor.composedPrompt).toContain("Available specialists:");
   });
 
-  it("gate agents (weft, warp) appear with hexagon {{}} syntax in loom diagram", () => {
-    const descriptor = getDescriptor("loom");
-    expect(descriptor.composedPrompt).toContain('{{"weft"}}');
-    expect(descriptor.composedPrompt).toContain('{{"warp"}}');
-  });
-
-  it("gate agents (weft, warp) appear with hexagon {{}} syntax in tapestry diagram", () => {
+  it("tapestry composedPrompt lists weft and warp as available specialists", () => {
     const descriptor = getDescriptor("tapestry");
-    expect(descriptor.composedPrompt).toContain('{{"weft"}}');
-    expect(descriptor.composedPrompt).toContain('{{"warp"}}');
+    expect(descriptor.composedPrompt).toContain("weft");
+    expect(descriptor.composedPrompt).toContain("warp");
   });
 
   // ---------------------------------------------------------------------------

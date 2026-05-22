@@ -1,6 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { ToolPermissionSchema, ToolPolicySchema } from "@weave/core";
 import {
+  AgentConfigSchema,
+  CategoryConfigSchema,
   CompletionMethodSchema,
   LogLevelSchema,
   OnRejectSchema,
@@ -509,6 +511,115 @@ describe("WeaveConfigSchema — settings integration", () => {
     if (r.success) {
       // log_level is not present in the parsed output (stripped)
       expect("log_level" in r.data).toBe(false);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AgentConfigSchema — prompt_append_file
+// ---------------------------------------------------------------------------
+
+describe("AgentConfigSchema — prompt_append_file", () => {
+  it("accepts prompt_append_file with a valid relative path (no prompt_append)", () => {
+    const r = AgentConfigSchema.safeParse({
+      prompt_append_file: "extra-instructions.md",
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it("accepts prompt_append alone (regression guard)", () => {
+    const r = AgentConfigSchema.safeParse({
+      prompt_append: "Always respond in JSON.",
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it("rejects when both prompt_append and prompt_append_file are set", () => {
+    const r = AgentConfigSchema.safeParse({
+      prompt_append: "Always respond in JSON.",
+      prompt_append_file: "extra-instructions.md",
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      const messages = r.error.issues.map((i) => i.message);
+      expect(messages.some((m) => m.includes("mutually exclusive"))).toBe(true);
+    }
+  });
+
+  it("rejects prompt_append_file with a path traversal (../bad.md)", () => {
+    const r = AgentConfigSchema.safeParse({
+      prompt_append_file: "../bad.md",
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      const messages = r.error.issues.map((i) => i.message);
+      expect(messages.some((m) => m.includes("relative path"))).toBe(true);
+    }
+  });
+
+  it("rejects prompt_append_file with an absolute path (/etc/passwd)", () => {
+    const r = AgentConfigSchema.safeParse({
+      prompt_append_file: "/etc/passwd",
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      const messages = r.error.issues.map((i) => i.message);
+      expect(messages.some((m) => m.includes("relative path"))).toBe(true);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CategoryConfigSchema — prompt_append_file
+// ---------------------------------------------------------------------------
+
+describe("CategoryConfigSchema — prompt_append_file", () => {
+  const baseCategory = {
+    patterns: ["src/**/*.ts"],
+  };
+
+  it("accepts prompt_append_file with a valid relative path", () => {
+    const r = CategoryConfigSchema.safeParse({
+      ...baseCategory,
+      prompt_append_file: "category-extra.md",
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it("rejects when both prompt_append and prompt_append_file are set", () => {
+    const r = CategoryConfigSchema.safeParse({
+      ...baseCategory,
+      prompt_append: "Focus on API contracts.",
+      prompt_append_file: "category-extra.md",
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      const messages = r.error.issues.map((i) => i.message);
+      expect(messages.some((m) => m.includes("mutually exclusive"))).toBe(true);
+    }
+  });
+
+  it("rejects prompt_append_file with a path traversal (../bad.md)", () => {
+    const r = CategoryConfigSchema.safeParse({
+      ...baseCategory,
+      prompt_append_file: "../bad.md",
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      const messages = r.error.issues.map((i) => i.message);
+      expect(messages.some((m) => m.includes("relative path"))).toBe(true);
+    }
+  });
+
+  it("rejects prompt_append_file with an absolute path (/etc/passwd)", () => {
+    const r = CategoryConfigSchema.safeParse({
+      ...baseCategory,
+      prompt_append_file: "/etc/passwd",
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      const messages = r.error.issues.map((i) => i.message);
+      expect(messages.some((m) => m.includes("relative path"))).toBe(true);
     }
   });
 });

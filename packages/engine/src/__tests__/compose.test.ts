@@ -12,6 +12,11 @@ const tempPromptFilePath = join(
   "weave-compose-agent-descriptor-prompt.md",
 );
 
+const tempAppendFilePath = join(
+  tmpdir(),
+  "weave-compose-agent-descriptor-append.md",
+);
+
 function cfg(source = ""): WeaveConfig {
   const result = parseConfig(source);
   if (result.isErr()) throw new Error(JSON.stringify(result.error));
@@ -39,6 +44,7 @@ async function descriptorFor(
 
 beforeAll(async () => {
   await Bun.write(tempPromptFilePath, "Prompt loaded from file.");
+  await Bun.write(tempAppendFilePath, "Append loaded from file.");
 });
 
 describe("composeAgentDescriptor", () => {
@@ -215,6 +221,134 @@ describe("composeAgentDescriptor", () => {
     });
   });
 
+  describe("prompt_append_file", () => {
+    it("Prompt_append_file_loads_file_content_and_appends_after_primary", async () => {
+      const config = cfg();
+      const agentConfig: AgentConfig = {
+        prompt: "Base prompt.",
+        prompt_append_file: tempAppendFilePath,
+      };
+
+      const descriptor = await descriptorFor(
+        "append-file-agent",
+        agentConfig,
+        config,
+        { "append-file-agent": agentConfig },
+      );
+
+      expect(descriptor.composedPrompt).toBe(
+        "Base prompt.\n\nAppend loaded from file.",
+      );
+    });
+
+    it("Prompt_append_file_templates_are_rendered", async () => {
+      const templateAppendFilePath = join(
+        tmpdir(),
+        "weave-compose-append-template-test.md",
+      );
+      await Bun.write(templateAppendFilePath, "Agent is {{agent.name}}.");
+
+      const config = cfg();
+      const agentConfig: AgentConfig = {
+        prompt: "Base prompt.",
+        prompt_append_file: templateAppendFilePath,
+      };
+
+      const descriptor = await descriptorFor(
+        "append-template-agent",
+        agentConfig,
+        config,
+        { "append-template-agent": agentConfig },
+      );
+
+      expect(descriptor.composedPrompt).toBe(
+        "Base prompt.\n\nAgent is append-template-agent.",
+      );
+    });
+
+    it("Unreadable_prompt_append_file_returns_PromptFileReadError", async () => {
+      const missingAppendFilePath = join(
+        tmpdir(),
+        "weave-compose-missing-append.md",
+      );
+      const config = cfg();
+      const agentConfig: AgentConfig = {
+        prompt: "Base prompt.",
+        prompt_append_file: missingAppendFilePath,
+      };
+
+      const result = await composeAgentDescriptor(
+        "append-missing-agent",
+        agentConfig,
+        config,
+        { "append-missing-agent": agentConfig },
+      );
+
+      expect(result.isErr()).toBe(true);
+      if (result.isOk()) throw new Error("expected PromptFileReadError");
+
+      expect(result.error.type).toBe("PromptFileReadError");
+      if (result.error.type !== "PromptFileReadError")
+        throw new Error("wrong error type");
+      expect(result.error.agentName).toBe("append-missing-agent");
+      expect(result.error.promptFilePath).toBe(missingAppendFilePath);
+      expect(result.error.fileErrorMessage).toBeTypeOf("string");
+      expect(result.error.fileErrorMessage.length).toBeGreaterThan(0);
+    });
+
+    it("Template_error_in_prompt_append_file_returns_PromptTemplateError_with_sourceKind_prompt_append_file", async () => {
+      const badTemplateAppendFilePath = join(
+        tmpdir(),
+        "weave-compose-append-bad-template.md",
+      );
+      await Bun.write(
+        badTemplateAppendFilePath,
+        "Append with {{unknown.path}}.",
+      );
+
+      const config = cfg();
+      const agentConfig: AgentConfig = {
+        prompt: "Base prompt.",
+        prompt_append_file: badTemplateAppendFilePath,
+      };
+
+      const result = await composeAgentDescriptor(
+        "append-template-error-agent",
+        agentConfig,
+        config,
+        { "append-template-error-agent": agentConfig },
+      );
+
+      expect(result.isErr()).toBe(true);
+      if (result.isOk()) throw new Error("expected PromptTemplateError");
+
+      expect(result.error.type).toBe("PromptTemplateError");
+      if (result.error.type !== "PromptTemplateError")
+        throw new Error("wrong error type");
+      expect(result.error.agentName).toBe("append-template-error-agent");
+      expect(result.error.sourceKind).toBe("prompt_append_file");
+      expect(result.error.promptFilePath).toBe(badTemplateAppendFilePath);
+      expect(result.error.reason.kind).toBe("UnknownPath");
+    });
+
+    it("No_prompt_append_file_does_not_add_extra_section", async () => {
+      const config = cfg(`
+        agent loom {
+          prompt "Base prompt."
+        }
+      `);
+
+      const descriptor = await descriptorFor(
+        "loom",
+        config.agents.loom,
+        config,
+        config.agents,
+      );
+
+      expect(descriptor.composedPrompt).toBe("Base prompt.");
+    });
+  });
+
   describe("delegation targets", () => {
     it("Agent_with_no_delegate_allow_has_empty_delegation_targets", async () => {
       const config = cfg(`
@@ -349,52 +483,6 @@ describe("composeAgentDescriptor", () => {
       expect(descriptor.delegationTargets.map((target) => target.name)).toEqual(
         ["helper"],
       );
-    });
-
-    it("Delegation_section_is_formatted_as_markdown_with_mermaid_in_composedPrompt", async () => {
-      const config = cfg(`
-        agent router {
-          prompt "Base prompt."
-          tool_policy {
-            delegate allow
-          }
-        }
-        agent reviewer {
-          prompt "Reviewer prompt."
-          description "Reviews code"
-          triggers [
-            { domain "Quality" trigger "Complex changes" }
-            { domain "Safety" trigger "Security-sensitive work" }
-          ]
-        }
-        agent helper {
-          prompt "Helper prompt."
-        }
-      `);
-
-      const descriptor = await descriptorFor(
-        "router",
-        config.agents.router,
-        config,
-        config.agents,
-      );
-
-      // New format includes Mermaid diagram
-      expect(descriptor.composedPrompt).toContain("## Delegation");
-      expect(descriptor.composedPrompt).toContain("```mermaid");
-      expect(descriptor.composedPrompt).toContain("flowchart TD");
-      expect(descriptor.composedPrompt).toContain('A0["router"]');
-      expect(descriptor.composedPrompt).toContain('A1["reviewer"]');
-      expect(descriptor.composedPrompt).toContain('A2["helper"]');
-      expect(descriptor.composedPrompt).toContain("- reviewer: Reviews code");
-      expect(descriptor.composedPrompt).toContain(
-        "  - Quality: Complex changes",
-      );
-      expect(descriptor.composedPrompt).toContain(
-        "  - Safety: Security-sensitive work",
-      );
-      expect(descriptor.composedPrompt).toContain("- helper");
-      expect(descriptor.composedPrompt).toStartWith("Base prompt.");
     });
 
     it("Shuttle_agent_excludes_shuttle_category_agents_from_delegation_targets", async () => {
@@ -764,6 +852,7 @@ describe("composeAgentDescriptor", () => {
           name: "helper",
           description: "Implementation helper",
           triggers: [{ domain: "Code", trigger: "Small implementation" }],
+          isCategory: false,
         },
       ]);
     });
@@ -957,34 +1046,7 @@ describe("composeAgentDescriptor", () => {
       expect(descriptor.composedPrompt).toBe("Base prompt.\n\nAgent is loom.");
     });
 
-    it("Fallback_delegation_section_inserted_when_primary_has_no_delegation_tags", async () => {
-      const config = cfg(`
-        agent router {
-          prompt "Route tasks."
-          tool_policy {
-            delegate allow
-          }
-        }
-        agent helper {
-          prompt "Helper prompt."
-        }
-      `);
-
-      const descriptor = await descriptorFor(
-        "router",
-        config.agents.router,
-        config,
-        config.agents,
-      );
-
-      // Fallback delegation section should be appended
-      expect(descriptor.composedPrompt).toStartWith("Route tasks.");
-      expect(descriptor.composedPrompt).toContain("## Delegation");
-      expect(descriptor.composedPrompt).toContain("flowchart TD");
-      expect(descriptor.composedPrompt).toContain("- helper");
-    });
-
-    it("Fallback_delegation_suppressed_when_primary_references_delegation_tag", async () => {
+    it("Delegation_section_path_in_primary_prompt_returns_PromptTemplateError_UnknownPath", async () => {
       const config = cfg(`
         agent router {
           prompt "Route tasks. {{{delegation.section}}}"
@@ -997,21 +1059,29 @@ describe("composeAgentDescriptor", () => {
         }
       `);
 
-      const descriptor = await descriptorFor(
+      const result = await composeAgentDescriptor(
         "router",
         config.agents.router,
         config,
         config.agents,
       );
 
-      // delegation.section is rendered inline — no duplicate fallback
-      const delegationCount = (
-        descriptor.composedPrompt.match(/## Delegation/g) ?? []
-      ).length;
-      expect(delegationCount).toBe(1);
+      // {{{delegation.section}}} is no longer a known path — must produce PromptTemplateError
+      expect(result.isErr()).toBe(true);
+      if (result.isOk()) throw new Error("expected PromptTemplateError");
+
+      expect(result.error.type).toBe("PromptTemplateError");
+      if (result.error.type !== "PromptTemplateError")
+        throw new Error("wrong error type");
+
+      expect(result.error.agentName).toBe("router");
+      expect(result.error.reason.kind).toBe("UnknownPath");
+      if (result.error.reason.kind !== "UnknownPath")
+        throw new Error("wrong reason kind");
+      expect(result.error.reason.path).toBe("delegation.section");
     });
 
-    it("Prompt_append_delegation_reference_does_not_suppress_fallback", async () => {
+    it("Prompt_append_delegation_targets_iterates_and_no_delegation_heading_inserted", async () => {
       const config = cfg(`
         agent router {
           prompt "Route tasks."
@@ -1032,10 +1102,10 @@ describe("composeAgentDescriptor", () => {
         config.agents,
       );
 
-      // prompt_append references delegation but primary does NOT — fallback should still be inserted
-      expect(descriptor.composedPrompt).toContain("## Delegation");
-      // The append should also be rendered
+      // delegation.targets in prompt_append is iterated correctly
       expect(descriptor.composedPrompt).toContain("helper");
+      // No fallback delegation heading is inserted
+      expect(descriptor.composedPrompt).not.toContain("## Delegation");
     });
 
     it("Static_prompt_without_mustache_tags_works_unchanged", async () => {
@@ -1143,7 +1213,7 @@ describe("composeAgentDescriptor", () => {
       expect(result.error.reason.kind).toBe("UnknownPath");
     });
 
-    it("Final_prompt_order_is_rendered_primary_then_fallback_then_rendered_append", async () => {
+    it("Final_prompt_order_is_rendered_primary_then_rendered_append", async () => {
       const config = cfg(`
         agent router {
           prompt "Primary: {{agent.name}}."
@@ -1167,10 +1237,10 @@ describe("composeAgentDescriptor", () => {
       const parts = descriptor.composedPrompt.split("\n\n");
       // First part: rendered primary
       expect(parts[0]).toBe("Primary: router.");
-      // Middle part(s): delegation section (may span multiple \n\n)
-      expect(descriptor.composedPrompt).toContain("## Delegation");
-      // Last part: rendered append
+      // Last part: rendered append (no delegation section in between)
       expect(parts[parts.length - 1]).toBe("Append: subagent.");
+      // No fallback delegation heading
+      expect(descriptor.composedPrompt).not.toContain("## Delegation");
     });
   });
 });

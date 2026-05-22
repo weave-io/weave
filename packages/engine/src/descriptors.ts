@@ -65,6 +65,9 @@ export function generateCategoryShuttles(
         ? `${existing}\n${category.prompt_append}`
         : category.prompt_append;
     }
+    if (category.prompt_append_file !== undefined) {
+      overrides.prompt_append_file = category.prompt_append_file;
+    }
     if (category.tool_policy !== undefined) {
       overrides.tool_policy = { ...base.tool_policy, ...category.tool_policy };
     }

@@ -1,5 +1,7 @@
 # Task 2 Proof Artifacts — Bounded Template Context and Delegation Guidance Generator
 
+> **Amendment:** `delegation-section` and `delegation-mermaid` were removed from the engine after this proof was recorded. The fallback-append logic was also removed. The current supported pattern is `{{#delegation.targets}}` iteration in prompt templates. Sections 7, 8, and 9 below reflect the original implementation and are preserved for historical reference only.
+
 ## 1. Diff: `packages/engine/src/template-context.ts` (new file)
 
 ```diff
@@ -18,8 +20,8 @@
 + * - Project resolved effective tool policy (no raw policy exposure)
 + * - Project delegation targets with deduplicated domains and trigger details
 + * - Generate deterministic Mermaid `flowchart TD` delegation diagrams
-+ * - Generate canonical `delegation.section` Markdown
-+ * - Omit `delegation.section` and `delegation.mermaid` when no targets exist
++ * - Generate canonical `delegation-section` Markdown
++ * - Omit `delegation-section` and `delegation-mermaid` when no targets exist
 + */
 +
 +// ... (full file: 310 lines)
@@ -100,12 +102,14 @@ Note: `generateMermaidDiagram`, `generateDelegationSection`, `projectDelegationT
 | `category.description` | `TemplateContextInput.category.description` (optional) |
 | `toolPolicy.effective.*` | `TemplateContextInput.effectiveToolPolicy` (5 resolved values) |
 | `delegation.targets` | Projected from `TemplateContextInput.delegationTargets` |
-| `delegation.mermaid` | Generated (only when targets exist) |
-| `delegation.section` | Generated (only when targets exist) |
+| ~~`delegation-mermaid`~~ | ~~Generated (only when targets exist)~~ — **REMOVED** |
+| ~~`delegation-section`~~ | ~~Generated (only when targets exist)~~ — **REMOVED** |
 
 ## 6. Allowed-Path Metadata
 
-`ALLOWED_TEMPLATE_PATHS` contains 28 paths:
+> **Amendment:** `delegation-section` and `delegation-mermaid` were removed from `ALLOWED_TEMPLATE_PATHS` when those fields were removed from the engine.
+
+`ALLOWED_TEMPLATE_PATHS` (original, 28 paths — now reduced by 2):
 
 ```
 agent, agent.name, agent.description, agent.mode, agent.skills, agent.isCategory,
@@ -113,14 +117,17 @@ category, category.name, category.description,
 toolPolicy, toolPolicy.effective,
 toolPolicy.effective.read, toolPolicy.effective.write, toolPolicy.effective.execute,
 toolPolicy.effective.delegate, toolPolicy.effective.network,
-delegation, delegation.targets, delegation.section, delegation.mermaid,
+delegation, delegation.targets,
+[delegation-section REMOVED], [delegation-mermaid REMOVED],
 delegation.targets.name, delegation.targets.description, delegation.targets.domains,
 delegation.targets.triggers, delegation.targets.triggers.domain,
 delegation.targets.triggers.trigger,
 .
 ```
 
-## 7. Mermaid Generation Verification
+## 7. Mermaid Generation Verification *(historical — feature removed)*
+
+> **Amendment:** `delegation-mermaid` was removed from the engine. The following is preserved for historical reference only.
 
 Example output for agent `loom` with two targets:
 
@@ -140,9 +147,11 @@ flowchart TD
 - ✅ Unlabelled edge when target has no triggers
 - ✅ Deterministic: same input → same output
 
-## 8. Delegation Section Markdown Verification
+## 8. Delegation Section Markdown Verification *(historical — feature removed)*
 
-Example `delegation.section` for agent `loom` with one target:
+> **Amendment:** `delegation-section` was removed from the engine. The following is preserved for historical reference only.
+
+Example `delegation-section` for agent `loom` with one target:
 
 ```markdown
 ## Delegation
@@ -164,14 +173,14 @@ flowchart TD
 - ✅ Compact bullets with optional description
 - ✅ Nested trigger lines indented with `  - `
 
-## 9. No-Target Omission Verification
+## 9. No-Target Omission Verification *(historical — feature removed)*
+
+> **Amendment:** `delegation-section` and `delegation-mermaid` were removed entirely. The omission behaviour described below no longer applies.
 
 When `delegationTargets = []`:
-- `delegation.targets` → `[]` (always present)
-- `delegation.mermaid` → `undefined` (omitted)
-- `delegation.section` → `undefined` (omitted)
-
-✅ Confirmed by tests: `delegation.mermaid is omitted when no targets` and `delegation.section is omitted when no targets`.
+- `delegation.targets` → `[]` (always present — still true)
+- ~~`delegation-mermaid` → `undefined` (omitted)~~ — field removed
+- ~~`delegation-section` → `undefined` (omitted)~~ — field removed
 
 ## 10. Renderer Internals Not Exported
 
