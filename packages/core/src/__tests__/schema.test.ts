@@ -332,6 +332,30 @@ describe("WorkflowStepSchema", () => {
       expect(r.data.insert_after).toBeUndefined();
     }
   });
+
+  it("rejects insert_before: '' (empty string)", () => {
+    const r = WorkflowStepSchema.safeParse({
+      ...validStep,
+      insert_before: "",
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      const msgs = r.error.issues.map((i) => i.message);
+      expect(msgs.some((m) => m.includes("insert_before"))).toBe(true);
+    }
+  });
+
+  it("rejects insert_after: '' (empty string)", () => {
+    const r = WorkflowStepSchema.safeParse({
+      ...validStep,
+      insert_after: "",
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      const msgs = r.error.issues.map((i) => i.message);
+      expect(msgs.some((m) => m.includes("insert_after"))).toBe(true);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -438,6 +462,19 @@ describe("WorkflowConfigSchema", () => {
     expect(r.success).toBe(true);
     if (r.success) {
       expect(r.data.extends).toBeUndefined();
+    }
+  });
+
+  it("rejects extends: '' (empty string)", () => {
+    const r = WorkflowConfigSchema.safeParse({
+      version: 1,
+      extends: "",
+      steps: [validStep],
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      const msgs = r.error.issues.map((i) => i.message);
+      expect(msgs.some((m) => m.includes("extends"))).toBe(true);
     }
   });
 });

@@ -229,9 +229,15 @@ export const WorkflowStepSchema = z
     outputs: z.array(ArtifactDeclSchema).optional(),
     on_reject: OnRejectSchema.optional(),
     /** Position this step immediately before the named anchor step in the base workflow. */
-    insert_before: z.string().optional(),
+    insert_before: z
+      .string()
+      .min(1, "insert_before must be a non-empty step name")
+      .optional(),
     /** Position this step immediately after the named anchor step in the base workflow. */
-    insert_after: z.string().optional(),
+    insert_after: z
+      .string()
+      .min(1, "insert_after must be a non-empty step name")
+      .optional(),
   })
   .refine((data) => data.on_reject === undefined || data.type === "gate", {
     message: "on_reject is only valid for gate steps",
@@ -265,7 +271,10 @@ export const WorkflowConfigSchema = z
     version: z.number().int().positive(),
     steps: z.array(WorkflowStepSchema),
     /** Name of the base workflow this workflow extends. */
-    extends: z.string().optional(),
+    extends: z
+      .string()
+      .min(1, "extends must be a non-empty workflow name")
+      .optional(),
   })
   .refine((data) => data.extends !== undefined || data.steps.length >= 1, {
     message:

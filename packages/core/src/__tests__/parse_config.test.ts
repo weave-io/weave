@@ -462,6 +462,64 @@ describe("parseConfig — workflows", () => {
     ).toBe(true);
   });
 
+  it("step with insert_before: '' (empty string) returns ValidationError", () => {
+    const src = `workflow w {
+  version 1
+
+  step bad {
+    name "Bad step"
+    type autonomous
+    agent shuttle
+    prompt "Do it."
+    completion agent_signal
+    insert_before ""
+  }
+}`;
+    const result = parseConfig(src);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    expect(errors.some((e) => e.type === "ValidationError")).toBe(true);
+  });
+
+  it("step with insert_after: '' (empty string) returns ValidationError", () => {
+    const src = `workflow w {
+  extends "base"
+  version 1
+
+  step bad {
+    name "Bad step"
+    type autonomous
+    agent shuttle
+    prompt "Do it."
+    completion agent_signal
+    insert_after ""
+  }
+}`;
+    const result = parseConfig(src);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    expect(errors.some((e) => e.type === "ValidationError")).toBe(true);
+  });
+
+  it("workflow with extends: '' (empty string) returns ValidationError", () => {
+    const src = `workflow w {
+  extends ""
+  version 1
+
+  step fix {
+    name "Fix"
+    type autonomous
+    agent shuttle
+    prompt "Do it."
+    completion agent_signal
+  }
+}`;
+    const result = parseConfig(src);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    expect(errors.some((e) => e.type === "ValidationError")).toBe(true);
+  });
+
   it("malformed completion block (no method identifier) returns err with ValidationError", () => {
     // `completion { plan_name \"x\" }` — plain block with no leading identifier means __name
     // is absent, so CompletionMethodSchema discriminated union cannot match.
