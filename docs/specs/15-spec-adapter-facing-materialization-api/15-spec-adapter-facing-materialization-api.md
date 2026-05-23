@@ -9,7 +9,7 @@ The primary goal is to expose a pure, typed engine composition surface that incl
 ## Goals
 
 - Provide a public engine materialization function that adapters can import from `@weave/engine`.
-- Return typed `neverthrow` `Result` or `ResultAsync` errors for expected materialization failures instead of throwing or invoking adapter lifecycle methods.
+- Return `ResultAsync<MaterializationPlan, never>` from `neverthrow`; accumulate per-agent failures in `MaterializationPlan.errors[]` rather than causing top-level rejection or throwing.
 - Materialize composed agent descriptors for builtin agents, custom agents, and generated category shuttles.
 - Preserve existing runner behavior for disabled agents and category shuttle ordering while making that behavior testable without a concrete adapter.
 - Document the materialization API in the adapter boundary docs so implementers understand what the engine owns and what adapters own after receiving descriptors.
@@ -31,12 +31,12 @@ The primary goal is to expose a pure, typed engine composition surface that incl
 - The system shall export a public materialization function from `packages/engine/src/index.ts` for adapter use.
 - The system shall define public input, output, warning, and error types for the materialization API.
 - The system shall accept explicit adapter-provided context and shall not read harness-owned directories, query harness UI/runtime state, or require a `HarnessAdapter` instance.
-- The system shall return a `Result` or `ResultAsync` value with discriminated union error variants for expected failures.
+- The system shall return a `ResultAsync<MaterializationPlan, never>` value that never rejects at the top level; per-agent failures are accumulated into `MaterializationPlan.errors[]`.
 
 **Proof Artifacts:**
 - Test: engine API import test demonstrates adapters can import the materialization function and its public types from `@weave/engine`.
-- Typecheck: `bun run typecheck` demonstrates the exported API and discriminated error types compile.
-- Code review artifact: API signature demonstrates no `HarnessAdapter` parameter and no concrete harness names.
+- Typecheck: `bun run typecheck` demonstrates the exported API, `MaterializationPlan` shape, and discriminated error types compile.
+- Code review artifact: API signature demonstrates no `HarnessAdapter` parameter, no concrete harness names, and `ResultAsync<MaterializationPlan, never>` return type.
 
 ### Unit 2: Deterministic Descriptor Materialization
 
@@ -64,13 +64,13 @@ The primary goal is to expose a pure, typed engine composition surface that incl
 **Functional Requirements:**
 - The system shall reuse existing descriptor composition behavior from `packages/engine/src/compose.ts` instead of duplicating prompt composition logic.
 - The system shall reuse existing category shuttle generation behavior from `packages/engine/src/descriptors.ts` instead of creating a parallel implementation.
-- The system shall convert expected category shuttle conflicts into typed materialization errors.
-- The system shall preserve prompt composition errors as typed materialization failures with enough context for adapter authors to identify the agent that failed.
-- The system shall not silently swallow expected materialization failures.
+- The system shall convert expected category shuttle conflicts into `MaterializationError` values accumulated in `MaterializationPlan.errors[]`; materialization of explicit agents continues even when a conflict is detected.
+- The system shall preserve prompt composition errors as `MaterializationError` values in `MaterializationPlan.errors[]` with enough context for adapter authors to identify the agent that failed; remaining agents continue to be materialized.
+- The system shall not silently swallow expected materialization failures — all failures appear in `plan.errors[]`.
 
 **Proof Artifacts:**
-- Test: category shuttle name conflict returns a typed materialization error rather than throwing.
-- Test: prompt composition failure identifies the affected agent in the materialization error.
+- Test: category shuttle name conflict produces a `CategoryShuttleConflict` entry in `plan.errors[]` rather than causing top-level rejection; explicit agents still appear in `plan.agents[]`.
+- Test: prompt composition failure produces a `DescriptorCompositionFailure` entry in `plan.errors[]` that identifies the affected agent; other agents still appear in `plan.agents[]`.
 - Test: composition reuse demonstrates descriptor fields match existing `composeAgentDescriptor` behavior for representative agents.
 - CLI: `bun test packages/engine/src` output demonstrates materialization tests pass with existing engine tests.
 
@@ -122,12 +122,12 @@ The developer experience should be clear for adapter authors: function and type 
 - The likely implementation surface is a new engine module near `packages/engine/src/materialization.ts`, plus tests under `packages/engine/src/__tests__/` and exports from `packages/engine/src/index.ts`.
 - The API may be named `materializeAgentDescriptors(config, context)` or `materializeHarnessConfig(config, context)`; the final name should emphasize descriptor materialization and avoid implying harness-specific file generation.
 - The materialization input should include a resolved `WeaveConfig` and explicit adapter-provided context. For the MVP, context should include only data required by existing descriptor composition. Additional model or skill context may be added only if needed without expanding scope beyond issue #70.
-- The materialization output should include an ordered list or record of materialized agent descriptors. If both forms are useful, the ordered list should be the source of deterministic behavior.
+- The materialization output is `MaterializationPlan`, which carries `agents: MaterializedAgent[]` (ordered, successful) and `errors: readonly MaterializationError[]` (accumulated per-agent failures). The `ResultAsync` itself is typed `ResultAsync<MaterializationPlan, never>` — it never rejects at the top level.
 - Category shuttle generation should reuse `generateCategoryShuttles(config)` to avoid a second implementation of category behavior.
 - Descriptor composition should reuse `composeAgentDescriptor(...)` so prompt templates, delegation context, raw/effective tool policy, and existing descriptor fields remain consistent.
 - Disabled agents must be filtered using the same semantics as `WeaveRunner.run()`.
 - Expected failures should be represented as discriminated unions. Current TypeScript guidance supports discriminated unions with exhaustive `never` checks for reliable handling when new variants are added.
-- Current `neverthrow` guidance supports `Result`/`ResultAsync` return types, `andThen` composition, and `ResultAsync.fromPromise`/`fromThrowable` wrappers for converting fallible or throwing operations into typed results. This matches the repository's error-handling standard.
+- Current `neverthrow` guidance supports `Result`/`ResultAsync` return types, `andThen` composition, and `ResultAsync.fromPromise`/`fromThrowable` wrappers for converting fallible or throwing operations into typed results. This matches the repository's error-handling standard. The `never` error type on `ResultAsync<MaterializationPlan, never>` signals that the promise always resolves — per-agent failures are surfaced through `plan.errors[]`, not through top-level rejection.
 - Latest-standards research summary:
   - **neverthrow**: Consulted Context7 docs for `/supermacro/neverthrow`, a living documentation source. Relevant guidance: use `ResultAsync.fromPromise` or `ResultAsync.fromThrowable` to wrap async fallible work; compose with `andThen`; return typed errors instead of relying on thrown exceptions for expected failures.
   - **TypeScript**: Consulted Context7 docs for `/microsoft/typescript-website`, a living documentation source. Relevant guidance: discriminated unions plus `never` exhaustiveness checks provide type-safe handling for public error variants; type-only exports/imports are erased at runtime and are appropriate for public API type surfaces.
@@ -151,7 +151,7 @@ The developer experience should be clear for adapter authors: function and type 
 
 ## Open Questions
 
-1. Should the public output be limited to `AgentDescriptor[]`, or should it introduce a wrapper such as `MaterializationPlan` with warnings, skipped-agent details, and provenance?
+1. ~~Should the public output be limited to `AgentDescriptor[]`, or should it introduce a wrapper such as `MaterializationPlan` with warnings, skipped-agent details, and provenance?~~ **Resolved**: `MaterializationPlan` is the output type, carrying both `agents: MaterializedAgent[]` and `errors: readonly MaterializationError[]`. The `ResultAsync` return type is `ResultAsync<MaterializationPlan, never>` — it never rejects at the top level.
 2. Should missing declared skills be represented in this materialization API now, or remain outside the MVP because issue #70 only requires composed descriptors?
-3. Should `WeaveRunner.run()` be refactored to use the new API in the first implementation, or should runner integration be a follow-up after the public API is tested independently?
+3. ~~Should `WeaveRunner.run()` be refactored to use the new API in the first implementation, or should runner integration be a follow-up after the public API is tested independently?~~ **Resolved**: Runner was not refactored. The runner's throw/skip-and-continue behavior differs from `materializeAgents`'s partial-by-default accumulation; a future refactor must explicitly bridge that gap.
 4. Should category provenance such as category name, description, or patterns be exposed in the materialization output, or should generated category shuttles remain ordinary descriptors for the MVP?
