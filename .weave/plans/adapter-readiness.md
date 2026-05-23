@@ -275,7 +275,8 @@ Make `@weave/engine` and `@weave/config` cleanly consumable by a third-party ada
 - [ ] `grep -rn "as any\|as unknown as" packages/adapters/opencode/src/` returns zero hits past the runtime-context boundary
 - [ ] `grep -rn "materializeAgents" packages/` shows every caller reads `.agents` and `.errors`
 - [ ] Reference adapter integration tests (tasks 10, 19) run a 2-step workflow against real `@opencode-ai/sdk` types and assert `DispatchAgentEffect` was applied
-  - [ ] All schema-changing tasks (12, 16) updated all four test layers per AGENTS.md- [ ] New specs 17, 18, 19 exist under `docs/specs/` and are linked from `docs/adapter-boundary.md`
+- [ ] All schema-changing tasks (12, 16) updated all four test layers per AGENTS.md
+- [ ] New specs 17, 18, 19 exist under `docs/specs/` and are linked from `docs/adapter-boundary.md`
 - [ ] Spec 15 amended to document partial-by-default `materializeAgents`
 - [ ] `docs/adapter-bootstrap.md` exists and is linked from at least one other doc
 - [ ] `docs/adapter-readiness-status.md` summarises the shipped surface and flags `@opencode-ai/sdk` pinning as a periodic-review item
