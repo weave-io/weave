@@ -53,7 +53,7 @@ export type EnvValidationError = {
  * Returns `ok(Env)` on success or `err(EnvValidationError)` on failure.
  */
 export function parseEnv(
-  raw: Record<string, string | undefined> = process.env,
+  raw: Record<string, string | undefined> = Bun.env,
 ): Result<Env, EnvValidationError> {
   const result = envSchema.safeParse(raw);
 
@@ -86,6 +86,6 @@ export const env: Env = parseEnv().match(
       { err: envErr },
       "[weave] Invalid environment variables",
     );
-    process.exit(1);
+    Bun.exit(1);
   },
 );

@@ -16,12 +16,12 @@
 - `packages/cli/src/errors.ts` — imported by **5** files
 - `packages/config/src/builtins.ts` — imported by **5** files
 - `packages/config/src/discovery.ts` — imported by **5** files
+- `packages/config/src/merge.ts` — imported by **5** files
 - `packages/config/src/types.ts` — imported by **5** files
 - `packages/core/src/lexer.ts` — imported by **5** files
 - `packages/engine/src/descriptors.ts` — imported by **5** files
 - `packages/config/src/normalize-path.ts` — imported by **4** files
 - `packages/core/src/parser.ts` — imported by **4** files
-- `packages/engine/src/env.ts` — imported by **4** files
 
 ## Import Map (who imports what)
 

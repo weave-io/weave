@@ -75,7 +75,12 @@
   - type DiscoveredConfig
   - const bunFileReader: FileReader
 - `packages/config/src/loader.ts` — function loadConfig: (projectRoot?, fileReader) => ResultAsync<import("@weave/core").WeaveConfig, ConfigLoadError[]>
-- `packages/config/src/merge.ts` — function mergeConfigs: (...configs) => WeaveConfig
+- `packages/config/src/merge.ts`
+  - function mergeWorkflow: (workflowName, base, override, workflowMap, WorkflowConfig>) => Result<WorkflowConfig, WorkflowExtensionError>
+  - function mergeConfigsResult: (...configs) => Result<WeaveConfig, MergeError[]>
+  - function mergeConfigs: (...configs) => WeaveConfig
+  - type WorkflowExtensionError
+  - type MergeError
 - `packages/config/src/normalize-path.ts` — function normalizePath: (p) => string
 - `packages/config/src/resolve.ts` — function resolvePromptPaths: (config, scope) => WeaveConfig
 - `packages/core/src/errors.ts`

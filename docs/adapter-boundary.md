@@ -5,7 +5,7 @@ Weave is a harness-agnostic orchestration framework with two cooperating halves:
 1. **Core Weave API** (`@weave/core`, `@weave/config`, `@weave/engine`) parses DSL config, normalizes agent intent, resolves/composes prompt and policy data, and exposes pure helper APIs.
 2. **Adapters** (`@weave/adapter-opencode`, `@weave/adapter-pi`, etc.) enable Weave inside a concrete harness by discovering harness-owned resources, translating normalized intent, and filling feature gaps when the harness lacks native support.
 
-**Related:** [Product Vision](product-vision.md) · [Adapter Bootstrap Guide](adapter-bootstrap.md) · [Claude Code Adapter](claude-code-adapter.md) · [Model Resolution](model-resolution.md) · [Config Loading](config-loading.md) · [Prompt Composition](prompt-composition.md) · [Tool Policy Evaluation](tool-policy-evaluation.md) · [Runtime Persistence Spec](specs/12-spec-runtime-persistence/12-spec-runtime-persistence.md) · [ADR 0002 — Runtime Persistence Store](adr/0002-runtime-persistence-store.md) · [Spec 05 — Skill Resolution](specs/05-spec-skill-loader/05-spec-skill-loader.md) · [Spec 07 — Adapter Capability Contract](specs/07-spec-adapter-capability-contract/07-spec-adapter-capability-contract.md) · [Spec 08 — Abstract Tool Policy Evaluation](specs/08-spec-abstract-tool-policy-evaluation/08-spec-abstract-tool-policy-evaluation.md) · [Spec 09 — Adapter-Provided Skill Resolution](specs/09-spec-adapter-provided-skill-resolution/09-spec-adapter-provided-skill-resolution.md) · [Spec 16 — Stable Adapter Descriptor Contract](specs/16-spec-stable-adapter-descriptor-contract/16-spec-stable-adapter-descriptor-contract.md) · [Spec 17 — Workflow Extension DSL](specs/17-spec-workflow-extension/17-spec-workflow-extension.md) · [Execution Lifecycle Surface](#execution-lifecycle-surface) · [Legacy Architecture](legacy-architecture.md)
+**Related:** [Product Vision](product-vision.md) · [Adapter Bootstrap Guide](adapter-bootstrap.md) · [Claude Code Adapter](claude-code-adapter.md) · [Model Resolution](model-resolution.md) · [Config Loading](config-loading.md) · [Prompt Composition](prompt-composition.md) · [Tool Policy Evaluation](tool-policy-evaluation.md) · [Runtime Persistence Spec](specs/12-spec-runtime-persistence/12-spec-runtime-persistence.md) · [ADR 0002 — Runtime Persistence Store](adr/0002-runtime-persistence-store.md) · [Spec 05 — Skill Resolution](specs/05-spec-skill-loader/05-spec-skill-loader.md) · [Spec 07 — Adapter Capability Contract](specs/07-spec-adapter-capability-contract/07-spec-adapter-capability-contract.md) · [Spec 08 — Abstract Tool Policy Evaluation](specs/08-spec-abstract-tool-policy-evaluation/08-spec-abstract-tool-policy-evaluation.md) · [Spec 09 — Adapter-Provided Skill Resolution](specs/09-spec-adapter-provided-skill-resolution/09-spec-adapter-provided-skill-resolution.md) · [Spec 16 — Stable Adapter Descriptor Contract](specs/16-spec-stable-adapter-descriptor-contract/16-spec-stable-adapter-descriptor-contract.md) · [Spec 17 — Workflow Extension DSL](specs/17-spec-workflow-extension/17-spec-workflow-extension.md) · [Spec 19 — Plan State Provider](specs/19-spec-plan-state-provider/19-spec-plan-state-provider.md) · [Execution Lifecycle Surface](#execution-lifecycle-surface) · [Legacy Architecture](legacy-architecture.md)
 
 ---
 
@@ -24,7 +24,7 @@ Engine-to-adapter calls are acceptable when they use abstract, harness-agnostic 
 Type names in `@weave/core` and `@weave/engine` follow a suffix convention to prevent collisions between the DSL configuration layer and the engine runtime layer:
 
 - **`*Decl` suffix** — used for core/DSL types that describe **declarative configuration** authored in `.weave` files. These types are parsed from the DSL and validated by Zod schemas. Example: `ArtifactDecl` describes a named artifact input or output declared on a workflow step.
-- **`*Ref` suffix** — used for engine runtime types that describe **persisted handles** or live records in the Runtime Store. These types are created and managed at execution time. Example: `ArtifactRef` (in `@weave/engine`) is a persisted artifact record with a resolved path and content hash.
+- **`*Ref` suffix** — used for engine runtime types that describe **persisted handles** or live records in the Runtime Store. These types are created and managed at execution time. Example: `ArtifactRef` (in `@weave/engine`) is a persisted artifact record with a logical name, a relative path, and optional `mimeType` and `description` metadata — it stores a reference and metadata only, never artifact contents or a content hash.
 
 When adding a new type that spans both layers (e.g. a concept declared in DSL config and also tracked at runtime), use `*Decl` for the core/DSL variant and `*Ref` for the engine runtime variant. Never share a single type name across both layers.
 
@@ -44,6 +44,7 @@ When adding a new type that spans both layers (e.g. a concept declared in DSL co
 | Skill discovery/loading                            | Adapter                  | Skill locations and formats are harness-specific                        |
 | Skill matching/filtering                           | Engine (`@weave/engine`) | Pure resolution against `AgentConfig.skills` and `disabled.skills`      |
 | `.weave/runtime/**` Runtime Store                  | Engine (`@weave/engine`) | Runtime records are Weave product state, not harness resources          |
+| Plan file state (`.weave/plans/**`)                | Adapter                  | Concrete I/O mechanism is harness/environment-specific; engine owns the `PlanStateProvider` interface only |
 | Harness plugin/config generation                   | Adapter                  | Output format is harness-specific                                       |
 | Concrete tool names and permissions                | Adapter                  | Tool identifiers differ by harness                                      |
 | Runtime lifecycle event mapping                    | Adapter                  | Event names and payloads differ by harness                              |
@@ -510,3 +511,65 @@ Adapters own everything after descriptors are returned:
 - Applying harness-specific materialization side effects and reporting any harness-specific failures outside the pure engine API.
 
 The engine must not write harness config files, spawn harness agents, discover harness resource locations, or register concrete harness callbacks as part of `materializeAgents()`.
+
+---
+
+## Plan State Provider
+
+> **Spec:** [Spec 19 — Plan State Provider](specs/19-spec-plan-state-provider/19-spec-plan-state-provider.md)
+
+The **Plan State Provider** is the engine-owned abstract interface that `completeStep` uses to query plan file state when a workflow step's completion method is `"plan_created"` or `"plan_complete"`. It replaces the previous direct `Bun.file()` calls inside `execution-lifecycle.ts`, which were a boundary violation.
+
+All types are exported from `@weave/engine` under `packages/engine/src/plan-state-provider.ts`.
+
+### Interface
+
+```ts
+interface PlanStateProvider {
+  planExists(planName: string): ResultAsync<boolean, PlanStateError>;
+  isPlanComplete(planName: string): ResultAsync<boolean, PlanStateError>;
+}
+
+type PlanStateError =
+  | { type: "InvalidPlanName"; planName: string; reason: string }
+  | { type: "ProviderUnavailable"; reason: string };
+```
+
+### Ownership Rules
+
+| Concern | Owner | Why |
+| --- | --- | --- |
+| `PlanStateProvider` interface and `PlanStateError` union | Engine (`@weave/engine`) | The engine defines the abstract contract; adapters implement it |
+| `validatePlanName` (safe-name regex) | Engine (`@weave/engine`) | Path traversal prevention must run before any provider call, regardless of implementation |
+| `BunFilesystemPlanStateProvider` (default implementation) | Config (`@weave/config`) | Concrete Bun filesystem I/O belongs outside the engine; `@weave/config` already owns filesystem I/O for config and prompt files |
+| Alternative provider implementations (database, remote, test double) | Adapter / test | Concrete I/O mechanism is harness/environment-specific |
+
+### Engine Behaviour
+
+- When `step.completion.method` is `"plan_created"` or `"plan_complete"` and `CompleteStepInput.planStateProvider` is **absent**, `completeStep` returns `err(lifecyclePolicyDecisionError("plan completion method requires a planStateProvider", "plan_state_provider"))` — never silently passes.
+- When the provider is present, the engine calls `planStateProvider.planExists(planName)` or `planStateProvider.isPlanComplete(planName)` and maps the result to the appropriate `LifecycleError` variant.
+- `validatePlanName` runs in the engine before any provider call as a path traversal defence.
+
+### Adapter Responsibility
+
+Adapters supply a `PlanStateProvider` implementation via `CompleteStepInput.planStateProvider`. For production use, adapters should use `BunFilesystemPlanStateProvider` from `@weave/config`. For tests, adapters should use an in-memory mock that returns controlled results without filesystem I/O.
+
+```ts
+// ✅ Correct: adapter supplies provider; engine calls interface
+const result = await completeStep(
+  {
+    workflowInstanceId,
+    leaseId,
+    stepName,
+    completionSignal,
+    context,
+    planStateProvider: new BunFilesystemPlanStateProvider(), // from @weave/config
+  },
+  store,
+);
+
+// ❌ Wrong: engine calls Bun.file() directly for plan files
+const exists = await Bun.file(`.weave/plans/${planName}.md`).exists();
+```
+
+See [Spec 19 — Plan State Provider](specs/19-spec-plan-state-provider/19-spec-plan-state-provider.md) for the full interface definition, error mapping, migration notes, and proof artifacts.
