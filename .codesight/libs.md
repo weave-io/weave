@@ -1,5 +1,19 @@
 # Libraries
 
+- `packages/adapters/opencode/src/index.ts` — class OpenCodeAdapter, interface OpenCodeAdapterOptions
+- `packages/adapters/opencode/src/run-workflow.ts`
+  - function runWorkflow: (input) => ResultAsync<RunWorkflowResult, RunWorkflowError>
+  - interface RunWorkflowInput
+  - interface RunWorkflowResult
+  - type RunWorkflowError
+- `packages/adapters/opencode/src/tool-policy-mapping.ts`
+  - function toOpenCodePermission: (permission) => OpenCodePermissionValue
+  - function buildReadToolsEntry: (readPermission) => Record<string, boolean> | undefined
+  - function mapToolPolicy: (policy) => void
+  - type OpenCodePermissionValue
+  - type OpenCodeToolPermissions
+  - const READ_TOOL_NAMES: readonly string[]
+- `packages/adapters/opencode/src/translate-agent.ts` — function translateAgent: (descriptor) => Result<OpenCodeAgentConfig, TranslateAgentError>, type TranslateAgentError
 - `packages/cli/src/args.ts`
   - function parseArgs: (argv) => Result<ParsedArgs, ArgParseError>
   - interface ParsedArgs

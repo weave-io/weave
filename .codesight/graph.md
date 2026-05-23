@@ -20,8 +20,8 @@
 - `packages/config/src/types.ts` — imported by **5** files
 - `packages/core/src/lexer.ts` — imported by **5** files
 - `packages/engine/src/descriptors.ts` — imported by **5** files
+- `packages/adapters/opencode/src/sdk-types.ts` — imported by **4** files
 - `packages/config/src/normalize-path.ts` — imported by **4** files
-- `packages/core/src/parser.ts` — imported by **4** files
 
 ## Import Map (who imports what)
 
