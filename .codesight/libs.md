@@ -82,6 +82,7 @@
   - type WorkflowExtensionError
   - type MergeError
 - `packages/config/src/normalize-path.ts` — function normalizePath: (p) => string
+- `packages/config/src/plan-state-provider.ts` — class BunFilesystemPlanStateProvider
 - `packages/config/src/resolve.ts` — function resolvePromptPaths: (config, scope) => WeaveConfig
 - `packages/core/src/errors.ts`
   - function formatError: (error) => string

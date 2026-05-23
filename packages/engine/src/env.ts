@@ -86,6 +86,6 @@ export const env: Env = parseEnv().match(
       { err: envErr },
       "[weave] Invalid environment variables",
     );
-    Bun.exit(1);
+    process.exit(1);
   },
 );
