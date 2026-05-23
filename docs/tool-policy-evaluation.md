@@ -142,14 +142,15 @@ type RunAgentEffect = {
 };
 ```
 
-`RunAgentEffect` is an observable effect emitted by `WeaveRunner` once per agent,
-immediately before `adapter.spawnSubagent` is called.
+`RunAgentEffect` is an observable effect emitted by the engine once per agent
+during the adapter bootstrap loop, immediately before `adapter.spawnSubagent`
+is called.
 
 **When it is emitted:** For every non-disabled agent (including generated
-`shuttle-{category}` agents), the runner composes an `AgentDescriptor` via
+`shuttle-{category}` agents), the engine composes an `AgentDescriptor` via
 `composeAgentDescriptor` (which internally calls `evaluateEffectiveToolPolicy`)
-and emits a `RunAgentEffect` via the optional `onEffect` callback on
-`WeaveRunnerOptions`.
+and emits a `RunAgentEffect` via the optional `onEffect` callback supplied to
+the bootstrap entry point (see [Adapter Bootstrap Guide](adapter-bootstrap.md)).
 
 **Fields:**
 
@@ -198,30 +199,31 @@ The adapter contract for tool policy is:
 
 ## Usage Example
 
+The `onEffect` callback is supplied to the adapter bootstrap entry point. See
+[Adapter Bootstrap Guide](adapter-bootstrap.md) for the full bootstrap pattern.
+
 ```ts
-import { WeaveRunner } from "@weave/engine";
+import { materializeAgents } from "@weave/engine";
 import type { RunAgentEffect } from "@weave/engine";
 
-const runner = new WeaveRunner(config, adapter, {
-  onEffect(effect: RunAgentEffect) {
-    if (effect.kind === "run-agent") {
-      // effectiveToolPolicy has all five capabilities resolved
-      const { read, write, execute, delegate, network } =
-        effect.effectiveToolPolicy;
+// onEffect is an optional callback passed alongside materializeAgents
+// (exact wiring depends on your adapter bootstrap — see adapter-bootstrap.md)
+function handleEffect(effect: RunAgentEffect) {
+  if (effect.kind === "run-agent") {
+    // effectiveToolPolicy has all five capabilities resolved
+    const { read, write, execute, delegate, network } =
+      effect.effectiveToolPolicy;
 
-      // rawToolPolicy is the original declared policy (may be undefined)
-      const raw = effect.rawToolPolicy;
+    // rawToolPolicy is the original declared policy (may be undefined)
+    const raw = effect.rawToolPolicy;
 
-      myTelemetry.record({
-        agent: effect.agentName,
-        policy: { read, write, execute, delegate, network },
-        hasDeclaredPolicy: raw !== undefined,
-      });
-    }
-  },
-});
-
-await runner.run();
+    myTelemetry.record({
+      agent: effect.agentName,
+      policy: { read, write, execute, delegate, network },
+      hasDeclaredPolicy: raw !== undefined,
+    });
+  }
+}
 ```
 
 ---
@@ -232,6 +234,6 @@ await runner.run();
 | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
 | [`packages/engine/src/tool-policy.ts`](../packages/engine/src/tool-policy.ts)           | `ABSTRACT_CAPABILITIES`, `EffectiveToolPolicy`, `DEFAULT_PERMISSION`, `evaluateEffectiveToolPolicy`, `resolveToolDecisions` |
 | [`packages/engine/src/run-agent-effects.ts`](../packages/engine/src/run-agent-effects.ts) | `RunAgentEffect` discriminated union                                     |
-| [`packages/engine/src/runner.ts`](../packages/engine/src/runner.ts)                     | `WeaveRunner`, `WeaveRunnerOptions` (with `onEffect`)                    |
+| [`packages/engine/src/materialization.ts`](../packages/engine/src/materialization.ts)   | `materializeAgents`, `MaterializationPlan`, `MaterializedAgent`          |
 | [`packages/engine/src/__tests__/tool-policy.test.ts`](../packages/engine/src/__tests__/tool-policy.test.ts) | Unit tests for `evaluateEffectiveToolPolicy` and `resolveToolDecisions`  |
-| [`packages/engine/src/__tests__/runner.test.ts`](../packages/engine/src/__tests__/runner.test.ts) | Integration tests for `WeaveRunner` including `onEffect` and category shuttle policy |
+| [`packages/engine/src/__tests__/materialization.test.ts`](../packages/engine/src/__tests__/materialization.test.ts) | Integration tests for `materializeAgents` including tool policy and category shuttle policy |
