@@ -2,7 +2,7 @@
 
 `@weave/config` owns the config-discovery, merge, and loading pipeline for Weave. It is the single entry point for reading agent configuration from disk and producing the final merged `WeaveConfig` consumed by the engine.
 
-**Related:** [Product Vision](product-vision.md) · [Adapter Boundary](adapter-boundary.md) · [Model Resolution](model-resolution.md) · [Spec 03 — Config Discovery](specs/03-spec-config-discovery/03-spec-config-discovery.md) · [AGENTS.md](../AGENTS.md) · [Legacy Architecture](legacy-architecture.md) · [`packages/config/src/loader.ts`](../packages/config/src/loader.ts)
+**Related:** [Product Vision](product-vision.md) · [Adapter Boundary](adapter-boundary.md) · [Model Resolution](model-resolution.md) · [Spec 03 — Config Discovery](specs/03-spec-config-discovery/03-spec-config-discovery.md) · [Spec 17 — Workflow Extension DSL](specs/17-spec-workflow-extension/17-spec-workflow-extension.md) · [AGENTS.md](../AGENTS.md) · [Legacy Architecture](legacy-architecture.md) · [`packages/config/src/loader.ts`](../packages/config/src/loader.ts)
 
 ---
 
@@ -30,12 +30,85 @@ Configuration is assembled from three layers in priority order (lowest → highe
 | **Scalar** (string, number, boolean, enum)   | Last-defined wins — project overrides global overrides builtin                                                                                                            |
 | **Object** (e.g. `agents`, `tool_policy`)    | Recursive deep-merge — only keys present in the override are updated; all other keys are preserved from lower layers                                                      |
 | **Array** (e.g. `models`, `disabled.agents`) | Union-merge — override entries come first, then base entries not already present (deduped by `JSON.stringify` equality); order reflects priority (highest-priority first) |
+| **Workflow** (when `extends` is set)         | Step-aware merge — see [Workflow Extension](#workflow-extension) below                                                                                                    |
 
 **Example:** a project config with `agent loom { temperature 0.5 }` leaves all other loom fields (models, prompt_file, tool_policy) intact from the builtin layer.
 
 **Immutability:** Inputs are never mutated. Each merge step produces a new object.
 
 See [`packages/config/src/merge.ts`](../packages/config/src/merge.ts) for the implementation.
+
+---
+
+## Workflow Extension
+
+When a project or global config declares a workflow with the same name as a builtin (or lower-priority) workflow **and** sets `extends`, the merge engine applies step-aware merge instead of the generic deep-merge.
+
+### DSL syntax
+
+```weave
+workflow plan-and-execute {
+  extends "plan-and-execute"   # name of the base workflow
+  version 1
+
+  # Insert a new step before an existing one
+  step spec {
+    name "Write spec"
+    type autonomous
+    agent pattern
+    prompt "Write a spec for: {{instance.goal}}"
+    completion agent_signal
+    insert_before "plan"
+  }
+
+  # Replace an existing step by same name
+  step implement {
+    name "Execute the plan (custom)"
+    type autonomous
+    agent shuttle
+    prompt "Custom implementation prompt"
+    completion plan_complete { plan_name "{{instance.slug}}" }
+  }
+}
+```
+
+### Step-aware merge algorithm
+
+1. **Resolve base steps** — if `extends` equals the workflow's own name, the base steps come from the lower-priority layer (the "project extends builtin" pattern). Otherwise the `extends` chain is followed through the workflow map.
+2. **Same-name replacement** — override steps whose `name` matches a base step replace the base step in place (preserving position).
+3. **Anchored insertion** — remaining override steps with `insert_before` or `insert_after` are inserted at the resolved index relative to the post-replacement step list.
+4. **Append** — remaining override steps with no anchor and no same-name match are appended to the end.
+
+### Error types
+
+| Error type                | When                                                                                   |
+| ------------------------- | -------------------------------------------------------------------------------------- |
+| `UnknownExtendsTarget`    | `extends` names a workflow that does not exist in the merged workflow map              |
+| `UnknownInsertionAnchor`  | `insert_before` / `insert_after` names a step that does not exist in the base steps   |
+| `BothInsertBeforeAndAfter`| A step declares both `insert_before` and `insert_after` (mutually exclusive)          |
+| `ExtendsCycle`            | The `extends` chain contains a cycle (A extends B, B extends A)                       |
+
+These are wrapped in `MergeError` and returned from `mergeConfigsResult`. The `loadConfig` pipeline surfaces them as `ConfigLoadError` with `type: "MergeError"`.
+
+### `mergeConfigsResult` vs `mergeConfigs`
+
+`mergeConfigsResult` is the preferred API — it returns `Result<WeaveConfig, MergeError[]>` and never throws. `mergeConfigs` is a deprecated wrapper that throws the first `MergeError` for callers that haven't migrated yet.
+
+```ts
+import { mergeConfigsResult } from "@weave/config";
+
+const result = mergeConfigsResult(builtins, globalConfig, projectConfig);
+result.match(
+  (config) => startRunner(config),
+  (errors) => {
+    for (const e of errors) {
+      if (e.type === "WorkflowExtensionError") {
+        console.error(`Workflow merge error: ${e.error.type}`);
+      }
+    }
+  },
+);
+```
 
 ---
 
