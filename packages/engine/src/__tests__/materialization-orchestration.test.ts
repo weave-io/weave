@@ -54,16 +54,6 @@ async function orchestrate(
   await adapter.init();
   await adapter.loadAvailableSkills();
 
-  /**
-   * Respects the adapter lifecycle contract: init() must be called before
-   * loadAvailableSkills(). Use this helper in all tests that call
-   * loadAvailableSkills() directly (i.e. outside of orchestrate()).
-   */
-  async function initAndLoadAvailableSkills(adapter: MockAdapter) {
-    await adapter.init();
-    return adapter.loadAvailableSkills();
-  }
-
   // materializeAgents returns ResultAsync<MaterializationPlan, never> —
   // the outer Result never rejects; unwrap unconditionally.
   const plan = (await materializeAgents({ config }))._unsafeUnwrap();
@@ -73,6 +63,16 @@ async function orchestrate(
   }
 
   return plan;
+}
+
+/**
+ * Respects the adapter lifecycle contract: init() must be called before
+ * loadAvailableSkills(). Use this helper in all tests that call
+ * loadAvailableSkills() directly (i.e. outside of orchestrate()).
+ */
+async function initAndLoadAvailableSkills(adapter: MockAdapter) {
+  await adapter.init();
+  return adapter.loadAvailableSkills();
 }
 
 // ---------------------------------------------------------------------------
@@ -789,7 +789,8 @@ describe("materialization orchestration", () => {
         agent upsilon-worker { prompt "Upsilon worker." models ["model-upsilon"] }
       `);
 
-      const availableSkills = await adapterWithSkills.loadAvailableSkills();
+      const availableSkills =
+        await initAndLoadAvailableSkills(adapterWithSkills);
       const skillResult = resolveSkillsForConfig({ config, availableSkills });
       expect(skillResult.isOk()).toBe(true);
       if (!skillResult.isOk()) return;
@@ -803,7 +804,7 @@ describe("materialization orchestration", () => {
         agent phi-worker { prompt "Phi worker." models ["model-phi"] }
       `);
 
-      const availableSkills = await adapter.loadAvailableSkills();
+      const availableSkills = await initAndLoadAvailableSkills(adapter);
       const skillResult = resolveSkillsForConfig({ config, availableSkills });
       expect(skillResult.isOk()).toBe(true);
       if (!skillResult.isOk()) return;
@@ -826,7 +827,8 @@ describe("materialization orchestration", () => {
         disable skills ["tdd"]
       `);
 
-      const availableSkills = await adapterWithSkills.loadAvailableSkills();
+      const availableSkills =
+        await initAndLoadAvailableSkills(adapterWithSkills);
       const skillResult = resolveSkillsForConfig({ config, availableSkills });
       expect(skillResult.isOk()).toBe(true);
       if (!skillResult.isOk()) return;
@@ -854,7 +856,8 @@ describe("materialization orchestration", () => {
         }
       `);
 
-      const availableSkills = await adapterWithSkills.loadAvailableSkills();
+      const availableSkills =
+        await initAndLoadAvailableSkills(adapterWithSkills);
       const skillResult = resolveSkillsForConfig({ config, availableSkills });
       expect(skillResult.isOk()).toBe(true);
       if (!skillResult.isOk()) return;
@@ -885,7 +888,8 @@ describe("materialization orchestration", () => {
         }
       `);
 
-      const availableSkills = await adapterWithSkills.loadAvailableSkills();
+      const availableSkills =
+        await initAndLoadAvailableSkills(adapterWithSkills);
       const skillResult = resolveSkillsForConfig({ config, availableSkills });
       expect(skillResult.isOk()).toBe(true);
       if (!skillResult.isOk()) return;
@@ -917,7 +921,8 @@ describe("materialization orchestration", () => {
         category alpha-cat { patterns ["src/alpha/**"] models ["model-alpha"] }
       `);
 
-      const availableSkills = await adapterWithSkills.loadAvailableSkills();
+      const availableSkills =
+        await initAndLoadAvailableSkills(adapterWithSkills);
       const skillResult = resolveSkillsForConfig({ config, availableSkills });
       expect(skillResult.isOk()).toBe(true);
       if (!skillResult.isOk()) return;
@@ -942,7 +947,8 @@ describe("materialization orchestration", () => {
         category gamma-cat { patterns ["src/gamma/**"] models ["model-gamma"] }
       `);
 
-      const availableSkills = await adapterWithSkills.loadAvailableSkills();
+      const availableSkills =
+        await initAndLoadAvailableSkills(adapterWithSkills);
       const skillResult = resolveSkillsForConfig({ config, availableSkills });
       expect(skillResult.isOk()).toBe(true);
       if (!skillResult.isOk()) return;
@@ -978,7 +984,8 @@ describe("materialization orchestration", () => {
         disable agents ["disabled-agent"]
       `);
 
-      const availableSkills = await adapterWithSkills.loadAvailableSkills();
+      const availableSkills =
+        await initAndLoadAvailableSkills(adapterWithSkills);
       const skillResult = resolveSkillsForConfig({ config, availableSkills });
       expect(skillResult.isOk()).toBe(true);
       if (!skillResult.isOk()) return;
@@ -1129,7 +1136,8 @@ describe("materialization orchestration", () => {
         }
       `);
 
-      const availableSkills = await adapterWithSkills.loadAvailableSkills();
+      const availableSkills =
+        await initAndLoadAvailableSkills(adapterWithSkills);
       const skillResult = resolveSkillsForConfig({ config, availableSkills });
       expect(skillResult.isOk()).toBe(true);
       if (!skillResult.isOk()) return;
