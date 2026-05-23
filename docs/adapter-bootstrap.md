@@ -22,7 +22,7 @@ one.
 
 The minimal adapter bootstrap has three steps:
 
-```
+```text
 loadConfig()  →  materializeAgents()  →  adapter loop: spawnSubagent(descriptor)
 ```
 

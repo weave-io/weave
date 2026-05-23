@@ -96,14 +96,14 @@ The OpenCode adapter (`@weave/adapter-opencode`) pins `@opencode-ai/sdk` at
 
 ## Adapter Bootstrap Quick-Start
 
-```
+```text
 loadConfig()  →  materializeAgents()  →  adapter loop: spawnSubagent(descriptor)
 ```
 
 For workflow execution, wire the execution lifecycle surface after agent
 materialisation:
 
-```
+```text
 startExecution → dispatchStep → completeStep (repeat) → complete-execution
 ```
 
