@@ -42,6 +42,8 @@ import {
   type ObserveSessionInput,
   type ObserveSessionOutput,
   observeSession,
+  type PlanStateError,
+  type PlanStateProvider,
   type PromptMetadata,
   queryError,
   type ResumeExecutionInput,
@@ -55,6 +57,40 @@ import {
   startExecution,
   type WorkflowExecutionContext,
 } from "@weave/engine";
+import { errAsync, okAsync } from "neverthrow";
+
+// ---------------------------------------------------------------------------
+// MockPlanStateProvider
+// ---------------------------------------------------------------------------
+
+/**
+ * Configurable mock for PlanStateProvider.
+ *
+ * - `existsMap`: maps planName → boolean (default: false = not found)
+ * - `completeMap`: maps planName → boolean (default: false = incomplete)
+ * - `existsError`: if set, planExists returns this error for all names
+ * - `completeError`: if set, isPlanComplete returns this error for all names
+ */
+class MockPlanStateProvider implements PlanStateProvider {
+  constructor(
+    private readonly existsMap: Record<string, boolean> = {},
+    private readonly completeMap: Record<string, boolean> = {},
+    private readonly existsError?: PlanStateError,
+    private readonly completeError?: PlanStateError,
+  ) {}
+
+  planExists(planName: string) {
+    if (this.existsError) return errAsync(this.existsError);
+    const exists = this.existsMap[planName] ?? false;
+    return okAsync(exists);
+  }
+
+  isPlanComplete(planName: string) {
+    if (this.completeError) return errAsync(this.completeError);
+    const complete = this.completeMap[planName] ?? false;
+    return okAsync(complete);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -4976,6 +5012,11 @@ describe("completeStep: completion method validation and gate logic", () => {
       currentStepName: "plan-created-step",
     });
 
+    // Provider reports the plan does not exist
+    const planStateProvider = new MockPlanStateProvider({
+      "nonexistent-plan-slug": false,
+    });
+
     const result = await completeStep(
       {
         workflowInstanceId: instanceId,
@@ -4991,6 +5032,7 @@ describe("completeStep: completion method validation and gate logic", () => {
           slug: "nonexistent-plan-slug",
           workflows: methodWorkflows,
         },
+        planStateProvider,
       },
       store,
     );
@@ -5005,54 +5047,44 @@ describe("completeStep: completion method validation and gate logic", () => {
   });
 
   it("plan_created: succeeds when plan file exists", async () => {
-    // Create a temp plan file
     const planSlug = `test-plan-created-${Date.now()}`;
-    const planDir = ".weave/plans";
-    const planPath = `${planDir}/${planSlug}.md`;
 
-    // Ensure directory exists and write the plan file
-    await Bun.write(planPath, "# Test Plan\n\n- [x] Task 1\n");
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startForMethod(
+      store,
+      `plan-created-ok-${Date.now()}`,
+      "Test goal",
+      planSlug,
+    );
 
-    try {
-      const store = createInMemoryRuntimeStore();
-      const { instanceId, activeLeaseId } = await startForMethod(
-        store,
-        `plan-created-ok-${Date.now()}`,
-        "Test goal",
-        planSlug,
-      );
+    await store.instances.update(instanceId, {
+      currentStepName: "plan-created-step",
+    });
 
-      await store.instances.update(instanceId, {
-        currentStepName: "plan-created-step",
-      });
+    // Provider reports the plan exists
+    const planStateProvider = new MockPlanStateProvider({ [planSlug]: true });
 
-      const result = await completeStep(
-        {
-          workflowInstanceId: instanceId,
-          leaseId: activeLeaseId,
-          stepName: "plan-created-step",
-          completionSignal: {
-            outcome: "success",
-            method: "plan_created",
-          },
-          context: {
-            workflowName: "method-test",
-            goal: "Test goal",
-            slug: planSlug,
-            workflows: methodWorkflows,
-          },
+    const result = await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "plan-created-step",
+        completionSignal: {
+          outcome: "success",
+          method: "plan_created",
         },
-        store,
-      );
+        context: {
+          workflowName: "method-test",
+          goal: "Test goal",
+          slug: planSlug,
+          workflows: methodWorkflows,
+        },
+        planStateProvider,
+      },
+      store,
+    );
 
-      expect(result.isOk()).toBe(true);
-    } finally {
-      // Clean up temp file
-      const file = Bun.file(planPath);
-      if (await file.exists()) {
-        await Bun.$`rm -f ${planPath}`;
-      }
-    }
+    expect(result.isOk()).toBe(true);
   });
 
   // ---------------------------------------------------------------------------
@@ -5061,107 +5093,99 @@ describe("completeStep: completion method validation and gate logic", () => {
 
   it("plan_complete: returns validation error when plan has incomplete checkboxes", async () => {
     const planSlug = `test-plan-incomplete-${Date.now()}`;
-    const planPath = `.weave/plans/${planSlug}.md`;
 
-    // Write a plan with incomplete checkboxes
-    await Bun.write(
-      planPath,
-      "# Test Plan\n\n- [x] Task 1\n- [ ] Task 2 (incomplete)\n- [x] Task 3\n",
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startForMethod(
+      store,
+      `plan-incomplete-${Date.now()}`,
+      "Test goal",
+      planSlug,
     );
 
-    try {
-      const store = createInMemoryRuntimeStore();
-      const { instanceId, activeLeaseId } = await startForMethod(
-        store,
-        `plan-incomplete-${Date.now()}`,
-        "Test goal",
-        planSlug,
-      );
+    await store.instances.update(instanceId, {
+      currentStepName: "plan-complete-step",
+    });
 
-      await store.instances.update(instanceId, {
-        currentStepName: "plan-complete-step",
-      });
+    // Provider reports the plan is NOT complete (has incomplete checkboxes)
+    const planStateProvider = new MockPlanStateProvider(
+      {},
+      { [planSlug]: false },
+    );
 
-      const result = await completeStep(
-        {
-          workflowInstanceId: instanceId,
-          leaseId: activeLeaseId,
-          stepName: "plan-complete-step",
-          completionSignal: {
-            outcome: "success",
-            method: "plan_complete",
-          },
-          context: {
-            workflowName: "method-test",
-            goal: "Test goal",
-            slug: planSlug,
-            workflows: methodWorkflows,
-          },
+    const result = await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "plan-complete-step",
+        completionSignal: {
+          outcome: "success",
+          method: "plan_complete",
         },
-        store,
-      );
+        context: {
+          workflowName: "method-test",
+          goal: "Test goal",
+          slug: planSlug,
+          workflows: methodWorkflows,
+        },
+        planStateProvider,
+      },
+      store,
+    );
 
-      expect(result.isErr()).toBe(true);
-      if (!result.isErr()) return;
-      expect(result.error.type).toBe("validation");
-      if (result.error.type === "validation") {
-        expect(result.error.field).toBe("plan_complete");
-        expect(result.error.message).toContain("incomplete");
-      }
-    } finally {
-      await Bun.$`rm -f ${planPath}`;
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+    if (result.error.type === "validation") {
+      expect(result.error.field).toBe("plan_complete");
+      expect(result.error.message).toContain("incomplete");
     }
   });
 
   it("plan_complete: succeeds when all checkboxes are checked", async () => {
     const planSlug = `test-plan-complete-${Date.now()}`;
-    const planPath = `.weave/plans/${planSlug}.md`;
 
-    // Write a plan with ALL checkboxes checked
-    await Bun.write(
-      planPath,
-      "# Test Plan\n\n- [x] Task 1\n- [x] Task 2\n- [x] Task 3\n",
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startForMethod(
+      store,
+      `plan-complete-ok-${Date.now()}`,
+      "Test goal",
+      planSlug,
     );
 
-    try {
-      const store = createInMemoryRuntimeStore();
-      const { instanceId, activeLeaseId } = await startForMethod(
-        store,
-        `plan-complete-ok-${Date.now()}`,
-        "Test goal",
-        planSlug,
-      );
+    await store.instances.update(instanceId, {
+      currentStepName: "plan-complete-step",
+    });
 
-      await store.instances.update(instanceId, {
-        currentStepName: "plan-complete-step",
-      });
+    // Provider reports the plan IS complete (all checkboxes checked)
+    const planStateProvider = new MockPlanStateProvider(
+      {},
+      { [planSlug]: true },
+    );
 
-      const result = await completeStep(
-        {
-          workflowInstanceId: instanceId,
-          leaseId: activeLeaseId,
-          stepName: "plan-complete-step",
-          completionSignal: {
-            outcome: "success",
-            method: "plan_complete",
-          },
-          context: {
-            workflowName: "method-test",
-            goal: "Test goal",
-            slug: planSlug,
-            workflows: methodWorkflows,
-          },
+    const result = await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "plan-complete-step",
+        completionSignal: {
+          outcome: "success",
+          method: "plan_complete",
         },
-        store,
-      );
+        context: {
+          workflowName: "method-test",
+          goal: "Test goal",
+          slug: planSlug,
+          workflows: methodWorkflows,
+        },
+        planStateProvider,
+      },
+      store,
+    );
 
-      expect(result.isOk()).toBe(true);
-    } finally {
-      await Bun.$`rm -f ${planPath}`;
-    }
+    expect(result.isOk()).toBe(true);
   });
 
-  it("plan_complete: returns not_found when plan file does not exist", async () => {
+  it("plan_complete: returns persistence error when provider is unavailable", async () => {
     const store = createInMemoryRuntimeStore();
     const { instanceId, activeLeaseId } = await startForMethod(
       store,
@@ -5172,6 +5196,12 @@ describe("completeStep: completion method validation and gate logic", () => {
 
     await store.instances.update(instanceId, {
       currentStepName: "plan-complete-step",
+    });
+
+    // Provider returns ProviderUnavailable (simulates missing file / I/O error)
+    const planStateProvider = new MockPlanStateProvider({}, {}, undefined, {
+      type: "ProviderUnavailable",
+      cause: new Error("file not found"),
     });
 
     const result = await completeStep(
@@ -5189,15 +5219,14 @@ describe("completeStep: completion method validation and gate logic", () => {
           slug: "no-such-plan-slug",
           workflows: methodWorkflows,
         },
+        planStateProvider,
       },
       store,
     );
 
     expect(result.isErr()).toBe(true);
     if (!result.isErr()) return;
-    // plan_complete reads the file — missing file returns persistence error
-    // (Bun.file().text() throws on missing file)
-    expect(["not_found", "persistence"]).toContain(result.error.type);
+    expect(result.error.type).toBe("persistence");
   });
 
   // ---------------------------------------------------------------------------
@@ -5236,6 +5265,260 @@ describe("completeStep: completion method validation and gate logic", () => {
       method: "plan_complete",
     };
     expect(planComplete.method).toBe("plan_complete");
+  });
+
+  // ---------------------------------------------------------------------------
+  // AC4: absent planStateProvider returns policy_decision error
+  // ---------------------------------------------------------------------------
+
+  it("plan_created: absent planStateProvider returns policy_decision error", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startForMethod(
+      store,
+      "absent-provider-created",
+      "Test goal",
+      "some-plan-slug",
+    );
+
+    await store.instances.update(instanceId, {
+      currentStepName: "plan-created-step",
+    });
+
+    // No planStateProvider supplied
+    const result = await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "plan-created-step",
+        completionSignal: { outcome: "success", method: "plan_created" },
+        context: {
+          workflowName: "method-test",
+          goal: "Test goal",
+          slug: "some-plan-slug",
+          workflows: methodWorkflows,
+        },
+        // planStateProvider intentionally absent
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("policy_decision");
+    if (result.error.type === "policy_decision") {
+      expect(result.error.rule).toBe("plan_state_provider");
+    }
+  });
+
+  it("plan_complete: absent planStateProvider returns policy_decision error", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startForMethod(
+      store,
+      "absent-provider-complete",
+      "Test goal",
+      "some-plan-slug",
+    );
+
+    await store.instances.update(instanceId, {
+      currentStepName: "plan-complete-step",
+    });
+
+    // No planStateProvider supplied
+    const result = await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "plan-complete-step",
+        completionSignal: { outcome: "success", method: "plan_complete" },
+        context: {
+          workflowName: "method-test",
+          goal: "Test goal",
+          slug: "some-plan-slug",
+          workflows: methodWorkflows,
+        },
+        // planStateProvider intentionally absent
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("policy_decision");
+    if (result.error.type === "policy_decision") {
+      expect(result.error.rule).toBe("plan_state_provider");
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // AC5: provider errors are mapped to LifecycleError
+  // ---------------------------------------------------------------------------
+
+  it("plan_created: provider returns InvalidPlanName → validation error", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startForMethod(
+      store,
+      "invalid-name-created",
+      "Test goal",
+      "some-plan-slug",
+    );
+
+    await store.instances.update(instanceId, {
+      currentStepName: "plan-created-step",
+    });
+
+    const planStateProvider = new MockPlanStateProvider(
+      {},
+      {},
+      { type: "InvalidPlanName", planName: "some-plan-slug" },
+    );
+
+    const result = await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "plan-created-step",
+        completionSignal: { outcome: "success", method: "plan_created" },
+        context: {
+          workflowName: "method-test",
+          goal: "Test goal",
+          slug: "some-plan-slug",
+          workflows: methodWorkflows,
+        },
+        planStateProvider,
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+    if (result.error.type === "validation") {
+      expect(result.error.field).toBe("plan_name");
+    }
+  });
+
+  it("plan_created: provider returns ProviderUnavailable → persistence error", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startForMethod(
+      store,
+      "unavailable-created",
+      "Test goal",
+      "some-plan-slug",
+    );
+
+    await store.instances.update(instanceId, {
+      currentStepName: "plan-created-step",
+    });
+
+    const planStateProvider = new MockPlanStateProvider(
+      {},
+      {},
+      { type: "ProviderUnavailable", cause: new Error("disk error") },
+    );
+
+    const result = await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "plan-created-step",
+        completionSignal: { outcome: "success", method: "plan_created" },
+        context: {
+          workflowName: "method-test",
+          goal: "Test goal",
+          slug: "some-plan-slug",
+          workflows: methodWorkflows,
+        },
+        planStateProvider,
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("persistence");
+  });
+
+  it("plan_complete: provider returns InvalidPlanName → validation error", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startForMethod(
+      store,
+      "invalid-name-complete",
+      "Test goal",
+      "some-plan-slug",
+    );
+
+    await store.instances.update(instanceId, {
+      currentStepName: "plan-complete-step",
+    });
+
+    const planStateProvider = new MockPlanStateProvider({}, {}, undefined, {
+      type: "InvalidPlanName",
+      planName: "some-plan-slug",
+    });
+
+    const result = await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "plan-complete-step",
+        completionSignal: { outcome: "success", method: "plan_complete" },
+        context: {
+          workflowName: "method-test",
+          goal: "Test goal",
+          slug: "some-plan-slug",
+          workflows: methodWorkflows,
+        },
+        planStateProvider,
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+    if (result.error.type === "validation") {
+      expect(result.error.field).toBe("plan_name");
+    }
+  });
+
+  it("plan_complete: provider returns ProviderUnavailable → persistence error", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startForMethod(
+      store,
+      "unavailable-complete",
+      "Test goal",
+      "some-plan-slug",
+    );
+
+    await store.instances.update(instanceId, {
+      currentStepName: "plan-complete-step",
+    });
+
+    const planStateProvider = new MockPlanStateProvider({}, {}, undefined, {
+      type: "ProviderUnavailable",
+      cause: new Error("disk error"),
+    });
+
+    const result = await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "plan-complete-step",
+        completionSignal: { outcome: "success", method: "plan_complete" },
+        context: {
+          workflowName: "method-test",
+          goal: "Test goal",
+          slug: "some-plan-slug",
+          workflows: methodWorkflows,
+        },
+        planStateProvider,
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("persistence");
   });
 });
 
@@ -5326,7 +5609,8 @@ describe("completeStep: blocking issue fixes", () => {
     const { instanceId, activeLeaseId } = await startFix(store, "i1-pc", slug);
 
     // currentStepName is "plan-created-step" (first step)
-    // Do NOT create the plan file — the check should fail
+    // Provider reports the plan does NOT exist — the check should fail
+    const planStateProvider = new MockPlanStateProvider({ [slug]: false });
 
     const result = await completeStep(
       {
@@ -5343,6 +5627,7 @@ describe("completeStep: blocking issue fixes", () => {
           slug,
           workflows: fixWorkflows,
         },
+        planStateProvider,
       },
       store,
     );
@@ -5357,37 +5642,35 @@ describe("completeStep: blocking issue fixes", () => {
 
   it("Issue 1: plan_created step with signal.method absent succeeds when file exists", async () => {
     const slug = `issue1-plan-ok-${Date.now()}`;
-    const planPath = `.weave/plans/${slug}.md`;
-    await Bun.write(planPath, "# Plan\n\n- [x] Done\n");
 
-    try {
-      const store = createInMemoryRuntimeStore();
-      const { instanceId, activeLeaseId } = await startFix(
-        store,
-        `i1-ok-${Date.now()}`,
-        slug,
-      );
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startFix(
+      store,
+      `i1-ok-${Date.now()}`,
+      slug,
+    );
 
-      const result = await completeStep(
-        {
-          workflowInstanceId: instanceId,
-          leaseId: activeLeaseId,
-          stepName: "plan-created-step",
-          completionSignal: { outcome: "success" }, // no method
-          context: {
-            workflowName: "fix-test",
-            goal: "Fix test goal",
-            slug,
-            workflows: fixWorkflows,
-          },
+    // Provider reports the plan exists
+    const planStateProvider = new MockPlanStateProvider({ [slug]: true });
+
+    const result = await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "plan-created-step",
+        completionSignal: { outcome: "success" }, // no method
+        context: {
+          workflowName: "fix-test",
+          goal: "Fix test goal",
+          slug,
+          workflows: fixWorkflows,
         },
-        store,
-      );
+        planStateProvider,
+      },
+      store,
+    );
 
-      expect(result.isOk()).toBe(true);
-    } finally {
-      await Bun.$`rm -f ${planPath}`;
-    }
+    expect(result.isOk()).toBe(true);
   });
 
   it("Issue 1: review_verdict step without signal.approved returns validation error", async () => {
@@ -5670,6 +5953,13 @@ describe("completeStep: blocking issue fixes", () => {
       "../etc/passwd",
     );
 
+    // Provider returns InvalidPlanName for the unsafe slug
+    const planStateProvider = new MockPlanStateProvider(
+      {},
+      {},
+      { type: "InvalidPlanName", planName: "../etc/passwd" },
+    );
+
     const result = await completeStep(
       {
         workflowInstanceId: instanceId,
@@ -5682,6 +5972,7 @@ describe("completeStep: blocking issue fixes", () => {
           slug: "../etc/passwd",
           workflows: fixWorkflows,
         },
+        planStateProvider,
       },
       store,
     );
@@ -5703,6 +5994,13 @@ describe("completeStep: blocking issue fixes", () => {
       "some/path",
     );
 
+    // Provider returns InvalidPlanName for the unsafe slug
+    const planStateProvider = new MockPlanStateProvider(
+      {},
+      {},
+      { type: "InvalidPlanName", planName: "some/path" },
+    );
+
     const result = await completeStep(
       {
         workflowInstanceId: instanceId,
@@ -5715,6 +6013,7 @@ describe("completeStep: blocking issue fixes", () => {
           slug: "some/path",
           workflows: fixWorkflows,
         },
+        planStateProvider,
       },
       store,
     );
@@ -5735,6 +6034,13 @@ describe("completeStep: blocking issue fixes", () => {
       "plan.name",
     );
 
+    // Provider returns InvalidPlanName for the unsafe slug
+    const planStateProvider = new MockPlanStateProvider(
+      {},
+      {},
+      { type: "InvalidPlanName", planName: "plan.name" },
+    );
+
     const result = await completeStep(
       {
         workflowInstanceId: instanceId,
@@ -5747,6 +6053,7 @@ describe("completeStep: blocking issue fixes", () => {
           slug: "plan.name",
           workflows: fixWorkflows,
         },
+        planStateProvider,
       },
       store,
     );
@@ -5761,38 +6068,36 @@ describe("completeStep: blocking issue fixes", () => {
 
   it("Issue 4: valid plan name (alphanumeric, hyphens, underscores) passes sanitization", async () => {
     const slug = `valid-plan-name-${Date.now()}`;
-    const planPath = `.weave/plans/${slug}.md`;
-    await Bun.write(planPath, "# Plan\n\n- [x] Done\n");
 
-    try {
-      const store = createInMemoryRuntimeStore();
-      const { instanceId, activeLeaseId } = await startFix(
-        store,
-        `i4-valid-${Date.now()}`,
-        slug,
-      );
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startFix(
+      store,
+      `i4-valid-${Date.now()}`,
+      slug,
+    );
 
-      const result = await completeStep(
-        {
-          workflowInstanceId: instanceId,
-          leaseId: activeLeaseId,
-          stepName: "plan-created-step",
-          completionSignal: { outcome: "success" },
-          context: {
-            workflowName: "fix-test",
-            goal: "Fix test goal",
-            slug,
-            workflows: fixWorkflows,
-          },
+    // Provider reports the plan exists (valid name passes)
+    const planStateProvider = new MockPlanStateProvider({ [slug]: true });
+
+    const result = await completeStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "plan-created-step",
+        completionSignal: { outcome: "success" },
+        context: {
+          workflowName: "fix-test",
+          goal: "Fix test goal",
+          slug,
+          workflows: fixWorkflows,
         },
-        store,
-      );
+        planStateProvider,
+      },
+      store,
+    );
 
-      // Should pass sanitization and succeed (file exists)
-      expect(result.isOk()).toBe(true);
-    } finally {
-      await Bun.$`rm -f ${planPath}`;
-    }
+    // Should pass sanitization and succeed (provider says file exists)
+    expect(result.isOk()).toBe(true);
   });
 
   it("Issue 4: plan name with spaces is rejected as unsafe", async () => {
@@ -5801,6 +6106,13 @@ describe("completeStep: blocking issue fixes", () => {
       store,
       "i4-spaces",
       "plan name with spaces",
+    );
+
+    // Provider returns InvalidPlanName for the unsafe slug
+    const planStateProvider = new MockPlanStateProvider(
+      {},
+      {},
+      { type: "InvalidPlanName", planName: "plan name with spaces" },
     );
 
     const result = await completeStep(
@@ -5815,6 +6127,7 @@ describe("completeStep: blocking issue fixes", () => {
           slug: "plan name with spaces",
           workflows: fixWorkflows,
         },
+        planStateProvider,
       },
       store,
     );

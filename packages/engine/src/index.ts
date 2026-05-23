@@ -108,13 +108,11 @@ export {
   DEFAULT_FALLBACK_MODEL,
   resolveAdapterModelIntent,
 } from "./model-resolution.js";
-export type { PromptMetadata, RunAgentEffect } from "./run-agent-effects.js";
 export type {
-  WeaveRunnerAdapterError,
-  WeaveRunnerError,
-  WeaveRunnerOptions,
-} from "./runner.js";
-export { WeaveRunner } from "./runner.js";
+  PlanStateError,
+  PlanStateProvider,
+} from "./plan-state-provider.js";
+export type { PromptMetadata, RunAgentEffect } from "./run-agent-effects.js";
 export type {
   RuntimeStoreConflictError,
   RuntimeStoreError,
