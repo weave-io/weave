@@ -347,12 +347,6 @@ describe("bootstrap orchestration — init boundary and lifecycle isolation", ()
     expect(methodsCalled).toContain("init");
     expect(methodsCalled).toContain("loadAvailableSkills");
     expect(methodsCalled).toContain("spawnSubagent");
-
-    // registerHook must NOT be called — it is superseded by the lifecycle surface
-    expect(adapter.callsTo("registerHook")).toHaveLength(0);
-
-    // loadSkill must NOT be called — superseded by loadAvailableSkills
-    expect(adapter.callsTo("loadSkill")).toHaveLength(0);
   });
 
   it("init() is called before loadAvailableSkills() and spawnSubagent()", async () => {
@@ -397,22 +391,6 @@ describe("bootstrap orchestration — init boundary and lifecycle isolation", ()
 
     expect(adapter.callsTo("init")).toHaveLength(1);
     expect(adapter.callsTo("spawnSubagent")).toHaveLength(0);
-  });
-
-  it("no concrete hook registration is introduced by the engine lifecycle surface", async () => {
-    // The engine lifecycle surface (execution-lifecycle.ts) accepts a
-    // RuntimeStore and returns typed ResultAsync values. It does NOT register
-    // concrete harness callbacks or call adapter.registerHook().
-    //
-    // This test proves that running the full bootstrap orchestration produces
-    // zero registerHook() calls — the engine never drives hook registration.
-    const config = cfg(`
-      agent loom { prompt "Orchestrator." models ["claude-sonnet-4-5"] }
-    `);
-
-    await orchestrate(config, adapter);
-
-    expect(adapter.callsTo("registerHook")).toHaveLength(0);
   });
 });
 

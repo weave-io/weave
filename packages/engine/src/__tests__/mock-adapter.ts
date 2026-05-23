@@ -34,13 +34,9 @@
  * ```
  */
 
-import type { HarnessAdapter, HookConfig, SkillConfig } from "../adapter.js";
+import type { HarnessAdapter } from "../adapter.js";
 import type { AgentDescriptor } from "../compose.js";
 import type { SkillInfo } from "../skill-resolution.js";
-
-// `HookConfig` and `SkillConfig` are transitional adapter-boundary types.
-// Tests should not treat them as proof that engine code owns concrete hook
-// registration or harness skill discovery/loading.
 
 // ---------------------------------------------------------------------------
 // MockAdapter options
@@ -65,8 +61,6 @@ export interface MockAdapterOptions {
 export type MockCall =
   | { method: "init" }
   | { method: "spawnSubagent"; descriptor: AgentDescriptor }
-  | { method: "registerHook"; hook: HookConfig }
-  | { method: "loadSkill"; skill: SkillConfig }
   | { method: "loadAvailableSkills" };
 
 // ---------------------------------------------------------------------------
@@ -89,17 +83,6 @@ export class MockAdapter implements HarnessAdapter {
 
   async spawnSubagent(descriptor: AgentDescriptor): Promise<void> {
     this.calls.push({ method: "spawnSubagent", descriptor });
-  }
-
-  async registerHook(hook: HookConfig): Promise<void> {
-    this.calls.push({ method: "registerHook", hook });
-  }
-
-  /**
-   * @deprecated Transitional method. Use `loadAvailableSkills()` instead.
-   */
-  async loadSkill(skill: SkillConfig): Promise<void> {
-    this.calls.push({ method: "loadSkill", skill });
   }
 
   /**

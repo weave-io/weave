@@ -54,6 +54,16 @@ async function orchestrate(
   await adapter.init();
   await adapter.loadAvailableSkills();
 
+  /**
+   * Respects the adapter lifecycle contract: init() must be called before
+   * loadAvailableSkills(). Use this helper in all tests that call
+   * loadAvailableSkills() directly (i.e. outside of orchestrate()).
+   */
+  async function initAndLoadAvailableSkills(adapter: MockAdapter) {
+    await adapter.init();
+    return adapter.loadAvailableSkills();
+  }
+
   // materializeAgents returns ResultAsync<MaterializationPlan, never> —
   // the outer Result never rejects; unwrap unconditionally.
   const plan = (await materializeAgents({ config }))._unsafeUnwrap();
@@ -885,8 +895,6 @@ describe("materialization orchestration", () => {
       expect(resolved?.map((s) => s.name)).toEqual(["tdd"]);
       // loadAvailableSkills was called — adapter provided context explicitly
       expect(adapterWithSkills.callsTo("loadAvailableSkills")).toHaveLength(1);
-      // No loadSkill calls — engine does not drive skill loading
-      expect(adapterWithSkills.callsTo("loadSkill")).toHaveLength(0);
     });
   });
 

@@ -1,44 +1,6 @@
 import type { AgentDescriptor } from "./compose.js";
 import type { SkillInfo } from "./skill-resolution.js";
 
-// ---------------------------------------------------------------------------
-// Transitional adapter-boundary types
-//
-// These interfaces predate the explicit engine/adapter boundary documented in
-// docs/adapter-boundary.md. They are kept so the current package compiles, but
-// they are not architectural precedent for new APIs.
-//
-// Future specs should move harness-owned context (skills, lifecycle events,
-// available models, selected model state) into adapter-supplied inputs for pure
-// engine composition helpers rather than making the engine discover or register
-// concrete harness resources directly.
-// ---------------------------------------------------------------------------
-
-/**
- * Transitional configuration for a lifecycle hook registered with the harness.
- *
- * TODO(#9): replace/reframe this around an abstract lifecycle policy surface
- * where adapters map concrete harness events into engine-owned policy handlers.
- */
-export interface HookConfig {
-  name: string;
-  enabled: boolean;
-  event: string;
-}
-
-/**
- * Transitional configuration for a skill loadable by the harness.
- *
- * @deprecated Use `loadAvailableSkills()` instead. Skill discovery/loading is
- * adapter-owned; the engine receives adapter-provided `SkillInfo` values and
- * resolves them against `AgentConfig.skills` and `disabled.skills`.
- */
-export interface SkillConfig {
-  name: string;
-  path?: string;
-  scope: "global" | "project";
-}
-
 /**
  * The `HarnessAdapter` interface abstracts harness-specific materialisation
  * behind a uniform contract. Each supported agent harness (OpenCode, Pi,
@@ -53,8 +15,9 @@ export interface SkillConfig {
 export interface HarnessAdapter {
   /**
    * Perform any one-time initialisation required by the harness before
-   * normalized Weave intent can be materialised. Called exactly once by
-   * `WeaveRunner.run()` before any other adapter method.
+   * normalized Weave intent can be materialised. Called exactly once by the
+   * bootstrap entry point before any other adapter method (see
+   * `docs/adapter-bootstrap.md`).
    */
   init(): Promise<void>;
 
@@ -69,51 +32,12 @@ export interface HarnessAdapter {
   spawnSubagent(descriptor: AgentDescriptor): Promise<void>;
 
   /**
-   * Register a lifecycle hook with the harness so that it fires at the
-   * appropriate point in the agent's execution lifecycle.
-   *
-   * @deprecated **Superseded** by the Execution Lifecycle Surface in
-   * `execution-lifecycle.ts`. Adapters should map concrete harness events into
-   * the 7 typed engine lifecycle functions instead of registering hooks through
-   * this method:
-   *
-   * - `observeSession`      — adapter reports a normalized session observation
-   * - `startExecution`      — adapter signals a new workflow execution begins
-   * - `resumeExecution`     — adapter signals a paused execution resumes
-   * - `handleUserInterrupt` — adapter signals a user-initiated interrupt
-   * - `dispatchStep`        — adapter requests dispatch of the next workflow step
-   * - `completeStep`        — adapter signals that a step has finished
-   * - `beforeTool`          — adapter signals that a tool call is about to execute
-   *
-   * The lifecycle surface accepts a `RuntimeStore` and returns typed
-   * `ResultAsync<Output, LifecycleError>` values — no concrete hook
-   * registration, no harness-specific callback wiring.
-   *
-   * This method will be removed once all adapters have migrated to the
-   * execution lifecycle surface.
-   *
-   * @param hook - The hook configuration to register.
-   */
-  registerHook(hook: HookConfig): Promise<void>;
-
-  /**
-   * Load a skill into the harness so that it becomes available to any
-   * agent that references it in its `AgentConfig.skills` list.
-   *
-   * @deprecated Transitional method. Use `loadAvailableSkills()` instead.
-   * Skill discovery/loading is adapter-owned; the engine should receive
-   * adapter-provided SkillInfo values and resolve them against
-   * `AgentConfig.skills` and `disabled.skills`.
-   * @param skill - The skill configuration to load.
-   */
-  loadSkill(skill: SkillConfig): Promise<void>;
-
-  /**
    * Return the list of skills available in this harness instance.
    *
-   * The engine calls this once during `WeaveRunner.run()` — after `init()` and
-   * before agent materialisation — to obtain the adapter-provided skill context
-   * used for skill resolution. The engine matches each agent's declared
+   * The engine calls this once during the bootstrap sequence — after `init()`
+   * and before agent materialisation (see `docs/adapter-bootstrap.md`) — to
+   * obtain the adapter-provided skill context used for skill resolution. The
+   * engine matches each agent's declared
    * `skills [...]` entries against `SkillInfo.name` values in the returned
    * list.
    *

@@ -2,8 +2,7 @@
  * Execution Lifecycle Surface for the Weave engine.
  *
  * Defines the 7 lifecycle methods that adapters call after mapping concrete
- * harness events into engine-owned policy decisions. This surface supersedes
- * the transitional `registerHook()` method on `HarnessAdapter`.
+ * harness events into engine-owned policy decisions.
  *
  * ## Lifecycle Methods
  *
