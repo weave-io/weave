@@ -81,17 +81,17 @@ Make `@weave/engine` and `@weave/config` cleanly consumable by a third-party ada
 
 ### P0 — Hard blockers (must complete before P1)
 
-- [ ] 1. Change `materializeAgents` to partial-by-default
+- [x] 1. Change `materializeAgents` to partial-by-default
   **What**: Modify `MaterializationPlan` to include a new field: `errors: readonly MaterializationError[]` (alongside the existing `agents: MaterializedAgent[]`). Rewrite the body of `materializeAgents` so it iterates every explicit agent and every generated category shuttle, accumulating successful descriptors into `agents[]` and per-agent failures into `errors[]` instead of short-circuiting. The `ResultAsync` itself only rejects on irrecoverable upstream failure (none currently — category shuttle conflict becomes an entry in `errors[]`, not a top-level reject). Preserve deterministic ordering: explicit agents in config order, then generated category shuttles in category declaration order, with disabled agents filtered before iteration. Update `MaterializationError` JSDoc to clarify that values are now collected rather than returned as the rejection.
   **Files**: `packages/engine/src/materialization.ts`, `packages/engine/src/index.ts` (re-exports unchanged — same names, new shape).
   **Acceptance**: Function compiles with new shape; `bun run typecheck` clean for the materialization module in isolation; behaviour change is intentional and visible in the diff.
 
-- [ ] 2. Update materialization tests for partial-by-default
+- [x] 2. Update materialization tests for partial-by-default
   **What**: Audit `packages/engine/src/__tests__/materialization.test.ts` for every test that asserts the rejected-`Result` path of `materializeAgents`. Rewrite each to assert that the value resolves to a `MaterializationPlan` carrying the expected entries in `errors[]` instead. Add new tests for: (a) one good agent + one bad agent both surface in their respective arrays; (b) category shuttle conflict appears in `errors[]` and explicit agents still resolve; (c) all-failures case yields empty `agents[]` and populated `errors[]`; (d) ordering invariant — successful agents preserve config order regardless of which earlier agents failed.
   **Files**: `packages/engine/src/__tests__/materialization.test.ts`.
   **Acceptance**: All materialization tests pass under the new shape; no test still expects a top-level `ResultAsync` rejection for per-agent failures.
 
-- [ ] 3. Update every other consumer of `materializeAgents` for the new shape
+- [x] 3. Update every other consumer of `materializeAgents` for the new shape
   **What**: Grep the repo for `materializeAgents` callers (`grep -rn "materializeAgents" packages/`). Today the function is exported from `@weave/engine` and the canonical consumer surface is empty (only test/spec references). Update each callsite to read `result.value.agents` and `result.value.errors` separately, logging or surfacing errors as appropriate. Confirm via grep that nothing else still expects the old rejected-Result-per-agent-failure flow.
   **Files**: any package source files that reference `materializeAgents` (likely only test files plus the soon-to-be-deleted runner).
   **Acceptance**: `grep -rn "materializeAgents" packages/` returns only callsites that read `.agents` and `.errors`; no caller treats per-agent failure as a top-level rejection.
@@ -101,17 +101,17 @@ Make `@weave/engine` and `@weave/config` cleanly consumable by a third-party ada
   **Files**: `docs/specs/15-spec-adapter-facing-materialization-api/15-spec-adapter-facing-materialization-api.md`, `docs/specs/15-spec-adapter-facing-materialization-api/15-validation-adapter-facing-materialization-api.md`, `docs/adapter-boundary.md`.
   **Acceptance**: Spec text matches code; cross-links unbroken; the boundary doc no longer claims `materializeAgents` fails fast.
 
-- [ ] 5. Write `docs/adapter-bootstrap.md`
+- [x] 5. Write `docs/adapter-bootstrap.md`
   **What**: New guide showing the canonical adapter bootstrap pattern with a runnable snippet using `MockAdapter`. Cover: `loadConfig` → `materializeAgents` → read `plan.agents` and surface `plan.errors` → adapter loop calling `spawnSubagent(descriptor)` → workflow path with `startExecution` → `dispatchStep` → adapter applies `LifecycleEffect[]` → `completeStep` (with `planStateProvider` injected from `@weave/config`'s `BunFilesystemPlanStateProvider` once Task 18 lands; cross-reference forward to that task). Link from `docs/adapter-boundary.md` (Transitional Interfaces section) and `docs/product-vision.md`. Include an explicit "you do not need `WeaveRunner` — it has been removed" callout.
   **Files**: `docs/adapter-bootstrap.md` (new), `docs/adapter-boundary.md` (add link), `docs/product-vision.md` (add link).
   **Acceptance**: File exists; cross-links resolve; snippet uses only public exports from `@weave/engine` and `@weave/config`.
 
-- [ ] 6. Remove `WeaveRunner` from `@weave/engine`
+- [x] 6. Remove `WeaveRunner` from `@weave/engine`
   **What**: Delete `packages/engine/src/runner.ts`. Remove `runner.js` export block from `packages/engine/src/index.ts` (lines 112-117 — types and class). Remove references in `packages/engine/src/run-agent-effects.ts` JSDoc (line 6) and `packages/engine/src/adapter.ts` JSDoc (lines 57, 114) — replace with references to the documented bootstrap pattern in `docs/adapter-bootstrap.md`.
   **Files**: delete `packages/engine/src/runner.ts`; edit `packages/engine/src/index.ts`, `packages/engine/src/run-agent-effects.ts`, `packages/engine/src/adapter.ts`.
   **Acceptance**: `grep -rn "WeaveRunner\|runner.js\|runner.ts" packages/engine/src/` returns zero hits outside the deletion target. `bun run typecheck` fails until task 7 runs (expected).
 
-- [ ] 7. Rewrite `runner.test.ts` and update `execution-lifecycle-integration.test.ts`
+- [x] 7. Rewrite `runner.test.ts` and update `execution-lifecycle-integration.test.ts`
   **What**: `packages/engine/src/__tests__/runner.test.ts` (1335 LOC) is the regression suite for the `init → loadAvailableSkills → spawnSubagent` orchestration. Rename to `materialization-orchestration.test.ts` and rewrite each test to exercise the documented adapter bootstrap pattern: a small `orchestrate(config, adapter)` helper inside the test file performs `adapter.init()` → `adapter.loadAvailableSkills()` → `materializeAgents({ config })` → reads `plan.agents` and `plan.errors` → loop calling `adapter.spawnSubagent(descriptor)`. Each existing test transplants to the new harness (lifecycle ordering, agent spawning, category shuttle generation, skill resolution warnings, `onEffect` observer hook becomes a parameter to the bootstrap fn, descriptor composition failure tolerance now reads from `plan.errors`). Update `execution-lifecycle-integration.test.ts` lines 30, 283-400 to use the new orchestration fn rather than `WeaveRunner`. Drop tests that specifically asserted `WeaveRunnerError` discriminants — replace with assertions against `plan.errors` entries.
   **Files**: `packages/engine/src/__tests__/runner.test.ts` (rewrite + rename to `materialization-orchestration.test.ts`), `packages/engine/src/__tests__/execution-lifecycle-integration.test.ts` (edit), `packages/engine/src/__tests__/mock-adapter.ts` (JSDoc tweaks; no API changes — `MockAdapter` interface unchanged until task 21).
   **Acceptance**: `bun test --filter materialization-orchestration` and `bun test --filter execution-lifecycle-integration` both pass; `WeaveRunner` is referenced nowhere in `packages/engine/src/__tests__/`.
@@ -135,12 +135,12 @@ Make `@weave/engine` and `@weave/config` cleanly consumable by a third-party ada
 
 #### P1-A: Workflow extension DSL (`extends` + same-name replace + `insert_before` / `insert_after`)
 
-- [ ] 11. Specify workflow step extension DSL (Spec 17)
+- [x] 11. Specify workflow step extension DSL (Spec 17)
   **What**: Write `docs/specs/17-spec-workflow-extension/17-spec-workflow-extension.md` documenting the surface decided in Resolved Decision §2. Cover: (1) schema additions (`workflow.extends?: string`; `WorkflowStep.insert_before?: string` / `insert_after?: string` — anchor name only, attached to the *step*, not to a separate insertion block); (2) merge precedence: parent steps first → applied replacements (same-name) → applied insertions (anchor-based) → appended new steps; (3) validation errors: `UnknownExtendsTarget`, `UnknownInsertionAnchor`, `BothInsertBeforeAndAfter`, `ExtendsCycle`; (4) interaction with the existing workflow union-merge (replaced by step-aware merge when either side declares `extends` or when both sides define a workflow of the same name); (5) the migration story for the four builtin workflows (they remain unchanged; users gain the ability to extend them). Include adapter-boundary clause: workflow extension is a config-merge concern, fully owned by `@weave/config`; engine receives the post-merge `WorkflowConfig` unchanged. Also create `17-tasks-…md` and `17-validation-…md` skeletons.
   **Files**: `docs/specs/17-spec-workflow-extension/17-spec-workflow-extension.md` (new), `docs/specs/17-spec-workflow-extension/17-tasks-workflow-extension.md` (new), `docs/specs/17-spec-workflow-extension/17-validation-workflow-extension.md` (new — skeleton; filled in task 14), `docs/adapter-boundary.md` (link).
   **Acceptance**: Spec document exists; merge semantics are unambiguous; an example shows inserting a `spec` step before `plan` in builtin `plan-and-execute` using only the new keywords.
 
-- [ ] 12. P1-A: Schema + AST + parser support for `extends` and step-level `insert_before` / `insert_after`
+- [x] 12. P1-A: Schema + AST + parser support for `extends` and step-level `insert_before` / `insert_after`
   **What**:
   - **Schema** (`packages/core/src/schema.ts`): extend `WorkflowConfigSchema` with optional `extends: z.string().optional()`. Extend `WorkflowStepSchema` with optional `insert_before: z.string().optional()` and `insert_after: z.string().optional()`. Add `.refine()` to `WorkflowStepSchema` rejecting both `insert_before` and `insert_after` set simultaneously (`BothInsertBeforeAndAfter`). Add `.refine()` to `WorkflowConfigSchema` allowing `steps.min(1)` to relax when `extends` is set (extension can override-only). Document the new fields in the JSDoc.
   - **AST** (`packages/core/src/ast.ts`): add optional `extends` to workflow AST node; add optional `insert_before` / `insert_after` to step AST node.
@@ -169,12 +169,12 @@ Make `@weave/engine` and `@weave/config` cleanly consumable by a third-party ada
 
 #### P1-B: Per-router delegation exclusion via `routing { delegation_exclude [...] }`
 
-- [ ] 15. P1-B: Specify per-router delegation exclusion (Spec 18)
+- [x] 15. P1-B: Specify per-router delegation exclusion (Spec 18)
   **What**: Write `docs/specs/18-spec-delegation-exclusion/18-spec-delegation-exclusion.md` documenting the surface decided in Resolved Decision §3. Cover: (1) DSL — `agent <name> { routing { delegation_exclude ["a","b"] } }`; (2) schema addition — `AgentConfigSchema` gains an optional `routing` object initially containing only `delegation_exclude?: string[]`, with JSDoc noting the block is open for future routing fields (priority, fallback, weighted routes); (3) semantics — `buildDelegationTargets()` filters out target names listed in `routing.delegation_exclude`; (4) validation — exclude entries that do not correspond to a known agent at validation time produce a debug-level log only, no validation error (forward references between config layers); (5) interaction with `disabled.agents` — excluded names that are also disabled are a no-op; (6) example showing Loom config that excludes `warp` from its delegation table while `warp` remains usable as a Tapestry delegation target. Create `18-tasks-…md` skeleton.
   **Files**: `docs/specs/18-spec-delegation-exclusion/18-spec-delegation-exclusion.md` (new), `docs/specs/18-spec-delegation-exclusion/18-tasks-delegation-exclusion.md` (new).
   **Acceptance**: Spec doc with worked example showing per-router exclusion without disabling the target.
 
-- [ ] 16. P1-B: Implement `routing { delegation_exclude }` end-to-end
+- [x] 16. P1-B: Implement `routing { delegation_exclude }` end-to-end
   **What**:
   - **Schema** (`packages/core/src/schema.ts`): add `RoutingConfigSchema = z.object({ delegation_exclude: z.array(z.string()).optional() }).strict()` (strict so unknown keys in `routing { }` raise a validation error and signal the user mistyped a future field). Add `routing: RoutingConfigSchema.optional()` to `AgentConfigSchema`. JSDoc on `RoutingConfigSchema`: "Per-agent routing knobs. Open for future fields (priority, fallback, weighted routes). Strict — unknown keys are rejected so typos surface clearly."
   - **AST** (`packages/core/src/ast.ts`): add optional `routing` block to agent AST node carrying a string-array `delegation_exclude` field.
@@ -187,7 +187,7 @@ Make `@weave/engine` and `@weave/config` cleanly consumable by a third-party ada
 
 #### P1-C: `PlanStateProvider` interface in `@weave/engine`, default `BunFilesystemPlanStateProvider` in `@weave/config`
 
-- [ ] 17. P1-C: Specify `PlanStateProvider` (Spec 19)
+- [x] 17. P1-C: Specify `PlanStateProvider` (Spec 19)
   **What**: Write `docs/specs/19-spec-plan-state-provider/19-spec-plan-state-provider.md` documenting the interface decided in Resolved Decision §4. Define:
   ```ts
   interface PlanStateProvider {
@@ -275,8 +275,7 @@ Make `@weave/engine` and `@weave/config` cleanly consumable by a third-party ada
 - [ ] `grep -rn "as any\|as unknown as" packages/adapters/opencode/src/` returns zero hits past the runtime-context boundary
 - [ ] `grep -rn "materializeAgents" packages/` shows every caller reads `.agents` and `.errors`
 - [ ] Reference adapter integration tests (tasks 10, 19) run a 2-step workflow against real `@opencode-ai/sdk` types and assert `DispatchAgentEffect` was applied
-- [ ] All schema-changing tasks (12, 16, 18) updated all four test layers per AGENTS.md
-- [ ] New specs 17, 18, 19 exist under `docs/specs/` and are linked from `docs/adapter-boundary.md`
+  - [ ] All schema-changing tasks (12, 16) updated all four test layers per AGENTS.md- [ ] New specs 17, 18, 19 exist under `docs/specs/` and are linked from `docs/adapter-boundary.md`
 - [ ] Spec 15 amended to document partial-by-default `materializeAgents`
 - [ ] `docs/adapter-bootstrap.md` exists and is linked from at least one other doc
 - [ ] `docs/adapter-readiness-status.md` summarises the shipped surface and flags `@opencode-ai/sdk` pinning as a periodic-review item

@@ -55,21 +55,21 @@ User has already made every binary decision for a four-tier cleanup pass and ask
 Land the four-tier cleanup as a sequence of small, reviewable, atomic Conventional Commits. Each commit either deletes dead code, un-exports an internal, normalises an API to project conventions, or ships a minimum-viable adapter skeleton. No behaviour change to user-facing surfaces beyond what the user explicitly requested.
 
 ### Deliverables
-- [ ] All Tier 1 deletions landed (excluding superseded Task 4); `bun test` + `bun run typecheck` green.
-- [ ] All Tier 2 design fixes landed; behaviour-equivalent at user-facing surface.
-- [ ] Tier 3 items: **all four tasks superseded by `adapter-readiness.md`** — no work in this plan.
-- [ ] Tier 4 chores landed: cross-platform fs ops, stale docs swept.
-- [ ] Each task is a single commit following Conventional Commits.
+- [x] All Tier 1 deletions landed (excluding superseded Task 4); `bun test` + `bun run typecheck` green.
+- [x] All Tier 2 design fixes landed; behaviour-equivalent at user-facing surface.
+- [x] Tier 3 items: **all four tasks superseded by `adapter-readiness.md`** — no work in this plan.
+- [x] Tier 4 chores landed: cross-platform fs ops, stale docs swept.
+- [x] Each task is a single commit following Conventional Commits.
 
 ### Definition of Done
-- [ ] `bun test` passes from repo root.
-- [ ] `bun run typecheck` passes from repo root.
-- [ ] `bun run build` succeeds.
-- [ ] `grep -rn "installers/unsupported" packages/` returns zero hits.
-- [ ] `grep -rn "scripts/validate-config" .` returns zero source hits (only release-history references in docs allowed).
-- [ ] `grep -rn "BUILTIN_AGENT_NAMES" packages/` returns zero hits.
-- [ ] `grep -rn "NodeJS.ProcessEnv" packages/` returns zero hits.
-- [ ] `grep -n "Bun.spawnSync" packages/engine/src/runtime/sqlite/store.ts` returns zero hits.
+- [x] `bun test` passes from repo root.
+- [x] `bun run typecheck` passes from repo root.
+- [x] `bun run build` succeeds.
+- [x] `grep -rn "installers/unsupported" packages/` returns zero hits.
+- [x] `grep -rn "scripts/validate-config" .` returns zero source hits (only release-history references in docs allowed).
+- [x] `grep -rn "BUILTIN_AGENT_NAMES" packages/` returns zero hits.
+- [x] `grep -rn "NodeJS.ProcessEnv" packages/` returns zero hits.
+- [x] `grep -n "Bun.spawnSync" packages/engine/src/runtime/sqlite/store.ts` returns zero hits.
 - [ ] Tasks owned by `adapter-readiness.md` (deprecated HarnessAdapter member removal, opencode adapter build) are verified by that plan's DoD — not duplicated here.
 
 ### Guardrails (Must NOT)
@@ -88,7 +88,7 @@ Land the four-tier cleanup as a sequence of small, reviewable, atomic Convention
 
 ### Tier 1 — Safe atomic deletions
 
-- [ ] 1. Delete orphan `unsupported.ts` installer module
+- [x] 1. Delete orphan `unsupported.ts` installer module
   **What**: Remove the unused installer module with `unsupportedHarnessInstall` and `undetectedHarnessInstall` exports. No call sites exist anywhere in `packages/` source.
   **Files**:
   - DELETE `packages/cli/src/installers/unsupported.ts`
@@ -99,7 +99,7 @@ Land the four-tier cleanup as a sequence of small, reviewable, atomic Convention
   - `bun run typecheck` passes.
   **Commit**: `chore(cli): remove orphan unsupported installer module`
 
-- [ ] 2. Delete superseded `scripts/validate-config.ts` and fixtures
+- [x] 2. Delete superseded `scripts/validate-config.ts` and fixtures
   **What**: The CLI `validate` command supersedes this script. `package.json`'s `validate-config` script already delegates. Remove the script, its tests, and its fixture file.
   **Files**:
   - DELETE `scripts/validate-config.ts`
@@ -114,7 +114,7 @@ Land the four-tier cleanup as a sequence of small, reviewable, atomic Convention
   **Note**: Doc updates (`docs/specs/12-spec-runtime-persistence/12-proofs/12-task-01-proofs.md`) are deferred to Task 14.
   **Commit**: `chore(scripts): remove superseded validate-config script`
 
-- [ ] 3. Un-export internal helpers across packages
+- [x] 3. Un-export internal helpers across packages
   **What**: Drop the `export` keyword from 11 internals that are only used within their own source file. Two of them (Lexer, Parser classes) have public function wrappers (`tokenize`, `parse`) that tests already use — no test rewrites are needed for those.
   **Files** (one symbol per bullet, all in the same commit since they're trivial textual changes):
   - `packages/cli/src/commands/validate.ts` — un-export `validateExplicitPath`, `formatSummary`
@@ -140,7 +140,7 @@ Land the four-tier cleanup as a sequence of small, reviewable, atomic Convention
   **Status**: Owned by `.weave/plans/adapter-readiness.md` Task 20. That plan deletes `HookConfig`, `SkillConfig`, `registerHook()`, and `loadSkill()` from `HarnessAdapter` and `MockAdapter` as part of the wider `WeaveRunner` removal. Do NOT execute this task here — it would conflict with the adapter-readiness branch.
   **Verification gate (owned by adapter-readiness)**: `grep -rn 'registerHook\|loadSkill\|HookConfig\|SkillConfig' packages/engine/src/ | grep -v 'loadAvailableSkills'` returns zero hits.
 
-- [ ] 5. Delete `BUILTIN_AGENT_NAMES` constant, derive in tests
+- [x] 5. Delete `BUILTIN_AGENT_NAMES` constant, derive in tests
   **What**: Remove the redundant `BUILTIN_AGENT_NAMES` constant. Replace each of the three test usages by deriving the agent list from `Object.keys(getBuiltinConfig()._unsafeUnwrap().agents)` or equivalent.
   **Files**:
   - `packages/config/src/builtins.ts` — delete the `BUILTIN_AGENT_NAMES` export (line 12).
@@ -157,7 +157,7 @@ Land the four-tier cleanup as a sequence of small, reviewable, atomic Convention
 
 ### Tier 2 — Design-touching fixes
 
-- [ ] 6. Rename core/DSL `ArtifactRef` → `ArtifactDecl` to resolve collision with engine runtime `ArtifactRef`
+- [x] 6. Rename core/DSL `ArtifactRef` → `ArtifactDecl` to resolve collision with engine runtime `ArtifactRef`
   **What**: Two public exports share the name `ArtifactRef` across packages. Rename the core/DSL variant (DSL workflow step input/output declaration) to `ArtifactDecl`. The engine's runtime `ArtifactRef` (persisted record) keeps its name since it is the runtime concept. Document the convention in `docs/adapter-boundary.md`.
   **Files**:
   - `packages/core/src/schema.ts` — rename `ArtifactRefSchema` → `ArtifactDeclSchema` (line 129); update references inside `WorkflowStepSchema` (lines 161, 162); rename type export `ArtifactRef` → `ArtifactDecl` (line 260).
@@ -178,7 +178,7 @@ Land the four-tier cleanup as a sequence of small, reviewable, atomic Convention
   **Pitfall**: This is a breaking change to the `@weave/core` public API. Since no external consumer exists today (pre-1.0, single-repo project), no deprecation alias is required. Note this in the commit body.
   **Commit**: `refactor(core)!: rename ArtifactRef → ArtifactDecl to disambiguate from engine runtime type`
 
-- [ ] 7. Replace hardcoded `"shuttle"` literal in `compose.ts` with structural check
+- [x] 7. Replace hardcoded `"shuttle"` literal in `compose.ts` with structural check
   **What**: `shouldExcludeSharedShuttleTarget` at `compose.ts:128-135` special-cases the literal builtin name `"shuttle"`, violating the DSL-first principle that builtin names are not engine-known. Replace with a structural rule based on the agent's `mode` field plus `name`-starts-with-`"shuttle-"` check.
   **Decision**: Pattern selects **Option C** from the brief — structural check based on `mode === "all"` (the shuttle root) plus absence of category prefix. Rationale: requires no schema change, no new DSL keyword, and matches the conceptual definition of "the shuttle root agent" (a top-level non-categorised generalist with `mode: all`). Options A and B would require schema field additions that ripple through validate/parser/parse_config tests for no behavioural gain.
   **Files**:
@@ -195,7 +195,7 @@ Land the four-tier cleanup as a sequence of small, reviewable, atomic Convention
   **Pitfall**: If existing tests break due to subtle structural-rule differences, prefer adjusting the rule to preserve existing behaviour over rewriting test expectations. The intent is identical user-facing behaviour with a cleaner internal implementation.
   **Commit**: `refactor(engine): replace hardcoded shuttle name with structural check in delegation exclusion`
 
-- [ ] 8. Convert `packages/engine/src/env.ts` to `Result`-returning + Bun types
+- [x] 8. Convert `packages/engine/src/env.ts` to `Result`-returning + Bun types
   **What**: `parseEnv()` currently throws on validation failure and uses `NodeJS.ProcessEnv`. Convert to `Result<Env, EnvValidationError>` and replace the type with `Record<string, string | undefined>` (project is Bun-only per AGENTS.md). The module-level `env` constant uses `.match()` to log-and-exit on failure, preserving the "crash early" semantics without throwing through `import`.
   **Files**:
   - `packages/engine/src/env.ts` — add typed `EnvValidationError` discriminated union (`{ type: "InvalidEnv", issues: { path: string; message: string }[] }`); change `parseEnv` signature to `(raw?: Record<string, string | undefined>): Result<Env, EnvValidationError>`; change body to `safeParse` → `ok`/`err`; change module-level `export const env` to call `parseEnv().match(env => env, err => { logger.fatal({ err }, "..."); process.exit(1); })` (or equivalent). Import `logger` from `./logger.js`.
@@ -210,7 +210,7 @@ Land the four-tier cleanup as a sequence of small, reviewable, atomic Convention
   **Pitfall**: Module-level `env` initialisation runs at import time. If it calls `process.exit(1)` on invalid env, test suites that import `@weave/engine` with a polluted env will crash. Mitigation: tests must not mutate `process.env.LOG_LEVEL` to invalid values; the test for failure paths must call `parseEnv({ LOG_LEVEL: "bogus" })` with an explicit argument, never via `process.env` mutation.
   **Commit**: `refactor(engine): convert env.ts to neverthrow + Bun-native env type`
 
-- [ ] 9. Fix nested `try/catch` in `runtime.ts` with `Result.fromThrowable`
+- [x] 9. Fix nested `try/catch` in `runtime.ts` with `Result.fromThrowable`
   **What**: Lines 385-397 of `packages/cli/src/commands/runtime.ts` have a nested `try { try { ... } finally { db.close() } } catch { ... }` block to read schema version from a possibly-missing database. Refactor with `Result.fromThrowable` so the inner cleanup-required block stays a single `try/finally` and the outer `catch` becomes a `Result` error path.
   **Files**:
   - `packages/cli/src/commands/runtime.ts` — replace lines 385-397. New pattern:
@@ -238,7 +238,7 @@ Land the four-tier cleanup as a sequence of small, reviewable, atomic Convention
 
 ### Tier 4 — Chores
 
-- [ ] 13. Replace `Bun.spawnSync` filesystem ops with native `node:fs` calls
+- [x] 13. Replace `Bun.spawnSync` filesystem ops with native `node:fs` calls
   **What**: `packages/engine/src/runtime/sqlite/store.ts` lines 1090, 1102, 1152-1154 shell out to `mkdir` and `chmod`. Replace with `node:fs/promises` calls. `node:fs` is allowed per AGENTS.md — it is one of the `node:` protocol modules Bun explicitly adopts. Wrap with `Result.fromThrowable` / `ResultAsync.fromPromise` per neverthrow discipline.
   **Files**:
   - `packages/engine/src/runtime/sqlite/store.ts`:
@@ -256,11 +256,11 @@ Land the four-tier cleanup as a sequence of small, reviewable, atomic Convention
   **Pitfall**: `fs.chmod` rejects on Windows for some modes. Since the runtime store is currently macOS/Linux only, keep the `.catch(() => undefined)` swallow to preserve best-effort behaviour. Document in the commit body that cross-platform Windows support is a separate concern.
   **Commit**: `refactor(engine): replace shell-out fs ops in runtime store with node:fs/promises`
 
-- [ ] 14. Sweep stale doc references
-  **What**: After Tasks 2, 4, 5 land, several doc files reference deleted symbols. Sweep and update.
+- [x] 14. Sweep stale doc references
+  **What**: After Tasks 2, 5 land and adapter-readiness.md Task 20 lands, several doc files reference deleted symbols. Sweep and update.
   **Files**:
   - `docs/specs/12-spec-runtime-persistence/12-proofs/12-task-01-proofs.md` — remove the `scripts/validate-config.ts` / `printSummary` reference at line 116; replace with a pointer to the CLI `validate` command.
-  - `docs/adapter-boundary.md` — remove the "deprecated `loadSkill`/`registerHook` will be removed" paragraphs (now stale since Task 4 removed them).
+  - `docs/adapter-boundary.md` — remove the "deprecated `loadSkill`/`registerHook` will be removed" paragraphs (now stale since adapter-readiness.md Task 20 removed them).
   - `docs/specs/09-spec-adapter-provided-skill-resolution/` — same cleanup of `loadSkill` deprecation language; ensure forward references to `loadAvailableSkills` are the canonical guidance.
   - `docs/specs/13-spec-minimal-execution-lifecycle-surface/` — verify the "supersedes `registerHook`" language matches the post-removal state (descriptive past tense, not deprecation language).
   - Any other spec mentioning `BUILTIN_AGENT_NAMES` (none expected — verify with `grep -rn "BUILTIN_AGENT_NAMES" docs/`).
@@ -276,13 +276,13 @@ Land the four-tier cleanup as a sequence of small, reviewable, atomic Convention
 
 ## Verification
 
-- [ ] All tests pass: `bun test`
-- [ ] Typecheck clean: `bun run typecheck`
-- [ ] Build succeeds for all packages including new adapter: `bun run build`
-- [ ] No regressions in CLI behaviour: manually run `bun run validate-config`, `bun packages/cli/src/main.ts validate --project`, `bun packages/cli/src/main.ts runtime status`.
-- [ ] All Definition-of-Done grep checks return the expected zero/non-zero counts (see above).
-- [ ] Each task lands as a single commit following Conventional Commits format (`refactor:`, `feat:`, `docs:`, `chore:`).
-- [ ] Tasks 6, 8 carry the breaking-change marker (`!`) in their type since they alter public exports / module-level behaviour respectively.
+- [x] All tests pass: `bun test`
+- [x] Typecheck clean: `bun run typecheck`
+- [x] Build succeeds for all packages including new adapter: `bun run build`
+- [x] No regressions in CLI behaviour: manually run `bun run validate-config`, `bun packages/cli/src/main.ts validate --project`, `bun packages/cli/src/main.ts runtime status`.
+- [x] All Definition-of-Done grep checks return the expected zero/non-zero counts (see above).
+- [x] Each task lands as a single commit following Conventional Commits format (`refactor:`, `feat:`, `docs:`, `chore:`).
+- [x] Tasks 6, 8 carry the breaking-change marker (`!`) in their type since they alter public exports / module-level behaviour respectively.
 
 ### Review routing
 

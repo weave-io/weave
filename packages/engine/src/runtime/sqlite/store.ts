@@ -1102,9 +1102,12 @@ export class SqliteRuntimeStore implements RuntimeStore {
     }
 
     // Apply restrictive permissions to the directory (best-effort)
-    // .catch(() => undefined) preserves best-effort semantics; Windows chmod
-    // support is a separate concern tracked outside this module.
-    await fs.chmod(dir, 0o700).catch(() => undefined);
+    await fs.chmod(dir, 0o700).catch((cause) => {
+      log.warn(
+        { path: dir, mode: 0o700, cause },
+        "Failed to tighten runtime directory permissions",
+      );
+    });
 
     // Create Kysely instance with BunSqliteDialect
     const dialect = new BunSqliteDialect(this.options.dbPath);
@@ -1154,11 +1157,24 @@ export class SqliteRuntimeStore implements RuntimeStore {
     }
 
     // Apply restrictive permissions to the DB file (best-effort)
-    // .catch(() => undefined) preserves best-effort semantics; Windows chmod
-    // support is a separate concern tracked outside this module.
-    await fs.chmod(this.options.dbPath, 0o600).catch(() => undefined);
-    await fs.chmod(`${this.options.dbPath}-wal`, 0o600).catch(() => undefined);
-    await fs.chmod(`${this.options.dbPath}-shm`, 0o600).catch(() => undefined);
+    await fs.chmod(this.options.dbPath, 0o600).catch((cause) => {
+      log.warn(
+        { path: this.options.dbPath, mode: 0o600, cause },
+        "Failed to tighten runtime DB permissions",
+      );
+    });
+    await fs.chmod(`${this.options.dbPath}-wal`, 0o600).catch((cause) => {
+      log.warn(
+        { path: `${this.options.dbPath}-wal`, mode: 0o600, cause },
+        "Failed to tighten runtime WAL permissions",
+      );
+    });
+    await fs.chmod(`${this.options.dbPath}-shm`, 0o600).catch((cause) => {
+      log.warn(
+        { path: `${this.options.dbPath}-shm`, mode: 0o600, cause },
+        "Failed to tighten runtime SHM permissions",
+      );
+    });
 
     this.initialized = true;
     this.initializingPromise = null;

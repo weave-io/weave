@@ -4,6 +4,7 @@ node_modules/
 .bun/
 
 .weave/runtime/
+.weave/state.json
 
 # Build output
 dist/
