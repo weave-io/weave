@@ -49,11 +49,17 @@ Both paths are required for full materialization.
 ```jsonc
 // opencode.json — direct plugin installation
 {
-  "plugin": ["@weave/adapter-opencode"]
+  "plugin": ["@weave/adapter-opencode/plugin"]
 }
 ```
 
-No user-authored wrapper script is required. The package itself is the plugin entry point.
+> **Important**: Use the `@weave/adapter-opencode/plugin` subpath export, not the bare package name.
+> The bare `@weave/adapter-opencode` entry (`dist/index.js`) exports non-function values (constants,
+> type re-exports) that cause OpenCode's `getLegacyPlugins` loader to throw `TypeError: Plugin export
+> is not a function`. The `./plugin` subpath (`dist/plugin.js`) exports only the plugin function and
+> is the correct entry point for OpenCode.
+
+No user-authored wrapper script is required. The `./plugin` bundle is the plugin entry point.
 
 The `OpenCodeAdapterOptions.client` field is the primary injection point for the SDK client. When omitted, the adapter operates in translation-only mode (no SDK calls), which is useful for config-write-only scenarios and tests that only need translated config snapshots.
 

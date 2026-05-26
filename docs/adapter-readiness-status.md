@@ -112,11 +112,17 @@ future specs:
 ```jsonc
 // opencode.json
 {
-  "plugin": ["@weave/adapter-opencode"]
+  "plugin": ["@weave/adapter-opencode/plugin"]
 }
 ```
 
-After adding the plugin entry, restart OpenCode. The package's default-exported
+> **Important**: Use the `@weave/adapter-opencode/plugin` subpath export, not the bare package name.
+> The bare `@weave/adapter-opencode` entry (`dist/index.js`) exports non-function values (constants,
+> type re-exports) that cause OpenCode's `getLegacyPlugins` loader to throw
+> `TypeError: Plugin export is not a function`. The `./plugin` subpath (`dist/plugin.js`) exports
+> only the plugin function and is the correct entry point for OpenCode.
+
+After adding the plugin entry, restart OpenCode. The `./plugin` bundle's default-exported
 `WeavePlugin` function is called by OpenCode at startup. It loads
 `.weave/config.weave`, materializes all declared agents via the injected SDK
 client, and returns a `Hooks` object with a `config` hook.
@@ -126,10 +132,10 @@ The `config` hook injects the translated agent configs into `cfg.agent` so that
 reconciliation (`spawnSubagent`) also runs to persist agents into OpenCode's
 runtime store.
 
-**No user-authored wrapper script is required.** The package itself is the
+**No user-authored wrapper script is required.** The `./plugin` bundle is the
 plugin entry point. The `WeavePlugin` function, a `server` alias (for
 `PluginModule` compatibility), and a `createWeavePlugin(options?)` factory are
-all exported from the package root.
+all exported from `@weave/adapter-opencode/plugin`.
 
 See [ADR 0003 — OpenCode Adapter Materialization Shape](adr/0003-opencode-adapter-materialization-shape.md)
 for the full design rationale and [Spec 20](specs/20-spec-opencode-adapter-materialization/20-spec-opencode-adapter-materialization.md)
