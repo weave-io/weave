@@ -1,7 +1,27 @@
+/**
+ * Materialization Orchestration Tests
+ *
+ * Exercises the canonical adapter bootstrap pattern:
+ *   adapter.init() → adapter.loadAvailableSkills() → materializeAgents({ config })
+ *   → read plan.agents and plan.errors → loop calling adapter.spawnSubagent(descriptor)
+ *
+ * This replaces the deleted WeaveRunner-based runner.test.ts. All tests use
+ * the `orchestrate()` helper defined below — no WeaveRunner anywhere.
+ *
+ * Per-agent failures (CategoryShuttleConflict, DescriptorCompositionFailure)
+ * are read from `plan.errors`, not from a top-level Result rejection.
+ */
+
 import { beforeEach, describe, expect, it } from "bun:test";
+import type { WeaveConfig } from "@weave/core";
 import { parseConfig } from "@weave/core";
-import type { RunAgentEffect } from "../run-agent-effects.js";
-import { WeaveRunner } from "../runner.js";
+import {
+  type MaterializationError,
+  type MaterializationPlan,
+  type MaterializedAgent,
+  materializeAgents,
+  resolveSkillsForConfig,
+} from "@weave/engine";
 import { MockAdapter } from "./mock-adapter.js";
 
 // ---------------------------------------------------------------------------
@@ -9,17 +29,57 @@ import { MockAdapter } from "./mock-adapter.js";
 // ---------------------------------------------------------------------------
 
 /** Parse a .weave source string and unwrap — throws on invalid input. */
-function cfg(source: string) {
+function cfg(source: string): WeaveConfig {
   const result = parseConfig(source);
   if (result.isErr()) throw new Error(JSON.stringify(result.error));
   return result.value;
+}
+
+/**
+ * Canonical adapter bootstrap pattern.
+ *
+ * Performs:
+ *   1. adapter.init()
+ *   2. adapter.loadAvailableSkills()
+ *   3. materializeAgents({ config })
+ *   4. Read plan.agents and plan.errors
+ *   5. Loop calling adapter.spawnSubagent(descriptor) for each agent
+ *
+ * Returns the full MaterializationPlan so tests can inspect plan.errors.
+ */
+async function orchestrate(
+  config: WeaveConfig,
+  adapter: MockAdapter,
+): Promise<MaterializationPlan> {
+  await adapter.init();
+  await adapter.loadAvailableSkills();
+
+  // materializeAgents returns ResultAsync<MaterializationPlan, never> —
+  // the outer Result never rejects; unwrap unconditionally.
+  const plan = (await materializeAgents({ config }))._unsafeUnwrap();
+
+  for (const { descriptor } of plan.agents) {
+    await adapter.spawnSubagent(descriptor);
+  }
+
+  return plan;
+}
+
+/**
+ * Respects the adapter lifecycle contract: init() must be called before
+ * loadAvailableSkills(). Use this helper in all tests that call
+ * loadAvailableSkills() directly (i.e. outside of orchestrate()).
+ */
+async function initAndLoadAvailableSkills(adapter: MockAdapter) {
+  await adapter.init();
+  return adapter.loadAvailableSkills();
 }
 
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("WeaveRunner", () => {
+describe("materialization orchestration", () => {
   let adapter: MockAdapter;
 
   beforeEach(() => {
@@ -27,10 +87,10 @@ describe("WeaveRunner", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Lifecycle
+  // Lifecycle ordering
   // -------------------------------------------------------------------------
 
-  describe("lifecycle", () => {
+  describe("lifecycle ordering", () => {
     it("calls init exactly once before spawning any agent", async () => {
       const config = cfg(`
         agent loom {
@@ -39,7 +99,7 @@ describe("WeaveRunner", () => {
         }
       `);
 
-      await new WeaveRunner(config, adapter).run();
+      await orchestrate(config, adapter);
 
       const allCalls = adapter.calls.map((c) => c.method);
       expect(allCalls[0]).toBe("init");
@@ -47,10 +107,68 @@ describe("WeaveRunner", () => {
     });
 
     it("completes without error on an empty config", async () => {
-      await new WeaveRunner(cfg(""), adapter).run();
+      await orchestrate(cfg(""), adapter);
 
       expect(adapter.callsTo("init")).toHaveLength(1);
       expect(adapter.callsTo("spawnSubagent")).toHaveLength(0);
+    });
+
+    it("init always precedes spawnSubagent calls", async () => {
+      const config = cfg(`
+        agent loom { prompt "Orchestrator." models ["claude-sonnet-4-5"] }
+      `);
+
+      await orchestrate(config, adapter);
+
+      const initIdx = adapter.calls.findIndex((c) => c.method === "init");
+      const spawnIdx = adapter.calls.findIndex(
+        (c) => c.method === "spawnSubagent",
+      );
+      expect(initIdx).toBeLessThan(spawnIdx);
+    });
+
+    it("loadAvailableSkills is called exactly once before spawnSubagent", async () => {
+      const config = cfg(`
+        agent sigma-worker { prompt "Sigma worker." models ["model-sigma"] }
+      `);
+
+      await orchestrate(config, adapter);
+
+      expect(adapter.callsTo("loadAvailableSkills")).toHaveLength(1);
+      const loadIdx = adapter.calls.findIndex(
+        (c) => c.method === "loadAvailableSkills",
+      );
+      const spawnIdx = adapter.calls.findIndex(
+        (c) => c.method === "spawnSubagent",
+      );
+      expect(loadIdx).toBeGreaterThanOrEqual(0);
+      expect(loadIdx).toBeLessThan(spawnIdx);
+    });
+
+    it("init is called before loadAvailableSkills", async () => {
+      const config = cfg(`
+        agent loom { prompt "Orchestrator." models ["claude-sonnet-4-5"] }
+      `);
+
+      await orchestrate(config, adapter);
+
+      const initIdx = adapter.calls.findIndex((c) => c.method === "init");
+      const loadIdx = adapter.calls.findIndex(
+        (c) => c.method === "loadAvailableSkills",
+      );
+      expect(initIdx).toBe(0);
+      expect(initIdx).toBeLessThan(loadIdx);
+    });
+
+    it("still calls init even when all agents are disabled", async () => {
+      const config = cfg(`
+        agent loom { prompt "Orchestrator." models ["claude-sonnet-4-5"] }
+        disable agents ["loom"]
+      `);
+
+      await orchestrate(config, adapter);
+
+      expect(adapter.callsTo("init")).toHaveLength(1);
     });
   });
 
@@ -68,7 +186,7 @@ describe("WeaveRunner", () => {
         }
       `);
 
-      await new WeaveRunner(config, adapter).run();
+      await orchestrate(config, adapter);
 
       const spawned = adapter.callsTo("spawnSubagent");
       expect(spawned).toHaveLength(1);
@@ -93,7 +211,7 @@ describe("WeaveRunner", () => {
         }
       `);
 
-      await new WeaveRunner(config, adapter).run();
+      await orchestrate(config, adapter);
 
       const names = adapter
         .callsTo("spawnSubagent")
@@ -119,7 +237,7 @@ describe("WeaveRunner", () => {
         }
       `);
 
-      await new WeaveRunner(config, adapter).run();
+      await orchestrate(config, adapter);
 
       const spawned = adapter.callsTo("spawnSubagent");
       expect(spawned[0]?.descriptor.rawToolPolicy?.read).toBe("allow");
@@ -142,7 +260,7 @@ describe("WeaveRunner", () => {
         disable agents ["warp"]
       `);
 
-      await new WeaveRunner(config, adapter).run();
+      await orchestrate(config, adapter);
 
       const names = adapter
         .callsTo("spawnSubagent")
@@ -157,40 +275,9 @@ describe("WeaveRunner", () => {
         disable agents ["loom"]
       `);
 
-      await new WeaveRunner(config, adapter).run();
+      await orchestrate(config, adapter);
 
       expect(adapter.callsTo("spawnSubagent")).toHaveLength(0);
-    });
-
-    it("still calls init even when all agents are disabled", async () => {
-      const config = cfg(`
-        agent loom { prompt "Orchestrator." models ["claude-sonnet-4-5"] }
-        disable agents ["loom"]
-      `);
-
-      await new WeaveRunner(config, adapter).run();
-
-      expect(adapter.callsTo("init")).toHaveLength(1);
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // Call ordering
-  // -------------------------------------------------------------------------
-
-  describe("call ordering", () => {
-    it("init always precedes spawnSubagent calls", async () => {
-      const config = cfg(`
-        agent loom { prompt "Orchestrator." models ["claude-sonnet-4-5"] }
-      `);
-
-      await new WeaveRunner(config, adapter).run();
-
-      const initIdx = adapter.calls.findIndex((c) => c.method === "init");
-      const spawnIdx = adapter.calls.findIndex(
-        (c) => c.method === "spawnSubagent",
-      );
-      expect(initIdx).toBeLessThan(spawnIdx);
     });
   });
 
@@ -205,7 +292,7 @@ describe("WeaveRunner", () => {
         category frontend { patterns ["src/components/**"] models ["gpt-5"] }
       `);
 
-      await new WeaveRunner(config, adapter).run();
+      await orchestrate(config, adapter);
 
       const names = adapter
         .callsTo("spawnSubagent")
@@ -221,7 +308,7 @@ describe("WeaveRunner", () => {
         category backend { patterns ["src/api/**"] models ["gpt-4o"] }
       `);
 
-      await new WeaveRunner(config, adapter).run();
+      await orchestrate(config, adapter);
 
       const names = adapter
         .callsTo("spawnSubagent")
@@ -237,7 +324,7 @@ describe("WeaveRunner", () => {
         disable agents ["shuttle"]
       `);
 
-      await new WeaveRunner(config, adapter).run();
+      await orchestrate(config, adapter);
 
       const names = adapter
         .callsTo("spawnSubagent")
@@ -254,7 +341,7 @@ describe("WeaveRunner", () => {
         disable agents ["shuttle-frontend"]
       `);
 
-      await new WeaveRunner(config, adapter).run();
+      await orchestrate(config, adapter);
 
       const names = adapter
         .callsTo("spawnSubagent")
@@ -269,7 +356,7 @@ describe("WeaveRunner", () => {
         category frontend { patterns ["src/components/**"] models ["gpt-5"] }
       `);
 
-      await new WeaveRunner(config, adapter).run();
+      await orchestrate(config, adapter);
 
       const spawned = adapter
         .callsTo("spawnSubagent")
@@ -295,7 +382,7 @@ describe("WeaveRunner", () => {
         disable agents ["warp", "shuttle-backend"]
       `);
 
-      await new WeaveRunner(config, adapter).run();
+      await orchestrate(config, adapter);
 
       const descriptors = adapter
         .callsTo("spawnSubagent")
@@ -323,57 +410,34 @@ describe("WeaveRunner", () => {
       });
     });
 
-    it("returns an err when a category would generate a name that is already explicitly declared", async () => {
+    it("plan.errors contains a CategoryShuttleConflict when a category would generate a name that is already explicitly declared", async () => {
       const config = cfg(`
         agent shuttle { prompt "Specialist." models ["claude-sonnet-4-5"] }
         agent shuttle-frontend { prompt "Explicit." models ["gpt-4o"] }
         category frontend { patterns ["src/components/**"] models ["gpt-5"] }
       `);
 
-      const result = await new WeaveRunner(config, adapter).run();
+      const plan = await orchestrate(config, adapter);
 
-      expect(result.isErr()).toBe(true);
-      if (result.isErr()) {
-        expect(result.error.type).toBe("CategoryShuttleConflictError");
-        if (result.error.type === "CategoryShuttleConflictError") {
-          expect(result.error.shuttleName).toBe("shuttle-frontend");
-          expect(result.error.categoryName).toBe("frontend");
-        }
-      }
+      const conflictErrors = plan.errors.filter(
+        (
+          e,
+        ): e is Extract<
+          MaterializationError,
+          { type: "CategoryShuttleConflict" }
+        > => e.type === "CategoryShuttleConflict",
+      );
+      expect(conflictErrors).toHaveLength(1);
+      expect(conflictErrors[0]?.conflict.shuttleName).toBe("shuttle-frontend");
+      expect(conflictErrors[0]?.conflict.categoryName).toBe("frontend");
     });
   });
 
   // -------------------------------------------------------------------------
-  // onEffect — RunAgentEffect emission
+  // Descriptor fields — effectiveToolPolicy and rawToolPolicy
   // -------------------------------------------------------------------------
 
-  describe("onEffect callback", () => {
-    it("emits a run-agent effect for a normal agent with explicit tool_policy", async () => {
-      const config = cfg(`
-        agent alpha-worker {
-          prompt "Alpha worker agent."
-          models ["model-a"]
-          tool_policy {
-            read  allow
-            write allow
-            execute deny
-            delegate deny
-            network ask
-          }
-        }
-      `);
-
-      const effects: RunAgentEffect[] = [];
-      await new WeaveRunner(config, adapter, {
-        onEffect: (e) => effects.push(e),
-      }).run();
-
-      expect(effects).toHaveLength(1);
-      const effect = effects[0];
-      expect(effect?.kind).toBe("run-agent");
-      expect(effect?.agentName).toBe("alpha-worker");
-    });
-
+  describe("descriptor tool policy", () => {
     it("effectiveToolPolicy reflects explicit tool_policy values", async () => {
       const config = cfg(`
         agent beta-worker {
@@ -389,20 +453,18 @@ describe("WeaveRunner", () => {
         }
       `);
 
-      const effects: RunAgentEffect[] = [];
-      await new WeaveRunner(config, adapter, {
-        onEffect: (e) => effects.push(e),
-      }).run();
+      await orchestrate(config, adapter);
 
-      const effect = effects[0];
-      expect(effect?.effectiveToolPolicy.read).toBe("allow");
-      expect(effect?.effectiveToolPolicy.write).toBe("deny");
-      expect(effect?.effectiveToolPolicy.execute).toBe("ask");
-      expect(effect?.effectiveToolPolicy.delegate).toBe("deny");
-      expect(effect?.effectiveToolPolicy.network).toBe("allow");
+      const spawned = adapter.callsTo("spawnSubagent");
+      const descriptor = spawned[0]?.descriptor;
+      expect(descriptor?.effectiveToolPolicy.read).toBe("allow");
+      expect(descriptor?.effectiveToolPolicy.write).toBe("deny");
+      expect(descriptor?.effectiveToolPolicy.execute).toBe("ask");
+      expect(descriptor?.effectiveToolPolicy.delegate).toBe("deny");
+      expect(descriptor?.effectiveToolPolicy.network).toBe("allow");
     });
 
-    it("rawToolPolicy in effect matches the agent's declared tool_policy", async () => {
+    it("rawToolPolicy in descriptor matches the agent's declared tool_policy", async () => {
       const config = cfg(`
         agent gamma-worker {
           prompt "Gamma worker agent."
@@ -417,17 +479,14 @@ describe("WeaveRunner", () => {
         }
       `);
 
-      const effects: RunAgentEffect[] = [];
-      await new WeaveRunner(config, adapter, {
-        onEffect: (e) => effects.push(e),
-      }).run();
+      await orchestrate(config, adapter);
 
-      const effect = effects[0];
-      expect(effect?.rawToolPolicy?.read).toBe("allow");
-      expect(effect?.rawToolPolicy?.write).toBe("allow");
-      expect(effect?.rawToolPolicy?.execute).toBe("deny");
-      expect(effect?.rawToolPolicy?.delegate).toBe("deny");
-      expect(effect?.rawToolPolicy?.network).toBe("deny");
+      const descriptor = adapter.callsTo("spawnSubagent")[0]?.descriptor;
+      expect(descriptor?.rawToolPolicy?.read).toBe("allow");
+      expect(descriptor?.rawToolPolicy?.write).toBe("allow");
+      expect(descriptor?.rawToolPolicy?.execute).toBe("deny");
+      expect(descriptor?.rawToolPolicy?.delegate).toBe("deny");
+      expect(descriptor?.rawToolPolicy?.network).toBe("deny");
     });
 
     it("agent with no tool_policy: effectiveToolPolicy defaults all capabilities to ask", async () => {
@@ -438,17 +497,14 @@ describe("WeaveRunner", () => {
         }
       `);
 
-      const effects: RunAgentEffect[] = [];
-      await new WeaveRunner(config, adapter, {
-        onEffect: (e) => effects.push(e),
-      }).run();
+      await orchestrate(config, adapter);
 
-      const effect = effects[0];
-      expect(effect?.effectiveToolPolicy.read).toBe("ask");
-      expect(effect?.effectiveToolPolicy.write).toBe("ask");
-      expect(effect?.effectiveToolPolicy.execute).toBe("ask");
-      expect(effect?.effectiveToolPolicy.delegate).toBe("ask");
-      expect(effect?.effectiveToolPolicy.network).toBe("ask");
+      const descriptor = adapter.callsTo("spawnSubagent")[0]?.descriptor;
+      expect(descriptor?.effectiveToolPolicy.read).toBe("ask");
+      expect(descriptor?.effectiveToolPolicy.write).toBe("ask");
+      expect(descriptor?.effectiveToolPolicy.execute).toBe("ask");
+      expect(descriptor?.effectiveToolPolicy.delegate).toBe("ask");
+      expect(descriptor?.effectiveToolPolicy.network).toBe("ask");
     });
 
     it("agent with no tool_policy: rawToolPolicy is undefined", async () => {
@@ -459,87 +515,13 @@ describe("WeaveRunner", () => {
         }
       `);
 
-      const effects: RunAgentEffect[] = [];
-      await new WeaveRunner(config, adapter, {
-        onEffect: (e) => effects.push(e),
-      }).run();
+      await orchestrate(config, adapter);
 
-      expect(effects[0]?.rawToolPolicy).toBeUndefined();
+      const descriptor = adapter.callsTo("spawnSubagent")[0]?.descriptor;
+      expect(descriptor?.rawToolPolicy).toBeUndefined();
     });
 
-    it("emits one effect per agent in a multi-agent config", async () => {
-      const config = cfg(`
-        agent zeta-one { prompt "Zeta one." models ["model-z1"] }
-        agent zeta-two { prompt "Zeta two." models ["model-z2"] }
-        agent zeta-three { prompt "Zeta three." models ["model-z3"] }
-      `);
-
-      const effects: RunAgentEffect[] = [];
-      await new WeaveRunner(config, adapter, {
-        onEffect: (e) => effects.push(e),
-      }).run();
-
-      expect(effects).toHaveLength(3);
-      const names = effects.map((e) => e.agentName);
-      expect(names).toContain("zeta-one");
-      expect(names).toContain("zeta-two");
-      expect(names).toContain("zeta-three");
-    });
-
-    it("does not emit an effect for disabled agents", async () => {
-      const config = cfg(`
-        agent eta-active  { prompt "Eta active."   models ["model-eta-a"] }
-        agent eta-disabled { prompt "Eta disabled." models ["model-eta-d"] }
-        disable agents ["eta-disabled"]
-      `);
-
-      const effects: RunAgentEffect[] = [];
-      await new WeaveRunner(config, adapter, {
-        onEffect: (e) => effects.push(e),
-      }).run();
-
-      const names = effects.map((e) => e.agentName);
-      expect(names).toContain("eta-active");
-      expect(names).not.toContain("eta-disabled");
-    });
-
-    it("continues agent materialization when onEffect throws", async () => {
-      const config = cfg(`
-        agent phi-worker { prompt "Phi worker." models ["model-phi"] }
-      `);
-
-      await new WeaveRunner(config, adapter, {
-        onEffect: () => {
-          throw new Error("observer exploded");
-        },
-      }).run();
-
-      // Agent should still be spawned despite the callback throwing
-      const names = adapter
-        .callsTo("spawnSubagent")
-        .map((c) => c.descriptor.name);
-      expect(names).toContain("phi-worker");
-    });
-
-    it("effect is emitted before adapter.spawnSubagent is called", async () => {
-      const config = cfg(`
-        agent theta-worker { prompt "Theta worker." models ["model-theta"] }
-      `);
-
-      const order: string[] = [];
-      const originalSpawn = adapter.spawnSubagent.bind(adapter);
-      adapter.spawnSubagent = async (descriptor) => {
-        order.push(`spawn:${descriptor.name}`);
-        return originalSpawn(descriptor);
-      };
-      await new WeaveRunner(config, adapter, {
-        onEffect: (e) => order.push(`effect:${e.agentName}`),
-      }).run();
-
-      expect(order).toEqual(["effect:theta-worker", "spawn:theta-worker"]);
-    });
-
-    it("no harness-specific tool names appear in any emitted effect", async () => {
+    it("no harness-specific tool names appear in any spawned descriptor", async () => {
       const config = cfg(`
         agent iota-worker {
           prompt "Iota worker."
@@ -554,14 +536,10 @@ describe("WeaveRunner", () => {
         }
       `);
 
-      const effects: RunAgentEffect[] = [];
-      await new WeaveRunner(config, adapter, {
-        onEffect: (e) => effects.push(e),
-      }).run();
+      await orchestrate(config, adapter);
 
-      // Serialize the effect and confirm no harness-specific names appear
-      const serialized = JSON.stringify(effects);
-      // Abstract capability keys only — no harness tool identifiers
+      const spawned = adapter.callsTo("spawnSubagent");
+      const serialized = JSON.stringify(spawned);
       const harnessPatterns = [
         "opencode",
         "claude-code",
@@ -578,28 +556,10 @@ describe("WeaveRunner", () => {
   });
 
   // -------------------------------------------------------------------------
-  // onEffect — category shuttle policy
+  // Category shuttle — tool policy
   // -------------------------------------------------------------------------
 
-  describe("onEffect — category shuttle policy", () => {
-    it("emits a run-agent effect for a category shuttle agent", async () => {
-      const config = cfg(`
-        agent shuttle { prompt "Specialist." models ["model-shuttle"] }
-        category kappa { patterns ["src/kappa/**"] models ["model-kappa"] }
-      `);
-
-      const effects: RunAgentEffect[] = [];
-      await new WeaveRunner(config, adapter, {
-        onEffect: (e) => effects.push(e),
-      }).run();
-
-      const shuttleEffect = effects.find(
-        (e) => e.agentName === "shuttle-kappa",
-      );
-      expect(shuttleEffect).toBeDefined();
-      expect(shuttleEffect?.kind).toBe("run-agent");
-    });
-
+  describe("category shuttle tool policy", () => {
     it("category shuttle with explicit tool_policy: effectiveToolPolicy reflects category values", async () => {
       const config = cfg(`
         agent shuttle { prompt "Specialist." models ["model-shuttle"] }
@@ -616,19 +576,16 @@ describe("WeaveRunner", () => {
         }
       `);
 
-      const effects: RunAgentEffect[] = [];
-      await new WeaveRunner(config, adapter, {
-        onEffect: (e) => effects.push(e),
-      }).run();
+      await orchestrate(config, adapter);
 
-      const shuttleEffect = effects.find(
-        (e) => e.agentName === "shuttle-lambda",
-      );
-      expect(shuttleEffect?.effectiveToolPolicy.read).toBe("allow");
-      expect(shuttleEffect?.effectiveToolPolicy.write).toBe("deny");
-      expect(shuttleEffect?.effectiveToolPolicy.execute).toBe("deny");
-      expect(shuttleEffect?.effectiveToolPolicy.delegate).toBe("deny");
-      expect(shuttleEffect?.effectiveToolPolicy.network).toBe("deny");
+      const shuttleDescriptor = adapter
+        .callsTo("spawnSubagent")
+        .find((c) => c.descriptor.name === "shuttle-lambda")?.descriptor;
+      expect(shuttleDescriptor?.effectiveToolPolicy.read).toBe("allow");
+      expect(shuttleDescriptor?.effectiveToolPolicy.write).toBe("deny");
+      expect(shuttleDescriptor?.effectiveToolPolicy.execute).toBe("deny");
+      expect(shuttleDescriptor?.effectiveToolPolicy.delegate).toBe("deny");
+      expect(shuttleDescriptor?.effectiveToolPolicy.network).toBe("deny");
     });
 
     it("category shuttle with no tool_policy: effectiveToolPolicy defaults all to ask", async () => {
@@ -637,17 +594,16 @@ describe("WeaveRunner", () => {
         category mu { patterns ["src/mu/**"] models ["model-mu"] }
       `);
 
-      const effects: RunAgentEffect[] = [];
-      await new WeaveRunner(config, adapter, {
-        onEffect: (e) => effects.push(e),
-      }).run();
+      await orchestrate(config, adapter);
 
-      const shuttleEffect = effects.find((e) => e.agentName === "shuttle-mu");
-      expect(shuttleEffect?.effectiveToolPolicy.read).toBe("ask");
-      expect(shuttleEffect?.effectiveToolPolicy.write).toBe("ask");
-      expect(shuttleEffect?.effectiveToolPolicy.execute).toBe("ask");
-      expect(shuttleEffect?.effectiveToolPolicy.delegate).toBe("ask");
-      expect(shuttleEffect?.effectiveToolPolicy.network).toBe("ask");
+      const shuttleDescriptor = adapter
+        .callsTo("spawnSubagent")
+        .find((c) => c.descriptor.name === "shuttle-mu")?.descriptor;
+      expect(shuttleDescriptor?.effectiveToolPolicy.read).toBe("ask");
+      expect(shuttleDescriptor?.effectiveToolPolicy.write).toBe("ask");
+      expect(shuttleDescriptor?.effectiveToolPolicy.execute).toBe("ask");
+      expect(shuttleDescriptor?.effectiveToolPolicy.delegate).toBe("ask");
+      expect(shuttleDescriptor?.effectiveToolPolicy.network).toBe("ask");
     });
 
     it("category shuttle rawToolPolicy matches the category's declared tool_policy", async () => {
@@ -666,52 +622,16 @@ describe("WeaveRunner", () => {
         }
       `);
 
-      const effects: RunAgentEffect[] = [];
-      await new WeaveRunner(config, adapter, {
-        onEffect: (e) => effects.push(e),
-      }).run();
+      await orchestrate(config, adapter);
 
-      const shuttleEffect = effects.find((e) => e.agentName === "shuttle-nu");
-      expect(shuttleEffect?.rawToolPolicy?.read).toBe("allow");
-      expect(shuttleEffect?.rawToolPolicy?.write).toBe("allow");
-      expect(shuttleEffect?.rawToolPolicy?.execute).toBe("ask");
-      expect(shuttleEffect?.rawToolPolicy?.delegate).toBe("deny");
-      expect(shuttleEffect?.rawToolPolicy?.network).toBe("deny");
-    });
-
-    it("onEffect receives category metadata matching the spawned descriptor", async () => {
-      const config = cfg(`
-        agent worker { prompt "Regular." models ["model-worker"] }
-        agent shuttle { prompt "Specialist." models ["model-shuttle"] }
-        category frontend {
-          description "Frontend UI, styling, accessibility"
-          patterns ["src/components/**", "**/*.tsx"]
-          models ["model-frontend"]
-        }
-      `);
-
-      const effects: RunAgentEffect[] = [];
-      await new WeaveRunner(config, adapter, {
-        onEffect: (e) => effects.push(e),
-      }).run();
-
-      const spawned = adapter
+      const shuttleDescriptor = adapter
         .callsTo("spawnSubagent")
-        .find((c) => c.descriptor.name === "shuttle-frontend");
-      const shuttleEffect = effects.find(
-        (e) => e.agentName === "shuttle-frontend",
-      );
-      const regularEffect = effects.find((e) => e.agentName === "worker");
-
-      expect(shuttleEffect?.agentDescriptor.category).toEqual(
-        spawned?.descriptor.category,
-      );
-      expect(shuttleEffect?.agentDescriptor.category).toEqual({
-        name: "frontend",
-        description: "Frontend UI, styling, accessibility",
-        patterns: ["src/components/**", "**/*.tsx"],
-      });
-      expect(regularEffect?.agentDescriptor.category).toBeUndefined();
+        .find((c) => c.descriptor.name === "shuttle-nu")?.descriptor;
+      expect(shuttleDescriptor?.rawToolPolicy?.read).toBe("allow");
+      expect(shuttleDescriptor?.rawToolPolicy?.write).toBe("allow");
+      expect(shuttleDescriptor?.rawToolPolicy?.execute).toBe("ask");
+      expect(shuttleDescriptor?.rawToolPolicy?.delegate).toBe("deny");
+      expect(shuttleDescriptor?.rawToolPolicy?.network).toBe("deny");
     });
 
     it("category shuttle with no tool_policy: rawToolPolicy is undefined", async () => {
@@ -720,13 +640,12 @@ describe("WeaveRunner", () => {
         category xi { patterns ["src/xi/**"] models ["model-xi"] }
       `);
 
-      const effects: RunAgentEffect[] = [];
-      await new WeaveRunner(config, adapter, {
-        onEffect: (e) => effects.push(e),
-      }).run();
+      await orchestrate(config, adapter);
 
-      const shuttleEffect = effects.find((e) => e.agentName === "shuttle-xi");
-      expect(shuttleEffect?.rawToolPolicy).toBeUndefined();
+      const shuttleDescriptor = adapter
+        .callsTo("spawnSubagent")
+        .find((c) => c.descriptor.name === "shuttle-xi")?.descriptor;
+      expect(shuttleDescriptor?.rawToolPolicy).toBeUndefined();
     });
 
     it("raw tool_policy is still passed to adapter unchanged for category shuttle", async () => {
@@ -745,53 +664,52 @@ describe("WeaveRunner", () => {
         }
       `);
 
-      await new WeaveRunner(config, adapter).run();
+      await orchestrate(config, adapter);
 
-      const spawned = adapter
+      const shuttleDescriptor = adapter
         .callsTo("spawnSubagent")
-        .find((c) => c.descriptor.name === "shuttle-omicron");
-      expect(spawned?.descriptor.rawToolPolicy?.read).toBe("allow");
-      expect(spawned?.descriptor.rawToolPolicy?.write).toBe("allow");
-      expect(spawned?.descriptor.rawToolPolicy?.execute).toBe("deny");
-      expect(spawned?.descriptor.rawToolPolicy?.delegate).toBe("deny");
-      expect(spawned?.descriptor.rawToolPolicy?.network).toBe("deny");
+        .find((c) => c.descriptor.name === "shuttle-omicron")?.descriptor;
+      expect(shuttleDescriptor?.rawToolPolicy?.read).toBe("allow");
+      expect(shuttleDescriptor?.rawToolPolicy?.write).toBe("allow");
+      expect(shuttleDescriptor?.rawToolPolicy?.execute).toBe("deny");
+      expect(shuttleDescriptor?.rawToolPolicy?.delegate).toBe("deny");
+      expect(shuttleDescriptor?.rawToolPolicy?.network).toBe("deny");
+    });
+
+    it("category descriptor carries category metadata", async () => {
+      const config = cfg(`
+        agent worker { prompt "Regular." models ["model-worker"] }
+        agent shuttle { prompt "Specialist." models ["model-shuttle"] }
+        category frontend {
+          description "Frontend UI, styling, accessibility"
+          patterns ["src/components/**", "**/*.tsx"]
+          models ["model-frontend"]
+        }
+      `);
+
+      await orchestrate(config, adapter);
+
+      const shuttleDescriptor = adapter
+        .callsTo("spawnSubagent")
+        .find((c) => c.descriptor.name === "shuttle-frontend")?.descriptor;
+      const workerDescriptor = adapter
+        .callsTo("spawnSubagent")
+        .find((c) => c.descriptor.name === "worker")?.descriptor;
+
+      expect(shuttleDescriptor?.category).toEqual({
+        name: "frontend",
+        description: "Frontend UI, styling, accessibility",
+        patterns: ["src/components/**", "**/*.tsx"],
+      });
+      expect(workerDescriptor?.category).toBeUndefined();
     });
   });
 
   // -------------------------------------------------------------------------
-  // Non-breaking: callers without onEffect still work
+  // Prompt composition
   // -------------------------------------------------------------------------
 
-  describe("non-breaking: no onEffect option", () => {
-    it("runner works normally when no options object is provided", async () => {
-      const config = cfg(`
-        agent test-worker { prompt "Test worker." models ["model-test"] }
-      `);
-
-      // No options argument — must not throw
-      await new WeaveRunner(config, adapter).run();
-
-      expect(adapter.callsTo("spawnSubagent")).toHaveLength(1);
-      expect(adapter.callsTo("spawnSubagent")[0]?.descriptor.name).toBe(
-        "test-worker",
-      );
-    });
-
-    it("runner works normally when options object has no onEffect", async () => {
-      const config = cfg(`
-        agent rho-worker { prompt "Rho worker." models ["model-rho"] }
-      `);
-
-      await new WeaveRunner(config, adapter, {}).run();
-
-      expect(adapter.callsTo("spawnSubagent")).toHaveLength(1);
-      expect(adapter.callsTo("spawnSubagent")[0]?.descriptor.name).toBe(
-        "rho-worker",
-      );
-    });
-  });
-
-  describe("composition", () => {
+  describe("prompt composition", () => {
     it("composedPrompt contains the inline prompt text", async () => {
       const config = cfg(`
         agent sigma-worker {
@@ -800,7 +718,7 @@ describe("WeaveRunner", () => {
         }
       `);
 
-      await new WeaveRunner(config, adapter).run();
+      await orchestrate(config, adapter);
 
       const spawned = adapter.callsTo("spawnSubagent");
       expect(spawned[0]?.descriptor.composedPrompt).toContain("You are sigma.");
@@ -812,61 +730,34 @@ describe("WeaveRunner", () => {
         agent tau-two { prompt_file "nonexistent/missing-prompt.md" models ["model-tau-2"] }
       `);
 
-      await new WeaveRunner(config, adapter).run();
+      const plan = await orchestrate(config, adapter);
 
       const names = adapter
         .callsTo("spawnSubagent")
         .map((c) => c.descriptor.name);
       expect(names).toContain("tau-one");
       expect(names).not.toContain("tau-two");
-    });
 
-    it("effect carries the composed agentDescriptor", async () => {
-      const config = cfg(`
-        agent upsilon-worker {
-          prompt "You are upsilon."
-          models ["model-upsilon"]
-        }
-      `);
-
-      const effects: RunAgentEffect[] = [];
-      await new WeaveRunner(config, adapter, {
-        onEffect: (e) => effects.push(e),
-      }).run();
-
-      expect(effects[0]?.agentDescriptor).toBeDefined();
-      expect(effects[0]?.agentDescriptor.name).toBe("upsilon-worker");
-      expect(effects[0]?.agentDescriptor.composedPrompt).toContain(
-        "You are upsilon.",
+      // Composition failure is recorded in plan.errors
+      const compositionErrors = plan.errors.filter(
+        (
+          e,
+        ): e is Extract<
+          MaterializationError,
+          { type: "DescriptorCompositionFailure" }
+        > => e.type === "DescriptorCompositionFailure",
       );
+      expect(compositionErrors).toHaveLength(1);
+      expect(compositionErrors[0]?.agentName).toBe("tau-two");
     });
   });
 
   // -------------------------------------------------------------------------
-  // Skill resolution — adapter-provided context (4.1, 4.2, 4.5, 4.6, 4.7)
+  // Skill resolution — adapter-provided context
   // -------------------------------------------------------------------------
 
   describe("skill resolution — adapter-provided context", () => {
-    it("calls loadAvailableSkills() exactly once before spawnSubagent", async () => {
-      const config = cfg(`
-        agent sigma-worker { prompt "Sigma worker." models ["model-sigma"] }
-      `);
-
-      await new WeaveRunner(config, adapter).run();
-
-      expect(adapter.callsTo("loadAvailableSkills")).toHaveLength(1);
-      // loadAvailableSkills must be called before any spawnSubagent
-      const loadIdx = adapter.calls.findIndex(
-        (c) => c.method === "loadAvailableSkills",
-      );
-      const spawnIdx = adapter.calls.findIndex(
-        (c) => c.method === "spawnSubagent",
-      );
-      expect(loadIdx).toBeGreaterThanOrEqual(0);
-      expect(loadIdx).toBeLessThan(spawnIdx);
-    });
-
-    it("resolvedSkills in effect contains matched skill names from adapter-provided list", async () => {
+    it("resolvedSkills contains matched skill names from adapter-provided list", async () => {
       const adapterWithSkills = new MockAdapter({
         availableSkills: [{ name: "tdd" }, { name: "code-review" }],
       });
@@ -879,13 +770,14 @@ describe("WeaveRunner", () => {
         }
       `);
 
-      const effects: RunAgentEffect[] = [];
-      await new WeaveRunner(config, adapterWithSkills, {
-        onEffect: (e) => effects.push(e),
-      }).run();
+      await adapterWithSkills.init();
+      const availableSkills = await adapterWithSkills.loadAvailableSkills();
+      const skillResult = resolveSkillsForConfig({ config, availableSkills });
+      expect(skillResult.isOk()).toBe(true);
+      if (!skillResult.isOk()) return;
 
-      expect(effects).toHaveLength(1);
-      expect(effects[0]?.resolvedSkills).toEqual(["tdd", "code-review"]);
+      const resolved = skillResult.value["tau-worker"];
+      expect(resolved?.map((s) => s.name)).toEqual(["tdd", "code-review"]);
     });
 
     it("resolvedSkills is empty array when agent declares no skills", async () => {
@@ -897,29 +789,31 @@ describe("WeaveRunner", () => {
         agent upsilon-worker { prompt "Upsilon worker." models ["model-upsilon"] }
       `);
 
-      const effects: RunAgentEffect[] = [];
-      await new WeaveRunner(config, adapterWithSkills, {
-        onEffect: (e) => effects.push(e),
-      }).run();
+      const availableSkills =
+        await initAndLoadAvailableSkills(adapterWithSkills);
+      const skillResult = resolveSkillsForConfig({ config, availableSkills });
+      expect(skillResult.isOk()).toBe(true);
+      if (!skillResult.isOk()) return;
 
-      expect(effects[0]?.resolvedSkills).toEqual([]);
+      const resolved = skillResult.value["upsilon-worker"];
+      expect(resolved).toEqual([]);
     });
 
     it("resolvedSkills is empty array when adapter provides no available skills", async () => {
-      // adapter has no availableSkills (default empty)
       const config = cfg(`
         agent phi-worker { prompt "Phi worker." models ["model-phi"] }
       `);
 
-      const effects: RunAgentEffect[] = [];
-      await new WeaveRunner(config, adapter, {
-        onEffect: (e) => effects.push(e),
-      }).run();
+      const availableSkills = await initAndLoadAvailableSkills(adapter);
+      const skillResult = resolveSkillsForConfig({ config, availableSkills });
+      expect(skillResult.isOk()).toBe(true);
+      if (!skillResult.isOk()) return;
 
-      expect(effects[0]?.resolvedSkills).toEqual([]);
+      const resolved = skillResult.value["phi-worker"];
+      expect(resolved).toEqual([]);
     });
 
-    it("disabled skills are filtered from resolvedSkills in effect", async () => {
+    it("disabled skills are filtered from resolvedSkills", async () => {
       const adapterWithSkills = new MockAdapter({
         availableSkills: [{ name: "tdd" }, { name: "code-review" }],
       });
@@ -933,13 +827,15 @@ describe("WeaveRunner", () => {
         disable skills ["tdd"]
       `);
 
-      const effects: RunAgentEffect[] = [];
-      await new WeaveRunner(config, adapterWithSkills, {
-        onEffect: (e) => effects.push(e),
-      }).run();
+      const availableSkills =
+        await initAndLoadAvailableSkills(adapterWithSkills);
+      const skillResult = resolveSkillsForConfig({ config, availableSkills });
+      expect(skillResult.isOk()).toBe(true);
+      if (!skillResult.isOk()) return;
 
+      const resolved = skillResult.value["chi-worker"];
       // tdd is disabled — only code-review should appear
-      expect(effects[0]?.resolvedSkills).toEqual(["code-review"]);
+      expect(resolved?.map((s) => s.name)).toEqual(["code-review"]);
     });
 
     it("resolvedSkills preserves declaration order from agent config", async () => {
@@ -960,48 +856,18 @@ describe("WeaveRunner", () => {
         }
       `);
 
-      const effects: RunAgentEffect[] = [];
-      await new WeaveRunner(config, adapterWithSkills, {
-        onEffect: (e) => effects.push(e),
-      }).run();
+      const availableSkills =
+        await initAndLoadAvailableSkills(adapterWithSkills);
+      const skillResult = resolveSkillsForConfig({ config, availableSkills });
+      expect(skillResult.isOk()).toBe(true);
+      if (!skillResult.isOk()) return;
 
-      expect(effects[0]?.resolvedSkills).toEqual([
+      const resolved = skillResult.value["psi-worker"];
+      expect(resolved?.map((s) => s.name)).toEqual([
         "tdd",
         "code-review",
         "security-audit",
       ]);
-    });
-
-    it("missing skills for one agent do not clear other agents' resolved skills", async () => {
-      const adapterWithSkills = new MockAdapter({
-        availableSkills: [{ name: "tdd" }],
-      });
-
-      const config = cfg(`
-        agent valid-worker {
-          prompt "Valid worker."
-          models ["model-valid"]
-          skills ["tdd"]
-        }
-        agent invalid-worker {
-          prompt "Invalid worker."
-          models ["model-invalid"]
-          skills ["missing-skill"]
-        }
-      `);
-
-      const effects: RunAgentEffect[] = [];
-      await new WeaveRunner(config, adapterWithSkills, {
-        onEffect: (e) => effects.push(e),
-      }).run();
-
-      const validEffect = effects.find((e) => e.agentName === "valid-worker");
-      const invalidEffect = effects.find(
-        (e) => e.agentName === "invalid-worker",
-      );
-
-      expect(validEffect?.resolvedSkills).toEqual(["tdd"]);
-      expect(invalidEffect?.resolvedSkills).toEqual([]);
     });
 
     it("engine does not perform directory scanning, skill-file reads, or harness-specific lookup", async () => {
@@ -1022,26 +888,26 @@ describe("WeaveRunner", () => {
         }
       `);
 
-      const effects: RunAgentEffect[] = [];
-      await new WeaveRunner(config, adapterWithSkills, {
-        onEffect: (e) => effects.push(e),
-      }).run();
+      const availableSkills =
+        await initAndLoadAvailableSkills(adapterWithSkills);
+      const skillResult = resolveSkillsForConfig({ config, availableSkills });
+      expect(skillResult.isOk()).toBe(true);
+      if (!skillResult.isOk()) return;
 
       // Engine resolved the skill using only adapter-provided context
-      expect(effects[0]?.resolvedSkills).toEqual(["tdd"]);
+      const resolved = skillResult.value["omega-worker"];
+      expect(resolved?.map((s) => s.name)).toEqual(["tdd"]);
       // loadAvailableSkills was called — adapter provided context explicitly
       expect(adapterWithSkills.callsTo("loadAvailableSkills")).toHaveLength(1);
-      // No loadSkill calls — engine does not drive skill loading
-      expect(adapterWithSkills.callsTo("loadSkill")).toHaveLength(0);
     });
   });
 
   // -------------------------------------------------------------------------
-  // Skill resolution — category shuttles (4.5)
+  // Skill resolution — category shuttles
   // -------------------------------------------------------------------------
 
   describe("skill resolution — category shuttles", () => {
-    it("generated category shuttle receives resolved skill data in effect", async () => {
+    it("generated category shuttle receives resolved skill data", async () => {
       const adapterWithSkills = new MockAdapter({
         availableSkills: [{ name: "tdd" }],
       });
@@ -1055,17 +921,15 @@ describe("WeaveRunner", () => {
         category alpha-cat { patterns ["src/alpha/**"] models ["model-alpha"] }
       `);
 
-      const effects: RunAgentEffect[] = [];
-      await new WeaveRunner(config, adapterWithSkills, {
-        onEffect: (e) => effects.push(e),
-      }).run();
+      const availableSkills =
+        await initAndLoadAvailableSkills(adapterWithSkills);
+      const skillResult = resolveSkillsForConfig({ config, availableSkills });
+      expect(skillResult.isOk()).toBe(true);
+      if (!skillResult.isOk()) return;
 
-      const shuttleEffect = effects.find(
-        (e) => e.agentName === "shuttle-alpha-cat",
-      );
-      expect(shuttleEffect).toBeDefined();
       // Generated shuttle inherits base shuttle skills
-      expect(shuttleEffect?.resolvedSkills).toEqual(["tdd"]);
+      const resolved = skillResult.value["shuttle-alpha-cat"];
+      expect(resolved?.map((s) => s.name)).toEqual(["tdd"]);
     });
 
     it("multiple category shuttles each receive their own resolved skill data", async () => {
@@ -1083,61 +947,26 @@ describe("WeaveRunner", () => {
         category gamma-cat { patterns ["src/gamma/**"] models ["model-gamma"] }
       `);
 
-      const effects: RunAgentEffect[] = [];
-      await new WeaveRunner(config, adapterWithSkills, {
-        onEffect: (e) => effects.push(e),
-      }).run();
+      const availableSkills =
+        await initAndLoadAvailableSkills(adapterWithSkills);
+      const skillResult = resolveSkillsForConfig({ config, availableSkills });
+      expect(skillResult.isOk()).toBe(true);
+      if (!skillResult.isOk()) return;
 
-      const betaEffect = effects.find(
-        (e) => e.agentName === "shuttle-beta-cat",
-      );
-      const gammaEffect = effects.find(
-        (e) => e.agentName === "shuttle-gamma-cat",
-      );
+      const betaResolved = skillResult.value["shuttle-beta-cat"];
+      const gammaResolved = skillResult.value["shuttle-gamma-cat"];
 
-      expect(betaEffect?.resolvedSkills).toEqual(["tdd", "code-review"]);
-      expect(gammaEffect?.resolvedSkills).toEqual(["tdd", "code-review"]);
+      expect(betaResolved?.map((s) => s.name)).toEqual(["tdd", "code-review"]);
+      expect(gammaResolved?.map((s) => s.name)).toEqual(["tdd", "code-review"]);
     });
   });
 
   // -------------------------------------------------------------------------
-  // Skill resolution — disabled agents (4.4)
+  // Skill resolution — disabled agents
   // -------------------------------------------------------------------------
 
   describe("skill resolution — disabled agents", () => {
-    it("disabled agents do not emit run-agent effects (no resolvedSkills emitted)", async () => {
-      const adapterWithSkills = new MockAdapter({
-        availableSkills: [{ name: "tdd" }],
-      });
-
-      const config = cfg(`
-        agent active-agent {
-          prompt "Active."
-          models ["model-active"]
-          skills ["tdd"]
-        }
-        agent disabled-agent {
-          prompt "Disabled."
-          models ["model-disabled"]
-          skills ["tdd"]
-        }
-        disable agents ["disabled-agent"]
-      `);
-
-      const effects: RunAgentEffect[] = [];
-      await new WeaveRunner(config, adapterWithSkills, {
-        onEffect: (e) => effects.push(e),
-      }).run();
-
-      const names = effects.map((e) => e.agentName);
-      expect(names).toContain("active-agent");
-      expect(names).not.toContain("disabled-agent");
-    });
-
     it("disabled agents are excluded from skill resolution entirely", async () => {
-      // disabled-agent references a skill that is NOT in availableSkills.
-      // If the engine tried to resolve it, it would produce a MissingSkill error.
-      // Since disabled agents are excluded, no error should occur.
       const adapterWithSkills = new MockAdapter({
         availableSkills: [{ name: "tdd" }],
       });
@@ -1155,24 +984,27 @@ describe("WeaveRunner", () => {
         disable agents ["disabled-agent"]
       `);
 
-      const effects: RunAgentEffect[] = [];
-      // Must not throw even though disabled-agent is excluded from resolution
-      await new WeaveRunner(config, adapterWithSkills, {
-        onEffect: (e) => effects.push(e),
-      }).run();
+      const availableSkills =
+        await initAndLoadAvailableSkills(adapterWithSkills);
+      const skillResult = resolveSkillsForConfig({ config, availableSkills });
+      expect(skillResult.isOk()).toBe(true);
+      if (!skillResult.isOk()) return;
 
-      expect(effects).toHaveLength(1);
-      expect(effects[0]?.agentName).toBe("active-agent");
-      expect(effects[0]?.resolvedSkills).toEqual(["tdd"]);
+      // active-agent is resolved
+      expect(skillResult.value["active-agent"]?.map((s) => s.name)).toEqual([
+        "tdd",
+      ]);
+      // disabled-agent is excluded from resolution
+      expect(skillResult.value["disabled-agent"]).toBeUndefined();
     });
   });
 
   // -------------------------------------------------------------------------
-  // Sanitized-effect coverage (4.8)
+  // Sanitized descriptor coverage
   // -------------------------------------------------------------------------
 
-  describe("sanitized-effect coverage", () => {
-    it("serialized run-agent effects do not expose adapter-owned skill paths", async () => {
+  describe("sanitized descriptor coverage", () => {
+    it("serialized descriptors do not expose adapter-owned skill paths", async () => {
       const adapterWithSkills = new MockAdapter({
         availableSkills: [
           {
@@ -1194,23 +1026,21 @@ describe("WeaveRunner", () => {
         }
       `);
 
-      const effects: RunAgentEffect[] = [];
-      await new WeaveRunner(config, adapterWithSkills, {
-        onEffect: (e) => effects.push(e),
-      }).run();
+      await orchestrate(config, adapterWithSkills);
 
-      const serialized = JSON.stringify(effects);
+      const spawned = adapterWithSkills.callsTo("spawnSubagent");
+      const serialized = JSON.stringify(spawned);
 
-      // Skill name is present — it is safe to emit
-      expect(serialized).toContain("tdd");
+      // Agent name is present — it is safe to emit
+      expect(serialized).toContain("sanitize-worker");
 
-      // Adapter-owned metadata must NOT appear in the serialized effect
+      // Adapter-owned metadata must NOT appear in the serialized descriptor
       expect(serialized).not.toContain("/home/user/.weave/skills/tdd.md");
       expect(serialized).not.toContain("Secret skill content here");
       expect(serialized).not.toContain("global");
     });
 
-    it("serialized run-agent effects do not expose API keys or tokens in skill metadata", async () => {
+    it("serialized descriptors do not expose API keys or tokens in skill metadata", async () => {
       const adapterWithSkills = new MockAdapter({
         availableSkills: [
           {
@@ -1232,23 +1062,21 @@ describe("WeaveRunner", () => {
         }
       `);
 
-      const effects: RunAgentEffect[] = [];
-      await new WeaveRunner(config, adapterWithSkills, {
-        onEffect: (e) => effects.push(e),
-      }).run();
+      await orchestrate(config, adapterWithSkills);
 
-      const serialized = JSON.stringify(effects);
+      const spawned = adapterWithSkills.callsTo("spawnSubagent");
+      const serialized = JSON.stringify(spawned);
 
-      // Only the skill name should appear
-      expect(serialized).toContain("code-review");
+      // Only the agent name should appear
+      expect(serialized).toContain("key-worker");
 
-      // Secrets must NOT appear in the serialized effect
+      // Secrets must NOT appear in the serialized descriptor
       expect(serialized).not.toContain("sk-secret-api-key-12345");
       expect(serialized).not.toContain("bearer-token-xyz");
       expect(serialized).not.toContain("/project/.env");
     });
 
-    it("no harness-specific tool names appear in any emitted effect (including resolvedSkills)", async () => {
+    it("no harness-specific tool names appear in any spawned descriptor (including skills)", async () => {
       const adapterWithSkills = new MockAdapter({
         availableSkills: [{ name: "tdd" }],
       });
@@ -1268,14 +1096,10 @@ describe("WeaveRunner", () => {
         }
       `);
 
-      const effects: RunAgentEffect[] = [];
-      await new WeaveRunner(config, adapterWithSkills, {
-        onEffect: (e) => effects.push(e),
-      }).run();
+      await orchestrate(config, adapterWithSkills);
 
-      const serialized = JSON.stringify(effects);
-
-      // Abstract capability keys only — no harness tool identifiers
+      const spawned = adapterWithSkills.callsTo("spawnSubagent");
+      const serialized = JSON.stringify(spawned);
       const harnessPatterns = [
         "opencode",
         "claude-code",
@@ -1312,24 +1136,82 @@ describe("WeaveRunner", () => {
         }
       `);
 
-      const effects: RunAgentEffect[] = [];
-      await new WeaveRunner(config, adapterWithSkills, {
-        onEffect: (e) => effects.push(e),
-      }).run();
+      const availableSkills =
+        await initAndLoadAvailableSkills(adapterWithSkills);
+      const skillResult = resolveSkillsForConfig({ config, availableSkills });
+      expect(skillResult.isOk()).toBe(true);
+      if (!skillResult.isOk()) return;
 
-      const effect = effects[0];
-      expect(effect?.resolvedSkills).toEqual(["tdd"]);
+      const resolved = skillResult.value["meta-worker"];
+      expect(resolved?.map((s) => s.name)).toEqual(["tdd"]);
 
-      // resolvedSkills is an array of strings — no objects, no metadata
-      for (const skill of effect?.resolvedSkills ?? []) {
-        expect(typeof skill).toBe("string");
+      // resolvedSkills names are strings — no objects, no metadata
+      for (const skill of resolved ?? []) {
+        expect(typeof skill.name).toBe("string");
       }
 
-      // Serialized effect must not contain adapter metadata
-      const serialized = JSON.stringify(effect);
+      // Serialized skill names must not contain adapter metadata
+      const serialized = JSON.stringify(resolved?.map((s) => s.name));
       expect(serialized).not.toContain("/skills/tdd.md");
       expect(serialized).not.toContain("opencode://skills/tdd");
       expect(serialized).not.toContain("secret");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // plan.errors — DescriptorCompositionFailure tolerance
+  // -------------------------------------------------------------------------
+
+  describe("plan.errors — composition failure tolerance", () => {
+    it("plan.errors is empty when all agents compose successfully", async () => {
+      const config = cfg(`
+        agent loom { prompt "Orchestrator." models ["claude-sonnet-4-5"] }
+        agent shuttle { prompt "Specialist." models ["claude-sonnet-4-5"] }
+      `);
+
+      const plan = await orchestrate(config, adapter);
+
+      expect(plan.errors).toHaveLength(0);
+    });
+
+    it("plan.errors accumulates DescriptorCompositionFailure for agents with missing prompt_file", async () => {
+      const config = cfg(`
+        agent good-agent { prompt "Good." models ["model-good"] }
+        agent bad-agent { prompt_file "nonexistent/missing.md" models ["model-bad"] }
+      `);
+
+      const plan = await orchestrate(config, adapter);
+
+      const failures = plan.errors.filter(
+        (
+          e,
+        ): e is Extract<
+          MaterializationError,
+          { type: "DescriptorCompositionFailure" }
+        > => e.type === "DescriptorCompositionFailure",
+      );
+      expect(failures).toHaveLength(1);
+      expect(failures[0]?.agentName).toBe("bad-agent");
+    });
+
+    it("agents with composition failures are not spawned", async () => {
+      const config = cfg(`
+        agent good-agent { prompt "Good." models ["model-good"] }
+        agent bad-agent { prompt_file "nonexistent/missing.md" models ["model-bad"] }
+      `);
+
+      await orchestrate(config, adapter);
+
+      const names = adapter
+        .callsTo("spawnSubagent")
+        .map((c) => c.descriptor.name);
+      expect(names).toContain("good-agent");
+      expect(names).not.toContain("bad-agent");
+    });
+
+    it("plan.errors is empty when config is empty", async () => {
+      const plan = await orchestrate(cfg(""), adapter);
+      expect(plan.errors).toHaveLength(0);
     });
   });
 });

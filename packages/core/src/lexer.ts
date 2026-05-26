@@ -9,7 +9,7 @@ import { err, ok, type Result } from "neverthrow";
 import type { LexError } from "./errors.js";
 import { type Token, TokenType } from "./tokens.js";
 
-export class Lexer {
+class Lexer {
   readonly #source: string;
   #pos = 0;
   #line = 1;

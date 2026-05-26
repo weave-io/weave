@@ -6,6 +6,7 @@ import {
   CompletionMethodSchema,
   LogLevelSchema,
   OnRejectSchema,
+  RoutingConfigSchema,
   RuntimeSettingsSchema,
   SettingsConfigSchema,
   WeaveConfigSchema,
@@ -285,6 +286,76 @@ describe("WorkflowStepSchema", () => {
       expect(r.data.display_name).toBe("Create implementation plan");
     }
   });
+
+  it("accepts insert_before without insert_after", () => {
+    const r = WorkflowStepSchema.safeParse({
+      ...validStep,
+      insert_before: "review",
+    });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.insert_before).toBe("review");
+      expect(r.data.insert_after).toBeUndefined();
+    }
+  });
+
+  it("accepts insert_after without insert_before", () => {
+    const r = WorkflowStepSchema.safeParse({
+      ...validStep,
+      insert_after: "plan",
+    });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.insert_after).toBe("plan");
+      expect(r.data.insert_before).toBeUndefined();
+    }
+  });
+
+  it("rejects both insert_before and insert_after set simultaneously (BothInsertBeforeAndAfter)", () => {
+    const r = WorkflowStepSchema.safeParse({
+      ...validStep,
+      insert_before: "review",
+      insert_after: "plan",
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      const msg = r.error.issues[0]?.message ?? "";
+      expect(msg).toContain("BothInsertBeforeAndAfter");
+    }
+  });
+
+  it("accepts step with neither insert_before nor insert_after (normal step)", () => {
+    const r = WorkflowStepSchema.safeParse(validStep);
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.insert_before).toBeUndefined();
+      expect(r.data.insert_after).toBeUndefined();
+    }
+  });
+
+  it("rejects insert_before: '' (empty string)", () => {
+    const r = WorkflowStepSchema.safeParse({
+      ...validStep,
+      insert_before: "",
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      const msgs = r.error.issues.map((i) => i.message);
+      expect(msgs.some((m) => m.includes("insert_before"))).toBe(true);
+    }
+  });
+
+  it("rejects insert_after: '' (empty string)", () => {
+    const r = WorkflowStepSchema.safeParse({
+      ...validStep,
+      insert_after: "",
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      const msgs = r.error.issues.map((i) => i.message);
+      expect(msgs.some((m) => m.includes("insert_after"))).toBe(true);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -344,6 +415,67 @@ describe("WorkflowConfigSchema", () => {
       steps: [validStep],
     });
     expect(r.success).toBe(false);
+  });
+
+  it("accepts extends field with a non-empty string", () => {
+    const r = WorkflowConfigSchema.safeParse({
+      version: 1,
+      extends: "base-workflow",
+      steps: [validStep],
+    });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.extends).toBe("base-workflow");
+    }
+  });
+
+  it("accepts extends with empty steps array (extension workflow)", () => {
+    const r = WorkflowConfigSchema.safeParse({
+      version: 1,
+      extends: "base-workflow",
+      steps: [],
+    });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.extends).toBe("base-workflow");
+      expect(r.data.steps).toHaveLength(0);
+    }
+  });
+
+  it("rejects empty steps without extends (no extension to relax the constraint)", () => {
+    const r = WorkflowConfigSchema.safeParse({
+      version: 1,
+      steps: [],
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      const paths = r.error.issues.map((i) => i.path.join("."));
+      expect(paths.some((p) => p.includes("steps"))).toBe(true);
+    }
+  });
+
+  it("extends is optional — workflow without extends still works normally", () => {
+    const r = WorkflowConfigSchema.safeParse({
+      version: 1,
+      steps: [validStep],
+    });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.extends).toBeUndefined();
+    }
+  });
+
+  it("rejects extends: '' (empty string)", () => {
+    const r = WorkflowConfigSchema.safeParse({
+      version: 1,
+      extends: "",
+      steps: [validStep],
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      const msgs = r.error.issues.map((i) => i.message);
+      expect(msgs.some((m) => m.includes("extends"))).toBe(true);
+    }
   });
 });
 
@@ -620,6 +752,99 @@ describe("CategoryConfigSchema — prompt_append_file", () => {
     if (!r.success) {
       const messages = r.error.issues.map((i) => i.message);
       expect(messages.some((m) => m.includes("relative path"))).toBe(true);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// RoutingConfigSchema
+// ---------------------------------------------------------------------------
+
+describe("RoutingConfigSchema", () => {
+  it("accepts empty routing block", () => {
+    const r = RoutingConfigSchema.safeParse({});
+    expect(r.success).toBe(true);
+  });
+
+  it("accepts delegation_exclude as an array of strings", () => {
+    const r = RoutingConfigSchema.safeParse({
+      delegation_exclude: ["warp", "spindle"],
+    });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.delegation_exclude).toEqual(["warp", "spindle"]);
+    }
+  });
+
+  it("accepts delegation_exclude as an empty array", () => {
+    const r = RoutingConfigSchema.safeParse({ delegation_exclude: [] });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.delegation_exclude).toEqual([]);
+    }
+  });
+
+  it("accepts omitted delegation_exclude (optional)", () => {
+    const r = RoutingConfigSchema.safeParse({});
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.delegation_exclude).toBeUndefined();
+    }
+  });
+
+  it("rejects unknown keys (strict block)", () => {
+    const r = RoutingConfigSchema.safeParse({
+      delegation_exclude: ["warp"],
+      priority: 1,
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      // Zod strict() reports unknown keys in the message, not the path
+      const msgs = r.error.issues.map((i) => i.message);
+      expect(msgs.some((m) => m.includes("priority"))).toBe(true);
+    }
+  });
+
+  it("rejects delegation_exclude with non-string elements", () => {
+    const r = RoutingConfigSchema.safeParse({ delegation_exclude: [42] });
+    expect(r.success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AgentConfigSchema — routing field
+// ---------------------------------------------------------------------------
+
+describe("AgentConfigSchema — routing field", () => {
+  it("accepts agent with routing.delegation_exclude", () => {
+    const r = AgentConfigSchema.safeParse({
+      prompt: "You are an agent.",
+      routing: { delegation_exclude: ["warp", "spindle"] },
+    });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.routing?.delegation_exclude).toEqual(["warp", "spindle"]);
+    }
+  });
+
+  it("accepts agent without routing (optional)", () => {
+    const r = AgentConfigSchema.safeParse({ prompt: "You are an agent." });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.routing).toBeUndefined();
+    }
+  });
+
+  it("rejects unknown keys inside routing block (strict)", () => {
+    const r = AgentConfigSchema.safeParse({
+      prompt: "You are an agent.",
+      routing: { delegation_exclude: ["warp"], fallback: "loom" },
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      // Zod strict() reports unknown keys in the message, not the path
+      const msgs = r.error.issues.map((i) => i.message);
+      expect(msgs.some((m) => m.includes("fallback"))).toBe(true);
     }
   });
 });

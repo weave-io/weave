@@ -12,6 +12,8 @@ import {
   type Result,
   ResultAsync,
 } from "neverthrow";
+
+import { logger } from "./logger.js";
 import {
   type AgentPromptTemplateContext,
   ALLOWED_TEMPLATE_PATHS,
@@ -27,6 +29,8 @@ import {
   type EffectiveToolPolicy,
   evaluateEffectiveToolPolicy,
 } from "./tool-policy.js";
+
+const log = logger.child({ module: "compose" });
 
 type AgentMode = NonNullable<AgentConfig["mode"]>;
 
@@ -132,11 +136,16 @@ function loadPromptSource(
 
 function shouldExcludeSharedShuttleTarget(
   agentName: string,
+  agentConfig: AgentConfig,
   targetName: string,
 ): boolean {
   if (!targetName.startsWith("shuttle-")) return false;
-  if (agentName === "shuttle") return true;
-  return agentName.startsWith("shuttle-");
+  // Category shuttle: any agent whose name starts with "shuttle-"
+  if (agentName.startsWith("shuttle-")) return true;
+  // Root shuttle equivalent: mode === "all" and no "shuttle-" prefix (generalist root)
+  if (agentConfig.mode === "all" && !agentName.startsWith("shuttle-"))
+    return true;
+  return false;
 }
 
 function buildDelegationTargets(
@@ -146,6 +155,18 @@ function buildDelegationTargets(
   allAgents: Record<string, AgentConfig>,
 ): DelegationTarget[] {
   if (agentConfig.tool_policy?.delegate !== "allow") return [];
+
+  const delegationExclude = agentConfig.routing?.delegation_exclude ?? [];
+
+  // Warn at debug level for exclusion entries that don't match any known agent.
+  for (const excluded of delegationExclude) {
+    if (!(excluded in allAgents)) {
+      log.debug(
+        { agentName, excluded },
+        "delegation_exclude entry does not match any known agent (no-op)",
+      );
+    }
+  }
 
   // Build the set of generated category shuttle names from config categories
   const categoryShuttleNames = new Set(
@@ -158,7 +179,9 @@ function buildDelegationTargets(
     if (targetName === agentName) continue;
     if (config.disabled.agents.includes(targetName)) continue;
     if (targetConfig.mode === "primary") continue;
-    if (shouldExcludeSharedShuttleTarget(agentName, targetName)) continue;
+    if (shouldExcludeSharedShuttleTarget(agentName, agentConfig, targetName))
+      continue;
+    if (delegationExclude.includes(targetName)) continue;
 
     targets.push({
       name: targetName,

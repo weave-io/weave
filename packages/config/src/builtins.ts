@@ -3,24 +3,6 @@ import { parseConfig } from "@weave/core";
 import type { Result } from "neverthrow";
 
 /**
- * Ordered list of all built-in agent names.
- *
- * These names match the `agent` blocks in `BUILTIN_WEAVE_SOURCE` and are
- * exported so consumers can check whether a given name is a builtin without
- * needing to call `getBuiltinConfig()`.
- */
-export const BUILTIN_AGENT_NAMES: readonly string[] = [
-  "loom",
-  "tapestry",
-  "shuttle",
-  "pattern",
-  "thread",
-  "spindle",
-  "weft",
-  "warp",
-];
-
-/**
  * The canonical `.weave` DSL source that declares all 8 built-in agents.
  *
  * This constant is the single source of truth for default agent configuration.

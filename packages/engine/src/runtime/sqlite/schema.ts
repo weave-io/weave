@@ -137,7 +137,7 @@ export interface RuntimeJournalEntryRow {
  *
  * Tracks which migrations have been applied.
  */
-export interface SchemaMigrationRow {
+interface SchemaMigrationRow {
   /** Migration version number (1-based). */
   readonly version: Generated<number>;
   /** ISO 8601 timestamp when this migration was applied. */
@@ -156,7 +156,7 @@ export interface SchemaMigrationRow {
  * Stores singleton key-value metadata for the runtime store.
  * Keys include: `schema_version`, `project_salt`.
  */
-export interface RuntimeMetadataRow {
+interface RuntimeMetadataRow {
   /** Metadata key. */
   readonly key: string;
   /** Metadata value (string). */

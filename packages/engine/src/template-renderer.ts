@@ -136,7 +136,7 @@ export interface TemplateContext {
   [key: string]: TemplateContextValue;
 }
 
-export type TemplateContextValue =
+type TemplateContextValue =
   | string
   | number
   | boolean

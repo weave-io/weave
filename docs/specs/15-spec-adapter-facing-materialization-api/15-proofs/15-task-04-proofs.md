@@ -11,11 +11,11 @@ Decision: **not safe to refactor in this task**.
 Reason: the current runner and `materializeAgents(input)` intentionally differ in failure behavior:
 
 - `WeaveRunner.run()` throws `Error(conflict.message)` on category shuttle conflicts after logging the conflict.
-- `materializeAgents(input)` returns `err({ type: "CategoryShuttleConflict", ... })` instead of throwing.
+- `materializeAgents(input)` accumulates `{ type: "CategoryShuttleConflict", ... }` into `plan.errors[]` and continues materializing explicit agents.
 - `WeaveRunner.run()` logs descriptor composition failures, skips the failed agent, and continues materializing later agents.
-- `materializeAgents(input)` returns `err({ type: "DescriptorCompositionFailure", ... })` and stops on the first descriptor composition failure.
+- `materializeAgents(input)` accumulates `{ type: "DescriptorCompositionFailure", ... }` into `plan.errors[]` and continues materializing remaining agents (partial-by-default).
 
-The runner was left on its manual composition loop, with a compatibility comment explaining that a future refactor must either add partial-failure materialization support or explicitly convert typed materialization results back into the runner's throw/skip-and-continue behavior.
+The runner was left on its manual composition loop, with a compatibility comment explaining that a future refactor must explicitly convert typed materialization results back into the runner's throw/skip-and-continue behavior for category conflicts.
 
 ## Acceptance Checks
 

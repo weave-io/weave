@@ -364,6 +364,162 @@ describe("parseConfig — workflows", () => {
     expect(errors.some((e) => e.type === "ValidationError")).toBe(true);
   });
 
+  it("workflow with extends and step-level insert_before parses end-to-end", () => {
+    const src = `workflow extended-feature {
+  extends "secure-feature"
+  description "Extended feature workflow with extra security step"
+  version 2
+
+  step pre-audit {
+    name "Pre-deployment audit"
+    type gate
+    agent warp
+    prompt "Perform a pre-deployment audit for: {{instance.goal}}"
+    completion review_verdict
+    insert_before "security-review"
+    on_reject pause
+  }
+}`;
+
+    const result = parseConfig(src);
+    expect(result.isOk()).toBe(true);
+    const config = result._unsafeUnwrap();
+    const wf = config.workflows["extended-feature"];
+    expect(wf).toBeDefined();
+    expect(wf?.extends).toBe("secure-feature");
+    expect(wf?.version).toBe(2);
+    expect(wf?.steps).toHaveLength(1);
+
+    const step = wf?.steps[0];
+    expect(step?.name).toBe("pre-audit");
+    expect(step?.display_name).toBe("Pre-deployment audit");
+    expect(step?.type).toBe("gate");
+    expect(step?.agent).toBe("warp");
+    expect(step?.insert_before).toBe("security-review");
+    expect(step?.insert_after).toBeUndefined();
+    expect(step?.on_reject).toBe("pause");
+  });
+
+  it("extension workflow with empty steps (override-only) parses end-to-end", () => {
+    const src = `workflow override-only {
+  extends "base-workflow"
+  version 1
+}`;
+    const result = parseConfig(src);
+    expect(result.isOk()).toBe(true);
+    const wf = result._unsafeUnwrap().workflows["override-only"];
+    expect(wf?.extends).toBe("base-workflow");
+    expect(wf?.steps).toHaveLength(0);
+  });
+
+  it("step with insert_after parses end-to-end", () => {
+    const src = `workflow w {
+  extends "base"
+  version 1
+
+  step extra {
+    name "Extra step"
+    type autonomous
+    agent shuttle
+    prompt "Do extra work."
+    completion agent_signal
+    insert_after "plan"
+  }
+}`;
+    const result = parseConfig(src);
+    expect(result.isOk()).toBe(true);
+    const step = result._unsafeUnwrap().workflows.w?.steps[0];
+    expect(step?.insert_after).toBe("plan");
+    expect(step?.insert_before).toBeUndefined();
+  });
+
+  it("step with both insert_before and insert_after returns ValidationError", () => {
+    const src = `workflow w {
+  extends "base"
+  version 1
+
+  step bad {
+    name "Bad step"
+    type autonomous
+    agent shuttle
+    prompt "Do it."
+    completion agent_signal
+    insert_before "review"
+    insert_after "plan"
+  }
+}`;
+    const result = parseConfig(src);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    expect(errors.some((e) => e.type === "ValidationError")).toBe(true);
+    expect(
+      errors.some(
+        (e) =>
+          e.type === "ValidationError" &&
+          "message" in e &&
+          e.message.includes("BothInsertBeforeAndAfter"),
+      ),
+    ).toBe(true);
+  });
+
+  it("step with insert_before: '' (empty string) returns ValidationError", () => {
+    const src = `workflow w {
+  version 1
+
+  step bad {
+    name "Bad step"
+    type autonomous
+    agent shuttle
+    prompt "Do it."
+    completion agent_signal
+    insert_before ""
+  }
+}`;
+    const result = parseConfig(src);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    expect(errors.some((e) => e.type === "ValidationError")).toBe(true);
+  });
+
+  it("step with insert_after: '' (empty string) returns ValidationError", () => {
+    const src = `workflow w {
+  extends "base"
+  version 1
+
+  step bad {
+    name "Bad step"
+    type autonomous
+    agent shuttle
+    prompt "Do it."
+    completion agent_signal
+    insert_after ""
+  }
+}`;
+    const result = parseConfig(src);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    expect(errors.some((e) => e.type === "ValidationError")).toBe(true);
+  });
+
+  it("workflow with extends: '' (empty string) returns ValidationError", () => {
+    const src = `workflow w {
+  extends ""
+  version 1
+
+  step fix {
+    name "Fix"
+    type autonomous
+    agent shuttle
+    prompt "Do it."
+    completion agent_signal
+  }
+}`;
+    const result = parseConfig(src);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    expect(errors.some((e) => e.type === "ValidationError")).toBe(true);
+  });
+
   it("malformed completion block (no method identifier) returns err with ValidationError", () => {
     // `completion { plan_name \"x\" }` — plain block with no leading identifier means __name
     // is absent, so CompletionMethodSchema discriminated union cannot match.
@@ -531,5 +687,53 @@ describe("parseConfig — source positions in errors", () => {
     if (lexErr?.type === "UnterminatedString") {
       expect(lexErr.line).toBe(2);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// parseConfig — routing block end-to-end
+// ---------------------------------------------------------------------------
+
+describe("parseConfig — routing block", () => {
+  it("agent with routing.delegation_exclude parses end-to-end", () => {
+    const src = `agent router {
+  prompt "You are a router."
+  tool_policy {
+    delegate allow
+  }
+  routing {
+    delegation_exclude ["warp", "spindle"]
+  }
+}`;
+    const result = parseConfig(src);
+    expect(result.isOk()).toBe(true);
+    const config = result._unsafeUnwrap();
+    expect(config.agents.router?.routing?.delegation_exclude).toEqual([
+      "warp",
+      "spindle",
+    ]);
+  });
+
+  it("agent without routing block has undefined routing", () => {
+    const src = `agent loom {
+  prompt "You are loom."
+}`;
+    const result = parseConfig(src);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().agents.loom?.routing).toBeUndefined();
+  });
+
+  it("routing block with unknown key returns ValidationError (strict)", () => {
+    const src = `agent bad {
+  prompt "You are bad."
+  routing {
+    delegation_exclude ["warp"]
+    typo_key "value"
+  }
+}`;
+    const result = parseConfig(src);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    expect(errors.some((e) => e.type === "ValidationError")).toBe(true);
   });
 });

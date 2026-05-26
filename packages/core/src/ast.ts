@@ -57,6 +57,18 @@ export type StepBlock = {
   name: string;
   properties: Property[];
   pos: SourcePos;
+  /**
+   * When set, this step is inserted immediately before the named anchor step
+   * in the base workflow. Only meaningful on extension workflows.
+   * Mutually exclusive with `insert_after`.
+   */
+  insert_before?: string;
+  /**
+   * When set, this step is inserted immediately after the named anchor step
+   * in the base workflow. Only meaningful on extension workflows.
+   * Mutually exclusive with `insert_before`.
+   */
+  insert_after?: string;
 };
 
 // ---------------------------------------------------------------------------
@@ -66,6 +78,13 @@ export type StepBlock = {
 export type AgentBlock = {
   type: "agent";
   name: string;
+  /**
+   * Flat property bag for all agent fields.
+   *
+   * Notable nested blocks stored here as `BlockValue` properties:
+   * - `tool_policy` — capability permission map
+   * - `routing`     — per-agent routing knobs (e.g. `delegation_exclude`)
+   */
   properties: Property[];
   pos: SourcePos;
 };
@@ -83,6 +102,12 @@ export type WorkflowBlock = {
   properties: Property[];
   steps: StepBlock[];
   pos: SourcePos;
+  /**
+   * When set, this workflow extends the named base workflow.
+   * Extension workflows may have zero or more steps (each step may carry
+   * `insert_before` / `insert_after` to position itself relative to the base).
+   */
+  extends?: string;
 };
 
 export type DisableDirective = {

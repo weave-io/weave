@@ -4,7 +4,7 @@ Weave is a harness-agnostic agent orchestration framework and API for building a
 
 It is closer to Neovim's API layer than to a finished editor: Weave defines the primitives, config model, prompt/delegation structure, and policy intent that adapters compose into concrete harness integrations.
 
-**Related:** [System Architecture](system-architecture.md) · [Adapter Boundary](adapter-boundary.md) · [Claude Code Adapter](claude-code-adapter.md) · [Model Resolution](model-resolution.md) · [Config Loading](config-loading.md) · [Tool Policy Evaluation](tool-policy-evaluation.md) · [Spec 04 — Agent Model Resolution](specs/04-spec-agent-model-resolution/04-spec-agent-model-resolution.md) · [Spec 09 — Adapter-Provided Skill Resolution](specs/09-spec-adapter-provided-skill-resolution/09-spec-adapter-provided-skill-resolution.md) · [Spec 07 — Adapter Capability Contract](specs/07-spec-adapter-capability-contract/07-spec-adapter-capability-contract.md) · [Spec 08 — Abstract Tool Policy Evaluation](specs/08-spec-abstract-tool-policy-evaluation/08-spec-abstract-tool-policy-evaluation.md) · [Legacy Architecture](legacy-architecture.md)
+**Related:** [System Architecture](system-architecture.md) · [Adapter Boundary](adapter-boundary.md) · [Adapter Bootstrap Guide](adapter-bootstrap.md) · [Claude Code Adapter](claude-code-adapter.md) · [Model Resolution](model-resolution.md) · [Config Loading](config-loading.md) · [Tool Policy Evaluation](tool-policy-evaluation.md) · [Spec 04 — Agent Model Resolution](specs/04-spec-agent-model-resolution/04-spec-agent-model-resolution.md) · [Spec 09 — Adapter-Provided Skill Resolution](specs/09-spec-adapter-provided-skill-resolution/09-spec-adapter-provided-skill-resolution.md) · [Spec 07 — Adapter Capability Contract](specs/07-spec-adapter-capability-contract/07-spec-adapter-capability-contract.md) · [Spec 08 — Abstract Tool Policy Evaluation](specs/08-spec-abstract-tool-policy-evaluation/08-spec-abstract-tool-policy-evaluation.md) · [Legacy Architecture](legacy-architecture.md)
 
 ---
 
@@ -175,10 +175,10 @@ by an adapter. The five abstract capabilities (`read`, `write`, `execute`,
 `delegate`, `network`) are harness-agnostic; adapters own the mapping to concrete
 harness tool names.
 
-The engine emits a `RunAgentEffect` (via the optional `onEffect` callback on
-`WeaveRunnerOptions`) once per agent, carrying both the engine-computed
-`effectiveToolPolicy` and the raw `rawToolPolicy` for adapter-side translation.
-Adapters receive the raw `tool_policy` unchanged via `spawnSubagent`.
+The engine emits a `RunAgentEffect` once per agent during the adapter bootstrap
+loop, carrying both the engine-computed `effectiveToolPolicy` and the raw
+`rawToolPolicy` for adapter-side translation. Adapters receive the raw
+`tool_policy` unchanged via `spawnSubagent`.
 
 See [Tool Policy Evaluation](tool-policy-evaluation.md) for the full vocabulary,
 evaluation rules, and adapter contract. See
@@ -191,7 +191,7 @@ for the formal spec and proof artifacts.
 
 Weave resolves agent `skills [...]` declarations against an explicit list of skills supplied by the adapter. The engine owns matching, disabled-skill filtering, and missing-skill error reporting; adapters own skill discovery, loading, file formats, and harness-specific mounting.
 
-**Adapter surface:** `HarnessAdapter.loadAvailableSkills(): Promise<SkillInfo[]>` is called by `WeaveRunner` before agent materialization. The engine calls `resolveSkillsForConfig()` and attaches `resolvedSkills` to each `RunAgentEffect`.
+**Adapter surface:** `HarnessAdapter.loadAvailableSkills(): Promise<SkillInfo[]>` is called during the adapter bootstrap loop before each `spawnSubagent` call. The engine calls `resolveSkillsForConfig()` and attaches `resolvedSkills` to each `RunAgentEffect`.
 
 **Engine APIs (pure, harness-agnostic):**
 

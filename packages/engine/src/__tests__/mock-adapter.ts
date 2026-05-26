@@ -10,13 +10,18 @@
  * harness API calls, or directory scanning — proving the engine does not
  * need to discover skills itself.
  *
- * Usage:
+ * Usage (canonical bootstrap pattern):
  * ```ts
  * const adapter = new MockAdapter();
- * await new WeaveRunner(config, adapter).run();
+ * await adapter.init();
+ * await adapter.loadAvailableSkills();
+ * const plan = (await materializeAgents({ config })).value;
+ * for (const { descriptor } of plan.agents) {
+ *   await adapter.spawnSubagent(descriptor);
+ * }
  *
  * expect(adapter.callsTo("init")).toHaveLength(1);
- * expect(adapter.callsTo("spawnSubagent")[0]?.name).toBe("loom");
+ * expect(adapter.callsTo("spawnSubagent")[0]?.descriptor.name).toBe("loom");
  * ```
  *
  * With available skills:
@@ -24,17 +29,14 @@
  * const adapter = new MockAdapter({
  *   availableSkills: [{ name: "tdd" }, { name: "code-review" }],
  * });
- * await new WeaveRunner(config, adapter).run();
+ * const availableSkills = await adapter.loadAvailableSkills();
+ * const skillResult = resolveSkillsForConfig({ config, availableSkills });
  * ```
  */
 
-import type { HarnessAdapter, HookConfig, SkillConfig } from "../adapter.js";
+import type { HarnessAdapter } from "../adapter.js";
 import type { AgentDescriptor } from "../compose.js";
 import type { SkillInfo } from "../skill-resolution.js";
-
-// `HookConfig` and `SkillConfig` are transitional adapter-boundary types.
-// Tests should not treat them as proof that engine code owns concrete hook
-// registration or harness skill discovery/loading.
 
 // ---------------------------------------------------------------------------
 // MockAdapter options
@@ -59,8 +61,6 @@ export interface MockAdapterOptions {
 export type MockCall =
   | { method: "init" }
   | { method: "spawnSubagent"; descriptor: AgentDescriptor }
-  | { method: "registerHook"; hook: HookConfig }
-  | { method: "loadSkill"; skill: SkillConfig }
   | { method: "loadAvailableSkills" };
 
 // ---------------------------------------------------------------------------
@@ -83,17 +83,6 @@ export class MockAdapter implements HarnessAdapter {
 
   async spawnSubagent(descriptor: AgentDescriptor): Promise<void> {
     this.calls.push({ method: "spawnSubagent", descriptor });
-  }
-
-  async registerHook(hook: HookConfig): Promise<void> {
-    this.calls.push({ method: "registerHook", hook });
-  }
-
-  /**
-   * @deprecated Transitional method. Use `loadAvailableSkills()` instead.
-   */
-  async loadSkill(skill: SkillConfig): Promise<void> {
-    this.calls.push({ method: "loadSkill", skill });
   }
 
   /**

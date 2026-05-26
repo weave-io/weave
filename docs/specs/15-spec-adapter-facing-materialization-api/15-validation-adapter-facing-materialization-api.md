@@ -60,7 +60,7 @@ All changed files are in scope for Spec 15 or generated/supporting index artifac
 | Unit 1: Export public materialization function from `packages/engine/src/index.ts` | Covered | `index.ts` exports `materializeAgents`; import/export test imports from `../index.js`. |
 | Unit 1: Define public input, output, warning, and error types | Covered | `MaterializationInput`, `MaterializedAgent`, `MaterializationPlan`, `MaterializationError` defined/exported. No warnings currently needed by MVP output. |
 | Unit 1: Accept explicit adapter-provided context; no harness directories/UI/runtime state; no `HarnessAdapter` | Covered | `materializeAgents(input: { config })`; `materialization.ts` has no `HarnessAdapter`, filesystem, harness names, or adapter lifecycle calls. |
-| Unit 1: Return `Result`/`ResultAsync` with discriminated union errors | Covered | `ResultAsync<MaterializationPlan, MaterializationError>`; variants `CategoryShuttleConflict` and `DescriptorCompositionFailure`. |
+| Unit 1: Return `ResultAsync<MaterializationPlan, never>` — never rejects at top level; per-agent failures in `plan.errors[]` | Covered | `ResultAsync<MaterializationPlan, never>`; variants `CategoryShuttleConflict` and `DescriptorCompositionFailure` accumulated in `plan.errors[]`. |
 | Unit 2: Materialize builtin agents in resolved config | Covered | Test: “produces descriptors for builtin-named declared agents”. |
 | Unit 2: Materialize custom agents | Covered | Tests for single and multiple declared custom agents. |
 | Unit 2: Generate/materialize category shuttle descriptors using existing naming/merge behavior | Covered | Uses `generateCategoryShuttles(input.config)`; category shuttle tests pass. |
@@ -71,7 +71,7 @@ All changed files are in scope for Spec 15 or generated/supporting index artifac
 | Unit 3: Reuse `generateCategoryShuttles` rather than parallel category implementation | Covered | `materialization.ts` imports/calls `generateCategoryShuttles`. |
 | Unit 3: Convert category shuttle conflicts into typed materialization errors | Covered | `generateCategoryShuttles` error maps to `CategoryShuttleConflict`; tests assert returned `err`, not throw. |
 | Unit 3: Preserve prompt composition errors with affected agent context | Covered | `DescriptorCompositionFailure` includes `agentName` and `cause`; tests assert affected agent. |
-| Unit 3: Do not silently swallow expected materialization failures | Covered | Materialization returns `err` on category conflict and first descriptor composition failure. |
+| Unit 3: Do not silently swallow expected materialization failures | Covered | All per-agent failures accumulated in `plan.errors[]`; `CategoryShuttleConflict` and `DescriptorCompositionFailure` both collected rather than causing top-level rejection. |
 | Unit 4: Keep `WeaveRunner.run()` behavior compatible | Covered | Runner test passes: `51 pass / 0 fail`; runner loop intentionally unchanged. |
 | Unit 4: Use materialization internally if safe | Covered by explicit decision | Proof and `runner.ts` comment explain not safe due throw-vs-err and continue-vs-stop behavioral differences. Spec says “should”, not “shall”. |
 | Unit 4: Preserve `onEffect` and `spawnSubagent()` ordering if refactored | Covered | No refactor performed; existing runner test suite passed. Manual review confirms `onEffect` remains immediately before `spawnSubagent`. |
@@ -90,7 +90,7 @@ All changed files are in scope for Spec 15 or generated/supporting index artifac
 ## Repository Standards Review
 
 - **Bun-only:** Validation used Bun commands. New materialization code does not use Node runtime APIs, filesystem, process spawning, or harness I/O.
-- **neverthrow:** `materializeAgents` returns `ResultAsync<MaterializationPlan, MaterializationError>` and maps expected errors via `errAsync`/`mapErr`.
+- **neverthrow:** `materializeAgents` returns `ResultAsync<MaterializationPlan, never>`; per-agent failures are accumulated into `plan.errors[]` via `okAsync` rather than causing top-level rejection.
 - **Discriminated errors:** `MaterializationError` is a discriminated union with `type` variants.
 - **Early returns / no nested ternaries / no nested try-catch:** `materialization.ts` uses early error return. No nested try/catch. Ternaries for category derivation are shallow enough and typecheck cleanly.
 - **Logging:** New materialization module has no logging and no `console.*`. Existing runner uses pino `logger`.

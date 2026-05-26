@@ -29,6 +29,21 @@ export const ToolPolicySchema = z
   .strict();
 
 // ---------------------------------------------------------------------------
+// Routing
+// ---------------------------------------------------------------------------
+
+/**
+ * Per-agent routing knobs. Open for future fields (priority, fallback,
+ * weighted routes). Strict — unknown keys are rejected so typos surface
+ * clearly.
+ */
+export const RoutingConfigSchema = z
+  .object({
+    delegation_exclude: z.array(z.string()).optional(),
+  })
+  .strict();
+
+// ---------------------------------------------------------------------------
 // Agent
 // ---------------------------------------------------------------------------
 
@@ -45,6 +60,7 @@ export const AgentConfigSchema = z
     temperature: z.number().min(0).max(2).optional(),
     mode: z.enum(["primary", "subagent", "all"]).optional(),
     tool_policy: ToolPolicySchema.optional(),
+    routing: RoutingConfigSchema.optional(),
     skills: z.array(z.string()).optional(),
     triggers: z.array(DelegationTriggerSchema).optional(),
   })
@@ -127,7 +143,7 @@ export const CategoryConfigSchema = z
 // Disabled
 // ---------------------------------------------------------------------------
 
-export const DisabledConfigSchema = z.object({
+const DisabledConfigSchema = z.object({
   agents: z.array(z.string()).default([]),
   hooks: z.array(z.string()).default([]),
   skills: z.array(z.string()).default([]),
@@ -171,7 +187,7 @@ export const CompletionMethodSchema = z.discriminatedUnion("method", [
 // ---------------------------------------------------------------------------
 
 /** A named artifact produced or consumed by a workflow step. */
-export const ArtifactRefSchema = z.object({
+export const ArtifactDeclSchema = z.object({
   name: z.string(),
   description: z.string(),
 });
@@ -191,9 +207,15 @@ export const OnRejectSchema = z.enum(["pause", "fail", "retry"]);
  * A single step inside a workflow.
  *
  * Field mapping notes:
- * - `name`         — the step's block identifier in the DSL (e.g. `step plan { }` → `"plan"`)
- * - `display_name` — the human-readable label from the inner `name "..."` property
- * - `on_reject`    — only valid when `type` is `"gate"` (enforced by `.refine()`)
+ * - `name`          — the step's block identifier in the DSL (e.g. `step plan { }` → `"plan"`)
+ * - `display_name`  — the human-readable label from the inner `name "..."` property
+ * - `on_reject`     — only valid when `type` is `"gate"` (enforced by `.refine()`)
+ * - `insert_before` — position this step immediately before the named anchor step in the
+ *                     base workflow; only meaningful on extension workflows
+ * - `insert_after`  — position this step immediately after the named anchor step in the
+ *                     base workflow; only meaningful on extension workflows
+ *
+ * `insert_before` and `insert_after` are mutually exclusive (`BothInsertBeforeAndAfter`).
  */
 export const WorkflowStepSchema = z
   .object({
@@ -203,13 +225,31 @@ export const WorkflowStepSchema = z
     agent: z.string(),
     prompt: z.string(),
     completion: CompletionMethodSchema,
-    inputs: z.array(ArtifactRefSchema).optional(),
-    outputs: z.array(ArtifactRefSchema).optional(),
+    inputs: z.array(ArtifactDeclSchema).optional(),
+    outputs: z.array(ArtifactDeclSchema).optional(),
     on_reject: OnRejectSchema.optional(),
+    /** Position this step immediately before the named anchor step in the base workflow. */
+    insert_before: z
+      .string()
+      .min(1, "insert_before must be a non-empty step name")
+      .optional(),
+    /** Position this step immediately after the named anchor step in the base workflow. */
+    insert_after: z
+      .string()
+      .min(1, "insert_after must be a non-empty step name")
+      .optional(),
   })
   .refine((data) => data.on_reject === undefined || data.type === "gate", {
     message: "on_reject is only valid for gate steps",
-  });
+  })
+  .refine(
+    (data) =>
+      !(data.insert_before !== undefined && data.insert_after !== undefined),
+    {
+      message:
+        "insert_before and insert_after are mutually exclusive (BothInsertBeforeAndAfter)",
+    },
+  );
 
 // ---------------------------------------------------------------------------
 // Workflow config
@@ -219,14 +259,28 @@ export const WorkflowStepSchema = z
  * A named workflow definition containing an ordered list of steps.
  *
  * - `version` — positive integer; used for future migration
- * - `steps`   — at least one step is required
+ * - `steps`   — at least one step is required unless `extends` is set
+ * - `extends` — optional name of a base workflow this workflow extends;
+ *               when set, `steps` may be empty (the extension may add steps
+ *               relative to the base via `insert_before` / `insert_after`)
  */
-export const WorkflowConfigSchema = z.object({
-  name: z.string().optional(),
-  description: z.string().optional(),
-  version: z.number().int().positive(),
-  steps: z.array(WorkflowStepSchema).min(1),
-});
+export const WorkflowConfigSchema = z
+  .object({
+    name: z.string().optional(),
+    description: z.string().optional(),
+    version: z.number().int().positive(),
+    steps: z.array(WorkflowStepSchema),
+    /** Name of the base workflow this workflow extends. */
+    extends: z
+      .string()
+      .min(1, "extends must be a non-empty workflow name")
+      .optional(),
+  })
+  .refine((data) => data.extends !== undefined || data.steps.length >= 1, {
+    message:
+      "steps must have at least one entry (or set extends to allow an empty steps list)",
+    path: ["steps"],
+  });
 
 // ---------------------------------------------------------------------------
 // Settings
@@ -294,15 +348,16 @@ export const WeaveConfigSchema = z.object({
 export type ToolPermission = z.infer<typeof ToolPermissionSchema>;
 export type DelegationTrigger = z.infer<typeof DelegationTriggerSchema>;
 export type ToolPolicy = z.infer<typeof ToolPolicySchema>;
+/** Per-agent routing configuration (delegation_exclude, etc.). */
+export type RoutingConfig = z.infer<typeof RoutingConfigSchema>;
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
 export type CategoryConfig = z.infer<typeof CategoryConfigSchema>;
-export type DisabledConfig = z.infer<typeof DisabledConfigSchema>;
 /** Step execution mode. */
 export type WorkflowStepType = z.infer<typeof WorkflowStepTypeSchema>;
 /** Discriminated union describing how a step signals completion. */
 export type CompletionMethod = z.infer<typeof CompletionMethodSchema>;
 /** A named artifact produced or consumed by a step. */
-export type ArtifactRef = z.infer<typeof ArtifactRefSchema>;
+export type ArtifactDecl = z.infer<typeof ArtifactDeclSchema>;
 /** Behaviour when a gate step rejects. */
 export type OnReject = z.infer<typeof OnRejectSchema>;
 /** A fully-validated workflow step. */

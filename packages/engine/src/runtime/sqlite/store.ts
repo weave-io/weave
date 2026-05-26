@@ -10,6 +10,7 @@
  * @internal
  */
 
+import * as fs from "node:fs/promises";
 import { dirname } from "node:path";
 import { Kysely } from "kysely";
 import {
@@ -1086,20 +1087,27 @@ export class SqliteRuntimeStore implements RuntimeStore {
   private async _doInitialize(): Promise<Result<void, RuntimeStoreError>> {
     const dir = dirname(this.options.dbPath);
 
-    // Create runtime directory using Bun.spawnSync
-    const mkdirResult = Bun.spawnSync(["mkdir", "-p", dir]);
-    if (mkdirResult.exitCode !== 0) {
-      this.initializingPromise = null;
-      return err(
+    // Create runtime directory using node:fs/promises
+    const mkdirResult = await ResultAsync.fromPromise(
+      fs.mkdir(dir, { recursive: true }),
+      (cause) =>
         initializationError(
           `Failed to create runtime directory: ${dir}`,
-          new Error(`mkdir exited with code ${mkdirResult.exitCode}`),
+          cause,
         ),
-      );
+    );
+    if (mkdirResult.isErr()) {
+      this.initializingPromise = null;
+      return err(mkdirResult.error);
     }
 
     // Apply restrictive permissions to the directory (best-effort)
-    Bun.spawnSync(["chmod", "700", dir]);
+    await fs.chmod(dir, 0o700).catch((cause) => {
+      log.warn(
+        { path: dir, mode: 0o700, cause },
+        "Failed to tighten runtime directory permissions",
+      );
+    });
 
     // Create Kysely instance with BunSqliteDialect
     const dialect = new BunSqliteDialect(this.options.dbPath);
@@ -1149,9 +1157,24 @@ export class SqliteRuntimeStore implements RuntimeStore {
     }
 
     // Apply restrictive permissions to the DB file (best-effort)
-    Bun.spawnSync(["chmod", "600", this.options.dbPath]);
-    Bun.spawnSync(["chmod", "600", `${this.options.dbPath}-wal`]);
-    Bun.spawnSync(["chmod", "600", `${this.options.dbPath}-shm`]);
+    await fs.chmod(this.options.dbPath, 0o600).catch((cause) => {
+      log.warn(
+        { path: this.options.dbPath, mode: 0o600, cause },
+        "Failed to tighten runtime DB permissions",
+      );
+    });
+    await fs.chmod(`${this.options.dbPath}-wal`, 0o600).catch((cause) => {
+      log.warn(
+        { path: `${this.options.dbPath}-wal`, mode: 0o600, cause },
+        "Failed to tighten runtime WAL permissions",
+      );
+    });
+    await fs.chmod(`${this.options.dbPath}-shm`, 0o600).catch((cause) => {
+      log.warn(
+        { path: `${this.options.dbPath}-shm`, mode: 0o600, cause },
+        "Failed to tighten runtime SHM permissions",
+      );
+    });
 
     this.initialized = true;
     this.initializingPromise = null;

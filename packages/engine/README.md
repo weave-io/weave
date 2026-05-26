@@ -10,7 +10,7 @@ Harness-agnostic composition APIs and adapter-boundary helpers for Weave.
 - **Model resolution helper** — `resolveAdapterModelIntent()` resolves model preferences using adapter-supplied harness context
 - **Skill resolution API** — implemented by [Spec 09](../../docs/specs/09-spec-adapter-provided-skill-resolution/09-spec-adapter-provided-skill-resolution.md); adapters provide available skills via `loadAvailableSkills()`, engine matches/filters them via `resolveSkillsForAgent()` and `resolveSkillsForConfig()`
 - **Prompt composition APIs** — future APIs that combine prompt files, prompt appendices, delegation metadata, and resolved skills
-- **Execution Lifecycle Surface** — abstract lifecycle API (`execution-lifecycle.ts`); adapters map harness events into 7 typed lifecycle methods (`observeSession`, `startExecution`, `resumeExecution`, `handleUserInterrupt`, `dispatchStep`, `completeStep`, `beforeTool`); supersedes `registerHook()`
+- **Execution Lifecycle Surface** — abstract lifecycle API (`execution-lifecycle.ts`); adapters map harness events into 7 typed lifecycle methods (`observeSession`, `startExecution`, `resumeExecution`, `handleUserInterrupt`, `dispatchStep`, `completeStep`, `beforeTool`)
 - **`WeaveRunner`** — current transitional orchestration entry point that passes normalized intent through a `HarnessAdapter`
 
 ## Boundary Rule
@@ -129,8 +129,6 @@ async function onHarnessStepComplete(stepName: string) {
   );
 }
 
-// ❌ Wrong: engine registering a concrete harness callback.
-adapter.registerHook({ name: "on-step-complete", event: "step:done", enabled: true });
 ```
 
 ### Workflow Engine Behavior
@@ -159,17 +157,12 @@ Adapters pass `WorkflowExecutionContext` to `startExecution`, `dispatchStep`, an
 
 See [`docs/adapter-boundary.md — Workflow Engine`](../../docs/adapter-boundary.md#workflow-engine) for the full ownership matrix and [`docs/workflow-schema.md — Execution Semantics`](../../docs/workflow-schema.md#execution-semantics) for step-by-step runtime behavior.
 
-### `registerHook()` — superseded
+## Adapter Interface
 
-`HarnessAdapter.registerHook()` is **superseded** by the execution lifecycle surface. Adapters should map concrete harness events into the 7 typed engine lifecycle functions listed above instead of registering hooks through this method. `registerHook()` will be removed once all adapters have migrated.
+`HarnessAdapter` exposes three methods:
 
-## Transitional Adapter Interface
-
-`HarnessAdapter` currently contains early placeholder methods. Treat those as transitional, not architectural precedent:
-
-- **`loadAvailableSkills(): Promise<SkillInfo[]>`** — the current adapter surface for skill context (Spec 09). Adapters return a flat list of `SkillInfo` descriptors; the engine resolves references against it. This replaces the deprecated `loadSkill()` method.
-- **`loadSkill()`** — deprecated. Superseded by `loadAvailableSkills()`. Will be removed in a future spec.
-- **`registerHook()`** — **superseded** by the execution lifecycle surface. See above.
-- Agent materialization methods such as `spawnSubagent()` are acceptable only when they receive normalized, harness-agnostic intent and the adapter owns concrete harness translation.
+- **`init(): Promise<void>`** — one-time harness initialisation, called before any other method.
+- **`spawnSubagent(descriptor): Promise<void>`** — materialise a normalized agent descriptor; adapter owns concrete harness translation.
+- **`loadAvailableSkills(): Promise<SkillInfo[]>`** — adapter-provided skill context (Spec 09). Adapters return a flat list of `SkillInfo` descriptors; the engine resolves references against it.
 
 When adding new engine APIs, prefer pure helpers that accept explicit harness context and return normalized results.

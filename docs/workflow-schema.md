@@ -28,17 +28,19 @@ A workflow is declared with the `workflow <name> { }` top-level block.
 
 Each `step <name> { }` block inside a workflow produces a `WorkflowStep`.
 
-| Field          | Type               | Required | Description                                                             |
-| -------------- | ------------------ | -------- | ----------------------------------------------------------------------- |
-| `name`         | `string`           | **yes**  | The step's block identifier (e.g. `step plan { }` → `"plan"`)           |
-| `display_name` | `string`           | no       | Human-readable label — sourced from the inner `name "..."` property     |
-| `type`         | `WorkflowStepType` | **yes**  | Execution mode: `autonomous`, `interactive`, or `gate`                  |
-| `agent`        | `string`           | **yes**  | Name of the agent that runs this step                                   |
-| `prompt`       | `string`           | **yes**  | Instruction sent to the agent; may contain `{{template}}` variables     |
-| `completion`   | `CompletionMethod` | **yes**  | How the step signals that it is done (see below)                        |
-| `inputs`       | `ArtifactRef[]`    | no       | Named artifacts this step consumes from a previous step                 |
-| `outputs`      | `ArtifactRef[]`    | no       | Named artifacts this step produces for downstream steps                 |
-| `on_reject`    | `OnReject`         | no       | Behaviour when a gate step rejects (only valid when `type` is `"gate"`) |
+| Field           | Type               | Required | Description                                                                                                                                                                                  |
+| --------------- | ------------------ | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`          | `string`           | **yes**  | The step's block identifier (e.g. `step plan { }` → `"plan"`)                                                                                                                               |
+| `display_name`  | `string`           | no       | Human-readable label — sourced from the inner `name "..."` property                                                                                                                          |
+| `type`          | `WorkflowStepType` | **yes**  | Execution mode: `autonomous`, `interactive`, or `gate`                                                                                                                                       |
+| `agent`         | `string`           | **yes**  | Name of the agent that runs this step                                                                                                                                                        |
+| `prompt`        | `string`           | **yes**  | Instruction sent to the agent; may contain `{{template}}` variables                                                                                                                          |
+| `completion`    | `CompletionMethod` | **yes**  | How the step signals that it is done (see below)                                                                                                                                             |
+| `inputs`        | `ArtifactDecl[]`   | no       | Named artifacts this step consumes from a previous step                                                                                                                                      |
+| `outputs`       | `ArtifactDecl[]`   | no       | Named artifacts this step produces for downstream steps                                                                                                                                      |
+| `on_reject`     | `OnReject`         | no       | Behaviour when a gate step rejects (only valid when `type` is `"gate"`)                                                                                                                      |
+| `insert_before` | `string`           | no       | Position this step immediately before the named anchor step in the base workflow (only meaningful on extension workflows; mutually exclusive with `insert_after`)                             |
+| `insert_after`  | `string`           | no       | Position this step immediately after the named anchor step in the base workflow (only meaningful on extension workflows; mutually exclusive with `insert_before`)                             |
 
 ### Step Type Enum
 
@@ -158,10 +160,10 @@ This produces the same `BlockValue` structure with `__name: "my_method"`. Future
 
 ## Artifact References
 
-`inputs` and `outputs` are arrays of `ArtifactRef`:
+`inputs` and `outputs` are arrays of `ArtifactDecl`:
 
 ```ts
-type ArtifactRef = {
+type ArtifactDecl = {
   name: string;
   description: string;
 };

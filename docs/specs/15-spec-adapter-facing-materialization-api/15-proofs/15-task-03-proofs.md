@@ -6,9 +6,9 @@ Task 03 verifies that `materializeAgents(input)` preserves typed failure behavio
 
 ## Proofs
 
-- Explicit `agent shuttle-frontend` plus `category frontend` returns `err({ type: "CategoryShuttleConflict", ... })` without throwing.
-- A descriptor composition failure returns `err({ type: "DescriptorCompositionFailure", agentName, cause })`.
-- `DescriptorCompositionFailure.cause.agentName` matches the affected agent.
+- Explicit `agent shuttle-frontend` plus `category frontend` produces a `CategoryShuttleConflict` entry in `plan.errors[]` without throwing; explicit agents still appear in `plan.agents[]`.
+- A descriptor composition failure produces a `DescriptorCompositionFailure` entry in `plan.errors[]`; other agents still appear in `plan.agents[]`.
+- `DescriptorCompositionFailure.agentName` matches the affected agent.
 - Materialized descriptor fields match direct `composeAgentDescriptor(...)` output for `name`, `models`, `mode`, `composedPrompt`, and `effectiveToolPolicy`.
 
 ## Verification

@@ -5,7 +5,7 @@ Weave is a harness-agnostic orchestration framework with two cooperating halves:
 1. **Core Weave API** (`@weave/core`, `@weave/config`, `@weave/engine`) parses DSL config, normalizes agent intent, resolves/composes prompt and policy data, and exposes pure helper APIs.
 2. **Adapters** (`@weave/adapter-opencode`, `@weave/adapter-pi`, etc.) enable Weave inside a concrete harness by discovering harness-owned resources, translating normalized intent, and filling feature gaps when the harness lacks native support.
 
-**Related:** [Product Vision](product-vision.md) · [Claude Code Adapter](claude-code-adapter.md) · [Model Resolution](model-resolution.md) · [Config Loading](config-loading.md) · [Prompt Composition](prompt-composition.md) · [Tool Policy Evaluation](tool-policy-evaluation.md) · [Runtime Persistence Spec](specs/12-spec-runtime-persistence/12-spec-runtime-persistence.md) · [ADR 0002 — Runtime Persistence Store](adr/0002-runtime-persistence-store.md) · [Spec 05 — Skill Resolution](specs/05-spec-skill-loader/05-spec-skill-loader.md) · [Spec 07 — Adapter Capability Contract](specs/07-spec-adapter-capability-contract/07-spec-adapter-capability-contract.md) · [Spec 08 — Abstract Tool Policy Evaluation](specs/08-spec-abstract-tool-policy-evaluation/08-spec-abstract-tool-policy-evaluation.md) · [Spec 09 — Adapter-Provided Skill Resolution](specs/09-spec-adapter-provided-skill-resolution/09-spec-adapter-provided-skill-resolution.md) · [Spec 16 — Stable Adapter Descriptor Contract](specs/16-spec-stable-adapter-descriptor-contract/16-spec-stable-adapter-descriptor-contract.md) · [Execution Lifecycle Surface](#execution-lifecycle-surface) · [Legacy Architecture](legacy-architecture.md)
+**Related:** [Product Vision](product-vision.md) · [Adapter Bootstrap Guide](adapter-bootstrap.md) · [Claude Code Adapter](claude-code-adapter.md) · [Model Resolution](model-resolution.md) · [Config Loading](config-loading.md) · [Prompt Composition](prompt-composition.md) · [Tool Policy Evaluation](tool-policy-evaluation.md) · [Adapter Readiness Status](adapter-readiness-status.md) · [Runtime Persistence Spec](specs/12-spec-runtime-persistence/12-spec-runtime-persistence.md) · [ADR 0002 — Runtime Persistence Store](adr/0002-runtime-persistence-store.md) · [Spec 05 — Skill Resolution](specs/05-spec-skill-loader/05-spec-skill-loader.md) · [Spec 07 — Adapter Capability Contract](specs/07-spec-adapter-capability-contract/07-spec-adapter-capability-contract.md) · [Spec 08 — Abstract Tool Policy Evaluation](specs/08-spec-abstract-tool-policy-evaluation/08-spec-abstract-tool-policy-evaluation.md) · [Spec 09 — Adapter-Provided Skill Resolution](specs/09-spec-adapter-provided-skill-resolution/09-spec-adapter-provided-skill-resolution.md) · [Spec 15 — Adapter-Facing Materialization API](specs/15-spec-adapter-facing-materialization-api/15-spec-adapter-facing-materialization-api.md) · [Spec 16 — Stable Adapter Descriptor Contract](specs/16-spec-stable-adapter-descriptor-contract/16-spec-stable-adapter-descriptor-contract.md) · [Spec 17 — Workflow Extension DSL](specs/17-spec-workflow-extension/17-spec-workflow-extension.md) · [Spec 18 — Delegation Exclusion](specs/18-spec-delegation-exclusion/18-spec-delegation-exclusion.md) · [Spec 19 — Plan State Provider](specs/19-spec-plan-state-provider/19-spec-plan-state-provider.md) · [Execution Lifecycle Surface](#execution-lifecycle-surface) · [Legacy Architecture](legacy-architecture.md)
 
 ---
 
@@ -16,6 +16,17 @@ The key question is not "does the engine call the adapter?" The key question is:
 > **Is the engine making a harness-specific assumption?**
 
 Engine-to-adapter calls are acceptable when they use abstract, harness-agnostic intent. They are incorrect when they require the engine to know where a harness stores resources, how a harness registers lifecycle callbacks, or how a harness represents runtime state.
+
+---
+
+## Naming Conventions
+
+Type names in `@weave/core` and `@weave/engine` follow a suffix convention to prevent collisions between the DSL configuration layer and the engine runtime layer:
+
+- **`*Decl` suffix** — used for core/DSL types that describe **declarative configuration** authored in `.weave` files. These types are parsed from the DSL and validated by Zod schemas. Example: `ArtifactDecl` describes a named artifact input or output declared on a workflow step.
+- **`*Ref` suffix** — used for engine runtime types that describe **persisted handles** or live records in the Runtime Store. These types are created and managed at execution time. Example: `ArtifactRef` (in `@weave/engine`) is a persisted artifact record with a logical name, a relative path, and optional `mimeType` and `description` metadata — it stores a reference and metadata only, never artifact contents or a content hash.
+
+When adding a new type that spans both layers (e.g. a concept declared in DSL config and also tracked at runtime), use `*Decl` for the core/DSL variant and `*Ref` for the engine runtime variant. Never share a single type name across both layers.
 
 ---
 
@@ -33,6 +44,7 @@ Engine-to-adapter calls are acceptable when they use abstract, harness-agnostic 
 | Skill discovery/loading                            | Adapter                  | Skill locations and formats are harness-specific                        |
 | Skill matching/filtering                           | Engine (`@weave/engine`) | Pure resolution against `AgentConfig.skills` and `disabled.skills`      |
 | `.weave/runtime/**` Runtime Store                  | Engine (`@weave/engine`) | Runtime records are Weave product state, not harness resources          |
+| Plan file state (`.weave/plans/**`)                | Adapter                  | Concrete I/O mechanism is harness/environment-specific; engine owns the `PlanStateProvider` interface only |
 | Harness plugin/config generation                   | Adapter                  | Output format is harness-specific                                       |
 | Concrete tool names and permissions                | Adapter                  | Tool identifiers differ by harness                                      |
 | Runtime lifecycle event mapping                    | Adapter                  | Event names and payloads differ by harness                              |
@@ -144,14 +156,14 @@ const resolved = resolveSkillsForConfig(config, skills);
 
 Skill resolution is implemented as a pure engine helper. Adapters discover and load skills from harness-specific directories; the engine matches, filters, and validates those skills against agent config.
 
-**Transitional adapter surface decision (Spec 09):** The `HarnessAdapter` interface exposes `loadAvailableSkills(): Promise<SkillInfo[]>`. This method is called by `WeaveRunner` before agent materialization. Adapters return a flat list of `SkillInfo` descriptors; the engine calls `resolveSkillsForConfig()` and attaches `resolvedSkills` to each `RunAgentEffect`.
+**Transitional adapter surface decision (Spec 09):** The `HarnessAdapter` interface exposes `loadAvailableSkills(): Promise<SkillInfo[]>`. This method is called during the adapter bootstrap loop (after `materializeAgents`) before each `spawnSubagent` call. Adapters return a flat list of `SkillInfo` descriptors; the engine calls `resolveSkillsForConfig()` and attaches `resolvedSkills` to each `RunAgentEffect`.
 
 Key rules:
 
 - `loadAvailableSkills()` is adapter-owned — the engine never scans skill directories itself.
 - `resolveSkillsForAgent()` and `resolveSkillsForConfig()` are pure engine helpers — they accept explicit `availableSkills` input and return `Result<ResolvedSkill[], SkillResolutionError[]>`.
 - `RunAgentEffect.resolvedSkills` carries only engine-resolved skill references; adapter-owned metadata (paths, content, tokens) must not appear in emitted effects.
-- The deprecated `loadSkill()` method on `HarnessAdapter` is superseded by `loadAvailableSkills()` and will be removed in a future spec.
+- The deprecated `loadSkill()` method on `HarnessAdapter` was superseded by `loadAvailableSkills()`. It remains on the interface marked `@deprecated` for backward compatibility; new adapters should not implement it.
 
 See [Spec 09 — Adapter-Provided Skill Resolution](specs/09-spec-adapter-provided-skill-resolution/09-spec-adapter-provided-skill-resolution.md) for the full vocabulary, resolution semantics, and proof artifacts.
 
@@ -199,8 +211,8 @@ See [Spec 16 — Stable Adapter Descriptor Contract](specs/16-spec-stable-adapte
 
 Some current code still uses early placeholder methods such as `loadSkill()` or `registerHook()` on `HarnessAdapter`. Treat these as **transitional implementation details**, not product architecture precedent.
 
-- `loadSkill()` is deprecated and superseded by `loadAvailableSkills()` (see Spec 09 above). Adapters should provide the full available-skill list upfront; the engine resolves references against it.
-- `registerHook()` will be replaced or reframed around adapter-owned lifecycle event mapping into engine policy surfaces.
+- `loadSkill()` was deprecated and superseded by `loadAvailableSkills()` (see Spec 09 above). Adapters should provide the full available-skill list upfront; the engine resolves references against it. The method remains on the interface marked `@deprecated` for backward compatibility.
+- `registerHook()` was superseded by the Execution Lifecycle Surface (Spec 13). Adapters should map harness events into the 7 typed lifecycle functions instead. The method remains on the interface marked `@deprecated` for backward compatibility.
 
 Future specs should move toward this boundary:
 
@@ -209,6 +221,8 @@ Future specs should move toward this boundary:
 - adapters materialize those outputs in the concrete harness
 
 When a legacy issue or proof artifact conflicts with this document, prefer this document and [Product Vision](product-vision.md).
+
+See [Adapter Bootstrap Guide](adapter-bootstrap.md) for the canonical `loadConfig` → `materializeAgents` → adapter loop pattern with a runnable `MockAdapter` example.
 
 ---
 
@@ -256,7 +270,7 @@ The engine evaluates abstract `tool_policy` declarations into a fully-resolved
 Adapters receive the **raw** `tool_policy` unchanged as `descriptor.rawToolPolicy`
 via `spawnSubagent(descriptor: AgentDescriptor)`; the engine-computed effective
 policy is surfaced both on the descriptor (`descriptor.effectiveToolPolicy`) and
-via the `onEffect` callback on `WeaveRunnerOptions`.
+via the `onEffect` callback on `MaterializationInput` (see [Adapter Bootstrap Guide](adapter-bootstrap.md)).
 
 Key rules:
 
@@ -336,7 +350,7 @@ if (input.toolName === "bash") { /* harness-specific logic */ }
 
 ### `registerHook()` is Superseded
 
-The `registerHook()` method on `HarnessAdapter` is deprecated and will be removed in a future spec. Adapters should map harness events into the lifecycle surface instead:
+The `registerHook()` method on `HarnessAdapter` was superseded by the Execution Lifecycle Surface (Spec 13). It remains on the interface marked `@deprecated` for backward compatibility. Adapters should map harness events into the lifecycle surface instead:
 
 ```ts
 // ❌ Old: engine registers a concrete harness hook
@@ -497,3 +511,65 @@ Adapters own everything after descriptors are returned:
 - Applying harness-specific materialization side effects and reporting any harness-specific failures outside the pure engine API.
 
 The engine must not write harness config files, spawn harness agents, discover harness resource locations, or register concrete harness callbacks as part of `materializeAgents()`.
+
+---
+
+## Plan State Provider
+
+> **Spec:** [Spec 19 — Plan State Provider](specs/19-spec-plan-state-provider/19-spec-plan-state-provider.md)
+
+The **Plan State Provider** is the engine-owned abstract interface that `completeStep` uses to query plan file state when a workflow step's completion method is `"plan_created"` or `"plan_complete"`. It replaces the previous direct `Bun.file()` calls inside `execution-lifecycle.ts`, which were a boundary violation.
+
+All types are exported from `@weave/engine` under `packages/engine/src/plan-state-provider.ts`.
+
+### Interface
+
+```ts
+interface PlanStateProvider {
+  planExists(planName: string): ResultAsync<boolean, PlanStateError>;
+  isPlanComplete(planName: string): ResultAsync<boolean, PlanStateError>;
+}
+
+type PlanStateError =
+  | { type: "InvalidPlanName"; planName: string; reason: string }
+  | { type: "ProviderUnavailable"; reason: string };
+```
+
+### Ownership Rules
+
+| Concern | Owner | Why |
+| --- | --- | --- |
+| `PlanStateProvider` interface and `PlanStateError` union | Engine (`@weave/engine`) | The engine defines the abstract contract; adapters implement it |
+| `validatePlanName` (safe-name regex) | Engine (`@weave/engine`) | Path traversal prevention must run before any provider call, regardless of implementation |
+| `BunFilesystemPlanStateProvider` (default implementation) | Config (`@weave/config`) | Concrete Bun filesystem I/O belongs outside the engine; `@weave/config` already owns filesystem I/O for config and prompt files |
+| Alternative provider implementations (database, remote, test double) | Adapter / test | Concrete I/O mechanism is harness/environment-specific |
+
+### Engine Behaviour
+
+- When `step.completion.method` is `"plan_created"` or `"plan_complete"` and `CompleteStepInput.planStateProvider` is **absent**, `completeStep` returns `err(lifecyclePolicyDecisionError("plan completion method requires a planStateProvider", "plan_state_provider"))` — never silently passes.
+- When the provider is present, the engine calls `planStateProvider.planExists(planName)` or `planStateProvider.isPlanComplete(planName)` and maps the result to the appropriate `LifecycleError` variant.
+- `validatePlanName` runs in the engine before any provider call as a path traversal defence.
+
+### Adapter Responsibility
+
+Adapters supply a `PlanStateProvider` implementation via `CompleteStepInput.planStateProvider`. For production use, adapters should use `BunFilesystemPlanStateProvider` from `@weave/config`. For tests, adapters should use an in-memory mock that returns controlled results without filesystem I/O.
+
+```ts
+// ✅ Correct: adapter supplies provider; engine calls interface
+const result = await completeStep(
+  {
+    workflowInstanceId,
+    leaseId,
+    stepName,
+    completionSignal,
+    context,
+    planStateProvider: new BunFilesystemPlanStateProvider(), // from @weave/config
+  },
+  store,
+);
+
+// ❌ Wrong: engine calls Bun.file() directly for plan files
+const exists = await Bun.file(`.weave/plans/${planName}.md`).exists();
+```
+
+See [Spec 19 — Plan State Provider](specs/19-spec-plan-state-provider/19-spec-plan-state-provider.md) for the full interface definition, error mapping, migration notes, and proof artifacts.

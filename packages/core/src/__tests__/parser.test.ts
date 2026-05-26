@@ -195,6 +195,87 @@ describe("Parser — workflow block", () => {
       value: "Fix a bug",
     });
   });
+
+  it("parses extends scalar inside workflow block", () => {
+    const src = `workflow my-ext {
+  extends "base-workflow"
+  version 1
+}`;
+    const result = parseSource(src);
+    expect(result.isOk()).toBe(true);
+    const wf = result._unsafeUnwrap()[0] as WorkflowBlock;
+    expect(wf.type).toBe("workflow");
+    expect(wf.name).toBe("my-ext");
+    // extends is extracted to the dedicated field, not left in properties
+    expect(wf.extends).toBe("base-workflow");
+    const extendsProp = wf.properties.find((p) => p.key === "extends");
+    expect(extendsProp).toBeUndefined();
+  });
+
+  it("parses insert_before scalar inside step block", () => {
+    const src = `workflow w {
+  step audit {
+    insert_before "review"
+    type autonomous
+    agent warp
+    prompt "Audit."
+    completion agent_signal
+  }
+}`;
+    const result = parseSource(src);
+    expect(result.isOk()).toBe(true);
+    const wf = result._unsafeUnwrap()[0] as WorkflowBlock;
+    const step = wf.steps[0];
+    expect(step?.name).toBe("audit");
+    // insert_before is extracted to the dedicated field
+    expect(step?.insert_before).toBe("review");
+    expect(step?.insert_after).toBeUndefined();
+    // insert_before must NOT appear in properties
+    const insertProp = step?.properties.find((p) => p.key === "insert_before");
+    expect(insertProp).toBeUndefined();
+  });
+
+  it("parses insert_after scalar inside step block", () => {
+    const src = `workflow w {
+  step audit {
+    insert_after "plan"
+    type autonomous
+    agent warp
+    prompt "Audit."
+    completion agent_signal
+  }
+}`;
+    const result = parseSource(src);
+    expect(result.isOk()).toBe(true);
+    const wf = result._unsafeUnwrap()[0] as WorkflowBlock;
+    const step = wf.steps[0];
+    expect(step?.insert_after).toBe("plan");
+    expect(step?.insert_before).toBeUndefined();
+    const insertProp = step?.properties.find((p) => p.key === "insert_after");
+    expect(insertProp).toBeUndefined();
+  });
+
+  it("parses workflow with extends and steps containing insert_before", () => {
+    const src = `workflow extended {
+  extends "base"
+  version 2
+
+  step security-check {
+    insert_before "deploy"
+    type gate
+    agent warp
+    prompt "Security check."
+    completion review_verdict
+  }
+}`;
+    const result = parseSource(src);
+    expect(result.isOk()).toBe(true);
+    const wf = result._unsafeUnwrap()[0] as WorkflowBlock;
+    expect(wf.extends).toBe("base");
+    expect(wf.steps).toHaveLength(1);
+    expect(wf.steps[0]?.insert_before).toBe("deploy");
+    expect(wf.steps[0]?.insert_after).toBeUndefined();
+  });
 });
 
 describe("Parser — multiple top-level blocks", () => {
@@ -346,6 +427,73 @@ describe("Parser — settings block", () => {
       key: "strict",
       value: { kind: "boolean", value: true },
     });
+  });
+});
+
+describe("Parser — routing block inside agent", () => {
+  it("parses routing { delegation_exclude [...] } as a BlockValue property", () => {
+    const src = `agent loom {
+  routing {
+    delegation_exclude ["warp", "spindle"]
+  }
+}`;
+    const result = parseSource(src);
+    expect(result.isOk()).toBe(true);
+    const agent = result._unsafeUnwrap()[0] as AgentBlock;
+    expect(agent.name).toBe("loom");
+    const routingProp = agent.properties.find((p) => p.key === "routing");
+    expect(routingProp?.value.kind).toBe("block");
+    const block = routingProp?.value as BlockValue;
+    expect(block.properties).toHaveLength(1);
+    expect(block.properties[0]).toMatchObject({
+      key: "delegation_exclude",
+    });
+    const excludeArr = block.properties[0]?.value as ArrayValue;
+    expect(excludeArr.kind).toBe("array");
+    expect(excludeArr.elements).toHaveLength(2);
+    expect(excludeArr.elements[0]).toMatchObject({
+      kind: "string",
+      value: "warp",
+    });
+    expect(excludeArr.elements[1]).toMatchObject({
+      kind: "string",
+      value: "spindle",
+    });
+  });
+
+  it("parses agent with both tool_policy and routing blocks", () => {
+    const src = `agent router {
+  tool_policy {
+    delegate allow
+  }
+  routing {
+    delegation_exclude ["warp"]
+  }
+}`;
+    const result = parseSource(src);
+    expect(result.isOk()).toBe(true);
+    const agent = result._unsafeUnwrap()[0] as AgentBlock;
+    const toolPolicyProp = agent.properties.find(
+      (p) => p.key === "tool_policy",
+    );
+    const routingProp = agent.properties.find((p) => p.key === "routing");
+    expect(toolPolicyProp?.value.kind).toBe("block");
+    expect(routingProp?.value.kind).toBe("block");
+  });
+
+  it("parses routing block with empty delegation_exclude array", () => {
+    const src = `agent loom {
+  routing {
+    delegation_exclude []
+  }
+}`;
+    const result = parseSource(src);
+    expect(result.isOk()).toBe(true);
+    const agent = result._unsafeUnwrap()[0] as AgentBlock;
+    const routingProp = agent.properties.find((p) => p.key === "routing");
+    const block = routingProp?.value as BlockValue;
+    const excludeArr = block.properties[0]?.value as ArrayValue;
+    expect(excludeArr.elements).toHaveLength(0);
   });
 });
 

@@ -2,8 +2,7 @@
  * Execution Lifecycle Surface for the Weave engine.
  *
  * Defines the 7 lifecycle methods that adapters call after mapping concrete
- * harness events into engine-owned policy decisions. This surface supersedes
- * the transitional `registerHook()` method on `HarnessAdapter`.
+ * harness events into engine-owned policy decisions.
  *
  * ## Lifecycle Methods
  *
@@ -38,8 +37,12 @@ import {
   ok,
   okAsync,
   type Result,
-  ResultAsync,
+  type ResultAsync,
 } from "neverthrow";
+import type {
+  PlanStateError,
+  PlanStateProvider,
+} from "./plan-state-provider.js";
 import type { RunAgentEffect } from "./run-agent-effects.js";
 import type { RuntimeStoreConflictError } from "./runtime/errors.js";
 import type { RuntimeStore } from "./runtime/store.js";
@@ -776,6 +779,17 @@ export interface CompleteStepInput {
    * When omitted the engine uses legacy behaviour (no auto-advance).
    */
   readonly context?: WorkflowExecutionContext;
+  /**
+   * Optional provider for querying plan file state.
+   *
+   * Required when the step's completion method is `"plan_created"` or
+   * `"plan_complete"`. When absent and one of those methods is used, `completeStep`
+   * returns a `policy_decision` error rather than crashing.
+   *
+   * Adapters should supply `BunFilesystemPlanStateProvider` from `@weave/config`
+   * (or a mock in tests).
+   */
+  readonly planStateProvider?: PlanStateProvider;
 }
 
 /**
@@ -1793,25 +1807,6 @@ function validateCompletionMethod(
 }
 
 /**
- * Validate that a rendered plan name contains only safe characters.
- *
- * Allowed: alphanumeric characters, hyphens, and underscores.
- * Rejected: slashes, dots, backslashes, or any other character that could
- * enable path traversal attacks.
- *
- * Returns `ok(planName)` when safe, or a typed `validation` error.
- */
-function validatePlanName(planName: string): Result<string, LifecycleError> {
-  if (/^[a-zA-Z0-9_-]+$/.test(planName)) return ok(planName);
-  return err(
-    lifecycleValidationError(
-      `plan name "${planName}" contains unsafe characters — only alphanumeric characters, hyphens, and underscores are allowed`,
-      "plan_name",
-    ),
-  );
-}
-
-/**
  * Render the `plan_name` template from a step's completion config.
  *
  * The `plan_name` field may contain Mustache placeholders (e.g.
@@ -1851,77 +1846,25 @@ function renderPlanName(
 }
 
 /**
- * Check that the plan file `.weave/plans/<planName>.md` exists.
+ * Map a `PlanStateError` from a `PlanStateProvider` to a `LifecycleError`.
  *
- * Validates `planName` against the safe-name allowlist before constructing
- * the path to prevent path traversal attacks.
- *
- * Returns `ok(undefined)` when the file exists, or a typed error.
+ * - `InvalidPlanName` → `validation` error (bad plan name)
+ * - `ProviderUnavailable` → `persistence` error (I/O failure)
  */
-function checkPlanFileExists(
+function mapPlanStateError(
+  providerErr: PlanStateError,
   planName: string,
-): ResultAsync<undefined, LifecycleError> {
-  const nameCheck = validatePlanName(planName);
-  if (nameCheck.isErr()) return errAsync(nameCheck.error);
-
-  const planPath = `.weave/plans/${planName}.md`;
-  return ResultAsync.fromPromise(
-    Bun.file(planPath).exists(),
-    (cause): LifecycleError =>
-      lifecyclePersistenceError(
-        `Failed to check plan file existence: ${planPath}`,
-        { type: "query", message: String(cause) },
-      ),
-  ).andThen((exists) => {
-    if (!exists) {
-      return errAsync(
-        lifecycleNotFoundError(
-          "plan_file",
-          planPath,
-          `Plan file "${planPath}" does not exist`,
-        ),
-      );
-    }
-    return okAsync(undefined);
-  });
-}
-
-/**
- * Check that the plan file `.weave/plans/<planName>.md` has no incomplete
- * checkboxes (`- [ ]`).
- *
- * Validates `planName` against the safe-name allowlist before constructing
- * the path to prevent path traversal attacks.
- *
- * Returns `ok(undefined)` when the file is fully complete, or a typed error.
- */
-function checkPlanComplete(
-  planName: string,
-): ResultAsync<undefined, LifecycleError> {
-  const nameCheck = validatePlanName(planName);
-  if (nameCheck.isErr()) return errAsync(nameCheck.error);
-
-  const planPath = `.weave/plans/${planName}.md`;
-  return ResultAsync.fromPromise(
-    Bun.file(planPath).text(),
-    (cause): LifecycleError =>
-      lifecyclePersistenceError(`Failed to read plan file: ${planPath}`, {
-        type: "query",
-        message: String(cause),
-      }),
-  ).andThen((content) => {
-    const incompleteMatches = content.match(/- \[ \]/g);
-    const incompleteCount = incompleteMatches?.length ?? 0;
-    if (incompleteCount > 0) {
-      return errAsync(
-        lifecycleValidationError(
-          `Plan "${planPath}" has ${incompleteCount} incomplete checkbox(es) — all tasks must be checked off`,
-          "plan_complete",
-        ),
-      );
-    }
-    return okAsync(undefined);
-  });
+): LifecycleError {
+  if (providerErr.type === "InvalidPlanName") {
+    return lifecycleValidationError(
+      `plan name "${planName}" contains unsafe characters — only alphanumeric characters, hyphens, and underscores are allowed`,
+      "plan_name",
+    );
+  }
+  return lifecyclePersistenceError(
+    `PlanStateProvider unavailable for plan "${planName}"`,
+    { type: "query", message: String(providerErr.cause) },
+  );
 }
 
 /**
@@ -2469,22 +2412,73 @@ export function completeStep(
             // signal.method is present).
             const planCheck: ResultAsync<undefined, LifecycleError> = (() => {
               if (stepConfig.completion.method === "plan_created") {
+                if (!input.planStateProvider) {
+                  return errAsync(
+                    lifecyclePolicyDecisionError(
+                      "plan completion method requires a planStateProvider",
+                      "plan_state_provider",
+                    ),
+                  );
+                }
                 const planNameResult = renderPlanName(
                   stepConfig.completion.plan_name,
                   existing,
                 );
                 if (planNameResult.isErr())
                   return errAsync(planNameResult.error);
-                return checkPlanFileExists(planNameResult.value);
+                return input.planStateProvider
+                  .planExists(planNameResult.value)
+                  .mapErr(
+                    (providerErr): LifecycleError =>
+                      mapPlanStateError(providerErr, planNameResult.value),
+                  )
+                  .andThen((exists) => {
+                    if (!exists) {
+                      const planPath = `.weave/plans/${planNameResult.value}.md`;
+                      return errAsync(
+                        lifecycleNotFoundError(
+                          "plan_file",
+                          planPath,
+                          `Plan file "${planPath}" does not exist`,
+                        ),
+                      );
+                    }
+                    return okAsync(undefined);
+                  });
               }
               if (stepConfig.completion.method === "plan_complete") {
+                if (!input.planStateProvider) {
+                  return errAsync(
+                    lifecyclePolicyDecisionError(
+                      "plan completion method requires a planStateProvider",
+                      "plan_state_provider",
+                    ),
+                  );
+                }
                 const planNameResult = renderPlanName(
                   stepConfig.completion.plan_name,
                   existing,
                 );
                 if (planNameResult.isErr())
                   return errAsync(planNameResult.error);
-                return checkPlanComplete(planNameResult.value);
+                return input.planStateProvider
+                  .isPlanComplete(planNameResult.value)
+                  .mapErr(
+                    (providerErr): LifecycleError =>
+                      mapPlanStateError(providerErr, planNameResult.value),
+                  )
+                  .andThen((complete) => {
+                    if (!complete) {
+                      const planPath = `.weave/plans/${planNameResult.value}.md`;
+                      return errAsync(
+                        lifecycleValidationError(
+                          `Plan "${planPath}" has incomplete checkbox(es) — all tasks must be checked off`,
+                          "plan_complete",
+                        ),
+                      );
+                    }
+                    return okAsync(undefined);
+                  });
               }
               return okAsync(undefined);
             })();

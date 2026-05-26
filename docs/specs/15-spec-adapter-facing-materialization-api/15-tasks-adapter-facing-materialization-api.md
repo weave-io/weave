@@ -40,7 +40,7 @@
 - [ ] 1.2 Define `MaterializationInput` with a resolved `WeaveConfig` and only explicit adapter-provided context required for descriptor composition.
 - [ ] 1.3 Define `MaterializedAgent` and/or `MaterializationPlan` output types that preserve deterministic agent ordering.
 - [ ] 1.4 Define discriminated `MaterializationError` variants for category shuttle conflicts and descriptor composition failures.
-- [ ] 1.5 Implement the public function signature using `Result` or `ResultAsync` from `neverthrow` for expected failures.
+- [ ] 1.5 Implement the public function signature as `ResultAsync<MaterializationPlan, never>` from `neverthrow`; per-agent failures accumulate into `MaterializationPlan.errors[]` rather than causing top-level rejection.
 - [ ] 1.6 Export the public materialization function and public types from `packages/engine/src/index.ts`.
 - [ ] 1.7 Add an import/export test that imports the function and types from the package barrel.
 - [ ] 1.8 Run `bun run --filter '@weave/engine' typecheck` and save the command output as the typecheck proof artifact.
@@ -79,7 +79,7 @@
 
 - [ ] 3.1 Map `CategoryShuttleConflictError` from `generateCategoryShuttles(...)` into a `MaterializationError` variant without throwing.
 - [ ] 3.2 Map `ComposeError` from `composeAgentDescriptor(...)` into a `MaterializationError` variant that includes the affected `agentName`.
-- [ ] 3.3 Decide whether materialization stops on the first descriptor composition failure or accumulates multiple failures, then encode that behavior in the output type and tests.
+- [ ] 3.3 Accumulate all descriptor composition failures into `plan.errors[]` rather than stopping on the first failure; encode this partial-by-default behavior in the output type and tests.
 - [ ] 3.4 Add a category conflict test using an explicit `shuttle-frontend` agent plus a `frontend` category.
 - [ ] 3.5 Add a prompt composition failure test using an agent with neither `prompt` nor `prompt_file`.
 - [ ] 3.6 Add compatibility assertions that compare representative materialized descriptor fields with a direct `composeAgentDescriptor(...)` result.

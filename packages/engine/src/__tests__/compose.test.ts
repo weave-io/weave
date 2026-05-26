@@ -489,6 +489,7 @@ describe("composeAgentDescriptor", () => {
       const config = cfg(`
         agent shuttle {
           prompt "Shuttle prompt."
+          mode all
           tool_policy {
             delegate allow
           }
@@ -544,6 +545,73 @@ describe("composeAgentDescriptor", () => {
 
       expect(descriptor.delegationTargets.map((target) => target.name)).toEqual(
         ["helper"],
+      );
+    });
+
+    it("Mode_all_agent_with_non_shuttle_prefix_excludes_category_shuttles_from_delegation_targets", async () => {
+      const config = cfg(`
+        agent loom-shuttle {
+          prompt "Loom-shuttle prompt."
+          mode all
+          tool_policy {
+            delegate allow
+          }
+        }
+        agent shuttle-frontend {
+          prompt "Frontend shuttle prompt."
+        }
+        agent shuttle-backend {
+          prompt "Backend shuttle prompt."
+        }
+        agent helper {
+          prompt "Helper prompt."
+        }
+      `);
+
+      const descriptor = await descriptorFor(
+        "loom-shuttle",
+        config.agents["loom-shuttle"],
+        config,
+        config.agents,
+      );
+
+      expect(descriptor.delegationTargets.map((target) => target.name)).toEqual(
+        ["helper"],
+      );
+    });
+
+    it("Agent_named_shuttle_with_mode_primary_does_not_exclude_category_shuttles", async () => {
+      const config = cfg(`
+        agent shuttle {
+          prompt "Shuttle prompt."
+          mode primary
+          tool_policy {
+            delegate allow
+          }
+        }
+        agent shuttle-frontend {
+          prompt "Frontend shuttle prompt."
+        }
+        agent shuttle-backend {
+          prompt "Backend shuttle prompt."
+        }
+        agent helper {
+          prompt "Helper prompt."
+        }
+      `);
+
+      const descriptor = await descriptorFor(
+        "shuttle",
+        config.agents.shuttle,
+        config,
+        config.agents,
+      );
+
+      // mode primary targets are excluded from delegation, so shuttle-frontend and shuttle-backend
+      // are included (they have no mode set, defaulting to subagent), but shuttle itself is excluded
+      // (same agent). The key assertion: category shuttles are NOT excluded because source mode is primary.
+      expect(descriptor.delegationTargets.map((target) => target.name)).toEqual(
+        ["shuttle-frontend", "shuttle-backend", "helper"],
       );
     });
   });
@@ -680,6 +748,147 @@ describe("composeAgentDescriptor", () => {
 
       expect(loom.category).toBeUndefined();
       expect(shuttle.category).toBeUndefined();
+    });
+  });
+
+  describe("delegation_exclude routing", () => {
+    it("Excluded_target_absent_from_agent_delegation_list", async () => {
+      const config = cfg(`
+        agent router {
+          prompt "Router prompt."
+          tool_policy {
+            delegate allow
+          }
+          routing {
+            delegation_exclude ["warp"]
+          }
+        }
+        agent warp {
+          prompt "Warp prompt."
+        }
+        agent helper {
+          prompt "Helper prompt."
+        }
+      `);
+
+      const descriptor = await descriptorFor(
+        "router",
+        config.agents.router,
+        config,
+        config.agents,
+      );
+
+      const names = descriptor.delegationTargets.map((t) => t.name);
+      expect(names).not.toContain("warp");
+      expect(names).toContain("helper");
+    });
+
+    it("Excluded_target_still_appears_in_other_agents_delegation_list", async () => {
+      const config = cfg(`
+        agent router {
+          prompt "Router prompt."
+          tool_policy {
+            delegate allow
+          }
+          routing {
+            delegation_exclude ["warp"]
+          }
+        }
+        agent other-router {
+          prompt "Other router prompt."
+          tool_policy {
+            delegate allow
+          }
+        }
+        agent warp {
+          prompt "Warp prompt."
+        }
+        agent helper {
+          prompt "Helper prompt."
+        }
+      `);
+
+      // router excludes warp
+      const routerDescriptor = await descriptorFor(
+        "router",
+        config.agents.router,
+        config,
+        config.agents,
+      );
+      expect(
+        routerDescriptor.delegationTargets.map((t) => t.name),
+      ).not.toContain("warp");
+
+      // other-router does NOT exclude warp — warp should appear
+      const otherDescriptor = await descriptorFor(
+        "other-router",
+        config.agents["other-router"],
+        config,
+        config.agents,
+      );
+      expect(otherDescriptor.delegationTargets.map((t) => t.name)).toContain(
+        "warp",
+      );
+    });
+
+    it("Excluding_non_existent_target_is_a_noop", async () => {
+      const config = cfg(`
+        agent router {
+          prompt "Router prompt."
+          tool_policy {
+            delegate allow
+          }
+          routing {
+            delegation_exclude ["ghost-agent"]
+          }
+        }
+        agent helper {
+          prompt "Helper prompt."
+        }
+      `);
+
+      const descriptor = await descriptorFor(
+        "router",
+        config.agents.router,
+        config,
+        config.agents,
+      );
+
+      // ghost-agent doesn't exist — helper should still be present
+      expect(descriptor.delegationTargets.map((t) => t.name)).toEqual([
+        "helper",
+      ]);
+    });
+
+    it("Empty_delegation_exclude_includes_all_eligible_targets", async () => {
+      const config = cfg(`
+        agent router {
+          prompt "Router prompt."
+          tool_policy {
+            delegate allow
+          }
+          routing {
+            delegation_exclude []
+          }
+        }
+        agent helper {
+          prompt "Helper prompt."
+        }
+        agent reviewer {
+          prompt "Reviewer prompt."
+        }
+      `);
+
+      const descriptor = await descriptorFor(
+        "router",
+        config.agents.router,
+        config,
+        config.agents,
+      );
+
+      const names = descriptor.delegationTargets.map((t) => t.name);
+      expect(names).toContain("helper");
+      expect(names).toContain("reviewer");
     });
   });
 

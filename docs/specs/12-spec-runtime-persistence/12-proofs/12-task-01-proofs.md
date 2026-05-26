@@ -112,10 +112,9 @@ Ran 1032 tests across 35 files. [154.00ms]
 - `packages/cli/src/config/starter-config.ts` — Updated starter config template to use `settings { log_level INFO }`
 - `packages/cli/src/__fixtures__/valid.weave` — Updated fixture to use `settings { log_level INFO }`
 
-### Scripts
-- `scripts/validate-config.ts` — Updated `printSummary` to use `config.settings.log_level`; only prints when non-default (not INFO)
-- `scripts/__tests__/validate-config.test.ts` — Updated tests to use `settings { log_level ... }`
-- `scripts/fixtures/full-config.weave` — Updated fixture to use `settings { log_level DEBUG }`
+### Scripts (removed)
+
+> **Note**: The `scripts/validate-config.ts` script and its associated test and fixture files were removed in a subsequent cleanup. The `printSummary` / `log_level` logic described here was migrated to the CLI `validate` command at `packages/cli/src/commands/validate.ts` (see `formatSummary`). Use `weave validate` to exercise this behaviour.
 
 ### Engine
 - `packages/engine/src/__tests__/skill-resolution.test.ts` — Updated `makeConfig` helper to include `settings` field

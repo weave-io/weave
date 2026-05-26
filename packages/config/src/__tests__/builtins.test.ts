@@ -1,10 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { parseConfig } from "@weave/core";
-import {
-  BUILTIN_AGENT_NAMES,
-  BUILTIN_WEAVE_SOURCE,
-  getBuiltinConfig,
-} from "../builtins.js";
+import { BUILTIN_WEAVE_SOURCE, getBuiltinConfig } from "../builtins.js";
 
 describe("getBuiltinConfig", () => {
   it("(a) returns ok — not err", () => {
@@ -12,12 +8,23 @@ describe("getBuiltinConfig", () => {
     expect(result.isOk()).toBe(true);
   });
 
-  it("(b) result contains exactly 8 agents matching BUILTIN_AGENT_NAMES", () => {
+  it("(b) result contains exactly 8 agents", () => {
     const result = getBuiltinConfig();
     expect(result.isOk()).toBe(true);
     const config = result._unsafeUnwrap();
     const names = Object.keys(config.agents).sort();
-    expect(names).toEqual([...BUILTIN_AGENT_NAMES].sort());
+    expect(names).toEqual(
+      [
+        "loom",
+        "tapestry",
+        "shuttle",
+        "pattern",
+        "thread",
+        "spindle",
+        "weft",
+        "warp",
+      ].sort(),
+    );
     expect(names).toHaveLength(8);
   });
 

@@ -17,7 +17,7 @@
  * Replaces `cause?: unknown` to satisfy the repo rule: "Use discriminated
  * unions with explicit domain error types; never use `unknown` or bare strings."
  */
-export interface RuntimeStoreErrorCause {
+interface RuntimeStoreErrorCause {
   readonly name?: string;
   readonly message: string;
   readonly stack?: string;

@@ -22,7 +22,7 @@ type ValidatedConfig = {
   config: WeaveConfig;
 };
 
-export function validateExplicitPath(
+function validateExplicitPath(
   path: string,
   fs: FileSystem,
 ): ResultAsync<ValidatedConfig, ValidateError> {
@@ -74,7 +74,7 @@ export function validateExplicitPath(
     });
 }
 
-export function formatSummary(config: WeaveConfig): string {
+function formatSummary(config: WeaveConfig): string {
   const disabledAgents = config.disabled.agents.length;
   const disabledHooks = config.disabled.hooks.length;
   const disabledSkills = config.disabled.skills.length;
@@ -112,6 +112,8 @@ function validateEffective(
             return [`${error.path}: could not read config`];
           if (error.type === "BuiltinParseError")
             return error.errors.map((e) => `builtins:${formatError(e)}`);
+          if (error.type === "MergeError")
+            return error.errors.map((e) => `merge:${e.type}:${e.error.type}`);
           return error.errors.map((e) => `${error.path}:${formatError(e)}`);
         }),
       }),

@@ -122,14 +122,22 @@ function astToPlainObject(nodes: AstNode[]): {
         categories[node.name] = propertiesToObject(node.properties);
         break;
 
-      case "workflow":
-        workflows[node.name] = {
+      case "workflow": {
+        const workflowObj: Record<string, unknown> = {
           ...propertiesToObject(node.properties),
-          steps: node.steps.map((s) =>
-            transformStepProperties(s.name, s.properties),
-          ),
+          steps: node.steps.map((s) => {
+            const stepObj = transformStepProperties(s.name, s.properties);
+            if (s.insert_before !== undefined)
+              stepObj.insert_before = s.insert_before;
+            if (s.insert_after !== undefined)
+              stepObj.insert_after = s.insert_after;
+            return stepObj;
+          }),
         };
+        if (node.extends !== undefined) workflowObj.extends = node.extends;
+        workflows[node.name] = workflowObj;
         break;
+      }
 
       case "disable":
         disabled[node.target] = [

@@ -5,9 +5,10 @@
  * 1. A mock adapter can drive the full lifecycle flow end-to-end without a
  *    real harness process — using `createInMemoryRuntimeStore()` and the 7
  *    engine lifecycle functions directly.
- * 2. `WeaveRunner.run()` calls `init()` exactly once and does NOT call any
- *    lifecycle functions during initialization — the lifecycle surface is
- *    engine-owned and adapters call it, not the runner.
+ * 2. The canonical bootstrap pattern (adapter.init() → adapter.loadAvailableSkills()
+ *    → materializeAgents() → adapter.spawnSubagent()) calls init() exactly once
+ *    and does NOT call any lifecycle functions during initialization — the
+ *    lifecycle surface is engine-owned and adapters call it, not the bootstrap.
  * 3. No concrete hook registration is introduced by the engine lifecycle
  *    surface — adapters map harness events into lifecycle calls themselves.
  *
@@ -25,9 +26,9 @@ import {
   createInMemoryRuntimeStore,
   createWorkflowInstanceId,
   dispatchStep,
+  materializeAgents,
   observeSession,
   startExecution,
-  WeaveRunner,
   type WorkflowExecutionContext,
 } from "@weave/engine";
 import { MockAdapter } from "./mock-adapter.js";
@@ -280,17 +281,37 @@ describe("lifecycle integration — mock adapter drives end-to-end flow", () => 
 });
 
 // ---------------------------------------------------------------------------
-// WeaveRunner.run() — init boundary and lifecycle isolation
+// Bootstrap orchestration — init boundary and lifecycle isolation
 // ---------------------------------------------------------------------------
 
-describe("WeaveRunner.run() — init boundary and lifecycle isolation", () => {
+/**
+ * Canonical adapter bootstrap pattern used in this describe block.
+ *
+ * Performs: adapter.init() → adapter.loadAvailableSkills()
+ *   → materializeAgents({ config }) → adapter.spawnSubagent(descriptor) per agent
+ */
+async function orchestrate(
+  config: ReturnType<typeof cfg>,
+  adapter: MockAdapter,
+): Promise<void> {
+  await adapter.init();
+  await adapter.loadAvailableSkills();
+
+  const plan = (await materializeAgents({ config }))._unsafeUnwrap();
+
+  for (const { descriptor } of plan.agents) {
+    await adapter.spawnSubagent(descriptor);
+  }
+}
+
+describe("bootstrap orchestration — init boundary and lifecycle isolation", () => {
   let adapter: MockAdapter;
 
   beforeEach(() => {
     adapter = new MockAdapter();
   });
 
-  it("init() is called exactly once during WeaveRunner.run()", async () => {
+  it("init() is called exactly once during orchestrate()", async () => {
     const config = cfg(`
       agent loom {
         prompt "You are loom."
@@ -298,17 +319,17 @@ describe("WeaveRunner.run() — init boundary and lifecycle isolation", () => {
       }
     `);
 
-    await new WeaveRunner(config, adapter).run();
+    await orchestrate(config, adapter);
 
     expect(adapter.callsTo("init")).toHaveLength(1);
   });
 
-  it("no lifecycle functions are called as part of WeaveRunner.run() — lifecycle surface is adapter-driven", async () => {
+  it("no lifecycle functions are called as part of orchestrate() — lifecycle surface is adapter-driven", async () => {
     // The lifecycle functions (observeSession, startExecution, etc.) are
-    // ENGINE functions, not HarnessAdapter methods. WeaveRunner.run() does NOT
-    // call them — adapters call them in response to harness events.
+    // ENGINE functions, not HarnessAdapter methods. The bootstrap orchestration
+    // does NOT call them — adapters call them in response to harness events.
     //
-    // This test proves the boundary: after WeaveRunner.run() completes, the
+    // This test proves the boundary: after orchestrate() completes, the
     // only adapter calls recorded are init(), loadAvailableSkills(), and
     // spawnSubagent() — no lifecycle-related adapter methods.
     const config = cfg(`
@@ -318,20 +339,14 @@ describe("WeaveRunner.run() — init boundary and lifecycle isolation", () => {
       }
     `);
 
-    await new WeaveRunner(config, adapter).run();
+    await orchestrate(config, adapter);
 
     const methodsCalled = adapter.calls.map((c) => c.method);
 
-    // Only these three adapter methods should be called by the runner
+    // Only these three adapter methods should be called by the bootstrap
     expect(methodsCalled).toContain("init");
     expect(methodsCalled).toContain("loadAvailableSkills");
     expect(methodsCalled).toContain("spawnSubagent");
-
-    // registerHook must NOT be called — it is superseded by the lifecycle surface
-    expect(adapter.callsTo("registerHook")).toHaveLength(0);
-
-    // loadSkill must NOT be called — superseded by loadAvailableSkills
-    expect(adapter.callsTo("loadSkill")).toHaveLength(0);
   });
 
   it("init() is called before loadAvailableSkills() and spawnSubagent()", async () => {
@@ -339,7 +354,7 @@ describe("WeaveRunner.run() — init boundary and lifecycle isolation", () => {
       agent loom { prompt "Orchestrator." models ["claude-sonnet-4-5"] }
     `);
 
-    await new WeaveRunner(config, adapter).run();
+    await orchestrate(config, adapter);
 
     const initIdx = adapter.calls.findIndex((c) => c.method === "init");
     const loadIdx = adapter.calls.findIndex(
@@ -361,7 +376,7 @@ describe("WeaveRunner.run() — init boundary and lifecycle isolation", () => {
       agent warp    { prompt "Reviewer."     models ["claude-sonnet-4-5"] }
     `);
 
-    await new WeaveRunner(config, adapter).run();
+    await orchestrate(config, adapter);
 
     expect(adapter.callsTo("init")).toHaveLength(1);
   });
@@ -372,26 +387,10 @@ describe("WeaveRunner.run() — init boundary and lifecycle isolation", () => {
       disable agents ["loom"]
     `);
 
-    await new WeaveRunner(config, adapter).run();
+    await orchestrate(config, adapter);
 
     expect(adapter.callsTo("init")).toHaveLength(1);
     expect(adapter.callsTo("spawnSubagent")).toHaveLength(0);
-  });
-
-  it("no concrete hook registration is introduced by the engine lifecycle surface", async () => {
-    // The engine lifecycle surface (execution-lifecycle.ts) accepts a
-    // RuntimeStore and returns typed ResultAsync values. It does NOT register
-    // concrete harness callbacks or call adapter.registerHook().
-    //
-    // This test proves that running the full WeaveRunner lifecycle produces
-    // zero registerHook() calls — the engine never drives hook registration.
-    const config = cfg(`
-      agent loom { prompt "Orchestrator." models ["claude-sonnet-4-5"] }
-    `);
-
-    await new WeaveRunner(config, adapter).run();
-
-    expect(adapter.callsTo("registerHook")).toHaveLength(0);
   });
 });
 

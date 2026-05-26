@@ -2,9 +2,9 @@
  * Observable effects emitted by the Weave engine during agent materialisation.
  *
  * Effects are pure data records — they carry no side effects themselves.
- * Callers receive them via the optional `onEffect` callback on
- * `WeaveRunnerOptions` and may use them for logging, telemetry, testing, or
- * adapter-side policy enforcement.
+ * Callers receive them via the `onEffect` callback supplied to the bootstrap
+ * entry point (see `docs/adapter-bootstrap.md`) and may use them for logging,
+ * telemetry, testing, or adapter-side policy enforcement.
  *
  * No harness-specific tool names appear here. The `effectiveToolPolicy` field
  * is engine-computed from the abstract capability vocabulary; adapters receive

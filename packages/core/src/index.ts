@@ -51,12 +51,13 @@ export { parse } from "./parser.js";
 // ---------------------------------------------------------------------------
 export type {
   AgentConfig,
-  ArtifactRef,
+  ArtifactDecl,
   CategoryConfig,
   CompletionMethod,
   DelegationTrigger,
   LogLevel,
   OnReject,
+  RoutingConfig,
   RuntimeSettings,
   SettingsConfig,
   ToolPermission,
@@ -71,12 +72,13 @@ export type {
 // ---------------------------------------------------------------------------
 export {
   AgentConfigSchema,
-  ArtifactRefSchema,
+  ArtifactDeclSchema,
   CategoryConfigSchema,
   CompletionMethodSchema,
   DelegationTriggerSchema,
   LogLevelSchema,
   OnRejectSchema,
+  RoutingConfigSchema,
   RuntimeSettingsSchema,
   SettingsConfigSchema,
   ToolPermissionSchema,

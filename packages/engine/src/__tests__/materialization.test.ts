@@ -334,7 +334,7 @@ describe("materializeAgents", () => {
   });
 
   describe("typed failures", () => {
-    it("returns CategoryShuttleConflict error when explicit agent collides with generated shuttle", async () => {
+    it("collects CategoryShuttleConflict into plan.errors when explicit agent collides with generated shuttle", async () => {
       const result = await materializeAgents({
         config: cfg(`
           agent shuttle { prompt "Base shuttle" models ["model-shuttle"] mode all }
@@ -344,11 +344,14 @@ describe("materializeAgents", () => {
         `),
       });
 
-      expect(result.isErr()).toBe(true);
-      if (result.isOk()) return;
-      expect(result.error.type).toBe("CategoryShuttleConflict");
-      if (result.error.type !== "CategoryShuttleConflict") return;
-      expect(result.error.conflict).toEqual({
+      expect(result.isOk()).toBe(true);
+      if (result.isErr()) return;
+      const plan = result.value;
+      expect(plan.errors).toHaveLength(1);
+      const error = plan.errors[0];
+      expect(error?.type).toBe("CategoryShuttleConflict");
+      if (error?.type !== "CategoryShuttleConflict") return;
+      expect(error.conflict).toEqual({
         type: "CategoryShuttleConflictError",
         shuttleName: "shuttle-frontend",
         categoryName: "frontend",
@@ -357,23 +360,26 @@ describe("materializeAgents", () => {
       });
     });
 
-    it("returns DescriptorCompositionFailure when agent has no prompt source", async () => {
+    it("collects DescriptorCompositionFailure into plan.errors when agent has no prompt source", async () => {
       const result = await materializeAgents({
         config: cfg(`
           agent broken { models ["model-broken"] }
         `),
       });
 
-      expect(result.isErr()).toBe(true);
-      if (result.isOk()) return;
-      expect(result.error.type).toBe("DescriptorCompositionFailure");
-      if (result.error.type !== "DescriptorCompositionFailure") return;
-      expect(result.error.agentName).toBe("broken");
-      expect(result.error.cause.type).toBe("PromptSourceMissingError");
-      expect(result.error.cause.agentName).toBe("broken");
+      expect(result.isOk()).toBe(true);
+      if (result.isErr()) return;
+      const plan = result.value;
+      expect(plan.errors).toHaveLength(1);
+      const error = plan.errors[0];
+      expect(error?.type).toBe("DescriptorCompositionFailure");
+      if (error?.type !== "DescriptorCompositionFailure") return;
+      expect(error.agentName).toBe("broken");
+      expect(error.cause.type).toBe("PromptSourceMissingError");
+      expect(error.cause.agentName).toBe("broken");
     });
 
-    it("DescriptorCompositionFailure includes the affected agentName", async () => {
+    it("DescriptorCompositionFailure includes the affected agentName and successful agents still appear", async () => {
       const result = await materializeAgents({
         config: cfg(`
           agent alpha { prompt "Alpha" models ["model-alpha"] }
@@ -382,16 +388,20 @@ describe("materializeAgents", () => {
         `),
       });
 
-      expect(result.isErr()).toBe(true);
-      if (result.isOk()) return;
-      expect(result.error).toMatchObject({
+      expect(result.isOk()).toBe(true);
+      if (result.isErr()) return;
+      const plan = result.value;
+      // broken agent goes into errors[], alpha and omega still materialise
+      expect(plan.errors).toHaveLength(1);
+      expect(plan.errors[0]).toMatchObject({
         type: "DescriptorCompositionFailure",
         agentName: "broken",
         cause: { agentName: "broken" },
       });
+      expect(agentNames(plan)).toEqual(["alpha", "omega"]);
     });
 
-    it("does not throw on category shuttle conflict — returns err instead", async () => {
+    it("does not reject on category shuttle conflict — collects into plan.errors instead", async () => {
       const result = await materializeAgents({
         config: cfg(`
           agent shuttle { prompt "Base shuttle" models ["model-shuttle"] mode all }
@@ -401,9 +411,161 @@ describe("materializeAgents", () => {
         `),
       });
 
-      expect(result.isErr()).toBe(true);
-      if (result.isOk()) return;
-      expect(result.error.type).toBe("CategoryShuttleConflict");
+      expect(result.isOk()).toBe(true);
+      if (result.isErr()) return;
+      expect(result.value.errors[0]?.type).toBe("CategoryShuttleConflict");
+    });
+
+    it("accumulates multiple errors without short-circuiting", async () => {
+      const result = await materializeAgents({
+        config: cfg(`
+          agent broken-a { models ["model-a"] }
+          agent good { prompt "Good" models ["model-good"] }
+          agent broken-b { models ["model-b"] }
+        `),
+      });
+
+      expect(result.isOk()).toBe(true);
+      if (result.isErr()) return;
+      const plan = result.value;
+      expect(plan.errors).toHaveLength(2);
+      expect(plan.errors.map((e) => e.type)).toEqual([
+        "DescriptorCompositionFailure",
+        "DescriptorCompositionFailure",
+      ]);
+      expect(agentNames(plan)).toEqual(["good"]);
+    });
+
+    it("returns empty errors array when all agents materialise successfully", async () => {
+      const result = await materializeAgents({
+        config: cfg(`
+          agent alpha { prompt "Alpha" models ["model-alpha"] }
+          agent beta { prompt "Beta" models ["model-beta"] }
+        `),
+      });
+
+      expect(result.isOk()).toBe(true);
+      if (result.isErr()) return;
+      expect(result.value.errors).toHaveLength(0);
+    });
+  });
+
+  describe("partial-by-default invariants", () => {
+    // (a) one good agent + one bad agent both surface in their respective arrays
+    it("(a) one good agent and one bad agent surface in agents[] and errors[] respectively", async () => {
+      const result = await materializeAgents({
+        config: cfg(`
+          agent good { prompt "Good agent" models ["model-good"] }
+          agent bad { models ["model-bad"] }
+        `),
+      });
+
+      expect(result.isOk()).toBe(true);
+      if (result.isErr()) return;
+      const plan = result.value;
+
+      // good agent appears in agents[]
+      expect(plan.agents).toHaveLength(1);
+      expect(plan.agents[0]?.agentName).toBe("good");
+      expect(plan.agents[0]?.descriptor.composedPrompt).toBe("Good agent");
+
+      // bad agent appears in errors[]
+      expect(plan.errors).toHaveLength(1);
+      expect(plan.errors[0]?.type).toBe("DescriptorCompositionFailure");
+      if (plan.errors[0]?.type !== "DescriptorCompositionFailure") return;
+      expect(plan.errors[0].agentName).toBe("bad");
+      expect(plan.errors[0].cause.type).toBe("PromptSourceMissingError");
+    });
+
+    // (b) category shuttle conflict appears in errors[] and explicit agents still resolve
+    it("(b) category shuttle conflict in errors[] does not prevent explicit agents from resolving", async () => {
+      const result = await materializeAgents({
+        config: cfg(`
+          agent shuttle { prompt "Base shuttle" models ["model-shuttle"] mode all }
+          agent shuttle-backend { prompt "Explicit backend" models ["model-explicit"] }
+          agent loom { prompt "Loom" models ["model-loom"] mode primary }
+
+          category backend { patterns ["src/**/*.ts"] models ["model-backend"] }
+        `),
+      });
+
+      expect(result.isOk()).toBe(true);
+      if (result.isErr()) return;
+      const plan = result.value;
+
+      // conflict is collected into errors[]
+      expect(plan.errors).toHaveLength(1);
+      expect(plan.errors[0]?.type).toBe("CategoryShuttleConflict");
+      if (plan.errors[0]?.type !== "CategoryShuttleConflict") return;
+      expect(plan.errors[0].conflict.shuttleName).toBe("shuttle-backend");
+      expect(plan.errors[0].conflict.categoryName).toBe("backend");
+
+      // explicit agents still resolve — shuttle, shuttle-backend, loom all appear
+      const names = agentNames(plan);
+      expect(names).toContain("shuttle");
+      expect(names).toContain("shuttle-backend");
+      expect(names).toContain("loom");
+    });
+
+    // (c) all-failures case yields empty agents[] and populated errors[]
+    it("(c) all-failures case yields empty agents[] and populated errors[]", async () => {
+      const result = await materializeAgents({
+        config: cfg(`
+          agent broken-a { models ["model-a"] }
+          agent broken-b { models ["model-b"] }
+          agent broken-c { models ["model-c"] }
+        `),
+      });
+
+      expect(result.isOk()).toBe(true);
+      if (result.isErr()) return;
+      const plan = result.value;
+
+      // no agents materialised
+      expect(plan.agents).toHaveLength(0);
+
+      // all three failures collected
+      expect(plan.errors).toHaveLength(3);
+      expect(plan.errors.map((e) => e.type)).toEqual([
+        "DescriptorCompositionFailure",
+        "DescriptorCompositionFailure",
+        "DescriptorCompositionFailure",
+      ]);
+      const agentNames_ = plan.errors
+        .filter((e) => e.type === "DescriptorCompositionFailure")
+        .map((e) =>
+          e.type === "DescriptorCompositionFailure" ? e.agentName : "",
+        );
+      expect(agentNames_).toEqual(["broken-a", "broken-b", "broken-c"]);
+    });
+
+    // (d) ordering invariant — successful agents preserve config order regardless of which earlier agents failed
+    it("(d) successful agents preserve config order regardless of which earlier agents failed", async () => {
+      const result = await materializeAgents({
+        config: cfg(`
+          agent first { prompt "First" models ["model-first"] }
+          agent broken-1 { models ["model-broken-1"] }
+          agent second { prompt "Second" models ["model-second"] }
+          agent broken-2 { models ["model-broken-2"] }
+          agent third { prompt "Third" models ["model-third"] }
+        `),
+      });
+
+      expect(result.isOk()).toBe(true);
+      if (result.isErr()) return;
+      const plan = result.value;
+
+      // successful agents appear in declaration order
+      expect(agentNames(plan)).toEqual(["first", "second", "third"]);
+
+      // failed agents collected in declaration order
+      expect(plan.errors).toHaveLength(2);
+      const failedNames = plan.errors
+        .filter((e) => e.type === "DescriptorCompositionFailure")
+        .map((e) =>
+          e.type === "DescriptorCompositionFailure" ? e.agentName : "",
+        );
+      expect(failedNames).toEqual(["broken-1", "broken-2"]);
     });
   });
 
