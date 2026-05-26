@@ -1,6 +1,10 @@
 # Libraries
 
 - `packages/adapters/opencode/src/index.ts` — class OpenCodeAdapter, interface OpenCodeAdapterOptions
+- `packages/adapters/opencode/src/model-resolution.ts`
+  - function resolveModelForAgent: (descriptor, context) => Result<string, ModelResolutionError>
+  - interface OpenCodeModelContext
+  - type ModelResolutionError
 - `packages/adapters/opencode/src/opencode-client.ts`
   - class SdkOpenCodeClient
   - interface OpenCodeClientFacade
@@ -17,6 +21,7 @@
   - interface RunWorkflowInput
   - interface RunWorkflowResult
   - type RunWorkflowError
+- `packages/adapters/opencode/src/skill-discovery.ts` — function buildSkillInfoList: (names) => SkillInfo[], function validateDeclaredSkills: (declaredSkills, availableSkills, disabledSkills) => Result<void, string[]>
 - `packages/adapters/opencode/src/tool-policy-mapping.ts`
   - function toOpenCodePermission: (permission) => OpenCodePermissionValue
   - function buildReadToolsEntry: (readPermission) => Record<string, boolean> | undefined
@@ -24,7 +29,7 @@
   - type OpenCodePermissionValue
   - type OpenCodeToolPermissions
   - const READ_TOOL_NAMES: readonly string[]
-- `packages/adapters/opencode/src/translate-agent.ts` — function translateAgent: (descriptor) => Result<OpenCodeAgentConfig, TranslateAgentError>, type TranslateAgentError
+- `packages/adapters/opencode/src/translate-agent.ts` — function translateAgent: (descriptor, resolvedModel?) => Result<OpenCodeAgentConfig, TranslateAgentError>, type TranslateAgentError
 - `packages/cli/src/args.ts`
   - function parseArgs: (argv) => Result<ParsedArgs, ArgParseError>
   - interface ParsedArgs

@@ -575,15 +575,200 @@ describe("OpenCodeAdapter — spawnSubagent() listAgents failure", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests: loadAvailableSkills()
+// Tests: loadAvailableSkills() — harness-injection architecture
 // ---------------------------------------------------------------------------
 
 describe("OpenCodeAdapter — loadAvailableSkills()", () => {
-  it("returns an empty array (stub implementation)", async () => {
+  it("returns an empty array when no skills are injected", async () => {
+    // No availableSkills option → harness provided nothing → empty list
     const adapter = new OpenCodeAdapter({ projectRoot: "/tmp/test-project" });
     await adapter.init();
     const skills = await adapter.loadAvailableSkills();
     expect(skills).toEqual([]);
+  });
+
+  it("returns the injected harness-provided skill list", async () => {
+    const harnessSkills = [
+      { name: "tdd" },
+      { name: "code-review" },
+      { name: "security" },
+    ];
+    const adapter = new OpenCodeAdapter({
+      projectRoot: "/tmp/test-project",
+      availableSkills: harnessSkills,
+    });
+    await adapter.init();
+    const skills = await adapter.loadAvailableSkills();
+    expect(skills).toHaveLength(3);
+    expect(skills.map((s) => s.name)).toEqual([
+      "tdd",
+      "code-review",
+      "security",
+    ]);
+  });
+
+  it("returns injected skills with metadata intact", async () => {
+    const harnessSkills = [
+      { name: "tdd", metadata: { source: "harness", path: "/skills/tdd.md" } },
+    ];
+    const adapter = new OpenCodeAdapter({
+      projectRoot: "/tmp/test-project",
+      availableSkills: harnessSkills,
+    });
+    await adapter.init();
+    const skills = await adapter.loadAvailableSkills();
+    expect(skills[0]?.name).toBe("tdd");
+    expect((skills[0]?.metadata as { source: string })?.source).toBe("harness");
+  });
+
+  it("returns the same list on repeated calls (no filesystem side effects)", async () => {
+    const harnessSkills = [{ name: "tdd" }, { name: "code-review" }];
+    const adapter = new OpenCodeAdapter({
+      projectRoot: "/tmp/test-project",
+      availableSkills: harnessSkills,
+    });
+    await adapter.init();
+    const first = await adapter.loadAvailableSkills();
+    const second = await adapter.loadAvailableSkills();
+    expect(first).toEqual(second);
+  });
+
+  it("does not scan the filesystem — returns empty list for non-existent project root", async () => {
+    // Even if the project root has skill directories, the adapter must NOT scan them.
+    // Skills come only from the injected list.
+    const adapter = new OpenCodeAdapter({
+      projectRoot: "/tmp/test-project-with-no-skills",
+    });
+    await adapter.init();
+    const skills = await adapter.loadAvailableSkills();
+    // No injected skills → empty list, regardless of filesystem state
+    expect(skills).toEqual([]);
+  });
+
+  it("two adapters with different injected skills are independent", async () => {
+    const adapterA = new OpenCodeAdapter({
+      availableSkills: [{ name: "tdd" }],
+    });
+    const adapterB = new OpenCodeAdapter({
+      availableSkills: [{ name: "code-review" }, { name: "security" }],
+    });
+    await adapterA.init();
+    await adapterB.init();
+
+    const skillsA = await adapterA.loadAvailableSkills();
+    const skillsB = await adapterB.loadAvailableSkills();
+
+    expect(skillsA).toHaveLength(1);
+    expect(skillsA[0]?.name).toBe("tdd");
+    expect(skillsB).toHaveLength(2);
+    expect(skillsB.map((s) => s.name)).toEqual(["code-review", "security"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: spawnSubagent() — model resolution
+// ---------------------------------------------------------------------------
+
+describe("OpenCodeAdapter — spawnSubagent() model resolution", () => {
+  it("uses resolved model from modelContext when available", async () => {
+    const mockClient = new MockOpenCodeClient();
+    mockClient.setListAgentsResult(okAsync([]));
+
+    const adapter = new OpenCodeAdapter({
+      projectRoot: "/tmp/test-project",
+      client: mockClient,
+      modelContext: {
+        availableModels: new Set(["claude-sonnet-4-5"]),
+      },
+    });
+    await adapter.init();
+
+    await adapter.spawnSubagent(
+      makeDescriptor({ models: ["claude-sonnet-4-5"], mode: "subagent" }),
+    );
+
+    const call = mockClient.createAgentCalls[0];
+    expect(call?.config.model).toBe("claude-sonnet-4-5");
+  });
+
+  it("throws ModelNotAvailableError when subagent declares unsupported model", async () => {
+    const mockClient = new MockOpenCodeClient();
+
+    const adapter = new OpenCodeAdapter({
+      projectRoot: "/tmp/test-project",
+      client: mockClient,
+      modelContext: {
+        availableModels: new Set(["claude-sonnet-4-5"]),
+      },
+    });
+    await adapter.init();
+
+    await expect(
+      adapter.spawnSubagent(
+        makeDescriptor({ models: ["unsupported-model"], mode: "subagent" }),
+      ),
+    ).rejects.toThrow("ModelNotAvailableError");
+  });
+
+  it("does not call createAgent() when model resolution fails", async () => {
+    const mockClient = new MockOpenCodeClient();
+
+    const adapter = new OpenCodeAdapter({
+      projectRoot: "/tmp/test-project",
+      client: mockClient,
+      modelContext: {
+        availableModels: new Set(["claude-sonnet-4-5"]),
+      },
+    });
+    await adapter.init();
+
+    await expect(
+      adapter.spawnSubagent(
+        makeDescriptor({ models: ["unsupported-model"], mode: "subagent" }),
+      ),
+    ).rejects.toThrow();
+
+    expect(mockClient.createAgentCalls).toHaveLength(0);
+    expect(mockClient.updateAgentCalls).toHaveLength(0);
+  });
+
+  it("succeeds when no modelContext is provided (falls back to constant fallback)", async () => {
+    const mockClient = new MockOpenCodeClient();
+    mockClient.setListAgentsResult(okAsync([]));
+
+    // No modelContext — falls back to DEFAULT_FALLBACK_MODEL
+    const adapter = new OpenCodeAdapter({
+      projectRoot: "/tmp/test-project",
+      client: mockClient,
+    });
+    await adapter.init();
+
+    await expect(
+      adapter.spawnSubagent(makeDescriptor({ models: [] })),
+    ).resolves.toBeUndefined();
+
+    expect(mockClient.createAgentCalls).toHaveLength(1);
+  });
+
+  it("succeeds for primary mode agent with unavailable model (no fail-fast)", async () => {
+    const mockClient = new MockOpenCodeClient();
+    mockClient.setListAgentsResult(okAsync([]));
+
+    const adapter = new OpenCodeAdapter({
+      projectRoot: "/tmp/test-project",
+      client: mockClient,
+      modelContext: {
+        availableModels: new Set(["claude-sonnet-4-5"]),
+      },
+    });
+    await adapter.init();
+
+    // primary mode: fail-fast does not apply
+    await expect(
+      adapter.spawnSubagent(
+        makeDescriptor({ models: ["unavailable-model"], mode: "primary" }),
+      ),
+    ).resolves.toBeUndefined();
   });
 });
 

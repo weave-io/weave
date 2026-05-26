@@ -43,8 +43,8 @@ export type TranslateAgentError = {
  *
  * Translation rules:
  * - `composedPrompt` → `prompt`
- * - `models[0]` → `model` (first preference; OpenCode accepts a single model
- *   string per agent config entry)
+ * - `resolvedModel` → `model` (pre-validated by `resolveModelForAgent()`; when
+ *   `undefined` the model field is omitted and OpenCode uses its own default)
  * - `temperature` → `temperature` (passed through when defined)
  * - `description` → `description` (passed through when defined)
  * - `mode` → `mode`
@@ -52,11 +52,14 @@ export type TranslateAgentError = {
  *   `mapToolPolicy`
  *
  * @param descriptor - The fully composed agent descriptor from the engine.
+ * @param resolvedModel - The pre-validated model string from
+ *   `resolveModelForAgent()`. Pass `undefined` to omit the model field.
  * @returns `ok(OpenCodeAgentConfig)` on success, or
  *   `err(TranslateAgentError)` when the descriptor cannot be translated.
  */
 export function translateAgent(
   descriptor: AgentDescriptor,
+  resolvedModel?: string,
 ): Result<OpenCodeAgentConfig, TranslateAgentError> {
   const { permission, tools: toolsPatch } = mapToolPolicy(
     descriptor.effectiveToolPolicy,
@@ -68,10 +71,9 @@ export function translateAgent(
     permission,
   };
 
-  // model: use first preference when available
-  const primaryModel = descriptor.models[0];
-  if (primaryModel !== undefined) {
-    config.model = primaryModel;
+  // model: use the pre-validated resolved model when provided
+  if (resolvedModel !== undefined) {
+    config.model = resolvedModel;
   }
 
   // temperature: pass through when declared

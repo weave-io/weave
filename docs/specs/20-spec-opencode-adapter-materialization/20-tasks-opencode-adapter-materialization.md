@@ -82,22 +82,23 @@
 - [x] 3.5 Keep first-slice behavior upsert-only by refusing automatic delete, prune, or forced takeover operations.
 - [x] 3.6 Add `packages/adapters/opencode/src/__tests__/reconcile-agent.test.ts` coverage for create, update, and foreign-agent collision cases.
 
-### [ ] 4.0 Add model and skill validation to the materialization pipeline
+### [x] 4.0 Add model and skill validation to the materialization pipeline
 
 #### 4.0 Proof Artifact(s)
 
 - Test: `bun test packages/adapters/opencode/src/__tests__/model-resolution.test.ts` passes demonstrates the adapter calls `resolveAdapterModelIntent()` with OpenCode model context.
 - Test: `bun test packages/adapters/opencode/src/__tests__/adapter.test.ts` passes an unsupported explicit subagent model case demonstrates materialization fails intentionally.
 - Test: `bun test packages/adapters/opencode/src/__tests__/skill-discovery.test.ts` passes both success and missing-skill cases demonstrates real discovery plus hard-error resolution semantics.
+- Proof: `docs/specs/20-spec-opencode-adapter-materialization/20-proofs/20-task-04-proofs.md`
 
 #### 4.0 Tasks
 
-- [ ] 4.1 Create `packages/adapters/opencode/src/model-resolution.ts` to gather OpenCode model context and call `resolveAdapterModelIntent()`.
-- [ ] 4.2 Replace the current `descriptor.models[0]` translation shortcut with resolved-and-validated model selection before the final agent payload is materialized.
-- [ ] 4.3 Fail fast when explicit subagent model intent cannot be satisfied by the available OpenCode model set.
-- [ ] 4.4 Create `packages/adapters/opencode/src/skill-discovery.ts` to return real `SkillInfo[]` entries for the OpenCode-visible skills the adapter can discover.
-- [ ] 4.5 Keep engine-owned missing-skill semantics intact by surfacing unresolved declared skills as hard errors rather than silent skips.
-- [ ] 4.6 Add `translate-agent`, model-resolution, and skill-discovery tests covering supported resolution, unsupported explicit model failure, and missing declared skill failure.
+- [x] 4.1 Create `packages/adapters/opencode/src/model-resolution.ts` to gather OpenCode model context and call `resolveAdapterModelIntent()`.
+- [x] 4.2 Replace the current `descriptor.models[0]` translation shortcut with resolved-and-validated model selection before the final agent payload is materialized.
+- [x] 4.3 Fail fast when explicit subagent model intent cannot be satisfied by the available OpenCode model set.
+- [x] 4.4 Create `packages/adapters/opencode/src/skill-discovery.ts` to return harness-injected `SkillInfo[]` entries (no filesystem scanning; harness-owned discovery).
+- [x] 4.5 Keep engine-owned missing-skill semantics intact by surfacing unresolved declared skills as hard errors rather than silent skips.
+- [x] 4.6 Add `translate-agent`, model-resolution, and skill-discovery tests covering supported resolution, unsupported explicit model failure, and missing declared skill failure.
 
 ### [ ] 5.0 Document the adapter shape and prove acceptance for the first slice
 

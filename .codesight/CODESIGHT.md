@@ -3,15 +3,19 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weave/core, @weave/engine, @weave/config, @weave/cli, @weave/adapter-opencode
 
-> 0 routes | 0 models | 0 components | 55 lib files | 2 env vars | 0 middleware | 0% test coverage
-> **Token savings:** this file is ~4,700 tokens. Without it, AI exploration would cost ~23,700 tokens. **Saves ~18,900 tokens per conversation.**
-> **Last scanned:** 2026-05-26 19:30 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 57 lib files | 2 env vars | 0 middleware | 0% test coverage
+> **Token savings:** this file is ~4,900 tokens. Without it, AI exploration would cost ~24,200 tokens. **Saves ~19,300 tokens per conversation.**
+> **Last scanned:** 2026-05-26 19:46 — re-run after significant changes
 
 ---
 
 # Libraries
 
 - `packages/adapters/opencode/src/index.ts` — class OpenCodeAdapter, interface OpenCodeAdapterOptions
+- `packages/adapters/opencode/src/model-resolution.ts`
+  - function resolveModelForAgent: (descriptor, context) => Result<string, ModelResolutionError>
+  - interface OpenCodeModelContext
+  - type ModelResolutionError
 - `packages/adapters/opencode/src/opencode-client.ts`
   - class SdkOpenCodeClient
   - interface OpenCodeClientFacade
@@ -28,6 +32,7 @@
   - interface RunWorkflowInput
   - interface RunWorkflowResult
   - type RunWorkflowError
+- `packages/adapters/opencode/src/skill-discovery.ts` — function buildSkillInfoList: (names) => SkillInfo[], function validateDeclaredSkills: (declaredSkills, availableSkills, disabledSkills) => Result<void, string[]>
 - `packages/adapters/opencode/src/tool-policy-mapping.ts`
   - function toOpenCodePermission: (permission) => OpenCodePermissionValue
   - function buildReadToolsEntry: (readPermission) => Record<string, boolean> | undefined
@@ -35,7 +40,7 @@
   - type OpenCodePermissionValue
   - type OpenCodeToolPermissions
   - const READ_TOOL_NAMES: readonly string[]
-- `packages/adapters/opencode/src/translate-agent.ts` — function translateAgent: (descriptor) => Result<OpenCodeAgentConfig, TranslateAgentError>, type TranslateAgentError
+- `packages/adapters/opencode/src/translate-agent.ts` — function translateAgent: (descriptor, resolvedModel?) => Result<OpenCodeAgentConfig, TranslateAgentError>, type TranslateAgentError
 - `packages/cli/src/args.ts`
   - function parseArgs: (argv) => Result<ParsedArgs, ArgParseError>
   - interface ParsedArgs
@@ -298,7 +303,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 47 test files found
+> 50 test files found
 
 ---
 

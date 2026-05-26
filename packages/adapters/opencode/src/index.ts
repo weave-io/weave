@@ -19,11 +19,20 @@ import type {
   SkillInfo,
 } from "@weave/engine";
 import { logger } from "@weave/engine";
+import {
+  type OpenCodeModelContext,
+  resolveModelForAgent,
+} from "./model-resolution.js";
 import type { OpenCodeClientFacade } from "./opencode-client.js";
 import { reconcileAgent } from "./reconcile-agent.js";
 import type { OpenCodeAgentConfig } from "./sdk-types.js";
 import { translateAgent } from "./translate-agent.js";
 
+export type {
+  ModelResolutionError,
+  OpenCodeModelContext,
+} from "./model-resolution.js";
+export { resolveModelForAgent } from "./model-resolution.js";
 export type {
   OpenCodeClientError,
   OpenCodeClientFacade,
@@ -45,6 +54,10 @@ export type {
   RunWorkflowResult,
 } from "./run-workflow.js";
 export { runWorkflow } from "./run-workflow.js";
+export {
+  buildSkillInfoList,
+  validateDeclaredSkills,
+} from "./skill-discovery.js";
 
 const log = logger.child({ module: "adapter-opencode" });
 
@@ -85,6 +98,40 @@ export interface OpenCodeAdapterOptions {
    * ```
    */
   readonly client?: OpenCodeClientFacade;
+
+  /**
+   * OpenCode model context for model resolution.
+   *
+   * When provided, `spawnSubagent()` calls `resolveModelForAgent()` with this
+   * context to validate model intent before materializing each agent.
+   *
+   * When omitted, model resolution falls back to the engine's constant
+   * fallback model (`DEFAULT_FALLBACK_MODEL`).
+   */
+  readonly modelContext?: OpenCodeModelContext;
+
+  /**
+   * Harness-provided skill list for `loadAvailableSkills()`.
+   *
+   * The OpenCode harness (SDK/runtime) is responsible for discovering which
+   * skills are available. Callers inject the harness-provided skill list here
+   * so the adapter can forward it to the engine without performing any
+   * filesystem scanning.
+   *
+   * When omitted, `loadAvailableSkills()` returns an empty list. The engine
+   * will then emit `MissingSkill` errors for any declared skills that cannot
+   * be resolved — this is the correct hard-error behavior.
+   *
+   * @example
+   * ```ts
+   * // In an OpenCode plugin entry point, the SDK provides available skills:
+   * const harnessSkills = sdk.listAvailableSkills(); // harness-owned discovery
+   * const adapter = new OpenCodeAdapter({
+   *   availableSkills: harnessSkills.map(s => ({ name: s.name, metadata: s })),
+   * });
+   * ```
+   */
+  readonly availableSkills?: SkillInfo[];
 }
 
 /**
@@ -144,9 +191,31 @@ export class OpenCodeAdapter implements HarnessAdapter {
    */
   private readonly openCodeClient: OpenCodeClientFacade | undefined;
 
+  /**
+   * OpenCode model context for model resolution.
+   *
+   * Provided by the caller at construction time. When `undefined`, model
+   * resolution falls back to the engine's constant fallback model.
+   */
+  private readonly modelContext: OpenCodeModelContext;
+
+  /**
+   * Harness-provided skill list.
+   *
+   * Injected at construction time by the caller (e.g. an OpenCode plugin entry
+   * point that received the skill list from the harness SDK). The adapter
+   * forwards this list to the engine via `loadAvailableSkills()` without
+   * performing any filesystem scanning.
+   *
+   * `undefined` when no skills were injected (adapter returns empty list).
+   */
+  private readonly harnessSkills: SkillInfo[] | undefined;
+
   constructor(options: OpenCodeAdapterOptions = {}) {
     this.projectRoot = options.projectRoot ?? process.cwd();
     this.openCodeClient = options.client;
+    this.modelContext = options.modelContext ?? {};
+    this.harnessSkills = options.availableSkills;
   }
 
   /**
@@ -172,16 +241,26 @@ export class OpenCodeAdapter implements HarnessAdapter {
   /**
    * Return the list of skills available in the current OpenCode instance.
    *
-   * The engine calls this once during bootstrap — after `init()` and before
-   * agent materialisation — to obtain the adapter-provided skill context used
-   * for skill resolution.
+   * Forwards the harness-provided skill list injected at construction time via
+   * `OpenCodeAdapterOptions.availableSkills`. The OpenCode harness (SDK/runtime)
+   * is responsible for discovering which skills exist; the adapter's role is to
+   * receive that list and forward it to the engine for skill resolution.
    *
-   * @returns Empty array in this skeleton; concrete discovery is implemented
-   *   in a subsequent task.
+   * When no skills were injected, returns an empty list. The engine will then
+   * emit `MissingSkill` errors for any declared skills that cannot be resolved —
+   * this is the correct hard-error behavior (no silent skips).
+   *
+   * Boundary rule: this method must not scan the filesystem, query harness
+   * directories, or perform any harness-owned discovery. All discovery is
+   * delegated to the harness and injected via the constructor.
    */
   async loadAvailableSkills(): Promise<SkillInfo[]> {
-    log.debug("loadAvailableSkills called (stub — returning empty list)");
-    return [];
+    const skills = this.harnessSkills ?? [];
+    log.debug(
+      { count: skills.length, injected: this.harnessSkills !== undefined },
+      "Returning harness-provided skill list",
+    );
+    return skills;
   }
 
   /**
@@ -189,21 +268,47 @@ export class OpenCodeAdapter implements HarnessAdapter {
    *
    * ## Flow
    *
-   * 1. Translate the descriptor into an OpenCode `AgentConfig` via
-   *    `translateAgent`. Throws on translation failure.
-   * 2. Store the translated config in `translatedAgents` for test inspection
+   * 1. Resolve the model for this agent using `resolveModelForAgent()` with
+   *    the adapter-provided OpenCode model context. Throws on model resolution
+   *    failure (e.g. unsupported explicit subagent model).
+   * 2. Translate the descriptor into an OpenCode `AgentConfig` via
+   *    `translateAgent`, passing the resolved model. Throws on translation
+   *    failure.
+   * 3. Store the translated config in `translatedAgents` for test inspection
    *    and transitional compatibility.
-   * 3. When an `OpenCodeClientFacade` is available, call `reconcileAgent()` to
+   * 4. When an `OpenCodeClientFacade` is available, call `reconcileAgent()` to
    *    perform the SDK-backed `list → reconcile → create/update` flow.
    *    Throws on reconciliation failure (including collision errors).
-   * 4. When no client is available, log a warning and return (translation-only
+   * 5. When no client is available, log a warning and return (translation-only
    *    mode — no SDK calls are made).
    *
    * @param descriptor - Full normalized agent descriptor to materialise.
-   * @throws {Error} When translation fails or SDK-backed materialization fails.
+   * @throws {Error} When model resolution fails, translation fails, or
+   *   SDK-backed materialization fails.
    */
   async spawnSubagent(descriptor: AgentDescriptor): Promise<void> {
-    const translateResult = translateAgent(descriptor);
+    // Step 1: Resolve model using adapter-provided OpenCode model context.
+    const modelResult = resolveModelForAgent(descriptor, this.modelContext);
+
+    if (modelResult.isErr()) {
+      const error = modelResult.error;
+      log.error(
+        {
+          agent: descriptor.name,
+          errorType: error.type,
+          message: error.message,
+        },
+        "Failed to resolve model for agent",
+      );
+      throw new Error(
+        `Failed to resolve model for agent "${descriptor.name}": [${error.type}] ${error.message}`,
+      );
+    }
+
+    const resolvedModel = modelResult.value;
+
+    // Step 2: Translate descriptor to OpenCode AgentConfig with resolved model.
+    const translateResult = translateAgent(descriptor, resolvedModel);
 
     if (translateResult.isErr()) {
       log.error(

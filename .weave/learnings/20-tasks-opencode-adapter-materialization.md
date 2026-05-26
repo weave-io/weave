@@ -22,3 +22,15 @@
 - **Resolution**: Wrote 42 tests covering create, update, collision, `listAgents` failure, and upsert-only constraint cases. All acceptance criteria were met through test coverage alone; no production code changes were required.
 - **Suggestion**: When a plan introduces a module in a later task but an earlier task depends on it, either move the module introduction earlier in the plan or explicitly note in the later task that implementation may already be complete and only test coverage is needed.
 - **Learnings file hygiene**: The learnings file must be staged and committed as part of the task commit. Leaving it modified but uncommitted causes the worktree to appear dirty after the task is marked complete. Always include the learnings file in the final `git add` before committing.
+
+## Task 4: Add model and skill validation to the materialization pipeline
+- **`translateAgent()` signature change**: Adding `resolvedModel?: string` as a second parameter to `translateAgent()` is the cleanest way to decouple model resolution from translation. The function no longer reads `descriptor.models[0]` — callers must resolve the model first and pass it in. This keeps translation pure and model resolution adapter-owned.
+- **Fail-fast scope**: The fail-fast rule for unsupported explicit model intent applies only to `subagent` mode agents with non-empty `models` declarations. Primary and `all` mode agents fall through to the engine's standard resolution chain. This matches the spec requirement without over-constraining non-subagent agents.
+- **Learnings file hygiene**: Must be staged and committed as part of the task commit. Leaving it modified but uncommitted causes the worktree to appear dirty after the task is marked complete.
+
+## Task 4 retry: Correct the skill-discovery boundary violation
+- **Boundary violation**: The original Task 4 implementation scanned the filesystem for skill files in `.weave/skills/` and `.agents/skills/` directories. This violated the adapter/harness boundary: skill discovery is harness-owned, not adapter-owned.
+- **Correct architecture**: The harness SDK/runtime tells the adapter which skills are available. The adapter receives a `SkillInfo[]` list via `OpenCodeAdapterOptions.availableSkills` and forwards it to the engine via `loadAvailableSkills()`. No filesystem scanning.
+- **`skill-discovery.ts` scope after correction**: The module provides only `buildSkillInfoList()` (wraps harness-provided names as `SkillInfo[]`) and `validateDeclaredSkills()` (validates declared names against the harness-provided list). No `discoverSkills()` function.
+- **Hard-error semantics preserved**: When no skills are injected, `loadAvailableSkills()` returns `[]`. The engine's `resolveSkillsForAgent()` then emits `MissingSkill` errors for declared skills — correct hard-error behavior, no silent skips.
+- **Test strategy**: Filesystem-scanning tests were replaced with harness-injection tests. Tests prove the adapter returns injected skills, returns empty list when nothing is injected, and does not scan the filesystem for non-existent project roots.
