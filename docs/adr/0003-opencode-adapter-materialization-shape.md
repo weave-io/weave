@@ -28,30 +28,26 @@ The reference implementation in `~/projects/opencode-weave` (the legacy alpha) s
 
 ### 1. SDK-first, plugin/runtime-first entry path
 
-`@weave/adapter-opencode` is an **OpenCode plugin**. Users install it by adding the package to the `plugin` array in their `opencode.json` config. OpenCode loads the plugin at startup and calls the plugin entry point with a runtime context that includes a pre-constructed SDK client.
+`@weave/adapter-opencode` is an **OpenCode plugin**. Users install it by adding the package to the `plugin` array in their `opencode.json` config. OpenCode loads the plugin at startup and calls the default-exported `WeavePlugin` function with a runtime context that includes a pre-constructed SDK client.
 
-The adapter's entry point accepts an injected `OpenCodeClientFacade` rather than constructing its own SDK client. This means:
+The package exports a `WeavePlugin` function (and a `server` alias for `PluginModule` compatibility) that:
 
-- No global SDK client state is created or mutated by the adapter.
-- The adapter can be tested with a mock client without starting a real OpenCode process.
-- The plugin host (OpenCode) owns the SDK client lifecycle; the adapter is a consumer.
+1. Loads the Weave config from `input.directory` via `loadConfig()`.
+2. Calls `materializeAgents()` to compose all agent descriptors.
+3. Constructs an `OpenCodeAdapter` with the injected `SdkOpenCodeClient`.
+4. Calls `spawnSubagent()` for each descriptor.
+5. Returns an empty `Hooks` object — agent materialization is the sole responsibility.
 
-```ts
-// Plugin entry point (user-authored, in their project)
-import { OpenCodeAdapter, SdkOpenCodeClient } from "@weave/adapter-opencode";
-
-export default async function weavePlugin(ctx: { directory: string }) {
-  const sdkClient = createOpencodeClient({ directory: ctx.directory });
-  const adapter = new OpenCodeAdapter({
-    projectRoot: ctx.directory,
-    client: new SdkOpenCodeClient(sdkClient),
-  });
-  await adapter.init();
-  // ... materialize agents
+```jsonc
+// opencode.json — direct plugin installation
+{
+  "plugin": ["@weave/adapter-opencode"]
 }
 ```
 
-The `OpenCodeAdapterOptions.client` field is the primary injection point. When omitted, the adapter operates in translation-only mode (no SDK calls), which is useful for config-write-only scenarios and tests that only need translated config snapshots.
+No user-authored wrapper script is required. The package itself is the plugin entry point.
+
+The `OpenCodeAdapterOptions.client` field is the primary injection point for the SDK client. When omitted, the adapter operates in translation-only mode (no SDK calls), which is useful for config-write-only scenarios and tests that only need translated config snapshots.
 
 ### 2. Injected client, adapter-owned SDK facade
 
@@ -143,7 +139,9 @@ The `[weave-managed]` ownership tag is embedded in the agent's `description` fie
 
 ## References
 
-- [`packages/adapters/opencode/src/index.ts`](../../packages/adapters/opencode/src/index.ts) — `OpenCodeAdapter` entry point with injected client and constructor options.
+- [`packages/adapters/opencode/src/index.ts`](../../packages/adapters/opencode/src/index.ts) — Package barrel: re-exports all public API including `WeavePlugin`, `OpenCodeAdapter`, and helpers.
+- [`packages/adapters/opencode/src/plugin.ts`](../../packages/adapters/opencode/src/plugin.ts) — `WeavePlugin` OpenCode plugin entry point; default export loaded by OpenCode at startup.
+- [`packages/adapters/opencode/src/adapter.ts`](../../packages/adapters/opencode/src/adapter.ts) — `OpenCodeAdapter` class with injected client and constructor options.
 - [`packages/adapters/opencode/src/opencode-client.ts`](../../packages/adapters/opencode/src/opencode-client.ts) — `OpenCodeClientFacade` interface and `SdkOpenCodeClient` implementation.
 - [`packages/adapters/opencode/src/reconcile-agent.ts`](../../packages/adapters/opencode/src/reconcile-agent.ts) — Ownership-safe upsert reconciliation logic.
 - [`packages/adapters/opencode/src/model-resolution.ts`](../../packages/adapters/opencode/src/model-resolution.ts) — Adapter-local model resolution with fail-fast rule.

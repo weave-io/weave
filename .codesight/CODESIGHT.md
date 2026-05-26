@@ -3,15 +3,15 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weave/core, @weave/engine, @weave/config, @weave/cli, @weave/adapter-opencode
 
-> 0 routes | 0 models | 0 components | 57 lib files | 2 env vars | 0 middleware | 0% test coverage
-> **Token savings:** this file is ~4,900 tokens. Without it, AI exploration would cost ~24,200 tokens. **Saves ~19,300 tokens per conversation.**
-> **Last scanned:** 2026-05-26 19:55 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 58 lib files | 2 env vars | 0 middleware | 0% test coverage
+> **Token savings:** this file is ~4,900 tokens. Without it, AI exploration would cost ~24,400 tokens. **Saves ~19,500 tokens per conversation.**
+> **Last scanned:** 2026-05-26 20:10 — re-run after significant changes
 
 ---
 
 # Libraries
 
-- `packages/adapters/opencode/src/index.ts` — class OpenCodeAdapter, interface OpenCodeAdapterOptions
+- `packages/adapters/opencode/src/adapter.ts` — class OpenCodeAdapter, interface OpenCodeAdapterOptions
 - `packages/adapters/opencode/src/model-resolution.ts`
   - function resolveModelForAgent: (descriptor, context) => Result<string, ModelResolutionError>
   - interface OpenCodeModelContext
@@ -20,6 +20,7 @@
   - class SdkOpenCodeClient
   - interface OpenCodeClientFacade
   - type OpenCodeClientError
+- `packages/adapters/opencode/src/plugin.ts` — function WeavePlugin, const server
 - `packages/adapters/opencode/src/reconcile-agent.ts`
   - function classifyExistingAgent: (agentName, existingAgents) => ReconcileDecision
   - function tagWithOwnership: (config) => OpenCodeAgentConfig
@@ -267,14 +268,14 @@
 - `packages/cli/src/theme/colors.ts` — imported by **12** files
 - `packages/engine/src/runtime/errors.ts` — imported by **11** files
 - `packages/cli/src/io/terminal.ts` — imported by **10** files
+- `packages/adapters/opencode/src/sdk-types.ts` — imported by **8** files
 - `packages/core/src/tokens.ts` — imported by **8** files
 - `packages/engine/src/compose.ts` — imported by **8** files
-- `packages/adapters/opencode/src/sdk-types.ts` — imported by **7** files
 - `packages/cli/src/fs/file-system.ts` — imported by **7** files
+- `packages/adapters/opencode/src/index.ts` — imported by **6** files
 - `packages/cli/src/args.ts` — imported by **6** files
 - `packages/core/src/errors.ts` — imported by **6** files
 - `packages/engine/src/logger.ts` — imported by **6** files
-- `packages/adapters/opencode/src/index.ts` — imported by **5** files
 - `packages/cli/src/cli.ts` — imported by **5** files
 - `packages/cli/src/theme/render.ts` — imported by **5** files
 - `packages/cli/src/errors.ts` — imported by **5** files
@@ -290,20 +291,20 @@
 - `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/runtime.test.ts`, `packages/cli/src/commands/__tests__/validate.test.ts` +7 more
 - `packages/engine/src/runtime/errors.ts` ← `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-journal.test.ts`, `packages/engine/src/__tests__/runtime-journal.test.ts`, `packages/engine/src/execution-lifecycle.ts`, `packages/engine/src/runtime/fingerprint.ts` +6 more
 - `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/runtime.test.ts`, `packages/cli/src/commands/__tests__/validate.test.ts` +5 more
+- `packages/adapters/opencode/src/sdk-types.ts` ← `packages/adapters/opencode/src/__tests__/adapter.test.ts`, `packages/adapters/opencode/src/__tests__/plugin.test.ts`, `packages/adapters/opencode/src/__tests__/reconcile-agent.test.ts`, `packages/adapters/opencode/src/__tests__/run-workflow.test.ts`, `packages/adapters/opencode/src/adapter.ts` +3 more
 - `packages/core/src/tokens.ts` ← `packages/core/src/__tests__/lexer.test.ts`, `packages/core/src/ast.ts`, `packages/core/src/ast.ts`, `packages/core/src/index.ts`, `packages/core/src/index.ts` +3 more
 - `packages/engine/src/compose.ts` ← `packages/engine/src/__tests__/compose.test.ts`, `packages/engine/src/__tests__/mock-adapter.ts`, `packages/engine/src/__tests__/template-context.test.ts`, `packages/engine/src/adapter.ts`, `packages/engine/src/descriptors.ts` +3 more
-- `packages/adapters/opencode/src/sdk-types.ts` ← `packages/adapters/opencode/src/__tests__/adapter.test.ts`, `packages/adapters/opencode/src/__tests__/reconcile-agent.test.ts`, `packages/adapters/opencode/src/__tests__/run-workflow.test.ts`, `packages/adapters/opencode/src/index.ts`, `packages/adapters/opencode/src/reconcile-agent.ts` +2 more
 - `packages/cli/src/fs/file-system.ts` ← `packages/cli/src/__tests__/file-system.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/validate.test.ts`, `packages/cli/src/commands/validate.ts`, `packages/cli/src/installers/__tests__/installers.test.ts` +2 more
+- `packages/adapters/opencode/src/index.ts` ← `packages/adapters/opencode/src/__tests__/adapter.test.ts`, `packages/adapters/opencode/src/__tests__/adapter.test.ts`, `packages/adapters/opencode/src/__tests__/plugin.test.ts`, `packages/adapters/opencode/src/__tests__/reconcile-agent.test.ts`, `packages/adapters/opencode/src/__tests__/run-workflow.test.ts` +1 more
 - `packages/cli/src/args.ts` ← `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/runtime.test.ts`, `packages/cli/src/commands/init.ts`, `packages/cli/src/commands/validate.ts`, `packages/cli/src/index.ts` +1 more
 - `packages/core/src/errors.ts` ← `packages/core/src/__tests__/errors.test.ts`, `packages/core/src/index.ts`, `packages/core/src/lexer.ts`, `packages/core/src/parse-config.ts`, `packages/core/src/parser.ts` +1 more
-- `packages/engine/src/logger.ts` ← `packages/engine/src/compose.ts`, `packages/engine/src/index.ts`, `packages/engine/src/runtime/journal-writer.ts`, `packages/engine/src/runtime/sqlite/store.ts`, `packages/engine/src/template-context.ts` +1 more
 
 ---
 
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 50 test files found
+> 51 test files found
 
 ---
 

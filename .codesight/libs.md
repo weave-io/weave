@@ -1,6 +1,6 @@
 # Libraries
 
-- `packages/adapters/opencode/src/index.ts` — class OpenCodeAdapter, interface OpenCodeAdapterOptions
+- `packages/adapters/opencode/src/adapter.ts` — class OpenCodeAdapter, interface OpenCodeAdapterOptions
 - `packages/adapters/opencode/src/model-resolution.ts`
   - function resolveModelForAgent: (descriptor, context) => Result<string, ModelResolutionError>
   - interface OpenCodeModelContext
@@ -9,6 +9,7 @@
   - class SdkOpenCodeClient
   - interface OpenCodeClientFacade
   - type OpenCodeClientError
+- `packages/adapters/opencode/src/plugin.ts` — function WeavePlugin, const server
 - `packages/adapters/opencode/src/reconcile-agent.ts`
   - function classifyExistingAgent: (agentName, existingAgents) => ReconcileDecision
   - function tagWithOwnership: (config) => OpenCodeAgentConfig

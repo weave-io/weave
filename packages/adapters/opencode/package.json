@@ -17,6 +17,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@opencode-ai/plugin": "~1.15.9",
     "@opencode-ai/sdk": "~1.15.9",
     "@weave/config": "workspace:*",
     "@weave/core": "workspace:*",

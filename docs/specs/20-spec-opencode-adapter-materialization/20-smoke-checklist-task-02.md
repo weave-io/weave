@@ -47,63 +47,38 @@ agent smoke-test-agent {
 EOF
 ```
 
-### 3. Write a minimal OpenCode plugin entry point
+### 3. Add `@weave/adapter-opencode` to `opencode.json`
 
-Create `weave-plugin.ts` in the test project:
+Create or update `opencode.json` in the test project:
 
-```typescript
-import { createOpencodeClient } from "@opencode-ai/sdk";
-import { OpenCodeAdapter, SdkOpenCodeClient } from "@weave/adapter-opencode";
-import { loadConfig } from "@weave/config";
-import { buildDescriptors } from "@weave/engine";
-
-export default async function weavePlugin(ctx: { directory: string }) {
-  // Load Weave config
-  const configResult = await loadConfig({ projectRoot: ctx.directory });
-  if (configResult.isErr()) {
-    console.error("Weave config load failed:", configResult.error);
-    return;
-  }
-
-  // Build agent descriptors
-  const descriptors = buildDescriptors(configResult.value);
-
-  // Create SDK client and adapter
-  const sdkClient = createOpencodeClient({ directory: ctx.directory });
-  const adapter = new OpenCodeAdapter({
-    projectRoot: ctx.directory,
-    client: new SdkOpenCodeClient(sdkClient),
-  });
-
-  // Initialize and materialize
-  await adapter.init();
-  for (const descriptor of descriptors) {
-    await adapter.spawnSubagent(descriptor);
-    console.log(`Materialized agent: ${descriptor.name}`);
-  }
+```jsonc
+// opencode.json
+{
+  "plugin": ["@weave/adapter-opencode"]
 }
 ```
+
+> **No user-authored wrapper script is required.** The package itself is the plugin entry point. OpenCode loads the default-exported `WeavePlugin` function at startup, which reads `.weave/config.weave`, materializes all declared agents, and returns.
 
 ---
 
 ## Verification Steps
 
-### Step 1: Run the plugin entry point
+### Step 1: Start OpenCode in the test project
 
 ```bash
 cd /tmp/weave-smoke-test
-bun run weave-plugin.ts
+opencode
 ```
 
-**Expected output:**
-```
-Materialized agent: smoke-test-agent
-```
+OpenCode loads `@weave/adapter-opencode` at startup. The plugin reads `.weave/config.weave` and materializes `smoke-test-agent`.
 
-**Expected log output (pino JSON):**
+**Expected log output (pino JSON, visible in OpenCode app log):**
 ```json
+{"level":30,"module":"adapter-opencode/plugin","directory":"/tmp/weave-smoke-test","msg":"Weave plugin starting"}
 {"level":30,"module":"adapter-opencode","agent":"smoke-test-agent","msg":"Agent descriptor translated successfully"}
 {"level":30,"module":"adapter-opencode","agent":"smoke-test-agent","msg":"Agent materialized successfully via OpenCode SDK"}
+{"level":30,"module":"adapter-opencode/plugin","agentCount":1,"msg":"Weave plugin initialization complete"}
 ```
 
 ### Step 2: Verify the agent appears in OpenCode
@@ -122,23 +97,15 @@ opencode agents list
 
 ### Step 3: Verify idempotency (update path)
 
-Run the plugin entry point a second time:
-
-```bash
-bun run weave-plugin.ts
-```
+Restart OpenCode (or reload the plugin) a second time:
 
 **Expected**: No error. The agent is updated in place (not duplicated). The `[weave-managed]` tag is preserved.
 
 ### Step 4: Verify collision protection
 
-Manually create an agent named `smoke-test-agent` in OpenCode **without** the `[weave-managed]` tag (e.g. via the OpenCode UI or config file), then run the plugin again:
+Manually create an agent named `smoke-test-agent` in OpenCode **without** the `[weave-managed]` tag (e.g. via the OpenCode UI or config file), then restart OpenCode:
 
-```bash
-bun run weave-plugin.ts
-```
-
-**Expected**: The plugin logs a `CollisionError` and exits with a non-zero code. The manually created agent is **not** overwritten.
+**Expected**: The plugin logs a `CollisionError` and the manually created agent is **not** overwritten.
 
 ---
 
@@ -146,7 +113,7 @@ bun run weave-plugin.ts
 
 | Check | Expected |
 |-------|----------|
-| Plugin runs without uncaught exception | ✅ |
+| Plugin loads without uncaught exception | ✅ |
 | `smoke-test-agent` appears in OpenCode agent list | ✅ |
 | Agent description contains `[weave-managed]` | ✅ |
 | Second run updates agent without error | ✅ |
@@ -160,3 +127,4 @@ bun run weave-plugin.ts
 - The `[weave-managed]` ownership tag is the primary signal that distinguishes Weave-managed agents from manually created ones.
 - SDK calls flow through `SdkOpenCodeClient` → `client.app.agents()` (list) and `client.config.update()` (create/update).
 - If OpenCode is not running, `listAgents()` will return a `ListAgentsError` and materialization will fail with a clear error message.
+- The plugin entry point is `src/plugin.ts` — it exports `WeavePlugin` as the default export and `server` as a named export for `PluginModule` compatibility.

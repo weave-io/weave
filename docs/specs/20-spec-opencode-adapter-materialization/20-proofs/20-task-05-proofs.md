@@ -19,18 +19,23 @@ Task 5 completes the documentation and acceptance proof for the first-slice
 | 5.4 | Run quality gate and record results | ✅ |
 | 5.5 | Finalize sanitized smoke checklist reference | ✅ |
 
+**Task 5 retry**: Added `@opencode-ai/plugin` dependency, `src/plugin.ts` plugin
+entry point, `src/adapter.ts` (extracted from `index.ts`), and `plugin.test.ts`.
+The package now exports a real OpenCode `Plugin` function as its default export.
+
 ---
 
 ## Documents Created / Updated
 
 ### 5.1 — `docs/adr/0003-opencode-adapter-materialization-shape.md` (new)
 
-Documents four key design decisions for the first-slice adapter shape:
+Documents five key design decisions for the first-slice adapter shape:
 
 1. **SDK-first, plugin/runtime-first entry path** — `@weave/adapter-opencode`
    is an OpenCode plugin. Users install it via `opencode.json`'s `plugin` array.
-   The plugin host injects a pre-constructed SDK client; the adapter never
-   constructs its own.
+   The package exports `WeavePlugin` as its default export — the OpenCode plugin
+   entry point. No user-authored wrapper script is required. The plugin loads
+   `.weave/config.weave`, materializes all agents, and returns empty `Hooks`.
 
 2. **Injected client, adapter-owned SDK facade** — All SDK calls flow through
    the narrow `OpenCodeClientFacade` interface (`opencode-client.ts`). The
@@ -62,12 +67,59 @@ Added:
   - Explicit non-goals table (prune/delete, workflow-lifecycle, engine API drift,
     skill file loading).
   - Installation and runtime story (`opencode.json` `plugin` array + restart).
+  - Clarification that no user-authored wrapper script is required.
 
 ### 5.3 — `docs/adapter-boundary.md` (updated)
 
 Added links to ADR 0003 and Spec 20 in the Related section. No ownership rules
 changed — the implementation confirmed the existing boundary is correct and
 complete for the first slice.
+
+---
+
+## Source Files Created / Updated
+
+### New: `packages/adapters/opencode/src/plugin.ts`
+
+The OpenCode plugin entry point. Exports:
+- `WeavePlugin` — the `Plugin` function (default export). Loaded by OpenCode at
+  startup when the package is listed in `opencode.json`'s `plugin` array.
+- `server` — alias for `WeavePlugin` for `PluginModule` compatibility.
+
+The plugin function:
+1. Calls `loadConfig(input.directory)` to load `.weave/config.weave`.
+2. Calls `materializeAgents({ config })` to compose all agent descriptors.
+3. Constructs `OpenCodeAdapter` with `new SdkOpenCodeClient(input.client)`.
+4. Calls `adapter.spawnSubagent(descriptor)` for each descriptor.
+5. Returns `{}` (empty `Hooks`) — agent materialization is the sole job.
+
+### New: `packages/adapters/opencode/src/adapter.ts`
+
+`OpenCodeAdapter` class extracted from `index.ts` to avoid a circular import
+(`index.ts` → `plugin.ts` → `adapter.ts`). Identical behavior to the previous
+`index.ts` implementation.
+
+### Updated: `packages/adapters/opencode/src/index.ts`
+
+Converted to a clean barrel that re-exports from `adapter.ts`, `plugin.ts`, and
+all other adapter modules. Also re-exports `Plugin`, `PluginInput`, and
+`PluginModule` types from `@opencode-ai/plugin` for consumer convenience.
+
+### Updated: `packages/adapters/opencode/package.json`
+
+Added `@opencode-ai/plugin@~1.15.9` as a production dependency (matching the
+`@opencode-ai/sdk@~1.15.9` pin already present).
+
+### New: `packages/adapters/opencode/src/__tests__/plugin.test.ts`
+
+11 tests covering:
+- Module shape: `WeavePlugin` is a function, `server` === `WeavePlugin`, default
+  export === `WeavePlugin`.
+- `PluginModule` compatibility: `{ server: WeavePlugin }` satisfies the shape.
+- Config load failure: plugin returns `{}` without throwing when config fails.
+- Successful materialization: plugin returns empty `Hooks` object.
+- `@opencode-ai/plugin` dependency proof: package is importable.
+- Plugin type contract: `WeavePlugin` returns `Promise<Hooks>`.
 
 ---
 
@@ -81,7 +133,8 @@ bun test packages/adapters/opencode/src/__tests__/adapter.test.ts && \
 bun test packages/adapters/opencode/src/__tests__/reconcile-agent.test.ts && \
 bun test packages/adapters/opencode/src/__tests__/model-resolution.test.ts && \
 bun test packages/adapters/opencode/src/__tests__/skill-discovery.test.ts && \
-bun test packages/adapters/opencode/src/__tests__/run-workflow.test.ts
+bun test packages/adapters/opencode/src/__tests__/run-workflow.test.ts && \
+bun test packages/adapters/opencode/src/__tests__/plugin.test.ts
 ```
 
 ### Results
@@ -95,13 +148,13 @@ $ tsc --noEmit -p tsconfig.json && bun run --filter '*' typecheck
 @weave/cli typecheck: Exited with code 0
 
 bun test v1.3.13 (bf2e2cec)
- 137 pass
+ 165 pass
  0 fail
- 273 expect() calls
-Ran 137 tests across 5 files. [68.00ms]
+ 336 expect() calls
+Ran 165 tests across 7 files. [178.00ms]
 ```
 
-All 5 packages pass typecheck. All 137 tests pass across 5 test files.
+All 5 packages pass typecheck. All 165 tests pass across 7 test files.
 
 ### Per-file test breakdown
 
@@ -112,7 +165,9 @@ All 5 packages pass typecheck. All 137 tests pass across 5 test files.
 | `model-resolution.test.ts` | 23 | ✅ pass |
 | `skill-discovery.test.ts` | 24 | ✅ pass |
 | `run-workflow.test.ts` | 8 | ✅ pass |
-| **Total** | **137** | **✅ all pass** |
+| `translate-agent.test.ts` | 17 | ✅ pass |
+| `plugin.test.ts` | 11 | ✅ pass |
+| **Total** | **165** | **✅ all pass** |
 
 ---
 
@@ -131,18 +186,17 @@ materialization via the real SDK path. Key steps:
 
 1. Create `/tmp/weave-smoke-test` with a minimal `.weave/config.weave` declaring
    `smoke-test-agent`.
-2. Write a plugin entry point (`weave-plugin.ts`) that constructs
-   `OpenCodeAdapter` with an injected `SdkOpenCodeClient` and calls
-   `spawnSubagent()` for each descriptor.
-3. Run `bun run weave-plugin.ts` — expected output: `Materialized agent: smoke-test-agent`.
+2. Add `@weave/adapter-opencode` to `opencode.json`'s `plugin` array — **no
+   user-authored wrapper script required**.
+3. Start OpenCode — the `WeavePlugin` default export is called at startup.
 4. Verify `smoke-test-agent` appears in OpenCode with `[weave-managed]` in its
    description.
-5. Run a second time — verify idempotency (no duplicate, no error).
-6. Create a foreign agent with the same name (no `[weave-managed]` tag) and run
-   again — verify `CollisionError` is logged and the foreign agent is not
+5. Restart OpenCode — verify idempotency (no duplicate, no error).
+6. Create a foreign agent with the same name (no `[weave-managed]` tag) and
+   restart — verify `CollisionError` is logged and the foreign agent is not
    overwritten.
 
-**Pass criteria**: plugin runs without uncaught exception; agent appears in
+**Pass criteria**: plugin loads without uncaught exception; agent appears in
 OpenCode; `[weave-managed]` tag present; second run is idempotent; foreign agent
 triggers `CollisionError`.
 
@@ -164,11 +218,14 @@ triggers `CollisionError`.
 | Task 2 proof | `docs/specs/20-spec-opencode-adapter-materialization/20-proofs/20-task-02-proofs.md` |
 | Task 3 proof | `docs/specs/20-spec-opencode-adapter-materialization/20-proofs/20-task-03-proofs.md` |
 | Task 4 proof | `docs/specs/20-spec-opencode-adapter-materialization/20-proofs/20-task-04-proofs.md` |
-| Adapter entry point | `packages/adapters/opencode/src/index.ts` |
+| Plugin entry point | `packages/adapters/opencode/src/plugin.ts` |
+| Adapter class | `packages/adapters/opencode/src/adapter.ts` |
+| Package barrel | `packages/adapters/opencode/src/index.ts` |
 | SDK facade | `packages/adapters/opencode/src/opencode-client.ts` |
 | Reconciliation | `packages/adapters/opencode/src/reconcile-agent.ts` |
 | Model resolution | `packages/adapters/opencode/src/model-resolution.ts` |
 | Skill discovery | `packages/adapters/opencode/src/skill-discovery.ts` |
+| Plugin tests | `packages/adapters/opencode/src/__tests__/plugin.test.ts` |
 
 ---
 
@@ -180,5 +237,6 @@ triggers `CollisionError`.
 | `adapter-readiness-status.md` describes first slice, remaining non-goals, and installation/runtime story | ✅ | New "OpenCode Adapter — First-Slice Materialization" section with capability table, non-goals, and `opencode.json` install snippet |
 | `adapter-boundary.md` changes stay within current boundary rules and do not invent new engine contracts | ✅ | Only link additions; no ownership rules changed; implementation confirmed existing boundary is correct |
 | Proof file exists with reviewer-friendly context, raw evidence, sanitized smoke checklist path/command, and quality gate results | ✅ | This file |
-| Quality gate passes: `bun run typecheck && bun test [5 test files]` | ✅ | 137/137 tests pass; all 5 packages typecheck clean |
+| Quality gate passes: `bun run typecheck && bun test [6 test files]` | ✅ | 165/165 tests pass; all 5 packages typecheck clean |
+| Package exposes a real OpenCode plugin entry surface (not just an adapter class requiring a user-authored wrapper) | ✅ | `src/plugin.ts` exports `WeavePlugin` as default export; `@opencode-ai/plugin` is a declared dependency; `plugin.test.ts` proves the plugin contract |
 | Commit references Task 5 and Spec 20 | ✅ | Conventional Commit with `(adapter-opencode)` scope and task/spec reference in body |

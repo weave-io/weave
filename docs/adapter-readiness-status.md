@@ -115,9 +115,14 @@ future specs:
 }
 ```
 
-After adding the plugin entry, restart OpenCode. The plugin entry point
-receives the runtime context, constructs an `OpenCodeAdapter` with the injected
-SDK client, and materializes all agents declared in `.weave/config.weave`.
+After adding the plugin entry, restart OpenCode. The package's default-exported
+`WeavePlugin` function is called by OpenCode at startup. It loads
+`.weave/config.weave`, materializes all declared agents via the injected SDK
+client, and returns an empty `Hooks` object.
+
+**No user-authored wrapper script is required.** The package itself is the
+plugin entry point. The `WeavePlugin` function and a `server` alias (for
+`PluginModule` compatibility) are both exported from the package root.
 
 See [ADR 0003 — OpenCode Adapter Materialization Shape](adr/0003-opencode-adapter-materialization-shape.md)
 for the full design rationale and [Spec 20](specs/20-spec-opencode-adapter-materialization/20-spec-opencode-adapter-materialization.md)
