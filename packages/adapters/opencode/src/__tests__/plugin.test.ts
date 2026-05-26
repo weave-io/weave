@@ -17,7 +17,6 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { okAsync, ResultAsync } from "neverthrow";
@@ -93,14 +92,16 @@ function makeMockPluginInput(
 /**
  * Creates a minimal temp project with a `.weave/config.weave` declaring one
  * agent. Returns the project root path.
+ *
+ * Uses `Bun.write()` which creates parent directories automatically — no
+ * `node:fs` required.
  */
-function makeTempProject(agentName = "smoke-agent"): string {
+async function makeTempProject(agentName = "smoke-agent"): Promise<string> {
   const root = join(
     tmpdir(),
     `weave-plugin-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
   );
-  mkdirSync(join(root, ".weave"), { recursive: true });
-  writeFileSync(
+  await Bun.write(
     join(root, ".weave", "config.weave"),
     [
       `agent ${agentName} {`,
@@ -202,7 +203,7 @@ describe("WeavePlugin — config load failure", () => {
 
 describe("WeavePlugin — successful materialization", () => {
   it("returns an empty Hooks object (no hook handlers registered)", async () => {
-    const root = makeTempProject("hooks-test-agent");
+    const root = await makeTempProject("hooks-test-agent");
     const client = new MockOpenCodeClient();
     client.setListResult(okAsync([]));
 
