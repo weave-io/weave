@@ -3,7 +3,7 @@
 **Spec**: [20-spec-opencode-adapter-materialization.md](./20-spec-opencode-adapter-materialization.md)  
 **Tasks**: [20-tasks-opencode-adapter-materialization.md](./20-tasks-opencode-adapter-materialization.md)  
 **Worktree**: `/Users/jose/projects/weave.worktrees/spec-20-opencode-materialization`  
-**HEAD**: `6430a31` → live-debug validated  
+**HEAD**: `faf0774` → live-debug validated  
 **Base commit**: `b54aacf`  
 **Validation date**: 2026-05-26  
 **Validator**: Shuttle (automated)
@@ -75,7 +75,7 @@
 | `node:path` / `node:os` allowed | Bun compatibility modules permitted | Verified | `node:os` (`tmpdir`) used in `plugin.test.ts` is explicitly allowed |
 | `neverthrow` error handling | All fallible functions return `Result<T,E>` or `ResultAsync<T,E>` | Verified | Adapter and reconcile-agent use neverthrow throughout |
 | No `console.*` logging | Use shared pino logger from `@weave/engine` | Verified | Zero `console.` hits in `packages/adapters/opencode/src` |
-| Conventional Commits | All commits follow `<type>(<scope>): <summary>` | Verified | All 7 commits in range follow the convention |
+| Conventional Commits | All commits follow `<type>(<scope>): <summary>` | Verified | All 9 commits in range follow the convention |
 | No committed secrets | No credentials, API keys, or secret values in tracked files | Verified | Secret scan found no committed credentials; spec/proof text mentions "secret" only in descriptive prose |
 | Docs updated | Non-trivial changes reflected in `docs/` | Verified | ADR 0003, adapter-readiness-status, adapter-boundary, proof files, smoke checklist all present |
 
@@ -196,7 +196,7 @@ Config load failed due to pre-existing `log_level INFO` at top level in the user
 
 ### B. Git Traceability
 
-Commits in range `b54aacf..7fcbe1a` (7 commits):
+Commits in range `b54aacf..faf0774` (9 commits):
 
 | SHA | Message |
 |-----|---------|
@@ -207,14 +207,16 @@ Commits in range `b54aacf..7fcbe1a` (7 commits):
 | `46c96f7` | `docs(adapter-opencode): document first-slice materialization shape and prove acceptance` |
 | `da9573b` | `fix(adapter-opencode): add real OpenCode plugin entry surface` |
 | `7fcbe1a` | `fix(adapter-opencode): build workspace deps before tsc declaration emit` |
+| `6430a31` | `fix(adapter-opencode): replace node:fs test setup with Bun-native helpers` |
+| `faf0774` | `fix(adapter-opencode): add plugin-only bundle to fix OpenCode getLegacyPlugins compatibility` |
 
 ---
 
 ### C. Changed-File Linkage
 
-**Files changed since base**: 33 (vs 23 listed in Relevant Files in the spec).
+**Files changed since base**: 34 (vs 23 listed in Relevant Files in the spec).
 
-The 10 additional files are justified as follows:
+The 11 additional files are justified as follows:
 
 | Category | Files | Justification |
 |----------|-------|---------------|
@@ -232,7 +234,7 @@ No out-of-scope core drift detected. All core file changes map to a spec task.
 
 | Check | Result |
 |-------|--------|
-| Clean worktree at HEAD `6430a31` | Confirmed (after live-debug fix commit) |
+| Clean worktree at HEAD `faf0774` | Confirmed (after live-debug fix commit) |
 | No `console.` in `packages/adapters/opencode/src` | Zero hits |
 | Direct `@opencode-ai/sdk` imports in executable code | Only in `sdk-types.ts`; doc comment example in `adapter.ts` is non-runtime |
 | Secret scan | No committed credentials; "secret" appears only in descriptive prose in spec/proof files |
