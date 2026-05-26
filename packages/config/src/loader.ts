@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { errAsync, type ResultAsync } from "neverthrow";
+import { err, errAsync, ok, type ResultAsync } from "neverthrow";
 import { getBuiltinConfig } from "./builtins.js";
 import {
   bunFileReader,
@@ -8,7 +8,7 @@ import {
 } from "./discovery.js";
 import type { ConfigLoadError } from "./errors.js";
 import { logger } from "./logger.js";
-import { mergeConfigs } from "./merge.js";
+import { mergeConfigsResult } from "./merge.js";
 import { normalizePath } from "./normalize-path.js";
 import { resolvePromptPaths } from "./resolve.js";
 import type { ConfigScope } from "./types.js";
@@ -71,7 +71,7 @@ export function loadConfig(
   const builtinConfig = builtinResult.value;
 
   // Step 2–5: Discover, resolve, merge
-  return discoverAndParse(projectRoot, fileReader).map((discovered) => {
+  return discoverAndParse(projectRoot, fileReader).andThen((discovered) => {
     // Step 3: Resolve prompt paths for each layer
     const builtinScope: ConfigScope = {
       kind: "builtin",
@@ -84,12 +84,21 @@ export function loadConfig(
     );
 
     // Step 4: Merge all layers
-    const merged = mergeConfigs(resolvedBuiltins, ...resolvedDiscovered);
+    const mergeResult = mergeConfigsResult(
+      resolvedBuiltins,
+      ...resolvedDiscovered,
+    );
+    if (mergeResult.isErr()) {
+      return err<import("@weave/core").WeaveConfig, ConfigLoadError[]>([
+        { type: "MergeError", errors: mergeResult.error },
+      ]);
+    }
 
+    const merged = mergeResult.value;
     const agentCount = Object.keys(merged.agents).length;
     log.debug({ agentCount }, "Merged config");
     log.info("Config loaded successfully");
 
-    return merged;
+    return ok(merged);
   });
 }

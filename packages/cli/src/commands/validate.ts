@@ -112,6 +112,8 @@ function validateEffective(
             return [`${error.path}: could not read config`];
           if (error.type === "BuiltinParseError")
             return error.errors.map((e) => `builtins:${formatError(e)}`);
+          if (error.type === "MergeError")
+            return error.errors.map((e) => `merge:${e.type}:${e.error.type}`);
           return error.errors.map((e) => `${error.path}:${formatError(e)}`);
         }),
       }),

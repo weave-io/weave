@@ -1,4 +1,5 @@
 import type { ConfigError } from "@weave/core";
+import type { MergeError } from "./merge.js";
 
 /**
  * Discriminated union of all errors that can occur during config loading.
@@ -39,4 +40,13 @@ export type ConfigLoadError =
   | {
       type: "BuiltinParseError";
       errors: ConfigError[];
+    }
+
+  /**
+   * One or more workflow extension errors occurred during config merging.
+   * `errors` contains all `MergeError` entries from `mergeConfigsResult`.
+   */
+  | {
+      type: "MergeError";
+      errors: MergeError[];
     };

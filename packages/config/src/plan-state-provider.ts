@@ -11,7 +11,7 @@
  */
 
 import type { PlanStateError, PlanStateProvider } from "@weave/engine";
-import { errAsync, okAsync, ResultAsync } from "neverthrow";
+import { errAsync, ResultAsync } from "neverthrow";
 
 // ---------------------------------------------------------------------------
 // Safe-name validation
@@ -39,13 +39,26 @@ function isSafePlanName(planName: string): boolean {
 /**
  * Default `PlanStateProvider` implementation backed by `Bun.file()`.
  *
- * Plan files are expected at `.weave/plans/<planName>.md` relative to the
- * current working directory (the project root).
+ * Plan files are expected at `<projectRoot>/.weave/plans/<planName>.md`.
+ * When `projectRoot` is omitted the current working directory is used,
+ * which is equivalent to the previous behaviour.
  *
  * Safe-name validation runs before any filesystem path is constructed to
  * prevent path traversal attacks.
  */
 export class BunFilesystemPlanStateProvider implements PlanStateProvider {
+  /** Absolute path to the project root directory. */
+  private readonly projectRoot: string;
+
+  /**
+   * @param projectRoot - Absolute path to the project root. Defaults to
+   *   `process.cwd()` when omitted, preserving the original behaviour of
+   *   resolving plan files relative to the current working directory.
+   */
+  constructor(projectRoot?: string) {
+    this.projectRoot = projectRoot ?? process.cwd();
+  }
+
   /**
    * Check whether the plan file for `planName` exists.
    *
@@ -58,7 +71,7 @@ export class BunFilesystemPlanStateProvider implements PlanStateProvider {
       return errAsync({ type: "InvalidPlanName" as const, planName });
     }
 
-    const planPath = `.weave/plans/${planName}.md`;
+    const planPath = `${this.projectRoot}/.weave/plans/${planName}.md`;
     return ResultAsync.fromPromise(
       Bun.file(planPath).exists(),
       (cause): PlanStateError => ({ type: "ProviderUnavailable", cause }),
@@ -78,7 +91,7 @@ export class BunFilesystemPlanStateProvider implements PlanStateProvider {
       return errAsync({ type: "InvalidPlanName" as const, planName });
     }
 
-    const planPath = `.weave/plans/${planName}.md`;
+    const planPath = `${this.projectRoot}/.weave/plans/${planName}.md`;
     return ResultAsync.fromPromise(
       Bun.file(planPath).text(),
       (cause): PlanStateError => ({ type: "ProviderUnavailable", cause }),
