@@ -19,9 +19,16 @@ Task 5 completes the documentation and acceptance proof for the first-slice
 | 5.4 | Run quality gate and record results | ✅ |
 | 5.5 | Finalize sanitized smoke checklist reference | ✅ |
 
-**Task 5 retry**: Added `@opencode-ai/plugin` dependency, `src/plugin.ts` plugin
+**Task 5 retry 1**: Added `@opencode-ai/plugin` dependency, `src/plugin.ts` plugin
 entry point, `src/adapter.ts` (extracted from `index.ts`), and `plugin.test.ts`.
 The package now exports a real OpenCode `Plugin` function as its default export.
+
+**Task 5 retry 2**: Fixed `bun run --filter @weave/adapter-opencode build` by
+updating the adapter's `package.json` build script to build workspace dependencies
+(`@weave/core`, `@weave/engine`, `@weave/config`) before the adapter itself. The
+`tsc --emitDeclarationOnly` step requires the dependency `dist/` directories to
+exist; the `--filter` command only builds the one package, so dependencies must be
+built explicitly in the script.
 
 ---
 
@@ -238,5 +245,6 @@ triggers `CollisionError`.
 | `adapter-boundary.md` changes stay within current boundary rules and do not invent new engine contracts | ✅ | Only link additions; no ownership rules changed; implementation confirmed existing boundary is correct |
 | Proof file exists with reviewer-friendly context, raw evidence, sanitized smoke checklist path/command, and quality gate results | ✅ | This file |
 | Quality gate passes: `bun run typecheck && bun test [6 test files]` | ✅ | 165/165 tests pass; all 5 packages typecheck clean |
+| `bun run --filter @weave/adapter-opencode build` passes from clean state | ✅ | Build script updated to build `@weave/core`, `@weave/engine`, `@weave/config` first; `tsc --emitDeclarationOnly` succeeds with dist files present |
 | Package exposes a real OpenCode plugin entry surface (not just an adapter class requiring a user-authored wrapper) | ✅ | `src/plugin.ts` exports `WeavePlugin` as default export; `@opencode-ai/plugin` is a declared dependency; `plugin.test.ts` proves the plugin contract |
 | Commit references Task 5 and Spec 20 | ✅ | Conventional Commit with `(adapter-opencode)` scope and task/spec reference in body |

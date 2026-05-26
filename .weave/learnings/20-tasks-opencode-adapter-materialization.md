@@ -50,3 +50,9 @@
 - **Test isolation for global config**: Tests that call `loadConfig()` in a dev environment may pick up the developer's global `~/.weave/config.weave`. Use a `FileReader` that returns `exists: false` for paths outside the test project root to prevent global config interference.
 - **`materializeAgents` return type**: `materializeAgents` returns `ResultAsync<MaterializationPlan, never>`. The `never` error type means `_unsafeUnwrap()` is safe — the promise always resolves to `ok()`.
 - **Docs must match implementation**: Never claim a package has a plugin entry surface unless the package actually exports the `Plugin` function and declares `@opencode-ai/plugin` as a dependency. Docs that overstate capabilities are worse than no docs.
+
+## Task 5 retry 2: Fix the package build
+- **Root cause**: `bun run --filter @weave/adapter-opencode build` failed because the `tsc --emitDeclarationOnly` step requires the `dist/` directories of workspace dependencies (`@weave/core`, `@weave/engine`, `@weave/config`) to exist. The `--filter` flag only builds the one package; it does not build its workspace dependencies first.
+- **Fix**: Updated the adapter's `package.json` build script to build workspace dependencies before the adapter itself: `bun run --filter @weave/core build && bun run --filter @weave/engine --filter @weave/config build && bun build ... && tsc ...`.
+- **Why not `paths` in `tsconfig.build.json`**: Adding `paths` pointing to source files outside `rootDir` causes `TS6059: File is not under rootDir` errors. The `rootDir` constraint is enforced during declaration emit. The correct fix is to ensure dist files exist before the tsc step runs.
+- **Pattern**: Any adapter package that depends on workspace packages and uses `tsc --emitDeclarationOnly` must either (a) build dependencies first in its own build script, or (b) rely on the root build script to build in dependency order. The `--filter` shortcut only works when dependencies are already built.
