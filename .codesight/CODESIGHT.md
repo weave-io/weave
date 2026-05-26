@@ -3,14 +3,28 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weave/core, @weave/engine, @weave/config, @weave/cli, @weave/adapter-opencode
 
-> 0 routes | 0 models | 0 components | 51 lib files | 2 env vars | 0 middleware | 0% test coverage
-> **Token savings:** this file is ~4,400 tokens. Without it, AI exploration would cost ~22,600 tokens. **Saves ~18,200 tokens per conversation.**
-> **Last scanned:** 2026-05-22 22:14 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 53 lib files | 2 env vars | 0 middleware | 0% test coverage
+> **Token savings:** this file is ~4,500 tokens. Without it, AI exploration would cost ~23,100 tokens. **Saves ~18,600 tokens per conversation.**
+> **Last scanned:** 2026-05-26 15:30 — re-run after significant changes
 
 ---
 
 # Libraries
 
+- `packages/adapters/opencode/src/index.ts` — class OpenCodeAdapter, interface OpenCodeAdapterOptions
+- `packages/adapters/opencode/src/run-workflow.ts`
+  - function runWorkflow: (input) => ResultAsync<RunWorkflowResult, RunWorkflowError>
+  - interface RunWorkflowInput
+  - interface RunWorkflowResult
+  - type RunWorkflowError
+- `packages/adapters/opencode/src/tool-policy-mapping.ts`
+  - function toOpenCodePermission: (permission) => OpenCodePermissionValue
+  - function buildReadToolsEntry: (readPermission) => Record<string, boolean> | undefined
+  - function mapToolPolicy: (policy) => void
+  - type OpenCodePermissionValue
+  - type OpenCodeToolPermissions
+  - const READ_TOOL_NAMES: readonly string[]
+- `packages/adapters/opencode/src/translate-agent.ts` — function translateAgent: (descriptor) => Result<OpenCodeAgentConfig, TranslateAgentError>, type TranslateAgentError
 - `packages/cli/src/args.ts`
   - function parseArgs: (argv) => Result<ParsedArgs, ArgParseError>
   - interface ParsedArgs
@@ -18,15 +32,8 @@
   - type ArgParseError
 - `packages/cli/src/cli.ts` — function run: (deps?) => Promise<Result<number, CliError>>, interface CliDeps
 - `packages/cli/src/commands/init.ts` — function runInit: (ctx) => Promise<Result<number, CliError>>, interface InitContext
-- `packages/cli/src/commands/runtime.ts`
-  - function runRuntime: (ctx) => Promise<Result<number, CliError>>
-  - interface RuntimeCommandContext
-  - const DEFAULT_RUNTIME_DB_PATH
-- `packages/cli/src/commands/validate.ts`
-  - function validateExplicitPath: (path, fs) => ResultAsync<ValidatedConfig, ValidateError>
-  - function formatSummary: (config) => string
-  - function runValidate: (ctx) => Promise<Result<number, CliError>>
-  - interface ValidateContext
+- `packages/cli/src/commands/runtime.ts` — function runRuntime: (ctx) => Promise<Result<number, CliError>>, interface RuntimeCommandContext
+- `packages/cli/src/commands/validate.ts` — function runValidate: (ctx) => Promise<Result<number, CliError>>, interface ValidateContext
 - `packages/cli/src/config/starter-config.ts` — function starterConfig: (scope) => string
 - `packages/cli/src/detect/index.ts`
   - function detectHarnesses: (probes) => void
@@ -52,19 +59,17 @@
   - class BunFileSystem
   - class MemoryFileSystem
   - interface FileSystem
-  - type FileSystemErrorCause
   - type FileSystemError
 - `packages/cli/src/installers/index.ts`
   - function installerRegistry: (fs) => Record<SupportedHarnessId, HarnessInstaller>
-  - function unsupportedInstaller: (id) => HarnessInstaller
-  - function skipUnsupported: (id) => InstallResult
   - function installAllSupported: (input, string[]>;
 }) => ResultAsync<InstallResult[], InstallError>
   - interface HarnessInstaller
   - type AdapterModule
-  - _...3 more_
+  - type InstallRequest
+  - type InstallResult
+  - _...1 more_
 - `packages/cli/src/installers/opencode.ts` — class OpenCodeInstaller
-- `packages/cli/src/installers/unsupported.ts` — function unsupportedHarnessInstall: (harness) => ResultAsync<InstallResult, InstallError>, function undetectedHarnessInstall: (harness) => ResultAsync<InstallResult, InstallError>
 - `packages/cli/src/io/terminal.ts`
   - class RealTerminal
   - class BufferTerminal
@@ -88,18 +93,21 @@
   - class ThemeRenderer
   - interface VersionSource
   - const defaultThemeRenderer
-- `packages/config/src/builtins.ts`
-  - function getBuiltinConfig: () => Result<WeaveConfig, ConfigError[]>
-  - const BUILTIN_AGENT_NAMES: readonly string[]
-  - const BUILTIN_WEAVE_SOURCE
+- `packages/config/src/builtins.ts` — function getBuiltinConfig: () => Result<WeaveConfig, ConfigError[]>, const BUILTIN_WEAVE_SOURCE
 - `packages/config/src/discovery.ts`
   - function discoverAndParse: (projectRoot?, fileReader) => ResultAsync<DiscoveredConfig[], ConfigLoadError[]>
   - interface FileReader
   - type DiscoveredConfig
   - const bunFileReader: FileReader
 - `packages/config/src/loader.ts` — function loadConfig: (projectRoot?, fileReader) => ResultAsync<import("@weave/core").WeaveConfig, ConfigLoadError[]>
-- `packages/config/src/merge.ts` — function mergeConfigs: (...configs) => WeaveConfig
+- `packages/config/src/merge.ts`
+  - function mergeWorkflow: (workflowName, base, override, workflowMap, WorkflowConfig>) => Result<WorkflowConfig, WorkflowExtensionError>
+  - function mergeConfigsResult: (...configs) => Result<WeaveConfig, MergeError[]>
+  - function mergeConfigs: (...configs) => WeaveConfig
+  - type WorkflowExtensionError
+  - type MergeError
 - `packages/config/src/normalize-path.ts` — function normalizePath: (p) => string
+- `packages/config/src/plan-state-provider.ts` — class BunFilesystemPlanStateProvider
 - `packages/config/src/resolve.ts` — function resolvePromptPaths: (config, scope) => WeaveConfig
 - `packages/core/src/errors.ts`
   - function formatError: (error) => string
@@ -107,9 +115,9 @@
   - type ParseError
   - type ValidationError
   - type ConfigError
-- `packages/core/src/lexer.ts` — function tokenize: (source) => Result<Token[], LexError[]>, class Lexer
+- `packages/core/src/lexer.ts` — function tokenize: (source) => Result<Token[], LexError[]>
 - `packages/core/src/parse-config.ts` — function parseConfig: (source) => Result<WeaveConfig, ConfigError[]>
-- `packages/core/src/parser.ts` — function parse: (tokens) => Result<AstNode[], ParseError[]>, class Parser
+- `packages/core/src/parser.ts` — function parse: (tokens) => Result<AstNode[], ParseError[]>
 - `packages/core/src/validate.ts` — function validate: (ast) => Result<WeaveConfig, ValidationError[]>
 - `packages/engine/src/capability-contract.ts`
   - function evaluateCoreReadinessProfile: (contract) => ProfileEvaluationResult
@@ -132,8 +140,9 @@
   - interface GeneratedCategoryShuttle
   - type CategoryShuttleConflictError
 - `packages/engine/src/env.ts`
-  - function parseEnv: (raw) => Env
+  - function parseEnv: (raw, string | undefined>) => Result<Env, EnvValidationError>
   - type Env
+  - type EnvValidationError
   - const envSchema
   - const env: Env
 - `packages/engine/src/execution-lifecycle.ts`
@@ -145,7 +154,7 @@
   - function lifecyclePolicyDecisionError: (message, rule?) => LifecyclePolicyDecisionError
   - _...41 more_
 - `packages/engine/src/materialization.ts`
-  - function materializeAgents: (input) => ResultAsync<MaterializationPlan, MaterializationError>
+  - function materializeAgents: (input) => ResultAsync<MaterializationPlan, never>
   - interface MaterializationInput
   - interface MaterializedAgent
   - interface MaterializationPlan
@@ -156,11 +165,6 @@
   - interface ModelResolutionResult
   - type ResolutionSource
   - const DEFAULT_FALLBACK_MODEL
-- `packages/engine/src/runner.ts`
-  - class WeaveRunner
-  - interface WeaveRunnerOptions
-  - type WeaveRunnerAdapterError
-  - type WeaveRunnerError
 - `packages/engine/src/runtime/errors.ts`
   - function initializationError: (message, cause?) => RuntimeStoreInitializationError
   - function migrationVersionError: (foundVersion, supportedVersion, message) => RuntimeStoreMigrationVersionError
@@ -168,7 +172,7 @@
   - function queryError: (message, cause?) => RuntimeStoreQueryError
   - function notFoundError: (entity, id, message?) => RuntimeStoreNotFoundError
   - function conflictError: (entity, message, conflictingId?) => RuntimeStoreConflictError
-  - _...12 more_
+  - _...11 more_
 - `packages/engine/src/runtime/fingerprint.ts` — function createProjectSalt: () => string, function fingerprintContent: (salt, content) => ResultAsync<string, RuntimeStoreError>
 - `packages/engine/src/runtime/journal-writer.ts` — class RuntimeJournalWriter, interface WriteJournalEntryInput
 - `packages/engine/src/runtime/memory-store.ts`
@@ -216,7 +220,6 @@
   - interface TemplateContext
   - interface RenderOptions
   - type RendererError
-  - type TemplateContextValue
 - `packages/engine/src/tool-policy.ts`
   - function evaluateEffectiveToolPolicy: (policy) => EffectiveToolPolicy
   - function resolveToolDecisions: (toolIds, classifications, effectivePolicy) => ToolDecision[]
@@ -225,7 +228,6 @@
   - type MappedToolDecision
   - type UnmappedToolDecision
   - _...3 more_
-- `scripts/validate-config.ts` — function printSummary: (config, configPath) => void
 
 ---
 
@@ -258,14 +260,14 @@
 - `packages/cli/src/cli.ts` — imported by **5** files
 - `packages/cli/src/theme/render.ts` — imported by **5** files
 - `packages/cli/src/errors.ts` — imported by **5** files
+- `packages/config/src/builtins.ts` — imported by **5** files
 - `packages/config/src/discovery.ts` — imported by **5** files
+- `packages/config/src/merge.ts` — imported by **5** files
 - `packages/config/src/types.ts` — imported by **5** files
 - `packages/core/src/lexer.ts` — imported by **5** files
 - `packages/engine/src/descriptors.ts` — imported by **5** files
-- `packages/config/src/builtins.ts` — imported by **4** files
+- `packages/adapters/opencode/src/sdk-types.ts` — imported by **4** files
 - `packages/config/src/normalize-path.ts` — imported by **4** files
-- `packages/core/src/parser.ts` — imported by **4** files
-- `packages/engine/src/env.ts` — imported by **4** files
 
 ## Import Map (who imports what)
 
@@ -277,7 +279,7 @@
 - `packages/cli/src/fs/file-system.ts` ← `packages/cli/src/__tests__/file-system.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/validate.test.ts`, `packages/cli/src/commands/validate.ts`, `packages/cli/src/installers/__tests__/installers.test.ts` +2 more
 - `packages/cli/src/args.ts` ← `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/runtime.test.ts`, `packages/cli/src/commands/init.ts`, `packages/cli/src/commands/validate.ts`, `packages/cli/src/index.ts` +1 more
 - `packages/core/src/errors.ts` ← `packages/core/src/__tests__/errors.test.ts`, `packages/core/src/index.ts`, `packages/core/src/lexer.ts`, `packages/core/src/parse-config.ts`, `packages/core/src/parser.ts` +1 more
-- `packages/engine/src/logger.ts` ← `packages/engine/src/index.ts`, `packages/engine/src/runner.ts`, `packages/engine/src/runtime/journal-writer.ts`, `packages/engine/src/runtime/sqlite/store.ts`, `packages/engine/src/template-context.ts` +1 more
+- `packages/engine/src/logger.ts` ← `packages/engine/src/compose.ts`, `packages/engine/src/index.ts`, `packages/engine/src/runtime/journal-writer.ts`, `packages/engine/src/runtime/sqlite/store.ts`, `packages/engine/src/template-context.ts` +1 more
 - `packages/cli/src/cli.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/commands/__tests__/runtime.test.ts`, `packages/cli/src/index.ts`, `packages/cli/src/index.ts`, `packages/cli/src/main.ts`
 
 ---
@@ -285,7 +287,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 44 test files found
+> 45 test files found
 
 ---
 

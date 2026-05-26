@@ -41,7 +41,7 @@ export interface OpenCodeAdapterOptions {
    *
    * Used to construct the `BunFilesystemPlanStateProvider` so that plan files
    * are resolved relative to the correct project root. Defaults to
-   * `process.cwd()` when omitted.
+   * `Bun.cwd` when omitted.
    */
   readonly projectRoot?: string;
 }
@@ -76,11 +76,11 @@ export class OpenCodeAdapter implements HarnessAdapter {
    */
   planStateProvider: PlanStateProvider | undefined = undefined;
 
-  /** Absolute path to the project root. Defaults to `process.cwd()`. */
+  /** Absolute path to the project root. Defaults to `Bun.cwd`. */
   private readonly projectRoot: string;
 
   constructor(options: OpenCodeAdapterOptions = {}) {
-    this.projectRoot = options.projectRoot ?? process.cwd();
+    this.projectRoot = options.projectRoot ?? Bun.cwd;
   }
 
   /**
@@ -119,7 +119,11 @@ export class OpenCodeAdapter implements HarnessAdapter {
    * `translateAgent`, logs the outcome, and stores the result in
    * `translatedAgents` for downstream consumption (config writing, task 10).
    *
+   * Throws when translation fails so the caller can handle the error rather
+   * than silently continuing with a partially-materialised agent set.
+   *
    * @param descriptor - Full normalized agent descriptor to materialise.
+   * @throws {Error} When the descriptor cannot be translated to an OpenCode config.
    */
   async spawnSubagent(descriptor: AgentDescriptor): Promise<void> {
     const result = translateAgent(descriptor);
@@ -133,7 +137,9 @@ export class OpenCodeAdapter implements HarnessAdapter {
         },
         "Failed to translate agent descriptor",
       );
-      return;
+      throw new Error(
+        `Failed to translate agent descriptor for "${descriptor.name}": ${result.error.message}`,
+      );
     }
 
     const config = result.value;

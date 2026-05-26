@@ -10,28 +10,41 @@
  * - PlanStateProvider and PlanStateError are importable from @weave/engine
  */
 
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
+import { rmdir, unlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { BunFilesystemPlanStateProvider } from "@weave/config";
 import type { PlanStateError, PlanStateProvider } from "@weave/engine";
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Isolated temp directory — no real project files touched
 // ---------------------------------------------------------------------------
 
-const TEST_PLAN_DIR = ".weave/plans";
+let TEST_ROOT: string;
+let TEST_PLAN_DIR: string;
+
+beforeAll(async () => {
+  // Create an isolated temp directory so tests never touch the real project.
+  TEST_ROOT = join(tmpdir(), `weave-plan-state-test-${Date.now()}`);
+  TEST_PLAN_DIR = join(TEST_ROOT, ".weave", "plans");
+  await Bun.write(join(TEST_PLAN_DIR, ".keep"), "");
+});
+
+afterAll(async () => {
+  // Clean up the entire temp tree after all tests finish.
+  await rmdir(TEST_ROOT, { recursive: true }).catch(() => undefined);
+});
 
 async function writePlan(slug: string, content: string): Promise<string> {
-  const path = `${TEST_PLAN_DIR}/${slug}.md`;
+  const path = join(TEST_PLAN_DIR, `${slug}.md`);
   await Bun.write(path, content);
   return path;
 }
 
 async function removePlan(slug: string): Promise<void> {
-  const path = `${TEST_PLAN_DIR}/${slug}.md`;
-  const file = Bun.file(path);
-  if (await file.exists()) {
-    await Bun.$`rm -f ${path}`;
-  }
+  const path = join(TEST_PLAN_DIR, `${slug}.md`);
+  await unlink(path).catch(() => undefined);
 }
 
 // ---------------------------------------------------------------------------
@@ -115,7 +128,7 @@ describe("BunFilesystemPlanStateProvider: safe-name validation", () => {
 // ---------------------------------------------------------------------------
 
 describe("BunFilesystemPlanStateProvider: planExists", () => {
-  const provider = new BunFilesystemPlanStateProvider();
+  // Provider is constructed lazily inside each test so TEST_ROOT is available.
   const slug = `test-plan-exists-${Date.now()}`;
 
   afterEach(async () => {
@@ -123,6 +136,7 @@ describe("BunFilesystemPlanStateProvider: planExists", () => {
   });
 
   it("returns ok(false) when plan file does not exist", async () => {
+    const provider = new BunFilesystemPlanStateProvider(TEST_ROOT);
     const result = await provider.planExists(`nonexistent-plan-${Date.now()}`);
     expect(result.isOk()).toBe(true);
     if (!result.isOk()) return;
@@ -130,6 +144,7 @@ describe("BunFilesystemPlanStateProvider: planExists", () => {
   });
 
   it("returns ok(true) when plan file exists", async () => {
+    const provider = new BunFilesystemPlanStateProvider(TEST_ROOT);
     await writePlan(slug, "# Plan\n\n- [x] Task 1\n");
     const result = await provider.planExists(slug);
     expect(result.isOk()).toBe(true);
@@ -143,7 +158,7 @@ describe("BunFilesystemPlanStateProvider: planExists", () => {
 // ---------------------------------------------------------------------------
 
 describe("BunFilesystemPlanStateProvider: isPlanComplete", () => {
-  const provider = new BunFilesystemPlanStateProvider();
+  // Provider is constructed lazily inside each test so TEST_ROOT is available.
   const slug = `test-plan-complete-${Date.now()}`;
 
   afterEach(async () => {
@@ -151,6 +166,7 @@ describe("BunFilesystemPlanStateProvider: isPlanComplete", () => {
   });
 
   it("returns ok(true) when all checkboxes are checked", async () => {
+    const provider = new BunFilesystemPlanStateProvider(TEST_ROOT);
     await writePlan(
       slug,
       "# Plan\n\n- [x] Task 1\n- [x] Task 2\n- [x] Task 3\n",
@@ -162,6 +178,7 @@ describe("BunFilesystemPlanStateProvider: isPlanComplete", () => {
   });
 
   it("returns ok(true) when there are no checkboxes at all", async () => {
+    const provider = new BunFilesystemPlanStateProvider(TEST_ROOT);
     await writePlan(slug, "# Plan\n\nJust some text, no checkboxes.\n");
     const result = await provider.isPlanComplete(slug);
     expect(result.isOk()).toBe(true);
@@ -170,6 +187,7 @@ describe("BunFilesystemPlanStateProvider: isPlanComplete", () => {
   });
 
   it("returns ok(false) when there is one incomplete checkbox", async () => {
+    const provider = new BunFilesystemPlanStateProvider(TEST_ROOT);
     await writePlan(
       slug,
       "# Plan\n\n- [x] Task 1\n- [ ] Task 2 (incomplete)\n- [x] Task 3\n",
@@ -181,6 +199,7 @@ describe("BunFilesystemPlanStateProvider: isPlanComplete", () => {
   });
 
   it("returns ok(false) when all checkboxes are incomplete", async () => {
+    const provider = new BunFilesystemPlanStateProvider(TEST_ROOT);
     await writePlan(
       slug,
       "# Plan\n\n- [ ] Task 1\n- [ ] Task 2\n- [ ] Task 3\n",
@@ -192,6 +211,7 @@ describe("BunFilesystemPlanStateProvider: isPlanComplete", () => {
   });
 
   it("returns err(ProviderUnavailable) when plan file does not exist", async () => {
+    const provider = new BunFilesystemPlanStateProvider(TEST_ROOT);
     const result = await provider.isPlanComplete(
       `nonexistent-plan-${Date.now()}`,
     );

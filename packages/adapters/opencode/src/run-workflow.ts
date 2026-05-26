@@ -202,6 +202,14 @@ function completeAndAdvance(
   stepName: string,
   state: LoopState,
 ): ResultAsync<RunWorkflowResult, RunWorkflowError> {
+  // Derive the completion method from the step's declared completion config so
+  // that non-agent_signal steps (plan_created, plan_complete, review_verdict,
+  // user_confirm) are validated correctly by the engine.
+  const stepConfig = state.workflowConfig.steps.find(
+    (s) => s.name === stepName,
+  );
+  const completionMethod = stepConfig?.completion.method ?? "agent_signal";
+
   return completeStep(
     {
       workflowInstanceId: state.workflowInstanceId,
@@ -209,7 +217,7 @@ function completeAndAdvance(
       stepName,
       completionSignal: {
         outcome: "success",
-        method: "agent_signal",
+        method: completionMethod,
       },
       context: state.context,
       planStateProvider: state.planStateProvider,
@@ -370,6 +378,14 @@ export function runWorkflow(
   } = input;
 
   const store = input.store ?? createInMemoryRuntimeStore();
+
+  // Validate maxSteps is at least 1 before touching the store.
+  if (maxSteps < 1) {
+    return errAsync({
+      type: "MaxStepsExceeded" as const,
+      maxSteps,
+    });
+  }
 
   // Validate workflow exists before touching the store.
   const workflowConfig = config.workflows[workflowName];

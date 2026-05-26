@@ -27,7 +27,10 @@ import type { ResultAsync } from "neverthrow";
  */
 export type PlanStateError =
   | { readonly type: "InvalidPlanName"; readonly planName: string }
-  | { readonly type: "ProviderUnavailable"; readonly cause: unknown };
+  | {
+      readonly type: "ProviderUnavailable";
+      readonly cause: Error | { readonly message: string };
+    };
 
 // ---------------------------------------------------------------------------
 // PlanStateProvider — interface

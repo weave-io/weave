@@ -74,7 +74,10 @@ export class BunFilesystemPlanStateProvider implements PlanStateProvider {
     const planPath = `${this.projectRoot}/.weave/plans/${planName}.md`;
     return ResultAsync.fromPromise(
       Bun.file(planPath).exists(),
-      (cause): PlanStateError => ({ type: "ProviderUnavailable", cause }),
+      (cause): PlanStateError => ({
+        type: "ProviderUnavailable",
+        cause: cause instanceof Error ? cause : { message: String(cause) },
+      }),
     );
   }
 
@@ -94,7 +97,10 @@ export class BunFilesystemPlanStateProvider implements PlanStateProvider {
     const planPath = `${this.projectRoot}/.weave/plans/${planName}.md`;
     return ResultAsync.fromPromise(
       Bun.file(planPath).text(),
-      (cause): PlanStateError => ({ type: "ProviderUnavailable", cause }),
+      (cause): PlanStateError => ({
+        type: "ProviderUnavailable",
+        cause: cause instanceof Error ? cause : { message: String(cause) },
+      }),
     ).map((content) => {
       const incompleteMatches = content.match(/- \[ \]/g);
       const incompleteCount = incompleteMatches?.length ?? 0;
