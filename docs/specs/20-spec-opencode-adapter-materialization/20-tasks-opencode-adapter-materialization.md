@@ -100,7 +100,7 @@
 - [x] 4.5 Keep engine-owned missing-skill semantics intact by surfacing unresolved declared skills as hard errors rather than silent skips.
 - [x] 4.6 Add `translate-agent`, model-resolution, and skill-discovery tests covering supported resolution, unsupported explicit model failure, and missing declared skill failure.
 
-### [ ] 5.0 Document the adapter shape and prove acceptance for the first slice
+### [x] 5.0 Document the adapter shape and prove acceptance for the first slice
 
 #### 5.0 Proof Artifact(s)
 
@@ -110,8 +110,8 @@
 
 #### 5.0 Tasks
 
-- [ ] 5.1 Write `docs/adr/0003-opencode-adapter-materialization-shape.md` documenting the SDK-first, plugin/runtime-first, injected-client, and ownership-safe decisions.
-- [ ] 5.2 Update `docs/adapter-readiness-status.md` and any other OpenCode adapter docs so the package is described as a real first-slice materialization path with explicit remaining non-goals.
-- [ ] 5.3 Update `docs/adapter-boundary.md` only if implementation reveals clarification needs that stay within the current boundary, without introducing new engine contracts.
-- [ ] 5.4 Run targeted adapter tests plus `bun run typecheck` and record the exact commands as planned proof artifacts.
-- [ ] 5.5 Finalize the sanitized manual smoke artifact/checklist so `/SDD-4-validate-spec-implementation` has a reproducible plugin/runtime verification path.
+- [x] 5.1 Write `docs/adr/0003-opencode-adapter-materialization-shape.md` documenting the SDK-first, plugin/runtime-first, injected-client, and ownership-safe decisions.
+- [x] 5.2 Update `docs/adapter-readiness-status.md` and any other OpenCode adapter docs so the package is described as a real first-slice materialization path with explicit remaining non-goals.
+- [x] 5.3 Update `docs/adapter-boundary.md` only if implementation reveals clarification needs that stay within the current boundary, without introducing new engine contracts.
+- [x] 5.4 Run targeted adapter tests plus `bun run typecheck` and record the exact commands as planned proof artifacts.
+- [x] 5.5 Finalize the sanitized manual smoke artifact/checklist so `/SDD-4-validate-spec-implementation` has a reproducible plugin/runtime verification path.

@@ -4,7 +4,7 @@ This document summarises the current adapter-readiness state of the Weave engine
 API — what user capabilities are available, which specs deliver them, and what
 every adapter must implement to be considered ready.
 
-**Related:** [Adapter Boundary](adapter-boundary.md) · [Adapter Bootstrap Guide](adapter-bootstrap.md) · [Spec 15 — Adapter-Facing Materialization API](specs/15-spec-adapter-facing-materialization-api/15-spec-adapter-facing-materialization-api.md) · [Spec 17 — Workflow Extension DSL](specs/17-spec-workflow-extension/17-spec-workflow-extension.md) · [Spec 18 — Delegation Exclusion](specs/18-spec-delegation-exclusion/18-spec-delegation-exclusion.md) · [Spec 19 — Plan State Provider](specs/19-spec-plan-state-provider/19-spec-plan-state-provider.md)
+**Related:** [Adapter Boundary](adapter-boundary.md) · [Adapter Bootstrap Guide](adapter-bootstrap.md) · [ADR 0003 — OpenCode Adapter Materialization Shape](adr/0003-opencode-adapter-materialization-shape.md) · [Spec 15 — Adapter-Facing Materialization API](specs/15-spec-adapter-facing-materialization-api/15-spec-adapter-facing-materialization-api.md) · [Spec 17 — Workflow Extension DSL](specs/17-spec-workflow-extension/17-spec-workflow-extension.md) · [Spec 18 — Delegation Exclusion](specs/18-spec-delegation-exclusion/18-spec-delegation-exclusion.md) · [Spec 19 — Plan State Provider](specs/19-spec-plan-state-provider/19-spec-plan-state-provider.md) · [Spec 20 — OpenCode Adapter Materialization](specs/20-spec-opencode-adapter-materialization/20-spec-opencode-adapter-materialization.md)
 
 ---
 
@@ -66,6 +66,62 @@ mapping, plugin/config generation, and feature-gap emulation.
 See [Adapter Bootstrap Guide](adapter-bootstrap.md) for the canonical
 `loadConfig → materializeAgents → adapter loop` pattern with a runnable
 `MockAdapter` example.
+
+---
+
+## OpenCode Adapter — First-Slice Materialization
+
+`@weave/adapter-opencode` is a real first-slice materialization path as of
+[Spec 20](specs/20-spec-opencode-adapter-materialization/20-spec-opencode-adapter-materialization.md).
+It is an **OpenCode plugin**: users install it by adding the package to the
+`plugin` array in their `opencode.json` config. OpenCode loads the plugin at
+startup and calls the plugin entry point with a runtime context that includes
+a pre-constructed SDK client.
+
+### What is implemented (first slice)
+
+| Capability | Status | Notes |
+| --- | --- | --- |
+| Injected `OpenCodeClientFacade` | ✅ | No global SDK state; testable with mocks |
+| `list → reconcile → create/update` flow | ✅ | `reconcile-agent.ts` |
+| `[weave-managed]` ownership tag | ✅ | Embedded in agent `description`; prevents silent overwrite |
+| Collision protection | ✅ | `CollisionError` returned for same-named foreign agents |
+| Model resolution with fail-fast | ✅ | `model-resolution.ts`; subagent explicit model intent fails fast |
+| Harness-injection-based skill forwarding | ✅ | `loadAvailableSkills()` returns injected list; no filesystem scanning |
+| Translation-only mode (no client) | ✅ | Falls back gracefully when no client is injected |
+| `BunFilesystemPlanStateProvider` | ✅ | Constructed in `init()`; available for `completeStep` calls |
+
+### Explicit non-goals (first slice)
+
+The following are **out of scope** for the first slice and will be addressed in
+future specs:
+
+- **Prune/delete reconciliation** — Weave-managed agents that are no longer in
+  config are not removed. Removal requires UX design (confirmation, dry-run).
+- **Workflow-lifecycle expansion** — `run-workflow.ts` is a thin helper; full
+  workflow lifecycle integration is a separate spec.
+- **Engine API drift** — No new engine contracts were introduced. The adapter
+  boundary rules in [Adapter Boundary](adapter-boundary.md) are unchanged.
+- **Harness-owned skill file loading** — The adapter forwards the harness-provided
+  `SkillInfo[]` list but does not load skill file content. Content loading is
+  harness-owned and out of scope.
+
+### Installation and runtime story
+
+```jsonc
+// opencode.json
+{
+  "plugin": ["@weave/adapter-opencode"]
+}
+```
+
+After adding the plugin entry, restart OpenCode. The plugin entry point
+receives the runtime context, constructs an `OpenCodeAdapter` with the injected
+SDK client, and materializes all agents declared in `.weave/config.weave`.
+
+See [ADR 0003 — OpenCode Adapter Materialization Shape](adr/0003-opencode-adapter-materialization-shape.md)
+for the full design rationale and [Spec 20](specs/20-spec-opencode-adapter-materialization/20-spec-opencode-adapter-materialization.md)
+for the normative spec.
 
 ---
 
