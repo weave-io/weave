@@ -1,6 +1,10 @@
 # Libraries
 
 - `packages/adapters/opencode/src/index.ts` — class OpenCodeAdapter, interface OpenCodeAdapterOptions
+- `packages/adapters/opencode/src/opencode-client.ts`
+  - class SdkOpenCodeClient
+  - interface OpenCodeClientFacade
+  - type OpenCodeClientError
 - `packages/adapters/opencode/src/run-workflow.ts`
   - function runWorkflow: (input) => ResultAsync<RunWorkflowResult, RunWorkflowError>
   - interface RunWorkflowInput

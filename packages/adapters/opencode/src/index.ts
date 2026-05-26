@@ -19,10 +19,15 @@ import type {
   SkillInfo,
 } from "@weave/engine";
 import { logger } from "@weave/engine";
-
+import type { OpenCodeClientFacade } from "./opencode-client.js";
 import type { OpenCodeAgentConfig } from "./sdk-types.js";
 import { translateAgent } from "./translate-agent.js";
 
+export type {
+  OpenCodeClientError,
+  OpenCodeClientFacade,
+} from "./opencode-client.js";
+export { SdkOpenCodeClient } from "./opencode-client.js";
 export type {
   RunWorkflowError,
   RunWorkflowInput,
@@ -44,6 +49,31 @@ export interface OpenCodeAdapterOptions {
    * `process.cwd()` when omitted.
    */
   readonly projectRoot?: string;
+
+  /**
+   * Injected OpenCode client facade.
+   *
+   * Callers (e.g. an OpenCode plugin entry point) provide a pre-constructed
+   * `OpenCodeClientFacade` that wraps the SDK client available in the
+   * plugin/runtime context. When omitted, the adapter operates in
+   * translation-only mode (no live SDK calls).
+   *
+   * Dependency injection through this option is the primary adapter entry
+   * path. No global SDK client state is created or mutated by the adapter.
+   *
+   * @example
+   * ```ts
+   * import { createOpencodeClient } from "@opencode-ai/sdk";
+   * import { OpenCodeAdapter, SdkOpenCodeClient } from "@weave/adapter-opencode";
+   *
+   * const sdkClient = createOpencodeClient({ directory: projectDir });
+   * const adapter = new OpenCodeAdapter({
+   *   projectRoot: projectDir,
+   *   client: new SdkOpenCodeClient(sdkClient),
+   * });
+   * ```
+   */
+  readonly client?: OpenCodeClientFacade;
 }
 
 /**
@@ -53,7 +83,8 @@ export interface OpenCodeAdapterOptions {
  * descriptors into a running OpenCode instance via the OpenCode SDK client.
  *
  * Translated agent configs are stored in an in-memory map keyed by agent name.
- * Actual file writing / SDK registration is handled in a subsequent task.
+ * Actual SDK-backed materialization uses the injected `OpenCodeClientFacade`
+ * when provided; without it the adapter operates in translation-only mode.
  *
  * A `BunFilesystemPlanStateProvider` is constructed during `init()` and stored
  * as `this.planStateProvider`. Pass it to any `completeStep` call that uses a
@@ -62,7 +93,8 @@ export interface OpenCodeAdapterOptions {
 export class OpenCodeAdapter implements HarnessAdapter {
   /**
    * In-memory store of translated OpenCode agent configs, keyed by agent name.
-   * Populated by `spawnSubagent`; consumed by the config-write task (task 10).
+   * Populated by `spawnSubagent`; consumed by the config-write task (task 10)
+   * and available for test inspection.
    */
   readonly translatedAgents: Map<string, OpenCodeAgentConfig> = new Map();
 
@@ -79,8 +111,18 @@ export class OpenCodeAdapter implements HarnessAdapter {
   /** Absolute path to the project root. Defaults to `process.cwd()`. */
   private readonly projectRoot: string;
 
+  /**
+   * Injected OpenCode client facade.
+   *
+   * Provided by the caller at construction time. `undefined` when the adapter
+   * is constructed without a client (translation-only mode). No global SDK
+   * state is created or mutated by the adapter.
+   */
+  private readonly openCodeClient: OpenCodeClientFacade | undefined;
+
   constructor(options: OpenCodeAdapterOptions = {}) {
     this.projectRoot = options.projectRoot ?? process.cwd();
+    this.openCodeClient = options.client;
   }
 
   /**
@@ -94,7 +136,13 @@ export class OpenCodeAdapter implements HarnessAdapter {
     this.planStateProvider = new BunFilesystemPlanStateProvider(
       this.projectRoot,
     );
-    log.info({ projectRoot: this.projectRoot }, "OpenCodeAdapter initialized");
+    log.info(
+      {
+        projectRoot: this.projectRoot,
+        hasClient: this.openCodeClient !== undefined,
+      },
+      "OpenCodeAdapter initialized",
+    );
   }
 
   /**
