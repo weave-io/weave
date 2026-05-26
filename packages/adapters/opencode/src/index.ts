@@ -41,7 +41,7 @@ export interface OpenCodeAdapterOptions {
    *
    * Used to construct the `BunFilesystemPlanStateProvider` so that plan files
    * are resolved relative to the correct project root. Defaults to
-   * `Bun.cwd` when omitted.
+   * `process.cwd()` when omitted.
    */
   readonly projectRoot?: string;
 }
@@ -76,11 +76,11 @@ export class OpenCodeAdapter implements HarnessAdapter {
    */
   planStateProvider: PlanStateProvider | undefined = undefined;
 
-  /** Absolute path to the project root. Defaults to `Bun.cwd`. */
+  /** Absolute path to the project root. Defaults to `process.cwd()`. */
   private readonly projectRoot: string;
 
   constructor(options: OpenCodeAdapterOptions = {}) {
-    this.projectRoot = options.projectRoot ?? Bun.cwd;
+    this.projectRoot = options.projectRoot ?? process.cwd();
   }
 
   /**
