@@ -90,6 +90,7 @@ a pre-constructed SDK client.
 | Harness-injection-based skill forwarding | ✅ | `loadAvailableSkills()` returns injected list; no filesystem scanning |
 | Translation-only mode (no client) | ✅ | Falls back gracefully when no client is injected |
 | `BunFilesystemPlanStateProvider` | ✅ | Constructed in `init()`; available for `completeStep` calls |
+| `config` hook — `opencode debug config` visibility | ✅ | `WeavePlugin` returns `Hooks.config` that injects agents into `cfg.agent` at startup |
 
 ### Explicit non-goals (first slice)
 
@@ -118,11 +119,17 @@ future specs:
 After adding the plugin entry, restart OpenCode. The package's default-exported
 `WeavePlugin` function is called by OpenCode at startup. It loads
 `.weave/config.weave`, materializes all declared agents via the injected SDK
-client, and returns an empty `Hooks` object.
+client, and returns a `Hooks` object with a `config` hook.
+
+The `config` hook injects the translated agent configs into `cfg.agent` so that
+`opencode debug config` shows all Weave-managed agents. The SDK-backed
+reconciliation (`spawnSubagent`) also runs to persist agents into OpenCode's
+runtime store.
 
 **No user-authored wrapper script is required.** The package itself is the
-plugin entry point. The `WeavePlugin` function and a `server` alias (for
-`PluginModule` compatibility) are both exported from the package root.
+plugin entry point. The `WeavePlugin` function, a `server` alias (for
+`PluginModule` compatibility), and a `createWeavePlugin(options?)` factory are
+all exported from the package root.
 
 See [ADR 0003 — OpenCode Adapter Materialization Shape](adr/0003-opencode-adapter-materialization-shape.md)
 for the full design rationale and [Spec 20](specs/20-spec-opencode-adapter-materialization/20-spec-opencode-adapter-materialization.md)

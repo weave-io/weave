@@ -6,9 +6,10 @@
  * - `server` is the same function as `WeavePlugin` (PluginModule compatibility).
  * - The default export is `WeavePlugin`.
  * - The plugin returns an empty `Hooks` object when config load fails.
+ * - The plugin returns a `Hooks` object with a `config` hook on success.
+ * - The `config` hook injects translated agent configs into `cfg.agent`.
  * - The plugin calls `spawnSubagent()` for each agent in the materialization plan.
  * - The plugin continues materializing remaining agents when one fails.
- * - The plugin returns an empty `Hooks` object on success.
  *
  * All tests use a mock `PluginInput` and a project-only file reader to avoid
  * picking up the developer's global ~/.weave/config.weave. The full
@@ -22,6 +23,7 @@ import { join } from "node:path";
 import { okAsync, ResultAsync } from "neverthrow";
 import type { OpenCodeClientError, OpenCodeClientFacade } from "../index.js";
 import {
+  createWeavePlugin,
   default as defaultExport,
   WeavePlugin,
   WeavePluginServer,
@@ -157,6 +159,15 @@ describe("WeavePlugin — module shape", () => {
     // Plugin = (input: PluginInput, options?: PluginOptions) => Promise<Hooks>
     expect(WeavePlugin.length).toBeGreaterThanOrEqual(1);
   });
+
+  it("createWeavePlugin is a function", () => {
+    expect(typeof createWeavePlugin).toBe("function");
+  });
+
+  it("createWeavePlugin() returns a Plugin function", () => {
+    const plugin = createWeavePlugin();
+    expect(typeof plugin).toBe("function");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -195,31 +206,150 @@ describe("WeavePlugin — config load failure", () => {
     expect(client.listAgentsCalls).toHaveLength(0);
     expect(client.createAgentCalls).toHaveLength(0);
   });
+
+  it("returns no config hook when config load fails", async () => {
+    const client = new MockOpenCodeClient();
+    const input = makeMockPluginInput(
+      "/nonexistent-weave-test-dir-fail",
+      client,
+    );
+
+    const hooks = await WeavePlugin(input);
+
+    // On failure, no config hook is registered
+    expect(hooks.config).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------
-// Tests: successful materialization path
+// Tests: successful materialization path — config hook
 // ---------------------------------------------------------------------------
 
-describe("WeavePlugin — successful materialization", () => {
-  it("returns an empty Hooks object (no hook handlers registered)", async () => {
-    const root = await makeTempProject("hooks-test-agent");
+describe("WeavePlugin — config hook", () => {
+  it("returns a Hooks object with a config hook on success", async () => {
+    const root = await makeTempProject("config-hook-agent");
     const client = new MockOpenCodeClient();
     client.setListResult(okAsync([]));
 
-    // Load config with project-only reader to avoid global config interference
-    const { loadConfig } = await import("@weave/config");
-    const configResult = await loadConfig(root, projectOnlyReader(root));
-    expect(configResult.isOk()).toBe(true);
-
+    // Use projectOnlyReader + clientFacade to avoid global config interference
+    // and to avoid needing a real SDK client.
+    const plugin = createWeavePlugin({
+      fileReader: projectOnlyReader(root),
+      clientFacade: client,
+    });
     const input = makeMockPluginInput(root, client);
-    const hooks = await WeavePlugin(input);
+    const hooks = await plugin(input);
 
     expect(typeof hooks).toBe("object");
-    // No hook handlers — agent materialization is the sole job
-    expect(hooks.event).toBeUndefined();
-    expect(hooks.config).toBeUndefined();
-    expect(hooks.tool).toBeUndefined();
+    // config hook must be present and be a function
+    expect(typeof hooks.config).toBe("function");
+  });
+
+  it("config hook injects translated agent into cfg.agent", async () => {
+    const agentName = "inject-test-agent";
+    const root = await makeTempProject(agentName);
+    const client = new MockOpenCodeClient();
+    client.setListResult(okAsync([]));
+
+    const plugin = createWeavePlugin({
+      fileReader: projectOnlyReader(root),
+      clientFacade: client,
+    });
+    const input = makeMockPluginInput(root, client);
+    const hooks = await plugin(input);
+
+    expect(typeof hooks.config).toBe("function");
+
+    // Simulate OpenCode calling the config hook with an empty config
+    const cfg: { agent?: Record<string, unknown> } = {};
+    await hooks.config!(cfg as never);
+
+    // The agent should now be present in cfg.agent
+    expect(cfg.agent).toBeDefined();
+    expect(cfg.agent![agentName]).toBeDefined();
+
+    const injected = cfg.agent![agentName] as Record<string, unknown>;
+    // The injected config should have at minimum a prompt and mode
+    expect(typeof injected.prompt).toBe("string");
+    expect(injected.mode).toBe("subagent");
+  });
+
+  it("config hook initialises cfg.agent when it is undefined", async () => {
+    const root = await makeTempProject("init-agent-field");
+    const client = new MockOpenCodeClient();
+    client.setListResult(okAsync([]));
+
+    const plugin = createWeavePlugin({
+      fileReader: projectOnlyReader(root),
+      clientFacade: client,
+    });
+    const input = makeMockPluginInput(root, client);
+    const hooks = await plugin(input);
+
+    expect(typeof hooks.config).toBe("function");
+
+    // cfg.agent is explicitly undefined
+    const cfg: { agent?: Record<string, unknown> } = { agent: undefined };
+    await hooks.config!(cfg as never);
+
+    expect(cfg.agent).toBeDefined();
+    expect(typeof cfg.agent).toBe("object");
+  });
+
+  it("config hook preserves existing cfg.agent entries", async () => {
+    const root = await makeTempProject("preserve-test-agent");
+    const client = new MockOpenCodeClient();
+    client.setListResult(okAsync([]));
+
+    const plugin = createWeavePlugin({
+      fileReader: projectOnlyReader(root),
+      clientFacade: client,
+    });
+    const input = makeMockPluginInput(root, client);
+    const hooks = await plugin(input);
+
+    expect(typeof hooks.config).toBe("function");
+
+    // Pre-populate cfg.agent with an existing entry
+    const existingAgent = {
+      prompt: "I am an existing agent.",
+      mode: "primary",
+    };
+    const cfg: { agent?: Record<string, unknown> } = {
+      agent: { "existing-agent": existingAgent },
+    };
+    await hooks.config!(cfg as never);
+
+    // Existing entry must be preserved
+    expect(cfg.agent!["existing-agent"]).toBe(existingAgent);
+    // Weave agent must also be present
+    expect(cfg.agent!["preserve-test-agent"]).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: successful materialization path — SDK reconciliation
+// ---------------------------------------------------------------------------
+
+describe("WeavePlugin — SDK reconciliation", () => {
+  it("calls spawnSubagent (createAgent) for each declared agent", async () => {
+    const root = await makeTempProject("sdk-reconcile-agent");
+    const client = new MockOpenCodeClient();
+    client.setListResult(okAsync([]));
+
+    // Pass clientFacade so the plugin uses the mock directly instead of
+    // wrapping input.client in SdkOpenCodeClient (which needs a real SDK).
+    const plugin = createWeavePlugin({
+      fileReader: projectOnlyReader(root),
+      clientFacade: client,
+    });
+    const input = makeMockPluginInput(root, client);
+    await plugin(input);
+
+    // The SDK client should have been called to create the agent
+    expect(client.createAgentCalls.length).toBeGreaterThan(0);
+    const names = client.createAgentCalls.map((c) => c.name);
+    expect(names).toContain("sdk-reconcile-agent");
   });
 
   it("plugin returns a Promise<Hooks> (thenable)", async () => {

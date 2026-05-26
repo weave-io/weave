@@ -103,6 +103,7 @@ export {
 // ---------------------------------------------------------------------------
 
 export type { Plugin, PluginInput, PluginModule } from "@opencode-ai/plugin";
+export type { WeavePluginOptions } from "./plugin.js";
 /**
  * Default export: the OpenCode `Plugin` function.
  *
@@ -110,6 +111,7 @@ export type { Plugin, PluginInput, PluginModule } from "@opencode-ai/plugin";
  * is listed in `opencode.json`'s `plugin` array.
  */
 export {
+  createWeavePlugin,
   server as WeavePluginServer,
   WeavePlugin,
   WeavePlugin as default,

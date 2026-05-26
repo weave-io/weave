@@ -34,9 +34,17 @@ The package exports a `WeavePlugin` function (and a `server` alias for `PluginMo
 
 1. Loads the Weave config from `input.directory` via `loadConfig()`.
 2. Calls `materializeAgents()` to compose all agent descriptors.
-3. Constructs an `OpenCodeAdapter` with the injected `SdkOpenCodeClient`.
-4. Calls `spawnSubagent()` for each descriptor.
-5. Returns an empty `Hooks` object — agent materialization is the sole responsibility.
+3. Translates each descriptor into an `OpenCodeAgentConfig` via `translateAgent()` and collects the results into a `translatedMap`.
+4. Constructs an `OpenCodeAdapter` with the injected `SdkOpenCodeClient`.
+5. Calls `spawnSubagent()` for each descriptor (SDK-backed `list → reconcile → create/update` flow).
+6. Returns a `Hooks` object with a `config` hook that injects the translated agent configs into `cfg.agent`.
+
+The `config` hook and the SDK-backed reconciliation serve different purposes:
+
+- **`config` hook** — injects translated agent configs into `cfg.agent` at startup so that `opencode debug config` reflects all Weave-managed agents. This is the observability path.
+- **SDK-backed reconciliation** (`spawnSubagent`) — writes agents into OpenCode's runtime store via `client.config.update()`. This is the durable persistence path that survives config reloads.
+
+Both paths are required for full materialization.
 
 ```jsonc
 // opencode.json — direct plugin installation
@@ -117,6 +125,8 @@ The `[weave-managed]` ownership tag is embedded in the agent's `description` fie
 
 - `@weave/adapter-opencode` is now a real first-slice materialization path, not a translation-only stub.
 - `spawnSubagent(descriptor)` performs the full `list → reconcile → create/update` flow when a client is injected.
+- `WeavePlugin` now returns a `Hooks` object with a `config` hook that injects translated agent configs into `cfg.agent`. This makes agents visible to `opencode debug config` at startup.
+- `createWeavePlugin(options?)` is exported as a factory for creating plugin instances with custom `fileReader` and `clientFacade` options (primarily for testing).
 - `translatedAgents` is retained as a read-only secondary artifact for test inspection and transitional compatibility; it is not the source of truth.
 - `loadAvailableSkills()` returns the harness-injected skill list without filesystem scanning.
 - Model resolution fails fast for explicit subagent model intent that cannot be satisfied.

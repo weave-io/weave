@@ -9,7 +9,11 @@
   - class SdkOpenCodeClient
   - interface OpenCodeClientFacade
   - type OpenCodeClientError
-- `packages/adapters/opencode/src/plugin.ts` — function WeavePlugin, const server
+- `packages/adapters/opencode/src/plugin.ts`
+  - function createWeavePlugin: (options) => Plugin
+  - interface WeavePluginOptions
+  - const WeavePlugin: Plugin
+  - const server
 - `packages/adapters/opencode/src/reconcile-agent.ts`
   - function classifyExistingAgent: (agentName, existingAgents) => ReconcileDecision
   - function tagWithOwnership: (config) => OpenCodeAgentConfig
