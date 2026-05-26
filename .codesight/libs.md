@@ -5,6 +5,13 @@
   - class SdkOpenCodeClient
   - interface OpenCodeClientFacade
   - type OpenCodeClientError
+- `packages/adapters/opencode/src/reconcile-agent.ts`
+  - function classifyExistingAgent: (agentName, existingAgents) => ReconcileDecision
+  - function tagWithOwnership: (config) => OpenCodeAgentConfig
+  - function reconcileAgent: (agentName, config, client) => ResultAsync<void, ReconcileAgentError>
+  - type ReconcileAgentError
+  - type ReconcileDecision
+  - const WEAVE_OWNERSHIP_TAG
 - `packages/adapters/opencode/src/run-workflow.ts`
   - function runWorkflow: (input) => ResultAsync<RunWorkflowResult, RunWorkflowError>
   - interface RunWorkflowInput

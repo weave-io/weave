@@ -1,5 +1,6 @@
 /**
- * Unit tests for `OpenCodeAdapter` construction and initialization.
+ * Unit tests for `OpenCodeAdapter` construction, initialization, and
+ * SDK-backed materialization.
  *
  * Verifies:
  * - The adapter can be constructed without a client (translation-only mode).
@@ -7,6 +8,10 @@
  * - `init()` completes successfully in both modes.
  * - The injected client is stored and accessible (no hidden global state).
  * - `spawnSubagent()` translates a descriptor and stores it in `translatedAgents`.
+ * - `spawnSubagent()` calls `createAgent()` when no existing agent is found (create path).
+ * - `spawnSubagent()` calls `updateAgent()` when an existing Weave-managed agent is found (update path).
+ * - `spawnSubagent()` throws a collision error when a foreign agent blocks the write.
+ * - `spawnSubagent()` skips SDK calls in translation-only mode (no client).
  *
  * All tests use a `MockOpenCodeClient` — no live OpenCode runtime is required.
  */
@@ -15,7 +20,7 @@ import { describe, expect, it } from "bun:test";
 import type { AgentDescriptor, EffectiveToolPolicy } from "@weave/engine";
 import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 import type { OpenCodeClientError, OpenCodeClientFacade } from "../index.js";
-import { OpenCodeAdapter } from "../index.js";
+import { OpenCodeAdapter, WEAVE_OWNERSHIP_TAG } from "../index.js";
 import type { OpenCodeAgent, OpenCodeAgentConfig } from "../sdk-types.js";
 
 // ---------------------------------------------------------------------------
@@ -42,11 +47,27 @@ class MockOpenCodeClient implements OpenCodeClientFacade {
   private _listAgentsResult: ResultAsync<OpenCodeAgent[], OpenCodeClientError> =
     okAsync([]);
 
+  private _createAgentResult: ResultAsync<void, OpenCodeClientError> =
+    okAsync(undefined);
+
+  private _updateAgentResult: ResultAsync<void, OpenCodeClientError> =
+    okAsync(undefined);
+
   /** Override the result returned by `listAgents()` for a specific test. */
   setListAgentsResult(
     result: ResultAsync<OpenCodeAgent[], OpenCodeClientError>,
   ): void {
     this._listAgentsResult = result;
+  }
+
+  /** Override the result returned by `createAgent()` for a specific test. */
+  setCreateAgentResult(result: ResultAsync<void, OpenCodeClientError>): void {
+    this._createAgentResult = result;
+  }
+
+  /** Override the result returned by `updateAgent()` for a specific test. */
+  setUpdateAgentResult(result: ResultAsync<void, OpenCodeClientError>): void {
+    this._updateAgentResult = result;
   }
 
   listAgents(): ResultAsync<OpenCodeAgent[], OpenCodeClientError> {
@@ -59,7 +80,7 @@ class MockOpenCodeClient implements OpenCodeClientFacade {
     config: OpenCodeAgentConfig,
   ): ResultAsync<void, OpenCodeClientError> {
     this.createAgentCalls.push({ name, config });
-    return okAsync(undefined);
+    return this._createAgentResult;
   }
 
   updateAgent(
@@ -67,7 +88,7 @@ class MockOpenCodeClient implements OpenCodeClientFacade {
     config: OpenCodeAgentConfig,
   ): ResultAsync<void, OpenCodeClientError> {
     this.updateAgentCalls.push({ name, config });
-    return okAsync(undefined);
+    return this._updateAgentResult;
   }
 }
 
@@ -99,6 +120,29 @@ function makeDescriptor(
     skills: [],
     ...overrides,
   };
+}
+
+/**
+ * Builds a mock `OpenCodeAgent` that looks like a Weave-managed agent.
+ * The description includes `WEAVE_OWNERSHIP_TAG` so the reconciler treats it
+ * as an existing Weave-managed agent (update path).
+ */
+function makeWeaveManagedAgent(name: string): OpenCodeAgent {
+  return {
+    name,
+    description: `A Weave-managed agent ${WEAVE_OWNERSHIP_TAG}`,
+  } as OpenCodeAgent;
+}
+
+/**
+ * Builds a mock `OpenCodeAgent` that looks like a manually created (foreign)
+ * agent — no ownership tag in the description.
+ */
+function makeForeignAgent(name: string): OpenCodeAgent {
+  return {
+    name,
+    description: "A manually created agent",
+  } as OpenCodeAgent;
 }
 
 // ---------------------------------------------------------------------------
@@ -220,15 +264,13 @@ describe("OpenCodeAdapter — injected client isolation", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests: spawnSubagent()
+// Tests: spawnSubagent() — translation-only mode (no client)
 // ---------------------------------------------------------------------------
 
-describe("OpenCodeAdapter — spawnSubagent()", () => {
+describe("OpenCodeAdapter — spawnSubagent() translation-only mode", () => {
   it("translates a descriptor and stores it in translatedAgents", async () => {
-    const mockClient = new MockOpenCodeClient();
     const adapter = new OpenCodeAdapter({
       projectRoot: "/tmp/test-project",
-      client: mockClient,
     });
     await adapter.init();
 
@@ -258,8 +300,32 @@ describe("OpenCodeAdapter — spawnSubagent()", () => {
     expect(adapter.translatedAgents.get("agent-b")?.prompt).toBe("Prompt B");
   });
 
-  it("does not call createAgent() or updateAgent() during spawnSubagent() (task 2 behavior)", async () => {
+  it("does not call createAgent() or updateAgent() when no client is injected", async () => {
+    // No client — translation-only mode
+    const adapter = new OpenCodeAdapter({
+      projectRoot: "/tmp/test-project",
+    });
+    await adapter.init();
+
+    // Should complete without error even without a client
+    await expect(
+      adapter.spawnSubagent(makeDescriptor()),
+    ).resolves.toBeUndefined();
+    // translatedAgents is still populated
+    expect(adapter.translatedAgents.has("test-agent")).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: spawnSubagent() — SDK-backed create path
+// ---------------------------------------------------------------------------
+
+describe("OpenCodeAdapter — spawnSubagent() SDK create path", () => {
+  it("calls createAgent() when no existing agent is found", async () => {
     const mockClient = new MockOpenCodeClient();
+    // listAgents returns empty list → create path
+    mockClient.setListAgentsResult(okAsync([]));
+
     const adapter = new OpenCodeAdapter({
       projectRoot: "/tmp/test-project",
       client: mockClient,
@@ -268,9 +334,243 @@ describe("OpenCodeAdapter — spawnSubagent()", () => {
 
     await adapter.spawnSubagent(makeDescriptor());
 
-    // SDK-backed materialization is task 2; task 1 only stores in memory
+    // listAgents was called once during reconciliation
+    expect(mockClient.listAgentsCalls).toHaveLength(1);
+    // createAgent was called with the correct agent name
+    expect(mockClient.createAgentCalls).toHaveLength(1);
+    expect(mockClient.createAgentCalls[0]?.name).toBe("test-agent");
+    // updateAgent was NOT called
+    expect(mockClient.updateAgentCalls).toHaveLength(0);
+  });
+
+  it("passes the translated config to createAgent()", async () => {
+    const mockClient = new MockOpenCodeClient();
+    mockClient.setListAgentsResult(okAsync([]));
+
+    const adapter = new OpenCodeAdapter({
+      projectRoot: "/tmp/test-project",
+      client: mockClient,
+    });
+    await adapter.init();
+
+    await adapter.spawnSubagent(
+      makeDescriptor({ composedPrompt: "Custom prompt text" }),
+    );
+
+    const call = mockClient.createAgentCalls[0];
+    expect(call).toBeDefined();
+    expect(call?.config.prompt).toBe("Custom prompt text");
+    expect(call?.config.mode).toBe("subagent");
+  });
+
+  it("tags the config with WEAVE_OWNERSHIP_TAG on create", async () => {
+    const mockClient = new MockOpenCodeClient();
+    mockClient.setListAgentsResult(okAsync([]));
+
+    const adapter = new OpenCodeAdapter({
+      projectRoot: "/tmp/test-project",
+      client: mockClient,
+    });
+    await adapter.init();
+
+    await adapter.spawnSubagent(makeDescriptor({ description: "My agent" }));
+
+    const call = mockClient.createAgentCalls[0];
+    expect(call?.config.description).toContain(WEAVE_OWNERSHIP_TAG);
+  });
+
+  it("stores translated config in translatedAgents even on create path", async () => {
+    const mockClient = new MockOpenCodeClient();
+    mockClient.setListAgentsResult(okAsync([]));
+
+    const adapter = new OpenCodeAdapter({
+      projectRoot: "/tmp/test-project",
+      client: mockClient,
+    });
+    await adapter.init();
+
+    await adapter.spawnSubagent(makeDescriptor());
+
+    expect(adapter.translatedAgents.has("test-agent")).toBe(true);
+  });
+
+  it("throws when createAgent() returns an error", async () => {
+    const mockClient = new MockOpenCodeClient();
+    mockClient.setListAgentsResult(okAsync([]));
+    mockClient.setCreateAgentResult(
+      errAsync({
+        type: "CreateAgentError" as const,
+        agentName: "test-agent",
+        message: "SDK write failed",
+      }),
+    );
+
+    const adapter = new OpenCodeAdapter({
+      projectRoot: "/tmp/test-project",
+      client: mockClient,
+    });
+    await adapter.init();
+
+    await expect(adapter.spawnSubagent(makeDescriptor())).rejects.toThrow(
+      "SDK write failed",
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: spawnSubagent() — SDK-backed update path
+// ---------------------------------------------------------------------------
+
+describe("OpenCodeAdapter — spawnSubagent() SDK update path", () => {
+  it("calls updateAgent() when an existing Weave-managed agent is found", async () => {
+    const mockClient = new MockOpenCodeClient();
+    // listAgents returns a Weave-managed agent with the same name → update path
+    mockClient.setListAgentsResult(
+      okAsync([makeWeaveManagedAgent("test-agent")]),
+    );
+
+    const adapter = new OpenCodeAdapter({
+      projectRoot: "/tmp/test-project",
+      client: mockClient,
+    });
+    await adapter.init();
+
+    await adapter.spawnSubagent(makeDescriptor());
+
+    // listAgents was called once during reconciliation
+    expect(mockClient.listAgentsCalls).toHaveLength(1);
+    // updateAgent was called with the correct agent name
+    expect(mockClient.updateAgentCalls).toHaveLength(1);
+    expect(mockClient.updateAgentCalls[0]?.name).toBe("test-agent");
+    // createAgent was NOT called
+    expect(mockClient.createAgentCalls).toHaveLength(0);
+  });
+
+  it("passes the translated config to updateAgent()", async () => {
+    const mockClient = new MockOpenCodeClient();
+    mockClient.setListAgentsResult(
+      okAsync([makeWeaveManagedAgent("test-agent")]),
+    );
+
+    const adapter = new OpenCodeAdapter({
+      projectRoot: "/tmp/test-project",
+      client: mockClient,
+    });
+    await adapter.init();
+
+    await adapter.spawnSubagent(
+      makeDescriptor({ composedPrompt: "Updated prompt" }),
+    );
+
+    const call = mockClient.updateAgentCalls[0];
+    expect(call).toBeDefined();
+    expect(call?.config.prompt).toBe("Updated prompt");
+  });
+
+  it("preserves WEAVE_OWNERSHIP_TAG in description on update", async () => {
+    const mockClient = new MockOpenCodeClient();
+    mockClient.setListAgentsResult(
+      okAsync([makeWeaveManagedAgent("test-agent")]),
+    );
+
+    const adapter = new OpenCodeAdapter({
+      projectRoot: "/tmp/test-project",
+      client: mockClient,
+    });
+    await adapter.init();
+
+    await adapter.spawnSubagent(makeDescriptor({ description: "My agent" }));
+
+    const call = mockClient.updateAgentCalls[0];
+    expect(call?.config.description).toContain(WEAVE_OWNERSHIP_TAG);
+  });
+
+  it("throws when updateAgent() returns an error", async () => {
+    const mockClient = new MockOpenCodeClient();
+    mockClient.setListAgentsResult(
+      okAsync([makeWeaveManagedAgent("test-agent")]),
+    );
+    mockClient.setUpdateAgentResult(
+      errAsync({
+        type: "UpdateAgentError" as const,
+        agentName: "test-agent",
+        message: "SDK update failed",
+      }),
+    );
+
+    const adapter = new OpenCodeAdapter({
+      projectRoot: "/tmp/test-project",
+      client: mockClient,
+    });
+    await adapter.init();
+
+    await expect(adapter.spawnSubagent(makeDescriptor())).rejects.toThrow(
+      "SDK update failed",
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: spawnSubagent() — collision path
+// ---------------------------------------------------------------------------
+
+describe("OpenCodeAdapter — spawnSubagent() collision path", () => {
+  it("throws a collision error when a foreign agent blocks the write", async () => {
+    const mockClient = new MockOpenCodeClient();
+    // listAgents returns a foreign agent (no ownership tag) with the same name
+    mockClient.setListAgentsResult(okAsync([makeForeignAgent("test-agent")]));
+
+    const adapter = new OpenCodeAdapter({
+      projectRoot: "/tmp/test-project",
+      client: mockClient,
+    });
+    await adapter.init();
+
+    await expect(adapter.spawnSubagent(makeDescriptor())).rejects.toThrow(
+      "CollisionError",
+    );
+  });
+
+  it("does not call createAgent() or updateAgent() on collision", async () => {
+    const mockClient = new MockOpenCodeClient();
+    mockClient.setListAgentsResult(okAsync([makeForeignAgent("test-agent")]));
+
+    const adapter = new OpenCodeAdapter({
+      projectRoot: "/tmp/test-project",
+      client: mockClient,
+    });
+    await adapter.init();
+
+    await expect(adapter.spawnSubagent(makeDescriptor())).rejects.toThrow();
+
     expect(mockClient.createAgentCalls).toHaveLength(0);
     expect(mockClient.updateAgentCalls).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: spawnSubagent() — listAgents failure
+// ---------------------------------------------------------------------------
+
+describe("OpenCodeAdapter — spawnSubagent() listAgents failure", () => {
+  it("throws when listAgents() returns an error", async () => {
+    const mockClient = new MockOpenCodeClient();
+    mockClient.setListAgentsResult(
+      errAsync({
+        type: "ListAgentsError" as const,
+        message: "Connection refused",
+      }),
+    );
+
+    const adapter = new OpenCodeAdapter({
+      projectRoot: "/tmp/test-project",
+      client: mockClient,
+    });
+    await adapter.init();
+
+    await expect(adapter.spawnSubagent(makeDescriptor())).rejects.toThrow(
+      "Connection refused",
+    );
   });
 });
 

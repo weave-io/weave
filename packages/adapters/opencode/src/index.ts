@@ -20,6 +20,7 @@ import type {
 } from "@weave/engine";
 import { logger } from "@weave/engine";
 import type { OpenCodeClientFacade } from "./opencode-client.js";
+import { reconcileAgent } from "./reconcile-agent.js";
 import type { OpenCodeAgentConfig } from "./sdk-types.js";
 import { translateAgent } from "./translate-agent.js";
 
@@ -28,6 +29,16 @@ export type {
   OpenCodeClientFacade,
 } from "./opencode-client.js";
 export { SdkOpenCodeClient } from "./opencode-client.js";
+export type {
+  ReconcileAgentError,
+  ReconcileDecision,
+} from "./reconcile-agent.js";
+export {
+  classifyExistingAgent,
+  reconcileAgent,
+  tagWithOwnership,
+  WEAVE_OWNERSHIP_TAG,
+} from "./reconcile-agent.js";
 export type {
   RunWorkflowError,
   RunWorkflowInput,
@@ -82,9 +93,15 @@ export interface OpenCodeAdapterOptions {
  * Implements the `HarnessAdapter` interface to materialise Weave agent
  * descriptors into a running OpenCode instance via the OpenCode SDK client.
  *
- * Translated agent configs are stored in an in-memory map keyed by agent name.
- * Actual SDK-backed materialization uses the injected `OpenCodeClientFacade`
- * when provided; without it the adapter operates in translation-only mode.
+ * When an `OpenCodeClientFacade` is injected, `spawnSubagent()` performs
+ * real SDK-backed materialization using the `list → reconcile → create/update`
+ * flow in `reconcile-agent.ts`. Without a client the adapter falls back to
+ * translation-only mode (no SDK calls are made).
+ *
+ * `translatedAgents` is retained as a read-only snapshot of the last
+ * translated config for each agent. It is populated regardless of whether SDK
+ * materialization succeeds, and is available for test inspection and
+ * transitional compatibility. It is NOT the primary materialization path.
  *
  * A `BunFilesystemPlanStateProvider` is constructed during `init()` and stored
  * as `this.planStateProvider`. Pass it to any `completeStep` call that uses a
@@ -92,9 +109,16 @@ export interface OpenCodeAdapterOptions {
  */
 export class OpenCodeAdapter implements HarnessAdapter {
   /**
-   * In-memory store of translated OpenCode agent configs, keyed by agent name.
-   * Populated by `spawnSubagent`; consumed by the config-write task (task 10)
-   * and available for test inspection.
+   * Read-only snapshot of the last translated OpenCode agent config for each
+   * agent, keyed by agent name.
+   *
+   * Populated by `spawnSubagent()` after successful translation, regardless of
+   * whether SDK materialization is attempted. Useful for test inspection and
+   * transitional compatibility.
+   *
+   * The primary materialization path is the SDK-backed `reconcileAgent()` call
+   * inside `spawnSubagent()`. This map is a secondary artifact, not the source
+   * of truth for what is actually registered in OpenCode.
    */
   readonly translatedAgents: Map<string, OpenCodeAgentConfig> = new Map();
 
@@ -163,34 +187,42 @@ export class OpenCodeAdapter implements HarnessAdapter {
   /**
    * Materialise a sub-agent from the provided normalized descriptor.
    *
-   * Translates the descriptor into an OpenCode `AgentConfig` via
-   * `translateAgent`, logs the outcome, and stores the result in
-   * `translatedAgents` for downstream consumption (config writing, task 10).
+   * ## Flow
    *
-   * Throws when translation fails so the caller can handle the error rather
-   * than silently continuing with a partially-materialised agent set.
+   * 1. Translate the descriptor into an OpenCode `AgentConfig` via
+   *    `translateAgent`. Throws on translation failure.
+   * 2. Store the translated config in `translatedAgents` for test inspection
+   *    and transitional compatibility.
+   * 3. When an `OpenCodeClientFacade` is available, call `reconcileAgent()` to
+   *    perform the SDK-backed `list → reconcile → create/update` flow.
+   *    Throws on reconciliation failure (including collision errors).
+   * 4. When no client is available, log a warning and return (translation-only
+   *    mode — no SDK calls are made).
    *
    * @param descriptor - Full normalized agent descriptor to materialise.
-   * @throws {Error} When the descriptor cannot be translated to an OpenCode config.
+   * @throws {Error} When translation fails or SDK-backed materialization fails.
    */
   async spawnSubagent(descriptor: AgentDescriptor): Promise<void> {
-    const result = translateAgent(descriptor);
+    const translateResult = translateAgent(descriptor);
 
-    if (result.isErr()) {
+    if (translateResult.isErr()) {
       log.error(
         {
           agent: descriptor.name,
-          error: result.error.type,
-          message: result.error.message,
+          error: translateResult.error.type,
+          message: translateResult.error.message,
         },
         "Failed to translate agent descriptor",
       );
       throw new Error(
-        `Failed to translate agent descriptor for "${descriptor.name}": ${result.error.message}`,
+        `Failed to translate agent descriptor for "${descriptor.name}": ${translateResult.error.message}`,
       );
     }
 
-    const config = result.value;
+    const config = translateResult.value;
+
+    // Store translated config for test inspection and transitional compatibility.
+    // This is a secondary artifact — the SDK-backed path below is primary.
     this.translatedAgents.set(descriptor.name, config);
 
     log.info(
@@ -200,6 +232,41 @@ export class OpenCodeAdapter implements HarnessAdapter {
         mode: config.mode,
       },
       "Agent descriptor translated successfully",
+    );
+
+    if (this.openCodeClient === undefined) {
+      log.warn(
+        { agent: descriptor.name },
+        "No OpenCode client injected — skipping SDK materialization (translation-only mode)",
+      );
+      return;
+    }
+
+    // SDK-backed materialization: list existing → reconcile → create/update
+    const reconcileResult = await reconcileAgent(
+      descriptor.name,
+      config,
+      this.openCodeClient,
+    );
+
+    if (reconcileResult.isErr()) {
+      const error = reconcileResult.error;
+      log.error(
+        {
+          agent: descriptor.name,
+          errorType: error.type,
+          message: error.message,
+        },
+        "Failed to materialize agent via SDK",
+      );
+      throw new Error(
+        `Failed to materialize agent "${descriptor.name}" via OpenCode SDK: [${error.type}] ${error.message}`,
+      );
+    }
+
+    log.info(
+      { agent: descriptor.name },
+      "Agent materialized successfully via OpenCode SDK",
     );
   }
 }

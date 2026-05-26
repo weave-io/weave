@@ -47,21 +47,23 @@
 - [x] 1.4 Update adapter initialization code so `OpenCodeAdapter` stores the injected dependency without relying on global mutable state.
 - [x] 1.5 Add `packages/adapters/opencode/src/__tests__/adapter.test.ts` coverage proving the adapter can be constructed and initialized with a mocked injected client.
 
-### [ ] 2.0 Replace in-memory translation with real SDK-backed materialization
+### [x] 2.0 Replace in-memory translation with real SDK-backed materialization
 
 #### 2.0 Proof Artifact(s)
 
 - Test: `bun test packages/adapters/opencode/src/__tests__/adapter.test.ts` passes with create/update materialization cases demonstrates `spawnSubagent(descriptor)` uses the SDK-backed path.
 - CLI: a sanitized smoke command recorded in validation notes (running OpenCode with only `@weave/adapter-opencode` enabled) produces an agent list or UI-visible agent entry for a Weave-authored agent demonstrates runtime materialization.
 - Diff: `packages/adapters/opencode/src/index.ts` removes the comment that real registration is deferred demonstrates the first-slice path is no longer in-memory only.
+- Proof: `docs/specs/20-spec-opencode-adapter-materialization/20-proofs/20-task-02-proofs.md`
+- Smoke: `docs/specs/20-spec-opencode-adapter-materialization/20-smoke-checklist-task-02.md`
 
 #### 2.0 Tasks
 
-- [ ] 2.1 Refactor `spawnSubagent(descriptor)` so translation is followed by SDK-backed materialization rather than only `translatedAgents.set(...)`.
-- [ ] 2.2 Decide and document the exact adapter-local flow for `list existing → reconcile decision → create/update call` inside the new facade/reconciliation modules.
-- [ ] 2.3 Preserve `translatedAgents` only if still needed for test visibility or transitional compatibility; otherwise remove or narrow it so the real SDK path is the primary behavior.
-- [ ] 2.4 Add mocked-client adapter tests proving a successful create path and a successful update path both invoke the expected facade methods.
-- [ ] 2.5 Write a sanitized manual smoke checklist that runs OpenCode with only `@weave/adapter-opencode` enabled and verifies a Weave-authored agent appears after materialization.
+- [x] 2.1 Refactor `spawnSubagent(descriptor)` so translation is followed by SDK-backed materialization rather than only `translatedAgents.set(...)`.
+- [x] 2.2 Decide and document the exact adapter-local flow for `list existing → reconcile decision → create/update call` inside the new facade/reconciliation modules.
+- [x] 2.3 Preserve `translatedAgents` only if still needed for test visibility or transitional compatibility; otherwise remove or narrow it so the real SDK path is the primary behavior.
+- [x] 2.4 Add mocked-client adapter tests proving a successful create path and a successful update path both invoke the expected facade methods.
+- [x] 2.5 Write a sanitized manual smoke checklist that runs OpenCode with only `@weave/adapter-opencode` enabled and verifies a Weave-authored agent appears after materialization.
 
 ### [ ] 3.0 Implement safe reconciliation using canonical agent identity and ownership checks
 
