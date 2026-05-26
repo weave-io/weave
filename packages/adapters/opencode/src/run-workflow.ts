@@ -30,7 +30,7 @@
  * @see docs/adapter-boundary.md — Execution Lifecycle Surface section
  */
 
-import type { WeaveConfig, WorkflowConfig } from "@weave/core";
+import type { WeaveConfig, WorkflowConfig, WorkflowStep } from "@weave/core";
 import type { RuntimeStore } from "@weave/engine";
 import {
   completeStep,
@@ -177,7 +177,7 @@ function resolveNextStepName(
   completedStepName: string,
 ): string | undefined {
   const currentIndex = workflowConfig.steps.findIndex(
-    (s) => s.name === completedStepName,
+    (s: WorkflowStep) => s.name === completedStepName,
   );
   if (currentIndex < 0) return undefined;
   return workflowConfig.steps[currentIndex + 1]?.name;
