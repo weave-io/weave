@@ -52,13 +52,24 @@ EOF
 Create or update `opencode.json` in the test project:
 
 ```jsonc
-// opencode.json
+// opencode.json — when installed from npm
 {
-  "plugin": ["@weave/adapter-opencode"]
+  "plugin": ["@weave/adapter-opencode/plugin"]
 }
 ```
 
-> **No user-authored wrapper script is required.** The package itself is the plugin entry point. OpenCode loads the default-exported `WeavePlugin` function at startup, which reads `.weave/config.weave`, materializes all declared agents, and returns.
+> **Important**: Use the `@weave/adapter-opencode/plugin` subpath export (not the bare package name). The bare `@weave/adapter-opencode` entry point (`dist/index.js`) exports non-function values (constants, types) that cause OpenCode's `getLegacyPlugins` loader to throw `TypeError: Plugin export is not a function`. The `./plugin` subpath (`dist/plugin.js`) exports only the plugin function and is the correct entry point for OpenCode.
+
+When referencing the local build directly (e.g. during development):
+
+```jsonc
+// opencode.json — local file reference
+{
+  "plugin": ["file:///path/to/packages/adapters/opencode/dist/plugin.js"]
+}
+```
+
+> **No user-authored wrapper script is required.** The plugin bundle is the entry point. OpenCode loads the default-exported `WeavePlugin` function at startup, which reads `.weave/config.weave`, materializes all declared agents, and returns.
 
 ---
 

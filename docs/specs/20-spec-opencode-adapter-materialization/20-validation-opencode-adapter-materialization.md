@@ -3,7 +3,7 @@
 **Spec**: [20-spec-opencode-adapter-materialization.md](./20-spec-opencode-adapter-materialization.md)  
 **Tasks**: [20-tasks-opencode-adapter-materialization.md](./20-tasks-opencode-adapter-materialization.md)  
 **Worktree**: `/Users/jose/projects/weave.worktrees/spec-20-opencode-materialization`  
-**HEAD**: `7fcbe1a` → remediated  
+**HEAD**: `6430a31` → live-debug validated  
 **Base commit**: `b54aacf`  
 **Validation date**: 2026-05-26  
 **Validator**: Shuttle (automated)
@@ -14,16 +14,18 @@
 
 **Overall: PASS**
 
-**Implementation Ready: Yes** — all functional requirements are verified, the build is clean, and all repository standards are met. The previously blocking `node:fs` violation in `plugin.test.ts` has been remediated: `mkdirSync`/`writeFileSync` replaced with `Bun.write()` (which creates parent directories automatically). No `node:fs` imports remain in the test file.
+**Implementation Ready: Yes** — all functional requirements are verified, the build is clean, all repository standards are met, and the plugin has been validated via live `opencode debug` CLI execution. A real defect was found and fixed during live validation: `dist/index.js` (the full library bundle) exports non-function values that cause OpenCode's `getLegacyPlugins` loader to throw `TypeError: Plugin export is not a function`. A dedicated plugin-only bundle (`dist/plugin.js`) was added and the `package.json` exports map updated with a `./plugin` entry point. The smoke checklist now correctly references `dist/plugin.js`.
 
 **Key metrics:**
 - Requirements Verified: 18 / 18 (100%)
 - Proof Artifacts Working: 9 / 9 (100%)
-- Files Changed vs Expected: 33 changed vs 23 listed in spec (10 additional files justified — see Evidence Appendix §C)
+- Files Changed vs Expected: 34 changed vs 23 listed in spec (11 additional files justified — see Evidence Appendix §C)
 - `bun run typecheck` → all 5 packages exit 0
 - Targeted adapter quality gate → 165 pass / 0 fail (7 files)
-- `bun run --filter @weave/adapter-opencode build` → exit 0, 407 modules bundled
+- `bun run --filter @weave/adapter-opencode build` → exit 0, 407 modules (index) + 404 modules (plugin) bundled
 - `bun test` → 1833 pass / 0 fail
+- `opencode debug config` → plugin path resolved in merged config ✅
+- `opencode debug info` → plugin listed and executed; pino log `"Weave plugin starting"` emitted ✅
 
 | Gate | Description | Result |
 |------|-------------|--------|
@@ -99,11 +101,12 @@
 
 ## Validation Issues
 
-No open issues. The previously reported MEDIUM violation (Gate E) has been resolved.
+No open issues. All previously reported violations have been resolved. One additional defect was found and fixed during live `opencode debug` validation.
 
 | Severity | Issue | Status |
 |----------|-------|--------|
 | ~~MEDIUM~~ | ~~`plugin.test.ts` imports `mkdirSync`/`writeFileSync` from `node:fs`~~ | **Resolved** — replaced with `Bun.write()` in remediation commit |
+| ~~HIGH~~ | ~~`dist/index.js` exports non-function values (`WEAVE_OWNERSHIP_TAG` string, etc.) causing OpenCode `getLegacyPlugins` to throw `TypeError: Plugin export is not a function`~~ | **Resolved** — dedicated `dist/plugin.js` bundle added; `package.json` exports map updated with `./plugin` entry; smoke checklist updated to reference `dist/plugin.js` |
 
 ---
 
@@ -133,7 +136,7 @@ bun test packages/adapters/opencode/src/__tests__/
 bun run --filter @weave/adapter-opencode build
 ```
 
-**Result**: Exit 0. Build bundles 407 modules; declaration emit succeeds.
+**Result**: Exit 0. Bundles 407 modules (`index.js`) + 404 modules (`plugin.js`); declaration emit succeeds.
 
 #### A.4 Full test suite
 
@@ -142,6 +145,52 @@ bun test
 ```
 
 **Result**: 1833 pass, 0 fail.
+
+#### A.5 Live `opencode debug` validation
+
+```bash
+# Test project setup
+mkdir -p /tmp/weave-smoke-test/.weave/prompts
+cat > /tmp/weave-smoke-test/.weave/config.weave << 'EOF'
+agent smoke-test-agent {
+  description "Smoke test agent for Weave materialization"
+  prompt "You are a smoke test agent created by Weave materialization."
+  models ["claude-sonnet-4-5"]
+  mode subagent
+  temperature 0.2
+  tool_policy { read allow write deny execute deny delegate deny network deny }
+}
+EOF
+cat > /tmp/weave-smoke-test/opencode.json << 'EOF'
+{ "plugin": ["file:///…/packages/adapters/opencode/dist/plugin.js"] }
+EOF
+
+# Commands run
+cd /tmp/weave-smoke-test
+opencode debug config   # shows merged config with plugin path
+opencode debug info     # executes plugin; shows pino logs
+```
+
+**`opencode debug config` result** (plugin section):
+```json
+"plugin": [
+  "…",
+  "file:///Users/jose/projects/weave.worktrees/spec-20-opencode-materialization/packages/adapters/opencode/dist/plugin.js",
+  "…"
+]
+```
+Plugin path correctly resolved in merged config. ✅
+
+**`opencode debug info` result** (pino logs emitted at startup):
+```json
+{"level":30,"module":"adapter-opencode/plugin","directory":"/private/tmp/weave-smoke-test","msg":"Weave plugin starting"}
+{"level":50,"module":"adapter-opencode/plugin","errors":[{"type":"ParseError","path":"/Users/jose/.weave/config.weave","errors":[{"type":"ValidationError","path":"log_level","message":"top-level log_level is not allowed; use settings { log_level INFO } instead"}]}],"msg":"Failed to load Weave config — no agents will be materialized"}
+```
+
+Plugin loaded and executed by OpenCode. ✅  
+Config load failed due to pre-existing `log_level INFO` at top level in the user's global `~/.weave/config.weave` (not inside `settings {}`). This is a user config issue, not an adapter defect — the plugin correctly logs the error and returns empty hooks (graceful degradation). The local test project config parses correctly in isolation.
+
+**Defect found during live validation**: `dist/index.js` (full library bundle) exports `WEAVE_OWNERSHIP_TAG` (a string constant) and other non-function values. OpenCode's `getLegacyPlugins` loader iterates all module exports and throws `TypeError: Plugin export is not a function` for any non-function export. **Fix applied**: dedicated `dist/plugin.js` bundle built from `src/plugin.ts` (exports only functions: `WeavePlugin`, `server`, `default`); `package.json` exports map updated with `./plugin` entry; smoke checklist updated to reference `dist/plugin.js`.
 
 ---
 
@@ -183,10 +232,12 @@ No out-of-scope core drift detected. All core file changes map to a spec task.
 
 | Check | Result |
 |-------|--------|
-| Clean worktree at HEAD `7fcbe1a` | Confirmed |
+| Clean worktree at HEAD `6430a31` | Confirmed (after live-debug fix commit) |
 | No `console.` in `packages/adapters/opencode/src` | Zero hits |
 | Direct `@opencode-ai/sdk` imports in executable code | Only in `sdk-types.ts`; doc comment example in `adapter.ts` is non-runtime |
 | Secret scan | No committed credentials; "secret" appears only in descriptive prose in spec/proof files |
+| `dist/plugin.js` exports only functions | Verified — `WeavePlugin`, `server`, `default` all `typeof === 'function'`; `getLegacyPlugins` simulation: PASS |
+| `opencode debug info` plugin execution | Plugin loaded and `"Weave plugin starting"` pino log emitted; graceful degradation on global config error |
 
 ---
 
