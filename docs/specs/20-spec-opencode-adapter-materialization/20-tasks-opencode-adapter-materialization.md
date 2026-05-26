@@ -65,7 +65,7 @@
 - [x] 2.4 Add mocked-client adapter tests proving a successful create path and a successful update path both invoke the expected facade methods.
 - [x] 2.5 Write a sanitized manual smoke checklist that runs OpenCode with only `@weave/adapter-opencode` enabled and verifies a Weave-authored agent appears after materialization.
 
-### [ ] 3.0 Implement safe reconciliation using canonical agent identity and ownership checks
+### [x] 3.0 Implement safe reconciliation using canonical agent identity and ownership checks
 
 #### 3.0 Proof Artifact(s)
 
@@ -75,12 +75,12 @@
 
 #### 3.0 Tasks
 
-- [ ] 3.1 Create `packages/adapters/opencode/src/reconcile-agent.ts` to encapsulate upsert-only reconciliation rules.
-- [ ] 3.2 Use `descriptor.name` as the Canonical Agent Name for all matching and durable identity checks.
-- [ ] 3.3 Treat `displayName`, `description`, and other presentation fields as mutable display metadata, not identity.
-- [ ] 3.4 Add an explicit Weave-ownership check before update and return a collision error when a same-named foreign OpenCode agent is found.
-- [ ] 3.5 Keep first-slice behavior upsert-only by refusing automatic delete, prune, or forced takeover operations.
-- [ ] 3.6 Add `packages/adapters/opencode/src/__tests__/reconcile-agent.test.ts` coverage for create, update, and foreign-agent collision cases.
+- [x] 3.1 Create `packages/adapters/opencode/src/reconcile-agent.ts` to encapsulate upsert-only reconciliation rules.
+- [x] 3.2 Use `descriptor.name` as the Canonical Agent Name for all matching and durable identity checks.
+- [x] 3.3 Treat `displayName`, `description`, and other presentation fields as mutable display metadata, not identity.
+- [x] 3.4 Add an explicit Weave-ownership check before update and return a collision error when a same-named foreign OpenCode agent is found.
+- [x] 3.5 Keep first-slice behavior upsert-only by refusing automatic delete, prune, or forced takeover operations.
+- [x] 3.6 Add `packages/adapters/opencode/src/__tests__/reconcile-agent.test.ts` coverage for create, update, and foreign-agent collision cases.
 
 ### [ ] 4.0 Add model and skill validation to the materialization pipeline
 
