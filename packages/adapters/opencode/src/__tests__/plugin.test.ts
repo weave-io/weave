@@ -858,6 +858,47 @@ describe("WeavePlugin — config hook injects ownership-tagged agents (no-collis
 });
 
 // ---------------------------------------------------------------------------
+// Tests: builtin shuttle mode regression
+// ---------------------------------------------------------------------------
+
+describe("WeavePlugin — builtin shuttle is subagent-only", () => {
+  it("builtin shuttle agent is injected with mode subagent (not all)", async () => {
+    // Regression test: shuttle was previously declared as `mode all` in
+    // builtins.ts. It must be `mode subagent` so it only appears as a
+    // subagent in OpenCode, not as a primary agent.
+    const root = join(
+      tmpdir(),
+      `weave-shuttle-mode-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
+    await Bun.write(
+      join(root, ".weave", "config.weave"),
+      "# empty project config\n",
+    );
+
+    const client = new MockOpenCodeClient();
+    client.setListResult(okAsync([]));
+
+    const plugin = createWeavePlugin({
+      fileReader: projectOnlyReader(root),
+      clientFacade: client,
+    });
+    const input = makeMockPluginInput(root, client);
+    const hooks = await plugin(input);
+
+    expect(typeof hooks.config).toBe("function");
+
+    const cfg: { agent?: Record<string, unknown> } = {};
+    await hooks.config!(cfg as never);
+
+    const shuttleConfig = cfg.agent?.["shuttle"] as
+      | Record<string, unknown>
+      | undefined;
+    expect(shuttleConfig).toBeDefined();
+    expect(shuttleConfig?.mode).toBe("subagent");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tests: @opencode-ai/plugin dependency proof
 // ---------------------------------------------------------------------------
 

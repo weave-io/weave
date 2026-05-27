@@ -461,6 +461,42 @@ All types and functions used in this guide are public exports:
 
 ---
 
+## Logging Configuration
+
+Weave uses [pino](https://getpino.io/) for structured JSON logging. By default,
+all log output goes to **stdout**. When running as an OpenCode plugin, stdout is
+read by the OpenCode UI, so Weave's JSON logs would surface as noise in the
+interface.
+
+### Routing logs to a file
+
+Set `WEAVE_LOG_FILE` to an absolute path to redirect all Weave log output to a
+file instead of stdout:
+
+```sh
+WEAVE_LOG_FILE=/tmp/weave.log opencode
+```
+
+Both the engine logger (`@weave/engine`) and the config logger (`@weave/config`)
+honour this variable. The file is created if it does not exist; existing content
+is appended.
+
+**Recommended for OpenCode plugin use**: set `WEAVE_LOG_FILE` in the environment
+before starting OpenCode so that Weave's structured logs do not appear in the
+OpenCode UI.
+
+### Log level
+
+Control verbosity with `LOG_LEVEL` (default: `info`):
+
+```sh
+LOG_LEVEL=debug WEAVE_LOG_FILE=/tmp/weave.log opencode
+```
+
+Valid values: `fatal`, `error`, `warn`, `info`, `debug`, `trace`, `silent`.
+
+---
+
 ## What Adapters Own After Bootstrap
 
 Once `materializeAgents` returns `plan.agents`, the adapter owns:

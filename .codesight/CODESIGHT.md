@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weave/core, @weave/engine, @weave/config, @weave/cli, @weave/adapter-opencode
 
-> 0 routes | 0 models | 0 components | 58 lib files | 2 env vars | 0 middleware | 0% test coverage
-> **Token savings:** this file is ~5,000 tokens. Without it, AI exploration would cost ~24,400 tokens. **Saves ~19,500 tokens per conversation.**
-> **Last scanned:** 2026-05-27 03:59 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 58 lib files | 3 env vars | 0 middleware | 0% test coverage
+> **Token savings:** this file is ~5,000 tokens. Without it, AI exploration would cost ~24,600 tokens. **Saves ~19,600 tokens per conversation.**
+> **Last scanned:** 2026-05-27 04:30 — re-run after significant changes
 
 ---
 
@@ -261,6 +261,7 @@
 
 - `HOME` **required** — packages/cli/src/detect/probes.ts
 - `LOG_LEVEL` **required** — packages/config/src/logger.ts
+- `WEAVE_LOG_FILE` **required** — packages/config/src/logger.ts
 
 ## Config Files
 

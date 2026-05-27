@@ -58,6 +58,46 @@ describe("parseEnv", () => {
     }
   });
 
+  // ---------------------------------------------------------------------------
+  // WEAVE_LOG_FILE
+  // ---------------------------------------------------------------------------
+
+  test("WEAVE_LOG_FILE is undefined when not set", () => {
+    const result = parseEnv({});
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.WEAVE_LOG_FILE).toBeUndefined();
+    }
+  });
+
+  test("WEAVE_LOG_FILE accepts a file path string", () => {
+    const result = parseEnv({ WEAVE_LOG_FILE: "/tmp/weave.log" });
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.WEAVE_LOG_FILE).toBe("/tmp/weave.log");
+    }
+  });
+
+  test("WEAVE_LOG_FILE accepts any non-empty string (no path validation at schema level)", () => {
+    const result = parseEnv({ WEAVE_LOG_FILE: "relative/path/weave.log" });
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.WEAVE_LOG_FILE).toBe("relative/path/weave.log");
+    }
+  });
+
+  test("WEAVE_LOG_FILE is preserved alongside LOG_LEVEL", () => {
+    const result = parseEnv({
+      LOG_LEVEL: "debug",
+      WEAVE_LOG_FILE: "/var/log/weave.log",
+    });
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.LOG_LEVEL).toBe("debug");
+      expect(result.value.WEAVE_LOG_FILE).toBe("/var/log/weave.log");
+    }
+  });
+
   // The module-level `env` bootstrap (env.ts bottom) calls `parseEnv()` at
   // import time and invokes `Bun.exit(1)` on failure. Direct import-time
   // testing is not feasible because module-level side effects run once per

@@ -44,6 +44,13 @@ describe("getBuiltinConfig", () => {
     expect(shuttle?.prompt_file).toBe("shuttle.md");
   });
 
+  it("(d2) shuttle has mode subagent (not all — shuttle is a subagent-only specialist)", () => {
+    const config = getBuiltinConfig()._unsafeUnwrap();
+    const shuttle = config.agents.shuttle;
+    expect(shuttle).toBeDefined();
+    expect(shuttle?.mode).toBe("subagent");
+  });
+
   it("(e) thread has temperature 0.0", () => {
     const config = getBuiltinConfig()._unsafeUnwrap();
     const thread = config.agents.thread;

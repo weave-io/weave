@@ -100,7 +100,7 @@ agent shuttle {
   description "Shuttle (Domain Specialist)"
   prompt_file "shuttle.md"
   models ["claude-sonnet-4-5"]
-  mode all
+  mode subagent
   temperature 0.2
 
   tool_policy {

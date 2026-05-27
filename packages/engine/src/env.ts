@@ -32,6 +32,19 @@ export const envSchema = z.object({
     })
     .optional()
     .default("info"),
+
+  /**
+   * Optional absolute path to a log file.
+   *
+   * When set, all Weave engine and config log output is written to this file
+   * instead of stdout. This prevents Weave's structured JSON logs from
+   * surfacing in the OpenCode UI (which reads stdout/stderr).
+   *
+   * Example: `WEAVE_LOG_FILE=/tmp/weave.log bun run start`
+   *
+   * When unset (the default), pino writes to stdout as usual.
+   */
+  WEAVE_LOG_FILE: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -77,11 +90,17 @@ export function parseEnv(
  *
  * Note: uses pino directly (not the shared logger) to avoid a circular
  * dependency — logger.ts imports env.ts to read LOG_LEVEL.
+ *
+ * When `WEAVE_LOG_FILE` is set, the startup fatal message is also written
+ * to that file instead of stdout, consistent with the shared logger.
  */
 export const env: Env = parseEnv().match(
   (e) => e,
   (envErr) => {
-    const startupLogger = pino({ name: "weave" });
+    const logFile = process.env.WEAVE_LOG_FILE;
+    const startupLogger = logFile
+      ? pino({ name: "weave" }, pino.destination({ dest: logFile, sync: true }))
+      : pino({ name: "weave" });
     startupLogger.fatal(
       { err: envErr },
       "[weave] Invalid environment variables",
