@@ -1,22 +1,5 @@
+import { logDestination } from "@weave/engine";
 import pino from "pino";
-
-/**
- * Resolve the pino destination for the config logger.
- *
- * When `WEAVE_LOG_FILE` is set, logs are written to that file path instead
- * of stdout. This prevents Weave's structured JSON logs from surfacing in
- * the OpenCode UI (which reads stdout/stderr).
- *
- * When unset, pino uses its default destination (stdout).
- *
- * Note: reads directly from `process.env` to avoid a circular dependency
- * with `@weave/engine` (which owns the validated `env` object).
- */
-function resolveDestination(): pino.DestinationStream | undefined {
-  const logFile = process.env.WEAVE_LOG_FILE;
-  if (!logFile) return undefined;
-  return pino.destination({ dest: logFile, sync: false });
-}
 
 /**
  * Package-local pino logger for `@weave/config`.
@@ -25,14 +8,35 @@ function resolveDestination(): pino.DestinationStream | undefined {
  * emitted under the `"weave:config"` name so it can be filtered independently
  * from the engine logger.
  *
+ * ## Shared destination
+ *
+ * This logger writes to the **same** `MutableDestination` instance exported
+ * by `@weave/engine`. This is the key invariant that makes silent startup work
+ * in the OpenCode plugin path:
+ *
+ * 1. The plugin calls `redirectLogsToFile(join(directory, '.weave/weave.log'))`
+ *    at the very start of `createWeavePlugin`.
+ * 2. `redirectLogsToFile` calls `logDestination.redirectTo(fileSink)` on the
+ *    shared `MutableDestination`.
+ * 3. Because this logger uses the same `logDestination`, all subsequent writes
+ *    from the config pipeline (including `log.info("Config loaded successfully")`)
+ *    go to the file — not to stdout.
+ *
+ * If this logger used its own separate destination (as it did before this
+ * change), `redirectLogsToFile` would not affect it and the config logger
+ * would continue writing to stdout even after the redirect.
+ *
+ * ## Log level
+ *
  * Log level is controlled at runtime via the `LOG_LEVEL` environment variable
  * (default: `"info"`). The test setup preload sets `LOG_LEVEL=silent` so that
  * pino output does not pollute test results.
  *
- * When `WEAVE_LOG_FILE` is set in the environment, all log output is written
- * to that file instead of stdout. This is the recommended configuration when
- * running as an OpenCode plugin to avoid polluting the OpenCode UI with
- * Weave's structured JSON logs.
+ * ## WEAVE_LOG_FILE
+ *
+ * When `WEAVE_LOG_FILE` is set, the engine's `buildInitialSink()` already
+ * points `logDestination` at that file before this module is imported. No
+ * additional handling is needed here — the shared destination handles it.
  *
  * @example
  * ```ts
@@ -41,11 +45,10 @@ function resolveDestination(): pino.DestinationStream | undefined {
  * log.debug({ path }, "Checking config file");
  * ```
  */
-const destination = resolveDestination();
-
-export const logger = destination
-  ? pino(
-      { name: "weave:config", level: process.env.LOG_LEVEL ?? "info" },
-      destination,
-    )
-  : pino({ name: "weave:config", level: process.env.LOG_LEVEL ?? "info" });
+export const logger = pino(
+  {
+    name: "weave:config",
+    level: process.env.LOG_LEVEL ?? "info",
+  },
+  logDestination as unknown as pino.DestinationStream,
+);

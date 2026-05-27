@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 59 lib files | 3 env vars | 0 middleware | 0% test coverage
 > **Token savings:** this file is ~5,000 tokens. Without it, AI exploration would cost ~24,800 tokens. **Saves ~19,800 tokens per conversation.**
-> **Last scanned:** 2026-05-27 14:56 — re-run after significant changes
+> **Last scanned:** 2026-05-27 15:18 — re-run after significant changes
 
 ---
 
@@ -265,7 +265,7 @@
 
 - `HOME` **required** — packages/cli/src/detect/probes.ts
 - `LOG_LEVEL` **required** — packages/config/src/logger.ts
-- `WEAVE_LOG_FILE` **required** — packages/config/src/logger.ts
+- `WEAVE_LOG_FILE` **required** — packages/engine/src/env.ts
 
 ## Config Files
 
@@ -296,7 +296,7 @@
 - `packages/config/src/merge.ts` — imported by **5** files
 - `packages/core/src/lexer.ts` — imported by **5** files
 - `packages/engine/src/descriptors.ts` — imported by **5** files
-- `packages/config/src/types.ts` — imported by **4** files
+- `packages/config/src/logger.ts` — imported by **4** files
 
 ## Import Map (who imports what)
 
@@ -316,7 +316,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 52 test files found
+> 53 test files found
 
 ---
 

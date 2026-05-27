@@ -21,7 +21,7 @@
 - `packages/config/src/merge.ts` — imported by **5** files
 - `packages/core/src/lexer.ts` — imported by **5** files
 - `packages/engine/src/descriptors.ts` — imported by **5** files
-- `packages/config/src/types.ts` — imported by **4** files
+- `packages/config/src/logger.ts` — imported by **4** files
 
 ## Import Map (who imports what)
 

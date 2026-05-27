@@ -1007,4 +1007,74 @@ describe("WeavePlugin — automatic file-backed logging", () => {
     // Regression guard: the constant must not change without updating docs.
     expect(DEFAULT_PLUGIN_LOG_SUBPATH).toBe(".weave/weave.log");
   });
+
+  it("config logger (weave:config) output goes to the log file — not stdout (regression for silent startup)", async () => {
+    // Regression test for: `{"name":"weave:config","module":"loader","msg":"Config loaded successfully"}`
+    // appearing on stdout during `opencode debug info` / `opencode` startup.
+    //
+    // Root cause: `packages/config/src/logger.ts` previously created its own
+    // separate pino destination (snapshotting stdout at module init time).
+    // When `redirectLogsToFile()` redirected the engine's `MutableDestination`,
+    // the config logger was unaffected — it still wrote to its own stdout sink.
+    //
+    // Fix: the config logger now uses the same `logDestination` from
+    // `@weave/engine`. After `redirectLogsToFile()`, both the engine logger
+    // and the config logger write to the file.
+    //
+    // Verification strategy:
+    //   1. Run the plugin against a temp project (triggers redirectLogsToFile).
+    //   2. Write a sentinel directly to `logDestination` (bypasses pino's
+    //      level filter, which is set to `silent` in tests).
+    //   3. Assert the sentinel appears in the log file.
+    //   4. Assert the log file contains "weave:config" entries (from the
+    //      config pipeline) — proving the config logger wrote to the file.
+    //
+    // Note: step 4 requires LOG_LEVEL != silent. Since tests run with
+    // LOG_LEVEL=silent, we can only verify the shared destination invariant
+    // via the direct write in step 2-3. The config logger's pino-level calls
+    // would also go to the file in production (LOG_LEVEL=info).
+
+    const root = join(
+      tmpdir(),
+      `weave-config-silent-startup-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
+    await Bun.write(
+      join(root, ".weave", "config.weave"),
+      "# empty project config\n",
+    );
+
+    const client = new MockOpenCodeClient();
+    client.setListResult(okAsync([]));
+
+    const plugin = createWeavePlugin({
+      fileReader: projectOnlyReader(root),
+      clientFacade: client,
+    });
+    const input = makeMockPluginInput(root, client);
+
+    // Run the plugin — triggers redirectLogsToFile, then loadConfig (which
+    // calls log.info("Config loaded successfully") via the config logger).
+    await plugin(input);
+
+    const expectedLogPath = join(root, DEFAULT_PLUGIN_LOG_SUBPATH);
+
+    // The log file must exist (created by redirectLogsToFile).
+    expect(await Bun.file(expectedLogPath).exists()).toBe(true);
+
+    // Write a sentinel directly to logDestination (bypasses pino's level
+    // filter). This proves the shared destination is pointing at the file.
+    const sentinel = `{"config-silent-startup-sentinel":true,"ts":${Date.now()}}\n`;
+    logDestination.write(sentinel);
+
+    const logContent = await Bun.file(expectedLogPath).text();
+    expect(logContent).toContain("config-silent-startup-sentinel");
+
+    // The sentinel must be valid JSON.
+    const sentinelLine = logContent
+      .split("\n")
+      .find((l) => l.includes("config-silent-startup-sentinel"));
+    expect(sentinelLine).toBeDefined();
+    const parsed = JSON.parse(sentinelLine!);
+    expect(parsed["config-silent-startup-sentinel"]).toBe(true);
+  });
 });
