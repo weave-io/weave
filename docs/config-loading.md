@@ -120,12 +120,20 @@ Eight built-in agents are shipped with `@weave/config`:
 | ---------- | -------- | ----------- | ------------------- |
 | `loom`     | primary  | 0.1         | Main orchestrator   |
 | `tapestry` | primary  | 0.1         | Plan execution      |
-| `shuttle`  | all      | 0.2         | Domain specialist   |
+| `shuttle`  | subagent | 0.2         | Domain specialist   |
 | `pattern`  | subagent | 0.3         | Strategic planner   |
 | `thread`   | subagent | 0.0         | Codebase explorer   |
 | `spindle`  | subagent | 0.1         | External researcher |
 | `weft`     | subagent | 0.1         | Reviewer            |
 | `warp`     | subagent | 0.1         | Security auditor    |
+
+> **Migration note — `shuttle` mode changed to `subagent`:** In earlier versions of Weave, the builtin `shuttle` agent was declared with `mode all` (usable as both primary and subagent). It is now `mode subagent`. If your project config or adapter code relied on `shuttle` being available as a primary agent, override the mode in your project's `.weave/config.weave`:
+> ```weave
+> agent shuttle {
+>   mode all
+> }
+> ```
+> This change was made to align `shuttle` with its actual usage pattern — it is always invoked as a delegated specialist, never as a user-facing primary agent.
 
 **DSL-first:** Builtins are declared as a `.weave` DSL string in [`packages/config/src/builtins.ts`](../packages/config/src/builtins.ts) — there is no separate code path. They flow through the same `parseConfig` pipeline as user-authored configs. This means:
 
@@ -198,7 +206,7 @@ const result = await loadConfig("/path/to/project");
 
 result.match(
   (config) => {
-    // config.agents["loom"].prompt_file is an absolute path
+    // config.agents["loom"].prompt is an inline string (builtins use prompt, not prompt_file)
     // config.agents includes all 8 builtins + user additions
     startRunner(config);
   },

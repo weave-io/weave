@@ -97,7 +97,7 @@ export function parseEnv(
 export const env: Env = parseEnv().match(
   (e) => e,
   (envErr) => {
-    const logFile = process.env.WEAVE_LOG_FILE;
+    const logFile = Bun.env.WEAVE_LOG_FILE;
     const startupLogger = logFile
       ? pino({ name: "weave" }, pino.destination({ dest: logFile, sync: true }))
       : pino({ name: "weave" });
