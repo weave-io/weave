@@ -1705,3 +1705,123 @@ describe("writeMigratedDsl with converted DSL content", () => {
     expect(result.isOk()).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Fix 4 — convertLegacyTools: non-boolean tool permission guard
+// ---------------------------------------------------------------------------
+
+describe("convertLegacyJsonc — non-boolean tool permission guard", () => {
+  it("warns and skips tool entry with string permission value", () => {
+    const result = convertLegacyJsonc(
+      JSON.stringify({
+        agents: { loom: { tools: { write: "yes" } } },
+      }),
+    );
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]!.field).toBe("agents.loom.tools.write");
+    expect(result.warnings[0]!.reason).toContain(
+      "tool permission must be a boolean",
+    );
+    expect(result.dsl).not.toContain("tool_policy");
+  });
+
+  it("warns and skips tool entry with number permission value", () => {
+    const result = convertLegacyJsonc(
+      JSON.stringify({
+        agents: { loom: { tools: { bash: 1 } } },
+      }),
+    );
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]!.field).toBe("agents.loom.tools.bash");
+    expect(result.warnings[0]!.reason).toContain(
+      "tool permission must be a boolean",
+    );
+    expect(result.dsl).not.toContain("execute");
+  });
+
+  it("warns and skips tool entry with null permission value", () => {
+    const result = convertLegacyJsonc(
+      JSON.stringify({
+        agents: { loom: { tools: { read: null } } },
+      }),
+    );
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]!.field).toBe("agents.loom.tools.read");
+    expect(result.warnings[0]!.reason).toContain(
+      "tool permission must be a boolean",
+    );
+  });
+
+  it("converts boolean tools while warning on non-boolean ones", () => {
+    const result = convertLegacyJsonc(
+      JSON.stringify({
+        agents: {
+          loom: {
+            tools: {
+              write: true, // valid boolean
+              bash: "yes", // invalid non-boolean
+              read: false, // valid boolean
+            },
+          },
+        },
+      }),
+    );
+    // One warning for the non-boolean
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]!.field).toBe("agents.loom.tools.bash");
+    // Valid boolean tools are still converted
+    expect(result.dsl).toContain("write allow");
+    expect(result.dsl).toContain("read deny");
+    // Non-boolean tool is not converted
+    expect(result.dsl).not.toContain("execute");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fix 5 — stripJsoncComments: URL preservation in string literals
+// ---------------------------------------------------------------------------
+
+describe("convertLegacyJsonc — URL preservation in string literals", () => {
+  it("preserves https:// URLs inside string values", () => {
+    const source = `{ "model": "https://api.example.com/v1/model" }`;
+    const result = convertLegacyJsonc(source);
+    // Should parse without error (unknown field warning is fine)
+    expect(result.warnings.some((w) => w.field === "<source>")).toBe(false);
+  });
+
+  it("preserves http:// URLs inside string values without stripping them", () => {
+    const source = `{ "prompt_append": "See http://example.com for details." }`;
+    // This will produce an unknown field warning, but the source must parse
+    const result = convertLegacyJsonc(source);
+    expect(result.warnings.some((w) => w.field === "<source>")).toBe(false);
+  });
+
+  it("preserves // inside string values (not treated as line comment)", () => {
+    const source = `{ "log_level": "INFO" /* block */ }`;
+    const result = convertLegacyJsonc(source);
+    expect(result.warnings).toHaveLength(0);
+    expect(result.dsl).toContain("log_level INFO");
+  });
+
+  it("strips line comment after value while preserving string with // inside", () => {
+    // The string value contains // but the trailing // is a real comment
+    const source = `{\n  "log_level": "INFO" // trailing comment\n}`;
+    const result = convertLegacyJsonc(source);
+    expect(result.warnings).toHaveLength(0);
+    expect(result.dsl).toContain("log_level INFO");
+  });
+
+  it("strips block comment while preserving adjacent string values", () => {
+    const source = `/* header */ { "log_level": "DEBUG" /* inline */ }`;
+    const result = convertLegacyJsonc(source);
+    expect(result.warnings).toHaveLength(0);
+    expect(result.dsl).toContain("log_level DEBUG");
+  });
+
+  it("handles escaped quotes inside strings without breaking comment detection", () => {
+    const source = `{ "prompt_append": "Say \\"hello\\"." }`;
+    const result = convertLegacyJsonc(source);
+    // unknown field warning is expected; source must parse successfully
+    expect(result.warnings.some((w) => w.field === "<source>")).toBe(false);
+  });
+});

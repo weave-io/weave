@@ -202,20 +202,77 @@ const VALID_LOG_LEVELS = new Set([
 ]);
 
 /**
- * Strip JSONC-style line comments (`// ...`) and block comments (`/* ... *\/`)
- * from a string so it can be parsed by `JSON.parse`.
+ * Strip JSONC-style line comments and block comments from a string so it
+ * can be parsed by `JSON.parse`.
  *
- * This is a minimal implementation that handles the common cases in
- * weave-opencode.jsonc files. It does not handle edge cases like comments
- * inside string literals.
+ * Uses a char-by-char state machine that tracks string context so that
+ * comment-like sequences inside string literals are preserved intact.
+ * This correctly handles URLs (e.g. `"https://example.com"`) and other
+ * string values that contain slashes.
  */
 function stripJsoncComments(source: string): string {
-  // Remove block comments first (/* ... */)
-  let result = source.replace(/\/\*[\s\S]*?\*\//g, "");
-  // Remove line comments (// ...) — but not inside strings
-  // Simple approach: remove // to end of line when not preceded by a colon
-  // (handles the common case; edge cases in strings are acceptable for migration)
-  result = result.replace(/\/\/[^\n]*/g, "");
+  let result = "";
+  let i = 0;
+  let inString = false;
+  let isEscaped = false;
+
+  while (i < source.length) {
+    const ch = source[i] as string;
+
+    if (inString) {
+      if (isEscaped) {
+        result += ch;
+        isEscaped = false;
+        i++;
+        continue;
+      }
+      if (ch === "\\") {
+        result += ch;
+        isEscaped = true;
+        i++;
+        continue;
+      }
+      if (ch === '"') {
+        result += ch;
+        inString = false;
+        i++;
+        continue;
+      }
+      result += ch;
+      i++;
+      continue;
+    }
+
+    if (ch === '"') {
+      result += ch;
+      inString = true;
+      i++;
+      continue;
+    }
+
+    if (ch === "/" && source[i + 1] === "/") {
+      while (i < source.length && source[i] !== "\n") {
+        i++;
+      }
+      continue;
+    }
+
+    if (ch === "/" && source[i + 1] === "*") {
+      i += 2;
+      while (i < source.length) {
+        if (source[i] === "*" && source[i + 1] === "/") {
+          i += 2;
+          break;
+        }
+        i++;
+      }
+      continue;
+    }
+
+    result += ch;
+    i++;
+  }
+
   return result;
 }
 
@@ -251,6 +308,13 @@ function convertLegacyTools(
       warnings.push({
         field: `${contextLabel}.tools.${toolName}`,
         reason: `"${toolName}" is a harness-specific tool name that cannot be mapped to an abstract tool_policy capability; skipped`,
+      });
+      continue;
+    }
+    if (typeof allowed !== "boolean") {
+      warnings.push({
+        field: `${contextLabel}.tools.${toolName}`,
+        reason: "tool permission must be a boolean; skipped",
       });
       continue;
     }
@@ -1263,18 +1327,28 @@ function renderMigrateSuccess(
 
 /**
  * Check whether a legacy weave-opencode.jsonc file exists for the given scope.
- * Returns the source path if found, undefined otherwise.
+ * Returns the source path when found, undefined when absent, or an error when
+ * the existence check itself fails (e.g. permission denied). Callers must
+ * handle the error case and stop the migration flow rather than proceeding as
+ * if the source were absent.
  */
 async function detectLegacySource(
   scope: InitScope,
   fs: FileSystem,
-): Promise<string | undefined> {
+): Promise<
+  { ok: true; path: string | undefined } | { ok: false; message: string }
+> {
   const scopeRoot = scope === "global" ? fs.home() : fs.cwd();
   const sourcePath = resolve(scopeRoot, LEGACY_SOURCE_RELATIVE[scope]);
   const exists = await fs.exists(sourcePath);
-  if (exists.isErr()) return undefined;
-  if (!exists.value) return undefined;
-  return sourcePath;
+  if (exists.isErr()) {
+    return {
+      ok: false,
+      message: `Failed to check legacy source at ${sourcePath}: ${describeFileSystemError(exists.error)}`,
+    };
+  }
+  if (!exists.value) return { ok: true, path: undefined };
+  return { ok: true, path: sourcePath };
 }
 
 // ---------------------------------------------------------------------------
@@ -1344,12 +1418,17 @@ async function createPlan(input: {
   }
 
   // After scope resolution, before harness selection: check for legacy source
-  const legacySource = await detectLegacySource(scope, fs);
-  if (legacySource !== undefined) {
+  const legacySourceResult = await detectLegacySource(scope, fs);
+  if (!legacySourceResult.ok) {
+    ctx.terminal.stderr(legacySourceResult.message);
+    return { type: "cancelled" };
+  }
+  const legacySourcePath = legacySourceResult.path;
+  if (legacySourcePath !== undefined) {
     // --yes: auto-migrate without prompting
     if (ctx.flags.yes) {
       const migrationPlan = buildMigrationPlan(scope, fs);
-      const sourceContent = await fs.readText(legacySource);
+      const sourceContent = await fs.readText(legacySourcePath);
       if (sourceContent.isErr()) {
         ctx.terminal.stderr(
           `Failed to read legacy source: ${describeFileSystemError(sourceContent.error)}`,
@@ -1358,13 +1437,18 @@ async function createPlan(input: {
       }
 
       const destExists = await fs.exists(migrationPlan.destinationPath);
-      const destExistsValue = destExists.isOk() ? destExists.value : false;
+      if (destExists.isErr()) {
+        ctx.terminal.stderr(
+          `Failed to check destination: ${describeFileSystemError(destExists.error)}`,
+        );
+        return { type: "cancelled" };
+      }
 
       const writeResult = await performMigrationWrite(
         fs,
         migrationPlan,
         sourceContent.value,
-        destExistsValue,
+        destExists.value,
       );
       if (writeResult.isErr()) {
         ctx.terminal.stderr(`Migration failed: ${writeResult.error.message}`);
@@ -1391,7 +1475,7 @@ async function createPlan(input: {
     // Interactive: offer migration
     if (prompt.isInteractive()) {
       const offerMigrate = await prompt.confirm({
-        message: `Legacy config found at ${legacySource}. Migrate to .weave DSL now?`,
+        message: `Legacy config found at ${legacySourcePath}. Migrate to .weave DSL now?`,
         initialValue: true,
       });
       if (offerMigrate.isErr())
@@ -1399,7 +1483,7 @@ async function createPlan(input: {
 
       if (offerMigrate.value) {
         const migrationPlan = buildMigrationPlan(scope, fs);
-        const sourceContent = await fs.readText(legacySource);
+        const sourceContent = await fs.readText(legacySourcePath);
         if (sourceContent.isErr()) {
           ctx.terminal.stderr(
             `Failed to read legacy source: ${describeFileSystemError(sourceContent.error)}`,
@@ -1408,13 +1492,18 @@ async function createPlan(input: {
         }
 
         const destExists = await fs.exists(migrationPlan.destinationPath);
-        const destExistsValue = destExists.isOk() ? destExists.value : false;
+        if (destExists.isErr()) {
+          ctx.terminal.stderr(
+            `Failed to check destination: ${describeFileSystemError(destExists.error)}`,
+          );
+          return { type: "cancelled" };
+        }
 
         const writeResult = await performMigrationWrite(
           fs,
           migrationPlan,
           sourceContent.value,
-          destExistsValue,
+          destExists.value,
         );
         if (writeResult.isErr()) {
           ctx.terminal.stderr(`Migration failed: ${writeResult.error.message}`);

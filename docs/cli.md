@@ -145,7 +145,7 @@ See [Config Loading — Config Discovery](./config-loading.md#config-discovery) 
 
 Before any file is written, migration shows a preflight summary:
 
-```
+```text
 Migration preflight
 
   Source:         /project/.opencode/weave-opencode.jsonc
@@ -157,7 +157,7 @@ Migration preflight
 
 When the destination already exists:
 
-```
+```text
 Migration preflight
 
   Source:         /project/.opencode/weave-opencode.jsonc
@@ -201,7 +201,7 @@ Without `--yes` in a non-TTY environment, migration exits with code `1` and a me
 
 Migration uses best-effort partial conversion: supported fields are written even when some legacy fields are skipped. When fields are skipped, a warning summary is printed after the success message:
 
-```
+```text
 ⚠  Migration warnings — the following legacy fields were skipped:
 
   • workflows: legacy workflow definitions are not supported in migration v1; define workflows using the current DSL workflow syntax
