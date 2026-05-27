@@ -327,6 +327,9 @@ export function createWeavePlugin(options: WeavePluginOptions = {}): Plugin {
      * Constructs the adapter, initialises it, and calls `spawnSubagent()` for
      * each agent descriptor. Errors are logged but do not throw — a failed
      * reconciliation for one agent does not block the others.
+     *
+     * If `adapter.init()` throws, the error is caught, logged, and the
+     * function returns early so the event hook does not reject.
      */
     async function runReconciliation(): Promise<void> {
       if (reconciled) return;
@@ -342,7 +345,15 @@ export function createWeavePlugin(options: WeavePluginOptions = {}): Plugin {
         client: clientFacade,
       });
 
-      await adapter.init();
+      try {
+        await adapter.init();
+      } catch (initErr: unknown) {
+        log.error(
+          { error: initErr },
+          "adapter.init() failed — aborting deferred SDK reconciliation",
+        );
+        return;
+      }
 
       for (const { agentName, descriptor } of agentDescriptors) {
         const spawnResult = await adapter.spawnSubagent(descriptor).then(

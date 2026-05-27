@@ -26,8 +26,9 @@
  *
  * Missing declared skills are hard errors (not silent skips). When an agent's
  * `skills [...]` declaration references a skill that is not in the
- * harness-provided list, `validateDeclaredSkills()` returns `err(string[])`
- * with the missing names. Callers must not suppress those errors.
+ * harness-provided list, `validateDeclaredSkills()` returns
+ * `err(MissingSkillsError)` with the missing names. Callers must not suppress
+ * those errors.
  *
  * Boundary rule: this module must not import from `@opencode-ai/sdk` directly.
  * All SDK type imports flow through `./sdk-types`.
@@ -35,6 +36,20 @@
 
 import type { SkillInfo } from "@weave/engine";
 import { err, ok, type Result } from "neverthrow";
+
+// ---------------------------------------------------------------------------
+// Error type
+// ---------------------------------------------------------------------------
+
+/**
+ * Discriminated error returned by `validateDeclaredSkills()` when one or more
+ * declared skill names are absent from the harness-provided available list.
+ */
+export interface MissingSkillsError {
+  readonly type: "MissingSkillsError";
+  /** Names of the skills that were declared but not found in the available list. */
+  readonly missingSkills: string[];
+}
 
 // ---------------------------------------------------------------------------
 // Primary export: build a SkillInfo[] from harness-provided data
@@ -62,7 +77,7 @@ export function buildSkillInfoList(names: string[]): SkillInfo[] {
  * available list.
  *
  * Returns `ok(void)` when all declared skills are available, or
- * `err(string[])` with the names of missing skills.
+ * `err(MissingSkillsError)` with the names of missing skills.
  *
  * This is a convenience helper for adapters that want to validate skill
  * availability before calling the engine's `resolveSkillsForAgent()`.
@@ -76,7 +91,7 @@ export function validateDeclaredSkills(
   declaredSkills: string[],
   availableSkills: SkillInfo[],
   disabledSkills: string[] = [],
-): Result<void, string[]> {
+): Result<void, MissingSkillsError> {
   const availableNames = new Set(availableSkills.map((s) => s.name));
   const missing: string[] = [];
 
@@ -87,6 +102,8 @@ export function validateDeclaredSkills(
     }
   }
 
-  if (missing.length > 0) return err(missing);
+  if (missing.length > 0) {
+    return err({ type: "MissingSkillsError", missingSkills: missing });
+  }
   return ok(undefined);
 }

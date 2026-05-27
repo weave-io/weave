@@ -26,7 +26,10 @@
   - interface RunWorkflowInput
   - interface RunWorkflowResult
   - type RunWorkflowError
-- `packages/adapters/opencode/src/skill-discovery.ts` — function buildSkillInfoList: (names) => SkillInfo[], function validateDeclaredSkills: (declaredSkills, availableSkills, disabledSkills) => Result<void, string[]>
+- `packages/adapters/opencode/src/skill-discovery.ts`
+  - function buildSkillInfoList: (names) => SkillInfo[]
+  - function validateDeclaredSkills: (declaredSkills, availableSkills, disabledSkills) => Result<void, MissingSkillsError>
+  - interface MissingSkillsError
 - `packages/adapters/opencode/src/tool-policy-mapping.ts`
   - function toOpenCodePermission: (permission) => OpenCodePermissionValue
   - function buildReadToolsEntry: (readPermission) => Record<string, boolean> | undefined

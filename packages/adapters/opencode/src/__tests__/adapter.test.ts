@@ -645,6 +645,24 @@ describe("OpenCodeAdapter — loadAvailableSkills()", () => {
     expect(skills).toEqual([]);
   });
 
+  it("returns a defensive copy — mutating the returned array does not affect subsequent calls", async () => {
+    const harnessSkills = [{ name: "tdd" }, { name: "code-review" }];
+    const adapter = new OpenCodeAdapter({
+      projectRoot: "/tmp/test-project",
+      availableSkills: harnessSkills,
+    });
+    await adapter.init();
+
+    const first = await adapter.loadAvailableSkills();
+    // Mutate the returned array
+    first.push({ name: "injected-by-caller" });
+
+    // Second call must return the original list, unaffected by the mutation
+    const second = await adapter.loadAvailableSkills();
+    expect(second).toHaveLength(2);
+    expect(second.map((s) => s.name)).toEqual(["tdd", "code-review"]);
+  });
+
   it("two adapters with different injected skills are independent", async () => {
     const adapterA = new OpenCodeAdapter({
       availableSkills: [{ name: "tdd" }],

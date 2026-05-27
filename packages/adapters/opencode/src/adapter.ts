@@ -227,7 +227,7 @@ export class OpenCodeAdapter implements HarnessAdapter {
       { count: skills.length, injected: this.harnessSkills !== undefined },
       "Returning harness-provided skill list",
     );
-    return skills;
+    return [...skills];
   }
 
   /**

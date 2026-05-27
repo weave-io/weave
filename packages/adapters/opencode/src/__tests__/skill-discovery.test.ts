@@ -8,11 +8,12 @@
  * Verifies:
  * - `buildSkillInfoList()` constructs `SkillInfo[]` from a list of names.
  * - `validateDeclaredSkills()` returns ok when all declared skills are present.
- * - `validateDeclaredSkills()` returns err with missing skill names when any
- *   declared skill is absent from the available list.
+ * - `validateDeclaredSkills()` returns err(MissingSkillsError) with missing
+ *   skill names when any declared skill is absent from the available list.
  * - `validateDeclaredSkills()` silently skips disabled skills.
  * - `validateDeclaredSkills()` returns ok for an empty declared list.
  * - Missing declared skills surface as hard errors (not silent skips).
+ * - The error type discriminant is `"MissingSkillsError"`.
  *
  * ## Architecture note
  *
@@ -31,6 +32,7 @@
 import { describe, expect, it } from "bun:test";
 import {
   buildSkillInfoList,
+  type MissingSkillsError,
   validateDeclaredSkills,
 } from "../skill-discovery.js";
 
@@ -126,16 +128,25 @@ describe("validateDeclaredSkills — missing skill hard errors", () => {
     expect(result.isErr()).toBe(true);
   });
 
-  it("err contains the missing skill name", () => {
+  it("err has type discriminant MissingSkillsError", () => {
     const available = buildSkillInfoList(["tdd"]);
     const result = validateDeclaredSkills(["missing-skill"], available);
     expect(result.isErr()).toBe(true);
     if (result.isErr()) {
-      expect(result.error).toContain("missing-skill");
+      expect(result.error.type).toBe("MissingSkillsError");
     }
   });
 
-  it("err contains all missing skill names when multiple are missing", () => {
+  it("err.missingSkills contains the missing skill name", () => {
+    const available = buildSkillInfoList(["tdd"]);
+    const result = validateDeclaredSkills(["missing-skill"], available);
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error.missingSkills).toContain("missing-skill");
+    }
+  });
+
+  it("err.missingSkills contains all missing skill names when multiple are missing", () => {
     const available = buildSkillInfoList(["tdd"]);
     const result = validateDeclaredSkills(
       ["missing-a", "tdd", "missing-b"],
@@ -143,10 +154,10 @@ describe("validateDeclaredSkills — missing skill hard errors", () => {
     );
     expect(result.isErr()).toBe(true);
     if (result.isErr()) {
-      expect(result.error).toContain("missing-a");
-      expect(result.error).toContain("missing-b");
+      expect(result.error.missingSkills).toContain("missing-a");
+      expect(result.error.missingSkills).toContain("missing-b");
       // "tdd" is present — should not be in the error list
-      expect(result.error).not.toContain("tdd");
+      expect(result.error.missingSkills).not.toContain("tdd");
     }
   });
 
@@ -154,17 +165,17 @@ describe("validateDeclaredSkills — missing skill hard errors", () => {
     const result = validateDeclaredSkills(["tdd"], []);
     expect(result.isErr()).toBe(true);
     if (result.isErr()) {
-      expect(result.error).toContain("tdd");
+      expect(result.error.missingSkills).toContain("tdd");
     }
   });
 
-  it("missing skill error is an array of strings (not a single string)", () => {
+  it("missing skill error has missingSkills as an array of strings", () => {
     const available = buildSkillInfoList([]);
     const result = validateDeclaredSkills(["skill-a", "skill-b"], available);
     expect(result.isErr()).toBe(true);
     if (result.isErr()) {
-      expect(Array.isArray(result.error)).toBe(true);
-      expect(result.error).toHaveLength(2);
+      expect(Array.isArray(result.error.missingSkills)).toBe(true);
+      expect(result.error.missingSkills).toHaveLength(2);
     }
   });
 
@@ -175,7 +186,19 @@ describe("validateDeclaredSkills — missing skill hard errors", () => {
     const result = validateDeclaredSkills(["tdd"], harnessProvided);
     expect(result.isErr()).toBe(true);
     if (result.isErr()) {
-      expect(result.error).toContain("tdd");
+      expect(result.error.missingSkills).toContain("tdd");
+    }
+  });
+
+  it("error is a MissingSkillsError discriminated union (type-safe narrowing)", () => {
+    const available = buildSkillInfoList(["tdd"]);
+    const result = validateDeclaredSkills(["missing-skill"], available);
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      // TypeScript narrowing: result.error is MissingSkillsError
+      const error: MissingSkillsError = result.error;
+      expect(error.type).toBe("MissingSkillsError");
+      expect(Array.isArray(error.missingSkills)).toBe(true);
     }
   });
 });
@@ -214,8 +237,8 @@ describe("validateDeclaredSkills — disabled skills", () => {
     );
     expect(result.isErr()).toBe(true);
     if (result.isErr()) {
-      expect(result.error).toContain("missing-skill");
-      expect(result.error).not.toContain("disabled-skill");
+      expect(result.error.missingSkills).toContain("missing-skill");
+      expect(result.error.missingSkills).not.toContain("disabled-skill");
     }
   });
 
@@ -240,7 +263,8 @@ describe("skill validation — hard-error semantics", () => {
     // Hard error — not ok, not silently skipped
     expect(result.isErr()).toBe(true);
     if (result.isErr()) {
-      expect(result.error).toContain("tdd");
+      expect(result.error.type).toBe("MissingSkillsError");
+      expect(result.error.missingSkills).toContain("tdd");
     }
   });
 

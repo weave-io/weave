@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 59 lib files | 3 env vars | 0 middleware | 0% test coverage
 > **Token savings:** this file is ~5,000 tokens. Without it, AI exploration would cost ~24,800 tokens. **Saves ~19,800 tokens per conversation.**
-> **Last scanned:** 2026-05-27 15:18 — re-run after significant changes
+> **Last scanned:** 2026-05-27 16:22 — re-run after significant changes
 
 ---
 
@@ -37,7 +37,10 @@
   - interface RunWorkflowInput
   - interface RunWorkflowResult
   - type RunWorkflowError
-- `packages/adapters/opencode/src/skill-discovery.ts` — function buildSkillInfoList: (names) => SkillInfo[], function validateDeclaredSkills: (declaredSkills, availableSkills, disabledSkills) => Result<void, string[]>
+- `packages/adapters/opencode/src/skill-discovery.ts`
+  - function buildSkillInfoList: (names) => SkillInfo[]
+  - function validateDeclaredSkills: (declaredSkills, availableSkills, disabledSkills) => Result<void, MissingSkillsError>
+  - interface MissingSkillsError
 - `packages/adapters/opencode/src/tool-policy-mapping.ts`
   - function toOpenCodePermission: (permission) => OpenCodePermissionValue
   - function buildReadToolsEntry: (readPermission) => Record<string, boolean> | undefined
