@@ -801,6 +801,62 @@ describe("convertLegacyJsonc — agents (builtin overrides)", () => {
     expect(result.dsl).toContain("agent loom {");
     expect(result.dsl).toContain("agent tapestry {");
   });
+
+  // Non-builtin names under `agents` must be warned and skipped — they are not
+  // silently promoted to new agents. New agents must come from `custom_agents`.
+  it("warns and skips non-builtin name under agents", () => {
+    const result = convertLegacyJsonc(
+      JSON.stringify({ agents: { "my-helper": { temperature: 0.2 } } }),
+    );
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]!.field).toBe("agents.my-helper");
+    expect(result.warnings[0]!.reason).toContain("not a builtin agent name");
+    // No agent block generated for non-builtin name
+    expect(result.dsl).not.toContain("agent my-helper");
+  });
+
+  it("warns and skips multiple non-builtin names under agents", () => {
+    const result = convertLegacyJsonc(
+      JSON.stringify({
+        agents: {
+          "my-helper": { temperature: 0.2 },
+          "custom-bot": { model: "gpt-4o" },
+        },
+      }),
+    );
+    expect(result.warnings).toHaveLength(2);
+    const fields = result.warnings.map((w) => w.field);
+    expect(fields).toContain("agents.my-helper");
+    expect(fields).toContain("agents.custom-bot");
+    expect(result.dsl).not.toContain("agent my-helper");
+    expect(result.dsl).not.toContain("agent custom-bot");
+  });
+
+  it("converts builtin overrides while warning on non-builtin names under agents", () => {
+    const result = convertLegacyJsonc(
+      JSON.stringify({
+        agents: {
+          loom: { temperature: 0.1 }, // builtin — converted
+          "my-helper": { temperature: 0.2 }, // non-builtin — warned and skipped
+        },
+      }),
+    );
+    // One warning for the non-builtin name
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]!.field).toBe("agents.my-helper");
+    expect(result.warnings[0]!.reason).toContain("not a builtin agent name");
+    // Builtin is converted
+    expect(result.dsl).toContain("agent loom {");
+    // Non-builtin is not
+    expect(result.dsl).not.toContain("agent my-helper");
+  });
+
+  it("warning for non-builtin agents entry mentions custom_agents as the correct path", () => {
+    const result = convertLegacyJsonc(
+      JSON.stringify({ agents: { "my-helper": { temperature: 0.2 } } }),
+    );
+    expect(result.warnings[0]!.reason).toContain("custom_agents");
+  });
 });
 
 // 4.2 — Legacy custom_agents entries as new agent blocks

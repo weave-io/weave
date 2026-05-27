@@ -13,6 +13,8 @@ Task 4 extends `convertLegacyJsonc()` in `packages/cli/src/commands/init.ts` wit
 
 All conversion follows the best-effort partial-success model established in Task 3: supported content is written even when warnings are emitted for skipped fields. The Task 2 validation gate (`parseConfig()` before any file write) and Task 3 warning semantics are preserved intact.
 
+**Namespace semantics (corrected in retry)**: The `agents` top-level key is strictly for overriding existing builtin agent names. Non-builtin names under `agents` are warned and skipped — they do not silently become new agents. New agents must come from `custom_agents` instead. This distinction is enforced by checking `BUILTIN_AGENT_NAMES.has(agentName)` before processing each `agents` entry.
+
 ---
 
 ## Implementation Context
@@ -147,17 +149,17 @@ Key properties:
 bun test packages/cli/src/commands/__tests__/migrate-conversion.test.ts
 
 bun test v1.3.13 (bf2e2cec)
- 104 pass
+ 108 pass
  0 fail
- 300 expect() calls
-Ran 104 tests across 1 file. [11.19s]
+ 315 expect() calls
+Ran 108 tests across 1 file. [11.20s]
 ```
 
-### New Task 4 test suites (56 new tests)
+### New Task 4 test suites (60 new tests, including 4 added in retry)
 
 | Suite | Tests | Coverage |
 |---|---|---|
-| `agents (builtin overrides)` | 6 | 4.1: temperature, model, prompt_append, display_name warning, invalid value, multiple overrides |
+| `agents (builtin overrides)` | 11 | 4.1: temperature, model, prompt_append, display_name warning, invalid value, multiple overrides; **+5 retry**: non-builtin name warned+skipped, multiple non-builtins, mixed builtin+non-builtin, warning mentions custom_agents |
 | `custom_agents (new agent blocks)` | 7 | 4.2: prompt, mode, prompt_file, skills warning, invalid mode |
 | `custom_agents builtin collision warnings` | 4 | 4.3: loom, tapestry, all 8 builtins, mixed collision+non-collision |
 | `model + fallback_models → ordered models [...]` | 7 | 4.4: single model, primary+fallbacks, ordering, invalid model, invalid fallback_models, category models |
@@ -174,10 +176,10 @@ Ran 104 tests across 1 file. [11.19s]
 bun test packages/cli/
 
 bun test v1.3.13 (bf2e2cec)
- 277 pass
+ 281 pass
  0 fail
- 713 expect() calls
-Ran 277 tests across 11 files. [23.41s]
+ 728 expect() calls
+Ran 281 tests across 11 files. [25.41s]
 ```
 
 ---

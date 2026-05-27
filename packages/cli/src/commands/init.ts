@@ -727,7 +727,7 @@ export function convertLegacyJsonc(source: string): ConversionResult {
       continue;
     }
 
-    // --- agents (4.1) — builtin agent overrides ---
+    // --- agents (4.1) — builtin agent overrides only ---
     if (key === "agents") {
       if (value === null || typeof value !== "object" || Array.isArray(value)) {
         warnings.push({
@@ -739,6 +739,16 @@ export function convertLegacyJsonc(source: string): ConversionResult {
       for (const [agentName, agentEntry] of Object.entries(
         value as Record<string, unknown>,
       )) {
+        // Only builtin agent names are valid override targets under `agents`.
+        // Non-builtin names here are not silently promoted to new agents —
+        // new agents must come from `custom_agents` instead.
+        if (!BUILTIN_AGENT_NAMES.has(agentName)) {
+          warnings.push({
+            field: `agents.${agentName}`,
+            reason: `"${agentName}" is not a builtin agent name; entries under "agents" are overrides of existing builtins only — use "custom_agents" to create new agents`,
+          });
+          continue;
+        }
         if (
           agentEntry === null ||
           typeof agentEntry !== "object" ||
