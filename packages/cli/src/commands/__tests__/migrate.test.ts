@@ -12,7 +12,7 @@ import { MemoryFileSystem } from "../../fs/file-system.js";
 import { BufferTerminal } from "../../io/terminal.js";
 import { StaticPromptAdapter } from "../../prompt/index.js";
 import { ThemeManager } from "../../theme/colors.js";
-import { runInit } from "../init.js";
+import { type MigrationPlan, runInit, writeMigratedDsl } from "../init.js";
 
 const themeManager = new ThemeManager({ isTty: () => false });
 
@@ -185,12 +185,53 @@ describe("migration preflight summary", () => {
 
 // ---------------------------------------------------------------------------
 // 2.3 — Validation before write: abort on invalid DSL
+//
+// These tests call writeMigratedDsl() directly so they can inject arbitrary
+// DSL — including intentionally invalid DSL — without going through the full
+// runInit() flow. This gives direct, unambiguous evidence that the
+// parseConfig() gate fires before any destination or backup file is touched.
 // ---------------------------------------------------------------------------
 
+/** Minimal MigrationPlan fixture for writeMigratedDsl tests. */
+function makePlan(
+  fs: MemoryFileSystem,
+  overrides: Partial<MigrationPlan> = {},
+): MigrationPlan {
+  return {
+    scope: "local",
+    sourcePath: `${fs.cwd()}/.opencode/weave-opencode.jsonc`,
+    destinationDir: `${fs.cwd()}/.weave`,
+    destinationPath: `${fs.cwd()}/.weave/config.weave`,
+    skippedWarningCount: 0,
+    ...overrides,
+  };
+}
+
+/** Minimal valid DSL that passes parseConfig(). */
+const VALID_DSL = `settings {\n  log_level INFO\n}\n`;
+
+/** Syntactically broken DSL that parseConfig() must reject. */
+const INVALID_DSL_SYNTAX = `agent { UNCLOSED BLOCK`;
+
+/**
+ * Structurally invalid DSL: valid syntax but fails Zod schema validation.
+ * `prompt` and `prompt_file` are mutually exclusive — the schema rejects this.
+ */
+const INVALID_DSL_SCHEMA = `agent myagent {\n  prompt "hello"\n  prompt_file "foo.md"\n}\n`;
+
 describe("validation-before-write", () => {
-  it("generated DSL passes the normal parse/validation pipeline", async () => {
-    // The starter config produced by buildMigratedContent must be valid DSL.
-    // This test verifies the happy path: migration succeeds and the file is written.
+  // --- Happy path: valid DSL is written ---
+
+  it("valid DSL passes parseConfig() and destination is written", async () => {
+    const fs = new MemoryFileSystem({}, "/project", "/home/user");
+    const plan = makePlan(fs);
+    const result = await writeMigratedDsl(fs, plan, VALID_DSL, false);
+    expect(result.isOk()).toBe(true);
+    expect(fs.snapshot()["/project/.weave/config.weave"]).toBe(VALID_DSL);
+  });
+
+  it("generated DSL from runInit passes the normal parse/validation pipeline", async () => {
+    // End-to-end: the starter config produced by buildMigratedContent must be valid DSL.
     const fs = new MemoryFileSystem(
       {
         "/project/.opencode/weave-opencode.jsonc": '{ "log_level": "DEBUG" }',
@@ -208,11 +249,75 @@ describe("validation-before-write", () => {
     expect(fs.snapshot()["/project/.weave/config.weave"]).toBeDefined();
   });
 
-  it("validation abort leaves destination untouched", async () => {
-    // We cannot easily inject invalid DSL through the current buildMigratedContent
-    // (it always produces valid starter config). This test verifies the invariant
-    // by checking that when migration succeeds, the destination is written, and
-    // when it fails (e.g. source not found), neither destination nor backup is written.
+  // --- Validation gate: invalid DSL aborts before any file mutation ---
+
+  it("syntactically invalid DSL aborts before destination is written (no destination)", async () => {
+    const fs = new MemoryFileSystem({}, "/project", "/home/user");
+    const plan = makePlan(fs);
+    const result = await writeMigratedDsl(fs, plan, INVALID_DSL_SYNTAX, false);
+    // Must return an error
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().message).toContain(
+      "Generated DSL failed validation",
+    );
+    // Destination must NOT be created
+    expect(fs.snapshot()["/project/.weave/config.weave"]).toBeUndefined();
+  });
+
+  it("syntactically invalid DSL aborts before destination is mutated (destination exists)", async () => {
+    const existingContent = "# pre-existing config";
+    const fs = new MemoryFileSystem(
+      { "/project/.weave/config.weave": existingContent },
+      "/project",
+      "/home/user",
+    );
+    const plan = makePlan(fs);
+    const result = await writeMigratedDsl(fs, plan, INVALID_DSL_SYNTAX, true);
+    expect(result.isErr()).toBe(true);
+    // Destination must remain byte-for-byte identical
+    expect(fs.snapshot()["/project/.weave/config.weave"]).toBe(existingContent);
+  });
+
+  it("syntactically invalid DSL aborts before backup is created (destination exists)", async () => {
+    const existingContent = "# pre-existing config";
+    const fs = new MemoryFileSystem(
+      { "/project/.weave/config.weave": existingContent },
+      "/project",
+      "/home/user",
+    );
+    const plan = makePlan(fs);
+    const result = await writeMigratedDsl(fs, plan, INVALID_DSL_SYNTAX, true);
+    expect(result.isErr()).toBe(true);
+    // Backup must NOT be created — validation fires before the copy step
+    expect(fs.snapshot()["/project/.weave/config.weave.bak"]).toBeUndefined();
+  });
+
+  it("schema-invalid DSL aborts before destination is written (no destination)", async () => {
+    const fs = new MemoryFileSystem({}, "/project", "/home/user");
+    const plan = makePlan(fs);
+    const result = await writeMigratedDsl(fs, plan, INVALID_DSL_SCHEMA, false);
+    expect(result.isErr()).toBe(true);
+    expect(fs.snapshot()["/project/.weave/config.weave"]).toBeUndefined();
+  });
+
+  it("schema-invalid DSL aborts before backup is created (destination exists)", async () => {
+    const existingContent = "# pre-existing config";
+    const fs = new MemoryFileSystem(
+      { "/project/.weave/config.weave": existingContent },
+      "/project",
+      "/home/user",
+    );
+    const plan = makePlan(fs);
+    const result = await writeMigratedDsl(fs, plan, INVALID_DSL_SCHEMA, true);
+    expect(result.isErr()).toBe(true);
+    // Neither destination nor backup mutated
+    expect(fs.snapshot()["/project/.weave/config.weave"]).toBe(existingContent);
+    expect(fs.snapshot()["/project/.weave/config.weave.bak"]).toBeUndefined();
+  });
+
+  // --- Earlier abort path: no legacy source (kept for regression coverage) ---
+
+  it("missing legacy source aborts before destination is mutated", async () => {
     const fs = new MemoryFileSystem(
       {
         "/project/.weave/config.weave": "# pre-existing config",
@@ -236,9 +341,7 @@ describe("validation-before-write", () => {
     expect(fs.snapshot()["/project/.weave/config.weave.bak"]).toBeUndefined();
   });
 
-  it("validation abort leaves backup untouched when destination exists", async () => {
-    // Simulate a scenario where migration fails before write:
-    // destination exists but no legacy source → no backup should be created.
+  it("missing legacy source aborts before backup is created (destination exists)", async () => {
     const fs = new MemoryFileSystem(
       {
         "/project/.weave/config.weave": "# pre-existing config",

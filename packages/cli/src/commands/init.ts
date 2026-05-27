@@ -69,7 +69,7 @@ const CANONICAL_WEAVE_DIR: Record<InitScope, string> = {
   local: ".weave",
 };
 
-type MigrationPlan = {
+export type MigrationPlan = {
   scope: InitScope;
   sourcePath: string;
   destinationDir: string;
@@ -330,19 +330,34 @@ function renderMigratePreflight(
   return lines.join("\n");
 }
 
-function performMigrationWrite(
+/**
+ * Write pre-built DSL content to the migration destination, with validation
+ * before any file mutation.
+ *
+ * Exported for direct testing of the validation gate: callers can inject
+ * arbitrary DSL (including intentionally invalid DSL) to verify that the
+ * `parseConfig()` check fires before any destination or backup file is touched.
+ *
+ * Sequence:
+ *   1. Validate `dslContent` through `parseConfig()` — abort with `errAsync` if invalid.
+ *   2. If `destExists`, copy destination → `<destination>.bak`.
+ *   3. `mkdir` the destination directory.
+ *   4. Write `dslContent` to the destination path.
+ *
+ * On any failure the function returns `errAsync` and leaves the filesystem in
+ * whatever state it was before the failing step (backup copy is atomic at the
+ * MemoryFileSystem level; real FS callers should treat this as best-effort).
+ */
+export function writeMigratedDsl(
   fs: FileSystem,
   plan: MigrationPlan,
-  _sourceContent: string,
+  dslContent: string,
   destExists: boolean,
 ): ResultAsync<{ backedUp: boolean }, { message: string }> {
-  // Generate migrated DSL content with provenance comment
-  const migratedContent = buildMigratedContent(plan);
-
   // Validate generated DSL through the normal parse/validation pipeline
   // before mutating any files. Abort if validation fails — leaves both
   // destination and backup untouched.
-  const validationResult = parseConfig(migratedContent);
+  const validationResult = parseConfig(dslContent);
   if (validationResult.isErr()) {
     const errorSummary = validationResult.error
       .map((e) => ("message" in e ? e.message : JSON.stringify(e)))
@@ -365,10 +380,21 @@ function performMigrationWrite(
     )
     .andThen(() =>
       fs
-        .writeText(plan.destinationPath, migratedContent)
+        .writeText(plan.destinationPath, dslContent)
         .mapErr((error) => ({ message: describeFileSystemError(error) })),
     )
     .map(() => ({ backedUp: destExists }));
+}
+
+function performMigrationWrite(
+  fs: FileSystem,
+  plan: MigrationPlan,
+  _sourceContent: string,
+  destExists: boolean,
+): ResultAsync<{ backedUp: boolean }, { message: string }> {
+  // Generate migrated DSL content with provenance comment
+  const migratedContent = buildMigratedContent(plan);
+  return writeMigratedDsl(fs, plan, migratedContent, destExists);
 }
 
 /**

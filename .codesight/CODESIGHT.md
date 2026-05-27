@@ -4,8 +4,8 @@
 > **Monorepo:** @weave/core, @weave/engine, @weave/config, @weave/cli, @weave/adapter-opencode
 
 > 0 routes | 0 models | 0 components | 59 lib files | 4 env vars | 1 middleware | 0% test coverage
-> **Token savings:** this file is ~5,100 tokens. Without it, AI exploration would cost ~25,200 tokens. **Saves ~20,200 tokens per conversation.**
-> **Last scanned:** 2026-05-27 20:44 — re-run after significant changes
+> **Token savings:** this file is ~5,100 tokens. Without it, AI exploration would cost ~25,200 tokens. **Saves ~20,100 tokens per conversation.**
+> **Last scanned:** 2026-05-27 20:52 — re-run after significant changes
 
 ---
 
@@ -58,7 +58,11 @@
   - type Command
   - type ArgParseError
 - `packages/cli/src/cli.ts` — function run: (deps?) => Promise<Result<number, CliError>>, interface CliDeps
-- `packages/cli/src/commands/init.ts` — function runInit: (ctx) => Promise<Result<number, CliError>>, interface InitContext
+- `packages/cli/src/commands/init.ts`
+  - function runInit: (ctx) => Promise<Result<number, CliError>>
+  - function writeMigratedDsl: (fs, plan, dslContent, destExists) => ResultAsync<
+  - interface InitContext
+  - type MigrationPlan
 - `packages/cli/src/commands/runtime.ts` — function runRuntime: (ctx) => Promise<Result<number, CliError>>, interface RuntimeCommandContext
 - `packages/cli/src/commands/validate.ts` — function runValidate: (ctx) => Promise<Result<number, CliError>>, interface ValidateContext
 - `packages/cli/src/config/starter-config.ts` — function starterConfig: (scope) => string

@@ -12,7 +12,7 @@ Task 2 adds the full write-path safety layer to the migration feature introduced
 
 1. **Migration plan stage** — `buildMigrationPlan()` now computes `sourcePath`, `destinationPath`, `destinationDir`, `scope`, and `skippedWarningCount` before any prompt or file mutation.
 2. **Interactive preflight summary** — `renderMigratePreflight()` renders source, destination, overwrite/backup intent, and skipped-field count before the confirmation prompt.
-3. **Validation before write** — `performMigrationWrite()` calls `parseConfig()` on the generated DSL and returns `errAsync` if validation fails, leaving both destination and backup untouched.
+3. **Validation before write** — `writeMigratedDsl()` calls `parseConfig()` on the generated DSL and returns `errAsync` if validation fails, leaving both destination and backup untouched. This function is exported so tests can inject arbitrary DSL directly.
 4. **Overwrite backup** — When destination exists, exactly one `<target>.bak` is written before overwriting.
 5. **Source preservation** — No rename/delete of the legacy JSONC source at any point.
 6. **Provenance comment** — Generated `config.weave` begins with `# Migrated from legacy OpenCode JSONC config` plus source path and scope.
@@ -72,7 +72,7 @@ agent loom {
 ...
 ```
 
-This file passes `parseConfig()` validation (confirmed by the validation-before-write gate in `performMigrationWrite()`).
+This file passes `parseConfig()` validation (confirmed by the validation-before-write gate in `writeMigratedDsl()`).
 
 ---
 
@@ -86,16 +86,65 @@ After `weave init migrate --scope local --yes` with an existing destination:
 
 ---
 
+## Validation-Before-Write Gate: Direct Evidence
+
+`writeMigratedDsl()` is exported from `packages/cli/src/commands/init.ts` so tests can inject arbitrary DSL content — including intentionally invalid DSL — without going through the full `runInit()` flow.
+
+Two categories of invalid DSL are tested directly:
+
+### Syntactically broken DSL
+
+```
+agent { UNCLOSED BLOCK
+```
+
+`parseConfig()` returns `isErr: true` with a `MissingBlockName` parse error. Neither destination nor backup is touched.
+
+### Schema-invalid DSL (valid syntax, fails Zod validation)
+
+```
+agent myagent {
+  prompt "hello"
+  prompt_file "foo.md"
+}
+```
+
+`parseConfig()` returns `isErr: true` with a `ValidationError` (`prompt and prompt_file are mutually exclusive`). Neither destination nor backup is touched.
+
+### Test assertions (direct `writeMigratedDsl` calls)
+
+| Scenario | Destination before | Backup before | Result | Destination after | Backup after |
+|---|---|---|---|---|---|
+| Syntax-invalid, no dest | absent | absent | `isErr` | absent | absent |
+| Syntax-invalid, dest exists | `"# pre-existing config"` | absent | `isErr` | `"# pre-existing config"` (unchanged) | absent |
+| Syntax-invalid, dest exists (backup check) | `"# pre-existing config"` | absent | `isErr` | unchanged | absent |
+| Schema-invalid, no dest | absent | absent | `isErr` | absent | absent |
+| Schema-invalid, dest exists | `"# pre-existing config"` | absent | `isErr` | `"# pre-existing config"` (unchanged) | absent |
+
+All five assertions are covered by direct `writeMigratedDsl()` calls in `packages/cli/src/commands/__tests__/migrate.test.ts` under the `validation-before-write` describe block.
+
+---
+
 ## Test Results
 
 ```
 bun test packages/cli/src/commands/__tests__/migrate.test.ts
 
 bun test v1.3.13 (bf2e2cec)
- 33 pass
+ 39 pass
  0 fail
- 58 expect() calls
-Ran 33 tests across 1 file. [12.44s]
+ 72 expect() calls
+Ran 39 tests across 1 file. [12.34s]
+```
+
+```
+bun test packages/cli/src/commands/__tests__/init.test.ts packages/cli/src/commands/__tests__/migrate.test.ts
+
+bun test v1.3.13 (bf2e2cec)
+ 79 pass
+ 0 fail
+ 186 expect() calls
+Ran 79 tests across 2 files. [12.08s]
 ```
 
 ### Test Coverage by Subtask
@@ -103,7 +152,7 @@ Ran 33 tests across 1 file. [12.44s]
 | Subtask | Test Group | Tests |
 |---------|-----------|-------|
 | 2.1 / 2.2 | `migration preflight summary` | 5 tests — source path, destination path, dest-exists status, backup intent, skipped-warning count |
-| 2.3 | `validation-before-write` | 3 tests — happy path passes validation, abort leaves destination untouched, abort leaves backup untouched |
+| 2.3 | `validation-before-write` | 9 tests — valid DSL written (direct), valid DSL via runInit (E2E), syntax-invalid aborts (no dest), syntax-invalid aborts (dest exists, destination check), syntax-invalid aborts (dest exists, backup check), schema-invalid aborts (no dest), schema-invalid aborts (dest exists), missing-source aborts (destination check), missing-source aborts (backup check) |
 | 2.4 | `overwrite backup creation` | 6 tests — exactly one .bak, backup content, destination overwritten, no backup when dest absent, success message with/without backup |
 | 2.5 | `source preservation` | 3 tests — local source preserved, global source preserved, success output mentions source preserved |
 | 2.6 | `provenance comment` | 5 tests — header present, names source file, appears at top, includes scope, JSONC comments not preserved |
@@ -117,10 +166,10 @@ Ran 33 tests across 1 file. [12.44s]
 ```bash
 # Tests
 bun test packages/cli/src/commands/__tests__/migrate.test.ts
-# → 33 pass, 0 fail
+# → 39 pass, 0 fail
 
 bun test packages/cli/src/commands/__tests__/init.test.ts packages/cli/src/commands/__tests__/migrate.test.ts
-# → 73 pass, 0 fail (no regressions in Task 1 tests)
+# → 79 pass, 0 fail (no regressions in Task 1 tests)
 
 # Typecheck
 bun run typecheck
@@ -135,14 +184,8 @@ bun run build
 
 ## Implementation Notes
 
-- `parseConfig` from `@weave/core` is imported directly into `packages/cli/src/commands/init.ts` for the validation gate. This is the same pipeline used by `@weave/config`'s `discoverAndParse()`, satisfying the "normal parse/validation pipeline" requirement.
+- `writeMigratedDsl()` is exported from `packages/cli/src/commands/init.ts` as a named export. It accepts `(fs, plan, dslContent, destExists)` and owns the `parseConfig()` gate plus the backup-and-write sequence. `performMigrationWrite()` (internal) calls it with the result of `buildMigratedContent()`.
+- `MigrationPlan` type is also exported so test files can construct fixture plans without duplicating the type definition.
 - The validation error path uses `errAsync({ message: ... })` (neverthrow) rather than throwing, consistent with repository error-handling rules.
 - `skippedWarningCount` defaults to `0` in `buildMigrationPlan()`. Task 3 will populate this from the JSONC conversion result.
 - The `_sourceContent` parameter in `performMigrationWrite()` is intentionally unused in Task 2 scope (Task 3/4 will use it for JSONC-to-DSL conversion).
-
----
-
-## Discrepancies / Learnings
-
-- **Validation-before-write abort test**: The spec requires a test that "invalid generated DSL aborts before any target or backup file mutation." Since `buildMigratedContent()` always produces valid starter DSL in Task 2 scope, the abort path is tested indirectly via the "no legacy source → migration fails before write" scenario. Task 3/4 will add direct invalid-DSL injection tests when the JSONC converter can produce invalid output.
-- **`loader.ts` and `discovery.ts` unchanged**: These files were listed as relevant but required no changes for Task 2. The validation reuse is achieved by importing `parseConfig` from `@weave/core` directly (the same function `discoverAndParse` uses internally), rather than calling the higher-level `loadConfig` which also merges builtins and discovered configs.
