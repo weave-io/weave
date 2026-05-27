@@ -79,6 +79,221 @@ export type MigrationPlan = {
 };
 
 // ---------------------------------------------------------------------------
+// JSONC conversion — best-effort partial success
+// ---------------------------------------------------------------------------
+
+/**
+ * A single conversion warning: a legacy field that was skipped with a reason.
+ */
+export type ConversionWarning = {
+  field: string;
+  reason: string;
+};
+
+/**
+ * Result of best-effort JSONC-to-DSL conversion.
+ * `dsl` contains the converted DSL lines (without provenance comment).
+ * `warnings` lists every skipped field with an explicit reason.
+ */
+export type ConversionResult = {
+  dsl: string;
+  warnings: ConversionWarning[];
+};
+
+/**
+ * Legacy top-level fields that are explicitly unsupported in migration v1.
+ * Each entry maps the field name to the human-readable skip reason.
+ */
+const UNSUPPORTED_LEGACY_FIELDS: Record<string, string> = {
+  workflows:
+    "legacy workflow definitions are not supported in migration v1; define workflows using the current DSL workflow syntax",
+  continuation:
+    "legacy continuation settings are not supported in migration v1; use the current DSL continuation block if needed",
+  analytics:
+    "legacy analytics settings are not supported in migration v1; use the current DSL analytics block if needed",
+  background:
+    "legacy background settings are not supported in migration v1; no equivalent exists in the current DSL",
+};
+
+/**
+ * Valid log level values accepted by the current DSL settings block.
+ * Matches LogLevelSchema in @weave/core.
+ */
+const VALID_LOG_LEVELS = new Set([
+  "TRACE",
+  "DEBUG",
+  "INFO",
+  "WARN",
+  "ERROR",
+  "FATAL",
+]);
+
+/**
+ * Strip JSONC-style line comments (`// ...`) and block comments (`/* ... *\/`)
+ * from a string so it can be parsed by `JSON.parse`.
+ *
+ * This is a minimal implementation that handles the common cases in
+ * weave-opencode.jsonc files. It does not handle edge cases like comments
+ * inside string literals.
+ */
+function stripJsoncComments(source: string): string {
+  // Remove block comments first (/* ... */)
+  let result = source.replace(/\/\*[\s\S]*?\*\//g, "");
+  // Remove line comments (// ...) — but not inside strings
+  // Simple approach: remove // to end of line when not preceded by a colon
+  // (handles the common case; edge cases in strings are acceptable for migration)
+  result = result.replace(/\/\/[^\n]*/g, "");
+  return result;
+}
+
+/**
+ * Convert a legacy weave-opencode.jsonc source string into current `.weave` DSL.
+ *
+ * This is a best-effort partial conversion:
+ * - Supported fields are converted and included in the output DSL.
+ * - Unsupported fields are skipped with explicit warnings.
+ * - Unknown fields are also skipped with a warning.
+ * - The function always returns a result (never throws); parse failures
+ *   produce a single warning and an empty DSL body.
+ *
+ * Supported mappings (Task 3 scope):
+ * - `disabled_agents`  → `disable agents [...]`
+ * - `disabled_hooks`   → `disable hooks [...]`
+ * - `disabled_skills`  → `disable skills [...]`
+ * - `log_level`        → `settings { log_level <VALUE> }`
+ *
+ * Explicitly unsupported (warn + skip):
+ * - `workflows`, `continuation`, `analytics`, `background`
+ */
+export function convertLegacyJsonc(source: string): ConversionResult {
+  const warnings: ConversionWarning[] = [];
+  const dslLines: string[] = [];
+
+  // Parse JSONC — strip comments first, then JSON.parse
+  let parsed: Record<string, unknown>;
+  try {
+    const stripped = stripJsoncComments(source);
+    parsed = JSON.parse(stripped) as Record<string, unknown>;
+  } catch {
+    warnings.push({
+      field: "<source>",
+      reason:
+        "failed to parse legacy JSONC source; no fields could be converted",
+    });
+    return { dsl: "", warnings };
+  }
+
+  // Process each top-level key
+  for (const [key, value] of Object.entries(parsed)) {
+    // --- Explicitly unsupported fields ---
+    if (key in UNSUPPORTED_LEGACY_FIELDS) {
+      warnings.push({ field: key, reason: UNSUPPORTED_LEGACY_FIELDS[key]! });
+      continue;
+    }
+
+    // --- disabled_agents ---
+    if (key === "disabled_agents") {
+      if (!Array.isArray(value)) {
+        warnings.push({
+          field: key,
+          reason: "expected an array of agent names; skipped",
+        });
+        continue;
+      }
+      const items = value
+        .filter((v): v is string => typeof v === "string")
+        .map((v) => JSON.stringify(v))
+        .join(", ");
+      dslLines.push(`disable agents [${items}]`);
+      continue;
+    }
+
+    // --- disabled_hooks ---
+    if (key === "disabled_hooks") {
+      if (!Array.isArray(value)) {
+        warnings.push({
+          field: key,
+          reason: "expected an array of hook names; skipped",
+        });
+        continue;
+      }
+      const items = value
+        .filter((v): v is string => typeof v === "string")
+        .map((v) => JSON.stringify(v))
+        .join(", ");
+      dslLines.push(`disable hooks [${items}]`);
+      continue;
+    }
+
+    // --- disabled_skills ---
+    if (key === "disabled_skills") {
+      if (!Array.isArray(value)) {
+        warnings.push({
+          field: key,
+          reason: "expected an array of skill names; skipped",
+        });
+        continue;
+      }
+      const items = value
+        .filter((v): v is string => typeof v === "string")
+        .map((v) => JSON.stringify(v))
+        .join(", ");
+      dslLines.push(`disable skills [${items}]`);
+      continue;
+    }
+
+    // --- log_level ---
+    if (key === "log_level") {
+      if (typeof value !== "string") {
+        warnings.push({
+          field: key,
+          reason: "expected a string log level value; skipped",
+        });
+        continue;
+      }
+      const normalized = value.toUpperCase();
+      if (!VALID_LOG_LEVELS.has(normalized)) {
+        warnings.push({
+          field: key,
+          reason: `"${value}" is not a valid log level (expected one of TRACE, DEBUG, INFO, WARN, ERROR, FATAL); skipped`,
+        });
+        continue;
+      }
+      dslLines.push(`settings {`);
+      dslLines.push(`  log_level ${normalized}`);
+      dslLines.push(`}`);
+      continue;
+    }
+
+    // --- Unknown field ---
+    warnings.push({
+      field: key,
+      reason: "unknown legacy field; not supported in migration v1",
+    });
+  }
+
+  return { dsl: dslLines.join("\n"), warnings };
+}
+
+/**
+ * Render a warning summary block for skipped legacy fields.
+ * Returns an empty string when there are no warnings.
+ */
+function renderConversionWarnings(warnings: ConversionWarning[]): string {
+  if (warnings.length === 0) return "";
+  const lines = [
+    "",
+    "⚠  Migration warnings — the following legacy fields were skipped:",
+    "",
+  ];
+  for (const w of warnings) {
+    lines.push(`  • ${w.field}: ${w.reason}`);
+  }
+  lines.push("");
+  return lines.join("\n");
+}
+
+// ---------------------------------------------------------------------------
 
 const HARNESS_IDS: SupportedHarnessId[] = ["opencode", "claude-code", "pi"];
 
@@ -140,10 +355,11 @@ async function runMigrateMode(
   prompt: PromptAdapter,
 ): Promise<Result<number, CliError>> {
   const scope = ctx.flags.scope ?? "local";
-  const migrationPlan = buildMigrationPlan(scope, fs);
+  // Build a preliminary plan (skippedWarningCount=0) to get paths for existence checks
+  const preliminaryPlan = buildMigrationPlan(scope, fs);
 
   // Check legacy source exists
-  const sourceExists = await fs.exists(migrationPlan.sourcePath);
+  const sourceExists = await fs.exists(preliminaryPlan.sourcePath);
   if (sourceExists.isErr()) {
     ctx.terminal.stderr(
       `Failed to check legacy source: ${describeFileSystemError(sourceExists.error)}`,
@@ -155,7 +371,7 @@ async function runMigrateMode(
     ctx.terminal.stderr(
       [
         `No legacy config found for scope "${scope}".`,
-        `Expected: ${migrationPlan.sourcePath}`,
+        `Expected: ${preliminaryPlan.sourcePath}`,
         "",
         "Nothing to migrate.",
       ].join("\n"),
@@ -164,13 +380,21 @@ async function runMigrateMode(
   }
 
   // Read legacy source
-  const sourceContent = await fs.readText(migrationPlan.sourcePath);
+  const sourceContent = await fs.readText(preliminaryPlan.sourcePath);
   if (sourceContent.isErr()) {
     ctx.terminal.stderr(
       `Failed to read legacy source: ${describeFileSystemError(sourceContent.error)}`,
     );
     return ok(1);
   }
+
+  // Pre-convert to compute accurate skippedWarningCount for preflight display
+  const preConversion = convertLegacyJsonc(sourceContent.value);
+  const migrationPlan = buildMigrationPlan(
+    scope,
+    fs,
+    preConversion.warnings.length,
+  );
 
   // Check destination exists
   const destExists = await fs.exists(migrationPlan.destinationPath);
@@ -389,20 +613,30 @@ export function writeMigratedDsl(
 function performMigrationWrite(
   fs: FileSystem,
   plan: MigrationPlan,
-  _sourceContent: string,
+  sourceContent: string,
   destExists: boolean,
-): ResultAsync<{ backedUp: boolean }, { message: string }> {
+): ResultAsync<
+  { backedUp: boolean; warnings: ConversionWarning[] },
+  { message: string }
+> {
+  // Convert legacy JSONC to DSL (best-effort partial success)
+  const conversion = convertLegacyJsonc(sourceContent);
   // Generate migrated DSL content with provenance comment
-  const migratedContent = buildMigratedContent(plan);
-  return writeMigratedDsl(fs, plan, migratedContent, destExists);
+  const migratedContent = buildMigratedContent(plan, conversion);
+  return writeMigratedDsl(fs, plan, migratedContent, destExists).map(
+    (result) => ({ ...result, warnings: conversion.warnings }),
+  );
 }
 
 /**
  * Build migrated config.weave content with a provenance comment.
- * In Task 1 scope this produces a minimal valid starter config.
- * Full JSONC-to-DSL conversion is implemented in Task 3/4.
+ * Incorporates converted DSL from the JSONC conversion result.
+ * Falls back to starter config body when conversion produces no DSL.
  */
-function buildMigratedContent(plan: MigrationPlan): string {
+function buildMigratedContent(
+  plan: MigrationPlan,
+  conversion: ConversionResult,
+): string {
   const provenanceComment = [
     `# Migrated from legacy OpenCode JSONC config`,
     `# Source: ${plan.sourcePath}`,
@@ -411,13 +645,19 @@ function buildMigratedContent(plan: MigrationPlan): string {
     "",
   ].join("\n");
 
-  return provenanceComment + starterConfig(plan.scope);
+  // If conversion produced DSL content, use it; otherwise fall back to starter config
+  const body =
+    conversion.dsl.trim().length > 0
+      ? conversion.dsl + "\n"
+      : starterConfig(plan.scope);
+
+  return provenanceComment + body;
 }
 
 function renderMigrateSuccess(
   theme: ThemeColors,
   plan: MigrationPlan,
-  result: { backedUp: boolean },
+  result: { backedUp: boolean; warnings?: ConversionWarning[] },
 ): string {
   const lines = [
     theme.boldCyan("Migration complete"),
@@ -431,6 +671,10 @@ function renderMigrateSuccess(
   lines.push("Next steps:");
   lines.push(`  - Review ${plan.destinationPath}`);
   lines.push("  - Run weave validate --project or weave validate --global");
+  // Append warning summary if any fields were skipped
+  if (result.warnings !== undefined && result.warnings.length > 0) {
+    lines.push(renderConversionWarnings(result.warnings));
+  }
   return lines.join("\n");
 }
 

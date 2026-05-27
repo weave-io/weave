@@ -62,7 +62,7 @@
 - [x] 2.7 Allow explicit non-interactive migrate mode to proceed with `--yes`, including overwrite-with-backup behavior when the destination already exists.
 - [x] 2.8 Add write-path tests covering interactive preflight behavior, validation-before-write aborts, overwrite backup creation, provenance comments, source preservation, and non-interactive `--yes` success paths.
 
-### [ ] 3.0 Convert top-level legacy settings with warning-visible best effort
+### [x] 3.0 Convert top-level legacy settings with warning-visible best effort
 
 #### 3.0 Proof Artifact(s)
 
@@ -72,12 +72,12 @@
 
 #### 3.0 Tasks
 
-- [ ] 3.1 Model migration conversion as best-effort partial success so supported content can be written even when warnings are emitted for skipped legacy fields.
-- [ ] 3.2 Map legacy `disabled_agents`, `disabled_hooks`, and `disabled_skills` into current `disable agents`, `disable hooks`, and `disable skills` declarations.
-- [ ] 3.3 Map legacy `log_level` into `settings { log_level ... }` using current DSL semantics.
-- [ ] 3.4 Warn and skip legacy `workflows`, `continuation`, `analytics`, and `background` sections in migration v1 with explicit per-field reasons.
-- [ ] 3.5 Ensure warning-bearing successful migrations still exit with code `0` after the destination file is written.
-- [ ] 3.6 Add conversion tests for supported top-level fields, unsupported-section warnings, and warning-free successful conversion fixtures.
+- [x] 3.1 Model migration conversion as best-effort partial success so supported content can be written even when warnings are emitted for skipped legacy fields.
+- [x] 3.2 Map legacy `disabled_agents`, `disabled_hooks`, and `disabled_skills` into current `disable agents`, `disable hooks`, and `disable skills` declarations.
+- [x] 3.3 Map legacy `log_level` into `settings { log_level ... }` using current DSL semantics.
+- [x] 3.4 Warn and skip legacy `workflows`, `continuation`, `analytics`, and `background` sections in migration v1 with explicit per-field reasons.
+- [x] 3.5 Ensure warning-bearing successful migrations still exit with code `0` after the destination file is written.
+- [x] 3.6 Add conversion tests for supported top-level fields, unsupported-section warnings, and warning-free successful conversion fixtures.
 
 ### [ ] 4.0 Convert legacy agent, category, model, tool, and prompt intent
 
