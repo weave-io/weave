@@ -52,6 +52,11 @@ export interface ParsedArgs {
     limit?: number;
     /** runtime subcommand: status | journal */
     runtimeSubcommand?: "status" | "journal";
+    /**
+     * init submode: "migrate" when `weave init migrate` is invoked.
+     * Undefined for ordinary `weave init`.
+     */
+    initSubmode?: "migrate";
   };
 }
 
@@ -228,6 +233,14 @@ export function parseArgs(argv: string[]): Result<ParsedArgs, ArgParseError> {
           break;
       }
       continue;
+    }
+
+    // init submode: "migrate" — parsed as the first positional after "init"
+    if (command === "init" && flags.initSubmode === undefined) {
+      if (arg === "migrate") {
+        flags.initSubmode = "migrate";
+        continue;
+      }
     }
 
     // runtime subcommands: status, journal

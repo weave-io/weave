@@ -169,6 +169,12 @@ Prompt files ship in [`packages/config/prompts/`](../packages/config/prompts/) a
 
 See [`packages/config/src/errors.ts`](../packages/config/src/errors.ts).
 
+### Migration and canonical destinations
+
+`weave init migrate` writes migrated config **only** to the canonical paths above — never to ad hoc locations. This is a hard constraint: the config loader only discovers `~/.weave/config.weave` and `<projectRoot>/.weave/config.weave`. A migrated file written anywhere else would be silently ignored at runtime.
+
+The `--install-dir` flag accepted by ordinary `weave init` (for starter-config scaffolding) is **ignored** in migrate mode for this reason. See [CLI — `weave init migrate`](./cli.md#weave-init-migrate) for the full migration contract.
+
 ---
 
 ## Prompt File Resolution
@@ -184,6 +190,14 @@ Each scope has a `rootDir` (see [`packages/config/src/types.ts`](../packages/con
 A `prompt_file: "loom.md"` in scope `{ rootDir: "/my/project/.weave" }` resolves to `/my/project/.weave/prompts/loom.md`.
 
 Resolution happens before merging so that when two layers both define the same agent's `prompt_file`, the winning value is already an absolute path pointing to the correct scope's `prompts/` directory.
+
+### Migration and prompt-file translation
+
+When `weave init migrate` converts a legacy config, `prompt_file` values are preserved **only** when the path is a bare filename with no directory separators (e.g. `"loom.md"`). This is because `resolvePromptPaths()` resolves relative `prompt_file` values against the scope's `.weave/prompts/` directory — a bare filename maps cleanly to `<scopeRoot>/.weave/prompts/<filename>`.
+
+Paths with directory components (e.g. `"subdir/loom.md"`, `"/abs/path.md"`, `"../prompts/loom.md"`) cannot be safely translated because the legacy system may have used arbitrary filesystem layouts that do not match the current `.weave/prompts/` convention. These are warned and skipped during migration. Users must manually place the prompt file in the correct `.weave/prompts/` directory and add the `prompt_file` reference after migration.
+
+See [CLI — Prompt file translation](./cli.md#prompt-file-translation) for the migration-specific rules.
 
 ### Bundle-safe builtin prompt resolution
 

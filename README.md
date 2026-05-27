@@ -113,27 +113,39 @@ weave/
 └── bunfig.toml                # Bun configuration
 ```
 
-## Getting Started
+## Installation
+
+Weave requires [Bun](https://bun.sh) ≥ 1.1. Node.js is not supported.
 
 ```bash
-# Install all dependencies
+# 1. Clone the repository
+git clone https://github.com/weave-io/weave.git
+cd weave
+
+# 2. Install all workspace dependencies
 bun install
 
-# Build all packages
+# 3. Build all packages (core → config → engine → adapters → cli)
 bun run build
+```
 
-# Run type checking
+The build emits compiled output into each package's `dist/` folder:
+
+| Package | Dist entry |
+| --- | --- |
+| `@weave/adapter-opencode` | `packages/adapters/opencode/dist/index.js` |
+| `@weave/cli` | `packages/cli/dist/main.js` |
+
+## Getting Started (development)
+
+```bash
+# Run type checking across all packages
 bun run typecheck
 
 # Run all tests
-bun run test
+bun test
 
-# Build and link the local weave executable
-bun run build
-bun link ./packages/cli
-weave --help
-
-# Validate project config through the CLI
+# Validate the project's own .weave config through the CLI
 bun run validate-config
 
 # Clean all dist/ folders
@@ -142,36 +154,93 @@ bun run clean
 
 ## CLI
 
-The `@weave/cli` package exposes the `weave` executable. During local development, build and link the package before using `weave` from `PATH`:
+The `@weave/cli` package exposes the `weave` executable. After building, link it into your `PATH` for local development:
 
 ```bash
 bun run build
 bun link ./packages/cli
-command -v weave
 weave --help
 weave --version
 ```
 
-Once publishable, the same command surface is available through package runners:
+Once published, the same command surface is available through package runners:
 
 ```bash
 bunx @weave/cli --help
 npx @weave/cli --help
-npm exec @weave/cli -- --help
-pnpm dlx @weave/cli --help
 ```
 
-Common commands:
+### `weave init` — scaffold a `.weave` config
 
 ```bash
+# Interactive setup (prompts for scope, harness, and modules)
+weave init
+
+# Non-interactive local setup
 weave init --scope local --yes
-weave init --scope global --install-dir ~/.weave --yes
-weave validate --project
-weave validate --path .weave/config.weave --json
-NO_COLOR=1 weave --help
+
+# Non-interactive global setup
+weave init --scope global --yes
 ```
 
-See [docs/cli.md](./docs/cli.md) for the full command contract, init safety rules, validation behavior, and installer boundaries.
+### `weave init migrate` — migrate a legacy OpenCode config
+
+If you have an existing `weave-opencode.jsonc` config from the legacy `opencode-weave` project, migrate it to the current `.weave` DSL:
+
+```bash
+# Explicit migrate mode — prompts for confirmation, then continues into harness setup
+weave init migrate --scope local
+weave init migrate --scope global
+
+# Non-interactive — migrates and exits without prompts
+weave init migrate --scope local --yes
+weave init migrate --scope global --yes
+```
+
+Legacy source paths (read-only, never modified):
+
+| Scope | Legacy source |
+| --- | --- |
+| `local` | `.opencode/weave-opencode.jsonc` |
+| `global` | `~/.config/opencode/weave-opencode.jsonc` |
+
+Migration writes only to the canonical destinations `~/.weave/config.weave` (global) and `.weave/config.weave` (local). The `--install-dir` flag is ignored in migrate mode.
+
+### `weave validate` — validate a `.weave` config
+
+```bash
+# Validate the project config (auto-discovers .weave/config.weave)
+weave validate --project
+
+# Validate a specific file
+weave validate --path .weave/config.weave
+
+# Machine-readable JSON output
+weave validate --path .weave/config.weave --json
+```
+
+See [docs/cli.md](./docs/cli.md) for the full command contract, init safety rules, migration behavior, validation output, and installer boundaries.
+
+## Using with OpenCode
+
+After building, point your OpenCode config at the local adapter dist file to use your development build as the active plugin.
+
+**`~/.config/opencode/opencode.jsonc`**:
+
+```jsonc
+{
+  "plugin": [
+    // Use the local development build of the Weave OpenCode adapter
+    "file:///absolute/path/to/weave/packages/adapters/opencode/dist/index.js"
+  ]
+}
+```
+
+Replace `/absolute/path/to/weave` with the actual path where you cloned the repo (e.g. `/Users/you/projects/weave`).
+
+To switch back to the published package, replace the `file://` entry with `@opencode_weave/weave` (or whichever published package name applies).
+
+> **Tip**: run `bun run build` after any source change to update the dist files before restarting OpenCode.
 
 ## Scope
 

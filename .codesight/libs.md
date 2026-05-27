@@ -47,7 +47,14 @@
   - type Command
   - type ArgParseError
 - `packages/cli/src/cli.ts` — function run: (deps?) => Promise<Result<number, CliError>>, interface CliDeps
-- `packages/cli/src/commands/init.ts` — function runInit: (ctx) => Promise<Result<number, CliError>>, interface InitContext
+- `packages/cli/src/commands/init.ts`
+  - function convertLegacyJsonc: (source) => ConversionResult
+  - function runInit: (ctx) => Promise<Result<number, CliError>>
+  - function writeMigratedDsl: (fs, plan, dslContent, destExists) => ResultAsync<
+  - interface InitContext
+  - type MigrationPlan
+  - type ConversionWarning
+  - _...1 more_
 - `packages/cli/src/commands/runtime.ts` — function runRuntime: (ctx) => Promise<Result<number, CliError>>, interface RuntimeCommandContext
 - `packages/cli/src/commands/validate.ts` — function runValidate: (ctx) => Promise<Result<number, CliError>>, interface ValidateContext
 - `packages/cli/src/config/starter-config.ts` — function starterConfig: (scope) => string
