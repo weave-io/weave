@@ -42,7 +42,7 @@
 - [x] 1.6 Continue into the normal harness selection and configuration flow after a successful migration write instead of treating migration as a terminal command.
 - [x] 1.7 Add init-flow tests covering explicit migrate mode, ordinary-init migration discovery, both scopes, canonical destination selection, and post-migration continuation behavior.
 
-### [ ] 2.0 Implement safe migration planning, preflight, and write behavior
+### [x] 2.0 Implement safe migration planning, preflight, and write behavior
 
 #### 2.0 Proof Artifact(s)
 
@@ -53,14 +53,14 @@
 
 #### 2.0 Tasks
 
-- [ ] 2.1 Add a migration-plan stage that computes source path, destination path, destination-exists status, backup intent, and skipped-warning count before any write prompt or file mutation.
-- [ ] 2.2 Render an interactive preflight summary that clearly distinguishes source versus destination and shows whether an overwrite backup will be created.
-- [ ] 2.3 Validate generated `.weave` output through the normal parse/validation pipeline before writing either the destination file or any `.bak` file.
-- [ ] 2.4 When the destination already exists, write exactly one backup file at `<target>.bak` before overwriting the destination.
-- [ ] 2.5 Preserve the legacy JSONC source file after successful migration and avoid any rename/delete cleanup step.
-- [ ] 2.6 Prepend a short provenance comment to generated `config.weave` and intentionally ignore arbitrary legacy JSONC comments rather than attempting comment preservation.
-- [ ] 2.7 Allow explicit non-interactive migrate mode to proceed with `--yes`, including overwrite-with-backup behavior when the destination already exists.
-- [ ] 2.8 Add write-path tests covering interactive preflight behavior, validation-before-write aborts, overwrite backup creation, provenance comments, source preservation, and non-interactive `--yes` success paths.
+- [x] 2.1 Add a migration-plan stage that computes source path, destination path, destination-exists status, backup intent, and skipped-warning count before any write prompt or file mutation.
+- [x] 2.2 Render an interactive preflight summary that clearly distinguishes source versus destination and shows whether an overwrite backup will be created.
+- [x] 2.3 Validate generated `.weave` output through the normal parse/validation pipeline before writing either the destination file or any `.bak` file.
+- [x] 2.4 When the destination already exists, write exactly one backup file at `<target>.bak` before overwriting the destination.
+- [x] 2.5 Preserve the legacy JSONC source file after successful migration and avoid any rename/delete cleanup step.
+- [x] 2.6 Prepend a short provenance comment to generated `config.weave` and intentionally ignore arbitrary legacy JSONC comments rather than attempting comment preservation.
+- [x] 2.7 Allow explicit non-interactive migrate mode to proceed with `--yes`, including overwrite-with-backup behavior when the destination already exists.
+- [x] 2.8 Add write-path tests covering interactive preflight behavior, validation-before-write aborts, overwrite backup creation, provenance comments, source preservation, and non-interactive `--yes` success paths.
 
 ### [ ] 3.0 Convert top-level legacy settings with warning-visible best effort
 

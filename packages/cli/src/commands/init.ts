@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
-import { ok, type Result, ResultAsync } from "neverthrow";
+import { parseConfig } from "@weave/core";
+import { errAsync, ok, type Result, ResultAsync } from "neverthrow";
 import type { ParsedArgs } from "../args.js";
 import { starterConfig } from "../config/starter-config.js";
 import {
@@ -73,6 +74,8 @@ type MigrationPlan = {
   sourcePath: string;
   destinationDir: string;
   destinationPath: string;
+  /** Number of legacy fields that will be skipped with warnings during conversion. */
+  skippedWarningCount: number;
 };
 
 // ---------------------------------------------------------------------------
@@ -279,12 +282,22 @@ async function runMigrateMode(
   return ok(installExit);
 }
 
-function buildMigrationPlan(scope: InitScope, fs: FileSystem): MigrationPlan {
+function buildMigrationPlan(
+  scope: InitScope,
+  fs: FileSystem,
+  skippedWarningCount = 0,
+): MigrationPlan {
   const scopeRoot = scope === "global" ? fs.home() : fs.cwd();
   const sourcePath = resolve(scopeRoot, LEGACY_SOURCE_RELATIVE[scope]);
   const destinationDir = resolve(scopeRoot, CANONICAL_WEAVE_DIR[scope]);
   const destinationPath = resolve(destinationDir, "config.weave");
-  return { scope, sourcePath, destinationDir, destinationPath };
+  return {
+    scope,
+    sourcePath,
+    destinationDir,
+    destinationPath,
+    skippedWarningCount,
+  };
 }
 
 function renderMigratePreflight(
@@ -292,14 +305,26 @@ function renderMigratePreflight(
   plan: MigrationPlan,
   destExists: boolean,
 ): string {
+  const overwriteLine = destExists
+    ? theme.boldYellow(
+        "yes — backup will be created at " + plan.destinationPath + ".bak",
+      )
+    : "no (destination does not exist)";
+  const warningLine =
+    plan.skippedWarningCount > 0
+      ? theme.boldYellow(
+          `${plan.skippedWarningCount} field(s) will be skipped with warnings`,
+        )
+      : "none";
   const lines = [
     "",
     theme.boldCyan("Migration preflight"),
     "",
-    `  Source:      ${plan.sourcePath}`,
-    `  Destination: ${plan.destinationPath}`,
-    `  Scope:       ${plan.scope}`,
-    `  Overwrite:   ${destExists ? theme.boldYellow("yes — backup will be created at " + plan.destinationPath + ".bak") : "no (destination does not exist)"}`,
+    `  Source:        ${plan.sourcePath}`,
+    `  Destination:   ${plan.destinationPath}`,
+    `  Scope:         ${plan.scope}`,
+    `  Overwrite:     ${overwriteLine}`,
+    `  Skipped fields: ${warningLine}`,
     "",
   ];
   return lines.join("\n");
@@ -313,6 +338,19 @@ function performMigrationWrite(
 ): ResultAsync<{ backedUp: boolean }, { message: string }> {
   // Generate migrated DSL content with provenance comment
   const migratedContent = buildMigratedContent(plan);
+
+  // Validate generated DSL through the normal parse/validation pipeline
+  // before mutating any files. Abort if validation fails — leaves both
+  // destination and backup untouched.
+  const validationResult = parseConfig(migratedContent);
+  if (validationResult.isErr()) {
+    const errorSummary = validationResult.error
+      .map((e) => ("message" in e ? e.message : JSON.stringify(e)))
+      .join("; ");
+    return errAsync({
+      message: `Generated DSL failed validation: ${errorSummary}`,
+    });
+  }
 
   const backup = destExists
     ? fs.copyFile(plan.destinationPath, `${plan.destinationPath}.bak`)
