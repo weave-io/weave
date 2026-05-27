@@ -37,6 +37,7 @@ import type { OpenCodeClientError, OpenCodeClientFacade } from "../index.js";
 import {
   createWeavePlugin,
   default as defaultExport,
+  WEAVE_OWNERSHIP_TAG,
   WeavePlugin,
   WeavePluginServer,
 } from "../index.js";
@@ -724,6 +725,135 @@ describe("WeavePlugin — bundle-safe builtin prompt resolution", () => {
     ].sort();
 
     expect(createdNames).toEqual(EXPECTED_BUILTINS);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: config-hook ownership tag + no-collision regression
+// ---------------------------------------------------------------------------
+
+describe("WeavePlugin — config hook injects ownership-tagged agents (no-collision regression)", () => {
+  it("config hook injects agents with WEAVE_OWNERSHIP_TAG in description", async () => {
+    const agentName = "ownership-tag-agent";
+    const root = await makeTempProject(agentName);
+    const client = new MockOpenCodeClient();
+    client.setListResult(okAsync([]));
+
+    const plugin = createWeavePlugin({
+      fileReader: projectOnlyReader(root),
+      clientFacade: client,
+    });
+    const input = makeMockPluginInput(root, client);
+    const hooks = await plugin(input);
+
+    const cfg: { agent?: Record<string, unknown> } = {};
+    await hooks.config!(cfg as never);
+
+    const injected = cfg.agent![agentName] as Record<string, unknown>;
+    // The injected config must carry the ownership tag so that deferred
+    // reconciliation classifies it as "update" rather than "collision".
+    expect(typeof injected.description).toBe("string");
+    expect(injected.description as string).toContain(WEAVE_OWNERSHIP_TAG);
+  });
+
+  it("session.created after config hook uses updateAgent (not collision) for config-hook-injected agents", async () => {
+    // Regression test for the startup collision spam bug.
+    //
+    // Scenario:
+    //   1. hooks.config(cfg) injects agents into cfg.agent.
+    //   2. OpenCode's runtime picks up those agents and they appear in
+    //      client.listAgents() (simulated here by pre-populating listResult
+    //      with the tagged agents from the config hook).
+    //   3. session.created fires → reconcileAgent runs.
+    //   4. Because the config-hook-injected agents carry WEAVE_OWNERSHIP_TAG,
+    //      classifyExistingAgent returns "update" — not "collision".
+    //   5. updateAgent is called; no CollisionError is logged.
+    //
+    const agentName = "no-collision-agent";
+    const root = await makeTempProject(agentName);
+    const client = new MockOpenCodeClient();
+
+    // Step 1: run config hook to get the tagged agent config
+    const plugin = createWeavePlugin({
+      fileReader: projectOnlyReader(root),
+      clientFacade: client,
+    });
+    const input = makeMockPluginInput(root, client);
+    const hooks = await plugin(input);
+
+    const cfg: { agent?: Record<string, unknown> } = {};
+    await hooks.config!(cfg as never);
+
+    // Step 2: simulate what OpenCode does — the config-hook-injected agent
+    // is now visible in listAgents() (as if OpenCode loaded it into its store).
+    const injectedConfig = cfg.agent![agentName] as OpenCodeAgentConfig;
+    client.setListResult(
+      okAsync([
+        {
+          name: agentName,
+          description: injectedConfig.description ?? "",
+        } as OpenCodeAgent,
+      ]),
+    );
+
+    // Step 3: trigger session.created
+    await triggerSessionCreated(hooks);
+
+    // Step 4+5: must have called updateAgent (ownership tag found → "update"),
+    // NOT createAgent (which would indicate a collision was silently ignored).
+    expect(client.updateAgentCalls.length).toBeGreaterThan(0);
+    const updatedNames = client.updateAgentCalls.map((c) => c.name);
+    expect(updatedNames).toContain(agentName);
+    // createAgent must NOT have been called for this agent
+    const createdNames = client.createAgentCalls.map((c) => c.name);
+    expect(createdNames).not.toContain(agentName);
+  });
+
+  it("config hook does NOT call any SDK methods (startup path stays clean)", async () => {
+    // Regression guard: the config hook must remain pure — no listAgents,
+    // createAgent, or updateAgent calls during the config hook phase.
+    const agentName = "clean-startup-agent";
+    const root = await makeTempProject(agentName);
+    const client = new MockOpenCodeClient();
+
+    const plugin = createWeavePlugin({
+      fileReader: projectOnlyReader(root),
+      clientFacade: client,
+    });
+    const input = makeMockPluginInput(root, client);
+    const hooks = await plugin(input);
+
+    // Run only the config hook — no event hook
+    const cfg: { agent?: Record<string, unknown> } = {};
+    await hooks.config!(cfg as never);
+
+    // No SDK calls must have been made
+    expect(client.listAgentsCalls).toHaveLength(0);
+    expect(client.createAgentCalls).toHaveLength(0);
+    expect(client.updateAgentCalls).toHaveLength(0);
+  });
+
+  it("ownership tag is idempotent — config hook does not double-tag agents", async () => {
+    const agentName = "idempotent-tag-agent";
+    const root = await makeTempProject(agentName);
+    const client = new MockOpenCodeClient();
+    client.setListResult(okAsync([]));
+
+    const plugin = createWeavePlugin({
+      fileReader: projectOnlyReader(root),
+      clientFacade: client,
+    });
+    const input = makeMockPluginInput(root, client);
+    const hooks = await plugin(input);
+
+    const cfg: { agent?: Record<string, unknown> } = {};
+    await hooks.config!(cfg as never);
+
+    const injected = cfg.agent![agentName] as Record<string, unknown>;
+    const description = injected.description as string;
+    // Tag must appear exactly once
+    const tagCount = description.split(WEAVE_OWNERSHIP_TAG).length - 1;
+    expect(tagCount).toBe(1);
   });
 });
 

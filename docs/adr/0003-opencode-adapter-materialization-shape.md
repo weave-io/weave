@@ -35,16 +35,18 @@ The package exports a `WeavePlugin` function (and a `server` alias for `PluginMo
 1. Loads the Weave config from `input.directory` via `loadConfig()`.
 2. Calls `materializeAgents()` to compose all agent descriptors.
 3. Translates each descriptor into an `OpenCodeAgentConfig` via `translateAgent()` and collects the results into a `translatedMap`.
-4. Constructs an `OpenCodeAdapter` with the injected `SdkOpenCodeClient`.
-5. Calls `spawnSubagent()` for each descriptor (SDK-backed `list → reconcile → create/update` flow).
-6. Returns a `Hooks` object with a `config` hook that injects the translated agent configs into `cfg.agent`.
+4. Returns a `Hooks` object **immediately** — without blocking on any SDK or DB calls.
 
-The `config` hook and the SDK-backed reconciliation serve different purposes:
+The `Hooks` object contains two hooks:
 
-- **`config` hook** — injects translated agent configs into `cfg.agent` at startup so that `opencode debug config` reflects all Weave-managed agents. This is the observability path.
-- **SDK-backed reconciliation** (`spawnSubagent`) — writes agents into OpenCode's runtime store via `client.config.update()`. This is the durable persistence path that survives config reloads.
+- **`config` hook** — injects translated agent configs (tagged with `[weave-managed]`) into `cfg.agent` at startup so that `opencode debug config` reflects all Weave-managed agents. This is pure computation (no SDK calls).
+- **`event` hook** — defers SDK-backed reconciliation (`adapter.init()` + `spawnSubagent()`) to the first `session.created` event. This ensures `opencode debug config` never hangs waiting for the OpenCode runtime store. Reconciliation runs exactly once per plugin activation.
 
 Both paths are required for full materialization.
+
+> **Why deferred?** `opencode debug config` calls the plugin function and exercises only the `config` hook. The previous design called `adapter.init()` and `spawnSubagent()` eagerly before returning `Hooks`, which blocked `debug config` because the runtime SDK path (`client.app.agents()` / DB) is not available in that context.
+
+> **Why tag in the config hook?** The `config` hook injects agents into `cfg.agent`. When OpenCode's runtime picks up those agents and they appear in `client.listAgents()`, the deferred `reconcileAgent` call must classify them as `"update"` (Weave-managed) rather than `"collision"` (foreign). Applying `tagWithOwnership()` in the config hook ensures the `[weave-managed]` marker is present before the reconciler ever sees the agent, eliminating startup collision spam.
 
 ```jsonc
 // opencode.json — direct plugin installation
@@ -131,7 +133,8 @@ The `[weave-managed]` ownership tag is embedded in the agent's `description` fie
 
 - `@weave/adapter-opencode` is now a real first-slice materialization path, not a translation-only stub.
 - `spawnSubagent(descriptor)` performs the full `list → reconcile → create/update` flow when a client is injected.
-- `WeavePlugin` now returns a `Hooks` object with a `config` hook that injects translated agent configs into `cfg.agent`. This makes agents visible to `opencode debug config` at startup.
+- `WeavePlugin` now returns a `Hooks` object **immediately** with a `config` hook (injects ownership-tagged agent configs into `cfg.agent`) and an `event` hook (defers SDK reconciliation to `session.created`). This makes agents visible to `opencode debug config` at startup without blocking on SDK/DB calls.
+- The `config` hook applies `tagWithOwnership()` before injecting agents so that deferred reconciliation classifies them as `"update"` rather than `"collision"`, eliminating startup collision spam.
 - `createWeavePlugin(options?)` is exported as a factory for creating plugin instances with custom `fileReader` and `clientFacade` options (primarily for testing).
 - `translatedAgents` is retained as a read-only secondary artifact for test inspection and transitional compatibility; it is not the source of truth.
 - `loadAvailableSkills()` returns the harness-injected skill list without filesystem scanning.

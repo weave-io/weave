@@ -99,6 +99,7 @@ import {
   type OpenCodeClientFacade,
   SdkOpenCodeClient,
 } from "./opencode-client.js";
+import { tagWithOwnership } from "./reconcile-agent.js";
 import type { OpenCodeAgentConfig } from "./sdk-types.js";
 import { translateAgent } from "./translate-agent.js";
 
@@ -327,7 +328,10 @@ export function createWeavePlugin(options: WeavePluginOptions = {}): Plugin {
         }
 
         for (const [agentName, agentConfig] of translatedMap) {
-          cfg.agent[agentName] = agentConfig;
+          // Tag with ownership before injecting so that deferred SDK
+          // reconciliation (session.created) sees the same ownership marker
+          // and classifies these agents as "update" rather than "collision".
+          cfg.agent[agentName] = tagWithOwnership(agentConfig);
           log.debug({ agent: agentName }, "Agent injected into config hook");
         }
 
