@@ -2,7 +2,7 @@
 
 This diagram is intentionally high level. It describes the conceptual flow of Weave without relying on specific source files or implementation details.
 
-**Related:** [Product Vision](product-vision.md) · [Adapter Boundary](adapter-boundary.md) · [Config Loading](config-loading.md) · [Model Resolution](model-resolution.md) · [Runtime Persistence Spec](specs/12-spec-runtime-persistence/12-spec-runtime-persistence.md)
+**Related:** [Product Vision](product-vision.md) · [Adapter Boundary](adapter-boundary.md) · [Config Loading](config-loading.md) · [Model Resolution](model-resolution.md) · [Harness Agent Surface Patterns](harness-agent-surface-patterns.md) · [Runtime Persistence Spec](specs/12-spec-runtime-persistence/12-spec-runtime-persistence.md)
 
 ---
 

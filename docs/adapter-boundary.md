@@ -156,14 +156,14 @@ const resolved = resolveSkillsForConfig(config, skills);
 
 Skill resolution is implemented as a pure engine helper. Adapters discover and load skills from harness-specific directories; the engine matches, filters, and validates those skills against agent config.
 
-**Transitional adapter surface decision (Spec 09):** The `HarnessAdapter` interface exposes `loadAvailableSkills(): Promise<SkillInfo[]>`. This method is called during the adapter bootstrap loop (after `materializeAgents`) before each `spawnSubagent` call. Adapters return a flat list of `SkillInfo` descriptors; the engine calls `resolveSkillsForConfig()` and attaches `resolvedSkills` to each `RunAgentEffect`.
+**Transitional adapter surface decision (Spec 09):** The `HarnessAdapter` interface exposes `loadAvailableSkills(): Promise<SkillInfo[]>`. This method is called once during the adapter bootstrap sequence (after `init()` and before agent materialization). Adapters return a flat list of `SkillInfo` descriptors; the engine resolves requested skill names against that list via `resolveSkillsForConfig()`.
 
 Key rules:
 
 - `loadAvailableSkills()` is adapter-owned — the engine never scans skill directories itself.
 - `resolveSkillsForAgent()` and `resolveSkillsForConfig()` are pure engine helpers — they accept explicit `availableSkills` input and return `Result<ResolvedSkill[], SkillResolutionError[]>`.
 - `RunAgentEffect.resolvedSkills` carries only engine-resolved skill references; adapter-owned metadata (paths, content, tokens) must not appear in emitted effects.
-- The deprecated `loadSkill()` method on `HarnessAdapter` was superseded by `loadAvailableSkills()`. It remains on the interface marked `@deprecated` for backward compatibility; new adapters should not implement it.
+- Earlier drafts used a placeholder `loadSkill()` method on `HarnessAdapter`. That method has been removed from the interface; adapters should implement `loadAvailableSkills()` only.
 
 See [Spec 09 — Adapter-Provided Skill Resolution](specs/09-spec-adapter-provided-skill-resolution/09-spec-adapter-provided-skill-resolution.md) for the full vocabulary, resolution semantics, and proof artifacts.
 
@@ -209,10 +209,10 @@ See [Spec 16 — Stable Adapter Descriptor Contract](specs/16-spec-stable-adapte
 
 ## Transitional Interfaces
 
-Some current code still uses early placeholder methods such as `loadSkill()` or `registerHook()` on `HarnessAdapter`. Treat these as **transitional implementation details**, not product architecture precedent.
+Earlier drafts and proof artifacts referenced placeholder methods such as `loadSkill()` and `registerHook()` on `HarnessAdapter`. Those methods are **not part of the current interface**. Treat them as historical migration context only, not architecture precedent.
 
-- `loadSkill()` was deprecated and superseded by `loadAvailableSkills()` (see Spec 09 above). Adapters should provide the full available-skill list upfront; the engine resolves references against it. The method remains on the interface marked `@deprecated` for backward compatibility.
-- `registerHook()` was superseded by the Execution Lifecycle Surface (Spec 13). Adapters should map harness events into the 7 typed lifecycle functions instead. The method remains on the interface marked `@deprecated` for backward compatibility.
+- `loadSkill()` was replaced by `loadAvailableSkills()` (see Spec 09 above). Adapters provide the full available-skill list upfront; the engine resolves references against it.
+- `registerHook()` was replaced by the Execution Lifecycle Surface (Spec 13). Adapters map harness events into the 7 typed lifecycle functions instead of exposing hook registration through the engine boundary.
 
 Future specs should move toward this boundary:
 
@@ -294,7 +294,7 @@ for the formal spec and proof artifacts.
 
 > **Issue:** [#44 — Minimal Execution Lifecycle Surface](https://github.com/josevalim/weave/issues/44) · **Spec:** [Spec 13 — Minimal Execution Lifecycle Surface](specs/13-spec-minimal-execution-lifecycle-surface/13-spec-minimal-execution-lifecycle-surface.md)
 
-The **Execution Lifecycle Surface** is the engine-owned abstract API that adapters call after mapping concrete harness events into normalized lifecycle inputs. It supersedes the transitional `registerHook()` method on `HarnessAdapter`.
+The **Execution Lifecycle Surface** is the engine-owned abstract API that adapters call after mapping concrete harness events into normalized lifecycle inputs. It supersedes earlier placeholder `registerHook()` designs.
 
 All types are exported from `@weave/engine` under `packages/engine/src/execution-lifecycle.ts`.
 
@@ -348,9 +348,9 @@ if (input.toolName === "bash") { /* harness-specific logic */ }
 - `BeforeToolOutput` contains only `decision` (`"allow"` | `"deny"` | `"ask"`) and an optional `reason` string. No raw payloads, credentials, or harness state appear in the output.
 - `beforeTool` does NOT access the Runtime Store — it is a pure policy evaluation wrapped in `ResultAsync` for interface consistency.
 
-### `registerHook()` is Superseded
+### Earlier `registerHook()` Designs Are Superseded
 
-The `registerHook()` method on `HarnessAdapter` was superseded by the Execution Lifecycle Surface (Spec 13). It remains on the interface marked `@deprecated` for backward compatibility. Adapters should map harness events into the lifecycle surface instead:
+Earlier drafts referenced a `registerHook()` method on `HarnessAdapter`. That method is not part of the current interface. Adapters should map harness events into the lifecycle surface instead:
 
 ```ts
 // ❌ Old: engine registers a concrete harness hook

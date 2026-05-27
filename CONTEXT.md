@@ -88,6 +88,14 @@ _Avoid_: Prompt globals, runtime state, agent internals
 A Mermaid representation of the delegation routes available from the current agent to eligible target agents.
 _Avoid_: Delegation table, routing chart, agent map
 
+**Canonical Agent Name**:
+The stable logical identifier Weave uses to refer to an agent across composition, materialization, and reconciliation.
+_Avoid_: Display name, UI label, rendered agent title
+
+**Weave-managed Agent**:
+An adapter-visible harness agent whose configuration lifecycle is owned by Weave rather than authored manually in the harness.
+_Avoid_: Any same-named agent, UI alias, unmanaged agent
+
 ## Relationships
 
 - A **WorkflowInstance** stores active execution metadata and artifacts for one workflow run.
@@ -109,6 +117,7 @@ _Avoid_: Delegation table, routing chart, agent map
 - A **Prompt Template** is rendered with a **Template Context** during prompt composition to produce prompt text that participates in the **Composed Prompt**.
 - Delegation data inside a **Composed Prompt** is computed from agent `triggers`; a **Prompt Template** may decide where and how that delegation guidance is rendered.
 - A **Delegation Diagram** starts as a current-agent star: the current agent points to each eligible delegation target.
+- A **Weave-managed Agent** is reconciled by its **Canonical Agent Name**, while display-oriented fields may change without changing identity.
 
 ## Prompt Composition Templates
 
@@ -129,3 +138,4 @@ See [Prompt Composition Guide](docs/prompt-composition.md) and [ADR 0001](docs/a
 - "active execution pointer" suggests a separate concept; resolved: a valid **ExecutionLease** identifies the actively driven **WorkflowInstance**.
 - "event log" can imply event sourcing; resolved: use **Runtime Journal** for observational runtime history that is not the source of truth.
 - "session runtime snapshot" can imply raw harness state capture; resolved: use **SessionSnapshot** for normalized Weave-visible observations only.
+- "agent name" can mean either a stable identifier or a UI-facing label; resolved: use **Canonical Agent Name** for identity and treat display text as presentation only.

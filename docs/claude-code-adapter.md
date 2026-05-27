@@ -3,7 +3,7 @@
 > **Status**: Planning note — no Claude Code adapter package exists yet.
 > **Purpose**: Define what is required to create `@weave/adapter-claude-code` using the legacy OpenCode feature set as a comparison baseline.
 
-**Related:** [Product Vision](product-vision.md) · [Adapter Boundary](adapter-boundary.md) · [Legacy Architecture](legacy-architecture.md) · [Model Resolution](model-resolution.md) · [Tool Policy Evaluation](tool-policy-evaluation.md) · [Spec 07 — Adapter Capability Contract](specs/07-spec-adapter-capability-contract/07-spec-adapter-capability-contract.md) · [Spec 09 — Adapter-Provided Skill Resolution](specs/09-spec-adapter-provided-skill-resolution/09-spec-adapter-provided-skill-resolution.md)
+**Related:** [Product Vision](product-vision.md) · [Adapter Boundary](adapter-boundary.md) · [Legacy Architecture](legacy-architecture.md) · [Model Resolution](model-resolution.md) · [Tool Policy Evaluation](tool-policy-evaluation.md) · [Harness Agent Surface Patterns](harness-agent-surface-patterns.md) · [Spec 07 — Adapter Capability Contract](specs/07-spec-adapter-capability-contract/07-spec-adapter-capability-contract.md) · [Spec 09 — Adapter-Provided Skill Resolution](specs/09-spec-adapter-provided-skill-resolution/09-spec-adapter-provided-skill-resolution.md)
 
 ---
 
@@ -37,7 +37,7 @@ The legacy runtime features listed as initially unsupported below **must be supp
 | Area | Current state |
 | --- | --- |
 | `HarnessAdapter` interface | Exists in `packages/engine/src/adapter.ts` |
-| Runner orchestration | Exists in `packages/engine/src/runner.ts` |
+| Bootstrap path | `loadConfig()` → `materializeAgents()` → adapter loop (`docs/adapter-bootstrap.md`) |
 | Model intent helper | Exists in `packages/engine/src/model-resolution.ts` |
 | Tool-policy helper | Exists in `packages/engine/src/tool-policy.ts` |
 | Capability contract | Exists in `packages/engine/src/capability-contract.ts` |
@@ -92,14 +92,22 @@ The package should be named `@weave/adapter-claude-code` and depend on `@weave/c
 - pass declarations and probes to `buildAdapterHealthReport()`
 - log readiness using the shared engine logger
 
-`spawnSubagent(name, agentConfig)` should:
+`loadAvailableSkills()` should:
+
+- discover Claude Code-visible skills, commands, and prompt assets when they can
+  be represented as `SkillInfo`
+- return a flat adapter-owned skill list for engine-side resolution
+- return `[]` when the adapter intentionally ships without skill support in an
+  initial slice
+
+`spawnSubagent(descriptor)` should:
 
 - resolve the best model using `resolveAdapterModelIntent()` and Claude Code's adapter-provided model context
 - evaluate concrete Claude tool decisions using `resolveToolDecisions()`
-- translate the Weave `AgentConfig` into Claude Code agent markdown
-- write `.claude/agents/<name>.md`
+- translate the engine-composed `AgentDescriptor` into Claude Code agent markdown
+- write `.claude/agents/<descriptor.name>.md`
 
-Transitional methods such as `registerHook()` and deprecated skill-loading methods should be implemented as no-ops or warnings unless Claude Code exposes a safe equivalent.
+Earlier placeholder methods such as `registerHook()` and `loadSkill()` are not part of the current `HarnessAdapter` interface. If Claude Code eventually exposes a safe lifecycle API, the adapter should map those events into the engine lifecycle surface rather than reviving deprecated engine-owned methods.
 
 ### `agent-translation.ts`
 
@@ -128,7 +136,7 @@ The translator should map:
 - `models` after adapter model resolution
 - `temperature` only if Claude Code has a supported equivalent
 - `tool_policy` after concrete tool classification
-- inline `prompt`, resolved `prompt_file` content, and category `prompt_append`
+- `composedPrompt`
 
 Generated category shuttles should be materialized exactly like normal agents because the engine already expands category descriptors.
 
