@@ -27,6 +27,7 @@
     }
   },
   "include": [
+    "types/**/*",
     "packages/*/src/**/*",
     "packages/adapters/*/src/**/*",
     "scripts/**/*"

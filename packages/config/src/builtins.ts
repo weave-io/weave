@@ -1,6 +1,53 @@
+/// <reference path="../../../types/md.d.ts" />
+
 import type { ConfigError, WeaveConfig } from "@weave/core";
 import { parseConfig } from "@weave/core";
 import type { Result } from "neverthrow";
+
+// ---------------------------------------------------------------------------
+// Embedded builtin prompt contents
+//
+// Imported as text at build time via Bun's `with { type: "text" }` import
+// assertion. This embeds the file contents directly into the bundle, making
+// builtin prompt resolution fully bundle-safe — no filesystem access required
+// at runtime, regardless of where the bundle is executed from.
+//
+// This is the fix for the `import.meta.dir` bundling problem: when
+// `@weave/config` is bundled into `@weave/adapter-opencode/dist/plugin.js`,
+// `import.meta.dir` in `loader.ts` resolves to the adapter's dist directory
+// rather than `packages/config/`. By embedding prompt content here, we
+// eliminate the runtime filesystem dependency for builtins entirely.
+// ---------------------------------------------------------------------------
+
+import loomPrompt from "../prompts/loom.md" with { type: "text" };
+import patternPrompt from "../prompts/pattern.md" with { type: "text" };
+import shuttlePrompt from "../prompts/shuttle.md" with { type: "text" };
+import spindlePrompt from "../prompts/spindle.md" with { type: "text" };
+import tapestryPrompt from "../prompts/tapestry.md" with { type: "text" };
+import threadPrompt from "../prompts/thread.md" with { type: "text" };
+import warpPrompt from "../prompts/warp.md" with { type: "text" };
+import weftPrompt from "../prompts/weft.md" with { type: "text" };
+
+/**
+ * Embedded builtin prompt contents, keyed by agent name.
+ *
+ * These are the same files referenced by `prompt_file` in
+ * `BUILTIN_WEAVE_SOURCE`, but embedded at build time so that the bundle
+ * does not need to read them from the filesystem at runtime.
+ *
+ * Used by `loader.ts` to inline prompt content into the builtin config
+ * before merging, replacing `prompt_file` references with `prompt` values.
+ */
+export const BUILTIN_PROMPT_CONTENTS: Readonly<Record<string, string>> = {
+  loom: loomPrompt,
+  tapestry: tapestryPrompt,
+  shuttle: shuttlePrompt,
+  pattern: patternPrompt,
+  thread: threadPrompt,
+  spindle: spindlePrompt,
+  weft: weftPrompt,
+  warp: warpPrompt,
+};
 
 /**
  * The canonical `.weave` DSL source that declares all 8 built-in agents.
@@ -12,7 +59,8 @@ import type { Result } from "neverthrow";
  *
  * Prompt file paths are relative to the `prompts/` directory shipped inside
  * `packages/config/`. They are resolved to absolute paths by
- * `resolvePromptPaths()` before merging.
+ * `resolvePromptPaths()` before merging, OR replaced with embedded inline
+ * content from `BUILTIN_PROMPT_CONTENTS` when running from a bundle.
  */
 export const BUILTIN_WEAVE_SOURCE = `
 agent loom {

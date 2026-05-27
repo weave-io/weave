@@ -103,7 +103,10 @@
   - class ThemeRenderer
   - interface VersionSource
   - const defaultThemeRenderer
-- `packages/config/src/builtins.ts` — function getBuiltinConfig: () => Result<WeaveConfig, ConfigError[]>, const BUILTIN_WEAVE_SOURCE
+- `packages/config/src/builtins.ts`
+  - function getBuiltinConfig: () => Result<WeaveConfig, ConfigError[]>
+  - const BUILTIN_PROMPT_CONTENTS: Readonly<Record<string, string>>
+  - const BUILTIN_WEAVE_SOURCE
 - `packages/config/src/discovery.ts`
   - function discoverAndParse: (projectRoot?, fileReader) => ResultAsync<DiscoveredConfig[], ConfigLoadError[]>
   - interface FileReader

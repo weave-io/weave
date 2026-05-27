@@ -4,8 +4,8 @@
 > **Monorepo:** @weave/core, @weave/engine, @weave/config, @weave/cli, @weave/adapter-opencode
 
 > 0 routes | 0 models | 0 components | 58 lib files | 2 env vars | 0 middleware | 0% test coverage
-> **Token savings:** this file is ~4,900 tokens. Without it, AI exploration would cost ~24,400 tokens. **Saves ~19,500 tokens per conversation.**
-> **Last scanned:** 2026-05-26 22:24 — re-run after significant changes
+> **Token savings:** this file is ~5,000 tokens. Without it, AI exploration would cost ~24,400 tokens. **Saves ~19,500 tokens per conversation.**
+> **Last scanned:** 2026-05-27 02:55 — re-run after significant changes
 
 ---
 
@@ -114,7 +114,10 @@
   - class ThemeRenderer
   - interface VersionSource
   - const defaultThemeRenderer
-- `packages/config/src/builtins.ts` — function getBuiltinConfig: () => Result<WeaveConfig, ConfigError[]>, const BUILTIN_WEAVE_SOURCE
+- `packages/config/src/builtins.ts`
+  - function getBuiltinConfig: () => Result<WeaveConfig, ConfigError[]>
+  - const BUILTIN_PROMPT_CONTENTS: Readonly<Record<string, string>>
+  - const BUILTIN_WEAVE_SOURCE
 - `packages/config/src/discovery.ts`
   - function discoverAndParse: (projectRoot?, fileReader) => ResultAsync<DiscoveredConfig[], ConfigLoadError[]>
   - interface FileReader
@@ -286,9 +289,9 @@
 - `packages/config/src/builtins.ts` — imported by **5** files
 - `packages/config/src/discovery.ts` — imported by **5** files
 - `packages/config/src/merge.ts` — imported by **5** files
-- `packages/config/src/types.ts` — imported by **5** files
 - `packages/core/src/lexer.ts` — imported by **5** files
 - `packages/engine/src/descriptors.ts` — imported by **5** files
+- `packages/config/src/types.ts` — imported by **4** files
 
 ## Import Map (who imports what)
 

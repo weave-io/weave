@@ -61,13 +61,34 @@ describe("loadConfig", () => {
     expect(agentNames).toEqual([...BUILTIN_AGENT_NAMES].sort());
   });
 
-  it("(a) zero-config: prompt_file paths are absolute", async () => {
+  it("(a) zero-config: builtin agents have inline prompt content (bundle-safe)", async () => {
+    // After the bundle-safe fix, builtin agents use embedded inline `prompt`
+    // content instead of `prompt_file` absolute paths. This ensures builtins
+    // compose correctly when @weave/config is bundled into an adapter.
     const reader = mockReader({});
     const result = await withHome(() => loadConfig(PROJECT, reader));
 
     expect(result.isOk()).toBe(true);
     const config = result._unsafeUnwrap();
 
+    for (const [name, agent] of Object.entries(config.agents)) {
+      // Builtin agents should have inline prompt content, not prompt_file paths.
+      // (User-authored agents may still use prompt_file — that is resolved to
+      // an absolute path by resolvePromptPaths() as before.)
+      if (BUILTIN_AGENT_NAMES.includes(name)) {
+        expect(
+          agent.prompt,
+          `builtin agent "${name}" should have inline prompt content`,
+        ).toBeDefined();
+        expect(
+          agent.prompt_file,
+          `builtin agent "${name}" should not have prompt_file after inlining`,
+        ).toBeUndefined();
+      }
+    }
+
+    // Any user-authored prompt_file values (from project/global configs) must
+    // still be absolute paths — resolvePromptPaths() is still applied to those.
     for (const [, agent] of Object.entries(config.agents)) {
       if (agent.prompt_file !== undefined) {
         expect(isAbsolute(agent.prompt_file)).toBe(true);
@@ -86,9 +107,14 @@ describe("loadConfig", () => {
     const loom = config.agents.loom;
 
     expect(loom?.temperature).toBe(0.5);
-    // prompt_file should come from builtin (absolute path), not overridden
-    expect(loom?.prompt_file).toBeDefined();
-    expect(isAbsolute(loom?.prompt_file ?? "")).toBe(true);
+    // After the bundle-safe fix, builtin agents use inline prompt content.
+    // The project override only sets temperature — the builtin inline prompt
+    // should be preserved via merge.
+    expect(loom?.prompt).toBeDefined();
+    expect(typeof loom?.prompt).toBe("string");
+    expect((loom?.prompt ?? "").length).toBeGreaterThan(0);
+    // prompt_file should NOT be present — builtins now use inline prompt
+    expect(loom?.prompt_file).toBeUndefined();
   });
 
   it("(c) global custom agent: merged config contains all 8 builtins + custom agent", async () => {

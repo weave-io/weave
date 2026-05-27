@@ -364,6 +364,155 @@ describe("WeavePlugin — SDK reconciliation", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Tests: bundle-safe builtin prompt resolution (regression for import.meta.dir)
+// ---------------------------------------------------------------------------
+
+describe("WeavePlugin — bundle-safe builtin prompt resolution", () => {
+  /**
+   * Regression test for the `import.meta.dir` bundling problem.
+   *
+   * **Root cause**: When `@weave/config` is bundled into
+   * `@weave/adapter-opencode/dist/plugin.js`, `import.meta.dir` in
+   * `loader.ts` resolves to the adapter's dist directory instead of
+   * `packages/config/`. This caused all 8 builtin prompt-file-backed agents
+   * to fail with `DescriptorCompositionFailure` because the resolved path
+   * pointed to a non-existent `packages/adapters/opencode/prompts/` directory.
+   *
+   * **Fix**: `loader.ts` now calls `inlineBuiltinPrompts()` instead of
+   * `resolvePromptPaths()` for the builtin layer. `inlineBuiltinPrompts()`
+   * replaces `prompt_file` references with embedded inline content from
+   * `BUILTIN_PROMPT_CONTENTS` (text-imported at build time in `builtins.ts`).
+   * This eliminates the runtime filesystem dependency for builtins entirely.
+   *
+   * **What this test asserts**: When the plugin runs with only builtin agents
+   * (no project config), all 8 builtins are materialized and the config hook
+   * injects all 8 into `cfg.agent`. Zero `DescriptorCompositionFailure` errors.
+   */
+  it("all 8 builtin agents materialize when project config is empty (no DescriptorCompositionFailure)", async () => {
+    // Create a project with an empty config — only builtins should be present.
+    const root = join(
+      tmpdir(),
+      `weave-builtin-regression-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
+    await Bun.write(
+      join(root, ".weave", "config.weave"),
+      "# empty project config\n",
+    );
+
+    const client = new MockOpenCodeClient();
+    client.setListResult(okAsync([]));
+
+    const plugin = createWeavePlugin({
+      fileReader: projectOnlyReader(root),
+      clientFacade: client,
+    });
+    const input = makeMockPluginInput(root, client);
+    const hooks = await plugin(input);
+
+    // Plugin must return a config hook — if builtins fail to compose, the
+    // translatedMap is empty and no config hook is returned.
+    expect(typeof hooks.config).toBe("function");
+
+    // Invoke the config hook and collect injected agents.
+    const cfg: { agent?: Record<string, unknown> } = {};
+    await hooks.config!(cfg as never);
+
+    const injectedNames = Object.keys(cfg.agent ?? {}).sort();
+
+    // All 8 builtins must be present.
+    const EXPECTED_BUILTINS = [
+      "loom",
+      "pattern",
+      "shuttle",
+      "spindle",
+      "tapestry",
+      "thread",
+      "warp",
+      "weft",
+    ].sort();
+
+    expect(injectedNames).toEqual(EXPECTED_BUILTINS);
+  });
+
+  it("builtin agents have non-empty composed prompts (prompt content was embedded)", async () => {
+    const root = join(
+      tmpdir(),
+      `weave-builtin-prompt-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
+    await Bun.write(
+      join(root, ".weave", "config.weave"),
+      "# empty project config\n",
+    );
+
+    const client = new MockOpenCodeClient();
+    client.setListResult(okAsync([]));
+
+    const plugin = createWeavePlugin({
+      fileReader: projectOnlyReader(root),
+      clientFacade: client,
+    });
+    const input = makeMockPluginInput(root, client);
+    const hooks = await plugin(input);
+
+    expect(typeof hooks.config).toBe("function");
+
+    const cfg: { agent?: Record<string, unknown> } = {};
+    await hooks.config!(cfg as never);
+
+    // Every injected builtin agent must have a non-empty prompt string.
+    for (const [name, agentConfig] of Object.entries(cfg.agent ?? {})) {
+      const config = agentConfig as Record<string, unknown>;
+      expect(
+        typeof config.prompt,
+        `builtin agent "${name}" must have a string prompt`,
+      ).toBe("string");
+      expect(
+        (config.prompt as string).length,
+        `builtin agent "${name}" must have a non-empty prompt`,
+      ).toBeGreaterThan(10);
+    }
+  });
+
+  it("SDK createAgent is called for all 8 builtins (no silent failures)", async () => {
+    const root = join(
+      tmpdir(),
+      `weave-builtin-sdk-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
+    await Bun.write(
+      join(root, ".weave", "config.weave"),
+      "# empty project config\n",
+    );
+
+    const client = new MockOpenCodeClient();
+    client.setListResult(okAsync([]));
+
+    const plugin = createWeavePlugin({
+      fileReader: projectOnlyReader(root),
+      clientFacade: client,
+    });
+    const input = makeMockPluginInput(root, client);
+    await plugin(input);
+
+    // All 8 builtins must have been passed to createAgent.
+    // Before the fix, only 0 builtins were created (all failed with
+    // DescriptorCompositionFailure due to the wrong prompt file path).
+    const createdNames = client.createAgentCalls.map((c) => c.name).sort();
+    const EXPECTED_BUILTINS = [
+      "loom",
+      "pattern",
+      "shuttle",
+      "spindle",
+      "tapestry",
+      "thread",
+      "warp",
+      "weft",
+    ].sort();
+
+    expect(createdNames).toEqual(EXPECTED_BUILTINS);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tests: @opencode-ai/plugin dependency proof
 // ---------------------------------------------------------------------------
 
