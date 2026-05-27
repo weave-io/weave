@@ -105,7 +105,7 @@ OpenCode has no separate create/update agent endpoint. Both operations write thr
 
 The reconciliation flow in `reconcile-agent.ts` is:
 
-```
+```text
 1. listAgents()       — fetch current agent list from OpenCode
 2. find by name       — look for an agent whose name matches descriptor.name
 3. ownership check    — if found, verify description contains [weave-managed]

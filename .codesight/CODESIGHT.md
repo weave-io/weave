@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 59 lib files | 4 env vars | 0 middleware | 0% test coverage
 > **Token savings:** this file is ~5,000 tokens. Without it, AI exploration would cost ~25,000 tokens. **Saves ~19,900 tokens per conversation.**
-> **Last scanned:** 2026-05-27 16:37 — re-run after significant changes
+> **Last scanned:** 2026-05-27 16:42 — re-run after significant changes
 
 ---
 
@@ -297,10 +297,10 @@
 - `packages/cli/src/errors.ts` — imported by **5** files
 - `packages/config/src/builtins.ts` — imported by **5** files
 - `packages/config/src/discovery.ts` — imported by **5** files
+- `packages/config/src/logger.ts` — imported by **5** files
 - `packages/config/src/merge.ts` — imported by **5** files
 - `packages/core/src/lexer.ts` — imported by **5** files
 - `packages/engine/src/descriptors.ts` — imported by **5** files
-- `packages/config/src/logger.ts` — imported by **4** files
 
 ## Import Map (who imports what)
 

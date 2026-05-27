@@ -34,20 +34,11 @@ describe("config logger — shared destination invariant", () => {
   });
 
   it("redirectLogsToFile redirects config logger output to file (shared destination)", async () => {
-    // This test proves the end-to-end invariant:
-    // After redirectLogsToFile(), writes to logDestination go to the file.
-    // Because the config logger uses logDestination, its output also goes to
-    // the file — not to stdout.
-    //
-    // We verify by:
-    //   1. Redirecting logDestination to a temp file.
-    //   2. Writing a sentinel directly to logDestination (bypasses pino's
-    //      level filter, which is set to `silent` in tests).
-    //   3. Asserting the sentinel appears in the file.
-    //
-    // This proves the shared destination is working. The config logger's
-    // pino-level calls (logger.info etc.) would also go to this file when
-    // LOG_LEVEL is not silent.
+    // This test proves the end-to-end invariant with the actual config logger:
+    // after redirectLogsToFile(), a real `configLogger.info(...)` call lands in
+    // the file rather than stdout.
+
+    const { logger: configLogger } = await import("../logger.js");
 
     const logPath = join(
       tmpdir(),
@@ -56,13 +47,17 @@ describe("config logger — shared destination invariant", () => {
 
     await redirectLogsToFile(logPath);
 
-    // Write a sentinel directly to the shared destination.
-    const sentinel = `{"config-logger-sentinel":true,"ts":${Date.now()}}\n`;
-    logDestination.write(sentinel);
+    const previousLevel = configLogger.level;
+    configLogger.level = "info";
+    configLogger.info(
+      { configLoggerSentinel: true },
+      "Config loaded successfully",
+    );
+    configLogger.level = previousLevel;
 
-    // The sentinel must appear in the log file.
     const logContent = await Bun.file(logPath).text();
-    expect(logContent).toContain("config-logger-sentinel");
+    expect(logContent).toContain("configLoggerSentinel");
+    expect(logContent).toContain("Config loaded successfully");
   });
 
   it("config logger name is weave:config", async () => {
