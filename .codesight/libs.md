@@ -1,6 +1,9 @@
 # Libraries
 
-- `packages/adapters/opencode/src/adapter.ts` — class OpenCodeAdapter, interface OpenCodeAdapterOptions
+- `packages/adapters/opencode/src/adapter.ts`
+  - class OpenCodeAdapterError
+  - class OpenCodeAdapter
+  - interface OpenCodeAdapterOptions
 - `packages/adapters/opencode/src/model-resolution.ts`
   - function resolveModelForAgent: (descriptor, context) => Result<string, ModelResolutionError>
   - interface OpenCodeModelContext

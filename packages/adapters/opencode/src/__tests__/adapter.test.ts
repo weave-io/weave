@@ -20,7 +20,11 @@ import { describe, expect, it } from "bun:test";
 import type { AgentDescriptor, EffectiveToolPolicy } from "@weave/engine";
 import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 import type { OpenCodeClientError, OpenCodeClientFacade } from "../index.js";
-import { OpenCodeAdapter, WEAVE_OWNERSHIP_TAG } from "../index.js";
+import {
+  OpenCodeAdapter,
+  type OpenCodeAdapterError,
+  WEAVE_OWNERSHIP_TAG,
+} from "../index.js";
 import type { OpenCodeAgent, OpenCodeAgentConfig } from "../sdk-types.js";
 
 // ---------------------------------------------------------------------------
@@ -413,6 +417,34 @@ describe("OpenCodeAdapter — spawnSubagent() SDK create path", () => {
 
     await expect(adapter.spawnSubagent(makeDescriptor())).rejects.toThrow(
       "SDK write failed",
+    );
+  });
+
+  it("throws OpenCodeAdapterError with structured context on create failure", async () => {
+    const mockClient = new MockOpenCodeClient();
+    mockClient.setListAgentsResult(okAsync([]));
+    mockClient.setCreateAgentResult(
+      errAsync({
+        type: "CreateAgentError" as const,
+        agentName: "test-agent",
+        message: "SDK write failed",
+      }),
+    );
+
+    const adapter = new OpenCodeAdapter({
+      projectRoot: "/tmp/test-project",
+      client: mockClient,
+    });
+    await adapter.init();
+
+    await expect(adapter.spawnSubagent(makeDescriptor())).rejects.toMatchObject(
+      {
+        name: "OpenCodeAdapterError",
+        type: "ReconcileAgentError",
+        agentName: "test-agent",
+        message:
+          'Failed to materialize agent "test-agent" via OpenCode SDK: [CreateAgentError] SDK write failed',
+      } satisfies Partial<OpenCodeAdapterError>,
     );
   });
 });

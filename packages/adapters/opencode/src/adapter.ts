@@ -28,6 +28,30 @@ import { translateAgent } from "./translate-agent.js";
 
 const log = logger.child({ module: "adapter-opencode" });
 
+type OpenCodeAdapterErrorType =
+  | "ModelResolutionError"
+  | "TranslateAgentError"
+  | "ReconcileAgentError";
+
+export class OpenCodeAdapterError extends Error {
+  readonly type: OpenCodeAdapterErrorType;
+  readonly agentName: string;
+  readonly cause: unknown;
+
+  constructor(input: {
+    type: OpenCodeAdapterErrorType;
+    agentName: string;
+    message: string;
+    cause?: unknown;
+  }) {
+    super(input.message);
+    this.name = "OpenCodeAdapterError";
+    this.type = input.type;
+    this.agentName = input.agentName;
+    this.cause = input.cause;
+  }
+}
+
 /**
  * Constructor options for `OpenCodeAdapter`.
  */
@@ -37,7 +61,7 @@ export interface OpenCodeAdapterOptions {
    *
    * Used to construct the `BunFilesystemPlanStateProvider` so that plan files
    * are resolved relative to the correct project root. Defaults to
-   * `Bun.env.PWD ?? process.cwd()` when omitted.
+   * `Bun.env.PWD ?? "."` when omitted.
    */
   readonly projectRoot?: string;
 
@@ -146,7 +170,7 @@ export class OpenCodeAdapter implements HarnessAdapter {
    */
   planStateProvider: PlanStateProvider | undefined = undefined;
 
-  /** Absolute path to the project root. Defaults to `Bun.env.PWD ?? process.cwd()`. */
+  /** Absolute path to the project root. Defaults to `Bun.env.PWD ?? "."`. */
   private readonly projectRoot: string;
 
   /**
@@ -179,7 +203,7 @@ export class OpenCodeAdapter implements HarnessAdapter {
   private readonly harnessSkills: SkillInfo[] | undefined;
 
   constructor(options: OpenCodeAdapterOptions = {}) {
-    this.projectRoot = options.projectRoot ?? Bun.env.PWD ?? process.cwd();
+    this.projectRoot = options.projectRoot ?? Bun.env.PWD ?? ".";
     this.openCodeClient = options.client;
     this.modelContext = options.modelContext ?? {};
     this.harnessSkills = options.availableSkills;
@@ -250,8 +274,8 @@ export class OpenCodeAdapter implements HarnessAdapter {
    *    mode — no SDK calls are made).
    *
    * @param descriptor - Full normalized agent descriptor to materialise.
-   * @throws {Error} When model resolution fails, translation fails, or
-   *   SDK-backed materialization fails.
+   * @throws {OpenCodeAdapterError} When model resolution fails, translation
+   *   fails, or SDK-backed materialization fails.
    */
   async spawnSubagent(descriptor: AgentDescriptor): Promise<void> {
     // Step 1: Resolve model using adapter-provided OpenCode model context.
@@ -267,9 +291,12 @@ export class OpenCodeAdapter implements HarnessAdapter {
         },
         "Failed to resolve model for agent",
       );
-      throw new Error(
-        `Failed to resolve model for agent "${descriptor.name}": [${error.type}] ${error.message}`,
-      );
+      throw new OpenCodeAdapterError({
+        type: "ModelResolutionError",
+        agentName: descriptor.name,
+        message: `Failed to resolve model for agent "${descriptor.name}": [${error.type}] ${error.message}`,
+        cause: error,
+      });
     }
 
     const resolvedModel = modelResult.value;
@@ -286,9 +313,12 @@ export class OpenCodeAdapter implements HarnessAdapter {
         },
         "Failed to translate agent descriptor",
       );
-      throw new Error(
-        `Failed to translate agent descriptor for "${descriptor.name}": ${translateResult.error.message}`,
-      );
+      throw new OpenCodeAdapterError({
+        type: "TranslateAgentError",
+        agentName: descriptor.name,
+        message: `Failed to translate agent descriptor for "${descriptor.name}": ${translateResult.error.message}`,
+        cause: translateResult.error,
+      });
     }
 
     const config = translateResult.value;
@@ -331,9 +361,12 @@ export class OpenCodeAdapter implements HarnessAdapter {
         },
         "Failed to materialize agent via SDK",
       );
-      throw new Error(
-        `Failed to materialize agent "${descriptor.name}" via OpenCode SDK: [${error.type}] ${error.message}`,
-      );
+      throw new OpenCodeAdapterError({
+        type: "ReconcileAgentError",
+        agentName: descriptor.name,
+        message: `Failed to materialize agent "${descriptor.name}" via OpenCode SDK: [${error.type}] ${error.message}`,
+        cause: error,
+      });
     }
 
     log.info(

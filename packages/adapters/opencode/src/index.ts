@@ -49,7 +49,7 @@
 // ---------------------------------------------------------------------------
 
 export type { OpenCodeAdapterOptions } from "./adapter.js";
-export { OpenCodeAdapter } from "./adapter.js";
+export { OpenCodeAdapter, OpenCodeAdapterError } from "./adapter.js";
 
 // ---------------------------------------------------------------------------
 // Model resolution
