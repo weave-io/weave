@@ -32,10 +32,12 @@
 import { describe, expect, it } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { logDestination } from "@weave/engine";
 import { okAsync, ResultAsync } from "neverthrow";
 import type { OpenCodeClientError, OpenCodeClientFacade } from "../index.js";
 import {
   createWeavePlugin,
+  DEFAULT_PLUGIN_LOG_SUBPATH,
   default as defaultExport,
   WEAVE_OWNERSHIP_TAG,
   WeavePlugin,
@@ -923,5 +925,86 @@ describe("WeavePlugin — @opencode-ai/plugin dependency", () => {
     // Hooks is an object — all fields are optional
     expect(typeof hooks).toBe("object");
     expect(hooks).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: automatic file-backed logging on the plugin path
+// ---------------------------------------------------------------------------
+
+describe("WeavePlugin — automatic file-backed logging", () => {
+  it("plugin creates .weave/weave.log and routes logs there by default (no WEAVE_LOG_FILE)", async () => {
+    // This test proves that when the plugin runs without an explicit
+    // WEAVE_LOG_FILE env var, the shared log destination is redirected to
+    // `<project>/.weave/weave.log` instead of stdout.
+    //
+    // Mechanism: the plugin calls `redirectLogsToFile(join(directory,
+    // DEFAULT_PLUGIN_LOG_SUBPATH))` at the very start of the plugin function.
+    // `redirectLogsToFile` swaps the shared pino stream's inner sink to a
+    // SonicBoom file destination (sync: true) and awaits the `ready` event.
+    //
+    // We verify by:
+    //   1. Running the plugin against a temp project.
+    //   2. Asserting the log file was created at the expected path.
+    //   3. Writing a sentinel line directly to `logDestination` (bypassing
+    //      pino's level filter, which is set to `silent` in tests) and
+    //      asserting it appears in the file.
+    //
+    // Note: the test preload sets LOG_LEVEL=silent, so pino-level log calls
+    // (logger.info etc.) are dropped. We use a direct write to logDestination
+    // to prove the sink is pointing at the file.
+
+    const root = join(
+      tmpdir(),
+      `weave-file-log-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
+    await Bun.write(
+      join(root, ".weave", "config.weave"),
+      "# empty project config\n",
+    );
+
+    const client = new MockOpenCodeClient();
+    client.setListResult(okAsync([]));
+
+    const plugin = createWeavePlugin({
+      fileReader: projectOnlyReader(root),
+      clientFacade: client,
+    });
+    const input = makeMockPluginInput(root, client);
+
+    // Run the plugin — this triggers redirectLogsToFile internally.
+    // After this call, logDestination._sink is a SonicBoom pointing at
+    // `<root>/.weave/weave.log`.
+    await plugin(input);
+
+    // The log file must exist at the expected path (created by SonicBoom
+    // when it opened the file during redirectLogsToFile).
+    const expectedLogPath = join(root, DEFAULT_PLUGIN_LOG_SUBPATH);
+    const logFile = Bun.file(expectedLogPath);
+    expect(await logFile.exists()).toBe(true);
+
+    // Write a sentinel line directly to logDestination (bypasses pino's
+    // level filter). With sync: true on the SonicBoom sink, this write is
+    // synchronous — the data is on disk before write() returns.
+    const sentinel = `{"weave-test-sentinel":true,"ts":${Date.now()}}\n`;
+    logDestination.write(sentinel);
+
+    // The sentinel must appear in the log file.
+    // Use a fresh Bun.file() reference to avoid any read caching.
+    const logContent = await Bun.file(expectedLogPath).text();
+    expect(logContent).toContain("weave-test-sentinel");
+
+    // The sentinel line must be valid JSON
+    const sentinelLine = logContent
+      .split("\n")
+      .find((l) => l.includes("weave-test-sentinel"));
+    expect(sentinelLine).toBeDefined();
+    const parsed = JSON.parse(sentinelLine!);
+    expect(parsed["weave-test-sentinel"]).toBe(true);
+  });
+
+  it("DEFAULT_PLUGIN_LOG_SUBPATH is .weave/weave.log", () => {
+    // Regression guard: the constant must not change without updating docs.
+    expect(DEFAULT_PLUGIN_LOG_SUBPATH).toBe(".weave/weave.log");
   });
 });

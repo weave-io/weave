@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weave/core, @weave/engine, @weave/config, @weave/cli, @weave/adapter-opencode
 
-> 0 routes | 0 models | 0 components | 58 lib files | 3 env vars | 0 middleware | 0% test coverage
-> **Token savings:** this file is ~5,000 tokens. Without it, AI exploration would cost ~24,600 tokens. **Saves ~19,600 tokens per conversation.**
-> **Last scanned:** 2026-05-27 04:30 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 59 lib files | 3 env vars | 0 middleware | 0% test coverage
+> **Token savings:** this file is ~5,000 tokens. Without it, AI exploration would cost ~24,800 tokens. **Saves ~19,800 tokens per conversation.**
+> **Last scanned:** 2026-05-27 14:56 — re-run after significant changes
 
 ---
 
@@ -177,6 +177,10 @@
   - function lifecyclePersistenceError: (message, cause?) => LifecyclePersistenceError
   - function lifecyclePolicyDecisionError: (message, rule?) => LifecyclePolicyDecisionError
   - _...41 more_
+- `packages/engine/src/logger.ts`
+  - function redirectLogsToFile: (filePath) => Promise<void>
+  - const logDestination
+  - const logger
 - `packages/engine/src/materialization.ts`
   - function materializeAgents: (input) => ResultAsync<MaterializationPlan, never>
   - interface MaterializationInput

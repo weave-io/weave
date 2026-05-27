@@ -166,6 +166,10 @@
   - function lifecyclePersistenceError: (message, cause?) => LifecyclePersistenceError
   - function lifecyclePolicyDecisionError: (message, rule?) => LifecyclePolicyDecisionError
   - _...41 more_
+- `packages/engine/src/logger.ts`
+  - function redirectLogsToFile: (filePath) => Promise<void>
+  - const logDestination
+  - const logger
 - `packages/engine/src/materialization.ts`
   - function materializeAgents: (input) => ResultAsync<MaterializationPlan, never>
   - interface MaterializationInput

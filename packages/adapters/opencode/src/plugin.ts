@@ -89,9 +89,16 @@
  *   other adapter consumer: `loadConfig → materializeAgents → spawnSubagent`.
  */
 
+import { join } from "node:path";
 import type { Hooks, Plugin, PluginInput } from "@opencode-ai/plugin";
 import { type FileReader, loadConfig } from "@weave/config";
-import { type AgentDescriptor, logger, materializeAgents } from "@weave/engine";
+import {
+  type AgentDescriptor,
+  env,
+  logger,
+  materializeAgents,
+  redirectLogsToFile,
+} from "@weave/engine";
 
 import { OpenCodeAdapter } from "./adapter.js";
 import { resolveModelForAgent } from "./model-resolution.js";
@@ -104,6 +111,22 @@ import type { OpenCodeAgentConfig } from "./sdk-types.js";
 import { translateAgent } from "./translate-agent.js";
 
 const log = logger.child({ module: "adapter-opencode/plugin" });
+
+/**
+ * Default log file path relative to the project directory.
+ *
+ * When the OpenCode plugin runs without an explicit `WEAVE_LOG_FILE` env var,
+ * Weave logs are written to this path under the project root. The `.weave/`
+ * directory is already the conventional home for Weave project state, so
+ * placing the log file there keeps everything in one place.
+ *
+ * Example: `/path/to/project/.weave/weave.log`
+ *
+ * Not exported from `plugin.ts` — the plugin entry point must export only
+ * functions to satisfy OpenCode's `getLegacyPlugins` loader. This constant
+ * is exported from the barrel `index.ts` as a standalone export.
+ */
+const DEFAULT_PLUGIN_LOG_SUBPATH = ".weave/weave.log";
 
 /**
  * Options for `createWeavePlugin`.
@@ -169,6 +192,35 @@ export interface WeavePluginOptions {
 export function createWeavePlugin(options: WeavePluginOptions = {}): Plugin {
   return async (input: PluginInput): Promise<Hooks> => {
     const { client: sdkClient, directory } = input;
+
+    // Redirect logs to a project-local file before any log calls.
+    //
+    // When running as an OpenCode plugin, stdout is read by the OpenCode UI.
+    // Writing structured JSON logs to stdout would surface raw log lines in
+    // the chat interface, which is confusing for users.
+    //
+    // `redirectLogsToFile` is a no-op when `WEAVE_LOG_FILE` is already set
+    // (the env var is the explicit override). Otherwise it redirects the
+    // shared pino stream to `.weave/weave.log` under the project directory.
+    // All existing child loggers share the same stream and automatically write
+    // to the new destination after this call.
+    //
+    // We only redirect when the project directory exists. If it doesn't (e.g.
+    // in tests using a non-existent path), we skip the redirect and let logs
+    // fall through to stdout — the config load will fail anyway.
+    if (!env.WEAVE_LOG_FILE) {
+      // Check if the project directory exists before redirecting. If it
+      // doesn't (e.g. in tests using a non-existent path), skip the redirect
+      // and let logs fall through to stdout — the config load will fail anyway.
+      // Note: Bun.file().exists() returns false for directories; use stat().
+      const dirExists = await Bun.file(directory)
+        .stat()
+        .then(() => true)
+        .catch(() => false);
+      if (dirExists) {
+        await redirectLogsToFile(join(directory, DEFAULT_PLUGIN_LOG_SUBPATH));
+      }
+    }
 
     log.info({ directory }, "Weave plugin starting");
 

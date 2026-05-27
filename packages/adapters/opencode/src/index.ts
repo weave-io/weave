@@ -112,6 +112,23 @@ export {
 
 export type { Plugin, PluginInput, PluginModule } from "@opencode-ai/plugin";
 export type { WeavePluginOptions } from "./plugin.js";
+
+/**
+ * Default log file path relative to the project directory.
+ *
+ * When the OpenCode plugin runs without an explicit `WEAVE_LOG_FILE` env var,
+ * Weave logs are written to this path under the project root. The `.weave/`
+ * directory is already the conventional home for Weave project state, so
+ * placing the log file there keeps everything in one place.
+ *
+ * Example: `/path/to/project/.weave/weave.log`
+ *
+ * Defined here (not re-exported from `plugin.ts`) because the plugin entry
+ * point must export only functions to satisfy OpenCode's `getLegacyPlugins`
+ * loader. This constant is safe to export from the barrel.
+ */
+export const DEFAULT_PLUGIN_LOG_SUBPATH = ".weave/weave.log";
+
 /**
  * Default export: the OpenCode `Plugin` function.
  *

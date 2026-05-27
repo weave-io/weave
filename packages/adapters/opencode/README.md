@@ -61,3 +61,23 @@ Use the same environment with `opencode debug info` to verify that the plugin ex
 - `opencode debug config` should show the Weave-materialized `agent` map injected by the plugin's `config` hook.
 - `opencode debug info` should show the plugin loading and executing.
 - The resulting OpenCode `agent` entries should reflect the resolved Weave DSL for the loaded `.weave/config.weave` plus builtin Weave agent defaults.
+
+## Logging
+
+When the plugin runs inside OpenCode, Weave logs are written to a file automatically instead of stdout. Writing structured JSON logs to stdout would surface raw log lines in the OpenCode UI, which is confusing for users.
+
+**Default log path**: `.weave/weave.log` under the project directory (the same directory OpenCode passes as `input.directory`).
+
+**Override**: set `WEAVE_LOG_FILE=/absolute/path/to/weave.log` in the environment to write logs to a custom path instead.
+
+```bash
+# Use the default path (.weave/weave.log in the project root)
+opencode
+
+# Override with a custom path
+WEAVE_LOG_FILE=/tmp/weave-debug.log opencode
+```
+
+The log file is created automatically when the plugin starts. Parent directories are created if they do not exist. Logs are written synchronously (one write per log line) to ensure lines are visible immediately even if the process is killed.
+
+**Non-plugin usage**: when `@weave/engine` is used outside the OpenCode plugin path (e.g. in tests or other adapters), logs go to stdout by default unless `WEAVE_LOG_FILE` is set.
