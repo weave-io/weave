@@ -91,7 +91,7 @@ export {
   sanitizeMetadata,
   startExecution,
 } from "./execution-lifecycle.js";
-export { logger } from "./logger.js";
+export { logDestination, logger, redirectLogsToFile } from "./logger.js";
 export type {
   MaterializationError,
   MaterializationInput,

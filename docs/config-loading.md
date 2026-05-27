@@ -120,19 +120,29 @@ Eight built-in agents are shipped with `@weave/config`:
 | ---------- | -------- | ----------- | ------------------- |
 | `loom`     | primary  | 0.1         | Main orchestrator   |
 | `tapestry` | primary  | 0.1         | Plan execution      |
-| `shuttle`  | all      | 0.2         | Domain specialist   |
+| `shuttle`  | subagent | 0.2         | Domain specialist   |
 | `pattern`  | subagent | 0.3         | Strategic planner   |
 | `thread`   | subagent | 0.0         | Codebase explorer   |
 | `spindle`  | subagent | 0.1         | External researcher |
 | `weft`     | subagent | 0.1         | Reviewer            |
 | `warp`     | subagent | 0.1         | Security auditor    |
 
+> **Migration note — `shuttle` mode changed to `subagent`:** In earlier versions of Weave, the builtin `shuttle` agent was declared with `mode all` (usable as both primary and subagent). It is now `mode subagent`. If your project config or adapter code relied on `shuttle` being available as a primary agent, override the mode in your project's `.weave/config.weave`:
+> ```weave
+> agent shuttle {
+>   mode all
+> }
+> ```
+> This change was made to align `shuttle` with its actual usage pattern — it is always invoked as a delegated specialist, never as a user-facing primary agent.
+
 **DSL-first:** Builtins are declared as a `.weave` DSL string in [`packages/config/src/builtins.ts`](../packages/config/src/builtins.ts) — there is no separate code path. They flow through the same `parseConfig` pipeline as user-authored configs. This means:
 
 - Any user can replicate, extend, or replace any builtin by writing equivalent DSL in their config file.
 - Bugs in the builtin DSL surface immediately as test failures in `builtins.test.ts`.
 
-Placeholder prompt files ship in [`packages/config/prompts/`](../packages/config/prompts/) and are resolved to absolute paths by `resolvePromptPaths()` before merging. Full prompt content is a future deliverable.
+Prompt files ship in [`packages/config/prompts/`](../packages/config/prompts/) and are **embedded at build time** using Bun's `with { type: "text" }` import assertion in `builtins.ts`. The embedded content is stored in `BUILTIN_PROMPT_CONTENTS` and inlined into the builtin config by `inlineBuiltinPrompts()` in `loader.ts` before merging.
+
+**Bundle-safe prompt resolution:** Builtin agents use `prompt` (inline content) rather than `prompt_file` (filesystem path) after loading. This is intentional — it makes builtin prompt resolution work correctly when `@weave/config` is bundled into an adapter (e.g. `@weave/adapter-opencode/dist/plugin.js`). See [Prompt File Resolution](#prompt-file-resolution) for details.
 
 ---
 
@@ -167,13 +177,23 @@ See [`packages/config/src/errors.ts`](../packages/config/src/errors.ts).
 
 Each scope has a `rootDir` (see [`packages/config/src/types.ts`](../packages/config/src/types.ts)):
 
-- **builtin** → `packages/config/` (where `prompts/` ships with this package)
+- **builtin** → handled by `inlineBuiltinPrompts()` — see below
 - **global** → `~/.weave/`
 - **project** → `<projectRoot>/.weave/`
 
 A `prompt_file: "loom.md"` in scope `{ rootDir: "/my/project/.weave" }` resolves to `/my/project/.weave/prompts/loom.md`.
 
 Resolution happens before merging so that when two layers both define the same agent's `prompt_file`, the winning value is already an absolute path pointing to the correct scope's `prompts/` directory.
+
+### Bundle-safe builtin prompt resolution
+
+Builtin agents are handled differently from user-authored agents. Instead of calling `resolvePromptPaths()` for the builtin layer, `loadConfig()` calls `inlineBuiltinPrompts()` which replaces `prompt_file` references with embedded inline `prompt` content from `BUILTIN_PROMPT_CONTENTS`.
+
+**Why?** `resolvePromptPaths()` uses `import.meta.dir` to compute the builtin root directory. When `@weave/config` is bundled into an adapter (e.g. `@weave/adapter-opencode/dist/plugin.js`), `import.meta.dir` resolves to the adapter's dist directory rather than `packages/config/`. This caused all 8 builtin agents to fail with `DescriptorCompositionFailure` because the resolved path pointed to a non-existent `packages/adapters/opencode/prompts/` directory.
+
+**Fix:** `builtins.ts` imports all 8 prompt files as text using Bun's `with { type: "text" }` import assertion. Bun embeds the file content as a string at build time. `inlineBuiltinPrompts()` then replaces `prompt_file` with the embedded `prompt` content, eliminating the runtime filesystem dependency for builtins entirely.
+
+**Observable effect:** After `loadConfig()`, builtin agents have `prompt` (inline string) rather than `prompt_file` (filesystem path). User-authored agents that declare `prompt_file` still have their paths resolved to absolute paths by `resolvePromptPaths()` as before.
 
 ---
 
@@ -186,7 +206,7 @@ const result = await loadConfig("/path/to/project");
 
 result.match(
   (config) => {
-    // config.agents["loom"].prompt_file is an absolute path
+    // config.agents["loom"].prompt is an inline string (builtins use prompt, not prompt_file)
     // config.agents includes all 8 builtins + user additions
     startRunner(config);
   },

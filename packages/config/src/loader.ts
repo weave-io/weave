@@ -1,6 +1,5 @@
-import { resolve } from "node:path";
 import { err, errAsync, ok, type ResultAsync } from "neverthrow";
-import { getBuiltinConfig } from "./builtins.js";
+import { BUILTIN_PROMPT_CONTENTS, getBuiltinConfig } from "./builtins.js";
 import {
   bunFileReader,
   discoverAndParse,
@@ -9,20 +8,63 @@ import {
 import type { ConfigLoadError } from "./errors.js";
 import { logger } from "./logger.js";
 import { mergeConfigsResult } from "./merge.js";
-import { normalizePath } from "./normalize-path.js";
 import { resolvePromptPaths } from "./resolve.js";
-import type { ConfigScope } from "./types.js";
 
 const log = logger.child({ module: "loader" });
 
 /**
- * The absolute path to the `packages/config` directory, used to resolve
- * builtin prompt files at runtime.
+ * Replace `prompt_file` references in the builtin config with embedded inline
+ * `prompt` content from `BUILTIN_PROMPT_CONTENTS`.
  *
- * `import.meta.dir` is the directory of this source file (`packages/config/src/`).
- * We resolve one level up to reach `packages/config/` where `prompts/` lives.
+ * This is the bundle-safe alternative to `resolvePromptPaths()` for the
+ * builtin layer. Instead of resolving `prompt_file` to an absolute filesystem
+ * path (which breaks when `@weave/config` is bundled into an adapter because
+ * `import.meta.dir` points to the adapter's dist directory), we substitute the
+ * embedded content directly.
+ *
+ * **Why not use `resolvePromptPaths` for builtins?**
+ *
+ * `resolvePromptPaths` sets `prompt_file` to an absolute path derived from
+ * `import.meta.dir`. When `@weave/config` is bundled into
+ * `@weave/adapter-opencode/dist/plugin.js`, `import.meta.dir` resolves to the
+ * adapter's dist directory (e.g. `packages/adapters/opencode/dist/`), not
+ * `packages/config/`. The resolved path then points to a non-existent
+ * `packages/adapters/opencode/prompts/` directory, causing all builtin
+ * prompt-file-backed agents to fail with `DescriptorCompositionFailure`.
+ *
+ * By embedding prompt content at build time via Bun's `with { type: "text" }`
+ * import assertion (in `builtins.ts`), we eliminate the runtime filesystem
+ * dependency for builtins entirely.
+ *
+ * @param config - The parsed builtin config (from `getBuiltinConfig()`).
+ * @returns A new `WeaveConfig` with `prompt_file` replaced by `prompt` for
+ *          all builtin agents whose content is available in
+ *          `BUILTIN_PROMPT_CONTENTS`. Agents without a matching entry are left
+ *          unchanged (they will fail at compose time if they have no prompt).
  */
-const BUILTIN_ROOT_DIR = normalizePath(resolve(import.meta.dir, ".."));
+function inlineBuiltinPrompts(
+  config: import("@weave/core").WeaveConfig,
+): import("@weave/core").WeaveConfig {
+  const inlinedAgents: import("@weave/core").WeaveConfig["agents"] = {};
+
+  for (const [name, agent] of Object.entries(config.agents)) {
+    const embeddedContent = BUILTIN_PROMPT_CONTENTS[name];
+
+    // Only inline if the agent uses prompt_file AND we have embedded content.
+    // Agents with inline prompt or no prompt are left unchanged.
+    if (agent.prompt_file === undefined || embeddedContent === undefined) {
+      inlinedAgents[name] = agent;
+      continue;
+    }
+
+    // Replace prompt_file with inline prompt content.
+    // Omit prompt_file so compose.ts uses the inline prompt path.
+    const { prompt_file: _removed, ...rest } = agent;
+    inlinedAgents[name] = { ...rest, prompt: embeddedContent };
+  }
+
+  return { ...config, agents: inlinedAgents };
+}
 
 /**
  * Load the final merged `WeaveConfig` for a project.
@@ -36,10 +78,10 @@ const BUILTIN_ROOT_DIR = normalizePath(resolve(import.meta.dir, ".."));
  *    `~/.weave/config.weave` (global) and `<projectRoot>/.weave/config.weave`
  *    (project). Missing files are silently skipped.
  *
- * 3. **Resolve paths**: Call `resolvePromptPaths()` on each layer so that
- *    all `prompt_file` values become absolute paths before merging.
- *    - Builtins use `BUILTIN_ROOT_DIR` (this package's directory).
- *    - Each discovered config uses its own `scope.rootDir`.
+ * 3. **Resolve paths**: For the builtin layer, inline embedded prompt content
+ *    via `inlineBuiltinPrompts()` — this is bundle-safe and does not depend on
+ *    `import.meta.dir`. For discovered layers, call `resolvePromptPaths()` as
+ *    before so that user-authored `prompt_file` values become absolute paths.
  *
  * 4. **Merge**: Fold all layers left to right:
  *    `mergeConfigs(resolvedBuiltins, ...resolvedDiscovered)`
@@ -72,12 +114,12 @@ export function loadConfig(
 
   // Step 2–5: Discover, resolve, merge
   return discoverAndParse(projectRoot, fileReader).andThen((discovered) => {
-    // Step 3: Resolve prompt paths for each layer
-    const builtinScope: ConfigScope = {
-      kind: "builtin",
-      rootDir: BUILTIN_ROOT_DIR,
-    };
-    const resolvedBuiltins = resolvePromptPaths(builtinConfig, builtinScope);
+    // Step 3: Resolve prompt paths for each layer.
+    //
+    // Builtins: use inlineBuiltinPrompts() instead of resolvePromptPaths().
+    // This replaces prompt_file references with embedded content (bundle-safe).
+    // See inlineBuiltinPrompts() JSDoc for the full rationale.
+    const resolvedBuiltins = inlineBuiltinPrompts(builtinConfig);
 
     const resolvedDiscovered = discovered.map(({ config, scope }) =>
       resolvePromptPaths(config, scope),

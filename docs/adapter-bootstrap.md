@@ -461,6 +461,78 @@ All types and functions used in this guide are public exports:
 
 ---
 
+## Logging Configuration
+
+Weave uses [pino](https://getpino.io/) for structured JSON logging. By default,
+all log output goes to **stdout**. When running as an OpenCode plugin, stdout is
+read by the OpenCode UI, so Weave's JSON logs would surface as noise in the
+interface.
+
+### Shared destination invariant
+
+All Weave loggers — both the engine logger (`weave`) and the config logger
+(`weave:config`) — write to the **same** `MutableDestination` instance exported
+as `logDestination` from `@weave/engine`. This is the key invariant that makes
+silent startup work in the OpenCode plugin path.
+
+`packages/config/src/logger.ts` creates its pino instance with `logDestination`
+as the destination. When `redirectLogsToFile()` calls
+`logDestination.redirectTo(fileSink)`, both loggers automatically start writing
+to the file — no separate redirect is needed for the config logger.
+
+> **Why this matters**: before this invariant was established, the config logger
+> had its own separate destination (snapshotted from stdout at module init time).
+> `redirectLogsToFile()` only redirected the engine logger, so the config logger
+> continued writing to stdout. This caused the line
+> `{"name":"weave:config","module":"loader","msg":"Config loaded successfully"}`
+> to appear on stdout during `opencode debug info` / `opencode` startup.
+
+### Routing logs to a file — programmatic (plugin path)
+
+The OpenCode plugin calls `redirectLogsToFile()` at the very start of
+`createWeavePlugin` to redirect all Weave logs to a project-local file:
+
+```ts
+import { redirectLogsToFile } from "@weave/engine";
+
+// Redirect all Weave logs (engine + config) to a file before any log calls.
+await redirectLogsToFile(join(directory, ".weave/weave.log"));
+```
+
+`redirectLogsToFile` swaps the inner sink of the shared `MutableDestination` to
+a SonicBoom file destination. All subsequent writes from any Weave logger go to
+the file. `WEAVE_LOG_FILE` takes precedence — the plugin checks `env.WEAVE_LOG_FILE`
+before calling this function.
+
+### Routing logs to a file — environment variable
+
+Set `WEAVE_LOG_FILE` to an absolute path to redirect all Weave log output to a
+file instead of stdout:
+
+```sh
+WEAVE_LOG_FILE=/tmp/weave.log opencode
+```
+
+Both the engine logger and the config logger honour this variable because they
+share the same `logDestination`. The file is created if it does not exist;
+existing content is appended.
+
+**Recommended for OpenCode plugin use**: set `WEAVE_LOG_FILE` in the environment
+before starting OpenCode so that Weave's structured logs do not appear in the
+OpenCode UI.
+
+### Log level
+
+Control verbosity with `LOG_LEVEL` (default: `info`):
+
+```sh
+LOG_LEVEL=debug WEAVE_LOG_FILE=/tmp/weave.log opencode
+```
+
+Valid values: `fatal`, `error`, `warn`, `info`, `debug`, `trace`, `silent`.
+
+---
+
 ## What Adapters Own After Bootstrap
 
 Once `materializeAgents` returns `plan.agents`, the adapter owns:
