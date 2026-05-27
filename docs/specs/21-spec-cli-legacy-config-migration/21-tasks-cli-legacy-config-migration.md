@@ -99,7 +99,7 @@
 - [x] 4.8 Warn and skip any prompt-file reference that cannot be translated safely into the current prompt-path convention instead of guessing a rewrite.
 - [x] 4.9 Add conversion tests for builtin overrides, custom-agent creation, builtin collision warnings, category blocks, ordered model conversion, tool-policy warnings, and safe/unsafe prompt-file handling.
 
-### [ ] 5.0 Document migration usage and prove end-to-end acceptance
+### [x] 5.0 Document migration usage and prove end-to-end acceptance
 
 #### 5.0 Proof Artifact(s)
 
@@ -110,8 +110,8 @@
 
 #### 5.0 Tasks
 
-- [ ] 5.1 Update `docs/cli.md` with migrate-mode entry paths, safety behavior, warning semantics, and canonical scope-aware source/destination paths.
-- [ ] 5.2 Update `docs/config-loading.md` so canonical config destinations and `.weave/prompts/` path semantics are cross-linked from the migration documentation.
-- [ ] 5.3 Document the migration-specific `--install-dir` tension and the chosen CLI behavior so starter-config scaffolding rules do not leak into canonical migration destinations.
-- [ ] 5.4 Add or update fixture-driven smoke notes that demonstrate local and global migration with sanitized paths and no secret-bearing content.
-- [ ] 5.5 Run the targeted Bun tests plus `bun run lint`, `bun run typecheck`, and `bun run build`, and record the exact commands as planned proof artifacts for end-to-end acceptance.
+- [x] 5.1 Update `docs/cli.md` with migrate-mode entry paths, safety behavior, warning semantics, and canonical scope-aware source/destination paths.
+- [x] 5.2 Update `docs/config-loading.md` so canonical config destinations and `.weave/prompts/` path semantics are cross-linked from the migration documentation.
+- [x] 5.3 Document the migration-specific `--install-dir` tension and the chosen CLI behavior so starter-config scaffolding rules do not leak into canonical migration destinations.
+- [x] 5.4 Add or update fixture-driven smoke notes that demonstrate local and global migration with sanitized paths and no secret-bearing content.
+- [x] 5.5 Run the targeted Bun tests plus `bun run lint`, `bun run typecheck`, and `bun run build`, and record the exact commands as planned proof artifacts for end-to-end acceptance.
