@@ -618,6 +618,224 @@ describe("runInit — ordinary init migration offer", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Ordinary init — migration offer when --scope flag is passed
+// ---------------------------------------------------------------------------
+
+describe("runInit — ordinary init with --scope flag offers migration", () => {
+  it("offers migration when --scope local is passed and local legacy source exists", async () => {
+    const fs = new MemoryFileSystem(
+      {
+        "/project/.opencode/weave-opencode.jsonc": '{ "log_level": "DEBUG" }',
+      },
+      "/project",
+      "/home/user",
+    );
+    // --scope local is set as a flag (not via interactive prompt)
+    // Prompt sequence: confirm migration offer → accept, then multiselect harnesses, then confirm
+    const prompt = new StaticPromptAdapter({
+      confirm: [true, true],
+      multiselect: [[]],
+    });
+    const { terminal, ctx } = initContext({
+      fs,
+      prompt,
+      overrides: { scope: "local" },
+    });
+    const result = await runInit(ctx);
+    expect(result._unsafeUnwrap()).toBe(0);
+    const snap = fs.snapshot();
+    // Migration should have written to canonical destination
+    expect(snap["/project/.weave/config.weave"]).toBeDefined();
+    expect(snap["/project/.weave/config.weave"]).toContain(
+      "Migrated from legacy OpenCode JSONC config",
+    );
+    expect(terminal.out.join("\n")).toContain("Migration complete");
+  });
+
+  it("offers migration when --scope global is passed and global legacy source exists", async () => {
+    const fs = new MemoryFileSystem(
+      {
+        "/home/user/.config/opencode/weave-opencode.jsonc":
+          '{ "log_level": "INFO" }',
+      },
+      "/project",
+      "/home/user",
+    );
+    // --scope global is set as a flag (not via interactive prompt)
+    const prompt = new StaticPromptAdapter({
+      confirm: [true, true],
+      multiselect: [[]],
+    });
+    const { terminal, ctx } = initContext({
+      fs,
+      prompt,
+      overrides: { scope: "global" },
+    });
+    const result = await runInit(ctx);
+    expect(result._unsafeUnwrap()).toBe(0);
+    const snap = fs.snapshot();
+    expect(snap["/home/user/.weave/config.weave"]).toBeDefined();
+    expect(snap["/home/user/.weave/config.weave"]).toContain(
+      "Migrated from legacy OpenCode JSONC config",
+    );
+    expect(terminal.out.join("\n")).toContain("Migration complete");
+  });
+
+  it("proceeds with normal init when --scope local is passed but no legacy source exists", async () => {
+    const fs = new MemoryFileSystem({}, "/project", "/home/user");
+    // No migration offer — goes straight to normal init (confirmed via flag)
+    const { ctx } = initContext({
+      fs,
+      overrides: { scope: "local", yes: true },
+    });
+    const result = await runInit(ctx);
+    expect(result._unsafeUnwrap()).toBe(0);
+    const snap = fs.snapshot();
+    // Normal init — no provenance comment
+    expect(snap["/project/.weave/config.weave"]).toBeDefined();
+    expect(snap["/project/.weave/config.weave"]).not.toContain(
+      "Migrated from legacy OpenCode JSONC config",
+    );
+  });
+
+  it("auto-migrates when --scope local and --yes are both set and legacy source exists", async () => {
+    const fs = new MemoryFileSystem(
+      {
+        "/project/.opencode/weave-opencode.jsonc": '{ "log_level": "DEBUG" }',
+      },
+      "/project",
+      "/home/user",
+    );
+    // --yes skips migration confirmation prompt
+    const { terminal, ctx } = initContext({
+      fs,
+      overrides: { scope: "local", yes: true },
+    });
+    const result = await runInit(ctx);
+    expect(result._unsafeUnwrap()).toBe(0);
+    const snap = fs.snapshot();
+    expect(snap["/project/.weave/config.weave"]).toBeDefined();
+    expect(snap["/project/.weave/config.weave"]).toContain(
+      "Migrated from legacy OpenCode JSONC config",
+    );
+    expect(terminal.out.join("\n")).toContain("Migration complete");
+  });
+
+  it("declines migration offer and proceeds with normal init when --scope is set", async () => {
+    const fs = new MemoryFileSystem(
+      {
+        "/project/.opencode/weave-opencode.jsonc": '{ "log_level": "DEBUG" }',
+      },
+      "/project",
+      "/home/user",
+    );
+    // Decline migration offer → normal init proceeds (confirmed via flag)
+    const prompt = new StaticPromptAdapter({
+      confirm: [false], // decline migration offer
+    });
+    const { terminal, ctx } = initContext({
+      fs,
+      prompt,
+      overrides: { scope: "local" },
+    });
+    const result = await runInit(ctx);
+    expect(result._unsafeUnwrap()).toBe(0);
+    // Should NOT have migration output
+    expect(terminal.out.join("\n")).not.toContain("Migration complete");
+    // Normal init should have written config (confirmed via scope flag)
+    const snap = fs.snapshot();
+    expect(snap["/project/.weave/config.weave"]).toBeDefined();
+    expect(snap["/project/.weave/config.weave"]).not.toContain(
+      "Migrated from legacy OpenCode JSONC config",
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Explicit migrate mode — continuation into harness flow
+// ---------------------------------------------------------------------------
+
+describe("runInit — explicit migrate mode continues into harness flow", () => {
+  it("enters interactive harness selection after successful migration write", async () => {
+    const fs = new MemoryFileSystem(
+      {
+        "/project/.opencode/weave-opencode.jsonc": '{ "log_level": "DEBUG" }',
+      },
+      "/project",
+      "/home/user",
+    );
+    // Prompt sequence for interactive migrate mode:
+    //   confirm: [true]     — confirm migration write
+    //   multiselect: [[]]   — no harnesses selected
+    //   confirm: [true]     — confirm harness config
+    const prompt = new StaticPromptAdapter({
+      confirm: [true, true],
+      multiselect: [[]],
+    });
+    const { terminal, ctx } = initContext({
+      fs,
+      prompt,
+      overrides: { initSubmode: "migrate", scope: "local" },
+    });
+    const result = await runInit(ctx);
+    expect(result._unsafeUnwrap()).toBe(0);
+    // Migration happened
+    expect(terminal.out.join("\n")).toContain("Migration complete");
+    // No errors — harness flow was entered and completed
+    expect(terminal.err.join("\n")).toBe("");
+  });
+
+  it("cancels harness flow when user declines after migration write", async () => {
+    const fs = new MemoryFileSystem(
+      {
+        "/project/.opencode/weave-opencode.jsonc": '{ "log_level": "DEBUG" }',
+      },
+      "/project",
+      "/home/user",
+    );
+    // Prompt sequence:
+    //   confirm: [true]     — confirm migration write
+    //   multiselect: [[]]   — no harnesses
+    //   confirm: [false]    — decline harness config → "No changes made"
+    const prompt = new StaticPromptAdapter({
+      confirm: [true, false],
+      multiselect: [[]],
+    });
+    const { terminal, ctx } = initContext({
+      fs,
+      prompt,
+      overrides: { initSubmode: "migrate", scope: "local" },
+    });
+    const result = await runInit(ctx);
+    expect(result._unsafeUnwrap()).toBe(0);
+    // Migration still happened (file was written)
+    const snap = fs.snapshot();
+    expect(snap["/project/.weave/config.weave"]).toBeDefined();
+    // Harness flow was declined
+    expect(terminal.out.join("\n")).toContain("No changes made");
+  });
+
+  it("non-interactive migrate with --yes skips harness selection and exits 0", async () => {
+    const fs = new MemoryFileSystem(
+      {
+        "/project/.opencode/weave-opencode.jsonc": '{ "log_level": "DEBUG" }',
+      },
+      "/project",
+      "/home/user",
+    );
+    // --yes: no prompts needed
+    const { terminal, ctx } = initContext({
+      fs,
+      overrides: { initSubmode: "migrate", scope: "local", yes: true },
+    });
+    const result = await runInit(ctx);
+    expect(result._unsafeUnwrap()).toBe(0);
+    expect(terminal.out.join("\n")).toContain("Migration complete");
+    expect(terminal.err.join("\n")).toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Post-migration continuation
 // ---------------------------------------------------------------------------
 

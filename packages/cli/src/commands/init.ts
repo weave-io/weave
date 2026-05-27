@@ -228,34 +228,55 @@ async function runMigrateMode(
   const detected = await detectHarnesses(ctx.probes);
   const harnesses = detected.isOk() ? detected.value : [];
 
-  const initPlan: InitPlan = {
-    scope,
-    installDir: migrationPlan.destinationDir,
-    selectedHarnesses: [],
-    selectedModules: { opencode: ["agents"] },
-    confirmed: true,
-  };
-
-  // Only install harnesses if explicitly requested via flags
-  if (
-    ctx.flags.harness !== undefined ||
-    ctx.flags.allHarnesses ||
-    ctx.flags.yes
-  ) {
-    const resolvedHarnesses = resolveSelectedHarnesses(ctx.flags, harnesses);
-    if (resolvedHarnesses.length > 0) {
-      initPlan.selectedHarnesses = resolvedHarnesses;
-      const installExit = await installHarnesses({
-        ctx,
-        fs,
-        plan: initPlan,
-        harnesses,
-      });
-      if (installExit !== 0) return ok(installExit);
-    }
+  // Non-interactive path: build plan from flags and install
+  if (ctx.flags.yes || !prompt.isInteractive()) {
+    const initPlan: InitPlan = {
+      scope,
+      installDir: migrationPlan.destinationDir,
+      selectedHarnesses: resolveSelectedHarnesses(ctx.flags, harnesses),
+      selectedModules: { opencode: ["agents"] },
+      confirmed: true,
+    };
+    const installExit = await installHarnesses({
+      ctx,
+      fs,
+      plan: initPlan,
+      harnesses,
+    });
+    return ok(installExit);
   }
 
-  return ok(0);
+  // Interactive path: ask for harness selection and confirmation
+  const planResult = await continueAfterMigration(
+    scope,
+    migrationPlan.destinationDir,
+    fs,
+    prompt,
+    harnesses,
+  );
+
+  if (planResult.type === "cancelled") {
+    ctx.terminal.stdout("Setup cancelled.");
+    return ok(0);
+  }
+
+  if (planResult.type === "unavailable") {
+    ctx.terminal.stderr(planResult.message);
+    return ok(1);
+  }
+
+  if (!planResult.plan.confirmed) {
+    ctx.terminal.stdout("No changes made.");
+    return ok(0);
+  }
+
+  const installExit = await installHarnesses({
+    ctx,
+    fs,
+    plan: planResult.plan,
+    harnesses,
+  });
+  return ok(installExit);
 }
 
 function buildMigrationPlan(scope: InitScope, fs: FileSystem): MigrationPlan {
@@ -384,62 +405,63 @@ async function createPlan(input: {
   | { type: "unavailable"; message: string }
 > {
   const { ctx, fs, prompt, harnesses } = input;
-  const decisive = Boolean(
+
+  // Resolve scope: from flag or interactively
+  let scope: InitScope;
+  if (ctx.flags.scope !== undefined) {
+    scope = ctx.flags.scope;
+  } else if (
     ctx.flags.yes ||
-      ctx.flags.scope ||
-      ctx.flags.installDir ||
-      ctx.flags.harness ||
-      ctx.flags.allHarnesses,
-  );
+    ctx.flags.installDir ||
+    ctx.flags.harness ||
+    ctx.flags.allHarnesses
+  ) {
+    // Non-interactive decisive flags without explicit scope — use default
+    scope = "local";
+  } else {
+    // Need interactive scope selection
+    if (!prompt.isInteractive()) {
+      return {
+        type: "unavailable",
+        message:
+          "Interactive mode is unavailable. Re-run with --yes and --scope global|local.",
+      };
+    }
 
-  if (decisive) {
-    return {
-      type: "ready",
-      plan: buildFlagPlan(ctx.flags, fs, harnesses),
-    };
-  }
+    ctx.terminal.stdout(
+      defaultThemeRenderer.renderBanner(ctx.theme).join("\n"),
+    );
+    ctx.terminal.stdout(`Weave CLI v${defaultThemeRenderer.renderVersion()}`);
+    ctx.terminal.stdout(
+      "Choose global config for shared defaults or local config for this project.",
+    );
 
-  if (!prompt.isInteractive()) {
-    return {
-      type: "unavailable",
-      message:
-        "Interactive mode is unavailable. Re-run with --yes and --scope global|local.",
-    };
-  }
-
-  ctx.terminal.stdout(defaultThemeRenderer.renderBanner(ctx.theme).join("\n"));
-  ctx.terminal.stdout(`Weave CLI v${defaultThemeRenderer.renderVersion()}`);
-  ctx.terminal.stdout(
-    "Choose global config for shared defaults or local config for this project.",
-  );
-
-  const scope = await prompt.select<InitScope>({
-    message: "Where should Weave create config?",
-    options: [
-      {
-        value: "global",
-        label: "Global ~/.weave",
-        hint: "shared across projects",
-      },
-      { value: "local", label: "Local ./.weave", hint: "this repository only" },
-    ],
-    initialValue: "local",
-  });
-  if (scope.isErr()) return promptFailure(scope.error.message);
-
-  // After scope resolution, before harness selection: offer migration if legacy source exists
-  const legacySource = await detectLegacySource(scope.value, fs);
-  if (legacySource !== undefined) {
-    const offerMigrate = await prompt.confirm({
-      message: `Legacy config found at ${legacySource}. Migrate to .weave DSL now?`,
-      initialValue: true,
+    const scopeResult = await prompt.select<InitScope>({
+      message: "Where should Weave create config?",
+      options: [
+        {
+          value: "global",
+          label: "Global ~/.weave",
+          hint: "shared across projects",
+        },
+        {
+          value: "local",
+          label: "Local ./.weave",
+          hint: "this repository only",
+        },
+      ],
+      initialValue: "local",
     });
-    if (offerMigrate.isErr()) return promptFailure(offerMigrate.error.message);
+    if (scopeResult.isErr()) return promptFailure(scopeResult.error.message);
+    scope = scopeResult.value;
+  }
 
-    if (offerMigrate.value) {
-      // User accepted migration offer — hand off to migrate mode
-      // We signal this by returning a special plan with migrationSource set
-      const migrationPlan = buildMigrationPlan(scope.value, fs);
+  // After scope resolution, before harness selection: check for legacy source
+  const legacySource = await detectLegacySource(scope, fs);
+  if (legacySource !== undefined) {
+    // --yes: auto-migrate without prompting
+    if (ctx.flags.yes) {
+      const migrationPlan = buildMigrationPlan(scope, fs);
       const sourceContent = await fs.readText(legacySource);
       if (sourceContent.isErr()) {
         ctx.terminal.stderr(
@@ -466,18 +488,86 @@ async function createPlan(input: {
         renderMigrateSuccess(ctx.theme, migrationPlan, writeResult.value),
       );
 
-      // Continue into harness selection with the canonical destination as installDir
-      return continueAfterMigration(
-        scope.value,
-        migrationPlan.destinationDir,
-        fs,
-        prompt,
-        harnesses,
-      );
+      // --yes: non-interactive post-migration — build plan from flags
+      return {
+        type: "ready",
+        plan: {
+          scope,
+          installDir: migrationPlan.destinationDir,
+          selectedHarnesses: resolveSelectedHarnesses(ctx.flags, harnesses),
+          selectedModules: { opencode: ["agents"] },
+          confirmed: true,
+        },
+      };
+    }
+
+    // Interactive: offer migration
+    if (prompt.isInteractive()) {
+      const offerMigrate = await prompt.confirm({
+        message: `Legacy config found at ${legacySource}. Migrate to .weave DSL now?`,
+        initialValue: true,
+      });
+      if (offerMigrate.isErr())
+        return promptFailure(offerMigrate.error.message);
+
+      if (offerMigrate.value) {
+        const migrationPlan = buildMigrationPlan(scope, fs);
+        const sourceContent = await fs.readText(legacySource);
+        if (sourceContent.isErr()) {
+          ctx.terminal.stderr(
+            `Failed to read legacy source: ${describeFileSystemError(sourceContent.error)}`,
+          );
+          return { type: "cancelled" };
+        }
+
+        const destExists = await fs.exists(migrationPlan.destinationPath);
+        const destExistsValue = destExists.isOk() ? destExists.value : false;
+
+        const writeResult = await performMigrationWrite(
+          fs,
+          migrationPlan,
+          sourceContent.value,
+          destExistsValue,
+        );
+        if (writeResult.isErr()) {
+          ctx.terminal.stderr(`Migration failed: ${writeResult.error.message}`);
+          return { type: "cancelled" };
+        }
+
+        ctx.terminal.stdout(
+          renderMigrateSuccess(ctx.theme, migrationPlan, writeResult.value),
+        );
+
+        // Continue into harness selection with the canonical destination as installDir
+        return continueAfterMigration(
+          scope,
+          migrationPlan.destinationDir,
+          fs,
+          prompt,
+          harnesses,
+        );
+      }
     }
   }
 
-  const defaultDir = defaultInstallDir(scope.value, fs);
+  // No migration (or migration declined): proceed with normal init
+  // If decisive flags are set (other than scope alone), build plan from flags
+  const decisiveNonScope = Boolean(
+    ctx.flags.yes ||
+      ctx.flags.installDir ||
+      ctx.flags.harness ||
+      ctx.flags.allHarnesses,
+  );
+
+  if (decisiveNonScope || ctx.flags.scope !== undefined) {
+    return {
+      type: "ready",
+      plan: buildFlagPlan(ctx.flags, fs, harnesses, scope),
+    };
+  }
+
+  // Fully interactive path: ask for install dir, harnesses, confirmation
+  const defaultDir = defaultInstallDir(scope, fs);
   const installDir = await prompt.text({
     message: "Install directory",
     defaultValue: defaultDir,
@@ -508,7 +598,7 @@ async function createPlan(input: {
   return {
     type: "ready",
     plan: {
-      scope: scope.value,
+      scope,
       installDir: fs.resolvePath(installDir.value),
       selectedHarnesses: selectedHarnesses.value,
       selectedModules: { opencode: ["agents"] },
@@ -575,8 +665,9 @@ function buildFlagPlan(
   flags: ParsedArgs["flags"],
   fs: FileSystem,
   harnesses: DetectedHarness[],
+  resolvedScope?: InitScope,
 ): InitPlan {
-  const scope = flags.scope ?? "local";
+  const scope = resolvedScope ?? flags.scope ?? "local";
   const selectedHarnesses = resolveSelectedHarnesses(flags, harnesses);
   return {
     scope,
