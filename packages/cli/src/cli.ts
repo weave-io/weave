@@ -63,6 +63,11 @@ export async function run(
 
   switch (command) {
     case "help": {
+      // If --help was requested while in init migrate context, show migrate help
+      if (flags.initSubmode === "migrate") {
+        terminal.stdout(renderMigrateHelp(theme).join("\n"));
+        return ok(0);
+      }
       const lines = defaultThemeRenderer.renderHelp(theme);
       terminal.stdout(lines.join("\n"));
       return ok(0);
@@ -142,4 +147,50 @@ export async function run(
       return ok(0);
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Migrate help text
+// ---------------------------------------------------------------------------
+
+function renderMigrateHelp(
+  theme: ReturnType<typeof defaultThemeManager.getTheme>,
+): string[] {
+  return [
+    "",
+    `  ${theme.bold("weave init migrate")} ${theme.dim("— migrate legacy OpenCode JSONC config to .weave DSL")}`,
+    "",
+    `  ${theme.boldCyan("USAGE")}`,
+    "",
+    `    ${theme.dim("$")} weave init migrate ${theme.dim("[--scope global|local] [--yes]")}`,
+    "",
+    `  ${theme.boldCyan("DESCRIPTION")}`,
+    "",
+    "    Reads the legacy weave-opencode.jsonc file for the chosen scope and",
+    "    converts it into a canonical config.weave file.",
+    "",
+    "    Scope-aware legacy sources:",
+    `      global  ${theme.dim("~/.config/opencode/weave-opencode.jsonc")}`,
+    `      local   ${theme.dim("./.opencode/weave-opencode.jsonc")}`,
+    "",
+    "    Canonical migration destinations (always enforced):",
+    `      global  ${theme.dim("~/.weave/config.weave")}`,
+    `      local   ${theme.dim("./.weave/config.weave")}`,
+    "",
+    `    ${theme.boldYellow("Note:")} --install-dir is ignored in migrate mode.`,
+    "    Migration always writes to the canonical scope destination above.",
+    "",
+    `  ${theme.boldCyan("OPTIONS")}`,
+    "",
+    `    ${theme.cyan("--scope")} global|local  ${theme.dim("Choose migration scope (default: local)")}`,
+    `    ${theme.cyan("--yes, -y")}            ${theme.dim("Non-interactive: skip confirmation prompt")}`,
+    `    ${theme.cyan("--force")}              ${theme.dim("Overwrite destination even if it exists (backup created)")}`,
+    "",
+    `  ${theme.boldCyan("EXAMPLES")}`,
+    "",
+    `    ${theme.dim("$")} weave init migrate                         ${theme.dim("# Interactive local migration")}`,
+    `    ${theme.dim("$")} weave init migrate --scope global          ${theme.dim("# Interactive global migration")}`,
+    `    ${theme.dim("$")} weave init migrate --scope local --yes     ${theme.dim("# Non-interactive local migration")}`,
+    "",
+  ];
 }

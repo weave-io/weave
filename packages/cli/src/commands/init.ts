@@ -46,6 +46,37 @@ type ScaffoldResult = {
   messages: string[];
 };
 
+// ---------------------------------------------------------------------------
+// Migration types
+// ---------------------------------------------------------------------------
+
+/**
+ * Canonical legacy source paths, keyed by scope.
+ * These are relative to the scope root (home or cwd).
+ */
+const LEGACY_SOURCE_RELATIVE: Record<InitScope, string> = {
+  global: ".config/opencode/weave-opencode.jsonc",
+  local: ".opencode/weave-opencode.jsonc",
+};
+
+/**
+ * Canonical migration destination directory names, keyed by scope.
+ * Migration ALWAYS writes to these paths — --install-dir is ignored.
+ */
+const CANONICAL_WEAVE_DIR: Record<InitScope, string> = {
+  global: ".weave",
+  local: ".weave",
+};
+
+type MigrationPlan = {
+  scope: InitScope;
+  sourcePath: string;
+  destinationDir: string;
+  destinationPath: string;
+};
+
+// ---------------------------------------------------------------------------
+
 const HARNESS_IDS: SupportedHarnessId[] = ["opencode", "claude-code", "pi"];
 
 export async function runInit(
@@ -53,6 +84,12 @@ export async function runInit(
 ): Promise<Result<number, CliError>> {
   const fs = ctx.fs ?? new BunFileSystem();
   const prompt = ctx.prompt ?? new ClackPromptAdapter();
+
+  // Explicit migrate submode: weave init migrate [--scope ...] [--yes]
+  if (ctx.flags.initSubmode === "migrate") {
+    return runMigrateMode(ctx, fs, prompt);
+  }
+
   const detected = await detectHarnesses(ctx.probes);
   const harnesses = detected.isOk() ? detected.value : [];
   const planResult = await createPlan({ ctx, fs, prompt, harnesses });
@@ -89,6 +126,252 @@ export async function runInit(
   ctx.terminal.stdout(renderInitSummary(ctx.theme, scaffold.value, harnesses));
   return ok(installExit);
 }
+
+// ---------------------------------------------------------------------------
+// Explicit migrate mode
+// ---------------------------------------------------------------------------
+
+async function runMigrateMode(
+  ctx: InitContext,
+  fs: FileSystem,
+  prompt: PromptAdapter,
+): Promise<Result<number, CliError>> {
+  const scope = ctx.flags.scope ?? "local";
+  const migrationPlan = buildMigrationPlan(scope, fs);
+
+  // Check legacy source exists
+  const sourceExists = await fs.exists(migrationPlan.sourcePath);
+  if (sourceExists.isErr()) {
+    ctx.terminal.stderr(
+      `Failed to check legacy source: ${describeFileSystemError(sourceExists.error)}`,
+    );
+    return ok(1);
+  }
+
+  if (!sourceExists.value) {
+    ctx.terminal.stderr(
+      [
+        `No legacy config found for scope "${scope}".`,
+        `Expected: ${migrationPlan.sourcePath}`,
+        "",
+        "Nothing to migrate.",
+      ].join("\n"),
+    );
+    return ok(1);
+  }
+
+  // Read legacy source
+  const sourceContent = await fs.readText(migrationPlan.sourcePath);
+  if (sourceContent.isErr()) {
+    ctx.terminal.stderr(
+      `Failed to read legacy source: ${describeFileSystemError(sourceContent.error)}`,
+    );
+    return ok(1);
+  }
+
+  // Check destination exists
+  const destExists = await fs.exists(migrationPlan.destinationPath);
+  if (destExists.isErr()) {
+    ctx.terminal.stderr(
+      `Failed to check destination: ${describeFileSystemError(destExists.error)}`,
+    );
+    return ok(1);
+  }
+
+  // Show preflight summary
+  ctx.terminal.stdout(
+    renderMigratePreflight(ctx.theme, migrationPlan, destExists.value),
+  );
+
+  // Confirm unless --yes
+  if (!ctx.flags.yes) {
+    if (!prompt.isInteractive()) {
+      ctx.terminal.stderr(
+        "Interactive mode is unavailable. Re-run with --yes to proceed non-interactively.",
+      );
+      return ok(1);
+    }
+
+    const confirmed = await prompt.confirm({
+      message: destExists.value
+        ? `Overwrite ${migrationPlan.destinationPath} (backup will be created)?`
+        : `Write migrated config to ${migrationPlan.destinationPath}?`,
+      initialValue: true,
+    });
+    if (confirmed.isErr()) {
+      ctx.terminal.stdout("Migration cancelled.");
+      return ok(0);
+    }
+    if (!confirmed.value) {
+      ctx.terminal.stdout("Migration cancelled.");
+      return ok(0);
+    }
+  }
+
+  // Perform migration write
+  const writeResult = await performMigrationWrite(
+    fs,
+    migrationPlan,
+    sourceContent.value,
+    destExists.value,
+  );
+  if (writeResult.isErr()) {
+    ctx.terminal.stderr(`Migration failed: ${writeResult.error.message}`);
+    return ok(1);
+  }
+
+  ctx.terminal.stdout(
+    renderMigrateSuccess(ctx.theme, migrationPlan, writeResult.value),
+  );
+
+  // Continue into normal harness selection and configuration flow
+  const detected = await detectHarnesses(ctx.probes);
+  const harnesses = detected.isOk() ? detected.value : [];
+
+  const initPlan: InitPlan = {
+    scope,
+    installDir: migrationPlan.destinationDir,
+    selectedHarnesses: [],
+    selectedModules: { opencode: ["agents"] },
+    confirmed: true,
+  };
+
+  // Only install harnesses if explicitly requested via flags
+  if (
+    ctx.flags.harness !== undefined ||
+    ctx.flags.allHarnesses ||
+    ctx.flags.yes
+  ) {
+    const resolvedHarnesses = resolveSelectedHarnesses(ctx.flags, harnesses);
+    if (resolvedHarnesses.length > 0) {
+      initPlan.selectedHarnesses = resolvedHarnesses;
+      const installExit = await installHarnesses({
+        ctx,
+        fs,
+        plan: initPlan,
+        harnesses,
+      });
+      if (installExit !== 0) return ok(installExit);
+    }
+  }
+
+  return ok(0);
+}
+
+function buildMigrationPlan(scope: InitScope, fs: FileSystem): MigrationPlan {
+  const scopeRoot = scope === "global" ? fs.home() : fs.cwd();
+  const sourcePath = resolve(scopeRoot, LEGACY_SOURCE_RELATIVE[scope]);
+  const destinationDir = resolve(scopeRoot, CANONICAL_WEAVE_DIR[scope]);
+  const destinationPath = resolve(destinationDir, "config.weave");
+  return { scope, sourcePath, destinationDir, destinationPath };
+}
+
+function renderMigratePreflight(
+  theme: ThemeColors,
+  plan: MigrationPlan,
+  destExists: boolean,
+): string {
+  const lines = [
+    "",
+    theme.boldCyan("Migration preflight"),
+    "",
+    `  Source:      ${plan.sourcePath}`,
+    `  Destination: ${plan.destinationPath}`,
+    `  Scope:       ${plan.scope}`,
+    `  Overwrite:   ${destExists ? theme.boldYellow("yes — backup will be created at " + plan.destinationPath + ".bak") : "no (destination does not exist)"}`,
+    "",
+  ];
+  return lines.join("\n");
+}
+
+function performMigrationWrite(
+  fs: FileSystem,
+  plan: MigrationPlan,
+  _sourceContent: string,
+  destExists: boolean,
+): ResultAsync<{ backedUp: boolean }, { message: string }> {
+  // Generate migrated DSL content with provenance comment
+  const migratedContent = buildMigratedContent(plan);
+
+  const backup = destExists
+    ? fs.copyFile(plan.destinationPath, `${plan.destinationPath}.bak`)
+    : ResultAsync.fromSafePromise(Promise.resolve());
+
+  return backup
+    .mapErr((error) => ({ message: describeFileSystemError(error) }))
+    .andThen(() =>
+      fs
+        .mkdir(plan.destinationDir)
+        .mapErr((error) => ({ message: describeFileSystemError(error) })),
+    )
+    .andThen(() =>
+      fs
+        .writeText(plan.destinationPath, migratedContent)
+        .mapErr((error) => ({ message: describeFileSystemError(error) })),
+    )
+    .map(() => ({ backedUp: destExists }));
+}
+
+/**
+ * Build migrated config.weave content with a provenance comment.
+ * In Task 1 scope this produces a minimal valid starter config.
+ * Full JSONC-to-DSL conversion is implemented in Task 3/4.
+ */
+function buildMigratedContent(plan: MigrationPlan): string {
+  const provenanceComment = [
+    `# Migrated from legacy OpenCode JSONC config`,
+    `# Source: ${plan.sourcePath}`,
+    `# Scope: ${plan.scope}`,
+    `# Generated by: weave init migrate`,
+    "",
+  ].join("\n");
+
+  return provenanceComment + starterConfig(plan.scope);
+}
+
+function renderMigrateSuccess(
+  theme: ThemeColors,
+  plan: MigrationPlan,
+  result: { backedUp: boolean },
+): string {
+  const lines = [
+    theme.boldCyan("Migration complete"),
+    `  Written: ${plan.destinationPath}`,
+  ];
+  if (result.backedUp) {
+    lines.push(`  Backup:  ${plan.destinationPath}.bak`);
+  }
+  lines.push(`  Source preserved: ${plan.sourcePath}`);
+  lines.push("");
+  lines.push("Next steps:");
+  lines.push(`  - Review ${plan.destinationPath}`);
+  lines.push("  - Run weave validate --project or weave validate --global");
+  return lines.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Ordinary init — scope-aware legacy source detection
+// ---------------------------------------------------------------------------
+
+/**
+ * Check whether a legacy weave-opencode.jsonc file exists for the given scope.
+ * Returns the source path if found, undefined otherwise.
+ */
+async function detectLegacySource(
+  scope: InitScope,
+  fs: FileSystem,
+): Promise<string | undefined> {
+  const scopeRoot = scope === "global" ? fs.home() : fs.cwd();
+  const sourcePath = resolve(scopeRoot, LEGACY_SOURCE_RELATIVE[scope]);
+  const exists = await fs.exists(sourcePath);
+  if (exists.isErr()) return undefined;
+  if (!exists.value) return undefined;
+  return sourcePath;
+}
+
+// ---------------------------------------------------------------------------
+// Ordinary init plan
+// ---------------------------------------------------------------------------
 
 async function createPlan(input: {
   ctx: InitContext;
@@ -144,6 +427,56 @@ async function createPlan(input: {
   });
   if (scope.isErr()) return promptFailure(scope.error.message);
 
+  // After scope resolution, before harness selection: offer migration if legacy source exists
+  const legacySource = await detectLegacySource(scope.value, fs);
+  if (legacySource !== undefined) {
+    const offerMigrate = await prompt.confirm({
+      message: `Legacy config found at ${legacySource}. Migrate to .weave DSL now?`,
+      initialValue: true,
+    });
+    if (offerMigrate.isErr()) return promptFailure(offerMigrate.error.message);
+
+    if (offerMigrate.value) {
+      // User accepted migration offer — hand off to migrate mode
+      // We signal this by returning a special plan with migrationSource set
+      const migrationPlan = buildMigrationPlan(scope.value, fs);
+      const sourceContent = await fs.readText(legacySource);
+      if (sourceContent.isErr()) {
+        ctx.terminal.stderr(
+          `Failed to read legacy source: ${describeFileSystemError(sourceContent.error)}`,
+        );
+        return { type: "cancelled" };
+      }
+
+      const destExists = await fs.exists(migrationPlan.destinationPath);
+      const destExistsValue = destExists.isOk() ? destExists.value : false;
+
+      const writeResult = await performMigrationWrite(
+        fs,
+        migrationPlan,
+        sourceContent.value,
+        destExistsValue,
+      );
+      if (writeResult.isErr()) {
+        ctx.terminal.stderr(`Migration failed: ${writeResult.error.message}`);
+        return { type: "cancelled" };
+      }
+
+      ctx.terminal.stdout(
+        renderMigrateSuccess(ctx.theme, migrationPlan, writeResult.value),
+      );
+
+      // Continue into harness selection with the canonical destination as installDir
+      return continueAfterMigration(
+        scope.value,
+        migrationPlan.destinationDir,
+        fs,
+        prompt,
+        harnesses,
+      );
+    }
+  }
+
   const defaultDir = defaultInstallDir(scope.value, fs);
   const installDir = await prompt.text({
     message: "Install directory",
@@ -177,6 +510,53 @@ async function createPlan(input: {
     plan: {
       scope: scope.value,
       installDir: fs.resolvePath(installDir.value),
+      selectedHarnesses: selectedHarnesses.value,
+      selectedModules: { opencode: ["agents"] },
+      confirmed: confirmed.value,
+    },
+  };
+}
+
+/**
+ * After a successful migration write in ordinary init, continue into
+ * harness selection using the canonical destination directory.
+ */
+async function continueAfterMigration(
+  scope: InitScope,
+  installDir: string,
+  fs: FileSystem,
+  prompt: PromptAdapter,
+  harnesses: DetectedHarness[],
+): Promise<
+  | { type: "ready"; plan: InitPlan }
+  | { type: "cancelled" }
+  | { type: "unavailable"; message: string }
+> {
+  const harnessOptions = harnesses.map((harness) => ({
+    value: harness.id,
+    label: harness.id,
+    hint: harness.version,
+  }));
+  const selectedHarnesses = await prompt.multiselect<SupportedHarnessId>({
+    message: "Select harnesses to configure",
+    options: harnessOptions,
+    initialValues: harnessOptions.map((option) => option.value),
+    required: false,
+  });
+  if (selectedHarnesses.isErr())
+    return promptFailure(selectedHarnesses.error.message);
+
+  const confirmed = await prompt.confirm({
+    message: `Configure selected harnesses with migrated config at ${installDir}?`,
+    initialValue: true,
+  });
+  if (confirmed.isErr()) return promptFailure(confirmed.error.message);
+
+  return {
+    type: "ready",
+    plan: {
+      scope,
+      installDir: fs.resolvePath(installDir),
       selectedHarnesses: selectedHarnesses.value,
       selectedModules: { opencode: ["agents"] },
       confirmed: confirmed.value,
