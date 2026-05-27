@@ -8,13 +8,25 @@
  * - The plugin returns an empty `Hooks` object when config load fails.
  * - The plugin returns a `Hooks` object with a `config` hook on success.
  * - The `config` hook injects translated agent configs into `cfg.agent`.
- * - The plugin calls `spawnSubagent()` for each agent in the materialization plan.
+ * - The plugin does NOT call SDK eagerly — SDK reconciliation is deferred.
+ * - The `event` hook triggers SDK reconciliation on `session.created`.
+ * - The `event` hook ignores non-`session.created` events.
+ * - The `event` hook runs reconciliation exactly once (idempotent).
+ * - The `debug config` path: `hooks.config` works without any SDK calls.
  * - The plugin continues materializing remaining agents when one fails.
  *
  * All tests use a mock `PluginInput` and a project-only file reader to avoid
  * picking up the developer's global ~/.weave/config.weave. The full
  * `loadConfig → materializeAgents → spawnSubagent` path is exercised at the
  * package level without depending on the test environment's global config.
+ *
+ * ## Deferred SDK reconciliation
+ *
+ * The plugin now returns `Hooks` immediately after config loading and agent
+ * translation (pure computation). SDK-backed reconciliation (`adapter.init()`
+ * + `spawnSubagent()`) is deferred to the `event` hook, which fires on the
+ * first `session.created` event. This ensures `opencode debug config` never
+ * blocks on SDK/DB calls.
  */
 
 import { describe, expect, it } from "bun:test";
@@ -136,6 +148,34 @@ function projectOnlyReader(root: string) {
       );
     },
   };
+}
+
+/**
+ * Helper: simulate a `session.created` event via the `event` hook.
+ */
+async function triggerSessionCreated(
+  hooks: Awaited<ReturnType<typeof WeavePlugin>>,
+): Promise<void> {
+  if (typeof hooks.event !== "function") return;
+  await hooks.event({
+    event: {
+      type: "session.created",
+      properties: { info: {} as never },
+    },
+  });
+}
+
+/**
+ * Helper: simulate a non-`session.created` event via the `event` hook.
+ */
+async function triggerOtherEvent(
+  hooks: Awaited<ReturnType<typeof WeavePlugin>>,
+  type: string,
+): Promise<void> {
+  if (typeof hooks.event !== "function") return;
+  await hooks.event({
+    event: { type, properties: {} } as never,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -328,11 +368,180 @@ describe("WeavePlugin — config hook", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests: successful materialization path — SDK reconciliation
+// Tests: deferred SDK reconciliation — no eager SDK calls
 // ---------------------------------------------------------------------------
 
-describe("WeavePlugin — SDK reconciliation", () => {
-  it("calls spawnSubagent (createAgent) for each declared agent", async () => {
+describe("WeavePlugin — no eager SDK calls (debug config path)", () => {
+  it("does NOT call listAgents before hooks are returned", async () => {
+    const root = await makeTempProject("no-eager-sdk-agent");
+    const client = new MockOpenCodeClient();
+    client.setListResult(okAsync([]));
+
+    const plugin = createWeavePlugin({
+      fileReader: projectOnlyReader(root),
+      clientFacade: client,
+    });
+    const input = makeMockPluginInput(root, client);
+
+    // Await the plugin — this is what `opencode debug config` does
+    await plugin(input);
+
+    // No SDK calls should have been made at this point
+    expect(client.listAgentsCalls).toHaveLength(0);
+    expect(client.createAgentCalls).toHaveLength(0);
+    expect(client.updateAgentCalls).toHaveLength(0);
+  });
+
+  it("config hook works without any SDK calls (debug config simulation)", async () => {
+    const agentName = "debug-config-agent";
+    const root = await makeTempProject(agentName);
+    const client = new MockOpenCodeClient();
+    // Do NOT set listResult — if SDK is called eagerly, it would use the default
+    // empty result, but we want to verify no SDK call happens at all.
+
+    const plugin = createWeavePlugin({
+      fileReader: projectOnlyReader(root),
+      clientFacade: client,
+    });
+    const input = makeMockPluginInput(root, client);
+    const hooks = await plugin(input);
+
+    // Simulate `opencode debug config`: call config hook only, no event hook
+    const cfg: { agent?: Record<string, unknown> } = {};
+    await hooks.config!(cfg as never);
+
+    // Agent must be injected via config hook
+    expect(cfg.agent![agentName]).toBeDefined();
+
+    // No SDK calls should have been made — config hook is pure
+    expect(client.listAgentsCalls).toHaveLength(0);
+    expect(client.createAgentCalls).toHaveLength(0);
+    expect(client.updateAgentCalls).toHaveLength(0);
+  });
+
+  it("returns Hooks immediately — plugin function resolves without SDK blocking", async () => {
+    const root = await makeTempProject("immediate-return-agent");
+    const client = new MockOpenCodeClient();
+    client.setListResult(okAsync([]));
+
+    const plugin = createWeavePlugin({
+      fileReader: projectOnlyReader(root),
+      clientFacade: client,
+    });
+    const input = makeMockPluginInput(root, client);
+
+    // The plugin must resolve to a Hooks object without blocking on SDK
+    const hooks = await plugin(input);
+
+    expect(typeof hooks).toBe("object");
+    expect(typeof hooks.config).toBe("function");
+    // event hook must be present for deferred reconciliation
+    expect(typeof hooks.event).toBe("function");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: deferred SDK reconciliation — event hook triggers reconciliation
+// ---------------------------------------------------------------------------
+
+describe("WeavePlugin — event hook triggers deferred SDK reconciliation", () => {
+  it("event hook is present on successful plugin init", async () => {
+    const root = await makeTempProject("event-hook-agent");
+    const client = new MockOpenCodeClient();
+    client.setListResult(okAsync([]));
+
+    const plugin = createWeavePlugin({
+      fileReader: projectOnlyReader(root),
+      clientFacade: client,
+    });
+    const input = makeMockPluginInput(root, client);
+    const hooks = await plugin(input);
+
+    expect(typeof hooks.event).toBe("function");
+  });
+
+  it("session.created event triggers SDK reconciliation (createAgent called)", async () => {
+    const root = await makeTempProject("sdk-reconcile-agent");
+    const client = new MockOpenCodeClient();
+    client.setListResult(okAsync([]));
+
+    const plugin = createWeavePlugin({
+      fileReader: projectOnlyReader(root),
+      clientFacade: client,
+    });
+    const input = makeMockPluginInput(root, client);
+    const hooks = await plugin(input);
+
+    // Before session.created: no SDK calls
+    expect(client.createAgentCalls).toHaveLength(0);
+
+    // Trigger session.created
+    await triggerSessionCreated(hooks);
+
+    // After session.created: SDK reconciliation must have run
+    expect(client.createAgentCalls.length).toBeGreaterThan(0);
+    const names = client.createAgentCalls.map((c) => c.name);
+    expect(names).toContain("sdk-reconcile-agent");
+  });
+
+  it("non-session.created events do NOT trigger SDK reconciliation", async () => {
+    const root = await makeTempProject("no-reconcile-agent");
+    const client = new MockOpenCodeClient();
+    client.setListResult(okAsync([]));
+
+    const plugin = createWeavePlugin({
+      fileReader: projectOnlyReader(root),
+      clientFacade: client,
+    });
+    const input = makeMockPluginInput(root, client);
+    const hooks = await plugin(input);
+
+    // Trigger various non-session.created events
+    await triggerOtherEvent(hooks, "session.updated");
+    await triggerOtherEvent(hooks, "session.deleted");
+    await triggerOtherEvent(hooks, "message.updated");
+    await triggerOtherEvent(hooks, "server.connected");
+
+    // No SDK calls should have been made
+    expect(client.listAgentsCalls).toHaveLength(0);
+    expect(client.createAgentCalls).toHaveLength(0);
+  });
+
+  it("reconciliation runs exactly once even if session.created fires multiple times", async () => {
+    const root = await makeTempProject("idempotent-reconcile-agent");
+    const client = new MockOpenCodeClient();
+    client.setListResult(okAsync([]));
+
+    const plugin = createWeavePlugin({
+      fileReader: projectOnlyReader(root),
+      clientFacade: client,
+    });
+    const input = makeMockPluginInput(root, client);
+    const hooks = await plugin(input);
+
+    // Trigger session.created once and record the SDK call counts
+    await triggerSessionCreated(hooks);
+    const listCallsAfterFirst = client.listAgentsCalls.length;
+    const createCallsAfterFirst = client.createAgentCalls.length;
+
+    // Trigger session.created two more times — reconciliation must NOT repeat
+    await triggerSessionCreated(hooks);
+    await triggerSessionCreated(hooks);
+
+    // SDK call counts must not have grown after the first reconciliation
+    expect(client.listAgentsCalls).toHaveLength(listCallsAfterFirst);
+    expect(client.createAgentCalls).toHaveLength(createCallsAfterFirst);
+    // At least one agent was created in the first reconciliation
+    expect(createCallsAfterFirst).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: successful materialization path — SDK reconciliation (via event hook)
+// ---------------------------------------------------------------------------
+
+describe("WeavePlugin — SDK reconciliation (via event hook)", () => {
+  it("calls spawnSubagent (createAgent) for each declared agent after session.created", async () => {
     const root = await makeTempProject("sdk-reconcile-agent");
     const client = new MockOpenCodeClient();
     client.setListResult(okAsync([]));
@@ -344,7 +553,10 @@ describe("WeavePlugin — SDK reconciliation", () => {
       clientFacade: client,
     });
     const input = makeMockPluginInput(root, client);
-    await plugin(input);
+    const hooks = await plugin(input);
+
+    // Trigger the deferred reconciliation
+    await triggerSessionCreated(hooks);
 
     // The SDK client should have been called to create the agent
     expect(client.createAgentCalls.length).toBeGreaterThan(0);
@@ -473,7 +685,7 @@ describe("WeavePlugin — bundle-safe builtin prompt resolution", () => {
     }
   });
 
-  it("SDK createAgent is called for all 8 builtins (no silent failures)", async () => {
+  it("SDK createAgent is called for all 8 builtins after session.created (no silent failures)", async () => {
     const root = join(
       tmpdir(),
       `weave-builtin-sdk-${Date.now()}-${Math.random().toString(36).slice(2)}`,
@@ -491,7 +703,10 @@ describe("WeavePlugin — bundle-safe builtin prompt resolution", () => {
       clientFacade: client,
     });
     const input = makeMockPluginInput(root, client);
-    await plugin(input);
+    const hooks = await plugin(input);
+
+    // Trigger deferred reconciliation via session.created
+    await triggerSessionCreated(hooks);
 
     // All 8 builtins must have been passed to createAgent.
     // Before the fix, only 0 builtins were created (all failed with

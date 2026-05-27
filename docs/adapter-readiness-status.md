@@ -91,6 +91,7 @@ a pre-constructed SDK client.
 | Translation-only mode (no client) | ✅ | Falls back gracefully when no client is injected |
 | `BunFilesystemPlanStateProvider` | ✅ | Constructed in `init()`; available for `completeStep` calls |
 | `config` hook — `opencode debug config` visibility | ✅ | `WeavePlugin` returns `Hooks.config` that injects agents into `cfg.agent` at startup |
+| `event` hook — deferred SDK reconciliation | ✅ | SDK-backed `spawnSubagent()` deferred to first `session.created` event; `opencode debug config` never blocks on SDK/DB calls |
 
 ### Explicit non-goals (first slice)
 
@@ -124,13 +125,25 @@ future specs:
 
 After adding the plugin entry, restart OpenCode. The `./plugin` bundle's default-exported
 `WeavePlugin` function is called by OpenCode at startup. It loads
-`.weave/config.weave`, materializes all declared agents via the injected SDK
-client, and returns a `Hooks` object with a `config` hook.
+`.weave/config.weave`, translates all declared agents, and returns a `Hooks`
+object **immediately** — without blocking on any SDK or DB calls.
 
-The `config` hook injects the translated agent configs into `cfg.agent` so that
-`opencode debug config` shows all Weave-managed agents. The SDK-backed
-reconciliation (`spawnSubagent`) also runs to persist agents into OpenCode's
-runtime store.
+The returned `Hooks` object contains two hooks:
+
+- **`config` hook** — injects the translated agent configs into `cfg.agent` so
+  that `opencode debug config` shows all Weave-managed agents. This is pure
+  computation (no SDK calls) and runs synchronously at startup.
+- **`event` hook** — defers SDK-backed reconciliation (`adapter.init()` +
+  `spawnSubagent()`) to the first `session.created` event. This ensures
+  `opencode debug config` never hangs waiting for the OpenCode runtime store.
+  Reconciliation runs exactly once per plugin activation.
+
+> **Why deferred?** `opencode debug config` calls the plugin function and
+> exercises only the `config` hook. The previous design called `adapter.init()`
+> and `spawnSubagent()` eagerly before returning `Hooks`, which blocked
+> `debug config` because the runtime SDK path (`client.app.agents()` / DB) is
+> not available in that context. The `event` hook fires only during real
+> OpenCode sessions, never during `debug config`.
 
 **No user-authored wrapper script is required.** The `./plugin` bundle is the
 plugin entry point. The `WeavePlugin` function, a `server` alias (for

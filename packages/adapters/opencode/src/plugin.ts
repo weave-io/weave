@@ -17,15 +17,29 @@
  *    resolved config.
  * 4. It translates each descriptor into an `OpenCodeAgentConfig` via
  *    `translateAgent()` and collects the results into a `translatedMap`.
- * 5. It returns a `Hooks` object with two responsibilities:
+ * 5. It returns a `Hooks` object **immediately** with two hooks:
  *    a. **`config` hook** — injects the translated agent configs into
  *       `cfg.agent` so that `opencode debug config` reflects all Weave-managed
  *       agents. This runs once at startup before OpenCode finalises its config.
- *    b. **SDK-backed reconciliation** — after the `config` hook is registered,
- *       the plugin also calls `spawnSubagent()` for each descriptor via
- *       `OpenCodeAdapter`. This performs the `list → reconcile → create/update`
- *       flow that persists agents into the running OpenCode instance's runtime
- *       store (not just the in-memory config snapshot).
+ *    b. **`event` hook** — listens for the first `session.created` event and
+ *       then performs SDK-backed reconciliation (`adapter.init()` +
+ *       `spawnSubagent()`) exactly once per plugin activation. This defers the
+ *       SDK/DB path to real session time, so `opencode debug config` is never
+ *       blocked by runtime SDK calls.
+ *
+ * ## Why deferred SDK reconciliation?
+ *
+ * `opencode debug config` calls the plugin function and waits for `Hooks` to
+ * be returned. In the previous design, `adapter.init()` and `spawnSubagent()`
+ * were called eagerly before `Hooks` was returned. Both operations touch the
+ * OpenCode SDK / DB path (`client.app.agents()`, `config.update()`), which
+ * hangs in the `debug config` context because the runtime store is not
+ * available.
+ *
+ * The fix: config loading and agent translation are pure computation (no SDK
+ * calls). `Hooks` is returned immediately after translation. SDK reconciliation
+ * is deferred to the `event` hook, which only fires during a real OpenCode
+ * session — never during `debug config`.
  *
  * ## Why both paths?
  *
@@ -77,7 +91,7 @@
 
 import type { Hooks, Plugin, PluginInput } from "@opencode-ai/plugin";
 import { type FileReader, loadConfig } from "@weave/config";
-import { logger, materializeAgents } from "@weave/engine";
+import { type AgentDescriptor, logger, materializeAgents } from "@weave/engine";
 
 import { OpenCodeAdapter } from "./adapter.js";
 import { resolveModelForAgent } from "./model-resolution.js";
@@ -138,6 +152,15 @@ export interface WeavePluginOptions {
  * production, call `createWeavePlugin()` with no arguments (or use the
  * pre-built `WeavePlugin` export). In tests, pass a custom `fileReader` to
  * isolate the test from the developer's global `~/.weave/config.weave`.
+ *
+ * The returned plugin function:
+ * 1. Loads Weave config and translates agent descriptors (pure computation).
+ * 2. Returns `Hooks` **immediately** — never blocks on SDK/DB calls.
+ * 3. Defers `adapter.init()` + `spawnSubagent()` to the `event` hook, which
+ *    fires on the first `session.created` event during a real OpenCode session.
+ *
+ * This design ensures `opencode debug config` returns quickly because it only
+ * exercises the `config` hook path, never the deferred SDK reconciliation path.
  *
  * @param options - Optional plugin configuration.
  * @returns A `Plugin` function compatible with `@opencode-ai/plugin`.
@@ -223,48 +246,77 @@ export function createWeavePlugin(options: WeavePluginOptions = {}): Plugin {
       "Agents translated for config hook injection",
     );
 
-    // Construct the adapter with the harness-injected SDK client.
-    // In production, wrap the raw SDK client in SdkOpenCodeClient.
-    // In tests, use the pre-constructed clientFacade directly (bypasses
-    // SdkOpenCodeClient wrapping so mock clients work without a live SDK).
+    // Capture the agent descriptors for deferred SDK reconciliation.
+    // These are used by the event hook when a real session starts.
+    const agentDescriptors: Array<{
+      agentName: string;
+      descriptor: AgentDescriptor;
+    }> = plan.agents.map(({ agentName, descriptor }) => ({
+      agentName,
+      descriptor,
+    }));
+
+    // Build the client facade once. In production, wrap the raw SDK client in
+    // SdkOpenCodeClient. In tests, use the pre-constructed clientFacade directly
+    // (bypasses SdkOpenCodeClient wrapping so mock clients work without a live SDK).
     const clientFacade: OpenCodeClientFacade =
       options.clientFacade ?? new SdkOpenCodeClient(sdkClient);
 
-    const adapter = new OpenCodeAdapter({
-      projectRoot: directory,
-      client: clientFacade,
-    });
+    // Deferred SDK reconciliation state.
+    // `reconciled` is set to true after the first successful reconciliation so
+    // that the event hook does not repeat the work on subsequent events.
+    let reconciled = false;
 
-    await adapter.init();
+    /**
+     * Perform SDK-backed reconciliation exactly once.
+     *
+     * Called from the `event` hook on the first `session.created` event.
+     * Constructs the adapter, initialises it, and calls `spawnSubagent()` for
+     * each agent descriptor. Errors are logged but do not throw — a failed
+     * reconciliation for one agent does not block the others.
+     */
+    async function runReconciliation(): Promise<void> {
+      if (reconciled) return;
+      reconciled = true;
 
-    // Perform SDK-backed reconciliation for each agent descriptor.
-    // This persists agents into OpenCode's runtime store via config.update().
-    // The config hook (returned below) is the startup-time visibility path;
-    // SDK reconciliation is the durable persistence path.
-    for (const { agentName, descriptor } of plan.agents) {
-      const spawnResult = await adapter.spawnSubagent(descriptor).then(
-        () => ({ ok: true as const }),
-        (err: unknown) => ({ ok: false as const, error: err }),
+      log.info(
+        { agentCount: agentDescriptors.length },
+        "Running deferred SDK reconciliation (session.created)",
       );
 
-      if (!spawnResult.ok) {
-        log.error(
-          { agent: agentName, error: spawnResult.error },
-          "Failed to materialize agent — continuing with remaining agents",
+      const adapter = new OpenCodeAdapter({
+        projectRoot: directory,
+        client: clientFacade,
+      });
+
+      await adapter.init();
+
+      for (const { agentName, descriptor } of agentDescriptors) {
+        const spawnResult = await adapter.spawnSubagent(descriptor).then(
+          () => ({ ok: true as const }),
+          (err: unknown) => ({ ok: false as const, error: err }),
         );
-      } else {
-        log.info({ agent: agentName }, "Agent materialized via SDK");
+
+        if (!spawnResult.ok) {
+          log.error(
+            { agent: agentName, error: spawnResult.error },
+            "Failed to materialize agent — continuing with remaining agents",
+          );
+        } else {
+          log.info({ agent: agentName }, "Agent materialized via SDK");
+        }
       }
+
+      log.info(
+        { agentCount: agentDescriptors.length },
+        "Deferred SDK reconciliation complete",
+      );
     }
 
-    log.info(
-      { agentCount: plan.agents.length },
-      "Weave plugin initialization complete",
-    );
+    log.info("Weave plugin hooks ready — returning immediately");
 
-    // Return hooks with a config hook that injects translated agents into
-    // cfg.agent. This makes agents visible to `opencode debug config` and to
-    // any OpenCode subsystem that reads the merged config at startup.
+    // Return hooks immediately. The config hook is populated now; the event
+    // hook defers SDK reconciliation to the first real session.
     return {
       config: async (cfg) => {
         if (translatedMap.size === 0) return;
@@ -284,6 +336,13 @@ export function createWeavePlugin(options: WeavePluginOptions = {}): Plugin {
           "Weave agents injected into OpenCode config",
         );
       },
+
+      event: async ({ event }) => {
+        // Only trigger reconciliation on session.created — the first real
+        // session event that indicates the OpenCode runtime store is available.
+        if (event.type !== "session.created") return;
+        await runReconciliation();
+      },
     };
   };
 }
@@ -295,17 +354,17 @@ export function createWeavePlugin(options: WeavePluginOptions = {}): Plugin {
  * the `plugin` array of `opencode.json`. Materializes all agents declared in
  * `.weave/config.weave` into the running OpenCode instance.
  *
- * Returns a `Hooks` object with:
+ * Returns a `Hooks` object **immediately** with:
  * - `config` hook — injects translated agent configs into `cfg.agent` so that
  *   `opencode debug config` shows all Weave-managed agents.
- *
- * Additionally performs SDK-backed reconciliation (`spawnSubagent`) for each
- * agent to persist them into OpenCode's runtime store.
+ * - `event` hook — defers SDK-backed reconciliation (`spawnSubagent`) to the
+ *   first `session.created` event, ensuring `opencode debug config` never
+ *   blocks on SDK/DB calls.
  *
  * @param input - Runtime context provided by OpenCode, including the SDK
  *   client and the project directory.
- * @returns A `Hooks` object with a `config` hook on success, or an empty
- *   `Hooks` object when config loading fails.
+ * @returns A `Hooks` object with `config` and `event` hooks on success, or an
+ *   empty `Hooks` object when config loading fails.
  */
 export const WeavePlugin: Plugin = createWeavePlugin();
 
