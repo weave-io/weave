@@ -79,7 +79,7 @@
 - [x] 3.5 Ensure warning-bearing successful migrations still exit with code `0` after the destination file is written.
 - [x] 3.6 Add conversion tests for supported top-level fields, unsupported-section warnings, and warning-free successful conversion fixtures.
 
-### [ ] 4.0 Convert legacy agent, category, model, tool, and prompt intent
+### [x] 4.0 Convert legacy agent, category, model, tool, and prompt intent
 
 #### 4.0 Proof Artifact(s)
 
@@ -89,15 +89,15 @@
 
 #### 4.0 Tasks
 
-- [ ] 4.1 Treat legacy `agents` entries as overrides of existing builtin agent names in the current unified agent namespace.
-- [ ] 4.2 Convert legacy `custom_agents` entries into new `agent <name>` blocks when the name does not collide with a builtin.
-- [ ] 4.3 Warn and skip a legacy `custom_agents` entry when its name collides with a builtin agent rather than silently overriding the builtin.
-- [ ] 4.4 Convert legacy `model` plus optional `fallback_models` into ordered `models [...]` arrays with the primary model first.
-- [ ] 4.5 Convert legacy `categories` into current `category <name>` blocks and rely on current generated `shuttle-<category>` semantics instead of flattening category behavior into standalone agents.
-- [ ] 4.6 Map only clearly known legacy tool names into current abstract `tool_policy` capability buckets and warn on ambiguous or unmappable tool names.
-- [ ] 4.7 Preserve `prompt_file` only when the path can be translated safely into the current scope-specific `.weave/prompts/` convention.
-- [ ] 4.8 Warn and skip any prompt-file reference that cannot be translated safely into the current prompt-path convention instead of guessing a rewrite.
-- [ ] 4.9 Add conversion tests for builtin overrides, custom-agent creation, builtin collision warnings, category blocks, ordered model conversion, tool-policy warnings, and safe/unsafe prompt-file handling.
+- [x] 4.1 Treat legacy `agents` entries as overrides of existing builtin agent names in the current unified agent namespace.
+- [x] 4.2 Convert legacy `custom_agents` entries into new `agent <name>` blocks when the name does not collide with a builtin.
+- [x] 4.3 Warn and skip a legacy `custom_agents` entry when its name collides with a builtin agent rather than silently overriding the builtin.
+- [x] 4.4 Convert legacy `model` plus optional `fallback_models` into ordered `models [...]` arrays with the primary model first.
+- [x] 4.5 Convert legacy `categories` into current `category <name>` blocks and rely on current generated `shuttle-<category>` semantics instead of flattening category behavior into standalone agents.
+- [x] 4.6 Map only clearly known legacy tool names into current abstract `tool_policy` capability buckets and warn on ambiguous or unmappable tool names.
+- [x] 4.7 Preserve `prompt_file` only when the path can be translated safely into the current scope-specific `.weave/prompts/` convention.
+- [x] 4.8 Warn and skip any prompt-file reference that cannot be translated safely into the current prompt-path convention instead of guessing a rewrite.
+- [x] 4.9 Add conversion tests for builtin overrides, custom-agent creation, builtin collision warnings, category blocks, ordered model conversion, tool-policy warnings, and safe/unsafe prompt-file handling.
 
 ### [ ] 5.0 Document migration usage and prove end-to-end acceptance
 
