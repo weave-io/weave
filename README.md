@@ -20,6 +20,82 @@ For a high-level flow diagram of configuration → engine → adapter → harnes
 | [`@weave/adapter-claude-code`](./packages/adapters/claude-code) | Claude Code adapter                                                                        |
 | [`@weave/adapter-pi`](./packages/adapters/pi)                   | Pi adapter                                                                                 |
 
+## OpenCode Adapter Status
+
+`@weave/adapter-opencode` is implemented as a **real first-slice OpenCode plugin adapter**. It can load Weave config, materialize builtin and custom agents, map Weave tool policy into OpenCode permissions, reconcile owned agents safely, and expose Weave-managed agents through the plugin bootstrap path.
+
+Today, the adapter is strongest at **agent/config materialization** and intentionally does **not** yet provide full parity with the legacy `opencode-weave` project.
+
+### Implemented now
+
+- OpenCode plugin entrypoint via `@weave/adapter-opencode/plugin`
+- builtin + custom agent materialization
+- category-generated shuttle agents through normal config materialization
+- model resolution and fail-fast validation for explicit subagent model intent
+- tool-policy mapping into OpenCode permissions
+- ownership-safe `list → reconcile → create/update` flow for Weave-managed agents
+- harness-injected skill forwarding
+- `config` hook visibility for `opencode debug config`
+- deferred SDK reconciliation on first `session.created`
+
+### Not yet at legacy parity
+
+The following legacy OpenCode-specific capabilities are still separate work:
+
+- full in-harness command lifecycle (`/start-work`, `/run-workflow`, status/pause/abort flows)
+- broader workflow runtime/lifecycle integration
+- skill MCP mounting/management
+- richer OpenCode runtime effects such as agent/session restoration flows
+- health, metrics, and token-reporting surfaces comparable to the legacy project
+
+For the normative status and current non-goals, see:
+
+- [Adapter Readiness Status](./docs/adapter-readiness-status.md)
+- [Spec 20 — OpenCode Adapter Materialization](./docs/specs/20-spec-opencode-adapter-materialization/20-spec-opencode-adapter-materialization.md)
+- [@weave/adapter-opencode README](./packages/adapters/opencode/README.md)
+
+### Legacy parity snapshot
+
+| Feature area | Legacy `opencode-weave` | Current Weave core | Current OpenCode adapter |
+| --- | --- | --- | --- |
+| Builtin agents | Yes | Yes | Yes |
+| Custom agents | Yes | Yes | Yes |
+| Prompt composition | Yes | Yes | Yes |
+| Category-generated shuttle agents | Yes | Yes | Yes via normal materialization |
+| Model resolution | Yes | Yes | Partial/strong |
+| Tool policy mapping | Yes | Yes | Yes |
+| OpenCode plugin entrypoint | Yes | N/A | Yes |
+| Agent reconcile create/update | Yes | N/A | Yes |
+| Ownership/collision protection | Yes | N/A | Yes |
+| Skill forwarding/discovery | Yes | Yes | Partial |
+| Skill MCP mounting | Yes | N/A | No |
+| `/start-work` / `/run-workflow` | Yes | Workflow concepts exist | No |
+| Workflow runtime lifecycle | Yes | Partial | No |
+| Pause/resume/abort/status | Yes | Partial | No |
+| Session restore / agent switch effects | Yes | N/A | No |
+| Health / metrics / token reports | Yes | Partial | No |
+| Full legacy OpenCode parity | Yes | Not the target itself | No |
+
+In practice, the current OpenCode adapter covers the **materialization foundation** well, while the main parity gaps are still the **runtime command lifecycle**, **workflow execution UX**, **skill MCP integration**, and **health/metrics/token-reporting surfaces**.
+
+## Other Adapter Status
+
+### Claude Code adapter
+
+`@weave/adapter-claude-code` currently exists as a package placeholder in the workspace. The harness-agnostic engine/config surfaces it depends on are present, but this adapter does not yet have an equivalent status story to the OpenCode first slice.
+
+- current role: placeholder package / future adapter target
+- intended scope: materialize Weave agents into Claude Code using the same engine-owned descriptors and policy surfaces
+- current status: not yet documented as a real materialized adapter slice
+
+### Pi adapter
+
+`@weave/adapter-pi` currently exists as a package placeholder in the workspace. Like Claude Code, it sits behind the current engine/config work and does not yet have a comparable materialization/readiness story documented in the repo README.
+
+- current role: placeholder package / future adapter target
+- intended scope: materialize Weave agents into Pi using the same adapter boundary and engine-owned descriptors
+- current status: not yet documented as a real materialized adapter slice
+
 ## Workspace Structure
 
 ```

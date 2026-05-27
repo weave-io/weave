@@ -3,20 +3,47 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weave/core, @weave/engine, @weave/config, @weave/cli, @weave/adapter-opencode
 
-> 0 routes | 0 models | 0 components | 53 lib files | 2 env vars | 0 middleware | 0% test coverage
-> **Token savings:** this file is ~4,500 tokens. Without it, AI exploration would cost ~23,100 tokens. **Saves ~18,600 tokens per conversation.**
-> **Last scanned:** 2026-05-27 17:08 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 59 lib files | 4 env vars | 0 middleware | 0% test coverage
+> **Token savings:** this file is ~5,000 tokens. Without it, AI exploration would cost ~25,000 tokens. **Saves ~19,900 tokens per conversation.**
+> **Last scanned:** 2026-05-27 18:12 — re-run after significant changes
 
 ---
 
 # Libraries
 
-- `packages/adapters/opencode/src/index.ts` — class OpenCodeAdapter, interface OpenCodeAdapterOptions
+- `packages/adapters/opencode/src/adapter.ts`
+  - class OpenCodeAdapterError
+  - class OpenCodeAdapter
+  - interface OpenCodeAdapterOptions
+- `packages/adapters/opencode/src/model-resolution.ts`
+  - function resolveModelForAgent: (descriptor, context) => Result<string, ModelResolutionError>
+  - interface OpenCodeModelContext
+  - type ModelResolutionError
+- `packages/adapters/opencode/src/opencode-client.ts`
+  - class SdkOpenCodeClient
+  - interface OpenCodeClientFacade
+  - type OpenCodeClientError
+- `packages/adapters/opencode/src/plugin.ts`
+  - function createWeavePlugin: (options) => Plugin
+  - interface WeavePluginOptions
+  - const WeavePlugin: Plugin
+  - const server
+- `packages/adapters/opencode/src/reconcile-agent.ts`
+  - function classifyExistingAgent: (agentName, existingAgents) => ReconcileDecision
+  - function tagWithOwnership: (config) => OpenCodeAgentConfig
+  - function reconcileAgent: (agentName, config, client) => ResultAsync<void, ReconcileAgentError>
+  - type ReconcileAgentError
+  - type ReconcileDecision
+  - const WEAVE_OWNERSHIP_TAG
 - `packages/adapters/opencode/src/run-workflow.ts`
   - function runWorkflow: (input) => ResultAsync<RunWorkflowResult, RunWorkflowError>
   - interface RunWorkflowInput
   - interface RunWorkflowResult
   - type RunWorkflowError
+- `packages/adapters/opencode/src/skill-discovery.ts`
+  - function buildSkillInfoList: (names) => SkillInfo[]
+  - function validateDeclaredSkills: (declaredSkills, availableSkills, disabledSkills) => Result<void, MissingSkillsError>
+  - interface MissingSkillsError
 - `packages/adapters/opencode/src/tool-policy-mapping.ts`
   - function toOpenCodePermission: (permission) => OpenCodePermissionValue
   - function buildReadToolsEntry: (readPermission) => Record<string, boolean> | undefined
@@ -24,7 +51,7 @@
   - type OpenCodePermissionValue
   - type OpenCodeToolPermissions
   - const READ_TOOL_NAMES: readonly string[]
-- `packages/adapters/opencode/src/translate-agent.ts` — function translateAgent: (descriptor) => Result<OpenCodeAgentConfig, TranslateAgentError>, type TranslateAgentError
+- `packages/adapters/opencode/src/translate-agent.ts` — function translateAgent: (descriptor, resolvedModel?) => Result<OpenCodeAgentConfig, TranslateAgentError>, type TranslateAgentError
 - `packages/cli/src/args.ts`
   - function parseArgs: (argv) => Result<ParsedArgs, ArgParseError>
   - interface ParsedArgs
@@ -93,7 +120,10 @@
   - class ThemeRenderer
   - interface VersionSource
   - const defaultThemeRenderer
-- `packages/config/src/builtins.ts` — function getBuiltinConfig: () => Result<WeaveConfig, ConfigError[]>, const BUILTIN_WEAVE_SOURCE
+- `packages/config/src/builtins.ts`
+  - function getBuiltinConfig: () => Result<WeaveConfig, ConfigError[]>
+  - const BUILTIN_PROMPT_CONTENTS: Readonly<Record<string, string>>
+  - const BUILTIN_WEAVE_SOURCE
 - `packages/config/src/discovery.ts`
   - function discoverAndParse: (projectRoot?, fileReader) => ResultAsync<DiscoveredConfig[], ConfigLoadError[]>
   - interface FileReader
@@ -153,6 +183,10 @@
   - function lifecyclePersistenceError: (message, cause?) => LifecyclePersistenceError
   - function lifecyclePolicyDecisionError: (message, rule?) => LifecyclePolicyDecisionError
   - _...41 more_
+- `packages/engine/src/logger.ts`
+  - function redirectLogsToFile: (filePath) => Promise<void>
+  - const logDestination
+  - const logger
 - `packages/engine/src/materialization.ts`
   - function materializeAgents: (input) => ResultAsync<MaterializationPlan, never>
   - interface MaterializationInput
@@ -237,6 +271,8 @@
 
 - `HOME` **required** — packages/cli/src/detect/probes.ts
 - `LOG_LEVEL` **required** — packages/config/src/logger.ts
+- `PWD` **required** — packages/adapters/opencode/src/adapter.ts
+- `WEAVE_LOG_FILE` **required** — packages/engine/src/env.ts
 
 ## Config Files
 
@@ -251,43 +287,43 @@
 - `packages/cli/src/theme/colors.ts` — imported by **12** files
 - `packages/engine/src/runtime/errors.ts` — imported by **11** files
 - `packages/cli/src/io/terminal.ts` — imported by **10** files
+- `packages/adapters/opencode/src/sdk-types.ts` — imported by **9** files
 - `packages/core/src/tokens.ts` — imported by **8** files
 - `packages/engine/src/compose.ts` — imported by **8** files
 - `packages/cli/src/fs/file-system.ts` — imported by **7** files
 - `packages/cli/src/args.ts` — imported by **6** files
 - `packages/core/src/errors.ts` — imported by **6** files
 - `packages/engine/src/logger.ts` — imported by **6** files
+- `packages/adapters/opencode/src/index.ts` — imported by **5** files
 - `packages/cli/src/cli.ts` — imported by **5** files
 - `packages/cli/src/theme/render.ts` — imported by **5** files
 - `packages/cli/src/errors.ts` — imported by **5** files
 - `packages/config/src/builtins.ts` — imported by **5** files
 - `packages/config/src/discovery.ts` — imported by **5** files
+- `packages/config/src/logger.ts` — imported by **5** files
 - `packages/config/src/merge.ts` — imported by **5** files
-- `packages/config/src/types.ts` — imported by **5** files
 - `packages/core/src/lexer.ts` — imported by **5** files
 - `packages/engine/src/descriptors.ts` — imported by **5** files
-- `packages/adapters/opencode/src/sdk-types.ts` — imported by **4** files
-- `packages/config/src/normalize-path.ts` — imported by **4** files
 
 ## Import Map (who imports what)
 
 - `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/runtime.test.ts`, `packages/cli/src/commands/__tests__/validate.test.ts` +7 more
 - `packages/engine/src/runtime/errors.ts` ← `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-journal.test.ts`, `packages/engine/src/__tests__/runtime-journal.test.ts`, `packages/engine/src/execution-lifecycle.ts`, `packages/engine/src/runtime/fingerprint.ts` +6 more
 - `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/runtime.test.ts`, `packages/cli/src/commands/__tests__/validate.test.ts` +5 more
+- `packages/adapters/opencode/src/sdk-types.ts` ← `packages/adapters/opencode/src/__tests__/adapter.test.ts`, `packages/adapters/opencode/src/__tests__/plugin.test.ts`, `packages/adapters/opencode/src/__tests__/reconcile-agent.test.ts`, `packages/adapters/opencode/src/__tests__/run-workflow.test.ts`, `packages/adapters/opencode/src/adapter.ts` +4 more
 - `packages/core/src/tokens.ts` ← `packages/core/src/__tests__/lexer.test.ts`, `packages/core/src/ast.ts`, `packages/core/src/ast.ts`, `packages/core/src/index.ts`, `packages/core/src/index.ts` +3 more
 - `packages/engine/src/compose.ts` ← `packages/engine/src/__tests__/compose.test.ts`, `packages/engine/src/__tests__/mock-adapter.ts`, `packages/engine/src/__tests__/template-context.test.ts`, `packages/engine/src/adapter.ts`, `packages/engine/src/descriptors.ts` +3 more
 - `packages/cli/src/fs/file-system.ts` ← `packages/cli/src/__tests__/file-system.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/validate.test.ts`, `packages/cli/src/commands/validate.ts`, `packages/cli/src/installers/__tests__/installers.test.ts` +2 more
 - `packages/cli/src/args.ts` ← `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/runtime.test.ts`, `packages/cli/src/commands/init.ts`, `packages/cli/src/commands/validate.ts`, `packages/cli/src/index.ts` +1 more
 - `packages/core/src/errors.ts` ← `packages/core/src/__tests__/errors.test.ts`, `packages/core/src/index.ts`, `packages/core/src/lexer.ts`, `packages/core/src/parse-config.ts`, `packages/core/src/parser.ts` +1 more
 - `packages/engine/src/logger.ts` ← `packages/engine/src/compose.ts`, `packages/engine/src/index.ts`, `packages/engine/src/runtime/journal-writer.ts`, `packages/engine/src/runtime/sqlite/store.ts`, `packages/engine/src/template-context.ts` +1 more
-- `packages/cli/src/cli.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/commands/__tests__/runtime.test.ts`, `packages/cli/src/index.ts`, `packages/cli/src/index.ts`, `packages/cli/src/main.ts`
 
 ---
 
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 45 test files found
+> 53 test files found
 
 ---
 
