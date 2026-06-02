@@ -1,7 +1,7 @@
 /**
  * Execution Lifecycle Surface for the Weave engine.
  *
- * Defines the 7 lifecycle methods that adapters call after mapping concrete
+ * Defines the 8 lifecycle methods that adapters call after mapping concrete
  * harness events into engine-owned policy decisions.
  *
  * ## Lifecycle Methods
@@ -13,6 +13,28 @@
  * 5. `dispatchStep`      — adapter requests dispatch of the next workflow step
  * 6. `completeStep`      — adapter signals that a step has finished
  * 7. `beforeTool`        — adapter signals that a tool call is about to execute
+ * 8. `inspectExecution`  — adapter queries execution state without side effects
+ *
+ * ## Explicit Execution Operations vs. Observation
+ *
+ * The lifecycle surface distinguishes two categories of operations:
+ *
+ * **Explicit execution operations** (`ExecutionOperationKind`):
+ * - `start`   — `startExecution`: sole authorized entry point for durable execution
+ * - `resume`  — `resumeExecution`: resumes a paused or blocked execution
+ * - `pause`   — `handleUserInterrupt` with `signal: "pause"`
+ * - `inspect` — `inspectExecution`: read-only state query, no side effects
+ * - `advance` — `dispatchStep` + `completeStep`: drive execution forward
+ *
+ * **Observation operations** (NOT execution operations):
+ * - `observeSession`: records a session snapshot; CANNOT start, resume, or
+ *   advance durable execution. Calling `observeSession` never creates a
+ *   `WorkflowInstance` or acquires an `ExecutionLease`.
+ *
+ * This distinction enforces ADR 0004: ordinary Loom conversation, session idle
+ * events, continuation hooks, and lifecycle observations are explicitly
+ * forbidden from implicitly starting durable execution. Only an explicit,
+ * user-authorized call to `startExecution` may begin durable execution.
  *
  * ## Security Invariants
  *
@@ -28,6 +50,7 @@
  * `persistence`, and `policy_decision`.
  *
  * @see docs/adapter-boundary.md — Execution Lifecycle Surface section
+ * @see docs/adr/0004-workflow-first-execution-contract.md — Execution boundary
  */
 
 import type { WorkflowConfig, WorkflowStep } from "@weave/core";
@@ -548,6 +571,10 @@ export interface WorkflowExecutionContext {
  * acquires an execution lease and transitions the workflow instance to
  * `running` status.
  *
+ * **Authorization requirement**: `authorizationSource` MUST be `"user"`.
+ * The engine rejects any other source with a `policy_decision` error.
+ * Agents, hooks, and events may not self-start durable execution (ADR 0004).
+ *
  * When `context` is provided the engine validates `context.workflowName`
  * against `context.workflows` before creating any instance. An unknown
  * workflow name returns a `not_found` error; a missing `workflowName` returns
@@ -565,6 +592,20 @@ export interface StartExecutionInput {
   readonly workflowInstanceId: WorkflowInstanceId;
   /** The owner identifier for the execution lease (e.g. session ID). */
   readonly ownerId: string;
+  /**
+   * The source of authorization for this execution start.
+   *
+   * MUST be `"user"` — the engine rejects any other value with a
+   * `policy_decision` error. Adapters must not pass `"agent"`, `"hook"`,
+   * or `"event"` here; those sources represent forbidden self-start paths.
+   *
+   * When omitted, the engine defaults to `"user"` for backward compatibility
+   * with existing callers that pre-date this field. New callers SHOULD always
+   * provide this field explicitly.
+   *
+   * @see docs/adr/0004-workflow-first-execution-contract.md
+   */
+  readonly authorizationSource?: ExecutionAuthorizationSource;
   /** ISO 8601 timestamp for lease acquisition (defaults to now if omitted). */
   readonly now?: string;
   /** Optional structured metadata about the execution start. */
@@ -611,6 +652,12 @@ export interface StartExecutionOutput {
  * acquires a new execution lease (replacing any expired lease) and transitions
  * the workflow instance back to `running` status.
  *
+ * **Authorization requirement**: `authorizationSource` MUST be `"user"`.
+ * The engine rejects any other source with a `policy_decision` error.
+ * Hooks and events may not implicitly resume durable execution (ADR 0004).
+ * The legacy `workContinuation` hook's automatic Tapestry re-injection is
+ * superseded by this explicit authorization requirement.
+ *
  * EXCLUDED: raw prompts, completions, transcripts, credentials, tokens,
  * cookies, authorization headers, raw provider payloads.
  */
@@ -619,6 +666,20 @@ export interface ResumeExecutionInput {
   readonly workflowInstanceId: WorkflowInstanceId;
   /** The owner identifier for the new execution lease. */
   readonly ownerId: string;
+  /**
+   * The source of authorization for this execution resume.
+   *
+   * MUST be `"user"` — the engine rejects any other value with a
+   * `policy_decision` error. Adapters must not pass `"agent"`, `"hook"`,
+   * or `"event"` here; those sources represent forbidden implicit-resume paths.
+   *
+   * When omitted, the engine defaults to `"user"` for backward compatibility
+   * with existing callers that pre-date this field. New callers SHOULD always
+   * provide this field explicitly.
+   *
+   * @see docs/adr/0004-workflow-first-execution-contract.md
+   */
+  readonly authorizationSource?: ExecutionAuthorizationSource;
   /** ISO 8601 timestamp for lease acquisition (defaults to now if omitted). */
   readonly now?: string;
   /** Optional structured metadata about the resume event. */
@@ -915,6 +976,202 @@ export type CompleteStepResult = ResultAsync<
 /** Result type for `beforeTool`. */
 export type BeforeToolResult = ResultAsync<BeforeToolOutput, LifecycleError>;
 
+/** Result type for `inspectExecution`. */
+export type InspectExecutionResult = ResultAsync<
+  InspectExecutionOutput,
+  LifecycleError
+>;
+
+// ---------------------------------------------------------------------------
+// ExecutionOperationKind — explicit execution operation discriminant
+// ---------------------------------------------------------------------------
+
+/**
+ * Discriminated union of the explicit execution operation kinds.
+ *
+ * These are the engine-owned operations that drive durable workflow execution.
+ * Each kind maps to one or more lifecycle methods:
+ *
+ * | Kind      | Lifecycle method(s)                                |
+ * |-----------|----------------------------------------------------|
+ * | `start`   | `startExecution`                                   |
+ * | `resume`  | `resumeExecution`                                  |
+ * | `pause`   | `handleUserInterrupt` with `signal: "pause"`       |
+ * | `inspect` | `inspectExecution`                                 |
+ * | `advance` | `dispatchStep`, `completeStep`                     |
+ *
+ * **Not included**: `observeSession` and `beforeTool` are NOT execution
+ * operations. `observeSession` is a passive observation that records session
+ * state without creating instances or acquiring leases. `beforeTool` is a
+ * policy evaluation that does not advance execution state.
+ *
+ * This type is used to document and enforce the boundary between explicit
+ * execution operations and chat-side or observation behavior. Adapters must
+ * only call `startExecution` in response to an explicit, user-authorized
+ * trigger — never in response to ordinary conversation, idle events, or
+ * continuation hooks.
+ *
+ * @see docs/adr/0004-workflow-first-execution-contract.md
+ */
+export type ExecutionOperationKind =
+  | "start"
+  | "resume"
+  | "pause"
+  | "inspect"
+  | "advance";
+
+/** All valid `ExecutionOperationKind` values as a readonly tuple. */
+export const EXECUTION_OPERATION_KINDS = [
+  "start",
+  "resume",
+  "pause",
+  "inspect",
+  "advance",
+] as const satisfies readonly ExecutionOperationKind[];
+
+// ---------------------------------------------------------------------------
+// ExecutionAuthorizationSource — explicit authorization discriminant
+// ---------------------------------------------------------------------------
+
+/**
+ * Discriminated union of the authorization sources for execution transitions.
+ *
+ * Adapters MUST declare the source of authorization when calling
+ * `startExecution` or `resumeExecution`. The engine rejects any source that
+ * is not `"user"` — enforcing ADR 0004's requirement that durable execution
+ * begins only through an explicit, user-authorized transition.
+ *
+ * ## Valid sources
+ *
+ * | Source    | Description                                                       |
+ * |-----------|-------------------------------------------------------------------|
+ * | `"user"`  | Explicit user action: command, skill invocation, UI button, CLI   |
+ *
+ * ## Rejected sources (policy_decision error)
+ *
+ * | Source    | Description                                                       |
+ * |-----------|-------------------------------------------------------------------|
+ * | `"agent"` | Agent-initiated self-start — forbidden by ADR 0004                |
+ * | `"hook"`  | Idle hook, continuation hook, or compaction recovery — forbidden  |
+ * | `"event"` | Session event, lifecycle event, or timer — forbidden              |
+ *
+ * ## Why this matters
+ *
+ * The legacy OpenCode model allowed `session.idle` hooks to silently resume
+ * Tapestry, and `/start-work` was the only explicit boundary — an
+ * OpenCode-specific boundary not portable to other harnesses. ADR 0004
+ * replaces this with an engine-enforced authorization check that works
+ * across all adapters.
+ *
+ * Adapters that call `startExecution` from an idle hook, continuation hook,
+ * or agent callback MUST pass `"hook"` or `"agent"` as the source — the
+ * engine will reject the call with a `policy_decision` error, preventing
+ * implicit execution start regardless of adapter intent.
+ *
+ * @see docs/adr/0004-workflow-first-execution-contract.md
+ */
+export type ExecutionAuthorizationSource = "user" | "agent" | "hook" | "event";
+
+/** All valid `ExecutionAuthorizationSource` values as a readonly tuple. */
+export const EXECUTION_AUTHORIZATION_SOURCES = [
+  "user",
+  "agent",
+  "hook",
+  "event",
+] as const satisfies readonly ExecutionAuthorizationSource[];
+
+/**
+ * The only authorization source that the engine accepts for execution
+ * transitions. All other sources are rejected with a `policy_decision` error.
+ */
+const AUTHORIZED_EXECUTION_SOURCE: ExecutionAuthorizationSource = "user";
+
+/**
+ * Validate that the authorization source is explicitly user-authorized.
+ *
+ * Returns `ok(undefined)` when `source === "user"`.
+ * Returns a typed `policy_decision` error for any other source, with a
+ * message that names the forbidden source and references ADR 0004.
+ *
+ * @param source - The declared authorization source from the adapter.
+ * @param operation - The lifecycle operation being attempted (for the error message).
+ * @returns `Result<undefined, LifecyclePolicyDecisionError>`
+ */
+export function validateAuthorizationSource(
+  source: ExecutionAuthorizationSource,
+  operation: "startExecution" | "resumeExecution",
+): Result<undefined, LifecyclePolicyDecisionError> {
+  if (source === AUTHORIZED_EXECUTION_SOURCE) return ok(undefined);
+  return err(
+    lifecyclePolicyDecisionError(
+      `${operation} requires explicit user authorization (source: "${source}" is not permitted). ` +
+        `Only source: "user" is accepted. Agents, hooks, and events may not self-start durable execution. ` +
+        `See docs/adr/0004-workflow-first-execution-contract.md.`,
+      "authorizationSource",
+    ),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 8. inspectExecution — Input / Output
+// ---------------------------------------------------------------------------
+
+/**
+ * Input for `inspectExecution`.
+ *
+ * Adapters call this to query the current execution state of a workflow
+ * instance without modifying any state. This is a read-only operation —
+ * it never creates instances, acquires leases, or emits lifecycle effects.
+ *
+ * EXCLUDED: raw prompts, completions, transcripts, credentials, tokens,
+ * cookies, authorization headers, raw provider payloads.
+ */
+export interface InspectExecutionInput {
+  /** The workflow instance to inspect. */
+  readonly workflowInstanceId: WorkflowInstanceId;
+  /** Optional structured metadata about the inspect request. */
+  readonly metadata?: SafeMetadata;
+}
+
+/**
+ * Output from `inspectExecution`.
+ *
+ * Returns a read-only snapshot of the workflow instance's current execution
+ * state. The snapshot contains only engine-visible, non-sensitive fields.
+ *
+ * This output is a point-in-time snapshot — it does not guarantee that the
+ * state has not changed by the time the caller processes it.
+ */
+export interface InspectExecutionOutput {
+  /** The workflow instance ID. */
+  readonly workflowInstanceId: WorkflowInstanceId;
+  /** Current lifecycle status of the workflow instance. */
+  readonly status: import("./runtime/types.js").WorkflowInstanceStatus;
+  /** Name of the current step being executed, if any. */
+  readonly currentStepName?: string;
+  /** Name of the workflow definition being executed. */
+  readonly workflowName: string;
+  /** Human-readable goal for this execution instance. */
+  readonly goal: string;
+  /** URL-safe slug for this execution instance. */
+  readonly slug: string;
+  /** ISO 8601 timestamp when this instance was created. */
+  readonly createdAt: string;
+  /** ISO 8601 timestamp of the last status update. */
+  readonly updatedAt: string;
+  /** ISO 8601 timestamp when execution completed (any terminal status). */
+  readonly completedAt?: string;
+  /** Human-readable error message if status is `failed`. */
+  readonly errorMessage?: string;
+  /** Artifact references produced by completed steps. */
+  readonly artifacts: readonly ArtifactRef[];
+  /**
+   * Whether an active (unexpired) execution lease exists for this instance.
+   * `true` means the instance is actively being driven by a lease holder.
+   */
+  readonly hasActiveLease: boolean;
+}
+
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
@@ -949,6 +1206,20 @@ function mapConflictToLeaseConflict(
  * Validates required fields, builds a `RecordSessionSnapshotInput`, and
  * delegates to `store.snapshots.record()`. The sanitizer inside the store
  * rejects metadata containing denied field names (credentials, raw content).
+ *
+ * ## Execution Boundary Invariant
+ *
+ * `observeSession` is a **passive observation** — it is NOT an execution
+ * operation. It NEVER:
+ * - Creates a `WorkflowInstance`
+ * - Acquires an `ExecutionLease`
+ * - Transitions instance status
+ * - Emits `LifecycleEffect` values
+ *
+ * Adapters MUST NOT call `observeSession` as a substitute for `startExecution`.
+ * Ordinary Loom conversation, session idle events, and continuation hooks may
+ * call `observeSession` safely — doing so will never implicitly start durable
+ * execution. See ADR 0004 for the full rationale.
  *
  * @param input - Normalized session observation from the adapter.
  * @param store - Runtime Store instance.
@@ -1081,6 +1352,16 @@ function resolveInstanceFields(
 /**
  * Start a new workflow execution.
  *
+ * This is the **sole authorized entry point** for durable execution. Only
+ * `startExecution` may create a `WorkflowInstance` or acquire an
+ * `ExecutionLease`. No other lifecycle method, adapter hook, idle event,
+ * continuation hook, or session observation may implicitly start execution.
+ *
+ * Adapters MUST call this only in response to an explicit, user-authorized
+ * trigger (e.g. a harness command, skill invocation, UI button, or script).
+ * Calling `startExecution` from an idle hook, continuation hook, or session
+ * observation is a boundary violation per ADR 0004.
+ *
  * When `input.context` is provided the engine validates `context.workflowName`
  * against `context.workflows` before creating any instance. On success the
  * instance is created with the correct `workflowName`, `goal`, `slug`, and
@@ -1097,6 +1378,7 @@ function resolveInstanceFields(
  * @param input - Execution start parameters from the adapter.
  * @param store - Runtime Store instance.
  * @returns `ok({ leaseId, effects: [] })` on success, or a typed `LifecycleError`.
+ * @see docs/adr/0004-workflow-first-execution-contract.md
  */
 export function startExecution(
   input: StartExecutionInput,
@@ -1113,6 +1395,14 @@ export function startExecution(
   if (!input.ownerId) {
     return errAsync(lifecycleValidationError("ownerId is required", "ownerId"));
   }
+
+  // Enforce explicit user authorization — reject agent-, hook-, and event-initiated
+  // self-start paths. When authorizationSource is omitted, default to "user" for
+  // backward compatibility with callers that pre-date this field.
+  const authSource: ExecutionAuthorizationSource =
+    input.authorizationSource ?? "user";
+  const authCheck = validateAuthorizationSource(authSource, "startExecution");
+  if (authCheck.isErr()) return errAsync(authCheck.error);
 
   if (input.metadata !== undefined && input.metadata !== null) {
     const metaCheck = sanitizeMetadata(input.metadata);
@@ -2621,6 +2911,16 @@ export function resumeExecution(
     return errAsync(lifecycleValidationError("ownerId is required", "ownerId"));
   }
 
+  // Enforce explicit user authorization — reject hook- and event-initiated
+  // implicit-resume paths. The legacy workContinuation hook's automatic
+  // Tapestry re-injection is superseded by this check (ADR 0004).
+  // When authorizationSource is omitted, default to "user" for backward
+  // compatibility with callers that pre-date this field.
+  const authSource: ExecutionAuthorizationSource =
+    input.authorizationSource ?? "user";
+  const authCheck = validateAuthorizationSource(authSource, "resumeExecution");
+  if (authCheck.isErr()) return errAsync(authCheck.error);
+
   if (input.metadata !== undefined && input.metadata !== null) {
     const metaCheck = sanitizeMetadata(input.metadata);
     if (metaCheck.isErr()) return errAsync(metaCheck.error);
@@ -2759,4 +3059,108 @@ export function beforeTool(input: BeforeToolInput): BeforeToolResult {
   const decision = input.effectiveToolPolicy[input.toolCapability];
 
   return okAsync({ decision });
+}
+
+// ---------------------------------------------------------------------------
+// 8. inspectExecution — implementation
+// ---------------------------------------------------------------------------
+
+/**
+ * Inspect the current execution state of a workflow instance.
+ *
+ * This is a **read-only** operation — it never creates instances, acquires
+ * leases, updates status, or emits lifecycle effects. It is the engine-owned
+ * "inspect" operation in the `ExecutionOperationKind` vocabulary.
+ *
+ * Use this when adapters need to query execution state for display, routing,
+ * or decision-making without advancing the workflow. Examples:
+ * - Rendering a status dashboard
+ * - Deciding whether to offer a "resume" affordance
+ * - Checking whether an instance is already running before calling `startExecution`
+ *
+ * **Boundary invariant**: `inspectExecution` does NOT call `startExecution`,
+ * `resumeExecution`, `dispatchStep`, or `completeStep`. It is safe to call
+ * from any adapter context — including idle hooks, continuation hooks, and
+ * session observations — without risking implicit execution start.
+ *
+ * @param input - Inspect parameters from the adapter.
+ * @param store - Runtime Store instance.
+ * @returns `ok(InspectExecutionOutput)` on success, or a typed `LifecycleError`.
+ */
+export function inspectExecution(
+  input: InspectExecutionInput,
+  store: RuntimeStore,
+): InspectExecutionResult {
+  if (!input.workflowInstanceId) {
+    return errAsync(
+      lifecycleValidationError(
+        "workflowInstanceId is required",
+        "workflowInstanceId",
+      ),
+    );
+  }
+
+  if (input.metadata !== undefined && input.metadata !== null) {
+    const metaCheck = sanitizeMetadata(input.metadata);
+    if (metaCheck.isErr()) return errAsync(metaCheck.error);
+  }
+
+  return store.instances
+    .findById(input.workflowInstanceId)
+    .mapErr(
+      (storeError): LifecycleError =>
+        lifecyclePersistenceError(storeError.message, {
+          type: storeError.type,
+          message: storeError.message,
+        }),
+    )
+    .andThen((instance) => {
+      if (instance === null) {
+        return errAsync(
+          lifecycleNotFoundError(
+            "WorkflowInstance",
+            input.workflowInstanceId as string,
+          ),
+        );
+      }
+
+      // Check for an active lease — read-only, no side effects.
+      return store.leases
+        .findActive()
+        .mapErr(
+          (storeError): LifecycleError =>
+            lifecyclePersistenceError(storeError.message, {
+              type: storeError.type,
+              message: storeError.message,
+            }),
+        )
+        .map((activeLease): InspectExecutionOutput => {
+          const hasActiveLease =
+            activeLease !== null &&
+            activeLease.workflowInstanceId === instance.id;
+
+          const output: InspectExecutionOutput = {
+            workflowInstanceId: instance.id,
+            status: instance.status,
+            workflowName: instance.workflowName,
+            goal: instance.goal,
+            slug: instance.slug,
+            createdAt: instance.createdAt,
+            updatedAt: instance.updatedAt,
+            artifacts: instance.artifacts,
+            hasActiveLease,
+            ...(instance.currentStepName !== undefined
+              ? { currentStepName: instance.currentStepName }
+              : {}),
+            ...(instance.completedAt !== undefined
+              ? { completedAt: instance.completedAt }
+              : {}),
+            ...(instance.errorMessage !== undefined
+              ? { errorMessage: instance.errorMessage }
+              : {}),
+          };
+
+          return output;
+        });
+    });
 }

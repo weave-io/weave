@@ -52,9 +52,14 @@ export type {
   DispatchStepInput,
   DispatchStepOutput,
   DispatchStepResult,
+  ExecutionAuthorizationSource,
+  ExecutionOperationKind,
   HandleUserInterruptInput,
   HandleUserInterruptOutput,
   HandleUserInterruptResult,
+  InspectExecutionInput,
+  InspectExecutionOutput,
+  InspectExecutionResult,
   LifecycleEffect,
   LifecycleError,
   LifecycleLeaseConflictError,
@@ -80,7 +85,10 @@ export {
   beforeTool,
   completeStep,
   dispatchStep,
+  EXECUTION_AUTHORIZATION_SOURCES,
+  EXECUTION_OPERATION_KINDS,
   handleUserInterrupt,
+  inspectExecution,
   lifecycleLeaseConflictError,
   lifecycleNotFoundError,
   lifecyclePersistenceError,
@@ -90,6 +98,7 @@ export {
   resumeExecution,
   sanitizeMetadata,
   startExecution,
+  validateAuthorizationSource,
 } from "./execution-lifecycle.js";
 export { logDestination, logger, redirectLogsToFile } from "./logger.js";
 export type {

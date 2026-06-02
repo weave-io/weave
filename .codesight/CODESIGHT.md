@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 59 lib files | 4 env vars | 2 middleware | 0% test coverage
 > **Token savings:** this file is ~5,200 tokens. Without it, AI exploration would cost ~25,500 tokens. **Saves ~20,300 tokens per conversation.**
-> **Last scanned:** 2026-05-28 12:42 — re-run after significant changes
+> **Last scanned:** 2026-06-02 22:20 — re-run after significant changes
 
 ---
 
@@ -189,7 +189,7 @@
   - function lifecycleLeaseConflictError: (workflowInstanceId, conflictingLeaseId, message) => LifecycleLeaseConflictError
   - function lifecyclePersistenceError: (message, cause?) => LifecyclePersistenceError
   - function lifecyclePolicyDecisionError: (message, rule?) => LifecyclePolicyDecisionError
-  - _...41 more_
+  - _...50 more_
 - `packages/engine/src/logger.ts`
   - function redirectLogsToFile: (filePath) => Promise<void>
   - const logDestination

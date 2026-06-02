@@ -10,6 +10,11 @@
 
 import { describe, expect, it } from "bun:test";
 import { errAsync, okAsync, type ResultAsync } from "neverthrow";
+import {
+  EXECUTION_AUTHORIZATION_SOURCES,
+  type ExecutionAuthorizationSource,
+  validateAuthorizationSource,
+} from "../execution-lifecycle.js";
 import type { RuntimeStoreError } from "../runtime/errors.js";
 import {
   conflictError,
@@ -1249,5 +1254,250 @@ describe("WorkflowInstance CRUD", () => {
     expect(updated.artifacts).toHaveLength(1);
     expect(updated.artifacts[0].name).toBe("plan");
     expect(updated.artifacts[0].path).toBe(".weave/plans/g.md");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: Spec 22 Unit 1 — WorkflowInstance and ExecutionLease are only created
+// through explicit user-authorized execution transitions
+// ---------------------------------------------------------------------------
+
+describe("Spec 22 Unit 1 — explicit execution boundary (WorkflowInstance + ExecutionLease)", () => {
+  it("WorkflowInstance starts in 'created' status — not 'running' — before any execution transition", async () => {
+    // A newly created WorkflowInstance must be in 'created' status.
+    // Only an explicit execution transition (startExecution) may move it to 'running'.
+    const repo = new StubWorkflowInstanceRepository();
+    const result = await repo.create({
+      workflowName: "boundary-wf",
+      goal: "boundary goal",
+      slug: "boundary-goal",
+    });
+    expect(result.isOk()).toBe(true);
+    const instance = result._unsafeUnwrap();
+    expect(instance.status).toBe("created");
+    // No lease exists — execution has not started
+  });
+
+  it("ExecutionLease can only be acquired explicitly — no implicit acquisition path exists in the store interface", async () => {
+    // The ExecutionLeaseRepository.acquire() method is the only way to create a lease.
+    // There is no implicit lease creation from session observations or idle events.
+    const repo = new StubExecutionLeaseRepository();
+
+    // Before any explicit acquire call, no active lease exists
+    const beforeLease = await repo.findActive();
+    expect(beforeLease.isOk()).toBe(true);
+    expect(beforeLease._unsafeUnwrap()).toBeNull();
+
+    // Only an explicit acquire() call creates a lease
+    const acquireResult = await repo.acquire({
+      workflowInstanceId: createWorkflowInstanceId("boundary-lease-wf"),
+      ownerId: createOwnerId("boundary-owner"),
+      ttlMs: 3_600_000,
+    });
+    expect(acquireResult.isOk()).toBe(true);
+
+    // Now a lease exists — only because of the explicit acquire
+    const afterLease = await repo.findActive();
+    expect(afterLease.isOk()).toBe(true);
+    expect(afterLease._unsafeUnwrap()).not.toBeNull();
+  });
+
+  it("WorkflowInstance status transitions are explicit — only update() changes status", async () => {
+    // Status transitions must be explicit — no implicit status changes from
+    // session observations, idle events, or continuation hooks.
+    const repo = new StubWorkflowInstanceRepository();
+    const created = (
+      await repo.create({ workflowName: "wf", goal: "g", slug: "g" })
+    )._unsafeUnwrap();
+
+    // Status starts at 'created'
+    expect(created.status).toBe("created");
+
+    // Only an explicit update() call changes status
+    const running = (
+      await repo.update(created.id, { status: "running" })
+    )._unsafeUnwrap();
+    expect(running.status).toBe("running");
+
+    // Verify the transition is durable
+    const fetched = (await repo.getById(created.id))._unsafeUnwrap();
+    expect(fetched.status).toBe("running");
+  });
+
+  it("WorkflowInstance list() does not create or modify instances", async () => {
+    // list() is a read-only operation — it must not create or modify instances.
+    const repo = new StubWorkflowInstanceRepository();
+
+    // list() on an empty store returns empty array
+    const emptyList = (await repo.list())._unsafeUnwrap();
+    expect(emptyList).toHaveLength(0);
+
+    // Create one instance
+    await repo.create({ workflowName: "wf", goal: "g", slug: "g" });
+
+    // list() returns the instance without modifying it
+    const list = (await repo.list())._unsafeUnwrap();
+    expect(list).toHaveLength(1);
+    expect(list[0].status).toBe("created");
+  });
+
+  it("ExecutionLease.findActive() is read-only — does not create or modify leases", async () => {
+    const repo = new StubExecutionLeaseRepository();
+
+    // findActive() on an empty store returns null without creating anything
+    const result1 = await repo.findActive();
+    expect(result1._unsafeUnwrap()).toBeNull();
+
+    // Calling findActive() multiple times does not create leases
+    const result2 = await repo.findActive();
+    expect(result2._unsafeUnwrap()).toBeNull();
+  });
+
+  it("WorkflowInstance terminal statuses (completed, failed, cancelled) require explicit transitions", async () => {
+    // Terminal statuses must be set explicitly — they cannot be reached implicitly.
+    const repo = new StubWorkflowInstanceRepository();
+    const created = (
+      await repo.create({ workflowName: "wf", goal: "g", slug: "g" })
+    )._unsafeUnwrap();
+
+    // Each terminal status requires an explicit update() call
+    for (const terminalStatus of [
+      "completed",
+      "failed",
+      "cancelled",
+    ] as const) {
+      const updated = (
+        await repo.update(created.id, { status: terminalStatus })
+      )._unsafeUnwrap();
+      expect(updated.status).toBe(terminalStatus);
+
+      // Reset to running for next iteration
+      await repo.update(created.id, { status: "running" });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: Spec 22 Unit 1 — ExecutionAuthorizationSource contract (Task 1.3)
+// ---------------------------------------------------------------------------
+
+describe("Spec 22 Unit 1 — ExecutionAuthorizationSource contract (ADR 0004)", () => {
+  it("EXECUTION_AUTHORIZATION_SOURCES contains exactly 4 values", () => {
+    expect(EXECUTION_AUTHORIZATION_SOURCES).toHaveLength(4);
+  });
+
+  it("'user' is the only source that passes validateAuthorizationSource for startExecution", () => {
+    const userResult = validateAuthorizationSource("user", "startExecution");
+    expect(userResult.isOk()).toBe(true);
+
+    const agentResult = validateAuthorizationSource("agent", "startExecution");
+    expect(agentResult.isErr()).toBe(true);
+
+    const hookResult = validateAuthorizationSource("hook", "startExecution");
+    expect(hookResult.isErr()).toBe(true);
+
+    const eventResult = validateAuthorizationSource("event", "startExecution");
+    expect(eventResult.isErr()).toBe(true);
+  });
+
+  it("'user' is the only source that passes validateAuthorizationSource for resumeExecution", () => {
+    const userResult = validateAuthorizationSource("user", "resumeExecution");
+    expect(userResult.isOk()).toBe(true);
+
+    for (const source of [
+      "agent",
+      "hook",
+      "event",
+    ] as ExecutionAuthorizationSource[]) {
+      const result = validateAuthorizationSource(source, "resumeExecution");
+      expect(result.isErr()).toBe(true);
+      if (!result.isErr()) continue;
+      expect(result.error.type).toBe("policy_decision");
+    }
+  });
+
+  it("forbidden sources produce policy_decision errors with rule: 'authorizationSource'", () => {
+    const forbidden: ExecutionAuthorizationSource[] = [
+      "agent",
+      "hook",
+      "event",
+    ];
+    for (const source of forbidden) {
+      const result = validateAuthorizationSource(source, "startExecution");
+      expect(result.isErr()).toBe(true);
+      if (!result.isErr()) continue;
+      expect(result.error.type).toBe("policy_decision");
+      if (result.error.type === "policy_decision") {
+        expect(result.error.rule).toBe("authorizationSource");
+      }
+    }
+  });
+
+  it("error message names the forbidden source and the operation", () => {
+    const result = validateAuthorizationSource("hook", "startExecution");
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    if (result.error.type !== "policy_decision") return;
+    expect(result.error.message).toContain("hook");
+    expect(result.error.message).toContain("startExecution");
+  });
+
+  it("ExecutionLeaseRepository.acquire() is the only way to create a lease — no implicit path exists", async () => {
+    // The store interface has no method that implicitly creates a lease.
+    // This test verifies the contract: only explicit acquire() creates leases.
+    const repo = new StubExecutionLeaseRepository();
+
+    // Before any explicit acquire, no active lease exists
+    const before = await repo.findActive();
+    expect(before._unsafeUnwrap()).toBeNull();
+
+    // Only acquire() creates a lease
+    await repo.acquire({
+      workflowInstanceId: createWorkflowInstanceId("auth-contract-wf"),
+      ownerId: createOwnerId("auth-contract-owner"),
+      ttlMs: 3_600_000,
+    });
+
+    const after = await repo.findActive();
+    expect(after._unsafeUnwrap()).not.toBeNull();
+  });
+
+  it("WorkflowInstance.create() does not start execution — status is 'created', not 'running'", async () => {
+    // Creating a WorkflowInstance does not start execution.
+    // Only an explicit startExecution call (with user authorization) may
+    // transition the instance to 'running'.
+    const repo = new StubWorkflowInstanceRepository();
+    const instance = (
+      await repo.create({ workflowName: "wf", goal: "g", slug: "g" })
+    )._unsafeUnwrap();
+
+    // Must be 'created', not 'running' — execution has not started
+    expect(instance.status).toBe("created");
+    expect(instance.status).not.toBe("running");
+  });
+
+  it("observeSession-equivalent: recording a snapshot does not create instances or leases", async () => {
+    // The SessionSnapshotRepository.record() method must not create
+    // WorkflowInstances or ExecutionLeases — it is a passive observation.
+    const instanceRepo = new StubWorkflowInstanceRepository();
+    const leaseRepo = new StubExecutionLeaseRepository();
+    const snapshotRepo = new StubSessionSnapshotRepository();
+
+    // Record a snapshot
+    await snapshotRepo.record({
+      workflowInstanceId: createWorkflowInstanceId("obs-contract-wf"),
+      leaseId: createExecutionLeaseId("obs-contract-lease"),
+      harnessName: "opencode",
+      agentName: "loom",
+      sessionStatus: "idle",
+      metadata: {},
+    });
+
+    // No instances or leases should have been created
+    const instances = (await instanceRepo.list())._unsafeUnwrap();
+    expect(instances).toHaveLength(0);
+
+    const activeLease = (await leaseRepo.findActive())._unsafeUnwrap();
+    expect(activeLease).toBeNull();
   });
 });

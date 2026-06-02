@@ -44,6 +44,34 @@ _Avoid_: Message marker, done text, assistant flag
 A human-readable plan document whose task list is the authoritative user-visible plan progress during dogfooding.
 _Avoid_: Rendered plan, generated view, workflow state
 
+**Execution Contract**:
+A harness-agnostic engine-owned semantic contract for starting, resuming, pausing, inspecting, and advancing Weave execution.
+_Avoid_: Adapter command set, harness hook shape, executor persona
+
+**Execution Operation**:
+One of the five explicit engine-owned operations that drive durable workflow execution: `start`, `resume`, `pause`, `inspect`, or `advance`. Modeled as the `ExecutionOperationKind` discriminated union in `@weave/engine`. `observeSession` and `beforeTool` are NOT execution operations — they are passive observations and policy evaluations that cannot start or advance execution.
+_Avoid_: Lifecycle event, adapter hook, session observation
+
+**inspectExecution**:
+A read-only lifecycle method that returns a point-in-time snapshot of a `WorkflowInstance`'s current execution state without modifying any state, creating instances, acquiring leases, or emitting `LifecycleEffect` values. Safe to call from any adapter context including idle hooks and continuation hooks.
+_Avoid_: startExecution, resumeExecution (which have side effects)
+
+**Canonical Execution Command**:
+A product-level command name that exposes part of the **Execution Contract** through a harness command surface when that harness supports commands.
+_Avoid_: Legacy alias, adapter-private shortcut, workflow definition
+
+**Artifact Approval State**:
+Workflow-owned state recording whether a named artifact revision has been approved for downstream consumption.
+_Avoid_: Gate side effect, chat assumption, implicit review memory
+
+**Artifact Identity**:
+A stable logical identifier for a workflow artifact that persists across revisions and does not depend on file path alone.
+_Avoid_: Raw file path, transient filename, prompt snippet
+
+**Artifact Revision**:
+A monotonic version of an **Artifact Identity** used to track approval, integrity verification, and downstream consumption across revisions.
+_Avoid_: Raw hash identity alone, opaque store token, file timestamp
+
 **Adapter Capability Contract**:
 A harness-neutral declaration of which Weave behaviors a harness adapter can provide and with what level of readiness.
 _Avoid_: Adapter feature list, harness support matrix
@@ -106,6 +134,10 @@ _Avoid_: Any same-named agent, UI alias, unmanaged agent
 - A **SessionSnapshot** may describe harness session context for a **WorkflowInstance** without storing raw harness-private state.
 - **Plan Markdown** remains the source for task-list progress in plan-compatible workflows during dogfooding.
 - A **WorkflowInstance** may reference **Plan Markdown** as an artifact.
+- An **Execution Contract** defines execution semantics independently of the harness-specific command, skill, hook, or script mechanism that delivers them.
+- A **Canonical Execution Command** is one possible adapter-visible projection of the **Execution Contract** and should be evaluated through adapter capability/readiness policy rather than assumed to exist in every harness.
+- **Artifact Approval State** attaches to an **Artifact Identity** and a specific **Artifact Revision** rather than to a file path alone.
+- An **Artifact Revision** may carry integrity-verification metadata without storing raw artifact contents in the Runtime Store.
 - An **Adapter Capability Contract** describes adapter readiness independently of any specific workflow run.
 - **Capability Readiness** qualifies each behavior in an **Adapter Capability Contract**.
 - A **Readiness Profile** evaluates an **Adapter Capability Contract** for a particular use case.
@@ -124,6 +156,14 @@ _Avoid_: Any same-named agent, UI alias, unmanaged agent
 Prompt composition templates are a first-class engine feature. Every agent `prompt`, `prompt_file`, and `prompt_append` value is a **Prompt Template** rendered with a bounded **Template Context** before adapters receive the final **Composed Prompt**. The Template Context exposes agent identity, effective tool policy, and generated delegation data — including `delegation.section` (a Mermaid diagram plus compact bullets) and `delegation.mermaid` (the diagram alone). Prompt authors use `{{{delegation.section}}}` to control where delegation guidance appears; prompts that omit any `delegation.*` reference receive the fallback delegation section automatically. Static prompts without Mustache tags are unaffected.
 
 See [Prompt Composition Guide](docs/prompt-composition.md) and [ADR 0001](docs/adr/0001-prompt-composition-templates.md) for the full specification and rationale.
+
+## Workflow-First Execution Contract
+
+The **Execution Contract** is engine-owned and harness-agnostic. `startExecution` is the sole authorized entry point for durable execution — ordinary Loom conversation, session idle events, continuation hooks, and lifecycle observations (`observeSession`) are explicitly forbidden from implicitly starting durable execution. Adapters expose the contract through harness-appropriate delivery mechanisms (commands, skills, hooks, scripts, or UI) and call `startExecution` only after an explicit user-authorized trigger.
+
+This replaces the legacy `/start-work` → Tapestry flow, which was OpenCode-specific and could silently resume execution on `session.idle` events. The new model requires an explicit user-authorized transition at the execution boundary.
+
+See [ADR 0004 — Workflow-First Execution Contract](docs/adr/0004-workflow-first-execution-contract.md) and [Spec 22 — Workflow-First Execution](docs/specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md) for the full rationale and ownership matrix.
 
 ## Example dialogue
 

@@ -8,6 +8,11 @@
  * - Public import paths compile (imports from @weave/engine)
  * - SafeMetadata structural constraint
  * - Error factory helpers produce correct discriminants
+ * - ExecutionOperationKind discriminated union (Spec 22 Unit 1)
+ * - ExecutionAuthorizationSource — explicit authorization enforcement (Task 1.3)
+ * - inspectExecution read-only behavior (Spec 22 Unit 1)
+ * - observeSession boundary: cannot create instances or leases (ADR 0004)
+ * - Agent-, hook-, and event-initiated self-start paths are rejected (ADR 0004)
  */
 
 import { describe, expect, it } from "bun:test";
@@ -28,10 +33,17 @@ import {
   type DispatchStepInput,
   type DispatchStepOutput,
   dispatchStep,
+  EXECUTION_AUTHORIZATION_SOURCES,
+  EXECUTION_OPERATION_KINDS,
+  type ExecutionAuthorizationSource,
+  type ExecutionOperationKind,
   evaluateEffectiveToolPolicy,
   type HandleUserInterruptInput,
   type HandleUserInterruptOutput,
   handleUserInterrupt,
+  type InspectExecutionInput,
+  type InspectExecutionOutput,
+  inspectExecution,
   type LifecycleEffect,
   type LifecycleError,
   lifecycleLeaseConflictError,
@@ -55,6 +67,7 @@ import {
   type StepCompletionSignal,
   sanitizeMetadata,
   startExecution,
+  validateAuthorizationSource,
   type WorkflowExecutionContext,
 } from "@weave/engine";
 import { errAsync, okAsync } from "neverthrow";
@@ -6137,6 +6150,1342 @@ describe("completeStep: blocking issue fixes", () => {
     expect(result.error.type).toBe("validation");
     if (result.error.type === "validation") {
       expect(result.error.field).toBe("plan_name");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Spec 22 Unit 1: ExecutionOperationKind — explicit operations are first-class
+// ---------------------------------------------------------------------------
+
+describe("ExecutionOperationKind (Spec 22 Unit 1)", () => {
+  it("EXECUTION_OPERATION_KINDS contains all 5 explicit operation kinds", () => {
+    expect(EXECUTION_OPERATION_KINDS).toHaveLength(5);
+    expect(EXECUTION_OPERATION_KINDS).toContain("start");
+    expect(EXECUTION_OPERATION_KINDS).toContain("resume");
+    expect(EXECUTION_OPERATION_KINDS).toContain("pause");
+    expect(EXECUTION_OPERATION_KINDS).toContain("inspect");
+    expect(EXECUTION_OPERATION_KINDS).toContain("advance");
+  });
+
+  it("ExecutionOperationKind type covers start, resume, pause, inspect, advance", () => {
+    // Type-level check: all 5 variants are assignable to ExecutionOperationKind
+    const kinds: ExecutionOperationKind[] = [
+      "start",
+      "resume",
+      "pause",
+      "inspect",
+      "advance",
+    ];
+    expect(kinds).toHaveLength(5);
+    for (const kind of kinds) {
+      expect(EXECUTION_OPERATION_KINDS).toContain(kind);
+    }
+  });
+
+  it("observeSession is NOT in EXECUTION_OPERATION_KINDS (it is an observation, not an execution op)", () => {
+    // observeSession is a passive observation — not an execution operation.
+    // This test documents the boundary: calling observeSession never starts execution.
+    expect(EXECUTION_OPERATION_KINDS).not.toContain("observe");
+    expect(EXECUTION_OPERATION_KINDS).not.toContain("observeSession");
+  });
+
+  it("beforeTool is NOT in EXECUTION_OPERATION_KINDS (it is a policy evaluation, not an execution op)", () => {
+    expect(EXECUTION_OPERATION_KINDS).not.toContain("beforeTool");
+    expect(EXECUTION_OPERATION_KINDS).not.toContain("tool");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Spec 22 Unit 1: inspectExecution — read-only, no side effects
+// ---------------------------------------------------------------------------
+
+describe("inspectExecution (Spec 22 Unit 1)", () => {
+  it("InspectExecutionInput / InspectExecutionOutput type shapes are correct", () => {
+    const input: InspectExecutionInput = {
+      workflowInstanceId: wfId,
+      metadata: { source: "dashboard" },
+    };
+    expect(input.workflowInstanceId).toBe(wfId);
+    expect(input.metadata?.source).toBe("dashboard");
+
+    const output: InspectExecutionOutput = {
+      workflowInstanceId: wfId,
+      status: "running",
+      workflowName: "my-workflow",
+      goal: "Build a feature",
+      slug: "build-a-feature",
+      createdAt: "2026-06-02T00:00:00.000Z",
+      updatedAt: "2026-06-02T00:01:00.000Z",
+      artifacts: [],
+      hasActiveLease: true,
+    };
+    expect(output.status).toBe("running");
+    expect(output.hasActiveLease).toBe(true);
+  });
+
+  it("returns not_found for a non-existent workflow instance", async () => {
+    const store = createInMemoryRuntimeStore();
+    const nonExistentId = createWorkflowInstanceId("inspect-non-existent");
+
+    const result = await inspectExecution(
+      { workflowInstanceId: nonExistentId },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("not_found");
+    if (result.error.type === "not_found") {
+      expect(result.error.entity).toBe("WorkflowInstance");
+      expect(result.error.id).toBe(nonExistentId);
+    }
+  });
+
+  it("returns validation error for missing workflowInstanceId", async () => {
+    const store = createInMemoryRuntimeStore();
+    const result = await inspectExecution(
+      { workflowInstanceId: "" as typeof wfId },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+    if (result.error.type === "validation") {
+      expect(result.error.field).toBe("workflowInstanceId");
+    }
+  });
+
+  it("returns the current instance state without modifying it", async () => {
+    const store = createInMemoryRuntimeStore();
+
+    // Create and start an instance
+    const instanceId = createWorkflowInstanceId("inspect-readonly-001");
+    const startResult = await startExecution(
+      { workflowInstanceId: instanceId, ownerId: "owner-inspect-001" },
+      store,
+    );
+    expect(startResult.isOk()).toBe(true);
+    if (!startResult.isOk()) return;
+
+    // Inspect the instance
+    const inspectResult = await inspectExecution(
+      { workflowInstanceId: instanceId },
+      store,
+    );
+
+    expect(inspectResult.isOk()).toBe(true);
+    if (!inspectResult.isOk()) return;
+
+    const output = inspectResult.value;
+    expect(output.workflowInstanceId).toBe(instanceId);
+    expect(output.status).toBe("running");
+    expect(output.hasActiveLease).toBe(true);
+
+    // Verify the instance was NOT modified by inspectExecution
+    const instanceAfter = await store.instances.getById(instanceId);
+    expect(instanceAfter.isOk()).toBe(true);
+    if (!instanceAfter.isOk()) return;
+    expect(instanceAfter.value.status).toBe("running");
+  });
+
+  it("reports hasActiveLease: false when no active lease exists", async () => {
+    const store = createInMemoryRuntimeStore();
+
+    // Create an instance without starting execution (no lease)
+    const createResult = await store.instances.create({
+      workflowName: "inspect-no-lease",
+      goal: "inspect goal",
+      slug: "inspect-goal",
+    });
+    expect(createResult.isOk()).toBe(true);
+    if (!createResult.isOk()) return;
+    const instanceId = createResult.value.id;
+
+    const result = await inspectExecution(
+      { workflowInstanceId: instanceId },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    expect(result.value.hasActiveLease).toBe(false);
+    expect(result.value.status).toBe("created");
+  });
+
+  it("reports hasActiveLease: true when an active lease exists for this instance", async () => {
+    const store = createInMemoryRuntimeStore();
+    const instanceId = createWorkflowInstanceId("inspect-with-lease-001");
+
+    const startResult = await startExecution(
+      { workflowInstanceId: instanceId, ownerId: "owner-lease-check" },
+      store,
+    );
+    expect(startResult.isOk()).toBe(true);
+
+    const result = await inspectExecution(
+      { workflowInstanceId: instanceId },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    expect(result.value.hasActiveLease).toBe(true);
+  });
+
+  it("reports hasActiveLease: false when the active lease belongs to a different instance", async () => {
+    const store = createInMemoryRuntimeStore();
+
+    // Start instance A (acquires the active lease)
+    const instanceA = createWorkflowInstanceId("inspect-lease-a");
+    const startA = await startExecution(
+      { workflowInstanceId: instanceA, ownerId: "owner-a" },
+      store,
+    );
+    expect(startA.isOk()).toBe(true);
+
+    // Create instance B without starting it
+    const createB = await store.instances.create({
+      workflowName: "inspect-lease-b",
+      goal: "goal b",
+      slug: "goal-b",
+    });
+    expect(createB.isOk()).toBe(true);
+    if (!createB.isOk()) return;
+    const instanceB = createB.value.id;
+
+    // Inspect instance B — the active lease belongs to A, not B
+    const result = await inspectExecution(
+      { workflowInstanceId: instanceB },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    expect(result.value.hasActiveLease).toBe(false);
+  });
+
+  it("returns all instance fields in the output snapshot", async () => {
+    const store = createInMemoryRuntimeStore();
+    const instanceId = createWorkflowInstanceId("inspect-fields-001");
+
+    await startExecution(
+      { workflowInstanceId: instanceId, ownerId: "owner-fields" },
+      store,
+    );
+    await store.instances.update(instanceId, { currentStepName: "plan" });
+
+    const result = await inspectExecution(
+      { workflowInstanceId: instanceId },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    const output = result.value;
+    expect(output.workflowInstanceId).toBe(instanceId);
+    expect(output.status).toBe("running");
+    expect(output.currentStepName).toBe("plan");
+    expect(output.workflowName).toBeDefined();
+    expect(output.goal).toBeDefined();
+    expect(output.slug).toBeDefined();
+    expect(output.createdAt).toBeDefined();
+    expect(output.updatedAt).toBeDefined();
+    expect(Array.isArray(output.artifacts)).toBe(true);
+  });
+
+  it("does NOT create a WorkflowInstance or ExecutionLease (read-only invariant)", async () => {
+    const store = createInMemoryRuntimeStore();
+    const nonExistentId = createWorkflowInstanceId("inspect-no-create");
+
+    // inspectExecution on a non-existent instance returns not_found
+    // and MUST NOT create any instance or lease as a side effect
+    const result = await inspectExecution(
+      { workflowInstanceId: nonExistentId },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("not_found");
+
+    // Verify no instance was created
+    const instanceCheck = await store.instances.findById(nonExistentId);
+    expect(instanceCheck.isOk()).toBe(true);
+    expect(instanceCheck._unsafeUnwrap()).toBeNull();
+
+    // Verify no lease was created
+    const leaseCheck = await store.leases.findActive();
+    expect(leaseCheck.isOk()).toBe(true);
+    expect(leaseCheck._unsafeUnwrap()).toBeNull();
+  });
+
+  it("rejects metadata with denied field names", async () => {
+    const store = createInMemoryRuntimeStore();
+    const instanceId = createWorkflowInstanceId("inspect-meta-deny");
+    await store.instances.create({
+      workflowName: "wf",
+      goal: "g",
+      slug: "g",
+    });
+
+    const result = await inspectExecution(
+      {
+        workflowInstanceId: instanceId,
+        metadata: { token: "secret" } as Record<string, string>,
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Spec 22 Unit 1 / ADR 0004: observeSession boundary invariants
+// ---------------------------------------------------------------------------
+
+describe("observeSession boundary invariants (ADR 0004)", () => {
+  it("observeSession does NOT create a WorkflowInstance", async () => {
+    const store = createInMemoryRuntimeStore();
+    const newId = createWorkflowInstanceId("observe-no-create-001");
+
+    // observeSession with a non-existent workflowInstanceId still records a
+    // snapshot (the store does not enforce FK constraints in the in-memory impl),
+    // but it MUST NOT create a WorkflowInstance record.
+    await observeSession(
+      {
+        workflowInstanceId: newId,
+        leaseId,
+        harnessName: "opencode",
+        agentName: "loom",
+        sessionStatus: "active",
+      },
+      store,
+    );
+
+    // The instance must not have been created by observeSession
+    const instanceCheck = await store.instances.findById(newId);
+    expect(instanceCheck.isOk()).toBe(true);
+    expect(instanceCheck._unsafeUnwrap()).toBeNull();
+  });
+
+  it("observeSession does NOT acquire an ExecutionLease", async () => {
+    const store = createInMemoryRuntimeStore();
+
+    // Call observeSession — it must not acquire any lease
+    await observeSession(
+      {
+        workflowInstanceId: wfId,
+        leaseId,
+        harnessName: "opencode",
+        agentName: "loom",
+        sessionStatus: "active",
+      },
+      store,
+    );
+
+    // No lease should have been acquired
+    const leaseCheck = await store.leases.findActive();
+    expect(leaseCheck.isOk()).toBe(true);
+    expect(leaseCheck._unsafeUnwrap()).toBeNull();
+  });
+
+  it("observeSession does NOT transition WorkflowInstance status", async () => {
+    const store = createInMemoryRuntimeStore();
+
+    // Create an instance in 'created' status
+    const createResult = await store.instances.create({
+      workflowName: "observe-boundary-wf",
+      goal: "observe boundary goal",
+      slug: "observe-boundary-goal",
+    });
+    expect(createResult.isOk()).toBe(true);
+    if (!createResult.isOk()) return;
+    const instanceId = createResult.value.id;
+    expect(createResult.value.status).toBe("created");
+
+    // Call observeSession — it must not change the instance status
+    await observeSession(
+      {
+        workflowInstanceId: instanceId,
+        leaseId,
+        harnessName: "opencode",
+        agentName: "loom",
+        sessionStatus: "active",
+      },
+      store,
+    );
+
+    // Status must remain 'created' — observeSession cannot start execution
+    const instanceAfter = await store.instances.getById(instanceId);
+    expect(instanceAfter.isOk()).toBe(true);
+    if (!instanceAfter.isOk()) return;
+    expect(instanceAfter.value.status).toBe("created");
+  });
+
+  it("observeSession does NOT emit LifecycleEffect values", async () => {
+    const store = createInMemoryRuntimeStore();
+
+    const result = await observeSession(
+      {
+        workflowInstanceId: wfId,
+        leaseId,
+        harnessName: "opencode",
+        agentName: "loom",
+        sessionStatus: "active",
+      },
+      store,
+    );
+
+    // observeSession returns ObserveSessionOutput — no effects field
+    if (result.isOk()) {
+      const output = result.value;
+      // The output has only snapshotId — no effects
+      expect("effects" in output).toBe(false);
+      expect(output.snapshotId).toBeDefined();
+    }
+    // Whether ok or err, there are no effects emitted
+  });
+
+  it("startExecution is the only path that creates a WorkflowInstance and acquires a lease", async () => {
+    const store = createInMemoryRuntimeStore();
+    const instanceId = createWorkflowInstanceId("boundary-only-start-001");
+
+    // Before startExecution: no instance, no lease
+    const beforeInstance = await store.instances.findById(instanceId);
+    expect(beforeInstance._unsafeUnwrap()).toBeNull();
+    const beforeLease = await store.leases.findActive();
+    expect(beforeLease._unsafeUnwrap()).toBeNull();
+
+    // Call observeSession — must not create instance or lease
+    await observeSession(
+      {
+        workflowInstanceId: instanceId,
+        leaseId,
+        harnessName: "opencode",
+        agentName: "loom",
+        sessionStatus: "active",
+      },
+      store,
+    );
+
+    const afterObserveInstance = await store.instances.findById(instanceId);
+    expect(afterObserveInstance._unsafeUnwrap()).toBeNull();
+    const afterObserveLease = await store.leases.findActive();
+    expect(afterObserveLease._unsafeUnwrap()).toBeNull();
+
+    // Only startExecution creates the instance and lease
+    const startResult = await startExecution(
+      { workflowInstanceId: instanceId, ownerId: "owner-boundary-001" },
+      store,
+    );
+    expect(startResult.isOk()).toBe(true);
+
+    const afterStartInstance = await store.instances.findById(instanceId);
+    expect(afterStartInstance._unsafeUnwrap()).not.toBeNull();
+    const afterStartLease = await store.leases.findActive();
+    expect(afterStartLease._unsafeUnwrap()).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ExecutionAuthorizationSource — type and constant tests (Task 1.3)
+// ---------------------------------------------------------------------------
+
+describe("ExecutionAuthorizationSource type and constants", () => {
+  it("EXECUTION_AUTHORIZATION_SOURCES contains all 4 valid source values", () => {
+    expect(EXECUTION_AUTHORIZATION_SOURCES).toHaveLength(4);
+    expect(EXECUTION_AUTHORIZATION_SOURCES).toContain("user");
+    expect(EXECUTION_AUTHORIZATION_SOURCES).toContain("agent");
+    expect(EXECUTION_AUTHORIZATION_SOURCES).toContain("hook");
+    expect(EXECUTION_AUTHORIZATION_SOURCES).toContain("event");
+  });
+
+  it("ExecutionAuthorizationSource type accepts all 4 variants", () => {
+    const sources: ExecutionAuthorizationSource[] = [
+      "user",
+      "agent",
+      "hook",
+      "event",
+    ];
+    expect(sources).toHaveLength(4);
+  });
+
+  it("'user' is the only authorized source — all others are forbidden", () => {
+    const forbidden: ExecutionAuthorizationSource[] = [
+      "agent",
+      "hook",
+      "event",
+    ];
+    for (const source of forbidden) {
+      const result = validateAuthorizationSource(source, "startExecution");
+      expect(result.isErr()).toBe(true);
+      if (!result.isErr()) continue;
+      expect(result.error.type).toBe("policy_decision");
+      if (result.error.type === "policy_decision") {
+        expect(result.error.rule).toBe("authorizationSource");
+        expect(result.error.message).toContain(source);
+        expect(result.error.message).toContain("startExecution");
+      }
+    }
+  });
+
+  it("validateAuthorizationSource: 'user' returns ok", () => {
+    const result = validateAuthorizationSource("user", "startExecution");
+    expect(result.isOk()).toBe(true);
+  });
+
+  it("validateAuthorizationSource: 'user' returns ok for resumeExecution", () => {
+    const result = validateAuthorizationSource("user", "resumeExecution");
+    expect(result.isOk()).toBe(true);
+  });
+
+  it("validateAuthorizationSource: 'agent' returns policy_decision error for startExecution", () => {
+    const result = validateAuthorizationSource("agent", "startExecution");
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("policy_decision");
+    expect(result.error.message).toContain("agent");
+    expect(result.error.message).toContain("startExecution");
+  });
+
+  it("validateAuthorizationSource: 'hook' returns policy_decision error for resumeExecution", () => {
+    const result = validateAuthorizationSource("hook", "resumeExecution");
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("policy_decision");
+    expect(result.error.message).toContain("hook");
+    expect(result.error.message).toContain("resumeExecution");
+  });
+
+  it("validateAuthorizationSource: 'event' returns policy_decision error", () => {
+    const result = validateAuthorizationSource("event", "startExecution");
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("policy_decision");
+    expect(result.error.message).toContain("event");
+  });
+
+  it("error message references ADR 0004", () => {
+    const result = validateAuthorizationSource("hook", "startExecution");
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.message).toContain("0004");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// startExecution — explicit authorization enforcement (Task 1.3 / ADR 0004)
+// ---------------------------------------------------------------------------
+
+describe("startExecution: explicit authorization enforcement (ADR 0004)", () => {
+  it("succeeds with authorizationSource: 'user' (explicit)", async () => {
+    const store = createInMemoryRuntimeStore();
+    const instanceId = createWorkflowInstanceId("auth-user-start-001");
+
+    const result = await startExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: "session-auth-user",
+        authorizationSource: "user",
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    expect(typeof result.value.leaseId).toBe("string");
+  });
+
+  it("succeeds when authorizationSource is omitted (backward-compat default: 'user')", async () => {
+    const store = createInMemoryRuntimeStore();
+    const instanceId = createWorkflowInstanceId("auth-omit-start-001");
+
+    const result = await startExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: "session-auth-omit",
+        // authorizationSource omitted — defaults to "user"
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+  });
+
+  it("rejects agent-initiated self-start: authorizationSource: 'agent'", async () => {
+    const store = createInMemoryRuntimeStore();
+    const instanceId = createWorkflowInstanceId("auth-agent-start-001");
+
+    const result = await startExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: "session-agent-self-start",
+        authorizationSource: "agent",
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("policy_decision");
+    if (result.error.type === "policy_decision") {
+      expect(result.error.rule).toBe("authorizationSource");
+      expect(result.error.message).toContain("agent");
+    }
+
+    // No instance or lease should have been created
+    const instanceResult = await store.instances.findById(instanceId);
+    expect(instanceResult.isOk()).toBe(true);
+    if (!instanceResult.isOk()) return;
+    expect(instanceResult.value).toBeNull();
+
+    const leaseResult = await store.leases.findActive();
+    expect(leaseResult.isOk()).toBe(true);
+    if (!leaseResult.isOk()) return;
+    expect(leaseResult.value).toBeNull();
+  });
+
+  it("rejects hook-initiated self-start: authorizationSource: 'hook'", async () => {
+    const store = createInMemoryRuntimeStore();
+    const instanceId = createWorkflowInstanceId("auth-hook-start-001");
+
+    const result = await startExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: "session-hook-self-start",
+        authorizationSource: "hook",
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("policy_decision");
+    if (result.error.type === "policy_decision") {
+      expect(result.error.rule).toBe("authorizationSource");
+      expect(result.error.message).toContain("hook");
+    }
+
+    // Fail closed: no instance or lease created
+    const instanceResult = await store.instances.findById(instanceId);
+    expect(instanceResult._unsafeUnwrap()).toBeNull();
+    const leaseResult = await store.leases.findActive();
+    expect(leaseResult._unsafeUnwrap()).toBeNull();
+  });
+
+  it("rejects event-initiated self-start: authorizationSource: 'event'", async () => {
+    const store = createInMemoryRuntimeStore();
+    const instanceId = createWorkflowInstanceId("auth-event-start-001");
+
+    const result = await startExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: "session-event-self-start",
+        authorizationSource: "event",
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("policy_decision");
+    if (result.error.type === "policy_decision") {
+      expect(result.error.rule).toBe("authorizationSource");
+      expect(result.error.message).toContain("event");
+    }
+
+    // Fail closed: no instance or lease created
+    const instanceResult = await store.instances.findById(instanceId);
+    expect(instanceResult._unsafeUnwrap()).toBeNull();
+    const leaseResult = await store.leases.findActive();
+    expect(leaseResult._unsafeUnwrap()).toBeNull();
+  });
+
+  it("authorization check fires BEFORE workflow context validation (fail-fast order)", async () => {
+    // If authorizationSource is rejected, the engine must not proceed to
+    // validate the workflow context or create any store records.
+    const store = createInMemoryRuntimeStore();
+    const instanceId = createWorkflowInstanceId("auth-order-start-001");
+
+    const result = await startExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: "session-order-test",
+        authorizationSource: "agent",
+        context: {
+          workflowName: "does-not-exist",
+          goal: "test",
+          slug: "test",
+          workflows: {},
+        },
+      },
+      store,
+    );
+
+    // Must fail with policy_decision (authorization), not not_found (workflow)
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("policy_decision");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resumeExecution — explicit authorization enforcement (Task 1.3 / ADR 0004)
+// ---------------------------------------------------------------------------
+
+describe("resumeExecution: explicit authorization enforcement (ADR 0004)", () => {
+  /**
+   * Helper: create a paused workflow instance for resume tests.
+   */
+  async function createPausedInstance(
+    store: ReturnType<typeof createInMemoryRuntimeStore>,
+    suffix: string,
+  ) {
+    const instanceId = createWorkflowInstanceId(`auth-resume-wf-${suffix}`);
+    // Start with user authorization, then pause
+    const startResult = await startExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: `owner-${suffix}`,
+        authorizationSource: "user",
+      },
+      store,
+    );
+    if (!startResult.isOk()) throw new Error("startExecution failed");
+    const { leaseId: activeLeaseId } = startResult.value;
+
+    // Pause the instance
+    await store.instances.update(instanceId, { status: "paused" });
+    // Release the lease so resume can acquire a new one
+    await store.leases.release(activeLeaseId, createOwnerId(`owner-${suffix}`));
+
+    return instanceId;
+  }
+
+  it("succeeds with authorizationSource: 'user' (explicit)", async () => {
+    const store = createInMemoryRuntimeStore();
+    const instanceId = await createPausedInstance(store, "user-resume");
+
+    const result = await resumeExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: "session-resume-user",
+        authorizationSource: "user",
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    expect(typeof result.value.leaseId).toBe("string");
+  });
+
+  it("succeeds when authorizationSource is omitted (backward-compat default: 'user')", async () => {
+    const store = createInMemoryRuntimeStore();
+    const instanceId = await createPausedInstance(store, "omit-resume");
+
+    const result = await resumeExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: "session-resume-omit",
+        // authorizationSource omitted — defaults to "user"
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+  });
+
+  it("rejects hook-initiated implicit resume: authorizationSource: 'hook'", async () => {
+    // This is the ADR 0004 scenario: the legacy workContinuation hook fired
+    // on session.idle and implicitly resumed Tapestry. That path is now
+    // rejected by the engine regardless of adapter intent.
+    const store = createInMemoryRuntimeStore();
+    const instanceId = await createPausedInstance(store, "hook-resume");
+
+    const result = await resumeExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: "session-hook-resume",
+        authorizationSource: "hook",
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("policy_decision");
+    if (result.error.type === "policy_decision") {
+      expect(result.error.rule).toBe("authorizationSource");
+      expect(result.error.message).toContain("hook");
+      expect(result.error.message).toContain("resumeExecution");
+    }
+
+    // Instance must remain paused — no state change on rejection
+    const instanceResult = await store.instances.getById(instanceId);
+    expect(instanceResult.isOk()).toBe(true);
+    if (!instanceResult.isOk()) return;
+    expect(instanceResult.value.status).toBe("paused");
+  });
+
+  it("rejects agent-initiated resume: authorizationSource: 'agent'", async () => {
+    const store = createInMemoryRuntimeStore();
+    const instanceId = await createPausedInstance(store, "agent-resume");
+
+    const result = await resumeExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: "session-agent-resume",
+        authorizationSource: "agent",
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("policy_decision");
+    if (result.error.type === "policy_decision") {
+      expect(result.error.rule).toBe("authorizationSource");
+      expect(result.error.message).toContain("agent");
+    }
+
+    // Instance must remain paused — fail closed
+    const instanceResult = await store.instances.getById(instanceId);
+    expect(instanceResult.isOk()).toBe(true);
+    if (!instanceResult.isOk()) return;
+    expect(instanceResult.value.status).toBe("paused");
+  });
+
+  it("rejects event-initiated resume: authorizationSource: 'event'", async () => {
+    const store = createInMemoryRuntimeStore();
+    const instanceId = await createPausedInstance(store, "event-resume");
+
+    const result = await resumeExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: "session-event-resume",
+        authorizationSource: "event",
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("policy_decision");
+    if (result.error.type === "policy_decision") {
+      expect(result.error.rule).toBe("authorizationSource");
+      expect(result.error.message).toContain("event");
+    }
+  });
+
+  it("authorization check fires BEFORE instance lookup (fail-fast order)", async () => {
+    // Even for a non-existent instance, the authorization check must fire first.
+    const store = createInMemoryRuntimeStore();
+    const nonExistentId = createWorkflowInstanceId("auth-order-resume-001");
+
+    const result = await resumeExecution(
+      {
+        workflowInstanceId: nonExistentId,
+        ownerId: "session-order-resume",
+        authorizationSource: "hook",
+      },
+      store,
+    );
+
+    // Must fail with policy_decision (authorization), not not_found (instance)
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("policy_decision");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// observeSession — side-effect-free boundary (Task 1.3 / ADR 0004)
+// ---------------------------------------------------------------------------
+
+describe("observeSession: side-effect-free boundary (ADR 0004)", () => {
+  it("observeSession does not accept authorizationSource — it is not an execution operation", () => {
+    // ObserveSessionInput must NOT have an authorizationSource field.
+    // This is a structural test: the type should not include the field.
+    const input: ObserveSessionInput = {
+      workflowInstanceId: createWorkflowInstanceId("obs-boundary-001"),
+      leaseId: createExecutionLeaseId("lease-obs-001"),
+      harnessName: "opencode",
+      agentName: "loom",
+      sessionStatus: "active",
+    };
+
+    // authorizationSource must NOT be a field on ObserveSessionInput
+    expect("authorizationSource" in input).toBe(false);
+  });
+
+  it("observeSession called from an idle-hook context does not start execution", async () => {
+    // Simulates the legacy workContinuation hook scenario:
+    // An idle hook calls observeSession — this must NOT create a WorkflowInstance
+    // or acquire an ExecutionLease, regardless of how many times it is called.
+    const store = createInMemoryRuntimeStore();
+    const instanceId = createWorkflowInstanceId("obs-idle-hook-001");
+    const leaseId = createExecutionLeaseId("lease-idle-hook-001");
+
+    // Call observeSession multiple times (simulating repeated idle events)
+    for (let i = 0; i < 3; i++) {
+      await observeSession(
+        {
+          workflowInstanceId: instanceId,
+          leaseId,
+          harnessName: "opencode",
+          agentName: "loom",
+          sessionStatus: "idle",
+          metadata: { idleCount: i },
+        },
+        store,
+      );
+    }
+
+    // No WorkflowInstance should have been created
+    const instanceResult = await store.instances.findById(instanceId);
+    expect(instanceResult.isOk()).toBe(true);
+    if (!instanceResult.isOk()) return;
+    expect(instanceResult.value).toBeNull();
+
+    // No ExecutionLease should have been acquired
+    const leaseResult = await store.leases.findActive();
+    expect(leaseResult.isOk()).toBe(true);
+    if (!leaseResult.isOk()) return;
+    expect(leaseResult.value).toBeNull();
+  });
+
+  it("observeSession called from a continuation-hook context does not resume execution", async () => {
+    // Simulates the legacy compaction-recovery scenario:
+    // A continuation hook calls observeSession — this must NOT transition
+    // a paused instance to running or acquire a new lease.
+    const store = createInMemoryRuntimeStore();
+
+    // Create a paused instance via the authorized path
+    const instanceId = createWorkflowInstanceId("obs-continuation-001");
+    const startResult = await startExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: "owner-continuation",
+        authorizationSource: "user",
+      },
+      store,
+    );
+    expect(startResult.isOk()).toBe(true);
+    if (!startResult.isOk()) return;
+
+    await store.instances.update(instanceId, { status: "paused" });
+    await store.leases.release(
+      startResult.value.leaseId,
+      createOwnerId("owner-continuation"),
+    );
+
+    // Verify the instance is paused and no active lease exists
+    const beforeInstance = await store.instances.getById(instanceId);
+    expect(beforeInstance._unsafeUnwrap().status).toBe("paused");
+    const beforeLease = await store.leases.findActive();
+    expect(beforeLease._unsafeUnwrap()).toBeNull();
+
+    // Call observeSession (simulating a continuation hook)
+    await observeSession(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: createExecutionLeaseId("fake-continuation-lease"),
+        harnessName: "opencode",
+        agentName: "tapestry",
+        sessionStatus: "active",
+        metadata: { source: "continuation-hook" },
+      },
+      store,
+    );
+
+    // Instance must still be paused — observeSession cannot resume execution
+    const afterInstance = await store.instances.getById(instanceId);
+    expect(afterInstance._unsafeUnwrap().status).toBe("paused");
+
+    // No new lease should have been acquired
+    const afterLease = await store.leases.findActive();
+    expect(afterLease._unsafeUnwrap()).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 1.4: No implicit execution — ordinary conversation, idle, and session
+// observation paths (ADR 0004 / Spec 22 Unit 1)
+// ---------------------------------------------------------------------------
+
+describe("No implicit execution: ordinary conversation-adjacent paths (ADR 0004)", () => {
+  it("ordinary Loom conversation: observeSession with sessionStatus 'active' does not create a WorkflowInstance", async () => {
+    // Simulates the most common path: Loom is responding to a user message
+    // in a normal conversation (no workflow). The adapter calls observeSession
+    // to record the session state. This MUST NOT create a WorkflowInstance.
+    const store = createInMemoryRuntimeStore();
+    const conversationInstanceId = createWorkflowInstanceId(
+      "conv-loom-active-001",
+    );
+    const conversationLeaseId = createExecutionLeaseId("conv-lease-001");
+
+    await observeSession(
+      {
+        workflowInstanceId: conversationInstanceId,
+        leaseId: conversationLeaseId,
+        harnessName: "opencode",
+        agentName: "loom",
+        sessionStatus: "active",
+        metadata: { turnIndex: 1 },
+      },
+      store,
+    );
+
+    // No WorkflowInstance must have been created
+    const instanceResult = await store.instances.findById(
+      conversationInstanceId,
+    );
+    expect(instanceResult.isOk()).toBe(true);
+    expect(instanceResult._unsafeUnwrap()).toBeNull();
+  });
+
+  it("ordinary Loom conversation: observeSession with sessionStatus 'active' does not acquire an ExecutionLease", async () => {
+    // Same scenario as above — verifies the lease side of the invariant.
+    const store = createInMemoryRuntimeStore();
+
+    await observeSession(
+      {
+        workflowInstanceId: createWorkflowInstanceId("conv-loom-lease-001"),
+        leaseId: createExecutionLeaseId("conv-lease-002"),
+        harnessName: "opencode",
+        agentName: "loom",
+        sessionStatus: "active",
+        metadata: { turnIndex: 2 },
+      },
+      store,
+    );
+
+    // No ExecutionLease must have been acquired
+    const leaseResult = await store.leases.findActive();
+    expect(leaseResult.isOk()).toBe(true);
+    expect(leaseResult._unsafeUnwrap()).toBeNull();
+  });
+
+  it("repeated conversation turns: multiple observeSession calls do not accumulate instances or leases", async () => {
+    // Simulates a multi-turn conversation where the adapter calls observeSession
+    // after each turn. None of these calls should create instances or leases.
+    const store = createInMemoryRuntimeStore();
+    const conversationId = createWorkflowInstanceId("conv-multi-turn-001");
+    const leaseRef = createExecutionLeaseId("conv-lease-multi-001");
+
+    for (let turn = 0; turn < 5; turn++) {
+      await observeSession(
+        {
+          workflowInstanceId: conversationId,
+          leaseId: leaseRef,
+          harnessName: "opencode",
+          agentName: "loom",
+          sessionStatus: "active",
+          metadata: { turnIndex: turn },
+        },
+        store,
+      );
+    }
+
+    // After 5 turns, still no instance or lease
+    const instanceResult = await store.instances.findById(conversationId);
+    expect(instanceResult._unsafeUnwrap()).toBeNull();
+
+    const leaseResult = await store.leases.findActive();
+    expect(leaseResult._unsafeUnwrap()).toBeNull();
+  });
+
+  it("inspectExecution called from a conversation context does not create instances or leases", async () => {
+    // An adapter may call inspectExecution during a conversation to check
+    // whether a workflow is running. This is a read-only operation and must
+    // not create any state even when the instance does not exist.
+    const store = createInMemoryRuntimeStore();
+    const nonExistentId = createWorkflowInstanceId("conv-inspect-001");
+
+    // inspectExecution on a non-existent instance returns not_found
+    const result = await inspectExecution(
+      { workflowInstanceId: nonExistentId },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("not_found");
+
+    // No instance or lease created as a side effect
+    const instanceCheck = await store.instances.findById(nonExistentId);
+    expect(instanceCheck._unsafeUnwrap()).toBeNull();
+
+    const leaseCheck = await store.leases.findActive();
+    expect(leaseCheck._unsafeUnwrap()).toBeNull();
+  });
+
+  it("idle session observation: observeSession with sessionStatus 'idle' does not create instances or leases", async () => {
+    // Simulates the session going idle between conversation turns.
+    // The adapter may call observeSession with 'idle' status — this must not
+    // trigger any execution state changes.
+    const store = createInMemoryRuntimeStore();
+    const idleId = createWorkflowInstanceId("conv-idle-obs-001");
+
+    await observeSession(
+      {
+        workflowInstanceId: idleId,
+        leaseId: createExecutionLeaseId("conv-idle-lease-001"),
+        harnessName: "opencode",
+        agentName: "loom",
+        sessionStatus: "idle",
+      },
+      store,
+    );
+
+    const instanceResult = await store.instances.findById(idleId);
+    expect(instanceResult._unsafeUnwrap()).toBeNull();
+
+    const leaseResult = await store.leases.findActive();
+    expect(leaseResult._unsafeUnwrap()).toBeNull();
+  });
+
+  it("terminated session observation: observeSession with sessionStatus 'terminated' does not create instances or leases", async () => {
+    // Simulates the session ending. The adapter calls observeSession with
+    // 'terminated' status — this must not create any execution state.
+    const store = createInMemoryRuntimeStore();
+    const terminatedId = createWorkflowInstanceId("conv-terminated-obs-001");
+
+    await observeSession(
+      {
+        workflowInstanceId: terminatedId,
+        leaseId: createExecutionLeaseId("conv-terminated-lease-001"),
+        harnessName: "claude-code",
+        agentName: "shuttle",
+        sessionStatus: "terminated",
+      },
+      store,
+    );
+
+    const instanceResult = await store.instances.findById(terminatedId);
+    expect(instanceResult._unsafeUnwrap()).toBeNull();
+
+    const leaseResult = await store.leases.findActive();
+    expect(leaseResult._unsafeUnwrap()).toBeNull();
+  });
+
+  it("conversation path cannot bypass the execution boundary: observeSession + inspectExecution together do not start execution", async () => {
+    // Verifies that combining observation and inspection (the two read-side
+    // operations available during ordinary conversation) cannot implicitly
+    // start durable execution. Only startExecution (with user authorization)
+    // may do so.
+    const store = createInMemoryRuntimeStore();
+    const id = createWorkflowInstanceId("conv-combined-obs-inspect-001");
+    const leaseRef = createExecutionLeaseId("conv-combined-lease-001");
+
+    // Step 1: observe the session (as an adapter would during conversation)
+    await observeSession(
+      {
+        workflowInstanceId: id,
+        leaseId: leaseRef,
+        harnessName: "opencode",
+        agentName: "loom",
+        sessionStatus: "active",
+      },
+      store,
+    );
+
+    // Step 2: inspect execution state (as an adapter would to check status)
+    const inspectResult = await inspectExecution(
+      { workflowInstanceId: id },
+      store,
+    );
+
+    // inspectExecution returns not_found — no instance was created by observeSession
+    expect(inspectResult.isErr()).toBe(true);
+    if (!inspectResult.isErr()) return;
+    expect(inspectResult.error.type).toBe("not_found");
+
+    // Confirm: no instance, no lease
+    const instanceCheck = await store.instances.findById(id);
+    expect(instanceCheck._unsafeUnwrap()).toBeNull();
+
+    const leaseCheck = await store.leases.findActive();
+    expect(leaseCheck._unsafeUnwrap()).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// beforeTool — side-effect-free boundary (Task 1.3 / ADR 0004)
+// ---------------------------------------------------------------------------
+
+describe("beforeTool: side-effect-free boundary (ADR 0004)", () => {
+  it("beforeTool does not accept authorizationSource — it is not an execution operation", () => {
+    // BeforeToolInput must NOT have an authorizationSource field.
+    const input: BeforeToolInput = {
+      workflowInstanceId: createWorkflowInstanceId("bt-boundary-001"),
+      leaseId: createExecutionLeaseId("lease-bt-001"),
+      agentName: "shuttle",
+      toolCapability: "read",
+      toolName: "read_file",
+      effectiveToolPolicy: evaluateEffectiveToolPolicy({ read: "allow" }),
+    };
+
+    expect("authorizationSource" in input).toBe(false);
+  });
+
+  it("beforeTool does not create WorkflowInstances or acquire leases", async () => {
+    // beforeTool is a pure policy evaluation — it must not touch the store.
+    // We verify this by calling it without a store and confirming it succeeds.
+    const input: BeforeToolInput = {
+      workflowInstanceId: createWorkflowInstanceId("bt-no-store-001"),
+      leaseId: createExecutionLeaseId("lease-bt-no-store-001"),
+      agentName: "shuttle",
+      toolCapability: "write",
+      toolName: "write_file",
+      effectiveToolPolicy: evaluateEffectiveToolPolicy({ write: "allow" }),
+    };
+
+    // beforeTool takes no store argument — it is a pure policy evaluation
+    const result = await beforeTool(input);
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    expect(result.value.decision).toBe("allow");
+  });
+
+  it("beforeTool called repeatedly does not accumulate state", async () => {
+    // Calling beforeTool multiple times must produce the same result each time.
+    const policy = evaluateEffectiveToolPolicy({ execute: "ask" });
+    const input: BeforeToolInput = {
+      workflowInstanceId: createWorkflowInstanceId("bt-idempotent-001"),
+      leaseId: createExecutionLeaseId("lease-bt-idempotent-001"),
+      agentName: "shuttle",
+      toolCapability: "execute",
+      toolName: "run_command",
+      effectiveToolPolicy: policy,
+    };
+
+    const results = await Promise.all([
+      beforeTool(input),
+      beforeTool(input),
+      beforeTool(input),
+    ]);
+
+    for (const result of results) {
+      expect(result.isOk()).toBe(true);
+      if (!result.isOk()) continue;
+      expect(result.value.decision).toBe("ask");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fail-closed invariant — execution boundary (Task 1.3 / ADR 0004)
+// ---------------------------------------------------------------------------
+
+describe("Fail-closed invariant: execution boundary (ADR 0004)", () => {
+  it("startExecution with forbidden source fails closed — no partial state written", async () => {
+    // When authorization is rejected, the engine must not write any partial
+    // state to the store. This is the "fail closed" invariant.
+    const store = createInMemoryRuntimeStore();
+    const instanceId = createWorkflowInstanceId("fail-closed-start-001");
+
+    const result = await startExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: "session-fail-closed",
+        authorizationSource: "agent",
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+
+    // No instance written
+    const instanceResult = await store.instances.findById(instanceId);
+    expect(instanceResult._unsafeUnwrap()).toBeNull();
+
+    // No lease acquired
+    const leaseResult = await store.leases.findActive();
+    expect(leaseResult._unsafeUnwrap()).toBeNull();
+  });
+
+  it("resumeExecution with forbidden source fails closed — instance status unchanged", async () => {
+    const store = createInMemoryRuntimeStore();
+
+    // Create a paused instance via the authorized path
+    const instanceId = createWorkflowInstanceId("fail-closed-resume-001");
+    const startResult = await startExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: "owner-fail-closed",
+        authorizationSource: "user",
+      },
+      store,
+    );
+    expect(startResult.isOk()).toBe(true);
+    if (!startResult.isOk()) return;
+
+    await store.instances.update(instanceId, { status: "paused" });
+    await store.leases.release(
+      startResult.value.leaseId,
+      createOwnerId("owner-fail-closed"),
+    );
+
+    // Attempt hook-initiated resume — must fail closed
+    const resumeResult = await resumeExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: "session-hook-fail-closed",
+        authorizationSource: "hook",
+      },
+      store,
+    );
+
+    expect(resumeResult.isErr()).toBe(true);
+    if (!resumeResult.isErr()) return;
+    expect(resumeResult.error.type).toBe("policy_decision");
+
+    // Instance must still be paused — no state change
+    const instanceResult = await store.instances.getById(instanceId);
+    expect(instanceResult._unsafeUnwrap().status).toBe("paused");
+
+    // No new lease acquired
+    const leaseResult = await store.leases.findActive();
+    expect(leaseResult._unsafeUnwrap()).toBeNull();
+  });
+
+  it("all three forbidden sources produce policy_decision errors (not validation or not_found)", async () => {
+    // The error type must be policy_decision — not validation or not_found.
+    // This distinguishes authorization failures from input errors.
+    const store = createInMemoryRuntimeStore();
+    const forbiddenSources: ExecutionAuthorizationSource[] = [
+      "agent",
+      "hook",
+      "event",
+    ];
+
+    for (const source of forbiddenSources) {
+      const instanceId = createWorkflowInstanceId(
+        `fail-closed-type-${source}-001`,
+      );
+      const result = await startExecution(
+        {
+          workflowInstanceId: instanceId,
+          ownerId: `session-${source}`,
+          authorizationSource: source,
+        },
+        store,
+      );
+
+      expect(result.isErr()).toBe(true);
+      if (!result.isErr()) continue;
+      expect(result.error.type).toBe("policy_decision");
+      // Must NOT be validation or not_found
+      expect(result.error.type).not.toBe("validation");
+      expect(result.error.type).not.toBe("not_found");
     }
   });
 });
