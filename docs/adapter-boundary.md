@@ -350,11 +350,11 @@ for the formal spec and proof artifacts.
 
 ## Execution Lifecycle Surface
 
-> **Issue:** [#44 — Minimal Execution Lifecycle Surface](https://github.com/josevalim/weave/issues/44) · **Spec:** [Spec 13 — Minimal Execution Lifecycle Surface](specs/13-spec-minimal-execution-lifecycle-surface/13-spec-minimal-execution-lifecycle-surface.md) · **Spec:** [Spec 22 — Workflow-First Execution](specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md) · **ADR:** [ADR 0004 — Workflow-First Execution Contract](adr/0004-workflow-first-execution-contract.md)
+> **Issue:** [#44 — Minimal Execution Lifecycle Surface](https://github.com/josevalim/weave/issues/44) · **Spec:** [Spec 13 — Minimal Execution Lifecycle Surface](specs/13-spec-minimal-execution-lifecycle-surface/13-spec-minimal-execution-lifecycle-surface.md) · **Spec:** [Spec 22 — Workflow-First Execution](specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md) · **Spec:** [Spec 24 — Execution Lifecycle Decomposition](specs/24-spec-execution-lifecycle-decomposition/24-spec-execution-lifecycle-decomposition.md) · **ADR:** [ADR 0004 — Workflow-First Execution Contract](adr/0004-workflow-first-execution-contract.md)
 
 The **Execution Lifecycle Surface** is the engine-owned abstract API that adapters call after mapping concrete harness events into normalized lifecycle inputs. It supersedes earlier placeholder `registerHook()` designs.
 
-All types are exported from `@weave/engine` under `packages/engine/src/execution-lifecycle.ts`.
+All types are exported from `@weave/engine`. The implementation lives in `packages/engine/src/execution-lifecycle/` (decomposed into focused modules by [Spec 24](specs/24-spec-execution-lifecycle-decomposition/24-spec-execution-lifecycle-decomposition.md)); `packages/engine/src/execution-lifecycle.ts` is a compatibility barrel that re-exports all public symbols.
 
 ### The 8 Lifecycle Methods
 
@@ -488,7 +488,7 @@ Adapter (harness event) → lifecycle method → engine policy → Runtime Store
                                                                               Adapter materialises effects
 ```
 
-See [`packages/engine/src/execution-lifecycle.ts`](../packages/engine/src/execution-lifecycle.ts) for the full type definitions and factory helpers.
+See [`packages/engine/src/execution-lifecycle/`](../packages/engine/src/execution-lifecycle/) for the full type definitions and factory helpers (decomposed by [Spec 24](specs/24-spec-execution-lifecycle-decomposition/24-spec-execution-lifecycle-decomposition.md)); `packages/engine/src/execution-lifecycle.ts` is the compatibility barrel.
 
 ---
 
@@ -600,7 +600,7 @@ The engine must not write harness config files, spawn harness agents, discover h
 
 > **Spec:** [Spec 19 — Plan State Provider](specs/19-spec-plan-state-provider/19-spec-plan-state-provider.md)
 
-The **Plan State Provider** is the engine-owned abstract interface that `completeStep` uses to query plan file state when a workflow step's completion method is `"plan_created"` or `"plan_complete"`. It replaces the previous direct `Bun.file()` calls inside `execution-lifecycle.ts`, which were a boundary violation.
+The **Plan State Provider** is the engine-owned abstract interface that `completeStep` uses to query plan file state when a workflow step's completion method is `"plan_created"` or `"plan_complete"`. It replaces the previous direct `Bun.file()` calls inside the execution lifecycle, which were a boundary violation.
 
 All types are exported from `@weave/engine` under `packages/engine/src/plan-state-provider.ts`.
 

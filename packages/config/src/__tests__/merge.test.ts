@@ -1273,9 +1273,9 @@ describe("mergeConfigsResult — before-plan extension surface ownership", () =>
 
     const merged = result._unsafeUnwrap();
     // extend_before_plan must be present in the merged config for the engine to read
-    const ebp = merged.extend_before_plan["__default__"];
+    const ebp = merged.extend_before_plan;
     expect(ebp).toBeDefined();
-    expect(ebp?.steps).toContain("spec-review");
+    expect(ebp.steps).toContain("spec-review");
   });
 
   it("(bp-5) extend_before_plan in base only: present in merged result", () => {
@@ -1290,9 +1290,9 @@ describe("mergeConfigsResult — before-plan extension surface ownership", () =>
     expect(result.isOk()).toBe(true);
 
     const merged = result._unsafeUnwrap();
-    const ebp = merged.extend_before_plan["__default__"];
+    const ebp = merged.extend_before_plan;
     expect(ebp).toBeDefined();
-    expect(ebp?.steps).toContain("requirements");
+    expect(ebp.steps).toContain("requirements");
   });
 
   it("(bp-6) extend_before_plan union-merge: steps from both layers combined, override first", () => {
@@ -1308,14 +1308,14 @@ describe("mergeConfigsResult — before-plan extension surface ownership", () =>
     expect(result.isOk()).toBe(true);
 
     const merged = result._unsafeUnwrap();
-    const ebp = merged.extend_before_plan["__default__"];
+    const ebp = merged.extend_before_plan;
     expect(ebp).toBeDefined();
     // Union-merge: override entries first, then base entries not already present
-    expect(ebp?.steps).toContain("spec-review");
-    expect(ebp?.steps).toContain("requirements");
+    expect(ebp.steps).toContain("spec-review");
+    expect(ebp.steps).toContain("requirements");
     // Override entry comes first
-    expect(ebp?.steps.indexOf("spec-review")).toBeLessThan(
-      ebp?.steps.indexOf("requirements") ?? -1,
+    expect(ebp.steps.indexOf("spec-review")).toBeLessThan(
+      ebp.steps.indexOf("requirements"),
     );
   });
 
@@ -1331,10 +1331,8 @@ describe("mergeConfigsResult — before-plan extension surface ownership", () =>
     expect(result.isOk()).toBe(true);
 
     const merged = result._unsafeUnwrap();
-    const ebp = merged.extend_before_plan["__default__"];
-    const specReviewCount = (ebp?.steps ?? []).filter(
-      (s) => s === "spec-review",
-    ).length;
+    const ebp = merged.extend_before_plan;
+    const specReviewCount = ebp.steps.filter((s) => s === "spec-review").length;
     expect(specReviewCount).toBe(1);
   });
 
@@ -1386,12 +1384,12 @@ describe("mergeConfigsResult — before-plan extension surface ownership", () =>
     expect(wf?.extension_points?.before_plan).toBe(true);
 
     // The engine reads extend_before_plan from the merged top-level config
-    const ebp = merged.extend_before_plan["__default__"];
-    expect(ebp?.steps).toContain("global-step");
-    expect(ebp?.steps).toContain("project-step");
+    const ebp = merged.extend_before_plan;
+    expect(ebp.steps).toContain("global-step");
+    expect(ebp.steps).toContain("project-step");
     // project (highest priority) comes first
-    expect(ebp?.steps.indexOf("project-step")).toBeLessThan(
-      ebp?.steps.indexOf("global-step") ?? -1,
+    expect(ebp.steps.indexOf("project-step")).toBeLessThan(
+      ebp.steps.indexOf("global-step"),
     );
   });
 
@@ -1430,8 +1428,8 @@ describe("mergeConfigsResult — before-plan extension surface ownership", () =>
 
     // extend_before_plan entry is present in the merged config (merge layer preserves it)
     // The engine is responsible for checking extension_points.before_plan before applying
-    const ebp = merged.extend_before_plan["__default__"];
-    expect(ebp?.steps).toContain("pre-check");
+    const ebp = merged.extend_before_plan;
+    expect(ebp.steps).toContain("pre-check");
   });
 
   it("(bp-10a) before-plan non-reconciling in v1: no reconciliation fields on steps after merge", () => {
@@ -1479,10 +1477,10 @@ describe("mergeConfigsResult — before-plan extension surface ownership", () =>
     }
 
     // extend_before_plan entry has no reconciliation metadata
-    const ebp = merged.extend_before_plan["__default__"];
-    expect(ebp?.steps).toContain("spec-review");
-    expect("reconciliation_handler" in (ebp ?? {})).toBe(false);
-    expect("on_reconcile" in (ebp ?? {})).toBe(false);
+    const ebp = merged.extend_before_plan;
+    expect(ebp.steps).toContain("spec-review");
+    expect("reconciliation_handler" in ebp).toBe(false);
+    expect("on_reconcile" in ebp).toBe(false);
   });
 
   it("(bp-10) planning step role preserved through step-aware merge", () => {

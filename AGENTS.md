@@ -30,6 +30,8 @@ Before adding or changing an engine API, read `docs/adapter-boundary.md` and ver
 
 ## The `.weave` DSL
 
+> **Canonical reference**: [`docs/dsl-reference.md`](docs/dsl-reference.md) is the normative DSL contract. The sections below are an onboarding summary and quick-reference for agents working in this repository. When the two diverge, `docs/dsl-reference.md` is authoritative. See [`docs/documentation-policy.md`](docs/documentation-policy.md) for the classification rules.
+
 Weave uses a **custom configuration language** (`.weave` files) designed for readability and declarative agent orchestration. The syntax is block-structured and domain-specific — not TypeScript, not JSON, not YAML.
 
 ### Configuration Locations
@@ -100,7 +102,7 @@ agent shuttle {
   description "Shuttle (Domain Specialist)"
   prompt_file "shuttle.md"
   models ["claude-sonnet-4-5"]
-  mode all
+  mode subagent
   temperature 0.2
 
   tool_policy {
@@ -652,7 +654,7 @@ docs/
 ```
 
 - **Specs** (`docs/specs/`) — detailed, numbered specs for subsystems. Each spec lives in its own directory. The primary spec file is `<N>-spec-<name>.md` (not `index.md`). Use a sequential number prefix (`29-`, `30-`, …) so specs have a stable reading order. See [`docs/specs/README.md`](docs/specs/README.md) for the full index.
-- **Guides** (`docs/*.md`) — conceptual overviews, architecture decision records (ADRs), how-to references. Name files with kebab-case (`harness-adapter.md`, `config-merge.md`).
+- **Guides** (`docs/*.md`) — conceptual overviews, architecture decision records (ADRs), how-to references. Name files with kebab-case (`harness-adapter.md`, `config-merge.md`). Entry point: [`docs/README.md`](docs/README.md).
 - **Artifacts** (`docs/artifacts/`) — non-normative proof artifacts, terminal captures, and audit evidence. See [`docs/documentation-policy.md`](docs/documentation-policy.md) for classification rules.
 
 ### How to write docs

@@ -4,7 +4,7 @@ The `.weave` configuration language is a block-structured, declarative DSL for d
 
 **Related:** [Config Loading](config-loading.md) · [Prompt Composition](prompt-composition.md) · [Workflow Schema](workflow-schema.md) · [Adapter Boundary](adapter-boundary.md)
 
-> **Status note**: The agent, category, settings, and prompt-template sections below reflect the stable DSL contract. Workflow execution lifecycle details (step completion semantics, artifact integrity) are being formalised in [Spec 22](specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md) and [Spec 24](specs/24-spec-execution-lifecycle-decomposition/24-spec-execution-lifecycle-decomposition.md); this reference will be updated once those specs land.
+> **Status**: This reference reflects the stable, finalized DSL contract. Workflow execution lifecycle details (step completion semantics, artifact integrity) are specified in [Spec 22 — Workflow-First Execution](specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md) and [Spec 24 — Execution Lifecycle Decomposition](specs/24-spec-execution-lifecycle-decomposition/24-spec-execution-lifecycle-decomposition.md), both of which are complete. See [Workflow Schema](workflow-schema.md) for the full typed schema and execution semantics.
 
 ---
 
@@ -273,6 +273,25 @@ workflow secure-feature {
 | `review_verdict` | bare | A gate agent emits approve or reject |
 
 See [Workflow Schema](workflow-schema.md) for the full typed schema, validation constraints, and artifact integrity rules.
+
+### `extend before-plan` Directive
+
+The `extend before-plan` directive inserts steps into the `before-plan` slot of any workflow that publishes `extension_points { before-plan }`. It is a **composition** directive — separate from the `extension_points { before-plan }` **publication** syntax inside a workflow block.
+
+```weave
+extend before-plan ["write-spec", "review-spec"]
+```
+
+**v1 contract**: there is exactly one global `before-plan` bucket — no per-workflow targeting. The config layer applies the step list to every workflow that publishes `extension_points { before-plan }`. Multiple `extend before-plan` directives in the same config are union-merged into a single ordered step list.
+
+| Constraint | Detail |
+| --- | --- |
+| Step names | Must be non-empty strings matching declared step block identifiers |
+| At least one step | An empty step list is rejected at validation time |
+| Global scope | Applied to all workflows that publish `before-plan`; no per-workflow targeting in v1 |
+| Union-merge | Multiple directives accumulate steps in declaration order |
+
+See [Workflow Schema — `before-plan` Extension Surface](workflow-schema.md#before-plan-extension-surface) for the full contract.
 
 ---
 
