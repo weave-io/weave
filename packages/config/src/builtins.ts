@@ -233,6 +233,10 @@ workflow plan-and-execute {
   description "Research, plan, implement, and review a feature end-to-end"
   version 1
 
+  extension_points {
+    before-plan
+  }
+
   step research {
     name "Research the codebase and external context"
     type autonomous
@@ -251,6 +255,7 @@ workflow plan-and-execute {
 
   step plan {
     name "Create implementation plan"
+    role planning
     type autonomous
     agent pattern
     prompt "Create a detailed implementation plan for: {{instance.goal}}"

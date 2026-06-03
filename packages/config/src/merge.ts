@@ -362,7 +362,21 @@ function deepMerge2Result(
   base: WeaveConfig,
   override: WeaveConfig,
 ): Result<WeaveConfig, MergeError[]> {
-  // Handle workflows specially; merge everything else with generic mergeValues
+  // Handle workflows specially; merge everything else with generic mergeValues.
+  //
+  // before-plan ownership note:
+  //   `extension_points` is a plain object field on WorkflowConfig — it passes
+  //   through mergeWorkflowRecord → mergeWorkflow → mergeValues as a deep-merge,
+  //   so `extension_points.before_plan` is preserved from whichever layer sets it.
+  //
+  //   `extend_before_plan` is a top-level WeaveConfig field — it passes through
+  //   the generic mergeValues path below. Its `steps` arrays union-merge across
+  //   layers (override entries first, then base entries not already present).
+  //
+  //   Both fields are engine-visible only after merge resolution completes.
+  //   The engine is responsible for checking `extension_points.before_plan` on
+  //   the target workflow before applying `extend_before_plan` entries — the
+  //   merge layer does not enforce that cross-field constraint.
   const baseWorkflows = base.workflows ?? {};
   const overrideWorkflows = override.workflows ?? {};
 
@@ -400,6 +414,18 @@ function deepMerge2Result(
  *   `JSON.stringify` equality); order reflects priority (highest first)
  * - *Workflows*: step-aware merge — same-name replacement, anchored insertion,
  *   append; `extends` chain is resolved across the merged workflow map
+ *
+ * **before-plan extension surface:**
+ * - `extension_points.before_plan` on a `WorkflowConfig` is preserved through
+ *   workflow merge via generic deep-merge. The engine reads this field from the
+ *   merged config to determine whether a workflow publishes the `before-plan` slot.
+ * - `extend_before_plan` (top-level) is preserved via generic deep-merge; its
+ *   `steps` arrays union-merge across layers. The engine reads this field from
+ *   the merged config to determine which steps to inject into the slot.
+ * - Both fields are engine-visible **only after** merge resolution completes.
+ *   The engine is responsible for checking `extension_points.before_plan` before
+ *   applying `extend_before_plan` entries — the merge layer does not enforce that
+ *   cross-field constraint.
  *
  * **Immutability:** Input configs are never mutated.
  */

@@ -124,9 +124,30 @@ export type SettingAssignment = {
   pos: SourcePos;
 };
 
+/**
+ * Top-level `extend before-plan ["step-a", "step-b"]` directive.
+ *
+ * Declares that the listed step names should be inserted into the `before-plan`
+ * slot of the named workflow. This is the **composition** syntax — distinct from
+ * the `extension_points { before-plan }` **publication** syntax inside a workflow.
+ *
+ * The `workflow` field is optional in the DSL; when absent the directive applies
+ * to the default plan-oriented workflow. The validator resolves the target after
+ * config-merge is complete.
+ */
+export type ExtendBeforePlanDirective = {
+  type: "extend_before_plan";
+  /** Target workflow name, or undefined when targeting the default workflow. */
+  workflow?: string;
+  /** Ordered list of step names to insert into the before-plan slot. */
+  steps: string[];
+  pos: SourcePos;
+};
+
 export type AstNode =
   | AgentBlock
   | CategoryBlock
   | WorkflowBlock
   | DisableDirective
-  | SettingAssignment;
+  | SettingAssignment
+  | ExtendBeforePlanDirective;

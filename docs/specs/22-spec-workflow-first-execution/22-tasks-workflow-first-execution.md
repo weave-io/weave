@@ -58,7 +58,7 @@
 - [x] 1.3 Add runtime checks that require explicit user-authorized execution transitions and reject agent-, hook-, or event-initiated self-start behavior.
 - [x] 1.4 Extend engine tests to prove ordinary conversation, idle continuation, and session observation paths do not implicitly enter durable execution.
 
-### [~] 2.0 Add the canonical planning workflow and `before-plan` extension contract
+### [x] 2.0 Add the canonical planning workflow and `before-plan` extension contract
 
 #### 2.0 Proof Artifact(s)
 
@@ -73,7 +73,7 @@
 - [x] 2.2 Update builtin workflow definitions so the effective default workflow is plan-oriented and publishes the selected `before-plan` extension surface without replacing planning itself.
 - [x] 2.3 Preserve the existing config-merge ownership of `extends`, `insert_before`, and `insert_after`, and document how `before-plan` becomes an engine-visible contract only after merge resolution.
 - [x] 2.4 Add schema, validate, parse-config, merge, and builtin tests covering valid planning workflows, invalid planning-step counts, invalid `before-plan` publication, and non-reconciling `before-plan` behavior in v1.
-- [ ] 2.5 Update workflow-schema and related docs with a concrete DSL example showing reviewed pre-plan artifacts feeding the canonical planning step. **BLOCKED 2026-06-02:** Shuttle retried twice but returned planning-only responses without editing `docs/workflow-schema.md`.
+- [x] 2.5 Update workflow-schema and related docs with a concrete DSL example showing reviewed pre-plan artifacts feeding the canonical planning step.
 
 ### [~] 3.0 Implement artifact identity, revisions, approval, and consumption provenance
 
@@ -88,7 +88,7 @@
 
 - [x] 3.1 Add runtime data types and persistence fields for artifact identity, monotonic revisions, approval state, and integrity-verification metadata without storing raw artifact contents.
 - [x] 3.2 Define or update the engine/runtime interfaces that let planning and execution steps declare normative and informational artifact inputs explicitly.
-- [ ] 3.3 Implement approval invalidation, self-approval prohibition, consumed-revision recording, and default retry reuse of the same consumed artifact revisions. **BLOCKED 2026-06-03:** two Shuttle delegation attempts aborted before execution.
+- [~] 3.3 Implement approval invalidation, self-approval prohibition, consumed-revision recording, and default retry reuse of the same consumed artifact revisions.
 - [x] 3.4 Implement consumption-time integrity verification that compares current artifact contents to the bound immutable revision or fingerprint and fails closed on mismatch.
 - [x] 3.5 Add in-memory and SQLite runtime tests, plus sanitized provenance fixtures, covering approval invalidation, integrity verification, and provenance recording.
 - [x] 3.6 Update boundary and glossary docs so integrity-verification metadata has a sanctioned home consistent with the new runtime model.

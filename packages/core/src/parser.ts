@@ -16,6 +16,7 @@ import type {
   BooleanValue,
   CategoryBlock,
   DisableDirective,
+  ExtendBeforePlanDirective,
   IdentifierValue,
   NumberValue,
   Property,
@@ -130,6 +131,8 @@ class Parser {
         return this.#parseWorkflowBlock();
       case "disable":
         return this.#parseDisableDirective();
+      case "extend":
+        return this.#parseExtendDirective();
       default:
         return this.#parseSettingAssignment();
     }
@@ -361,6 +364,53 @@ class Parser {
     return { type: "disable", target, items, pos };
   }
 
+  /**
+   * Parse `extend before-plan ["step-a", "step-b"]` top-level directive.
+   *
+   * Syntax: `extend before-plan [ <string>... ]`
+   *
+   * The `before-plan` token is a hyphenated identifier. The step names in the
+   * array must be strings. The directive is stored as an `ExtendBeforePlanDirective`
+   * AST node; the validator maps it into `WeaveConfig.extend_before_plan`.
+   */
+  #parseExtendDirective(): ExtendBeforePlanDirective | null {
+    const startTok = this.#advance(); // consume 'extend'
+    const pos: SourcePos = { line: startTok.line, column: startTok.column };
+
+    this.#skipNewlines();
+    const slotTok = this.#current();
+
+    // Only `before-plan` is supported in v1.
+    if (
+      slotTok.type !== TokenType.Identifier ||
+      slotTok.value !== "before-plan"
+    ) {
+      this.#errors.push({
+        type: "UnexpectedToken",
+        line: slotTok.line,
+        column: slotTok.column,
+        found: slotTok.value || slotTok.type,
+        expected: "before-plan",
+      });
+      this.#skipToNextBoundary();
+      return null;
+    }
+    this.#advance(); // consume 'before-plan'
+
+    this.#skipNewlines();
+    const arrayValue = this.#parseArrayLiteral();
+    if (!arrayValue) return null;
+
+    const steps = arrayValue.elements
+      .filter(
+        (el): el is StringValue | IdentifierValue =>
+          el.kind === "string" || el.kind === "identifier",
+      )
+      .map((el) => el.value);
+
+    return { type: "extend_before_plan", steps, pos };
+  }
+
   #parseSettingAssignment(): SettingAssignment | null {
     const keyTok = this.#advance();
     const pos: SourcePos = { line: keyTok.line, column: keyTok.column };
@@ -408,6 +458,26 @@ class Parser {
 
     this.#advance(); // consume key
     const pos: SourcePos = { line: keyTok.line, column: keyTok.column };
+
+    // Bare flag pattern: an identifier followed immediately by a newline, `}`,
+    // or EOF is treated as a boolean `true` flag (e.g. `before-plan` inside
+    // `extension_points { before-plan }`).
+    const next = this.#current();
+    if (
+      next.type === TokenType.Newline ||
+      next.type === TokenType.RBrace ||
+      next.type === TokenType.EOF
+    ) {
+      return {
+        key: keyTok.value,
+        value: {
+          kind: "boolean",
+          value: true,
+          pos,
+        } satisfies BooleanValue,
+        pos,
+      };
+    }
 
     // Allow optional newline between key and value (block-style sub-keys)
     this.#skipNewlines();
