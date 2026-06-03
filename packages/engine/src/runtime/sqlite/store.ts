@@ -82,7 +82,11 @@ import type {
   WorkflowInstanceRepository,
 } from "../store.js";
 import type {
+  ArtifactApprovalState,
+  ArtifactId,
+  ArtifactIntegrityMetadata,
   ArtifactRef,
+  ConsumedArtifactRecord,
   ExecutionLease,
   ExecutionLeaseId,
   JournalQueryFilter,
@@ -92,11 +96,13 @@ import type {
   RuntimeJournalEntryId,
   SessionSnapshot,
   SessionSnapshotId,
+  StepAttemptRecord,
   WorkflowInstance,
   WorkflowInstanceId,
   WorkflowInstanceStatus,
 } from "../types.js";
 import {
+  createArtifactId,
   createExecutionLeaseId,
   createRuntimeJournalEntryId,
   createSessionSnapshotId,
@@ -128,6 +134,10 @@ function newId(): string {
 
 function rowToWorkflowInstance(row: WorkflowInstanceRow): WorkflowInstance {
   const artifacts = JSON.parse(row.artifacts_json) as ArtifactRef[];
+  // step_attempts_json may be absent in rows created before migration 2
+  const stepAttempts: readonly StepAttemptRecord[] = row.step_attempts_json
+    ? (JSON.parse(row.step_attempts_json) as StepAttemptRecord[])
+    : [];
   return {
     id: createWorkflowInstanceId(row.id),
     workflowName: row.workflow_name,
@@ -138,6 +148,7 @@ function rowToWorkflowInstance(row: WorkflowInstanceRow): WorkflowInstance {
       ? { currentStepName: row.current_step_name }
       : {}),
     artifacts,
+    stepAttempts,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     ...(row.completed_at !== null ? { completedAt: row.completed_at } : {}),
@@ -229,6 +240,7 @@ class SqliteWorkflowInstanceRepository implements WorkflowInstanceRepository {
           status: "created",
           current_step_name: null,
           artifacts_json: "[]",
+          step_attempts_json: "[]",
           created_at: now,
           updated_at: now,
           completed_at: null,
@@ -363,6 +375,8 @@ class SqliteWorkflowInstanceRepository implements WorkflowInstanceRepository {
       path: string;
       mimeType?: string;
       description?: string;
+      integrity?: ArtifactIntegrityMetadata;
+      producerAgent?: string;
     },
   ): ResultAsync<WorkflowInstance, RuntimeStoreError> {
     return ResultAsync.fromPromise(
@@ -378,13 +392,30 @@ class SqliteWorkflowInstanceRepository implements WorkflowInstanceRepository {
           const artifacts = JSON.parse(
             existing.artifacts_json,
           ) as ArtifactRef[];
+
+          // Find existing artifact with same name to determine revision (last occurrence)
+          const prior =
+            [...artifacts].reverse().find((a) => a.name === artifact.name) ??
+            null;
+          const revision = prior ? prior.revision + 1 : 1;
+          // Reuse stable id across revisions; assign new id for first occurrence
+          const artifactId = prior ? prior.id : createArtifactId(newId());
+
           const ref: ArtifactRef = {
+            id: artifactId,
             name: artifact.name,
             path: artifact.path,
+            revision,
+            // New revision always resets approvalState to pending, invalidating prior approval.
+            approvalState: "pending",
+            ...(artifact.producerAgent
+              ? { producerAgent: artifact.producerAgent }
+              : {}),
             ...(artifact.mimeType ? { mimeType: artifact.mimeType } : {}),
             ...(artifact.description
               ? { description: artifact.description }
               : {}),
+            ...(artifact.integrity ? { integrity: artifact.integrity } : {}),
           };
           artifacts.push(ref);
           return this.db
@@ -409,6 +440,124 @@ class SqliteWorkflowInstanceRepository implements WorkflowInstanceRepository {
           return notFoundError(cause.entity, cause.entityId);
         }
         return queryError("Failed to add artifact to WorkflowInstance", cause);
+      },
+    );
+  }
+
+  updateArtifactApproval(
+    id: WorkflowInstanceId,
+    artifactId: ArtifactId,
+    approvalState: ArtifactApprovalState,
+  ): ResultAsync<WorkflowInstance, RuntimeStoreError> {
+    return ResultAsync.fromPromise(
+      this.db
+        .selectFrom("workflow_instances")
+        .selectAll()
+        .where("id", "=", id as string)
+        .executeTakeFirst()
+        .then((existing) => {
+          if (!existing) {
+            throw new NotFoundSentinel("WorkflowInstance", id as string);
+          }
+          const artifacts = JSON.parse(
+            existing.artifacts_json,
+          ) as ArtifactRef[];
+          // Find the last index of the artifact with the given id
+          let artifactIndex = -1;
+          for (let i = artifacts.length - 1; i >= 0; i--) {
+            if (artifacts[i].id === artifactId) {
+              artifactIndex = i;
+              break;
+            }
+          }
+          if (artifactIndex === -1) {
+            throw new NotFoundSentinel("ArtifactRef", artifactId as string);
+          }
+          const updatedArtifacts = artifacts.map((a, i) =>
+            i === artifactIndex ? { ...a, approvalState } : a,
+          );
+          return this.db
+            .updateTable("workflow_instances")
+            .set({
+              artifacts_json: JSON.stringify(updatedArtifacts),
+              updated_at: new Date().toISOString(),
+            })
+            .where("id", "=", id as string)
+            .execute();
+        })
+        .then(() =>
+          this.db
+            .selectFrom("workflow_instances")
+            .selectAll()
+            .where("id", "=", id as string)
+            .executeTakeFirstOrThrow(),
+        )
+        .then(rowToWorkflowInstance),
+      (cause) => {
+        if (cause instanceof NotFoundSentinel) {
+          return notFoundError(cause.entity, cause.entityId);
+        }
+        return queryError(
+          "Failed to update artifact approval on WorkflowInstance",
+          cause,
+        );
+      },
+    );
+  }
+
+  recordStepAttempt(
+    id: WorkflowInstanceId,
+    stepName: string,
+    consumedArtifacts: readonly ConsumedArtifactRecord[],
+  ): ResultAsync<WorkflowInstance, RuntimeStoreError> {
+    return ResultAsync.fromPromise(
+      this.db
+        .selectFrom("workflow_instances")
+        .selectAll()
+        .where("id", "=", id as string)
+        .executeTakeFirst()
+        .then((existing) => {
+          if (!existing) {
+            throw new NotFoundSentinel("WorkflowInstance", id as string);
+          }
+          const stepAttempts: StepAttemptRecord[] = existing.step_attempts_json
+            ? (JSON.parse(existing.step_attempts_json) as StepAttemptRecord[])
+            : [];
+          const priorAttempts = stepAttempts.filter(
+            (a) => a.stepName === stepName,
+          ).length;
+          const record: StepAttemptRecord = {
+            stepName,
+            attemptNumber: priorAttempts + 1,
+            dispatchedAt: new Date().toISOString(),
+            consumedArtifacts,
+          };
+          stepAttempts.push(record);
+          return this.db
+            .updateTable("workflow_instances")
+            .set({
+              step_attempts_json: JSON.stringify(stepAttempts),
+              updated_at: new Date().toISOString(),
+            })
+            .where("id", "=", id as string)
+            .execute();
+        })
+        .then(() =>
+          this.db
+            .selectFrom("workflow_instances")
+            .selectAll()
+            .where("id", "=", id as string)
+            .executeTakeFirstOrThrow(),
+        )
+        .then(rowToWorkflowInstance),
+      (cause) => {
+        if (cause instanceof NotFoundSentinel) {
+          return notFoundError(cause.entity, cause.entityId);
+        }
+        return queryError(
+          "Failed to record step attempt on WorkflowInstance",
+          cause,
+        );
       },
     );
   }
@@ -1286,9 +1435,31 @@ class LazyWorkflowInstanceRepository implements WorkflowInstanceRepository {
       path: string;
       mimeType?: string;
       description?: string;
+      integrity?: ArtifactIntegrityMetadata;
+      producerAgent?: string;
     },
   ): ResultAsync<WorkflowInstance, RuntimeStoreError> {
     return this.repo().andThen((r) => r.addArtifact(id, artifact));
+  }
+
+  updateArtifactApproval(
+    id: WorkflowInstanceId,
+    artifactId: ArtifactId,
+    approvalState: ArtifactApprovalState,
+  ): ResultAsync<WorkflowInstance, RuntimeStoreError> {
+    return this.repo().andThen((r) =>
+      r.updateArtifactApproval(id, artifactId, approvalState),
+    );
+  }
+
+  recordStepAttempt(
+    id: WorkflowInstanceId,
+    stepName: string,
+    consumedArtifacts: readonly ConsumedArtifactRecord[],
+  ): ResultAsync<WorkflowInstance, RuntimeStoreError> {
+    return this.repo().andThen((r) =>
+      r.recordStepAttempt(id, stepName, consumedArtifacts),
+    );
   }
 }
 

@@ -14,6 +14,10 @@
 import type { ResultAsync } from "neverthrow";
 import type { RuntimeStoreError } from "./errors.js";
 import type {
+  ArtifactApprovalState,
+  ArtifactId,
+  ArtifactIntegrityMetadata,
+  ConsumedArtifactRecord,
   ExecutionLease,
   ExecutionLeaseId,
   JournalQueryFilter,
@@ -22,6 +26,7 @@ import type {
   RuntimeJournalEntryId,
   SessionSnapshot,
   SessionSnapshotId,
+  StepAttemptRecord,
   WorkflowInstance,
   WorkflowInstanceId,
   WorkflowInstanceStatus,
@@ -98,6 +103,14 @@ export interface WorkflowInstanceRepository {
 
   /**
    * Add an artifact reference to a WorkflowInstance.
+   *
+   * The store assigns a stable ArtifactId and sets the initial revision to 1
+   * with approvalState `pending`. If an artifact with the same name already
+   * exists, the store increments the revision and resets approvalState to
+   * `pending` for the new revision, invalidating any prior approval.
+   *
+   * Raw artifact contents, prompts, tokens, and private paths must never be
+   * passed here — only the reference path and optional metadata.
    */
   addArtifact(
     id: WorkflowInstanceId,
@@ -106,7 +119,53 @@ export interface WorkflowInstanceRepository {
       path: string;
       mimeType?: string;
       description?: string;
+      /**
+       * Optional integrity-verification metadata.
+       * When provided, the digest is stored for tamper detection.
+       * The raw artifact content must never be passed here.
+       */
+      integrity?: ArtifactIntegrityMetadata;
+      /**
+       * Optional logical name of the agent that produced this artifact.
+       * Used to enforce the self-approval prohibition at the lifecycle layer.
+       */
+      producerAgent?: string;
     },
+  ): ResultAsync<WorkflowInstance, RuntimeStoreError>;
+
+  /**
+   * Update the approval state of a named artifact on a WorkflowInstance.
+   *
+   * Only the most recent revision of the named artifact is updated.
+   * Fails with `not_found` if the instance or artifact does not exist.
+   *
+   * @param id - The WorkflowInstance ID.
+   * @param artifactId - The stable ArtifactId to update.
+   * @param approvalState - The new approval state.
+   */
+  updateArtifactApproval(
+    id: WorkflowInstanceId,
+    artifactId: ArtifactId,
+    approvalState: ArtifactApprovalState,
+  ): ResultAsync<WorkflowInstance, RuntimeStoreError>;
+
+  /**
+   * Record a step attempt with its consumed artifact revisions.
+   *
+   * Appends a `StepAttemptRecord` to the instance's `stepAttempts` list.
+   * The attempt number is computed by the store as one more than the current
+   * count of attempts for the same step name.
+   *
+   * Fails with `not_found` if the instance does not exist.
+   *
+   * @param id - The WorkflowInstance ID.
+   * @param stepName - The step name for this attempt.
+   * @param consumedArtifacts - Artifact identity+revision pairs consumed at dispatch.
+   */
+  recordStepAttempt(
+    id: WorkflowInstanceId,
+    stepName: string,
+    consumedArtifacts: readonly ConsumedArtifactRecord[],
   ): ResultAsync<WorkflowInstance, RuntimeStoreError>;
 }
 

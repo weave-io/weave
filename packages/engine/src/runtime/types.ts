@@ -4,6 +4,10 @@
  * Defines WorkflowInstance, ExecutionLease, SessionSnapshot, RuntimeJournalEntry,
  * branded IDs, status enums, severity levels, and structured source types.
  *
+ * Also defines artifact identity primitives: ArtifactId, ArtifactApprovalState,
+ * ArtifactIntegrityMetadata, and the extended ArtifactRef with monotonic revision
+ * and approval-state tracking.
+ *
  * These types are engine-owned and live in @weave/engine, not @weave/core.
  * No SQLite or Kysely types are referenced here — this file is pure domain.
  *
@@ -73,6 +77,14 @@ export type RuntimeJournalEntryId = string & {
  */
 export type OwnerId = string & { readonly __brand: "OwnerId" };
 
+/**
+ * Branded string type for Artifact identifiers.
+ *
+ * Each logical artifact produced by a workflow step has a stable ArtifactId
+ * that persists across revisions. Use `createArtifactId()` to create values.
+ */
+export type ArtifactId = string & { readonly __brand: "ArtifactId" };
+
 // ---------------------------------------------------------------------------
 // ID factory helpers
 // ---------------------------------------------------------------------------
@@ -102,6 +114,11 @@ export function createRuntimeJournalEntryId(
 /** Cast a raw string to OwnerId. */
 export function createOwnerId(raw: string): OwnerId {
   return raw as OwnerId;
+}
+
+/** Cast a raw string to ArtifactId. */
+export function createArtifactId(raw: string): ArtifactId {
+  return raw as ArtifactId;
 }
 
 // ---------------------------------------------------------------------------
@@ -139,12 +156,146 @@ export const WORKFLOW_INSTANCE_STATUSES = [
   "cancelled",
 ] as const satisfies readonly WorkflowInstanceStatus[];
 
+// ---------------------------------------------------------------------------
+// Artifact identity primitives
+// ---------------------------------------------------------------------------
+
 /**
- * Artifact reference stored in a WorkflowInstance.
+ * Approval state for a persisted artifact.
  *
- * Stores metadata and a reference path only — never artifact contents.
+ * - `pending`  — artifact has been produced but not yet reviewed
+ * - `approved` — artifact has been explicitly approved (e.g. by a gate step)
+ * - `rejected` — artifact has been explicitly rejected; workflow may pause or fail
  */
-export interface ArtifactRef {
+export type ArtifactApprovalState = "pending" | "approved" | "rejected";
+
+/** All valid ArtifactApprovalState values as a readonly tuple. */
+export const ARTIFACT_APPROVAL_STATES = [
+  "pending",
+  "approved",
+  "rejected",
+] as const satisfies readonly ArtifactApprovalState[];
+
+/**
+ * Integrity-verification metadata for a persisted artifact.
+ *
+ * Stores a salted digest of the artifact content for tamper detection.
+ * The raw artifact content is NEVER stored here — only the digest.
+ *
+ * EXPLICITLY EXCLUDED:
+ * - Raw artifact contents
+ * - Raw prompts or completions used to produce the artifact
+ * - Private filesystem paths outside the project root
+ * - Credentials, tokens, or authorization headers
+ */
+export interface ArtifactIntegrityMetadata {
+  /**
+   * Hash algorithm used to compute the digest.
+   * Supported values: "sha256".
+   */
+  readonly algorithm: "sha256";
+  /**
+   * Lowercase hex-encoded digest of the artifact content.
+   * May be salted with the project salt for fingerprinting.
+   */
+  readonly digest: string;
+}
+
+// ---------------------------------------------------------------------------
+// Artifact input role — normative vs informational
+// ---------------------------------------------------------------------------
+
+/**
+ * The role of a declared artifact input for a workflow step.
+ *
+ * - `normative`    — the artifact is required for the step to proceed.
+ *                    The engine blocks dispatch if the artifact is absent or
+ *                    not yet approved. Approval invalidation on a normative
+ *                    input prevents the step from advancing.
+ * - `informational` — the artifact is advisory. The engine allows dispatch
+ *                    even if the artifact is absent or unapproved. Missing
+ *                    informational inputs are surfaced as warnings, not errors.
+ *
+ * When `role` is omitted on an `ArtifactInputDecl`, the engine defaults to
+ * `"normative"` for backward compatibility with existing step declarations
+ * that predate this field.
+ */
+export type ArtifactInputRole = "normative" | "informational";
+
+/** All valid `ArtifactInputRole` values as a readonly tuple. */
+export const ARTIFACT_INPUT_ROLES = [
+  "normative",
+  "informational",
+] as const satisfies readonly ArtifactInputRole[];
+
+/**
+ * A declared artifact input for a workflow step, with an explicit role.
+ *
+ * Extends the base `ArtifactDecl` concept (name + description) with a `role`
+ * field that distinguishes normative (blocking) from informational (advisory)
+ * inputs. Used by the engine at dispatch time to enforce or warn about missing
+ * or unapproved artifacts.
+ *
+ * When `role` is omitted, the engine defaults to `"normative"`.
+ */
+export interface ArtifactInputDecl {
+  /** Logical artifact name (matches workflow step output name). */
+  readonly name: string;
+  /** Human-readable description of the artifact's purpose. */
+  readonly description: string;
+  /**
+   * The role of this artifact input.
+   *
+   * - `"normative"`    — required; dispatch is blocked if absent or unapproved.
+   * - `"informational"` — advisory; dispatch proceeds with a warning if absent.
+   *
+   * Defaults to `"normative"` when omitted.
+   */
+  readonly role?: ArtifactInputRole;
+}
+
+/**
+ * Summary of artifact input validation performed during `dispatchStep`.
+ *
+ * Returned in `DispatchStepOutput.artifactInputSummary` when the step has
+ * declared inputs. Provides callers with a typed record of which inputs were
+ * normative (required) vs informational (advisory), and which informational
+ * inputs were absent at dispatch time.
+ *
+ * This summary is observational — it does not change dispatch behavior.
+ * Normative input failures are returned as `not_found` errors before this
+ * summary is produced.
+ */
+export interface ArtifactInputSummary {
+  /**
+   * Names of normative inputs that were present and satisfied at dispatch time.
+   */
+  readonly normativeSatisfied: readonly string[];
+  /**
+   * Names of informational inputs that were present at dispatch time.
+   */
+  readonly informationalPresent: readonly string[];
+  /**
+   * Names of informational inputs that were absent at dispatch time.
+   * These are advisory — dispatch proceeded despite their absence.
+   */
+  readonly informationalAbsent: readonly string[];
+}
+
+/**
+ * Agent-facing artifact reference input.
+ *
+ * Used in `StepCompletionSignal` and other agent-facing APIs where the agent
+ * provides the artifact name and path. The store assigns the stable `ArtifactId`,
+ * monotonic `revision`, and initial `approvalState` when persisting.
+ *
+ * EXPLICITLY EXCLUDED:
+ * - Raw artifact contents
+ * - Raw prompts or completions
+ * - Credentials, tokens, cookies, authorization headers
+ * - Private filesystem paths outside the project root
+ */
+export interface ArtifactRefInput {
   /** Logical artifact name (matches workflow step output name). */
   readonly name: string;
   /** Relative path to the artifact within the project. */
@@ -153,6 +304,116 @@ export interface ArtifactRef {
   readonly mimeType?: string;
   /** Optional human-readable description. */
   readonly description?: string;
+  /**
+   * Optional integrity-verification metadata.
+   * When provided, the digest is stored for tamper detection.
+   * The raw artifact content must never be passed here.
+   */
+  readonly integrity?: ArtifactIntegrityMetadata;
+}
+
+/**
+ * Artifact reference stored in a WorkflowInstance.
+ *
+ * Stores logical identity, monotonic revision, approval state, and optional
+ * integrity-verification metadata. Never stores raw artifact contents,
+ * raw prompts, tokens, or private paths.
+ *
+ * EXPLICITLY EXCLUDED:
+ * - Raw artifact contents
+ * - Raw prompts or completions
+ * - Credentials, tokens, cookies, authorization headers
+ * - Private filesystem paths outside the project root
+ */
+export interface ArtifactRef {
+  /**
+   * Stable logical identity for this artifact across revisions.
+   * Generated once when the artifact is first produced.
+   */
+  readonly id: ArtifactId;
+  /** Logical artifact name (matches workflow step output name). */
+  readonly name: string;
+  /** Relative path to the artifact within the project. */
+  readonly path: string;
+  /**
+   * Monotonic revision counter.
+   * Starts at 1 when the artifact is first produced.
+   * Incremented each time the artifact is updated (same name, new content).
+   */
+  readonly revision: number;
+  /**
+   * Approval state for this artifact revision.
+   * Defaults to `pending` when first produced.
+   * A new revision always resets approvalState to `pending`, invalidating
+   * any prior approval on the same artifact name.
+   */
+  readonly approvalState: ArtifactApprovalState;
+  /**
+   * The logical name of the agent that produced this artifact revision.
+   *
+   * Used to enforce the self-approval prohibition: an agent may not approve
+   * an artifact it produced. When absent, self-approval checks are skipped.
+   */
+  readonly producerAgent?: string;
+  /** Optional MIME type hint. */
+  readonly mimeType?: string;
+  /** Optional human-readable description. */
+  readonly description?: string;
+  /**
+   * Optional integrity-verification metadata.
+   * When present, the digest can be used to detect tampering.
+   * The raw artifact content is never stored here.
+   */
+  readonly integrity?: ArtifactIntegrityMetadata;
+}
+
+// ---------------------------------------------------------------------------
+// Step attempt consumed-artifact record
+// ---------------------------------------------------------------------------
+
+/**
+ * A record of a single artifact consumed by a step attempt.
+ *
+ * Captures the stable artifact identity and the specific revision that was
+ * consumed at dispatch time. This allows retries to pin to the same revision
+ * and prevents silent drift when an artifact is updated between attempts.
+ */
+export interface ConsumedArtifactRecord {
+  /** Stable artifact identity (same across revisions). */
+  readonly artifactId: ArtifactId;
+  /** Logical artifact name. */
+  readonly name: string;
+  /** The revision consumed at dispatch time. */
+  readonly revision: number;
+}
+
+/**
+ * A record of a single step attempt, capturing which artifact revisions were
+ * consumed at dispatch time.
+ *
+ * Stored in `WorkflowInstance.stepAttempts` to support:
+ * - Consumed-revision auditing (which revision did each attempt use?)
+ * - Retry pinning (retries reuse the same consumed revisions by default)
+ * - Approval invalidation detection (was the consumed revision later superseded?)
+ */
+export interface StepAttemptRecord {
+  /** The step name this attempt belongs to. */
+  readonly stepName: string;
+  /**
+   * Monotonic attempt counter for this step within this instance.
+   * Starts at 1 for the first attempt; incremented on each retry.
+   */
+  readonly attemptNumber: number;
+  /** ISO 8601 timestamp when this attempt was dispatched. */
+  readonly dispatchedAt: string;
+  /**
+   * Artifact revisions consumed at dispatch time.
+   *
+   * Each entry records the stable artifact identity and the specific revision
+   * that was pinned for this attempt. Retries reuse these same revisions by
+   * default unless the caller explicitly provides updated artifacts.
+   */
+  readonly consumedArtifacts: readonly ConsumedArtifactRecord[];
 }
 
 /**
@@ -175,6 +436,14 @@ export interface WorkflowInstance {
   readonly currentStepName?: string;
   /** Artifact references produced by completed steps. */
   readonly artifacts: readonly ArtifactRef[];
+  /**
+   * Step attempt records, ordered by dispatch time.
+   *
+   * Each entry captures which artifact revisions were consumed at dispatch
+   * time for a specific step attempt. Used for consumed-revision auditing
+   * and retry pinning.
+   */
+  readonly stepAttempts: readonly StepAttemptRecord[];
   /** ISO 8601 timestamp when this instance was created. */
   readonly createdAt: string;
   /** ISO 8601 timestamp of the last status update. */

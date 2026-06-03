@@ -69,8 +69,16 @@ A stable logical identifier for a workflow artifact that persists across revisio
 _Avoid_: Raw file path, transient filename, prompt snippet
 
 **Artifact Revision**:
-A monotonic version of an **Artifact Identity** used to track approval, integrity verification, and downstream consumption across revisions.
+A monotonic version of an **Artifact Identity** used to track approval, integrity verification, and downstream consumption across revisions. A new revision always resets approval state to `pending`, invalidating any prior approval on the same artifact name.
 _Avoid_: Raw hash identity alone, opaque store token, file timestamp
+
+**Artifact Integrity Metadata**:
+The engine-owned record (`ArtifactIntegrityMetadata`) stored inside an `ArtifactRef` that holds a SHA-256 digest for tamper detection. Contains only the hash algorithm identifier and a lowercase hex digest — never raw artifact contents, prompts, credentials, or private paths. Stored in the Runtime Store alongside the artifact reference; never in adapter-owned storage or harness session state.
+_Avoid_: Raw artifact content, file hash stored outside the Runtime Store, adapter-computed integrity record
+
+**Artifact Digest**:
+A lowercase hex-encoded SHA-256 hash of an artifact's current file contents, computed by the adapter immediately before calling `dispatchStep`. Passed via `DispatchStepInput.artifactDigests` so the engine can compare it against the stored `ArtifactIntegrityMetadata.digest`. The engine never reads artifact file contents — digest computation is adapter-owned.
+_Avoid_: Engine-computed hash, stored file content, raw artifact bytes
 
 **Adapter Capability Contract**:
 A harness-neutral declaration of which Weave behaviors a harness adapter can provide and with what level of readiness.
@@ -137,7 +145,9 @@ _Avoid_: Any same-named agent, UI alias, unmanaged agent
 - An **Execution Contract** defines execution semantics independently of the harness-specific command, skill, hook, or script mechanism that delivers them.
 - A **Canonical Execution Command** is one possible adapter-visible projection of the **Execution Contract** and should be evaluated through adapter capability/readiness policy rather than assumed to exist in every harness.
 - **Artifact Approval State** attaches to an **Artifact Identity** and a specific **Artifact Revision** rather than to a file path alone.
-- An **Artifact Revision** may carry integrity-verification metadata without storing raw artifact contents in the Runtime Store.
+- An **Artifact Revision** may carry **Artifact Integrity Metadata** without storing raw artifact contents in the Runtime Store.
+- **Artifact Integrity Metadata** lives inside `ArtifactRef` in the Runtime Store; it is engine-owned and never stored in adapter-owned storage or harness session state.
+- An **Artifact Digest** is computed by the adapter (by reading the artifact file) and passed to the engine at dispatch time; the engine compares it against the stored **Artifact Integrity Metadata** and fails closed on mismatch.
 - An **Adapter Capability Contract** describes adapter readiness independently of any specific workflow run.
 - **Capability Readiness** qualifies each behavior in an **Adapter Capability Contract**.
 - A **Readiness Profile** evaluates an **Adapter Capability Contract** for a particular use case.

@@ -33,7 +33,11 @@ import type {
   WorkflowInstanceRepository,
 } from "./store.js";
 import type {
+  ArtifactApprovalState,
+  ArtifactId,
+  ArtifactIntegrityMetadata,
   ArtifactRef,
+  ConsumedArtifactRecord,
   ExecutionLease,
   ExecutionLeaseId,
   JournalQueryFilter,
@@ -43,11 +47,13 @@ import type {
   RuntimeJournalEntryId,
   SessionSnapshot,
   SessionSnapshotId,
+  StepAttemptRecord,
   WorkflowInstance,
   WorkflowInstanceId,
   WorkflowInstanceStatus,
 } from "./types.js";
 import {
+  createArtifactId,
   createExecutionLeaseId,
   createRuntimeJournalEntryId,
   createSessionSnapshotId,
@@ -73,6 +79,8 @@ export interface InMemoryRuntimeStoreFailureConfig {
   workflowUpdate?: RuntimeStoreError;
   /** Injected error for `WorkflowInstanceRepository.addArtifact`. */
   workflowAddArtifact?: RuntimeStoreError;
+  /** Injected error for `WorkflowInstanceRepository.updateArtifactApproval`. */
+  workflowUpdateArtifactApproval?: RuntimeStoreError;
   /** Injected error for `ExecutionLeaseRepository.acquire`. */
   leaseAcquire?: RuntimeStoreError;
   /** Injected error for `ExecutionLeaseRepository.heartbeat`. */
@@ -149,6 +157,7 @@ class InMemoryWorkflowInstanceRepository implements WorkflowInstanceRepository {
       slug: input.slug,
       status: "created",
       artifacts: [],
+      stepAttempts: [],
       createdAt: now,
       updatedAt: now,
     };
@@ -235,6 +244,8 @@ class InMemoryWorkflowInstanceRepository implements WorkflowInstanceRepository {
       path: string;
       mimeType?: string;
       description?: string;
+      integrity?: ArtifactIntegrityMetadata;
+      producerAgent?: string;
     },
   ): ResultAsync<WorkflowInstance, RuntimeStoreError> {
     if (this.failures.workflowAddArtifact) {
@@ -244,15 +255,99 @@ class InMemoryWorkflowInstanceRepository implements WorkflowInstanceRepository {
     if (!existing) {
       return errAsync(notFoundError("WorkflowInstance", id as string));
     }
+
+    // Find existing artifact with same name to determine revision (last occurrence)
+    const prior =
+      [...existing.artifacts].reverse().find((a) => a.name === artifact.name) ??
+      null;
+    const revision = prior ? prior.revision + 1 : 1;
+    // Reuse stable id across revisions; assign new id for first occurrence
+    const artifactId = prior ? prior.id : createArtifactId(newId());
+
     const ref: ArtifactRef = {
+      id: artifactId,
       name: artifact.name,
       path: artifact.path,
+      revision,
+      // New revision always resets approvalState to pending, invalidating prior approval.
+      approvalState: "pending",
+      ...(artifact.producerAgent
+        ? { producerAgent: artifact.producerAgent }
+        : {}),
       ...(artifact.mimeType ? { mimeType: artifact.mimeType } : {}),
       ...(artifact.description ? { description: artifact.description } : {}),
+      ...(artifact.integrity ? { integrity: artifact.integrity } : {}),
     };
     const updated: WorkflowInstance = {
       ...existing,
       artifacts: [...existing.artifacts, ref],
+      updatedAt: new Date().toISOString(),
+    };
+    this.store.set(id, updated);
+    return okAsync(updated);
+  }
+
+  recordStepAttempt(
+    id: WorkflowInstanceId,
+    stepName: string,
+    consumedArtifacts: readonly ConsumedArtifactRecord[],
+  ): ResultAsync<WorkflowInstance, RuntimeStoreError> {
+    const existing = this.store.get(id);
+    if (!existing) {
+      return errAsync(notFoundError("WorkflowInstance", id as string));
+    }
+
+    // Compute attempt number: count prior attempts for this step + 1
+    const priorAttempts = existing.stepAttempts.filter(
+      (a) => a.stepName === stepName,
+    ).length;
+    const attemptNumber = priorAttempts + 1;
+
+    const record: StepAttemptRecord = {
+      stepName,
+      attemptNumber,
+      dispatchedAt: new Date().toISOString(),
+      consumedArtifacts,
+    };
+
+    const updated: WorkflowInstance = {
+      ...existing,
+      stepAttempts: [...existing.stepAttempts, record],
+      updatedAt: new Date().toISOString(),
+    };
+    this.store.set(id, updated);
+    return okAsync(updated);
+  }
+
+  updateArtifactApproval(
+    id: WorkflowInstanceId,
+    artifactId: ArtifactId,
+    approvalState: ArtifactApprovalState,
+  ): ResultAsync<WorkflowInstance, RuntimeStoreError> {
+    if (this.failures.workflowUpdateArtifactApproval) {
+      return errAsync(this.failures.workflowUpdateArtifactApproval);
+    }
+    const existing = this.store.get(id);
+    if (!existing) {
+      return errAsync(notFoundError("WorkflowInstance", id as string));
+    }
+    // Find the last index of the artifact with the given id
+    let artifactIndex = -1;
+    for (let i = existing.artifacts.length - 1; i >= 0; i--) {
+      if (existing.artifacts[i].id === artifactId) {
+        artifactIndex = i;
+        break;
+      }
+    }
+    if (artifactIndex === -1) {
+      return errAsync(notFoundError("ArtifactRef", artifactId as string));
+    }
+    const updatedArtifacts = existing.artifacts.map((a, i) =>
+      i === artifactIndex ? { ...a, approvalState } : a,
+    );
+    const updated: WorkflowInstance = {
+      ...existing,
+      artifacts: updatedArtifacts,
       updatedAt: new Date().toISOString(),
     };
     this.store.set(id, updated);

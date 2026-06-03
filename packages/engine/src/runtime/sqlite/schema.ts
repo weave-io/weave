@@ -34,6 +34,8 @@ export interface WorkflowInstanceRow {
   readonly current_step_name: string | null;
   /** JSON-serialized ArtifactRef[]. */
   readonly artifacts_json: string;
+  /** JSON-serialized StepAttemptRecord[]. */
+  readonly step_attempts_json: string;
   /** ISO 8601 creation timestamp. */
   readonly created_at: string;
   /** ISO 8601 last-update timestamp. */

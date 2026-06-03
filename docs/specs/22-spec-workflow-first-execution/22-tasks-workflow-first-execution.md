@@ -75,7 +75,7 @@
 - [x] 2.4 Add schema, validate, parse-config, merge, and builtin tests covering valid planning workflows, invalid planning-step counts, invalid `before-plan` publication, and non-reconciling `before-plan` behavior in v1.
 - [x] 2.5 Update workflow-schema and related docs with a concrete DSL example showing reviewed pre-plan artifacts feeding the canonical planning step.
 
-### [~] 3.0 Implement artifact identity, revisions, approval, and consumption provenance
+### [x] 3.0 Implement artifact identity, revisions, approval, and consumption provenance
 
 #### 3.0 Proof Artifact(s)
 
@@ -88,7 +88,7 @@
 
 - [x] 3.1 Add runtime data types and persistence fields for artifact identity, monotonic revisions, approval state, and integrity-verification metadata without storing raw artifact contents.
 - [x] 3.2 Define or update the engine/runtime interfaces that let planning and execution steps declare normative and informational artifact inputs explicitly.
-- [~] 3.3 Implement approval invalidation, self-approval prohibition, consumed-revision recording, and default retry reuse of the same consumed artifact revisions.
+- [x] 3.3 Implement approval invalidation, self-approval prohibition, consumed-revision recording, and default retry reuse of the same consumed artifact revisions.
 - [x] 3.4 Implement consumption-time integrity verification that compares current artifact contents to the bound immutable revision or fingerprint and fails closed on mismatch.
 - [x] 3.5 Add in-memory and SQLite runtime tests, plus sanitized provenance fixtures, covering approval invalidation, integrity verification, and provenance recording.
 - [x] 3.6 Update boundary and glossary docs so integrity-verification metadata has a sanctioned home consistent with the new runtime model.
