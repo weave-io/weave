@@ -1075,6 +1075,14 @@ export type ApproveArtifactResult = ResultAsync<
  * an artifact produced by a prior step. The engine enforces the self-approval
  * prohibition: an agent may not approve an artifact it produced.
  *
+ * **Lease enforcement**: `leaseId` is validated against the active lease for
+ * the workflow instance. A fabricated, stale, or non-matching lease ID returns
+ * a `lease_conflict` error — the engine fails closed.
+ *
+ * **Approver identity requirement**: `approverAgent` is required. Omitting it
+ * returns a `validation` error — the engine fails closed rather than silently
+ * skipping the self-approval prohibition.
+ *
  * EXCLUDED: raw prompts, completions, transcripts, credentials, tokens,
  * cookies, authorization headers, raw provider payloads.
  */
@@ -1094,11 +1102,15 @@ export interface ApproveArtifactInput {
   /**
    * The logical name of the agent performing the approval.
    *
+   * **Required** — the engine returns a `validation` error when absent, failing
+   * closed rather than silently skipping the self-approval prohibition.
+   *
    * Used to enforce the self-approval prohibition: if this matches the
    * `producerAgent` on the artifact, the engine returns a `policy_decision`
-   * error. When absent, self-approval checks are skipped.
+   * error. When `producerAgent` is absent on the artifact, the check is skipped
+   * (unknown producer identity cannot be compared).
    */
-  readonly approverAgent?: string;
+  readonly approverAgent: string;
   /** Optional structured metadata about the approval event. */
   readonly metadata?: SafeMetadata;
 }
@@ -3619,10 +3631,18 @@ export function beforeTool(input: BeforeToolInput): BeforeToolResult {
 /**
  * Approve or reject an artifact produced by a prior workflow step.
  *
- * Enforces the **self-approval prohibition**: if `input.approverAgent` matches
- * the `producerAgent` recorded on the artifact, the engine returns a
- * `policy_decision` error. This prevents a producing agent from approving its
- * own output, which would bypass the gate review intent.
+ * Enforces two security invariants:
+ *
+ * 1. **Lease enforcement**: `leaseId` is validated against the active lease
+ *    for the workflow instance. A fabricated, stale, or non-matching lease ID
+ *    returns a `lease_conflict` error — the engine fails closed.
+ *
+ * 2. **Self-approval prohibition**: `approverAgent` is required. When it
+ *    matches the `producerAgent` recorded on the artifact, the engine returns
+ *    a `policy_decision` error. Omitting `approverAgent` returns a `validation`
+ *    error — the engine fails closed rather than silently skipping the check.
+ *    When `producerAgent` is absent on the artifact, the identity comparison
+ *    is skipped (unknown producer cannot be compared).
  *
  * The engine updates only the most recent revision of the named artifact
  * (identified by `artifactId`). Approval of an older revision that has been
@@ -3658,14 +3678,26 @@ export function approveArtifact(
       lifecycleValidationError("approvalState is required", "approvalState"),
     );
   }
+  // Fail closed: approverAgent is required to prevent bypassing the
+  // self-approval prohibition by omitting the approver identity.
+  if (!input.approverAgent) {
+    return errAsync(
+      lifecycleValidationError(
+        "approverAgent is required — omitting it would bypass the self-approval prohibition",
+        "approverAgent",
+      ),
+    );
+  }
 
   if (input.metadata !== undefined && input.metadata !== null) {
     const metaCheck = sanitizeMetadata(input.metadata);
     if (metaCheck.isErr()) return errAsync(metaCheck.error);
   }
 
-  return store.instances
-    .findById(input.workflowInstanceId)
+  // Validate leaseId against the active lease — same fail-closed enforcement
+  // used by handleUserInterrupt, dispatchStep, and completeStep.
+  return store.leases
+    .findActive()
     .mapErr(
       (storeError): LifecycleError =>
         lifecyclePersistenceError(storeError.message, {
@@ -3673,55 +3705,39 @@ export function approveArtifact(
           message: storeError.message,
         }),
     )
-    .andThen((existing) => {
-      if (existing === null) {
+    .andThen((activeLease) => {
+      if (activeLease === null) {
         return errAsync(
-          lifecycleNotFoundError(
-            "WorkflowInstance",
-            input.workflowInstanceId as string,
+          lifecycleLeaseConflictError(
+            input.workflowInstanceId,
+            "none" as ExecutionLeaseId,
+            "No active lease for this workflow instance",
           ),
         );
       }
-
-      // Find the artifact by ID (last occurrence = most recent revision).
-      let artifact: ArtifactRef | undefined;
-      for (let i = existing.artifacts.length - 1; i >= 0; i--) {
-        if (existing.artifacts[i].id === input.artifactId) {
-          artifact = existing.artifacts[i];
-          break;
-        }
-      }
-
-      if (artifact === undefined) {
+      if (activeLease.id !== input.leaseId) {
         return errAsync(
-          lifecycleNotFoundError(
-            "ArtifactRef",
-            input.artifactId as string,
-            `Artifact '${input.artifactId}' not found in workflow instance`,
+          lifecycleLeaseConflictError(
+            input.workflowInstanceId,
+            activeLease.id,
+            "Provided lease ID does not match the active lease",
           ),
         );
       }
-
-      // Self-approval prohibition: producer cannot approve their own artifact.
-      if (
-        input.approverAgent !== undefined &&
-        artifact.producerAgent !== undefined &&
-        input.approverAgent === artifact.producerAgent
-      ) {
+      if (activeLease.workflowInstanceId !== input.workflowInstanceId) {
         return errAsync(
-          lifecyclePolicyDecisionError(
-            `Agent "${input.approverAgent}" cannot approve artifact "${artifact.name}" (revision ${artifact.revision}) because it produced that artifact. Self-approval is prohibited.`,
-            "self_approval",
+          lifecycleLeaseConflictError(
+            input.workflowInstanceId,
+            activeLease.id,
+            `Lease ${input.leaseId} belongs to workflow ${activeLease.workflowInstanceId}, not ${input.workflowInstanceId}`,
           ),
         );
       }
-
-      return store.instances
-        .updateArtifactApproval(
-          input.workflowInstanceId,
-          input.artifactId,
-          input.approvalState,
-        )
+      return okAsync(undefined as undefined);
+    })
+    .andThen(() =>
+      store.instances
+        .findById(input.workflowInstanceId)
         .mapErr(
           (storeError): LifecycleError =>
             lifecyclePersistenceError(storeError.message, {
@@ -3729,8 +3745,66 @@ export function approveArtifact(
               message: storeError.message,
             }),
         )
-        .map((instance): ApproveArtifactOutput => ({ instance }));
-    });
+        .andThen((existing) => {
+          if (existing === null) {
+            return errAsync(
+              lifecycleNotFoundError(
+                "WorkflowInstance",
+                input.workflowInstanceId as string,
+              ),
+            );
+          }
+
+          // Find the artifact by ID (last occurrence = most recent revision).
+          let artifact: ArtifactRef | undefined;
+          for (let i = existing.artifacts.length - 1; i >= 0; i--) {
+            if (existing.artifacts[i].id === input.artifactId) {
+              artifact = existing.artifacts[i];
+              break;
+            }
+          }
+
+          if (artifact === undefined) {
+            return errAsync(
+              lifecycleNotFoundError(
+                "ArtifactRef",
+                input.artifactId as string,
+                `Artifact '${input.artifactId}' not found in workflow instance`,
+              ),
+            );
+          }
+
+          // Self-approval prohibition: producer cannot approve their own artifact.
+          // When producerAgent is absent on the artifact, the identity comparison
+          // is skipped — unknown producer cannot be compared.
+          if (
+            artifact.producerAgent !== undefined &&
+            input.approverAgent === artifact.producerAgent
+          ) {
+            return errAsync(
+              lifecyclePolicyDecisionError(
+                `Agent "${input.approverAgent}" cannot approve artifact "${artifact.name}" (revision ${artifact.revision}) because it produced that artifact. Self-approval is prohibited.`,
+                "self_approval",
+              ),
+            );
+          }
+
+          return store.instances
+            .updateArtifactApproval(
+              input.workflowInstanceId,
+              input.artifactId,
+              input.approvalState,
+            )
+            .mapErr(
+              (storeError): LifecycleError =>
+                lifecyclePersistenceError(storeError.message, {
+                  type: storeError.type,
+                  message: storeError.message,
+                }),
+            )
+            .map((instance): ApproveArtifactOutput => ({ instance }));
+        }),
+    );
 }
 
 // ---------------------------------------------------------------------------

@@ -1,5 +1,5 @@
 /**
- * Artifact Approval Lifecycle Tests — Task 3.3
+ * Artifact Approval Lifecycle Tests — Task 3.3 + Security Fixes
  *
  * Verifies:
  * 1. Approval invalidation: new artifact revisions reset approvalState to
@@ -11,6 +11,10 @@
  *    the prior attempt by default.
  * 5. approveArtifact lifecycle function: validates inputs, enforces self-
  *    approval prohibition, delegates to store.
+ * 6. Lease enforcement: approveArtifact validates leaseId against the active
+ *    lease — fabricated or stale lease IDs are rejected (fail-closed).
+ * 7. approverAgent required: omitting approverAgent returns a validation error
+ *    rather than silently skipping the self-approval prohibition.
  *
  * All tests use createInMemoryRuntimeStore — no SQLite, no filesystem.
  */
@@ -129,6 +133,47 @@ async function setupRunningInstance(
   return { store, instanceId, leaseId };
 }
 
+/**
+ * Create a bare instance with an active lease for approveArtifact tests.
+ *
+ * Uses startExecution with a minimal single-step workflow so that the store
+ * has a real active lease. Returns { store, instanceId, leaseId }.
+ */
+async function setupApprovalInstance(instanceSuffix = "approval") {
+  const config = cfg(`
+workflow approval-test {
+  description "Minimal workflow for approval tests"
+  version 1
+
+  step work {
+    name "Do work"
+    type autonomous
+    agent shuttle
+    prompt "Do the work"
+    completion agent_signal
+  }
+}
+`);
+  const store = createInMemoryRuntimeStore();
+  const instanceId = createWorkflowInstanceId(`wf-${instanceSuffix}`);
+  const context = makeContext(config, "approval-test");
+
+  const startResult = await startExecution(
+    {
+      workflowInstanceId: instanceId,
+      ownerId: "owner-approval",
+      authorizationSource: "user",
+      context,
+    },
+    store,
+  );
+  if (startResult.isErr()) {
+    throw new Error(`startExecution failed: ${startResult.error.message}`);
+  }
+  const { leaseId } = startResult.value;
+  return { store, instanceId, leaseId };
+}
+
 // ---------------------------------------------------------------------------
 // 1. approveArtifact — basic validation
 // ---------------------------------------------------------------------------
@@ -142,6 +187,7 @@ describe("approveArtifact — input validation", () => {
         leaseId: createExecutionLeaseId("lease-001"),
         artifactId: createArtifactId("art-001"),
         approvalState: "approved",
+        approverAgent: "warp",
       },
       store,
     );
@@ -157,6 +203,7 @@ describe("approveArtifact — input validation", () => {
         leaseId: "" as ReturnType<typeof createExecutionLeaseId>,
         artifactId: createArtifactId("art-001"),
         approvalState: "approved",
+        approverAgent: "warp",
       },
       store,
     );
@@ -172,6 +219,7 @@ describe("approveArtifact — input validation", () => {
         leaseId: createExecutionLeaseId("lease-001"),
         artifactId: "" as ReturnType<typeof createArtifactId>,
         approvalState: "approved",
+        approverAgent: "warp",
       },
       store,
     );
@@ -179,37 +227,59 @@ describe("approveArtifact — input validation", () => {
     expect(result._unsafeUnwrapErr().type).toBe("validation");
   });
 
-  it("returns not_found when workflow instance does not exist", async () => {
+  it("returns validation error when approverAgent is missing", async () => {
+    // approverAgent is required — omitting it returns a validation error
+    // (fail-closed: cannot bypass self-approval prohibition by omission).
     const store = createInMemoryRuntimeStore();
     const result = await approveArtifact(
       {
-        workflowInstanceId: createWorkflowInstanceId("nonexistent"),
+        workflowInstanceId: createWorkflowInstanceId("wf-001"),
         leaseId: createExecutionLeaseId("lease-001"),
         artifactId: createArtifactId("art-001"),
         approvalState: "approved",
+        approverAgent: "" as string,
       },
       store,
     );
     expect(result.isErr()).toBe(true);
-    expect(result._unsafeUnwrapErr().type).toBe("not_found");
+    const error = result._unsafeUnwrapErr();
+    expect(error.type).toBe("validation");
+    if (error.type === "validation") {
+      expect(error.field).toBe("approverAgent");
+    }
   });
 
-  it("returns not_found when artifact does not exist on instance", async () => {
-    const store = createInMemoryRuntimeStore();
-    const instanceId = createWorkflowInstanceId("wf-001");
-    await store.instances.create({
-      id: instanceId,
-      workflowName: "test",
-      goal: "test",
-      slug: "test",
-    });
+  it("returns lease_conflict when workflowInstanceId does not match the active lease's instance", async () => {
+    // The active lease belongs to the instance created by setupApprovalInstance.
+    // Attempting to approve an artifact on a different (nonexistent) instance
+    // returns lease_conflict — the engine fails closed before reaching not_found.
+    const { store, leaseId } = await setupApprovalInstance("not-found-wf");
+
+    const result = await approveArtifact(
+      {
+        workflowInstanceId: createWorkflowInstanceId("different-instance"),
+        leaseId,
+        artifactId: createArtifactId("art-001"),
+        approvalState: "approved",
+        approverAgent: "warp",
+      },
+      store,
+    );
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().type).toBe("lease_conflict");
+  });
+
+  it("returns not_found when artifact does not exist on instance (with active lease)", async () => {
+    const { store, instanceId, leaseId } =
+      await setupApprovalInstance("no-artifact");
 
     const result = await approveArtifact(
       {
         workflowInstanceId: instanceId,
-        leaseId: createExecutionLeaseId("lease-001"),
+        leaseId,
         artifactId: createArtifactId("nonexistent-art"),
         approvalState: "approved",
+        approverAgent: "warp",
       },
       store,
     );
@@ -224,14 +294,8 @@ describe("approveArtifact — input validation", () => {
 
 describe("approveArtifact — self-approval prohibition", () => {
   it("rejects approval when approverAgent matches producerAgent", async () => {
-    const store = createInMemoryRuntimeStore();
-    const instanceId = createWorkflowInstanceId("wf-self-approve");
-    await store.instances.create({
-      id: instanceId,
-      workflowName: "test",
-      goal: "test",
-      slug: "test",
-    });
+    const { store, instanceId, leaseId } =
+      await setupApprovalInstance("self-approve");
 
     // Add artifact with producerAgent = "shuttle"
     const withArtifact = (
@@ -248,7 +312,7 @@ describe("approveArtifact — self-approval prohibition", () => {
     const result = await approveArtifact(
       {
         workflowInstanceId: instanceId,
-        leaseId: createExecutionLeaseId("lease-001"),
+        leaseId,
         artifactId,
         approvalState: "approved",
         approverAgent: "shuttle",
@@ -264,14 +328,8 @@ describe("approveArtifact — self-approval prohibition", () => {
   });
 
   it("allows approval when approverAgent differs from producerAgent", async () => {
-    const store = createInMemoryRuntimeStore();
-    const instanceId = createWorkflowInstanceId("wf-cross-approve");
-    await store.instances.create({
-      id: instanceId,
-      workflowName: "test",
-      goal: "test",
-      slug: "test",
-    });
+    const { store, instanceId, leaseId } =
+      await setupApprovalInstance("cross-approve");
 
     const withArtifact = (
       await store.instances.addArtifact(instanceId, {
@@ -287,7 +345,7 @@ describe("approveArtifact — self-approval prohibition", () => {
     const result = await approveArtifact(
       {
         workflowInstanceId: instanceId,
-        leaseId: createExecutionLeaseId("lease-001"),
+        leaseId,
         artifactId,
         approvalState: "approved",
         approverAgent: "warp",
@@ -301,15 +359,12 @@ describe("approveArtifact — self-approval prohibition", () => {
     expect(artifact?.approvalState).toBe("approved");
   });
 
-  it("allows approval when approverAgent is absent (no self-approval check)", async () => {
-    const store = createInMemoryRuntimeStore();
-    const instanceId = createWorkflowInstanceId("wf-no-approver");
-    await store.instances.create({
-      id: instanceId,
-      workflowName: "test",
-      goal: "test",
-      slug: "test",
-    });
+  it("rejects approval when approverAgent is absent — fail closed", async () => {
+    // approverAgent is required. Omitting it returns a validation error
+    // rather than silently skipping the self-approval prohibition.
+    // This is the fail-closed behavior: unknown approver identity → reject.
+    const { store, instanceId, leaseId } =
+      await setupApprovalInstance("no-approver");
 
     const withArtifact = (
       await store.instances.addArtifact(instanceId, {
@@ -321,32 +376,32 @@ describe("approveArtifact — self-approval prohibition", () => {
 
     const artifactId = withArtifact.artifacts[0].id;
 
-    // No approverAgent — self-approval check is skipped
+    // Empty approverAgent — must be rejected
     const result = await approveArtifact(
       {
         workflowInstanceId: instanceId,
-        leaseId: createExecutionLeaseId("lease-001"),
+        leaseId,
         artifactId,
         approvalState: "approved",
+        approverAgent: "" as string,
       },
       store,
     );
 
-    expect(result.isOk()).toBe(true);
-    const output = result._unsafeUnwrap();
-    const artifact = output.instance.artifacts.find((a) => a.id === artifactId);
-    expect(artifact?.approvalState).toBe("approved");
+    expect(result.isErr()).toBe(true);
+    const error = result._unsafeUnwrapErr();
+    expect(error.type).toBe("validation");
+    if (error.type === "validation") {
+      expect(error.field).toBe("approverAgent");
+    }
   });
 
-  it("allows approval when producerAgent is absent (no self-approval check)", async () => {
-    const store = createInMemoryRuntimeStore();
-    const instanceId = createWorkflowInstanceId("wf-no-producer");
-    await store.instances.create({
-      id: instanceId,
-      workflowName: "test",
-      goal: "test",
-      slug: "test",
-    });
+  it("allows approval when producerAgent is absent on artifact (unknown producer)", async () => {
+    // When the artifact has no producerAgent, the identity comparison is
+    // skipped — unknown producer cannot be compared. approverAgent is still
+    // required (fail-closed), but the self-approval check is not triggered.
+    const { store, instanceId, leaseId } =
+      await setupApprovalInstance("no-producer");
 
     // Artifact without producerAgent
     const withArtifact = (
@@ -358,11 +413,11 @@ describe("approveArtifact — self-approval prohibition", () => {
 
     const artifactId = withArtifact.artifacts[0].id;
 
-    // approverAgent is set but producerAgent is absent — no check
+    // approverAgent is set but producerAgent is absent — check is skipped
     const result = await approveArtifact(
       {
         workflowInstanceId: instanceId,
-        leaseId: createExecutionLeaseId("lease-001"),
+        leaseId,
         artifactId,
         approvalState: "approved",
         approverAgent: "shuttle",
@@ -374,14 +429,8 @@ describe("approveArtifact — self-approval prohibition", () => {
   });
 
   it("approveArtifact can set approvalState to 'rejected'", async () => {
-    const store = createInMemoryRuntimeStore();
-    const instanceId = createWorkflowInstanceId("wf-reject");
-    await store.instances.create({
-      id: instanceId,
-      workflowName: "test",
-      goal: "test",
-      slug: "test",
-    });
+    const { store, instanceId, leaseId } =
+      await setupApprovalInstance("reject");
 
     const withArtifact = (
       await store.instances.addArtifact(instanceId, {
@@ -396,7 +445,7 @@ describe("approveArtifact — self-approval prohibition", () => {
     const result = await approveArtifact(
       {
         workflowInstanceId: instanceId,
-        leaseId: createExecutionLeaseId("lease-001"),
+        leaseId,
         artifactId,
         approvalState: "rejected",
         approverAgent: "warp",
@@ -408,6 +457,134 @@ describe("approveArtifact — self-approval prohibition", () => {
     const output = result._unsafeUnwrap();
     const artifact = output.instance.artifacts.find((a) => a.id === artifactId);
     expect(artifact?.approvalState).toBe("rejected");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 2b. approveArtifact — lease enforcement (Warp security fix)
+// ---------------------------------------------------------------------------
+
+describe("approveArtifact — lease enforcement", () => {
+  it("rejects approval when no active lease exists", async () => {
+    // No startExecution called — store has no active lease.
+    const store = createInMemoryRuntimeStore();
+    const instanceId = createWorkflowInstanceId("wf-no-lease");
+    await store.instances.create({
+      id: instanceId,
+      workflowName: "test",
+      goal: "test",
+      slug: "test",
+    });
+    const withArtifact = (
+      await store.instances.addArtifact(instanceId, {
+        name: "plan",
+        path: ".weave/plans/test.md",
+        producerAgent: "shuttle",
+      })
+    )._unsafeUnwrap();
+    const artifactId = withArtifact.artifacts[0].id;
+
+    const result = await approveArtifact(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: createExecutionLeaseId("fabricated-lease"),
+        artifactId,
+        approvalState: "approved",
+        approverAgent: "warp",
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    const error = result._unsafeUnwrapErr();
+    expect(error.type).toBe("lease_conflict");
+  });
+
+  it("rejects approval when leaseId does not match the active lease", async () => {
+    // Active lease exists but caller provides a fabricated/stale lease ID.
+    const { store, instanceId } = await setupApprovalInstance("wrong-lease");
+    const withArtifact = (
+      await store.instances.addArtifact(instanceId, {
+        name: "plan",
+        path: ".weave/plans/test.md",
+        producerAgent: "shuttle",
+      })
+    )._unsafeUnwrap();
+    const artifactId = withArtifact.artifacts[0].id;
+
+    const result = await approveArtifact(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: createExecutionLeaseId("fabricated-lease-id"),
+        artifactId,
+        approvalState: "approved",
+        approverAgent: "warp",
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    const error = result._unsafeUnwrapErr();
+    expect(error.type).toBe("lease_conflict");
+  });
+
+  it("allows approval when leaseId matches the active lease", async () => {
+    // Happy path: valid lease, valid approver, different from producer.
+    const { store, instanceId, leaseId } =
+      await setupApprovalInstance("valid-lease");
+    const withArtifact = (
+      await store.instances.addArtifact(instanceId, {
+        name: "plan",
+        path: ".weave/plans/test.md",
+        producerAgent: "shuttle",
+      })
+    )._unsafeUnwrap();
+    const artifactId = withArtifact.artifacts[0].id;
+
+    const result = await approveArtifact(
+      {
+        workflowInstanceId: instanceId,
+        leaseId,
+        artifactId,
+        approvalState: "approved",
+        approverAgent: "warp",
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    const output = result._unsafeUnwrap();
+    const artifact = output.instance.artifacts.find((a) => a.id === artifactId);
+    expect(artifact?.approvalState).toBe("approved");
+  });
+
+  it("rejects approval with a fabricated lease even when instance and artifact exist", async () => {
+    // Regression: previously approveArtifact only checked leaseId was non-empty.
+    // A fabricated lease ID that is non-empty must now be rejected.
+    const { store, instanceId } = await setupApprovalInstance("fabricated");
+    const withArtifact = (
+      await store.instances.addArtifact(instanceId, {
+        name: "plan",
+        path: ".weave/plans/test.md",
+        producerAgent: "shuttle",
+      })
+    )._unsafeUnwrap();
+    const artifactId = withArtifact.artifacts[0].id;
+
+    // Use a non-empty but fabricated lease ID
+    const result = await approveArtifact(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: createExecutionLeaseId("totally-made-up-lease-xyz"),
+        artifactId,
+        approvalState: "approved",
+        approverAgent: "warp",
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().type).toBe("lease_conflict");
   });
 });
 
@@ -875,6 +1052,8 @@ describe("retry reuse — default pinning to prior attempt revisions", () => {
 
 describe("approveArtifact — metadata sanitization", () => {
   it("rejects metadata with denied field names", async () => {
+    // Metadata sanitization runs before lease validation, so this test
+    // does not need an active lease — the validation error fires first.
     const store = createInMemoryRuntimeStore();
     const instanceId = createWorkflowInstanceId("wf-meta");
     await store.instances.create({
@@ -897,6 +1076,7 @@ describe("approveArtifact — metadata sanitization", () => {
         leaseId: createExecutionLeaseId("lease-001"),
         artifactId,
         approvalState: "approved",
+        approverAgent: "warp",
         metadata: { token: "secret-value" } as Record<string, string>,
       },
       store,
