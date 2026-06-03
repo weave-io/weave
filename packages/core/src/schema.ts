@@ -296,16 +296,20 @@ export const WorkflowStepRoleSchema = z.enum(["planning"]);
  * A single step inside a workflow.
  *
  * Field mapping notes:
- * - `name`          — the step's block identifier in the DSL (e.g. `step plan { }` → `"plan"`)
- * - `display_name`  — the human-readable label from the inner `name "..."` property
- * - `role`          — optional semantic role; `"planning"` marks the canonical planning step
- * - `on_reject`     — only valid when `type` is `"gate"` (enforced by `.refine()`)
- * - `insert_before` — position this step immediately before the named anchor step in the
- *                     base workflow; only meaningful on extension workflows
- * - `insert_after`  — position this step immediately after the named anchor step in the
- *                     base workflow; only meaningful on extension workflows
+ * - `name`              — the step's block identifier in the DSL (e.g. `step plan { }` → `"plan"`)
+ * - `display_name`      — the human-readable label from the inner `name "..."` property
+ * - `role`              — optional semantic role; `"planning"` marks the canonical planning step
+ * - `on_reject`         — only valid when `type` is `"gate"` (enforced by `.refine()`)
+ * - `prompt_append`     — inline text appended after the step prompt; rendered as a Mustache template
+ * - `prompt_append_file`— path to a `.md` file appended after the step prompt; resolved relative to
+ *                         the config scope's `prompts/` directory; rendered as a Mustache template
+ * - `insert_before`     — position this step immediately before the named anchor step in the
+ *                         base workflow; only meaningful on extension workflows
+ * - `insert_after`      — position this step immediately after the named anchor step in the
+ *                         base workflow; only meaningful on extension workflows
  *
  * `insert_before` and `insert_after` are mutually exclusive (`BothInsertBeforeAndAfter`).
+ * `prompt_append` and `prompt_append_file` are mutually exclusive per scope.
  */
 export const WorkflowStepSchema = z
   .object({
@@ -316,6 +320,14 @@ export const WorkflowStepSchema = z
     type: WorkflowStepTypeSchema,
     agent: z.string(),
     prompt: z.string(),
+    /** Inline text appended after the step prompt; rendered as a Mustache template. */
+    prompt_append: z.string().optional(),
+    /**
+     * Path to a `.md` file appended after the step prompt; resolved relative to the
+     * config scope's `prompts/` directory; rendered as a Mustache template.
+     * Mutually exclusive with `prompt_append`.
+     */
+    prompt_append_file: z.string().optional(),
     completion: CompletionMethodSchema,
     inputs: z.array(ArtifactDeclSchema).optional(),
     outputs: z.array(ArtifactDeclSchema).optional(),
@@ -352,6 +364,26 @@ export const WorkflowStepSchema = z
     {
       message:
         "insert_before and insert_after are mutually exclusive (BothInsertBeforeAndAfter)",
+    },
+  )
+  .refine(
+    (data) =>
+      !(
+        data.prompt_append !== undefined &&
+        data.prompt_append_file !== undefined
+      ),
+    { message: "prompt_append and prompt_append_file are mutually exclusive" },
+  )
+  .refine(
+    (data) => {
+      if (data.prompt_append_file === undefined) return true;
+      if (data.prompt_append_file.startsWith("/")) return false;
+      if (data.prompt_append_file.includes("..")) return false;
+      return true;
+    },
+    {
+      message:
+        "prompt_append_file must be a relative path without '..' or absolute paths",
     },
   );
 
@@ -416,19 +448,27 @@ export const ExtendBeforePlanSchema = z.object({
 /**
  * A named workflow definition containing an ordered list of steps.
  *
- * - `version`          — positive integer; used for future migration
- * - `steps`            — at least one step is required unless `extends` is set
- * - `extends`          — optional name of a base workflow this workflow extends;
- *                        when set, `steps` may be empty (the extension may add steps
- *                        relative to the base via `insert_before` / `insert_after`)
- * - `extension_points` — thin publication block declaring engine-visible extension
- *                        surfaces (v1: `before-plan` only)
+ * - `version`           — positive integer; used for future migration
+ * - `steps`             — at least one step is required unless `extends` is set
+ * - `extends`           — optional name of a base workflow this workflow extends;
+ *                         when set, `steps` may be empty (the extension may add steps
+ *                         relative to the base via `insert_before` / `insert_after`)
+ * - `extension_points`  — thin publication block declaring engine-visible extension
+ *                         surfaces (v1: `before-plan` only)
+ * - `prompt_append`     — inline text appended to every step prompt in this workflow;
+ *                         rendered as a Mustache template; mutually exclusive with
+ *                         `prompt_append_file`
+ * - `prompt_append_file`— path to a `.md` file appended to every step prompt in this
+ *                         workflow; resolved relative to the config scope's `prompts/`
+ *                         directory; rendered as a Mustache template; mutually exclusive
+ *                         with `prompt_append`
  *
  * Validation invariants:
  * - When `extension_points.before_plan` is true, exactly one step must carry
  *   `role: "planning"` (`MissingPlanningStep` / `DuplicatePlanningStep`).
  * - A workflow without `extension_points.before_plan` may still have a planning
  *   step, but the uniqueness constraint is only enforced when the slot is published.
+ * - `prompt_append` and `prompt_append_file` are mutually exclusive per scope.
  */
 export const WorkflowConfigSchema = z
   .object({
@@ -443,6 +483,14 @@ export const WorkflowConfigSchema = z
       .optional(),
     /** Thin publication block declaring engine-visible extension surfaces. */
     extension_points: ExtensionPointsSchema.optional(),
+    /** Inline text appended to every step prompt in this workflow; rendered as a Mustache template. */
+    prompt_append: z.string().optional(),
+    /**
+     * Path to a `.md` file appended to every step prompt in this workflow; resolved relative to
+     * the config scope's `prompts/` directory; rendered as a Mustache template.
+     * Mutually exclusive with `prompt_append`.
+     */
+    prompt_append_file: z.string().optional(),
   })
   .refine((data) => data.extends !== undefined || data.steps.length >= 1, {
     message:
@@ -470,6 +518,26 @@ export const WorkflowConfigSchema = z
       message:
         "only one step per workflow may have role: planning (DuplicatePlanningStep)",
       path: ["steps"],
+    },
+  )
+  .refine(
+    (data) =>
+      !(
+        data.prompt_append !== undefined &&
+        data.prompt_append_file !== undefined
+      ),
+    { message: "prompt_append and prompt_append_file are mutually exclusive" },
+  )
+  .refine(
+    (data) => {
+      if (data.prompt_append_file === undefined) return true;
+      if (data.prompt_append_file.startsWith("/")) return false;
+      if (data.prompt_append_file.includes("..")) return false;
+      return true;
+    },
+    {
+      message:
+        "prompt_append_file must be a relative path without '..' or absolute paths",
     },
   );
 

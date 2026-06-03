@@ -30,12 +30,19 @@ export {
 export type {
   AgentDescriptor,
   AgentDescriptorCategory,
+  AppendCollision,
+  AppendScope,
   CategoryMetadata,
   ComposeError,
   DelegationTarget,
   PromptTemplateReason,
+  WorkflowStepComposedPrompt,
 } from "./compose.js";
-export { composeAgentDescriptor } from "./compose.js";
+export {
+  composeAgentDescriptor,
+  composeWorkflowStepPrompt,
+  detectAppendCollisions,
+} from "./compose.js";
 export type { CategoryShuttleConflictError } from "./descriptors.js";
 export { generateCategoryShuttles } from "./descriptors.js";
 export type { Env, EnvValidationError } from "./env.js";
@@ -103,9 +110,9 @@ export {
   lifecyclePolicyDecisionError,
   lifecycleValidationError,
   observeSession,
-  reconcileExecution,
   RECONCILIATION_AUTHORIZATION_SOURCES,
   RECONCILIATION_REASONS,
+  reconcileExecution,
   resumeExecution,
   sanitizeMetadata,
   startExecution,

@@ -154,13 +154,13 @@
   - interface CapabilityEntry
   - _...18 more_
 - `packages/engine/src/compose.ts`
+  - function detectAppendCollisions: (configs) => AppendCollision[]
+  - function composeWorkflowStepPrompt: (stepName, step, workflow, templateContext) => ResultAsync<WorkflowStepComposedPrompt, ComposeError>
   - function composeAgentDescriptor: (agentName, agentConfig, config, allAgents, AgentConfig>, category?) => ResultAsync<AgentDescriptor, ComposeError>
   - interface CategoryMetadata
   - interface AgentDescriptor
   - interface AgentDescriptorCategory
-  - interface DelegationTarget
-  - type PromptTemplateReason
-  - _...1 more_
+  - _...6 more_
 - `packages/engine/src/descriptors.ts`
   - function generateCategoryShuttles: (config) => Result<
   - interface GeneratedCategoryShuttle
@@ -178,7 +178,7 @@
   - function lifecycleLeaseConflictError: (workflowInstanceId, conflictingLeaseId, message) => LifecycleLeaseConflictError
   - function lifecyclePersistenceError: (message, cause?) => LifecyclePersistenceError
   - function lifecyclePolicyDecisionError: (message, rule?) => LifecyclePolicyDecisionError
-  - _...50 more_
+  - _...62 more_
 - `packages/engine/src/logger.ts`
   - function redirectLogsToFile: (filePath) => Promise<void>
   - const logDestination
@@ -226,8 +226,8 @@
   - function createSessionSnapshotId: (raw) => SessionSnapshotId
   - function createRuntimeJournalEntryId: (raw) => RuntimeJournalEntryId
   - function createOwnerId: (raw) => OwnerId
-  - interface JsonObject
-  - _...18 more_
+  - function createArtifactId: (raw) => ArtifactId
+  - _...30 more_
 - `packages/engine/src/skill-resolution.ts`
   - function resolveSkillsForAgent: (input) => Result<ResolvedSkill[], SkillResolutionError[]>
   - function resolveSkillsForConfig: (input) => Result<ConfigSkillResolutionResult, SkillResolutionError[]>

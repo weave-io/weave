@@ -1230,6 +1230,309 @@ describe("parseConfig — reconciliation_handlers on workflow steps", () => {
 });
 
 // ---------------------------------------------------------------------------
+// parseConfig — workflow-level prompt_append and prompt_append_file (Spec 22 Unit 4)
+// ---------------------------------------------------------------------------
+
+describe("parseConfig — workflow-level prompt_append and prompt_append_file", () => {
+  it("workflow with prompt_append parses end-to-end and field is present in output", () => {
+    const src = `workflow w {
+  version 1
+  prompt_append "Always write tests for your changes."
+
+  step fix {
+    name "Fix"
+    type autonomous
+    agent shuttle
+    prompt "Fix it."
+    completion agent_signal
+  }
+}`;
+    const result = parseConfig(src);
+    expect(result.isOk()).toBe(true);
+    const wf = result._unsafeUnwrap().workflows.w;
+    expect(wf?.prompt_append).toBe("Always write tests for your changes.");
+    expect(wf?.prompt_append_file).toBeUndefined();
+  });
+
+  it("workflow with prompt_append_file parses end-to-end and field is present in output", () => {
+    const src = `workflow w {
+  version 1
+  prompt_append_file "workflow-guidance.md"
+
+  step fix {
+    name "Fix"
+    type autonomous
+    agent shuttle
+    prompt "Fix it."
+    completion agent_signal
+  }
+}`;
+    const result = parseConfig(src);
+    expect(result.isOk()).toBe(true);
+    const wf = result._unsafeUnwrap().workflows.w;
+    expect(wf?.prompt_append_file).toBe("workflow-guidance.md");
+    expect(wf?.prompt_append).toBeUndefined();
+  });
+
+  it("workflow without prompt_append or prompt_append_file has both undefined in output", () => {
+    const src = `workflow w {
+  version 1
+
+  step fix {
+    name "Fix"
+    type autonomous
+    agent shuttle
+    prompt "Fix it."
+    completion agent_signal
+  }
+}`;
+    const result = parseConfig(src);
+    expect(result.isOk()).toBe(true);
+    const wf = result._unsafeUnwrap().workflows.w;
+    expect(wf?.prompt_append).toBeUndefined();
+    expect(wf?.prompt_append_file).toBeUndefined();
+  });
+
+  it("workflow with both prompt_append and prompt_append_file → err (mutually exclusive)", () => {
+    const src = `workflow w {
+  version 1
+  prompt_append "Inline guidance."
+  prompt_append_file "workflow-guidance.md"
+
+  step fix {
+    name "Fix"
+    type autonomous
+    agent shuttle
+    prompt "Fix it."
+    completion agent_signal
+  }
+}`;
+    const result = parseConfig(src);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    expect(errors.some((e) => e.type === "ValidationError")).toBe(true);
+    expect(
+      errors.some(
+        (e) =>
+          e.type === "ValidationError" &&
+          "message" in e &&
+          e.message.includes("mutually exclusive"),
+      ),
+    ).toBe(true);
+  });
+
+  it("workflow with prompt_append_file '../bad.md' → err (relative path)", () => {
+    const src = `workflow w {
+  version 1
+  prompt_append_file "../bad.md"
+
+  step fix {
+    name "Fix"
+    type autonomous
+    agent shuttle
+    prompt "Fix it."
+    completion agent_signal
+  }
+}`;
+    const result = parseConfig(src);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    expect(errors.some((e) => e.type === "ValidationError")).toBe(true);
+  });
+
+  it("workflow with prompt_append_file '/etc/passwd' → err (relative path)", () => {
+    const src = `workflow w {
+  version 1
+  prompt_append_file "/etc/passwd"
+
+  step fix {
+    name "Fix"
+    type autonomous
+    agent shuttle
+    prompt "Fix it."
+    completion agent_signal
+  }
+}`;
+    const result = parseConfig(src);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    expect(errors.some((e) => e.type === "ValidationError")).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// parseConfig — step-level prompt_append and prompt_append_file (Spec 22 Unit 4)
+// ---------------------------------------------------------------------------
+
+describe("parseConfig — step-level prompt_append and prompt_append_file", () => {
+  it("step with prompt_append parses end-to-end and field is present in output", () => {
+    const src = `workflow w {
+  version 1
+
+  step implement {
+    name "Implement"
+    type autonomous
+    agent shuttle
+    prompt "Do the work."
+    prompt_append "Focus on test coverage."
+    completion agent_signal
+  }
+}`;
+    const result = parseConfig(src);
+    expect(result.isOk()).toBe(true);
+    const step = result._unsafeUnwrap().workflows.w?.steps[0];
+    expect(step?.prompt_append).toBe("Focus on test coverage.");
+    expect(step?.prompt_append_file).toBeUndefined();
+  });
+
+  it("step with prompt_append_file parses end-to-end and field is present in output", () => {
+    const src = `workflow w {
+  version 1
+
+  step implement {
+    name "Implement"
+    type autonomous
+    agent shuttle
+    prompt "Do the work."
+    prompt_append_file "step-guidance.md"
+    completion agent_signal
+  }
+}`;
+    const result = parseConfig(src);
+    expect(result.isOk()).toBe(true);
+    const step = result._unsafeUnwrap().workflows.w?.steps[0];
+    expect(step?.prompt_append_file).toBe("step-guidance.md");
+    expect(step?.prompt_append).toBeUndefined();
+  });
+
+  it("step without prompt_append or prompt_append_file has both undefined in output", () => {
+    const src = `workflow w {
+  version 1
+
+  step fix {
+    name "Fix"
+    type autonomous
+    agent shuttle
+    prompt "Fix it."
+    completion agent_signal
+  }
+}`;
+    const result = parseConfig(src);
+    expect(result.isOk()).toBe(true);
+    const step = result._unsafeUnwrap().workflows.w?.steps[0];
+    expect(step?.prompt_append).toBeUndefined();
+    expect(step?.prompt_append_file).toBeUndefined();
+  });
+
+  it("step with both prompt_append and prompt_append_file → err (mutually exclusive)", () => {
+    const src = `workflow w {
+  version 1
+
+  step bad {
+    name "Bad step"
+    type autonomous
+    agent shuttle
+    prompt "Do it."
+    prompt_append "Inline guidance."
+    prompt_append_file "step-guidance.md"
+    completion agent_signal
+  }
+}`;
+    const result = parseConfig(src);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    expect(errors.some((e) => e.type === "ValidationError")).toBe(true);
+    expect(
+      errors.some(
+        (e) =>
+          e.type === "ValidationError" &&
+          "message" in e &&
+          e.message.includes("mutually exclusive"),
+      ),
+    ).toBe(true);
+  });
+
+  it("step with prompt_append_file '../bad.md' → err (relative path)", () => {
+    const src = `workflow w {
+  version 1
+
+  step bad {
+    name "Bad step"
+    type autonomous
+    agent shuttle
+    prompt "Do it."
+    prompt_append_file "../bad.md"
+    completion agent_signal
+  }
+}`;
+    const result = parseConfig(src);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    expect(errors.some((e) => e.type === "ValidationError")).toBe(true);
+  });
+
+  it("workflow-level and step-level prompt_append coexist independently end-to-end", () => {
+    const src = `workflow w {
+  version 1
+  prompt_append "Workflow-wide guidance."
+
+  step implement {
+    name "Implement"
+    type autonomous
+    agent shuttle
+    prompt "Do the work."
+    prompt_append "Step-local guidance."
+    completion agent_signal
+  }
+
+  step review {
+    name "Review"
+    type gate
+    agent weft
+    prompt "Review the changes."
+    completion review_verdict
+    on_reject pause
+  }
+}`;
+    const result = parseConfig(src);
+    expect(result.isOk()).toBe(true);
+    const wf = result._unsafeUnwrap().workflows.w;
+    expect(wf?.prompt_append).toBe("Workflow-wide guidance.");
+    expect(wf?.prompt_append_file).toBeUndefined();
+
+    const implStep = wf?.steps[0];
+    expect(implStep?.prompt_append).toBe("Step-local guidance.");
+    expect(implStep?.prompt_append_file).toBeUndefined();
+
+    const reviewStep = wf?.steps[1];
+    expect(reviewStep?.prompt_append).toBeUndefined();
+    expect(reviewStep?.prompt_append_file).toBeUndefined();
+  });
+
+  it("workflow with prompt_append_file and step with prompt_append_file coexist independently", () => {
+    const src = `workflow w {
+  version 1
+  prompt_append_file "workflow-guidance.md"
+
+  step implement {
+    name "Implement"
+    type autonomous
+    agent shuttle
+    prompt "Do the work."
+    prompt_append_file "step-guidance.md"
+    completion agent_signal
+  }
+}`;
+    const result = parseConfig(src);
+    expect(result.isOk()).toBe(true);
+    const wf = result._unsafeUnwrap().workflows.w;
+    expect(wf?.prompt_append_file).toBe("workflow-guidance.md");
+    const step = wf?.steps[0];
+    expect(step?.prompt_append_file).toBe("step-guidance.md");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // parseConfig — routing block
 // ---------------------------------------------------------------------------
 

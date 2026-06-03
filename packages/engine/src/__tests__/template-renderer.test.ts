@@ -709,3 +709,157 @@ describe("renderTemplate — strict full-path validation", () => {
     expect(output).toBe("Backend:API work Frontend:UI work ");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Spec 22 Unit 4 — Trust boundary: bounded template context for appends
+// ---------------------------------------------------------------------------
+
+describe("renderTemplate — Spec 22 Unit 4 trust boundary", () => {
+  /**
+   * Simulates the bounded allowed-paths set used for workflow step appends.
+   * Append instructions must only reference the bounded AgentPromptTemplateContext
+   * and must never interpolate untrusted artifact contents or incidental chat text.
+   */
+  const BOUNDED_APPEND_PATHS = new Set([
+    "agent",
+    "agent.name",
+    "agent.description",
+    "agent.mode",
+    "agent.skills",
+    "agent.isCategory",
+    "category",
+    "category.name",
+    "category.description",
+    "toolPolicy",
+    "toolPolicy.effective",
+    "toolPolicy.effective.read",
+    "toolPolicy.effective.write",
+    "toolPolicy.effective.execute",
+    "toolPolicy.effective.delegate",
+    "toolPolicy.effective.network",
+    "delegation",
+    "delegation.targets",
+    "delegation.targets.name",
+    "delegation.targets.description",
+    "delegation.targets.domains",
+    "delegation.targets.triggers",
+    "delegation.targets.triggers.domain",
+    "delegation.targets.triggers.trigger",
+    "delegation.targets.isCategory",
+    "delegation.targets.isCategory.name",
+    "delegation.targets.isCategory.description",
+    ".",
+  ]);
+
+  it("Append_cannot_reference_artifact_contents_path", () => {
+    // artifact.contents is not in the bounded context — must be rejected
+    const error = renderErr(
+      "Artifact: {{artifact.contents}}.",
+      {},
+      BOUNDED_APPEND_PATHS,
+    );
+    expect(error.type).toBe("UnknownPath");
+    if (error.type === "UnknownPath") {
+      expect(error.path).toBe("artifact.contents");
+    }
+  });
+
+  it("Append_cannot_reference_chat_history_path", () => {
+    // chat.history is not in the bounded context — must be rejected
+    const error = renderErr(
+      "History: {{chat.history}}.",
+      {},
+      BOUNDED_APPEND_PATHS,
+    );
+    expect(error.type).toBe("UnknownPath");
+    if (error.type === "UnknownPath") {
+      expect(error.path).toBe("chat.history");
+    }
+  });
+
+  it("Append_cannot_reference_raw_prompt_path", () => {
+    // raw.prompt is not in the bounded context — must be rejected
+    const error = renderErr(
+      "Prompt: {{raw.prompt}}.",
+      {},
+      BOUNDED_APPEND_PATHS,
+    );
+    expect(error.type).toBe("UnknownPath");
+    if (error.type === "UnknownPath") {
+      expect(error.path).toBe("raw.prompt");
+    }
+  });
+
+  it("Append_can_reference_bounded_agent_name", () => {
+    const output = render(
+      "Agent: {{agent.name}}.",
+      {
+        agent: {
+          name: "shuttle",
+          mode: "subagent",
+          skills: [],
+          isCategory: false,
+        },
+      },
+      BOUNDED_APPEND_PATHS,
+    );
+    expect(output).toBe("Agent: shuttle.");
+  });
+
+  it("Append_can_reference_bounded_tool_policy", () => {
+    const output = render(
+      "Read: {{toolPolicy.effective.read}}.",
+      {
+        toolPolicy: {
+          effective: {
+            read: "allow",
+            write: "deny",
+            execute: "ask",
+            delegate: "deny",
+            network: "ask",
+          },
+        },
+      },
+      BOUNDED_APPEND_PATHS,
+    );
+    expect(output).toBe("Read: allow.");
+  });
+
+  it("Append_cannot_use_partials_to_escape_bounded_context", () => {
+    // Partials are unsupported — cannot be used to load external content
+    const error = renderErr("{{> external-content}}", {}, BOUNDED_APPEND_PATHS);
+    expect(error.type).toBe("UnsupportedFeature");
+    if (error.type === "UnsupportedFeature") {
+      expect(error.feature).toBe("partial");
+    }
+  });
+
+  it("Append_cannot_use_delimiter_changes_to_escape_bounded_context", () => {
+    // Delimiter changes are unsupported — cannot be used to bypass path validation
+    const error = renderErr(
+      "{{= <% %> =}}<%artifact.contents%>",
+      {},
+      BOUNDED_APPEND_PATHS,
+    );
+    expect(error.type).toBe("UnsupportedFeature");
+    if (error.type === "UnsupportedFeature") {
+      expect(error.feature).toBe("delimiter-change");
+    }
+  });
+
+  it("Append_cannot_use_prototype_traversal_paths", () => {
+    // Prototype traversal is always rejected regardless of allowed paths
+    const error = renderErr("{{__proto__.polluted}}", {}, BOUNDED_APPEND_PATHS);
+    expect(error.type).toBe("UnsafePath");
+  });
+
+  it("Append_with_no_template_tags_passes_through_unchanged", () => {
+    // Static append text without Mustache tags is always safe
+    const output = render(
+      "This is static guidance with no template tags.",
+      {},
+      BOUNDED_APPEND_PATHS,
+    );
+    expect(output).toBe("This is static guidance with no template tags.");
+  });
+});

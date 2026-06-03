@@ -110,7 +110,7 @@
 - [x] 4.4 Add runtime protections that keep completed `Plan Markdown` tasks immutable and model corrections as follow-up work rather than in-place rewrites.
 - [x] 4.5 Extend execution-lifecycle and runtime-contract tests to cover the reason set, authorized-source checks, handler routing, gate re-runs, and immutable completed tasks.
 
-### [ ] 5.0 Compose workflow-level and step-level prompt appends safely
+### [x] 5.0 Compose workflow-level and step-level prompt appends safely
 
 #### 5.0 Proof Artifact(s)
 
@@ -121,11 +121,11 @@
 
 #### 5.0 Tasks
 
-- [ ] 5.1 Define `prompt_append` and `prompt_append_file` at workflow and step scope, including ordered multiple append support in final merged configuration order and mutual-exclusion enforcement per scope.
-- [ ] 5.2 Extend prompt-composition and workflow validation logic so workflow-scope and step-scope appends compose correctly, with step-local precedence across scopes and last-append-wins within a scope.
-- [ ] 5.3 Add inspection or conflict-surfacing behavior so same-scope append collisions are visible in tooling rather than silently accepted as healthy.
-- [ ] 5.4 Enforce the trust boundary that prompt appends are config-authored text rendered against bounded template context and never ingest untrusted artifact contents or incidental chat text as instructions.
-- [ ] 5.5 Update prompt-composition docs and test suites with concrete fixtures covering append ordering, precedence, conflict surfacing, and trusted rendering behavior.
+- [x] 5.1 Define `prompt_append` and `prompt_append_file` at workflow and step scope, including ordered multiple append support in final merged configuration order and mutual-exclusion enforcement per scope.
+- [x] 5.2 Extend prompt-composition and workflow validation logic so workflow-scope and step-scope appends compose correctly, with step-local precedence across scopes and last-append-wins within a scope.
+- [x] 5.3 Add inspection or conflict-surfacing behavior so same-scope append collisions are visible in tooling rather than silently accepted as healthy.
+- [x] 5.4 Enforce the trust boundary that prompt appends are config-authored text rendered against bounded template context and never ingest untrusted artifact contents or incidental chat text as instructions.
+- [x] 5.5 Update prompt-composition docs and test suites with concrete fixtures covering append ordering, precedence, conflict surfacing, and trusted rendering behavior.
 
 ### [ ] 6.0 Align adapter readiness and delivery with canonical execution commands
 

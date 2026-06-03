@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 59 lib files | 4 env vars | 2 middleware | 0% test coverage
 > **Token savings:** this file is ~5,200 tokens. Without it, AI exploration would cost ~25,500 tokens. **Saves ~20,300 tokens per conversation.**
-> **Last scanned:** 2026-06-02 22:20 — re-run after significant changes
+> **Last scanned:** 2026-06-03 16:06 — re-run after significant changes
 
 ---
 
@@ -165,13 +165,13 @@
   - interface CapabilityEntry
   - _...18 more_
 - `packages/engine/src/compose.ts`
+  - function detectAppendCollisions: (configs) => AppendCollision[]
+  - function composeWorkflowStepPrompt: (stepName, step, workflow, templateContext) => ResultAsync<WorkflowStepComposedPrompt, ComposeError>
   - function composeAgentDescriptor: (agentName, agentConfig, config, allAgents, AgentConfig>, category?) => ResultAsync<AgentDescriptor, ComposeError>
   - interface CategoryMetadata
   - interface AgentDescriptor
   - interface AgentDescriptorCategory
-  - interface DelegationTarget
-  - type PromptTemplateReason
-  - _...1 more_
+  - _...6 more_
 - `packages/engine/src/descriptors.ts`
   - function generateCategoryShuttles: (config) => Result<
   - interface GeneratedCategoryShuttle
@@ -189,7 +189,7 @@
   - function lifecycleLeaseConflictError: (workflowInstanceId, conflictingLeaseId, message) => LifecycleLeaseConflictError
   - function lifecyclePersistenceError: (message, cause?) => LifecyclePersistenceError
   - function lifecyclePolicyDecisionError: (message, rule?) => LifecyclePolicyDecisionError
-  - _...50 more_
+  - _...62 more_
 - `packages/engine/src/logger.ts`
   - function redirectLogsToFile: (filePath) => Promise<void>
   - const logDestination
@@ -237,8 +237,8 @@
   - function createSessionSnapshotId: (raw) => SessionSnapshotId
   - function createRuntimeJournalEntryId: (raw) => RuntimeJournalEntryId
   - function createOwnerId: (raw) => OwnerId
-  - interface JsonObject
-  - _...18 more_
+  - function createArtifactId: (raw) => ArtifactId
+  - _...30 more_
 - `packages/engine/src/skill-resolution.ts`
   - function resolveSkillsForAgent: (input) => Result<ResolvedSkill[], SkillResolutionError[]>
   - function resolveSkillsForConfig: (input) => Result<ConfigSkillResolutionResult, SkillResolutionError[]>
@@ -305,9 +305,9 @@
 - `packages/adapters/opencode/src/sdk-types.ts` — imported by **9** files
 - `packages/cli/src/fs/file-system.ts` — imported by **9** files
 - `packages/core/src/tokens.ts` — imported by **8** files
-- `packages/engine/src/compose.ts` — imported by **8** files
 - `packages/cli/src/args.ts` — imported by **7** files
 - `packages/core/src/errors.ts` — imported by **6** files
+- `packages/engine/src/compose.ts` — imported by **6** files
 - `packages/engine/src/logger.ts` — imported by **6** files
 - `packages/adapters/opencode/src/index.ts` — imported by **5** files
 - `packages/cli/src/cli.ts` — imported by **5** files
@@ -328,9 +328,9 @@
 - `packages/adapters/opencode/src/sdk-types.ts` ← `packages/adapters/opencode/src/__tests__/adapter.test.ts`, `packages/adapters/opencode/src/__tests__/plugin.test.ts`, `packages/adapters/opencode/src/__tests__/reconcile-agent.test.ts`, `packages/adapters/opencode/src/__tests__/run-workflow.test.ts`, `packages/adapters/opencode/src/adapter.ts` +4 more
 - `packages/cli/src/fs/file-system.ts` ← `packages/cli/src/__tests__/file-system.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`, `packages/cli/src/commands/__tests__/migrate.test.ts`, `packages/cli/src/commands/__tests__/validate.test.ts` +4 more
 - `packages/core/src/tokens.ts` ← `packages/core/src/__tests__/lexer.test.ts`, `packages/core/src/ast.ts`, `packages/core/src/ast.ts`, `packages/core/src/index.ts`, `packages/core/src/index.ts` +3 more
-- `packages/engine/src/compose.ts` ← `packages/engine/src/__tests__/compose.test.ts`, `packages/engine/src/__tests__/mock-adapter.ts`, `packages/engine/src/__tests__/template-context.test.ts`, `packages/engine/src/adapter.ts`, `packages/engine/src/descriptors.ts` +3 more
 - `packages/cli/src/args.ts` ← `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/runtime.test.ts`, `packages/cli/src/commands/init.ts`, `packages/cli/src/commands/validate.ts` +2 more
 - `packages/core/src/errors.ts` ← `packages/core/src/__tests__/errors.test.ts`, `packages/core/src/index.ts`, `packages/core/src/lexer.ts`, `packages/core/src/parse-config.ts`, `packages/core/src/parser.ts` +1 more
+- `packages/engine/src/compose.ts` ← `packages/engine/src/__tests__/mock-adapter.ts`, `packages/engine/src/__tests__/template-context.test.ts`, `packages/engine/src/adapter.ts`, `packages/engine/src/descriptors.ts`, `packages/engine/src/run-agent-effects.ts` +1 more
 - `packages/engine/src/logger.ts` ← `packages/engine/src/compose.ts`, `packages/engine/src/index.ts`, `packages/engine/src/runtime/journal-writer.ts`, `packages/engine/src/runtime/sqlite/store.ts`, `packages/engine/src/template-context.ts` +1 more
 
 ---
@@ -338,7 +338,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 55 test files found
+> 57 test files found
 
 ---
 
