@@ -47,7 +47,7 @@ import {
   type WorkflowExecutionContext,
   type WorkflowInstanceId,
 } from "@weave/engine";
-import { errAsync, okAsync, ResultAsync } from "neverthrow";
+import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 
 import type { OpenCodeAdapter } from "./index.js";
 

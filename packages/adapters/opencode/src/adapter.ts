@@ -17,7 +17,7 @@ import type {
   SkillInfo,
 } from "@weave/engine";
 import { logger } from "@weave/engine";
-import { errAsync, okAsync, ResultAsync } from "neverthrow";
+import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 import {
   type OpenCodeModelContext,
   resolveModelForAgent,
@@ -372,6 +372,7 @@ export class OpenCodeAdapter implements HarnessAdapter {
           { agent: descriptor.name },
           "Agent materialized successfully via OpenCode SDK",
         );
+        return undefined;
       });
   }
 }
