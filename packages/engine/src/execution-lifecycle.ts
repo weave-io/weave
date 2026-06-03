@@ -53,7 +53,11 @@
  * @see docs/adr/0004-workflow-first-execution-contract.md — Execution boundary
  */
 
-import type { WorkflowConfig, WorkflowStep } from "@weave/core";
+import type {
+  ReconciliationReason,
+  WorkflowConfig,
+  WorkflowStep,
+} from "@weave/core";
 import {
   err,
   errAsync,
@@ -70,10 +74,16 @@ import type { RunAgentEffect } from "./run-agent-effects.js";
 import type { RuntimeStoreConflictError } from "./runtime/errors.js";
 import type { RuntimeStore } from "./runtime/store.js";
 import type {
+  ArtifactId,
+  ArtifactInputDecl,
+  ArtifactInputSummary,
   ArtifactRef,
+  ArtifactRefInput,
+  ConsumedArtifactRecord,
   ExecutionLease,
   ExecutionLeaseId,
   SessionSnapshotId,
+  StepAttemptRecord,
   WorkflowInstance,
   WorkflowInstanceId,
 } from "./runtime/types.js";
@@ -467,8 +477,14 @@ export interface StepCompletionSignal {
    * Must not contain raw prompts, completions, credentials, or tokens.
    */
   readonly message?: string;
-  /** Optional artifact references produced by this step. */
-  readonly artifacts?: readonly ArtifactRef[];
+  /**
+   * Optional artifact references produced by this step.
+   *
+   * Agents provide name + path (and optional metadata). The store assigns
+   * the stable ArtifactId, monotonic revision, and initial approvalState
+   * when persisting via `WorkflowInstanceRepository.addArtifact()`.
+   */
+  readonly artifacts?: readonly ArtifactRefInput[];
   /**
    * Optional hint for the engine about which step to dispatch next.
    * The engine may ignore this hint if workflow topology dictates otherwise.
@@ -758,6 +774,24 @@ export interface HandleUserInterruptOutput {
  * When `context` is omitted the engine falls back to legacy behaviour: the
  * step name is used as the agent name with a minimal allow-all policy.
  *
+ * **Retry pinning**: when `pinnedArtifactRevisions` is provided, the engine
+ * skips approval-state validation for those artifact names and uses the pinned
+ * revisions as the consumed-artifact record for this attempt. This allows
+ * retries to reuse the same artifact revisions that were consumed in a prior
+ * attempt, preventing silent drift when an artifact is updated between attempts.
+ *
+ * When `pinnedArtifactRevisions` is omitted and a prior attempt exists for
+ * this step, the engine automatically pins to the consumed revisions from the
+ * most recent prior attempt (default retry reuse behavior).
+ *
+ * **Integrity verification**: when `artifactDigests` is provided, the engine
+ * compares each supplied digest against the stored `integrity.digest` on the
+ * corresponding artifact. A mismatch causes `dispatchStep` to return a
+ * `policy_decision` error — the engine fails closed. Artifacts without a
+ * stored `integrity` field are not checked even if a digest is supplied.
+ * Adapters compute digests by reading the artifact file and hashing its
+ * contents with SHA-256 before calling `dispatchStep`.
+ *
  * EXCLUDED: raw prompts, completions, transcripts, credentials, tokens,
  * cookies, authorization headers, raw provider payloads.
  */
@@ -782,6 +816,38 @@ export interface DispatchStepInput {
    * When omitted the engine uses the step name as the agent name (legacy).
    */
   readonly context?: WorkflowExecutionContext;
+  /**
+   * Optional explicit artifact revision pins for retry dispatch.
+   *
+   * When provided, the engine uses these pinned revisions as the consumed-
+   * artifact record for this attempt and skips approval-state validation for
+   * the pinned artifact names. This allows callers to explicitly override the
+   * default retry-reuse behavior.
+   *
+   * When omitted and a prior attempt exists for this step, the engine
+   * automatically pins to the consumed revisions from the most recent prior
+   * attempt (default retry reuse). When no prior attempt exists, the engine
+   * uses the current latest revisions from the instance.
+   */
+  readonly pinnedArtifactRevisions?: readonly ConsumedArtifactRecord[];
+  /**
+   * Optional map of artifact name → current SHA-256 digest for
+   * consumption-time integrity verification.
+   *
+   * When provided, the engine compares each supplied digest against the
+   * stored `integrity.digest` on the corresponding artifact. A mismatch
+   * causes `dispatchStep` to return a `policy_decision` error — the engine
+   * fails closed on tamper detection.
+   *
+   * Artifacts without a stored `integrity` field are not checked even if a
+   * digest is supplied for them. Adapters compute digests by reading the
+   * artifact file and hashing its contents with SHA-256 before calling
+   * `dispatchStep`.
+   *
+   * Only lowercase hex-encoded SHA-256 digests (64 characters) are accepted.
+   * Supplying a digest with an incorrect format returns a `validation` error.
+   */
+  readonly artifactDigests?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -795,6 +861,16 @@ export interface DispatchStepOutput {
   readonly stepName: string;
   /** Lifecycle effects to apply (always includes a `dispatch-agent` effect). */
   readonly effects: readonly LifecycleEffect[];
+  /**
+   * Summary of artifact input validation performed at dispatch time.
+   *
+   * Present when the step has declared inputs and `input.context` was provided.
+   * Absent for legacy dispatch (no context) or steps with no declared inputs.
+   *
+   * Normative input failures are returned as `not_found` errors before this
+   * summary is produced — the summary only appears on successful dispatch.
+   */
+  readonly artifactInputSummary?: ArtifactInputSummary;
 }
 
 // ---------------------------------------------------------------------------
@@ -981,6 +1057,61 @@ export type InspectExecutionResult = ResultAsync<
   InspectExecutionOutput,
   LifecycleError
 >;
+
+/** Result type for `approveArtifact`. */
+export type ApproveArtifactResult = ResultAsync<
+  ApproveArtifactOutput,
+  LifecycleError
+>;
+
+// ---------------------------------------------------------------------------
+// 9. approveArtifact — Input / Output
+// ---------------------------------------------------------------------------
+
+/**
+ * Input for `approveArtifact`.
+ *
+ * Adapters call this when a gate agent or user explicitly approves or rejects
+ * an artifact produced by a prior step. The engine enforces the self-approval
+ * prohibition: an agent may not approve an artifact it produced.
+ *
+ * EXCLUDED: raw prompts, completions, transcripts, credentials, tokens,
+ * cookies, authorization headers, raw provider payloads.
+ */
+export interface ApproveArtifactInput {
+  /** The workflow instance that owns the artifact. */
+  readonly workflowInstanceId: WorkflowInstanceId;
+  /** The active execution lease. */
+  readonly leaseId: ExecutionLeaseId;
+  /** The stable artifact ID to approve or reject. */
+  readonly artifactId: ArtifactId;
+  /**
+   * The new approval state.
+   * - `"approved"` — artifact is explicitly approved; normative consumers may proceed.
+   * - `"rejected"` — artifact is explicitly rejected; workflow may pause or fail.
+   */
+  readonly approvalState: "approved" | "rejected";
+  /**
+   * The logical name of the agent performing the approval.
+   *
+   * Used to enforce the self-approval prohibition: if this matches the
+   * `producerAgent` on the artifact, the engine returns a `policy_decision`
+   * error. When absent, self-approval checks are skipped.
+   */
+  readonly approverAgent?: string;
+  /** Optional structured metadata about the approval event. */
+  readonly metadata?: SafeMetadata;
+}
+
+/**
+ * Output from `approveArtifact`.
+ *
+ * Returns the updated workflow instance after the approval state change.
+ */
+export interface ApproveArtifactOutput {
+  /** The updated workflow instance. */
+  readonly instance: WorkflowInstance;
+}
 
 // ---------------------------------------------------------------------------
 // ExecutionOperationKind — explicit execution operation discriminant
@@ -1695,31 +1826,392 @@ function resolveWorkflowStep(
 }
 
 /**
- * Validate that all declared `step.inputs` artifacts are present in the
- * instance's persisted artifacts.
+ * Classify a declared step input as normative or informational.
  *
- * Returns `ok(undefined)` when all inputs are satisfied, or a typed
- * `not_found` error naming the first missing artifact.
+ * When `role` is absent on the input declaration, defaults to `"normative"`
+ * for backward compatibility with step declarations that predate this field.
+ *
+ * The `ArtifactDecl` type from `@weave/core` does not carry a `role` field —
+ * the engine treats any input without an explicit role as normative. Callers
+ * that want informational inputs must use `ArtifactInputDecl` (engine-owned)
+ * rather than the core `ArtifactDecl` type.
+ */
+function inputRole(input: {
+  name: string;
+  description: string;
+  role?: string;
+}): "normative" | "informational" {
+  if (input.role === "informational") return "informational";
+  return "normative";
+}
+
+/**
+ * Get the most recent artifact revision for a given name from the instance.
+ *
+ * Returns the last entry in `instance.artifacts` with the given name, or
+ * `undefined` if no artifact with that name exists.
+ */
+function latestArtifactByName(
+  instance: WorkflowInstance,
+  name: string,
+): ArtifactRef | undefined {
+  let latest: ArtifactRef | undefined;
+  for (const a of instance.artifacts) {
+    if (a.name === name) latest = a;
+  }
+  return latest;
+}
+
+/**
+ * Check whether a normative artifact's approval has been invalidated.
+ *
+ * Approval invalidation occurs when:
+ * - The artifact has multiple revisions (revision > 1), AND
+ * - The latest revision has `approvalState !== "approved"`, AND
+ * - A prior revision exists with `approvalState === "approved"`.
+ *
+ * This detects the case where a previously-approved artifact was superseded
+ * by a new revision (which resets approvalState to "pending"), blocking
+ * dispatch until the new revision is explicitly re-approved.
+ *
+ * Returns `true` when approval has been invalidated (dispatch should be blocked).
+ * Returns `false` when the artifact is either freshly produced (never approved)
+ * or currently approved.
+ */
+function isApprovalInvalidated(
+  instance: WorkflowInstance,
+  artifactName: string,
+): boolean {
+  const revisions = instance.artifacts.filter((a) => a.name === artifactName);
+  if (revisions.length <= 1) return false;
+
+  const latest = revisions[revisions.length - 1];
+  if (latest.approvalState === "approved") return false;
+
+  // Check if any prior revision was approved
+  const hasPriorApproval = revisions
+    .slice(0, -1)
+    .some((a) => a.approvalState === "approved");
+  return hasPriorApproval;
+}
+
+// ---------------------------------------------------------------------------
+// Consumption-time integrity verification
+// ---------------------------------------------------------------------------
+
+/** Lowercase hex SHA-256 digest pattern (exactly 64 hex characters). */
+const SHA256_HEX_RE = /^[0-9a-f]{64}$/;
+
+/**
+ * Validate the format of a caller-supplied SHA-256 digest.
+ *
+ * Returns `ok(digest)` when the format is valid (64 lowercase hex chars).
+ * Returns a typed `validation` error for any other format.
+ */
+function validateDigestFormat(
+  artifactName: string,
+  digest: string,
+): Result<string, LifecycleError> {
+  if (SHA256_HEX_RE.test(digest)) return ok(digest);
+  return err(
+    lifecycleValidationError(
+      `artifactDigests["${artifactName}"] is not a valid SHA-256 hex digest — expected 64 lowercase hex characters`,
+      `artifactDigests.${artifactName}`,
+    ),
+  );
+}
+
+/**
+ * Verify consumption-time integrity for a single artifact.
+ *
+ * Compares the caller-supplied digest against the stored `integrity.digest`
+ * on the artifact. Fails closed on mismatch: returns a `policy_decision`
+ * error when the digests differ.
+ *
+ * When the artifact has no stored `integrity` field, the check is skipped
+ * (returns `ok(undefined)`). When no digest is supplied for this artifact
+ * name, the check is also skipped.
+ *
+ * @param artifact - The persisted artifact reference (with optional integrity).
+ * @param suppliedDigest - The caller-supplied current digest, or undefined.
+ * @returns `ok(undefined)` when the check passes or is skipped.
+ * @returns `err(LifecyclePolicyDecisionError)` when digests differ.
+ * @returns `err(LifecycleValidationError)` when the supplied digest is malformed.
+ */
+function verifyArtifactIntegrity(
+  artifact: ArtifactRef,
+  suppliedDigest: string | undefined,
+): Result<undefined, LifecycleError> {
+  // No stored integrity metadata — skip check.
+  if (artifact.integrity === undefined) return ok(undefined);
+  // No digest supplied by caller — skip check (opt-in verification).
+  if (suppliedDigest === undefined) return ok(undefined);
+
+  // Validate the format of the supplied digest before comparing.
+  const formatCheck = validateDigestFormat(artifact.name, suppliedDigest);
+  if (formatCheck.isErr()) return err(formatCheck.error);
+
+  // Constant-time comparison is not strictly necessary here because we are
+  // comparing public digests (not secrets), but we use a simple string
+  // comparison which is sufficient for tamper detection.
+  if (suppliedDigest !== artifact.integrity.digest) {
+    return err(
+      lifecyclePolicyDecisionError(
+        `Integrity verification failed for artifact "${artifact.name}" (revision ${artifact.revision}): ` +
+          `supplied digest does not match stored digest. ` +
+          `The artifact may have been tampered with or replaced since it was approved. ` +
+          `Dispatch is blocked to prevent consumption of a modified artifact.`,
+        "artifact_integrity",
+      ),
+    );
+  }
+
+  return ok(undefined);
+}
+
+/**
+ * Validate declared `step.inputs` artifacts against the instance's persisted
+ * artifacts, distinguishing normative (blocking) from informational (advisory)
+ * inputs.
+ *
+ * **Normative inputs** (role: `"normative"` or role absent):
+ * - Must be present in the instance's artifact set.
+ * - If a prior revision was approved and a new revision has been added
+ *   (resetting approvalState to "pending"), dispatch is blocked with a
+ *   `policy_decision` error (approval invalidation).
+ * - Returns a typed `not_found` error for the first missing normative input.
+ * - Dispatch is blocked until all normative inputs are satisfied.
+ *
+ * **Informational inputs** (role: `"informational"`):
+ * - Advisory only — dispatch proceeds even if absent or unapproved.
+ * - Absent informational inputs are recorded in the returned summary.
+ *
+ * **Integrity verification** (when `artifactDigests` is provided):
+ * - For each artifact with a stored `integrity.digest`, the supplied digest
+ *   is compared. A mismatch returns a `policy_decision` error (fail closed).
+ *
+ * Returns `ok(ArtifactInputSummary)` when all normative inputs are satisfied.
+ * Returns `err(LifecycleError)` when any normative input is missing or has
+ * invalidated approval, or when integrity verification fails.
  */
 function validateStepInputs(
   step: WorkflowStep,
   instance: WorkflowInstance,
-): Result<undefined, LifecycleError> {
-  if (!step.inputs || step.inputs.length === 0) return ok(undefined);
+  artifactDigests?: Readonly<Record<string, string>>,
+): Result<ArtifactInputSummary, LifecycleError> {
+  const emptyResult: ArtifactInputSummary = {
+    normativeSatisfied: [],
+    informationalPresent: [],
+    informationalAbsent: [],
+  };
 
-  const artifactNames = new Set(instance.artifacts.map((a) => a.name));
+  if (!step.inputs || step.inputs.length === 0) return ok(emptyResult);
+
+  const normativeSatisfied: string[] = [];
+  const informationalPresent: string[] = [];
+  const informationalAbsent: string[] = [];
+
   for (const input of step.inputs) {
-    if (!artifactNames.has(input.name)) {
-      return err(
-        lifecycleNotFoundError(
-          "artifact",
-          input.name,
-          `Required input artifact "${input.name}" is missing from workflow instance`,
-        ),
+    const role = inputRole(input as ArtifactInputDecl);
+    const latest = latestArtifactByName(instance, input.name);
+
+    if (role === "normative") {
+      if (latest === undefined) {
+        return err(
+          lifecycleNotFoundError(
+            "artifact",
+            input.name,
+            `Required normative input artifact "${input.name}" is missing from workflow instance`,
+          ),
+        );
+      }
+      // Approval invalidation: a new revision supersedes a previously-approved
+      // revision, resetting approvalState to "pending". Block dispatch until
+      // the new revision is explicitly re-approved.
+      if (isApprovalInvalidated(instance, input.name)) {
+        return err(
+          lifecyclePolicyDecisionError(
+            `Normative input artifact "${input.name}" (revision ${latest.revision}) has approvalState "${latest.approvalState}" — a new revision invalidated the prior approval. Dispatch is blocked until the new revision is approved.`,
+            "artifact_approval",
+          ),
+        );
+      }
+      // Consumption-time integrity verification: compare supplied digest
+      // against the stored digest. Fails closed on mismatch.
+      const integrityCheck = verifyArtifactIntegrity(
+        latest,
+        artifactDigests?.[input.name],
       );
+      if (integrityCheck.isErr()) return err(integrityCheck.error);
+      normativeSatisfied.push(input.name);
+      continue;
+    }
+
+    // informational
+    if (latest !== undefined) {
+      // Also verify integrity for informational inputs when a digest is supplied.
+      const integrityCheck = verifyArtifactIntegrity(
+        latest,
+        artifactDigests?.[input.name],
+      );
+      if (integrityCheck.isErr()) return err(integrityCheck.error);
+      informationalPresent.push(input.name);
+    } else {
+      informationalAbsent.push(input.name);
     }
   }
-  return ok(undefined);
+
+  return ok({ normativeSatisfied, informationalPresent, informationalAbsent });
+}
+
+/**
+ * Validate declared `step.inputs` with pinned artifact revisions (retry path).
+ *
+ * For pinned artifacts, approval-state validation is skipped — the revision
+ * was already approved when first dispatched. For non-pinned artifacts, the
+ * standard approval check applies.
+ *
+ * Integrity verification is applied to all artifacts (pinned and non-pinned)
+ * when `artifactDigests` is provided. A mismatch returns a `policy_decision`
+ * error regardless of pin status — integrity is always verified.
+ *
+ * Returns `ok(ArtifactInputSummary)` when all normative inputs are satisfied.
+ * Returns `err(LifecycleError)` when any normative input is missing or when
+ * integrity verification fails.
+ */
+function validateStepInputsWithPins(
+  step: WorkflowStep,
+  instance: WorkflowInstance,
+  pinnedRevisions: readonly ConsumedArtifactRecord[],
+  artifactDigests?: Readonly<Record<string, string>>,
+): Result<ArtifactInputSummary, LifecycleError> {
+  const emptyResult: ArtifactInputSummary = {
+    normativeSatisfied: [],
+    informationalPresent: [],
+    informationalAbsent: [],
+  };
+
+  if (!step.inputs || step.inputs.length === 0) return ok(emptyResult);
+
+  // Build a set of pinned artifact names for fast lookup.
+  const pinnedNames = new Set(pinnedRevisions.map((p) => p.name));
+
+  const normativeSatisfied: string[] = [];
+  const informationalPresent: string[] = [];
+  const informationalAbsent: string[] = [];
+
+  for (const input of step.inputs) {
+    const role = inputRole(input as ArtifactInputDecl);
+
+    // For pinned artifacts: presence is guaranteed by the pin; skip approval check.
+    // Integrity verification still applies — pinning does not bypass tamper detection.
+    if (pinnedNames.has(input.name)) {
+      const latest = latestArtifactByName(instance, input.name);
+      if (latest !== undefined) {
+        const integrityCheck = verifyArtifactIntegrity(
+          latest,
+          artifactDigests?.[input.name],
+        );
+        if (integrityCheck.isErr()) return err(integrityCheck.error);
+      }
+      if (role === "normative") {
+        normativeSatisfied.push(input.name);
+      } else {
+        informationalPresent.push(input.name);
+      }
+      continue;
+    }
+
+    // Non-pinned: apply standard validation.
+    const latest = latestArtifactByName(instance, input.name);
+
+    if (role === "normative") {
+      if (latest === undefined) {
+        return err(
+          lifecycleNotFoundError(
+            "artifact",
+            input.name,
+            `Required normative input artifact "${input.name}" is missing from workflow instance`,
+          ),
+        );
+      }
+      if (isApprovalInvalidated(instance, input.name)) {
+        return err(
+          lifecyclePolicyDecisionError(
+            `Normative input artifact "${input.name}" (revision ${latest.revision}) has approvalState "${latest.approvalState}" — a new revision invalidated the prior approval. Dispatch is blocked until the new revision is approved.`,
+            "artifact_approval",
+          ),
+        );
+      }
+      // Consumption-time integrity verification for non-pinned normative inputs.
+      const integrityCheck = verifyArtifactIntegrity(
+        latest,
+        artifactDigests?.[input.name],
+      );
+      if (integrityCheck.isErr()) return err(integrityCheck.error);
+      normativeSatisfied.push(input.name);
+      continue;
+    }
+
+    // informational
+    if (latest !== undefined) {
+      // Verify integrity for informational inputs when a digest is supplied.
+      const integrityCheck = verifyArtifactIntegrity(
+        latest,
+        artifactDigests?.[input.name],
+      );
+      if (integrityCheck.isErr()) return err(integrityCheck.error);
+      informationalPresent.push(input.name);
+    } else {
+      informationalAbsent.push(input.name);
+    }
+  }
+
+  return ok({ normativeSatisfied, informationalPresent, informationalAbsent });
+}
+
+/**
+ * Build the consumed artifact records for a step dispatch.
+ *
+ * When `pinnedRevisions` is provided, those are used directly.
+ * Otherwise, the current latest revision of each declared input artifact
+ * is recorded.
+ */
+function buildConsumedArtifacts(
+  step: WorkflowStep,
+  instance: WorkflowInstance,
+  pinnedRevisions: readonly ConsumedArtifactRecord[] | undefined,
+): readonly ConsumedArtifactRecord[] {
+  if (pinnedRevisions !== undefined) return pinnedRevisions;
+
+  if (!step.inputs || step.inputs.length === 0) return [];
+
+  const consumed: ConsumedArtifactRecord[] = [];
+  for (const input of step.inputs) {
+    const latest = latestArtifactByName(instance, input.name);
+    if (latest !== undefined) {
+      consumed.push({
+        artifactId: latest.id,
+        name: latest.name,
+        revision: latest.revision,
+      });
+    }
+  }
+  return consumed;
+}
+
+/**
+ * Get the most recent step attempt for a given step name, or undefined.
+ */
+function latestAttemptForStep(
+  instance: WorkflowInstance,
+  stepName: string,
+): StepAttemptRecord | undefined {
+  let latest: StepAttemptRecord | undefined;
+  for (const attempt of instance.stepAttempts) {
+    if (attempt.stepName === stepName) latest = attempt;
+  }
+  return latest;
 }
 
 /**
@@ -2023,9 +2515,46 @@ export function dispatchStep(
           if (stepResult.isErr()) return errAsync(stepResult.error);
           const step = stepResult.value;
 
-          // Validate declared inputs are present in the instance.
-          const inputsCheck = validateStepInputs(step, existing);
+          // Determine pinned revisions for retry reuse.
+          // Priority: explicit pinnedArtifactRevisions > prior attempt revisions > none.
+          let effectivePins: readonly ConsumedArtifactRecord[] | undefined =
+            input.pinnedArtifactRevisions;
+          if (effectivePins === undefined) {
+            const priorAttempt = latestAttemptForStep(
+              existing,
+              resolvedStepName,
+            );
+            if (
+              priorAttempt !== undefined &&
+              priorAttempt.consumedArtifacts.length > 0
+            ) {
+              // Default retry reuse: pin to the same consumed revisions as the prior attempt.
+              effectivePins = priorAttempt.consumedArtifacts;
+            }
+          }
+
+          // Validate declared inputs — normative inputs block dispatch;
+          // informational inputs are advisory and produce a summary.
+          // When pinned revisions are present, approval-state check is skipped for pinned names.
+          // Integrity verification is applied when artifactDigests is provided.
+          const inputsCheck =
+            effectivePins !== undefined && effectivePins.length > 0
+              ? validateStepInputsWithPins(
+                  step,
+                  existing,
+                  effectivePins,
+                  input.artifactDigests,
+                )
+              : validateStepInputs(step, existing, input.artifactDigests);
           if (inputsCheck.isErr()) return errAsync(inputsCheck.error);
+          const artifactInputSummary = inputsCheck.value;
+
+          // Build consumed artifact records for this attempt.
+          const consumedArtifacts = buildConsumedArtifacts(
+            step,
+            existing,
+            effectivePins,
+          );
 
           // Render the step prompt and compute prompt metadata.
           const promptContext = buildStepPromptContext(existing, step);
@@ -2037,6 +2566,10 @@ export function dispatchStep(
           );
           if (promptResult.isErr()) return errAsync(promptResult.error);
           const promptMetadata = promptResult.value;
+
+          // Determine whether to include the summary in the output.
+          // Only include when the step has declared inputs (non-empty summary).
+          const hasInputs = step.inputs && step.inputs.length > 0;
 
           // Update currentStepName on the instance.
           return store.instances
@@ -2050,6 +2583,22 @@ export function dispatchStep(
                   message: storeError.message,
                 }),
             )
+            .andThen(() =>
+              // Record the step attempt with consumed artifact revisions.
+              store.instances
+                .recordStepAttempt(
+                  input.workflowInstanceId,
+                  resolvedStepName,
+                  consumedArtifacts,
+                )
+                .mapErr(
+                  (storeError): LifecycleError =>
+                    lifecyclePersistenceError(storeError.message, {
+                      type: storeError.type,
+                      message: storeError.message,
+                    }),
+                ),
+            )
             .map(
               (): DispatchStepOutput => ({
                 stepName: resolvedStepName,
@@ -2062,6 +2611,7 @@ export function dispatchStep(
                     ),
                   },
                 ],
+                ...(hasInputs ? { artifactInputSummary } : {}),
               }),
             );
         }),
@@ -2274,7 +2824,7 @@ function buildUpdateInput(
 function addArtifactsSequentially(
   store: RuntimeStore,
   workflowInstanceId: WorkflowInstanceId,
-  artifacts: readonly ArtifactRef[],
+  artifacts: readonly ArtifactRefInput[],
 ): ResultAsync<undefined, LifecycleError> {
   const first = artifacts[0];
   if (!first) return okAsync(undefined);
@@ -2285,6 +2835,7 @@ function addArtifactsSequentially(
       path: first.path,
       ...(first.mimeType ? { mimeType: first.mimeType } : {}),
       ...(first.description ? { description: first.description } : {}),
+      ...(first.integrity ? { integrity: first.integrity } : {}),
     })
     .mapErr(
       (storeError): LifecycleError =>
@@ -2312,7 +2863,7 @@ function addArtifactsSequentially(
  */
 function validateOutputArtifacts(
   step: WorkflowStep,
-  artifacts: readonly ArtifactRef[] | undefined,
+  artifacts: readonly ArtifactRefInput[] | undefined,
 ): Result<undefined, LifecycleError> {
   // No declared outputs — no restriction.
   if (!step.outputs || step.outputs.length === 0) return ok(undefined);
@@ -3062,6 +3613,127 @@ export function beforeTool(input: BeforeToolInput): BeforeToolResult {
 }
 
 // ---------------------------------------------------------------------------
+// 9. approveArtifact — implementation
+// ---------------------------------------------------------------------------
+
+/**
+ * Approve or reject an artifact produced by a prior workflow step.
+ *
+ * Enforces the **self-approval prohibition**: if `input.approverAgent` matches
+ * the `producerAgent` recorded on the artifact, the engine returns a
+ * `policy_decision` error. This prevents a producing agent from approving its
+ * own output, which would bypass the gate review intent.
+ *
+ * The engine updates only the most recent revision of the named artifact
+ * (identified by `artifactId`). Approval of an older revision that has been
+ * superseded by a newer revision is not blocked at this layer — callers should
+ * use `inspectExecution` to verify the current revision before approving.
+ *
+ * @param input - Approval parameters from the adapter.
+ * @param store - Runtime Store instance.
+ * @returns `ok({ instance })` on success, or a typed `LifecycleError`.
+ */
+export function approveArtifact(
+  input: ApproveArtifactInput,
+  store: RuntimeStore,
+): ApproveArtifactResult {
+  if (!input.workflowInstanceId) {
+    return errAsync(
+      lifecycleValidationError(
+        "workflowInstanceId is required",
+        "workflowInstanceId",
+      ),
+    );
+  }
+  if (!input.leaseId) {
+    return errAsync(lifecycleValidationError("leaseId is required", "leaseId"));
+  }
+  if (!input.artifactId) {
+    return errAsync(
+      lifecycleValidationError("artifactId is required", "artifactId"),
+    );
+  }
+  if (!input.approvalState) {
+    return errAsync(
+      lifecycleValidationError("approvalState is required", "approvalState"),
+    );
+  }
+
+  if (input.metadata !== undefined && input.metadata !== null) {
+    const metaCheck = sanitizeMetadata(input.metadata);
+    if (metaCheck.isErr()) return errAsync(metaCheck.error);
+  }
+
+  return store.instances
+    .findById(input.workflowInstanceId)
+    .mapErr(
+      (storeError): LifecycleError =>
+        lifecyclePersistenceError(storeError.message, {
+          type: storeError.type,
+          message: storeError.message,
+        }),
+    )
+    .andThen((existing) => {
+      if (existing === null) {
+        return errAsync(
+          lifecycleNotFoundError(
+            "WorkflowInstance",
+            input.workflowInstanceId as string,
+          ),
+        );
+      }
+
+      // Find the artifact by ID (last occurrence = most recent revision).
+      let artifact: ArtifactRef | undefined;
+      for (let i = existing.artifacts.length - 1; i >= 0; i--) {
+        if (existing.artifacts[i].id === input.artifactId) {
+          artifact = existing.artifacts[i];
+          break;
+        }
+      }
+
+      if (artifact === undefined) {
+        return errAsync(
+          lifecycleNotFoundError(
+            "ArtifactRef",
+            input.artifactId as string,
+            `Artifact '${input.artifactId}' not found in workflow instance`,
+          ),
+        );
+      }
+
+      // Self-approval prohibition: producer cannot approve their own artifact.
+      if (
+        input.approverAgent !== undefined &&
+        artifact.producerAgent !== undefined &&
+        input.approverAgent === artifact.producerAgent
+      ) {
+        return errAsync(
+          lifecyclePolicyDecisionError(
+            `Agent "${input.approverAgent}" cannot approve artifact "${artifact.name}" (revision ${artifact.revision}) because it produced that artifact. Self-approval is prohibited.`,
+            "self_approval",
+          ),
+        );
+      }
+
+      return store.instances
+        .updateArtifactApproval(
+          input.workflowInstanceId,
+          input.artifactId,
+          input.approvalState,
+        )
+        .mapErr(
+          (storeError): LifecycleError =>
+            lifecyclePersistenceError(storeError.message, {
+              type: storeError.type,
+              message: storeError.message,
+            }),
+        )
+        .map((instance): ApproveArtifactOutput => ({ instance }));
+    });
+}
+
+// ---------------------------------------------------------------------------
 // 8. inspectExecution — implementation
 // ---------------------------------------------------------------------------
 
@@ -3163,4 +3835,771 @@ export function inspectExecution(
           return output;
         });
     });
+}
+
+// ---------------------------------------------------------------------------
+// Reconciliation — types, authorization, handler resolution, and enforcement
+// ---------------------------------------------------------------------------
+
+/**
+ * The authorized source for each reconciliation reason (Spec 22 Unit 3).
+ *
+ * | Reason                  | Authorized source                                   |
+ * |-------------------------|-----------------------------------------------------|
+ * | `execution-mismatch`    | `"runtime"` — runtime validation or execution checks |
+ * | `user-revision-request` | `"user"` — explicit user action                     |
+ * | `review-rejection`      | `"review-gate"` — the review gate step              |
+ * | `security-rejection`    | `"security-gate"` — the security gate step          |
+ *
+ * The engine rejects any source that does not match the authorized source for
+ * the given reason with a `policy_decision` error.
+ */
+export type ReconciliationAuthorizationSource =
+  | "user"
+  | "runtime"
+  | "review-gate"
+  | "security-gate";
+
+/** All valid `ReconciliationAuthorizationSource` values as a readonly tuple. */
+export const RECONCILIATION_AUTHORIZATION_SOURCES = [
+  "user",
+  "runtime",
+  "review-gate",
+  "security-gate",
+] as const satisfies readonly ReconciliationAuthorizationSource[];
+
+/**
+ * The closed built-in reconciliation reason set (Spec 22 Unit 3).
+ *
+ * Mirrors `ReconciliationReason` from `@weave/core` for runtime use.
+ * Only these four values are accepted at runtime.
+ */
+export const RECONCILIATION_REASONS = [
+  "execution-mismatch",
+  "user-revision-request",
+  "review-rejection",
+  "security-rejection",
+] as const satisfies readonly ReconciliationReason[];
+
+/**
+ * Map from reconciliation reason to its single authorized source.
+ *
+ * Used by `validateReconciliationSource` to enforce the closed authorization
+ * contract from Spec 22 Unit 3.
+ */
+const RECONCILIATION_AUTHORIZED_SOURCES: Readonly<
+  Record<ReconciliationReason, ReconciliationAuthorizationSource>
+> = {
+  "execution-mismatch": "runtime",
+  "user-revision-request": "user",
+  "review-rejection": "review-gate",
+  "security-rejection": "security-gate",
+};
+
+/**
+ * Validate that the reconciliation source is authorized for the given reason.
+ *
+ * Returns `ok(undefined)` when the source matches the authorized source for
+ * the reason. Returns a typed `policy_decision` error otherwise.
+ *
+ * @param reason - The reconciliation reason being triggered.
+ * @param source - The declared authorization source from the adapter.
+ * @returns `Result<undefined, LifecyclePolicyDecisionError>`
+ */
+export function validateReconciliationSource(
+  reason: ReconciliationReason,
+  source: ReconciliationAuthorizationSource,
+): Result<undefined, LifecyclePolicyDecisionError> {
+  const authorized = RECONCILIATION_AUTHORIZED_SOURCES[reason];
+  if (source === authorized) return ok(undefined);
+  return err(
+    lifecyclePolicyDecisionError(
+      `Reconciliation reason "${reason}" requires source "${authorized}" but received "${source}". ` +
+        `Only the authorized source may trigger this reconciliation reason. ` +
+        `See docs/specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md Unit 3.`,
+      "reconciliationSource",
+    ),
+  );
+}
+
+/**
+ * Compute the set of step names that are `before-plan` steps in a workflow.
+ *
+ * A step is a `before-plan` step when the workflow publishes the `before-plan`
+ * extension point (`extension_points.before_plan === true`) AND the step
+ * appears before the canonical planning step (`role === "planning"`) in the
+ * step list.
+ *
+ * **v1 rule**: `before-plan` steps do not participate in reconciliation
+ * semantics. This function computes the exclusion set so that
+ * `resolveReconciliationHandler` can skip them at runtime, providing a
+ * defense-in-depth guarantee independent of the schema layer.
+ *
+ * When the workflow does not publish `before-plan`, the returned set is empty
+ * (no steps are excluded).
+ *
+ * @param workflowConfig - The workflow definition.
+ * @returns A `Set<string>` of step names that must be excluded from reconciliation.
+ */
+function computeBeforePlanExclusionSet(
+  workflowConfig: WorkflowConfig,
+): ReadonlySet<string> {
+  // Only workflows that publish the before-plan extension point have before-plan steps.
+  if (!workflowConfig.extension_points?.before_plan) return new Set();
+
+  const planningIndex = workflowConfig.steps.findIndex(
+    (s) => s.role === "planning",
+  );
+  // No planning step found — no before-plan steps to exclude.
+  if (planningIndex < 0) return new Set();
+
+  const excluded = new Set<string>();
+  for (let i = 0; i < planningIndex; i++) {
+    const step = workflowConfig.steps[i];
+    if (step !== undefined) excluded.add(step.name);
+  }
+  return excluded;
+}
+
+/**
+ * Resolve the nearest explicitly declared upstream handler step for a
+ * reconciliation reason, searching backwards from the triggering step.
+ *
+ * **Algorithm**:
+ * 1. Find the index of `triggeringStepName` in the workflow step list.
+ * 2. Walk backwards from that index (exclusive) toward the start.
+ * 3. Skip any step in the `beforePlanExclusions` set (v1 rule: before-plan
+ *    steps do not participate in reconciliation semantics).
+ * 4. Return the first step whose `reconciliation_handlers` list contains
+ *    an entry with `reason === reconciliationReason`.
+ * 5. If no handler is found, return `undefined` (fail-closed path).
+ *
+ * **`before-plan` exclusion**: steps that appear before the planning step in
+ * a workflow that publishes `extension_points.before_plan` are excluded from
+ * reconciliation handler resolution at runtime. This is a defense-in-depth
+ * guarantee that complements the schema-layer constraint (no
+ * `reconciliation_handlers` on before-plan steps). The runtime check ensures
+ * the v1 rule holds even after config merge or composition.
+ *
+ * @param workflowConfig - The workflow definition containing the step list.
+ * @param triggeringStepName - The step that triggered reconciliation.
+ * @param reconciliationReason - The reason to match against handler declarations.
+ * @param beforePlanExclusions - Set of step names excluded from reconciliation (before-plan steps).
+ * @returns The nearest upstream handler step, or `undefined` if none exists.
+ */
+function resolveReconciliationHandler(
+  workflowConfig: WorkflowConfig,
+  triggeringStepName: string,
+  reconciliationReason: ReconciliationReason,
+  beforePlanExclusions: ReadonlySet<string>,
+): WorkflowStep | undefined {
+  const steps = workflowConfig.steps;
+  const triggeringIndex = steps.findIndex((s) => s.name === triggeringStepName);
+
+  // If the triggering step is not found, search from the end of the list.
+  const searchFrom =
+    triggeringIndex >= 0 ? triggeringIndex - 1 : steps.length - 1;
+
+  for (let i = searchFrom; i >= 0; i--) {
+    const step = steps[i];
+    if (step === undefined) continue;
+    // v1 runtime rule: before-plan steps do not participate in reconciliation.
+    if (beforePlanExclusions.has(step.name)) continue;
+    if (!step.reconciliation_handlers) continue;
+    const hasHandler = step.reconciliation_handlers.some(
+      (h) => h.reason === reconciliationReason,
+    );
+    if (hasHandler) return step;
+  }
+
+  return undefined;
+}
+
+// ---------------------------------------------------------------------------
+// 10. reconcileExecution — Input / Output
+// ---------------------------------------------------------------------------
+
+/**
+ * Input for `reconcileExecution`.
+ *
+ * Adapters call this when a reconciliation event is triggered — a downstream
+ * step has encountered a condition that requires routing back to an upstream
+ * handler step. The engine enforces:
+ *
+ * 1. The `reason` must be one of the four closed built-in values.
+ * 2. The `authorizationSource` must match the authorized source for the reason.
+ * 3. The engine routes to the nearest explicitly declared upstream handler step.
+ * 4. When no handler exists, the engine fails closed by pausing the instance.
+ *
+ * **Authorized sources per reason**:
+ * - `execution-mismatch`    → `"runtime"`
+ * - `user-revision-request` → `"user"`
+ * - `review-rejection`      → `"review-gate"`
+ * - `security-rejection`    → `"security-gate"`
+ *
+ * EXCLUDED: raw prompts, completions, transcripts, credentials, tokens,
+ * cookies, authorization headers, raw provider payloads.
+ *
+ * @see docs/specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md Unit 3
+ */
+export interface ReconcileExecutionInput {
+  /** The workflow instance to reconcile. */
+  readonly workflowInstanceId: WorkflowInstanceId;
+  /** The active execution lease. */
+  readonly leaseId: ExecutionLeaseId;
+  /**
+   * The reconciliation reason — must be one of the four closed built-in values.
+   *
+   * - `execution-mismatch`    — runtime validation or execution checks detected a mismatch.
+   * - `user-revision-request` — an explicit user action requested a revision.
+   * - `review-rejection`      — the review gate returned a reject verdict.
+   * - `security-rejection`    — the security gate returned a reject verdict.
+   */
+  readonly reason: ReconciliationReason;
+  /**
+   * The authorization source for this reconciliation event.
+   *
+   * Must match the authorized source for the given `reason`:
+   * - `execution-mismatch`    → `"runtime"`
+   * - `user-revision-request` → `"user"`
+   * - `review-rejection`      → `"review-gate"`
+   * - `security-rejection`    → `"security-gate"`
+   *
+   * The engine rejects mismatched sources with a `policy_decision` error.
+   */
+  readonly authorizationSource: ReconciliationAuthorizationSource;
+  /**
+   * The name of the step that triggered the reconciliation event.
+   *
+   * Used as the starting point for nearest-upstream handler resolution.
+   * When omitted, the engine uses `instance.currentStepName`.
+   */
+  readonly triggeringStepName?: string;
+  /**
+   * Optional workflow execution context.
+   *
+   * When provided, the engine resolves the nearest upstream handler step
+   * from the workflow config and emits a `dispatch-agent` effect for it.
+   * When omitted, the engine falls back to a `pause-execution` effect
+   * (fail-closed behavior without workflow topology).
+   */
+  readonly context?: WorkflowExecutionContext;
+  /**
+   * Optional provider for querying plan file state.
+   *
+   * When provided and the triggering step uses a `plan_complete` or
+   * `plan_created` completion method, the engine checks whether the
+   * associated plan file is already complete (all checkboxes checked).
+   *
+   * If the plan is complete, `reconcileExecution` returns a `policy_decision`
+   * error — completed `Plan Markdown` tasks are immutable. Corrective work
+   * must be expressed as follow-up tasks rather than in-place revisions.
+   *
+   * When absent, the immutability check is skipped (no plan state is queried).
+   *
+   * Adapters should supply `BunFilesystemPlanStateProvider` from `@weave/config`
+   * (or a mock in tests).
+   *
+   * @see docs/specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md Unit 3
+   */
+  readonly planStateProvider?: PlanStateProvider;
+  /** Optional structured metadata about the reconciliation event. */
+  readonly metadata?: SafeMetadata;
+}
+
+/**
+ * Output from `reconcileExecution`.
+ *
+ * Returns the lifecycle effects resulting from the reconciliation routing
+ * decision. The primary effect is either:
+ * - `dispatch-agent` — routed to the nearest upstream handler step.
+ * - `pause-execution` — no handler found; fail-closed pause.
+ */
+export interface ReconcileExecutionOutput {
+  /**
+   * The name of the handler step that was routed to, or `undefined` when
+   * no handler was found and the engine failed closed with a pause.
+   */
+  readonly handlerStepName?: string;
+  /**
+   * Whether the engine found an explicit handler (`true`) or failed closed
+   * with a pause because no handler exists (`false`).
+   */
+  readonly handlerFound: boolean;
+  /** Lifecycle effects to apply. */
+  readonly effects: readonly LifecycleEffect[];
+  /**
+   * The name of the gate step that must re-run after the corrective handler
+   * completes, or `undefined` when the reconciliation reason is not gate-originated.
+   *
+   * Populated when `reason` is `"review-rejection"` or `"security-rejection"`.
+   * The gate step named here is the step that originally rejected and must
+   * re-run once the upstream handler has resolved the issue.
+   *
+   * Adapters use this field to schedule a re-dispatch of the gate step after
+   * the handler step completes successfully. When `handlerFound` is `false`
+   * (fail-closed pause), this field is still set so adapters can surface the
+   * gate context to the user.
+   *
+   * @see docs/specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md Unit 3
+   */
+  readonly gateReRunStepName?: string;
+}
+
+/** Result type for `reconcileExecution`. */
+export type ReconcileExecutionResult = ResultAsync<
+  ReconcileExecutionOutput,
+  LifecycleError
+>;
+
+// ---------------------------------------------------------------------------
+// Immutable completed plan check — helper for reconcileExecution
+// ---------------------------------------------------------------------------
+
+/**
+ * Check whether the plan associated with the triggering step is already
+ * complete, and if so, return a `policy_decision` error.
+ *
+ * **Immutability rule** (Spec 22 Unit 3):
+ * Completed `Plan Markdown` tasks are immutable. Reconciliation must not
+ * revise them in place. Corrective work must be expressed as follow-up tasks.
+ *
+ * This check applies only when:
+ * 1. `planStateProvider` is provided.
+ * 2. The triggering step's completion method is `"plan_complete"` or
+ *    `"plan_created"` (i.e., the step is plan-oriented).
+ * 3. The plan file exists and has no incomplete checkboxes.
+ *
+ * When the plan is complete, returns `err(LifecyclePolicyDecisionError)`.
+ * When the plan is not complete, or the check is not applicable, returns
+ * `ok(undefined)`.
+ *
+ * @param triggeringStep - The step that triggered reconciliation.
+ * @param instance - The current workflow instance (for plan name rendering).
+ * @param planStateProvider - Provider for querying plan file state.
+ * @returns `ok(undefined)` when reconciliation may proceed, or a typed error.
+ */
+function checkCompletedPlanImmutability(
+  triggeringStep: WorkflowStep,
+  instance: WorkflowInstance,
+  planStateProvider: PlanStateProvider,
+): ResultAsync<undefined, LifecycleError> {
+  const method = triggeringStep.completion.method;
+
+  // Only check plan-oriented steps.
+  if (method !== "plan_complete" && method !== "plan_created") {
+    return okAsync(undefined);
+  }
+
+  const planNameResult = renderPlanName(
+    triggeringStep.completion.plan_name,
+    instance,
+  );
+  if (planNameResult.isErr()) return errAsync(planNameResult.error);
+  const planName = planNameResult.value;
+
+  return planStateProvider
+    .isPlanComplete(planName)
+    .mapErr(
+      (providerErr): LifecycleError => mapPlanStateError(providerErr, planName),
+    )
+    .andThen((complete) => {
+      if (!complete) return okAsync(undefined);
+      const planPath = `.weave/plans/${planName}.md`;
+      return errAsync(
+        lifecyclePolicyDecisionError(
+          `Reconciliation rejected: plan "${planPath}" has all tasks completed. ` +
+            `Completed Plan Markdown tasks are immutable — corrective work must be expressed as follow-up tasks, not in-place revisions. ` +
+            `See docs/specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md Unit 3.`,
+          "completed_plan_immutability",
+        ),
+      );
+    });
+}
+
+// ---------------------------------------------------------------------------
+// 10. reconcileExecution — implementation
+// ---------------------------------------------------------------------------
+
+/**
+ * Trigger reconciliation for a workflow instance.
+ *
+ * Enforces the closed reconciliation reason set, validates the authorization
+ * source, routes to the nearest explicitly declared upstream handler step,
+ * and fails closed by pausing the instance when no handler exists.
+ *
+ * **Enforcement rules** (Spec 22 Unit 3):
+ * 1. `reason` must be one of the four closed built-in values — validated
+ *    at the type level by `ReconciliationReason` from `@weave/core`.
+ * 2. `authorizationSource` must match the authorized source for `reason`.
+ * 3. The engine walks workflow steps backwards from `triggeringStepName`
+ *    and routes to the first step with a matching `reconciliation_handlers`
+ *    entry. `before-plan` steps are excluded from this search at runtime.
+ * 4. When no handler is found, the engine updates the instance to `paused`
+ *    and emits a `pause-execution` effect (fail-closed).
+ *
+ * **`before-plan` exclusion**: `before-plan` steps do not participate in
+ * reconciliation semantics in v1. This is enforced at runtime by
+ * `computeBeforePlanExclusionSet` + `resolveReconciliationHandler`, providing
+ * a defense-in-depth guarantee independent of the schema layer.
+ *
+ * **Gate re-run**: when `reason` is `"review-rejection"` or
+ * `"security-rejection"`, the output carries `gateReRunStepName` set to the
+ * triggering step name. Adapters use this to re-dispatch the gate step after
+ * the corrective handler completes successfully (Spec 22 Unit 3).
+ *
+ * **Immutable completed plan tasks**: when `input.planStateProvider` is
+ * provided and the triggering step uses a `plan_complete` or `plan_created`
+ * completion method, the engine checks whether the associated plan file is
+ * already complete (all checkboxes checked). If complete, `reconcileExecution`
+ * returns a `policy_decision` error with rule `"completed_plan_immutability"`.
+ * Completed `Plan Markdown` tasks are immutable — corrective work must be
+ * expressed as follow-up tasks, not in-place revisions (Spec 22 Unit 3).
+ *
+ * @param input - Reconciliation parameters from the adapter.
+ * @param store - Runtime Store instance.
+ * @returns `ok(ReconcileExecutionOutput)` on success, or a typed `LifecycleError`.
+ */
+export function reconcileExecution(
+  input: ReconcileExecutionInput,
+  store: RuntimeStore,
+): ReconcileExecutionResult {
+  if (!input.workflowInstanceId) {
+    return errAsync(
+      lifecycleValidationError(
+        "workflowInstanceId is required",
+        "workflowInstanceId",
+      ),
+    );
+  }
+  if (!input.leaseId) {
+    return errAsync(lifecycleValidationError("leaseId is required", "leaseId"));
+  }
+  if (!input.reason) {
+    return errAsync(lifecycleValidationError("reason is required", "reason"));
+  }
+  if (!input.authorizationSource) {
+    return errAsync(
+      lifecycleValidationError(
+        "authorizationSource is required",
+        "authorizationSource",
+      ),
+    );
+  }
+
+  // Enforce the closed reason set — validate the authorization source.
+  const sourceCheck = validateReconciliationSource(
+    input.reason,
+    input.authorizationSource,
+  );
+  if (sourceCheck.isErr()) return errAsync(sourceCheck.error);
+
+  if (input.metadata !== undefined && input.metadata !== null) {
+    const metaCheck = sanitizeMetadata(input.metadata);
+    if (metaCheck.isErr()) return errAsync(metaCheck.error);
+  }
+
+  // Verify the active lease matches the provided leaseId.
+  return store.leases
+    .findActive()
+    .mapErr(
+      (storeError): LifecycleError =>
+        lifecyclePersistenceError(storeError.message, {
+          type: storeError.type,
+          message: storeError.message,
+        }),
+    )
+    .andThen((activeLease) => {
+      if (activeLease === null) {
+        return errAsync(
+          lifecycleLeaseConflictError(
+            input.workflowInstanceId,
+            "none" as ExecutionLeaseId,
+            "No active lease for this workflow instance",
+          ),
+        );
+      }
+      if (activeLease.id !== input.leaseId) {
+        return errAsync(
+          lifecycleLeaseConflictError(
+            input.workflowInstanceId,
+            activeLease.id,
+            "Provided lease ID does not match the active lease",
+          ),
+        );
+      }
+      if (activeLease.workflowInstanceId !== input.workflowInstanceId) {
+        return errAsync(
+          lifecycleLeaseConflictError(
+            input.workflowInstanceId,
+            activeLease.id,
+            `Lease ${input.leaseId} belongs to workflow ${activeLease.workflowInstanceId}, not ${input.workflowInstanceId}`,
+          ),
+        );
+      }
+      return okAsync(activeLease);
+    })
+    .andThen((activeLease) =>
+      store.instances
+        .findById(input.workflowInstanceId)
+        .mapErr(
+          (storeError): LifecycleError =>
+            lifecyclePersistenceError(storeError.message, {
+              type: storeError.type,
+              message: storeError.message,
+            }),
+        )
+        .andThen((existing) => {
+          if (existing === null) {
+            return errAsync(
+              lifecycleNotFoundError(
+                "WorkflowInstance",
+                input.workflowInstanceId as string,
+              ),
+            );
+          }
+
+          // Determine the triggering step name.
+          const triggeringStepName =
+            input.triggeringStepName ?? existing.currentStepName;
+
+          // Determine the gate step that must re-run after corrective routing
+          // resolves, when the reconciliation is gate-originated.
+          // Spec 22 Unit 3: review and security gates must re-run after
+          // reconciliation resolves a review- or security-originated rejection.
+          const gateReRunStepName =
+            input.reason === "review-rejection" ||
+            input.reason === "security-rejection"
+              ? (triggeringStepName ?? undefined)
+              : undefined;
+
+          // When no context is provided, fail closed immediately — no topology
+          // to search, so pause the instance.
+          if (input.context === undefined) {
+            return store.instances
+              .update(input.workflowInstanceId, { status: "paused" })
+              .mapErr(
+                (storeError): LifecycleError =>
+                  lifecyclePersistenceError(storeError.message, {
+                    type: storeError.type,
+                    message: storeError.message,
+                  }),
+              )
+              .map(
+                (): ReconcileExecutionOutput => ({
+                  handlerFound: false,
+                  ...(gateReRunStepName !== undefined
+                    ? { gateReRunStepName }
+                    : {}),
+                  effects: [
+                    {
+                      kind: "pause-execution",
+                      workflowInstanceId: input.workflowInstanceId,
+                      reason: `Reconciliation (${input.reason}): no workflow context provided — failing closed`,
+                    },
+                  ],
+                }),
+              );
+          }
+
+          // Resolve the workflow config.
+          const workflowConfig = input.context.workflows[existing.workflowName];
+          if (workflowConfig === undefined) {
+            return errAsync(
+              lifecycleNotFoundError(
+                "WorkflowConfig",
+                existing.workflowName,
+                `Workflow "${existing.workflowName}" not found in provided workflow map`,
+              ),
+            );
+          }
+
+          // Compute the before-plan exclusion set for this workflow.
+          // v1 rule: before-plan steps do not participate in reconciliation.
+          const beforePlanExclusions =
+            computeBeforePlanExclusionSet(workflowConfig);
+
+          // Immutability check: if a planStateProvider is supplied, verify that
+          // the triggering step's plan is not already complete. Completed Plan
+          // Markdown tasks are immutable — corrective work must be expressed as
+          // follow-up tasks, not in-place revisions (Spec 22 Unit 3).
+          const triggeringStepConfig =
+            triggeringStepName !== undefined
+              ? workflowConfig.steps.find((s) => s.name === triggeringStepName)
+              : undefined;
+
+          if (
+            input.planStateProvider !== undefined &&
+            triggeringStepConfig !== undefined
+          ) {
+            const immutabilityCheck = checkCompletedPlanImmutability(
+              triggeringStepConfig,
+              existing,
+              input.planStateProvider,
+            );
+            // We must await the async check before continuing.
+            // Use andThen to chain the rest of the logic.
+            return immutabilityCheck.andThen(() => {
+              // Resolve the nearest upstream handler step, skipping before-plan steps.
+              const handlerStep = resolveReconciliationHandler(
+                workflowConfig,
+                triggeringStepName ?? "",
+                input.reason,
+                beforePlanExclusions,
+              );
+
+              // Fail closed: no handler found — pause the instance.
+              if (handlerStep === undefined) {
+                return store.instances
+                  .update(input.workflowInstanceId, { status: "paused" })
+                  .mapErr(
+                    (storeError): LifecycleError =>
+                      lifecyclePersistenceError(storeError.message, {
+                        type: storeError.type,
+                        message: storeError.message,
+                      }),
+                  )
+                  .map(
+                    (): ReconcileExecutionOutput => ({
+                      handlerFound: false,
+                      ...(gateReRunStepName !== undefined
+                        ? { gateReRunStepName }
+                        : {}),
+                      effects: [
+                        {
+                          kind: "pause-execution",
+                          workflowInstanceId: input.workflowInstanceId,
+                          reason: `Reconciliation (${input.reason}): no upstream handler declared — failing closed`,
+                        },
+                      ],
+                    }),
+                  );
+              }
+
+              // Handler found — update currentStepName and dispatch the handler step.
+              return store.instances
+                .update(input.workflowInstanceId, {
+                  currentStepName: handlerStep.name,
+                  status: "running",
+                })
+                .mapErr(
+                  (storeError): LifecycleError =>
+                    lifecyclePersistenceError(storeError.message, {
+                      type: storeError.type,
+                      message: storeError.message,
+                    }),
+                )
+                .andThen((updatedInstance) => {
+                  const artifactNames = updatedInstance.artifacts.map(
+                    (a) => a.name,
+                  );
+                  const promptContext = buildStepPromptContext(
+                    updatedInstance,
+                    handlerStep,
+                  );
+                  const promptResult = renderStepPrompt(
+                    handlerStep.prompt,
+                    promptContext,
+                    artifactNames,
+                  );
+                  if (promptResult.isErr()) return errAsync(promptResult.error);
+                  const promptMetadata = promptResult.value;
+                  const runAgent = buildConfiguredRunAgentEffect(
+                    handlerStep,
+                    promptMetadata,
+                  );
+                  return okAsync<ReconcileExecutionOutput, LifecycleError>({
+                    handlerStepName: handlerStep.name,
+                    handlerFound: true,
+                    ...(gateReRunStepName !== undefined
+                      ? { gateReRunStepName }
+                      : {}),
+                    effects: [{ kind: "dispatch-agent", runAgent }],
+                  });
+                });
+            });
+          }
+
+          // Resolve the nearest upstream handler step, skipping before-plan steps.
+          const handlerStep = resolveReconciliationHandler(
+            workflowConfig,
+            triggeringStepName ?? "",
+            input.reason,
+            beforePlanExclusions,
+          );
+
+          // Fail closed: no handler found — pause the instance.
+          if (handlerStep === undefined) {
+            return store.instances
+              .update(input.workflowInstanceId, { status: "paused" })
+              .mapErr(
+                (storeError): LifecycleError =>
+                  lifecyclePersistenceError(storeError.message, {
+                    type: storeError.type,
+                    message: storeError.message,
+                  }),
+              )
+              .map(
+                (): ReconcileExecutionOutput => ({
+                  handlerFound: false,
+                  ...(gateReRunStepName !== undefined
+                    ? { gateReRunStepName }
+                    : {}),
+                  effects: [
+                    {
+                      kind: "pause-execution",
+                      workflowInstanceId: input.workflowInstanceId,
+                      reason: `Reconciliation (${input.reason}): no upstream handler declared — failing closed`,
+                    },
+                  ],
+                }),
+              );
+          }
+
+          // Handler found — update currentStepName and dispatch the handler step.
+          return store.instances
+            .update(input.workflowInstanceId, {
+              currentStepName: handlerStep.name,
+              status: "running",
+            })
+            .mapErr(
+              (storeError): LifecycleError =>
+                lifecyclePersistenceError(storeError.message, {
+                  type: storeError.type,
+                  message: storeError.message,
+                }),
+            )
+            .andThen((updatedInstance) => {
+              // Render the handler step prompt.
+              const artifactNames = updatedInstance.artifacts.map(
+                (a) => a.name,
+              );
+              const promptContext = buildStepPromptContext(
+                updatedInstance,
+                handlerStep,
+              );
+              const promptResult = renderStepPrompt(
+                handlerStep.prompt,
+                promptContext,
+                artifactNames,
+              );
+              if (promptResult.isErr()) return errAsync(promptResult.error);
+              const promptMetadata = promptResult.value;
+
+              const runAgent = buildConfiguredRunAgentEffect(
+                handlerStep,
+                promptMetadata,
+              );
+
+              return okAsync<ReconcileExecutionOutput, LifecycleError>({
+                handlerStepName: handlerStep.name,
+                handlerFound: true,
+                ...(gateReRunStepName !== undefined
+                  ? { gateReRunStepName }
+                  : {}),
+                effects: [{ kind: "dispatch-agent", runAgent }],
+              });
+            });
+        }),
+    );
 }

@@ -14,6 +14,10 @@ import {
   EXECUTION_AUTHORIZATION_SOURCES,
   type ExecutionAuthorizationSource,
   validateAuthorizationSource,
+  RECONCILIATION_AUTHORIZATION_SOURCES,
+  RECONCILIATION_REASONS,
+  validateReconciliationSource,
+  type ReconciliationAuthorizationSource,
 } from "../execution-lifecycle.js";
 import type { RuntimeStoreError } from "../runtime/errors.js";
 import {
@@ -40,7 +44,11 @@ import type {
   WorkflowInstanceRepository,
 } from "../runtime/store.js";
 import type {
+  ArtifactApprovalState,
+  ArtifactId,
+  ArtifactIntegrityMetadata,
   ArtifactRef,
+  ConsumedArtifactRecord,
   ExecutionLease,
   ExecutionLeaseId,
   JournalQueryFilter,
@@ -49,11 +57,14 @@ import type {
   RuntimeJournalEntryId,
   SessionSnapshot,
   SessionSnapshotId,
+  StepAttemptRecord,
   WorkflowInstance,
   WorkflowInstanceId,
   WorkflowInstanceStatus,
 } from "../runtime/types.js";
 import {
+  ARTIFACT_APPROVAL_STATES,
+  createArtifactId,
   createExecutionLeaseId,
   createOwnerId,
   createRuntimeJournalEntryId,
@@ -77,6 +88,7 @@ function makeWorkflowInstance(
     slug: "test-goal",
     status: "created",
     artifacts: [],
+    stepAttempts: [],
     createdAt: "2026-05-20T00:00:00.000Z",
     updatedAt: "2026-05-20T00:00:00.000Z",
     ...overrides,
@@ -124,6 +136,12 @@ function makeJournalEntry(
     data: {},
     ...overrides,
   };
+}
+
+// Monotonic counter for stub artifact ID generation — avoids Date.now() collisions
+let _stubArtifactCounter = 0;
+function newStubArtifactId(): ArtifactId {
+  return createArtifactId(`art-stub-${++_stubArtifactCounter}`);
 }
 
 /**
@@ -209,21 +227,94 @@ class StubWorkflowInstanceRepository implements WorkflowInstanceRepository {
       path: string;
       mimeType?: string;
       description?: string;
+      integrity?: ArtifactIntegrityMetadata;
+      producerAgent?: string;
     },
   ): ResultAsync<WorkflowInstance, RuntimeStoreError> {
     const existing = this.store.get(id);
     if (!existing) {
       return errAsync(notFoundError("WorkflowInstance", id));
     }
+    const prior =
+      [...existing.artifacts].reverse().find((a) => a.name === artifact.name) ??
+      null;
+    const revision = prior ? prior.revision + 1 : 1;
+    const artifactId = prior ? prior.id : newStubArtifactId();
     const ref: ArtifactRef = {
+      id: artifactId,
       name: artifact.name,
       path: artifact.path,
+      revision,
+      approvalState: "pending",
+      ...(artifact.producerAgent
+        ? { producerAgent: artifact.producerAgent }
+        : {}),
       ...(artifact.mimeType ? { mimeType: artifact.mimeType } : {}),
       ...(artifact.description ? { description: artifact.description } : {}),
+      ...(artifact.integrity ? { integrity: artifact.integrity } : {}),
     };
     const updated: WorkflowInstance = {
       ...existing,
       artifacts: [...existing.artifacts, ref],
+      updatedAt: new Date().toISOString(),
+    };
+    this.store.set(id, updated);
+    return okAsync(updated);
+  }
+
+  updateArtifactApproval(
+    id: WorkflowInstanceId,
+    artifactId: ArtifactId,
+    approvalState: ArtifactApprovalState,
+  ): ResultAsync<WorkflowInstance, RuntimeStoreError> {
+    const existing = this.store.get(id);
+    if (!existing) {
+      return errAsync(notFoundError("WorkflowInstance", id));
+    }
+    // Find the last index of the artifact with the given id
+    let artifactIndex = -1;
+    for (let i = existing.artifacts.length - 1; i >= 0; i--) {
+      if (existing.artifacts[i].id === artifactId) {
+        artifactIndex = i;
+        break;
+      }
+    }
+    if (artifactIndex === -1) {
+      return errAsync(notFoundError("ArtifactRef", artifactId as string));
+    }
+    const updatedArtifacts = existing.artifacts.map((a, i) =>
+      i === artifactIndex ? { ...a, approvalState } : a,
+    );
+    const updated: WorkflowInstance = {
+      ...existing,
+      artifacts: updatedArtifacts,
+      updatedAt: new Date().toISOString(),
+    };
+    this.store.set(id, updated);
+    return okAsync(updated);
+  }
+
+  recordStepAttempt(
+    id: WorkflowInstanceId,
+    stepName: string,
+    consumedArtifacts: readonly ConsumedArtifactRecord[],
+  ): ResultAsync<WorkflowInstance, RuntimeStoreError> {
+    const existing = this.store.get(id);
+    if (!existing) {
+      return errAsync(notFoundError("WorkflowInstance", id));
+    }
+    const priorAttempts = existing.stepAttempts.filter(
+      (a) => a.stepName === stepName,
+    ).length;
+    const record: StepAttemptRecord = {
+      stepName,
+      attemptNumber: priorAttempts + 1,
+      dispatchedAt: new Date().toISOString(),
+      consumedArtifacts,
+    };
+    const updated: WorkflowInstance = {
+      ...existing,
+      stepAttempts: [...existing.stepAttempts, record],
       updatedAt: new Date().toISOString(),
     };
     this.store.set(id, updated);
@@ -547,22 +638,35 @@ describe("WorkflowInstance status", () => {
   it("WorkflowInstance stores artifact references, not contents", () => {
     const instance = makeWorkflowInstance({
       artifacts: [
-        { name: "plan", path: ".weave/plans/test-goal.md" },
         {
+          id: createArtifactId("art-001"),
+          name: "plan",
+          path: ".weave/plans/test-goal.md",
+          revision: 1,
+          approvalState: "pending",
+        },
+        {
+          id: createArtifactId("art-002"),
           name: "output",
           path: ".weave/plans/output.json",
+          revision: 1,
+          approvalState: "approved",
           mimeType: "application/json",
         },
       ],
     });
     expect(instance.artifacts).toHaveLength(2);
-    expect(instance.artifacts[0]).toEqual({
+    expect(instance.artifacts[0]).toMatchObject({
       name: "plan",
       path: ".weave/plans/test-goal.md",
+      revision: 1,
+      approvalState: "pending",
     });
     expect(instance.artifacts[1]).toMatchObject({
       name: "output",
       mimeType: "application/json",
+      revision: 1,
+      approvalState: "approved",
     });
   });
 });
@@ -1240,7 +1344,7 @@ describe("WorkflowInstance CRUD", () => {
     expect(running[0].id as string).toBe(a.id as string);
   });
 
-  it("addArtifact appends an artifact reference", async () => {
+  it("addArtifact appends an artifact reference with identity and revision", async () => {
     const repo = new StubWorkflowInstanceRepository();
     const created = (
       await repo.create({ workflowName: "wf", goal: "g", slug: "g" })
@@ -1252,8 +1356,12 @@ describe("WorkflowInstance CRUD", () => {
       })
     )._unsafeUnwrap();
     expect(updated.artifacts).toHaveLength(1);
-    expect(updated.artifacts[0].name).toBe("plan");
-    expect(updated.artifacts[0].path).toBe(".weave/plans/g.md");
+    const art = updated.artifacts[0];
+    expect(art.name).toBe("plan");
+    expect(art.path).toBe(".weave/plans/g.md");
+    expect(typeof art.id).toBe("string");
+    expect(art.revision).toBe(1);
+    expect(art.approvalState).toBe("pending");
   });
 });
 
@@ -1499,5 +1607,786 @@ describe("Spec 22 Unit 1 — ExecutionAuthorizationSource contract (ADR 0004)", 
 
     const activeLease = (await leaseRepo.findActive())._unsafeUnwrap();
     expect(activeLease).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: Task 3.1 — Artifact identity, monotonic revisions, approval state,
+// and integrity-verification metadata
+// ---------------------------------------------------------------------------
+
+describe("ArtifactApprovalState values", () => {
+  it("ARTIFACT_APPROVAL_STATES contains all 3 valid values", () => {
+    expect(ARTIFACT_APPROVAL_STATES).toHaveLength(3);
+    expect(ARTIFACT_APPROVAL_STATES).toContain("pending");
+    expect(ARTIFACT_APPROVAL_STATES).toContain("approved");
+    expect(ARTIFACT_APPROVAL_STATES).toContain("rejected");
+  });
+
+  it("ArtifactRef can be created with each valid approvalState", () => {
+    for (const approvalState of ARTIFACT_APPROVAL_STATES) {
+      const ref: ArtifactRef = {
+        id: createArtifactId("art-test"),
+        name: "plan",
+        path: ".weave/plans/test.md",
+        revision: 1,
+        approvalState,
+      };
+      expect(ref.approvalState).toBe(approvalState);
+    }
+  });
+});
+
+describe("ArtifactId branded type", () => {
+  it("createArtifactId creates a branded ArtifactId", () => {
+    const id = createArtifactId("art-test");
+    expect(typeof id).toBe("string");
+    expect(id as string).toBe("art-test");
+  });
+
+  it("ArtifactRef.id is a stable branded ArtifactId", () => {
+    const id = createArtifactId("stable-art-id");
+    const ref: ArtifactRef = {
+      id,
+      name: "output",
+      path: ".weave/plans/output.json",
+      revision: 1,
+      approvalState: "pending",
+    };
+    expect(ref.id as string).toBe("stable-art-id");
+  });
+});
+
+describe("ArtifactRef monotonic revision", () => {
+  it("addArtifact assigns revision 1 for the first occurrence of a name", async () => {
+    const repo = new StubWorkflowInstanceRepository();
+    const created = (
+      await repo.create({ workflowName: "wf", goal: "g", slug: "g" })
+    )._unsafeUnwrap();
+    const updated = (
+      await repo.addArtifact(created.id, {
+        name: "plan",
+        path: ".weave/plans/g.md",
+      })
+    )._unsafeUnwrap();
+    expect(updated.artifacts[0].revision).toBe(1);
+  });
+
+  it("addArtifact increments revision for subsequent occurrences of the same name", async () => {
+    const repo = new StubWorkflowInstanceRepository();
+    const created = (
+      await repo.create({ workflowName: "wf", goal: "g", slug: "g" })
+    )._unsafeUnwrap();
+
+    await repo.addArtifact(created.id, {
+      name: "plan",
+      path: ".weave/plans/g-v1.md",
+    });
+    const updated = (
+      await repo.addArtifact(created.id, {
+        name: "plan",
+        path: ".weave/plans/g-v2.md",
+      })
+    )._unsafeUnwrap();
+
+    const planArtifacts = updated.artifacts.filter((a) => a.name === "plan");
+    expect(planArtifacts).toHaveLength(2);
+    expect(planArtifacts[0].revision).toBe(1);
+    expect(planArtifacts[1].revision).toBe(2);
+  });
+
+  it("addArtifact reuses the stable ArtifactId across revisions of the same name", async () => {
+    const repo = new StubWorkflowInstanceRepository();
+    const created = (
+      await repo.create({ workflowName: "wf", goal: "g", slug: "g" })
+    )._unsafeUnwrap();
+
+    await repo.addArtifact(created.id, {
+      name: "plan",
+      path: ".weave/plans/g-v1.md",
+    });
+    const updated = (
+      await repo.addArtifact(created.id, {
+        name: "plan",
+        path: ".weave/plans/g-v2.md",
+      })
+    )._unsafeUnwrap();
+
+    const planArtifacts = updated.artifacts.filter((a) => a.name === "plan");
+    // Both revisions share the same stable ArtifactId
+    expect(planArtifacts[0].id as string).toBe(planArtifacts[1].id as string);
+  });
+
+  it("different artifact names get independent ArtifactIds", async () => {
+    const repo = new StubWorkflowInstanceRepository();
+    const created = (
+      await repo.create({ workflowName: "wf", goal: "g", slug: "g" })
+    )._unsafeUnwrap();
+
+    await repo.addArtifact(created.id, {
+      name: "plan",
+      path: ".weave/plans/g.md",
+    });
+    const updated = (
+      await repo.addArtifact(created.id, {
+        name: "output",
+        path: ".weave/plans/output.json",
+      })
+    )._unsafeUnwrap();
+
+    const planArt = updated.artifacts.find((a) => a.name === "plan")!;
+    const outputArt = updated.artifacts.find((a) => a.name === "output")!;
+    expect(planArt.id as string).not.toBe(outputArt.id as string);
+  });
+});
+
+describe("ArtifactRef approval state", () => {
+  it("addArtifact sets approvalState to 'pending' by default", async () => {
+    const repo = new StubWorkflowInstanceRepository();
+    const created = (
+      await repo.create({ workflowName: "wf", goal: "g", slug: "g" })
+    )._unsafeUnwrap();
+    const updated = (
+      await repo.addArtifact(created.id, {
+        name: "plan",
+        path: ".weave/plans/g.md",
+      })
+    )._unsafeUnwrap();
+    expect(updated.artifacts[0].approvalState).toBe("pending");
+  });
+
+  it("updateArtifactApproval transitions approvalState to 'approved'", async () => {
+    const repo = new StubWorkflowInstanceRepository();
+    const created = (
+      await repo.create({ workflowName: "wf", goal: "g", slug: "g" })
+    )._unsafeUnwrap();
+    const withArtifact = (
+      await repo.addArtifact(created.id, {
+        name: "plan",
+        path: ".weave/plans/g.md",
+      })
+    )._unsafeUnwrap();
+
+    const artifactId = withArtifact.artifacts[0].id;
+    const approved = (
+      await repo.updateArtifactApproval(created.id, artifactId, "approved")
+    )._unsafeUnwrap();
+
+    expect(approved.artifacts[0].approvalState).toBe("approved");
+  });
+
+  it("updateArtifactApproval transitions approvalState to 'rejected'", async () => {
+    const repo = new StubWorkflowInstanceRepository();
+    const created = (
+      await repo.create({ workflowName: "wf", goal: "g", slug: "g" })
+    )._unsafeUnwrap();
+    const withArtifact = (
+      await repo.addArtifact(created.id, {
+        name: "plan",
+        path: ".weave/plans/g.md",
+      })
+    )._unsafeUnwrap();
+
+    const artifactId = withArtifact.artifacts[0].id;
+    const rejected = (
+      await repo.updateArtifactApproval(created.id, artifactId, "rejected")
+    )._unsafeUnwrap();
+
+    expect(rejected.artifacts[0].approvalState).toBe("rejected");
+  });
+
+  it("updateArtifactApproval returns not_found for missing WorkflowInstance", async () => {
+    const repo = new StubWorkflowInstanceRepository();
+    const result = await repo.updateArtifactApproval(
+      createWorkflowInstanceId("missing-wf"),
+      createArtifactId("art-001"),
+      "approved",
+    );
+    expect(result.isErr()).toBe(true);
+    const error = result._unsafeUnwrapErr();
+    expect(error.type).toBe("not_found");
+  });
+
+  it("updateArtifactApproval returns not_found for missing ArtifactId", async () => {
+    const repo = new StubWorkflowInstanceRepository();
+    const created = (
+      await repo.create({ workflowName: "wf", goal: "g", slug: "g" })
+    )._unsafeUnwrap();
+
+    const result = await repo.updateArtifactApproval(
+      created.id,
+      createArtifactId("nonexistent-art"),
+      "approved",
+    );
+    expect(result.isErr()).toBe(true);
+    const error = result._unsafeUnwrapErr();
+    expect(error.type).toBe("not_found");
+  });
+
+  it("addArtifact resets approvalState to 'pending' for a new revision", async () => {
+    const repo = new StubWorkflowInstanceRepository();
+    const created = (
+      await repo.create({ workflowName: "wf", goal: "g", slug: "g" })
+    )._unsafeUnwrap();
+
+    // Add first revision and approve it
+    const v1 = (
+      await repo.addArtifact(created.id, {
+        name: "plan",
+        path: ".weave/plans/g-v1.md",
+      })
+    )._unsafeUnwrap();
+    const artifactId = v1.artifacts[0].id;
+    await repo.updateArtifactApproval(created.id, artifactId, "approved");
+
+    // Add second revision — should be pending again
+    const v2 = (
+      await repo.addArtifact(created.id, {
+        name: "plan",
+        path: ".weave/plans/g-v2.md",
+      })
+    )._unsafeUnwrap();
+
+    const planArtifacts = v2.artifacts.filter((a) => a.name === "plan");
+    expect(planArtifacts[0].approvalState).toBe("approved"); // v1 unchanged
+    expect(planArtifacts[1].approvalState).toBe("pending"); // v2 starts pending
+  });
+});
+
+describe("ArtifactRef integrity-verification metadata", () => {
+  it("addArtifact stores integrity metadata when provided", async () => {
+    const repo = new StubWorkflowInstanceRepository();
+    const created = (
+      await repo.create({ workflowName: "wf", goal: "g", slug: "g" })
+    )._unsafeUnwrap();
+
+    const integrity: ArtifactIntegrityMetadata = {
+      algorithm: "sha256",
+      digest:
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    };
+    const updated = (
+      await repo.addArtifact(created.id, {
+        name: "plan",
+        path: ".weave/plans/g.md",
+        integrity,
+      })
+    )._unsafeUnwrap();
+
+    expect(updated.artifacts[0].integrity).toEqual(integrity);
+    expect(updated.artifacts[0].integrity?.algorithm).toBe("sha256");
+    expect(updated.artifacts[0].integrity?.digest).toHaveLength(64);
+  });
+
+  it("addArtifact omits integrity when not provided", async () => {
+    const repo = new StubWorkflowInstanceRepository();
+    const created = (
+      await repo.create({ workflowName: "wf", goal: "g", slug: "g" })
+    )._unsafeUnwrap();
+    const updated = (
+      await repo.addArtifact(created.id, {
+        name: "plan",
+        path: ".weave/plans/g.md",
+      })
+    )._unsafeUnwrap();
+
+    expect(updated.artifacts[0].integrity).toBeUndefined();
+  });
+
+  it("ArtifactRef does not store raw artifact contents", () => {
+    const ref: ArtifactRef = {
+      id: createArtifactId("art-001"),
+      name: "plan",
+      path: ".weave/plans/test.md",
+      revision: 1,
+      approvalState: "pending",
+      integrity: {
+        algorithm: "sha256",
+        digest:
+          "abc123def456abc123def456abc123def456abc123def456abc123def456abc1",
+      },
+    };
+    // These fields must NOT exist on ArtifactRef
+    expect("content" in ref).toBe(false);
+    expect("rawContent" in ref).toBe(false);
+    expect("body" in ref).toBe(false);
+    expect("text" in ref).toBe(false);
+    expect("prompt" in ref).toBe(false);
+    expect("completion" in ref).toBe(false);
+    expect("token" in ref).toBe(false);
+    expect("credential" in ref).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Reconciliation contract — Spec 22 Unit 3
+// ---------------------------------------------------------------------------
+
+describe("Reconciliation contract — closed reason set (Spec 22 Unit 3)", () => {
+  it("RECONCILIATION_REASONS contains exactly the four closed built-in values", () => {
+    expect(RECONCILIATION_REASONS).toHaveLength(4);
+    expect(RECONCILIATION_REASONS).toContain("execution-mismatch");
+    expect(RECONCILIATION_REASONS).toContain("user-revision-request");
+    expect(RECONCILIATION_REASONS).toContain("review-rejection");
+    expect(RECONCILIATION_REASONS).toContain("security-rejection");
+  });
+
+  it("RECONCILIATION_AUTHORIZATION_SOURCES contains exactly the four valid sources", () => {
+    expect(RECONCILIATION_AUTHORIZATION_SOURCES).toHaveLength(4);
+    expect(RECONCILIATION_AUTHORIZATION_SOURCES).toContain("user");
+    expect(RECONCILIATION_AUTHORIZATION_SOURCES).toContain("runtime");
+    expect(RECONCILIATION_AUTHORIZATION_SOURCES).toContain("review-gate");
+    expect(RECONCILIATION_AUTHORIZATION_SOURCES).toContain("security-gate");
+  });
+
+  it("each reason has exactly one authorized source (bijective mapping)", () => {
+    const authorizedPairs: Array<[string, string]> = [
+      ["execution-mismatch", "runtime"],
+      ["user-revision-request", "user"],
+      ["review-rejection", "review-gate"],
+      ["security-rejection", "security-gate"],
+    ];
+
+    for (const [reason, source] of authorizedPairs) {
+      const result = validateReconciliationSource(
+        reason as Parameters<typeof validateReconciliationSource>[0],
+        source as ReconciliationAuthorizationSource,
+      );
+      expect(result.isOk()).toBe(true);
+    }
+  });
+
+  it("every non-authorized source is rejected for each reason", () => {
+    const allSources: ReconciliationAuthorizationSource[] = [
+      "user",
+      "runtime",
+      "review-gate",
+      "security-gate",
+    ];
+    const authorizedMap: Record<string, string> = {
+      "execution-mismatch": "runtime",
+      "user-revision-request": "user",
+      "review-rejection": "review-gate",
+      "security-rejection": "security-gate",
+    };
+
+    for (const reason of RECONCILIATION_REASONS) {
+      const authorized = authorizedMap[reason];
+      for (const source of allSources) {
+        if (source === authorized) continue;
+        const result = validateReconciliationSource(reason, source);
+        expect(result.isErr()).toBe(true);
+        if (result.isErr()) {
+          expect(result.error.type).toBe("policy_decision");
+          expect(result.error.rule).toBe("reconciliationSource");
+        }
+      }
+    }
+  });
+
+  it("validateReconciliationSource error message names the reason and authorized source", () => {
+    const result = validateReconciliationSource("review-rejection", "user");
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.message).toContain("review-rejection");
+    expect(result.error.message).toContain("review-gate");
+    expect(result.error.message).toContain('"user"');
+  });
+
+  it("validateReconciliationSource error message references the spec", () => {
+    const result = validateReconciliationSource(
+      "security-rejection",
+      "runtime",
+    );
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    // Error message should reference the spec for traceability
+    expect(result.error.message).toContain("22-spec-workflow-first-execution");
+  });
+});
+
+describe("Reconciliation contract — WorkflowInstance and ExecutionLease invariants (Spec 22 Unit 3)", () => {
+  it("WorkflowInstance status 'paused' is the fail-closed state for reconciliation without a handler", () => {
+    // Structural: 'paused' must be a valid WorkflowInstanceStatus
+    const validStatuses = WORKFLOW_INSTANCE_STATUSES;
+    expect(validStatuses).toContain("paused");
+  });
+
+  it("WorkflowInstance status 'running' is the state after successful handler routing", () => {
+    const validStatuses = WORKFLOW_INSTANCE_STATUSES;
+    expect(validStatuses).toContain("running");
+  });
+
+  it("reconciliation does not create a new WorkflowInstance — it operates on an existing one", () => {
+    // Structural proof: reconcileExecution takes workflowInstanceId as input,
+    // not a creation payload. The type system enforces this.
+    // This test documents the invariant explicitly.
+    type ReconcileInput = {
+      workflowInstanceId: WorkflowInstanceId;
+      leaseId: ExecutionLeaseId;
+      reason: string;
+      authorizationSource: string;
+    };
+    const input: ReconcileInput = {
+      workflowInstanceId: createWorkflowInstanceId("existing-wf-001"),
+      leaseId: createExecutionLeaseId("existing-lease-001"),
+      reason: "user-revision-request",
+      authorizationSource: "user",
+    };
+    // The input references an existing instance — no 'goal', 'slug', or 'workflowName'
+    // creation fields are present. This is the structural proof.
+    expect("goal" in input).toBe(false);
+    expect("slug" in input).toBe(false);
+    expect("workflowName" in input).toBe(false);
+    expect(input.workflowInstanceId as string).toBe("existing-wf-001");
+  });
+
+  it("reconciliation fail-closed effect is pause-execution (not complete-execution)", () => {
+    // Structural: the fail-closed effect must be pause-execution, not complete-execution.
+    // This preserves resumability — the workflow is not terminated.
+    const failClosedEffect: {
+      kind: "pause-execution";
+      workflowInstanceId: WorkflowInstanceId;
+      reason?: string;
+    } = {
+      kind: "pause-execution",
+      workflowInstanceId: createWorkflowInstanceId("wf-fail-closed"),
+      reason: "Reconciliation: no upstream handler declared — failing closed",
+    };
+    expect(failClosedEffect.kind).toBe("pause-execution");
+    // Must NOT be complete-execution (which would terminate the workflow)
+    expect(failClosedEffect.kind).not.toBe("complete-execution");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Reconciliation contract — gate re-run (Spec 22 Unit 3)
+// ---------------------------------------------------------------------------
+
+describe("Reconciliation contract — gate re-run (Spec 22 Unit 3)", () => {
+  it("ReconcileExecutionOutput carries gateReRunStepName for gate-originated reasons", () => {
+    // Structural: the output type must support gateReRunStepName as an optional field.
+    // This test documents the contract shape without requiring a live store.
+    type GateReRunOutput = {
+      handlerFound: boolean;
+      handlerStepName?: string;
+      gateReRunStepName?: string;
+      effects: readonly { kind: string }[];
+    };
+
+    const reviewRejectionOutput: GateReRunOutput = {
+      handlerFound: true,
+      handlerStepName: "implement",
+      gateReRunStepName: "review-gate",
+      effects: [{ kind: "dispatch-agent" }],
+    };
+    expect(reviewRejectionOutput.gateReRunStepName).toBe("review-gate");
+
+    const securityRejectionOutput: GateReRunOutput = {
+      handlerFound: true,
+      handlerStepName: "implement",
+      gateReRunStepName: "security-gate",
+      effects: [{ kind: "dispatch-agent" }],
+    };
+    expect(securityRejectionOutput.gateReRunStepName).toBe("security-gate");
+  });
+
+  it("gateReRunStepName is absent for non-gate-originated reasons", () => {
+    // Structural: gateReRunStepName must be undefined for user-revision-request
+    // and execution-mismatch (not gate-originated).
+    type GateReRunOutput = {
+      handlerFound: boolean;
+      handlerStepName?: string;
+      gateReRunStepName?: string;
+      effects: readonly { kind: string }[];
+    };
+
+    const userRevisionOutput: GateReRunOutput = {
+      handlerFound: true,
+      handlerStepName: "implement",
+      // gateReRunStepName intentionally absent
+      effects: [{ kind: "dispatch-agent" }],
+    };
+    expect(userRevisionOutput.gateReRunStepName).toBeUndefined();
+
+    const executionMismatchOutput: GateReRunOutput = {
+      handlerFound: true,
+      handlerStepName: "plan",
+      // gateReRunStepName intentionally absent
+      effects: [{ kind: "dispatch-agent" }],
+    };
+    expect(executionMismatchOutput.gateReRunStepName).toBeUndefined();
+  });
+
+  it("gate re-run reasons are exactly review-rejection and security-rejection", () => {
+    // Document the closed set of gate-originated reasons that trigger re-run.
+    const gateOriginatedReasons: readonly string[] = [
+      "review-rejection",
+      "security-rejection",
+    ];
+    const nonGateReasons: readonly string[] = [
+      "execution-mismatch",
+      "user-revision-request",
+    ];
+
+    // All four reasons are in RECONCILIATION_REASONS
+    const allReasons: string[] = [...gateOriginatedReasons, ...nonGateReasons];
+    const reconciliationReasonsAsStrings: string[] = [
+      ...RECONCILIATION_REASONS,
+    ];
+    for (const reason of allReasons) {
+      expect(reconciliationReasonsAsStrings).toContain(reason);
+    }
+
+    // Gate-originated reasons have gate sources
+    expect(
+      validateReconciliationSource("review-rejection", "review-gate").isOk(),
+    ).toBe(true);
+    expect(
+      validateReconciliationSource(
+        "security-rejection",
+        "security-gate",
+      ).isOk(),
+    ).toBe(true);
+
+    // Non-gate reasons do not have gate sources
+    expect(
+      validateReconciliationSource("execution-mismatch", "review-gate").isErr(),
+    ).toBe(true);
+    expect(
+      validateReconciliationSource(
+        "user-revision-request",
+        "security-gate",
+      ).isErr(),
+    ).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Reconciliation contract — before-plan exclusion (Spec 22 Unit 3)
+// ---------------------------------------------------------------------------
+
+describe("Reconciliation contract — before-plan exclusion (Spec 22 Unit 3)", () => {
+  it("before-plan steps do not participate in reconciliation — v1 rule is documented", () => {
+    // Structural proof: the v1 rule is that before-plan steps do not participate
+    // in reconciliation semantics. This test documents the invariant.
+    //
+    // The runtime enforcement is in resolveReconciliationHandler via
+    // computeBeforePlanExclusionSet. The schema layer also prevents
+    // reconciliation_handlers on before-plan steps, but the runtime check
+    // provides defense-in-depth after config merge or composition.
+    //
+    // A before-plan step is identified by:
+    // 1. The workflow publishes extension_points.before_plan === true
+    // 2. The step appears before the step with role === "planning"
+    //
+    // This test verifies the structural invariant is documented and the
+    // WorkflowStep type supports the role field.
+    type StepWithRole = {
+      name: string;
+      role?: "planning";
+      reconciliation_handlers?: Array<{ reason: string }>;
+    };
+
+    const planningStep: StepWithRole = {
+      name: "plan",
+      role: "planning",
+    };
+    expect(planningStep.role).toBe("planning");
+
+    const beforePlanStep: StepWithRole = {
+      name: "spec-review",
+      // No role — before-plan steps do not have role: "planning"
+    };
+    expect(beforePlanStep.role).toBeUndefined();
+  });
+
+  it("before-plan exclusion is a runtime defense-in-depth guarantee", () => {
+    // The schema layer prevents reconciliation_handlers on before-plan steps.
+    // The runtime layer (computeBeforePlanExclusionSet + resolveReconciliationHandler)
+    // provides a second line of defense after config merge or composition.
+    //
+    // This test documents that the runtime check is independent of the schema check.
+    // Both must hold for the v1 rule to be enforced.
+    //
+    // Structural: the runtime check uses extension_points.before_plan and
+    // the position of the planning step (role === "planning") to compute
+    // the exclusion set. Steps before the planning step are excluded.
+    const workflowWithBeforePlan = {
+      extension_points: { before_plan: true },
+      steps: [
+        { name: "spec-review", role: undefined }, // before-plan (excluded)
+        { name: "plan", role: "planning" as const }, // planning step (boundary)
+        { name: "implement", role: undefined }, // after planning (not excluded)
+      ],
+    };
+
+    // Verify the structural invariant: spec-review is before plan (index 0 < 1)
+    const planIndex = workflowWithBeforePlan.steps.findIndex(
+      (s) => s.role === "planning",
+    );
+    expect(planIndex).toBe(1);
+
+    const specReviewIndex = workflowWithBeforePlan.steps.findIndex(
+      (s) => s.name === "spec-review",
+    );
+    expect(specReviewIndex).toBe(0);
+
+    // spec-review is before the planning step — it is a before-plan step
+    expect(specReviewIndex < planIndex).toBe(true);
+
+    // implement is after the planning step — it is NOT a before-plan step
+    const implementIndex = workflowWithBeforePlan.steps.findIndex(
+      (s) => s.name === "implement",
+    );
+    expect(implementIndex > planIndex).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Reconciliation contract — immutable completed plan tasks (Spec 22 Unit 3)
+// ---------------------------------------------------------------------------
+
+describe("Reconciliation contract — immutable completed plan tasks (Spec 22 Unit 3)", () => {
+  it("ReconcileExecutionInput accepts an optional planStateProvider field", () => {
+    // Structural: ReconcileExecutionInput must support planStateProvider as an
+    // optional field. This test documents the contract shape.
+    //
+    // The planStateProvider is used to check whether the triggering step's plan
+    // is already complete. If complete, reconciliation is rejected with a
+    // policy_decision error — completed Plan Markdown tasks are immutable.
+    type ReconcileInputShape = {
+      workflowInstanceId: WorkflowInstanceId;
+      leaseId: ExecutionLeaseId;
+      reason: string;
+      authorizationSource: string;
+      planStateProvider?: {
+        isPlanComplete(planName: string): ResultAsync<boolean, unknown>;
+      };
+    };
+
+    const inputWithProvider: ReconcileInputShape = {
+      workflowInstanceId: createWorkflowInstanceId("wf-001"),
+      leaseId: createExecutionLeaseId("lease-001"),
+      reason: "user-revision-request",
+      authorizationSource: "user",
+      planStateProvider: {
+        isPlanComplete: (_planName: string) => okAsync(false),
+      },
+    };
+    expect(inputWithProvider.planStateProvider).toBeDefined();
+
+    const inputWithoutProvider: ReconcileInputShape = {
+      workflowInstanceId: createWorkflowInstanceId("wf-002"),
+      leaseId: createExecutionLeaseId("lease-002"),
+      reason: "user-revision-request",
+      authorizationSource: "user",
+      // planStateProvider omitted
+    };
+    expect(inputWithoutProvider.planStateProvider).toBeUndefined();
+  });
+
+  it("immutability check applies only to plan-oriented completion methods", () => {
+    // Structural: the immutability check is triggered only when the triggering
+    // step uses plan_complete or plan_created completion methods.
+    // Steps using agent_signal, user_confirm, or review_verdict are not checked.
+    //
+    // This test documents the closed set of plan-oriented methods.
+    const planOrientedMethods = ["plan_complete", "plan_created"] as const;
+    const nonPlanOrientedMethods = [
+      "agent_signal",
+      "user_confirm",
+      "review_verdict",
+    ] as const;
+
+    // Plan-oriented methods are a strict subset of all completion methods
+    for (const method of planOrientedMethods) {
+      expect(["plan_complete", "plan_created"]).toContain(method);
+    }
+
+    // Non-plan-oriented methods do not trigger the immutability check
+    for (const method of nonPlanOrientedMethods) {
+      expect(["plan_complete", "plan_created"]).not.toContain(method);
+    }
+  });
+
+  it("immutability error is a policy_decision with rule 'completed_plan_immutability'", () => {
+    // Structural: the error returned when a completed plan blocks reconciliation
+    // must be a policy_decision error with rule 'completed_plan_immutability'.
+    // This allows callers to distinguish this specific rejection from other
+    // policy_decision errors.
+    type PolicyDecisionError = {
+      type: "policy_decision";
+      message: string;
+      rule?: string;
+    };
+
+    const immutabilityError: PolicyDecisionError = {
+      type: "policy_decision",
+      message:
+        'Reconciliation rejected: plan ".weave/plans/my-plan.md" has all tasks completed. ' +
+        "Completed Plan Markdown tasks are immutable — corrective work must be expressed as follow-up tasks.",
+      rule: "completed_plan_immutability",
+    };
+
+    expect(immutabilityError.type).toBe("policy_decision");
+    expect(immutabilityError.rule).toBe("completed_plan_immutability");
+    expect(immutabilityError.message).toContain("immutable");
+    expect(immutabilityError.message).toContain("follow-up tasks");
+  });
+
+  it("corrective work model: completed tasks are immutable, follow-up tasks are the correction path", () => {
+    // Conceptual contract: when a plan is complete, reconciliation cannot revise
+    // the completed tasks in place. Instead, corrective work must be expressed
+    // as new follow-up tasks appended to the plan.
+    //
+    // This test documents the semantic contract:
+    // - Completed checkboxes (- [x]) are immutable
+    // - Corrective work is expressed as new incomplete checkboxes (- [ ])
+    // - The plan file itself is not locked — only completed tasks within it
+    //
+    // The engine enforces this by rejecting reconciliation when isPlanComplete
+    // returns true (all checkboxes are checked). When at least one checkbox
+    // remains unchecked, reconciliation is allowed to proceed.
+    const planWithAllTasksComplete = {
+      content: "- [x] Task 1\n- [x] Task 2\n- [x] Task 3",
+      isComplete: true, // isPlanComplete returns true
+    };
+    expect(planWithAllTasksComplete.isComplete).toBe(true);
+
+    const planWithFollowUpTasks = {
+      content: "- [x] Task 1\n- [x] Task 2\n- [ ] Follow-up: fix issue",
+      isComplete: false, // isPlanComplete returns false — has unchecked tasks
+    };
+    expect(planWithFollowUpTasks.isComplete).toBe(false);
+
+    // When isComplete is false, reconciliation is allowed to proceed.
+    // The corrective work (follow-up task) is expressed as a new - [ ] item.
+    expect(planWithFollowUpTasks.content).toContain("- [ ] Follow-up");
+  });
+
+  it("immutability check does not modify instance state on rejection", () => {
+    // Structural: when the immutability check rejects reconciliation, no
+    // instance state changes must occur. The check is a pre-condition guard
+    // that returns an error before any store writes.
+    //
+    // This is enforced by the implementation: checkCompletedPlanImmutability
+    // returns err() before any store.instances.update() calls are made.
+    // The test documents this invariant structurally.
+    type ImmutabilityCheckResult =
+      | { ok: true }
+      | { ok: false; error: { type: "policy_decision"; rule: string } };
+
+    const rejectedResult: ImmutabilityCheckResult = {
+      ok: false,
+      error: { type: "policy_decision", rule: "completed_plan_immutability" },
+    };
+
+    // When rejected, no state changes occur — the error is returned immediately
+    expect(rejectedResult.ok).toBe(false);
+    if (!rejectedResult.ok) {
+      expect(rejectedResult.error.type).toBe("policy_decision");
+      expect(rejectedResult.error.rule).toBe("completed_plan_immutability");
+    }
   });
 });

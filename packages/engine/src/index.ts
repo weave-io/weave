@@ -41,6 +41,9 @@ export { generateCategoryShuttles } from "./descriptors.js";
 export type { Env, EnvValidationError } from "./env.js";
 export { env, envSchema, parseEnv } from "./env.js";
 export type {
+  ApproveArtifactInput,
+  ApproveArtifactOutput,
+  ApproveArtifactResult,
   BeforeToolInput,
   BeforeToolOutput,
   BeforeToolResult,
@@ -71,6 +74,10 @@ export type {
   ObserveSessionOutput,
   ObserveSessionResult,
   PauseExecutionEffect,
+  ReconcileExecutionInput,
+  ReconcileExecutionOutput,
+  ReconcileExecutionResult,
+  ReconciliationAuthorizationSource,
   ResumeExecutionInput,
   ResumeExecutionOutput,
   ResumeExecutionResult,
@@ -82,6 +89,7 @@ export type {
   WorkflowExecutionContext,
 } from "./execution-lifecycle.js";
 export {
+  approveArtifact,
   beforeTool,
   completeStep,
   dispatchStep,
@@ -95,10 +103,14 @@ export {
   lifecyclePolicyDecisionError,
   lifecycleValidationError,
   observeSession,
+  reconcileExecution,
+  RECONCILIATION_AUTHORIZATION_SOURCES,
+  RECONCILIATION_REASONS,
   resumeExecution,
   sanitizeMetadata,
   startExecution,
   validateAuthorizationSource,
+  validateReconciliationSource,
 } from "./execution-lifecycle.js";
 export { logDestination, logger, redirectLogsToFile } from "./logger.js";
 export type {
@@ -184,8 +196,18 @@ export type {
   UpdateWorkflowInstanceInput,
   WorkflowInstanceRepository,
 } from "./runtime/store.js";
+// Note: ArtifactApprovalState, ArtifactId, ArtifactIntegrityMetadata are
+// exported from ./runtime/types.js above.
 export type {
+  ArtifactApprovalState,
+  ArtifactId,
+  ArtifactInputDecl,
+  ArtifactInputRole,
+  ArtifactInputSummary,
+  ArtifactIntegrityMetadata,
   ArtifactRef,
+  ArtifactRefInput,
+  ConsumedArtifactRecord,
   ExecutionLease,
   ExecutionLeaseId,
   JournalEntrySource,
@@ -199,11 +221,15 @@ export type {
   RuntimeJournalEntryId,
   SessionSnapshot,
   SessionSnapshotId,
+  StepAttemptRecord,
   WorkflowInstance,
   WorkflowInstanceId,
   WorkflowInstanceStatus,
 } from "./runtime/types.js";
 export {
+  ARTIFACT_APPROVAL_STATES,
+  ARTIFACT_INPUT_ROLES,
+  createArtifactId,
   createExecutionLeaseId,
   createOwnerId,
   createRuntimeJournalEntryId,

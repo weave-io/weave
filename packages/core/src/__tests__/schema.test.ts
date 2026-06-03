@@ -4,13 +4,19 @@ import {
   AgentConfigSchema,
   CategoryConfigSchema,
   CompletionMethodSchema,
+  ExtendBeforePlanSchema,
+  ExtensionPointsSchema,
   LogLevelSchema,
   OnRejectSchema,
+  ReconciliationHandlerListSchema,
+  ReconciliationHandlerSchema,
+  ReconciliationReasonSchema,
   RoutingConfigSchema,
   RuntimeSettingsSchema,
   SettingsConfigSchema,
   WeaveConfigSchema,
   WorkflowConfigSchema,
+  WorkflowStepRoleSchema,
   WorkflowStepSchema,
   WorkflowStepTypeSchema,
 } from "../schema.js";
@@ -808,6 +814,560 @@ describe("RoutingConfigSchema", () => {
   it("rejects delegation_exclude with non-string elements", () => {
     const r = RoutingConfigSchema.safeParse({ delegation_exclude: [42] });
     expect(r.success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WorkflowStepRoleSchema
+// ---------------------------------------------------------------------------
+
+describe("WorkflowStepRoleSchema", () => {
+  it("accepts planning", () => {
+    expect(WorkflowStepRoleSchema.safeParse("planning").success).toBe(true);
+  });
+
+  it("rejects unknown role", () => {
+    expect(WorkflowStepRoleSchema.safeParse("execution").success).toBe(false);
+    expect(WorkflowStepRoleSchema.safeParse("review").success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WorkflowStepSchema — role field
+// ---------------------------------------------------------------------------
+
+describe("WorkflowStepSchema — role field", () => {
+  const validStep = {
+    name: "plan",
+    type: "autonomous" as const,
+    agent: "pattern",
+    prompt: "Create a plan.",
+    completion: { method: "plan_created" as const, plan_name: "my-plan" },
+  };
+
+  it("accepts step with role: planning", () => {
+    const r = WorkflowStepSchema.safeParse({ ...validStep, role: "planning" });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.role).toBe("planning");
+    }
+  });
+
+  it("accepts step without role (optional)", () => {
+    const r = WorkflowStepSchema.safeParse(validStep);
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.role).toBeUndefined();
+    }
+  });
+
+  it("rejects unknown role value", () => {
+    const r = WorkflowStepSchema.safeParse({ ...validStep, role: "execution" });
+    expect(r.success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ExtensionPointsSchema
+// ---------------------------------------------------------------------------
+
+describe("ExtensionPointsSchema", () => {
+  it("accepts before_plan: true", () => {
+    const r = ExtensionPointsSchema.safeParse({ before_plan: true });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.before_plan).toBe(true);
+    }
+  });
+
+  it("accepts empty object (no extension points published)", () => {
+    const r = ExtensionPointsSchema.safeParse({});
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.before_plan).toBeUndefined();
+    }
+  });
+
+  it("accepts before_plan: false (explicitly disabled)", () => {
+    const r = ExtensionPointsSchema.safeParse({ before_plan: false });
+    expect(r.success).toBe(true);
+  });
+
+  it("rejects unknown extension point keys (UnknownExtensionPoint)", () => {
+    const r = ExtensionPointsSchema.safeParse({
+      before_plan: true,
+      after_plan: true,
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      // Zod .strict() reports unknown keys via "unrecognized_keys" code.
+      const codes = r.error.issues.map((i) => i.code);
+      expect(codes.some((c) => c === "unrecognized_keys")).toBe(true);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ExtendBeforePlanSchema
+// ---------------------------------------------------------------------------
+
+describe("ExtendBeforePlanSchema", () => {
+  it("accepts a non-empty steps array", () => {
+    const r = ExtendBeforePlanSchema.safeParse({
+      steps: ["spec-review", "requirements"],
+    });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.steps).toEqual(["spec-review", "requirements"]);
+    }
+  });
+
+  it("accepts a single-step array", () => {
+    const r = ExtendBeforePlanSchema.safeParse({ steps: ["spec-review"] });
+    expect(r.success).toBe(true);
+  });
+
+  it("rejects empty steps array", () => {
+    const r = ExtendBeforePlanSchema.safeParse({ steps: [] });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      const msgs = r.error.issues.map((i) => i.message);
+      expect(msgs.some((m) => m.includes("at least one step"))).toBe(true);
+    }
+  });
+
+  it("rejects steps with empty string names", () => {
+    const r = ExtendBeforePlanSchema.safeParse({ steps: [""] });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      const msgs = r.error.issues.map((i) => i.message);
+      expect(msgs.some((m) => m.includes("non-empty"))).toBe(true);
+    }
+  });
+
+  it("rejects missing steps field", () => {
+    const r = ExtendBeforePlanSchema.safeParse({});
+    expect(r.success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WorkflowConfigSchema — extension_points and planning step
+// ---------------------------------------------------------------------------
+
+describe("WorkflowConfigSchema — extension_points", () => {
+  const planningStep = {
+    name: "plan",
+    type: "autonomous" as const,
+    agent: "pattern",
+    prompt: "Create a plan.",
+    completion: { method: "plan_created" as const, plan_name: "my-plan" },
+    role: "planning" as const,
+  };
+
+  const regularStep = {
+    name: "implement",
+    type: "autonomous" as const,
+    agent: "shuttle",
+    prompt: "Implement the plan.",
+    completion: { method: "agent_signal" as const },
+  };
+
+  it("accepts workflow with extension_points.before_plan and one planning step", () => {
+    const r = WorkflowConfigSchema.safeParse({
+      version: 1,
+      extension_points: { before_plan: true },
+      steps: [planningStep, regularStep],
+    });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.extension_points?.before_plan).toBe(true);
+      expect(r.data.steps[0]?.role).toBe("planning");
+    }
+  });
+
+  it("rejects workflow with extension_points.before_plan but no planning step (MissingPlanningStep)", () => {
+    const r = WorkflowConfigSchema.safeParse({
+      version: 1,
+      extension_points: { before_plan: true },
+      steps: [regularStep],
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      const msgs = r.error.issues.map((i) => i.message);
+      expect(msgs.some((m) => m.includes("MissingPlanningStep"))).toBe(true);
+    }
+  });
+
+  it("rejects workflow with two planning steps (DuplicatePlanningStep)", () => {
+    const r = WorkflowConfigSchema.safeParse({
+      version: 1,
+      steps: [planningStep, { ...planningStep, name: "plan2" }, regularStep],
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      const msgs = r.error.issues.map((i) => i.message);
+      expect(msgs.some((m) => m.includes("DuplicatePlanningStep"))).toBe(true);
+    }
+  });
+
+  it("accepts workflow without extension_points and no planning step", () => {
+    const r = WorkflowConfigSchema.safeParse({
+      version: 1,
+      steps: [regularStep],
+    });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.extension_points).toBeUndefined();
+    }
+  });
+
+  it("accepts workflow without extension_points but with a planning step (role is optional)", () => {
+    const r = WorkflowConfigSchema.safeParse({
+      version: 1,
+      steps: [planningStep, regularStep],
+    });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.steps[0]?.role).toBe("planning");
+    }
+  });
+
+  it("rejects extension_points with unknown key (UnknownExtensionPoint)", () => {
+    const r = WorkflowConfigSchema.safeParse({
+      version: 1,
+      extension_points: { before_plan: true, after_plan: true },
+      steps: [planningStep],
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      // Zod .strict() reports unknown keys via "unrecognized_keys" code.
+      const codes = r.error.issues.map((i) => i.code);
+      expect(codes.some((c) => c === "unrecognized_keys")).toBe(true);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WeaveConfigSchema — extend_before_plan
+// ---------------------------------------------------------------------------
+
+describe("WeaveConfigSchema — extend_before_plan", () => {
+  it("accepts extend_before_plan with a workflow name and steps", () => {
+    const r = WeaveConfigSchema.safeParse({
+      extend_before_plan: {
+        "plan-and-build": { steps: ["spec-review"] },
+      },
+    });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.extend_before_plan["plan-and-build"]?.steps).toEqual([
+        "spec-review",
+      ]);
+    }
+  });
+
+  it("defaults extend_before_plan to empty object when absent", () => {
+    const r = WeaveConfigSchema.safeParse({});
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.extend_before_plan).toEqual({});
+    }
+  });
+
+  it("rejects extend_before_plan entry with empty steps array", () => {
+    const r = WeaveConfigSchema.safeParse({
+      extend_before_plan: {
+        "plan-and-build": { steps: [] },
+      },
+    });
+    expect(r.success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ReconciliationReasonSchema
+// ---------------------------------------------------------------------------
+
+describe("ReconciliationReasonSchema", () => {
+  it("accepts all four closed built-in reasons", () => {
+    expect(
+      ReconciliationReasonSchema.safeParse("execution-mismatch").success,
+    ).toBe(true);
+    expect(
+      ReconciliationReasonSchema.safeParse("user-revision-request").success,
+    ).toBe(true);
+    expect(
+      ReconciliationReasonSchema.safeParse("review-rejection").success,
+    ).toBe(true);
+    expect(
+      ReconciliationReasonSchema.safeParse("security-rejection").success,
+    ).toBe(true);
+  });
+
+  it("rejects unknown reason strings", () => {
+    expect(ReconciliationReasonSchema.safeParse("unknown-reason").success).toBe(
+      false,
+    );
+    expect(ReconciliationReasonSchema.safeParse("").success).toBe(false);
+    expect(ReconciliationReasonSchema.safeParse("retry").success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ReconciliationHandlerSchema
+// ---------------------------------------------------------------------------
+
+describe("ReconciliationHandlerSchema", () => {
+  it("accepts a valid handler with execution-mismatch", () => {
+    const r = ReconciliationHandlerSchema.safeParse({
+      reason: "execution-mismatch",
+    });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.reason).toBe("execution-mismatch");
+    }
+  });
+
+  it("accepts a valid handler with user-revision-request", () => {
+    const r = ReconciliationHandlerSchema.safeParse({
+      reason: "user-revision-request",
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it("accepts a valid handler with review-rejection", () => {
+    const r = ReconciliationHandlerSchema.safeParse({
+      reason: "review-rejection",
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it("accepts a valid handler with security-rejection", () => {
+    const r = ReconciliationHandlerSchema.safeParse({
+      reason: "security-rejection",
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it("rejects handler with unknown reason", () => {
+    const r = ReconciliationHandlerSchema.safeParse({ reason: "bad-reason" });
+    expect(r.success).toBe(false);
+  });
+
+  it("rejects handler missing reason field", () => {
+    const r = ReconciliationHandlerSchema.safeParse({});
+    expect(r.success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ReconciliationHandlerListSchema
+// ---------------------------------------------------------------------------
+
+describe("ReconciliationHandlerListSchema", () => {
+  it("accepts a single-handler list", () => {
+    const r = ReconciliationHandlerListSchema.safeParse([
+      { reason: "execution-mismatch" },
+    ]);
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data).toHaveLength(1);
+      expect(r.data[0]?.reason).toBe("execution-mismatch");
+    }
+  });
+
+  it("accepts all four reasons in one list", () => {
+    const r = ReconciliationHandlerListSchema.safeParse([
+      { reason: "execution-mismatch" },
+      { reason: "user-revision-request" },
+      { reason: "review-rejection" },
+      { reason: "security-rejection" },
+    ]);
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data).toHaveLength(4);
+    }
+  });
+
+  it("rejects empty list (must have at least one handler)", () => {
+    const r = ReconciliationHandlerListSchema.safeParse([]);
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      const msgs = r.error.issues.map((i) => i.message);
+      expect(msgs.some((m) => m.includes("at least one handler"))).toBe(true);
+    }
+  });
+
+  it("rejects duplicate reasons in the same list (DuplicateReconciliationReason)", () => {
+    const r = ReconciliationHandlerListSchema.safeParse([
+      { reason: "execution-mismatch" },
+      { reason: "execution-mismatch" },
+    ]);
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      const msgs = r.error.issues.map((i) => i.message);
+      expect(
+        msgs.some((m) => m.includes("DuplicateReconciliationReason")),
+      ).toBe(true);
+    }
+  });
+
+  it("rejects list with an unknown reason", () => {
+    const r = ReconciliationHandlerListSchema.safeParse([
+      { reason: "bad-reason" },
+    ]);
+    expect(r.success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WorkflowStepSchema — reconciliation_handlers field
+// ---------------------------------------------------------------------------
+
+describe("WorkflowStepSchema — reconciliation_handlers", () => {
+  const validStep = {
+    name: "plan",
+    type: "autonomous" as const,
+    agent: "pattern",
+    prompt: "Create a plan.",
+    completion: { method: "agent_signal" as const },
+  };
+
+  it("accepts step with reconciliation_handlers declaring one reason", () => {
+    const r = WorkflowStepSchema.safeParse({
+      ...validStep,
+      reconciliation_handlers: [{ reason: "execution-mismatch" }],
+    });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.reconciliation_handlers).toHaveLength(1);
+      expect(r.data.reconciliation_handlers?.[0]?.reason).toBe(
+        "execution-mismatch",
+      );
+    }
+  });
+
+  it("accepts step with reconciliation_handlers declaring all four reasons", () => {
+    const r = WorkflowStepSchema.safeParse({
+      ...validStep,
+      reconciliation_handlers: [
+        { reason: "execution-mismatch" },
+        { reason: "user-revision-request" },
+        { reason: "review-rejection" },
+        { reason: "security-rejection" },
+      ],
+    });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.reconciliation_handlers).toHaveLength(4);
+    }
+  });
+
+  it("accepts step without reconciliation_handlers (optional)", () => {
+    const r = WorkflowStepSchema.safeParse(validStep);
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.reconciliation_handlers).toBeUndefined();
+    }
+  });
+
+  it("rejects step with empty reconciliation_handlers array", () => {
+    const r = WorkflowStepSchema.safeParse({
+      ...validStep,
+      reconciliation_handlers: [],
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      const msgs = r.error.issues.map((i) => i.message);
+      expect(msgs.some((m) => m.includes("at least one handler"))).toBe(true);
+    }
+  });
+
+  it("rejects step with duplicate reconciliation reasons (DuplicateReconciliationReason)", () => {
+    const r = WorkflowStepSchema.safeParse({
+      ...validStep,
+      reconciliation_handlers: [
+        { reason: "review-rejection" },
+        { reason: "review-rejection" },
+      ],
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      const msgs = r.error.issues.map((i) => i.message);
+      expect(
+        msgs.some((m) => m.includes("DuplicateReconciliationReason")),
+      ).toBe(true);
+    }
+  });
+
+  it("rejects step with unknown reconciliation reason", () => {
+    const r = WorkflowStepSchema.safeParse({
+      ...validStep,
+      reconciliation_handlers: [{ reason: "bad-reason" }],
+    });
+    expect(r.success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WorkflowStepSchema — v1 before-plan non-reconciling contract (engine-layer)
+// ---------------------------------------------------------------------------
+
+describe("WorkflowStepSchema — v1 before-plan non-reconciling contract", () => {
+  // Spec 22 Unit 2 states: "before-plan steps do not participate in
+  // reconciliation semantics" in v1.
+  //
+  // As of Task 4.1, `reconciliation_handlers` IS a valid schema field on
+  // WorkflowStepSchema. The v1 non-reconciling constraint for before-plan
+  // steps is enforced at the engine/runtime layer (not the schema layer),
+  // because the schema cannot know which steps will end up in the before-plan
+  // slot at config-merge time.
+  //
+  // This test suite documents that invariant so future changes remain explicit.
+
+  const validStep = {
+    name: "spec-review",
+    type: "autonomous" as const,
+    agent: "pattern",
+    prompt: "Review the spec.",
+    completion: { method: "agent_signal" as const },
+  };
+
+  it("a step destined for the before-plan slot is a valid WorkflowStep (schema layer accepts it)", () => {
+    const r = WorkflowStepSchema.safeParse(validStep);
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.name).toBe("spec-review");
+      // reconciliation_handlers is optional — absent by default
+      expect(r.data.reconciliation_handlers).toBeUndefined();
+    }
+  });
+
+  it("schema accepts reconciliation_handlers on any step (engine enforces before-plan exclusion)", () => {
+    // The schema does not know which steps are in the before-plan slot.
+    // Engine/runtime enforcement prevents before-plan steps from acting as
+    // reconciliation handlers. At the schema layer, the field is valid.
+    const r = WorkflowStepSchema.safeParse({
+      ...validStep,
+      reconciliation_handlers: [{ reason: "execution-mismatch" }],
+    });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.reconciliation_handlers).toHaveLength(1);
+    }
+  });
+
+  it("on_reconcile is not a schema field (unknown keys are stripped)", () => {
+    // `on_reconcile` was never a schema field; unknown keys are stripped by Zod.
+    const r = WorkflowStepSchema.safeParse({
+      ...validStep,
+      on_reconcile: "pause",
+    });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect("on_reconcile" in r.data).toBe(false);
+    }
   });
 });
 

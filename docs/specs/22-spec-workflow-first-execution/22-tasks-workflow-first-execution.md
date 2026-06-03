@@ -58,7 +58,7 @@
 - [x] 1.3 Add runtime checks that require explicit user-authorized execution transitions and reject agent-, hook-, or event-initiated self-start behavior.
 - [x] 1.4 Extend engine tests to prove ordinary conversation, idle continuation, and session observation paths do not implicitly enter durable execution.
 
-### [ ] 2.0 Add the canonical planning workflow and `before-plan` extension contract
+### [~] 2.0 Add the canonical planning workflow and `before-plan` extension contract
 
 #### 2.0 Proof Artifact(s)
 
@@ -69,13 +69,13 @@
 
 #### 2.0 Tasks
 
-- [ ] 2.1 Define the DSL fields for one canonical planning step, thin workflow-level `before-plan` publication (`extension_points { before-plan }`), separate composition syntax (`extend before-plan [ ... ]`), and the closed v1 `before-plan` contract in schema and validation layers.
-- [ ] 2.2 Update builtin workflow definitions so the effective default workflow is plan-oriented and publishes the selected `before-plan` extension surface without replacing planning itself.
-- [ ] 2.3 Preserve the existing config-merge ownership of `extends`, `insert_before`, and `insert_after`, and document how `before-plan` becomes an engine-visible contract only after merge resolution.
-- [ ] 2.4 Add schema, validate, parse-config, merge, and builtin tests covering valid planning workflows, invalid planning-step counts, invalid `before-plan` publication, and non-reconciling `before-plan` behavior in v1.
-- [ ] 2.5 Update workflow-schema and related docs with a concrete DSL example showing reviewed pre-plan artifacts feeding the canonical planning step.
+- [x] 2.1 Define the DSL fields for one canonical planning step, thin workflow-level `before-plan` publication (`extension_points { before-plan }`), separate composition syntax (`extend before-plan [ ... ]`), and the closed v1 `before-plan` contract in schema and validation layers.
+- [x] 2.2 Update builtin workflow definitions so the effective default workflow is plan-oriented and publishes the selected `before-plan` extension surface without replacing planning itself.
+- [x] 2.3 Preserve the existing config-merge ownership of `extends`, `insert_before`, and `insert_after`, and document how `before-plan` becomes an engine-visible contract only after merge resolution.
+- [x] 2.4 Add schema, validate, parse-config, merge, and builtin tests covering valid planning workflows, invalid planning-step counts, invalid `before-plan` publication, and non-reconciling `before-plan` behavior in v1.
+- [ ] 2.5 Update workflow-schema and related docs with a concrete DSL example showing reviewed pre-plan artifacts feeding the canonical planning step. **BLOCKED 2026-06-02:** Shuttle retried twice but returned planning-only responses without editing `docs/workflow-schema.md`.
 
-### [ ] 3.0 Implement artifact identity, revisions, approval, and consumption provenance
+### [~] 3.0 Implement artifact identity, revisions, approval, and consumption provenance
 
 #### 3.0 Proof Artifact(s)
 
@@ -86,14 +86,14 @@
 
 #### 3.0 Tasks
 
-- [ ] 3.1 Add runtime data types and persistence fields for artifact identity, monotonic revisions, approval state, and integrity-verification metadata without storing raw artifact contents.
-- [ ] 3.2 Define or update the engine/runtime interfaces that let planning and execution steps declare normative and informational artifact inputs explicitly.
-- [ ] 3.3 Implement approval invalidation, self-approval prohibition, consumed-revision recording, and default retry reuse of the same consumed artifact revisions.
-- [ ] 3.4 Implement consumption-time integrity verification that compares current artifact contents to the bound immutable revision or fingerprint and fails closed on mismatch.
-- [ ] 3.5 Add in-memory and SQLite runtime tests, plus sanitized provenance fixtures, covering approval invalidation, integrity verification, and provenance recording.
-- [ ] 3.6 Update boundary and glossary docs so integrity-verification metadata has a sanctioned home consistent with the new runtime model.
+- [x] 3.1 Add runtime data types and persistence fields for artifact identity, monotonic revisions, approval state, and integrity-verification metadata without storing raw artifact contents.
+- [x] 3.2 Define or update the engine/runtime interfaces that let planning and execution steps declare normative and informational artifact inputs explicitly.
+- [ ] 3.3 Implement approval invalidation, self-approval prohibition, consumed-revision recording, and default retry reuse of the same consumed artifact revisions. **BLOCKED 2026-06-03:** two Shuttle delegation attempts aborted before execution.
+- [x] 3.4 Implement consumption-time integrity verification that compares current artifact contents to the bound immutable revision or fingerprint and fails closed on mismatch.
+- [x] 3.5 Add in-memory and SQLite runtime tests, plus sanitized provenance fixtures, covering approval invalidation, integrity verification, and provenance recording.
+- [x] 3.6 Update boundary and glossary docs so integrity-verification metadata has a sanctioned home consistent with the new runtime model.
 
-### [ ] 4.0 Add reconciliation semantics and handler routing
+### [x] 4.0 Add reconciliation semantics and handler routing
 
 #### 4.0 Proof Artifact(s)
 
@@ -104,11 +104,11 @@
 
 #### 4.0 Tasks
 
-- [ ] 4.1 Add DSL and validated-config support for step-local reconciliation handler declarations using the closed built-in reason set from Spec 22 Unit 3.
-- [ ] 4.2 Implement runtime enforcement for authorized reconciliation sources, nearest-upstream handler resolution, and fail-closed pause/block behavior when no handler exists.
-- [ ] 4.3 Implement gate re-run behavior for review- and security-originated reconciliation outcomes and preserve the v1 rule that `before-plan` steps do not participate in reconciliation.
-- [ ] 4.4 Add runtime protections that keep completed `Plan Markdown` tasks immutable and model corrections as follow-up work rather than in-place rewrites.
-- [ ] 4.5 Extend execution-lifecycle and runtime-contract tests to cover the reason set, authorized-source checks, handler routing, gate re-runs, and immutable completed tasks.
+- [x] 4.1 Add DSL and validated-config support for step-local reconciliation handler declarations using the closed built-in reason set from Spec 22 Unit 3.
+- [x] 4.2 Implement runtime enforcement for authorized reconciliation sources, nearest-upstream handler resolution, and fail-closed pause/block behavior when no handler exists.
+- [x] 4.3 Implement gate re-run behavior for review- and security-originated reconciliation outcomes and preserve the v1 rule that `before-plan` steps do not participate in reconciliation.
+- [x] 4.4 Add runtime protections that keep completed `Plan Markdown` tasks immutable and model corrections as follow-up work rather than in-place rewrites.
+- [x] 4.5 Extend execution-lifecycle and runtime-contract tests to cover the reason set, authorized-source checks, handler routing, gate re-runs, and immutable completed tasks.
 
 ### [ ] 5.0 Compose workflow-level and step-level prompt appends safely
 
