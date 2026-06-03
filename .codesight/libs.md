@@ -183,14 +183,43 @@
   - type EnvValidationError
   - const envSchema
   - const env: Env
-- `packages/engine/src/execution-lifecycle.ts`
-  - function sanitizeMetadata: (metadata) => Result<SafeMetadata, LifecycleValidationError>
+- `packages/engine/src/execution-lifecycle/artifacts.ts`
+  - function latestArtifactByName: (instance, name) => ArtifactRef | undefined
+  - function latestAttemptForStep: (instance, stepName) => StepAttemptRecord | undefined
+  - function isApprovalInvalidated: (instance, artifactName) => boolean
+  - function verifyArtifactIntegrity: (artifact, suppliedDigest) => Result<undefined, LifecycleError>
+  - function inputRole: (input) => "normative" | "informational"
+  - function validateStepInputs: (step, instance, artifactDigests?, string>>, pinnedNames?) => Result<ArtifactInputSummary, LifecycleError>
+  - _...3 more_
+- `packages/engine/src/execution-lifecycle/authorization.ts` — function validateAuthorizationSource: (source, operation) => Result<undefined, LifecyclePolicyDecisionError>, function validateReconciliationSource: (reason, source) => Result<undefined, LifecyclePolicyDecisionError>
+- `packages/engine/src/execution-lifecycle/before-tool.ts` — function beforeTool: (input) => BeforeToolResult
+- `packages/engine/src/execution-lifecycle/completion.ts` — function completeStep: (input, store) => ResultAsync<CompleteStepOutput, LifecycleError>
+- `packages/engine/src/execution-lifecycle/dispatch.ts`
+  - function buildConfiguredRunAgentEffect: (step, promptMetadata) => RunAgentEffect
+  - function resolveWorkflowStep: (workflowConfig, stepName) => Result<WorkflowStep, LifecycleError>
+  - function dispatchStep: (input, store) => ResultAsync<DispatchStepOutput, LifecycleError>
+- `packages/engine/src/execution-lifecycle/errors.ts`
   - function lifecycleValidationError: (message, field?) => LifecycleValidationError
   - function lifecycleNotFoundError: (entity, id, message?) => LifecycleNotFoundError
   - function lifecycleLeaseConflictError: (workflowInstanceId, conflictingLeaseId, message) => LifecycleLeaseConflictError
   - function lifecyclePersistenceError: (message, cause?) => LifecyclePersistenceError
   - function lifecyclePolicyDecisionError: (message, rule?) => LifecyclePolicyDecisionError
-  - _...62 more_
+- `packages/engine/src/execution-lifecycle/inspection.ts` — function inspectExecution: (input, store) => InspectExecutionResult
+- `packages/engine/src/execution-lifecycle/interrupts.ts` — function handleUserInterrupt: (input, store) => ResultAsync<HandleUserInterruptOutput, LifecycleError>
+- `packages/engine/src/execution-lifecycle/lease.ts`
+  - function mapStoreError: (storeError) => LifecyclePersistenceError
+  - function mapConflictToLeaseConflict: (workflowInstanceId, storeError) => LifecycleLeaseConflictError
+  - function validateActiveLease: (activeLease, workflowInstanceId, leaseId) => Result<ExecutionLease, LifecycleError>
+- `packages/engine/src/execution-lifecycle/metadata.ts` — function sanitizeMetadata: (metadata) => Result<SafeMetadata, LifecycleValidationError>
+- `packages/engine/src/execution-lifecycle/prompt-context.ts`
+  - function buildStepPromptContext: (instance, step) => TemplateContext
+  - function renderStepPrompt: (promptTemplate, context, artifactNames) => Result<
+  - function renderPlanName: (planNameTemplate, instance) => Result<string, LifecycleError>
+- `packages/engine/src/execution-lifecycle/reconciliation.ts` — function reconcileExecution: (input, store) => ReconcileExecutionResult
+- `packages/engine/src/execution-lifecycle/resume.ts` — function resumeExecution: (input, store) => ResultAsync<ResumeExecutionOutput, LifecycleError>
+- `packages/engine/src/execution-lifecycle/session.ts` — function observeSession: (input, store) => ResultAsync<ObserveSessionOutput, LifecycleError>
+- `packages/engine/src/execution-lifecycle/start.ts` — function startExecution: (input, store) => ResultAsync<StartExecutionOutput, LifecycleError>
+- `packages/engine/src/execution-lifecycle/terminal-outcomes.ts` — function approveArtifact: (input, store) => ApproveArtifactResult
 - `packages/engine/src/logger.ts`
   - function redirectLogsToFile: (filePath) => Promise<void>
   - const logDestination

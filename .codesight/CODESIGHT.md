@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weave/core, @weave/engine, @weave/config, @weave/cli, @weave/adapter-opencode
 
-> 0 routes | 0 models | 0 components | 65 lib files | 4 env vars | 3 middleware | 0% test coverage
-> **Token savings:** this file is ~5,500 tokens. Without it, AI exploration would cost ~27,300 tokens. **Saves ~21,800 tokens per conversation.**
-> **Last scanned:** 2026-06-03 22:25 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 80 lib files | 4 env vars | 5 middleware | 0% test coverage
+> **Token savings:** this file is ~6,700 tokens. Without it, AI exploration would cost ~31,700 tokens. **Saves ~25,000 tokens per conversation.**
+> **Last scanned:** 2026-06-03 22:47 — re-run after significant changes
 
 ---
 
@@ -194,14 +194,43 @@
   - type EnvValidationError
   - const envSchema
   - const env: Env
-- `packages/engine/src/execution-lifecycle.ts`
-  - function sanitizeMetadata: (metadata) => Result<SafeMetadata, LifecycleValidationError>
+- `packages/engine/src/execution-lifecycle/artifacts.ts`
+  - function latestArtifactByName: (instance, name) => ArtifactRef | undefined
+  - function latestAttemptForStep: (instance, stepName) => StepAttemptRecord | undefined
+  - function isApprovalInvalidated: (instance, artifactName) => boolean
+  - function verifyArtifactIntegrity: (artifact, suppliedDigest) => Result<undefined, LifecycleError>
+  - function inputRole: (input) => "normative" | "informational"
+  - function validateStepInputs: (step, instance, artifactDigests?, string>>, pinnedNames?) => Result<ArtifactInputSummary, LifecycleError>
+  - _...3 more_
+- `packages/engine/src/execution-lifecycle/authorization.ts` — function validateAuthorizationSource: (source, operation) => Result<undefined, LifecyclePolicyDecisionError>, function validateReconciliationSource: (reason, source) => Result<undefined, LifecyclePolicyDecisionError>
+- `packages/engine/src/execution-lifecycle/before-tool.ts` — function beforeTool: (input) => BeforeToolResult
+- `packages/engine/src/execution-lifecycle/completion.ts` — function completeStep: (input, store) => ResultAsync<CompleteStepOutput, LifecycleError>
+- `packages/engine/src/execution-lifecycle/dispatch.ts`
+  - function buildConfiguredRunAgentEffect: (step, promptMetadata) => RunAgentEffect
+  - function resolveWorkflowStep: (workflowConfig, stepName) => Result<WorkflowStep, LifecycleError>
+  - function dispatchStep: (input, store) => ResultAsync<DispatchStepOutput, LifecycleError>
+- `packages/engine/src/execution-lifecycle/errors.ts`
   - function lifecycleValidationError: (message, field?) => LifecycleValidationError
   - function lifecycleNotFoundError: (entity, id, message?) => LifecycleNotFoundError
   - function lifecycleLeaseConflictError: (workflowInstanceId, conflictingLeaseId, message) => LifecycleLeaseConflictError
   - function lifecyclePersistenceError: (message, cause?) => LifecyclePersistenceError
   - function lifecyclePolicyDecisionError: (message, rule?) => LifecyclePolicyDecisionError
-  - _...62 more_
+- `packages/engine/src/execution-lifecycle/inspection.ts` — function inspectExecution: (input, store) => InspectExecutionResult
+- `packages/engine/src/execution-lifecycle/interrupts.ts` — function handleUserInterrupt: (input, store) => ResultAsync<HandleUserInterruptOutput, LifecycleError>
+- `packages/engine/src/execution-lifecycle/lease.ts`
+  - function mapStoreError: (storeError) => LifecyclePersistenceError
+  - function mapConflictToLeaseConflict: (workflowInstanceId, storeError) => LifecycleLeaseConflictError
+  - function validateActiveLease: (activeLease, workflowInstanceId, leaseId) => Result<ExecutionLease, LifecycleError>
+- `packages/engine/src/execution-lifecycle/metadata.ts` — function sanitizeMetadata: (metadata) => Result<SafeMetadata, LifecycleValidationError>
+- `packages/engine/src/execution-lifecycle/prompt-context.ts`
+  - function buildStepPromptContext: (instance, step) => TemplateContext
+  - function renderStepPrompt: (promptTemplate, context, artifactNames) => Result<
+  - function renderPlanName: (planNameTemplate, instance) => Result<string, LifecycleError>
+- `packages/engine/src/execution-lifecycle/reconciliation.ts` — function reconcileExecution: (input, store) => ReconcileExecutionResult
+- `packages/engine/src/execution-lifecycle/resume.ts` — function resumeExecution: (input, store) => ResultAsync<ResumeExecutionOutput, LifecycleError>
+- `packages/engine/src/execution-lifecycle/session.ts` — function observeSession: (input, store) => ResultAsync<ObserveSessionOutput, LifecycleError>
+- `packages/engine/src/execution-lifecycle/start.ts` — function startExecution: (input, store) => ResultAsync<StartExecutionOutput, LifecycleError>
+- `packages/engine/src/execution-lifecycle/terminal-outcomes.ts` — function approveArtifact: (input, store) => ApproveArtifactResult
 - `packages/engine/src/logger.ts`
   - function redirectLogsToFile: (filePath) => Promise<void>
   - const logDestination
@@ -311,6 +340,10 @@
 ## validation
 - migrate — `packages/cli/src/commands/migrate.ts`
 
+## auth
+- authorization.test — `packages/engine/src/__tests__/execution-lifecycle/authorization.test.ts`
+- authorization — `packages/engine/src/execution-lifecycle/authorization.ts`
+
 ---
 
 # Dependency Graph
@@ -321,42 +354,42 @@
 - `packages/cli/src/io/terminal.ts` — imported by **13** files
 - `packages/cli/src/fs/file-system.ts` — imported by **12** files
 - `packages/engine/src/runtime/errors.ts` — imported by **11** files
+- `packages/engine/src/runtime/store.ts` — imported by **11** files
+- `packages/engine/src/execution-lifecycle/metadata.ts` — imported by **11** files
+- `packages/engine/src/execution-lifecycle/lease.ts` — imported by **10** files
+- `packages/engine/src/execution-lifecycle/errors.ts` — imported by **10** files
 - `packages/adapters/opencode/src/sdk-types.ts` — imported by **9** files
 - `packages/cli/src/args.ts` — imported by **8** files
 - `packages/core/src/tokens.ts` — imported by **8** files
 - `packages/cli/src/errors.ts` — imported by **6** files
 - `packages/cli/src/prompt/index.ts` — imported by **6** files
 - `packages/core/src/errors.ts` — imported by **6** files
+- `packages/engine/src/tool-policy.ts` — imported by **6** files
+- `packages/engine/src/__tests__/execution-lifecycle/fixtures.ts` — imported by **6** files
 - `packages/engine/src/compose.ts` — imported by **6** files
 - `packages/engine/src/logger.ts` — imported by **6** files
 - `packages/adapters/opencode/src/index.ts` — imported by **5** files
 - `packages/cli/src/cli.ts` — imported by **5** files
-- `packages/cli/src/theme/render.ts` — imported by **5** files
-- `packages/cli/src/migration/types.ts` — imported by **5** files
-- `packages/config/src/builtins.ts` — imported by **5** files
-- `packages/config/src/discovery.ts` — imported by **5** files
-- `packages/config/src/logger.ts` — imported by **5** files
-- `packages/config/src/merge.ts` — imported by **5** files
 
 ## Import Map (who imports what)
 
 - `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`, `packages/cli/src/commands/__tests__/migrate.test.ts` +10 more
 - `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`, `packages/cli/src/commands/__tests__/migrate.test.ts` +8 more
 - `packages/cli/src/fs/file-system.ts` ← `packages/cli/src/__tests__/file-system.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`, `packages/cli/src/commands/__tests__/migrate.test.ts`, `packages/cli/src/commands/__tests__/validate.test.ts` +7 more
-- `packages/engine/src/runtime/errors.ts` ← `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-journal.test.ts`, `packages/engine/src/__tests__/runtime-journal.test.ts`, `packages/engine/src/execution-lifecycle.ts`, `packages/engine/src/runtime/fingerprint.ts` +6 more
+- `packages/engine/src/runtime/errors.ts` ← `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-journal.test.ts`, `packages/engine/src/__tests__/runtime-journal.test.ts`, `packages/engine/src/execution-lifecycle/lease.ts`, `packages/engine/src/runtime/fingerprint.ts` +6 more
+- `packages/engine/src/runtime/store.ts` ← `packages/engine/src/__tests__/runtime-journal.test.ts`, `packages/engine/src/execution-lifecycle/artifacts.ts`, `packages/engine/src/execution-lifecycle/dispatch.ts`, `packages/engine/src/execution-lifecycle/inspection.ts`, `packages/engine/src/execution-lifecycle/interrupts.ts` +6 more
+- `packages/engine/src/execution-lifecycle/metadata.ts` ← `packages/engine/src/execution-lifecycle/before-tool.ts`, `packages/engine/src/execution-lifecycle/completion.ts`, `packages/engine/src/execution-lifecycle/dispatch.ts`, `packages/engine/src/execution-lifecycle/index.ts`, `packages/engine/src/execution-lifecycle/inspection.ts` +6 more
+- `packages/engine/src/execution-lifecycle/lease.ts` ← `packages/engine/src/execution-lifecycle/artifacts.ts`, `packages/engine/src/execution-lifecycle/completion.ts`, `packages/engine/src/execution-lifecycle/dispatch.ts`, `packages/engine/src/execution-lifecycle/inspection.ts`, `packages/engine/src/execution-lifecycle/interrupts.ts` +5 more
+- `packages/engine/src/execution-lifecycle/errors.ts` ← `packages/engine/src/execution-lifecycle/authorization.ts`, `packages/engine/src/execution-lifecycle/before-tool.ts`, `packages/engine/src/execution-lifecycle/dispatch.ts`, `packages/engine/src/execution-lifecycle/inspection.ts`, `packages/engine/src/execution-lifecycle/interrupts.ts` +5 more
 - `packages/adapters/opencode/src/sdk-types.ts` ← `packages/adapters/opencode/src/__tests__/adapter.test.ts`, `packages/adapters/opencode/src/__tests__/plugin.test.ts`, `packages/adapters/opencode/src/__tests__/reconcile-agent.test.ts`, `packages/adapters/opencode/src/__tests__/run-workflow.test.ts`, `packages/adapters/opencode/src/adapter.ts` +4 more
 - `packages/cli/src/args.ts` ← `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/runtime.test.ts`, `packages/cli/src/commands/init.ts`, `packages/cli/src/commands/migrate.ts` +3 more
-- `packages/core/src/tokens.ts` ← `packages/core/src/__tests__/lexer.test.ts`, `packages/core/src/ast.ts`, `packages/core/src/ast.ts`, `packages/core/src/index.ts`, `packages/core/src/index.ts` +3 more
-- `packages/cli/src/errors.ts` ← `packages/cli/src/cli.ts`, `packages/cli/src/commands/init.ts`, `packages/cli/src/commands/migrate.ts`, `packages/cli/src/commands/runtime.ts`, `packages/cli/src/commands/validate.ts` +1 more
-- `packages/cli/src/prompt/index.ts` ← `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`, `packages/cli/src/commands/__tests__/migrate.test.ts`, `packages/cli/src/commands/init.ts`, `packages/cli/src/commands/migrate.ts` +1 more
-- `packages/core/src/errors.ts` ← `packages/core/src/__tests__/errors.test.ts`, `packages/core/src/index.ts`, `packages/core/src/lexer.ts`, `packages/core/src/parse-config.ts`, `packages/core/src/parser.ts` +1 more
 
 ---
 
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 57 test files found
+> 65 test files found
 
 ---
 
