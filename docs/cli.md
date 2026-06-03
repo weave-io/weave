@@ -269,6 +269,27 @@ Harness writes only happen after explicit non-interactive flags or interactive c
 
 Weave configures harnesses; harnesses run themselves. `weave run`, if encountered for transition compatibility, exits with a message directing users to `weave init` and harness-specific launch commands.
 
+## CLI command module structure
+
+The CLI source is organized into focused modules:
+
+```
+packages/cli/src/
+├── commands/
+│   ├── init.ts        # weave init — planning, prompts, scaffold, harness install, summary
+│   ├── migrate.ts     # weave init migrate — orchestration flow
+│   ├── validate.ts    # weave validate
+│   └── runtime.ts     # weave runtime
+└── migration/
+    ├── types.ts                  # Shared migration types (MigrationPlan, ConversionWarning, etc.)
+    ├── legacy-jsonc-converter.ts # JSONC-to-DSL conversion logic
+    ├── conversion-warnings.ts    # Warning summary rendering
+    ├── migration-plan.ts         # Path resolution and plan construction
+    └── migration-write.ts        # Validated write orchestration
+```
+
+`init.ts` owns init flow only. `migrate.ts` owns the `weave init migrate` orchestration. All legacy JSONC conversion logic lives in `migration/`.
+
 ## Proof artifact security
 
 Proof artifacts and terminal captures are committed to the repository. Before committing them:
