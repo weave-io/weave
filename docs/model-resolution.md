@@ -2,7 +2,7 @@
 
 Weave does not resolve models by querying harness UI state. Weave records **model intent** in normalized config, and adapters translate that intent into concrete harness-specific model fields.
 
-**Related:** [Product Vision](product-vision.md) · [Adapter Boundary](adapter-boundary.md) · [Config Loading](config-loading.md) · [Spec 04 — Agent Model Resolution](specs/04-spec-agent-model-resolution/04-spec-agent-model-resolution.md) · [Core DSL Spec](specs/01-spec-core-dsl/01-spec-core-dsl.md)
+**Related:** [Product Vision](product-vision.md) · [Adapter Boundary](adapter-boundary.md) · [Config Loading](config-loading.md) · [DSL Reference](dsl-reference.md)
 
 ---
 

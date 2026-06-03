@@ -1,13 +1,13 @@
 # Workflow Schema
 
-This document describes the typed workflow schema introduced by [spec 02](specs/02-spec-workflow-schema/02-spec-workflow-schema.md). It covers field semantics, the completion method model, validation constraints, the `name`/`display_name` mapping convention, and the `__name` parser pattern that makes parameterised completion syntax possible.
+This document describes the typed workflow schema. It covers field semantics, the completion method model, validation constraints, the `name`/`display_name` mapping convention, and the `__name` parser pattern that makes parameterised completion syntax possible.
 
 **Related source files:**
 
 - [`packages/core/src/schema.ts`](../packages/core/src/schema.ts) — all Zod schemas and inferred types
 - [`packages/core/src/validate.ts`](../packages/core/src/validate.ts) — `transformStepProperties()` and `astToPlainObject()`
 - [`packages/core/src/parser.ts`](../packages/core/src/parser.ts) — named block value parser enhancement
-- [Spec 02](specs/02-spec-workflow-schema/02-spec-workflow-schema.md) — formal requirements and design rationale
+- [DSL Reference](dsl-reference.md) — canonical `.weave` DSL syntax reference
 - [Spec 17 — Workflow Extension](specs/17-spec-workflow-extension/17-spec-workflow-extension.md) — `extends`, `insert_before`, `insert_after` config-merge semantics
 - [Spec 22 — Workflow-First Execution](specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md) — `before-plan` extension surface, `role planning`, and execution contract
 

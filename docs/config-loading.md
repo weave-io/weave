@@ -2,7 +2,7 @@
 
 `@weave/config` owns the config-discovery, merge, and loading pipeline for Weave. It is the single entry point for reading agent configuration from disk and producing the final merged `WeaveConfig` consumed by the engine.
 
-**Related:** [Product Vision](product-vision.md) · [Adapter Boundary](adapter-boundary.md) · [Model Resolution](model-resolution.md) · [Spec 03 — Config Discovery](specs/03-spec-config-discovery/03-spec-config-discovery.md) · [Spec 17 — Workflow Extension DSL](specs/17-spec-workflow-extension/17-spec-workflow-extension.md) · [AGENTS.md](../AGENTS.md) · [Legacy Architecture](legacy-architecture.md) · [`packages/config/src/loader.ts`](../packages/config/src/loader.ts)
+**Related:** [Product Vision](product-vision.md) · [Adapter Boundary](adapter-boundary.md) · [Model Resolution](model-resolution.md) · [Spec 17 — Workflow Extension DSL](specs/17-spec-workflow-extension/17-spec-workflow-extension.md) · [AGENTS.md](../AGENTS.md) · [Legacy Architecture](legacy-architecture.md) · [`packages/config/src/loader.ts`](../packages/config/src/loader.ts)
 
 ---
 

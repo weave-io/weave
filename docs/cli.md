@@ -2,11 +2,11 @@
 
 The Weave CLI is the user-facing command surface for GitHub issue #26. It creates and validates `.weave` configuration and safely hands Weave intent to supported harness installers. It does **not** start, supervise, or drive third-party harness runtimes.
 
-Related specs:
+Related docs:
 
-- [CLI spec](./specs/06-spec-cli/06-spec-cli.md)
 - [Adapter boundary](./adapter-boundary.md)
 - [Product vision](./product-vision.md)
+- [Config Loading](./config-loading.md)
 
 ## Local PATH installation
 
