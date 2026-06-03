@@ -38,7 +38,7 @@ import { describe, expect, it } from "bun:test";
 import type { WeaveConfig } from "@weave/core";
 import type { PlanStateError, PlanStateProvider } from "@weave/engine";
 import { createInMemoryRuntimeStore } from "@weave/engine";
-import { okAsync, errAsync, type ResultAsync } from "neverthrow";
+import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 
 import { OpenCodeAdapter } from "../index.js";
 import { runWorkflow } from "../run-workflow.js";
@@ -131,7 +131,7 @@ const TWO_STEP_CONFIG: WeaveConfig = {
     log_level: "INFO",
     runtime: { journal: { strict: false } },
   },
-  extend_before_plan: {},
+  extend_before_plan: { steps: [] },
   workflows: {
     "plan-and-execute": {
       description: "Plan then execute a task",
@@ -191,7 +191,7 @@ const THREE_STEP_CONFIG: WeaveConfig = {
     log_level: "INFO",
     runtime: { journal: { strict: false } },
   },
-  extend_before_plan: {},
+  extend_before_plan: { steps: [] },
   workflows: {
     "plan-implement-review": {
       description: "Plan, implement, and review a feature",
@@ -257,7 +257,7 @@ const PLAN_CREATED_CONFIG: WeaveConfig = {
     log_level: "INFO",
     runtime: { journal: { strict: false } },
   },
-  extend_before_plan: {},
+  extend_before_plan: { steps: [] },
   workflows: {
     "plan-then-execute": {
       description: "Create a plan file then execute it",
@@ -311,7 +311,7 @@ const PLAN_COMPLETE_CONFIG: WeaveConfig = {
     log_level: "INFO",
     runtime: { journal: { strict: false } },
   },
-  extend_before_plan: {},
+  extend_before_plan: { steps: [] },
   workflows: {
     "execute-and-verify": {
       description: "Execute a plan and verify completion",
