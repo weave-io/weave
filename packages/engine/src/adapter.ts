@@ -1,3 +1,4 @@
+import type { ResultAsync } from "neverthrow";
 import type { AgentDescriptor } from "./compose.js";
 import type { SkillInfo } from "./skill-resolution.js";
 
@@ -27,9 +28,13 @@ export interface HarnessAdapter {
    * The adapter owns concrete harness translation (display names, prompt/model
    * fields, tool names, and feature-gap emulation).
    *
+   * Returns `ok(undefined)` on success or `err(error)` on failure. Adapters
+   * must not throw — all failure paths must be captured in the returned
+   * `ResultAsync`.
+   *
    * @param descriptor - Full normalized agent descriptor to materialise.
    */
-  spawnSubagent(descriptor: AgentDescriptor): Promise<void>;
+  spawnSubagent(descriptor: AgentDescriptor): ResultAsync<void, Error>;
 
   /**
    * Return the list of skills available in this harness instance.

@@ -356,12 +356,9 @@ export function createWeavePlugin(options: WeavePluginOptions = {}): Plugin {
       }
 
       for (const { agentName, descriptor } of agentDescriptors) {
-        const spawnResult = await adapter.spawnSubagent(descriptor).then(
-          () => ({ ok: true as const }),
-          (err: unknown) => ({ ok: false as const, error: err }),
-        );
+        const spawnResult = await adapter.spawnSubagent(descriptor);
 
-        if (!spawnResult.ok) {
+        if (spawnResult.isErr()) {
           log.error(
             { agent: agentName, error: spawnResult.error },
             "Failed to materialize agent — continuing with remaining agents",

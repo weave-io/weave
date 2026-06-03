@@ -177,6 +177,7 @@ export {
   InMemoryRuntimeStore,
 } from "./runtime/memory-store.js";
 export {
+  isDeniedKey,
   sanitizeJournalData,
   sanitizeSnapshotMetadata,
 } from "./runtime/sanitizer.js";

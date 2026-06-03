@@ -119,6 +119,8 @@ packages/cli/src/
 
 **Consequence**: `packages/cli/src/commands/runtime.ts` shall replace its local `SENSITIVE_KEYS` set with an import from the engine's canonical sanitization module. The comment "Mirrors the denylist in the engine sanitizer" (line 198) shall be removed.
 
+**Implementation (Task 5)**: `isDeniedKey(key: string): boolean` was exported from `packages/engine/src/runtime/sanitizer.ts` and re-exported from `packages/engine/src/index.ts`. `packages/cli/src/commands/runtime.ts` now imports `isDeniedKey` from `@weave/engine` and the local `isSensitiveKey` function (with its duplicated denylist) was removed. The comment "Mirrors the denylist in the engine sanitizer" was removed along with the local copy.
+
 ---
 
 ## Decision 6 — Spec 26: Non-OpenCode call sites for the typed spawn seam
@@ -128,6 +130,8 @@ packages/cli/src/
 **Decision**: **Scope to OpenCode adapter only for this spec.** No other adapter currently has a `spawnSubagent` implementation. The Claude Code and Pi adapters are stubs. Extending the typed-result seam to those adapters is deferred until they have real implementations.
 
 **Consequence**: Spec 26 Unit 1 changes only `packages/adapters/opencode/src/adapter.ts` and its callers. The `HarnessAdapter` interface in `packages/engine/src/adapter.ts` is updated to reflect the new return type if `spawnSubagent` is declared there; otherwise the change is adapter-local.
+
+**Implementation (Task 5)**: `HarnessAdapter.spawnSubagent()` was updated to return `ResultAsync<void, Error>`. `OpenCodeAdapter.spawnSubagent()` now returns `ResultAsync<void, OpenCodeAdapterError>` — all failure paths use `errAsync(...)` instead of `throw`. `MockAdapter.spawnSubagent()` returns `ResultAsync<void, never>`. The `.then(ok, err)` wrapper in `plugin.ts` and the `ResultAsync.fromPromise(...)` wrappers in `run-workflow.ts` were removed; callers now use the returned `ResultAsync` directly. Adapter tests were updated to use `isErr()` / `isOk()` instead of `rejects.toThrow()` / `resolves.toBeUndefined()`.
 
 ---
 

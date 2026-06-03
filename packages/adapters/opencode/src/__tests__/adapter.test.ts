@@ -312,9 +312,8 @@ describe("OpenCodeAdapter — spawnSubagent() translation-only mode", () => {
     await adapter.init();
 
     // Should complete without error even without a client
-    await expect(
-      adapter.spawnSubagent(makeDescriptor()),
-    ).resolves.toBeUndefined();
+    const result = await adapter.spawnSubagent(makeDescriptor());
+    expect(result.isOk()).toBe(true);
     // translatedAgents is still populated
     expect(adapter.translatedAgents.has("test-agent")).toBe(true);
   });
@@ -398,7 +397,7 @@ describe("OpenCodeAdapter — spawnSubagent() SDK create path", () => {
     expect(adapter.translatedAgents.has("test-agent")).toBe(true);
   });
 
-  it("throws when createAgent() returns an error", async () => {
+  it("returns err when createAgent() returns an error", async () => {
     const mockClient = new MockOpenCodeClient();
     mockClient.setListAgentsResult(okAsync([]));
     mockClient.setCreateAgentResult(
@@ -415,12 +414,14 @@ describe("OpenCodeAdapter — spawnSubagent() SDK create path", () => {
     });
     await adapter.init();
 
-    await expect(adapter.spawnSubagent(makeDescriptor())).rejects.toThrow(
-      "SDK write failed",
-    );
+    const result = await adapter.spawnSubagent(makeDescriptor());
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error.message).toContain("SDK write failed");
+    }
   });
 
-  it("throws OpenCodeAdapterError with structured context on create failure", async () => {
+  it("returns err(OpenCodeAdapterError) with structured context on create failure", async () => {
     const mockClient = new MockOpenCodeClient();
     mockClient.setListAgentsResult(okAsync([]));
     mockClient.setCreateAgentResult(
@@ -437,15 +438,17 @@ describe("OpenCodeAdapter — spawnSubagent() SDK create path", () => {
     });
     await adapter.init();
 
-    await expect(adapter.spawnSubagent(makeDescriptor())).rejects.toMatchObject(
-      {
+    const result = await adapter.spawnSubagent(makeDescriptor());
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error).toMatchObject({
         name: "OpenCodeAdapterError",
         type: "ReconcileAgentError",
         agentName: "test-agent",
         message:
           'Failed to materialize agent "test-agent" via OpenCode SDK: [CreateAgentError] SDK write failed',
-      } satisfies Partial<OpenCodeAdapterError>,
-    );
+      } satisfies Partial<OpenCodeAdapterError>);
+    }
   });
 });
 
@@ -517,7 +520,7 @@ describe("OpenCodeAdapter — spawnSubagent() SDK update path", () => {
     expect(call?.config.description).toContain(WEAVE_OWNERSHIP_TAG);
   });
 
-  it("throws when updateAgent() returns an error", async () => {
+  it("returns err when updateAgent() returns an error", async () => {
     const mockClient = new MockOpenCodeClient();
     mockClient.setListAgentsResult(
       okAsync([makeWeaveManagedAgent("test-agent")]),
@@ -536,9 +539,11 @@ describe("OpenCodeAdapter — spawnSubagent() SDK update path", () => {
     });
     await adapter.init();
 
-    await expect(adapter.spawnSubagent(makeDescriptor())).rejects.toThrow(
-      "SDK update failed",
-    );
+    const result = await adapter.spawnSubagent(makeDescriptor());
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error.message).toContain("SDK update failed");
+    }
   });
 });
 
@@ -547,7 +552,7 @@ describe("OpenCodeAdapter — spawnSubagent() SDK update path", () => {
 // ---------------------------------------------------------------------------
 
 describe("OpenCodeAdapter — spawnSubagent() collision path", () => {
-  it("throws a collision error when a foreign agent blocks the write", async () => {
+  it("returns err with CollisionError when a foreign agent blocks the write", async () => {
     const mockClient = new MockOpenCodeClient();
     // listAgents returns a foreign agent (no ownership tag) with the same name
     mockClient.setListAgentsResult(okAsync([makeForeignAgent("test-agent")]));
@@ -558,9 +563,11 @@ describe("OpenCodeAdapter — spawnSubagent() collision path", () => {
     });
     await adapter.init();
 
-    await expect(adapter.spawnSubagent(makeDescriptor())).rejects.toThrow(
-      "CollisionError",
-    );
+    const result = await adapter.spawnSubagent(makeDescriptor());
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error.message).toContain("CollisionError");
+    }
   });
 
   it("does not call createAgent() or updateAgent() on collision", async () => {
@@ -573,7 +580,8 @@ describe("OpenCodeAdapter — spawnSubagent() collision path", () => {
     });
     await adapter.init();
 
-    await expect(adapter.spawnSubagent(makeDescriptor())).rejects.toThrow();
+    const result = await adapter.spawnSubagent(makeDescriptor());
+    expect(result.isErr()).toBe(true);
 
     expect(mockClient.createAgentCalls).toHaveLength(0);
     expect(mockClient.updateAgentCalls).toHaveLength(0);
@@ -585,7 +593,7 @@ describe("OpenCodeAdapter — spawnSubagent() collision path", () => {
 // ---------------------------------------------------------------------------
 
 describe("OpenCodeAdapter — spawnSubagent() listAgents failure", () => {
-  it("throws when listAgents() returns an error", async () => {
+  it("returns err when listAgents() returns an error", async () => {
     const mockClient = new MockOpenCodeClient();
     mockClient.setListAgentsResult(
       errAsync({
@@ -600,9 +608,11 @@ describe("OpenCodeAdapter — spawnSubagent() listAgents failure", () => {
     });
     await adapter.init();
 
-    await expect(adapter.spawnSubagent(makeDescriptor())).rejects.toThrow(
-      "Connection refused",
-    );
+    const result = await adapter.spawnSubagent(makeDescriptor());
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error.message).toContain("Connection refused");
+    }
   });
 });
 
@@ -741,7 +751,7 @@ describe("OpenCodeAdapter — spawnSubagent() model resolution", () => {
     expect(call?.config.model).toBe("claude-sonnet-4-5");
   });
 
-  it("throws ModelNotAvailableError when subagent declares unsupported model", async () => {
+  it("returns err(ModelNotAvailableError) when subagent declares unsupported model", async () => {
     const mockClient = new MockOpenCodeClient();
 
     const adapter = new OpenCodeAdapter({
@@ -753,11 +763,13 @@ describe("OpenCodeAdapter — spawnSubagent() model resolution", () => {
     });
     await adapter.init();
 
-    await expect(
-      adapter.spawnSubagent(
-        makeDescriptor({ models: ["unsupported-model"], mode: "subagent" }),
-      ),
-    ).rejects.toThrow("ModelNotAvailableError");
+    const result = await adapter.spawnSubagent(
+      makeDescriptor({ models: ["unsupported-model"], mode: "subagent" }),
+    );
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error.message).toContain("ModelNotAvailableError");
+    }
   });
 
   it("does not call createAgent() when model resolution fails", async () => {
@@ -772,11 +784,10 @@ describe("OpenCodeAdapter — spawnSubagent() model resolution", () => {
     });
     await adapter.init();
 
-    await expect(
-      adapter.spawnSubagent(
-        makeDescriptor({ models: ["unsupported-model"], mode: "subagent" }),
-      ),
-    ).rejects.toThrow();
+    const result = await adapter.spawnSubagent(
+      makeDescriptor({ models: ["unsupported-model"], mode: "subagent" }),
+    );
+    expect(result.isErr()).toBe(true);
 
     expect(mockClient.createAgentCalls).toHaveLength(0);
     expect(mockClient.updateAgentCalls).toHaveLength(0);
@@ -793,9 +804,8 @@ describe("OpenCodeAdapter — spawnSubagent() model resolution", () => {
     });
     await adapter.init();
 
-    await expect(
-      adapter.spawnSubagent(makeDescriptor({ models: [] })),
-    ).resolves.toBeUndefined();
+    const result = await adapter.spawnSubagent(makeDescriptor({ models: [] }));
+    expect(result.isOk()).toBe(true);
 
     expect(mockClient.createAgentCalls).toHaveLength(1);
   });
@@ -814,11 +824,10 @@ describe("OpenCodeAdapter — spawnSubagent() model resolution", () => {
     await adapter.init();
 
     // primary mode: fail-fast does not apply
-    await expect(
-      adapter.spawnSubagent(
-        makeDescriptor({ models: ["unavailable-model"], mode: "primary" }),
-      ),
-    ).resolves.toBeUndefined();
+    const result = await adapter.spawnSubagent(
+      makeDescriptor({ models: ["unavailable-model"], mode: "primary" }),
+    );
+    expect(result.isOk()).toBe(true);
   });
 });
 

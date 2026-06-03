@@ -48,13 +48,10 @@
   - type ArgParseError
 - `packages/cli/src/cli.ts` — function run: (deps?) => Promise<Result<number, CliError>>, interface CliDeps
 - `packages/cli/src/commands/init.ts`
-  - function convertLegacyJsonc: (source) => ConversionResult
   - function runInit: (ctx) => Promise<Result<number, CliError>>
-  - function writeMigratedDsl: (fs, plan, dslContent, destExists) => ResultAsync<
+  - function installHarnesses: (input) => Promise<number>
   - interface InitContext
-  - type MigrationPlan
-  - type ConversionWarning
-  - _...1 more_
+- `packages/cli/src/commands/migrate.ts` — function runMigrateMode: (ctx, installHarnesses, harnesses) => void, interface MigrateContext
 - `packages/cli/src/commands/runtime.ts` — function runRuntime: (ctx) => Promise<Result<number, CliError>>, interface RuntimeCommandContext
 - `packages/cli/src/commands/validate.ts` — function runValidate: (ctx) => Promise<Result<number, CliError>>, interface ValidateContext
 - `packages/cli/src/config/starter-config.ts` — function starterConfig: (scope) => string
@@ -97,6 +94,17 @@
   - class RealTerminal
   - class BufferTerminal
   - interface TerminalIO
+- `packages/cli/src/migration/conversion-warnings.ts` — function renderConversionWarnings: (warnings) => string
+- `packages/cli/src/migration/legacy-jsonc-converter.ts` — function stripJsoncComments: (source) => string, function convertLegacyJsonc: (source) => ConversionResult
+- `packages/cli/src/migration/migration-plan.ts`
+  - function buildMigrationPlan: (scope, fs, skippedWarningCount) => MigrationPlan
+  - function detectLegacySource: (scope, fs) => Promise<
+  - const LEGACY_SOURCE_RELATIVE: Record<MigrationScope, string>
+  - const CANONICAL_WEAVE_DIR: Record<MigrationScope, string>
+- `packages/cli/src/migration/migration-write.ts`
+  - function buildMigratedContent: (plan, conversion) => string
+  - function writeMigratedDsl: (fs, plan, dslContent, destExists) => ResultAsync<
+  - function performMigrationWrite: (fs, plan, sourceContent, destExists) => ResultAsync<
 - `packages/cli/src/prompt/index.ts`
   - class ClackPromptAdapter
   - class StaticPromptAdapter
@@ -144,6 +152,10 @@
 - `packages/core/src/lexer.ts` — function tokenize: (source) => Result<Token[], LexError[]>
 - `packages/core/src/parse-config.ts` — function parseConfig: (source) => Result<WeaveConfig, ConfigError[]>
 - `packages/core/src/parser.ts` — function parse: (tokens) => Result<AstNode[], ParseError[]>
+- `packages/core/src/prompt-schema-helpers.ts`
+  - function refinePromptAppendExclusive: () => [
+  - function refinePromptExclusive: () => [
+  - function refinePromptFileSafe: (field) => [(data: HasPromptFile) => boolean,
 - `packages/core/src/validate.ts` — function validate: (ast) => Result<WeaveConfig, ValidationError[]>
 - `packages/engine/src/capability-contract.ts`
   - function evaluateCoreReadinessProfile: (contract) => ProfileEvaluationResult
@@ -210,7 +222,10 @@
   - class InMemoryRuntimeStore
   - interface InMemoryRuntimeStoreFailureConfig
   - interface InMemoryRuntimeStoreOptions
-- `packages/engine/src/runtime/sanitizer.ts` — function sanitizeJournalData: (data) => Result<JsonObject, RuntimeStoreError>, function sanitizeSnapshotMetadata: (metadata, string | number | boolean>) => Result<Record<string, string | number | boolean>, RuntimeStoreError>
+- `packages/engine/src/runtime/sanitizer.ts`
+  - function isDeniedKey: (key) => boolean
+  - function sanitizeJournalData: (data) => Result<JsonObject, RuntimeStoreError>
+  - function sanitizeSnapshotMetadata: (metadata, string | number | boolean>) => Result<Record<string, string | number | boolean>, RuntimeStoreError>
 - `packages/engine/src/runtime/sqlite/kysely-bun-sqlite.ts` — class BunSqliteDialect
 - `packages/engine/src/runtime/sqlite/migrations.ts`
   - function runMigrations: (db) => Result<void, RuntimeStoreError>

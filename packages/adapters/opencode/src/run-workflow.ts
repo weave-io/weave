@@ -129,11 +129,13 @@ export interface RunWorkflowResult {
  *
  * The adapter's `spawnSubagent` method translates the descriptor into an
  * OpenCode `AgentConfig` and stores it in `adapter.translatedAgents`.
+ *
+ * Returns `ok(undefined)` on success or `err(RunWorkflowError)` on failure.
  */
-async function applyDispatchAgentEffect(
+function applyDispatchAgentEffect(
   effect: DispatchAgentEffect,
   adapter: OpenCodeAdapter,
-): Promise<void> {
+): ResultAsync<void, RunWorkflowError> {
   log.info(
     {
       agentName: effect.runAgent.agentName,
@@ -142,7 +144,15 @@ async function applyDispatchAgentEffect(
     },
     "Applying DispatchAgentEffect — spawning subagent",
   );
-  await adapter.spawnSubagent(effect.runAgent.agentDescriptor);
+  return adapter.spawnSubagent(effect.runAgent.agentDescriptor).mapErr(
+    (cause): RunWorkflowError => ({
+      type: "LifecycleError",
+      cause: {
+        type: "policy_decision",
+        message: `spawnSubagent failed: ${cause.message}`,
+      },
+    }),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -316,16 +326,9 @@ function completeAndAdvance(
           "Auto-advancing to next step",
         );
 
-        return ResultAsync.fromPromise(
-          applyDispatchAgentEffect(nextDispatch, state.adapter),
-          (cause): RunWorkflowError => ({
-            type: "LifecycleError",
-            cause: {
-              type: "policy_decision",
-              message: `spawnSubagent threw unexpectedly: ${String(cause)}`,
-            },
-          }),
-        ).andThen(() => completeAndAdvance(nextStepName, state));
+        return applyDispatchAgentEffect(nextDispatch, state.adapter).andThen(
+          () => completeAndAdvance(nextStepName, state),
+        );
       }
 
       // No terminal or auto-advance effect — this should not happen in normal
@@ -466,20 +469,14 @@ export function runWorkflow(
             (e): e is DispatchAgentEffect => e.kind === "dispatch-agent",
           );
 
-          return ResultAsync.fromPromise(
-            (async () => {
-              for (const effect of dispatchEffects) {
-                await applyDispatchAgentEffect(effect, adapter);
-              }
-            })(),
-            (cause): RunWorkflowError => ({
-              type: "LifecycleError",
-              cause: {
-                type: "policy_decision",
-                message: `spawnSubagent threw unexpectedly: ${String(cause)}`,
-              },
-            }),
-          ).andThen(() =>
+          // Apply all dispatch effects sequentially, short-circuiting on error.
+          const applyAll = dispatchEffects.reduce(
+            (chain, effect) =>
+              chain.andThen(() => applyDispatchAgentEffect(effect, adapter)),
+            okAsync<void, RunWorkflowError>(undefined),
+          );
+
+          return applyAll.andThen(() =>
             // Step 3+: completeStep with auto-advance handles the rest of the loop.
             completeAndAdvance(stepName, state),
           );

@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weave/core, @weave/engine, @weave/config, @weave/cli, @weave/adapter-opencode
 
-> 0 routes | 0 models | 0 components | 59 lib files | 4 env vars | 2 middleware | 0% test coverage
-> **Token savings:** this file is ~5,200 tokens. Without it, AI exploration would cost ~25,500 tokens. **Saves ~20,300 tokens per conversation.**
-> **Last scanned:** 2026-06-03 22:05 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 65 lib files | 4 env vars | 3 middleware | 0% test coverage
+> **Token savings:** this file is ~5,600 tokens. Without it, AI exploration would cost ~27,300 tokens. **Saves ~21,700 tokens per conversation.**
+> **Last scanned:** 2026-06-03 22:17 — re-run after significant changes
 
 ---
 
@@ -59,13 +59,10 @@
   - type ArgParseError
 - `packages/cli/src/cli.ts` — function run: (deps?) => Promise<Result<number, CliError>>, interface CliDeps
 - `packages/cli/src/commands/init.ts`
-  - function convertLegacyJsonc: (source) => ConversionResult
   - function runInit: (ctx) => Promise<Result<number, CliError>>
-  - function writeMigratedDsl: (fs, plan, dslContent, destExists) => ResultAsync<
+  - function installHarnesses: (input) => Promise<number>
   - interface InitContext
-  - type MigrationPlan
-  - type ConversionWarning
-  - _...1 more_
+- `packages/cli/src/commands/migrate.ts` — function runMigrateMode: (ctx, installHarnesses, harnesses) => void, interface MigrateContext
 - `packages/cli/src/commands/runtime.ts` — function runRuntime: (ctx) => Promise<Result<number, CliError>>, interface RuntimeCommandContext
 - `packages/cli/src/commands/validate.ts` — function runValidate: (ctx) => Promise<Result<number, CliError>>, interface ValidateContext
 - `packages/cli/src/config/starter-config.ts` — function starterConfig: (scope) => string
@@ -108,6 +105,17 @@
   - class RealTerminal
   - class BufferTerminal
   - interface TerminalIO
+- `packages/cli/src/migration/conversion-warnings.ts` — function renderConversionWarnings: (warnings) => string
+- `packages/cli/src/migration/legacy-jsonc-converter.ts` — function stripJsoncComments: (source) => string, function convertLegacyJsonc: (source) => ConversionResult
+- `packages/cli/src/migration/migration-plan.ts`
+  - function buildMigrationPlan: (scope, fs, skippedWarningCount) => MigrationPlan
+  - function detectLegacySource: (scope, fs) => Promise<
+  - const LEGACY_SOURCE_RELATIVE: Record<MigrationScope, string>
+  - const CANONICAL_WEAVE_DIR: Record<MigrationScope, string>
+- `packages/cli/src/migration/migration-write.ts`
+  - function buildMigratedContent: (plan, conversion) => string
+  - function writeMigratedDsl: (fs, plan, dslContent, destExists) => ResultAsync<
+  - function performMigrationWrite: (fs, plan, sourceContent, destExists) => ResultAsync<
 - `packages/cli/src/prompt/index.ts`
   - class ClackPromptAdapter
   - class StaticPromptAdapter
@@ -155,6 +163,10 @@
 - `packages/core/src/lexer.ts` — function tokenize: (source) => Result<Token[], LexError[]>
 - `packages/core/src/parse-config.ts` — function parseConfig: (source) => Result<WeaveConfig, ConfigError[]>
 - `packages/core/src/parser.ts` — function parse: (tokens) => Result<AstNode[], ParseError[]>
+- `packages/core/src/prompt-schema-helpers.ts`
+  - function refinePromptAppendExclusive: () => [
+  - function refinePromptExclusive: () => [
+  - function refinePromptFileSafe: (field) => [(data: HasPromptFile) => boolean,
 - `packages/core/src/validate.ts` — function validate: (ast) => Result<WeaveConfig, ValidationError[]>
 - `packages/engine/src/capability-contract.ts`
   - function evaluateCoreReadinessProfile: (contract) => ProfileEvaluationResult
@@ -221,7 +233,10 @@
   - class InMemoryRuntimeStore
   - interface InMemoryRuntimeStoreFailureConfig
   - interface InMemoryRuntimeStoreOptions
-- `packages/engine/src/runtime/sanitizer.ts` — function sanitizeJournalData: (data) => Result<JsonObject, RuntimeStoreError>, function sanitizeSnapshotMetadata: (metadata, string | number | boolean>) => Result<Record<string, string | number | boolean>, RuntimeStoreError>
+- `packages/engine/src/runtime/sanitizer.ts`
+  - function isDeniedKey: (key) => boolean
+  - function sanitizeJournalData: (data) => Result<JsonObject, RuntimeStoreError>
+  - function sanitizeSnapshotMetadata: (metadata, string | number | boolean>) => Result<Record<string, string | number | boolean>, RuntimeStoreError>
 - `packages/engine/src/runtime/sqlite/kysely-bun-sqlite.ts` — class BunSqliteDialect
 - `packages/engine/src/runtime/sqlite/migrations.ts`
   - function runMigrations: (db) => Result<void, RuntimeStoreError>
@@ -293,45 +308,48 @@
 - migrate-conversion.test — `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`
 - migrate.test — `packages/cli/src/commands/__tests__/migrate.test.ts`
 
+## validation
+- migrate — `packages/cli/src/commands/migrate.ts`
+
 ---
 
 # Dependency Graph
 
 ## Most Imported Files (change these carefully)
 
-- `packages/cli/src/theme/colors.ts` — imported by **14** files
-- `packages/cli/src/io/terminal.ts` — imported by **12** files
+- `packages/cli/src/theme/colors.ts` — imported by **15** files
+- `packages/cli/src/io/terminal.ts` — imported by **13** files
+- `packages/cli/src/fs/file-system.ts` — imported by **11** files
 - `packages/engine/src/runtime/errors.ts` — imported by **11** files
 - `packages/adapters/opencode/src/sdk-types.ts` — imported by **9** files
-- `packages/cli/src/fs/file-system.ts` — imported by **9** files
+- `packages/cli/src/args.ts` — imported by **8** files
 - `packages/core/src/tokens.ts` — imported by **8** files
-- `packages/cli/src/args.ts` — imported by **7** files
+- `packages/cli/src/errors.ts` — imported by **6** files
+- `packages/cli/src/prompt/index.ts` — imported by **6** files
+- `packages/cli/src/migration/types.ts` — imported by **6** files
 - `packages/core/src/errors.ts` — imported by **6** files
 - `packages/engine/src/compose.ts` — imported by **6** files
 - `packages/engine/src/logger.ts` — imported by **6** files
 - `packages/adapters/opencode/src/index.ts` — imported by **5** files
 - `packages/cli/src/cli.ts` — imported by **5** files
 - `packages/cli/src/theme/render.ts` — imported by **5** files
-- `packages/cli/src/errors.ts` — imported by **5** files
-- `packages/cli/src/prompt/index.ts` — imported by **5** files
 - `packages/config/src/builtins.ts` — imported by **5** files
 - `packages/config/src/discovery.ts` — imported by **5** files
 - `packages/config/src/logger.ts` — imported by **5** files
 - `packages/config/src/merge.ts` — imported by **5** files
-- `packages/core/src/lexer.ts` — imported by **5** files
 
 ## Import Map (who imports what)
 
-- `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`, `packages/cli/src/commands/__tests__/migrate.test.ts` +9 more
-- `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`, `packages/cli/src/commands/__tests__/migrate.test.ts` +7 more
+- `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`, `packages/cli/src/commands/__tests__/migrate.test.ts` +10 more
+- `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`, `packages/cli/src/commands/__tests__/migrate.test.ts` +8 more
+- `packages/cli/src/fs/file-system.ts` ← `packages/cli/src/__tests__/file-system.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`, `packages/cli/src/commands/__tests__/migrate.test.ts`, `packages/cli/src/commands/__tests__/validate.test.ts` +6 more
 - `packages/engine/src/runtime/errors.ts` ← `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-journal.test.ts`, `packages/engine/src/__tests__/runtime-journal.test.ts`, `packages/engine/src/execution-lifecycle.ts`, `packages/engine/src/runtime/fingerprint.ts` +6 more
 - `packages/adapters/opencode/src/sdk-types.ts` ← `packages/adapters/opencode/src/__tests__/adapter.test.ts`, `packages/adapters/opencode/src/__tests__/plugin.test.ts`, `packages/adapters/opencode/src/__tests__/reconcile-agent.test.ts`, `packages/adapters/opencode/src/__tests__/run-workflow.test.ts`, `packages/adapters/opencode/src/adapter.ts` +4 more
-- `packages/cli/src/fs/file-system.ts` ← `packages/cli/src/__tests__/file-system.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`, `packages/cli/src/commands/__tests__/migrate.test.ts`, `packages/cli/src/commands/__tests__/validate.test.ts` +4 more
+- `packages/cli/src/args.ts` ← `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/runtime.test.ts`, `packages/cli/src/commands/init.ts`, `packages/cli/src/commands/migrate.ts` +3 more
 - `packages/core/src/tokens.ts` ← `packages/core/src/__tests__/lexer.test.ts`, `packages/core/src/ast.ts`, `packages/core/src/ast.ts`, `packages/core/src/index.ts`, `packages/core/src/index.ts` +3 more
-- `packages/cli/src/args.ts` ← `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/runtime.test.ts`, `packages/cli/src/commands/init.ts`, `packages/cli/src/commands/validate.ts` +2 more
-- `packages/core/src/errors.ts` ← `packages/core/src/__tests__/errors.test.ts`, `packages/core/src/index.ts`, `packages/core/src/lexer.ts`, `packages/core/src/parse-config.ts`, `packages/core/src/parser.ts` +1 more
-- `packages/engine/src/compose.ts` ← `packages/engine/src/__tests__/mock-adapter.ts`, `packages/engine/src/__tests__/template-context.test.ts`, `packages/engine/src/adapter.ts`, `packages/engine/src/descriptors.ts`, `packages/engine/src/run-agent-effects.ts` +1 more
-- `packages/engine/src/logger.ts` ← `packages/engine/src/compose.ts`, `packages/engine/src/index.ts`, `packages/engine/src/runtime/journal-writer.ts`, `packages/engine/src/runtime/sqlite/store.ts`, `packages/engine/src/template-context.ts` +1 more
+- `packages/cli/src/errors.ts` ← `packages/cli/src/cli.ts`, `packages/cli/src/commands/init.ts`, `packages/cli/src/commands/migrate.ts`, `packages/cli/src/commands/runtime.ts`, `packages/cli/src/commands/validate.ts` +1 more
+- `packages/cli/src/prompt/index.ts` ← `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`, `packages/cli/src/commands/__tests__/migrate.test.ts`, `packages/cli/src/commands/init.ts`, `packages/cli/src/commands/migrate.ts` +1 more
+- `packages/cli/src/migration/types.ts` ← `packages/cli/src/commands/init.ts`, `packages/cli/src/commands/init.ts`, `packages/cli/src/commands/migrate.ts`, `packages/cli/src/migration/conversion-warnings.ts`, `packages/cli/src/migration/legacy-jsonc-converter.ts` +1 more
 
 ---
 

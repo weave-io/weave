@@ -655,3 +655,53 @@ const exists = await Bun.file(`.weave/plans/${planName}.md`).exists();
 ```
 
 See [Spec 19 — Plan State Provider](specs/19-spec-plan-state-provider/19-spec-plan-state-provider.md) for the full interface definition, error mapping, migration notes, and proof artifacts.
+
+---
+
+## Typed Spawn Seam
+
+`HarnessAdapter.spawnSubagent()` returns `ResultAsync<void, Error>` — adapters must not throw on failure. All failure paths must be captured in the returned `ResultAsync`.
+
+**Rationale**: callers (plugin event hooks, workflow execution loops) need to handle per-agent failures without crashing the entire materialization pass. A typed result lets callers log and continue rather than wrapping every call in a `.then(ok, err)` shim.
+
+**OpenCode adapter**: `OpenCodeAdapter.spawnSubagent()` returns `ResultAsync<void, OpenCodeAdapterError>`. `OpenCodeAdapterError extends Error`, so it satisfies the interface. Failure paths (model resolution, translation, reconciliation) all return `errAsync(...)` — no throws.
+
+**Mock adapter**: `MockAdapter.spawnSubagent()` returns `ResultAsync<void, never>` — always succeeds, satisfying the interface.
+
+**Call-site contract**: callers must not wrap `spawnSubagent()` in `ResultAsync.fromPromise()` or `.then(ok, err)`. Use the returned `ResultAsync` directly:
+
+```ts
+// ✅ Correct: use the ResultAsync directly
+const result = await adapter.spawnSubagent(descriptor);
+if (result.isErr()) {
+  log.error({ agent: agentName, error: result.error }, "spawn failed");
+}
+
+// ❌ Wrong: wrapping a ResultAsync in fromPromise (double-wraps the result)
+const result = await ResultAsync.fromPromise(
+  adapter.spawnSubagent(descriptor),
+  (cause) => ({ type: "LifecycleError", cause }),
+);
+```
+
+---
+
+## Engine-Owned Sensitive-Key Policy
+
+The engine owns the canonical denylist of sensitive field names used to sanitize journal entries and session snapshots. This policy is exported from `packages/engine/src/runtime/sanitizer.ts` as `isDeniedKey(key: string): boolean` and re-exported from `@weave/engine`.
+
+**Rule**: CLI rendering layers (e.g. `packages/cli/src/commands/runtime.ts`) must import `isDeniedKey` from `@weave/engine` rather than maintaining a local copy of the denylist. This ensures the rendering layer and the storage layer apply the same policy.
+
+```ts
+// ✅ Correct: import from engine
+import { isDeniedKey } from "@weave/engine";
+const safeKeys = Object.keys(entry.data).filter((k) => !isDeniedKey(k));
+
+// ❌ Wrong: local copy of the denylist (diverges from engine policy)
+function isSensitiveKey(key: string): boolean {
+  const denied = new Set(["token", "apikey", ...]);
+  return denied.has(key.toLowerCase());
+}
+```
+
+The denylist covers auth/credential fields (`token`, `apiKey`, `api_key`, `password`, `secret`, `authorization`, `cookie`, `bearer`, `accessToken`, `access_token`, `refreshToken`, `refresh_token`, `clientSecret`, `client_secret`, `privateKey`, `private_key`, `auth`, `credentials`, `credential`) and raw content fields (`prompt`, `completion`, `transcript`, `rawPrompt`, `raw_prompt`, `rawCompletion`, `raw_completion`, `rawTranscript`, `raw_transcript`, `systemPrompt`, `system_prompt`, `userPrompt`, `user_prompt`, `assistantMessage`, `assistant_message`). All comparisons are case-insensitive.
