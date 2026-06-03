@@ -1320,6 +1320,24 @@ export interface InspectExecutionOutput {
 // ---------------------------------------------------------------------------
 
 /**
+ * Map any store error to a `LifecyclePersistenceError`.
+ *
+ * Centralises the 46 inline `lifecyclePersistenceError(storeError.message, {
+ * type: storeError.type, message: storeError.message })` patterns into a
+ * single call site. The cause preserves the discriminant and message only —
+ * raw store internals (SQL, file paths, stack traces) are never leaked.
+ */
+function mapStoreError(storeError: {
+  readonly type: string;
+  readonly message: string;
+}): LifecyclePersistenceError {
+  return lifecyclePersistenceError(storeError.message, {
+    type: storeError.type,
+    message: storeError.message,
+  });
+}
+
+/**
  * Map a `RuntimeStoreConflictError` to a `LifecycleLeaseConflictError`.
  *
  * The conflicting lease ID is extracted from `conflictingId` when present.
@@ -1336,6 +1354,53 @@ function mapConflictToLeaseConflict(
     conflictingLeaseId,
     storeError.message,
   );
+}
+
+/**
+ * Validate the active lease against the caller-supplied `workflowInstanceId`
+ * and `leaseId`.
+ *
+ * Centralises the 4-site duplication of the three-check block:
+ *   1. No active lease → `lease_conflict("none")`
+ *   2. Lease ID mismatch → `lease_conflict(activeLease.id)`
+ *   3. Instance ID mismatch → `lease_conflict(activeLease.id)`
+ *
+ * Returns `ok(activeLease)` when all checks pass so callers can thread the
+ * lease through for subsequent release operations.
+ */
+function validateActiveLease(
+  activeLease: ExecutionLease | null,
+  workflowInstanceId: WorkflowInstanceId,
+  leaseId: ExecutionLeaseId,
+): Result<ExecutionLease, LifecycleLeaseConflictError> {
+  if (activeLease === null) {
+    return err(
+      lifecycleLeaseConflictError(
+        workflowInstanceId,
+        "none" as ExecutionLeaseId,
+        "No active lease for this workflow instance",
+      ),
+    );
+  }
+  if (activeLease.id !== leaseId) {
+    return err(
+      lifecycleLeaseConflictError(
+        workflowInstanceId,
+        activeLease.id,
+        "Provided lease ID does not match the active lease",
+      ),
+    );
+  }
+  if (activeLease.workflowInstanceId !== workflowInstanceId) {
+    return err(
+      lifecycleLeaseConflictError(
+        workflowInstanceId,
+        activeLease.id,
+        `Lease ${leaseId} belongs to workflow ${activeLease.workflowInstanceId}, not ${workflowInstanceId}`,
+      ),
+    );
+  }
+  return ok(activeLease);
 }
 
 // ---------------------------------------------------------------------------
@@ -1418,12 +1483,7 @@ export function observeSession(
 
   return store.snapshots
     .record(snapshotInput)
-    .mapErr((storeError) =>
-      lifecyclePersistenceError(storeError.message, {
-        type: storeError.type,
-        message: storeError.message,
-      }),
-    )
+    .mapErr((storeError) => mapStoreError(storeError))
     .map((snapshot) => ({ snapshotId: snapshot.id }));
 }
 
@@ -1567,13 +1627,7 @@ export function startExecution(
   // Invariant: created/updated instance ID === leased workflowInstanceId === output ID.
   return store.instances
     .findById(input.workflowInstanceId)
-    .mapErr(
-      (storeError): LifecycleError =>
-        lifecyclePersistenceError(storeError.message, {
-          type: storeError.type,
-          message: storeError.message,
-        }),
-    )
+    .mapErr((storeError): LifecycleError => mapStoreError(storeError))
     .andThen((existing) => {
       if (existing === null) {
         return store.instances
@@ -1583,13 +1637,7 @@ export function startExecution(
             goal: fields.goal,
             slug: fields.slug,
           })
-          .mapErr(
-            (storeError): LifecycleError =>
-              lifecyclePersistenceError(storeError.message, {
-                type: storeError.type,
-                message: storeError.message,
-              }),
-          )
+          .mapErr((storeError): LifecycleError => mapStoreError(storeError))
           .andThen((created) => {
             // Build the update: always set status to running; also set
             // currentStepName when the context provides a first step.
@@ -1600,13 +1648,11 @@ export function startExecution(
                     currentStepName: fields.currentStepName,
                   }
                 : { status: "running" as const };
-            return store.instances.update(created.id, updateInput).mapErr(
-              (storeError): LifecycleError =>
-                lifecyclePersistenceError(storeError.message, {
-                  type: storeError.type,
-                  message: storeError.message,
-                }),
-            );
+            return store.instances
+              .update(created.id, updateInput)
+              .mapErr(
+                (storeError): LifecycleError => mapStoreError(storeError),
+              );
           });
       }
       const existingUpdateInput =
@@ -1616,13 +1662,9 @@ export function startExecution(
               currentStepName: fields.currentStepName,
             }
           : { status: "running" as const };
-      return store.instances.update(existing.id, existingUpdateInput).mapErr(
-        (storeError): LifecycleError =>
-          lifecyclePersistenceError(storeError.message, {
-            type: storeError.type,
-            message: storeError.message,
-          }),
-      );
+      return store.instances
+        .update(existing.id, existingUpdateInput)
+        .mapErr((storeError): LifecycleError => mapStoreError(storeError));
     })
     .andThen((instance) =>
       store.leases
@@ -1635,10 +1677,7 @@ export function startExecution(
           if (storeError.type === "conflict") {
             return mapConflictToLeaseConflict(instance.id, storeError);
           }
-          return lifecyclePersistenceError(storeError.message, {
-            type: storeError.type,
-            message: storeError.message,
-          });
+          return mapStoreError(storeError);
         }),
     )
     .map((lease) => ({
@@ -1691,53 +1730,20 @@ export function handleUserInterrupt(
 
   return store.leases
     .findActive()
-    .mapErr(
-      (storeError): LifecycleError =>
-        lifecyclePersistenceError(storeError.message, {
-          type: storeError.type,
-          message: storeError.message,
-        }),
-    )
+    .mapErr((storeError): LifecycleError => mapStoreError(storeError))
     .andThen((activeLease) => {
-      if (activeLease === null) {
-        return errAsync(
-          lifecycleLeaseConflictError(
-            input.workflowInstanceId,
-            "none" as ExecutionLeaseId,
-            "No active lease for this workflow instance",
-          ),
-        );
-      }
-      if (activeLease.id !== input.leaseId) {
-        return errAsync(
-          lifecycleLeaseConflictError(
-            input.workflowInstanceId,
-            activeLease.id,
-            "Provided lease ID does not match the active lease",
-          ),
-        );
-      }
-      if (activeLease.workflowInstanceId !== input.workflowInstanceId) {
-        return errAsync(
-          lifecycleLeaseConflictError(
-            input.workflowInstanceId,
-            activeLease.id,
-            `Lease ${input.leaseId} belongs to workflow ${activeLease.workflowInstanceId}, not ${input.workflowInstanceId}`,
-          ),
-        );
-      }
-      return okAsync(undefined as undefined);
+      const leaseCheck = validateActiveLease(
+        activeLease,
+        input.workflowInstanceId,
+        input.leaseId,
+      );
+      if (leaseCheck.isErr()) return errAsync(leaseCheck.error);
+      return okAsync(undefined);
     })
     .andThen(() =>
       store.instances
         .findById(input.workflowInstanceId)
-        .mapErr(
-          (storeError): LifecycleError =>
-            lifecyclePersistenceError(storeError.message, {
-              type: storeError.type,
-              message: storeError.message,
-            }),
-        )
+        .mapErr((storeError): LifecycleError => mapStoreError(storeError))
         .andThen((existing) => {
           if (existing === null) {
             return errAsync(
@@ -1751,13 +1757,7 @@ export function handleUserInterrupt(
           if (input.signal === "pause") {
             return store.instances
               .update(input.workflowInstanceId, { status: "paused" })
-              .mapErr(
-                (storeError): LifecycleError =>
-                  lifecyclePersistenceError(storeError.message, {
-                    type: storeError.type,
-                    message: storeError.message,
-                  }),
-              )
+              .mapErr((storeError): LifecycleError => mapStoreError(storeError))
               .map(
                 (): HandleUserInterruptOutput => ({
                   effects: [
@@ -1773,13 +1773,7 @@ export function handleUserInterrupt(
           // signal === "cancel" — terminal status
           return store.instances
             .update(input.workflowInstanceId, { status: "cancelled" })
-            .mapErr(
-              (storeError): LifecycleError =>
-                lifecyclePersistenceError(storeError.message, {
-                  type: storeError.type,
-                  message: storeError.message,
-                }),
-            )
+            .mapErr((storeError): LifecycleError => mapStoreError(storeError))
             .map(
               (): HandleUserInterruptOutput => ({
                 effects: [
@@ -1990,7 +1984,9 @@ function verifyArtifactIntegrity(
  * - Must be present in the instance's artifact set.
  * - If a prior revision was approved and a new revision has been added
  *   (resetting approvalState to "pending"), dispatch is blocked with a
- *   `policy_decision` error (approval invalidation).
+ *   `policy_decision` error (approval invalidation) — **unless** the artifact
+ *   name is in `pinnedNames`, in which case the approval check is skipped
+ *   (the revision was already approved when first dispatched).
  * - Returns a typed `not_found` error for the first missing normative input.
  * - Dispatch is blocked until all normative inputs are satisfied.
  *
@@ -2001,6 +1997,12 @@ function verifyArtifactIntegrity(
  * **Integrity verification** (when `artifactDigests` is provided):
  * - For each artifact with a stored `integrity.digest`, the supplied digest
  *   is compared. A mismatch returns a `policy_decision` error (fail closed).
+ *   Integrity is always verified regardless of pin status.
+ *
+ * **`pinnedNames`** (optional, retry path):
+ * - When provided, approval-state validation is skipped for artifacts whose
+ *   names are in this set. Integrity verification still applies.
+ *   Pass `new Set(pinnedRevisions.map(p => p.name))` at the call site.
  *
  * Returns `ok(ArtifactInputSummary)` when all normative inputs are satisfied.
  * Returns `err(LifecycleError)` when any normative input is missing or has
@@ -2010,6 +2012,7 @@ function validateStepInputs(
   step: WorkflowStep,
   instance: WorkflowInstance,
   artifactDigests?: Readonly<Record<string, string>>,
+  pinnedNames?: ReadonlySet<string>,
 ): Result<ArtifactInputSummary, LifecycleError> {
   const emptyResult: ArtifactInputSummary = {
     normativeSatisfied: [],
@@ -2025,7 +2028,27 @@ function validateStepInputs(
 
   for (const input of step.inputs) {
     const role = inputRole(input as ArtifactInputDecl);
+    const isPinned = pinnedNames?.has(input.name) ?? false;
     const latest = latestArtifactByName(instance, input.name);
+
+    // Integrity verification applies to all artifacts regardless of pin status.
+    if (latest !== undefined) {
+      const integrityCheck = verifyArtifactIntegrity(
+        latest,
+        artifactDigests?.[input.name],
+      );
+      if (integrityCheck.isErr()) return err(integrityCheck.error);
+    }
+
+    if (isPinned) {
+      // Pinned: presence is guaranteed by the pin; skip approval-state check.
+      if (role === "normative") {
+        normativeSatisfied.push(input.name);
+      } else {
+        informationalPresent.push(input.name);
+      }
+      continue;
+    }
 
     if (role === "normative") {
       if (latest === undefined) {
@@ -2048,131 +2071,12 @@ function validateStepInputs(
           ),
         );
       }
-      // Consumption-time integrity verification: compare supplied digest
-      // against the stored digest. Fails closed on mismatch.
-      const integrityCheck = verifyArtifactIntegrity(
-        latest,
-        artifactDigests?.[input.name],
-      );
-      if (integrityCheck.isErr()) return err(integrityCheck.error);
       normativeSatisfied.push(input.name);
       continue;
     }
 
     // informational
     if (latest !== undefined) {
-      // Also verify integrity for informational inputs when a digest is supplied.
-      const integrityCheck = verifyArtifactIntegrity(
-        latest,
-        artifactDigests?.[input.name],
-      );
-      if (integrityCheck.isErr()) return err(integrityCheck.error);
-      informationalPresent.push(input.name);
-    } else {
-      informationalAbsent.push(input.name);
-    }
-  }
-
-  return ok({ normativeSatisfied, informationalPresent, informationalAbsent });
-}
-
-/**
- * Validate declared `step.inputs` with pinned artifact revisions (retry path).
- *
- * For pinned artifacts, approval-state validation is skipped — the revision
- * was already approved when first dispatched. For non-pinned artifacts, the
- * standard approval check applies.
- *
- * Integrity verification is applied to all artifacts (pinned and non-pinned)
- * when `artifactDigests` is provided. A mismatch returns a `policy_decision`
- * error regardless of pin status — integrity is always verified.
- *
- * Returns `ok(ArtifactInputSummary)` when all normative inputs are satisfied.
- * Returns `err(LifecycleError)` when any normative input is missing or when
- * integrity verification fails.
- */
-function validateStepInputsWithPins(
-  step: WorkflowStep,
-  instance: WorkflowInstance,
-  pinnedRevisions: readonly ConsumedArtifactRecord[],
-  artifactDigests?: Readonly<Record<string, string>>,
-): Result<ArtifactInputSummary, LifecycleError> {
-  const emptyResult: ArtifactInputSummary = {
-    normativeSatisfied: [],
-    informationalPresent: [],
-    informationalAbsent: [],
-  };
-
-  if (!step.inputs || step.inputs.length === 0) return ok(emptyResult);
-
-  // Build a set of pinned artifact names for fast lookup.
-  const pinnedNames = new Set(pinnedRevisions.map((p) => p.name));
-
-  const normativeSatisfied: string[] = [];
-  const informationalPresent: string[] = [];
-  const informationalAbsent: string[] = [];
-
-  for (const input of step.inputs) {
-    const role = inputRole(input as ArtifactInputDecl);
-
-    // For pinned artifacts: presence is guaranteed by the pin; skip approval check.
-    // Integrity verification still applies — pinning does not bypass tamper detection.
-    if (pinnedNames.has(input.name)) {
-      const latest = latestArtifactByName(instance, input.name);
-      if (latest !== undefined) {
-        const integrityCheck = verifyArtifactIntegrity(
-          latest,
-          artifactDigests?.[input.name],
-        );
-        if (integrityCheck.isErr()) return err(integrityCheck.error);
-      }
-      if (role === "normative") {
-        normativeSatisfied.push(input.name);
-      } else {
-        informationalPresent.push(input.name);
-      }
-      continue;
-    }
-
-    // Non-pinned: apply standard validation.
-    const latest = latestArtifactByName(instance, input.name);
-
-    if (role === "normative") {
-      if (latest === undefined) {
-        return err(
-          lifecycleNotFoundError(
-            "artifact",
-            input.name,
-            `Required normative input artifact "${input.name}" is missing from workflow instance`,
-          ),
-        );
-      }
-      if (isApprovalInvalidated(instance, input.name)) {
-        return err(
-          lifecyclePolicyDecisionError(
-            `Normative input artifact "${input.name}" (revision ${latest.revision}) has approvalState "${latest.approvalState}" — a new revision invalidated the prior approval. Dispatch is blocked until the new revision is approved.`,
-            "artifact_approval",
-          ),
-        );
-      }
-      // Consumption-time integrity verification for non-pinned normative inputs.
-      const integrityCheck = verifyArtifactIntegrity(
-        latest,
-        artifactDigests?.[input.name],
-      );
-      if (integrityCheck.isErr()) return err(integrityCheck.error);
-      normativeSatisfied.push(input.name);
-      continue;
-    }
-
-    // informational
-    if (latest !== undefined) {
-      // Verify integrity for informational inputs when a digest is supplied.
-      const integrityCheck = verifyArtifactIntegrity(
-        latest,
-        artifactDigests?.[input.name],
-      );
-      if (integrityCheck.isErr()) return err(integrityCheck.error);
       informationalPresent.push(input.name);
     } else {
       informationalAbsent.push(input.name);
@@ -2415,53 +2319,20 @@ export function dispatchStep(
 
   return store.leases
     .findActive()
-    .mapErr(
-      (storeError): LifecycleError =>
-        lifecyclePersistenceError(storeError.message, {
-          type: storeError.type,
-          message: storeError.message,
-        }),
-    )
+    .mapErr((storeError): LifecycleError => mapStoreError(storeError))
     .andThen((activeLease) => {
-      if (activeLease === null) {
-        return errAsync(
-          lifecycleLeaseConflictError(
-            input.workflowInstanceId,
-            "none" as ExecutionLeaseId,
-            "No active lease for this workflow instance",
-          ),
-        );
-      }
-      if (activeLease.id !== input.leaseId) {
-        return errAsync(
-          lifecycleLeaseConflictError(
-            input.workflowInstanceId,
-            activeLease.id,
-            "Provided lease ID does not match the active lease",
-          ),
-        );
-      }
-      if (activeLease.workflowInstanceId !== input.workflowInstanceId) {
-        return errAsync(
-          lifecycleLeaseConflictError(
-            input.workflowInstanceId,
-            activeLease.id,
-            `Lease ${input.leaseId} belongs to workflow ${activeLease.workflowInstanceId}, not ${input.workflowInstanceId}`,
-          ),
-        );
-      }
-      return okAsync(undefined as undefined);
+      const leaseCheck = validateActiveLease(
+        activeLease,
+        input.workflowInstanceId,
+        input.leaseId,
+      );
+      if (leaseCheck.isErr()) return errAsync(leaseCheck.error);
+      return okAsync(undefined);
     })
     .andThen(() =>
       store.instances
         .findById(input.workflowInstanceId)
-        .mapErr(
-          (storeError): LifecycleError =>
-            lifecyclePersistenceError(storeError.message, {
-              type: storeError.type,
-              message: storeError.message,
-            }),
-        )
+        .mapErr((storeError): LifecycleError => mapStoreError(storeError))
         .andThen((existing) => {
           if (existing === null) {
             return errAsync(
@@ -2479,13 +2350,7 @@ export function dispatchStep(
           if (input.context === undefined) {
             return store.instances
               .update(input.workflowInstanceId, { currentStepName: stepName })
-              .mapErr(
-                (storeError): LifecycleError =>
-                  lifecyclePersistenceError(storeError.message, {
-                    type: storeError.type,
-                    message: storeError.message,
-                  }),
-              )
+              .mapErr((storeError): LifecycleError => mapStoreError(storeError))
               .map(
                 (): DispatchStepOutput => ({
                   stepName,
@@ -2549,15 +2414,16 @@ export function dispatchStep(
           // informational inputs are advisory and produce a summary.
           // When pinned revisions are present, approval-state check is skipped for pinned names.
           // Integrity verification is applied when artifactDigests is provided.
-          const inputsCheck =
+          const pinnedNames =
             effectivePins !== undefined && effectivePins.length > 0
-              ? validateStepInputsWithPins(
-                  step,
-                  existing,
-                  effectivePins,
-                  input.artifactDigests,
-                )
-              : validateStepInputs(step, existing, input.artifactDigests);
+              ? new Set(effectivePins.map((p) => p.name))
+              : undefined;
+          const inputsCheck = validateStepInputs(
+            step,
+            existing,
+            input.artifactDigests,
+            pinnedNames,
+          );
           if (inputsCheck.isErr()) return errAsync(inputsCheck.error);
           const artifactInputSummary = inputsCheck.value;
 
@@ -2588,13 +2454,7 @@ export function dispatchStep(
             .update(input.workflowInstanceId, {
               currentStepName: resolvedStepName,
             })
-            .mapErr(
-              (storeError): LifecycleError =>
-                lifecyclePersistenceError(storeError.message, {
-                  type: storeError.type,
-                  message: storeError.message,
-                }),
-            )
+            .mapErr((storeError): LifecycleError => mapStoreError(storeError))
             .andThen(() =>
               // Record the step attempt with consumed artifact revisions.
               store.instances
@@ -2604,11 +2464,7 @@ export function dispatchStep(
                   consumedArtifacts,
                 )
                 .mapErr(
-                  (storeError): LifecycleError =>
-                    lifecyclePersistenceError(storeError.message, {
-                      type: storeError.type,
-                      message: storeError.message,
-                    }),
+                  (storeError): LifecycleError => mapStoreError(storeError),
                 ),
             )
             .map(
@@ -2740,13 +2596,7 @@ function applyGateRejection(
   if (policy === "pause") {
     return store.instances
       .update(workflowInstanceId, { status: "paused" })
-      .mapErr(
-        (storeError): LifecycleError =>
-          lifecyclePersistenceError(storeError.message, {
-            type: storeError.type,
-            message: storeError.message,
-          }),
-      )
+      .mapErr((storeError): LifecycleError => mapStoreError(storeError))
       .map((): readonly LifecycleEffect[] => [
         { kind: "pause-execution", workflowInstanceId },
       ]);
@@ -2758,21 +2608,11 @@ function applyGateRejection(
         status: "failed",
         ...(message !== undefined ? { errorMessage: message } : {}),
       })
-      .mapErr(
-        (storeError): LifecycleError =>
-          lifecyclePersistenceError(storeError.message, {
-            type: storeError.type,
-            message: storeError.message,
-          }),
-      )
+      .mapErr((storeError): LifecycleError => mapStoreError(storeError))
       .andThen(() =>
-        store.leases.release(activeLease.id, activeLease.ownerId).mapErr(
-          (storeError): LifecycleError =>
-            lifecyclePersistenceError(storeError.message, {
-              type: storeError.type,
-              message: storeError.message,
-            }),
-        ),
+        store.leases
+          .release(activeLease.id, activeLease.ownerId)
+          .mapErr((storeError): LifecycleError => mapStoreError(storeError)),
       )
       .map((): readonly LifecycleEffect[] => [
         { kind: "complete-execution", workflowInstanceId },
@@ -2783,13 +2623,7 @@ function applyGateRejection(
   // Fetch the current instance for prompt rendering context.
   return store.instances
     .getById(workflowInstanceId)
-    .mapErr(
-      (storeError): LifecycleError =>
-        lifecyclePersistenceError(storeError.message, {
-          type: storeError.type,
-          message: storeError.message,
-        }),
-    )
+    .mapErr((storeError): LifecycleError => mapStoreError(storeError))
     .andThen((instance) => {
       const artifactNames = instance.artifacts.map((a) => a.name);
       const promptContext = buildStepPromptContext(instance, step);
@@ -2849,13 +2683,7 @@ function addArtifactsSequentially(
       ...(first.description ? { description: first.description } : {}),
       ...(first.integrity ? { integrity: first.integrity } : {}),
     })
-    .mapErr(
-      (storeError): LifecycleError =>
-        lifecyclePersistenceError(storeError.message, {
-          type: storeError.type,
-          message: storeError.message,
-        }),
-    )
+    .mapErr((storeError): LifecycleError => mapStoreError(storeError))
     .andThen(() =>
       addArtifactsSequentially(store, workflowInstanceId, artifacts.slice(1)),
     );
@@ -2936,21 +2764,11 @@ function buildAutoAdvanceEffects(
     // Final step — complete the workflow and release the lease.
     return store.instances
       .update(workflowInstanceId, { status: "completed" })
-      .mapErr(
-        (storeError): LifecycleError =>
-          lifecyclePersistenceError(storeError.message, {
-            type: storeError.type,
-            message: storeError.message,
-          }),
-      )
+      .mapErr((storeError): LifecycleError => mapStoreError(storeError))
       .andThen(() =>
-        store.leases.release(activeLease.id, activeLease.ownerId).mapErr(
-          (storeError): LifecycleError =>
-            lifecyclePersistenceError(storeError.message, {
-              type: storeError.type,
-              message: storeError.message,
-            }),
-        ),
+        store.leases
+          .release(activeLease.id, activeLease.ownerId)
+          .mapErr((storeError): LifecycleError => mapStoreError(storeError)),
       )
       .map((): readonly LifecycleEffect[] => [
         { kind: "complete-execution", workflowInstanceId },
@@ -2961,13 +2779,7 @@ function buildAutoAdvanceEffects(
   // Fetch the current instance (with newly persisted artifacts) before advancing.
   return store.instances
     .getById(workflowInstanceId)
-    .mapErr(
-      (storeError): LifecycleError =>
-        lifecyclePersistenceError(storeError.message, {
-          type: storeError.type,
-          message: storeError.message,
-        }),
-    )
+    .mapErr((storeError): LifecycleError => mapStoreError(storeError))
     .andThen((currentInstance) => {
       // Validate next step's declared inputs are available before advancing.
       const inputsCheck = validateStepInputs(nextStep, currentInstance);
@@ -2977,13 +2789,7 @@ function buildAutoAdvanceEffects(
     .andThen((currentInstance) =>
       store.instances
         .update(workflowInstanceId, { currentStepName: nextStep.name })
-        .mapErr(
-          (storeError): LifecycleError =>
-            lifecyclePersistenceError(storeError.message, {
-              type: storeError.type,
-              message: storeError.message,
-            }),
-        )
+        .mapErr((storeError): LifecycleError => mapStoreError(storeError))
         .map(() => currentInstance),
     )
     .andThen((currentInstance) => {
@@ -3067,54 +2873,21 @@ export function completeStep(
 
   return store.leases
     .findActive()
-    .mapErr(
-      (storeError): LifecycleError =>
-        lifecyclePersistenceError(storeError.message, {
-          type: storeError.type,
-          message: storeError.message,
-        }),
-    )
+    .mapErr((storeError): LifecycleError => mapStoreError(storeError))
     .andThen((activeLease) => {
-      if (activeLease === null) {
-        return errAsync(
-          lifecycleLeaseConflictError(
-            input.workflowInstanceId,
-            "none" as ExecutionLeaseId,
-            "No active lease for this workflow instance",
-          ),
-        );
-      }
-      if (activeLease.id !== input.leaseId) {
-        return errAsync(
-          lifecycleLeaseConflictError(
-            input.workflowInstanceId,
-            activeLease.id,
-            "Provided lease ID does not match the active lease",
-          ),
-        );
-      }
-      if (activeLease.workflowInstanceId !== input.workflowInstanceId) {
-        return errAsync(
-          lifecycleLeaseConflictError(
-            input.workflowInstanceId,
-            activeLease.id,
-            `Lease ${input.leaseId} belongs to workflow ${activeLease.workflowInstanceId}, not ${input.workflowInstanceId}`,
-          ),
-        );
-      }
       // Thread the active lease through for potential release on final step.
-      return okAsync(activeLease);
+      const leaseCheck = validateActiveLease(
+        activeLease,
+        input.workflowInstanceId,
+        input.leaseId,
+      );
+      if (leaseCheck.isErr()) return errAsync(leaseCheck.error);
+      return okAsync(leaseCheck.value);
     })
     .andThen((activeLease) =>
       store.instances
         .findById(input.workflowInstanceId)
-        .mapErr(
-          (storeError): LifecycleError =>
-            lifecyclePersistenceError(storeError.message, {
-              type: storeError.type,
-              message: storeError.message,
-            }),
-        )
+        .mapErr((storeError): LifecycleError => mapStoreError(storeError))
         .andThen((existing) => {
           if (existing === null) {
             return errAsync(
@@ -3209,11 +2982,7 @@ export function completeStep(
               return store.instances
                 .update(input.workflowInstanceId, updateInput)
                 .mapErr(
-                  (storeError): LifecycleError =>
-                    lifecyclePersistenceError(storeError.message, {
-                      type: storeError.type,
-                      message: storeError.message,
-                    }),
+                  (storeError): LifecycleError => mapStoreError(storeError),
                 )
                 .andThen(() => {
                   if (!artifacts || artifacts.length === 0) {
@@ -3244,10 +3013,7 @@ export function completeStep(
                       .release(activeLease.id, activeLease.ownerId)
                       .mapErr(
                         (storeError): LifecycleError =>
-                          lifecyclePersistenceError(storeError.message, {
-                            type: storeError.type,
-                            message: storeError.message,
-                          }),
+                          mapStoreError(storeError),
                       )
                       .map((): readonly LifecycleEffect[] => [
                         {
@@ -3351,11 +3117,7 @@ export function completeStep(
                 store.instances
                   .update(input.workflowInstanceId, { status: "running" })
                   .mapErr(
-                    (storeError): LifecycleError =>
-                      lifecyclePersistenceError(storeError.message, {
-                        type: storeError.type,
-                        message: storeError.message,
-                      }),
+                    (storeError): LifecycleError => mapStoreError(storeError),
                   ),
               )
               .andThen(() => {
@@ -3386,13 +3148,7 @@ export function completeStep(
 
           return store.instances
             .update(input.workflowInstanceId, updateInput)
-            .mapErr(
-              (storeError): LifecycleError =>
-                lifecyclePersistenceError(storeError.message, {
-                  type: storeError.type,
-                  message: storeError.message,
-                }),
-            )
+            .mapErr((storeError): LifecycleError => mapStoreError(storeError))
             .andThen(() => {
               if (!artifacts || artifacts.length === 0) {
                 return okAsync(undefined);
@@ -3423,11 +3179,7 @@ export function completeStep(
                 return store.leases
                   .release(activeLease.id, activeLease.ownerId)
                   .mapErr(
-                    (storeError): LifecycleError =>
-                      lifecyclePersistenceError(storeError.message, {
-                        type: storeError.type,
-                        message: storeError.message,
-                      }),
+                    (storeError): LifecycleError => mapStoreError(storeError),
                   )
                   .map((): readonly LifecycleEffect[] => [
                     {
@@ -3493,13 +3245,7 @@ export function resumeExecution(
 
   return store.instances
     .findById(input.workflowInstanceId)
-    .mapErr(
-      (storeError): LifecycleError =>
-        lifecyclePersistenceError(storeError.message, {
-          type: storeError.type,
-          message: storeError.message,
-        }),
-    )
+    .mapErr((storeError): LifecycleError => mapStoreError(storeError))
     .andThen((existing) => {
       if (existing === null) {
         return errAsync(
@@ -3522,21 +3268,12 @@ export function resumeExecution(
               storeError,
             );
           }
-          return lifecyclePersistenceError(storeError.message, {
-            type: storeError.type,
-            message: storeError.message,
-          });
+          return mapStoreError(storeError);
         })
         .andThen((lease) =>
           store.instances
             .update(input.workflowInstanceId, { status: "running" })
-            .mapErr(
-              (storeError): LifecycleError =>
-                lifecyclePersistenceError(storeError.message, {
-                  type: storeError.type,
-                  message: storeError.message,
-                }),
-            )
+            .mapErr((storeError): LifecycleError => mapStoreError(storeError))
             .map(() => lease),
         );
     })
@@ -3698,53 +3435,20 @@ export function approveArtifact(
   // used by handleUserInterrupt, dispatchStep, and completeStep.
   return store.leases
     .findActive()
-    .mapErr(
-      (storeError): LifecycleError =>
-        lifecyclePersistenceError(storeError.message, {
-          type: storeError.type,
-          message: storeError.message,
-        }),
-    )
+    .mapErr((storeError): LifecycleError => mapStoreError(storeError))
     .andThen((activeLease) => {
-      if (activeLease === null) {
-        return errAsync(
-          lifecycleLeaseConflictError(
-            input.workflowInstanceId,
-            "none" as ExecutionLeaseId,
-            "No active lease for this workflow instance",
-          ),
-        );
-      }
-      if (activeLease.id !== input.leaseId) {
-        return errAsync(
-          lifecycleLeaseConflictError(
-            input.workflowInstanceId,
-            activeLease.id,
-            "Provided lease ID does not match the active lease",
-          ),
-        );
-      }
-      if (activeLease.workflowInstanceId !== input.workflowInstanceId) {
-        return errAsync(
-          lifecycleLeaseConflictError(
-            input.workflowInstanceId,
-            activeLease.id,
-            `Lease ${input.leaseId} belongs to workflow ${activeLease.workflowInstanceId}, not ${input.workflowInstanceId}`,
-          ),
-        );
-      }
-      return okAsync(undefined as undefined);
+      const leaseCheck = validateActiveLease(
+        activeLease,
+        input.workflowInstanceId,
+        input.leaseId,
+      );
+      if (leaseCheck.isErr()) return errAsync(leaseCheck.error);
+      return okAsync(undefined);
     })
     .andThen(() =>
       store.instances
         .findById(input.workflowInstanceId)
-        .mapErr(
-          (storeError): LifecycleError =>
-            lifecyclePersistenceError(storeError.message, {
-              type: storeError.type,
-              message: storeError.message,
-            }),
-        )
+        .mapErr((storeError): LifecycleError => mapStoreError(storeError))
         .andThen((existing) => {
           if (existing === null) {
             return errAsync(
@@ -3795,13 +3499,7 @@ export function approveArtifact(
               input.artifactId,
               input.approvalState,
             )
-            .mapErr(
-              (storeError): LifecycleError =>
-                lifecyclePersistenceError(storeError.message, {
-                  type: storeError.type,
-                  message: storeError.message,
-                }),
-            )
+            .mapErr((storeError): LifecycleError => mapStoreError(storeError))
             .map((instance): ApproveArtifactOutput => ({ instance }));
         }),
     );
@@ -3853,13 +3551,7 @@ export function inspectExecution(
 
   return store.instances
     .findById(input.workflowInstanceId)
-    .mapErr(
-      (storeError): LifecycleError =>
-        lifecyclePersistenceError(storeError.message, {
-          type: storeError.type,
-          message: storeError.message,
-        }),
-    )
+    .mapErr((storeError): LifecycleError => mapStoreError(storeError))
     .andThen((instance) => {
       if (instance === null) {
         return errAsync(
@@ -3873,13 +3565,7 @@ export function inspectExecution(
       // Check for an active lease — read-only, no side effects.
       return store.leases
         .findActive()
-        .mapErr(
-          (storeError): LifecycleError =>
-            lifecyclePersistenceError(storeError.message, {
-              type: storeError.type,
-              message: storeError.message,
-            }),
-        )
+        .mapErr((storeError): LifecycleError => mapStoreError(storeError))
         .map((activeLease): InspectExecutionOutput => {
           const hasActiveLease =
             activeLease !== null &&
@@ -4334,6 +4020,89 @@ function checkCompletedPlanImmutability(
  * @param store - Runtime Store instance.
  * @returns `ok(ReconcileExecutionOutput)` on success, or a typed `LifecycleError`.
  */
+
+/**
+ * Resolve the nearest upstream handler step and either dispatch it or pause.
+ *
+ * Extracted from `reconcileExecution` to eliminate the duplicated
+ * handler-resolution / dispatch-or-pause branch that previously appeared
+ * twice inside that function (once inside the `immutabilityCheck.andThen`
+ * callback and once in the fallthrough path).
+ *
+ * - When a handler step is found: updates `currentStepName` to the handler,
+ *   renders its prompt, and returns a `dispatch-agent` effect.
+ * - When no handler is found: updates instance to `paused` and returns a
+ *   `pause-execution` effect (fail-closed).
+ */
+function dispatchHandlerOrPause(
+  store: RuntimeStore,
+  workflowInstanceId: WorkflowInstanceId,
+  workflowConfig: WorkflowConfig,
+  triggeringStepName: string | undefined,
+  reconciliationReason: ReconciliationReason,
+  beforePlanExclusions: ReadonlySet<string>,
+  gateReRunStepName: string | undefined,
+): ResultAsync<ReconcileExecutionOutput, LifecycleError> {
+  const handlerStep = resolveReconciliationHandler(
+    workflowConfig,
+    triggeringStepName ?? "",
+    reconciliationReason,
+    beforePlanExclusions,
+  );
+
+  // Fail closed: no handler found — pause the instance.
+  if (handlerStep === undefined) {
+    return store.instances
+      .update(workflowInstanceId, { status: "paused" })
+      .mapErr((storeError): LifecycleError => mapStoreError(storeError))
+      .map(
+        (): ReconcileExecutionOutput => ({
+          handlerFound: false,
+          ...(gateReRunStepName !== undefined ? { gateReRunStepName } : {}),
+          effects: [
+            {
+              kind: "pause-execution",
+              workflowInstanceId,
+              reason: `Reconciliation (${reconciliationReason}): no upstream handler declared — failing closed`,
+            },
+          ],
+        }),
+      );
+  }
+
+  // Handler found — update currentStepName and dispatch the handler step.
+  return store.instances
+    .update(workflowInstanceId, {
+      currentStepName: handlerStep.name,
+      status: "running",
+    })
+    .mapErr((storeError): LifecycleError => mapStoreError(storeError))
+    .andThen((updatedInstance) => {
+      const artifactNames = updatedInstance.artifacts.map((a) => a.name);
+      const promptContext = buildStepPromptContext(
+        updatedInstance,
+        handlerStep,
+      );
+      const promptResult = renderStepPrompt(
+        handlerStep.prompt,
+        promptContext,
+        artifactNames,
+      );
+      if (promptResult.isErr()) return errAsync(promptResult.error);
+      const promptMetadata = promptResult.value;
+      const runAgent = buildConfiguredRunAgentEffect(
+        handlerStep,
+        promptMetadata,
+      );
+      return okAsync<ReconcileExecutionOutput, LifecycleError>({
+        handlerStepName: handlerStep.name,
+        handlerFound: true,
+        ...(gateReRunStepName !== undefined ? { gateReRunStepName } : {}),
+        effects: [{ kind: "dispatch-agent", runAgent }],
+      });
+    });
+}
+
 export function reconcileExecution(
   input: ReconcileExecutionInput,
   store: RuntimeStore,
@@ -4376,53 +4145,20 @@ export function reconcileExecution(
   // Verify the active lease matches the provided leaseId.
   return store.leases
     .findActive()
-    .mapErr(
-      (storeError): LifecycleError =>
-        lifecyclePersistenceError(storeError.message, {
-          type: storeError.type,
-          message: storeError.message,
-        }),
-    )
+    .mapErr((storeError): LifecycleError => mapStoreError(storeError))
     .andThen((activeLease) => {
-      if (activeLease === null) {
-        return errAsync(
-          lifecycleLeaseConflictError(
-            input.workflowInstanceId,
-            "none" as ExecutionLeaseId,
-            "No active lease for this workflow instance",
-          ),
-        );
-      }
-      if (activeLease.id !== input.leaseId) {
-        return errAsync(
-          lifecycleLeaseConflictError(
-            input.workflowInstanceId,
-            activeLease.id,
-            "Provided lease ID does not match the active lease",
-          ),
-        );
-      }
-      if (activeLease.workflowInstanceId !== input.workflowInstanceId) {
-        return errAsync(
-          lifecycleLeaseConflictError(
-            input.workflowInstanceId,
-            activeLease.id,
-            `Lease ${input.leaseId} belongs to workflow ${activeLease.workflowInstanceId}, not ${input.workflowInstanceId}`,
-          ),
-        );
-      }
-      return okAsync(activeLease);
+      const leaseCheck = validateActiveLease(
+        activeLease,
+        input.workflowInstanceId,
+        input.leaseId,
+      );
+      if (leaseCheck.isErr()) return errAsync(leaseCheck.error);
+      return okAsync(undefined);
     })
-    .andThen((activeLease) =>
+    .andThen(() =>
       store.instances
         .findById(input.workflowInstanceId)
-        .mapErr(
-          (storeError): LifecycleError =>
-            lifecyclePersistenceError(storeError.message, {
-              type: storeError.type,
-              message: storeError.message,
-            }),
-        )
+        .mapErr((storeError): LifecycleError => mapStoreError(storeError))
         .andThen((existing) => {
           if (existing === null) {
             return errAsync(
@@ -4452,13 +4188,7 @@ export function reconcileExecution(
           if (input.context === undefined) {
             return store.instances
               .update(input.workflowInstanceId, { status: "paused" })
-              .mapErr(
-                (storeError): LifecycleError =>
-                  lifecyclePersistenceError(storeError.message, {
-                    type: storeError.type,
-                    message: storeError.message,
-                  }),
-              )
+              .mapErr((storeError): LifecycleError => mapStoreError(storeError))
               .map(
                 (): ReconcileExecutionOutput => ({
                   handlerFound: false,
@@ -4502,178 +4232,39 @@ export function reconcileExecution(
               ? workflowConfig.steps.find((s) => s.name === triggeringStepName)
               : undefined;
 
+          // When a planStateProvider is supplied, run the immutability check
+          // before routing. Both paths (with and without the check) delegate to
+          // dispatchHandlerOrPause, eliminating the previously duplicated block.
           if (
             input.planStateProvider !== undefined &&
             triggeringStepConfig !== undefined
           ) {
-            const immutabilityCheck = checkCompletedPlanImmutability(
+            return checkCompletedPlanImmutability(
               triggeringStepConfig,
               existing,
               input.planStateProvider,
-            );
-            // We must await the async check before continuing.
-            // Use andThen to chain the rest of the logic.
-            return immutabilityCheck.andThen(() => {
-              // Resolve the nearest upstream handler step, skipping before-plan steps.
-              const handlerStep = resolveReconciliationHandler(
+            ).andThen(() =>
+              dispatchHandlerOrPause(
+                store,
+                input.workflowInstanceId,
                 workflowConfig,
-                triggeringStepName ?? "",
+                triggeringStepName,
                 input.reason,
                 beforePlanExclusions,
-              );
-
-              // Fail closed: no handler found — pause the instance.
-              if (handlerStep === undefined) {
-                return store.instances
-                  .update(input.workflowInstanceId, { status: "paused" })
-                  .mapErr(
-                    (storeError): LifecycleError =>
-                      lifecyclePersistenceError(storeError.message, {
-                        type: storeError.type,
-                        message: storeError.message,
-                      }),
-                  )
-                  .map(
-                    (): ReconcileExecutionOutput => ({
-                      handlerFound: false,
-                      ...(gateReRunStepName !== undefined
-                        ? { gateReRunStepName }
-                        : {}),
-                      effects: [
-                        {
-                          kind: "pause-execution",
-                          workflowInstanceId: input.workflowInstanceId,
-                          reason: `Reconciliation (${input.reason}): no upstream handler declared — failing closed`,
-                        },
-                      ],
-                    }),
-                  );
-              }
-
-              // Handler found — update currentStepName and dispatch the handler step.
-              return store.instances
-                .update(input.workflowInstanceId, {
-                  currentStepName: handlerStep.name,
-                  status: "running",
-                })
-                .mapErr(
-                  (storeError): LifecycleError =>
-                    lifecyclePersistenceError(storeError.message, {
-                      type: storeError.type,
-                      message: storeError.message,
-                    }),
-                )
-                .andThen((updatedInstance) => {
-                  const artifactNames = updatedInstance.artifacts.map(
-                    (a) => a.name,
-                  );
-                  const promptContext = buildStepPromptContext(
-                    updatedInstance,
-                    handlerStep,
-                  );
-                  const promptResult = renderStepPrompt(
-                    handlerStep.prompt,
-                    promptContext,
-                    artifactNames,
-                  );
-                  if (promptResult.isErr()) return errAsync(promptResult.error);
-                  const promptMetadata = promptResult.value;
-                  const runAgent = buildConfiguredRunAgentEffect(
-                    handlerStep,
-                    promptMetadata,
-                  );
-                  return okAsync<ReconcileExecutionOutput, LifecycleError>({
-                    handlerStepName: handlerStep.name,
-                    handlerFound: true,
-                    ...(gateReRunStepName !== undefined
-                      ? { gateReRunStepName }
-                      : {}),
-                    effects: [{ kind: "dispatch-agent", runAgent }],
-                  });
-                });
-            });
+                gateReRunStepName,
+              ),
+            );
           }
 
-          // Resolve the nearest upstream handler step, skipping before-plan steps.
-          const handlerStep = resolveReconciliationHandler(
+          return dispatchHandlerOrPause(
+            store,
+            input.workflowInstanceId,
             workflowConfig,
-            triggeringStepName ?? "",
+            triggeringStepName,
             input.reason,
             beforePlanExclusions,
+            gateReRunStepName,
           );
-
-          // Fail closed: no handler found — pause the instance.
-          if (handlerStep === undefined) {
-            return store.instances
-              .update(input.workflowInstanceId, { status: "paused" })
-              .mapErr(
-                (storeError): LifecycleError =>
-                  lifecyclePersistenceError(storeError.message, {
-                    type: storeError.type,
-                    message: storeError.message,
-                  }),
-              )
-              .map(
-                (): ReconcileExecutionOutput => ({
-                  handlerFound: false,
-                  ...(gateReRunStepName !== undefined
-                    ? { gateReRunStepName }
-                    : {}),
-                  effects: [
-                    {
-                      kind: "pause-execution",
-                      workflowInstanceId: input.workflowInstanceId,
-                      reason: `Reconciliation (${input.reason}): no upstream handler declared — failing closed`,
-                    },
-                  ],
-                }),
-              );
-          }
-
-          // Handler found — update currentStepName and dispatch the handler step.
-          return store.instances
-            .update(input.workflowInstanceId, {
-              currentStepName: handlerStep.name,
-              status: "running",
-            })
-            .mapErr(
-              (storeError): LifecycleError =>
-                lifecyclePersistenceError(storeError.message, {
-                  type: storeError.type,
-                  message: storeError.message,
-                }),
-            )
-            .andThen((updatedInstance) => {
-              // Render the handler step prompt.
-              const artifactNames = updatedInstance.artifacts.map(
-                (a) => a.name,
-              );
-              const promptContext = buildStepPromptContext(
-                updatedInstance,
-                handlerStep,
-              );
-              const promptResult = renderStepPrompt(
-                handlerStep.prompt,
-                promptContext,
-                artifactNames,
-              );
-              if (promptResult.isErr()) return errAsync(promptResult.error);
-              const promptMetadata = promptResult.value;
-
-              const runAgent = buildConfiguredRunAgentEffect(
-                handlerStep,
-                promptMetadata,
-              );
-
-              return okAsync<ReconcileExecutionOutput, LifecycleError>({
-                handlerStepName: handlerStep.name,
-                handlerFound: true,
-                ...(gateReRunStepName !== undefined
-                  ? { gateReRunStepName }
-                  : {}),
-                effects: [{ kind: "dispatch-agent", runAgent }],
-              });
-            });
         }),
     );
 }
