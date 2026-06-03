@@ -153,12 +153,29 @@ Manual link review of all files listed in the task spec found **no dead links**.
 - `docs/specs/25-spec-cli-init-and-migration-decomposition/25-spec-cli-init-and-migration-decomposition.md`
 - `docs/specs/26-spec-opencode-adapter-boundary-cleanup/26-spec-opencode-adapter-boundary-cleanup.md`
 - `docs/specs/27-spec-dsl-model-and-schema-cleanup/27-spec-dsl-model-and-schema-cleanup.md`
+- `docs/specs/28-spec-documentation-information-architecture-repair/28-spec-documentation-information-architecture-repair.md`
 
 ### Navigation path verification
 
 A contributor can reach all canonical references from `docs/README.md`:
-- **DSL** → [DSL Reference](../dsl-reference.md) in the Conceptual Guides table
-- **CLI** → [CLI](../cli.md) in the Conceptual Guides table
-- **Adapter boundary** → [Adapter Boundary](../adapter-boundary.md) in the Conceptual Guides table
-- **Workflow lifecycle** → [Workflow Schema](../workflow-schema.md) + [Spec 22](../specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md) via the Formal Specs section
-- **Spec index** → [docs/specs/README.md](../specs/README.md) via the Formal Specs section
+- **DSL** → [DSL Reference](../../dsl-reference.md) in the Conceptual Guides table
+- **CLI** → [CLI](../../cli.md) in the Conceptual Guides table
+- **Adapter boundary** → [Adapter Boundary](../../adapter-boundary.md) in the Conceptual Guides table
+- **Workflow lifecycle** → [Workflow Schema](../../workflow-schema.md) + [Spec 22](../22-spec-workflow-first-execution/22-spec-workflow-first-execution.md) via the Formal Specs section
+- **Spec index** → [docs/specs/README.md](../README.md) via the Formal Specs section
+
+### Remediation pass (Task 8 re-run)
+
+Two durable dead links were found and fixed after the initial Task 8 pass:
+
+**`AGENTS.md` — "Link liberally" example**: The example path `../packages/config/src/discovery.ts` was written as a Markdown link syntax example. From `AGENTS.md` at the repo root, `../` resolves outside the repository. Fixed by converting the examples to plain inline code paths (non-clickable), with correct repo-relative paths: `packages/config/src/discovery.ts` from the repo root and `../../packages/config/src/discovery.ts` from a doc under `docs/specs/<N>-spec-*/`.
+
+**Spec 28 navigation section**: All five navigation links used `../` which resolves to `docs/specs/` (one level up from the spec directory), not `docs/`. Fixed by using `../../` for top-level doc targets and `../` for sibling spec directories:
+- `../dsl-reference.md` → `../../dsl-reference.md`
+- `../cli.md` → `../../cli.md`
+- `../adapter-boundary.md` → `../../adapter-boundary.md`
+- `../workflow-schema.md` → `../../workflow-schema.md`
+- `../specs/22-spec-workflow-first-execution/...` → `../22-spec-workflow-first-execution/...`
+- `../specs/README.md` → `../README.md`
+
+Python link-checker result after remediation: **213 OK, 0 dead** across all 18 durable docs.

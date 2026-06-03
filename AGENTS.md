@@ -659,7 +659,7 @@ docs/
 
 ### How to write docs
 
-- **Link liberally** — every doc should cross-link to related docs, source files, and specs. Use relative Markdown links from the current file (`[config loader](../packages/config/src/discovery.ts)` from a doc under `docs/`, `[DSL reference](docs/dsl-reference.md)` from this guide).
+- **Link liberally** — every doc should cross-link to related docs, source files, and specs. Use relative Markdown links from the current file (`packages/config/src/discovery.ts` from the repo root, `../../packages/config/src/discovery.ts` from a doc under `docs/specs/<N>-spec-*/`, `docs/dsl-reference.md` from this guide).
 - **Write for agents** — be explicit about _why_ a decision was made, not just _what_ was decided. Agents lack the conversation history; the doc is their only context.
 - **Keep docs close to the change** — if you change `packages/core/src/lexer.ts`, update or create a doc that describes the lexer's responsibilities and any invariants it enforces.
 - **Use ADR format for decisions** — when a choice has meaningful trade-offs, document it as a lightweight ADR: _Context → Decision → Consequences_.
