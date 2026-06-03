@@ -26,9 +26,9 @@ Specs are numbered sequentially. Numbers 01–06 were retired or superseded; the
 | 19 | [Plan State Provider](19-spec-plan-state-provider/19-spec-plan-state-provider.md) | Abstract `PlanStateProvider` interface; removes direct `Bun.file()` from engine |
 | 20 | [OpenCode Adapter Materialization](20-spec-opencode-adapter-materialization/20-spec-opencode-adapter-materialization.md) | OpenCode-specific adapter materialization shape |
 | 21a | [CLI Legacy Config Migration](21-spec-cli-legacy-config-migration/21-spec-cli-legacy-config-migration.md) | `weave init migrate` JSONC-to-DSL conversion |
-| 21b | [Workflow-First Execution (draft)](21-spec-workflow-first-execution/21-spec-workflow-first-execution.md) | Earlier draft; superseded by Spec 22 |
+| 21b | Workflow-First Execution (draft) | Earlier draft; superseded by Spec 22. No spec file — directory is empty. |
 | 22 | [Workflow-First Execution](22-spec-workflow-first-execution/22-spec-workflow-first-execution.md) | `startExecution` as sole authorized entry point; `before-plan` extension surface; artifact integrity |
-| 23 | [Thermonuclear Quality Remediation](23-spec-thermonuclear-quality-remediation/23-spec-thermonuclear-quality-remediation.md) | Code quality remediation plan |
+| 23 | Thermonuclear Quality Remediation | Planning artifact only; no formal spec file. Remediation work was decomposed into Specs 24–28. |
 | 24 | [Execution Lifecycle Decomposition](24-spec-execution-lifecycle-decomposition/24-spec-execution-lifecycle-decomposition.md) | Concern-based split of `execution-lifecycle.ts` into four focused modules |
 | 25 | [CLI Init and Migration Decomposition](25-spec-cli-init-and-migration-decomposition/25-spec-cli-init-and-migration-decomposition.md) | Split `init.ts`; move conversion logic to `packages/cli/src/migrate/` |
 | 26 | [OpenCode Adapter Boundary Cleanup](26-spec-opencode-adapter-boundary-cleanup/26-spec-opencode-adapter-boundary-cleanup.md) | Typed spawn seam; canonical redaction helper import |
