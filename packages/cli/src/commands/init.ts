@@ -1234,19 +1234,6 @@ export function writeMigratedDsl(
     });
   }
 
-  // Validate generated DSL through the normal parse/validation pipeline
-  // before mutating any files. Abort if validation fails — leaves both
-  // destination and backup untouched.
-  const validationResult = parseConfig(migratedContent);
-  if (validationResult.isErr()) {
-    const errorSummary = validationResult.error
-      .map((e) => ("message" in e ? e.message : JSON.stringify(e)))
-      .join("; ");
-    return errAsync({
-      message: `Generated DSL failed validation: ${errorSummary}`,
-    });
-  }
-
   const backup = destExists
     ? fs.copyFile(plan.destinationPath, `${plan.destinationPath}.bak`)
     : ResultAsync.fromSafePromise(Promise.resolve());
