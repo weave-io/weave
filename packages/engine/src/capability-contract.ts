@@ -61,6 +61,31 @@ export const CapabilityReadinessSchema = z.enum([
  *   idle-continuation, compaction-recovery, context-window-monitor,
  *   analytics-dashboard, eval-integration, static-artifact-generation,
  *   multiple-active-workflows
+ *
+ * ## Execution-entry capability model (Spec 22 Unit 4)
+ *
+ * `command-entrypoints` is the **canonical execution-entry capability**. It
+ * models how an adapter exposes the explicit user-authorized trigger that
+ * crosses the durable execution boundary (see ADR 0004). Adapters declare:
+ *
+ * - `native`      — the harness exposes literal commands (e.g. `/run-workflow`)
+ *                   that the user invokes directly.
+ * - `emulated`    — the harness lacks native commands but provides an
+ *                   equivalent explicit delivery path (skill, script, UI
+ *                   button, or helper) that the user must invoke deliberately.
+ * - `degraded`    — an explicit start path exists but is incomplete or
+ *                   inconsistent (e.g. only some workflows are reachable).
+ * - `unsupported` — no reliable explicit start path exists in this harness.
+ *
+ * `workflow-step-dispatch` is **supporting execution context** — it models
+ * the engine's ability to resolve and dispatch individual workflow steps once
+ * execution has already started. It is NOT a second execution-entry
+ * capability. Adapters must not treat `workflow-step-dispatch` readiness as
+ * a substitute for `command-entrypoints` readiness when evaluating whether
+ * the harness can initiate durable execution.
+ *
+ * See: docs/specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md (Unit 4)
+ * See: docs/adr/0004-workflow-first-execution-contract.md
  */
 export type CapabilityId =
   // Required

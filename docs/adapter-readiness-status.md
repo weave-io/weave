@@ -4,7 +4,7 @@ This document summarises the current adapter-readiness state of the Weave engine
 API — what user capabilities are available, which specs deliver them, and what
 every adapter must implement to be considered ready.
 
-**Related:** [Adapter Boundary](adapter-boundary.md) · [Adapter Bootstrap Guide](adapter-bootstrap.md) · [Harness Agent Surface Patterns](harness-agent-surface-patterns.md) · [ADR 0003 — OpenCode Adapter Materialization Shape](adr/0003-opencode-adapter-materialization-shape.md) · [Spec 15 — Adapter-Facing Materialization API](specs/15-spec-adapter-facing-materialization-api/15-spec-adapter-facing-materialization-api.md) · [Spec 17 — Workflow Extension DSL](specs/17-spec-workflow-extension/17-spec-workflow-extension.md) · [Spec 18 — Delegation Exclusion](specs/18-spec-delegation-exclusion/18-spec-delegation-exclusion.md) · [Spec 19 — Plan State Provider](specs/19-spec-plan-state-provider/19-spec-plan-state-provider.md) · [Spec 20 — OpenCode Adapter Materialization](specs/20-spec-opencode-adapter-materialization/20-spec-opencode-adapter-materialization.md)
+**Related:** [Adapter Boundary](adapter-boundary.md) · [Adapter Bootstrap Guide](adapter-bootstrap.md) · [Harness Agent Surface Patterns](harness-agent-surface-patterns.md) · [ADR 0003 — OpenCode Adapter Materialization Shape](adr/0003-opencode-adapter-materialization-shape.md) · [ADR 0004 — Workflow-First Execution Contract](adr/0004-workflow-first-execution-contract.md) · [Spec 15 — Adapter-Facing Materialization API](specs/15-spec-adapter-facing-materialization-api/15-spec-adapter-facing-materialization-api.md) · [Spec 17 — Workflow Extension DSL](specs/17-spec-workflow-extension/17-spec-workflow-extension.md) · [Spec 18 — Delegation Exclusion](specs/18-spec-delegation-exclusion/18-spec-delegation-exclusion.md) · [Spec 19 — Plan State Provider](specs/19-spec-plan-state-provider/19-spec-plan-state-provider.md) · [Spec 20 — OpenCode Adapter Materialization](specs/20-spec-opencode-adapter-materialization/20-spec-opencode-adapter-materialization.md) · [Spec 22 — Workflow-First Execution](specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md)
 
 ---
 
@@ -178,6 +178,101 @@ The OpenCode adapter (`@weave/adapter-opencode`) pins `@opencode-ai/sdk` at
 | [Spec 17](specs/17-spec-workflow-extension/17-spec-workflow-extension.md)                                 | Workflow Extension DSL             | `extends`, `insert_before`, `insert_after` resolved by `@weave/config` before the engine sees `WorkflowConfig`; no adapter changes needed       |
 | [Spec 18](specs/18-spec-delegation-exclusion/18-spec-delegation-exclusion.md)                             | Delegation Exclusion               | `routing.delegation_exclude` filtered inside `buildDelegationTargets()`; adapters receive pre-filtered `delegationTargets` on `AgentDescriptor` |
 | [Spec 19](specs/19-spec-plan-state-provider/19-spec-plan-state-provider.md)                               | Plan State Provider                | Adapters supply a `PlanStateProvider` to `completeStep`; use `BunFilesystemPlanStateProvider` from `@weave/config` for production               |
+| [Spec 22](specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md)                     | Workflow-First Execution           | Commands, hooks, skills, scripts, and UI are adapter-owned projections of the engine-owned execution contract; adapters declare delivery via `command-entrypoints` readiness |
+
+---
+
+## Execution-Command Readiness (Spec 22 Unit 4)
+
+**Commands, hooks, skills, scripts, and UI affordances are all adapter-owned projections of the same engine-owned execution contract.** The engine defines what execution means — `startExecution` is the sole authorized entry point, and the engine owns all state transitions, lease management, and effect emission. Adapters own the concrete delivery mechanism that exposes the explicit user-authorized trigger in their harness. No delivery form is privileged over another; what matters is that the trigger is explicit and user-authorized.
+
+Adapters declare `command-entrypoints` readiness to model how they expose the
+explicit user-authorized trigger that crosses the durable execution boundary.
+This is the **canonical execution-entry capability** — it is the only capability
+that gates whether a harness can initiate durable workflow execution.
+
+### `command-entrypoints` readiness values
+
+| Readiness | Meaning | Example |
+| --- | --- | --- |
+| `native` | The harness exposes literal commands (e.g. `/run-workflow`) that the user invokes directly | OpenCode slash commands |
+| `emulated` | No native commands, but an equivalent explicit delivery path exists (skill, script, UI button, or helper) that the user must invoke deliberately | A skill that calls `startExecution` when triggered |
+| `degraded` | An explicit start path exists but is incomplete or inconsistent (e.g. only some workflows are reachable) | Partial command surface |
+| `unsupported` | No reliable explicit start path exists in this harness | Harness has no user-facing execution trigger |
+
+`emulated` satisfies the Core Readiness Profile — a harness without literal
+commands can still be fully ready by providing an equivalent explicit delivery
+path (skill, script, or UI). `degraded` and `unsupported` fail the profile.
+
+### `workflow-step-dispatch` is supporting execution context
+
+`workflow-step-dispatch` models the engine's ability to resolve and dispatch
+individual workflow steps **once execution has already started**. It is NOT a
+second execution-entry capability and must not be treated as a substitute for
+`command-entrypoints` readiness.
+
+A harness that can dispatch steps (`workflow-step-dispatch: native`) but has no
+explicit start path (`command-entrypoints: unsupported`) still fails the Core
+Readiness Profile. The two capabilities model different concerns:
+
+- `command-entrypoints` — can the user explicitly start durable execution?
+- `workflow-step-dispatch` — can the engine dispatch steps within a running execution?
+
+### Adapter declaration example
+
+```ts
+// Command harness (native slash commands)
+{
+  id: "command-entrypoints",
+  description: "Execution command entrypoints",
+  readiness: "native",
+  notes: "Exposes /run-workflow and /resume-workflow commands",
+}
+
+// Non-command harness (skill/script delivery)
+{
+  id: "command-entrypoints",
+  description: "Execution command entrypoints",
+  readiness: "emulated",
+  notes: "No native command surface; execution is started via an explicit run-workflow skill invocation that the user must trigger deliberately",
+}
+```
+
+See [Spec 22 — Workflow-First Execution](specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md) (Unit 4)
+and [ADR 0004 — Workflow-First Execution Contract](adr/0004-workflow-first-execution-contract.md) for the full rationale.
+
+---
+
+## OpenCode Adapter Delivery Evidence (Task 6.3)
+
+`@weave/adapter-opencode` provides the canonical example of an adapter-owned projection of the engine-owned execution contract. The delivery path is `packages/adapters/opencode/src/run-workflow.ts` — an explicit user-driven helper that calls `startExecution` only when invoked deliberately by a user-authorized trigger.
+
+### What the evidence proves
+
+| Proof | Evidence |
+| --- | --- |
+| Execution enters only through explicit `runWorkflow` calls | Store is empty before any call; `WorkflowInstance` is created only after an explicit `runWorkflow` invocation |
+| Idle hooks and session events do not start durable execution | Without an explicit `runWorkflow` call, the store remains empty |
+| Each explicit call creates a distinct `WorkflowInstance` | `result1.workflowInstanceId !== result2.workflowInstanceId` |
+| `PlanStateProvider` is supplied at plan-oriented completion boundaries | Absent provider → `policy_decision` error (fail closed); present provider → completion succeeds or fails based on plan state |
+| Implicit paths are structurally excluded | `runWorkflow` is never wired to idle hooks, session events, or continuation hooks |
+
+### Test run results
+
+```
+bun test packages/adapters/opencode/src/__tests__/run-workflow.test.ts
+
+21 pass, 0 fail, 75 expect() calls
+Ran 21 tests across 1 file. [78.00ms]
+```
+
+| Describe block | Tests | Coverage |
+| --- | --- | --- |
+| `runWorkflow` (basic execution loop) | 8 | 2-step, 3-step, default store, instance ID, agent_signal isolation |
+| `runWorkflow — explicit user-driven delivery path` | 4 | Store empty before call; instance created after; distinct IDs; validation before store access |
+| `runWorkflow — PlanStateProvider at completion boundaries` | 9 | Absent provider fail-closed; present provider success/failure; provider isolation; boundary proof |
+
+See [22-task-06-3-proofs.md](specs/22-spec-workflow-first-execution/22-proofs/22-task-06-3-proofs.md) for the full proof artifact.
 
 ---
 

@@ -127,7 +127,7 @@
 - [x] 5.4 Enforce the trust boundary that prompt appends are config-authored text rendered against bounded template context and never ingest untrusted artifact contents or incidental chat text as instructions.
 - [x] 5.5 Update prompt-composition docs and test suites with concrete fixtures covering append ordering, precedence, conflict surfacing, and trusted rendering behavior.
 
-### [ ] 6.0 Align adapter readiness and delivery with canonical execution commands
+### [x] 6.0 Align adapter readiness and delivery with canonical execution commands
 
 #### 6.0 Proof Artifact(s)
 
@@ -139,7 +139,7 @@
 
 #### 6.0 Tasks
 
-- [ ] 6.1 Document that canonical execution-command support is modeled through Spec 07 `command-entrypoints`, with `workflow-step-dispatch` treated as supporting execution context rather than a separate start-path capability.
-- [ ] 6.2 Update engine readiness/profile logic and tests so command and non-command harnesses can declare `command-entrypoints` support for execution-contract delivery as `native`, `emulated`, `degraded`, or `unsupported` without inventing a parallel model.
-- [ ] 6.3 Update OpenCode adapter delivery tests and documentation to prove workflow execution enters only through explicit user-driven helpers/commands and still respects plan-state completion boundaries.
-- [ ] 6.4 Update adapter-boundary and adapter-readiness docs so command, hook, skill, script, and UI delivery remain adapter-owned projections of the same engine-owned execution contract.
+- [x] 6.1 Document that canonical execution-command support is modeled through Spec 07 `command-entrypoints`, with `workflow-step-dispatch` treated as supporting execution context rather than a separate start-path capability.
+- [x] 6.2 Update engine readiness/profile logic and tests so command and non-command harnesses can declare `command-entrypoints` support for execution-contract delivery as `native`, `emulated`, `degraded`, or `unsupported` without inventing a parallel model.
+- [x] 6.3 Update OpenCode adapter delivery tests and documentation to prove workflow execution enters only through explicit user-driven helpers/commands and still respects plan-state completion boundaries.
+- [x] 6.4 Update adapter-boundary and adapter-readiness docs so command, hook, skill, script, and UI delivery remain adapter-owned projections of the same engine-owned execution contract.

@@ -45,6 +45,8 @@ When adding a new type that spans both layers (e.g. a concept declared in DSL co
 | Skill matching/filtering                           | Engine (`@weave/engine`) | Pure resolution against `AgentConfig.skills` and `disabled.skills`      |
 | `.weave/runtime/**` Runtime Store                  | Engine (`@weave/engine`) | Runtime records are Weave product state, not harness resources          |
 | Plan file state (`.weave/plans/**`)                | Adapter                  | Concrete I/O mechanism is harness/environment-specific; engine owns the `PlanStateProvider` interface only |
+| Artifact integrity metadata (`ArtifactIntegrityMetadata`) | Engine (`@weave/engine`) | Stored in `ArtifactRef` inside the Runtime Store; engine owns the type, comparison logic, and fail-closed policy |
+| Artifact digest computation (reading file, hashing) | Adapter                 | Adapters read artifact files and compute SHA-256 digests before calling `dispatchStep`; the engine never reads artifact file contents |
 | Harness plugin/config generation                   | Adapter                  | Output format is harness-specific                                       |
 | Concrete tool names and permissions                | Adapter                  | Tool identifiers differ by harness                                      |
 | Runtime lifecycle event mapping                    | Adapter                  | Event names and payloads differ by harness                              |
@@ -108,6 +110,62 @@ The engine MUST NOT expand category globs, scan project files to match patterns,
 The engine owns durable Weave runtime state under `.weave/runtime/**`, including the default `.weave/runtime/weave.db` Runtime Store described in [ADR 0002](adr/0002-runtime-persistence-store.md).
 
 This is a narrow boundary exception: the engine may perform Bun filesystem/database I/O only for Weave-owned runtime records. It must not inspect harness-owned storage, harness session internals, harness model registries, or concrete harness plugin state. Adapters may emit sanitized observations through an engine-provided Runtime Journal writer, but adapters do not receive direct database ownership.
+
+### Artifact Integrity Metadata
+
+> **Spec:** [Spec 22 — Workflow-First Execution](specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md) (Unit 3)
+
+**`ArtifactIntegrityMetadata`** is the engine-owned type that stores a salted SHA-256 digest for tamper detection on a persisted artifact revision. It lives inside `ArtifactRef` in the Runtime Store — never in adapter-owned storage, harness session state, or raw artifact file contents.
+
+**What it contains:**
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `algorithm` | `"sha256"` | Hash algorithm; only `"sha256"` is accepted |
+| `digest` | `string` | Lowercase hex-encoded SHA-256 digest (64 characters) |
+
+**What it explicitly excludes:**
+
+- Raw artifact file contents
+- Raw prompts or completions used to produce the artifact
+- Private filesystem paths outside the project root
+- Credentials, tokens, cookies, or authorization headers
+
+**Boundary rules:**
+
+- The engine owns `ArtifactIntegrityMetadata` type definition, digest format validation (64 lowercase hex chars), and the fail-closed comparison in `dispatchStep`.
+- Adapters own artifact file I/O: reading the artifact file and computing the SHA-256 digest before calling `dispatchStep`. The engine never reads artifact file contents.
+- Adapters pass the computed digest via `DispatchStepInput.artifactDigests` — a `Record<string, string>` map of artifact name → current digest.
+- The engine compares the supplied digest against the stored `ArtifactRef.integrity.digest`. A mismatch returns a `policy_decision` error; the engine fails closed.
+- Integrity verification is **opt-in**: if `artifactDigests` is omitted or does not include a key for a given artifact, no check is performed for that artifact. Artifacts without a stored `integrity` field are never checked even if a digest is supplied.
+- Digest computation uses SHA-256 only. MD5, SHA-1, and non-cryptographic hashes are forbidden by construction.
+
+**Correct data flow:**
+
+```ts
+// ✅ Correct: adapter reads file and computes digest; engine compares against stored metadata
+const fileContent = await Bun.file(artifactPath).text();
+const digest = await computeSha256Hex(fileContent); // adapter-owned
+const result = await dispatchStep(
+  {
+    workflowInstanceId,
+    leaseId,
+    stepName,
+    context,
+    artifactDigests: { plan_path: digest }, // adapter supplies; engine compares
+  },
+  store,
+);
+
+// ❌ Wrong: engine reads artifact file contents directly
+const content = await Bun.file(artifact.path).text(); // boundary violation
+```
+
+**Relationship to `ArtifactRef`:**
+
+`ArtifactRef` is the persisted artifact record in the Runtime Store. Its optional `integrity` field holds `ArtifactIntegrityMetadata`. A new artifact revision always resets `approvalState` to `pending` and may carry updated integrity metadata. The engine stores integrity metadata only — never the artifact content itself.
+
+See [`packages/engine/src/runtime/types.ts`](../packages/engine/src/runtime/types.ts) for the `ArtifactIntegrityMetadata` and `ArtifactRef` type definitions. See [`packages/engine/src/execution-lifecycle.ts`](../packages/engine/src/execution-lifecycle.ts) for the `DispatchStepInput.artifactDigests` field and the fail-closed comparison logic.
 
 ### Lifecycle Policies
 
@@ -325,6 +383,17 @@ The lifecycle surface distinguishes two categories of operations:
 
 **Execution boundary invariant** (ADR 0004): `startExecution` is the sole authorized entry point for durable execution. Ordinary Loom conversation, session idle events, continuation hooks, and lifecycle observations are explicitly forbidden from implicitly starting durable execution. Adapters must call `startExecution` only in response to an explicit, user-authorized trigger.
 
+**Adapter delivery of the execution contract** (Spec 22 Unit 4): Commands, hooks, skills, scripts, and UI affordances are all **adapter-owned projections of the same engine-owned execution contract**. The engine defines what execution means — `startExecution` is the sole authorized entry point, and the engine owns all state transitions, lease management, and effect emission. Adapters own the concrete delivery mechanism that exposes the explicit user-authorized trigger in their harness. The engine does not dictate which delivery form an adapter uses; it only requires that `startExecution` is called after an explicit user action. Adapters declare their delivery capability through the `command-entrypoints` readiness value in their `AdapterCapabilityContract`:
+
+- `native` — literal harness commands (e.g. `/run-workflow`)
+- `emulated` — equivalent explicit delivery via skill, script, or UI (satisfies the Core Readiness Profile)
+- `degraded` — incomplete or inconsistent explicit delivery
+- `unsupported` — no reliable explicit start path
+
+`workflow-step-dispatch` is **supporting execution context** — it models step dispatch within a running execution, not execution entry. It is not a substitute for `command-entrypoints` readiness. See [Adapter Readiness Status](adapter-readiness-status.md#execution-command-readiness-spec-22-unit-4) for the full readiness vocabulary and declaration examples.
+
+**OpenCode adapter evidence** (task 6.3): `packages/adapters/opencode/src/run-workflow.ts` is the OpenCode adapter's explicit user-driven helper — the adapter-owned projection of the engine's `startExecution` lifecycle method. Tests in `packages/adapters/opencode/src/__tests__/run-workflow.test.ts` prove that execution enters only through explicit `runWorkflow` calls, that idle hooks and session events do not start durable execution, and that `PlanStateProvider` is supplied at plan-oriented completion boundaries. See [Adapter Readiness Status](adapter-readiness-status.md#opencode-adapter-delivery-evidence-task-63) for the full evidence summary.
+
 ### `beforeTool` — Adapter/Engine Boundary
 
 `beforeTool` is the lifecycle point called immediately before a tool executes. The boundary is strict:
@@ -429,7 +498,7 @@ See [`packages/engine/src/execution-lifecycle.ts`](../packages/engine/src/execut
 
 The workflow engine is the engine-owned subsystem that drives multi-step workflow execution. It is implemented inside the Execution Lifecycle Surface (`execution-lifecycle.ts`) and operates exclusively through the 8 lifecycle methods described above.
 
-**Execution boundary**: `startExecution` is the sole authorized entry point for durable execution. Ordinary Loom conversation, session idle events, continuation hooks, and lifecycle observations (`observeSession`) are explicitly forbidden from implicitly starting durable execution. Adapters expose the execution contract through harness-appropriate delivery mechanisms (commands, skills, hooks, scripts, or UI) and call `startExecution` only after an explicit user-authorized trigger. See [ADR 0004](adr/0004-workflow-first-execution-contract.md) for the full rationale and ownership matrix.
+**Execution boundary**: `startExecution` is the sole authorized entry point for durable execution. Ordinary Loom conversation, session idle events, continuation hooks, and lifecycle observations (`observeSession`) are explicitly forbidden from implicitly starting durable execution. Commands, hooks, skills, scripts, and UI affordances are all adapter-owned projections of the same engine-owned execution contract — adapters choose the delivery form; the engine owns the semantics. Adapters call `startExecution` only after an explicit user-authorized trigger. See [ADR 0004](adr/0004-workflow-first-execution-contract.md) for the full rationale and ownership matrix.
 
 ### Ownership Matrix — Workflow Engine
 
