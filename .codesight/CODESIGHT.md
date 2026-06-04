@@ -4,8 +4,8 @@
 > **Monorepo:** @weave/core, @weave/engine, @weave/config, @weave/cli, @weave/adapter-opencode
 
 > 0 routes | 0 models | 0 components | 80 lib files | 4 env vars | 5 middleware | 0% test coverage
-> **Token savings:** this file is ~6,700 tokens. Without it, AI exploration would cost ~31,700 tokens. **Saves ~25,000 tokens per conversation.**
-> **Last scanned:** 2026-06-04 16:52 — re-run after significant changes
+> **Token savings:** this file is ~6,800 tokens. Without it, AI exploration would cost ~31,700 tokens. **Saves ~25,000 tokens per conversation.**
+> **Last scanned:** 2026-06-04 17:05 — re-run after significant changes
 
 ---
 
@@ -64,6 +64,7 @@
   - interface InitContext
 - `packages/cli/src/commands/migrate.ts`
   - function renderMigrateSuccess: (theme, plan, result) => string
+  - function resolveSelectedHarnesses: (flags, harnesses) => SupportedHarnessId[]
   - function runMigrateMode: (ctx, installHarnesses, harnesses) => void
   - interface MigrateContext
 - `packages/cli/src/commands/runtime.ts` — function runRuntime: (ctx) => Promise<Result<number, CliError>>, interface RuntimeCommandContext

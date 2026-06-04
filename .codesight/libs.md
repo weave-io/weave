@@ -53,6 +53,7 @@
   - interface InitContext
 - `packages/cli/src/commands/migrate.ts`
   - function renderMigrateSuccess: (theme, plan, result) => string
+  - function resolveSelectedHarnesses: (flags, harnesses) => SupportedHarnessId[]
   - function runMigrateMode: (ctx, installHarnesses, harnesses) => void
   - interface MigrateContext
 - `packages/cli/src/commands/runtime.ts` — function runRuntime: (ctx) => Promise<Result<number, CliError>>, interface RuntimeCommandContext

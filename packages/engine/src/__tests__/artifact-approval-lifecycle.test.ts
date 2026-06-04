@@ -875,8 +875,10 @@ describe("consumed-revision recording — dispatchStep records stepAttempts", ()
       await store.instances.getById(instanceId)
     )._unsafeUnwrap();
     expect(instance.stepAttempts).toHaveLength(2);
-    expect(instance.stepAttempts[0].attemptNumber).toBe(1);
-    expect(instance.stepAttempts[1].attemptNumber).toBe(2);
+    const attempt1 = instance.stepAttempts.find((a) => a.attemptNumber === 1);
+    const attempt2 = instance.stepAttempts.find((a) => a.attemptNumber === 2);
+    expect(attempt1?.attemptNumber).toBe(1);
+    expect(attempt2?.attemptNumber).toBe(2);
   });
 });
 
@@ -934,12 +936,14 @@ describe("retry reuse — default pinning to prior attempt revisions", () => {
     )._unsafeUnwrap();
     expect(instance.stepAttempts).toHaveLength(2);
 
-    const attempt1 = instance.stepAttempts[0];
-    const attempt2 = instance.stepAttempts[1];
-    expect(attempt1.consumedArtifacts[0].revision).toBe(1);
-    expect(attempt2.consumedArtifacts[0].revision).toBe(1); // pinned to same revision
-    expect(attempt2.consumedArtifacts[0].artifactId).toBe(
-      attempt1.consumedArtifacts[0].artifactId,
+    const attempt1 = instance.stepAttempts.find((a) => a.attemptNumber === 1);
+    const attempt2 = instance.stepAttempts.find((a) => a.attemptNumber === 2);
+    expect(attempt1).toBeDefined();
+    expect(attempt2).toBeDefined();
+    expect(attempt1!.consumedArtifacts[0].revision).toBe(1);
+    expect(attempt2!.consumedArtifacts[0].revision).toBe(1); // pinned to same revision
+    expect(attempt2!.consumedArtifacts[0].artifactId).toBe(
+      attempt1!.consumedArtifacts[0].artifactId,
     );
   });
 
@@ -1009,8 +1013,9 @@ describe("retry reuse — default pinning to prior attempt revisions", () => {
     const instance = (
       await store.instances.getById(instanceId)
     )._unsafeUnwrap();
-    const attempt2 = instance.stepAttempts[1];
-    expect(attempt2.consumedArtifacts[0].revision).toBe(2); // explicitly pinned to v2
+    const attempt2 = instance.stepAttempts.find((a) => a.attemptNumber === 2);
+    expect(attempt2).toBeDefined();
+    expect(attempt2!.consumedArtifacts[0].revision).toBe(2); // explicitly pinned to v2
   });
 
   it("first dispatch (no prior attempt) uses current latest revisions", async () => {
@@ -1152,9 +1157,12 @@ describe("recordStepAttempt — store-level contract", () => {
 
     const instance = result._unsafeUnwrap();
     expect(instance.stepAttempts).toHaveLength(3);
-    expect(instance.stepAttempts[0].attemptNumber).toBe(1);
-    expect(instance.stepAttempts[1].attemptNumber).toBe(2);
-    expect(instance.stepAttempts[2].attemptNumber).toBe(3);
+    const a1 = instance.stepAttempts.find((a) => a.attemptNumber === 1);
+    const a2 = instance.stepAttempts.find((a) => a.attemptNumber === 2);
+    const a3 = instance.stepAttempts.find((a) => a.attemptNumber === 3);
+    expect(a1?.attemptNumber).toBe(1);
+    expect(a2?.attemptNumber).toBe(2);
+    expect(a3?.attemptNumber).toBe(3);
   });
 
   it("returns not_found for missing WorkflowInstance", async () => {
@@ -1185,15 +1193,18 @@ describe("recordStepAttempt — store-level contract", () => {
     const instance = (
       await store.instances.getById(instanceId)
     )._unsafeUnwrap();
-    const planAttempts = instance.stepAttempts.filter(
-      (a) => a.stepName === "plan",
+    const planAttempt1 = instance.stepAttempts.find(
+      (a) => a.stepName === "plan" && a.attemptNumber === 1,
     );
-    const reviewAttempts = instance.stepAttempts.filter(
-      (a) => a.stepName === "review",
+    const planAttempt2 = instance.stepAttempts.find(
+      (a) => a.stepName === "plan" && a.attemptNumber === 2,
+    );
+    const reviewAttempt1 = instance.stepAttempts.find(
+      (a) => a.stepName === "review" && a.attemptNumber === 1,
     );
 
-    expect(planAttempts[0].attemptNumber).toBe(1);
-    expect(planAttempts[1].attemptNumber).toBe(2);
-    expect(reviewAttempts[0].attemptNumber).toBe(1);
+    expect(planAttempt1?.attemptNumber).toBe(1);
+    expect(planAttempt2?.attemptNumber).toBe(2);
+    expect(reviewAttempt1?.attemptNumber).toBe(1);
   });
 });

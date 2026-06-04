@@ -165,7 +165,7 @@ describe("composeAgentDescriptor", () => {
       const config = cfg();
       const promptFilePath = join(
         tmpdir(),
-        "weave-compose-agent-descriptor-missing-prompt.md",
+        `weave-compose-agent-descriptor-missing-prompt-${randomUUID()}.md`,
       );
       const agentConfig: AgentConfig = {
         prompt_file: promptFilePath,
@@ -283,7 +283,7 @@ describe("composeAgentDescriptor", () => {
     it("Unreadable_prompt_append_file_returns_PromptFileReadError", async () => {
       const missingAppendFilePath = join(
         tmpdir(),
-        "weave-compose-missing-append.md",
+        `weave-compose-missing-append-${randomUUID()}.md`,
       );
       const config = cfg();
       const agentConfig: AgentConfig = {

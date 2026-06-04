@@ -78,11 +78,11 @@ No replacement file shall exceed 1,000 lines. The public API surface exported fr
 
 ## Decision 3 — Spec 25: Migration conversion module location
 
-**Open question**: Should migration conversion remain under `commands/` ownership or move into a dedicated `migrate/` support area?
+**Open question**: Should migration conversion remain under `commands/` ownership or move into a dedicated `migration/` support area?
 
 **Decision**: **Move into a dedicated `migration/` support area** under `packages/cli/src/migration/`.
 
-**Rationale**: The conversion logic (JSONC-to-DSL translation, field mapping, warning building) is not command orchestration — it is a pure transformation that should be independently testable without a terminal or file system. Placing it under `commands/` conflates two concerns. A dedicated `migration/` directory makes the ownership boundary obvious and allows the conversion logic to be tested in isolation.
+**Rationale**: The conversion logic (JSONC-to-DSL translation, field mapping, warning building) is not command orchestration — it is a pure transformation that should be independently testable without a terminal or file system. Placing it under `commands/` conflates two concerns. A dedicated `migration/` directory (not `migrate/`) makes the ownership boundary obvious and allows the conversion logic to be tested in isolation.
 
 **Layout** (as implemented):
 

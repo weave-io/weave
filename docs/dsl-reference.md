@@ -364,7 +364,9 @@ Every `prompt`, `prompt_file`, `prompt_append`, and `prompt_append_file` value i
 ```md
 You are {{agent.name}}.
 
-{{{delegation.section}}}
+{{#delegation.targets}}
+- **{{name}}**{{#description}} — {{description}}{{/description}}
+{{/delegation.targets}}
 ```
 
 ### Template Context Fields
@@ -383,17 +385,13 @@ You are {{agent.name}}.
 | `{{toolPolicy.effective.execute}}` | `allow`\|`deny`\|`ask` | Resolved execute permission |
 | `{{toolPolicy.effective.delegate}}` | `allow`\|`deny`\|`ask` | Resolved delegate permission |
 | `{{toolPolicy.effective.network}}` | `allow`\|`deny`\|`ask` | Resolved network permission |
-| `{{{delegation.section}}}` | string? | Full `## Delegation` Markdown block with Mermaid diagram and bullets |
-| `{{{delegation.mermaid}}}` | string? | Mermaid diagram block only |
 | `{{#delegation.targets}}` | array | Iterate over eligible delegation targets |
 | `{{name}}` | string | Target agent name (inside `delegation.targets`) |
 | `{{description}}` | string? | Target description (inside `delegation.targets`) |
 | `{{domains}}` | string[] | Deduplicated trigger domains (inside `delegation.targets`) |
 | `{{#triggers}}` | array | Iterate over triggers (inside `delegation.targets`) |
 
-### Delegation Section Fallback
-
-If the primary prompt source does not reference any `delegation.*` path, the engine appends `delegation.section` automatically. Use `\{{delegation.section}}` (backslash-escaped) to render the literal text without triggering suppression.
+> **Note**: `{{{delegation.section}}}` and `{{{delegation.mermaid}}}` are **not** supported template paths. Using them produces a `PromptTemplateError` with `UnknownPath`. Use `{{#delegation.targets}}` loops to render delegation routing guidance.
 
 ### Unsupported Features
 
