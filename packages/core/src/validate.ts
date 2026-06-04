@@ -9,7 +9,6 @@ import type {
   AstNode,
   AstValue,
   BlockValue,
-  ExtendBeforePlanDirective,
   IdentifierValue,
   Property,
 } from "./ast.js";
@@ -132,7 +131,7 @@ function astToPlainObject(nodes: AstNode[]): {
   const categories: Record<string, unknown> = {};
   const disabled: Record<string, string[]> = {};
   const workflows: Record<string, unknown> = {};
-  const extendBeforePlan: Record<string, { steps: string[] }> = {};
+  let extendBeforePlanSteps: string[] = [];
   let settingsBlock: Record<string, unknown> | undefined;
   let topLevelLogLevel = false;
   let invalidSettingsShape = false;
@@ -184,17 +183,11 @@ function astToPlainObject(nodes: AstNode[]): {
         ];
         break;
 
-      case "extend_before_plan": {
-        // `extend before-plan ["step-a", "step-b"]` — union-merge step lists.
-        // When no workflow name is given, use the sentinel key "__default__".
-        const key =
-          (node as ExtendBeforePlanDirective).workflow ?? "__default__";
-        const existing = extendBeforePlan[key]?.steps ?? [];
-        extendBeforePlan[key] = {
-          steps: [...existing, ...(node as ExtendBeforePlanDirective).steps],
-        };
+      case "extend_before_plan":
+        // `extend before-plan ["step-a", "step-b"]` — union-merge into a single
+        // global step list. v1 has no per-workflow targeting.
+        extendBeforePlanSteps = [...extendBeforePlanSteps, ...node.steps];
         break;
-      }
 
       case "setting":
         if (node.key === "log_level") {
@@ -218,8 +211,8 @@ function astToPlainObject(nodes: AstNode[]): {
   if (Object.keys(categories).length > 0) result.categories = categories;
   if (Object.keys(disabled).length > 0) result.disabled = disabled;
   if (Object.keys(workflows).length > 0) result.workflows = workflows;
-  if (Object.keys(extendBeforePlan).length > 0)
-    result.extend_before_plan = extendBeforePlan;
+  if (extendBeforePlanSteps.length > 0)
+    result.extend_before_plan = { steps: extendBeforePlanSteps };
   if (settingsBlock !== undefined) result.settings = settingsBlock;
 
   return { plain: result, topLevelLogLevel, invalidSettingsShape };

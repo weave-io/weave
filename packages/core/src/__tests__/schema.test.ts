@@ -1219,33 +1219,47 @@ describe("WorkflowConfigSchema — extension_points", () => {
 // ---------------------------------------------------------------------------
 
 describe("WeaveConfigSchema — extend_before_plan", () => {
-  it("accepts extend_before_plan with a workflow name and steps", () => {
+  it("accepts extend_before_plan with a steps array", () => {
     const r = WeaveConfigSchema.safeParse({
-      extend_before_plan: {
-        "plan-and-build": { steps: ["spec-review"] },
-      },
+      extend_before_plan: { steps: ["spec-review"] },
     });
     expect(r.success).toBe(true);
     if (r.success) {
-      expect(r.data.extend_before_plan["plan-and-build"]?.steps).toEqual([
+      expect(r.data.extend_before_plan.steps).toEqual(["spec-review"]);
+    }
+  });
+
+  it("accepts extend_before_plan with multiple steps", () => {
+    const r = WeaveConfigSchema.safeParse({
+      extend_before_plan: { steps: ["spec-review", "requirements"] },
+    });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.extend_before_plan.steps).toEqual([
         "spec-review",
+        "requirements",
       ]);
     }
   });
 
-  it("defaults extend_before_plan to empty object when absent", () => {
+  it("defaults extend_before_plan to empty steps when absent", () => {
     const r = WeaveConfigSchema.safeParse({});
     expect(r.success).toBe(true);
     if (r.success) {
-      expect(r.data.extend_before_plan).toEqual({});
+      expect(r.data.extend_before_plan).toEqual({ steps: [] });
     }
   });
 
-  it("rejects extend_before_plan entry with empty steps array", () => {
+  it("rejects extend_before_plan with empty steps array", () => {
     const r = WeaveConfigSchema.safeParse({
-      extend_before_plan: {
-        "plan-and-build": { steps: [] },
-      },
+      extend_before_plan: { steps: [] },
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it("rejects extend_before_plan with empty string step names", () => {
+    const r = WeaveConfigSchema.safeParse({
+      extend_before_plan: { steps: [""] },
     });
     expect(r.success).toBe(false);
   });

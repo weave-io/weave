@@ -791,12 +791,12 @@ describe("validate — extension_points block", () => {
 // ---------------------------------------------------------------------------
 
 describe("validate — extend before-plan directive", () => {
-  it("extend before-plan directive round-trips into extend_before_plan", () => {
+  it("extend before-plan directive round-trips into extend_before_plan.steps", () => {
     const src = `extend before-plan ["spec-review", "requirements"]`;
     const result = validateSource(src);
     expect(result.isOk()).toBe(true);
     const config = result._unsafeUnwrap();
-    expect(config.extend_before_plan["__default__"]?.steps).toEqual([
+    expect(config.extend_before_plan.steps).toEqual([
       "spec-review",
       "requirements",
     ]);
@@ -808,16 +808,16 @@ extend before-plan ["requirements"]`;
     const result = validateSource(src);
     expect(result.isOk()).toBe(true);
     const config = result._unsafeUnwrap();
-    expect(config.extend_before_plan["__default__"]?.steps).toEqual([
+    expect(config.extend_before_plan.steps).toEqual([
       "spec-review",
       "requirements",
     ]);
   });
 
-  it("empty source has empty extend_before_plan", () => {
+  it("empty source has extend_before_plan with empty steps", () => {
     const result = validateSource("");
     expect(result.isOk()).toBe(true);
-    expect(result._unsafeUnwrap().extend_before_plan).toEqual({});
+    expect(result._unsafeUnwrap().extend_before_plan).toEqual({ steps: [] });
   });
 });
 
@@ -839,14 +839,13 @@ describe("validate — before-plan non-reconciling in v1", () => {
     const result = validateSource(src);
     expect(result.isOk()).toBe(true);
     const config = result._unsafeUnwrap();
-    // The extend_before_plan entry is a list of step names, not WorkflowStep objects.
+    // extend_before_plan is a flat object with a steps array — no per-workflow keying.
     // The engine resolves these names to steps at runtime.
-    const ebp = config.extend_before_plan["__default__"];
-    expect(ebp).toBeDefined();
-    expect(ebp?.steps).toEqual(["spec-review"]);
-    // No reconciliation fields on the ExtendBeforePlan record itself
-    expect("reconciliation_handler" in (ebp ?? {})).toBe(false);
-    expect("on_reconcile" in (ebp ?? {})).toBe(false);
+    const ebp = config.extend_before_plan;
+    expect(ebp.steps).toEqual(["spec-review"]);
+    // No reconciliation fields on the ExtendBeforePlan object itself
+    expect("reconciliation_handler" in ebp).toBe(false);
+    expect("on_reconcile" in ebp).toBe(false);
   });
 
   it("workflow with planning step and before-plan slot: planning step has no reconciliation_handlers by default", () => {

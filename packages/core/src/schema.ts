@@ -6,6 +6,11 @@
  */
 
 import { z } from "zod";
+import {
+  refinePromptAppendExclusive,
+  refinePromptExclusive,
+  refinePromptFileSafe,
+} from "./prompt-schema-helpers.js";
 
 // ---------------------------------------------------------------------------
 // Primitives
@@ -64,42 +69,10 @@ export const AgentConfigSchema = z
     skills: z.array(z.string()).optional(),
     triggers: z.array(DelegationTriggerSchema).optional(),
   })
-  .refine(
-    (data) => !(data.prompt !== undefined && data.prompt_file !== undefined),
-    { message: "prompt and prompt_file are mutually exclusive" },
-  )
-  .refine(
-    (data) => {
-      if (data.prompt_file === undefined) return true;
-      if (data.prompt_file.startsWith("/")) return false;
-      if (data.prompt_file.includes("..")) return false;
-      return true;
-    },
-    {
-      message:
-        "prompt_file must be a relative path without '..' or absolute paths",
-    },
-  )
-  .refine(
-    (data) =>
-      !(
-        data.prompt_append !== undefined &&
-        data.prompt_append_file !== undefined
-      ),
-    { message: "prompt_append and prompt_append_file are mutually exclusive" },
-  )
-  .refine(
-    (data) => {
-      if (data.prompt_append_file === undefined) return true;
-      if (data.prompt_append_file.startsWith("/")) return false;
-      if (data.prompt_append_file.includes("..")) return false;
-      return true;
-    },
-    {
-      message:
-        "prompt_append_file must be a relative path without '..' or absolute paths",
-    },
-  );
+  .refine(...refinePromptExclusive())
+  .refine(...refinePromptFileSafe("prompt_file"))
+  .refine(...refinePromptAppendExclusive())
+  .refine(...refinePromptFileSafe("prompt_append_file"));
 
 // ---------------------------------------------------------------------------
 // Category
@@ -118,26 +91,8 @@ export const CategoryConfigSchema = z
     prompt_append: z.string().optional(),
     prompt_append_file: z.string().optional(),
   })
-  .refine(
-    (data) =>
-      !(
-        data.prompt_append !== undefined &&
-        data.prompt_append_file !== undefined
-      ),
-    { message: "prompt_append and prompt_append_file are mutually exclusive" },
-  )
-  .refine(
-    (data) => {
-      if (data.prompt_append_file === undefined) return true;
-      if (data.prompt_append_file.startsWith("/")) return false;
-      if (data.prompt_append_file.includes("..")) return false;
-      return true;
-    },
-    {
-      message:
-        "prompt_append_file must be a relative path without '..' or absolute paths",
-    },
-  );
+  .refine(...refinePromptAppendExclusive())
+  .refine(...refinePromptFileSafe("prompt_append_file"));
 
 // ---------------------------------------------------------------------------
 // Disabled
@@ -366,26 +321,8 @@ export const WorkflowStepSchema = z
         "insert_before and insert_after are mutually exclusive (BothInsertBeforeAndAfter)",
     },
   )
-  .refine(
-    (data) =>
-      !(
-        data.prompt_append !== undefined &&
-        data.prompt_append_file !== undefined
-      ),
-    { message: "prompt_append and prompt_append_file are mutually exclusive" },
-  )
-  .refine(
-    (data) => {
-      if (data.prompt_append_file === undefined) return true;
-      if (data.prompt_append_file.startsWith("/")) return false;
-      if (data.prompt_append_file.includes("..")) return false;
-      return true;
-    },
-    {
-      message:
-        "prompt_append_file must be a relative path without '..' or absolute paths",
-    },
-  );
+  .refine(...refinePromptAppendExclusive())
+  .refine(...refinePromptFileSafe("prompt_append_file"));
 
 // ---------------------------------------------------------------------------
 // Extension points (workflow-level publication)
@@ -421,7 +358,7 @@ export const ExtensionPointsSchema = z
 
 /**
  * Top-level composition directive that lists step names to insert into the
- * `before-plan` slot of a named workflow.
+ * `before-plan` slot of any workflow that publishes `extension_points { before-plan }`.
  *
  * DSL syntax:
  * ```weave
@@ -431,8 +368,13 @@ export const ExtensionPointsSchema = z
  * This is a **separate** syntax from `extension_points { before-plan }`.
  * Publication declares the slot exists; composition provides the steps.
  *
- * The validator resolves composition after generic config-merge
- * (`extends` / `insert_before` / `insert_after`) is complete.
+ * Multiple `extend before-plan` directives in the same config are union-merged
+ * into a single ordered step list. The validator resolves composition after
+ * generic config-merge (`extends` / `insert_before` / `insert_after`) is complete.
+ *
+ * v1 contract: there is exactly one global `before-plan` bucket — no per-workflow
+ * targeting. The config layer applies the step list to every workflow that
+ * publishes `extension_points { before-plan }`.
  */
 export const ExtendBeforePlanSchema = z.object({
   /** Ordered list of step names to insert into the `before-plan` slot. */
@@ -520,26 +462,8 @@ export const WorkflowConfigSchema = z
       path: ["steps"],
     },
   )
-  .refine(
-    (data) =>
-      !(
-        data.prompt_append !== undefined &&
-        data.prompt_append_file !== undefined
-      ),
-    { message: "prompt_append and prompt_append_file are mutually exclusive" },
-  )
-  .refine(
-    (data) => {
-      if (data.prompt_append_file === undefined) return true;
-      if (data.prompt_append_file.startsWith("/")) return false;
-      if (data.prompt_append_file.includes("..")) return false;
-      return true;
-    },
-    {
-      message:
-        "prompt_append_file must be a relative path without '..' or absolute paths",
-    },
-  );
+  .refine(...refinePromptAppendExclusive())
+  .refine(...refinePromptFileSafe("prompt_append_file"));
 
 // ---------------------------------------------------------------------------
 // Settings
@@ -589,8 +513,9 @@ export const SettingsConfigSchema = z
  * canonical home for `log_level` and `runtime.journal.strict`.
  *
  * `extend_before_plan` holds the merged result of all `extend before-plan [...]`
- * top-level directives. Each entry maps a workflow name to the ordered list of
- * step names to insert into that workflow's `before-plan` slot.
+ * top-level directives. The step list is applied globally — there is no
+ * per-workflow targeting in v1. The config layer inserts these steps into every
+ * workflow that publishes `extension_points { before-plan }`.
  */
 export const WeaveConfigSchema = z.object({
   agents: z.record(z.string(), AgentConfigSchema).default({}),
@@ -603,10 +528,15 @@ export const WeaveConfigSchema = z.object({
   settings: SettingsConfigSchema,
   workflows: z.record(z.string(), WorkflowConfigSchema).default({}),
   /**
-   * Merged `extend before-plan [...]` directives keyed by workflow name.
-   * Populated by the validator from top-level `extend before-plan` AST nodes.
+   * Merged `extend before-plan [...]` directives.
+   *
+   * v1 contract: a single global bucket — no per-workflow targeting.
+   * The config layer applies this step list to every workflow that publishes
+   * `extension_points { before-plan }`.
+   *
+   * Defaults to `{ steps: [] }` when no `extend before-plan` directive is present.
    */
-  extend_before_plan: z.record(z.string(), ExtendBeforePlanSchema).default({}),
+  extend_before_plan: ExtendBeforePlanSchema.default({ steps: [] }),
 });
 
 // ---------------------------------------------------------------------------

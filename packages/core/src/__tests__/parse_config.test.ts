@@ -876,12 +876,12 @@ describe("parseConfig — extension_points block", () => {
 // ---------------------------------------------------------------------------
 
 describe("parseConfig — extend before-plan directive", () => {
-  it("extend before-plan directive parses end-to-end into extend_before_plan", () => {
+  it("extend before-plan directive parses end-to-end into extend_before_plan.steps", () => {
     const src = `extend before-plan ["spec-review", "requirements"]`;
     const result = parseConfig(src);
     expect(result.isOk()).toBe(true);
     const config = result._unsafeUnwrap();
-    expect(config.extend_before_plan["__default__"]?.steps).toEqual([
+    expect(config.extend_before_plan.steps).toEqual([
       "spec-review",
       "requirements",
     ]);
@@ -915,15 +915,13 @@ extend before-plan ["spec-review"]`;
     expect(
       config.workflows["plan-and-build"]?.extension_points?.before_plan,
     ).toBe(true);
-    expect(config.extend_before_plan["__default__"]?.steps).toEqual([
-      "spec-review",
-    ]);
+    expect(config.extend_before_plan.steps).toEqual(["spec-review"]);
   });
 
-  it("empty source has empty extend_before_plan", () => {
+  it("empty source has extend_before_plan with empty steps", () => {
     const result = parseConfig("");
     expect(result.isOk()).toBe(true);
-    expect(result._unsafeUnwrap().extend_before_plan).toEqual({});
+    expect(result._unsafeUnwrap().extend_before_plan).toEqual({ steps: [] });
   });
 
   it("invalid extend slot name returns parse error", () => {
@@ -999,10 +997,10 @@ extend before-plan ["spec-review"]`;
       expect("on_reconcile" in step).toBe(false);
     }
 
-    // extend_before_plan entry has no reconciliation fields
-    const ebp = config.extend_before_plan["__default__"];
-    expect(ebp?.steps).toEqual(["spec-review"]);
-    expect("reconciliation_handler" in (ebp ?? {})).toBe(false);
+    // extend_before_plan is a flat object — no per-workflow keying
+    const ebp = config.extend_before_plan;
+    expect(ebp.steps).toEqual(["spec-review"]);
+    expect("reconciliation_handler" in ebp).toBe(false);
   });
 
   it("before-plan steps (via extend before-plan) are ordinary step names with no reconciliation metadata", () => {
@@ -1010,11 +1008,10 @@ extend before-plan ["spec-review"]`;
     const result = parseConfig(src);
     expect(result.isOk()).toBe(true);
     const config = result._unsafeUnwrap();
-    const ebp = config.extend_before_plan["__default__"];
-    expect(ebp).toBeDefined();
+    const ebp = config.extend_before_plan;
     // Steps are plain string names — no reconciliation handler attached
-    expect(ebp?.steps).toEqual(["spec-review", "requirements"]);
-    expect(Object.keys(ebp ?? {}).sort()).toEqual(["steps"]);
+    expect(ebp.steps).toEqual(["spec-review", "requirements"]);
+    expect(Object.keys(ebp).sort()).toEqual(["steps"]);
   });
 });
 

@@ -310,6 +310,8 @@ extend before-plan ["write-spec", "review-spec"]
 
 The listed step names are inserted into the `before-plan` slot of any workflow that publishes `extension_points { before-plan }`. Steps are inserted in the order declared.
 
+**v1 contract — single global bucket**: there is no per-workflow targeting. The same step list is applied to every workflow that publishes `extension_points { before-plan }`. Multiple `extend before-plan` directives in the same config are union-merged into a single ordered step list. The validated `WeaveConfig.extend_before_plan` field is a flat `{ steps: string[] }` object — not a record keyed by workflow name.
+
 ### Concrete example — reviewed spec artifact feeding planning
 
 The following example shows a user-authored `write-spec` step and a `review-spec` gate step inserted before the canonical `plan` step. The reviewed specification artifact is passed to planning as an explicit input.

@@ -128,17 +128,16 @@ export type SettingAssignment = {
  * Top-level `extend before-plan ["step-a", "step-b"]` directive.
  *
  * Declares that the listed step names should be inserted into the `before-plan`
- * slot of the named workflow. This is the **composition** syntax — distinct from
- * the `extension_points { before-plan }` **publication** syntax inside a workflow.
+ * slot of any workflow that publishes `extension_points { before-plan }`.
+ * This is the **composition** syntax — distinct from the
+ * `extension_points { before-plan }` **publication** syntax inside a workflow.
  *
- * The `workflow` field is optional in the DSL; when absent the directive applies
- * to the default plan-oriented workflow. The validator resolves the target after
- * config-merge is complete.
+ * v1 contract: there is exactly one global `before-plan` bucket — no per-workflow
+ * targeting. Multiple directives in the same config are union-merged into a single
+ * ordered step list by the validator.
  */
 export type ExtendBeforePlanDirective = {
   type: "extend_before_plan";
-  /** Target workflow name, or undefined when targeting the default workflow. */
-  workflow?: string;
   /** Ordered list of step names to insert into the before-plan slot. */
   steps: string[];
   pos: SourcePos;
