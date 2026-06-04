@@ -6,8 +6,6 @@ import {
   type DetectedHarness,
   detectHarnesses,
   formatDetectionSummary,
-  HARNESS_IDS,
-  isHarnessId,
   type SupportedHarnessId,
 } from "../detect/index.js";
 import type { DetectionProbes } from "../detect/probes.js";
@@ -24,11 +22,14 @@ import {
   detectLegacySource,
 } from "../migration/migration-plan.js";
 import { performMigrationWrite } from "../migration/migration-write.js";
-import type { ConversionWarning, MigrationPlan } from "../migration/types.js";
 import { ClackPromptAdapter, type PromptAdapter } from "../prompt/index.js";
 import type { ThemeColors } from "../theme/colors.js";
 import { defaultThemeRenderer } from "../theme/render.js";
-import { renderMigrateSuccess, runMigrateMode } from "./migrate.js";
+import {
+  renderMigrateSuccess,
+  resolveSelectedHarnesses,
+  runMigrateMode,
+} from "./migrate.js";
 
 // ---------------------------------------------------------------------------
 // Re-exports for backward compatibility
@@ -432,16 +433,6 @@ function buildFlagPlan(
       flags.harness !== undefined ||
       flags.allHarnesses,
   };
-}
-
-function resolveSelectedHarnesses(
-  flags: ParsedArgs["flags"],
-  harnesses: DetectedHarness[],
-): SupportedHarnessId[] {
-  if (flags.harness !== undefined && isHarnessId(flags.harness))
-    return [flags.harness];
-  if (flags.allHarnesses) return harnesses.map((harness) => harness.id);
-  return [];
 }
 
 function defaultInstallDir(scope: InitScope, fs: FileSystem): string {

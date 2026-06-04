@@ -17,7 +17,7 @@ import type { ParsedArgs } from "../args.js";
 import {
   type DetectedHarness,
   detectHarnesses,
-  HARNESS_IDS,
+  isHarnessId,
   type SupportedHarnessId,
 } from "../detect/index.js";
 import type { DetectionProbes } from "../detect/probes.js";
@@ -124,16 +124,12 @@ export function renderMigrateSuccess(
 // Post-migration harness selection helpers
 // ---------------------------------------------------------------------------
 
-function resolveSelectedHarnesses(
+export function resolveSelectedHarnesses(
   flags: ParsedArgs["flags"],
   harnesses: DetectedHarness[],
 ): SupportedHarnessId[] {
-  if (
-    flags.harness !== undefined &&
-    HARNESS_IDS.includes(flags.harness as SupportedHarnessId)
-  ) {
-    return [flags.harness as SupportedHarnessId];
-  }
+  if (flags.harness !== undefined && isHarnessId(flags.harness))
+    return [flags.harness];
   if (flags.allHarnesses) return harnesses.map((h) => h.id);
   return [];
 }

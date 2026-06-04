@@ -109,15 +109,25 @@ const VALID_LOG_LEVELS = new Set([
 /**
  * Escapes a string value for safe embedding in a `.weave` DSL double-quoted
  * string literal. Handles backslashes, double-quotes, newlines, carriage
- * returns, and tabs so that multi-line legacy prompt values produce valid DSL.
+ * returns, tabs, and other ASCII control characters (U+0000–U+001F except
+ * \n, \r, \t, and U+007F) so that any legacy prompt value produces valid DSL.
  */
+// Regex for ASCII control characters not covered by named escape sequences
+// (\n, \r, \t). Covers U+0000-U+0008, U+000B, U+000C, U+000E-U+001F, U+007F.
+// biome-ignore lint/suspicious/noControlCharactersInRegex: intentional — this regex exists specifically to detect and escape control characters
+const CONTROL_CHAR_RE = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g;
+
 function escapeForDsl(str: string): string {
   return str
     .replace(/\\/g, "\\\\")
     .replace(/"/g, '\\"')
     .replace(/\n/g, "\\n")
     .replace(/\r/g, "\\r")
-    .replace(/\t/g, "\\t");
+    .replace(/\t/g, "\\t")
+    .replace(CONTROL_CHAR_RE, (ch) => {
+      const hex = ch.charCodeAt(0).toString(16).padStart(4, "0");
+      return `\\u${hex}`;
+    });
 }
 
 export function stripJsoncComments(source: string): string {
