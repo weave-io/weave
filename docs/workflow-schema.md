@@ -10,6 +10,7 @@ This document describes the typed workflow schema. It covers field semantics, th
 - [DSL Reference](dsl-reference.md) — canonical `.weave` DSL syntax reference
 - [Spec 17 — Workflow Extension](specs/17-spec-workflow-extension/17-spec-workflow-extension.md) — `extends`, `insert_before`, `insert_after` config-merge semantics
 - [Spec 22 — Workflow-First Execution](specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md) — `before-plan` extension surface, `role planning`, and execution contract
+- [ADR 0006 — End-to-End Orchestration Flow](adr/0006-end-to-end-orchestration-flow.md) — full Loom → Pattern → Tapestry → Weft/Warp flow; legacy vs. current model; where issue #52 fits
 
 ---
 

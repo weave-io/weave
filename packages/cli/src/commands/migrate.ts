@@ -46,12 +46,12 @@ export interface MigrateContext {
 }
 
 // ---------------------------------------------------------------------------
-// Internal plan type (mirrors InitPlan in init.ts)
+// Shared plan types (exported for use in init.ts)
 // ---------------------------------------------------------------------------
 
-type InitScope = "global" | "local";
+export type InitScope = "global" | "local";
 
-type InitPlan = {
+export type InitPlan = {
   scope: InitScope;
   installDir: string;
   selectedHarnesses: SupportedHarnessId[];
@@ -128,6 +128,10 @@ export function resolveSelectedHarnesses(
   flags: ParsedArgs["flags"],
   harnesses: DetectedHarness[],
 ): SupportedHarnessId[] {
+  // If --harness is set but not a valid harness ID, fall through to no
+  // selection (empty array). Callers treat an empty result as "no harness
+  // configured" and skip harness installation silently — this is intentional
+  // because the flag is optional and an invalid value is treated as absent.
   if (flags.harness !== undefined && isHarnessId(flags.harness))
     return [flags.harness];
   if (flags.allHarnesses) return harnesses.map((h) => h.id);

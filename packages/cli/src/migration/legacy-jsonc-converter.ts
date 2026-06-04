@@ -347,7 +347,7 @@ function convertLegacyPromptFile(
     return { line: undefined, warnings };
   }
 
-  return { line: `  prompt_file "${value}"`, warnings };
+  return { line: `  prompt_file "${escapeForDsl(value)}"`, warnings };
 }
 
 /**

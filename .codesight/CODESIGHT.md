@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 80 lib files | 4 env vars | 5 middleware | 0% test coverage
 > **Token savings:** this file is ~6,800 tokens. Without it, AI exploration would cost ~31,700 tokens. **Saves ~25,000 tokens per conversation.**
-> **Last scanned:** 2026-06-04 17:14 — re-run after significant changes
+> **Last scanned:** 2026-06-04 20:06 — re-run after significant changes
 
 ---
 
@@ -67,6 +67,8 @@
   - function resolveSelectedHarnesses: (flags, harnesses) => SupportedHarnessId[]
   - function runMigrateMode: (ctx, installHarnesses, harnesses) => void
   - interface MigrateContext
+  - type InitScope
+  - type InitPlan
 - `packages/cli/src/commands/runtime.ts` — function runRuntime: (ctx) => Promise<Result<number, CliError>>, interface RuntimeCommandContext
 - `packages/cli/src/commands/validate.ts` — function runValidate: (ctx) => Promise<Result<number, CliError>>, interface ValidateContext
 - `packages/cli/src/config/starter-config.ts` — function starterConfig: (scope) => string

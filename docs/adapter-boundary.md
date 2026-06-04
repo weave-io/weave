@@ -350,7 +350,7 @@ for the formal spec and proof artifacts.
 
 ## Execution Lifecycle Surface
 
-> **Issue:** [#44 — Minimal Execution Lifecycle Surface](https://github.com/josevalim/weave/issues/44) · **Spec:** [Spec 13 — Minimal Execution Lifecycle Surface](specs/13-spec-minimal-execution-lifecycle-surface/13-spec-minimal-execution-lifecycle-surface.md) · **Spec:** [Spec 22 — Workflow-First Execution](specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md) · **Spec:** [Spec 24 — Execution Lifecycle Decomposition](specs/24-spec-execution-lifecycle-decomposition/24-spec-execution-lifecycle-decomposition.md) · **ADR:** [ADR 0004 — Workflow-First Execution Contract](adr/0004-workflow-first-execution-contract.md)
+> **Issue:** [#44 — Minimal Execution Lifecycle Surface](https://github.com/josevalim/weave/issues/44) · **Spec:** [Spec 13 — Minimal Execution Lifecycle Surface](specs/13-spec-minimal-execution-lifecycle-surface/13-spec-minimal-execution-lifecycle-surface.md) · **Spec:** [Spec 22 — Workflow-First Execution](specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md) · **Spec:** [Spec 24 — Execution Lifecycle Decomposition](specs/24-spec-execution-lifecycle-decomposition/24-spec-execution-lifecycle-decomposition.md) · **ADR:** [ADR 0004 — Workflow-First Execution Contract](adr/0004-workflow-first-execution-contract.md) · **ADR:** [ADR 0006 — End-to-End Orchestration Flow](adr/0006-end-to-end-orchestration-flow.md)
 
 The **Execution Lifecycle Surface** is the engine-owned abstract API that adapters call after mapping concrete harness events into normalized lifecycle inputs. It supersedes earlier placeholder `registerHook()` designs.
 

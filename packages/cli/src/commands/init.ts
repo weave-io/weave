@@ -26,6 +26,8 @@ import { ClackPromptAdapter, type PromptAdapter } from "../prompt/index.js";
 import type { ThemeColors } from "../theme/colors.js";
 import { defaultThemeRenderer } from "../theme/render.js";
 import {
+  type InitPlan,
+  type InitScope,
   renderMigrateSuccess,
   resolveSelectedHarnesses,
   runMigrateMode,
@@ -55,16 +57,6 @@ export interface InitContext {
   prompt?: PromptAdapter;
   probes?: DetectionProbes;
 }
-
-type InitScope = "global" | "local";
-
-type InitPlan = {
-  scope: InitScope;
-  installDir: string;
-  selectedHarnesses: SupportedHarnessId[];
-  selectedModules: Record<string, string[]>;
-  confirmed: boolean;
-};
 
 type ScaffoldResult = {
   configPath: string;
