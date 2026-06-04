@@ -12,6 +12,54 @@ _Avoid_: Run state, workflow state blob, plan progress
 A coordination record that grants one actor permission to actively drive a workflow run.
 _Avoid_: Workflow status, active flag, lock file
 
+**Execution Contract**:
+A harness-agnostic engine-owned semantic contract for starting, resuming, pausing, inspecting, and advancing Weave execution.
+_Avoid_: Adapter command set, harness hook shape, executor persona
+
+**Canonical Execution Command**:
+A product-level command name that exposes part of the **Execution Contract** through a harness command surface when that harness supports commands.
+_Avoid_: Legacy alias, adapter-private shortcut, workflow definition
+
+**Default Workflow**:
+The effective workflow Weave starts when execution begins without an explicitly named workflow.
+_Avoid_: Legacy plan mode, executor agent, adapter alias
+
+**Workflow Extension Point**:
+A stable location in a workflow definition where additional steps may be composed in without replacing the whole workflow.
+_Avoid_: Full workflow override, adapter preflight, hidden hook slot
+
+**Specification Artifact**:
+A user-reviewable artifact produced before planning that sharpens requirements and can be consumed as input to a planning step.
+_Avoid_: Plan Markdown, implementation notes, workflow state
+
+**Artifact Approval State**:
+The workflow-owned state that records whether a named artifact has been approved for downstream consumption.
+_Avoid_: Gate side effect, chat assumption, implicit review memory
+
+**Artifact Identity**:
+A stable logical identifier for a workflow artifact that persists across revisions and does not depend on file path alone.
+_Avoid_: Raw file path, transient filename, prompt snippet
+
+**Artifact Revision**:
+A monotonic version of an **Artifact Identity** used to track approval and downstream consumption across revisions.
+_Avoid_: Raw hash identity, opaque store token, file timestamp
+
+**Normative Artifact Input**:
+An explicit workflow step input whose approved contents constrain downstream behavior and must be obeyed.
+_Avoid_: Optional hint, incidental context, unreviewed draft
+
+**Informational Artifact Input**:
+An explicit workflow step input that may inform downstream behavior without overriding normative constraints.
+_Avoid_: Binding requirement, approved constraint, hidden prompt memory
+
+**Step Prompt Append**:
+Workflow-owned prompt text appended to a workflow step's base prompt so step behavior can be composed without replacing the whole step.
+_Avoid_: Hidden adapter injection, full step replacement, incidental chat context
+
+**Workflow Prompt Append**:
+Workflow-owned prompt text appended at the workflow scope to express run-wide execution guidance without replacing step-local prompts.
+_Avoid_: Step-local override, adapter injection, structural workflow change
+
 **Runtime Store**:
 The Weave-owned durable state space for workflow execution records, coordination records, and runtime observations.
 _Avoid_: Harness storage, adapter storage, config state
@@ -136,6 +184,44 @@ _Avoid_: Any same-named agent, UI alias, unmanaged agent
 
 - A **WorkflowInstance** stores active execution metadata and artifacts for one workflow run.
 - An **ExecutionLease** controls active ownership of a **WorkflowInstance** without replacing its lifecycle state.
+- An **Execution Contract** defines execution semantics independently of the harness-specific command, skill, hook, or script mechanism that delivers them.
+- A **Canonical Execution Command** is one possible adapter-visible projection of the **Execution Contract** and should be evaluated through adapter capability/readiness policy rather than assumed to exist in every harness.
+- A **Default Workflow** is resolved by configuration and executed through the **Execution Contract** rather than implied by ordinary chat behavior.
+- A **Workflow Extension Point** lets configuration compose additional workflow steps around a baseline workflow while preserving the baseline workflow's identity.
+- A **Workflow Extension Point** is declared by name plus an explicit contract, not as an untyped merge slot.
+- Workflow-level extension-point publication should use an explicit structured declaration rather than a bare name list or flag.
+- Workflow-level extension-point publication should use a dedicated DSL block rather than a generic metadata field.
+- The initial built-in **Workflow Extension Point** contract set contains only `before-plan`.
+- A **Specification Artifact** may be produced in a `before-plan` extension step and reviewed before the planning step creates **Plan Markdown**.
+- A `before-plan` extension band may produce multiple named artifacts, provided they use the standard artifact identity, revision, and approval model.
+- A workflow has exactly one canonical planning step; `before-plan` steps may enrich its inputs but do not replace it.
+- The canonical planning step should declare both its planning role and the reconciliation reasons it handles on the step itself.
+- The planning step must explicitly declare which approved `before-plan` artifacts it consumes.
+- In v1, `before-plan` steps may pause, retry, and revise artifacts, but they do not participate in reconciliation semantics.
+- Post-plan approval attaches to a specific **Plan Markdown** artifact revision rather than to planning completion in the abstract.
+- **Artifact Approval State** determines whether a named artifact may be consumed by downstream workflow steps.
+- **Artifact Approval State** attaches to an **Artifact Identity** and is revision-sensitive rather than path-sensitive.
+- An **Artifact Revision** is tracked per **Artifact Identity** and provides the human-visible version boundary for approval and consumption.
+- A **Normative Artifact Input** constrains downstream planning or execution behavior.
+- An **Informational Artifact Input** may assist downstream behavior but cannot override a **Normative Artifact Input**.
+- All workflow steps, including planning and execution steps, may declare **Normative Artifact Inputs** and **Informational Artifact Inputs** explicitly.
+- Workflow steps should record consumed **Artifact Revisions** for all explicit artifact inputs, not only normative ones.
+- Step retries should reuse the same consumed **Artifact Revisions** by default rather than silently rebinding to newer revisions.
+- Rebinding to newer approved **Artifact Revisions** requires an explicit workflow transition rather than automatic latest-approved lookup.
+- Step re-entry versus new-attempt semantics should be workflow-defined, with planning reconciliation as the default special case that re-enters the same logical planning step.
+- Reconciliation reasons are workflow-wide runtime semantics, while individual workflow steps explicitly declare which reasons they handle.
+- When a reconciliation reason occurs, the workflow runtime should resolve the nearest explicitly declared handler step; if none exists, the workflow should pause or block rather than guessing.
+- The initial built-in reconciliation reason set is: `execution-mismatch`, `user-revision-request`, `review-rejection`, and `security-rejection`.
+- A **Workflow Prompt Append** applies run-wide execution guidance, while a **Step Prompt Append** applies step-local guidance.
+- **Workflow Prompt Appends** follow the same ordered-multiple, final-merged-configuration ordering model as **Step Prompt Appends**.
+- When **Workflow Prompt Appends** and **Step Prompt Appends** conflict, step-local guidance wins.
+- A **Step Prompt Append** composes step-specific behavior explicitly within workflow configuration rather than through adapter-side prompt injection, and steps may support ordered multiple appends.
+- Ordered multiple **Step Prompt Appends** are applied in final merged configuration order rather than by explicit priority or weight.
+- When **Step Prompt Appends** conflict, later appends win for instruction emphasis, but tooling/inspection should surface the composition risk.
+- A `before-plan` extension point composes workflow steps, not raw skills as first-class runtime nodes.
+- The planning step should consume approved pre-plan artifacts explicitly rather than depending on incidental chat history.
+- During execution, **Plan Markdown** governs executable task sequencing, while approved pre-plan artifacts remain normative constraints and context.
+- During planning reconciliation, completed **Plan Markdown** tasks are immutable history and may not be revised.
 - A **Cancelled Workflow** is terminal, while a **Paused Workflow** is intentionally resumable.
 - The **Runtime Store** contains **WorkflowInstance** records and related runtime coordination data.
 - A **Runtime Journal** records observations about **WorkflowInstance** execution without replacing repository state.

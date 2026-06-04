@@ -103,6 +103,11 @@ Do not assume a core feature automatically means adapter parity.
 
 Review the open issues the user pointed to, or the active issue tracker if available.
 
+Treat the issue review as two related tasks:
+
+1. use issues as parity evidence
+2. identify which issues look stale, out of date, superseded, or out of scope
+
 For each relevant issue, classify it as one of:
 
 - confirms a missing feature
@@ -112,6 +117,21 @@ For each relevant issue, classify it as one of:
 - adjacent but out of parity scope
 
 Use issues to sharpen the gap list and prioritize missing work.
+
+When the issue review is done, explicitly surface cleanup candidates:
+
+- issues that no longer match the code
+- issues that are still valid but need narrower scope
+- issues that duplicate other issues
+- issues that are not actually parity-related
+
+Then ask the user what to do next with issue updates:
+
+- update all relevant issues
+- update only selected issues
+- do not update issues yet
+
+Do not silently edit or rewrite issues unless the user asks for it.
 
 ### 5. Build a parity matrix
 
@@ -185,6 +205,12 @@ For each item, say whether it is:
 - a documentation task
 - an issue triage / cleanup task
 
+If issue cleanup work is in scope, separate it into:
+
+- stale issues to close or relabel
+- issues that need rewritten acceptance criteria
+- issues that should be split, merged, or deprioritized
+
 ## Analysis rules
 
 - Prefer direct evidence from code, docs, tests, and issues.
@@ -192,6 +218,7 @@ For each item, say whether it is:
 - If a feature has moved or been intentionally redesigned, call that out rather than marking it simply missing.
 - Do not inflate certainty. If you cannot verify behavior, use `unknown` and say what is needed to verify it.
 - When the reference project is older, watch for legacy behaviors that should **not** be restored; mark them as intentional divergence when appropriate.
+- Treat issue tracker hygiene as a separate decision from the parity audit itself: recommend updates when useful, but let the user choose whether to update all issues, selected issues, or none.
 
 ## Example trigger shapes
 
