@@ -1000,7 +1000,7 @@ extend before-plan ["spec-review"]`;
     // extend_before_plan is a flat object — no per-workflow keying
     const ebp = config.extend_before_plan;
     expect(ebp.steps).toEqual(["spec-review"]);
-    expect("reconciliation_handler" in ebp).toBe(false);
+    expect("reconciliation_handlers" in ebp).toBe(false);
   });
 
   it("before-plan steps (via extend before-plan) are ordinary step names with no reconciliation metadata", () => {

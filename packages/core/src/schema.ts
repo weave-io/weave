@@ -448,7 +448,7 @@ export const WorkflowConfigSchema = z
     },
     {
       message:
-        "a workflow that publishes before-plan must have exactly one step with role: planning (MissingPlanningStep)",
+        "a workflow that publishes before-plan must have a step with role: planning (MissingPlanningStep)",
       path: ["steps"],
     },
   )

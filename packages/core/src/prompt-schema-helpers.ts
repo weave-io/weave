@@ -3,21 +3,28 @@ import { posix, win32 } from "node:path";
 /**
  * Shared Zod refinement helpers for prompt-related schema invariants.
  *
- * These helpers centralize the two repeated constraints that appear across
+ * These helpers centralize the three repeated constraints that appear across
  * agent, category, workflow step, and workflow config schemas:
  *
- * 1. **Prompt append mutual exclusivity** — `prompt_append` and
+ * 1. **Prompt mutual exclusivity** — `prompt` and `prompt_file` are mutually
+ *    exclusive within the same scope (agent-only).
+ * 2. **Prompt append mutual exclusivity** — `prompt_append` and
  *    `prompt_append_file` are mutually exclusive within the same scope.
- * 2. **Prompt file path safety** — `prompt_file` and `prompt_append_file`
+ * 3. **Prompt file path safety** — `prompt_file` and `prompt_append_file`
  *    must be relative paths without `..` segments or absolute prefixes.
  *
  * Usage:
  * ```ts
- * import { refinePromptAppendExclusive, refinePromptFileSafe } from "./prompt-schema-helpers.js";
+ * import {
+ *   refinePromptExclusive,
+ *   refinePromptAppendExclusive,
+ *   refinePromptFileSafe,
+ * } from "./prompt-schema-helpers.js";
  *
  * const MySchema = z.object({ ... })
- *   .refine(...refinePromptAppendExclusive())
+ *   .refine(...refinePromptExclusive())
  *   .refine(...refinePromptFileSafe("prompt_file"))
+ *   .refine(...refinePromptAppendExclusive())
  *   .refine(...refinePromptFileSafe("prompt_append_file"));
  * ```
  */
