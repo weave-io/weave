@@ -273,7 +273,7 @@ Weave configures harnesses; harnesses run themselves. `weave run`, if encountere
 
 The CLI source is organized into focused modules:
 
-```
+```text
 packages/cli/src/
 ├── commands/
 │   ├── init.ts        # weave init — planning, prompts, scaffold, harness install, summary

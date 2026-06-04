@@ -1,3 +1,5 @@
+import { posix, win32 } from "node:path";
+
 /**
  * Shared Zod refinement helpers for prompt-related schema invariants.
  *
@@ -14,7 +16,7 @@
  * import { refinePromptAppendExclusive, refinePromptFileSafe } from "./prompt-schema-helpers.js";
  *
  * const MySchema = z.object({ ... })
- *   .refine(...refinePromptAppendExclusive("prompt_append", "prompt_append_file"))
+ *   .refine(...refinePromptAppendExclusive())
  *   .refine(...refinePromptFileSafe("prompt_file"))
  *   .refine(...refinePromptFileSafe("prompt_append_file"));
  * ```
@@ -95,8 +97,9 @@ export function refinePromptFileSafe(
       const value = data[field];
       if (value === undefined) return true;
       if (typeof value !== "string") return true;
-      if (value.startsWith("/")) return false;
-      if (value.includes("..")) return false;
+      if (posix.isAbsolute(value) || win32.isAbsolute(value)) return false;
+      if (value.split(/[\\/]+/).some((segment) => segment === ".."))
+        return false;
       return true;
     },
     {

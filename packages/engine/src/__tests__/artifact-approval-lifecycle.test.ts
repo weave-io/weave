@@ -23,13 +23,13 @@ import { describe, expect, it } from "bun:test";
 import { parseConfig } from "@weave/core";
 import {
   approveArtifact,
+  type ConsumedArtifactRecord,
   createArtifactId,
   createExecutionLeaseId,
   createInMemoryRuntimeStore,
   createWorkflowInstanceId,
   dispatchStep,
   startExecution,
-  type ConsumedArtifactRecord,
   type WorkflowExecutionContext,
 } from "@weave/engine";
 
@@ -732,10 +732,12 @@ describe("approval invalidation — new revision resets approvalState", () => {
     )._unsafeUnwrap();
 
     // Approve v2 (the latest revision)
-    const v2Artifact = v2.artifacts.filter((a) => a.name === "plan_path")[1];
+    const planArtifactsV2 = v2.artifacts.filter((a) => a.name === "plan_path");
+    const v2Artifact = planArtifactsV2.at(-1);
+    expect(v2Artifact).toBeDefined();
     await store.instances.updateArtifactApproval(
       instanceId,
-      v2Artifact.id,
+      v2Artifact!.id,
       "approved",
     );
 
@@ -975,16 +977,18 @@ describe("retry reuse — default pinning to prior attempt revisions", () => {
         path: ".weave/plans/test-v2.md",
       })
     )._unsafeUnwrap();
-    const v2Artifact = v2.artifacts.filter((a) => a.name === "plan_path")[1];
+    const planArtifactsV2b = v2.artifacts.filter((a) => a.name === "plan_path");
+    const v2Artifact = planArtifactsV2b.at(-1);
+    expect(v2Artifact).toBeDefined();
     await store.instances.updateArtifactApproval(
       instanceId,
-      v2Artifact.id,
+      v2Artifact!.id,
       "approved",
     );
 
     // Explicit pin to v2 — overrides default retry reuse
     const explicitPin: ConsumedArtifactRecord = {
-      artifactId: v2Artifact.id,
+      artifactId: v2Artifact!.id,
       name: "plan_path",
       revision: 2,
     };

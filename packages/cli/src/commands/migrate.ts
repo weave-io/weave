@@ -17,6 +17,7 @@ import type { ParsedArgs } from "../args.js";
 import {
   type DetectedHarness,
   detectHarnesses,
+  HARNESS_IDS,
   type SupportedHarnessId,
 } from "../detect/index.js";
 import type { DetectionProbes } from "../detect/probes.js";
@@ -96,7 +97,7 @@ function renderMigratePreflight(
 // Success rendering
 // ---------------------------------------------------------------------------
 
-function renderMigrateSuccess(
+export function renderMigrateSuccess(
   theme: ThemeColors,
   plan: MigrationPlan,
   result: { backedUp: boolean; warnings?: ConversionWarning[] },
@@ -127,7 +128,6 @@ function resolveSelectedHarnesses(
   flags: ParsedArgs["flags"],
   harnesses: DetectedHarness[],
 ): SupportedHarnessId[] {
-  const HARNESS_IDS: SupportedHarnessId[] = ["opencode", "claude-code", "pi"];
   if (
     flags.harness !== undefined &&
     HARNESS_IDS.includes(flags.harness as SupportedHarnessId)
@@ -301,12 +301,13 @@ export async function runMigrateMode(
     }
   }
 
-  // Step 8: Perform migration write
+  // Step 8: Perform migration write (reuse pre-conversion to avoid double-parsing)
   const writeResult = await performMigrationWrite(
     fs,
     migrationPlan,
     sourceContent.value,
     destExists.value,
+    preConversion,
   );
   if (writeResult.isErr()) {
     ctx.terminal.stderr(`Migration failed: ${writeResult.error.message}`);

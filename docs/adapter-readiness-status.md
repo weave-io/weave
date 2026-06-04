@@ -259,7 +259,7 @@ and [ADR 0004 — Workflow-First Execution Contract](adr/0004-workflow-first-exe
 
 ### Test run results
 
-```
+```text
 bun test packages/adapters/opencode/src/__tests__/run-workflow.test.ts
 
 21 pass, 0 fail, 75 expect() calls

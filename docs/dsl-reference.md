@@ -19,7 +19,7 @@ The `.weave` configuration language is a block-structured, declarative DSL for d
 
 **Directory layout**:
 
-```
+```text
 ~/.weave/                    # Global config root
 ├── config.weave             # Global agent/category/workflow definitions
 └── prompts/                 # Global prompt files

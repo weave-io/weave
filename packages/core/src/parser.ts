@@ -401,12 +401,21 @@ class Parser {
     const arrayValue = this.#parseArrayLiteral();
     if (!arrayValue) return null;
 
-    const steps = arrayValue.elements
-      .filter(
-        (el): el is StringValue | IdentifierValue =>
-          el.kind === "string" || el.kind === "identifier",
-      )
-      .map((el) => el.value);
+    const steps: string[] = [];
+    for (const el of arrayValue.elements) {
+      if (el.kind === "string" || el.kind === "identifier") {
+        steps.push(el.value);
+        continue;
+      }
+      this.#errors.push({
+        type: "UnexpectedToken",
+        line: el.pos.line,
+        column: el.pos.column,
+        found: el.kind,
+        expected: "step name (string or identifier)",
+      });
+      return null;
+    }
 
     return { type: "extend_before_plan", steps, pos };
   }
@@ -459,14 +468,24 @@ class Parser {
     this.#advance(); // consume key
     const pos: SourcePos = { line: keyTok.line, column: keyTok.column };
 
-    // Bare flag pattern: an identifier followed immediately by a newline, `}`,
-    // or EOF is treated as a boolean `true` flag (e.g. `before-plan` inside
-    // `extension_points { before-plan }`).
-    const next = this.#current();
+    // Bare flag pattern: an identifier followed by `}` or EOF (possibly with
+    // intervening newlines) is treated as a boolean `true` flag (e.g.
+    // `before-plan` inside `extension_points { before-plan }`).
+    // We peek past any newlines to find the next meaningful token. If it is
+    // `}` or EOF the key has no value — treat it as a bare flag. Otherwise
+    // fall through to normal key→value parsing so that `log_level\nINFO`
+    // (key and value on separate lines) is handled correctly.
+    let lookahead = this.#cursor;
+    while (
+      (this.#tokens[lookahead]?.type ?? TokenType.EOF) === TokenType.Newline
+    ) {
+      lookahead++;
+    }
+    const nextNonNewline = this.#tokens[lookahead];
     if (
-      next.type === TokenType.Newline ||
-      next.type === TokenType.RBrace ||
-      next.type === TokenType.EOF
+      nextNonNewline === undefined ||
+      nextNonNewline.type === TokenType.RBrace ||
+      nextNonNewline.type === TokenType.EOF
     ) {
       return {
         key: keyTok.value,

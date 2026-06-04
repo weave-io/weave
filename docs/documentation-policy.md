@@ -52,7 +52,7 @@ Non-normative artifacts are evidence that a spec was implemented correctly. They
 
 Each spec directory may contain:
 
-```
+```text
 docs/specs/<N>-spec-<name>/
 ├── <N>-spec-<name>.md          # Durable: formal spec (normative)
 ├── <N>-tasks-<name>.md         # Non-normative: implementation task list

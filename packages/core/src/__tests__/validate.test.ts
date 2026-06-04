@@ -844,7 +844,7 @@ describe("validate — before-plan non-reconciling in v1", () => {
     const ebp = config.extend_before_plan;
     expect(ebp.steps).toEqual(["spec-review"]);
     // No reconciliation fields on the ExtendBeforePlan object itself
-    expect("reconciliation_handler" in ebp).toBe(false);
+    expect("reconciliation_handlers" in ebp).toBe(false);
     expect("on_reconcile" in ebp).toBe(false);
   });
 

@@ -118,11 +118,12 @@ export function performMigrationWrite(
   plan: MigrationPlan,
   sourceContent: string,
   destExists: boolean,
+  preConversion?: ConversionResult,
 ): ResultAsync<
   { backedUp: boolean; warnings: ConversionWarning[] },
   { message: string }
 > {
-  const conversion = convertLegacyJsonc(sourceContent);
+  const conversion = preConversion ?? convertLegacyJsonc(sourceContent);
   const migratedContent = buildMigratedContent(plan, conversion);
   return writeMigratedDsl(fs, plan, migratedContent, destExists).map(
     (result) => ({ ...result, warnings: conversion.warnings }),

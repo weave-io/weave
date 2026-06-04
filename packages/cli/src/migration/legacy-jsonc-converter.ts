@@ -106,6 +106,20 @@ const VALID_LOG_LEVELS = new Set([
  * This correctly handles URLs (e.g. `"https://example.com"`) and other
  * string values that contain slashes.
  */
+/**
+ * Escapes a string value for safe embedding in a `.weave` DSL double-quoted
+ * string literal. Handles backslashes, double-quotes, newlines, carriage
+ * returns, and tabs so that multi-line legacy prompt values produce valid DSL.
+ */
+function escapeForDsl(str: string): string {
+  return str
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, "\\n")
+    .replace(/\r/g, "\\r")
+    .replace(/\t/g, "\\t");
+}
+
 export function stripJsoncComments(source: string): string {
   let result = "";
   let i = 0;
@@ -356,7 +370,7 @@ function convertLegacyAgentEntry(
   }
 
   if (typeof entry["prompt_append"] === "string") {
-    const escaped = entry["prompt_append"].replace(/"/g, '\\"');
+    const escaped = escapeForDsl(entry["prompt_append"]);
     lines.push(`  prompt_append "${escaped}"`);
   }
 
@@ -418,7 +432,7 @@ function convertLegacyCustomAgent(
   const lines: string[] = [`agent ${name} {`];
 
   if (typeof entry["prompt"] === "string") {
-    const escaped = entry["prompt"].replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    const escaped = escapeForDsl(entry["prompt"]);
     lines.push(`  prompt "${escaped}"`);
   }
 
@@ -461,7 +475,7 @@ function convertLegacyCustomAgent(
   }
 
   if (typeof entry["prompt_append"] === "string") {
-    const escaped = entry["prompt_append"].replace(/"/g, '\\"');
+    const escaped = escapeForDsl(entry["prompt_append"]);
     lines.push(`  prompt_append "${escaped}"`);
   }
 
@@ -515,7 +529,7 @@ function convertLegacyCategory(
   const lines: string[] = [`category ${name} {`];
 
   if (typeof entry["description"] === "string") {
-    const escaped = entry["description"].replace(/"/g, '\\"');
+    const escaped = escapeForDsl(entry["description"]);
     lines.push(`  description "${escaped}"`);
   }
 
@@ -541,7 +555,7 @@ function convertLegacyCategory(
   }
 
   if (typeof entry["prompt_append"] === "string") {
-    const escaped = entry["prompt_append"].replace(/"/g, '\\"');
+    const escaped = escapeForDsl(entry["prompt_append"]);
     lines.push(`  prompt_append "${escaped}"`);
   }
 

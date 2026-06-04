@@ -16,7 +16,7 @@ Each of Specs 24–28 contains open questions that must be resolved before sourc
 
 ### `bun run typecheck`
 
-```
+```text
 packages/cli/src/commands/init.ts(1227,9): error TS2451: Cannot redeclare block-scoped variable 'validationResult'.
 packages/cli/src/commands/init.ts(1240,9): error TS2451: Cannot redeclare block-scoped variable 'validationResult'.
 packages/cli/src/commands/init.ts(1240,40): error TS2552: Cannot find name 'migratedContent'. Did you mean 'buildMigratedContent'?
@@ -80,21 +80,23 @@ No replacement file shall exceed 1,000 lines. The public API surface exported fr
 
 **Open question**: Should migration conversion remain under `commands/` ownership or move into a dedicated `migrate/` support area?
 
-**Decision**: **Move into a dedicated `migrate/` support area** under `packages/cli/src/migrate/`.
+**Decision**: **Move into a dedicated `migration/` support area** under `packages/cli/src/migration/`.
 
-**Rationale**: The conversion logic (JSONC-to-DSL translation, field mapping, warning building) is not command orchestration — it is a pure transformation that should be independently testable without a terminal or file system. Placing it under `commands/` conflates two concerns. A dedicated `migrate/` directory makes the ownership boundary obvious and allows the conversion logic to be tested in isolation.
+**Rationale**: The conversion logic (JSONC-to-DSL translation, field mapping, warning building) is not command orchestration — it is a pure transformation that should be independently testable without a terminal or file system. Placing it under `commands/` conflates two concerns. A dedicated `migration/` directory makes the ownership boundary obvious and allows the conversion logic to be tested in isolation.
 
-**Layout**:
+**Layout** (as implemented):
 
-```
+```text
 packages/cli/src/
 ├── commands/
 │   ├── init.ts          (init flow only — interactive prompting, file generation)
-│   └── migrate.ts       (migration command orchestration only — calls migrate/ helpers)
-└── migrate/
-    ├── conversion.ts    (JSONC-to-DSL field mapping and warning building)
-    ├── executor.ts      (canonical read-check-write-render migration helper)
-    └── index.ts         (barrel)
+│   └── migrate.ts       (migration command orchestration only — calls migration/ helpers)
+└── migration/
+    ├── types.ts
+    ├── legacy-jsonc-converter.ts
+    ├── conversion-warnings.ts
+    ├── migration-plan.ts
+    └── migration-write.ts
 ```
 
 ---

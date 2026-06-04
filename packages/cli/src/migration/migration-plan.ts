@@ -6,6 +6,7 @@
  */
 
 import { resolve } from "node:path";
+import type { ResultAsync } from "neverthrow";
 import { describeFileSystemError, type FileSystem } from "../fs/file-system.js";
 import type { MigrationPlan, MigrationScope } from "./types.js";
 
@@ -70,21 +71,16 @@ export function buildMigrationPlan(
  * handle the error case and stop the migration flow rather than proceeding as
  * if the source were absent.
  */
-export async function detectLegacySource(
+export function detectLegacySource(
   scope: MigrationScope,
   fs: FileSystem,
-): Promise<
-  { ok: true; path: string | undefined } | { ok: false; message: string }
-> {
+): ResultAsync<string | undefined, { message: string }> {
   const scopeRoot = scope === "global" ? fs.home() : fs.cwd();
   const sourcePath = resolve(scopeRoot, LEGACY_SOURCE_RELATIVE[scope]);
-  const exists = await fs.exists(sourcePath);
-  if (exists.isErr()) {
-    return {
-      ok: false,
-      message: `Failed to check legacy source at ${sourcePath}: ${describeFileSystemError(exists.error)}`,
-    };
-  }
-  if (!exists.value) return { ok: true, path: undefined };
-  return { ok: true, path: sourcePath };
+  return fs
+    .exists(sourcePath)
+    .mapErr((error) => ({
+      message: `Failed to check legacy source at ${sourcePath}: ${describeFileSystemError(error)}`,
+    }))
+    .map((exists) => (exists ? sourcePath : undefined));
 }

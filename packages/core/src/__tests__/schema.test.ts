@@ -565,6 +565,19 @@ describe("WorkflowConfigSchema", () => {
       expect(msgs.some((m) => m.includes("relative path"))).toBe(true);
     }
   });
+
+  it("accepts workflow with both workflow-level and step-level prompt_append (independent scopes)", () => {
+    const r = WorkflowConfigSchema.safeParse({
+      version: 1,
+      steps: [{ ...validStep, prompt_append: "Step-local guidance." }],
+      prompt_append: "Workflow-wide guidance.",
+    });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.prompt_append).toBe("Workflow-wide guidance.");
+      expect(r.data.steps[0]?.prompt_append).toBe("Step-local guidance.");
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1585,195 +1598,6 @@ describe("AgentConfigSchema — routing field", () => {
       // Zod strict() reports unknown keys in the message, not the path
       const msgs = r.error.issues.map((i) => i.message);
       expect(msgs.some((m) => m.includes("fallback"))).toBe(true);
-    }
-  });
-});
-
-// ---------------------------------------------------------------------------
-// WorkflowStepSchema — prompt_append and prompt_append_file (Spec 22 Unit 4)
-// ---------------------------------------------------------------------------
-
-describe("WorkflowStepSchema — prompt_append and prompt_append_file", () => {
-  const validStep = {
-    name: "implement",
-    type: "autonomous" as const,
-    agent: "shuttle",
-    prompt: "Implement the feature.",
-    completion: { method: "agent_signal" as const },
-  };
-
-  it("accepts step with prompt_append (inline text)", () => {
-    const r = WorkflowStepSchema.safeParse({
-      ...validStep,
-      prompt_append: "Focus on test coverage.",
-    });
-    expect(r.success).toBe(true);
-    if (r.success) {
-      expect(r.data.prompt_append).toBe("Focus on test coverage.");
-      expect(r.data.prompt_append_file).toBeUndefined();
-    }
-  });
-
-  it("accepts step with prompt_append_file (valid relative path)", () => {
-    const r = WorkflowStepSchema.safeParse({
-      ...validStep,
-      prompt_append_file: "step-guidance.md",
-    });
-    expect(r.success).toBe(true);
-    if (r.success) {
-      expect(r.data.prompt_append_file).toBe("step-guidance.md");
-      expect(r.data.prompt_append).toBeUndefined();
-    }
-  });
-
-  it("accepts step with neither prompt_append nor prompt_append_file (both optional)", () => {
-    const r = WorkflowStepSchema.safeParse(validStep);
-    expect(r.success).toBe(true);
-    if (r.success) {
-      expect(r.data.prompt_append).toBeUndefined();
-      expect(r.data.prompt_append_file).toBeUndefined();
-    }
-  });
-
-  it("rejects step with both prompt_append and prompt_append_file set (mutually exclusive)", () => {
-    const r = WorkflowStepSchema.safeParse({
-      ...validStep,
-      prompt_append: "Inline guidance.",
-      prompt_append_file: "step-guidance.md",
-    });
-    expect(r.success).toBe(false);
-    if (!r.success) {
-      const msgs = r.error.issues.map((i) => i.message);
-      expect(msgs.some((m) => m.includes("mutually exclusive"))).toBe(true);
-    }
-  });
-
-  it("rejects step prompt_append_file with path traversal (../bad.md)", () => {
-    const r = WorkflowStepSchema.safeParse({
-      ...validStep,
-      prompt_append_file: "../bad.md",
-    });
-    expect(r.success).toBe(false);
-    if (!r.success) {
-      const msgs = r.error.issues.map((i) => i.message);
-      expect(msgs.some((m) => m.includes("relative path"))).toBe(true);
-    }
-  });
-
-  it("rejects step prompt_append_file with absolute path (/etc/passwd)", () => {
-    const r = WorkflowStepSchema.safeParse({
-      ...validStep,
-      prompt_append_file: "/etc/passwd",
-    });
-    expect(r.success).toBe(false);
-    if (!r.success) {
-      const msgs = r.error.issues.map((i) => i.message);
-      expect(msgs.some((m) => m.includes("relative path"))).toBe(true);
-    }
-  });
-});
-
-// ---------------------------------------------------------------------------
-// WorkflowConfigSchema — prompt_append and prompt_append_file (Spec 22 Unit 4)
-// ---------------------------------------------------------------------------
-
-describe("WorkflowConfigSchema — prompt_append and prompt_append_file", () => {
-  const validStep = {
-    name: "fix",
-    type: "autonomous" as const,
-    agent: "shuttle",
-    prompt: "Fix the bug.",
-    completion: { method: "agent_signal" as const },
-  };
-
-  it("accepts workflow with prompt_append (inline text)", () => {
-    const r = WorkflowConfigSchema.safeParse({
-      version: 1,
-      steps: [validStep],
-      prompt_append: "Always write tests for your changes.",
-    });
-    expect(r.success).toBe(true);
-    if (r.success) {
-      expect(r.data.prompt_append).toBe("Always write tests for your changes.");
-      expect(r.data.prompt_append_file).toBeUndefined();
-    }
-  });
-
-  it("accepts workflow with prompt_append_file (valid relative path)", () => {
-    const r = WorkflowConfigSchema.safeParse({
-      version: 1,
-      steps: [validStep],
-      prompt_append_file: "workflow-guidance.md",
-    });
-    expect(r.success).toBe(true);
-    if (r.success) {
-      expect(r.data.prompt_append_file).toBe("workflow-guidance.md");
-      expect(r.data.prompt_append).toBeUndefined();
-    }
-  });
-
-  it("accepts workflow with neither prompt_append nor prompt_append_file (both optional)", () => {
-    const r = WorkflowConfigSchema.safeParse({
-      version: 1,
-      steps: [validStep],
-    });
-    expect(r.success).toBe(true);
-    if (r.success) {
-      expect(r.data.prompt_append).toBeUndefined();
-      expect(r.data.prompt_append_file).toBeUndefined();
-    }
-  });
-
-  it("rejects workflow with both prompt_append and prompt_append_file set (mutually exclusive)", () => {
-    const r = WorkflowConfigSchema.safeParse({
-      version: 1,
-      steps: [validStep],
-      prompt_append: "Inline guidance.",
-      prompt_append_file: "workflow-guidance.md",
-    });
-    expect(r.success).toBe(false);
-    if (!r.success) {
-      const msgs = r.error.issues.map((i) => i.message);
-      expect(msgs.some((m) => m.includes("mutually exclusive"))).toBe(true);
-    }
-  });
-
-  it("rejects workflow prompt_append_file with path traversal (../bad.md)", () => {
-    const r = WorkflowConfigSchema.safeParse({
-      version: 1,
-      steps: [validStep],
-      prompt_append_file: "../bad.md",
-    });
-    expect(r.success).toBe(false);
-    if (!r.success) {
-      const msgs = r.error.issues.map((i) => i.message);
-      expect(msgs.some((m) => m.includes("relative path"))).toBe(true);
-    }
-  });
-
-  it("rejects workflow prompt_append_file with absolute path (/etc/passwd)", () => {
-    const r = WorkflowConfigSchema.safeParse({
-      version: 1,
-      steps: [validStep],
-      prompt_append_file: "/etc/passwd",
-    });
-    expect(r.success).toBe(false);
-    if (!r.success) {
-      const msgs = r.error.issues.map((i) => i.message);
-      expect(msgs.some((m) => m.includes("relative path"))).toBe(true);
-    }
-  });
-
-  it("accepts workflow with both workflow-level and step-level prompt_append (independent scopes)", () => {
-    const r = WorkflowConfigSchema.safeParse({
-      version: 1,
-      steps: [{ ...validStep, prompt_append: "Step-local guidance." }],
-      prompt_append: "Workflow-wide guidance.",
-    });
-    expect(r.success).toBe(true);
-    if (r.success) {
-      expect(r.data.prompt_append).toBe("Workflow-wide guidance.");
-      expect(r.data.steps[0]?.prompt_append).toBe("Step-local guidance.");
     }
   });
 });

@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, it } from "bun:test";
+import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
@@ -2295,7 +2296,7 @@ describe("composeWorkflowStepPrompt — Spec 22 Unit 4", () => {
     it("Unreadable_step_append_file_returns_PromptFileReadError", async () => {
       const missingFilePath = join(
         tmpdir(),
-        "weave-compose-step-missing-append.md",
+        `weave-compose-step-missing-append-${randomUUID()}.md`,
       );
       const step = makeStep({
         prompt: "Step prompt.",
@@ -2323,7 +2324,7 @@ describe("composeWorkflowStepPrompt — Spec 22 Unit 4", () => {
     it("Unreadable_workflow_append_file_returns_PromptFileReadError", async () => {
       const missingFilePath = join(
         tmpdir(),
-        "weave-compose-workflow-missing-append.md",
+        `weave-compose-workflow-missing-append-${randomUUID()}.md`,
       );
       const step = makeStep({ prompt: "Step prompt." });
       const workflow = makeWorkflow({ prompt_append_file: missingFilePath });

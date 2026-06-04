@@ -131,7 +131,8 @@ function astToPlainObject(nodes: AstNode[]): {
   const categories: Record<string, unknown> = {};
   const disabled: Record<string, string[]> = {};
   const workflows: Record<string, unknown> = {};
-  let extendBeforePlanSteps: string[] = [];
+  const extendBeforePlanSteps: string[] = [];
+  const seenExtendBeforePlanSteps = new Set<string>();
   let settingsBlock: Record<string, unknown> | undefined;
   let topLevelLogLevel = false;
   let invalidSettingsShape = false;
@@ -186,7 +187,12 @@ function astToPlainObject(nodes: AstNode[]): {
       case "extend_before_plan":
         // `extend before-plan ["step-a", "step-b"]` — union-merge into a single
         // global step list. v1 has no per-workflow targeting.
-        extendBeforePlanSteps = [...extendBeforePlanSteps, ...node.steps];
+        for (const step of node.steps) {
+          if (!seenExtendBeforePlanSteps.has(step)) {
+            seenExtendBeforePlanSteps.add(step);
+            extendBeforePlanSteps.push(step);
+          }
+        }
         break;
 
       case "setting":

@@ -51,16 +51,21 @@
   - function runInit: (ctx) => Promise<Result<number, CliError>>
   - function installHarnesses: (input) => Promise<number>
   - interface InitContext
-- `packages/cli/src/commands/migrate.ts` — function runMigrateMode: (ctx, installHarnesses, harnesses) => void, interface MigrateContext
+- `packages/cli/src/commands/migrate.ts`
+  - function renderMigrateSuccess: (theme, plan, result) => string
+  - function runMigrateMode: (ctx, installHarnesses, harnesses) => void
+  - interface MigrateContext
 - `packages/cli/src/commands/runtime.ts` — function runRuntime: (ctx) => Promise<Result<number, CliError>>, interface RuntimeCommandContext
 - `packages/cli/src/commands/validate.ts` — function runValidate: (ctx) => Promise<Result<number, CliError>>, interface ValidateContext
 - `packages/cli/src/config/starter-config.ts` — function starterConfig: (scope) => string
 - `packages/cli/src/detect/index.ts`
+  - function isHarnessId: (value) => value is SupportedHarnessId
   - function detectHarnesses: (probes) => void
   - function formatDetectionSummary: (harnesses) => string[]
   - type SupportedHarnessId
   - type DetectedHarness
   - type DetectionError
+  - _...1 more_
 - `packages/cli/src/detect/probes.ts`
   - class BunDetectionProbes
   - class MemoryDetectionProbes
@@ -98,13 +103,13 @@
 - `packages/cli/src/migration/legacy-jsonc-converter.ts` — function stripJsoncComments: (source) => string, function convertLegacyJsonc: (source) => ConversionResult
 - `packages/cli/src/migration/migration-plan.ts`
   - function buildMigrationPlan: (scope, fs, skippedWarningCount) => MigrationPlan
-  - function detectLegacySource: (scope, fs) => Promise<
+  - function detectLegacySource: (scope, fs) => ResultAsync<string | undefined,
   - const LEGACY_SOURCE_RELATIVE: Record<MigrationScope, string>
   - const CANONICAL_WEAVE_DIR: Record<MigrationScope, string>
 - `packages/cli/src/migration/migration-write.ts`
   - function buildMigratedContent: (plan, conversion) => string
   - function writeMigratedDsl: (fs, plan, dslContent, destExists) => ResultAsync<
-  - function performMigrationWrite: (fs, plan, sourceContent, destExists) => ResultAsync<
+  - function performMigrationWrite: (fs, plan, sourceContent, destExists, preConversion?) => ResultAsync<
 - `packages/cli/src/prompt/index.ts`
   - class ClackPromptAdapter
   - class StaticPromptAdapter

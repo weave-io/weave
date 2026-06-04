@@ -6,6 +6,8 @@ import {
   type DetectedHarness,
   detectHarnesses,
   formatDetectionSummary,
+  HARNESS_IDS,
+  isHarnessId,
   type SupportedHarnessId,
 } from "../detect/index.js";
 import type { DetectionProbes } from "../detect/probes.js";
@@ -17,7 +19,6 @@ import {
 } from "../fs/file-system.js";
 import { installerRegistry } from "../installers/index.js";
 import type { TerminalIO } from "../io/terminal.js";
-import { renderConversionWarnings } from "../migration/conversion-warnings.js";
 import {
   buildMigrationPlan,
   detectLegacySource,
@@ -27,7 +28,7 @@ import type { ConversionWarning, MigrationPlan } from "../migration/types.js";
 import { ClackPromptAdapter, type PromptAdapter } from "../prompt/index.js";
 import type { ThemeColors } from "../theme/colors.js";
 import { defaultThemeRenderer } from "../theme/render.js";
-import { runMigrateMode } from "./migrate.js";
+import { renderMigrateSuccess, runMigrateMode } from "./migrate.js";
 
 // ---------------------------------------------------------------------------
 // Re-exports for backward compatibility
@@ -69,8 +70,6 @@ type ScaffoldResult = {
   promptsPath: string;
   messages: string[];
 };
-
-const HARNESS_IDS: SupportedHarnessId[] = ["opencode", "claude-code", "pi"];
 
 // ---------------------------------------------------------------------------
 // Entry point
@@ -192,11 +191,11 @@ async function createPlan(input: {
 
   // After scope resolution: check for legacy source
   const legacySourceResult = await detectLegacySource(scope, fs);
-  if (!legacySourceResult.ok) {
-    ctx.terminal.stderr(legacySourceResult.message);
+  if (legacySourceResult.isErr()) {
+    ctx.terminal.stderr(legacySourceResult.error.message);
     return { type: "cancelled" };
   }
-  const legacySourcePath = legacySourceResult.path;
+  const legacySourcePath = legacySourceResult.value;
   if (legacySourcePath !== undefined) {
     // --yes: auto-migrate without prompting
     if (ctx.flags.yes) {
@@ -445,10 +444,6 @@ function resolveSelectedHarnesses(
   return [];
 }
 
-function isHarnessId(value: string): value is SupportedHarnessId {
-  return HARNESS_IDS.includes(value as SupportedHarnessId);
-}
-
 function defaultInstallDir(scope: InitScope, fs: FileSystem): string {
   if (scope === "global") return resolve(fs.home(), ".weave");
   return resolve(fs.cwd(), ".weave");
@@ -591,27 +586,4 @@ function renderInitSummary(
     `- Edit ${scaffold.configPath}`,
     "- Run weave validate --project or weave validate --global",
   ].join("\n");
-}
-
-function renderMigrateSuccess(
-  theme: ThemeColors,
-  plan: MigrationPlan,
-  result: { backedUp: boolean; warnings?: ConversionWarning[] },
-): string {
-  const lines = [
-    theme.boldCyan("Migration complete"),
-    `  Written: ${plan.destinationPath}`,
-  ];
-  if (result.backedUp) {
-    lines.push(`  Backup:  ${plan.destinationPath}.bak`);
-  }
-  lines.push(`  Source preserved: ${plan.sourcePath}`);
-  lines.push("");
-  lines.push("Next steps:");
-  lines.push(`  - Review ${plan.destinationPath}`);
-  lines.push("  - Run weave validate --project or weave validate --global");
-  if (result.warnings !== undefined && result.warnings.length > 0) {
-    lines.push(renderConversionWarnings(result.warnings));
-  }
-  return lines.join("\n");
 }

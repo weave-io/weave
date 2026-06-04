@@ -406,10 +406,11 @@ export const ExtendBeforePlanSchema = z.object({
  *                         with `prompt_append`
  *
  * Validation invariants:
- * - When `extension_points.before_plan` is true, exactly one step must carry
- *   `role: "planning"` (`MissingPlanningStep` / `DuplicatePlanningStep`).
- * - A workflow without `extension_points.before_plan` may still have a planning
- *   step, but the uniqueness constraint is only enforced when the slot is published.
+ * - A workflow may have **at most one** step with `role: "planning"` — this
+ *   uniqueness constraint (`DuplicatePlanningStep`) is always enforced,
+ *   regardless of whether `extension_points.before_plan` is set.
+ * - When `extension_points.before_plan` is true, exactly one planning step is
+ *   also **required** (`MissingPlanningStep`).
  * - `prompt_append` and `prompt_append_file` are mutually exclusive per scope.
  */
 export const WorkflowConfigSchema = z

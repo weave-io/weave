@@ -307,7 +307,7 @@ loading agent config from disk.
 
 **Composition order** (step prompt → effective append):
 
-```
+```text
 [rendered step.prompt]
 
 [rendered effective append]
@@ -348,7 +348,7 @@ workflow secure-feature {
 
 For the `implement` step the composed prompt is:
 
-```
+```text
 Execute the plan.
 
 Focus on security.
@@ -377,7 +377,7 @@ workflow secure-feature {
 
 For the `review` step the composed prompt is:
 
-```
+```text
 Review the changes.
 
 Always write tests.
