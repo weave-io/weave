@@ -5,6 +5,7 @@ import type {
   BlockValue,
   CategoryBlock,
   DisableDirective,
+  ExtendBeforePlanDirective,
   SettingAssignment,
   WorkflowBlock,
 } from "../ast.js";
@@ -494,6 +495,36 @@ describe("Parser — routing block inside agent", () => {
     const block = routingProp?.value as BlockValue;
     const excludeArr = block.properties[0]?.value as ArrayValue;
     expect(excludeArr.elements).toHaveLength(0);
+  });
+});
+
+describe("Parser — extend before-plan directive", () => {
+  it("parses extend before-plan with a step list into ExtendBeforePlanDirective", () => {
+    const src = `extend before-plan ["spec-review", "requirements"]`;
+    const result = parseSource(src);
+    expect(result.isOk()).toBe(true);
+    const node = result._unsafeUnwrap()[0] as ExtendBeforePlanDirective;
+    expect(node.type).toBe("extend_before_plan");
+    expect(node.steps).toEqual(["spec-review", "requirements"]);
+    // v1: no workflow field — single global bucket
+    expect("workflow" in node).toBe(false);
+  });
+
+  it("parses a single-step extend before-plan", () => {
+    const src = `extend before-plan ["write-spec"]`;
+    const result = parseSource(src);
+    expect(result.isOk()).toBe(true);
+    const node = result._unsafeUnwrap()[0] as ExtendBeforePlanDirective;
+    expect(node.type).toBe("extend_before_plan");
+    expect(node.steps).toEqual(["write-spec"]);
+  });
+
+  it("rejects extend with unknown slot name (not before-plan)", () => {
+    const src = `extend after-plan ["spec-review"]`;
+    const result = parseSource(src);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    expect(errors.some((e) => e.type === "UnexpectedToken")).toBe(true);
   });
 });
 

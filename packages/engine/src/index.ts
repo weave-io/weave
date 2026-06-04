@@ -30,17 +30,27 @@ export {
 export type {
   AgentDescriptor,
   AgentDescriptorCategory,
+  AppendCollision,
+  AppendScope,
   CategoryMetadata,
   ComposeError,
   DelegationTarget,
   PromptTemplateReason,
+  WorkflowStepComposedPrompt,
 } from "./compose.js";
-export { composeAgentDescriptor } from "./compose.js";
+export {
+  composeAgentDescriptor,
+  composeWorkflowStepPrompt,
+  detectAppendCollisions,
+} from "./compose.js";
 export type { CategoryShuttleConflictError } from "./descriptors.js";
 export { generateCategoryShuttles } from "./descriptors.js";
 export type { Env, EnvValidationError } from "./env.js";
 export { env, envSchema, parseEnv } from "./env.js";
 export type {
+  ApproveArtifactInput,
+  ApproveArtifactOutput,
+  ApproveArtifactResult,
   BeforeToolInput,
   BeforeToolOutput,
   BeforeToolResult,
@@ -52,9 +62,14 @@ export type {
   DispatchStepInput,
   DispatchStepOutput,
   DispatchStepResult,
+  ExecutionAuthorizationSource,
+  ExecutionOperationKind,
   HandleUserInterruptInput,
   HandleUserInterruptOutput,
   HandleUserInterruptResult,
+  InspectExecutionInput,
+  InspectExecutionOutput,
+  InspectExecutionResult,
   LifecycleEffect,
   LifecycleError,
   LifecycleLeaseConflictError,
@@ -66,6 +81,10 @@ export type {
   ObserveSessionOutput,
   ObserveSessionResult,
   PauseExecutionEffect,
+  ReconcileExecutionInput,
+  ReconcileExecutionOutput,
+  ReconcileExecutionResult,
+  ReconciliationAuthorizationSource,
   ResumeExecutionInput,
   ResumeExecutionOutput,
   ResumeExecutionResult,
@@ -77,19 +96,28 @@ export type {
   WorkflowExecutionContext,
 } from "./execution-lifecycle.js";
 export {
+  approveArtifact,
   beforeTool,
   completeStep,
   dispatchStep,
+  EXECUTION_AUTHORIZATION_SOURCES,
+  EXECUTION_OPERATION_KINDS,
   handleUserInterrupt,
+  inspectExecution,
   lifecycleLeaseConflictError,
   lifecycleNotFoundError,
   lifecyclePersistenceError,
   lifecyclePolicyDecisionError,
   lifecycleValidationError,
   observeSession,
+  RECONCILIATION_AUTHORIZATION_SOURCES,
+  RECONCILIATION_REASONS,
+  reconcileExecution,
   resumeExecution,
   sanitizeMetadata,
   startExecution,
+  validateAuthorizationSource,
+  validateReconciliationSource,
 } from "./execution-lifecycle.js";
 export { logDestination, logger, redirectLogsToFile } from "./logger.js";
 export type {
@@ -149,6 +177,7 @@ export {
   InMemoryRuntimeStore,
 } from "./runtime/memory-store.js";
 export {
+  isDeniedKey,
   sanitizeJournalData,
   sanitizeSnapshotMetadata,
 } from "./runtime/sanitizer.js";
@@ -175,8 +204,18 @@ export type {
   UpdateWorkflowInstanceInput,
   WorkflowInstanceRepository,
 } from "./runtime/store.js";
+// Note: ArtifactApprovalState, ArtifactId, ArtifactIntegrityMetadata are
+// exported from ./runtime/types.js above.
 export type {
+  ArtifactApprovalState,
+  ArtifactId,
+  ArtifactInputDecl,
+  ArtifactInputRole,
+  ArtifactInputSummary,
+  ArtifactIntegrityMetadata,
   ArtifactRef,
+  ArtifactRefInput,
+  ConsumedArtifactRecord,
   ExecutionLease,
   ExecutionLeaseId,
   JournalEntrySource,
@@ -190,11 +229,15 @@ export type {
   RuntimeJournalEntryId,
   SessionSnapshot,
   SessionSnapshotId,
+  StepAttemptRecord,
   WorkflowInstance,
   WorkflowInstanceId,
   WorkflowInstanceStatus,
 } from "./runtime/types.js";
 export {
+  ARTIFACT_APPROVAL_STATES,
+  ARTIFACT_INPUT_ROLES,
+  createArtifactId,
   createExecutionLeaseId,
   createOwnerId,
   createRuntimeJournalEntryId,

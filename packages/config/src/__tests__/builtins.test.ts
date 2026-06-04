@@ -81,6 +81,51 @@ describe("getBuiltinConfig", () => {
     expect(config.workflows["tapestry-execution"]).toBeDefined();
   });
 
+  // ---------------------------------------------------------------------------
+  // Planning workflow defaults
+  // ---------------------------------------------------------------------------
+
+  it("(g3) plan-and-execute publishes extension_points.before_plan: true", () => {
+    const config = getBuiltinConfig()._unsafeUnwrap();
+    const wf = config.workflows["plan-and-execute"];
+    expect(wf).toBeDefined();
+    expect(wf?.extension_points?.before_plan).toBe(true);
+  });
+
+  it("(g4) plan-and-execute has exactly one planning step with role: planning on the 'plan' step", () => {
+    const config = getBuiltinConfig()._unsafeUnwrap();
+    const wf = config.workflows["plan-and-execute"];
+    expect(wf).toBeDefined();
+    const planningSteps = wf?.steps.filter((s) => s.role === "planning") ?? [];
+    expect(planningSteps).toHaveLength(1);
+    expect(planningSteps[0]?.name).toBe("plan");
+  });
+
+  it("(g5) quick-fix does NOT publish extension_points.before_plan", () => {
+    const config = getBuiltinConfig()._unsafeUnwrap();
+    const wf = config.workflows["quick-fix"];
+    expect(wf).toBeDefined();
+    expect(wf?.extension_points?.before_plan).toBeUndefined();
+  });
+
+  it("(g6) tapestry-execution does NOT publish extension_points.before_plan", () => {
+    const config = getBuiltinConfig()._unsafeUnwrap();
+    const wf = config.workflows["tapestry-execution"];
+    expect(wf).toBeDefined();
+    expect(wf?.extension_points?.before_plan).toBeUndefined();
+  });
+
+  it("(g7) plan-and-execute planning step uses plan_created completion with plan_name template", () => {
+    const config = getBuiltinConfig()._unsafeUnwrap();
+    const wf = config.workflows["plan-and-execute"];
+    const planStep = wf?.steps.find((s) => s.role === "planning");
+    expect(planStep).toBeDefined();
+    expect(planStep?.completion.method).toBe("plan_created");
+    if (planStep?.completion.method === "plan_created") {
+      expect(planStep.completion.plan_name).toBeTruthy();
+    }
+  });
+
   it("(h) BUILTIN_WEAVE_SOURCE is valid DSL — parseConfig returns no errors", () => {
     const result = parseConfig(BUILTIN_WEAVE_SOURCE);
     expect(result.isOk()).toBe(true);

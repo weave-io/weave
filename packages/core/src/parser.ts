@@ -16,6 +16,7 @@ import type {
   BooleanValue,
   CategoryBlock,
   DisableDirective,
+  ExtendBeforePlanDirective,
   IdentifierValue,
   NumberValue,
   Property,
@@ -130,6 +131,8 @@ class Parser {
         return this.#parseWorkflowBlock();
       case "disable":
         return this.#parseDisableDirective();
+      case "extend":
+        return this.#parseExtendDirective();
       default:
         return this.#parseSettingAssignment();
     }
@@ -361,6 +364,62 @@ class Parser {
     return { type: "disable", target, items, pos };
   }
 
+  /**
+   * Parse `extend before-plan ["step-a", "step-b"]` top-level directive.
+   *
+   * Syntax: `extend before-plan [ <string>... ]`
+   *
+   * The `before-plan` token is a hyphenated identifier. The step names in the
+   * array must be strings. The directive is stored as an `ExtendBeforePlanDirective`
+   * AST node; the validator maps it into `WeaveConfig.extend_before_plan`.
+   */
+  #parseExtendDirective(): ExtendBeforePlanDirective | null {
+    const startTok = this.#advance(); // consume 'extend'
+    const pos: SourcePos = { line: startTok.line, column: startTok.column };
+
+    this.#skipNewlines();
+    const slotTok = this.#current();
+
+    // Only `before-plan` is supported in v1.
+    if (
+      slotTok.type !== TokenType.Identifier ||
+      slotTok.value !== "before-plan"
+    ) {
+      this.#errors.push({
+        type: "UnexpectedToken",
+        line: slotTok.line,
+        column: slotTok.column,
+        found: slotTok.value || slotTok.type,
+        expected: "before-plan",
+      });
+      this.#skipToNextBoundary();
+      return null;
+    }
+    this.#advance(); // consume 'before-plan'
+
+    this.#skipNewlines();
+    const arrayValue = this.#parseArrayLiteral();
+    if (!arrayValue) return null;
+
+    const steps: string[] = [];
+    for (const el of arrayValue.elements) {
+      if (el.kind === "string" || el.kind === "identifier") {
+        steps.push(el.value);
+        continue;
+      }
+      this.#errors.push({
+        type: "UnexpectedToken",
+        line: el.pos.line,
+        column: el.pos.column,
+        found: el.kind,
+        expected: "step name (string or identifier)",
+      });
+      return null;
+    }
+
+    return { type: "extend_before_plan", steps, pos };
+  }
+
   #parseSettingAssignment(): SettingAssignment | null {
     const keyTok = this.#advance();
     const pos: SourcePos = { line: keyTok.line, column: keyTok.column };
@@ -408,6 +467,36 @@ class Parser {
 
     this.#advance(); // consume key
     const pos: SourcePos = { line: keyTok.line, column: keyTok.column };
+
+    // Bare flag pattern: an identifier followed by `}` or EOF (possibly with
+    // intervening newlines) is treated as a boolean `true` flag (e.g.
+    // `before-plan` inside `extension_points { before-plan }`).
+    // We peek past any newlines to find the next meaningful token. If it is
+    // `}` or EOF the key has no value — treat it as a bare flag. Otherwise
+    // fall through to normal key→value parsing so that `log_level\nINFO`
+    // (key and value on separate lines) is handled correctly.
+    let lookahead = this.#cursor;
+    while (
+      (this.#tokens[lookahead]?.type ?? TokenType.EOF) === TokenType.Newline
+    ) {
+      lookahead++;
+    }
+    const nextNonNewline = this.#tokens[lookahead];
+    if (
+      nextNonNewline === undefined ||
+      nextNonNewline.type === TokenType.RBrace ||
+      nextNonNewline.type === TokenType.EOF
+    ) {
+      return {
+        key: keyTok.value,
+        value: {
+          kind: "boolean",
+          value: true,
+          pos,
+        } satisfies BooleanValue,
+        pos,
+      };
+    }
 
     // Allow optional newline between key and value (block-style sub-keys)
     this.#skipNewlines();

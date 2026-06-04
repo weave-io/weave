@@ -514,3 +514,140 @@ describe("sanitized JSON fixture", () => {
     expect(json).not.toContain("/Users/");
   });
 });
+
+// ---------------------------------------------------------------------------
+// § 9 — Spec 22 Unit 4: command-entrypoints as canonical execution-entry
+// ---------------------------------------------------------------------------
+
+/**
+ * Spec 22 Unit 4 proof: `command-entrypoints` is the canonical execution-entry
+ * capability. `workflow-step-dispatch` is supporting execution context — it is
+ * NOT a second execution-entry capability.
+ *
+ * These tests demonstrate:
+ * 1. A command harness (native commands) declares `command-entrypoints: native`.
+ * 2. A non-command harness (skill/script delivery) declares
+ *    `command-entrypoints: emulated` and still passes the Core Readiness Profile.
+ * 3. `workflow-step-dispatch` readiness is independent of execution-entry
+ *    readiness — a harness with `workflow-step-dispatch: native` but
+ *    `command-entrypoints: unsupported` still fails the profile.
+ * 4. `workflow-step-dispatch` alone cannot substitute for `command-entrypoints`.
+ */
+
+describe("Spec 22 Unit 4: command-entrypoints is the canonical execution-entry capability", () => {
+  it("command harness with native command support passes the profile", () => {
+    // A harness that exposes literal /run-workflow commands declares native.
+    const contract = withOverride(
+      fullPassingContract(),
+      "command-entrypoints",
+      {
+        readiness: "native",
+        description: "Execution command entrypoints",
+        notes:
+          "Harness exposes /run-workflow and /resume-workflow commands for explicit user-authorized execution start",
+        supplier: "synthetic-command-harness",
+      },
+    );
+    const result = evaluateCoreReadinessProfile(contract);
+    expect(result.ready).toBe(true);
+    const pass = result.passes.find(
+      (p) => p.capabilityId === "command-entrypoints",
+    );
+    expect(pass).toBeDefined();
+    expect(pass?.readiness).toBe("native");
+  });
+
+  it("non-command harness with emulated delivery passes the profile", () => {
+    // A harness without literal commands (e.g. skill/script/UI delivery)
+    // declares emulated — this is the Spec 22 Unit 4 non-OpenCode proof path.
+    const contract = withOverride(
+      fullPassingContract(),
+      "command-entrypoints",
+      {
+        readiness: "emulated",
+        description: "Execution command entrypoints",
+        notes:
+          "No native command surface; execution is started via an explicit run-workflow skill invocation that the user must trigger deliberately",
+        supplier: "synthetic-non-command-harness",
+      },
+    );
+    const result = evaluateCoreReadinessProfile(contract);
+    expect(result.ready).toBe(true);
+    const pass = result.passes.find(
+      (p) => p.capabilityId === "command-entrypoints",
+    );
+    expect(pass).toBeDefined();
+    expect(pass?.readiness).toBe("emulated");
+  });
+
+  it("harness with unsupported command-entrypoints fails the profile even if workflow-step-dispatch is native", () => {
+    // workflow-step-dispatch is supporting execution context, not an entry point.
+    // A harness that can dispatch steps but has no explicit start path still fails.
+    let contract = withOverride(fullPassingContract(), "command-entrypoints", {
+      readiness: "unsupported",
+      description: "Execution command entrypoints",
+      notes: "No explicit execution start path available in this harness",
+      supplier: "synthetic-no-entry-harness",
+    });
+    contract = withOverride(contract, "workflow-step-dispatch", {
+      readiness: "native",
+      description: "Workflow step dispatch",
+      notes: "Engine can dispatch steps once execution has started",
+      supplier: "synthetic-no-entry-harness",
+    });
+    const result = evaluateCoreReadinessProfile(contract);
+    expect(result.ready).toBe(false);
+    const failure = result.failures.find(
+      (f) => f.capabilityId === "command-entrypoints",
+    );
+    expect(failure).toBeDefined();
+    expect(failure?.verdict).toBe("fail");
+    // workflow-step-dispatch passes independently — it is supporting context
+    const stepDispatchPass = result.passes.find(
+      (p) => p.capabilityId === "workflow-step-dispatch",
+    );
+    expect(stepDispatchPass).toBeDefined();
+  });
+
+  it("workflow-step-dispatch readiness is independent of command-entrypoints readiness", () => {
+    // Both can be native simultaneously — they model different concerns.
+    const contract = fullPassingContract(); // all native
+    const result = evaluateCoreReadinessProfile(contract);
+    expect(result.ready).toBe(true);
+    const entryPass = result.passes.find(
+      (p) => p.capabilityId === "command-entrypoints",
+    );
+    const dispatchPass = result.passes.find(
+      (p) => p.capabilityId === "workflow-step-dispatch",
+    );
+    expect(entryPass).toBeDefined();
+    expect(dispatchPass).toBeDefined();
+    // Both pass independently — neither substitutes for the other.
+    expect(entryPass?.capabilityId).toBe("command-entrypoints");
+    expect(dispatchPass?.capabilityId).toBe("workflow-step-dispatch");
+  });
+
+  it("degraded command-entrypoints fails the profile (incomplete explicit start path)", () => {
+    const contract = withOverride(
+      fullPassingContract(),
+      "command-entrypoints",
+      {
+        readiness: "degraded",
+        description: "Execution command entrypoints",
+        notes:
+          "Only some workflows are reachable via explicit start; others require manual workarounds",
+        blockingImpact:
+          "Not all workflows can be started through an explicit user-authorized path",
+        supplier: "synthetic-partial-harness",
+      },
+    );
+    const result = evaluateCoreReadinessProfile(contract);
+    expect(result.ready).toBe(false);
+    const failure = result.failures.find(
+      (f) => f.capabilityId === "command-entrypoints",
+    );
+    expect(failure).toBeDefined();
+    expect(failure?.verdict).toBe("fail");
+    expect(failure?.readiness).toBe("degraded");
+  });
+});

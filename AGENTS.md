@@ -30,6 +30,8 @@ Before adding or changing an engine API, read `docs/adapter-boundary.md` and ver
 
 ## The `.weave` DSL
 
+> **Canonical reference**: [`docs/dsl-reference.md`](docs/dsl-reference.md) is the normative DSL contract. The sections below are an onboarding summary and quick-reference for agents working in this repository. When the two diverge, `docs/dsl-reference.md` is authoritative. See [`docs/documentation-policy.md`](docs/documentation-policy.md) for the classification rules.
+
 Weave uses a **custom configuration language** (`.weave` files) designed for readability and declarative agent orchestration. The syntax is block-structured and domain-specific — not TypeScript, not JSON, not YAML.
 
 ### Configuration Locations
@@ -100,7 +102,7 @@ agent shuttle {
   description "Shuttle (Domain Specialist)"
   prompt_file "shuttle.md"
   models ["claude-sonnet-4-5"]
-  mode all
+  mode subagent
   temperature 0.2
 
   tool_policy {
@@ -637,18 +639,27 @@ Write or update a doc whenever you:
 
 ```
 docs/
+├── README.md                     # Top-level navigation entry point
+├── documentation-policy.md       # Artifact classification and retention rules
+├── dsl-reference.md              # Canonical .weave DSL syntax reference
 ├── legacy-architecture.md        # Alpha / OpenCode-era reference (read-only history)
 ├── specs/                        # Formal specs for DSL features and subsystems
-│   └── 01-spec-core-dsl/         # One directory per spec, with index.md entry point
-└── *.md                          # Conceptual guides, ADRs, how-tos
+│   ├── README.md                 # Specs index with canonical ordering
+│   └── <N>-spec-<name>/          # One directory per spec
+│       ├── <N>-spec-<name>.md    # Durable: formal spec (normative)
+│       └── <N>-proofs/           # Non-normative: proof artifacts
+├── adr/                          # Architecture Decision Records
+├── artifacts/                    # Non-normative historical artifacts
+└── *.md                          # Conceptual guides
 ```
 
-- **Specs** (`docs/specs/`) — detailed, numbered specs for subsystems. Each spec lives in its own directory with an `index.md`. Use a sequential number prefix (`02-`, `03-`, …) so specs have a stable reading order.
-- **Guides** (`docs/*.md`) — conceptual overviews, architecture decision records (ADRs), how-to references. Name files with kebab-case (`harness-adapter.md`, `config-merge.md`).
+- **Specs** (`docs/specs/`) — detailed, numbered specs for subsystems. Each spec lives in its own directory. The primary spec file is `<N>-spec-<name>.md` (not `index.md`). Use a sequential number prefix (`29-`, `30-`, …) so specs have a stable reading order. See [`docs/specs/README.md`](docs/specs/README.md) for the full index.
+- **Guides** (`docs/*.md`) — conceptual overviews, architecture decision records (ADRs), how-to references. Name files with kebab-case (`harness-adapter.md`, `config-merge.md`). Entry point: [`docs/README.md`](docs/README.md).
+- **Artifacts** (`docs/artifacts/`) — non-normative proof artifacts, terminal captures, and audit evidence. See [`docs/documentation-policy.md`](docs/documentation-policy.md) for classification rules.
 
 ### How to write docs
 
-- **Link liberally** — every doc should cross-link to related docs, source files, and specs. Use relative Markdown links from the current file (`[config loader](../packages/config/src/discovery.ts)` from a doc under `docs/`, `[DSL spec](docs/specs/01-spec-core-dsl/01-spec-core-dsl.md)` from this guide).
+- **Link liberally** — every doc should cross-link to related docs, source files, and specs. Use relative Markdown links from the current file (`packages/config/src/discovery.ts` from the repo root, `../../packages/config/src/discovery.ts` from a doc under `docs/specs/<N>-spec-*/`, `docs/dsl-reference.md` from this guide).
 - **Write for agents** — be explicit about _why_ a decision was made, not just _what_ was decided. Agents lack the conversation history; the doc is their only context.
 - **Keep docs close to the change** — if you change `packages/core/src/lexer.ts`, update or create a doc that describes the lexer's responsibilities and any invariants it enforces.
 - **Use ADR format for decisions** — when a choice has meaningful trade-offs, document it as a lightweight ADR: _Context → Decision → Consequences_.

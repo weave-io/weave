@@ -48,22 +48,27 @@
   - type ArgParseError
 - `packages/cli/src/cli.ts` — function run: (deps?) => Promise<Result<number, CliError>>, interface CliDeps
 - `packages/cli/src/commands/init.ts`
-  - function convertLegacyJsonc: (source) => ConversionResult
   - function runInit: (ctx) => Promise<Result<number, CliError>>
-  - function writeMigratedDsl: (fs, plan, dslContent, destExists) => ResultAsync<
+  - function installHarnesses: (input) => Promise<number>
   - interface InitContext
-  - type MigrationPlan
-  - type ConversionWarning
-  - _...1 more_
+- `packages/cli/src/commands/migrate.ts`
+  - function renderMigrateSuccess: (theme, plan, result) => string
+  - function resolveSelectedHarnesses: (flags, harnesses) => SupportedHarnessId[]
+  - function runMigrateMode: (ctx, installHarnesses, harnesses) => void
+  - interface MigrateContext
+  - type InitScope
+  - type InitPlan
 - `packages/cli/src/commands/runtime.ts` — function runRuntime: (ctx) => Promise<Result<number, CliError>>, interface RuntimeCommandContext
 - `packages/cli/src/commands/validate.ts` — function runValidate: (ctx) => Promise<Result<number, CliError>>, interface ValidateContext
 - `packages/cli/src/config/starter-config.ts` — function starterConfig: (scope) => string
 - `packages/cli/src/detect/index.ts`
+  - function isHarnessId: (value) => value is SupportedHarnessId
   - function detectHarnesses: (probes) => void
   - function formatDetectionSummary: (harnesses) => string[]
   - type SupportedHarnessId
   - type DetectedHarness
   - type DetectionError
+  - _...1 more_
 - `packages/cli/src/detect/probes.ts`
   - class BunDetectionProbes
   - class MemoryDetectionProbes
@@ -97,6 +102,17 @@
   - class RealTerminal
   - class BufferTerminal
   - interface TerminalIO
+- `packages/cli/src/migration/conversion-warnings.ts` — function renderConversionWarnings: (warnings) => string
+- `packages/cli/src/migration/legacy-jsonc-converter.ts` — function stripJsoncComments: (source) => string, function convertLegacyJsonc: (source) => ConversionResult
+- `packages/cli/src/migration/migration-plan.ts`
+  - function buildMigrationPlan: (scope, fs, skippedWarningCount) => MigrationPlan
+  - function detectLegacySource: (scope, fs) => ResultAsync<string | undefined,
+  - const LEGACY_SOURCE_RELATIVE: Record<MigrationScope, string>
+  - const CANONICAL_WEAVE_DIR: Record<MigrationScope, string>
+- `packages/cli/src/migration/migration-write.ts`
+  - function buildMigratedContent: (plan, conversion) => string
+  - function writeMigratedDsl: (fs, plan, dslContent, destExists) => ResultAsync<
+  - function performMigrationWrite: (fs, plan, sourceContent, destExists, preConversion?) => ResultAsync<
 - `packages/cli/src/prompt/index.ts`
   - class ClackPromptAdapter
   - class StaticPromptAdapter
@@ -144,6 +160,10 @@
 - `packages/core/src/lexer.ts` — function tokenize: (source) => Result<Token[], LexError[]>
 - `packages/core/src/parse-config.ts` — function parseConfig: (source) => Result<WeaveConfig, ConfigError[]>
 - `packages/core/src/parser.ts` — function parse: (tokens) => Result<AstNode[], ParseError[]>
+- `packages/core/src/prompt-schema-helpers.ts`
+  - function refinePromptAppendExclusive: () => [
+  - function refinePromptExclusive: () => [
+  - function refinePromptFileSafe: (field) => [(data: HasPromptFile) => boolean,
 - `packages/core/src/validate.ts` — function validate: (ast) => Result<WeaveConfig, ValidationError[]>
 - `packages/engine/src/capability-contract.ts`
   - function evaluateCoreReadinessProfile: (contract) => ProfileEvaluationResult
@@ -154,13 +174,13 @@
   - interface CapabilityEntry
   - _...18 more_
 - `packages/engine/src/compose.ts`
+  - function detectAppendCollisions: (configs) => AppendCollision[]
+  - function composeWorkflowStepPrompt: (stepName, step, workflow, templateContext) => ResultAsync<WorkflowStepComposedPrompt, ComposeError>
   - function composeAgentDescriptor: (agentName, agentConfig, config, allAgents, AgentConfig>, category?) => ResultAsync<AgentDescriptor, ComposeError>
   - interface CategoryMetadata
   - interface AgentDescriptor
   - interface AgentDescriptorCategory
-  - interface DelegationTarget
-  - type PromptTemplateReason
-  - _...1 more_
+  - _...6 more_
 - `packages/engine/src/descriptors.ts`
   - function generateCategoryShuttles: (config) => Result<
   - interface GeneratedCategoryShuttle
@@ -171,14 +191,43 @@
   - type EnvValidationError
   - const envSchema
   - const env: Env
-- `packages/engine/src/execution-lifecycle.ts`
-  - function sanitizeMetadata: (metadata) => Result<SafeMetadata, LifecycleValidationError>
+- `packages/engine/src/execution-lifecycle/artifacts.ts`
+  - function latestArtifactByName: (instance, name) => ArtifactRef | undefined
+  - function latestAttemptForStep: (instance, stepName) => StepAttemptRecord | undefined
+  - function isApprovalInvalidated: (instance, artifactName) => boolean
+  - function verifyArtifactIntegrity: (artifact, suppliedDigest) => Result<undefined, LifecycleError>
+  - function inputRole: (input) => "normative" | "informational"
+  - function validateStepInputs: (step, instance, artifactDigests?, string>>, pinnedNames?) => Result<ArtifactInputSummary, LifecycleError>
+  - _...3 more_
+- `packages/engine/src/execution-lifecycle/authorization.ts` — function validateAuthorizationSource: (source, operation) => Result<undefined, LifecyclePolicyDecisionError>, function validateReconciliationSource: (reason, source) => Result<undefined, LifecyclePolicyDecisionError>
+- `packages/engine/src/execution-lifecycle/before-tool.ts` — function beforeTool: (input) => BeforeToolResult
+- `packages/engine/src/execution-lifecycle/completion.ts` — function completeStep: (input, store) => ResultAsync<CompleteStepOutput, LifecycleError>
+- `packages/engine/src/execution-lifecycle/dispatch.ts`
+  - function buildConfiguredRunAgentEffect: (step, promptMetadata) => RunAgentEffect
+  - function resolveWorkflowStep: (workflowConfig, stepName) => Result<WorkflowStep, LifecycleError>
+  - function dispatchStep: (input, store) => ResultAsync<DispatchStepOutput, LifecycleError>
+- `packages/engine/src/execution-lifecycle/errors.ts`
   - function lifecycleValidationError: (message, field?) => LifecycleValidationError
   - function lifecycleNotFoundError: (entity, id, message?) => LifecycleNotFoundError
   - function lifecycleLeaseConflictError: (workflowInstanceId, conflictingLeaseId, message) => LifecycleLeaseConflictError
   - function lifecyclePersistenceError: (message, cause?) => LifecyclePersistenceError
   - function lifecyclePolicyDecisionError: (message, rule?) => LifecyclePolicyDecisionError
-  - _...41 more_
+- `packages/engine/src/execution-lifecycle/inspection.ts` — function inspectExecution: (input, store) => InspectExecutionResult
+- `packages/engine/src/execution-lifecycle/interrupts.ts` — function handleUserInterrupt: (input, store) => ResultAsync<HandleUserInterruptOutput, LifecycleError>
+- `packages/engine/src/execution-lifecycle/lease.ts`
+  - function mapStoreError: (storeError) => LifecyclePersistenceError
+  - function mapConflictToLeaseConflict: (workflowInstanceId, storeError) => LifecycleLeaseConflictError
+  - function validateActiveLease: (activeLease, workflowInstanceId, leaseId) => Result<ExecutionLease, LifecycleError>
+- `packages/engine/src/execution-lifecycle/metadata.ts` — function sanitizeMetadata: (metadata) => Result<SafeMetadata, LifecycleValidationError>
+- `packages/engine/src/execution-lifecycle/prompt-context.ts`
+  - function buildStepPromptContext: (instance, step) => TemplateContext
+  - function renderStepPrompt: (promptTemplate, context, artifactNames) => Result<
+  - function renderPlanName: (planNameTemplate, instance) => Result<string, LifecycleError>
+- `packages/engine/src/execution-lifecycle/reconciliation.ts` — function reconcileExecution: (input, store) => ReconcileExecutionResult
+- `packages/engine/src/execution-lifecycle/resume.ts` — function resumeExecution: (input, store) => ResultAsync<ResumeExecutionOutput, LifecycleError>
+- `packages/engine/src/execution-lifecycle/session.ts` — function observeSession: (input, store) => ResultAsync<ObserveSessionOutput, LifecycleError>
+- `packages/engine/src/execution-lifecycle/start.ts` — function startExecution: (input, store) => ResultAsync<StartExecutionOutput, LifecycleError>
+- `packages/engine/src/execution-lifecycle/terminal-outcomes.ts` — function approveArtifact: (input, store) => ApproveArtifactResult
 - `packages/engine/src/logger.ts`
   - function redirectLogsToFile: (filePath) => Promise<void>
   - const logDestination
@@ -210,7 +259,10 @@
   - class InMemoryRuntimeStore
   - interface InMemoryRuntimeStoreFailureConfig
   - interface InMemoryRuntimeStoreOptions
-- `packages/engine/src/runtime/sanitizer.ts` — function sanitizeJournalData: (data) => Result<JsonObject, RuntimeStoreError>, function sanitizeSnapshotMetadata: (metadata, string | number | boolean>) => Result<Record<string, string | number | boolean>, RuntimeStoreError>
+- `packages/engine/src/runtime/sanitizer.ts`
+  - function isDeniedKey: (key) => boolean
+  - function sanitizeJournalData: (data) => Result<JsonObject, RuntimeStoreError>
+  - function sanitizeSnapshotMetadata: (metadata, string | number | boolean>) => Result<Record<string, string | number | boolean>, RuntimeStoreError>
 - `packages/engine/src/runtime/sqlite/kysely-bun-sqlite.ts` — class BunSqliteDialect
 - `packages/engine/src/runtime/sqlite/migrations.ts`
   - function runMigrations: (db) => Result<void, RuntimeStoreError>
@@ -226,8 +278,8 @@
   - function createSessionSnapshotId: (raw) => SessionSnapshotId
   - function createRuntimeJournalEntryId: (raw) => RuntimeJournalEntryId
   - function createOwnerId: (raw) => OwnerId
-  - interface JsonObject
-  - _...18 more_
+  - function createArtifactId: (raw) => ArtifactId
+  - _...30 more_
 - `packages/engine/src/skill-resolution.ts`
   - function resolveSkillsForAgent: (input) => Result<ResolvedSkill[], SkillResolutionError[]>
   - function resolveSkillsForConfig: (input) => Result<ConfigSkillResolutionResult, SkillResolutionError[]>

@@ -1,0 +1,233 @@
+{
+  "$schema": "https://weave.dev/schemas/artifact-provenance-fixture/v1",
+  "$comment": "Sanitized artifact provenance fixture for Task 3.5 tests. Contains fingerprints and metadata only. EXPLICITLY EXCLUDED: raw artifact contents, raw prompts, tokens, credentials, private filesystem paths.",
+  "version": 1,
+  "description": "Representative artifact provenance scenarios for automated coverage of identity, revision, approval, integrity, and step-attempt recording.",
+
+  "scenarios": [
+    {
+      "id": "single-revision-pending",
+      "description": "Artifact produced once; no approval yet.",
+      "artifact": {
+        "id": "art-aaa111",
+        "name": "plan",
+        "path": ".weave/plans/feature-x.md",
+        "revision": 1,
+        "approvalState": "pending",
+        "producerAgent": "shuttle",
+        "mimeType": "text/markdown",
+        "integrity": {
+          "algorithm": "sha256",
+          "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      },
+      "stepAttempts": []
+    },
+    {
+      "id": "single-revision-approved",
+      "description": "Artifact produced once and approved by a different agent.",
+      "artifact": {
+        "id": "art-bbb222",
+        "name": "plan",
+        "path": ".weave/plans/feature-y.md",
+        "revision": 1,
+        "approvalState": "approved",
+        "producerAgent": "shuttle",
+        "mimeType": "text/markdown",
+        "integrity": {
+          "algorithm": "sha256",
+          "digest": "abc123def456abc123def456abc123def456abc123def456abc123def456abcd"
+        }
+      },
+      "stepAttempts": [
+        {
+          "stepName": "review",
+          "attemptNumber": 1,
+          "dispatchedAt": "2026-06-03T10:00:00.000Z",
+          "consumedArtifacts": [
+            {
+              "artifactId": "art-bbb222",
+              "name": "plan",
+              "revision": 1
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "approval-invalidation",
+      "description": "Artifact revised after approval; new revision resets approvalState to pending, invalidating prior approval.",
+      "artifacts": [
+        {
+          "id": "art-ccc333",
+          "name": "plan",
+          "path": ".weave/plans/feature-z-v1.md",
+          "revision": 1,
+          "approvalState": "approved",
+          "producerAgent": "shuttle",
+          "integrity": {
+            "algorithm": "sha256",
+            "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        },
+        {
+          "id": "art-ccc333",
+          "name": "plan",
+          "path": ".weave/plans/feature-z-v2.md",
+          "revision": 2,
+          "approvalState": "pending",
+          "producerAgent": "shuttle",
+          "integrity": {
+            "algorithm": "sha256",
+            "digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        }
+      ],
+      "$comment": "Stable ArtifactId 'art-ccc333' is shared across both revisions. Revision 2 resets approvalState to 'pending', blocking dispatch of normative inputs until re-approved.",
+      "stepAttempts": []
+    },
+    {
+      "id": "retry-pinning",
+      "description": "Step retried twice; second attempt pins to same consumed revision as first.",
+      "artifact": {
+        "id": "art-ddd444",
+        "name": "plan",
+        "path": ".weave/plans/feature-w.md",
+        "revision": 1,
+        "approvalState": "approved",
+        "producerAgent": "shuttle",
+        "integrity": {
+          "algorithm": "sha256",
+          "digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      },
+      "stepAttempts": [
+        {
+          "stepName": "review",
+          "attemptNumber": 1,
+          "dispatchedAt": "2026-06-03T11:00:00.000Z",
+          "consumedArtifacts": [
+            {
+              "artifactId": "art-ddd444",
+              "name": "plan",
+              "revision": 1
+            }
+          ]
+        },
+        {
+          "stepName": "review",
+          "attemptNumber": 2,
+          "dispatchedAt": "2026-06-03T11:05:00.000Z",
+          "consumedArtifacts": [
+            {
+              "artifactId": "art-ddd444",
+              "name": "plan",
+              "revision": 1
+            }
+          ],
+          "$comment": "Retry pins to revision 1 from attempt 1, even if a newer revision exists."
+        }
+      ]
+    },
+    {
+      "id": "integrity-mismatch-blocked",
+      "description": "Dispatch blocked because supplied digest does not match stored digest (tamper detection, fail-closed).",
+      "artifact": {
+        "id": "art-eee555",
+        "name": "plan",
+        "path": ".weave/plans/feature-v.md",
+        "revision": 1,
+        "approvalState": "pending",
+        "producerAgent": "shuttle",
+        "integrity": {
+          "algorithm": "sha256",
+          "digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      },
+      "suppliedDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "expectedOutcome": "policy_decision",
+      "$comment": "suppliedDigest does not match stored digest. Engine returns policy_decision error (fail-closed). No step attempt is recorded.",
+      "stepAttempts": []
+    },
+    {
+      "id": "self-approval-prohibited",
+      "description": "Approval rejected because approverAgent matches producerAgent.",
+      "artifact": {
+        "id": "art-fff666",
+        "name": "plan",
+        "path": ".weave/plans/feature-u.md",
+        "revision": 1,
+        "approvalState": "pending",
+        "producerAgent": "shuttle"
+      },
+      "approvalAttempt": {
+        "approverAgent": "shuttle",
+        "requestedState": "approved",
+        "expectedOutcome": "policy_decision",
+        "$comment": "Self-approval is prohibited. Engine returns policy_decision error."
+      },
+      "stepAttempts": []
+    },
+    {
+      "id": "multi-step-independent-counters",
+      "description": "Two steps with independent attempt counters on the same workflow instance.",
+      "artifacts": [
+        {
+          "id": "art-ggg777",
+          "name": "plan",
+          "path": ".weave/plans/feature-t.md",
+          "revision": 1,
+          "approvalState": "approved",
+          "producerAgent": "pattern",
+          "integrity": {
+            "algorithm": "sha256",
+            "digest": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          }
+        }
+      ],
+      "stepAttempts": [
+        {
+          "stepName": "implement",
+          "attemptNumber": 1,
+          "dispatchedAt": "2026-06-03T12:00:00.000Z",
+          "consumedArtifacts": [
+            {
+              "artifactId": "art-ggg777",
+              "name": "plan",
+              "revision": 1
+            }
+          ]
+        },
+        {
+          "stepName": "implement",
+          "attemptNumber": 2,
+          "dispatchedAt": "2026-06-03T12:30:00.000Z",
+          "consumedArtifacts": [
+            {
+              "artifactId": "art-ggg777",
+              "name": "plan",
+              "revision": 1
+            }
+          ]
+        },
+        {
+          "stepName": "security-review",
+          "attemptNumber": 1,
+          "dispatchedAt": "2026-06-03T13:00:00.000Z",
+          "consumedArtifacts": []
+        }
+      ]
+    }
+  ],
+
+  "provenanceInvariants": {
+    "stableIdentity": "ArtifactId is assigned once at first production and never changes across revisions of the same artifact name.",
+    "monotonicRevision": "Revision counter starts at 1 and increments by 1 for each new version of the same artifact name.",
+    "approvalInvalidation": "A new revision always resets approvalState to 'pending', invalidating any prior approval on the same artifact name.",
+    "selfApprovalProhibition": "An agent may not approve an artifact it produced (producerAgent === approverAgent is rejected).",
+    "integrityFailClosed": "When a supplied digest does not match the stored digest, dispatch is blocked (policy_decision error). No step attempt is recorded.",
+    "integrityOptIn": "Integrity verification is opt-in: if no digest is supplied for an artifact with stored integrity, the check is skipped.",
+    "retryPinning": "Retries pin to the same consumed artifact revisions from the prior attempt by default, preventing silent drift.",
+    "noRawContent": "Raw artifact contents, prompts, completions, tokens, credentials, and private paths are never stored in provenance records."
+  }
+}

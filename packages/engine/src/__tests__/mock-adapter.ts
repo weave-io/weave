@@ -34,6 +34,7 @@
  * ```
  */
 
+import { okAsync, type ResultAsync } from "neverthrow";
 import type { HarnessAdapter } from "../adapter.js";
 import type { AgentDescriptor } from "../compose.js";
 import type { SkillInfo } from "../skill-resolution.js";
@@ -81,8 +82,9 @@ export class MockAdapter implements HarnessAdapter {
     this.calls.push({ method: "init" });
   }
 
-  async spawnSubagent(descriptor: AgentDescriptor): Promise<void> {
+  spawnSubagent(descriptor: AgentDescriptor): ResultAsync<void, never> {
     this.calls.push({ method: "spawnSubagent", descriptor });
+    return okAsync(undefined);
   }
 
   /**

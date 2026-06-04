@@ -5,7 +5,7 @@ Weave is a harness-agnostic orchestration framework with two cooperating halves:
 1. **Core Weave API** (`@weave/core`, `@weave/config`, `@weave/engine`) parses DSL config, normalizes agent intent, resolves/composes prompt and policy data, and exposes pure helper APIs.
 2. **Adapters** (`@weave/adapter-opencode`, `@weave/adapter-pi`, etc.) enable Weave inside a concrete harness by discovering harness-owned resources, translating normalized intent, and filling feature gaps when the harness lacks native support.
 
-**Related:** [Product Vision](product-vision.md) · [Adapter Bootstrap Guide](adapter-bootstrap.md) · [Claude Code Adapter](claude-code-adapter.md) · [Model Resolution](model-resolution.md) · [Config Loading](config-loading.md) · [Prompt Composition](prompt-composition.md) · [Tool Policy Evaluation](tool-policy-evaluation.md) · [Adapter Readiness Status](adapter-readiness-status.md) · [ADR 0003 — OpenCode Adapter Materialization Shape](adr/0003-opencode-adapter-materialization-shape.md) · [Runtime Persistence Spec](specs/12-spec-runtime-persistence/12-spec-runtime-persistence.md) · [ADR 0002 — Runtime Persistence Store](adr/0002-runtime-persistence-store.md) · [Spec 05 — Skill Resolution](specs/05-spec-skill-loader/05-spec-skill-loader.md) · [Spec 07 — Adapter Capability Contract](specs/07-spec-adapter-capability-contract/07-spec-adapter-capability-contract.md) · [Spec 08 — Abstract Tool Policy Evaluation](specs/08-spec-abstract-tool-policy-evaluation/08-spec-abstract-tool-policy-evaluation.md) · [Spec 09 — Adapter-Provided Skill Resolution](specs/09-spec-adapter-provided-skill-resolution/09-spec-adapter-provided-skill-resolution.md) · [Spec 15 — Adapter-Facing Materialization API](specs/15-spec-adapter-facing-materialization-api/15-spec-adapter-facing-materialization-api.md) · [Spec 16 — Stable Adapter Descriptor Contract](specs/16-spec-stable-adapter-descriptor-contract/16-spec-stable-adapter-descriptor-contract.md) · [Spec 17 — Workflow Extension DSL](specs/17-spec-workflow-extension/17-spec-workflow-extension.md) · [Spec 18 — Delegation Exclusion](specs/18-spec-delegation-exclusion/18-spec-delegation-exclusion.md) · [Spec 19 — Plan State Provider](specs/19-spec-plan-state-provider/19-spec-plan-state-provider.md) · [Spec 20 — OpenCode Adapter Materialization](specs/20-spec-opencode-adapter-materialization/20-spec-opencode-adapter-materialization.md) · [Execution Lifecycle Surface](#execution-lifecycle-surface) · [Legacy Architecture](legacy-architecture.md)
+**Related:** [Product Vision](product-vision.md) · [Adapter Bootstrap Guide](adapter-bootstrap.md) · [Claude Code Adapter](claude-code-adapter.md) · [Model Resolution](model-resolution.md) · [Config Loading](config-loading.md) · [Prompt Composition](prompt-composition.md) · [Tool Policy Evaluation](tool-policy-evaluation.md) · [Adapter Readiness Status](adapter-readiness-status.md) · [ADR 0003 — OpenCode Adapter Materialization Shape](adr/0003-opencode-adapter-materialization-shape.md) · [Runtime Persistence Spec](specs/12-spec-runtime-persistence/12-spec-runtime-persistence.md) · [ADR 0002 — Runtime Persistence Store](adr/0002-runtime-persistence-store.md) · [Spec 09 — Adapter-Provided Skill Resolution](specs/09-spec-adapter-provided-skill-resolution/09-spec-adapter-provided-skill-resolution.md) · [Spec 07 — Adapter Capability Contract](specs/07-spec-adapter-capability-contract/07-spec-adapter-capability-contract.md) · [Spec 08 — Abstract Tool Policy Evaluation](specs/08-spec-abstract-tool-policy-evaluation/08-spec-abstract-tool-policy-evaluation.md) · [Spec 15 — Adapter-Facing Materialization API](specs/15-spec-adapter-facing-materialization-api/15-spec-adapter-facing-materialization-api.md) · [Spec 16 — Stable Adapter Descriptor Contract](specs/16-spec-stable-adapter-descriptor-contract/16-spec-stable-adapter-descriptor-contract.md) · [Spec 17 — Workflow Extension DSL](specs/17-spec-workflow-extension/17-spec-workflow-extension.md) · [Spec 18 — Delegation Exclusion](specs/18-spec-delegation-exclusion/18-spec-delegation-exclusion.md) · [Spec 19 — Plan State Provider](specs/19-spec-plan-state-provider/19-spec-plan-state-provider.md) · [Spec 20 — OpenCode Adapter Materialization](specs/20-spec-opencode-adapter-materialization/20-spec-opencode-adapter-materialization.md) · [Spec 22 — Workflow-First Execution](specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md) · [ADR 0004 — Workflow-First Execution Contract](adr/0004-workflow-first-execution-contract.md) · [Execution Lifecycle Surface](#execution-lifecycle-surface) · [Legacy Architecture](legacy-architecture.md)
 
 ---
 
@@ -24,7 +24,7 @@ Engine-to-adapter calls are acceptable when they use abstract, harness-agnostic 
 Type names in `@weave/core` and `@weave/engine` follow a suffix convention to prevent collisions between the DSL configuration layer and the engine runtime layer:
 
 - **`*Decl` suffix** — used for core/DSL types that describe **declarative configuration** authored in `.weave` files. These types are parsed from the DSL and validated by Zod schemas. Example: `ArtifactDecl` describes a named artifact input or output declared on a workflow step.
-- **`*Ref` suffix** — used for engine runtime types that describe **persisted handles** or live records in the Runtime Store. These types are created and managed at execution time. Example: `ArtifactRef` (in `@weave/engine`) is a persisted artifact record with a logical name, a relative path, and optional `mimeType` and `description` metadata — it stores a reference and metadata only, never artifact contents or a content hash.
+- **`*Ref` suffix** — used for engine runtime types that describe **persisted handles** or live records in the Runtime Store. These types are created and managed at execution time. Example: `ArtifactRef` (in `@weave/engine`) is a persisted artifact record with a logical name, a relative path, and optional `mimeType`, `description`, and integrity-verification metadata — it stores a reference and metadata only, never raw artifact contents.
 
 When adding a new type that spans both layers (e.g. a concept declared in DSL config and also tracked at runtime), use `*Decl` for the core/DSL variant and `*Ref` for the engine runtime variant. Never share a single type name across both layers.
 
@@ -45,6 +45,8 @@ When adding a new type that spans both layers (e.g. a concept declared in DSL co
 | Skill matching/filtering                           | Engine (`@weave/engine`) | Pure resolution against `AgentConfig.skills` and `disabled.skills`      |
 | `.weave/runtime/**` Runtime Store                  | Engine (`@weave/engine`) | Runtime records are Weave product state, not harness resources          |
 | Plan file state (`.weave/plans/**`)                | Adapter                  | Concrete I/O mechanism is harness/environment-specific; engine owns the `PlanStateProvider` interface only |
+| Artifact integrity metadata (`ArtifactIntegrityMetadata`) | Engine (`@weave/engine`) | Stored in `ArtifactRef` inside the Runtime Store; engine owns the type, comparison logic, and fail-closed policy |
+| Artifact digest computation (reading file, hashing) | Adapter                 | Adapters read artifact files and compute SHA-256 digests before calling `dispatchStep`; the engine never reads artifact file contents |
 | Harness plugin/config generation                   | Adapter                  | Output format is harness-specific                                       |
 | Concrete tool names and permissions                | Adapter                  | Tool identifiers differ by harness                                      |
 | Runtime lifecycle event mapping                    | Adapter                  | Event names and payloads differ by harness                              |
@@ -108,6 +110,62 @@ The engine MUST NOT expand category globs, scan project files to match patterns,
 The engine owns durable Weave runtime state under `.weave/runtime/**`, including the default `.weave/runtime/weave.db` Runtime Store described in [ADR 0002](adr/0002-runtime-persistence-store.md).
 
 This is a narrow boundary exception: the engine may perform Bun filesystem/database I/O only for Weave-owned runtime records. It must not inspect harness-owned storage, harness session internals, harness model registries, or concrete harness plugin state. Adapters may emit sanitized observations through an engine-provided Runtime Journal writer, but adapters do not receive direct database ownership.
+
+### Artifact Integrity Metadata
+
+> **Spec:** [Spec 22 — Workflow-First Execution](specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md) (Unit 3)
+
+**`ArtifactIntegrityMetadata`** is the engine-owned type that stores a salted SHA-256 digest for tamper detection on a persisted artifact revision. It lives inside `ArtifactRef` in the Runtime Store — never in adapter-owned storage, harness session state, or raw artifact file contents.
+
+**What it contains:**
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `algorithm` | `"sha256"` | Hash algorithm; only `"sha256"` is accepted |
+| `digest` | `string` | Lowercase hex-encoded SHA-256 digest (64 characters) |
+
+**What it explicitly excludes:**
+
+- Raw artifact file contents
+- Raw prompts or completions used to produce the artifact
+- Private filesystem paths outside the project root
+- Credentials, tokens, cookies, or authorization headers
+
+**Boundary rules:**
+
+- The engine owns `ArtifactIntegrityMetadata` type definition, digest format validation (64 lowercase hex chars), and the fail-closed comparison in `dispatchStep`.
+- Adapters own artifact file I/O: reading the artifact file and computing the SHA-256 digest before calling `dispatchStep`. The engine never reads artifact file contents.
+- Adapters pass the computed digest via `DispatchStepInput.artifactDigests` — a `Record<string, string>` map of artifact name → current digest.
+- The engine compares the supplied digest against the stored `ArtifactRef.integrity.digest`. A mismatch returns a `policy_decision` error; the engine fails closed.
+- Integrity verification is **opt-in**: if `artifactDigests` is omitted or does not include a key for a given artifact, no check is performed for that artifact. Artifacts without a stored `integrity` field are never checked even if a digest is supplied.
+- Digest computation uses SHA-256 only. MD5, SHA-1, and non-cryptographic hashes are forbidden by construction.
+
+**Correct data flow:**
+
+```ts
+// ✅ Correct: adapter reads file and computes digest; engine compares against stored metadata
+const fileContent = await Bun.file(artifactPath).text();
+const digest = await computeSha256Hex(fileContent); // adapter-owned
+const result = await dispatchStep(
+  {
+    workflowInstanceId,
+    leaseId,
+    stepName,
+    context,
+    artifactDigests: { plan_path: digest }, // adapter supplies; engine compares
+  },
+  store,
+);
+
+// ❌ Wrong: engine reads artifact file contents directly
+const content = await Bun.file(artifact.path).text(); // boundary violation
+```
+
+**Relationship to `ArtifactRef`:**
+
+`ArtifactRef` is the persisted artifact record in the Runtime Store. Its optional `integrity` field holds `ArtifactIntegrityMetadata`. A new artifact revision always resets `approvalState` to `pending` and may carry updated integrity metadata. The engine stores integrity metadata only — never the artifact content itself.
+
+See [`packages/engine/src/runtime/types.ts`](../packages/engine/src/runtime/types.ts) for the `ArtifactIntegrityMetadata` and `ArtifactRef` type definitions. See [`packages/engine/src/execution-lifecycle.ts`](../packages/engine/src/execution-lifecycle.ts) for the `DispatchStepInput.artifactDigests` field and the fail-closed comparison logic.
 
 ### Lifecycle Policies
 
@@ -292,13 +350,13 @@ for the formal spec and proof artifacts.
 
 ## Execution Lifecycle Surface
 
-> **Issue:** [#44 — Minimal Execution Lifecycle Surface](https://github.com/josevalim/weave/issues/44) · **Spec:** [Spec 13 — Minimal Execution Lifecycle Surface](specs/13-spec-minimal-execution-lifecycle-surface/13-spec-minimal-execution-lifecycle-surface.md)
+> **Issue:** [#44 — Minimal Execution Lifecycle Surface](https://github.com/josevalim/weave/issues/44) · **Spec:** [Spec 13 — Minimal Execution Lifecycle Surface](specs/13-spec-minimal-execution-lifecycle-surface/13-spec-minimal-execution-lifecycle-surface.md) · **Spec:** [Spec 22 — Workflow-First Execution](specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md) · **Spec:** [Spec 24 — Execution Lifecycle Decomposition](specs/24-spec-execution-lifecycle-decomposition/24-spec-execution-lifecycle-decomposition.md) · **ADR:** [ADR 0004 — Workflow-First Execution Contract](adr/0004-workflow-first-execution-contract.md) · **ADR:** [ADR 0006 — End-to-End Orchestration Flow](adr/0006-end-to-end-orchestration-flow.md)
 
 The **Execution Lifecycle Surface** is the engine-owned abstract API that adapters call after mapping concrete harness events into normalized lifecycle inputs. It supersedes earlier placeholder `registerHook()` designs.
 
-All types are exported from `@weave/engine` under `packages/engine/src/execution-lifecycle.ts`.
+All types are exported from `@weave/engine`. The implementation lives in `packages/engine/src/execution-lifecycle/` (decomposed into focused modules by [Spec 24](specs/24-spec-execution-lifecycle-decomposition/24-spec-execution-lifecycle-decomposition.md)); `packages/engine/src/execution-lifecycle.ts` is a compatibility barrel that re-exports all public symbols.
 
-### The 7 Lifecycle Methods
+### The 8 Lifecycle Methods
 
 | Method | Adapter calls this when… | Engine responsibility |
 | --- | --- | --- |
@@ -309,10 +367,32 @@ All types are exported from `@weave/engine` under `packages/engine/src/execution
 | `dispatchStep` | The next workflow step should be dispatched | Resolve step agent and policy; return a `DispatchAgentEffect` |
 | `completeStep` | A workflow step has finished | Record completion; determine next effects (dispatch/pause/complete) |
 | `beforeTool` | A tool call is about to execute | Evaluate abstract tool policy; return `allow`/`deny`/`ask` decision |
+| `inspectExecution` | Adapter needs to query execution state without side effects | Return a read-only snapshot of the `WorkflowInstance` and lease status |
 
 **Adapter responsibility**: map concrete harness events (session events, user signals, tool invocations) into these abstract inputs. The engine does not know about harness-specific event names, payloads, or callback registration.
 
 **Engine responsibility**: evaluate policy, update Runtime Store state, and return typed `LifecycleEffect` values. The engine does not register harness callbacks or inspect harness-specific state.
+
+### Execution Operations vs. Observations
+
+The lifecycle surface distinguishes two categories of operations:
+
+**Explicit execution operations** (`ExecutionOperationKind`): `start`, `resume`, `pause`, `inspect`, `advance`. These map to `startExecution`, `resumeExecution`, `handleUserInterrupt` (pause signal), `inspectExecution`, and `dispatchStep`/`completeStep` respectively. Only `startExecution` may create a `WorkflowInstance` or acquire an `ExecutionLease`.
+
+**Observation operations**: `observeSession` and `beforeTool`. These are passive — they never create instances, acquire leases, or emit `LifecycleEffect` values. Adapters may call `observeSession` from idle hooks, continuation hooks, or session events without risking implicit execution start.
+
+**Execution boundary invariant** (ADR 0004): `startExecution` is the sole authorized entry point for durable execution. Ordinary Loom conversation, session idle events, continuation hooks, and lifecycle observations are explicitly forbidden from implicitly starting durable execution. Adapters must call `startExecution` only in response to an explicit, user-authorized trigger.
+
+**Adapter delivery of the execution contract** (Spec 22 Unit 4): Commands, hooks, skills, scripts, and UI affordances are all **adapter-owned projections of the same engine-owned execution contract**. The engine defines what execution means — `startExecution` is the sole authorized entry point, and the engine owns all state transitions, lease management, and effect emission. Adapters own the concrete delivery mechanism that exposes the explicit user-authorized trigger in their harness. The engine does not dictate which delivery form an adapter uses; it only requires that `startExecution` is called after an explicit user action. Adapters declare their delivery capability through the `command-entrypoints` readiness value in their `AdapterCapabilityContract`:
+
+- `native` — literal harness commands (e.g. `/run-workflow`)
+- `emulated` — equivalent explicit delivery via skill, script, or UI (satisfies the Core Readiness Profile)
+- `degraded` — incomplete or inconsistent explicit delivery
+- `unsupported` — no reliable explicit start path
+
+`workflow-step-dispatch` is **supporting execution context** — it models step dispatch within a running execution, not execution entry. It is not a substitute for `command-entrypoints` readiness. See [Adapter Readiness Status](adapter-readiness-status.md#execution-command-readiness-spec-22-unit-4) for the full readiness vocabulary and declaration examples.
+
+**OpenCode adapter evidence** (task 6.3): `packages/adapters/opencode/src/run-workflow.ts` is the OpenCode adapter's explicit user-driven helper — the adapter-owned projection of the engine's `startExecution` lifecycle method. Tests in `packages/adapters/opencode/src/__tests__/run-workflow.test.ts` prove that execution enters only through explicit `runWorkflow` calls, that idle hooks and session events do not start durable execution, and that `PlanStateProvider` is supplied at plan-oriented completion boundaries. See [Adapter Readiness Status](adapter-readiness-status.md#opencode-adapter-delivery-evidence-task-63) for the full evidence summary.
 
 ### `beforeTool` — Adapter/Engine Boundary
 
@@ -408,15 +488,17 @@ Adapter (harness event) → lifecycle method → engine policy → Runtime Store
                                                                               Adapter materialises effects
 ```
 
-See [`packages/engine/src/execution-lifecycle.ts`](../packages/engine/src/execution-lifecycle.ts) for the full type definitions and factory helpers.
+See [`packages/engine/src/execution-lifecycle/`](../packages/engine/src/execution-lifecycle/) for the full type definitions and factory helpers (decomposed by [Spec 24](specs/24-spec-execution-lifecycle-decomposition/24-spec-execution-lifecycle-decomposition.md)); `packages/engine/src/execution-lifecycle.ts` is the compatibility barrel.
 
 ---
 
 ## Workflow Engine
 
-> **Spec:** [Spec 10 — Workflow Engine](specs/10-spec-workflow-engine/10-spec-workflow-engine.md)
+> **Spec:** [Spec 10 — Workflow Engine](specs/10-spec-workflow-engine/10-spec-workflow-engine.md) · **Spec:** [Spec 22 — Workflow-First Execution](specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md) · **ADR:** [ADR 0004 — Workflow-First Execution Contract](adr/0004-workflow-first-execution-contract.md)
 
-The workflow engine is the engine-owned subsystem that drives multi-step workflow execution. It is implemented inside the Execution Lifecycle Surface (`execution-lifecycle.ts`) and operates exclusively through the 7 lifecycle methods described above.
+The workflow engine is the engine-owned subsystem that drives multi-step workflow execution. It is implemented inside the Execution Lifecycle Surface (`execution-lifecycle.ts`) and operates exclusively through the 8 lifecycle methods described above.
+
+**Execution boundary**: `startExecution` is the sole authorized entry point for durable execution. Ordinary Loom conversation, session idle events, continuation hooks, and lifecycle observations (`observeSession`) are explicitly forbidden from implicitly starting durable execution. Commands, hooks, skills, scripts, and UI affordances are all adapter-owned projections of the same engine-owned execution contract — adapters choose the delivery form; the engine owns the semantics. Adapters call `startExecution` only after an explicit user-authorized trigger. See [ADR 0004](adr/0004-workflow-first-execution-contract.md) for the full rationale and ownership matrix.
 
 ### Ownership Matrix — Workflow Engine
 
@@ -518,7 +600,7 @@ The engine must not write harness config files, spawn harness agents, discover h
 
 > **Spec:** [Spec 19 — Plan State Provider](specs/19-spec-plan-state-provider/19-spec-plan-state-provider.md)
 
-The **Plan State Provider** is the engine-owned abstract interface that `completeStep` uses to query plan file state when a workflow step's completion method is `"plan_created"` or `"plan_complete"`. It replaces the previous direct `Bun.file()` calls inside `execution-lifecycle.ts`, which were a boundary violation.
+The **Plan State Provider** is the engine-owned abstract interface that `completeStep` uses to query plan file state when a workflow step's completion method is `"plan_created"` or `"plan_complete"`. It replaces the previous direct `Bun.file()` calls inside the execution lifecycle, which were a boundary violation.
 
 All types are exported from `@weave/engine` under `packages/engine/src/plan-state-provider.ts`.
 
@@ -573,3 +655,53 @@ const exists = await Bun.file(`.weave/plans/${planName}.md`).exists();
 ```
 
 See [Spec 19 — Plan State Provider](specs/19-spec-plan-state-provider/19-spec-plan-state-provider.md) for the full interface definition, error mapping, migration notes, and proof artifacts.
+
+---
+
+## Typed Spawn Seam
+
+`HarnessAdapter.spawnSubagent()` returns `ResultAsync<void, Error>` — adapters must not throw on failure. All failure paths must be captured in the returned `ResultAsync`.
+
+**Rationale**: callers (plugin event hooks, workflow execution loops) need to handle per-agent failures without crashing the entire materialization pass. A typed result lets callers log and continue rather than wrapping every call in a `.then(ok, err)` shim.
+
+**OpenCode adapter**: `OpenCodeAdapter.spawnSubagent()` returns `ResultAsync<void, OpenCodeAdapterError>`. `OpenCodeAdapterError extends Error`, so it satisfies the interface. Failure paths (model resolution, translation, reconciliation) all return `errAsync(...)` — no throws.
+
+**Mock adapter**: `MockAdapter.spawnSubagent()` returns `ResultAsync<void, never>` — always succeeds, satisfying the interface.
+
+**Call-site contract**: callers must not wrap `spawnSubagent()` in `ResultAsync.fromPromise()` or `.then(ok, err)`. Use the returned `ResultAsync` directly:
+
+```ts
+// ✅ Correct: use the ResultAsync directly
+const result = await adapter.spawnSubagent(descriptor);
+if (result.isErr()) {
+  log.error({ agent: agentName, error: result.error }, "spawn failed");
+}
+
+// ❌ Wrong: wrapping a ResultAsync in fromPromise (double-wraps the result)
+const result = await ResultAsync.fromPromise(
+  adapter.spawnSubagent(descriptor),
+  (cause) => ({ type: "LifecycleError", cause }),
+);
+```
+
+---
+
+## Engine-Owned Sensitive-Key Policy
+
+The engine owns the canonical denylist of sensitive field names used to sanitize journal entries and session snapshots. This policy is exported from `packages/engine/src/runtime/sanitizer.ts` as `isDeniedKey(key: string): boolean` and re-exported from `@weave/engine`.
+
+**Rule**: CLI rendering layers (e.g. `packages/cli/src/commands/runtime.ts`) must import `isDeniedKey` from `@weave/engine` rather than maintaining a local copy of the denylist. This ensures the rendering layer and the storage layer apply the same policy.
+
+```ts
+// ✅ Correct: import from engine
+import { isDeniedKey } from "@weave/engine";
+const safeKeys = Object.keys(entry.data).filter((k) => !isDeniedKey(k));
+
+// ❌ Wrong: local copy of the denylist (diverges from engine policy)
+function isSensitiveKey(key: string): boolean {
+  const denied = new Set(["token", "apikey", ...]);
+  return denied.has(key.toLowerCase());
+}
+```
+
+The denylist covers auth/credential fields (`token`, `apiKey`, `api_key`, `password`, `secret`, `authorization`, `cookie`, `bearer`, `accessToken`, `access_token`, `refreshToken`, `refresh_token`, `clientSecret`, `client_secret`, `privateKey`, `private_key`, `auth`, `credentials`, `credential`) and raw content fields (`prompt`, `completion`, `transcript`, `rawPrompt`, `raw_prompt`, `rawCompletion`, `raw_completion`, `rawTranscript`, `raw_transcript`, `systemPrompt`, `system_prompt`, `userPrompt`, `user_prompt`, `assistantMessage`, `assistant_message`). All comparisons are case-insensitive.

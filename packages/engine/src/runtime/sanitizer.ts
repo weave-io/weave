@@ -77,8 +77,11 @@ const DENIED_FIELD_NAMES: ReadonlySet<string> = new Set([
 
 /**
  * Check whether a field key matches the denylist (case-insensitive).
+ *
+ * Exported so that CLI rendering layers (e.g. `runtime.ts`) can apply the
+ * same canonical policy without duplicating the denylist.
  */
-function isDeniedKey(key: string): boolean {
+export function isDeniedKey(key: string): boolean {
   return DENIED_FIELD_NAMES.has(key.toLowerCase());
 }
 

@@ -17,6 +17,7 @@ import {
   CURRENT_SCHEMA_VERSION,
   createSqliteRuntimeStore,
   type ExecutionLease,
+  isDeniedKey,
   type RuntimeJournalEntry,
   type RuntimeStore,
   readSchemaVersion,
@@ -179,9 +180,7 @@ function formatJournalEntry(
   const sourceLabel = `${entry.source.kind}/${entry.source.name}`;
 
   // Render data fields — exclude any denied/sensitive keys defensively
-  const safeDataKeys = Object.keys(entry.data).filter(
-    (k) => !isSensitiveKey(k),
-  );
+  const safeDataKeys = Object.keys(entry.data).filter((k) => !isDeniedKey(k));
   const dataStr =
     safeDataKeys.length > 0
       ? " " +
@@ -191,51 +190,6 @@ function formatJournalEntry(
       : "";
 
   return `${entry.timestamp} ${severityLabel} [${sourceLabel}] ${entry.eventType}${dataStr}`;
-}
-
-/**
- * Defensive check for sensitive-looking keys in journal data.
- * Mirrors the denylist in the engine sanitizer.
- */
-function isSensitiveKey(key: string): boolean {
-  const lower = key.toLowerCase();
-  const denied = new Set([
-    "token",
-    "apikey",
-    "api_key",
-    "password",
-    "secret",
-    "authorization",
-    "cookie",
-    "bearer",
-    "accesstoken",
-    "access_token",
-    "refreshtoken",
-    "refresh_token",
-    "clientsecret",
-    "client_secret",
-    "privatekey",
-    "private_key",
-    "auth",
-    "credentials",
-    "credential",
-    "prompt",
-    "completion",
-    "transcript",
-    "rawprompt",
-    "raw_prompt",
-    "rawcompletion",
-    "raw_completion",
-    "rawtranscript",
-    "raw_transcript",
-    "systemprompt",
-    "system_prompt",
-    "userprompt",
-    "user_prompt",
-    "assistantmessage",
-    "assistant_message",
-  ]);
-  return denied.has(lower);
 }
 
 // ---------------------------------------------------------------------------

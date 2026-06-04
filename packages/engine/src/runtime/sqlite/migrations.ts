@@ -30,7 +30,7 @@ import {
  * The highest schema version this Weave build supports.
  * Increment this when adding a new migration.
  */
-export const CURRENT_SCHEMA_VERSION = 1;
+export const CURRENT_SCHEMA_VERSION = 2;
 
 // ---------------------------------------------------------------------------
 // Migration definition
@@ -165,6 +165,17 @@ const MIGRATIONS: readonly Migration[] = [
 
       CREATE INDEX IF NOT EXISTS idx_journal_entries_severity
         ON runtime_journal_entries (severity);
+    `,
+  },
+  {
+    version: 2,
+    name: "add_step_attempts_json",
+    sql: `
+      -- Add step_attempts_json column to workflow_instances.
+      -- Stores JSON-serialized StepAttemptRecord[] for consumed-revision tracking.
+      -- Default '[]' ensures backward compatibility with existing rows.
+      ALTER TABLE workflow_instances
+        ADD COLUMN step_attempts_json TEXT NOT NULL DEFAULT '[]';
     `,
   },
 ];

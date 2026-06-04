@@ -7,6 +7,16 @@ import {
 
 export type SupportedHarnessId = "opencode" | "claude-code" | "pi";
 
+export const HARNESS_IDS: SupportedHarnessId[] = [
+  "opencode",
+  "claude-code",
+  "pi",
+];
+
+export function isHarnessId(value: string): value is SupportedHarnessId {
+  return HARNESS_IDS.includes(value as SupportedHarnessId);
+}
+
 export type DetectedHarness = {
   id: SupportedHarnessId;
   configPath: string;

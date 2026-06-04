@@ -1,13 +1,16 @@
 # Workflow Schema
 
-This document describes the typed workflow schema introduced by [spec 02](specs/02-spec-workflow-schema/02-spec-workflow-schema.md). It covers field semantics, the completion method model, validation constraints, the `name`/`display_name` mapping convention, and the `__name` parser pattern that makes parameterised completion syntax possible.
+This document describes the typed workflow schema. It covers field semantics, the completion method model, validation constraints, the `name`/`display_name` mapping convention, and the `__name` parser pattern that makes parameterised completion syntax possible.
 
 **Related source files:**
 
 - [`packages/core/src/schema.ts`](../packages/core/src/schema.ts) — all Zod schemas and inferred types
 - [`packages/core/src/validate.ts`](../packages/core/src/validate.ts) — `transformStepProperties()` and `astToPlainObject()`
 - [`packages/core/src/parser.ts`](../packages/core/src/parser.ts) — named block value parser enhancement
-- [Spec 02](specs/02-spec-workflow-schema/02-spec-workflow-schema.md) — formal requirements and design rationale
+- [DSL Reference](dsl-reference.md) — canonical `.weave` DSL syntax reference
+- [Spec 17 — Workflow Extension](specs/17-spec-workflow-extension/17-spec-workflow-extension.md) — `extends`, `insert_before`, `insert_after` config-merge semantics
+- [Spec 22 — Workflow-First Execution](specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md) — `before-plan` extension surface, `role planning`, and execution contract
+- [ADR 0006 — End-to-End Orchestration Flow](adr/0006-end-to-end-orchestration-flow.md) — full Loom → Pattern → Tapestry → Weft/Warp flow; legacy vs. current model; where issue #52 fits
 
 ---
 
@@ -15,12 +18,13 @@ This document describes the typed workflow schema introduced by [spec 02](specs/
 
 A workflow is declared with the `workflow <name> { }` top-level block.
 
-| Field         | Type                        | Required | Description                                                     |
-| ------------- | --------------------------- | -------- | --------------------------------------------------------------- |
-| `name`        | `string`                    | no       | Internal name (set from block identifier, not the `name` field) |
-| `description` | `string`                    | no       | Human-readable description of the workflow's purpose            |
-| `version`     | `number` (positive integer) | **yes**  | Schema version for future migration; must be ≥ 1                |
-| `steps`       | `WorkflowStep[]`            | **yes**  | Ordered list of steps; at least one step is required            |
+| Field              | Type                        | Required | Description                                                                                                                    |
+| ------------------ | --------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `name`             | `string`                    | no       | Internal name (set from block identifier, not the `name` field)                                                                |
+| `description`      | `string`                    | no       | Human-readable description of the workflow's purpose                                                                           |
+| `version`          | `number` (positive integer) | **yes**  | Schema version for future migration; must be ≥ 1                                                                               |
+| `steps`            | `WorkflowStep[]`            | **yes**  | Ordered list of steps; at least one step is required                                                                           |
+| `extension_points` | `{ before_plan?: boolean }` | no       | Declares which named extension slots this workflow publishes; `before-plan` is the only slot in v1 (see `before-plan` section) |
 
 ---
 
@@ -38,6 +42,7 @@ Each `step <name> { }` block inside a workflow produces a `WorkflowStep`.
 | `completion`    | `CompletionMethod` | **yes**  | How the step signals that it is done (see below)                                                                                                                                             |
 | `inputs`        | `ArtifactDecl[]`   | no       | Named artifacts this step consumes from a previous step                                                                                                                                      |
 | `outputs`       | `ArtifactDecl[]`   | no       | Named artifacts this step produces for downstream steps                                                                                                                                      |
+| `role`          | `"planning"`       | no       | Semantic role of this step; `"planning"` marks the canonical planning step (at most one per workflow that publishes `extension_points { before-plan }`)                                       |
 | `on_reject`     | `OnReject`         | no       | Behaviour when a gate step rejects (only valid when `type` is `"gate"`)                                                                                                                      |
 | `insert_before` | `string`           | no       | Position this step immediately before the named anchor step in the base workflow (only meaningful on extension workflows; mutually exclusive with `insert_after`)                             |
 | `insert_after`  | `string`           | no       | Position this step immediately after the named anchor step in the base workflow (only meaningful on extension workflows; mutually exclusive with `insert_before`)                             |
@@ -244,6 +249,128 @@ The rendered prompt is never included in `RunAgentEffect` directly — only `pro
 - `StepCompletionSignal` structurally excludes raw prompts, completions, transcripts, credentials, and tokens. Only `outcome`, `method`, `approved`, `message` (safe human-readable), `artifacts`, and `nextStepHint` are accepted.
 - `promptMetadata` in `RunAgentEffect` carries only `byteLength` — no raw prompt text appears in emitted effects or the Runtime Store.
 - `SafeMetadata` on all lifecycle inputs is validated against a credential denylist before any state changes.
+
+---
+
+## `before-plan` Extension Surface
+
+> **Related**: [Spec 22 — Workflow-First Execution, Unit 2](specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md#unit-2-plan-oriented-default-workflow-with-before-plan-extension) · [Spec 17 — Workflow Extension](specs/17-spec-workflow-extension/17-spec-workflow-extension.md)
+
+Selected workflows may publish a `before-plan` extension point — a named slot where reviewed pre-plan artifacts can be produced before the canonical planning step runs. Publication and composition use **distinct syntax** so the two roles are never conflated.
+
+### Publication syntax — `extension_points { before-plan }`
+
+A workflow declares that it exposes the `before-plan` slot using a thin `extension_points` block:
+
+```weave
+workflow plan-and-execute {
+  description "Research, plan, implement, and review a feature end-to-end"
+  version 1
+
+  extension_points {
+    before-plan
+  }
+
+  step research {
+    name "Research the codebase and external context"
+    type autonomous
+    agent thread
+    prompt "Explore the codebase to understand the relevant area for: {{instance.goal}}"
+    completion agent_signal
+  }
+
+  step plan {
+    name "Create implementation plan"
+    role planning
+    type autonomous
+    agent pattern
+    prompt "Create a detailed implementation plan for: {{instance.goal}}"
+    completion plan_created {
+      plan_name "{{instance.slug}}"
+    }
+    outputs [
+      { name "plan_path" description "Path to the generated plan file" }
+    ]
+  }
+}
+```
+
+Key invariants enforced by the schema:
+
+- `extension_points { before-plan }` is the **only** publication syntax. It declares the slot; it does not insert steps.
+- A workflow that publishes `before-plan` must contain **exactly one** step with `role planning`. The validator rejects zero or multiple planning steps.
+- The `before-plan` slot enriches planning inputs — it does not replace the planning step.
+
+### Composition syntax — `extend before-plan [ ... ]`
+
+A separate top-level directive names the steps that fill the published slot. This is a **config-level composition** concern resolved by `@weave/config` after generic config-merge, before the engine sees the final `WorkflowConfig`:
+
+```weave
+extend before-plan ["write-spec", "review-spec"]
+```
+
+The listed step names are inserted into the `before-plan` slot of any workflow that publishes `extension_points { before-plan }`. Steps are inserted in the order declared.
+
+**v1 contract — single global bucket**: there is no per-workflow targeting. The same step list is applied to every workflow that publishes `extension_points { before-plan }`. Multiple `extend before-plan` directives in the same config are union-merged into a single ordered step list. The validated `WeaveConfig.extend_before_plan` field is a flat `{ steps: string[] }` object — not a record keyed by workflow name.
+
+### Concrete example — reviewed spec artifact feeding planning
+
+The following example shows a user-authored `write-spec` step and a `review-spec` gate step inserted before the canonical `plan` step. The reviewed specification artifact is passed to planning as an explicit input.
+
+**Step definitions** (declared in the project `.weave/config.weave`):
+
+```weave
+step write-spec {
+  name "Write specification"
+  type autonomous
+  agent pattern
+  prompt "Write a detailed specification for: {{instance.goal}}"
+  completion agent_signal
+  outputs [
+    { name "spec_path" description "Path to the specification document" }
+  ]
+}
+
+step review-spec {
+  name "Review specification"
+  type gate
+  agent weft
+  prompt "Review the specification at {{artifacts.spec_path}} for: {{instance.goal}}"
+  completion review_verdict
+  on_reject pause
+  inputs [
+    { name "spec_path" description "Path to the specification to review" }
+  ]
+}
+```
+
+**Composition directive** (also in the project `.weave/config.weave`):
+
+```weave
+extend before-plan ["write-spec", "review-spec"]
+```
+
+**Resulting resolved step order** (after `@weave/config` merge, as seen by the engine):
+
+1. `research` — inherited from `plan-and-execute`
+2. `write-spec` — inserted into `before-plan` slot (produces `spec_path`)
+3. `review-spec` — inserted into `before-plan` slot (consumes `spec_path`; gate must approve before planning proceeds)
+4. `plan` — canonical planning step (`role planning`); may consume `spec_path` as an informational input
+5. `implement` — inherited from `plan-and-execute`
+6. `review` — inherited from `plan-and-execute`
+7. `security` — inherited from `plan-and-execute`
+
+The engine receives a flat `WorkflowConfig` with no `extension_points`, `extend_before_plan`, or insertion fields — those are stripped by the config layer.
+
+### `before-plan` constraints (v1)
+
+| Constraint | Detail |
+| --- | --- |
+| Steps may pause, retry, and revise artifacts | Full step lifecycle applies |
+| Steps do **not** participate in reconciliation | `before-plan` steps are excluded from reconciliation semantics in v1 |
+| Artifact flow is explicit | `outputs` / `inputs` declarations required; no implicit artifact passing |
+| Self-approval is forbidden | The agent that produces an artifact cannot approve it |
+| Publication is per-workflow | Only workflows that declare `extension_points { before-plan }` expose the slot |
 
 ---
 

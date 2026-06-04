@@ -1825,3 +1825,134 @@ describe("convertLegacyJsonc — URL preservation in string literals", () => {
     expect(result.warnings.some((w) => w.field === "<source>")).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// escapeForDsl — control character escaping
+// ---------------------------------------------------------------------------
+
+describe("convertLegacyJsonc — control character escaping in string fields", () => {
+  it("escapes newline in prompt to \\n", () => {
+    const result = convertLegacyJsonc(
+      JSON.stringify({
+        custom_agents: { "my-agent": { prompt: "line1\nline2" } },
+      }),
+    );
+    expect(result.warnings).toHaveLength(0);
+    expect(result.dsl).toContain('prompt "line1\\nline2"');
+  });
+
+  it("escapes carriage return in prompt to \\r", () => {
+    const result = convertLegacyJsonc(
+      JSON.stringify({
+        custom_agents: { "my-agent": { prompt: "line1\rline2" } },
+      }),
+    );
+    expect(result.warnings).toHaveLength(0);
+    expect(result.dsl).toContain('prompt "line1\\rline2"');
+  });
+
+  it("escapes tab in prompt to \\t", () => {
+    const result = convertLegacyJsonc(
+      JSON.stringify({
+        custom_agents: { "my-agent": { prompt: "col1\tcol2" } },
+      }),
+    );
+    expect(result.warnings).toHaveLength(0);
+    expect(result.dsl).toContain('prompt "col1\\tcol2"');
+  });
+
+  it("escapes backslash in prompt to \\\\", () => {
+    const result = convertLegacyJsonc(
+      JSON.stringify({
+        custom_agents: { "my-agent": { prompt: "path\\to\\file" } },
+      }),
+    );
+    expect(result.warnings).toHaveLength(0);
+    expect(result.dsl).toContain('prompt "path\\\\to\\\\file"');
+  });
+
+  it('escapes double-quote in prompt to \\"', () => {
+    const result = convertLegacyJsonc(
+      JSON.stringify({
+        custom_agents: { "my-agent": { prompt: 'say "hello"' } },
+      }),
+    );
+    expect(result.warnings).toHaveLength(0);
+    expect(result.dsl).toContain('prompt "say \\"hello\\""');
+  });
+
+  it("escapes NUL byte (\\x00) in prompt to \\u0000", () => {
+    const result = convertLegacyJsonc(
+      JSON.stringify({
+        custom_agents: { "my-agent": { prompt: "before\x00after" } },
+      }),
+    );
+    expect(result.warnings).toHaveLength(0);
+    expect(result.dsl).toContain("\\u0000");
+  });
+
+  it("escapes BEL (\\x07) in prompt to \\u0007", () => {
+    const result = convertLegacyJsonc(
+      JSON.stringify({
+        custom_agents: { "my-agent": { prompt: "ring\x07bell" } },
+      }),
+    );
+    expect(result.warnings).toHaveLength(0);
+    expect(result.dsl).toContain("\\u0007");
+  });
+
+  it("escapes ESC (\\x1b) in prompt to \\u001b", () => {
+    const result = convertLegacyJsonc(
+      JSON.stringify({
+        custom_agents: { "my-agent": { prompt: "\x1b[31mred\x1b[0m" } },
+      }),
+    );
+    expect(result.warnings).toHaveLength(0);
+    expect(result.dsl).toContain("\\u001b");
+  });
+
+  it("escapes DEL (\\x7f) in prompt to \\u007f", () => {
+    const result = convertLegacyJsonc(
+      JSON.stringify({
+        custom_agents: { "my-agent": { prompt: "before\x7fafter" } },
+      }),
+    );
+    expect(result.warnings).toHaveLength(0);
+    expect(result.dsl).toContain("\\u007f");
+  });
+
+  it("escapes control characters in prompt_append", () => {
+    const result = convertLegacyJsonc(
+      JSON.stringify({
+        agents: { loom: { prompt_append: "note\x01hidden" } },
+      }),
+    );
+    expect(result.warnings).toHaveLength(0);
+    expect(result.dsl).toContain("\\u0001");
+  });
+
+  it("escapes control characters in category description", () => {
+    const result = convertLegacyJsonc(
+      JSON.stringify({
+        categories: {
+          backend: { description: "APIs\x02services", patterns: [] },
+        },
+      }),
+    );
+    expect(result.warnings).toHaveLength(0);
+    expect(result.dsl).toContain("\\u0002");
+  });
+
+  it("generated DSL with escaped control characters passes parseConfig validation", () => {
+    const result = convertLegacyJsonc(
+      JSON.stringify({
+        custom_agents: {
+          "my-agent": { prompt: "line1\nline2\ttabbed\x00null" },
+        },
+      }),
+    );
+    expect(result.warnings).toHaveLength(0);
+    const parseResult = parseConfig(result.dsl);
+    expect(parseResult.isOk()).toBe(true);
+  });
+});

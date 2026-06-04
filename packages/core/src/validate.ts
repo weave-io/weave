@@ -94,6 +94,29 @@ function transformStepProperties(
 }
 
 /**
+ * Normalise an `extension_points` block's properties.
+ *
+ * The DSL uses hyphenated identifiers as bare flags inside the block:
+ * ```weave
+ * extension_points {
+ *   before-plan
+ * }
+ * ```
+ * The parser produces `{ key: "before-plan", value: BooleanValue(true) }`.
+ * This function converts the hyphenated key to the schema key `before_plan`.
+ */
+function normalizeExtensionPoints(
+  raw: Record<string, unknown>,
+): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    const normalized = key === "before-plan" ? "before_plan" : key;
+    result[normalized] = value;
+  }
+  return result;
+}
+
+/**
  * Walk `AstNode[]` and build a plain object shaped for `WeaveConfigSchema`.
  *
  * Top-level `log_level` is rejected with a `ValidationError` — it must be
@@ -108,6 +131,8 @@ function astToPlainObject(nodes: AstNode[]): {
   const categories: Record<string, unknown> = {};
   const disabled: Record<string, string[]> = {};
   const workflows: Record<string, unknown> = {};
+  const extendBeforePlanSteps: string[] = [];
+  const seenExtendBeforePlanSteps = new Set<string>();
   let settingsBlock: Record<string, unknown> | undefined;
   let topLevelLogLevel = false;
   let invalidSettingsShape = false;
@@ -123,8 +148,21 @@ function astToPlainObject(nodes: AstNode[]): {
         break;
 
       case "workflow": {
+        const rawProps = propertiesToObject(node.properties);
+
+        // Normalise extension_points block: convert hyphenated keys to underscored.
+        if (
+          rawProps.extension_points !== null &&
+          typeof rawProps.extension_points === "object" &&
+          !Array.isArray(rawProps.extension_points)
+        ) {
+          rawProps.extension_points = normalizeExtensionPoints(
+            rawProps.extension_points as Record<string, unknown>,
+          );
+        }
+
         const workflowObj: Record<string, unknown> = {
-          ...propertiesToObject(node.properties),
+          ...rawProps,
           steps: node.steps.map((s) => {
             const stepObj = transformStepProperties(s.name, s.properties);
             if (s.insert_before !== undefined)
@@ -144,6 +182,17 @@ function astToPlainObject(nodes: AstNode[]): {
           ...(disabled[node.target] ?? []),
           ...node.items,
         ];
+        break;
+
+      case "extend_before_plan":
+        // `extend before-plan ["step-a", "step-b"]` — union-merge into a single
+        // global step list. v1 has no per-workflow targeting.
+        for (const step of node.steps) {
+          if (!seenExtendBeforePlanSteps.has(step)) {
+            seenExtendBeforePlanSteps.add(step);
+            extendBeforePlanSteps.push(step);
+          }
+        }
         break;
 
       case "setting":
@@ -168,6 +217,8 @@ function astToPlainObject(nodes: AstNode[]): {
   if (Object.keys(categories).length > 0) result.categories = categories;
   if (Object.keys(disabled).length > 0) result.disabled = disabled;
   if (Object.keys(workflows).length > 0) result.workflows = workflows;
+  if (extendBeforePlanSteps.length > 0)
+    result.extend_before_plan = { steps: extendBeforePlanSteps };
   if (settingsBlock !== undefined) result.settings = settingsBlock;
 
   return { plain: result, topLevelLogLevel, invalidSettingsShape };

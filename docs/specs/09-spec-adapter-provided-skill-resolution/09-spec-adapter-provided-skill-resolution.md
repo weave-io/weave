@@ -131,7 +131,7 @@ No specific UI design requirements identified. Any CLI, debug, or diagnostic out
 - Missing-skill failures should be represented as structured errors, such as a discriminated union carrying `type`, `agentName`, and `skillName` fields.
 - Batch resolution should accumulate missing-skill errors across agents so the user can fix all missing references in one pass.
 - The transitional `HarnessAdapter.loadSkill()` method is marked `@deprecated` in `packages/engine/src/adapter.ts` and was superseded by `loadAvailableSkills()` as part of this spec. It remains on the interface for backward compatibility; new adapters should implement `loadAvailableSkills()` instead.
-- Existing dead documentation links to the older `docs/specs/05-spec-skill-loader/05-spec-skill-loader.md` should be corrected during implementation planning or execution so readers land on this spec or another valid skill-resolution document.
+- Dead documentation links to the older `docs/specs/05-spec-skill-loader/05-spec-skill-loader.md` have been removed from durable guides. Readers should use this spec (Spec 09) as the canonical skill-resolution reference. The retired Spec 05 is listed in [`docs/specs/README.md`](../README.md) under the retired specs table.
 - Latest-standards research summary: Neverthrow documentation was consulted via Context7 (`/supermacro/neverthrow`, living GitHub wiki/docs). Relevant current guidance: avoid throwing for expected failures because TypeScript does not force callers to catch them; encode fallible paths with `Result`/`ResultAsync`; use `ok` and `err` with explicit success and error types. This supports `Result` errors for missing non-disabled skills and plain return values only for non-fallible helper internals.
 
 ## Security Considerations

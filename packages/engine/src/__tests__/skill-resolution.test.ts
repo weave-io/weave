@@ -641,6 +641,7 @@ function makeConfig(overrides: Partial<WeaveConfig> = {}): WeaveConfig {
       runtime: { journal: { strict: false } },
     },
     workflows: {},
+    extend_before_plan: { steps: [] },
     ...overrides,
   };
 }

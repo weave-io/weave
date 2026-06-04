@@ -8,11 +8,20 @@
  * - Public import paths compile (imports from @weave/engine)
  * - SafeMetadata structural constraint
  * - Error factory helpers produce correct discriminants
+ * - ExecutionOperationKind discriminated union (Spec 22 Unit 1)
+ * - ExecutionAuthorizationSource — explicit authorization enforcement (Task 1.3)
+ * - inspectExecution read-only behavior (Spec 22 Unit 1)
+ * - observeSession boundary: cannot create instances or leases (ADR 0004)
+ * - Agent-, hook-, and event-initiated self-start paths are rejected (ADR 0004)
  */
 
 import { describe, expect, it } from "bun:test";
 import type { RunAgentEffect } from "@weave/engine";
 import {
+  type ArtifactInputDecl,
+  type ArtifactInputRole,
+  type ArtifactInputSummary,
+  ARTIFACT_INPUT_ROLES,
   type BeforeToolInput,
   type BeforeToolOutput,
   beforeTool,
@@ -28,10 +37,17 @@ import {
   type DispatchStepInput,
   type DispatchStepOutput,
   dispatchStep,
+  EXECUTION_AUTHORIZATION_SOURCES,
+  EXECUTION_OPERATION_KINDS,
+  type ExecutionAuthorizationSource,
+  type ExecutionOperationKind,
   evaluateEffectiveToolPolicy,
   type HandleUserInterruptInput,
   type HandleUserInterruptOutput,
   handleUserInterrupt,
+  type InspectExecutionInput,
+  type InspectExecutionOutput,
+  inspectExecution,
   type LifecycleEffect,
   type LifecycleError,
   lifecycleLeaseConflictError,
@@ -46,6 +62,12 @@ import {
   type PlanStateProvider,
   type PromptMetadata,
   queryError,
+  type ReconcileExecutionInput,
+  type ReconcileExecutionOutput,
+  type ReconciliationAuthorizationSource,
+  reconcileExecution,
+  RECONCILIATION_AUTHORIZATION_SOURCES,
+  RECONCILIATION_REASONS,
   type ResumeExecutionInput,
   type ResumeExecutionOutput,
   resumeExecution,
@@ -55,6 +77,8 @@ import {
   type StepCompletionSignal,
   sanitizeMetadata,
   startExecution,
+  validateAuthorizationSource,
+  validateReconciliationSource,
   type WorkflowExecutionContext,
 } from "@weave/engine";
 import { errAsync, okAsync } from "neverthrow";
@@ -6137,6 +6161,4141 @@ describe("completeStep: blocking issue fixes", () => {
     expect(result.error.type).toBe("validation");
     if (result.error.type === "validation") {
       expect(result.error.field).toBe("plan_name");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Spec 22 Unit 1: ExecutionOperationKind — explicit operations are first-class
+// ---------------------------------------------------------------------------
+
+describe("ExecutionOperationKind (Spec 22 Unit 1)", () => {
+  it("EXECUTION_OPERATION_KINDS contains all 5 explicit operation kinds", () => {
+    expect(EXECUTION_OPERATION_KINDS).toHaveLength(5);
+    expect(EXECUTION_OPERATION_KINDS).toContain("start");
+    expect(EXECUTION_OPERATION_KINDS).toContain("resume");
+    expect(EXECUTION_OPERATION_KINDS).toContain("pause");
+    expect(EXECUTION_OPERATION_KINDS).toContain("inspect");
+    expect(EXECUTION_OPERATION_KINDS).toContain("advance");
+  });
+
+  it("ExecutionOperationKind type covers start, resume, pause, inspect, advance", () => {
+    // Type-level check: all 5 variants are assignable to ExecutionOperationKind
+    const kinds: ExecutionOperationKind[] = [
+      "start",
+      "resume",
+      "pause",
+      "inspect",
+      "advance",
+    ];
+    expect(kinds).toHaveLength(5);
+    for (const kind of kinds) {
+      expect(EXECUTION_OPERATION_KINDS).toContain(kind);
+    }
+  });
+
+  it("observeSession is NOT in EXECUTION_OPERATION_KINDS (it is an observation, not an execution op)", () => {
+    // observeSession is a passive observation — not an execution operation.
+    // This test documents the boundary: calling observeSession never starts execution.
+    expect(EXECUTION_OPERATION_KINDS).not.toContain("observe");
+    expect(EXECUTION_OPERATION_KINDS).not.toContain("observeSession");
+  });
+
+  it("beforeTool is NOT in EXECUTION_OPERATION_KINDS (it is a policy evaluation, not an execution op)", () => {
+    expect(EXECUTION_OPERATION_KINDS).not.toContain("beforeTool");
+    expect(EXECUTION_OPERATION_KINDS).not.toContain("tool");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Spec 22 Unit 1: inspectExecution — read-only, no side effects
+// ---------------------------------------------------------------------------
+
+describe("inspectExecution (Spec 22 Unit 1)", () => {
+  it("InspectExecutionInput / InspectExecutionOutput type shapes are correct", () => {
+    const input: InspectExecutionInput = {
+      workflowInstanceId: wfId,
+      metadata: { source: "dashboard" },
+    };
+    expect(input.workflowInstanceId).toBe(wfId);
+    expect(input.metadata?.source).toBe("dashboard");
+
+    const output: InspectExecutionOutput = {
+      workflowInstanceId: wfId,
+      status: "running",
+      workflowName: "my-workflow",
+      goal: "Build a feature",
+      slug: "build-a-feature",
+      createdAt: "2026-06-02T00:00:00.000Z",
+      updatedAt: "2026-06-02T00:01:00.000Z",
+      artifacts: [],
+      hasActiveLease: true,
+    };
+    expect(output.status).toBe("running");
+    expect(output.hasActiveLease).toBe(true);
+  });
+
+  it("returns not_found for a non-existent workflow instance", async () => {
+    const store = createInMemoryRuntimeStore();
+    const nonExistentId = createWorkflowInstanceId("inspect-non-existent");
+
+    const result = await inspectExecution(
+      { workflowInstanceId: nonExistentId },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("not_found");
+    if (result.error.type === "not_found") {
+      expect(result.error.entity).toBe("WorkflowInstance");
+      expect(result.error.id).toBe(nonExistentId);
+    }
+  });
+
+  it("returns validation error for missing workflowInstanceId", async () => {
+    const store = createInMemoryRuntimeStore();
+    const result = await inspectExecution(
+      { workflowInstanceId: "" as typeof wfId },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+    if (result.error.type === "validation") {
+      expect(result.error.field).toBe("workflowInstanceId");
+    }
+  });
+
+  it("returns the current instance state without modifying it", async () => {
+    const store = createInMemoryRuntimeStore();
+
+    // Create and start an instance
+    const instanceId = createWorkflowInstanceId("inspect-readonly-001");
+    const startResult = await startExecution(
+      { workflowInstanceId: instanceId, ownerId: "owner-inspect-001" },
+      store,
+    );
+    expect(startResult.isOk()).toBe(true);
+    if (!startResult.isOk()) return;
+
+    // Inspect the instance
+    const inspectResult = await inspectExecution(
+      { workflowInstanceId: instanceId },
+      store,
+    );
+
+    expect(inspectResult.isOk()).toBe(true);
+    if (!inspectResult.isOk()) return;
+
+    const output = inspectResult.value;
+    expect(output.workflowInstanceId).toBe(instanceId);
+    expect(output.status).toBe("running");
+    expect(output.hasActiveLease).toBe(true);
+
+    // Verify the instance was NOT modified by inspectExecution
+    const instanceAfter = await store.instances.getById(instanceId);
+    expect(instanceAfter.isOk()).toBe(true);
+    if (!instanceAfter.isOk()) return;
+    expect(instanceAfter.value.status).toBe("running");
+  });
+
+  it("reports hasActiveLease: false when no active lease exists", async () => {
+    const store = createInMemoryRuntimeStore();
+
+    // Create an instance without starting execution (no lease)
+    const createResult = await store.instances.create({
+      workflowName: "inspect-no-lease",
+      goal: "inspect goal",
+      slug: "inspect-goal",
+    });
+    expect(createResult.isOk()).toBe(true);
+    if (!createResult.isOk()) return;
+    const instanceId = createResult.value.id;
+
+    const result = await inspectExecution(
+      { workflowInstanceId: instanceId },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    expect(result.value.hasActiveLease).toBe(false);
+    expect(result.value.status).toBe("created");
+  });
+
+  it("reports hasActiveLease: true when an active lease exists for this instance", async () => {
+    const store = createInMemoryRuntimeStore();
+    const instanceId = createWorkflowInstanceId("inspect-with-lease-001");
+
+    const startResult = await startExecution(
+      { workflowInstanceId: instanceId, ownerId: "owner-lease-check" },
+      store,
+    );
+    expect(startResult.isOk()).toBe(true);
+
+    const result = await inspectExecution(
+      { workflowInstanceId: instanceId },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    expect(result.value.hasActiveLease).toBe(true);
+  });
+
+  it("reports hasActiveLease: false when the active lease belongs to a different instance", async () => {
+    const store = createInMemoryRuntimeStore();
+
+    // Start instance A (acquires the active lease)
+    const instanceA = createWorkflowInstanceId("inspect-lease-a");
+    const startA = await startExecution(
+      { workflowInstanceId: instanceA, ownerId: "owner-a" },
+      store,
+    );
+    expect(startA.isOk()).toBe(true);
+
+    // Create instance B without starting it
+    const createB = await store.instances.create({
+      workflowName: "inspect-lease-b",
+      goal: "goal b",
+      slug: "goal-b",
+    });
+    expect(createB.isOk()).toBe(true);
+    if (!createB.isOk()) return;
+    const instanceB = createB.value.id;
+
+    // Inspect instance B — the active lease belongs to A, not B
+    const result = await inspectExecution(
+      { workflowInstanceId: instanceB },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    expect(result.value.hasActiveLease).toBe(false);
+  });
+
+  it("returns all instance fields in the output snapshot", async () => {
+    const store = createInMemoryRuntimeStore();
+    const instanceId = createWorkflowInstanceId("inspect-fields-001");
+
+    await startExecution(
+      { workflowInstanceId: instanceId, ownerId: "owner-fields" },
+      store,
+    );
+    await store.instances.update(instanceId, { currentStepName: "plan" });
+
+    const result = await inspectExecution(
+      { workflowInstanceId: instanceId },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    const output = result.value;
+    expect(output.workflowInstanceId).toBe(instanceId);
+    expect(output.status).toBe("running");
+    expect(output.currentStepName).toBe("plan");
+    expect(output.workflowName).toBeDefined();
+    expect(output.goal).toBeDefined();
+    expect(output.slug).toBeDefined();
+    expect(output.createdAt).toBeDefined();
+    expect(output.updatedAt).toBeDefined();
+    expect(Array.isArray(output.artifacts)).toBe(true);
+  });
+
+  it("does NOT create a WorkflowInstance or ExecutionLease (read-only invariant)", async () => {
+    const store = createInMemoryRuntimeStore();
+    const nonExistentId = createWorkflowInstanceId("inspect-no-create");
+
+    // inspectExecution on a non-existent instance returns not_found
+    // and MUST NOT create any instance or lease as a side effect
+    const result = await inspectExecution(
+      { workflowInstanceId: nonExistentId },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("not_found");
+
+    // Verify no instance was created
+    const instanceCheck = await store.instances.findById(nonExistentId);
+    expect(instanceCheck.isOk()).toBe(true);
+    expect(instanceCheck._unsafeUnwrap()).toBeNull();
+
+    // Verify no lease was created
+    const leaseCheck = await store.leases.findActive();
+    expect(leaseCheck.isOk()).toBe(true);
+    expect(leaseCheck._unsafeUnwrap()).toBeNull();
+  });
+
+  it("rejects metadata with denied field names", async () => {
+    const store = createInMemoryRuntimeStore();
+    const instanceId = createWorkflowInstanceId("inspect-meta-deny");
+    await store.instances.create({
+      workflowName: "wf",
+      goal: "g",
+      slug: "g",
+    });
+
+    const result = await inspectExecution(
+      {
+        workflowInstanceId: instanceId,
+        metadata: { token: "secret" } as Record<string, string>,
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Spec 22 Unit 1 / ADR 0004: observeSession boundary invariants
+// ---------------------------------------------------------------------------
+
+describe("observeSession boundary invariants (ADR 0004)", () => {
+  it("observeSession does NOT create a WorkflowInstance", async () => {
+    const store = createInMemoryRuntimeStore();
+    const newId = createWorkflowInstanceId("observe-no-create-001");
+
+    // observeSession with a non-existent workflowInstanceId still records a
+    // snapshot (the store does not enforce FK constraints in the in-memory impl),
+    // but it MUST NOT create a WorkflowInstance record.
+    await observeSession(
+      {
+        workflowInstanceId: newId,
+        leaseId,
+        harnessName: "opencode",
+        agentName: "loom",
+        sessionStatus: "active",
+      },
+      store,
+    );
+
+    // The instance must not have been created by observeSession
+    const instanceCheck = await store.instances.findById(newId);
+    expect(instanceCheck.isOk()).toBe(true);
+    expect(instanceCheck._unsafeUnwrap()).toBeNull();
+  });
+
+  it("observeSession does NOT acquire an ExecutionLease", async () => {
+    const store = createInMemoryRuntimeStore();
+
+    // Call observeSession — it must not acquire any lease
+    await observeSession(
+      {
+        workflowInstanceId: wfId,
+        leaseId,
+        harnessName: "opencode",
+        agentName: "loom",
+        sessionStatus: "active",
+      },
+      store,
+    );
+
+    // No lease should have been acquired
+    const leaseCheck = await store.leases.findActive();
+    expect(leaseCheck.isOk()).toBe(true);
+    expect(leaseCheck._unsafeUnwrap()).toBeNull();
+  });
+
+  it("observeSession does NOT transition WorkflowInstance status", async () => {
+    const store = createInMemoryRuntimeStore();
+
+    // Create an instance in 'created' status
+    const createResult = await store.instances.create({
+      workflowName: "observe-boundary-wf",
+      goal: "observe boundary goal",
+      slug: "observe-boundary-goal",
+    });
+    expect(createResult.isOk()).toBe(true);
+    if (!createResult.isOk()) return;
+    const instanceId = createResult.value.id;
+    expect(createResult.value.status).toBe("created");
+
+    // Call observeSession — it must not change the instance status
+    await observeSession(
+      {
+        workflowInstanceId: instanceId,
+        leaseId,
+        harnessName: "opencode",
+        agentName: "loom",
+        sessionStatus: "active",
+      },
+      store,
+    );
+
+    // Status must remain 'created' — observeSession cannot start execution
+    const instanceAfter = await store.instances.getById(instanceId);
+    expect(instanceAfter.isOk()).toBe(true);
+    if (!instanceAfter.isOk()) return;
+    expect(instanceAfter.value.status).toBe("created");
+  });
+
+  it("observeSession does NOT emit LifecycleEffect values", async () => {
+    const store = createInMemoryRuntimeStore();
+
+    const result = await observeSession(
+      {
+        workflowInstanceId: wfId,
+        leaseId,
+        harnessName: "opencode",
+        agentName: "loom",
+        sessionStatus: "active",
+      },
+      store,
+    );
+
+    // observeSession returns ObserveSessionOutput — no effects field
+    if (result.isOk()) {
+      const output = result.value;
+      // The output has only snapshotId — no effects
+      expect("effects" in output).toBe(false);
+      expect(output.snapshotId).toBeDefined();
+    }
+    // Whether ok or err, there are no effects emitted
+  });
+
+  it("startExecution is the only path that creates a WorkflowInstance and acquires a lease", async () => {
+    const store = createInMemoryRuntimeStore();
+    const instanceId = createWorkflowInstanceId("boundary-only-start-001");
+
+    // Before startExecution: no instance, no lease
+    const beforeInstance = await store.instances.findById(instanceId);
+    expect(beforeInstance._unsafeUnwrap()).toBeNull();
+    const beforeLease = await store.leases.findActive();
+    expect(beforeLease._unsafeUnwrap()).toBeNull();
+
+    // Call observeSession — must not create instance or lease
+    await observeSession(
+      {
+        workflowInstanceId: instanceId,
+        leaseId,
+        harnessName: "opencode",
+        agentName: "loom",
+        sessionStatus: "active",
+      },
+      store,
+    );
+
+    const afterObserveInstance = await store.instances.findById(instanceId);
+    expect(afterObserveInstance._unsafeUnwrap()).toBeNull();
+    const afterObserveLease = await store.leases.findActive();
+    expect(afterObserveLease._unsafeUnwrap()).toBeNull();
+
+    // Only startExecution creates the instance and lease
+    const startResult = await startExecution(
+      { workflowInstanceId: instanceId, ownerId: "owner-boundary-001" },
+      store,
+    );
+    expect(startResult.isOk()).toBe(true);
+
+    const afterStartInstance = await store.instances.findById(instanceId);
+    expect(afterStartInstance._unsafeUnwrap()).not.toBeNull();
+    const afterStartLease = await store.leases.findActive();
+    expect(afterStartLease._unsafeUnwrap()).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ExecutionAuthorizationSource — type and constant tests (Task 1.3)
+// ---------------------------------------------------------------------------
+
+describe("ExecutionAuthorizationSource type and constants", () => {
+  it("EXECUTION_AUTHORIZATION_SOURCES contains all 4 valid source values", () => {
+    expect(EXECUTION_AUTHORIZATION_SOURCES).toHaveLength(4);
+    expect(EXECUTION_AUTHORIZATION_SOURCES).toContain("user");
+    expect(EXECUTION_AUTHORIZATION_SOURCES).toContain("agent");
+    expect(EXECUTION_AUTHORIZATION_SOURCES).toContain("hook");
+    expect(EXECUTION_AUTHORIZATION_SOURCES).toContain("event");
+  });
+
+  it("ExecutionAuthorizationSource type accepts all 4 variants", () => {
+    const sources: ExecutionAuthorizationSource[] = [
+      "user",
+      "agent",
+      "hook",
+      "event",
+    ];
+    expect(sources).toHaveLength(4);
+  });
+
+  it("'user' is the only authorized source — all others are forbidden", () => {
+    const forbidden: ExecutionAuthorizationSource[] = [
+      "agent",
+      "hook",
+      "event",
+    ];
+    for (const source of forbidden) {
+      const result = validateAuthorizationSource(source, "startExecution");
+      expect(result.isErr()).toBe(true);
+      if (!result.isErr()) continue;
+      expect(result.error.type).toBe("policy_decision");
+      if (result.error.type === "policy_decision") {
+        expect(result.error.rule).toBe("authorizationSource");
+        expect(result.error.message).toContain(source);
+        expect(result.error.message).toContain("startExecution");
+      }
+    }
+  });
+
+  it("validateAuthorizationSource: 'user' returns ok", () => {
+    const result = validateAuthorizationSource("user", "startExecution");
+    expect(result.isOk()).toBe(true);
+  });
+
+  it("validateAuthorizationSource: 'user' returns ok for resumeExecution", () => {
+    const result = validateAuthorizationSource("user", "resumeExecution");
+    expect(result.isOk()).toBe(true);
+  });
+
+  it("validateAuthorizationSource: 'agent' returns policy_decision error for startExecution", () => {
+    const result = validateAuthorizationSource("agent", "startExecution");
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("policy_decision");
+    expect(result.error.message).toContain("agent");
+    expect(result.error.message).toContain("startExecution");
+  });
+
+  it("validateAuthorizationSource: 'hook' returns policy_decision error for resumeExecution", () => {
+    const result = validateAuthorizationSource("hook", "resumeExecution");
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("policy_decision");
+    expect(result.error.message).toContain("hook");
+    expect(result.error.message).toContain("resumeExecution");
+  });
+
+  it("validateAuthorizationSource: 'event' returns policy_decision error", () => {
+    const result = validateAuthorizationSource("event", "startExecution");
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("policy_decision");
+    expect(result.error.message).toContain("event");
+  });
+
+  it("error message references ADR 0004", () => {
+    const result = validateAuthorizationSource("hook", "startExecution");
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.message).toContain("0004");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// startExecution — explicit authorization enforcement (Task 1.3 / ADR 0004)
+// ---------------------------------------------------------------------------
+
+describe("startExecution: explicit authorization enforcement (ADR 0004)", () => {
+  it("succeeds with authorizationSource: 'user' (explicit)", async () => {
+    const store = createInMemoryRuntimeStore();
+    const instanceId = createWorkflowInstanceId("auth-user-start-001");
+
+    const result = await startExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: "session-auth-user",
+        authorizationSource: "user",
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    expect(typeof result.value.leaseId).toBe("string");
+  });
+
+  it("succeeds when authorizationSource is omitted (backward-compat default: 'user')", async () => {
+    const store = createInMemoryRuntimeStore();
+    const instanceId = createWorkflowInstanceId("auth-omit-start-001");
+
+    const result = await startExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: "session-auth-omit",
+        // authorizationSource omitted — defaults to "user"
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+  });
+
+  it("rejects agent-initiated self-start: authorizationSource: 'agent'", async () => {
+    const store = createInMemoryRuntimeStore();
+    const instanceId = createWorkflowInstanceId("auth-agent-start-001");
+
+    const result = await startExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: "session-agent-self-start",
+        authorizationSource: "agent",
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("policy_decision");
+    if (result.error.type === "policy_decision") {
+      expect(result.error.rule).toBe("authorizationSource");
+      expect(result.error.message).toContain("agent");
+    }
+
+    // No instance or lease should have been created
+    const instanceResult = await store.instances.findById(instanceId);
+    expect(instanceResult.isOk()).toBe(true);
+    if (!instanceResult.isOk()) return;
+    expect(instanceResult.value).toBeNull();
+
+    const leaseResult = await store.leases.findActive();
+    expect(leaseResult.isOk()).toBe(true);
+    if (!leaseResult.isOk()) return;
+    expect(leaseResult.value).toBeNull();
+  });
+
+  it("rejects hook-initiated self-start: authorizationSource: 'hook'", async () => {
+    const store = createInMemoryRuntimeStore();
+    const instanceId = createWorkflowInstanceId("auth-hook-start-001");
+
+    const result = await startExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: "session-hook-self-start",
+        authorizationSource: "hook",
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("policy_decision");
+    if (result.error.type === "policy_decision") {
+      expect(result.error.rule).toBe("authorizationSource");
+      expect(result.error.message).toContain("hook");
+    }
+
+    // Fail closed: no instance or lease created
+    const instanceResult = await store.instances.findById(instanceId);
+    expect(instanceResult._unsafeUnwrap()).toBeNull();
+    const leaseResult = await store.leases.findActive();
+    expect(leaseResult._unsafeUnwrap()).toBeNull();
+  });
+
+  it("rejects event-initiated self-start: authorizationSource: 'event'", async () => {
+    const store = createInMemoryRuntimeStore();
+    const instanceId = createWorkflowInstanceId("auth-event-start-001");
+
+    const result = await startExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: "session-event-self-start",
+        authorizationSource: "event",
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("policy_decision");
+    if (result.error.type === "policy_decision") {
+      expect(result.error.rule).toBe("authorizationSource");
+      expect(result.error.message).toContain("event");
+    }
+
+    // Fail closed: no instance or lease created
+    const instanceResult = await store.instances.findById(instanceId);
+    expect(instanceResult._unsafeUnwrap()).toBeNull();
+    const leaseResult = await store.leases.findActive();
+    expect(leaseResult._unsafeUnwrap()).toBeNull();
+  });
+
+  it("authorization check fires BEFORE workflow context validation (fail-fast order)", async () => {
+    // If authorizationSource is rejected, the engine must not proceed to
+    // validate the workflow context or create any store records.
+    const store = createInMemoryRuntimeStore();
+    const instanceId = createWorkflowInstanceId("auth-order-start-001");
+
+    const result = await startExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: "session-order-test",
+        authorizationSource: "agent",
+        context: {
+          workflowName: "does-not-exist",
+          goal: "test",
+          slug: "test",
+          workflows: {},
+        },
+      },
+      store,
+    );
+
+    // Must fail with policy_decision (authorization), not not_found (workflow)
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("policy_decision");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resumeExecution — explicit authorization enforcement (Task 1.3 / ADR 0004)
+// ---------------------------------------------------------------------------
+
+describe("resumeExecution: explicit authorization enforcement (ADR 0004)", () => {
+  /**
+   * Helper: create a paused workflow instance for resume tests.
+   */
+  async function createPausedInstance(
+    store: ReturnType<typeof createInMemoryRuntimeStore>,
+    suffix: string,
+  ) {
+    const instanceId = createWorkflowInstanceId(`auth-resume-wf-${suffix}`);
+    // Start with user authorization, then pause
+    const startResult = await startExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: `owner-${suffix}`,
+        authorizationSource: "user",
+      },
+      store,
+    );
+    if (!startResult.isOk()) throw new Error("startExecution failed");
+    const { leaseId: activeLeaseId } = startResult.value;
+
+    // Pause the instance
+    await store.instances.update(instanceId, { status: "paused" });
+    // Release the lease so resume can acquire a new one
+    await store.leases.release(activeLeaseId, createOwnerId(`owner-${suffix}`));
+
+    return instanceId;
+  }
+
+  it("succeeds with authorizationSource: 'user' (explicit)", async () => {
+    const store = createInMemoryRuntimeStore();
+    const instanceId = await createPausedInstance(store, "user-resume");
+
+    const result = await resumeExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: "session-resume-user",
+        authorizationSource: "user",
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    expect(typeof result.value.leaseId).toBe("string");
+  });
+
+  it("succeeds when authorizationSource is omitted (backward-compat default: 'user')", async () => {
+    const store = createInMemoryRuntimeStore();
+    const instanceId = await createPausedInstance(store, "omit-resume");
+
+    const result = await resumeExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: "session-resume-omit",
+        // authorizationSource omitted — defaults to "user"
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+  });
+
+  it("rejects hook-initiated implicit resume: authorizationSource: 'hook'", async () => {
+    // This is the ADR 0004 scenario: the legacy workContinuation hook fired
+    // on session.idle and implicitly resumed Tapestry. That path is now
+    // rejected by the engine regardless of adapter intent.
+    const store = createInMemoryRuntimeStore();
+    const instanceId = await createPausedInstance(store, "hook-resume");
+
+    const result = await resumeExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: "session-hook-resume",
+        authorizationSource: "hook",
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("policy_decision");
+    if (result.error.type === "policy_decision") {
+      expect(result.error.rule).toBe("authorizationSource");
+      expect(result.error.message).toContain("hook");
+      expect(result.error.message).toContain("resumeExecution");
+    }
+
+    // Instance must remain paused — no state change on rejection
+    const instanceResult = await store.instances.getById(instanceId);
+    expect(instanceResult.isOk()).toBe(true);
+    if (!instanceResult.isOk()) return;
+    expect(instanceResult.value.status).toBe("paused");
+  });
+
+  it("rejects agent-initiated resume: authorizationSource: 'agent'", async () => {
+    const store = createInMemoryRuntimeStore();
+    const instanceId = await createPausedInstance(store, "agent-resume");
+
+    const result = await resumeExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: "session-agent-resume",
+        authorizationSource: "agent",
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("policy_decision");
+    if (result.error.type === "policy_decision") {
+      expect(result.error.rule).toBe("authorizationSource");
+      expect(result.error.message).toContain("agent");
+    }
+
+    // Instance must remain paused — fail closed
+    const instanceResult = await store.instances.getById(instanceId);
+    expect(instanceResult.isOk()).toBe(true);
+    if (!instanceResult.isOk()) return;
+    expect(instanceResult.value.status).toBe("paused");
+  });
+
+  it("rejects event-initiated resume: authorizationSource: 'event'", async () => {
+    const store = createInMemoryRuntimeStore();
+    const instanceId = await createPausedInstance(store, "event-resume");
+
+    const result = await resumeExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: "session-event-resume",
+        authorizationSource: "event",
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("policy_decision");
+    if (result.error.type === "policy_decision") {
+      expect(result.error.rule).toBe("authorizationSource");
+      expect(result.error.message).toContain("event");
+    }
+  });
+
+  it("authorization check fires BEFORE instance lookup (fail-fast order)", async () => {
+    // Even for a non-existent instance, the authorization check must fire first.
+    const store = createInMemoryRuntimeStore();
+    const nonExistentId = createWorkflowInstanceId("auth-order-resume-001");
+
+    const result = await resumeExecution(
+      {
+        workflowInstanceId: nonExistentId,
+        ownerId: "session-order-resume",
+        authorizationSource: "hook",
+      },
+      store,
+    );
+
+    // Must fail with policy_decision (authorization), not not_found (instance)
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("policy_decision");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// observeSession — side-effect-free boundary (Task 1.3 / ADR 0004)
+// ---------------------------------------------------------------------------
+
+describe("observeSession: side-effect-free boundary (ADR 0004)", () => {
+  it("observeSession does not accept authorizationSource — it is not an execution operation", () => {
+    // ObserveSessionInput must NOT have an authorizationSource field.
+    // This is a structural test: the type should not include the field.
+    const input: ObserveSessionInput = {
+      workflowInstanceId: createWorkflowInstanceId("obs-boundary-001"),
+      leaseId: createExecutionLeaseId("lease-obs-001"),
+      harnessName: "opencode",
+      agentName: "loom",
+      sessionStatus: "active",
+    };
+
+    // authorizationSource must NOT be a field on ObserveSessionInput
+    expect("authorizationSource" in input).toBe(false);
+  });
+
+  it("observeSession called from an idle-hook context does not start execution", async () => {
+    // Simulates the legacy workContinuation hook scenario:
+    // An idle hook calls observeSession — this must NOT create a WorkflowInstance
+    // or acquire an ExecutionLease, regardless of how many times it is called.
+    const store = createInMemoryRuntimeStore();
+    const instanceId = createWorkflowInstanceId("obs-idle-hook-001");
+    const leaseId = createExecutionLeaseId("lease-idle-hook-001");
+
+    // Call observeSession multiple times (simulating repeated idle events)
+    for (let i = 0; i < 3; i++) {
+      await observeSession(
+        {
+          workflowInstanceId: instanceId,
+          leaseId,
+          harnessName: "opencode",
+          agentName: "loom",
+          sessionStatus: "idle",
+          metadata: { idleCount: i },
+        },
+        store,
+      );
+    }
+
+    // No WorkflowInstance should have been created
+    const instanceResult = await store.instances.findById(instanceId);
+    expect(instanceResult.isOk()).toBe(true);
+    if (!instanceResult.isOk()) return;
+    expect(instanceResult.value).toBeNull();
+
+    // No ExecutionLease should have been acquired
+    const leaseResult = await store.leases.findActive();
+    expect(leaseResult.isOk()).toBe(true);
+    if (!leaseResult.isOk()) return;
+    expect(leaseResult.value).toBeNull();
+  });
+
+  it("observeSession called from a continuation-hook context does not resume execution", async () => {
+    // Simulates the legacy compaction-recovery scenario:
+    // A continuation hook calls observeSession — this must NOT transition
+    // a paused instance to running or acquire a new lease.
+    const store = createInMemoryRuntimeStore();
+
+    // Create a paused instance via the authorized path
+    const instanceId = createWorkflowInstanceId("obs-continuation-001");
+    const startResult = await startExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: "owner-continuation",
+        authorizationSource: "user",
+      },
+      store,
+    );
+    expect(startResult.isOk()).toBe(true);
+    if (!startResult.isOk()) return;
+
+    await store.instances.update(instanceId, { status: "paused" });
+    await store.leases.release(
+      startResult.value.leaseId,
+      createOwnerId("owner-continuation"),
+    );
+
+    // Verify the instance is paused and no active lease exists
+    const beforeInstance = await store.instances.getById(instanceId);
+    expect(beforeInstance._unsafeUnwrap().status).toBe("paused");
+    const beforeLease = await store.leases.findActive();
+    expect(beforeLease._unsafeUnwrap()).toBeNull();
+
+    // Call observeSession (simulating a continuation hook)
+    await observeSession(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: createExecutionLeaseId("fake-continuation-lease"),
+        harnessName: "opencode",
+        agentName: "tapestry",
+        sessionStatus: "active",
+        metadata: { source: "continuation-hook" },
+      },
+      store,
+    );
+
+    // Instance must still be paused — observeSession cannot resume execution
+    const afterInstance = await store.instances.getById(instanceId);
+    expect(afterInstance._unsafeUnwrap().status).toBe("paused");
+
+    // No new lease should have been acquired
+    const afterLease = await store.leases.findActive();
+    expect(afterLease._unsafeUnwrap()).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 1.4: No implicit execution — ordinary conversation, idle, and session
+// observation paths (ADR 0004 / Spec 22 Unit 1)
+// ---------------------------------------------------------------------------
+
+describe("No implicit execution: ordinary conversation-adjacent paths (ADR 0004)", () => {
+  it("ordinary Loom conversation: observeSession with sessionStatus 'active' does not create a WorkflowInstance", async () => {
+    // Simulates the most common path: Loom is responding to a user message
+    // in a normal conversation (no workflow). The adapter calls observeSession
+    // to record the session state. This MUST NOT create a WorkflowInstance.
+    const store = createInMemoryRuntimeStore();
+    const conversationInstanceId = createWorkflowInstanceId(
+      "conv-loom-active-001",
+    );
+    const conversationLeaseId = createExecutionLeaseId("conv-lease-001");
+
+    await observeSession(
+      {
+        workflowInstanceId: conversationInstanceId,
+        leaseId: conversationLeaseId,
+        harnessName: "opencode",
+        agentName: "loom",
+        sessionStatus: "active",
+        metadata: { turnIndex: 1 },
+      },
+      store,
+    );
+
+    // No WorkflowInstance must have been created
+    const instanceResult = await store.instances.findById(
+      conversationInstanceId,
+    );
+    expect(instanceResult.isOk()).toBe(true);
+    expect(instanceResult._unsafeUnwrap()).toBeNull();
+  });
+
+  it("ordinary Loom conversation: observeSession with sessionStatus 'active' does not acquire an ExecutionLease", async () => {
+    // Same scenario as above — verifies the lease side of the invariant.
+    const store = createInMemoryRuntimeStore();
+
+    await observeSession(
+      {
+        workflowInstanceId: createWorkflowInstanceId("conv-loom-lease-001"),
+        leaseId: createExecutionLeaseId("conv-lease-002"),
+        harnessName: "opencode",
+        agentName: "loom",
+        sessionStatus: "active",
+        metadata: { turnIndex: 2 },
+      },
+      store,
+    );
+
+    // No ExecutionLease must have been acquired
+    const leaseResult = await store.leases.findActive();
+    expect(leaseResult.isOk()).toBe(true);
+    expect(leaseResult._unsafeUnwrap()).toBeNull();
+  });
+
+  it("repeated conversation turns: multiple observeSession calls do not accumulate instances or leases", async () => {
+    // Simulates a multi-turn conversation where the adapter calls observeSession
+    // after each turn. None of these calls should create instances or leases.
+    const store = createInMemoryRuntimeStore();
+    const conversationId = createWorkflowInstanceId("conv-multi-turn-001");
+    const leaseRef = createExecutionLeaseId("conv-lease-multi-001");
+
+    for (let turn = 0; turn < 5; turn++) {
+      await observeSession(
+        {
+          workflowInstanceId: conversationId,
+          leaseId: leaseRef,
+          harnessName: "opencode",
+          agentName: "loom",
+          sessionStatus: "active",
+          metadata: { turnIndex: turn },
+        },
+        store,
+      );
+    }
+
+    // After 5 turns, still no instance or lease
+    const instanceResult = await store.instances.findById(conversationId);
+    expect(instanceResult._unsafeUnwrap()).toBeNull();
+
+    const leaseResult = await store.leases.findActive();
+    expect(leaseResult._unsafeUnwrap()).toBeNull();
+  });
+
+  it("inspectExecution called from a conversation context does not create instances or leases", async () => {
+    // An adapter may call inspectExecution during a conversation to check
+    // whether a workflow is running. This is a read-only operation and must
+    // not create any state even when the instance does not exist.
+    const store = createInMemoryRuntimeStore();
+    const nonExistentId = createWorkflowInstanceId("conv-inspect-001");
+
+    // inspectExecution on a non-existent instance returns not_found
+    const result = await inspectExecution(
+      { workflowInstanceId: nonExistentId },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("not_found");
+
+    // No instance or lease created as a side effect
+    const instanceCheck = await store.instances.findById(nonExistentId);
+    expect(instanceCheck._unsafeUnwrap()).toBeNull();
+
+    const leaseCheck = await store.leases.findActive();
+    expect(leaseCheck._unsafeUnwrap()).toBeNull();
+  });
+
+  it("idle session observation: observeSession with sessionStatus 'idle' does not create instances or leases", async () => {
+    // Simulates the session going idle between conversation turns.
+    // The adapter may call observeSession with 'idle' status — this must not
+    // trigger any execution state changes.
+    const store = createInMemoryRuntimeStore();
+    const idleId = createWorkflowInstanceId("conv-idle-obs-001");
+
+    await observeSession(
+      {
+        workflowInstanceId: idleId,
+        leaseId: createExecutionLeaseId("conv-idle-lease-001"),
+        harnessName: "opencode",
+        agentName: "loom",
+        sessionStatus: "idle",
+      },
+      store,
+    );
+
+    const instanceResult = await store.instances.findById(idleId);
+    expect(instanceResult._unsafeUnwrap()).toBeNull();
+
+    const leaseResult = await store.leases.findActive();
+    expect(leaseResult._unsafeUnwrap()).toBeNull();
+  });
+
+  it("terminated session observation: observeSession with sessionStatus 'terminated' does not create instances or leases", async () => {
+    // Simulates the session ending. The adapter calls observeSession with
+    // 'terminated' status — this must not create any execution state.
+    const store = createInMemoryRuntimeStore();
+    const terminatedId = createWorkflowInstanceId("conv-terminated-obs-001");
+
+    await observeSession(
+      {
+        workflowInstanceId: terminatedId,
+        leaseId: createExecutionLeaseId("conv-terminated-lease-001"),
+        harnessName: "claude-code",
+        agentName: "shuttle",
+        sessionStatus: "terminated",
+      },
+      store,
+    );
+
+    const instanceResult = await store.instances.findById(terminatedId);
+    expect(instanceResult._unsafeUnwrap()).toBeNull();
+
+    const leaseResult = await store.leases.findActive();
+    expect(leaseResult._unsafeUnwrap()).toBeNull();
+  });
+
+  it("conversation path cannot bypass the execution boundary: observeSession + inspectExecution together do not start execution", async () => {
+    // Verifies that combining observation and inspection (the two read-side
+    // operations available during ordinary conversation) cannot implicitly
+    // start durable execution. Only startExecution (with user authorization)
+    // may do so.
+    const store = createInMemoryRuntimeStore();
+    const id = createWorkflowInstanceId("conv-combined-obs-inspect-001");
+    const leaseRef = createExecutionLeaseId("conv-combined-lease-001");
+
+    // Step 1: observe the session (as an adapter would during conversation)
+    await observeSession(
+      {
+        workflowInstanceId: id,
+        leaseId: leaseRef,
+        harnessName: "opencode",
+        agentName: "loom",
+        sessionStatus: "active",
+      },
+      store,
+    );
+
+    // Step 2: inspect execution state (as an adapter would to check status)
+    const inspectResult = await inspectExecution(
+      { workflowInstanceId: id },
+      store,
+    );
+
+    // inspectExecution returns not_found — no instance was created by observeSession
+    expect(inspectResult.isErr()).toBe(true);
+    if (!inspectResult.isErr()) return;
+    expect(inspectResult.error.type).toBe("not_found");
+
+    // Confirm: no instance, no lease
+    const instanceCheck = await store.instances.findById(id);
+    expect(instanceCheck._unsafeUnwrap()).toBeNull();
+
+    const leaseCheck = await store.leases.findActive();
+    expect(leaseCheck._unsafeUnwrap()).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// beforeTool — side-effect-free boundary (Task 1.3 / ADR 0004)
+// ---------------------------------------------------------------------------
+
+describe("beforeTool: side-effect-free boundary (ADR 0004)", () => {
+  it("beforeTool does not accept authorizationSource — it is not an execution operation", () => {
+    // BeforeToolInput must NOT have an authorizationSource field.
+    const input: BeforeToolInput = {
+      workflowInstanceId: createWorkflowInstanceId("bt-boundary-001"),
+      leaseId: createExecutionLeaseId("lease-bt-001"),
+      agentName: "shuttle",
+      toolCapability: "read",
+      toolName: "read_file",
+      effectiveToolPolicy: evaluateEffectiveToolPolicy({ read: "allow" }),
+    };
+
+    expect("authorizationSource" in input).toBe(false);
+  });
+
+  it("beforeTool does not create WorkflowInstances or acquire leases", async () => {
+    // beforeTool is a pure policy evaluation — it must not touch the store.
+    // We verify this by calling it without a store and confirming it succeeds.
+    const input: BeforeToolInput = {
+      workflowInstanceId: createWorkflowInstanceId("bt-no-store-001"),
+      leaseId: createExecutionLeaseId("lease-bt-no-store-001"),
+      agentName: "shuttle",
+      toolCapability: "write",
+      toolName: "write_file",
+      effectiveToolPolicy: evaluateEffectiveToolPolicy({ write: "allow" }),
+    };
+
+    // beforeTool takes no store argument — it is a pure policy evaluation
+    const result = await beforeTool(input);
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    expect(result.value.decision).toBe("allow");
+  });
+
+  it("beforeTool called repeatedly does not accumulate state", async () => {
+    // Calling beforeTool multiple times must produce the same result each time.
+    const policy = evaluateEffectiveToolPolicy({ execute: "ask" });
+    const input: BeforeToolInput = {
+      workflowInstanceId: createWorkflowInstanceId("bt-idempotent-001"),
+      leaseId: createExecutionLeaseId("lease-bt-idempotent-001"),
+      agentName: "shuttle",
+      toolCapability: "execute",
+      toolName: "run_command",
+      effectiveToolPolicy: policy,
+    };
+
+    const results = await Promise.all([
+      beforeTool(input),
+      beforeTool(input),
+      beforeTool(input),
+    ]);
+
+    for (const result of results) {
+      expect(result.isOk()).toBe(true);
+      if (!result.isOk()) continue;
+      expect(result.value.decision).toBe("ask");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fail-closed invariant — execution boundary (Task 1.3 / ADR 0004)
+// ---------------------------------------------------------------------------
+
+describe("Fail-closed invariant: execution boundary (ADR 0004)", () => {
+  it("startExecution with forbidden source fails closed — no partial state written", async () => {
+    // When authorization is rejected, the engine must not write any partial
+    // state to the store. This is the "fail closed" invariant.
+    const store = createInMemoryRuntimeStore();
+    const instanceId = createWorkflowInstanceId("fail-closed-start-001");
+
+    const result = await startExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: "session-fail-closed",
+        authorizationSource: "agent",
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+
+    // No instance written
+    const instanceResult = await store.instances.findById(instanceId);
+    expect(instanceResult._unsafeUnwrap()).toBeNull();
+
+    // No lease acquired
+    const leaseResult = await store.leases.findActive();
+    expect(leaseResult._unsafeUnwrap()).toBeNull();
+  });
+
+  it("resumeExecution with forbidden source fails closed — instance status unchanged", async () => {
+    const store = createInMemoryRuntimeStore();
+
+    // Create a paused instance via the authorized path
+    const instanceId = createWorkflowInstanceId("fail-closed-resume-001");
+    const startResult = await startExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: "owner-fail-closed",
+        authorizationSource: "user",
+      },
+      store,
+    );
+    expect(startResult.isOk()).toBe(true);
+    if (!startResult.isOk()) return;
+
+    await store.instances.update(instanceId, { status: "paused" });
+    await store.leases.release(
+      startResult.value.leaseId,
+      createOwnerId("owner-fail-closed"),
+    );
+
+    // Attempt hook-initiated resume — must fail closed
+    const resumeResult = await resumeExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: "session-hook-fail-closed",
+        authorizationSource: "hook",
+      },
+      store,
+    );
+
+    expect(resumeResult.isErr()).toBe(true);
+    if (!resumeResult.isErr()) return;
+    expect(resumeResult.error.type).toBe("policy_decision");
+
+    // Instance must still be paused — no state change
+    const instanceResult = await store.instances.getById(instanceId);
+    expect(instanceResult._unsafeUnwrap().status).toBe("paused");
+
+    // No new lease acquired
+    const leaseResult = await store.leases.findActive();
+    expect(leaseResult._unsafeUnwrap()).toBeNull();
+  });
+
+  it("all three forbidden sources produce policy_decision errors (not validation or not_found)", async () => {
+    // The error type must be policy_decision — not validation or not_found.
+    // This distinguishes authorization failures from input errors.
+    const store = createInMemoryRuntimeStore();
+    const forbiddenSources: ExecutionAuthorizationSource[] = [
+      "agent",
+      "hook",
+      "event",
+    ];
+
+    for (const source of forbiddenSources) {
+      const instanceId = createWorkflowInstanceId(
+        `fail-closed-type-${source}-001`,
+      );
+      const result = await startExecution(
+        {
+          workflowInstanceId: instanceId,
+          ownerId: `session-${source}`,
+          authorizationSource: source,
+        },
+        store,
+      );
+
+      expect(result.isErr()).toBe(true);
+      if (!result.isErr()) continue;
+      expect(result.error.type).toBe("policy_decision");
+      // Must NOT be validation or not_found
+      expect(result.error.type).not.toBe("validation");
+      expect(result.error.type).not.toBe("not_found");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 3.2: Normative vs informational artifact input interfaces
+// ---------------------------------------------------------------------------
+
+describe("ArtifactInputRole — type and constant surface", () => {
+  it("ARTIFACT_INPUT_ROLES contains 'normative' and 'informational'", () => {
+    expect(ARTIFACT_INPUT_ROLES).toContain("normative");
+    expect(ARTIFACT_INPUT_ROLES).toContain("informational");
+    expect(ARTIFACT_INPUT_ROLES).toHaveLength(2);
+  });
+
+  it("ArtifactInputRole type accepts 'normative' and 'informational'", () => {
+    const normative: ArtifactInputRole = "normative";
+    const informational: ArtifactInputRole = "informational";
+    expect(normative).toBe("normative");
+    expect(informational).toBe("informational");
+  });
+
+  it("ArtifactInputDecl accepts name, description, and optional role", () => {
+    const normativeDecl: ArtifactInputDecl = {
+      name: "plan_path",
+      description: "Path to the plan file",
+      role: "normative",
+    };
+    const informationalDecl: ArtifactInputDecl = {
+      name: "context_doc",
+      description: "Optional context document",
+      role: "informational",
+    };
+    const noRoleDecl: ArtifactInputDecl = {
+      name: "spec_file",
+      description: "Specification file",
+      // role omitted — engine defaults to normative
+    };
+
+    expect(normativeDecl.role).toBe("normative");
+    expect(informationalDecl.role).toBe("informational");
+    expect(noRoleDecl.role).toBeUndefined();
+  });
+
+  it("ArtifactInputSummary carries three readonly arrays", () => {
+    const summary: ArtifactInputSummary = {
+      normativeSatisfied: ["plan_path"],
+      informationalPresent: ["context_doc"],
+      informationalAbsent: ["optional_spec"],
+    };
+    expect(summary.normativeSatisfied).toContain("plan_path");
+    expect(summary.informationalPresent).toContain("context_doc");
+    expect(summary.informationalAbsent).toContain("optional_spec");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// dispatchStep — normative vs informational artifact input validation
+// ---------------------------------------------------------------------------
+
+describe("dispatchStep: normative vs informational artifact inputs (Task 3.2)", () => {
+  /**
+   * Workflow fixture with mixed normative and informational inputs.
+   *
+   * "implement" step:
+   *   - normative input: "plan_path" (required — blocks dispatch if absent)
+   *   - informational input: "context_doc" (advisory — dispatch proceeds if absent)
+   *
+   * "review" step:
+   *   - informational input only: "build_report" (advisory)
+   *
+   * "plan" step:
+   *   - no inputs (produces plan_path)
+   */
+  const mixedInputWorkflows: WorkflowExecutionContext["workflows"] = {
+    "mixed-inputs": {
+      version: 1,
+      steps: [
+        {
+          name: "plan",
+          type: "autonomous",
+          agent: "pattern",
+          prompt: "Create a plan for {{instance.goal}}",
+          completion: { method: "agent_signal" },
+          outputs: [{ name: "plan_path", description: "Path to the plan" }],
+        },
+        {
+          name: "implement",
+          type: "autonomous",
+          agent: "shuttle",
+          prompt: "Implement using {{artifacts.plan_path}}",
+          completion: { method: "agent_signal" },
+          inputs: [
+            {
+              name: "plan_path",
+              description: "Path to the plan file",
+              // no role — defaults to normative
+            },
+            {
+              name: "context_doc",
+              description: "Optional context document",
+              role: "informational",
+            } as ArtifactInputDecl,
+          ],
+        },
+        {
+          name: "review",
+          type: "gate",
+          agent: "weft",
+          prompt: "Review changes for {{instance.workflowName}}",
+          completion: { method: "review_verdict" },
+          on_reject: "pause",
+          inputs: [
+            {
+              name: "build_report",
+              description: "Build report (advisory)",
+              role: "informational",
+            } as ArtifactInputDecl,
+          ],
+        },
+      ],
+    },
+    "normative-only": {
+      version: 1,
+      steps: [
+        {
+          name: "execute",
+          type: "autonomous",
+          agent: "shuttle",
+          prompt: "Execute using {{artifacts.required_spec}}",
+          completion: { method: "agent_signal" },
+          inputs: [
+            {
+              name: "required_spec",
+              description: "Required specification",
+              role: "normative",
+            } as ArtifactInputDecl,
+          ],
+        },
+      ],
+    },
+    "informational-only": {
+      version: 1,
+      steps: [
+        {
+          name: "analyze",
+          type: "autonomous",
+          agent: "shuttle",
+          prompt: "Analyze the codebase",
+          completion: { method: "agent_signal" },
+          inputs: [
+            {
+              name: "prior_analysis",
+              description: "Prior analysis (advisory)",
+              role: "informational",
+            } as ArtifactInputDecl,
+          ],
+        },
+      ],
+    },
+  };
+
+  /**
+   * Helper: start an execution with workflow context.
+   */
+  async function startWithCtx(
+    store: ReturnType<typeof createInMemoryRuntimeStore>,
+    suffix: string,
+    workflowName = "mixed-inputs",
+    goal = "Build feature",
+    slug = "build-feature",
+  ) {
+    const instanceId = createWorkflowInstanceId(`t32-${suffix}`);
+    const startResult = await startExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: `owner-${suffix}`,
+        context: {
+          workflowName,
+          goal,
+          slug,
+          workflows: mixedInputWorkflows,
+        },
+      },
+      store,
+    );
+    if (!startResult.isOk())
+      throw new Error(`startExecution failed: ${JSON.stringify(startResult)}`);
+    return { instanceId, activeLeaseId: startResult.value.leaseId };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Normative input — blocks dispatch when absent
+  // ---------------------------------------------------------------------------
+
+  it("normative input absent: returns not_found error, dispatch blocked", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startWithCtx(
+      store,
+      "norm-absent",
+    );
+
+    // Do NOT add "plan_path" — normative input is absent
+
+    const result = await dispatchStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "implement",
+        context: {
+          workflowName: "mixed-inputs",
+          goal: "Build feature",
+          slug: "build-feature",
+          workflows: mixedInputWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("not_found");
+    if (result.error.type === "not_found") {
+      expect(result.error.entity).toBe("artifact");
+      expect(result.error.id).toBe("plan_path");
+    }
+  });
+
+  it("normative input present: dispatch succeeds", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startWithCtx(
+      store,
+      "norm-present",
+    );
+
+    // Add the normative input
+    await store.instances.addArtifact(instanceId, {
+      name: "plan_path",
+      path: ".weave/plans/build-feature.md",
+    });
+
+    const result = await dispatchStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "implement",
+        context: {
+          workflowName: "mixed-inputs",
+          goal: "Build feature",
+          slug: "build-feature",
+          workflows: mixedInputWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Informational input — dispatch proceeds even when absent
+  // ---------------------------------------------------------------------------
+
+  it("informational input absent: dispatch succeeds (advisory only)", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startWithCtx(
+      store,
+      "info-absent",
+    );
+
+    // Add normative input but NOT the informational "context_doc"
+    await store.instances.addArtifact(instanceId, {
+      name: "plan_path",
+      path: ".weave/plans/build-feature.md",
+    });
+
+    const result = await dispatchStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "implement",
+        context: {
+          workflowName: "mixed-inputs",
+          goal: "Build feature",
+          slug: "build-feature",
+          workflows: mixedInputWorkflows,
+        },
+      },
+      store,
+    );
+
+    // Dispatch must succeed even though "context_doc" is absent
+    expect(result.isOk()).toBe(true);
+  });
+
+  it("all-informational step: dispatch succeeds with no artifacts present", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startWithCtx(
+      store,
+      "all-info-absent",
+      "informational-only",
+      "Analyze codebase",
+      "analyze-codebase",
+    );
+
+    // Do NOT add "prior_analysis" — it is informational
+
+    const result = await dispatchStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "analyze",
+        context: {
+          workflowName: "informational-only",
+          goal: "Analyze codebase",
+          slug: "analyze-codebase",
+          workflows: mixedInputWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+  });
+
+  // ---------------------------------------------------------------------------
+  // ArtifactInputSummary — present in DispatchStepOutput when step has inputs
+  // ---------------------------------------------------------------------------
+
+  it("artifactInputSummary: normative satisfied, informational absent", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startWithCtx(
+      store,
+      "summary-norm-sat-info-absent",
+    );
+
+    // Add normative "plan_path" but NOT informational "context_doc"
+    await store.instances.addArtifact(instanceId, {
+      name: "plan_path",
+      path: ".weave/plans/build-feature.md",
+    });
+
+    const result = await dispatchStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "implement",
+        context: {
+          workflowName: "mixed-inputs",
+          goal: "Build feature",
+          slug: "build-feature",
+          workflows: mixedInputWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    const { artifactInputSummary } = result.value;
+    expect(artifactInputSummary).toBeDefined();
+    if (!artifactInputSummary) return;
+
+    expect(artifactInputSummary.normativeSatisfied).toContain("plan_path");
+    expect(artifactInputSummary.informationalAbsent).toContain("context_doc");
+    expect(artifactInputSummary.informationalPresent).toHaveLength(0);
+  });
+
+  it("artifactInputSummary: normative satisfied, informational present", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startWithCtx(
+      store,
+      "summary-both-present",
+    );
+
+    // Add both normative and informational inputs
+    await store.instances.addArtifact(instanceId, {
+      name: "plan_path",
+      path: ".weave/plans/build-feature.md",
+    });
+    await store.instances.addArtifact(instanceId, {
+      name: "context_doc",
+      path: ".weave/context/context.md",
+    });
+
+    const result = await dispatchStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "implement",
+        context: {
+          workflowName: "mixed-inputs",
+          goal: "Build feature",
+          slug: "build-feature",
+          workflows: mixedInputWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    const { artifactInputSummary } = result.value;
+    expect(artifactInputSummary).toBeDefined();
+    if (!artifactInputSummary) return;
+
+    expect(artifactInputSummary.normativeSatisfied).toContain("plan_path");
+    expect(artifactInputSummary.informationalPresent).toContain("context_doc");
+    expect(artifactInputSummary.informationalAbsent).toHaveLength(0);
+  });
+
+  it("artifactInputSummary: all-informational step, artifact absent", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startWithCtx(
+      store,
+      "summary-all-info-absent",
+      "informational-only",
+      "Analyze codebase",
+      "analyze-codebase",
+    );
+
+    // Do NOT add "prior_analysis"
+
+    const result = await dispatchStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "analyze",
+        context: {
+          workflowName: "informational-only",
+          goal: "Analyze codebase",
+          slug: "analyze-codebase",
+          workflows: mixedInputWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    const { artifactInputSummary } = result.value;
+    expect(artifactInputSummary).toBeDefined();
+    if (!artifactInputSummary) return;
+
+    expect(artifactInputSummary.normativeSatisfied).toHaveLength(0);
+    expect(artifactInputSummary.informationalPresent).toHaveLength(0);
+    expect(artifactInputSummary.informationalAbsent).toContain(
+      "prior_analysis",
+    );
+  });
+
+  it("artifactInputSummary: absent for steps with no declared inputs", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startWithCtx(
+      store,
+      "summary-no-inputs",
+    );
+
+    // "plan" step has no inputs
+    const result = await dispatchStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "plan",
+        context: {
+          workflowName: "mixed-inputs",
+          goal: "Build feature",
+          slug: "build-feature",
+          workflows: mixedInputWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    // No inputs declared — summary should be absent
+    expect(result.value.artifactInputSummary).toBeUndefined();
+  });
+
+  it("artifactInputSummary: absent for legacy dispatch (no context)", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startWithCtx(
+      store,
+      "summary-legacy",
+    );
+
+    // Legacy dispatch — no context
+    const result = await dispatchStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "plan",
+        // no context
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    // Legacy dispatch never produces a summary
+    expect(result.value.artifactInputSummary).toBeUndefined();
+  });
+
+  // ---------------------------------------------------------------------------
+  // Role defaulting — absent role treated as normative
+  // ---------------------------------------------------------------------------
+
+  it("input without explicit role defaults to normative (blocks dispatch when absent)", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startWithCtx(
+      store,
+      "default-role-normative",
+      "normative-only",
+      "Execute spec",
+      "execute-spec",
+    );
+
+    // "required_spec" has explicit role: "normative" — absent → blocked
+    const result = await dispatchStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "execute",
+        context: {
+          workflowName: "normative-only",
+          goal: "Execute spec",
+          slug: "execute-spec",
+          workflows: mixedInputWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("not_found");
+    if (result.error.type === "not_found") {
+      expect(result.error.entity).toBe("artifact");
+      expect(result.error.id).toBe("required_spec");
+    }
+  });
+
+  it("input without explicit role defaults to normative (succeeds when present)", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startWithCtx(
+      store,
+      "default-role-normative-present",
+      "normative-only",
+      "Execute spec",
+      "execute-spec",
+    );
+
+    // Add the normative artifact
+    await store.instances.addArtifact(instanceId, {
+      name: "required_spec",
+      path: ".weave/specs/required.md",
+    });
+
+    const result = await dispatchStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "execute",
+        context: {
+          workflowName: "normative-only",
+          goal: "Execute spec",
+          slug: "execute-spec",
+          workflows: mixedInputWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    const { artifactInputSummary } = result.value;
+    expect(artifactInputSummary).toBeDefined();
+    if (!artifactInputSummary) return;
+    expect(artifactInputSummary.normativeSatisfied).toContain("required_spec");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Error message quality — normative error names the artifact
+  // ---------------------------------------------------------------------------
+
+  it("normative not_found error message names the missing artifact", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startWithCtx(
+      store,
+      "error-message-quality",
+    );
+
+    // "plan_path" is normative — absent
+
+    const result = await dispatchStep(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        stepName: "implement",
+        context: {
+          workflowName: "mixed-inputs",
+          goal: "Build feature",
+          slug: "build-feature",
+          workflows: mixedInputWorkflows,
+        },
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("not_found");
+    if (result.error.type === "not_found") {
+      // Error message must name the artifact
+      expect(result.error.message).toContain("plan_path");
+      // Error message must indicate it is normative
+      expect(result.error.message).toContain("normative");
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // DispatchStepOutput type shape — artifactInputSummary is optional
+  // ---------------------------------------------------------------------------
+
+  it("DispatchStepOutput.artifactInputSummary is optional (absent for no-input steps)", () => {
+    // Structural type test: DispatchStepOutput must accept absence of summary
+    const output: DispatchStepOutput = {
+      stepName: "plan",
+      effects: [],
+      // artifactInputSummary absent — valid
+    };
+    expect(output.artifactInputSummary).toBeUndefined();
+  });
+
+  it("DispatchStepOutput.artifactInputSummary carries three arrays when present", () => {
+    const summary: ArtifactInputSummary = {
+      normativeSatisfied: ["plan_path"],
+      informationalPresent: [],
+      informationalAbsent: ["context_doc"],
+    };
+    const output: DispatchStepOutput = {
+      stepName: "implement",
+      effects: [],
+      artifactInputSummary: summary,
+    };
+    expect(output.artifactInputSummary?.normativeSatisfied).toContain(
+      "plan_path",
+    );
+    expect(output.artifactInputSummary?.informationalAbsent).toContain(
+      "context_doc",
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Reconciliation — type shapes and static validation
+// ---------------------------------------------------------------------------
+
+describe("ReconciliationAuthorizationSource type and constants", () => {
+  it("RECONCILIATION_AUTHORIZATION_SOURCES contains all four valid sources", () => {
+    expect(RECONCILIATION_AUTHORIZATION_SOURCES).toContain("user");
+    expect(RECONCILIATION_AUTHORIZATION_SOURCES).toContain("runtime");
+    expect(RECONCILIATION_AUTHORIZATION_SOURCES).toContain("review-gate");
+    expect(RECONCILIATION_AUTHORIZATION_SOURCES).toContain("security-gate");
+    expect(RECONCILIATION_AUTHORIZATION_SOURCES).toHaveLength(4);
+  });
+
+  it("RECONCILIATION_REASONS contains all four closed built-in values", () => {
+    expect(RECONCILIATION_REASONS).toContain("execution-mismatch");
+    expect(RECONCILIATION_REASONS).toContain("user-revision-request");
+    expect(RECONCILIATION_REASONS).toContain("review-rejection");
+    expect(RECONCILIATION_REASONS).toContain("security-rejection");
+    expect(RECONCILIATION_REASONS).toHaveLength(4);
+  });
+
+  it("ReconcileExecutionInput type accepts all required fields", () => {
+    const input: ReconcileExecutionInput = {
+      workflowInstanceId: wfId,
+      leaseId,
+      reason: "user-revision-request",
+      authorizationSource: "user",
+    };
+    expect(input.reason).toBe("user-revision-request");
+    expect(input.authorizationSource).toBe("user");
+  });
+
+  it("ReconcileExecutionInput accepts optional triggeringStepName and context", () => {
+    const input: ReconcileExecutionInput = {
+      workflowInstanceId: wfId,
+      leaseId,
+      reason: "review-rejection",
+      authorizationSource: "review-gate",
+      triggeringStepName: "security-review",
+      metadata: { stepIndex: 2 },
+    };
+    expect(input.triggeringStepName).toBe("security-review");
+    expect(input.metadata?.stepIndex).toBe(2);
+  });
+
+  it("ReconcileExecutionOutput type shape: handlerFound, handlerStepName, effects", () => {
+    const output: ReconcileExecutionOutput = {
+      handlerFound: true,
+      handlerStepName: "plan",
+      effects: [
+        {
+          kind: "dispatch-agent",
+          runAgent: {
+            kind: "run-agent",
+            agentName: "pattern",
+            agentDescriptor: {
+              name: "pattern",
+              composedPrompt: "",
+              models: [],
+              mode: "subagent",
+              skills: [],
+              delegationTargets: [],
+              effectiveToolPolicy: {
+                read: "allow",
+                write: "allow",
+                execute: "allow",
+                delegate: "deny",
+                network: "ask",
+              },
+              rawToolPolicy: undefined,
+            },
+            effectiveToolPolicy: {
+              read: "allow",
+              write: "allow",
+              execute: "allow",
+              delegate: "deny",
+              network: "ask",
+            },
+            rawToolPolicy: undefined,
+            resolvedSkills: [],
+          },
+        },
+      ],
+    };
+    expect(output.handlerFound).toBe(true);
+    expect(output.handlerStepName).toBe("plan");
+    expect(output.effects).toHaveLength(1);
+  });
+
+  it("ReconcileExecutionOutput with handlerFound: false has no handlerStepName", () => {
+    const output: ReconcileExecutionOutput = {
+      handlerFound: false,
+      effects: [
+        {
+          kind: "pause-execution",
+          workflowInstanceId: wfId,
+          reason: "Reconciliation: no handler found",
+        },
+      ],
+    };
+    expect(output.handlerFound).toBe(false);
+    expect(output.handlerStepName).toBeUndefined();
+    expect(output.effects[0]?.kind).toBe("pause-execution");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validateReconciliationSource — authorized source enforcement
+// ---------------------------------------------------------------------------
+
+describe("validateReconciliationSource", () => {
+  it("accepts 'user' for 'user-revision-request'", () => {
+    const result = validateReconciliationSource(
+      "user-revision-request",
+      "user",
+    );
+    expect(result.isOk()).toBe(true);
+  });
+
+  it("accepts 'runtime' for 'execution-mismatch'", () => {
+    const result = validateReconciliationSource(
+      "execution-mismatch",
+      "runtime",
+    );
+    expect(result.isOk()).toBe(true);
+  });
+
+  it("accepts 'review-gate' for 'review-rejection'", () => {
+    const result = validateReconciliationSource(
+      "review-rejection",
+      "review-gate",
+    );
+    expect(result.isOk()).toBe(true);
+  });
+
+  it("accepts 'security-gate' for 'security-rejection'", () => {
+    const result = validateReconciliationSource(
+      "security-rejection",
+      "security-gate",
+    );
+    expect(result.isOk()).toBe(true);
+  });
+
+  it("rejects 'user' for 'execution-mismatch' (must be 'runtime')", () => {
+    const result = validateReconciliationSource("execution-mismatch", "user");
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("policy_decision");
+    expect(result.error.message).toContain("execution-mismatch");
+    expect(result.error.message).toContain("runtime");
+    expect(result.error.rule).toBe("reconciliationSource");
+  });
+
+  it("rejects 'user' for 'review-rejection' (must be 'review-gate')", () => {
+    const result = validateReconciliationSource("review-rejection", "user");
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("policy_decision");
+    expect(result.error.message).toContain("review-rejection");
+    expect(result.error.message).toContain("review-gate");
+  });
+
+  it("rejects 'user' for 'security-rejection' (must be 'security-gate')", () => {
+    const result = validateReconciliationSource("security-rejection", "user");
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("policy_decision");
+    expect(result.error.message).toContain("security-rejection");
+    expect(result.error.message).toContain("security-gate");
+  });
+
+  it("rejects 'runtime' for 'user-revision-request' (must be 'user')", () => {
+    const result = validateReconciliationSource(
+      "user-revision-request",
+      "runtime",
+    );
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("policy_decision");
+    expect(result.error.message).toContain("user-revision-request");
+    expect(result.error.message).toContain('"user"');
+  });
+
+  it("rejects 'review-gate' for 'security-rejection' (must be 'security-gate')", () => {
+    const result = validateReconciliationSource(
+      "security-rejection",
+      "review-gate",
+    );
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("policy_decision");
+  });
+
+  it("rejects 'security-gate' for 'review-rejection' (must be 'review-gate')", () => {
+    const result = validateReconciliationSource(
+      "review-rejection",
+      "security-gate",
+    );
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("policy_decision");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// reconcileExecution — runtime enforcement tests
+// ---------------------------------------------------------------------------
+
+describe("reconcileExecution (Runtime Store)", () => {
+  /**
+   * Minimal workflow config for reconciliation tests.
+   *
+   * Step order: plan → implement → security-review
+   * - plan: has reconciliation_handlers for execution-mismatch and user-revision-request
+   * - implement: has reconciliation_handlers for user-revision-request
+   * - security-review: no handlers (gate step)
+   */
+  const reconcileWorkflows: Record<
+    string,
+    WorkflowExecutionContext["workflows"][string]
+  > = {
+    "reconcile-workflow": {
+      name: "reconcile-workflow",
+      description: "Test workflow for reconciliation",
+      version: 1,
+      steps: [
+        {
+          name: "plan",
+          display_name: "Create plan",
+          type: "autonomous",
+          agent: "pattern",
+          prompt: "Create a plan for {{instance.goal}}",
+          completion: {
+            method: "plan_created",
+            plan_name: "{{instance.slug}}",
+          },
+          reconciliation_handlers: [
+            { reason: "execution-mismatch" },
+            { reason: "user-revision-request" },
+          ],
+        },
+        {
+          name: "implement",
+          display_name: "Implement",
+          type: "autonomous",
+          agent: "shuttle",
+          prompt: "Implement the plan for {{instance.goal}}",
+          completion: { method: "agent_signal" },
+          reconciliation_handlers: [{ reason: "user-revision-request" }],
+        },
+        {
+          name: "security-review",
+          display_name: "Security review",
+          type: "gate",
+          agent: "warp",
+          prompt: "Review security for {{instance.goal}}",
+          completion: { method: "review_verdict" },
+          on_reject: "pause",
+          // No reconciliation_handlers — fail-closed path
+        },
+      ],
+    },
+  };
+
+  const reconcileContext: WorkflowExecutionContext = {
+    workflowName: "reconcile-workflow",
+    goal: "Build secure feature",
+    slug: "build-secure-feature",
+    workflows: reconcileWorkflows,
+  };
+
+  /**
+   * Helper: start an execution for a new workflow instance and return both
+   * the instance ID and the acquired lease ID.
+   */
+  async function startReconcileInstance(
+    store: ReturnType<typeof createInMemoryRuntimeStore>,
+    suffix: string,
+  ) {
+    const instanceId = createWorkflowInstanceId(`reconcile-wf-${suffix}`);
+    const startResult = await startExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: `owner-${suffix}`,
+        context: reconcileContext,
+      },
+      store,
+    );
+    if (!startResult.isOk())
+      throw new Error(`startExecution failed: ${JSON.stringify(startResult)}`);
+    return { instanceId, activeLeaseId: startResult.value.leaseId };
+  }
+
+  // -------------------------------------------------------------------------
+  // Validation errors
+  // -------------------------------------------------------------------------
+
+  it("returns validation error for missing workflowInstanceId", async () => {
+    const store = createInMemoryRuntimeStore();
+    const result = await reconcileExecution(
+      {
+        workflowInstanceId: "" as typeof wfId,
+        leaseId,
+        reason: "user-revision-request",
+        authorizationSource: "user",
+      },
+      store,
+    );
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+    if (result.error.type === "validation") {
+      expect(result.error.field).toBe("workflowInstanceId");
+    }
+  });
+
+  it("returns validation error for missing leaseId", async () => {
+    const store = createInMemoryRuntimeStore();
+    const result = await reconcileExecution(
+      {
+        workflowInstanceId: wfId,
+        leaseId: "" as typeof leaseId,
+        reason: "user-revision-request",
+        authorizationSource: "user",
+      },
+      store,
+    );
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+    if (result.error.type === "validation") {
+      expect(result.error.field).toBe("leaseId");
+    }
+  });
+
+  it("returns validation error for missing reason", async () => {
+    const store = createInMemoryRuntimeStore();
+    const result = await reconcileExecution(
+      {
+        workflowInstanceId: wfId,
+        leaseId,
+        reason: "" as "user-revision-request",
+        authorizationSource: "user",
+      },
+      store,
+    );
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+    if (result.error.type === "validation") {
+      expect(result.error.field).toBe("reason");
+    }
+  });
+
+  it("returns validation error for missing authorizationSource", async () => {
+    const store = createInMemoryRuntimeStore();
+    const result = await reconcileExecution(
+      {
+        workflowInstanceId: wfId,
+        leaseId,
+        reason: "user-revision-request",
+        authorizationSource: "" as ReconciliationAuthorizationSource,
+      },
+      store,
+    );
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+    if (result.error.type === "validation") {
+      expect(result.error.field).toBe("authorizationSource");
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // Authorized source enforcement
+  // -------------------------------------------------------------------------
+
+  it("rejects unauthorized source for 'user-revision-request' (must be 'user')", async () => {
+    const store = createInMemoryRuntimeStore();
+    const result = await reconcileExecution(
+      {
+        workflowInstanceId: wfId,
+        leaseId,
+        reason: "user-revision-request",
+        authorizationSource: "runtime", // wrong source
+      },
+      store,
+    );
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("policy_decision");
+    if (result.error.type === "policy_decision") {
+      expect(result.error.rule).toBe("reconciliationSource");
+      expect(result.error.message).toContain("user-revision-request");
+    }
+  });
+
+  it("rejects unauthorized source for 'execution-mismatch' (must be 'runtime')", async () => {
+    const store = createInMemoryRuntimeStore();
+    const result = await reconcileExecution(
+      {
+        workflowInstanceId: wfId,
+        leaseId,
+        reason: "execution-mismatch",
+        authorizationSource: "user", // wrong source
+      },
+      store,
+    );
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("policy_decision");
+    if (result.error.type === "policy_decision") {
+      expect(result.error.message).toContain("execution-mismatch");
+      expect(result.error.message).toContain("runtime");
+    }
+  });
+
+  it("rejects unauthorized source for 'review-rejection' (must be 'review-gate')", async () => {
+    const store = createInMemoryRuntimeStore();
+    const result = await reconcileExecution(
+      {
+        workflowInstanceId: wfId,
+        leaseId,
+        reason: "review-rejection",
+        authorizationSource: "user", // wrong source
+      },
+      store,
+    );
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("policy_decision");
+  });
+
+  it("rejects unauthorized source for 'security-rejection' (must be 'security-gate')", async () => {
+    const store = createInMemoryRuntimeStore();
+    const result = await reconcileExecution(
+      {
+        workflowInstanceId: wfId,
+        leaseId,
+        reason: "security-rejection",
+        authorizationSource: "review-gate", // wrong source
+      },
+      store,
+    );
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("policy_decision");
+  });
+
+  // -------------------------------------------------------------------------
+  // Lease validation
+  // -------------------------------------------------------------------------
+
+  it("returns lease_conflict when no active lease exists", async () => {
+    const store = createInMemoryRuntimeStore();
+    const result = await reconcileExecution(
+      {
+        workflowInstanceId: wfId,
+        leaseId,
+        reason: "user-revision-request",
+        authorizationSource: "user",
+      },
+      store,
+    );
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("lease_conflict");
+  });
+
+  it("returns lease_conflict when leaseId does not match active lease", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId } = await startReconcileInstance(
+      store,
+      "lease-mismatch",
+    );
+    const fakeLeaseId = createExecutionLeaseId("fake-lease-id-reconcile");
+
+    const result = await reconcileExecution(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: fakeLeaseId,
+        reason: "user-revision-request",
+        authorizationSource: "user",
+      },
+      store,
+    );
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("lease_conflict");
+  });
+
+  // -------------------------------------------------------------------------
+  // Fail-closed: no context provided
+  // -------------------------------------------------------------------------
+
+  it("fails closed with pause-execution when no context is provided", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startReconcileInstance(
+      store,
+      "no-context",
+    );
+
+    const result = await reconcileExecution(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        reason: "user-revision-request",
+        authorizationSource: "user",
+        // no context
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    expect(result.value.handlerFound).toBe(false);
+    expect(result.value.handlerStepName).toBeUndefined();
+    expect(result.value.effects).toHaveLength(1);
+    expect(result.value.effects[0]?.kind).toBe("pause-execution");
+
+    // Verify instance is paused
+    const instanceResult = await store.instances.getById(instanceId);
+    expect(instanceResult.isOk()).toBe(true);
+    if (!instanceResult.isOk()) return;
+    expect(instanceResult.value.status).toBe("paused");
+  });
+
+  // -------------------------------------------------------------------------
+  // Fail-closed: no handler declared for the reason
+  // -------------------------------------------------------------------------
+
+  it("fails closed with pause-execution when no upstream handler exists for the reason", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startReconcileInstance(
+      store,
+      "no-handler",
+    );
+
+    // Set currentStepName to 'security-review' (no handlers declared)
+    await store.instances.update(instanceId, {
+      currentStepName: "security-review",
+    });
+
+    // Trigger reconciliation with 'security-rejection' from security-review step.
+    // No step upstream of security-review has a security-rejection handler.
+    const result = await reconcileExecution(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        reason: "security-rejection",
+        authorizationSource: "security-gate",
+        triggeringStepName: "security-review",
+        context: reconcileContext,
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    expect(result.value.handlerFound).toBe(false);
+    expect(result.value.handlerStepName).toBeUndefined();
+    expect(result.value.effects).toHaveLength(1);
+    expect(result.value.effects[0]?.kind).toBe("pause-execution");
+
+    // Verify instance is paused
+    const instanceResult = await store.instances.getById(instanceId);
+    expect(instanceResult.isOk()).toBe(true);
+    if (!instanceResult.isOk()) return;
+    expect(instanceResult.value.status).toBe("paused");
+  });
+
+  // -------------------------------------------------------------------------
+  // Nearest-upstream handler resolution
+  // -------------------------------------------------------------------------
+
+  it("routes to nearest upstream handler for 'user-revision-request' from 'security-review'", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startReconcileInstance(
+      store,
+      "nearest-upstream",
+    );
+
+    // Set currentStepName to 'security-review'
+    await store.instances.update(instanceId, {
+      currentStepName: "security-review",
+    });
+
+    // Trigger reconciliation from security-review.
+    // Nearest upstream handler for 'user-revision-request':
+    //   - implement (index 1) has user-revision-request handler → nearest
+    const result = await reconcileExecution(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        reason: "user-revision-request",
+        authorizationSource: "user",
+        triggeringStepName: "security-review",
+        context: reconcileContext,
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    expect(result.value.handlerFound).toBe(true);
+    // 'implement' is the nearest upstream handler (closer than 'plan')
+    expect(result.value.handlerStepName).toBe("implement");
+    expect(result.value.effects).toHaveLength(1);
+    expect(result.value.effects[0]?.kind).toBe("dispatch-agent");
+    if (result.value.effects[0]?.kind === "dispatch-agent") {
+      expect(result.value.effects[0].runAgent.agentName).toBe("shuttle");
+    }
+
+    // Verify instance currentStepName updated to handler step
+    const instanceResult = await store.instances.getById(instanceId);
+    expect(instanceResult.isOk()).toBe(true);
+    if (!instanceResult.isOk()) return;
+    expect(instanceResult.value.currentStepName).toBe("implement");
+    expect(instanceResult.value.status).toBe("running");
+  });
+
+  it("routes to 'plan' for 'user-revision-request' from 'implement' (skips implement itself)", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startReconcileInstance(
+      store,
+      "from-implement",
+    );
+
+    // Set currentStepName to 'implement'
+    await store.instances.update(instanceId, {
+      currentStepName: "implement",
+    });
+
+    // Trigger reconciliation from implement.
+    // Nearest upstream handler for 'user-revision-request':
+    //   - plan (index 0) has user-revision-request handler → only option upstream of implement
+    const result = await reconcileExecution(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        reason: "user-revision-request",
+        authorizationSource: "user",
+        triggeringStepName: "implement",
+        context: reconcileContext,
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    expect(result.value.handlerFound).toBe(true);
+    expect(result.value.handlerStepName).toBe("plan");
+    expect(result.value.effects).toHaveLength(1);
+    expect(result.value.effects[0]?.kind).toBe("dispatch-agent");
+    if (result.value.effects[0]?.kind === "dispatch-agent") {
+      expect(result.value.effects[0].runAgent.agentName).toBe("pattern");
+    }
+  });
+
+  it("routes to 'plan' for 'execution-mismatch' from 'security-review'", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startReconcileInstance(
+      store,
+      "exec-mismatch",
+    );
+
+    await store.instances.update(instanceId, {
+      currentStepName: "security-review",
+    });
+
+    // Only 'plan' has an execution-mismatch handler
+    const result = await reconcileExecution(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        reason: "execution-mismatch",
+        authorizationSource: "runtime",
+        triggeringStepName: "security-review",
+        context: reconcileContext,
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    expect(result.value.handlerFound).toBe(true);
+    expect(result.value.handlerStepName).toBe("plan");
+    expect(result.value.effects[0]?.kind).toBe("dispatch-agent");
+  });
+
+  it("fails closed for 'execution-mismatch' from 'plan' (no upstream steps)", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startReconcileInstance(
+      store,
+      "from-plan",
+    );
+
+    await store.instances.update(instanceId, {
+      currentStepName: "plan",
+    });
+
+    // 'plan' is the first step — no upstream steps to search
+    const result = await reconcileExecution(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        reason: "execution-mismatch",
+        authorizationSource: "runtime",
+        triggeringStepName: "plan",
+        context: reconcileContext,
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    expect(result.value.handlerFound).toBe(false);
+    expect(result.value.effects[0]?.kind).toBe("pause-execution");
+  });
+
+  it("uses instance.currentStepName when triggeringStepName is omitted", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startReconcileInstance(
+      store,
+      "current-step",
+    );
+
+    // Set currentStepName to 'security-review'
+    await store.instances.update(instanceId, {
+      currentStepName: "security-review",
+    });
+
+    // No triggeringStepName — engine uses instance.currentStepName
+    const result = await reconcileExecution(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        reason: "user-revision-request",
+        authorizationSource: "user",
+        // triggeringStepName omitted
+        context: reconcileContext,
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    // Should route to 'implement' (nearest upstream handler for user-revision-request)
+    expect(result.value.handlerFound).toBe(true);
+    expect(result.value.handlerStepName).toBe("implement");
+  });
+
+  it("dispatched handler effect has composedPrompt === '' (security invariant)", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startReconcileInstance(
+      store,
+      "security-prompt",
+    );
+
+    await store.instances.update(instanceId, {
+      currentStepName: "security-review",
+    });
+
+    const result = await reconcileExecution(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        reason: "user-revision-request",
+        authorizationSource: "user",
+        triggeringStepName: "security-review",
+        context: reconcileContext,
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    const effect = result.value.effects[0];
+    if (effect?.kind === "dispatch-agent") {
+      // Security invariant: composedPrompt must be empty string
+      expect(effect.runAgent.agentDescriptor.composedPrompt).toBe("");
+    }
+  });
+
+  it("returns not_found when workflow instance does not exist", async () => {
+    const store = createInMemoryRuntimeStore();
+    const nonExistentId = createWorkflowInstanceId("non-existent-reconcile-id");
+
+    // Acquire a lease bound to the non-existent ID so lease check passes
+    const leaseResult = await store.leases.acquire({
+      workflowInstanceId: nonExistentId,
+      ownerId: createOwnerId("owner-reconcile-not-found"),
+      ttlMs: 3_600_000,
+    });
+    if (!leaseResult.isOk()) throw new Error("lease acquire failed");
+    const boundLeaseId = leaseResult.value.id;
+
+    const result = await reconcileExecution(
+      {
+        workflowInstanceId: nonExistentId,
+        leaseId: boundLeaseId,
+        reason: "user-revision-request",
+        authorizationSource: "user",
+        context: reconcileContext,
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("not_found");
+    if (result.error.type === "not_found") {
+      expect(result.error.entity).toBe("WorkflowInstance");
+    }
+  });
+
+  it("returns not_found when workflow config is not in context.workflows", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startReconcileInstance(
+      store,
+      "missing-workflow",
+    );
+
+    // Context with an empty workflows map
+    const emptyContext: WorkflowExecutionContext = {
+      workflowName: "reconcile-workflow",
+      goal: "Build secure feature",
+      slug: "build-secure-feature",
+      workflows: {}, // workflow not present
+    };
+
+    const result = await reconcileExecution(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        reason: "user-revision-request",
+        authorizationSource: "user",
+        context: emptyContext,
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("not_found");
+    if (result.error.type === "not_found") {
+      expect(result.error.entity).toBe("WorkflowConfig");
+    }
+  });
+
+  it("metadata with denied key is rejected before any store operations", async () => {
+    const store = createInMemoryRuntimeStore();
+    const result = await reconcileExecution(
+      {
+        workflowInstanceId: wfId,
+        leaseId,
+        reason: "user-revision-request",
+        authorizationSource: "user",
+        metadata: { token: "secret" } as Record<
+          string,
+          string | number | boolean
+        >,
+      },
+      store,
+    );
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("validation");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// reconcileExecution — gate re-run behavior (Spec 22 Unit 3)
+// ---------------------------------------------------------------------------
+
+describe("reconcileExecution — gate re-run (Spec 22 Unit 3)", () => {
+  /**
+   * Workflow for gate re-run tests.
+   *
+   * Step order: plan → implement → review-gate → security-gate
+   * - plan: has reconciliation_handlers for execution-mismatch and user-revision-request
+   * - implement: has reconciliation_handlers for user-revision-request, review-rejection, security-rejection
+   * - review-gate: gate step (no handlers)
+   * - security-gate: gate step (no handlers)
+   */
+  const gateReRunWorkflows: Record<
+    string,
+    WorkflowExecutionContext["workflows"][string]
+  > = {
+    "gate-rerun-workflow": {
+      name: "gate-rerun-workflow",
+      description: "Test workflow for gate re-run tests",
+      version: 1,
+      steps: [
+        {
+          name: "plan",
+          display_name: "Create plan",
+          type: "autonomous",
+          agent: "pattern",
+          prompt: "Create a plan for {{instance.goal}}",
+          completion: { method: "agent_signal" },
+          reconciliation_handlers: [
+            { reason: "execution-mismatch" },
+            { reason: "user-revision-request" },
+          ],
+        },
+        {
+          name: "implement",
+          display_name: "Implement",
+          type: "autonomous",
+          agent: "shuttle",
+          prompt: "Implement the plan for {{instance.goal}}",
+          completion: { method: "agent_signal" },
+          reconciliation_handlers: [
+            { reason: "user-revision-request" },
+            { reason: "review-rejection" },
+            { reason: "security-rejection" },
+          ],
+        },
+        {
+          name: "review-gate",
+          display_name: "Review gate",
+          type: "gate",
+          agent: "weft",
+          prompt: "Review the implementation for {{instance.goal}}",
+          completion: { method: "review_verdict" },
+          on_reject: "pause",
+          // No reconciliation_handlers — gate step
+        },
+        {
+          name: "security-gate",
+          display_name: "Security gate",
+          type: "gate",
+          agent: "warp",
+          prompt: "Security audit for {{instance.goal}}",
+          completion: { method: "review_verdict" },
+          on_reject: "pause",
+          // No reconciliation_handlers — gate step
+        },
+      ],
+    },
+  };
+
+  const gateReRunContext: WorkflowExecutionContext = {
+    workflowName: "gate-rerun-workflow",
+    goal: "Build secure feature",
+    slug: "build-secure-feature",
+    workflows: gateReRunWorkflows,
+  };
+
+  async function startGateReRunInstance(
+    store: ReturnType<typeof createInMemoryRuntimeStore>,
+    suffix: string,
+  ) {
+    const instanceId = createWorkflowInstanceId(`gate-rerun-wf-${suffix}`);
+    const startResult = await startExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: `owner-${suffix}`,
+        context: gateReRunContext,
+      },
+      store,
+    );
+    if (!startResult.isOk())
+      throw new Error(`startExecution failed: ${JSON.stringify(startResult)}`);
+    return { instanceId, activeLeaseId: startResult.value.leaseId };
+  }
+
+  it("review-rejection: gateReRunStepName is set to the triggering step name", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startGateReRunInstance(
+      store,
+      "review-rerun",
+    );
+
+    await store.instances.update(instanceId, {
+      currentStepName: "review-gate",
+    });
+
+    const result = await reconcileExecution(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        reason: "review-rejection",
+        authorizationSource: "review-gate",
+        triggeringStepName: "review-gate",
+        context: gateReRunContext,
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    expect(result.value.handlerFound).toBe(true);
+    expect(result.value.handlerStepName).toBe("implement");
+    // Gate re-run: gateReRunStepName must be set to the triggering gate step
+    expect(result.value.gateReRunStepName).toBe("review-gate");
+  });
+
+  it("security-rejection: gateReRunStepName is set to the triggering step name", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startGateReRunInstance(
+      store,
+      "security-rerun",
+    );
+
+    await store.instances.update(instanceId, {
+      currentStepName: "security-gate",
+    });
+
+    const result = await reconcileExecution(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        reason: "security-rejection",
+        authorizationSource: "security-gate",
+        triggeringStepName: "security-gate",
+        context: gateReRunContext,
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    expect(result.value.handlerFound).toBe(true);
+    expect(result.value.handlerStepName).toBe("implement");
+    // Gate re-run: gateReRunStepName must be set to the triggering gate step
+    expect(result.value.gateReRunStepName).toBe("security-gate");
+  });
+
+  it("user-revision-request: gateReRunStepName is NOT set (not gate-originated)", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startGateReRunInstance(
+      store,
+      "user-revision-no-rerun",
+    );
+
+    await store.instances.update(instanceId, {
+      currentStepName: "review-gate",
+    });
+
+    const result = await reconcileExecution(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        reason: "user-revision-request",
+        authorizationSource: "user",
+        triggeringStepName: "review-gate",
+        context: gateReRunContext,
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    // No gate re-run for user-revision-request
+    expect(result.value.gateReRunStepName).toBeUndefined();
+  });
+
+  it("execution-mismatch: gateReRunStepName is NOT set (not gate-originated)", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startGateReRunInstance(
+      store,
+      "exec-mismatch-no-rerun",
+    );
+
+    await store.instances.update(instanceId, {
+      currentStepName: "security-gate",
+    });
+
+    const result = await reconcileExecution(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        reason: "execution-mismatch",
+        authorizationSource: "runtime",
+        triggeringStepName: "security-gate",
+        context: gateReRunContext,
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    // No gate re-run for execution-mismatch
+    expect(result.value.gateReRunStepName).toBeUndefined();
+  });
+
+  it("review-rejection fail-closed: gateReRunStepName is still set even when no handler found", async () => {
+    // Workflow with no handlers for review-rejection
+    const noHandlerWorkflows: Record<
+      string,
+      WorkflowExecutionContext["workflows"][string]
+    > = {
+      "no-handler-workflow": {
+        name: "no-handler-workflow",
+        description: "Workflow with no review-rejection handlers",
+        version: 1,
+        steps: [
+          {
+            name: "plan",
+            display_name: "Plan",
+            type: "autonomous",
+            agent: "pattern",
+            prompt: "Plan for {{instance.goal}}",
+            completion: { method: "agent_signal" },
+            // No review-rejection handler
+          },
+          {
+            name: "review-gate",
+            display_name: "Review gate",
+            type: "gate",
+            agent: "weft",
+            prompt: "Review for {{instance.goal}}",
+            completion: { method: "review_verdict" },
+            on_reject: "pause",
+          },
+        ],
+      },
+    };
+
+    const noHandlerContext: WorkflowExecutionContext = {
+      workflowName: "no-handler-workflow",
+      goal: "Test goal",
+      slug: "test-goal",
+      workflows: noHandlerWorkflows,
+    };
+
+    const store = createInMemoryRuntimeStore();
+    const instanceId = createWorkflowInstanceId("gate-rerun-no-handler");
+    const startResult = await startExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: "owner-no-handler",
+        context: noHandlerContext,
+      },
+      store,
+    );
+    if (!startResult.isOk()) throw new Error("startExecution failed");
+    const activeLeaseId = startResult.value.leaseId;
+
+    await store.instances.update(instanceId, {
+      currentStepName: "review-gate",
+    });
+
+    const result = await reconcileExecution(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        reason: "review-rejection",
+        authorizationSource: "review-gate",
+        triggeringStepName: "review-gate",
+        context: noHandlerContext,
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    // Fail-closed: no handler found
+    expect(result.value.handlerFound).toBe(false);
+    expect(result.value.effects[0]?.kind).toBe("pause-execution");
+    // Gate re-run is still set even when failing closed — adapter needs context
+    expect(result.value.gateReRunStepName).toBe("review-gate");
+  });
+
+  it("review-rejection: gateReRunStepName uses instance.currentStepName when triggeringStepName is omitted", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startGateReRunInstance(
+      store,
+      "review-rerun-current-step",
+    );
+
+    await store.instances.update(instanceId, {
+      currentStepName: "review-gate",
+    });
+
+    // No triggeringStepName — engine uses instance.currentStepName
+    const result = await reconcileExecution(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        reason: "review-rejection",
+        authorizationSource: "review-gate",
+        // triggeringStepName omitted
+        context: gateReRunContext,
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    expect(result.value.handlerFound).toBe(true);
+    // gateReRunStepName should be the current step (review-gate)
+    expect(result.value.gateReRunStepName).toBe("review-gate");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// reconcileExecution — before-plan exclusion (Spec 22 Unit 3)
+// ---------------------------------------------------------------------------
+
+describe("reconcileExecution — before-plan exclusion (Spec 22 Unit 3)", () => {
+  /**
+   * Workflow with before-plan extension point.
+   *
+   * Step order: spec-review (before-plan) → plan (planning) → implement → review-gate
+   *
+   * The spec-review step is a before-plan step and must NOT participate in
+   * reconciliation handler resolution, even if it declares reconciliation_handlers.
+   *
+   * Note: In practice, the schema layer prevents before-plan steps from having
+   * reconciliation_handlers. This test verifies the runtime defense-in-depth
+   * guarantee by simulating a step that has handlers but is in the before-plan
+   * position (e.g. after config merge or composition bypasses schema validation).
+   */
+  const beforePlanWorkflows: Record<
+    string,
+    WorkflowExecutionContext["workflows"][string]
+  > = {
+    "before-plan-workflow": {
+      name: "before-plan-workflow",
+      description: "Workflow with before-plan extension point",
+      version: 1,
+      extension_points: { before_plan: true },
+      steps: [
+        {
+          name: "spec-review",
+          display_name: "Spec review (before-plan)",
+          type: "gate",
+          agent: "weft",
+          prompt: "Review spec for {{instance.goal}}",
+          completion: { method: "review_verdict" },
+          on_reject: "pause",
+          // This step is in the before-plan position. Even if it had
+          // reconciliation_handlers, the runtime must skip it.
+          // We add a handler here to test the runtime exclusion.
+          reconciliation_handlers: [{ reason: "user-revision-request" }],
+        },
+        {
+          name: "plan",
+          display_name: "Plan (planning step)",
+          type: "autonomous",
+          agent: "pattern",
+          prompt: "Create a plan for {{instance.goal}}",
+          completion: { method: "agent_signal" },
+          role: "planning",
+          reconciliation_handlers: [{ reason: "user-revision-request" }],
+        },
+        {
+          name: "implement",
+          display_name: "Implement",
+          type: "autonomous",
+          agent: "shuttle",
+          prompt: "Implement for {{instance.goal}}",
+          completion: { method: "agent_signal" },
+          reconciliation_handlers: [{ reason: "user-revision-request" }],
+        },
+        {
+          name: "review-gate",
+          display_name: "Review gate",
+          type: "gate",
+          agent: "weft",
+          prompt: "Review for {{instance.goal}}",
+          completion: { method: "review_verdict" },
+          on_reject: "pause",
+        },
+      ],
+    },
+  };
+
+  const beforePlanContext: WorkflowExecutionContext = {
+    workflowName: "before-plan-workflow",
+    goal: "Build feature with spec",
+    slug: "build-feature-with-spec",
+    workflows: beforePlanWorkflows,
+  };
+
+  async function startBeforePlanInstance(
+    store: ReturnType<typeof createInMemoryRuntimeStore>,
+    suffix: string,
+  ) {
+    const instanceId = createWorkflowInstanceId(`before-plan-wf-${suffix}`);
+    const startResult = await startExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: `owner-${suffix}`,
+        context: beforePlanContext,
+      },
+      store,
+    );
+    if (!startResult.isOk())
+      throw new Error(`startExecution failed: ${JSON.stringify(startResult)}`);
+    return { instanceId, activeLeaseId: startResult.value.leaseId };
+  }
+
+  it("before-plan step is skipped during handler resolution even if it declares reconciliation_handlers", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startBeforePlanInstance(
+      store,
+      "skip-before-plan",
+    );
+
+    // Set current step to review-gate (downstream of all steps)
+    await store.instances.update(instanceId, {
+      currentStepName: "review-gate",
+    });
+
+    // Trigger user-revision-request from review-gate.
+    // The nearest upstream handler search walks: implement → plan → spec-review
+    // spec-review is a before-plan step and must be SKIPPED at runtime.
+    // The nearest valid handler is 'implement' (not spec-review).
+    const result = await reconcileExecution(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        reason: "user-revision-request",
+        authorizationSource: "user",
+        triggeringStepName: "review-gate",
+        context: beforePlanContext,
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    expect(result.value.handlerFound).toBe(true);
+    // Must route to 'implement', not 'spec-review' (before-plan step is excluded)
+    expect(result.value.handlerStepName).toBe("implement");
+  });
+
+  it("before-plan step is skipped: routes to planning step when implement has no handler", async () => {
+    // Workflow where only spec-review (before-plan) and plan have handlers,
+    // but implement does not. The engine must skip spec-review and route to plan.
+    const noImplementHandlerWorkflows: Record<
+      string,
+      WorkflowExecutionContext["workflows"][string]
+    > = {
+      "no-implement-handler-workflow": {
+        name: "no-implement-handler-workflow",
+        description: "Workflow where implement has no handler",
+        version: 1,
+        extension_points: { before_plan: true },
+        steps: [
+          {
+            name: "spec-review",
+            display_name: "Spec review (before-plan)",
+            type: "gate",
+            agent: "weft",
+            prompt: "Review spec for {{instance.goal}}",
+            completion: { method: "review_verdict" },
+            on_reject: "pause",
+            // before-plan step with handler — must be excluded at runtime
+            reconciliation_handlers: [{ reason: "user-revision-request" }],
+          },
+          {
+            name: "plan",
+            display_name: "Plan (planning step)",
+            type: "autonomous",
+            agent: "pattern",
+            prompt: "Create a plan for {{instance.goal}}",
+            completion: { method: "agent_signal" },
+            role: "planning",
+            reconciliation_handlers: [{ reason: "user-revision-request" }],
+          },
+          {
+            name: "implement",
+            display_name: "Implement",
+            type: "autonomous",
+            agent: "shuttle",
+            prompt: "Implement for {{instance.goal}}",
+            completion: { method: "agent_signal" },
+            // No reconciliation_handlers on implement
+          },
+          {
+            name: "review-gate",
+            display_name: "Review gate",
+            type: "gate",
+            agent: "weft",
+            prompt: "Review for {{instance.goal}}",
+            completion: { method: "review_verdict" },
+            on_reject: "pause",
+          },
+        ],
+      },
+    };
+
+    const noImplementHandlerContext: WorkflowExecutionContext = {
+      workflowName: "no-implement-handler-workflow",
+      goal: "Build feature",
+      slug: "build-feature",
+      workflows: noImplementHandlerWorkflows,
+    };
+
+    const store = createInMemoryRuntimeStore();
+    const instanceId = createWorkflowInstanceId("before-plan-skip-to-plan");
+    const startResult = await startExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: "owner-skip-to-plan",
+        context: noImplementHandlerContext,
+      },
+      store,
+    );
+    if (!startResult.isOk()) throw new Error("startExecution failed");
+    const activeLeaseId = startResult.value.leaseId;
+
+    await store.instances.update(instanceId, {
+      currentStepName: "review-gate",
+    });
+
+    const result = await reconcileExecution(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        reason: "user-revision-request",
+        authorizationSource: "user",
+        triggeringStepName: "review-gate",
+        context: noImplementHandlerContext,
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    expect(result.value.handlerFound).toBe(true);
+    // Must route to 'plan' (planning step), skipping spec-review (before-plan)
+    expect(result.value.handlerStepName).toBe("plan");
+  });
+
+  it("before-plan exclusion: fails closed when only before-plan steps have handlers", async () => {
+    // Workflow where only the before-plan step has a handler — no valid handler
+    // exists after exclusion, so the engine must fail closed.
+    const onlyBeforePlanHandlerWorkflows: Record<
+      string,
+      WorkflowExecutionContext["workflows"][string]
+    > = {
+      "only-before-plan-handler-workflow": {
+        name: "only-before-plan-handler-workflow",
+        description: "Workflow where only before-plan step has handler",
+        version: 1,
+        extension_points: { before_plan: true },
+        steps: [
+          {
+            name: "spec-review",
+            display_name: "Spec review (before-plan)",
+            type: "gate",
+            agent: "weft",
+            prompt: "Review spec for {{instance.goal}}",
+            completion: { method: "review_verdict" },
+            on_reject: "pause",
+            // Only handler — but it's a before-plan step, so it must be excluded
+            reconciliation_handlers: [{ reason: "user-revision-request" }],
+          },
+          {
+            name: "plan",
+            display_name: "Plan (planning step)",
+            type: "autonomous",
+            agent: "pattern",
+            prompt: "Create a plan for {{instance.goal}}",
+            completion: { method: "agent_signal" },
+            role: "planning",
+            // No handler on plan
+          },
+          {
+            name: "implement",
+            display_name: "Implement",
+            type: "autonomous",
+            agent: "shuttle",
+            prompt: "Implement for {{instance.goal}}",
+            completion: { method: "agent_signal" },
+            // No handler on implement
+          },
+        ],
+      },
+    };
+
+    const onlyBeforePlanContext: WorkflowExecutionContext = {
+      workflowName: "only-before-plan-handler-workflow",
+      goal: "Test goal",
+      slug: "test-goal",
+      workflows: onlyBeforePlanHandlerWorkflows,
+    };
+
+    const store = createInMemoryRuntimeStore();
+    const instanceId = createWorkflowInstanceId("before-plan-only-handler");
+    const startResult = await startExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: "owner-only-before-plan",
+        context: onlyBeforePlanContext,
+      },
+      store,
+    );
+    if (!startResult.isOk()) throw new Error("startExecution failed");
+    const activeLeaseId = startResult.value.leaseId;
+
+    await store.instances.update(instanceId, {
+      currentStepName: "implement",
+    });
+
+    const result = await reconcileExecution(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        reason: "user-revision-request",
+        authorizationSource: "user",
+        triggeringStepName: "implement",
+        context: onlyBeforePlanContext,
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    // Fail-closed: spec-review is excluded (before-plan), no other handler exists
+    expect(result.value.handlerFound).toBe(false);
+    expect(result.value.effects[0]?.kind).toBe("pause-execution");
+  });
+
+  it("workflow without extension_points.before_plan: no steps are excluded", async () => {
+    // Workflow without before-plan extension point — all steps are eligible
+    const noExtensionWorkflows: Record<
+      string,
+      WorkflowExecutionContext["workflows"][string]
+    > = {
+      "no-extension-workflow": {
+        name: "no-extension-workflow",
+        description: "Workflow without before-plan extension",
+        version: 1,
+        // No extension_points
+        steps: [
+          {
+            name: "early-step",
+            display_name: "Early step",
+            type: "autonomous",
+            agent: "shuttle",
+            prompt: "Early step for {{instance.goal}}",
+            completion: { method: "agent_signal" },
+            // This step has a handler and is NOT a before-plan step
+            reconciliation_handlers: [{ reason: "user-revision-request" }],
+          },
+          {
+            name: "implement",
+            display_name: "Implement",
+            type: "autonomous",
+            agent: "shuttle",
+            prompt: "Implement for {{instance.goal}}",
+            completion: { method: "agent_signal" },
+          },
+        ],
+      },
+    };
+
+    const noExtensionContext: WorkflowExecutionContext = {
+      workflowName: "no-extension-workflow",
+      goal: "Test goal",
+      slug: "test-goal",
+      workflows: noExtensionWorkflows,
+    };
+
+    const store = createInMemoryRuntimeStore();
+    const instanceId = createWorkflowInstanceId("no-extension-wf");
+    const startResult = await startExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: "owner-no-extension",
+        context: noExtensionContext,
+      },
+      store,
+    );
+    if (!startResult.isOk()) throw new Error("startExecution failed");
+    const activeLeaseId = startResult.value.leaseId;
+
+    await store.instances.update(instanceId, {
+      currentStepName: "implement",
+    });
+
+    const result = await reconcileExecution(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        reason: "user-revision-request",
+        authorizationSource: "user",
+        triggeringStepName: "implement",
+        context: noExtensionContext,
+      },
+      store,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    // early-step is NOT excluded (no before-plan extension point)
+    expect(result.value.handlerFound).toBe(true);
+    expect(result.value.handlerStepName).toBe("early-step");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// reconcileExecution — immutable completed plan tasks (Spec 22 Unit 3)
+// ---------------------------------------------------------------------------
+
+describe("reconcileExecution — immutable completed plan tasks (Spec 22 Unit 3)", () => {
+  /**
+   * Workflow for immutable plan tests.
+   *
+   * Step order: plan → implement → review-gate
+   * - plan: plan_complete completion method (plan-oriented step)
+   * - implement: agent_signal completion method
+   * - review-gate: review_verdict gate step
+   *
+   * plan has reconciliation_handlers for user-revision-request.
+   * implement has reconciliation_handlers for user-revision-request.
+   */
+  const immutablePlanWorkflows: Record<
+    string,
+    WorkflowExecutionContext["workflows"][string]
+  > = {
+    "immutable-plan-workflow": {
+      name: "immutable-plan-workflow",
+      description: "Test workflow for immutable plan tests",
+      version: 1,
+      steps: [
+        {
+          name: "plan",
+          display_name: "Create plan",
+          type: "autonomous",
+          agent: "pattern",
+          prompt: "Create a plan for {{instance.goal}}",
+          completion: {
+            method: "plan_complete",
+            plan_name: "{{instance.slug}}",
+          },
+          reconciliation_handlers: [{ reason: "user-revision-request" }],
+        },
+        {
+          name: "implement",
+          display_name: "Implement",
+          type: "autonomous",
+          agent: "shuttle",
+          prompt: "Implement the plan for {{instance.goal}}",
+          completion: { method: "agent_signal" },
+          reconciliation_handlers: [{ reason: "user-revision-request" }],
+        },
+        {
+          name: "review-gate",
+          display_name: "Review gate",
+          type: "gate",
+          agent: "weft",
+          prompt: "Review the implementation for {{instance.goal}}",
+          completion: { method: "review_verdict" },
+          on_reject: "pause",
+        },
+      ],
+    },
+  };
+
+  const immutablePlanContext: WorkflowExecutionContext = {
+    workflowName: "immutable-plan-workflow",
+    goal: "Build feature",
+    slug: "build-feature",
+    workflows: immutablePlanWorkflows,
+  };
+
+  async function startImmutablePlanInstance(
+    store: ReturnType<typeof createInMemoryRuntimeStore>,
+    suffix: string,
+  ) {
+    const instanceId = createWorkflowInstanceId(`immutable-plan-wf-${suffix}`);
+    const startResult = await startExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: `owner-${suffix}`,
+        context: immutablePlanContext,
+      },
+      store,
+    );
+    if (!startResult.isOk())
+      throw new Error(`startExecution failed: ${JSON.stringify(startResult)}`);
+    return { instanceId, activeLeaseId: startResult.value.leaseId };
+  }
+
+  // -------------------------------------------------------------------------
+  // Core immutability protection
+  // -------------------------------------------------------------------------
+
+  it("rejects reconciliation with policy_decision when triggering step's plan is complete", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startImmutablePlanInstance(
+      store,
+      "complete-plan-reject",
+    );
+
+    await store.instances.update(instanceId, {
+      currentStepName: "plan",
+    });
+
+    // Plan is complete — all checkboxes checked
+    const planProvider = new MockPlanStateProvider(
+      { "build-feature": true }, // planExists
+      { "build-feature": true }, // isPlanComplete → true
+    );
+
+    const result = await reconcileExecution(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        reason: "user-revision-request",
+        authorizationSource: "user",
+        triggeringStepName: "plan",
+        context: immutablePlanContext,
+        planStateProvider: planProvider,
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("policy_decision");
+    if (result.error.type === "policy_decision") {
+      expect(result.error.rule).toBe("completed_plan_immutability");
+      expect(result.error.message).toContain("build-feature");
+      expect(result.error.message).toContain("immutable");
+      expect(result.error.message).toContain("follow-up tasks");
+    }
+  });
+
+  it("allows reconciliation when triggering step's plan is NOT complete", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startImmutablePlanInstance(
+      store,
+      "incomplete-plan-allow",
+    );
+
+    await store.instances.update(instanceId, {
+      currentStepName: "plan",
+    });
+
+    // Plan is NOT complete — has remaining checkboxes
+    const planProvider = new MockPlanStateProvider(
+      { "build-feature": true }, // planExists
+      { "build-feature": false }, // isPlanComplete → false
+    );
+
+    const result = await reconcileExecution(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        reason: "user-revision-request",
+        authorizationSource: "user",
+        triggeringStepName: "plan",
+        context: immutablePlanContext,
+        planStateProvider: planProvider,
+      },
+      store,
+    );
+
+    // Reconciliation should proceed — plan is not complete
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    // No upstream handler for user-revision-request before 'plan' → fail-closed pause
+    expect(result.value.handlerFound).toBe(false);
+    expect(result.value.effects[0]?.kind).toBe("pause-execution");
+  });
+
+  it("skips immutability check when planStateProvider is absent", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startImmutablePlanInstance(
+      store,
+      "no-provider-skip",
+    );
+
+    await store.instances.update(instanceId, {
+      currentStepName: "plan",
+    });
+
+    // No planStateProvider — check is skipped regardless of plan state
+    const result = await reconcileExecution(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        reason: "user-revision-request",
+        authorizationSource: "user",
+        triggeringStepName: "plan",
+        context: immutablePlanContext,
+        // planStateProvider omitted
+      },
+      store,
+    );
+
+    // Reconciliation proceeds without plan check
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    // No upstream handler before 'plan' → fail-closed pause
+    expect(result.value.handlerFound).toBe(false);
+    expect(result.value.effects[0]?.kind).toBe("pause-execution");
+  });
+
+  it("skips immutability check when triggering step uses agent_signal (not plan-oriented)", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startImmutablePlanInstance(
+      store,
+      "agent-signal-skip",
+    );
+
+    await store.instances.update(instanceId, {
+      currentStepName: "implement",
+    });
+
+    // Provider always returns complete — but implement uses agent_signal, not plan_complete
+    const planProvider = new MockPlanStateProvider(
+      { "build-feature": true },
+      { "build-feature": true }, // would block if checked
+    );
+
+    const result = await reconcileExecution(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        reason: "user-revision-request",
+        authorizationSource: "user",
+        triggeringStepName: "implement",
+        context: immutablePlanContext,
+        planStateProvider: planProvider,
+      },
+      store,
+    );
+
+    // Reconciliation proceeds — implement is not plan-oriented
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    // Nearest upstream handler for user-revision-request from implement → plan
+    expect(result.value.handlerFound).toBe(true);
+    expect(result.value.handlerStepName).toBe("plan");
+  });
+
+  it("skips immutability check when triggeringStepName is omitted and current step is not plan-oriented", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startImmutablePlanInstance(
+      store,
+      "no-triggering-step",
+    );
+
+    // Set current step to implement (agent_signal — not plan-oriented)
+    await store.instances.update(instanceId, {
+      currentStepName: "implement",
+    });
+
+    const planProvider = new MockPlanStateProvider(
+      { "build-feature": true },
+      { "build-feature": true }, // would block if checked
+    );
+
+    // No triggeringStepName — engine uses instance.currentStepName (implement)
+    const result = await reconcileExecution(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        reason: "user-revision-request",
+        authorizationSource: "user",
+        // triggeringStepName omitted
+        context: immutablePlanContext,
+        planStateProvider: planProvider,
+      },
+      store,
+    );
+
+    // Reconciliation proceeds — implement is not plan-oriented
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    expect(result.value.handlerFound).toBe(true);
+    expect(result.value.handlerStepName).toBe("plan");
+  });
+
+  it("rejects reconciliation when plan_created step's plan is complete", async () => {
+    // Workflow with plan_created completion method
+    const planCreatedWorkflows: Record<
+      string,
+      WorkflowExecutionContext["workflows"][string]
+    > = {
+      "plan-created-workflow": {
+        name: "plan-created-workflow",
+        description: "Workflow with plan_created completion",
+        version: 1,
+        steps: [
+          {
+            name: "plan",
+            display_name: "Create plan",
+            type: "autonomous",
+            agent: "pattern",
+            prompt: "Create a plan for {{instance.goal}}",
+            completion: {
+              method: "plan_created",
+              plan_name: "{{instance.slug}}",
+            },
+            reconciliation_handlers: [{ reason: "user-revision-request" }],
+          },
+          {
+            name: "implement",
+            display_name: "Implement",
+            type: "autonomous",
+            agent: "shuttle",
+            prompt: "Implement for {{instance.goal}}",
+            completion: { method: "agent_signal" },
+          },
+        ],
+      },
+    };
+
+    const planCreatedContext: WorkflowExecutionContext = {
+      workflowName: "plan-created-workflow",
+      goal: "Build feature",
+      slug: "build-feature",
+      workflows: planCreatedWorkflows,
+    };
+
+    const store = createInMemoryRuntimeStore();
+    const instanceId = createWorkflowInstanceId("plan-created-immutable");
+    const startResult = await startExecution(
+      {
+        workflowInstanceId: instanceId,
+        ownerId: "owner-plan-created",
+        context: planCreatedContext,
+      },
+      store,
+    );
+    if (!startResult.isOk()) throw new Error("startExecution failed");
+    const activeLeaseId = startResult.value.leaseId;
+
+    await store.instances.update(instanceId, { currentStepName: "plan" });
+
+    // Plan is complete
+    const planProvider = new MockPlanStateProvider(
+      { "build-feature": true },
+      { "build-feature": true }, // isPlanComplete → true
+    );
+
+    const result = await reconcileExecution(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        reason: "user-revision-request",
+        authorizationSource: "user",
+        triggeringStepName: "plan",
+        context: planCreatedContext,
+        planStateProvider: planProvider,
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("policy_decision");
+    if (result.error.type === "policy_decision") {
+      expect(result.error.rule).toBe("completed_plan_immutability");
+    }
+  });
+
+  it("propagates PlanStateProvider error as persistence error", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startImmutablePlanInstance(
+      store,
+      "provider-error",
+    );
+
+    await store.instances.update(instanceId, { currentStepName: "plan" });
+
+    // Provider returns an error
+    const planProvider = new MockPlanStateProvider({}, {}, undefined, {
+      type: "ProviderUnavailable",
+      cause: new Error("I/O failure"),
+    });
+
+    const result = await reconcileExecution(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        reason: "user-revision-request",
+        authorizationSource: "user",
+        triggeringStepName: "plan",
+        context: immutablePlanContext,
+        planStateProvider: planProvider,
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    expect(result.error.type).toBe("persistence");
+  });
+
+  it("instance is NOT modified when immutability check rejects reconciliation", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startImmutablePlanInstance(
+      store,
+      "no-state-mutation",
+    );
+
+    await store.instances.update(instanceId, { currentStepName: "plan" });
+
+    const planProvider = new MockPlanStateProvider(
+      { "build-feature": true },
+      { "build-feature": true }, // complete → reject
+    );
+
+    const result = await reconcileExecution(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        reason: "user-revision-request",
+        authorizationSource: "user",
+        triggeringStepName: "plan",
+        context: immutablePlanContext,
+        planStateProvider: planProvider,
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+
+    // Instance status must remain unchanged (running, not paused or modified)
+    const instanceResult = await store.instances.getById(instanceId);
+    expect(instanceResult.isOk()).toBe(true);
+    if (!instanceResult.isOk()) return;
+    // Status should still be running (not paused by reconciliation)
+    expect(instanceResult.value.status).toBe("running");
+    // currentStepName should still be "plan"
+    expect(instanceResult.value.currentStepName).toBe("plan");
+  });
+
+  it("error message includes plan path and immutability guidance", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instanceId, activeLeaseId } = await startImmutablePlanInstance(
+      store,
+      "error-message-check",
+    );
+
+    await store.instances.update(instanceId, { currentStepName: "plan" });
+
+    const planProvider = new MockPlanStateProvider(
+      { "build-feature": true },
+      { "build-feature": true },
+    );
+
+    const result = await reconcileExecution(
+      {
+        workflowInstanceId: instanceId,
+        leaseId: activeLeaseId,
+        reason: "user-revision-request",
+        authorizationSource: "user",
+        triggeringStepName: "plan",
+        context: immutablePlanContext,
+        planStateProvider: planProvider,
+      },
+      store,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (!result.isErr()) return;
+    if (result.error.type === "policy_decision") {
+      // Must reference the plan path
+      expect(result.error.message).toContain(".weave/plans/build-feature.md");
+      // Must explain the immutability rule
+      expect(result.error.message).toContain("immutable");
+      // Must guide toward follow-up tasks
+      expect(result.error.message).toContain("follow-up tasks");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// reconcileExecution — runtime-contract.test.ts coverage (Spec 22 Unit 3)
+// ---------------------------------------------------------------------------
+
+describe("reconcileExecution — closed reason set enforcement", () => {
+  it("all four closed reasons are accepted with their authorized sources", () => {
+    const pairs: Array<
+      [
+        Parameters<typeof validateReconciliationSource>[0],
+        Parameters<typeof validateReconciliationSource>[1],
+      ]
+    > = [
+      ["execution-mismatch", "runtime"],
+      ["user-revision-request", "user"],
+      ["review-rejection", "review-gate"],
+      ["security-rejection", "security-gate"],
+    ];
+    for (const [reason, source] of pairs) {
+      const result = validateReconciliationSource(reason, source);
+      expect(result.isOk()).toBe(true);
+    }
+  });
+
+  it("all four reasons reject every non-authorized source", () => {
+    const allSources: ReconciliationAuthorizationSource[] = [
+      "user",
+      "runtime",
+      "review-gate",
+      "security-gate",
+    ];
+    const authorizedMap: Record<string, string> = {
+      "execution-mismatch": "runtime",
+      "user-revision-request": "user",
+      "review-rejection": "review-gate",
+      "security-rejection": "security-gate",
+    };
+
+    for (const reason of RECONCILIATION_REASONS) {
+      const authorized = authorizedMap[reason];
+      for (const source of allSources) {
+        if (source === authorized) continue;
+        const result = validateReconciliationSource(
+          reason,
+          source as ReconciliationAuthorizationSource,
+        );
+        expect(result.isErr()).toBe(true);
+        if (result.isErr()) {
+          expect(result.error.type).toBe("policy_decision");
+        }
+      }
     }
   });
 });

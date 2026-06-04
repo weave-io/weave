@@ -615,6 +615,695 @@ describe("validate — settings block", () => {
 // validate — routing block
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// validate — planning step role
+// ---------------------------------------------------------------------------
+
+describe("validate — planning step role", () => {
+  it("step with role planning round-trips correctly", () => {
+    const src = `workflow plan-and-build {
+  version 1
+
+  step plan {
+    name "Create plan"
+    role planning
+    type autonomous
+    agent pattern
+    prompt "Plan the work."
+    completion plan_created {
+      plan_name "my-plan"
+    }
+  }
+}`;
+    const result = validateSource(src);
+    expect(result.isOk()).toBe(true);
+    const step = result._unsafeUnwrap().workflows["plan-and-build"]?.steps[0];
+    expect(step?.role).toBe("planning");
+  });
+
+  it("step without role has undefined role", () => {
+    const src = `workflow w {
+  version 1
+
+  step fix {
+    name "Fix"
+    type autonomous
+    agent shuttle
+    prompt "Fix it."
+    completion agent_signal
+  }
+}`;
+    const result = validateSource(src);
+    expect(result.isOk()).toBe(true);
+    const step = result._unsafeUnwrap().workflows.w?.steps[0];
+    expect(step?.role).toBeUndefined();
+  });
+
+  it("invalid role value is rejected", () => {
+    const src = `workflow w {
+  version 1
+
+  step bad {
+    name "Bad"
+    role execution
+    type autonomous
+    agent shuttle
+    prompt "Do it."
+    completion agent_signal
+  }
+}`;
+    const result = validateSource(src);
+    expect(result.isErr()).toBe(true);
+  });
+
+  it("two planning steps in one workflow is rejected (DuplicatePlanningStep)", () => {
+    const src = `workflow w {
+  version 1
+
+  step plan1 {
+    name "Plan 1"
+    role planning
+    type autonomous
+    agent pattern
+    prompt "Plan."
+    completion plan_created {
+      plan_name "p1"
+    }
+  }
+
+  step plan2 {
+    name "Plan 2"
+    role planning
+    type autonomous
+    agent pattern
+    prompt "Plan again."
+    completion plan_created {
+      plan_name "p2"
+    }
+  }
+}`;
+    const result = validateSource(src);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    expect(
+      errors.some((e) => e.message.includes("DuplicatePlanningStep")),
+    ).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validate — extension_points block
+// ---------------------------------------------------------------------------
+
+describe("validate — extension_points block", () => {
+  it("workflow with extension_points { before-plan } and planning step is accepted", () => {
+    const src = `workflow plan-and-build {
+  version 1
+
+  extension_points {
+    before-plan
+  }
+
+  step plan {
+    name "Create plan"
+    role planning
+    type autonomous
+    agent pattern
+    prompt "Plan the work."
+    completion plan_created {
+      plan_name "my-plan"
+    }
+  }
+}`;
+    const result = validateSource(src);
+    expect(result.isOk()).toBe(true);
+    const wf = result._unsafeUnwrap().workflows["plan-and-build"];
+    expect(wf?.extension_points?.before_plan).toBe(true);
+    expect(wf?.steps[0]?.role).toBe("planning");
+  });
+
+  it("workflow with extension_points { before-plan } but no planning step is rejected (MissingPlanningStep)", () => {
+    const src = `workflow plan-and-build {
+  version 1
+
+  extension_points {
+    before-plan
+  }
+
+  step implement {
+    name "Implement"
+    type autonomous
+    agent shuttle
+    prompt "Do the work."
+    completion agent_signal
+  }
+}`;
+    const result = validateSource(src);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    expect(errors.some((e) => e.message.includes("MissingPlanningStep"))).toBe(
+      true,
+    );
+  });
+
+  it("workflow without extension_points has undefined extension_points", () => {
+    const src = `workflow w {
+  version 1
+
+  step fix {
+    name "Fix"
+    type autonomous
+    agent shuttle
+    prompt "Fix it."
+    completion agent_signal
+  }
+}`;
+    const result = validateSource(src);
+    expect(result.isOk()).toBe(true);
+    expect(
+      result._unsafeUnwrap().workflows.w?.extension_points,
+    ).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validate — extend before-plan directive
+// ---------------------------------------------------------------------------
+
+describe("validate — extend before-plan directive", () => {
+  it("extend before-plan directive round-trips into extend_before_plan.steps", () => {
+    const src = `extend before-plan ["spec-review", "requirements"]`;
+    const result = validateSource(src);
+    expect(result.isOk()).toBe(true);
+    const config = result._unsafeUnwrap();
+    expect(config.extend_before_plan.steps).toEqual([
+      "spec-review",
+      "requirements",
+    ]);
+  });
+
+  it("multiple extend before-plan directives union-merge step lists", () => {
+    const src = `extend before-plan ["spec-review"]
+extend before-plan ["requirements"]`;
+    const result = validateSource(src);
+    expect(result.isOk()).toBe(true);
+    const config = result._unsafeUnwrap();
+    expect(config.extend_before_plan.steps).toEqual([
+      "spec-review",
+      "requirements",
+    ]);
+  });
+
+  it("empty source has extend_before_plan with empty steps", () => {
+    const result = validateSource("");
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().extend_before_plan).toEqual({ steps: [] });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validate — before-plan non-reconciling in v1
+// ---------------------------------------------------------------------------
+
+describe("validate — before-plan non-reconciling in v1", () => {
+  // Spec 22 Unit 2: "before-plan steps do not participate in reconciliation
+  // semantics" in v1. As of Task 4.1, `reconciliation_handlers` is a valid
+  // schema field. The v1 non-reconciling constraint for before-plan steps is
+  // enforced at the engine/runtime layer, not the schema/validate layer.
+  // Steps inserted into the before-plan slot via extend before-plan are
+  // ordinary WorkflowStep objects; the engine prevents them from acting as
+  // reconciliation handlers.
+
+  it("extend before-plan step names carry no reconciliation metadata in validated output", () => {
+    const src = `extend before-plan ["spec-review"]`;
+    const result = validateSource(src);
+    expect(result.isOk()).toBe(true);
+    const config = result._unsafeUnwrap();
+    // extend_before_plan is a flat object with a steps array — no per-workflow keying.
+    // The engine resolves these names to steps at runtime.
+    const ebp = config.extend_before_plan;
+    expect(ebp.steps).toEqual(["spec-review"]);
+    // No reconciliation fields on the ExtendBeforePlan object itself
+    expect("reconciliation_handlers" in ebp).toBe(false);
+    expect("on_reconcile" in ebp).toBe(false);
+  });
+
+  it("workflow with planning step and before-plan slot: planning step has no reconciliation_handlers by default", () => {
+    const src = `workflow plan-and-build {
+  version 1
+
+  extension_points {
+    before-plan
+  }
+
+  step plan {
+    name "Create plan"
+    role planning
+    type autonomous
+    agent pattern
+    prompt "Plan the work."
+    completion plan_created {
+      plan_name "my-plan"
+    }
+  }
+
+  step implement {
+    name "Implement"
+    type autonomous
+    agent shuttle
+    prompt "Do the work."
+    completion agent_signal
+  }
+}`;
+    const result = validateSource(src);
+    expect(result.isOk()).toBe(true);
+    const wf = result._unsafeUnwrap().workflows["plan-and-build"];
+    const planStep = wf?.steps.find((s) => s.role === "planning");
+    expect(planStep).toBeDefined();
+    // reconciliation_handlers is optional — absent by default
+    expect(planStep?.reconciliation_handlers).toBeUndefined();
+    // on_reconcile is not a schema field (unknown keys stripped)
+    expect("on_reconcile" in (planStep ?? {})).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validate — reconciliation_handlers on workflow steps
+// ---------------------------------------------------------------------------
+
+describe("validate — reconciliation_handlers on workflow steps", () => {
+  it("step with reconciliation_handlers declaring execution-mismatch round-trips correctly", () => {
+    const src = `workflow w {
+  version 1
+
+  step plan {
+    name "Create plan"
+    type autonomous
+    agent pattern
+    prompt "Plan the work."
+    completion agent_signal
+    reconciliation_handlers [
+      { reason "execution-mismatch" }
+    ]
+  }
+}`;
+    const result = validateSource(src);
+    expect(result.isOk()).toBe(true);
+    const step = result._unsafeUnwrap().workflows.w?.steps[0];
+    expect(step?.reconciliation_handlers).toHaveLength(1);
+    expect(step?.reconciliation_handlers?.[0]?.reason).toBe(
+      "execution-mismatch",
+    );
+  });
+
+  it("step with all four reconciliation reasons round-trips correctly", () => {
+    const src = `workflow w {
+  version 1
+
+  step handler {
+    name "Handler step"
+    type autonomous
+    agent shuttle
+    prompt "Handle reconciliation."
+    completion agent_signal
+    reconciliation_handlers [
+      { reason "execution-mismatch" }
+      { reason "user-revision-request" }
+      { reason "review-rejection" }
+      { reason "security-rejection" }
+    ]
+  }
+}`;
+    const result = validateSource(src);
+    expect(result.isOk()).toBe(true);
+    const step = result._unsafeUnwrap().workflows.w?.steps[0];
+    expect(step?.reconciliation_handlers).toHaveLength(4);
+    const reasons = step?.reconciliation_handlers?.map((h) => h.reason) ?? [];
+    expect(reasons).toContain("execution-mismatch");
+    expect(reasons).toContain("user-revision-request");
+    expect(reasons).toContain("review-rejection");
+    expect(reasons).toContain("security-rejection");
+  });
+
+  it("step without reconciliation_handlers has undefined reconciliation_handlers", () => {
+    const src = `workflow w {
+  version 1
+
+  step fix {
+    name "Fix"
+    type autonomous
+    agent shuttle
+    prompt "Fix it."
+    completion agent_signal
+  }
+}`;
+    const result = validateSource(src);
+    expect(result.isOk()).toBe(true);
+    const step = result._unsafeUnwrap().workflows.w?.steps[0];
+    expect(step?.reconciliation_handlers).toBeUndefined();
+  });
+
+  it("step with unknown reconciliation reason is rejected", () => {
+    const src = `workflow w {
+  version 1
+
+  step bad {
+    name "Bad step"
+    type autonomous
+    agent shuttle
+    prompt "Do it."
+    completion agent_signal
+    reconciliation_handlers [
+      { reason "unknown-reason" }
+    ]
+  }
+}`;
+    const result = validateSource(src);
+    expect(result.isErr()).toBe(true);
+  });
+
+  it("step with duplicate reconciliation reason is rejected (DuplicateReconciliationReason)", () => {
+    const src = `workflow w {
+  version 1
+
+  step bad {
+    name "Bad step"
+    type autonomous
+    agent shuttle
+    prompt "Do it."
+    completion agent_signal
+    reconciliation_handlers [
+      { reason "execution-mismatch" }
+      { reason "execution-mismatch" }
+    ]
+  }
+}`;
+    const result = validateSource(src);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    expect(
+      errors.some((e) => e.message.includes("DuplicateReconciliationReason")),
+    ).toBe(true);
+  });
+
+  it("step with empty reconciliation_handlers array is rejected", () => {
+    const src = `workflow w {
+  version 1
+
+  step bad {
+    name "Bad step"
+    type autonomous
+    agent shuttle
+    prompt "Do it."
+    completion agent_signal
+    reconciliation_handlers []
+  }
+}`;
+    const result = validateSource(src);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    expect(errors.some((e) => e.message.includes("at least one handler"))).toBe(
+      true,
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validate — workflow-level prompt_append and prompt_append_file (Spec 22 Unit 4)
+// ---------------------------------------------------------------------------
+
+describe("validate — workflow-level prompt_append and prompt_append_file", () => {
+  it("workflow with prompt_append round-trips correctly", () => {
+    const src = `workflow w {
+  version 1
+  prompt_append "Always write tests."
+
+  step fix {
+    name "Fix"
+    type autonomous
+    agent shuttle
+    prompt "Fix it."
+    completion agent_signal
+  }
+}`;
+    const result = validateSource(src);
+    expect(result.isOk()).toBe(true);
+    const wf = result._unsafeUnwrap().workflows.w;
+    expect(wf?.prompt_append).toBe("Always write tests.");
+    expect(wf?.prompt_append_file).toBeUndefined();
+  });
+
+  it("workflow with prompt_append_file round-trips correctly", () => {
+    const src = `workflow w {
+  version 1
+  prompt_append_file "workflow-guidance.md"
+
+  step fix {
+    name "Fix"
+    type autonomous
+    agent shuttle
+    prompt "Fix it."
+    completion agent_signal
+  }
+}`;
+    const result = validateSource(src);
+    expect(result.isOk()).toBe(true);
+    const wf = result._unsafeUnwrap().workflows.w;
+    expect(wf?.prompt_append_file).toBe("workflow-guidance.md");
+    expect(wf?.prompt_append).toBeUndefined();
+  });
+
+  it("workflow without prompt_append or prompt_append_file has both undefined", () => {
+    const src = `workflow w {
+  version 1
+
+  step fix {
+    name "Fix"
+    type autonomous
+    agent shuttle
+    prompt "Fix it."
+    completion agent_signal
+  }
+}`;
+    const result = validateSource(src);
+    expect(result.isOk()).toBe(true);
+    const wf = result._unsafeUnwrap().workflows.w;
+    expect(wf?.prompt_append).toBeUndefined();
+    expect(wf?.prompt_append_file).toBeUndefined();
+  });
+
+  it("workflow with both prompt_append and prompt_append_file → err (mutually exclusive)", () => {
+    const src = `workflow w {
+  version 1
+  prompt_append "Inline guidance."
+  prompt_append_file "workflow-guidance.md"
+
+  step fix {
+    name "Fix"
+    type autonomous
+    agent shuttle
+    prompt "Fix it."
+    completion agent_signal
+  }
+}`;
+    const result = validateSource(src);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    expect(errors.some((e) => e.message.includes("mutually exclusive"))).toBe(
+      true,
+    );
+  });
+
+  it("workflow with prompt_append_file '../bad.md' → err (relative path)", () => {
+    const src = `workflow w {
+  version 1
+  prompt_append_file "../bad.md"
+
+  step fix {
+    name "Fix"
+    type autonomous
+    agent shuttle
+    prompt "Fix it."
+    completion agent_signal
+  }
+}`;
+    const result = validateSource(src);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    expect(errors.some((e) => e.message.includes("relative path"))).toBe(true);
+  });
+
+  it("workflow with prompt_append_file '/etc/passwd' → err (relative path)", () => {
+    const src = `workflow w {
+  version 1
+  prompt_append_file "/etc/passwd"
+
+  step fix {
+    name "Fix"
+    type autonomous
+    agent shuttle
+    prompt "Fix it."
+    completion agent_signal
+  }
+}`;
+    const result = validateSource(src);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    expect(errors.some((e) => e.message.includes("relative path"))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validate — step-level prompt_append and prompt_append_file (Spec 22 Unit 4)
+// ---------------------------------------------------------------------------
+
+describe("validate — step-level prompt_append and prompt_append_file", () => {
+  it("step with prompt_append round-trips correctly", () => {
+    const src = `workflow w {
+  version 1
+
+  step implement {
+    name "Implement"
+    type autonomous
+    agent shuttle
+    prompt "Do the work."
+    prompt_append "Focus on test coverage."
+    completion agent_signal
+  }
+}`;
+    const result = validateSource(src);
+    expect(result.isOk()).toBe(true);
+    const step = result._unsafeUnwrap().workflows.w?.steps[0];
+    expect(step?.prompt_append).toBe("Focus on test coverage.");
+    expect(step?.prompt_append_file).toBeUndefined();
+  });
+
+  it("step with prompt_append_file round-trips correctly", () => {
+    const src = `workflow w {
+  version 1
+
+  step implement {
+    name "Implement"
+    type autonomous
+    agent shuttle
+    prompt "Do the work."
+    prompt_append_file "step-guidance.md"
+    completion agent_signal
+  }
+}`;
+    const result = validateSource(src);
+    expect(result.isOk()).toBe(true);
+    const step = result._unsafeUnwrap().workflows.w?.steps[0];
+    expect(step?.prompt_append_file).toBe("step-guidance.md");
+    expect(step?.prompt_append).toBeUndefined();
+  });
+
+  it("step without prompt_append or prompt_append_file has both undefined", () => {
+    const src = `workflow w {
+  version 1
+
+  step fix {
+    name "Fix"
+    type autonomous
+    agent shuttle
+    prompt "Fix it."
+    completion agent_signal
+  }
+}`;
+    const result = validateSource(src);
+    expect(result.isOk()).toBe(true);
+    const step = result._unsafeUnwrap().workflows.w?.steps[0];
+    expect(step?.prompt_append).toBeUndefined();
+    expect(step?.prompt_append_file).toBeUndefined();
+  });
+
+  it("step with both prompt_append and prompt_append_file → err (mutually exclusive)", () => {
+    const src = `workflow w {
+  version 1
+
+  step bad {
+    name "Bad step"
+    type autonomous
+    agent shuttle
+    prompt "Do it."
+    prompt_append "Inline guidance."
+    prompt_append_file "step-guidance.md"
+    completion agent_signal
+  }
+}`;
+    const result = validateSource(src);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    expect(errors.some((e) => e.message.includes("mutually exclusive"))).toBe(
+      true,
+    );
+  });
+
+  it("step with prompt_append_file '../bad.md' → err (relative path)", () => {
+    const src = `workflow w {
+  version 1
+
+  step bad {
+    name "Bad step"
+    type autonomous
+    agent shuttle
+    prompt "Do it."
+    prompt_append_file "../bad.md"
+    completion agent_signal
+  }
+}`;
+    const result = validateSource(src);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    expect(errors.some((e) => e.message.includes("relative path"))).toBe(true);
+  });
+
+  it("step with prompt_append_file '/etc/passwd' → err (relative path)", () => {
+    const src = `workflow w {
+  version 1
+
+  step bad {
+    name "Bad step"
+    type autonomous
+    agent shuttle
+    prompt "Do it."
+    prompt_append_file "/etc/passwd"
+    completion agent_signal
+  }
+}`;
+    const result = validateSource(src);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    expect(errors.some((e) => e.message.includes("relative path"))).toBe(true);
+  });
+
+  it("workflow-level and step-level prompt_append coexist independently", () => {
+    const src = `workflow w {
+  version 1
+  prompt_append "Workflow-wide guidance."
+
+  step implement {
+    name "Implement"
+    type autonomous
+    agent shuttle
+    prompt "Do the work."
+    prompt_append "Step-local guidance."
+    completion agent_signal
+  }
+}`;
+    const result = validateSource(src);
+    expect(result.isOk()).toBe(true);
+    const wf = result._unsafeUnwrap().workflows.w;
+    expect(wf?.prompt_append).toBe("Workflow-wide guidance.");
+    const step = wf?.steps[0];
+    expect(step?.prompt_append).toBe("Step-local guidance.");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validate — routing block
+// ---------------------------------------------------------------------------
+
 describe("validate — routing block", () => {
   it("agent with routing.delegation_exclude round-trips correctly", () => {
     const src = `agent router {

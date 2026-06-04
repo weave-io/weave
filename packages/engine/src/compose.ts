@@ -3,6 +3,8 @@ import type {
   DelegationTrigger,
   ToolPolicy,
   WeaveConfig,
+  WorkflowConfig,
+  WorkflowStep,
 } from "@weave/core";
 import {
   err,
@@ -277,6 +279,8 @@ function mapRendererError(
 /**
  * Load the append source for an agent: returns the inline prompt_append string,
  * the contents of prompt_append_file, or undefined if neither is set.
+ *
+ * Delegates to `loadAppendSourceFromInput` using the agent config as input.
  */
 function loadAppendSource(
   agentName: string,
@@ -285,23 +289,10 @@ function loadAppendSource(
   { content: string; fromFile: boolean } | undefined,
   ComposeError
 > {
-  if (agentConfig.prompt_append !== undefined) {
-    return okAsync({ content: agentConfig.prompt_append, fromFile: false });
-  }
-
-  if (agentConfig.prompt_append_file === undefined) {
-    return okAsync(undefined);
-  }
-
-  const appendFilePath = agentConfig.prompt_append_file;
-
-  return ResultAsync.fromPromise(Bun.file(appendFilePath).text(), (cause) => ({
-    type: "PromptFileReadError" as const,
-    agentName,
-    promptFilePath: appendFilePath,
-    message: `Failed to read prompt_append_file for agent "${agentName}": ${appendFilePath}`,
-    fileErrorMessage: cause instanceof Error ? cause.message : String(cause),
-  })).map((content) => ({ content, fromFile: true }));
+  return loadAppendSourceFromInput(agentName, {
+    prompt_append: agentConfig.prompt_append,
+    prompt_append_file: agentConfig.prompt_append_file,
+  });
 }
 
 /**
@@ -337,6 +328,356 @@ function renderPromptTemplate(
   }
 
   return ok(renderResult.value);
+}
+
+// ---------------------------------------------------------------------------
+// Workflow step prompt composition
+// ---------------------------------------------------------------------------
+
+/**
+ * Scope from which an effective append was selected.
+ *
+ * - `step`     — the step's own `prompt_append` / `prompt_append_file` was used
+ * - `workflow` — the workflow-level `prompt_append` / `prompt_append_file` was used
+ *               (step had no append of its own)
+ * - `none`     — neither scope had an append
+ */
+export type AppendScope = "step" | "workflow" | "none";
+
+/**
+ * Result of composing a workflow step prompt.
+ *
+ * - `composedPrompt` — the final composed prompt string (step prompt + effective append)
+ * - `appendScope`    — which scope the effective append came from
+ */
+export interface WorkflowStepComposedPrompt {
+  composedPrompt: string;
+  appendScope: AppendScope;
+}
+
+// ---------------------------------------------------------------------------
+// Append collision detection
+// ---------------------------------------------------------------------------
+
+/**
+ * A same-scope prompt-append collision: two or more configs in the merge
+ * stack both define `prompt_append` or `prompt_append_file` for the same
+ * workflow or step. The config-merge layer silently applies last-defined-wins;
+ * this record makes that resolution visible to tooling.
+ *
+ * Fields:
+ * - `scope`        — whether the collision is at workflow level or step level
+ * - `workflowName` — name of the workflow where the collision occurred
+ * - `stepName`     — name of the step (only present when `scope === "step"`)
+ * - `field`        — which append field collided
+ * - `losingValue`  — the value that was overridden (from the lower-priority config)
+ * - `winningValue` — the value that won (from the higher-priority config)
+ * - `loserIndex`   — index into the input `configs` array of the losing config
+ * - `winnerIndex`  — index into the input `configs` array of the winning config
+ */
+export interface AppendCollision {
+  scope: "workflow" | "step";
+  workflowName: string;
+  stepName?: string;
+  field: "prompt_append" | "prompt_append_file";
+  losingValue: string;
+  winningValue: string;
+  loserIndex: number;
+  winnerIndex: number;
+}
+
+/** Append fields checked for collisions. */
+const APPEND_FIELDS = ["prompt_append", "prompt_append_file"] as const;
+
+/**
+ * Detect same-scope prompt-append collisions across an ordered list of
+ * `WeaveConfig` objects (base → override priority, left to right).
+ *
+ * A collision occurs when two or more configs in the list both define
+ * `prompt_append` or `prompt_append_file` for the same workflow or step.
+ * The config-merge layer silently applies last-defined-wins; this function
+ * makes that resolution visible so tooling can warn users instead of
+ * silently accepting the override as healthy.
+ *
+ * The function is pure and never throws. It returns an empty array when
+ * there are no collisions.
+ *
+ * @param configs - Ordered list of configs (index 0 = lowest priority).
+ *   Typically: `[builtins, globalConfig, projectConfig]`.
+ * @returns Array of `AppendCollision` records, one per collision detected.
+ *   Multiple collisions can exist for the same workflow/step if both
+ *   `prompt_append` and `prompt_append_file` collide independently.
+ */
+export function detectAppendCollisions(
+  configs: WeaveConfig[],
+): AppendCollision[] {
+  const collisions: AppendCollision[] = [];
+
+  // Collect all workflow names across all configs
+  const allWorkflowNames = new Set<string>();
+  for (const config of configs) {
+    for (const name of Object.keys(config.workflows ?? {})) {
+      allWorkflowNames.add(name);
+    }
+  }
+
+  for (const workflowName of allWorkflowNames) {
+    // Check workflow-level append fields
+    for (const field of APPEND_FIELDS) {
+      const collision = findScalarCollision(
+        configs,
+        (config) => config.workflows?.[workflowName]?.[field],
+      );
+      if (collision !== undefined) {
+        collisions.push({
+          scope: "workflow",
+          workflowName,
+          field,
+          losingValue: collision.losingValue,
+          winningValue: collision.winningValue,
+          loserIndex: collision.loserIndex,
+          winnerIndex: collision.winnerIndex,
+        });
+      }
+    }
+
+    // Collect all step names for this workflow across all configs
+    const allStepNames = new Set<string>();
+    for (const config of configs) {
+      const steps = config.workflows?.[workflowName]?.steps ?? [];
+      for (const step of steps) {
+        allStepNames.add(step.name);
+      }
+    }
+
+    for (const stepName of allStepNames) {
+      for (const field of APPEND_FIELDS) {
+        const collision = findScalarCollision(
+          configs,
+          (config) =>
+            config.workflows?.[workflowName]?.steps.find(
+              (s) => s.name === stepName,
+            )?.[field],
+        );
+        if (collision !== undefined) {
+          collisions.push({
+            scope: "step",
+            workflowName,
+            stepName,
+            field,
+            losingValue: collision.losingValue,
+            winningValue: collision.winningValue,
+            loserIndex: collision.loserIndex,
+            winnerIndex: collision.winnerIndex,
+          });
+        }
+      }
+    }
+  }
+
+  return collisions;
+}
+
+/**
+ * Scan an ordered list of configs for a scalar field that is defined in
+ * more than one config. Returns the last collision pair (loser → winner)
+ * where the winner is the highest-priority config that defines the field.
+ *
+ * Returns `undefined` when the field is defined in at most one config.
+ */
+function findScalarCollision(
+  configs: WeaveConfig[],
+  extract: (config: WeaveConfig) => string | undefined,
+):
+  | {
+      losingValue: string;
+      winningValue: string;
+      loserIndex: number;
+      winnerIndex: number;
+    }
+  | undefined {
+  // Collect all (index, value) pairs where the field is defined
+  const defined: Array<{ index: number; value: string }> = [];
+  for (let i = 0; i < configs.length; i++) {
+    const value = extract(configs[i] as WeaveConfig);
+    if (value !== undefined) {
+      defined.push({ index: i, value });
+    }
+  }
+
+  // No collision if fewer than two configs define the field
+  if (defined.length < 2) return undefined;
+
+  // The winner is the last (highest-priority) entry; the loser is the one before it
+  const winner = defined[defined.length - 1] as {
+    index: number;
+    value: string;
+  };
+  const loser = defined[defined.length - 2] as { index: number; value: string };
+
+  return {
+    losingValue: loser.value,
+    winningValue: winner.value,
+    loserIndex: loser.index,
+    winnerIndex: winner.index,
+  };
+}
+
+/**
+ * Inputs for loading a raw append source (inline string or file path).
+ *
+ * Mirrors the shape of `AgentConfig` append fields so the same loader can
+ * be reused for both agent-level and workflow/step-level appends.
+ */
+interface AppendSourceInput {
+  prompt_append?: string;
+  prompt_append_file?: string;
+}
+
+/**
+ * Load an append source from an `AppendSourceInput`.
+ *
+ * Returns:
+ * - `{ content, fromFile: false }` when `prompt_append` is set
+ * - `{ content, fromFile: true }` when `prompt_append_file` is set and readable
+ * - `undefined` when neither is set
+ * - `err(ComposeError)` when the file cannot be read
+ */
+function loadAppendSourceFromInput(
+  contextLabel: string,
+  input: AppendSourceInput,
+): ResultAsync<
+  { content: string; fromFile: boolean } | undefined,
+  ComposeError
+> {
+  if (input.prompt_append !== undefined) {
+    return okAsync({ content: input.prompt_append, fromFile: false });
+  }
+
+  if (input.prompt_append_file === undefined) {
+    return okAsync(undefined);
+  }
+
+  const appendFilePath = input.prompt_append_file;
+
+  return ResultAsync.fromPromise(Bun.file(appendFilePath).text(), (cause) => ({
+    type: "PromptFileReadError" as const,
+    agentName: contextLabel,
+    promptFilePath: appendFilePath,
+    message: `Failed to read prompt_append_file for "${contextLabel}": ${appendFilePath}`,
+    fileErrorMessage: cause instanceof Error ? cause.message : String(cause),
+  })).map((content) => ({ content, fromFile: true }));
+}
+
+/**
+ * Compose the final prompt for a single workflow step.
+ *
+ * ## Precedence rules (Spec 22 Unit 4)
+ *
+ * 1. **Step-local precedence**: when the step declares its own
+ *    `prompt_append` / `prompt_append_file`, that append is used exclusively.
+ *    The workflow-level append is suppressed.
+ *
+ * 2. **Workflow-scope fallback**: when the step has no append of its own,
+ *    the workflow-level `prompt_append` / `prompt_append_file` is applied.
+ *
+ * 3. **No append**: when neither scope has an append, the step prompt is
+ *    returned as-is (after template rendering).
+ *
+ * 4. **Same-scope last-append-wins**: within a single scope, the config-merge
+ *    layer is responsible for resolving multiple appends to a single value
+ *    before this function is called. This function always receives at most one
+ *    append per scope.
+ *
+ * Both the step prompt and the effective append are rendered as Mustache
+ * templates against the provided `templateContext`. The append is never
+ * allowed to reference untrusted artifact contents — only the bounded
+ * `AgentPromptTemplateContext` paths are permitted.
+ *
+ * @param stepName         - Logical step identifier (used in error messages)
+ * @param step             - The validated workflow step config
+ * @param workflow         - The validated workflow config (provides workflow-scope append)
+ * @param templateContext  - Bounded template context for Mustache rendering
+ * @returns `ResultAsync<WorkflowStepComposedPrompt, ComposeError>`
+ */
+export function composeWorkflowStepPrompt(
+  stepName: string,
+  step: WorkflowStep,
+  workflow: WorkflowConfig,
+  templateContext: AgentPromptTemplateContext,
+): ResultAsync<WorkflowStepComposedPrompt, ComposeError> {
+  const contextLabel = `workflow-step:${stepName}`;
+
+  // Render the step's primary prompt as a template
+  const renderedPrimaryResult = renderPromptTemplate(
+    step.prompt,
+    templateContext,
+    contextLabel,
+    "prompt",
+  );
+
+  if (renderedPrimaryResult.isErr()) {
+    return errAsync(renderedPrimaryResult.error);
+  }
+
+  const renderedPrimary = renderedPrimaryResult.value;
+
+  // Determine effective append scope: step-local takes precedence
+  const stepHasAppend =
+    step.prompt_append !== undefined || step.prompt_append_file !== undefined;
+
+  const effectiveAppendInput: AppendSourceInput = stepHasAppend
+    ? {
+        prompt_append: step.prompt_append,
+        prompt_append_file: step.prompt_append_file,
+      }
+    : {
+        prompt_append: workflow.prompt_append,
+        prompt_append_file: workflow.prompt_append_file,
+      };
+
+  let effectiveScope: AppendScope;
+  if (stepHasAppend) {
+    effectiveScope = "step";
+  } else if (
+    workflow.prompt_append !== undefined ||
+    workflow.prompt_append_file !== undefined
+  ) {
+    effectiveScope = "workflow";
+  } else {
+    effectiveScope = "none";
+  }
+
+  return loadAppendSourceFromInput(contextLabel, effectiveAppendInput).andThen(
+    (appendSource): Result<WorkflowStepComposedPrompt, ComposeError> => {
+      if (appendSource === undefined) {
+        return ok({ composedPrompt: renderedPrimary, appendScope: "none" });
+      }
+
+      const appendSourceKind = appendSource.fromFile
+        ? ("prompt_append_file" as const)
+        : ("prompt_append" as const);
+      const appendFilePath = appendSource.fromFile
+        ? effectiveAppendInput.prompt_append_file
+        : undefined;
+
+      const renderedAppendResult = renderPromptTemplate(
+        appendSource.content,
+        templateContext,
+        contextLabel,
+        appendSourceKind,
+        appendFilePath,
+      );
+
+      if (renderedAppendResult.isErr()) return err(renderedAppendResult.error);
+
+      const composedPrompt = [renderedPrimary, renderedAppendResult.value].join(
+        "\n\n",
+      );
+
+      return ok({ composedPrompt, appendScope: effectiveScope });
+    },
+  );
 }
 
 export function composeAgentDescriptor(

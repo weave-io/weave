@@ -17,6 +17,7 @@ import type {
   SkillInfo,
 } from "@weave/engine";
 import { logger } from "@weave/engine";
+import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 import {
   type OpenCodeModelContext,
   resolveModelForAgent,
@@ -260,24 +261,24 @@ export class OpenCodeAdapter implements HarnessAdapter {
    * ## Flow
    *
    * 1. Resolve the model for this agent using `resolveModelForAgent()` with
-   *    the adapter-provided OpenCode model context. Throws on model resolution
-   *    failure (e.g. unsupported explicit subagent model).
+   *    the adapter-provided OpenCode model context. Returns `err` on model
+   *    resolution failure (e.g. unsupported explicit subagent model).
    * 2. Translate the descriptor into an OpenCode `AgentConfig` via
-   *    `translateAgent`, passing the resolved model. Throws on translation
-   *    failure.
+   *    `translateAgent`, passing the resolved model. Returns `err` on failure.
    * 3. Store the translated config in `translatedAgents` for test inspection
    *    and transitional compatibility.
    * 4. When an `OpenCodeClientFacade` is available, call `reconcileAgent()` to
    *    perform the SDK-backed `list → reconcile → create/update` flow.
-   *    Throws on reconciliation failure (including collision errors).
-   * 5. When no client is available, log a warning and return (translation-only
-   *    mode — no SDK calls are made).
+   *    Returns `err` on reconciliation failure (including collision errors).
+   * 5. When no client is available, log a warning and return `ok(undefined)`
+   *    (translation-only mode — no SDK calls are made).
    *
    * @param descriptor - Full normalized agent descriptor to materialise.
-   * @throws {OpenCodeAdapterError} When model resolution fails, translation
-   *   fails, or SDK-backed materialization fails.
+   * @returns `ok(undefined)` on success, `err(OpenCodeAdapterError)` on failure.
    */
-  async spawnSubagent(descriptor: AgentDescriptor): Promise<void> {
+  spawnSubagent(
+    descriptor: AgentDescriptor,
+  ): ResultAsync<void, OpenCodeAdapterError> {
     // Step 1: Resolve model using adapter-provided OpenCode model context.
     const modelResult = resolveModelForAgent(descriptor, this.modelContext);
 
@@ -291,12 +292,14 @@ export class OpenCodeAdapter implements HarnessAdapter {
         },
         "Failed to resolve model for agent",
       );
-      throw new OpenCodeAdapterError({
-        type: "ModelResolutionError",
-        agentName: descriptor.name,
-        message: `Failed to resolve model for agent "${descriptor.name}": [${error.type}] ${error.message}`,
-        cause: error,
-      });
+      return errAsync(
+        new OpenCodeAdapterError({
+          type: "ModelResolutionError",
+          agentName: descriptor.name,
+          message: `Failed to resolve model for agent "${descriptor.name}": [${error.type}] ${error.message}`,
+          cause: error,
+        }),
+      );
     }
 
     const resolvedModel = modelResult.value;
@@ -313,12 +316,14 @@ export class OpenCodeAdapter implements HarnessAdapter {
         },
         "Failed to translate agent descriptor",
       );
-      throw new OpenCodeAdapterError({
-        type: "TranslateAgentError",
-        agentName: descriptor.name,
-        message: `Failed to translate agent descriptor for "${descriptor.name}": ${translateResult.error.message}`,
-        cause: translateResult.error,
-      });
+      return errAsync(
+        new OpenCodeAdapterError({
+          type: "TranslateAgentError",
+          agentName: descriptor.name,
+          message: `Failed to translate agent descriptor for "${descriptor.name}": ${translateResult.error.message}`,
+          cause: translateResult.error,
+        }),
+      );
     }
 
     const config = translateResult.value;
@@ -341,37 +346,33 @@ export class OpenCodeAdapter implements HarnessAdapter {
         { agent: descriptor.name },
         "No OpenCode client injected — skipping SDK materialization (translation-only mode)",
       );
-      return;
+      return okAsync(undefined);
     }
 
     // SDK-backed materialization: list existing → reconcile → create/update
-    const reconcileResult = await reconcileAgent(
-      descriptor.name,
-      config,
-      this.openCodeClient,
-    );
-
-    if (reconcileResult.isErr()) {
-      const error = reconcileResult.error;
-      log.error(
-        {
-          agent: descriptor.name,
-          errorType: error.type,
-          message: error.message,
-        },
-        "Failed to materialize agent via SDK",
-      );
-      throw new OpenCodeAdapterError({
-        type: "ReconcileAgentError",
-        agentName: descriptor.name,
-        message: `Failed to materialize agent "${descriptor.name}" via OpenCode SDK: [${error.type}] ${error.message}`,
-        cause: error,
+    return reconcileAgent(descriptor.name, config, this.openCodeClient)
+      .mapErr((error) => {
+        log.error(
+          {
+            agent: descriptor.name,
+            errorType: error.type,
+            message: error.message,
+          },
+          "Failed to materialize agent via SDK",
+        );
+        return new OpenCodeAdapterError({
+          type: "ReconcileAgentError",
+          agentName: descriptor.name,
+          message: `Failed to materialize agent "${descriptor.name}" via OpenCode SDK: [${error.type}] ${error.message}`,
+          cause: error,
+        });
+      })
+      .map(() => {
+        log.info(
+          { agent: descriptor.name },
+          "Agent materialized successfully via OpenCode SDK",
+        );
+        return undefined;
       });
-    }
-
-    log.info(
-      { agent: descriptor.name },
-      "Agent materialized successfully via OpenCode SDK",
-    );
   }
 }

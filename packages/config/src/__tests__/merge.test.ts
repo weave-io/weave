@@ -1085,3 +1085,460 @@ describe("mergeConfigs — deprecated wrapper throws on workflow extension error
     expect(() => mergeConfigs(base, project)).toThrow();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Tests — before-plan extension surface: merge ownership boundary
+//
+// These tests prove that:
+//   1. `extension_points.before_plan` is preserved through workflow merge
+//      (config-merge layer owns this; the engine reads it from the merged result)
+//   2. `extend_before_plan` entries survive config merge (union-merge of steps)
+//   3. The before-plan contract is only engine-visible after merge resolution —
+//      the engine must check the merged config, not individual layers
+// ---------------------------------------------------------------------------
+
+describe("mergeConfigsResult — before-plan extension surface ownership", () => {
+  // -------------------------------------------------------------------------
+  // extension_points.before_plan preserved through workflow merge
+  // -------------------------------------------------------------------------
+
+  it("(bp-1) base workflow with extension_points.before_plan: preserved in merged result", () => {
+    // Base declares the before-plan slot and has a planning step
+    const base = cfg(`
+      workflow plan-and-execute {
+        description "Plan and execute"
+        version 1
+        extension_points {
+          before-plan
+        }
+        step plan {
+          name "Create plan"
+          role planning
+          type autonomous
+          agent pattern
+          prompt "Create a plan for: {{instance.goal}}"
+          completion plan_created { plan_name "{{instance.slug}}" }
+        }
+        step implement {
+          name "Execute"
+          type autonomous
+          agent tapestry
+          prompt "Execute the plan"
+          completion plan_complete { plan_name "{{instance.slug}}" }
+        }
+      }
+    `);
+    // Override adds a step but does not touch extension_points
+    const override = cfg(`
+      workflow plan-and-execute {
+        extends "plan-and-execute"
+        version 1
+        step review {
+          name "Review"
+          type gate
+          agent weft
+          prompt "Review changes"
+          completion review_verdict
+          on_reject pause
+        }
+      }
+    `);
+
+    const result = mergeConfigsResult(base, override);
+    expect(result.isOk()).toBe(true);
+
+    const merged = result._unsafeUnwrap();
+    const wf = merged.workflows["plan-and-execute"];
+    expect(wf).toBeDefined();
+    // extension_points.before_plan must survive the merge — engine reads this
+    expect(wf?.extension_points?.before_plan).toBe(true);
+    // planning step still present
+    const planStep = wf?.steps.find((s) => s.name === "plan");
+    expect(planStep?.role).toBe("planning");
+  });
+
+  it("(bp-2) override adds extension_points.before_plan: present in merged result", () => {
+    // Base has no extension_points; override adds it (with a planning step)
+    const base = cfg(`
+      workflow quick-plan {
+        version 1
+        step plan {
+          name "Plan"
+          type autonomous
+          agent pattern
+          prompt "Plan it"
+          completion plan_created { plan_name "{{instance.slug}}" }
+        }
+      }
+    `);
+    // Override promotes the workflow to publish the before-plan slot
+    const override = cfg(`
+      workflow quick-plan {
+        version 1
+        extension_points {
+          before-plan
+        }
+        step plan {
+          name "Plan"
+          role planning
+          type autonomous
+          agent pattern
+          prompt "Plan it"
+          completion plan_created { plan_name "{{instance.slug}}" }
+        }
+      }
+    `);
+
+    const result = mergeConfigsResult(base, override);
+    expect(result.isOk()).toBe(true);
+
+    const merged = result._unsafeUnwrap();
+    const wf = merged.workflows["quick-plan"];
+    expect(wf?.extension_points?.before_plan).toBe(true);
+  });
+
+  it("(bp-3) override without extension_points: base extension_points.before_plan preserved", () => {
+    // Base publishes the slot; override only changes description — slot must survive
+    const base = cfg(`
+      workflow plan-and-execute {
+        description "Original"
+        version 1
+        extension_points {
+          before-plan
+        }
+        step plan {
+          name "Plan"
+          role planning
+          type autonomous
+          agent pattern
+          prompt "Plan it"
+          completion plan_created { plan_name "{{instance.slug}}" }
+        }
+      }
+    `);
+    const override = cfg(`
+      workflow plan-and-execute {
+        description "Overridden description"
+        version 1
+        step plan {
+          name "Plan"
+          role planning
+          type autonomous
+          agent pattern
+          prompt "Plan it"
+          completion plan_created { plan_name "{{instance.slug}}" }
+        }
+      }
+    `);
+
+    const result = mergeConfigsResult(base, override);
+    expect(result.isOk()).toBe(true);
+
+    const merged = result._unsafeUnwrap();
+    const wf = merged.workflows["plan-and-execute"];
+    // description from override wins (scalar)
+    expect(wf?.description).toBe("Overridden description");
+    // extension_points from base is preserved (override did not set it)
+    expect(wf?.extension_points?.before_plan).toBe(true);
+  });
+
+  // -------------------------------------------------------------------------
+  // extend_before_plan preserved through config merge
+  // -------------------------------------------------------------------------
+
+  it("(bp-4) extend_before_plan in override only: present in merged result", () => {
+    const base = cfg(`
+      workflow plan-and-execute {
+        version 1
+        extension_points {
+          before-plan
+        }
+        step plan {
+          name "Plan"
+          role planning
+          type autonomous
+          agent pattern
+          prompt "Plan it"
+          completion plan_created { plan_name "{{instance.slug}}" }
+        }
+      }
+    `);
+    // Override adds an extend before-plan directive
+    const override = cfg(`
+      extend before-plan ["spec-review"]
+    `);
+
+    const result = mergeConfigsResult(base, override);
+    expect(result.isOk()).toBe(true);
+
+    const merged = result._unsafeUnwrap();
+    // extend_before_plan must be present in the merged config for the engine to read
+    const ebp = merged.extend_before_plan;
+    expect(ebp).toBeDefined();
+    expect(ebp.steps).toContain("spec-review");
+  });
+
+  it("(bp-5) extend_before_plan in base only: present in merged result", () => {
+    const base = cfg(`
+      extend before-plan ["requirements"]
+    `);
+    const override = cfg(`
+      settings { log_level DEBUG }
+    `);
+
+    const result = mergeConfigsResult(base, override);
+    expect(result.isOk()).toBe(true);
+
+    const merged = result._unsafeUnwrap();
+    const ebp = merged.extend_before_plan;
+    expect(ebp).toBeDefined();
+    expect(ebp.steps).toContain("requirements");
+  });
+
+  it("(bp-6) extend_before_plan union-merge: steps from both layers combined, override first", () => {
+    // Base declares one step; override declares another — both must appear
+    const base = cfg(`
+      extend before-plan ["requirements"]
+    `);
+    const override = cfg(`
+      extend before-plan ["spec-review"]
+    `);
+
+    const result = mergeConfigsResult(base, override);
+    expect(result.isOk()).toBe(true);
+
+    const merged = result._unsafeUnwrap();
+    const ebp = merged.extend_before_plan;
+    expect(ebp).toBeDefined();
+    // Union-merge: override entries first, then base entries not already present
+    expect(ebp.steps).toContain("spec-review");
+    expect(ebp.steps).toContain("requirements");
+    // Override entry comes first
+    expect(ebp.steps.indexOf("spec-review")).toBeLessThan(
+      ebp.steps.indexOf("requirements"),
+    );
+  });
+
+  it("(bp-7) extend_before_plan dedup: duplicate step name appears exactly once", () => {
+    const base = cfg(`
+      extend before-plan ["spec-review", "requirements"]
+    `);
+    const override = cfg(`
+      extend before-plan ["spec-review"]
+    `);
+
+    const result = mergeConfigsResult(base, override);
+    expect(result.isOk()).toBe(true);
+
+    const merged = result._unsafeUnwrap();
+    const ebp = merged.extend_before_plan;
+    const specReviewCount = ebp.steps.filter((s) => s === "spec-review").length;
+    expect(specReviewCount).toBe(1);
+  });
+
+  // -------------------------------------------------------------------------
+  // Ownership boundary: before-plan is engine-visible only after merge
+  // -------------------------------------------------------------------------
+
+  it("(bp-8) three-layer merge: extension_points.before_plan visible in final merged config", () => {
+    // Simulates: builtins → global → project merge order
+    // Builtin declares the slot; global and project add steps
+    const builtins = cfg(`
+      workflow plan-and-execute {
+        description "Builtin plan-and-execute"
+        version 1
+        extension_points {
+          before-plan
+        }
+        step plan {
+          name "Create plan"
+          role planning
+          type autonomous
+          agent pattern
+          prompt "Create a plan"
+          completion plan_created { plan_name "{{instance.slug}}" }
+        }
+        step implement {
+          name "Execute"
+          type autonomous
+          agent tapestry
+          prompt "Execute the plan"
+          completion plan_complete { plan_name "{{instance.slug}}" }
+        }
+      }
+    `);
+    const global = cfg(`
+      extend before-plan ["global-step"]
+    `);
+    const project = cfg(`
+      extend before-plan ["project-step"]
+    `);
+
+    const result = mergeConfigsResult(builtins, global, project);
+    expect(result.isOk()).toBe(true);
+
+    const merged = result._unsafeUnwrap();
+
+    // The engine reads extension_points.before_plan from the merged workflow
+    const wf = merged.workflows["plan-and-execute"];
+    expect(wf?.extension_points?.before_plan).toBe(true);
+
+    // The engine reads extend_before_plan from the merged top-level config
+    const ebp = merged.extend_before_plan;
+    expect(ebp.steps).toContain("global-step");
+    expect(ebp.steps).toContain("project-step");
+    // project (highest priority) comes first
+    expect(ebp.steps.indexOf("project-step")).toBeLessThan(
+      ebp.steps.indexOf("global-step"),
+    );
+  });
+
+  it("(bp-9) workflow without extension_points.before_plan: slot not published even if extend_before_plan references it", () => {
+    // This test documents the engine ownership boundary:
+    // extend_before_plan entries survive merge, but the engine must also check
+    // extension_points.before_plan on the target workflow before applying them.
+    // The merge layer does NOT enforce this cross-field constraint — that is
+    // the engine's responsibility.
+    const base = cfg(`
+      workflow quick-fix {
+        version 1
+        step fix {
+          name "Fix"
+          type autonomous
+          agent shuttle
+          prompt "Fix it"
+          completion agent_signal
+        }
+      }
+    `);
+    // extend before-plan references quick-fix, but quick-fix has no extension_points
+    const override = cfg(`
+      extend before-plan ["pre-check"]
+    `);
+
+    const result = mergeConfigsResult(base, override);
+    expect(result.isOk()).toBe(true);
+
+    const merged = result._unsafeUnwrap();
+
+    // Merge succeeds — the merge layer does not validate cross-field constraints
+    const wf = merged.workflows["quick-fix"];
+    // extension_points is absent (workflow did not publish the slot)
+    expect(wf?.extension_points?.before_plan).toBeUndefined();
+
+    // extend_before_plan entry is present in the merged config (merge layer preserves it)
+    // The engine is responsible for checking extension_points.before_plan before applying
+    const ebp = merged.extend_before_plan;
+    expect(ebp.steps).toContain("pre-check");
+  });
+
+  it("(bp-10a) before-plan non-reconciling in v1: no reconciliation fields on steps after merge", () => {
+    // Spec 22 Unit 2: "before-plan steps do not participate in reconciliation
+    // semantics" in v1. After merge, no step in the merged workflow has
+    // reconciliation_handler or on_reconcile fields.
+    const base = cfg(`
+      workflow plan-and-execute {
+        version 1
+        extension_points {
+          before-plan
+        }
+        step plan {
+          name "Create plan"
+          role planning
+          type autonomous
+          agent pattern
+          prompt "Create a plan"
+          completion plan_created { plan_name "{{instance.slug}}" }
+        }
+        step implement {
+          name "Execute"
+          type autonomous
+          agent tapestry
+          prompt "Execute the plan"
+          completion plan_complete { plan_name "{{instance.slug}}" }
+        }
+      }
+    `);
+    const override = cfg(`
+      extend before-plan ["spec-review"]
+    `);
+
+    const result = mergeConfigsResult(base, override);
+    expect(result.isOk()).toBe(true);
+
+    const merged = result._unsafeUnwrap();
+    const wf = merged.workflows["plan-and-execute"];
+    expect(wf?.extension_points?.before_plan).toBe(true);
+
+    // v1: no reconciliation fields on any step in the merged workflow
+    for (const step of wf?.steps ?? []) {
+      expect("reconciliation_handler" in step).toBe(false);
+      expect("on_reconcile" in step).toBe(false);
+    }
+
+    // extend_before_plan entry has no reconciliation metadata
+    const ebp = merged.extend_before_plan;
+    expect(ebp.steps).toContain("spec-review");
+    expect("reconciliation_handler" in ebp).toBe(false);
+    expect("on_reconcile" in ebp).toBe(false);
+  });
+
+  it("(bp-10) planning step role preserved through step-aware merge", () => {
+    // When a workflow with a planning step is extended, the role must survive
+    const base = cfg(`
+      workflow plan-and-execute {
+        version 1
+        extension_points {
+          before-plan
+        }
+        step plan {
+          name "Create plan"
+          role planning
+          type autonomous
+          agent pattern
+          prompt "Create a plan"
+          completion plan_created { plan_name "{{instance.slug}}" }
+        }
+        step implement {
+          name "Execute"
+          type autonomous
+          agent tapestry
+          prompt "Execute"
+          completion plan_complete { plan_name "{{instance.slug}}" }
+        }
+      }
+    `);
+    // Override inserts a step before plan — the planning step must retain its role
+    const override = cfg(`
+      workflow plan-and-execute {
+        extends "plan-and-execute"
+        version 1
+        step spec {
+          name "Write spec"
+          type autonomous
+          agent pattern
+          prompt "Write a spec"
+          completion agent_signal
+          insert_before "plan"
+        }
+      }
+    `);
+
+    const result = mergeConfigsResult(base, override);
+    expect(result.isOk()).toBe(true);
+
+    const merged = result._unsafeUnwrap();
+    const wf = merged.workflows["plan-and-execute"];
+
+    // extension_points preserved
+    expect(wf?.extension_points?.before_plan).toBe(true);
+
+    // planning step role preserved after step-aware merge
+    const planStep = wf?.steps.find((s) => s.name === "plan");
+    expect(planStep?.role).toBe("planning");
+
+    // spec step inserted before plan
+    const stepNames = wf?.steps.map((s) => s.name) ?? [];
+    expect(stepNames.indexOf("spec")).toBe(stepNames.indexOf("plan") - 1);
+  });
+});

@@ -284,7 +284,9 @@ any `{{#delegation.targets}}` section renders nothing.
 
 ## Composition Order
 
-Final prompt text is assembled in this order:
+### Agent prompt composition
+
+Final agent prompt text is assembled in this order:
 
 1. rendered primary prompt source (`prompt` or `prompt_file`)
 2. rendered append source (`prompt_append` or `prompt_append_file`), when present
@@ -295,6 +297,191 @@ the same Template Context as the primary source.
 
 There is no automatic fallback delegation block. Delegation guidance must be
 explicitly placed in the prompt source using `{{#delegation.targets}}` loops.
+
+### Workflow step prompt composition
+
+`composeWorkflowStepPrompt()` assembles the final prompt for a single workflow
+step. It applies the same Mustache rendering pipeline as agent composition, but
+uses a bounded `AgentPromptTemplateContext` supplied by the caller rather than
+loading agent config from disk.
+
+**Composition order** (step prompt → effective append):
+
+```text
+[rendered step.prompt]
+
+[rendered effective append]
+```
+
+The two parts are joined with `\n\n`. If there is no effective append, the step
+prompt is returned as-is.
+
+**Append precedence rules** (step-local wins):
+
+| Step has append? | Workflow has append? | Effective append | `appendScope` |
+| --- | --- | --- | --- |
+| yes | any | step's append | `"step"` |
+| no | yes | workflow's append | `"workflow"` |
+| no | no | — | `"none"` |
+
+Step-local precedence means a step's own `prompt_append` / `prompt_append_file`
+completely suppresses the workflow-level append for that step. The workflow-level
+append is only applied when the step declares no append of its own.
+
+**Concrete example** — step-local wins:
+
+```weave
+workflow secure-feature {
+  version 1
+  prompt_append "Always write tests."   # workflow-scope append
+
+  step implement {
+    name "Implement"
+    type autonomous
+    agent shuttle
+    prompt "Execute the plan."
+    prompt_append "Focus on security."  # step-scope append — wins
+    completion agent_signal
+  }
+}
+```
+
+For the `implement` step the composed prompt is:
+
+```text
+Execute the plan.
+
+Focus on security.
+```
+
+The workflow-level `"Always write tests."` is suppressed for this step.
+
+**Concrete example** — workflow fallback:
+
+```weave
+workflow secure-feature {
+  version 1
+  prompt_append "Always write tests."   # workflow-scope append
+
+  step review {
+    name "Review"
+    type gate
+    agent weft
+    prompt "Review the changes."
+    # no step-scope append — workflow fallback applies
+    completion review_verdict
+    on_reject pause
+  }
+}
+```
+
+For the `review` step the composed prompt is:
+
+```text
+Review the changes.
+
+Always write tests.
+```
+
+**`appendScope` field**: `composeWorkflowStepPrompt()` returns a
+`WorkflowStepComposedPrompt` with two fields:
+
+```ts
+interface WorkflowStepComposedPrompt {
+  composedPrompt: string;
+  appendScope: "step" | "workflow" | "none";
+}
+```
+
+`appendScope` tells callers which scope the effective append came from, enabling
+tooling to surface diagnostic information without re-inspecting the config.
+
+---
+
+## Same-Scope Collision Surfacing
+
+When multiple configs in the merge stack (e.g. global + project) both define
+`prompt_append` or `prompt_append_file` for the same workflow or step, the
+config-merge layer silently applies last-defined-wins. `detectAppendCollisions()`
+makes that resolution visible so tooling can warn users.
+
+```ts
+function detectAppendCollisions(configs: WeaveConfig[]): AppendCollision[]
+```
+
+`configs` is an ordered list from lowest to highest priority (e.g.
+`[builtins, globalConfig, projectConfig]`). The function is pure and never
+throws.
+
+```ts
+interface AppendCollision {
+  scope: "workflow" | "step";
+  workflowName: string;
+  stepName?: string;                          // only when scope === "step"
+  field: "prompt_append" | "prompt_append_file";
+  losingValue: string;                        // overridden value
+  winningValue: string;                       // value that won
+  loserIndex: number;                         // index in configs array
+  winnerIndex: number;                        // index in configs array
+}
+```
+
+**Example** — two configs both define a workflow-level append:
+
+```ts
+const collisions = detectAppendCollisions([globalConfig, projectConfig]);
+// → [{
+//     scope: "workflow",
+//     workflowName: "secure-feature",
+//     field: "prompt_append",
+//     losingValue: "Always write tests.",   // from globalConfig
+//     winningValue: "Focus on security.",   // from projectConfig
+//     loserIndex: 0,
+//     winnerIndex: 1,
+//   }]
+```
+
+A collision is reported only when **two or more** configs in the list define the
+same field for the same workflow/step. A single config defining an append is not
+a collision. The function returns an empty array when there are no collisions.
+
+---
+
+## Trust Boundary for Prompt Appends
+
+Both agent-level and workflow/step-level appends are rendered against the
+**bounded `AgentPromptTemplateContext`** — the same context used for primary
+prompts. This is a deliberate security boundary.
+
+**What appends can reference** (bounded paths only):
+
+- `{{agent.name}}`, `{{agent.mode}}`, `{{agent.skills}}`, `{{agent.isCategory}}`
+- `{{category.name}}`, `{{category.description}}`
+- `{{toolPolicy.effective.read}}` (and other capability fields)
+- `{{#delegation.targets}}` iteration
+
+**What appends cannot reference** (rejected as `UnknownPath`):
+
+- `{{artifact.contents}}` — artifact data is not in the bounded context
+- `{{chat.history}}` — chat history is not in the bounded context
+- `{{raw.prompt}}` — raw prompt text is not in the bounded context
+- Any path not in the explicit `ALLOWED_TEMPLATE_PATHS` set
+
+**What appends cannot use** (rejected as `UnsupportedFeature`):
+
+- `{{> partial}}` — partials cannot load external content
+- `{{= <% %> =}}` — delimiter changes cannot bypass path validation
+
+**What appends cannot traverse** (rejected as `UnsafePath`):
+
+- `{{__proto__}}`, `{{constructor}}`, `{{prototype}}` — prototype traversal
+
+Static append text without Mustache tags is always safe and passes through
+unchanged.
+
+This boundary is enforced at render time by the same `renderTemplate()` wrapper
+used for primary prompts. There is no separate code path for appends — the same
+allowed-path set applies to both.
 
 ---
 
@@ -333,9 +520,10 @@ literal tags produced from `\{{...}}` are allowed.
 Existing static prompts remain valid because every prompt source is rendered as a
 Prompt Template, but sources without Mustache tags render to the same text.
 
-Workflow step prompt interpolation is conceptually aligned with Prompt Templates
-but not implemented in this slice. Future workflow rendering should reuse the
-same renderer with a workflow-specific Template Context.
+Workflow step prompts are rendered using the same Mustache renderer and the same
+bounded `AgentPromptTemplateContext`. The caller supplies the context; the engine
+does not re-derive it from config during step composition. This keeps step
+rendering deterministic and testable without disk access.
 
 ---
 
@@ -416,13 +604,18 @@ type ComposeError =
       promptFilePath?: string;
       message: string;
       reason:
-        | { type: "MalformedSyntax"; line: number; column: number }
-        | { type: "UnsupportedTag"; tag: string; line: number; column: number }
-        | { type: "UnknownPath"; path: string; line: number; column: number }
-        | { type: "UnsafePath"; path: string; line: number; column: number }
-        | { type: "FunctionValue"; path: string; line: number; column: number }
-        | { type: "SectionMismatch"; line: number; column: number }
-        | { type: "UnresolvedTag"; tag: string };
+        | { kind: "MalformedSyntax"; message: string; line?: number; column?: number }
+        | { kind: "UnsupportedTag"; tag: string; message: string }
+        | { kind: "UnknownPath"; path: string; message: string }
+        | { kind: "UnsafePath"; path: string; message: string }
+        | { kind: "FunctionValue"; path: string; message: string }
+        | { kind: "SectionMismatch"; message: string }
+        | { kind: "UnresolvedTag"; tag: string; message: string };
+    }
+  | {
+      type: "TemplateContextBuildError";
+      agentName: string;
+      message: string;
     };
 ```
 
@@ -453,8 +646,8 @@ with the rest of the engine pipeline without `try/catch` control flow.
 
 | File | Contents |
 | --- | --- |
-| [`packages/engine/src/compose.ts`](../packages/engine/src/compose.ts) | `AgentDescriptor`, `DelegationTarget`, `ComposeError`, `composeAgentDescriptor()` |
+| [`packages/engine/src/compose.ts`](../packages/engine/src/compose.ts) | `AgentDescriptor`, `DelegationTarget`, `ComposeError`, `composeAgentDescriptor()`, `composeWorkflowStepPrompt()`, `detectAppendCollisions()`, `AppendCollision`, `AppendScope`, `WorkflowStepComposedPrompt` |
 | `packages/engine/src/template-renderer.ts` | Mustache wrapper, parse/render helpers, reference extraction, unsupported-feature and unresolved-tag checks |
-| `packages/engine/src/template-context.ts` | Agent prompt Template Context types, allowed paths, delegation target projection |
+| `packages/engine/src/template-context.ts` | Agent prompt Template Context types, `ALLOWED_TEMPLATE_PATHS`, delegation target projection |
 | [`packages/engine/src/run-agent-effects.ts`](../packages/engine/src/run-agent-effects.ts) | `RunAgentEffect` carrying the composed descriptor |
 | [`packages/engine/src/tool-policy.ts`](../packages/engine/src/tool-policy.ts) | `evaluateEffectiveToolPolicy()` and `EffectiveToolPolicy` |
