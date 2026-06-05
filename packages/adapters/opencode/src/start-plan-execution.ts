@@ -79,12 +79,15 @@ export const DEFAULT_EXECUTION_WORKFLOW = "tapestry-execution" as const;
  * Discriminated union of errors that `startPlanExecution` can return.
  *
  * - `PlanNotFound` — the plan does not exist according to the `PlanStateProvider`.
+ * - `InvalidPlanName` — the plan name failed the safe-name check in the
+ *   `PlanStateProvider` (contains `/`, `..`, `\0`, or other unsafe characters).
  * - `ProviderUnavailable` — the `PlanStateProvider` could not be queried (I/O
  *   error or the provider was not supplied).
  * - `WorkflowError` — the underlying `runWorkflow` call returned an error.
  */
 export type StartPlanExecutionError =
   | { readonly type: "PlanNotFound"; readonly planName: string }
+  | { readonly type: "InvalidPlanName"; readonly planName: string }
   | {
       readonly type: "ProviderUnavailable";
       readonly cause: Error | { readonly message: string };
@@ -181,7 +184,8 @@ const log = logger.child({ module: "start-plan-execution" });
  *
  * 1. Guard: if `planStateProvider` is `undefined`, return `ProviderUnavailable`.
  * 2. Call `planStateProvider.planExists(planName)`.
- *    - On provider error → return `ProviderUnavailable`.
+ *    - On `InvalidPlanName` error → return `InvalidPlanName` (preserves discriminant).
+ *    - On `ProviderUnavailable` error → return `ProviderUnavailable`.
  *    - On `false` → return `PlanNotFound`.
  * 3. Call `runWorkflow` with the explicit workflow path (`tapestry-execution`
  *    by default), passing `planStateProvider` through for plan-oriented
@@ -227,15 +231,12 @@ export function startPlanExecution(
   // Step 1: validate plan exists — fail before touching the store.
   return planStateProvider
     .planExists(planName)
-    .mapErr(
-      (cause): StartPlanExecutionError => ({
-        type: "ProviderUnavailable" as const,
-        cause:
-          cause.type === "ProviderUnavailable"
-            ? cause.cause
-            : { message: `Invalid plan name: ${planName}` },
-      }),
-    )
+    .mapErr((cause): StartPlanExecutionError => {
+      if (cause.type === "InvalidPlanName") {
+        return { type: "InvalidPlanName" as const, planName: cause.planName };
+      }
+      return { type: "ProviderUnavailable" as const, cause: cause.cause };
+    })
     .andThen((exists) => {
       if (!exists) {
         log.warn({ planName }, "Plan does not exist — aborting execution");

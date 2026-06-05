@@ -126,6 +126,57 @@ describe("getBuiltinConfig", () => {
     }
   });
 
+  // ---------------------------------------------------------------------------
+  // tapestry-execution: existing-plan execution contract
+  // ---------------------------------------------------------------------------
+
+  it("(g8) tapestry-execution has no planning step (role: planning)", () => {
+    const config = getBuiltinConfig()._unsafeUnwrap();
+    const wf = config.workflows["tapestry-execution"];
+    expect(wf).toBeDefined();
+    const planningSteps = wf?.steps.filter((s) => s.role === "planning") ?? [];
+    expect(planningSteps).toHaveLength(0);
+  });
+
+  it("(g9) tapestry-execution first step uses plan_complete completion (not plan_created or agent_signal)", () => {
+    const config = getBuiltinConfig()._unsafeUnwrap();
+    const wf = config.workflows["tapestry-execution"];
+    expect(wf).toBeDefined();
+    const firstStep = wf?.steps[0];
+    expect(firstStep).toBeDefined();
+    expect(firstStep?.completion.method).toBe("plan_complete");
+    if (firstStep?.completion.method === "plan_complete") {
+      expect(firstStep.completion.plan_name).toBeTruthy();
+    }
+  });
+
+  it("(g10) tapestry-execution first step prompt references {{instance.slug}} (existing plan)", () => {
+    const config = getBuiltinConfig()._unsafeUnwrap();
+    const wf = config.workflows["tapestry-execution"];
+    expect(wf).toBeDefined();
+    const firstStep = wf?.steps[0];
+    expect(firstStep).toBeDefined();
+    expect(firstStep?.prompt).toContain("{{instance.slug}}");
+  });
+
+  it("(g11) builtin config has no default_workflow selector — settings has no default_workflow field", () => {
+    const config = getBuiltinConfig()._unsafeUnwrap();
+    // settings should not have a default_workflow field
+    expect(
+      (config.settings as Record<string, unknown>)["default_workflow"],
+    ).toBeUndefined();
+  });
+
+  it("(g12) plan-and-execute remains available as an explicit named workflow", () => {
+    const config = getBuiltinConfig()._unsafeUnwrap();
+    expect(config.workflows["plan-and-execute"]).toBeDefined();
+    // It should have a planning step (plan_created semantics)
+    const wf = config.workflows["plan-and-execute"];
+    const planStep = wf?.steps.find((s) => s.role === "planning");
+    expect(planStep).toBeDefined();
+    expect(planStep?.completion.method).toBe("plan_created");
+  });
+
   it("(h) BUILTIN_WEAVE_SOURCE is valid DSL — parseConfig returns no errors", () => {
     const result = parseConfig(BUILTIN_WEAVE_SOURCE);
     expect(result.isOk()).toBe(true);

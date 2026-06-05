@@ -89,6 +89,28 @@ class FailingPlanStateProvider implements PlanStateProvider {
   }
 }
 
+/**
+ * Mock `PlanStateProvider` that always returns an `InvalidPlanName` error.
+ *
+ * Simulates a provider that rejects the plan name at the safe-name check
+ * (e.g. the name contains `/`, `..`, `\0`, or other unsafe characters).
+ */
+class InvalidNamePlanStateProvider implements PlanStateProvider {
+  planExists(planName: string): ResultAsync<boolean, PlanStateError> {
+    return errAsync({
+      type: "InvalidPlanName" as const,
+      planName,
+    });
+  }
+
+  isPlanComplete(planName: string): ResultAsync<boolean, PlanStateError> {
+    return errAsync({
+      type: "InvalidPlanName" as const,
+      planName,
+    });
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Fixture WeaveConfig — tapestry-execution workflow
 // ---------------------------------------------------------------------------
@@ -399,6 +421,101 @@ describe("startPlanExecution — provider unavailable", () => {
     expect(instances.isOk()).toBe(true);
     if (instances.isOk()) {
       expect(instances.value).toHaveLength(0);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests — invalid plan name returns distinct typed error
+// ---------------------------------------------------------------------------
+
+describe("startPlanExecution — invalid plan name", () => {
+  it("returns InvalidPlanName (not ProviderUnavailable) when provider rejects the name", async () => {
+    const adapter = new OpenCodeAdapter();
+    const store = createInMemoryRuntimeStore();
+    const planStateProvider = new InvalidNamePlanStateProvider();
+
+    const result = await startPlanExecution({
+      planName: "../../../etc/passwd",
+      config: TAPESTRY_EXECUTION_CONFIG,
+      planStateProvider,
+      adapter,
+      store,
+    });
+
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error.type).toBe("InvalidPlanName");
+    }
+  });
+
+  it("preserves the planName in the InvalidPlanName error", async () => {
+    const adapter = new OpenCodeAdapter();
+    const store = createInMemoryRuntimeStore();
+    const planStateProvider = new InvalidNamePlanStateProvider();
+    const badName = "../../../etc/passwd";
+
+    const result = await startPlanExecution({
+      planName: badName,
+      config: TAPESTRY_EXECUTION_CONFIG,
+      planStateProvider,
+      adapter,
+      store,
+    });
+
+    expect(result.isErr()).toBe(true);
+    if (result.isErr() && result.error.type === "InvalidPlanName") {
+      expect(result.error.planName).toBe(badName);
+    }
+  });
+
+  it("leaves the store empty when plan name is invalid", async () => {
+    const adapter = new OpenCodeAdapter();
+    const store = createInMemoryRuntimeStore();
+    const planStateProvider = new InvalidNamePlanStateProvider();
+
+    await startPlanExecution({
+      planName: "bad/name",
+      config: TAPESTRY_EXECUTION_CONFIG,
+      planStateProvider,
+      adapter,
+      store,
+    });
+
+    const instances = await store.instances.list();
+    expect(instances.isOk()).toBe(true);
+    if (instances.isOk()) {
+      expect(instances.value).toHaveLength(0);
+    }
+  });
+
+  it("InvalidPlanName is distinct from ProviderUnavailable", async () => {
+    const adapter = new OpenCodeAdapter();
+    const store = createInMemoryRuntimeStore();
+
+    const invalidResult = await startPlanExecution({
+      planName: "bad/name",
+      config: TAPESTRY_EXECUTION_CONFIG,
+      planStateProvider: new InvalidNamePlanStateProvider(),
+      adapter,
+      store,
+    });
+
+    const unavailableResult = await startPlanExecution({
+      planName: "my-plan",
+      config: TAPESTRY_EXECUTION_CONFIG,
+      planStateProvider: new FailingPlanStateProvider(),
+      adapter,
+      store,
+    });
+
+    expect(invalidResult.isErr()).toBe(true);
+    expect(unavailableResult.isErr()).toBe(true);
+
+    if (invalidResult.isErr() && unavailableResult.isErr()) {
+      expect(invalidResult.error.type).toBe("InvalidPlanName");
+      expect(unavailableResult.error.type).toBe("ProviderUnavailable");
+      expect(invalidResult.error.type).not.toBe(unavailableResult.error.type);
     }
   });
 });
