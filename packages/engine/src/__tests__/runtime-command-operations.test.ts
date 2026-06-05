@@ -81,6 +81,7 @@ import type {
 import { runWorkflowLifecycle } from "../runtime-command-operations/workflow-runner.js";
 import {
   FailingPlanStateProvider,
+  GATE_WORKFLOWS,
   InvalidNamePlanStateProvider,
   MockEffectProjector,
   MockPlanStateProvider,
@@ -89,6 +90,7 @@ import {
   makeCapabilityEntry,
   makeContractWithCommandEntrypoints,
   noopProjectEffect,
+  PLAN_COMPLETION_WORKFLOWS,
   SIMPLE_WORKFLOWS,
 } from "./runtime-command-operations/fixtures.js";
 
@@ -2145,6 +2147,431 @@ describe("command operation authorization boundary — ambiguous targets are rej
     expect(result.isErr()).toBe(true);
     if (result.isErr()) {
       expect(result.error.type).toBe("command_not_found");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// § 10 — Completion signals: review_verdict, plan completion, degraded paths
+// ---------------------------------------------------------------------------
+
+/**
+ * Helper: create a blocked instance on a specific step with an active lease.
+ * Used for completion signal tests that need a specific workflow and step.
+ */
+async function createBlockedInstanceOnStep(
+  store: ReturnType<typeof createInMemoryRuntimeStore>,
+  workflowName: string,
+  stepName: string,
+) {
+  const instance = await store.instances.create({
+    workflowName,
+    goal: "Test goal",
+    slug: "test-slug",
+  });
+  if (!instance.isOk()) throw new Error("Failed to create instance");
+
+  await store.instances.update(instance.value.id, {
+    status: "blocked",
+    currentStepName: stepName,
+  });
+
+  const lease = await store.leases.acquire({
+    workflowInstanceId: instance.value.id,
+    ownerId: "owner-test" as OwnerId,
+    ttlMs: 60_000,
+  });
+  if (!lease.isOk()) throw new Error("Failed to acquire lease");
+
+  return { instance: instance.value, lease: lease.value };
+}
+
+describe("advance-step — review_verdict: approved (success path)", () => {
+  it("returns ok(StepAdvancedData) when review_verdict is approved", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instance, lease } = await createBlockedInstanceOnStep(
+      store,
+      "gate-execution",
+      "gate",
+    );
+
+    const result = await advanceStep({
+      workflowInstanceId: instance.id,
+      leaseId: lease.id,
+      stepName: "gate",
+      completionSignal: {
+        outcome: "success",
+        method: "review_verdict",
+        approved: true,
+      },
+      store,
+      context: {
+        workflowName: "gate-execution",
+        goal: "Test goal",
+        slug: "test-slug",
+        workflows: GATE_WORKFLOWS,
+      },
+    });
+
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.kind).toBe("step-advanced");
+      expect(result.value.stepName).toBe("gate");
+      expect(result.value.completionSignal.outcome).toBe("success");
+      // Approved gate on final step → complete-execution effect
+      const hasTerminalEffect = result.value.effects.some(
+        (e) => e.kind === "complete-execution" || e.kind === "dispatch-agent",
+      );
+      expect(hasTerminalEffect).toBe(true);
+    }
+  });
+
+  it("effects are projectable by adapters after approved review_verdict", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instance, lease } = await createBlockedInstanceOnStep(
+      store,
+      "gate-execution",
+      "gate",
+    );
+
+    const result = await advanceStep({
+      workflowInstanceId: instance.id,
+      leaseId: lease.id,
+      stepName: "gate",
+      completionSignal: {
+        outcome: "success",
+        method: "review_verdict",
+        approved: true,
+      },
+      store,
+      context: {
+        workflowName: "gate-execution",
+        goal: "Test goal",
+        slug: "test-slug",
+        workflows: GATE_WORKFLOWS,
+      },
+    });
+
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      // Effects are returned in the result — adapters can project them
+      expect(Array.isArray(result.value.effects)).toBe(true);
+    }
+  });
+});
+
+describe("advance-step — review_verdict: rejected + on_reject: pause (blocked advancement)", () => {
+  it("returns ok(StepAdvancedData) with pause-execution effect when rejected", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instance, lease } = await createBlockedInstanceOnStep(
+      store,
+      "gate-execution",
+      "gate",
+    );
+
+    const result = await advanceStep({
+      workflowInstanceId: instance.id,
+      leaseId: lease.id,
+      stepName: "gate",
+      completionSignal: {
+        outcome: "success",
+        method: "review_verdict",
+        approved: false,
+        message: "Changes need revision",
+      },
+      store,
+      context: {
+        workflowName: "gate-execution",
+        goal: "Test goal",
+        slug: "test-slug",
+        workflows: GATE_WORKFLOWS,
+      },
+    });
+
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.kind).toBe("step-advanced");
+      // Rejected gate with on_reject:pause → pause-execution effect
+      const pauseEffect = result.value.effects.find(
+        (e) => e.kind === "pause-execution",
+      );
+      expect(pauseEffect).toBeDefined();
+    }
+  });
+
+  it("instance transitions to paused status after rejected review_verdict", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instance, lease } = await createBlockedInstanceOnStep(
+      store,
+      "gate-execution",
+      "gate",
+    );
+
+    await advanceStep({
+      workflowInstanceId: instance.id,
+      leaseId: lease.id,
+      stepName: "gate",
+      completionSignal: {
+        outcome: "success",
+        method: "review_verdict",
+        approved: false,
+      },
+      store,
+      context: {
+        workflowName: "gate-execution",
+        goal: "Test goal",
+        slug: "test-slug",
+        workflows: GATE_WORKFLOWS,
+      },
+    });
+
+    const afterInstance = await store.instances.getById(instance.id);
+    expect(afterInstance.isOk()).toBe(true);
+    if (afterInstance.isOk()) {
+      expect(afterInstance.value.status).toBe("paused");
+    }
+  });
+
+  it("pause-execution effect carries the workflowInstanceId for adapter projection", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instance, lease } = await createBlockedInstanceOnStep(
+      store,
+      "gate-execution",
+      "gate",
+    );
+
+    const result = await advanceStep({
+      workflowInstanceId: instance.id,
+      leaseId: lease.id,
+      stepName: "gate",
+      completionSignal: {
+        outcome: "success",
+        method: "review_verdict",
+        approved: false,
+      },
+      store,
+      context: {
+        workflowName: "gate-execution",
+        goal: "Test goal",
+        slug: "test-slug",
+        workflows: GATE_WORKFLOWS,
+      },
+    });
+
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      const pauseEffect = result.value.effects.find(
+        (e) => e.kind === "pause-execution",
+      );
+      expect(pauseEffect).toBeDefined();
+      if (pauseEffect?.kind === "pause-execution") {
+        expect(pauseEffect.workflowInstanceId).toBe(instance.id);
+      }
+    }
+  });
+});
+
+describe("advance-step — plan_created: missing planStateProvider (degraded fallback)", () => {
+  it("returns command_lifecycle error when planStateProvider is absent for plan_created step", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instance, lease } = await createBlockedInstanceOnStep(
+      store,
+      "plan-completion-execution",
+      "create-plan",
+    );
+
+    // No planStateProvider — plan_created completion requires one
+    const result = await advanceStep({
+      workflowInstanceId: instance.id,
+      leaseId: lease.id,
+      stepName: "create-plan",
+      completionSignal: {
+        outcome: "success",
+        method: "plan_created",
+      },
+      store,
+      context: {
+        workflowName: "plan-completion-execution",
+        goal: "Test goal",
+        slug: "test-slug",
+        workflows: PLAN_COMPLETION_WORKFLOWS,
+      },
+      // planStateProvider intentionally absent — degraded fallback
+    });
+
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      // Missing provider → policy_decision lifecycle error → command_lifecycle
+      expect(result.error.type).toBe("command_lifecycle");
+      if (result.error.type === "command_lifecycle") {
+        expect(result.error.cause.type).toBe("policy_decision");
+      }
+    }
+  });
+
+  it("returns command_lifecycle error when planStateProvider is absent for plan_complete step", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instance, lease } = await createBlockedInstanceOnStep(
+      store,
+      "plan-completion-execution",
+      "execute-plan",
+    );
+
+    // No planStateProvider — plan_complete completion requires one
+    const result = await advanceStep({
+      workflowInstanceId: instance.id,
+      leaseId: lease.id,
+      stepName: "execute-plan",
+      completionSignal: {
+        outcome: "success",
+        method: "plan_complete",
+      },
+      store,
+      context: {
+        workflowName: "plan-completion-execution",
+        goal: "Test goal",
+        slug: "test-slug",
+        workflows: PLAN_COMPLETION_WORKFLOWS,
+      },
+      // planStateProvider intentionally absent — degraded fallback
+    });
+
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      // Missing provider → policy_decision lifecycle error → command_lifecycle
+      expect(result.error.type).toBe("command_lifecycle");
+      if (result.error.type === "command_lifecycle") {
+        expect(result.error.cause.type).toBe("policy_decision");
+      }
+    }
+  });
+
+  it("succeeds when planStateProvider is supplied and plan exists", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instance, lease } = await createBlockedInstanceOnStep(
+      store,
+      "plan-completion-execution",
+      "create-plan",
+    );
+
+    // Provider reports plan EXISTS
+    const planStateProvider = new MockPlanStateProvider(true, true);
+
+    const result = await advanceStep({
+      workflowInstanceId: instance.id,
+      leaseId: lease.id,
+      stepName: "create-plan",
+      completionSignal: {
+        outcome: "success",
+        method: "plan_created",
+      },
+      store,
+      context: {
+        workflowName: "plan-completion-execution",
+        goal: "Test goal",
+        slug: "test-slug",
+        workflows: PLAN_COMPLETION_WORKFLOWS,
+      },
+      planStateProvider,
+    });
+
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.kind).toBe("step-advanced");
+    }
+  });
+});
+
+describe("advance-step — unsupported automatic signal detection (degraded path)", () => {
+  /**
+   * OpenCode cannot detect structured completion signals automatically.
+   *
+   * The `advance-step` command operation requires adapters to supply an
+   * explicit `completionSignal` with `outcome` and optionally `method`.
+   * There is no automatic signal detection — the engine does not poll for
+   * agent output or parse harness events to infer completion.
+   *
+   * This is the documented degraded path: adapters that cannot wire TUI
+   * step-advance must supply explicit signals via the command operation.
+   * The `DEGRADED_AFFORDANCES` list in the OpenCode adapter documents this.
+   */
+
+  it("advance-step requires explicit completionSignal — no automatic detection", async () => {
+    const store = createInMemoryRuntimeStore();
+
+    // Missing completionSignal → command_validation (not automatic detection)
+    const result = await advanceStep({
+      workflowInstanceId: createWorkflowInstanceId("some-instance"),
+      leaseId: createExecutionLeaseId("some-lease"),
+      stepName: "execute",
+      completionSignal: null as unknown as AdvanceStepInput["completionSignal"],
+      store,
+    });
+
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      // Explicit validation error — not a silent automatic detection failure
+      expect(result.error.type).toBe("command_validation");
+      if (result.error.type === "command_validation") {
+        expect(result.error.field).toBe("completionSignal");
+      }
+    }
+  });
+
+  it("advance-step requires explicit outcome — no inferred outcome from harness events", async () => {
+    const store = createInMemoryRuntimeStore();
+
+    // Missing outcome → command_validation (not automatic detection)
+    const result = await advanceStep({
+      workflowInstanceId: createWorkflowInstanceId("some-instance"),
+      leaseId: createExecutionLeaseId("some-lease"),
+      stepName: "execute",
+      completionSignal: {
+        outcome: "" as "success" | "blocked" | "failed" | "paused",
+      },
+      store,
+    });
+
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      // Explicit validation error — outcome must be supplied by the adapter
+      expect(result.error.type).toBe("command_validation");
+      if (result.error.type === "command_validation") {
+        expect(result.error.field).toBe("completionSignal.outcome");
+      }
+    }
+  });
+
+  it("advance-step with agent_signal method: accepted when explicitly supplied", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { instance, lease } = await createBlockedInstanceOnStep(
+      store,
+      "simple-execution",
+      "execute",
+    );
+
+    // Adapter explicitly supplies agent_signal method — no automatic detection
+    const result = await advanceStep({
+      workflowInstanceId: instance.id,
+      leaseId: lease.id,
+      stepName: "execute",
+      completionSignal: {
+        outcome: "success",
+        method: "agent_signal",
+      },
+      store,
+      context: {
+        workflowName: "simple-execution",
+        goal: "Test goal",
+        slug: "test-slug",
+        workflows: SIMPLE_WORKFLOWS,
+      },
+    });
+
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.kind).toBe("step-advanced");
+      expect(result.value.completionSignal.method).toBe("agent_signal");
     }
   });
 });
