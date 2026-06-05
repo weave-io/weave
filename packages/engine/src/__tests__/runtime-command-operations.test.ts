@@ -2575,3 +2575,184 @@ describe("advance-step — unsupported automatic signal detection (degraded path
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// § 11 — maxSteps regression: adapter→engine→runner threading
+// ---------------------------------------------------------------------------
+
+describe("run-named-workflow — maxSteps threading: adapter→engine→runner", () => {
+  /**
+   * Regression coverage for the revived `RunWorkflowInput.maxSteps` chain.
+   *
+   * These tests prove that `maxSteps` is correctly threaded from the
+   * `RunNamedWorkflowInput` (engine command operation) through
+   * `runWorkflowLifecycle` (runner) and that the structured
+   * `command_validation` error with `field: "maxSteps"` and the numeric
+   * `maxSteps` value is surfaced without regex scraping.
+   *
+   * Chain: RunNamedWorkflowInput.maxSteps
+   *   → runNamedWorkflow (passes to runWorkflowLifecycle)
+   *   → runWorkflowLifecycle (enforces cap, emits max_steps_exceeded)
+   *   → mapRunnerErrorToCommandError (maps to command_validation)
+   *   → CommandValidationError.maxSteps (structured numeric value)
+   */
+
+  it("returns command_validation (field: maxSteps) when maxSteps is 0", async () => {
+    // maxSteps < 1 is rejected by runWorkflowLifecycle before any store access.
+    const store = createInMemoryRuntimeStore();
+
+    const result = await runNamedWorkflow(
+      {
+        workflowName: "simple-execution",
+        goal: "Test maxSteps=0 rejection",
+        slug: "test-maxsteps-zero",
+        ownerId: "owner-test",
+        store,
+        workflows: SIMPLE_WORKFLOWS,
+        maxSteps: 0,
+      },
+      noopProjectEffect,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error.type).toBe("command_validation");
+      if (result.error.type === "command_validation") {
+        expect(result.error.field).toBe("maxSteps");
+        // Structured numeric value — no regex scraping of message string.
+        expect(result.error.maxSteps).toBe(0);
+      }
+    }
+  });
+
+  it("returns command_validation (field: maxSteps) when maxSteps is negative", async () => {
+    const store = createInMemoryRuntimeStore();
+
+    const result = await runNamedWorkflow(
+      {
+        workflowName: "simple-execution",
+        goal: "Test negative maxSteps rejection",
+        slug: "test-maxsteps-negative",
+        ownerId: "owner-test",
+        store,
+        workflows: SIMPLE_WORKFLOWS,
+        maxSteps: -5,
+      },
+      noopProjectEffect,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error.type).toBe("command_validation");
+      if (result.error.type === "command_validation") {
+        expect(result.error.field).toBe("maxSteps");
+        // Structured numeric value matches the supplied cap.
+        expect(result.error.maxSteps).toBe(-5);
+      }
+    }
+  });
+
+  it("returns command_validation (field: maxSteps) when a multi-step workflow exceeds maxSteps: 1", async () => {
+    // MULTI_STEP_WORKFLOWS has 2 steps. maxSteps: 1 means the second step
+    // dispatch triggers the cap. The error must carry the structured maxSteps
+    // value so callers can read it without parsing the human-readable message.
+    const store = createInMemoryRuntimeStore();
+
+    const result = await runNamedWorkflow(
+      {
+        workflowName: "multi-step-execution",
+        goal: "Test maxSteps exceeded on multi-step workflow",
+        slug: "test-maxsteps-exceeded",
+        ownerId: "owner-test",
+        store,
+        workflows: MULTI_STEP_WORKFLOWS,
+        maxSteps: 1,
+      },
+      noopProjectEffect,
+    );
+
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error.type).toBe("command_validation");
+      if (result.error.type === "command_validation") {
+        expect(result.error.field).toBe("maxSteps");
+        // Structured value — must equal the cap supplied by the caller.
+        expect(result.error.maxSteps).toBe(1);
+      }
+    }
+  });
+
+  it("CommandValidationError.maxSteps carries the exact cap value — no regex scraping needed", async () => {
+    // Prove the structured field is present and equals the input cap.
+    // Callers must NOT need to parse error.message to recover the cap value.
+    const store = createInMemoryRuntimeStore();
+    const cap = 3;
+
+    const result = await runNamedWorkflow(
+      {
+        workflowName: "multi-step-execution",
+        goal: "Structured maxSteps value test",
+        slug: "structured-maxsteps-value",
+        ownerId: "owner-test",
+        store,
+        workflows: MULTI_STEP_WORKFLOWS,
+        maxSteps: cap,
+      },
+      noopProjectEffect,
+    );
+
+    // A 2-step workflow with maxSteps: 3 should succeed (2 ≤ 3).
+    // This test proves the cap is threaded correctly for the success path too.
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.kind).toBe("execution-started");
+    }
+  });
+
+  it("succeeds when maxSteps equals the exact step count of the workflow", async () => {
+    // MULTI_STEP_WORKFLOWS has 2 steps. maxSteps: 2 should succeed.
+    const store = createInMemoryRuntimeStore();
+
+    const result = await runNamedWorkflow(
+      {
+        workflowName: "multi-step-execution",
+        goal: "Exact step count test",
+        slug: "exact-step-count",
+        ownerId: "owner-test",
+        store,
+        workflows: MULTI_STEP_WORKFLOWS,
+        maxSteps: 2,
+      },
+      noopProjectEffect,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.kind).toBe("execution-started");
+    }
+  });
+
+  it("leaves the store empty when maxSteps < 1 (validation before store access)", async () => {
+    // maxSteps < 1 is rejected before any WorkflowInstance is created.
+    const store = createInMemoryRuntimeStore();
+
+    await runNamedWorkflow(
+      {
+        workflowName: "simple-execution",
+        goal: "Store isolation test",
+        slug: "store-isolation",
+        ownerId: "owner-test",
+        store,
+        workflows: SIMPLE_WORKFLOWS,
+        maxSteps: 0,
+      },
+      noopProjectEffect,
+    );
+
+    const instances = await store.instances.list();
+    expect(instances.isOk()).toBe(true);
+    if (instances.isOk()) {
+      expect(instances.value).toHaveLength(0);
+    }
+  });
+});

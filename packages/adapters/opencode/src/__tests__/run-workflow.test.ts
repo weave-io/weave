@@ -991,3 +991,174 @@ describe("runWorkflow — PlanStateProvider at named-workflow completion boundar
     expect(planStateProvider.isPlanCompleteCalls).toHaveLength(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Tests — MaxStepsExceeded: structured surfacing (no regex scraping)
+// ---------------------------------------------------------------------------
+
+describe("runWorkflow — MaxStepsExceeded: structured error surfacing", () => {
+  /**
+   * Regression coverage for the `RunWorkflowInput.maxSteps` chain.
+   *
+   * These tests prove that:
+   * 1. `maxSteps` is threaded from `RunWorkflowInput` through `runNamedWorkflow`
+   *    (engine) to `runWorkflowLifecycle` (runner).
+   * 2. When the cap is exceeded, `runWorkflow` surfaces
+   *    `{ type: "MaxStepsExceeded", maxSteps: N }` with `N` matching the
+   *    input cap — no regex scraping of a human-readable message string.
+   * 3. `maxSteps: 0` is rejected before any store access.
+   *
+   * Chain: RunWorkflowInput.maxSteps
+   *   → runWorkflow (passes to runNamedWorkflow)
+   *   → runNamedWorkflow (passes to runWorkflowLifecycle)
+   *   → runWorkflowLifecycle (enforces cap, emits max_steps_exceeded)
+   *   → mapRunnerErrorToCommandError (command_validation with maxSteps field)
+   *   → mapCommandError (MaxStepsExceeded with structured maxSteps value)
+   *   → RunWorkflowError.MaxStepsExceeded.maxSteps (N matches input cap)
+   */
+
+  it("returns MaxStepsExceeded when maxSteps: 1 and workflow has 2 steps", async () => {
+    // TWO_STEP_CONFIG has 2 steps. maxSteps: 1 means the second step dispatch
+    // triggers the cap. The error must carry the structured maxSteps value.
+    const adapter = new OpenCodeAdapter();
+    const store = createInMemoryRuntimeStore();
+
+    const result = await runWorkflow({
+      config: TWO_STEP_CONFIG,
+      workflowName: "plan-and-execute",
+      goal: "Test maxSteps exceeded",
+      slug: "test-maxsteps-exceeded",
+      adapter,
+      store,
+      maxSteps: 1,
+    });
+
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error.type).toBe("MaxStepsExceeded");
+      if (result.error.type === "MaxStepsExceeded") {
+        // Structured numeric value — must equal the cap supplied by the caller.
+        // No regex scraping of a human-readable message string.
+        expect(result.error.maxSteps).toBe(1);
+      }
+    }
+  });
+
+  it("MaxStepsExceeded.maxSteps equals the exact cap supplied in RunWorkflowInput", async () => {
+    // Prove the structured field carries the exact input cap value.
+    const adapter = new OpenCodeAdapter();
+    const store = createInMemoryRuntimeStore();
+    const cap = 1;
+
+    const result = await runWorkflow({
+      config: TWO_STEP_CONFIG,
+      workflowName: "plan-and-execute",
+      goal: "Structured maxSteps value test",
+      slug: "structured-maxsteps-value",
+      adapter,
+      store,
+      maxSteps: cap,
+    });
+
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error.type).toBe("MaxStepsExceeded");
+      if (result.error.type === "MaxStepsExceeded") {
+        expect(result.error.maxSteps).toBe(cap);
+      }
+    }
+  });
+
+  it("returns MaxStepsExceeded when maxSteps: 0 (below minimum)", async () => {
+    // maxSteps: 0 is rejected by runWorkflowLifecycle before any store access.
+    // The adapter maps this to MaxStepsExceeded with maxSteps: 0.
+    const adapter = new OpenCodeAdapter();
+    const store = createInMemoryRuntimeStore();
+
+    const result = await runWorkflow({
+      config: TWO_STEP_CONFIG,
+      workflowName: "plan-and-execute",
+      goal: "Test maxSteps=0 rejection",
+      slug: "test-maxsteps-zero",
+      adapter,
+      store,
+      maxSteps: 0,
+    });
+
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error.type).toBe("MaxStepsExceeded");
+      if (result.error.type === "MaxStepsExceeded") {
+        expect(result.error.maxSteps).toBe(0);
+      }
+    }
+  });
+
+  it("succeeds when maxSteps equals the exact step count of the workflow", async () => {
+    // TWO_STEP_CONFIG has 2 steps. maxSteps: 2 should succeed.
+    const adapter = new OpenCodeAdapter();
+    const store = createInMemoryRuntimeStore();
+
+    const result = await runWorkflow({
+      config: TWO_STEP_CONFIG,
+      workflowName: "plan-and-execute",
+      goal: "Exact step count test",
+      slug: "exact-step-count",
+      adapter,
+      store,
+      maxSteps: 2,
+    });
+
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.status).toBe("completed");
+      expect(result.value.stepsDispatched).toBe(2);
+    }
+  });
+
+  it("succeeds with default maxSteps (100) when no cap is supplied", async () => {
+    // No maxSteps supplied — defaults to 100. A 2-step workflow should complete.
+    const adapter = new OpenCodeAdapter();
+    const store = createInMemoryRuntimeStore();
+
+    const result = await runWorkflow({
+      config: TWO_STEP_CONFIG,
+      workflowName: "plan-and-execute",
+      goal: "Default maxSteps test",
+      slug: "default-maxsteps",
+      adapter,
+      store,
+      // maxSteps intentionally omitted — defaults to 100
+    });
+
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.status).toBe("completed");
+    }
+  });
+
+  it("MaxStepsExceeded is distinct from WorkflowNotFound and LifecycleError", async () => {
+    // Prove the discriminated union is correctly typed — MaxStepsExceeded is
+    // a separate variant, not conflated with other error types.
+    const adapter = new OpenCodeAdapter();
+    const store = createInMemoryRuntimeStore();
+
+    const result = await runWorkflow({
+      config: TWO_STEP_CONFIG,
+      workflowName: "plan-and-execute",
+      goal: "Error type distinction test",
+      slug: "error-type-distinction",
+      adapter,
+      store,
+      maxSteps: 1,
+    });
+
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      // Must be MaxStepsExceeded — not WorkflowNotFound or LifecycleError.
+      expect(result.error.type).not.toBe("WorkflowNotFound");
+      expect(result.error.type).not.toBe("LifecycleError");
+      expect(result.error.type).toBe("MaxStepsExceeded");
+    }
+  });
+});
