@@ -29,6 +29,14 @@
   - interface RunWorkflowInput
   - interface RunWorkflowResult
   - type RunWorkflowError
+- `packages/adapters/opencode/src/runtime-command-projection.ts`
+  - function buildOpenCodeHealthReport: (overrides?) => AdapterHealthReport
+  - class RuntimeCommandProjection
+  - interface ProjectionSuccess
+  - interface ProjectionFailure
+  - interface ProjectionDegraded
+  - interface StartPlanProjectionInput
+  - _...7 more_
 - `packages/adapters/opencode/src/skill-discovery.ts`
   - function buildSkillInfoList: (names) => SkillInfo[]
   - function validateDeclaredSkills: (declaredSkills, availableSkills, disabledSkills) => Result<void, MissingSkillsError>

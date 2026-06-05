@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weave/core, @weave/engine, @weave/config, @weave/cli, @weave/adapter-opencode
 
-> 0 routes | 0 models | 0 components | 87 lib files | 4 env vars | 5 middleware | 0% test coverage
-> **Token savings:** this file is ~7,200 tokens. Without it, AI exploration would cost ~33,500 tokens. **Saves ~26,300 tokens per conversation.**
-> **Last scanned:** 2026-06-05 15:35 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 88 lib files | 4 env vars | 5 middleware | 0% test coverage
+> **Token savings:** this file is ~7,300 tokens. Without it, AI exploration would cost ~33,800 tokens. **Saves ~26,500 tokens per conversation.**
+> **Last scanned:** 2026-06-05 15:58 — re-run after significant changes
 
 ---
 
@@ -40,6 +40,14 @@
   - interface RunWorkflowInput
   - interface RunWorkflowResult
   - type RunWorkflowError
+- `packages/adapters/opencode/src/runtime-command-projection.ts`
+  - function buildOpenCodeHealthReport: (overrides?) => AdapterHealthReport
+  - class RuntimeCommandProjection
+  - interface ProjectionSuccess
+  - interface ProjectionFailure
+  - interface ProjectionDegraded
+  - interface StartPlanProjectionInput
+  - _...7 more_
 - `packages/adapters/opencode/src/skill-discovery.ts`
   - function buildSkillInfoList: (names) => SkillInfo[]
   - function validateDeclaredSkills: (declaredSkills, availableSkills, disabledSkills) => Result<void, MissingSkillsError>
@@ -389,13 +397,13 @@
 - `packages/adapters/opencode/src/sdk-types.ts` — imported by **9** files
 - `packages/cli/src/args.ts` — imported by **8** files
 - `packages/core/src/tokens.ts` — imported by **8** files
+- `packages/adapters/opencode/src/adapter.ts` — imported by **7** files
 - `packages/engine/src/execution-lifecycle.ts` — imported by **7** files
 - `packages/cli/src/errors.ts` — imported by **6** files
 - `packages/cli/src/prompt/index.ts` — imported by **6** files
 - `packages/core/src/errors.ts` — imported by **6** files
 - `packages/engine/src/tool-policy.ts` — imported by **6** files
 - `packages/engine/src/__tests__/execution-lifecycle/fixtures.ts` — imported by **6** files
-- `packages/engine/src/compose.ts` — imported by **6** files
 
 ## Import Map (who imports what)
 
@@ -415,7 +423,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 358 test files found
+> 361 test files found
 
 ---
 

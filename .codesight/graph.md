@@ -15,13 +15,13 @@
 - `packages/adapters/opencode/src/sdk-types.ts` — imported by **9** files
 - `packages/cli/src/args.ts` — imported by **8** files
 - `packages/core/src/tokens.ts` — imported by **8** files
+- `packages/adapters/opencode/src/adapter.ts` — imported by **7** files
 - `packages/engine/src/execution-lifecycle.ts` — imported by **7** files
 - `packages/cli/src/errors.ts` — imported by **6** files
 - `packages/cli/src/prompt/index.ts` — imported by **6** files
 - `packages/core/src/errors.ts` — imported by **6** files
 - `packages/engine/src/tool-policy.ts` — imported by **6** files
 - `packages/engine/src/__tests__/execution-lifecycle/fixtures.ts` — imported by **6** files
-- `packages/engine/src/compose.ts` — imported by **6** files
 
 ## Import Map (who imports what)
 
