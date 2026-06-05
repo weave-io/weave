@@ -131,6 +131,25 @@ export async function run(
       });
     }
 
+    case "prompt": {
+      const { runPrompt } = await import("./commands/prompt.js");
+      const subcommand = flags.promptSubcommand;
+      if (!subcommand) {
+        terminal.stderr(
+          [
+            `${theme.boldYellow("Usage:")} weave prompt <subcommand>`,
+            "",
+            `  ${theme.cyan("weave prompt inspect <agent>")}         ${theme.dim("Render the composed prompt for an agent")}`,
+            `  ${theme.cyan("weave prompt inspect <agent> --json")}  ${theme.dim("Output prompt + metadata as JSON")}`,
+            `  ${theme.cyan("weave prompt list")}                    ${theme.dim("List all available agent names")}`,
+            `  ${theme.cyan("weave prompt list --json")}             ${theme.dim("List agents as JSON")}`,
+          ].join("\n"),
+        );
+        return ok(1);
+      }
+      return runPrompt({ terminal, theme, flags });
+    }
+
     case "unknown": {
       const errMsg = formatCliError({
         type: "UnknownCommand",

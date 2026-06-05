@@ -9,7 +9,7 @@ function cli(args: string[]) {
 }
 
 describe("CLI routing", () => {
-  it("--help exits 0 and lists init and validate", async () => {
+  it("Should_exit_0_and_list_init_and_validate_for_help", async () => {
     const { terminal, result } = cli(["--help"]);
     const r = await result;
     expect(r.isOk()).toBe(true);
@@ -19,7 +19,7 @@ describe("CLI routing", () => {
     expect(out).toContain("validate");
   });
 
-  it("-h is an alias for --help", async () => {
+  it("Should_treat_h_as_an_alias_for_help", async () => {
     const { terminal, result } = cli(["-h"]);
     const r = await result;
     expect(r.isOk()).toBe(true);
@@ -28,7 +28,7 @@ describe("CLI routing", () => {
     expect(out).toContain("COMMANDS");
   });
 
-  it("no arguments shows help", async () => {
+  it("Should_show_help_when_no_arguments_are_provided", async () => {
     const { terminal, result } = cli([]);
     const r = await result;
     expect(r.isOk()).toBe(true);
@@ -37,7 +37,7 @@ describe("CLI routing", () => {
     expect(out).toContain("USAGE");
   });
 
-  it("--version exits 0 and prints version string", async () => {
+  it("Should_exit_0_and_print_version_for_version", async () => {
     const { terminal, result } = cli(["--version"]);
     const r = await result;
     expect(r.isOk()).toBe(true);
@@ -46,7 +46,7 @@ describe("CLI routing", () => {
     expect(out).toMatch(/^\d+\.\d+\.\d+$/);
   });
 
-  it("-V is an alias for --version", async () => {
+  it("Should_treat_v_as_an_alias_for_version", async () => {
     const { terminal, result } = cli(["-V"]);
     const r = await result;
     expect(r.isOk()).toBe(true);
@@ -55,7 +55,7 @@ describe("CLI routing", () => {
     expect(out).toMatch(/^\d+\.\d+\.\d+$/);
   });
 
-  it("unknown command exits 1 with error message", async () => {
+  it("Should_exit_1_with_error_message_for_unknown_command", async () => {
     const { terminal, result } = cli(["frobnicate"]);
     const r = await result;
     expect(r.isOk()).toBe(true);
@@ -65,7 +65,7 @@ describe("CLI routing", () => {
     expect(errOut).toContain("Unknown command");
   });
 
-  it("run command exits 1 with product-vision message", async () => {
+  it("Should_exit_1_with_product_vision_message_for_run_command", async () => {
     const { terminal, result } = cli(["run"]);
     const r = await result;
     expect(r.isOk()).toBe(true);
@@ -75,7 +75,7 @@ describe("CLI routing", () => {
     expect(errOut).toContain("weave init");
   });
 
-  it("--help overrides a command", async () => {
+  it("Should_allow_help_to_override_a_command", async () => {
     const { terminal, result } = cli(["validate", "--help"]);
     const r = await result;
     expect(r.isOk()).toBe(true);
@@ -84,12 +84,43 @@ describe("CLI routing", () => {
     expect(out).toContain("COMMANDS");
   });
 
-  it("help output includes EXAMPLES section", async () => {
+  it("Should_include_examples_section_in_help_output", async () => {
     const { terminal, result } = cli(["--help"]);
     await result;
     const out = terminal.out.join("\n");
     expect(out).toContain("EXAMPLES");
     expect(out).toContain("weave init");
     expect(out).toContain("weave validate");
+  });
+
+  it("Should_not_show_unknown_command_for_prompt", async () => {
+    const { terminal, result } = cli(["prompt"]);
+
+    const r = await result;
+
+    expect(r.isOk()).toBe(true);
+    expect(r._unsafeUnwrap()).toBe(1);
+    expect(terminal.err.join("\n")).not.toContain("Unknown command");
+  });
+
+  it("Should_show_usage_for_bare_prompt_command", async () => {
+    const { terminal, result } = cli(["prompt"]);
+
+    const r = await result;
+    const combinedOutput = [...terminal.out, ...terminal.err].join("\n");
+
+    expect(r.isOk()).toBe(true);
+    expect(r._unsafeUnwrap()).toBe(1);
+    expect(combinedOutput).toContain("weave prompt inspect");
+  });
+
+  it("Should_dispatch_prompt_list_without_unknown_command_error", async () => {
+    const { terminal, result } = cli(["prompt", "list"]);
+
+    const r = await result;
+
+    expect(r.isOk()).toBe(true);
+    expect(r._unsafeUnwrap()).toBe(0);
+    expect(terminal.err.join("\n")).not.toContain("Unknown command");
   });
 });

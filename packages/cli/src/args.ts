@@ -18,6 +18,7 @@ export type Command =
   | "init"
   | "validate"
   | "run"
+  | "prompt"
   | "runtime"
   | "unknown";
 
@@ -52,6 +53,10 @@ export interface ParsedArgs {
     limit?: number;
     /** runtime subcommand: status | journal */
     runtimeSubcommand?: "status" | "journal";
+    /** prompt subcommand: inspect | list */
+    promptSubcommand?: "inspect" | "list";
+    /** agent name for `prompt inspect <agent>` */
+    agentName?: string;
     /**
      * init submode: "migrate" when `weave init migrate` is invoked.
      * Undefined for ordinary `weave init`.
@@ -224,6 +229,9 @@ export function parseArgs(argv: string[]): Result<ParsedArgs, ArgParseError> {
         case "run":
           command = "run";
           break;
+        case "prompt":
+          command = "prompt";
+          break;
         case "runtime":
           command = "runtime";
           break;
@@ -249,6 +257,24 @@ export function parseArgs(argv: string[]): Result<ParsedArgs, ArgParseError> {
         flags.runtimeSubcommand = arg;
         continue;
       }
+    }
+
+    // prompt subcommands: inspect, list
+    if (command === "prompt" && flags.promptSubcommand === undefined) {
+      if (arg === "inspect" || arg === "list") {
+        flags.promptSubcommand = arg;
+        continue;
+      }
+    }
+
+    // prompt inspect agent name — parsed as the first positional after "inspect"
+    if (
+      command === "prompt" &&
+      flags.promptSubcommand === "inspect" &&
+      flags.agentName === undefined
+    ) {
+      flags.agentName = arg;
+      continue;
     }
 
     // Everything else goes into rest

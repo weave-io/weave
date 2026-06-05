@@ -31,6 +31,8 @@ export class ThemeRenderer {
       `  ${theme.boldCyan("COMMANDS")}`,
       "",
       `    ${theme.cyan("init")}                    ${theme.dim("Create Weave config and install into harnesses")}`,
+      `    ${theme.cyan("prompt inspect <agent>")}  ${theme.dim("Render the composed prompt for an agent")}`,
+      `    ${theme.cyan("prompt list")}             ${theme.dim("List all available agent names")}`,
       `    ${theme.cyan("validate")}               ${theme.dim("Validate .weave configuration files")}`,
       `    ${theme.cyan("runtime status")}         ${theme.dim("Show runtime store status")}`,
       `    ${theme.cyan("runtime journal")}        ${theme.dim("Show recent journal entries (--limit <n>)")}`,
