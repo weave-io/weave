@@ -27,11 +27,15 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import type { PlanStateError, PlanStateProvider } from "@weave/engine";
+import type {
+  AgentDescriptor,
+  PlanStateError,
+  PlanStateProvider,
+} from "@weave/engine";
 import { createInMemoryRuntimeStore } from "@weave/engine";
 import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 
-import { OpenCodeAdapter } from "../adapter.js";
+import { OpenCodeAdapter, type OpenCodeAdapterError } from "../adapter.js";
 import {
   DEFAULT_EXECUTION_WORKFLOW,
   type StartPlanExecutionInput,
@@ -39,6 +43,31 @@ import {
   WEAVE_START_COMMAND,
   WEAVE_START_LEGACY_COMMAND,
 } from "../start-plan-execution.js";
+
+// ---------------------------------------------------------------------------
+// MockOpenCodeAdapter
+// ---------------------------------------------------------------------------
+
+/**
+ * Minimal test double for `OpenCodeAdapter`.
+ *
+ * Overrides `spawnSubagent` to return `okAsync(undefined)` without touching
+ * the filesystem, SDK, or any real harness resource. Tracks all calls so
+ * tests can assert the adapter was (or was not) invoked.
+ *
+ * Extends `OpenCodeAdapter` so it satisfies the concrete type required by
+ * `StartPlanExecutionInput.adapter` and `RunWorkflowInput.adapter`.
+ */
+class MockOpenCodeAdapter extends OpenCodeAdapter {
+  readonly spawnSubagentCalls: AgentDescriptor[] = [];
+
+  override spawnSubagent(
+    descriptor: AgentDescriptor,
+  ): ResultAsync<void, OpenCodeAdapterError> {
+    this.spawnSubagentCalls.push(descriptor);
+    return okAsync(undefined);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // MockPlanStateProvider
@@ -286,7 +315,7 @@ describe("startPlanExecution — command name constants", () => {
 
 describe("startPlanExecution — missing plan", () => {
   it("returns PlanNotFound when planExists returns false", async () => {
-    const adapter = new OpenCodeAdapter();
+    const adapter = new MockOpenCodeAdapter();
     const store = createInMemoryRuntimeStore();
     // Provider reports plan does NOT exist
     const planStateProvider = new MockPlanStateProvider(false);
@@ -309,7 +338,7 @@ describe("startPlanExecution — missing plan", () => {
   });
 
   it("leaves the store empty when plan is missing", async () => {
-    const adapter = new OpenCodeAdapter();
+    const adapter = new MockOpenCodeAdapter();
     const store = createInMemoryRuntimeStore();
     const planStateProvider = new MockPlanStateProvider(false);
 
@@ -330,7 +359,7 @@ describe("startPlanExecution — missing plan", () => {
   });
 
   it("calls planExists with the correct plan name", async () => {
-    const adapter = new OpenCodeAdapter();
+    const adapter = new MockOpenCodeAdapter();
     const store = createInMemoryRuntimeStore();
     const planStateProvider = new MockPlanStateProvider(false);
 
@@ -353,7 +382,7 @@ describe("startPlanExecution — missing plan", () => {
 
 describe("startPlanExecution — provider unavailable", () => {
   it("returns ProviderUnavailable when planStateProvider is undefined", async () => {
-    const adapter = new OpenCodeAdapter();
+    const adapter = new MockOpenCodeAdapter();
     const store = createInMemoryRuntimeStore();
 
     const result = await startPlanExecution({
@@ -371,7 +400,7 @@ describe("startPlanExecution — provider unavailable", () => {
   });
 
   it("leaves the store empty when provider is undefined", async () => {
-    const adapter = new OpenCodeAdapter();
+    const adapter = new MockOpenCodeAdapter();
     const store = createInMemoryRuntimeStore();
 
     await startPlanExecution({
@@ -390,7 +419,7 @@ describe("startPlanExecution — provider unavailable", () => {
   });
 
   it("returns ProviderUnavailable when planExists returns an error", async () => {
-    const adapter = new OpenCodeAdapter();
+    const adapter = new MockOpenCodeAdapter();
     const store = createInMemoryRuntimeStore();
     const planStateProvider = new FailingPlanStateProvider();
 
@@ -409,7 +438,7 @@ describe("startPlanExecution — provider unavailable", () => {
   });
 
   it("leaves the store empty when provider returns an error", async () => {
-    const adapter = new OpenCodeAdapter();
+    const adapter = new MockOpenCodeAdapter();
     const store = createInMemoryRuntimeStore();
     const planStateProvider = new FailingPlanStateProvider();
 
@@ -435,7 +464,7 @@ describe("startPlanExecution — provider unavailable", () => {
 
 describe("startPlanExecution — invalid plan name", () => {
   it("returns InvalidPlanName (not ProviderUnavailable) when provider rejects the name", async () => {
-    const adapter = new OpenCodeAdapter();
+    const adapter = new MockOpenCodeAdapter();
     const store = createInMemoryRuntimeStore();
     const planStateProvider = new InvalidNamePlanStateProvider();
 
@@ -454,7 +483,7 @@ describe("startPlanExecution — invalid plan name", () => {
   });
 
   it("preserves the planName in the InvalidPlanName error", async () => {
-    const adapter = new OpenCodeAdapter();
+    const adapter = new MockOpenCodeAdapter();
     const store = createInMemoryRuntimeStore();
     const planStateProvider = new InvalidNamePlanStateProvider();
     const badName = "../../../etc/passwd";
@@ -474,7 +503,7 @@ describe("startPlanExecution — invalid plan name", () => {
   });
 
   it("leaves the store empty when plan name is invalid", async () => {
-    const adapter = new OpenCodeAdapter();
+    const adapter = new MockOpenCodeAdapter();
     const store = createInMemoryRuntimeStore();
     const planStateProvider = new InvalidNamePlanStateProvider();
 
@@ -494,7 +523,7 @@ describe("startPlanExecution — invalid plan name", () => {
   });
 
   it("InvalidPlanName is distinct from ProviderUnavailable", async () => {
-    const adapter = new OpenCodeAdapter();
+    const adapter = new MockOpenCodeAdapter();
     const store = createInMemoryRuntimeStore();
 
     const invalidResult = await startPlanExecution({
@@ -530,7 +559,7 @@ describe("startPlanExecution — invalid plan name", () => {
 
 describe("startPlanExecution — present plan calls explicit workflow path", () => {
   it("calls runWorkflow when plan exists (agent_signal workflow)", async () => {
-    const adapter = new OpenCodeAdapter();
+    const adapter = new MockOpenCodeAdapter();
     const store = createInMemoryRuntimeStore();
     // Provider reports plan exists
     const planStateProvider = new MockPlanStateProvider(true, true);
@@ -552,7 +581,7 @@ describe("startPlanExecution — present plan calls explicit workflow path", () 
   });
 
   it("creates a WorkflowInstance in the store when plan exists", async () => {
-    const adapter = new OpenCodeAdapter();
+    const adapter = new MockOpenCodeAdapter();
     const store = createInMemoryRuntimeStore();
     const planStateProvider = new MockPlanStateProvider(true, true);
 
@@ -576,7 +605,7 @@ describe("startPlanExecution — present plan calls explicit workflow path", () 
   });
 
   it("uses planName as the slug for the workflow instance", async () => {
-    const adapter = new OpenCodeAdapter();
+    const adapter = new MockOpenCodeAdapter();
     const store = createInMemoryRuntimeStore();
     const planStateProvider = new MockPlanStateProvider(true, true);
 
@@ -601,7 +630,7 @@ describe("startPlanExecution — present plan calls explicit workflow path", () 
   });
 
   it("defaults goal to 'Execute plan: <planName>' when goal is omitted", async () => {
-    const adapter = new OpenCodeAdapter();
+    const adapter = new MockOpenCodeAdapter();
     const store = createInMemoryRuntimeStore();
     const planStateProvider = new MockPlanStateProvider(true, true);
 
@@ -620,7 +649,7 @@ describe("startPlanExecution — present plan calls explicit workflow path", () 
   });
 
   it("uses the provided goal when supplied", async () => {
-    const adapter = new OpenCodeAdapter();
+    const adapter = new MockOpenCodeAdapter();
     const store = createInMemoryRuntimeStore();
     const planStateProvider = new MockPlanStateProvider(true, true);
 
@@ -641,7 +670,7 @@ describe("startPlanExecution — present plan calls explicit workflow path", () 
     // Verify that the DEFAULT_EXECUTION_WORKFLOW constant is used when
     // workflowName is not provided. We test this by omitting workflowName
     // and using a config that includes tapestry-execution.
-    const adapter = new OpenCodeAdapter();
+    const adapter = new MockOpenCodeAdapter();
     const store = createInMemoryRuntimeStore();
     // Provider reports plan exists AND is complete (needed for plan_complete step)
     const planStateProvider = new MockPlanStateProvider(true, true);
@@ -669,7 +698,7 @@ describe("startPlanExecution — present plan calls explicit workflow path", () 
   });
 
   it("returns WorkflowError when the workflow does not exist in config", async () => {
-    const adapter = new OpenCodeAdapter();
+    const adapter = new MockOpenCodeAdapter();
     const store = createInMemoryRuntimeStore();
     const planStateProvider = new MockPlanStateProvider(true, true);
 
@@ -692,7 +721,7 @@ describe("startPlanExecution — present plan calls explicit workflow path", () 
   });
 
   it("leaves the store empty when workflow is not found", async () => {
-    const adapter = new OpenCodeAdapter();
+    const adapter = new MockOpenCodeAdapter();
     const store = createInMemoryRuntimeStore();
     const planStateProvider = new MockPlanStateProvider(true, true);
 
@@ -713,7 +742,7 @@ describe("startPlanExecution — present plan calls explicit workflow path", () 
   });
 
   it("passes planStateProvider through to runWorkflow for plan-oriented steps", async () => {
-    const adapter = new OpenCodeAdapter();
+    const adapter = new MockOpenCodeAdapter();
     const store = createInMemoryRuntimeStore();
     // Provider reports plan exists AND is complete
     const planStateProvider = new MockPlanStateProvider(true, true);
@@ -754,7 +783,7 @@ describe("startPlanExecution — adapter boundary", () => {
   it("startPlanExecution accepts WeaveConfig as a parameter (not fetched internally)", () => {
     // Structural proof: the function signature requires config to be passed in.
     // This ensures no core-owned config loading happens inside the helper.
-    const adapter = new OpenCodeAdapter();
+    const adapter = new MockOpenCodeAdapter();
     const planStateProvider = new MockPlanStateProvider(false);
 
     // The call compiles and runs — config is a parameter, not fetched internally.
