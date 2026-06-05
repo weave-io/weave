@@ -3,24 +3,32 @@
  *
  * ## What these tests prove (Spec 22 Unit 4 / ADR 0004)
  *
- * 1. **Explicit named-workflow execution** — `runWorkflow` is the OpenCode
- *    adapter's helper for running a specific, named workflow declared in
- *    `.weave/config.weave`. The caller must supply the workflow name; there is
- *    no implicit or default workflow selection. This is distinct from the
- *    ordinary Loom-led path (`/weave:start` → `startPlanExecution`), which is
- *    plan-first and does not require the caller to name a workflow.
+ * 1. **Explicit named-workflow execution via engine delegation** — `runWorkflow`
+ *    is the OpenCode adapter's helper for running a specific, named workflow
+ *    declared in `.weave/config.weave`. It delegates lifecycle semantics to the
+ *    engine's `runNamedWorkflow` command operation and supplies
+ *    `adapter.spawnSubagent` as the `projectEffect` callback. The caller must
+ *    supply the workflow name; there is no implicit or default workflow
+ *    selection. This is distinct from the ordinary Loom-led path
+ *    (`/weave:start` → `startPlanExecution`), which is plan-first and does not
+ *    require the caller to name a workflow.
  *
  *    `runWorkflow` must be called by a user-authorized trigger (command
  *    handler, script, or UI action). It is never called from idle hooks,
  *    session events, continuation hooks, or lifecycle observations.
  *
- * 2. **`PlanStateProvider` at completion boundaries** — when a workflow step
+ * 2. **`DispatchAgentEffect` applied through `OpenCodeAdapter.spawnSubagent`**
+ *    — the engine emits `DispatchAgentEffect` values; the adapter's
+ *    `projectEffect` callback calls `adapter.spawnSubagent` for each one.
+ *    The engine never applies harness-specific behavior directly.
+ *
+ * 3. **`PlanStateProvider` at completion boundaries** — when a workflow step
  *    uses `plan_created` or `plan_complete` as its completion method, the
  *    engine requires a `PlanStateProvider`. Tests prove:
  *    - Absent provider → `LifecycleError` (engine fails closed)
  *    - Present provider → completion succeeds when plan state matches
  *
- * 3. **Plugin hooks do not start named-workflow execution** — `runWorkflow` is
+ * 4. **Plugin hooks do not start named-workflow execution** — `runWorkflow` is
  *    not wired to any idle hook, session event, or continuation hook in the
  *    OpenCode adapter. The plugin's `event` hook fires only on
  *    `session.created` and performs agent materialization — it never calls
@@ -33,7 +41,7 @@
  * - Fixture `WeaveConfig` objects with 2–3 step workflows
  *
  * Asserts:
- * - At least one `DispatchAgentEffect` was applied
+ * - At least one `DispatchAgentEffect` was applied through `adapter.spawnSubagent`
  * - The produced `OpenCodeAgentConfig` validates against SDK types (no `any` casts)
  * - The execution loop terminates with `status: "completed"`
  * - `PlanStateProvider` is called for plan-oriented completion methods
@@ -348,7 +356,7 @@ const PLAN_COMPLETE_CONFIG: WeaveConfig = {
 // Tests — basic execution loop
 // ---------------------------------------------------------------------------
 
-describe("runWorkflow", () => {
+describe("runWorkflow — delegates to engine runNamedWorkflow with OpenCode adapter projection", () => {
   it("returns WorkflowNotFound error for unknown workflow name", async () => {
     const adapter = new OpenCodeAdapter();
     const store = createInMemoryRuntimeStore();
@@ -371,7 +379,10 @@ describe("runWorkflow", () => {
     }
   });
 
-  it("runs a 2-step workflow and applies DispatchAgentEffect for each step", async () => {
+  it("applies DispatchAgentEffect through adapter.spawnSubagent for each step in a 2-step workflow", async () => {
+    // Proof: runWorkflow delegates to runNamedWorkflow (engine) and supplies
+    // adapter.spawnSubagent as the projectEffect callback. The engine emits
+    // DispatchAgentEffect values; the adapter applies them via spawnSubagent.
     const adapter = new OpenCodeAdapter();
     const store = createInMemoryRuntimeStore();
     const planStateProvider = new MockPlanStateProvider();
@@ -401,13 +412,13 @@ describe("runWorkflow", () => {
     // Both steps should have been dispatched
     expect(stepsDispatched).toBe(2);
 
-    // At least one DispatchAgentEffect should have been applied
+    // At least one DispatchAgentEffect should have been applied through spawnSubagent
     const dispatchEffects = appliedEffects.filter(
       (e) => e.kind === "dispatch-agent",
     );
     expect(dispatchEffects.length).toBeGreaterThanOrEqual(1);
 
-    // The adapter should have translated at least one agent
+    // The adapter should have translated at least one agent via spawnSubagent
     expect(adapter.translatedAgents.size).toBeGreaterThanOrEqual(1);
   });
 
@@ -589,9 +600,9 @@ describe("runWorkflow", () => {
 
 describe("runWorkflow — explicit named-workflow execution boundary (Spec 22 Unit 4)", () => {
   /**
-   * Proof: `runWorkflow` executes a specific, named workflow — not the
-   * ordinary Loom-led path. The caller must supply `workflowName`; there is
-   * no implicit or default workflow selection.
+   * Proof: `runWorkflow` executes a specific, named workflow by delegating to
+   * the engine's `runNamedWorkflow` command operation. The caller must supply
+   * `workflowName`; there is no implicit or default workflow selection.
    *
    * This is distinct from `/weave:start` → `startPlanExecution`, which is
    * plan-first and does not require the caller to name a workflow.
@@ -605,9 +616,10 @@ describe("runWorkflow — explicit named-workflow execution boundary (Spec 22 Un
    *
    * ADR 0004 Decision 3: "Adapters are delivery layers, not semantic owners."
    *
-   * This test proves that `runWorkflow` calls `startExecution` internally
-   * (via the engine lifecycle surface) and that named-workflow execution only
-   * begins when the function is explicitly invoked — not from any implicit path.
+   * This test proves that `runWorkflow` delegates to `runNamedWorkflow`
+   * (which calls `startExecution` internally) and that named-workflow
+   * execution only begins when the function is explicitly invoked — not from
+   * any implicit path.
    */
   it("starts named-workflow execution only when explicitly called — not from idle hooks or session events", async () => {
     const adapter = new OpenCodeAdapter();
@@ -702,9 +714,10 @@ describe("runWorkflow — explicit named-workflow execution boundary (Spec 22 Un
 
   it("runWorkflow requires an explicit workflowName — it is not a hook or event handler", async () => {
     // Structural proof: `runWorkflow` requires an explicit `workflowName`
-    // that must be provided by the caller. It cannot be called from an idle
-    // hook or session event without those explicit inputs — there is no
-    // implicit state that could trigger it.
+    // that must be provided by the caller. It delegates to `runNamedWorkflow`
+    // (engine), which validates the name before any store access. It cannot
+    // be called from an idle hook or session event without those explicit
+    // inputs — there is no implicit state that could trigger it.
     //
     // This distinguishes runWorkflow from /weave:start (startPlanExecution),
     // which selects the workflow implicitly based on plan state.
@@ -747,6 +760,8 @@ describe("runWorkflow — PlanStateProvider at named-workflow completion boundar
    * Proof: when a named-workflow step uses `plan_created` as its completion
    * method, the engine requires a `PlanStateProvider`. The adapter (OpenCode)
    * is responsible for supplying this provider — it is not engine-owned I/O.
+   * `runWorkflow` threads the provider through to `runNamedWorkflow` (engine),
+   * which passes it to `runWorkflowLifecycle` and ultimately to `completeStep`.
    *
    * ADR 0004 Decision 3: "Adapters are delivery layers, not semantic owners."
    * Spec 19: "Adapters supply a `PlanStateProvider` implementation via

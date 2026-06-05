@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weave/core, @weave/engine, @weave/config, @weave/cli, @weave/adapter-opencode
 
-> 0 routes | 0 models | 0 components | 84 lib files | 4 env vars | 5 middleware | 0% test coverage
-> **Token savings:** this file is ~7,000 tokens. Without it, AI exploration would cost ~32,800 tokens. **Saves ~25,700 tokens per conversation.**
-> **Last scanned:** 2026-06-05 14:54 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 87 lib files | 4 env vars | 5 middleware | 0% test coverage
+> **Token savings:** this file is ~7,200 tokens. Without it, AI exploration would cost ~33,500 tokens. **Saves ~26,300 tokens per conversation.**
+> **Last scanned:** 2026-06-05 15:35 — re-run after significant changes
 
 ---
 
@@ -298,8 +298,11 @@
   - function createOwnerId: (raw) => OwnerId
   - function createArtifactId: (raw) => ArtifactId
   - _...30 more_
+- `packages/engine/src/runtime-command-operations/control.ts` — function abortExecution: (input) => import("neverthrow").ResultAsync<ExecutionAbortedData, CommandOperationError>, function advanceStep: (input) => import("neverthrow").ResultAsync<StepAdvancedData, CommandOperationError>
+- `packages/engine/src/runtime-command-operations/health.ts` — function runtimeHealth: (input) => RuntimeHealthResult
 - `packages/engine/src/runtime-command-operations/run-named-workflow.ts` — function runNamedWorkflow: (input, projectEffect) => void
 - `packages/engine/src/runtime-command-operations/start-plan.ts` — function startPlan: (input, projectEffect) => void
+- `packages/engine/src/runtime-command-operations/status.ts` — function inspectStatus: (input) => import("neverthrow").ResultAsync<ExecutionStatusData, CommandOperationError>
 - `packages/engine/src/runtime-command-operations/workflow-runner.ts`
   - function runWorkflowLifecycle: (input) => ResultAsync<WorkflowRunnerOutput, WorkflowRunnerError>
   - function mapWorkflowRunnerErrorToLifecycle: (error) => CommandLifecycleError
@@ -373,46 +376,46 @@
 
 ## Most Imported Files (change these carefully)
 
+- `packages/engine/src/runtime/types.ts` — imported by **17** files
 - `packages/cli/src/theme/colors.ts` — imported by **15** files
 - `packages/cli/src/io/terminal.ts` — imported by **13** files
 - `packages/engine/src/runtime/store.ts` — imported by **13** files
 - `packages/cli/src/fs/file-system.ts` — imported by **12** files
+- `packages/engine/src/logger.ts` — imported by **12** files
 - `packages/engine/src/runtime/errors.ts` — imported by **11** files
 - `packages/engine/src/execution-lifecycle/metadata.ts` — imported by **11** files
 - `packages/engine/src/execution-lifecycle/lease.ts` — imported by **10** files
 - `packages/engine/src/execution-lifecycle/errors.ts` — imported by **10** files
 - `packages/adapters/opencode/src/sdk-types.ts` — imported by **9** files
-- `packages/engine/src/logger.ts` — imported by **9** files
 - `packages/cli/src/args.ts` — imported by **8** files
 - `packages/core/src/tokens.ts` — imported by **8** files
+- `packages/engine/src/execution-lifecycle.ts` — imported by **7** files
 - `packages/cli/src/errors.ts` — imported by **6** files
 - `packages/cli/src/prompt/index.ts` — imported by **6** files
 - `packages/core/src/errors.ts` — imported by **6** files
 - `packages/engine/src/tool-policy.ts` — imported by **6** files
 - `packages/engine/src/__tests__/execution-lifecycle/fixtures.ts` — imported by **6** files
 - `packages/engine/src/compose.ts` — imported by **6** files
-- `packages/engine/src/runtime/types.ts` — imported by **6** files
-- `packages/adapters/opencode/src/index.ts` — imported by **5** files
 
 ## Import Map (who imports what)
 
+- `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts` +12 more
 - `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`, `packages/cli/src/commands/__tests__/migrate.test.ts` +10 more
 - `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`, `packages/cli/src/commands/__tests__/migrate.test.ts` +8 more
 - `packages/engine/src/runtime/store.ts` ← `packages/engine/src/__tests__/runtime-journal.test.ts`, `packages/engine/src/execution-lifecycle/artifacts.ts`, `packages/engine/src/execution-lifecycle/dispatch.ts`, `packages/engine/src/execution-lifecycle/inspection.ts`, `packages/engine/src/execution-lifecycle/interrupts.ts` +8 more
 - `packages/cli/src/fs/file-system.ts` ← `packages/cli/src/__tests__/file-system.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`, `packages/cli/src/commands/__tests__/migrate.test.ts`, `packages/cli/src/commands/__tests__/validate.test.ts` +7 more
+- `packages/engine/src/logger.ts` ← `packages/engine/src/compose.ts`, `packages/engine/src/index.ts`, `packages/engine/src/runtime/journal-writer.ts`, `packages/engine/src/runtime/sqlite/store.ts`, `packages/engine/src/runtime-command-operations/control.ts` +7 more
 - `packages/engine/src/runtime/errors.ts` ← `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-journal.test.ts`, `packages/engine/src/__tests__/runtime-journal.test.ts`, `packages/engine/src/execution-lifecycle/lease.ts`, `packages/engine/src/runtime/fingerprint.ts` +6 more
 - `packages/engine/src/execution-lifecycle/metadata.ts` ← `packages/engine/src/execution-lifecycle/before-tool.ts`, `packages/engine/src/execution-lifecycle/completion.ts`, `packages/engine/src/execution-lifecycle/dispatch.ts`, `packages/engine/src/execution-lifecycle/index.ts`, `packages/engine/src/execution-lifecycle/inspection.ts` +6 more
 - `packages/engine/src/execution-lifecycle/lease.ts` ← `packages/engine/src/execution-lifecycle/artifacts.ts`, `packages/engine/src/execution-lifecycle/completion.ts`, `packages/engine/src/execution-lifecycle/dispatch.ts`, `packages/engine/src/execution-lifecycle/inspection.ts`, `packages/engine/src/execution-lifecycle/interrupts.ts` +5 more
 - `packages/engine/src/execution-lifecycle/errors.ts` ← `packages/engine/src/execution-lifecycle/authorization.ts`, `packages/engine/src/execution-lifecycle/before-tool.ts`, `packages/engine/src/execution-lifecycle/dispatch.ts`, `packages/engine/src/execution-lifecycle/inspection.ts`, `packages/engine/src/execution-lifecycle/interrupts.ts` +5 more
-- `packages/adapters/opencode/src/sdk-types.ts` ← `packages/adapters/opencode/src/__tests__/adapter.test.ts`, `packages/adapters/opencode/src/__tests__/plugin.test.ts`, `packages/adapters/opencode/src/__tests__/reconcile-agent.test.ts`, `packages/adapters/opencode/src/__tests__/run-workflow.test.ts`, `packages/adapters/opencode/src/adapter.ts` +4 more
-- `packages/engine/src/logger.ts` ← `packages/engine/src/compose.ts`, `packages/engine/src/index.ts`, `packages/engine/src/runtime/journal-writer.ts`, `packages/engine/src/runtime/sqlite/store.ts`, `packages/engine/src/runtime-command-operations/run-named-workflow.ts` +4 more
 
 ---
 
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 351 test files found
+> 358 test files found
 
 ---
 

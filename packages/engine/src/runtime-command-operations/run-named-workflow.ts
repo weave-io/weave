@@ -127,7 +127,7 @@ export function runNamedWorkflow(
     effect: DispatchAgentEffect,
   ) => ResultAsync<void, WorkflowRunnerError>,
 ): ResultAsync<ExecutionStartedData, CommandOperationError> {
-  const { workflowName, goal, slug, ownerId, store, workflows, now } = input;
+  const { workflowName, goal, slug, ownerId, store, workflows, planStateProvider, now } = input;
 
   // Validate required fields before touching the store.
   if (!workflowName) {
@@ -179,6 +179,7 @@ export function runNamedWorkflow(
     store,
     workflows: typedWorkflows,
     projectEffect,
+    planStateProvider,
     now,
   })
     .mapErr(mapRunnerError)

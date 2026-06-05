@@ -287,8 +287,11 @@
   - function createOwnerId: (raw) => OwnerId
   - function createArtifactId: (raw) => ArtifactId
   - _...30 more_
+- `packages/engine/src/runtime-command-operations/control.ts` — function abortExecution: (input) => import("neverthrow").ResultAsync<ExecutionAbortedData, CommandOperationError>, function advanceStep: (input) => import("neverthrow").ResultAsync<StepAdvancedData, CommandOperationError>
+- `packages/engine/src/runtime-command-operations/health.ts` — function runtimeHealth: (input) => RuntimeHealthResult
 - `packages/engine/src/runtime-command-operations/run-named-workflow.ts` — function runNamedWorkflow: (input, projectEffect) => void
 - `packages/engine/src/runtime-command-operations/start-plan.ts` — function startPlan: (input, projectEffect) => void
+- `packages/engine/src/runtime-command-operations/status.ts` — function inspectStatus: (input) => import("neverthrow").ResultAsync<ExecutionStatusData, CommandOperationError>
 - `packages/engine/src/runtime-command-operations/workflow-runner.ts`
   - function runWorkflowLifecycle: (input) => ResultAsync<WorkflowRunnerOutput, WorkflowRunnerError>
   - function mapWorkflowRunnerErrorToLifecycle: (error) => CommandLifecycleError
