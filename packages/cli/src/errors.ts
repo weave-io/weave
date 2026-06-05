@@ -15,6 +15,8 @@ export type CliError =
   | FileReadError
   | ParseFailureError
   | ValidationFailureError
+  | AgentNotFoundError
+  | CompositionFailureError
   | UnknownCommandError;
 
 export type InvalidArgsError = {
@@ -47,6 +49,18 @@ export type ValidationFailureError = {
   errors: string[];
 };
 
+export type AgentNotFoundError = {
+  type: "AgentNotFound";
+  agentName: string;
+  message: string;
+};
+
+export type CompositionFailureError = {
+  type: "CompositionFailure";
+  agentName: string;
+  message: string;
+};
+
 export type UnknownCommandError = {
   type: "UnknownCommand";
   command: string;
@@ -70,6 +84,10 @@ export function formatCliError(error: CliError): string {
       return error.errors.join("\n");
     case "ValidationFailure":
       return error.errors.join("\n");
+    case "AgentNotFound":
+      return `error: agent "${error.agentName}" not found\n\nRun 'weave prompt list' to see available agents.`;
+    case "CompositionFailure":
+      return `error: failed to compose prompt for agent "${error.agentName}"\n\n${error.message}`;
     case "UnknownCommand":
       return `Error: Unknown command "${error.command}"\n  ${error.message}`;
   }

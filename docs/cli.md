@@ -71,6 +71,25 @@ The root `validate-config` script delegates to the CLI:
 bun run validate-config
 ```
 
+## `weave prompt`
+
+Use `weave prompt` to inspect composed agent prompts or list available agent names from the effective config.
+
+```bash
+weave prompt list
+weave prompt list --json
+weave prompt inspect loom
+weave prompt inspect loom --json
+```
+
+Subcommands:
+
+- `weave prompt list` prints available agent names, including generated category shuttle agents.
+- `weave prompt inspect <agent>` renders the fully composed prompt for the requested agent.
+- `--json` emits machine-readable output for either subcommand.
+
+Running `weave prompt` without a subcommand prints inline usage and exits with code `1`.
+
 ## `weave init`
 
 `weave init` creates a starter Weave config directory containing `config.weave` and `prompts/`.
@@ -278,6 +297,7 @@ packages/cli/src/
 ├── commands/
 │   ├── init.ts        # weave init — planning, prompts, scaffold, harness install, summary
 │   ├── migrate.ts     # weave init migrate — orchestration flow
+│   ├── prompt.ts      # weave prompt
 │   ├── validate.ts    # weave validate
 │   └── runtime.ts     # weave runtime
 └── migration/
