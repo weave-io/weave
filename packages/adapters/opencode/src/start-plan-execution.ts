@@ -164,12 +164,6 @@ export interface StartPlanExecutionInput {
 }
 
 // ---------------------------------------------------------------------------
-// Logger
-// ---------------------------------------------------------------------------
-
-const log = logger.child({ module: "start-plan-execution" });
-
-// ---------------------------------------------------------------------------
 // startPlanExecution — main helper
 // ---------------------------------------------------------------------------
 
@@ -199,6 +193,8 @@ const log = logger.child({ module: "start-plan-execution" });
 export function startPlanExecution(
   input: StartPlanExecutionInput,
 ): ResultAsync<RunWorkflowResult, StartPlanExecutionError> {
+  const log = logger.child({ module: "start-plan-execution" });
+
   const {
     planName,
     config,

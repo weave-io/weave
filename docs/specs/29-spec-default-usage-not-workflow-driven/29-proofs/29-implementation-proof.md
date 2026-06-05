@@ -91,13 +91,12 @@ workflow tapestry-execution {
     completion plan_complete {
       plan_name "{{instance.slug}}"
     }
-    inputs [
-      { name "plan_path" description "Path to the existing plan to execute" }
-    ]
   }
   ...
 }
 ```
+
+> **Note**: The `execute` step has no `inputs` declaration. It is the first step in the workflow, so no prior step can populate an artifact. The prompt uses `{{instance.slug}}` (set at workflow start via `startPlanExecution`) rather than `{{artifacts.plan_path}}`. This is intentional: `tapestry-execution` is invoked when a plan already exists and its name is known; the slug carries that identity.
 
 ### Evidence: `start-plan-execution.test.ts` assertions
 

@@ -333,9 +333,6 @@ workflow tapestry-execution {
     completion plan_complete {
       plan_name "{{instance.slug}}"
     }
-    inputs [
-      { name "plan_path" description "Path to the existing plan to execute" }
-    ]
   }
 
   step review {

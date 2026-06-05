@@ -180,6 +180,10 @@ const TAPESTRY_EXECUTION_CONFIG: StartPlanExecutionInput["config"] = {
             method: "plan_complete",
             plan_name: "{{instance.slug}}",
           },
+          // No inputs declared: the execute step is the first step in
+          // tapestry-execution, so no prior step can populate plan_path.
+          // The prompt uses {{instance.slug}} (set at workflow start) rather
+          // than {{artifacts.plan_path}} (which would require a prior step).
         },
         {
           name: "review",
@@ -586,9 +590,13 @@ describe("startPlanExecution — present plan calls explicit workflow path", () 
     });
 
     expect(result.isOk()).toBe(true);
-    if (result.isOk()) {
-      expect(typeof result.value.workflowInstanceId).toBe("string");
-      expect(result.value.workflowInstanceId.length).toBeGreaterThan(0);
+
+    // Assert the persisted WorkflowInstance slug equals the planName.
+    const instances = await store.instances.list();
+    expect(instances.isOk()).toBe(true);
+    if (instances.isOk()) {
+      expect(instances.value).toHaveLength(1);
+      expect(instances.value[0]?.slug).toBe("feature-auth");
     }
   });
 

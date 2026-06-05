@@ -159,6 +159,17 @@ describe("getBuiltinConfig", () => {
     expect(firstStep?.prompt).toContain("{{instance.slug}}");
   });
 
+  it("(g10a) tapestry-execution execute step has no inputs — it is the first step and uses {{instance.slug}}, not {{artifacts.plan_path}}", () => {
+    const config = getBuiltinConfig()._unsafeUnwrap();
+    const wf = config.workflows["tapestry-execution"];
+    expect(wf).toBeDefined();
+    const executeStep = wf?.steps.find((s) => s.name === "execute");
+    expect(executeStep).toBeDefined();
+    // No inputs: execute is the first step; no prior step can populate plan_path.
+    // The prompt uses {{instance.slug}} set at workflow start.
+    expect(executeStep?.inputs ?? []).toHaveLength(0);
+  });
+
   it("(g11) builtin config has no default_workflow selector — settings has no default_workflow field", () => {
     const config = getBuiltinConfig()._unsafeUnwrap();
     // settings should not have a default_workflow field
