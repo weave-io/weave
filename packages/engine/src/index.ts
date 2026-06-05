@@ -284,6 +284,7 @@ export {
   mapWorkflowRunnerErrorToLifecycle,
   runNamedWorkflow,
   runWorkflowLifecycle,
+  startPlan,
 } from "./runtime-command-operations.js";
 export type {
   ConfigSkillResolutionResult,

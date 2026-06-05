@@ -11,9 +11,9 @@
 - `packages/engine/src/execution-lifecycle/lease.ts` — imported by **10** files
 - `packages/engine/src/execution-lifecycle/errors.ts` — imported by **10** files
 - `packages/adapters/opencode/src/sdk-types.ts` — imported by **9** files
+- `packages/engine/src/logger.ts` — imported by **9** files
 - `packages/cli/src/args.ts` — imported by **8** files
 - `packages/core/src/tokens.ts` — imported by **8** files
-- `packages/engine/src/logger.ts` — imported by **8** files
 - `packages/cli/src/errors.ts` — imported by **6** files
 - `packages/cli/src/prompt/index.ts` — imported by **6** files
 - `packages/core/src/errors.ts` — imported by **6** files
@@ -34,4 +34,4 @@
 - `packages/engine/src/execution-lifecycle/lease.ts` ← `packages/engine/src/execution-lifecycle/artifacts.ts`, `packages/engine/src/execution-lifecycle/completion.ts`, `packages/engine/src/execution-lifecycle/dispatch.ts`, `packages/engine/src/execution-lifecycle/inspection.ts`, `packages/engine/src/execution-lifecycle/interrupts.ts` +5 more
 - `packages/engine/src/execution-lifecycle/errors.ts` ← `packages/engine/src/execution-lifecycle/authorization.ts`, `packages/engine/src/execution-lifecycle/before-tool.ts`, `packages/engine/src/execution-lifecycle/dispatch.ts`, `packages/engine/src/execution-lifecycle/inspection.ts`, `packages/engine/src/execution-lifecycle/interrupts.ts` +5 more
 - `packages/adapters/opencode/src/sdk-types.ts` ← `packages/adapters/opencode/src/__tests__/adapter.test.ts`, `packages/adapters/opencode/src/__tests__/plugin.test.ts`, `packages/adapters/opencode/src/__tests__/reconcile-agent.test.ts`, `packages/adapters/opencode/src/__tests__/run-workflow.test.ts`, `packages/adapters/opencode/src/adapter.ts` +4 more
-- `packages/cli/src/args.ts` ← `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/runtime.test.ts`, `packages/cli/src/commands/init.ts`, `packages/cli/src/commands/migrate.ts` +3 more
+- `packages/engine/src/logger.ts` ← `packages/engine/src/compose.ts`, `packages/engine/src/index.ts`, `packages/engine/src/runtime/journal-writer.ts`, `packages/engine/src/runtime/sqlite/store.ts`, `packages/engine/src/runtime-command-operations/run-named-workflow.ts` +4 more

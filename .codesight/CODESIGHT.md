@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weave/core, @weave/engine, @weave/config, @weave/cli, @weave/adapter-opencode
 
-> 0 routes | 0 models | 0 components | 83 lib files | 4 env vars | 5 middleware | 0% test coverage
-> **Token savings:** this file is ~7,000 tokens. Without it, AI exploration would cost ~32,500 tokens. **Saves ~25,500 tokens per conversation.**
-> **Last scanned:** 2026-06-05 14:48 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 84 lib files | 4 env vars | 5 middleware | 0% test coverage
+> **Token savings:** this file is ~7,000 tokens. Without it, AI exploration would cost ~32,800 tokens. **Saves ~25,700 tokens per conversation.**
+> **Last scanned:** 2026-06-05 14:54 — re-run after significant changes
 
 ---
 
@@ -299,6 +299,7 @@
   - function createArtifactId: (raw) => ArtifactId
   - _...30 more_
 - `packages/engine/src/runtime-command-operations/run-named-workflow.ts` — function runNamedWorkflow: (input, projectEffect) => void
+- `packages/engine/src/runtime-command-operations/start-plan.ts` — function startPlan: (input, projectEffect) => void
 - `packages/engine/src/runtime-command-operations/workflow-runner.ts`
   - function runWorkflowLifecycle: (input) => ResultAsync<WorkflowRunnerOutput, WorkflowRunnerError>
   - function mapWorkflowRunnerErrorToLifecycle: (error) => CommandLifecycleError
@@ -381,9 +382,9 @@
 - `packages/engine/src/execution-lifecycle/lease.ts` — imported by **10** files
 - `packages/engine/src/execution-lifecycle/errors.ts` — imported by **10** files
 - `packages/adapters/opencode/src/sdk-types.ts` — imported by **9** files
+- `packages/engine/src/logger.ts` — imported by **9** files
 - `packages/cli/src/args.ts` — imported by **8** files
 - `packages/core/src/tokens.ts` — imported by **8** files
-- `packages/engine/src/logger.ts` — imported by **8** files
 - `packages/cli/src/errors.ts` — imported by **6** files
 - `packages/cli/src/prompt/index.ts` — imported by **6** files
 - `packages/core/src/errors.ts` — imported by **6** files
@@ -404,14 +405,14 @@
 - `packages/engine/src/execution-lifecycle/lease.ts` ← `packages/engine/src/execution-lifecycle/artifacts.ts`, `packages/engine/src/execution-lifecycle/completion.ts`, `packages/engine/src/execution-lifecycle/dispatch.ts`, `packages/engine/src/execution-lifecycle/inspection.ts`, `packages/engine/src/execution-lifecycle/interrupts.ts` +5 more
 - `packages/engine/src/execution-lifecycle/errors.ts` ← `packages/engine/src/execution-lifecycle/authorization.ts`, `packages/engine/src/execution-lifecycle/before-tool.ts`, `packages/engine/src/execution-lifecycle/dispatch.ts`, `packages/engine/src/execution-lifecycle/inspection.ts`, `packages/engine/src/execution-lifecycle/interrupts.ts` +5 more
 - `packages/adapters/opencode/src/sdk-types.ts` ← `packages/adapters/opencode/src/__tests__/adapter.test.ts`, `packages/adapters/opencode/src/__tests__/plugin.test.ts`, `packages/adapters/opencode/src/__tests__/reconcile-agent.test.ts`, `packages/adapters/opencode/src/__tests__/run-workflow.test.ts`, `packages/adapters/opencode/src/adapter.ts` +4 more
-- `packages/cli/src/args.ts` ← `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/runtime.test.ts`, `packages/cli/src/commands/init.ts`, `packages/cli/src/commands/migrate.ts` +3 more
+- `packages/engine/src/logger.ts` ← `packages/engine/src/compose.ts`, `packages/engine/src/index.ts`, `packages/engine/src/runtime/journal-writer.ts`, `packages/engine/src/runtime/sqlite/store.ts`, `packages/engine/src/runtime-command-operations/run-named-workflow.ts` +4 more
 
 ---
 
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 349 test files found
+> 351 test files found
 
 ---
 

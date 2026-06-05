@@ -11,6 +11,7 @@
  * | `types.ts`              | Operation kinds, inputs, result data, result types, errors      |
  * | `workflow-runner.ts`    | Reusable lifecycle-driven execution loop (adapter-agnostic)     |
  * | `run-named-workflow.ts` | `run-named-workflow` command operation                          |
+ * | `start-plan.ts`         | `start-plan` command operation (plan-first path)                |
  *
  * ## Command Operations
  *
@@ -28,6 +29,7 @@
  */
 
 export { runNamedWorkflow } from "./run-named-workflow.js";
+export { startPlan } from "./start-plan.js";
 export type {
   AbortExecutionInput,
   AbortExecutionResult,
