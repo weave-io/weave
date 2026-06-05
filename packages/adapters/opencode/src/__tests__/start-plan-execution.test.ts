@@ -8,9 +8,10 @@
  *    provider is unavailable, `startPlanExecution` returns a typed error and
  *    leaves the store empty (no `WorkflowInstance` is created).
  *
- * 2. **Explicit workflow path** — when the plan exists, `startPlanExecution`
- *    calls `runWorkflow` with the `tapestry-execution` workflow (or the
- *    caller-supplied `workflowName`).
+ * 2. **Delegation to shared `startPlan` semantics** — when the plan exists,
+ *    `startPlanExecution` delegates to the engine's `startPlan` operation with
+ *    the `tapestry-execution` workflow (or the caller-supplied `workflowName`).
+ *    The store is mutated only after `startPlan` validates the plan.
  *
  * 3. **Command name constants** — `WEAVE_START_COMMAND` is `/weave:start`
  *    (preferred) and `WEAVE_START_LEGACY_COMMAND` is `/start-work` (legacy).
@@ -242,7 +243,7 @@ const TAPESTRY_EXECUTION_CONFIG: StartPlanExecutionInput["config"] = {
 /**
  * Minimal fixture `WeaveConfig` with a simple `agent_signal` workflow.
  *
- * Used for tests that need a successful `runWorkflow` call without plan-oriented
+ * Used for tests that need a successful `startPlan` delegation without plan-oriented
  * completion methods.
  */
 const SIMPLE_EXECUTION_CONFIG: StartPlanExecutionInput["config"] = {
@@ -554,11 +555,11 @@ describe("startPlanExecution — invalid plan name", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests — present plan calls the explicit workflow path
+// Tests — present plan delegates to shared startPlan operation
 // ---------------------------------------------------------------------------
 
-describe("startPlanExecution — present plan calls explicit workflow path", () => {
-  it("calls runWorkflow when plan exists (agent_signal workflow)", async () => {
+describe("startPlanExecution — present plan delegates to shared startPlan operation", () => {
+  it("delegates to startPlan when plan exists (agent_signal workflow)", async () => {
     const adapter = new MockOpenCodeAdapter();
     const store = createInMemoryRuntimeStore();
     // Provider reports plan exists
@@ -688,11 +689,11 @@ describe("startPlanExecution — present plan calls explicit workflow path", () 
 
     // The result may be ok (if all steps complete) or err (if gate steps
     // fail with agent_signal mismatch). Either way, the store should have
-    // been touched — proving runWorkflow was called with tapestry-execution.
+    // been touched — proving startPlan was called with tapestry-execution.
     const instances = await store.instances.list();
     expect(instances.isOk()).toBe(true);
     if (instances.isOk()) {
-      // At least one instance was created — runWorkflow was called
+      // At least one instance was created — startPlan was called
       expect(instances.value.length).toBeGreaterThanOrEqual(1);
     }
   });
@@ -741,7 +742,7 @@ describe("startPlanExecution — present plan calls explicit workflow path", () 
     }
   });
 
-  it("passes planStateProvider through to runWorkflow for plan-oriented steps", async () => {
+  it("passes planStateProvider through to startPlan for plan-oriented steps", async () => {
     const adapter = new MockOpenCodeAdapter();
     const store = createInMemoryRuntimeStore();
     // Provider reports plan exists AND is complete
