@@ -72,8 +72,8 @@ describe("prompt command", () => {
     const result = await runPrompt(ctx);
 
     expect(result._unsafeUnwrap()).toBe(1);
-    expect(terminal.out.join("\n")).toContain("Usage: weave prompt <subcommand>");
-    expect(terminal.err).toHaveLength(0);
+    expect(terminal.err.join("\n")).toContain("Usage: weave prompt <subcommand>");
+    expect(terminal.out).toHaveLength(0);
   });
 
   it("Should_list_agent_names_plain_when_subcommand_is_list", async () => {
@@ -151,8 +151,8 @@ describe("prompt command", () => {
     const result = await runPrompt(ctx);
 
     expect(result._unsafeUnwrap()).toBe(1);
-    expect(terminal.out.join("\n")).toContain("Usage: weave prompt <subcommand>");
-    expect(terminal.err).toHaveLength(0);
+    expect(terminal.err.join("\n")).toContain("Usage: weave prompt <subcommand>");
+    expect(terminal.out).toHaveLength(0);
   });
 
   it("Should_exit_1_on_config_load_failure", async () => {

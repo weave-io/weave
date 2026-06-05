@@ -85,9 +85,9 @@ export function formatCliError(error: CliError): string {
     case "ValidationFailure":
       return error.errors.join("\n");
     case "AgentNotFound":
-      return `error: agent "${error.agentName}" not found\n\nRun 'weave prompt list' to see available agents.`;
+      return `Error: Agent "${error.agentName}" not found\n\nRun 'weave prompt list' to see available agents.`;
     case "CompositionFailure":
-      return `error: failed to compose prompt for agent "${error.agentName}"\n\n${error.message}`;
+      return `Error: Failed to compose prompt for agent "${error.agentName}"\n\n${error.message}`;
     case "UnknownCommand":
       return `Error: Unknown command "${error.command}"\n  ${error.message}`;
   }

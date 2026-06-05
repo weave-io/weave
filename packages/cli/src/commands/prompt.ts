@@ -146,13 +146,13 @@ async function runPromptList(
     return ok(1);
   }
 
-  const agents = Object.entries(buildCombinedAgents(configResult.value)).map(
-    ([name, entry]) => ({
+  const agents = Object.entries(buildCombinedAgents(configResult.value))
+    .map(([name, entry]) => ({
       name,
       description: entry.config.description,
       mode: entry.config.mode ?? "subagent",
-    }),
-  );
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 
   if (ctx.flags.json) {
     ctx.terminal.stdout(JSON.stringify({ agents }, null, 2));
@@ -167,7 +167,7 @@ async function runPromptInspect(
   ctx: PromptContext,
 ): Promise<Result<number, CliError>> {
   if (ctx.flags.agentName === undefined) {
-    ctx.terminal.stdout(PROMPT_USAGE);
+    ctx.terminal.stderr(PROMPT_USAGE);
     return ok(1);
   }
 
@@ -228,7 +228,7 @@ export async function runPrompt(
   ctx: PromptContext,
 ): Promise<Result<number, CliError>> {
   if (ctx.flags.promptSubcommand === undefined) {
-    ctx.terminal.stdout(PROMPT_USAGE);
+    ctx.terminal.stderr(PROMPT_USAGE);
     return ok(1);
   }
 
