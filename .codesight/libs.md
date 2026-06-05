@@ -17,6 +17,7 @@
   - interface WeavePluginOptions
   - const WeavePlugin: Plugin
   - const server
+- `packages/adapters/opencode/src/projection-helpers.ts` — function buildProjectEffect: (adapter) => (effect: DispatchAgentEffect) => ResultAsync<void, WorkflowRunnerError>, function deriveRunWorkflowResult: (data) => RunWorkflowResult
 - `packages/adapters/opencode/src/reconcile-agent.ts`
   - function classifyExistingAgent: (agentName, existingAgents) => ReconcileDecision
   - function tagWithOwnership: (config) => OpenCodeAgentConfig
@@ -303,6 +304,7 @@
 - `packages/engine/src/runtime-command-operations/workflow-runner.ts`
   - function runWorkflowLifecycle: (input) => ResultAsync<WorkflowRunnerOutput, WorkflowRunnerError>
   - function mapWorkflowRunnerErrorToLifecycle: (error) => CommandLifecycleError
+  - function mapRunnerErrorToCommandError: (error, operation) => CommandOperationError
   - interface WorkflowRunnerInput
   - interface WorkflowRunnerOutput
   - type WorkflowRunnerError

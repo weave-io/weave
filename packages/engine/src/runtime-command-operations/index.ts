@@ -12,6 +12,9 @@
  * | `workflow-runner.ts`    | Reusable lifecycle-driven execution loop (adapter-agnostic)     |
  * | `run-named-workflow.ts` | `run-named-workflow` command operation                          |
  * | `start-plan.ts`         | `start-plan` command operation (plan-first path)                |
+ * | `status.ts`             | `inspect-status` command operation (read-only)                  |
+ * | `control.ts`            | `abort-execution` and `advance-step` command operations         |
+ * | `health.ts`             | `runtime-health` command operation (pure, adapter-supplied)     |
  *
  * ## Command Operations
  *
@@ -28,8 +31,11 @@
  * @see docs/adapter-boundary.md
  */
 
+export { abortExecution, advanceStep } from "./control.js";
+export { runtimeHealth } from "./health.js";
 export { runNamedWorkflow } from "./run-named-workflow.js";
 export { startPlan } from "./start-plan.js";
+export { inspectStatus } from "./status.js";
 export type {
   AbortExecutionInput,
   AbortExecutionResult,
@@ -69,6 +75,7 @@ export type {
   WorkflowRunnerOutput,
 } from "./workflow-runner.js";
 export {
+  mapRunnerErrorToCommandError,
   mapWorkflowRunnerErrorToLifecycle,
   runWorkflowLifecycle,
 } from "./workflow-runner.js";

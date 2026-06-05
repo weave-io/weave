@@ -39,21 +39,23 @@
 import type { WeaveConfig } from "@weave/core";
 import type {
   CommandOperationError,
-  DispatchAgentEffect,
   LifecycleEffect,
   LifecycleError,
   PlanStateProvider,
   RuntimeStore,
-  WorkflowRunnerError,
 } from "@weave/engine";
 import {
   createInMemoryRuntimeStore,
   logger,
   runNamedWorkflow,
 } from "@weave/engine";
-import { type ResultAsync } from "neverthrow";
+import type { ResultAsync } from "neverthrow";
 
 import type { OpenCodeAdapter } from "./index.js";
+import {
+  buildProjectEffect,
+  deriveRunWorkflowResult,
+} from "./projection-helpers.js";
 
 const log = logger.child({ module: "run-workflow" });
 
@@ -125,40 +127,6 @@ export interface RunWorkflowResult {
 }
 
 // ---------------------------------------------------------------------------
-// buildProjectEffect — adapter-owned effect projection callback
-// ---------------------------------------------------------------------------
-
-/**
- * Build the adapter-owned `projectEffect` callback for `runNamedWorkflow`.
- *
- * The callback calls `adapter.spawnSubagent` for each `DispatchAgentEffect`
- * emitted by the engine's workflow runner. On failure, maps
- * `OpenCodeAdapterError` to `WorkflowRunnerError` so the engine can propagate
- * it as a typed `projection_error`.
- */
-function buildProjectEffect(
-  adapter: OpenCodeAdapter,
-): (effect: DispatchAgentEffect) => ResultAsync<void, WorkflowRunnerError> {
-  return (effect: DispatchAgentEffect) => {
-    log.info(
-      {
-        agentName: effect.runAgent.agentName,
-        stepType: effect.runAgent.stepType,
-        completionMethod: effect.runAgent.completionMethod,
-      },
-      "Applying DispatchAgentEffect — spawning subagent",
-    );
-    return adapter.spawnSubagent(effect.runAgent.agentDescriptor).mapErr(
-      (cause): WorkflowRunnerError => ({
-        type: "projection_error" as const,
-        message: `spawnSubagent failed for agent "${effect.runAgent.agentName}": ${cause.message}`,
-        cause,
-      }),
-    );
-  };
-}
-
-// ---------------------------------------------------------------------------
 // mapCommandError — convert CommandOperationError to RunWorkflowError
 // ---------------------------------------------------------------------------
 
@@ -176,8 +144,8 @@ function mapCommandError(error: CommandOperationError): RunWorkflowError {
   }
 
   if (error.type === "command_validation" && error.field === "maxSteps") {
-    const match = /(\d+)/.exec(error.message);
-    const maxSteps = match ? parseInt(match[1] ?? "0", 10) : 0;
+    // Use the structured maxSteps value carried by CommandValidationError.
+    const maxSteps = error.maxSteps ?? 0;
     return { type: "MaxStepsExceeded" as const, maxSteps };
   }
 
@@ -187,12 +155,12 @@ function mapCommandError(error: CommandOperationError): RunWorkflowError {
 
   // command_validation (other fields), command_unsupported, command_degraded —
   // wrap as a LifecycleError with a policy_decision cause.
-  const message =
-    "message" in error && typeof error.message === "string"
-      ? error.message
-      : "reason" in error && typeof error.reason === "string"
-        ? error.reason
-        : "Unknown command operation error";
+  let message = "Unknown command operation error";
+  if ("message" in error && typeof error.message === "string") {
+    message = error.message;
+  } else if ("reason" in error && typeof error.reason === "string") {
+    message = error.reason;
+  }
 
   return {
     type: "LifecycleError" as const,
@@ -200,36 +168,6 @@ function mapCommandError(error: CommandOperationError): RunWorkflowError {
       type: "policy_decision" as const,
       message,
     },
-  };
-}
-
-// ---------------------------------------------------------------------------
-// deriveRunWorkflowResult — map ExecutionStartedData to RunWorkflowResult
-// ---------------------------------------------------------------------------
-
-/**
- * Derive a `RunWorkflowResult` from the engine's `ExecutionStartedData`.
- *
- * `ExecutionStartedData.effects` carries all lifecycle effects emitted during
- * the run. We derive:
- * - `status`: "paused" if a `pause-execution` effect is present, else "completed".
- * - `stepsDispatched`: count of `dispatch-agent` effects.
- * - `appliedEffects`: all effects (forwarded as-is).
- */
-function deriveRunWorkflowResult(data: {
-  readonly workflowInstanceId: string;
-  readonly effects: readonly { readonly kind: string }[];
-}): RunWorkflowResult {
-  const hasPause = data.effects.some((e) => e.kind === "pause-execution");
-  const stepsDispatched = data.effects.filter(
-    (e) => e.kind === "dispatch-agent",
-  ).length;
-
-  return {
-    workflowInstanceId: data.workflowInstanceId,
-    appliedEffects: data.effects as RunWorkflowResult["appliedEffects"],
-    status: hasPause ? "paused" : "completed",
-    stepsDispatched,
   };
 }
 
@@ -269,6 +207,7 @@ export function runWorkflow(
     slug,
     adapter,
     planStateProvider,
+    maxSteps,
     ownerId = "run-workflow",
   } = input;
 
@@ -290,6 +229,7 @@ export function runWorkflow(
       store,
       workflows: config.workflows,
       planStateProvider,
+      maxSteps,
       now: undefined,
     },
     projectEffect,

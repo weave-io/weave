@@ -24,20 +24,20 @@
  */
 
 import type { ResultAsync } from "neverthrow";
+import type { AdapterHealthReport } from "../capability-contract.js";
 import type {
+  InspectExecutionOutput,
   LifecycleEffect,
   LifecycleError,
-  InspectExecutionOutput,
   StepCompletionSignal,
 } from "../execution-lifecycle.js";
 import type { PlanStateProvider } from "../plan-state-provider.js";
 import type { RuntimeStore } from "../runtime/store.js";
 import type {
-  WorkflowInstanceId,
   ExecutionLeaseId,
+  WorkflowInstanceId,
   WorkflowInstanceStatus,
 } from "../runtime/types.js";
-import type { AdapterHealthReport } from "../capability-contract.js";
 
 // ---------------------------------------------------------------------------
 // § 1 — Command Operation Kinds
@@ -106,11 +106,16 @@ export const COMMAND_OPERATION_OUTCOMES = [
  *
  * Returned when required fields are missing, malformed, or violate a
  * structural constraint before any lifecycle method is called.
+ *
+ * `maxSteps` is populated when `field === "maxSteps"` so callers can read
+ * the structured value without parsing the human-readable `message`.
  */
 export interface CommandValidationError {
   readonly type: "command_validation";
   readonly message: string;
   readonly field?: string;
+  /** Structured step cap — present when `field === "maxSteps"`. */
+  readonly maxSteps?: number;
 }
 
 /**
@@ -372,6 +377,13 @@ export interface RunNamedWorkflowInput {
    * Absent provider causes the engine to fail closed for those steps.
    */
   readonly planStateProvider?: PlanStateProvider;
+  /**
+   * Safety cap on the number of steps dispatched.
+   *
+   * Forwarded to `runWorkflowLifecycle`. Defaults to 100 when omitted.
+   * Must be ≥ 1; values below 1 return a `command_validation` error.
+   */
+  readonly maxSteps?: number;
   /** Optional ISO-8601 timestamp override (for testing). */
   readonly now?: string;
 }

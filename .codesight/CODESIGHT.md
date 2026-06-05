@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weave/core, @weave/engine, @weave/config, @weave/cli, @weave/adapter-opencode
 
-> 0 routes | 0 models | 0 components | 88 lib files | 4 env vars | 5 middleware | 0% test coverage
-> **Token savings:** this file is ~7,300 tokens. Without it, AI exploration would cost ~33,800 tokens. **Saves ~26,500 tokens per conversation.**
-> **Last scanned:** 2026-06-05 16:25 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 89 lib files | 4 env vars | 5 middleware | 0% test coverage
+> **Token savings:** this file is ~7,400 tokens. Without it, AI exploration would cost ~34,100 tokens. **Saves ~26,700 tokens per conversation.**
+> **Last scanned:** 2026-06-05 17:14 — re-run after significant changes
 
 ---
 
@@ -28,6 +28,7 @@
   - interface WeavePluginOptions
   - const WeavePlugin: Plugin
   - const server
+- `packages/adapters/opencode/src/projection-helpers.ts` — function buildProjectEffect: (adapter) => (effect: DispatchAgentEffect) => ResultAsync<void, WorkflowRunnerError>, function deriveRunWorkflowResult: (data) => RunWorkflowResult
 - `packages/adapters/opencode/src/reconcile-agent.ts`
   - function classifyExistingAgent: (agentName, existingAgents) => ReconcileDecision
   - function tagWithOwnership: (config) => OpenCodeAgentConfig
@@ -314,6 +315,7 @@
 - `packages/engine/src/runtime-command-operations/workflow-runner.ts`
   - function runWorkflowLifecycle: (input) => ResultAsync<WorkflowRunnerOutput, WorkflowRunnerError>
   - function mapWorkflowRunnerErrorToLifecycle: (error) => CommandLifecycleError
+  - function mapRunnerErrorToCommandError: (error, operation) => CommandOperationError
   - interface WorkflowRunnerInput
   - interface WorkflowRunnerOutput
   - type WorkflowRunnerError
@@ -395,9 +397,9 @@
 - `packages/engine/src/execution-lifecycle/lease.ts` — imported by **10** files
 - `packages/engine/src/execution-lifecycle/errors.ts` — imported by **10** files
 - `packages/adapters/opencode/src/sdk-types.ts` — imported by **9** files
+- `packages/adapters/opencode/src/adapter.ts` — imported by **8** files
 - `packages/cli/src/args.ts` — imported by **8** files
 - `packages/core/src/tokens.ts` — imported by **8** files
-- `packages/adapters/opencode/src/adapter.ts` — imported by **7** files
 - `packages/engine/src/execution-lifecycle.ts` — imported by **7** files
 - `packages/cli/src/errors.ts` — imported by **6** files
 - `packages/cli/src/prompt/index.ts` — imported by **6** files
@@ -423,7 +425,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 364 test files found
+> 365 test files found
 
 ---
 

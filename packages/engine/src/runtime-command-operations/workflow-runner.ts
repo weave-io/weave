@@ -46,7 +46,12 @@ import { logger } from "../logger.js";
 import type { PlanStateProvider } from "../plan-state-provider.js";
 import type { RuntimeStore } from "../runtime/store.js";
 import type { ExecutionLeaseId, WorkflowInstanceId } from "../runtime/types.js";
-import type { CommandLifecycleError } from "./types.js";
+import type {
+  CommandLifecycleError,
+  CommandNotFoundError,
+  CommandOperationError,
+  CommandValidationError,
+} from "./types.js";
 
 const log = logger.child({ module: "workflow-runner" });
 
@@ -482,5 +487,61 @@ export function mapWorkflowRunnerErrorToLifecycle(
     type: "command_lifecycle",
     operation: "run-named-workflow",
     cause: error.cause,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// § 8 — mapRunnerErrorToCommandError — shared parameterized mapper
+// ---------------------------------------------------------------------------
+
+/**
+ * Map a `WorkflowRunnerError` to a typed `CommandOperationError`.
+ *
+ * Shared by `runNamedWorkflow` and `startPlan` — the only difference between
+ * the two callers is the `operation` label on `CommandLifecycleError`.
+ *
+ * - `workflow_not_found` → `CommandNotFoundError`
+ * - `max_steps_exceeded` → `CommandValidationError`
+ * - `lifecycle_error`    → `CommandLifecycleError`
+ * - `projection_error`   → `CommandLifecycleError` (policy_decision cause)
+ */
+export function mapRunnerErrorToCommandError(
+  error: WorkflowRunnerError,
+  operation: CommandLifecycleError["operation"],
+): CommandOperationError {
+  if (error.type === "workflow_not_found") {
+    return {
+      type: "command_not_found",
+      entity: "workflow",
+      name: error.workflowName,
+      message: `Workflow "${error.workflowName}" not found in the provided workflow registry`,
+    } satisfies CommandNotFoundError;
+  }
+
+  if (error.type === "max_steps_exceeded") {
+    return {
+      type: "command_validation",
+      message: `Workflow execution exceeded the maximum step limit of ${error.maxSteps}`,
+      field: "maxSteps",
+      maxSteps: error.maxSteps,
+    } satisfies CommandValidationError;
+  }
+
+  if (error.type === "lifecycle_error") {
+    return {
+      type: "command_lifecycle",
+      operation,
+      cause: error.cause,
+    };
+  }
+
+  // projection_error
+  return {
+    type: "command_lifecycle",
+    operation,
+    cause: {
+      type: "policy_decision",
+      message: error.message,
+    },
   };
 }

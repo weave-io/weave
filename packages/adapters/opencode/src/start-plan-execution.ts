@@ -1,15 +1,18 @@
 /**
- * start-plan-execution — adapter-owned helper for the /weave:start delivery path.
+ * start-plan-execution — adapter-owned projection of the engine's start-plan operation.
  *
- * This module represents the future command-capable `/weave:start` delivery path
- * without making the command name core-owned. The command name constants are
- * adapter-owned and documented here.
+ * This module is the OpenCode adapter's projection of the reusable `startPlan`
+ * engine operation. It supplies the adapter-owned `projectEffect` callback
+ * (calling `adapter.spawnSubagent`) and maps the engine's typed
+ * `CommandOperationError` result back to the adapter-owned
+ * `StartPlanExecutionError` discriminated union.
  *
  * ## Boundary rule
  *
  * This module is adapter-owned. It must not import from `@weave/core` directly
- * (config types are accepted as parameters, not fetched). It must not reference
- * concrete command names in core packages — command naming is adapter-owned.
+ * (config types are accepted as parameters, not fetched). Command naming is
+ * adapter-owned — the engine never references `WEAVE_START_COMMAND` or
+ * `WEAVE_START_LEGACY_COMMAND`.
  *
  * ## Command name preference
  *
@@ -21,17 +24,24 @@
  * See `WEAVE_START_COMMAND` and `WEAVE_START_LEGACY_COMMAND` constants below.
  */
 
-import type { PlanStateProvider, RuntimeStore } from "@weave/engine";
-import { logger } from "@weave/engine";
+import type {
+  CommandOperationError,
+  PlanStateProvider,
+  RuntimeStore,
+} from "@weave/engine";
+import { createInMemoryRuntimeStore, logger, startPlan } from "@weave/engine";
 import { errAsync, type ResultAsync } from "neverthrow";
 
 import type { OpenCodeAdapter } from "./adapter.js";
+import {
+  buildProjectEffect,
+  deriveRunWorkflowResult,
+} from "./projection-helpers.js";
 import type {
   RunWorkflowError,
   RunWorkflowInput,
   RunWorkflowResult,
 } from "./run-workflow.js";
-import { runWorkflow } from "./run-workflow.js";
 
 // ---------------------------------------------------------------------------
 // Command name constants — adapter-owned
@@ -83,7 +93,7 @@ export const DEFAULT_EXECUTION_WORKFLOW = "tapestry-execution" as const;
  *   `PlanStateProvider` (contains `/`, `..`, `\0`, or other unsafe characters).
  * - `ProviderUnavailable` — the `PlanStateProvider` could not be queried (I/O
  *   error or the provider was not supplied).
- * - `WorkflowError` — the underlying `runWorkflow` call returned an error.
+ * - `WorkflowError` — the underlying `startPlan` call returned an error.
  */
 export type StartPlanExecutionError =
   | { readonly type: "PlanNotFound"; readonly planName: string }
@@ -125,7 +135,7 @@ export interface StartPlanExecutionInput {
   /**
    * Provider for querying plan file state.
    *
-   * Used to validate that the plan exists before calling `runWorkflow`.
+   * Used to validate that the plan exists before calling `startPlan`.
    * When omitted, `startPlanExecution` returns a `ProviderUnavailable` error
    * without touching the store.
    *
@@ -142,7 +152,7 @@ export interface StartPlanExecutionInput {
   /**
    * Human-readable goal for this execution instance.
    *
-   * Passed through to `runWorkflow` as `goal`. Defaults to
+   * Passed through to `startPlan` as `goal`. Defaults to
    * `"Execute plan: <planName>"` when omitted.
    */
   readonly goal?: string;
@@ -157,10 +167,75 @@ export interface StartPlanExecutionInput {
   /**
    * Runtime Store instance.
    *
-   * Passed through to `runWorkflow`. Defaults to a fresh `InMemoryRuntimeStore`
-   * when omitted (same default as `runWorkflow`).
+   * Passed through to `startPlan`. Callers that need status/control to inspect
+   * the execution later must supply a shared store instance here. Defaults to
+   * a fresh `InMemoryRuntimeStore` when omitted.
    */
   readonly store?: RuntimeStore;
+}
+
+// ---------------------------------------------------------------------------
+// mapCommandError — convert CommandOperationError to StartPlanExecutionError
+// ---------------------------------------------------------------------------
+
+/**
+ * Map a `CommandOperationError` from the engine's `startPlan` operation to
+ * the adapter-owned `StartPlanExecutionError` discriminated union.
+ *
+ * - `command_not_found` (entity: "plan") → `PlanNotFound`
+ * - `command_validation` (field: "planName") → `InvalidPlanName`
+ * - `command_validation` (field: "planStateProvider") → `ProviderUnavailable`
+ * - all other errors → `WorkflowError` (wrapping a `RunWorkflowError`)
+ */
+function mapCommandError(
+  planName: string,
+  error: CommandOperationError,
+): StartPlanExecutionError {
+  if (error.type === "command_not_found" && error.entity === "plan") {
+    return { type: "PlanNotFound" as const, planName };
+  }
+
+  if (error.type === "command_validation" && error.field === "planName") {
+    return { type: "InvalidPlanName" as const, planName };
+  }
+
+  if (
+    error.type === "command_validation" &&
+    error.field === "planStateProvider"
+  ) {
+    return {
+      type: "ProviderUnavailable" as const,
+      cause: { message: error.message },
+    };
+  }
+
+  // All other engine errors map to WorkflowError with a RunWorkflowError cause.
+  if (error.type === "command_not_found") {
+    const cause: RunWorkflowError = {
+      type: "WorkflowNotFound" as const,
+      workflowName: error.name,
+    };
+    return { type: "WorkflowError" as const, cause };
+  }
+
+  // command_validation (other fields), command_unsupported, command_degraded,
+  // command_lifecycle — extract a human-readable message safely.
+  let message = "Unknown command operation error";
+  if ("message" in error && typeof error.message === "string") {
+    message = error.message;
+  } else if ("reason" in error && typeof error.reason === "string") {
+    message = error.reason;
+  }
+
+  const cause: RunWorkflowError = {
+    type: "LifecycleError" as const,
+    cause: {
+      type: "policy_decision" as const,
+      message,
+    },
+  };
+
+  return { type: "WorkflowError" as const, cause };
 }
 
 // ---------------------------------------------------------------------------
@@ -168,24 +243,23 @@ export interface StartPlanExecutionInput {
 // ---------------------------------------------------------------------------
 
 /**
- * Adapter-owned helper for the `/weave:start` delivery path.
+ * Adapter-owned projection of the engine's `startPlan` command operation.
  *
  * Validates that the named plan exists via `PlanStateProvider.planExists()`
- * before calling `runWorkflow`. Fails without creating a `WorkflowInstance`
- * when the plan is missing or the provider is unavailable.
+ * before delegating to the engine's `startPlan` operation. Fails without
+ * creating a `WorkflowInstance` when the plan is missing or the provider is
+ * unavailable.
  *
  * ## Execution flow
  *
  * 1. Guard: if `planStateProvider` is `undefined`, return `ProviderUnavailable`.
- * 2. Call `planStateProvider.planExists(planName)`.
- *    - On `InvalidPlanName` error → return `InvalidPlanName` (preserves discriminant).
- *    - On `ProviderUnavailable` error → return `ProviderUnavailable`.
- *    - On `false` → return `PlanNotFound`.
- * 3. Call `runWorkflow` with the explicit workflow path (`tapestry-execution`
- *    by default), passing `planStateProvider` through for plan-oriented
- *    completion methods.
- *    - On `runWorkflow` error → return `WorkflowError`.
- * 4. Return `ok(RunWorkflowResult)`.
+ * 2. Delegate to `startPlan` (engine-owned) with:
+ *    - `planStateProvider` for plan existence validation (engine validates before
+ *      touching the store).
+ *    - `projectEffect` callback that calls `adapter.spawnSubagent` for each
+ *      `DispatchAgentEffect` emitted by the workflow runner.
+ * 3. Map `CommandOperationError` → `StartPlanExecutionError`.
+ * 4. Map `ExecutionStartedData` → `RunWorkflowResult`.
  *
  * @param input - Execution parameters.
  * @returns `ok(RunWorkflowResult)` on success, or `err(StartPlanExecutionError)`.
@@ -204,6 +278,7 @@ export function startPlanExecution(
   } = input;
 
   const goal = input.goal ?? `Execute plan: ${planName}`;
+  const store = input.store ?? createInMemoryRuntimeStore();
 
   // Guard: provider must be supplied before any store access.
   if (planStateProvider === undefined) {
@@ -221,46 +296,26 @@ export function startPlanExecution(
 
   log.info(
     { planName, workflowName, goal },
-    "Checking plan existence before execution",
+    "Delegating to engine startPlan operation",
   );
 
-  // Step 1: validate plan exists — fail before touching the store.
-  return planStateProvider
-    .planExists(planName)
-    .mapErr((cause): StartPlanExecutionError => {
-      if (cause.type === "InvalidPlanName") {
-        return { type: "InvalidPlanName" as const, planName: cause.planName };
-      }
-      return { type: "ProviderUnavailable" as const, cause: cause.cause };
-    })
-    .andThen((exists) => {
-      if (!exists) {
-        log.warn({ planName }, "Plan does not exist — aborting execution");
-        return errAsync<RunWorkflowResult, StartPlanExecutionError>({
-          type: "PlanNotFound" as const,
-          planName,
-        });
-      }
+  const projectEffect = buildProjectEffect(adapter);
 
-      log.info(
-        { planName, workflowName },
-        "Plan exists — starting workflow execution",
-      );
-
-      // Step 2: delegate to runWorkflow with the explicit workflow path.
-      return runWorkflow({
-        config,
-        workflowName,
-        goal,
-        slug: planName,
-        adapter,
-        store: input.store,
-        planStateProvider,
-      }).mapErr(
-        (cause): StartPlanExecutionError => ({
-          type: "WorkflowError" as const,
-          cause,
-        }),
-      );
-    });
+  return startPlan(
+    {
+      planName,
+      workflowName,
+      goal,
+      slug: planName,
+      ownerId: "start-plan-execution",
+      store,
+      workflows: config.workflows,
+      planStateProvider,
+    },
+    projectEffect,
+  )
+    .mapErr(
+      (error): StartPlanExecutionError => mapCommandError(planName, error),
+    )
+    .map(deriveRunWorkflowResult);
 }

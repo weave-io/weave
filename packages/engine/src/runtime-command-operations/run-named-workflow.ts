@@ -26,13 +26,12 @@ import { errAsync, type ResultAsync } from "neverthrow";
 import type { DispatchAgentEffect } from "../execution-lifecycle.js";
 import { logger } from "../logger.js";
 import type {
-  CommandNotFoundError,
   CommandOperationError,
-  CommandValidationError,
   ExecutionStartedData,
   RunNamedWorkflowInput,
 } from "./types.js";
 import {
+  mapRunnerErrorToCommandError,
   runWorkflowLifecycle,
   type WorkflowRunnerError,
 } from "./workflow-runner.js";
@@ -40,56 +39,7 @@ import {
 const log = logger.child({ module: "run-named-workflow" });
 
 // ---------------------------------------------------------------------------
-// § 1 — mapRunnerError — convert WorkflowRunnerError to CommandOperationError
-// ---------------------------------------------------------------------------
-
-/**
- * Map a `WorkflowRunnerError` to a typed `CommandOperationError`.
- *
- * - `workflow_not_found` → `CommandNotFoundError`
- * - `max_steps_exceeded` → `CommandValidationError`
- * - `lifecycle_error`    → `CommandLifecycleError`
- * - `projection_error`   → `CommandLifecycleError` (policy_decision cause)
- */
-function mapRunnerError(error: WorkflowRunnerError): CommandOperationError {
-  if (error.type === "workflow_not_found") {
-    return {
-      type: "command_not_found",
-      entity: "workflow",
-      name: error.workflowName,
-      message: `Workflow "${error.workflowName}" not found in the provided workflow registry`,
-    } satisfies CommandNotFoundError;
-  }
-
-  if (error.type === "max_steps_exceeded") {
-    return {
-      type: "command_validation",
-      message: `Workflow execution exceeded the maximum step limit of ${error.maxSteps}`,
-      field: "maxSteps",
-    } satisfies CommandValidationError;
-  }
-
-  if (error.type === "lifecycle_error") {
-    return {
-      type: "command_lifecycle",
-      operation: "run-named-workflow",
-      cause: error.cause,
-    };
-  }
-
-  // projection_error
-  return {
-    type: "command_lifecycle",
-    operation: "run-named-workflow",
-    cause: {
-      type: "policy_decision",
-      message: error.message,
-    },
-  };
-}
-
-// ---------------------------------------------------------------------------
-// § 2 — runNamedWorkflow — command operation entry point
+// § 1 — runNamedWorkflow — command operation entry point
 // ---------------------------------------------------------------------------
 
 /**
@@ -127,7 +77,17 @@ export function runNamedWorkflow(
     effect: DispatchAgentEffect,
   ) => ResultAsync<void, WorkflowRunnerError>,
 ): ResultAsync<ExecutionStartedData, CommandOperationError> {
-  const { workflowName, goal, slug, ownerId, store, workflows, planStateProvider, now } = input;
+  const {
+    workflowName,
+    goal,
+    slug,
+    ownerId,
+    store,
+    workflows,
+    planStateProvider,
+    now,
+    maxSteps,
+  } = input;
 
   // Validate required fields before touching the store.
   if (!workflowName) {
@@ -180,9 +140,12 @@ export function runNamedWorkflow(
     workflows: typedWorkflows,
     projectEffect,
     planStateProvider,
+    maxSteps,
     now,
   })
-    .mapErr(mapRunnerError)
+    .mapErr((error) =>
+      mapRunnerErrorToCommandError(error, "run-named-workflow"),
+    )
     .map(
       (output): ExecutionStartedData => ({
         kind: "execution-started",

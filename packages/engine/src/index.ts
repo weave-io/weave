@@ -277,15 +277,20 @@ export type {
   WorkflowRunnerError,
   WorkflowRunnerInput,
   WorkflowRunnerOutput,
-} from "./runtime-command-operations.js";
+} from "./runtime-command-operations/index.js";
 export {
+  abortExecution,
+  advanceStep,
   COMMAND_OPERATION_KINDS,
   COMMAND_OPERATION_OUTCOMES,
+  inspectStatus,
+  mapRunnerErrorToCommandError,
   mapWorkflowRunnerErrorToLifecycle,
   runNamedWorkflow,
+  runtimeHealth,
   runWorkflowLifecycle,
   startPlan,
-} from "./runtime-command-operations.js";
+} from "./runtime-command-operations/index.js";
 export type {
   ConfigSkillResolutionResult,
   ResolvedSkill,
