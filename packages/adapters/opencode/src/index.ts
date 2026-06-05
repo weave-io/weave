@@ -113,6 +113,30 @@ export {
 } from "./start-plan-execution.js";
 
 // ---------------------------------------------------------------------------
+// Runtime command projection (adapter-owned command handlers and renderers)
+// ---------------------------------------------------------------------------
+
+export type {
+  AbortExecutionProjectionInput,
+  AdvanceStepProjectionInput,
+  InspectStatusProjectionInput,
+  ProjectionDegraded,
+  ProjectionFailure,
+  ProjectionResult,
+  ProjectionSuccess,
+  RuntimeHealthProjectionInput,
+  RunWorkflowProjectionInput,
+  StartPlanProjectionInput,
+} from "./runtime-command-projection.js";
+export {
+  buildOpenCodeHealthReport,
+  createDefaultStore,
+  DEGRADED_AFFORDANCES,
+  RuntimeCommandProjection,
+  WEAVE_COMMAND_LABELS,
+} from "./runtime-command-projection.js";
+
+// ---------------------------------------------------------------------------
 // Skill discovery helpers
 // ---------------------------------------------------------------------------
 

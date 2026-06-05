@@ -11,57 +11,51 @@
  * `runWorkflow` is never called from idle hooks, session events, or
  * continuation hooks — it requires explicit, user-authorized invocation.
  *
- * ## Execution lifecycle
+ * ## Delegation to shared engine operation
+ *
+ * `runWorkflow` delegates lifecycle semantics to the engine's reusable
+ * `runNamedWorkflow` command operation. The adapter supplies a `projectEffect`
+ * callback that calls `adapter.spawnSubagent` for each `DispatchAgentEffect`
+ * emitted by the engine. The engine never applies harness-specific behavior.
+ *
+ * ## Execution lifecycle (engine-owned)
  *
  *   1. `startExecution`  — acquire lease, create/update WorkflowInstance
  *   2. `dispatchStep`    — resolve next step, emit DispatchAgentEffect
- *   3. Apply effects     — call `adapter.spawnSubagent` for each DispatchAgentEffect
+ *   3. Project effects   — call `projectEffect` (→ `adapter.spawnSubagent`)
  *   4. `completeStep`    — record step completion, advance to next step or finish
  *
  * The loop continues until a `complete-execution` or `pause-execution` effect
  * is emitted, or until an error is returned.
  *
- * ## Auto-advance semantics
- *
- * When `completeStep` is called with `context` and `outcome: "success"`, the
- * engine auto-advances and emits one of:
- * - `dispatch-agent` — the next step to execute (non-final step); the engine
- *   also updates `instance.currentStepName` to the next step name.
- * - `complete-execution` — the workflow is done (final step).
- *
- * The loop applies the `dispatch-agent` effect from `completeStep` directly
- * (calling `spawnSubagent`) and then calls `completeStep` again for the next
- * step (resolved from the workflow config). It does NOT call `dispatchStep`
- * again after `completeStep` emits a `dispatch-agent` effect — that would
- * double-dispatch the same step.
- *
- * Boundary rule: this module calls engine lifecycle functions and the adapter
- * interface. It must not import directly from `@opencode-ai/sdk`.
+ * Boundary rule: this module calls the engine's `runNamedWorkflow` operation
+ * and the adapter interface. It must not import directly from `@opencode-ai/sdk`.
  *
  * @see docs/adapter-boundary.md — Execution Lifecycle Surface section
  * @see start-plan-execution.ts — the `/weave:start` ordinary-usage path
+ * @see packages/engine/src/runtime-command-operations/run-named-workflow.ts
  */
 
-import type { WeaveConfig, WorkflowConfig, WorkflowStep } from "@weave/core";
-import type { RuntimeStore } from "@weave/engine";
-import {
-  completeStep,
-  createInMemoryRuntimeStore,
-  createWorkflowInstanceId,
-  type DispatchAgentEffect,
-  dispatchStep,
-  type ExecutionLeaseId,
-  type LifecycleEffect,
-  type LifecycleError,
-  logger,
-  type PlanStateProvider,
-  startExecution,
-  type WorkflowExecutionContext,
-  type WorkflowInstanceId,
+import type { WeaveConfig } from "@weave/core";
+import type {
+  CommandOperationError,
+  LifecycleEffect,
+  LifecycleError,
+  PlanStateProvider,
+  RuntimeStore,
 } from "@weave/engine";
-import { errAsync, okAsync, type ResultAsync } from "neverthrow";
+import {
+  createInMemoryRuntimeStore,
+  logger,
+  runNamedWorkflow,
+} from "@weave/engine";
+import type { ResultAsync } from "neverthrow";
 
 import type { OpenCodeAdapter } from "./index.js";
+import {
+  buildProjectEffect,
+  deriveRunWorkflowResult,
+} from "./projection-helpers.js";
 
 const log = logger.child({ module: "run-workflow" });
 
@@ -133,233 +127,52 @@ export interface RunWorkflowResult {
 }
 
 // ---------------------------------------------------------------------------
-// Effect application
+// mapCommandError — convert CommandOperationError to RunWorkflowError
 // ---------------------------------------------------------------------------
 
 /**
- * Apply a single `DispatchAgentEffect` by calling `adapter.spawnSubagent`.
+ * Map a `CommandOperationError` from the engine's `runNamedWorkflow` operation
+ * to the adapter-owned `RunWorkflowError` discriminated union.
  *
- * The adapter's `spawnSubagent` method translates the descriptor into an
- * OpenCode `AgentConfig` and stores it in `adapter.translatedAgents`.
- *
- * Returns `ok(undefined)` on success or `err(RunWorkflowError)` on failure.
+ * - `command_not_found` (entity: "workflow") → `WorkflowNotFound`
+ * - `command_validation` (field: "maxSteps") → `MaxStepsExceeded`
+ * - all other errors → `LifecycleError`
  */
-function applyDispatchAgentEffect(
-  effect: DispatchAgentEffect,
-  adapter: OpenCodeAdapter,
-): ResultAsync<void, RunWorkflowError> {
-  log.info(
-    {
-      agentName: effect.runAgent.agentName,
-      stepType: effect.runAgent.stepType,
-      completionMethod: effect.runAgent.completionMethod,
+function mapCommandError(error: CommandOperationError): RunWorkflowError {
+  if (error.type === "command_not_found" && error.entity === "workflow") {
+    return { type: "WorkflowNotFound" as const, workflowName: error.name };
+  }
+
+  if (error.type === "command_validation" && error.field === "maxSteps") {
+    // Use the structured maxSteps value carried by CommandValidationError.
+    const maxSteps = error.maxSteps ?? 0;
+    return { type: "MaxStepsExceeded" as const, maxSteps };
+  }
+
+  if (error.type === "command_lifecycle") {
+    return { type: "LifecycleError" as const, cause: error.cause };
+  }
+
+  // command_validation (other fields), command_unsupported, command_degraded —
+  // wrap as a LifecycleError with a policy_decision cause.
+  let message = "Unknown command operation error";
+  if ("message" in error && typeof error.message === "string") {
+    message = error.message;
+  } else if ("reason" in error && typeof error.reason === "string") {
+    message = error.reason;
+  }
+
+  return {
+    type: "LifecycleError" as const,
+    cause: {
+      type: "policy_decision" as const,
+      message,
     },
-    "Applying DispatchAgentEffect — spawning subagent",
-  );
-  return adapter.spawnSubagent(effect.runAgent.agentDescriptor).mapErr(
-    (cause): RunWorkflowError => ({
-      type: "LifecycleError",
-      cause: {
-        type: "policy_decision",
-        message: `spawnSubagent failed: ${cause.message}`,
-      },
-    }),
-  );
+  };
 }
 
 // ---------------------------------------------------------------------------
-// Loop state
-// ---------------------------------------------------------------------------
-
-interface LoopState {
-  readonly workflowInstanceId: WorkflowInstanceId;
-  readonly leaseId: ExecutionLeaseId;
-  readonly context: WorkflowExecutionContext;
-  readonly workflowConfig: WorkflowConfig;
-  readonly adapter: OpenCodeAdapter;
-  readonly planStateProvider: PlanStateProvider | undefined;
-  readonly store: RuntimeStore;
-  readonly appliedEffects: LifecycleEffect[];
-  stepsDispatched: number;
-  readonly maxSteps: number;
-}
-
-// ---------------------------------------------------------------------------
-// resolveNextStepName — find the step after the completed one
-// ---------------------------------------------------------------------------
-
-/**
- * Resolve the name of the step that follows `completedStepName` in the
- * workflow config.
- *
- * Returns `undefined` when `completedStepName` is the final step.
- */
-function resolveNextStepName(
-  workflowConfig: WorkflowConfig,
-  completedStepName: string,
-): string | undefined {
-  const currentIndex = workflowConfig.steps.findIndex(
-    (s: WorkflowStep) => s.name === completedStepName,
-  );
-  if (currentIndex < 0) return undefined;
-  return workflowConfig.steps[currentIndex + 1]?.name;
-}
-
-// ---------------------------------------------------------------------------
-// completeAndAdvance — complete a step and handle auto-advance effects
-// ---------------------------------------------------------------------------
-
-/**
- * Complete a step and recursively handle auto-advance effects.
- *
- * When `completeStep` emits a `dispatch-agent` effect (auto-advance to next
- * step), this function applies it and calls itself recursively for the next
- * step. The next step name is resolved from the workflow config — NOT from
- * the agent name in the effect (which is the agent name, not the step name).
- *
- * When `completeStep` emits `complete-execution` or `pause-execution`, the
- * recursion terminates.
- */
-function completeAndAdvance(
-  stepName: string,
-  state: LoopState,
-): ResultAsync<RunWorkflowResult, RunWorkflowError> {
-  // Derive the completion method from the step's declared completion config so
-  // that non-agent_signal steps (plan_created, plan_complete, review_verdict,
-  // user_confirm) are validated correctly by the engine.
-  const stepConfig = state.workflowConfig.steps.find(
-    (s) => s.name === stepName,
-  );
-  const completionMethod = stepConfig?.completion.method ?? "agent_signal";
-
-  return completeStep(
-    {
-      workflowInstanceId: state.workflowInstanceId,
-      leaseId: state.leaseId,
-      stepName,
-      completionSignal: {
-        outcome: "success",
-        method: completionMethod,
-      },
-      context: state.context,
-      planStateProvider: state.planStateProvider,
-    },
-    state.store,
-  )
-    .mapErr((cause): RunWorkflowError => ({ type: "LifecycleError", cause }))
-    .andThen(({ effects: completionEffects }) => {
-      for (const effect of completionEffects) {
-        state.appliedEffects.push(effect);
-      }
-
-      log.info(
-        { stepName, completionEffectCount: completionEffects.length },
-        "Step completed",
-      );
-
-      // Check for terminal effects first.
-      const completeEffect = completionEffects.find(
-        (e) => e.kind === "complete-execution",
-      );
-      if (completeEffect !== undefined) {
-        log.info(
-          {
-            workflowName: state.context.workflowName,
-            stepsDispatched: state.stepsDispatched,
-          },
-          "Workflow completed",
-        );
-        return okAsync<RunWorkflowResult, RunWorkflowError>({
-          workflowInstanceId: state.workflowInstanceId,
-          appliedEffects: state.appliedEffects,
-          status: "completed",
-          stepsDispatched: state.stepsDispatched,
-        });
-      }
-
-      const pauseEffect = completionEffects.find(
-        (e) => e.kind === "pause-execution",
-      );
-      if (pauseEffect !== undefined) {
-        log.info(
-          {
-            workflowName: state.context.workflowName,
-            stepsDispatched: state.stepsDispatched,
-          },
-          "Workflow paused",
-        );
-        return okAsync<RunWorkflowResult, RunWorkflowError>({
-          workflowInstanceId: state.workflowInstanceId,
-          appliedEffects: state.appliedEffects,
-          status: "paused",
-          stepsDispatched: state.stepsDispatched,
-        });
-      }
-
-      // Auto-advance: completeStep emitted a dispatch-agent effect for the next step.
-      // Apply it and complete the next step — do NOT call dispatchStep again.
-      const nextDispatch = completionEffects.find(
-        (e): e is DispatchAgentEffect => e.kind === "dispatch-agent",
-      );
-
-      if (nextDispatch !== undefined) {
-        if (state.stepsDispatched >= state.maxSteps) {
-          return errAsync<RunWorkflowResult, RunWorkflowError>({
-            type: "MaxStepsExceeded",
-            maxSteps: state.maxSteps,
-          });
-        }
-        state.stepsDispatched += 1;
-
-        // Resolve the next step name from the workflow config.
-        // The dispatch-agent effect carries the agent name, not the step name.
-        const nextStepName = resolveNextStepName(
-          state.workflowConfig,
-          stepName,
-        );
-
-        if (nextStepName === undefined) {
-          // Should not happen — the engine emitted dispatch-agent but there's
-          // no next step in the config. Treat as completed.
-          log.warn(
-            { stepName },
-            "dispatch-agent effect emitted but no next step found — treating as completed",
-          );
-          return okAsync<RunWorkflowResult, RunWorkflowError>({
-            workflowInstanceId: state.workflowInstanceId,
-            appliedEffects: state.appliedEffects,
-            status: "completed",
-            stepsDispatched: state.stepsDispatched,
-          });
-        }
-
-        log.info(
-          { nextStepName, stepsDispatched: state.stepsDispatched },
-          "Auto-advancing to next step",
-        );
-
-        return applyDispatchAgentEffect(nextDispatch, state.adapter).andThen(
-          () => completeAndAdvance(nextStepName, state),
-        );
-      }
-
-      // No terminal or auto-advance effect — this should not happen in normal
-      // configured dispatch, but handle gracefully by returning completed.
-      log.warn(
-        { stepName, completionEffects: completionEffects.map((e) => e.kind) },
-        "completeStep returned no terminal or advance effect — treating as completed",
-      );
-      return okAsync<RunWorkflowResult, RunWorkflowError>({
-        workflowInstanceId: state.workflowInstanceId,
-        appliedEffects: state.appliedEffects,
-        status: "completed",
-        stepsDispatched: state.stepsDispatched,
-      });
-    });
-}
-
-// ---------------------------------------------------------------------------
-// runWorkflow — main execution loop
+// runWorkflow — main execution entry point
 // ---------------------------------------------------------------------------
 
 /**
@@ -374,15 +187,12 @@ function completeAndAdvance(
  * script, or UI action). It is never wired to idle hooks, session events, or
  * continuation hooks.
  *
- * Execution flow:
- * 1. Validate that the named workflow exists in `config.workflows`.
- * 2. Call `startExecution` to acquire a lease and create the instance.
- * 3. Call `dispatchStep` to get the first step's `DispatchAgentEffect`.
- * 4. Apply the `DispatchAgentEffect` by calling `adapter.spawnSubagent`.
- * 5. Call `completeStep` — the engine auto-advances and emits the next
- *    `dispatch-agent` effect (or `complete-execution` for the final step).
- * 6. Apply the auto-advance `dispatch-agent` effect and repeat from step 5
- *    until `complete-execution` or `pause-execution` is emitted.
+ * ## Delegation
+ *
+ * Lifecycle semantics are delegated to the engine's `runNamedWorkflow`
+ * command operation. The adapter supplies a `projectEffect` callback that
+ * calls `adapter.spawnSubagent` for each `DispatchAgentEffect`. The engine
+ * never applies harness-specific behavior.
  *
  * @param input - Named-workflow execution parameters.
  * @returns `ok(RunWorkflowResult)` on success, or `err(RunWorkflowError)`.
@@ -397,110 +207,33 @@ export function runWorkflow(
     slug,
     adapter,
     planStateProvider,
+    maxSteps,
     ownerId = "run-workflow",
-    maxSteps = 100,
   } = input;
 
   const store = input.store ?? createInMemoryRuntimeStore();
 
-  // Validate maxSteps is at least 1 before touching the store.
-  if (maxSteps < 1) {
-    return errAsync({
-      type: "MaxStepsExceeded" as const,
-      maxSteps,
-    });
-  }
-
-  // Validate workflow exists before touching the store.
-  const workflowConfig = config.workflows[workflowName];
-  if (workflowConfig === undefined) {
-    return errAsync({
-      type: "WorkflowNotFound" as const,
-      workflowName,
-    });
-  }
-
-  const workflowInstanceId = createWorkflowInstanceId(crypto.randomUUID());
-
-  const context: WorkflowExecutionContext = {
-    workflowName,
-    goal,
-    slug,
-    workflows: config.workflows,
-  };
-
   log.info(
-    { workflowName, goal, slug, workflowInstanceId },
-    "Starting workflow execution",
+    { workflowName, goal, slug },
+    "runWorkflow — delegating to engine runNamedWorkflow operation",
   );
 
-  // Step 1: startExecution — acquire lease and create instance.
-  return startExecution(
+  const projectEffect = buildProjectEffect(adapter);
+
+  return runNamedWorkflow(
     {
-      workflowInstanceId,
+      workflowName,
+      goal,
+      slug,
       ownerId,
-      context,
+      store,
+      workflows: config.workflows,
+      planStateProvider,
+      maxSteps,
+      now: undefined,
     },
-    store,
+    projectEffect,
   )
-    .mapErr((cause): RunWorkflowError => ({ type: "LifecycleError", cause }))
-    .andThen(({ leaseId }) => {
-      log.info({ leaseId }, "Execution started — dispatching first step");
-
-      const appliedEffects: LifecycleEffect[] = [];
-
-      const state: LoopState = {
-        workflowInstanceId,
-        leaseId,
-        context,
-        workflowConfig,
-        adapter,
-        planStateProvider,
-        store,
-        appliedEffects,
-        stepsDispatched: 0,
-        maxSteps,
-      };
-
-      // Step 2: dispatchStep — resolve the first step and emit DispatchAgentEffect.
-      return dispatchStep(
-        {
-          workflowInstanceId,
-          leaseId,
-          context,
-        },
-        store,
-      )
-        .mapErr(
-          (cause): RunWorkflowError => ({ type: "LifecycleError", cause }),
-        )
-        .andThen(({ stepName, effects }) => {
-          state.stepsDispatched += 1;
-          log.info(
-            { stepName, effectCount: effects.length },
-            "First step dispatched",
-          );
-
-          for (const effect of effects) {
-            appliedEffects.push(effect);
-          }
-
-          // Apply all dispatch effects from dispatchStep.
-          const dispatchEffects = effects.filter(
-            (e): e is DispatchAgentEffect => e.kind === "dispatch-agent",
-          );
-
-          // Apply all dispatch effects sequentially, short-circuiting on error.
-          const applyAll = dispatchEffects.reduce(
-            (chain, effect) =>
-              chain.andThen(() => applyDispatchAgentEffect(effect, adapter)),
-            okAsync<void, RunWorkflowError>(undefined),
-          );
-
-          return applyAll.andThen(() =>
-            // Step 3+: completeStep with auto-advance handles the rest of the loop.
-            completeAndAdvance(stepName, state),
-          );
-        });
-    });
+    .mapErr(mapCommandError)
+    .map(deriveRunWorkflowResult);
 }

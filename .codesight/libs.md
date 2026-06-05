@@ -17,6 +17,7 @@
   - interface WeavePluginOptions
   - const WeavePlugin: Plugin
   - const server
+- `packages/adapters/opencode/src/projection-helpers.ts` — function buildProjectEffect: (adapter) => (effect: DispatchAgentEffect) => ResultAsync<void, WorkflowRunnerError>, function deriveRunWorkflowResult: (data) => RunWorkflowResult
 - `packages/adapters/opencode/src/reconcile-agent.ts`
   - function classifyExistingAgent: (agentName, existingAgents) => ReconcileDecision
   - function tagWithOwnership: (config) => OpenCodeAgentConfig
@@ -29,6 +30,14 @@
   - interface RunWorkflowInput
   - interface RunWorkflowResult
   - type RunWorkflowError
+- `packages/adapters/opencode/src/runtime-command-projection.ts`
+  - function buildOpenCodeHealthReport: (overrides?) => AdapterHealthReport
+  - class RuntimeCommandProjection
+  - interface ProjectionSuccess
+  - interface ProjectionFailure
+  - interface ProjectionDegraded
+  - interface StartPlanProjectionInput
+  - _...7 more_
 - `packages/adapters/opencode/src/skill-discovery.ts`
   - function buildSkillInfoList: (names) => SkillInfo[]
   - function validateDeclaredSkills: (declaredSkills, availableSkills, disabledSkills) => Result<void, MissingSkillsError>
@@ -287,6 +296,18 @@
   - function createOwnerId: (raw) => OwnerId
   - function createArtifactId: (raw) => ArtifactId
   - _...30 more_
+- `packages/engine/src/runtime-command-operations/control.ts` — function abortExecution: (input) => import("neverthrow").ResultAsync<ExecutionAbortedData, CommandOperationError>, function advanceStep: (input) => import("neverthrow").ResultAsync<StepAdvancedData, CommandOperationError>
+- `packages/engine/src/runtime-command-operations/health.ts` — function runtimeHealth: (input) => RuntimeHealthResult
+- `packages/engine/src/runtime-command-operations/run-named-workflow.ts` — function runNamedWorkflow: (input, projectEffect) => void
+- `packages/engine/src/runtime-command-operations/start-plan.ts` — function startPlan: (input, projectEffect) => void
+- `packages/engine/src/runtime-command-operations/status.ts` — function inspectStatus: (input) => import("neverthrow").ResultAsync<ExecutionStatusData, CommandOperationError>
+- `packages/engine/src/runtime-command-operations/workflow-runner.ts`
+  - function runWorkflowLifecycle: (input) => ResultAsync<WorkflowRunnerOutput, WorkflowRunnerError>
+  - function mapWorkflowRunnerErrorToLifecycle: (error) => CommandLifecycleError
+  - function mapRunnerErrorToCommandError: (error, operation) => CommandOperationError
+  - interface WorkflowRunnerInput
+  - interface WorkflowRunnerOutput
+  - type WorkflowRunnerError
 - `packages/engine/src/skill-resolution.ts`
   - function resolveSkillsForAgent: (input) => Result<ResolvedSkill[], SkillResolutionError[]>
   - function resolveSkillsForConfig: (input) => Result<ConfigSkillResolutionResult, SkillResolutionError[]>
