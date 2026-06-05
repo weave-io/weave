@@ -287,6 +287,13 @@
   - function createOwnerId: (raw) => OwnerId
   - function createArtifactId: (raw) => ArtifactId
   - _...30 more_
+- `packages/engine/src/runtime-command-operations/run-named-workflow.ts` — function runNamedWorkflow: (input, projectEffect) => void
+- `packages/engine/src/runtime-command-operations/workflow-runner.ts`
+  - function runWorkflowLifecycle: (input) => ResultAsync<WorkflowRunnerOutput, WorkflowRunnerError>
+  - function mapWorkflowRunnerErrorToLifecycle: (error) => CommandLifecycleError
+  - interface WorkflowRunnerInput
+  - interface WorkflowRunnerOutput
+  - type WorkflowRunnerError
 - `packages/engine/src/skill-resolution.ts`
   - function resolveSkillsForAgent: (input) => Result<ResolvedSkill[], SkillResolutionError[]>
   - function resolveSkillsForConfig: (input) => Result<ConfigSkillResolutionResult, SkillResolutionError[]>
