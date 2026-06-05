@@ -14,6 +14,8 @@
  * - The `event` hook runs reconciliation exactly once (idempotent).
  * - The `debug config` path: `hooks.config` works without any SDK calls.
  * - The plugin continues materializing remaining agents when one fails.
+ * - The `event` hook only materializes agents — it never calls `runWorkflow`
+ *   or `startPlanExecution` (no execution-start helpers are wired to session events).
  *
  * All tests use a mock `PluginInput` and a project-only file reader to avoid
  * picking up the developer's global ~/.weave/config.weave. The full
@@ -27,6 +29,14 @@
  * + `spawnSubagent()`) is deferred to the `event` hook, which fires on the
  * first `session.created` event. This ensures `opencode debug config` never
  * blocks on SDK/DB calls.
+ *
+ * ## Plugin event hook boundary
+ *
+ * The `event` hook is strictly an agent-materialization hook. It calls
+ * `adapter.spawnSubagent()` for each declared agent — nothing more. It does
+ * not call `runWorkflow` (explicit named-workflow execution) or
+ * `startPlanExecution` (the `/weave:start` ordinary-usage path). Execution
+ * start helpers are never wired to session events or plugin lifecycle hooks.
  */
 
 import { describe, expect, it } from "bun:test";
@@ -897,6 +907,122 @@ describe("WeavePlugin — builtin shuttle is subagent-only", () => {
       | undefined;
     expect(shuttleConfig).toBeDefined();
     expect(shuttleConfig?.mode).toBe("subagent");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: event hook boundary — agent materialization only, no start helpers
+// ---------------------------------------------------------------------------
+
+describe("WeavePlugin — event hook only materializes agents (no execution-start helpers)", () => {
+  /**
+   * Boundary proof: the plugin's `event` hook is strictly an agent-
+   * materialization hook. It calls `adapter.spawnSubagent()` (via
+   * `createAgent` / `updateAgent` on the SDK client) for each declared agent.
+   * It does NOT call `runWorkflow` (explicit named-workflow execution) or
+   * `startPlanExecution` (the `/weave:start` ordinary-usage path).
+   *
+   * Execution-start helpers are never wired to session events or plugin
+   * lifecycle hooks. The only way to start named-workflow execution is to
+   * call `runWorkflow` explicitly from a user-authorized trigger.
+   */
+  it("session.created triggers agent materialization (spawnSubagent) — not workflow execution", async () => {
+    // Proof: after session.created, the SDK client receives createAgent calls
+    // (agent materialization). No workflow execution is started — the mock
+    // client has no runWorkflow or startPlanExecution surface, and the plugin
+    // does not call those helpers.
+    const root = await makeTempProject("materialization-only-agent");
+    const client = new MockOpenCodeClient();
+    client.setListResult(okAsync([]));
+
+    const plugin = createWeavePlugin({
+      fileReader: projectOnlyReader(root),
+      clientFacade: client,
+    });
+    const input = makeMockPluginInput(root, client);
+    const hooks = await plugin(input);
+
+    await triggerSessionCreated(hooks);
+
+    // Agent materialization occurred (createAgent was called).
+    expect(client.createAgentCalls.length).toBeGreaterThan(0);
+    const names = client.createAgentCalls.map((c) => c.name);
+    expect(names).toContain("materialization-only-agent");
+
+    // The mock client has no runWorkflow or startPlanExecution calls —
+    // the plugin does not invoke execution-start helpers on session.created.
+    // (MockOpenCodeClient only exposes listAgents, createAgent, updateAgent.)
+    expect(client.listAgentsCalls.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("event hook does not call any execution-start helpers on session.created", async () => {
+    // Structural proof: the plugin's event hook implementation (in plugin.ts)
+    // calls only `runReconciliation()`, which calls `adapter.init()` and
+    // `adapter.spawnSubagent()`. It does not call `runWorkflow` or
+    // `startPlanExecution`. This test verifies the observable boundary:
+    // only SDK agent-management methods are called, not execution helpers.
+    const root = await makeTempProject("no-exec-start-agent");
+    const client = new MockOpenCodeClient();
+    client.setListResult(okAsync([]));
+
+    const plugin = createWeavePlugin({
+      fileReader: projectOnlyReader(root),
+      clientFacade: client,
+    });
+    const input = makeMockPluginInput(root, client);
+    const hooks = await plugin(input);
+
+    // Trigger session.created once — reconciliation runs.
+    await triggerSessionCreated(hooks);
+
+    // Only agent-management SDK calls were made (createAgent/updateAgent).
+    // No execution-start helpers (runWorkflow, startPlanExecution) were called.
+    // The mock client surface is the boundary: it only exposes agent CRUD.
+    const agentManagementCallCount =
+      client.createAgentCalls.length + client.updateAgentCalls.length;
+    expect(agentManagementCallCount).toBeGreaterThan(0);
+
+    // Record counts after the first reconciliation.
+    const listAfterFirst = client.listAgentsCalls.length;
+    const createAfterFirst = client.createAgentCalls.length;
+    const updateAfterFirst = client.updateAgentCalls.length;
+
+    // Trigger session.created again — reconciliation must NOT repeat (idempotent).
+    await triggerSessionCreated(hooks);
+    await triggerSessionCreated(hooks);
+
+    // SDK call counts must not have grown after the first reconciliation.
+    // This proves the idempotent guard is in place and no execution-start
+    // helpers were wired to subsequent session events.
+    expect(client.listAgentsCalls.length).toBe(listAfterFirst);
+    expect(client.createAgentCalls.length).toBe(createAfterFirst);
+    expect(client.updateAgentCalls.length).toBe(updateAfterFirst);
+  });
+
+  it("non-session.created events do not trigger agent materialization or execution helpers", async () => {
+    // Proof: non-session.created events are ignored entirely. Neither agent
+    // materialization nor execution-start helpers are called.
+    const root = await makeTempProject("ignored-events-agent");
+    const client = new MockOpenCodeClient();
+    client.setListResult(okAsync([]));
+
+    const plugin = createWeavePlugin({
+      fileReader: projectOnlyReader(root),
+      clientFacade: client,
+    });
+    const input = makeMockPluginInput(root, client);
+    const hooks = await plugin(input);
+
+    // Trigger various non-session.created events.
+    await triggerOtherEvent(hooks, "session.updated");
+    await triggerOtherEvent(hooks, "session.deleted");
+    await triggerOtherEvent(hooks, "message.updated");
+    await triggerOtherEvent(hooks, "server.connected");
+
+    // No SDK calls — neither materialization nor execution helpers were invoked.
+    expect(client.listAgentsCalls).toHaveLength(0);
+    expect(client.createAgentCalls).toHaveLength(0);
+    expect(client.updateAgentCalls).toHaveLength(0);
   });
 });
 

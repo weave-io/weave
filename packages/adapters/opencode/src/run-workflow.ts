@@ -1,7 +1,18 @@
 /**
- * End-to-end workflow execution loop for the OpenCode adapter.
+ * Explicit named-workflow execution loop for the OpenCode adapter.
  *
- * Demonstrates the full lifecycle surface:
+ * `runWorkflow` is the adapter-owned helper for **explicit named-workflow
+ * execution** — the path where a caller (command handler, script, or
+ * user-authorized trigger) names a specific workflow declared in
+ * `.weave/config.weave` and requests that it run end-to-end.
+ *
+ * This is distinct from ordinary Loom-led usage (the `/weave:start` path),
+ * which is plan-first and does not require the caller to name a workflow.
+ * `runWorkflow` is never called from idle hooks, session events, or
+ * continuation hooks — it requires explicit, user-authorized invocation.
+ *
+ * ## Execution lifecycle
+ *
  *   1. `startExecution`  — acquire lease, create/update WorkflowInstance
  *   2. `dispatchStep`    — resolve next step, emit DispatchAgentEffect
  *   3. Apply effects     — call `adapter.spawnSubagent` for each DispatchAgentEffect
@@ -28,6 +39,7 @@
  * interface. It must not import directly from `@opencode-ai/sdk`.
  *
  * @see docs/adapter-boundary.md — Execution Lifecycle Surface section
+ * @see start-plan-execution.ts — the `/weave:start` ordinary-usage path
  */
 
 import type { WeaveConfig, WorkflowConfig, WorkflowStep } from "@weave/core";
@@ -351,10 +363,19 @@ function completeAndAdvance(
 // ---------------------------------------------------------------------------
 
 /**
- * Run a workflow end-to-end using the engine's lifecycle surface.
+ * Execute a named workflow end-to-end using the engine's lifecycle surface.
+ *
+ * This is the **explicit named-workflow execution** entry point. The caller
+ * must supply the name of a workflow declared in `config.workflows`. This
+ * function is not the ordinary Loom-led path — for that, see
+ * `startPlanExecution` (the `/weave:start` delivery path).
+ *
+ * `runWorkflow` must be called by a user-authorized trigger (command handler,
+ * script, or UI action). It is never wired to idle hooks, session events, or
+ * continuation hooks.
  *
  * Execution flow:
- * 1. Validate that the workflow exists in `config.workflows`.
+ * 1. Validate that the named workflow exists in `config.workflows`.
  * 2. Call `startExecution` to acquire a lease and create the instance.
  * 3. Call `dispatchStep` to get the first step's `DispatchAgentEffect`.
  * 4. Apply the `DispatchAgentEffect` by calling `adapter.spawnSubagent`.
@@ -363,7 +384,7 @@ function completeAndAdvance(
  * 6. Apply the auto-advance `dispatch-agent` effect and repeat from step 5
  *    until `complete-execution` or `pause-execution` is emitted.
  *
- * @param input - Workflow execution parameters.
+ * @param input - Named-workflow execution parameters.
  * @returns `ok(RunWorkflowResult)` on success, or `err(RunWorkflowError)`.
  */
 export function runWorkflow(
