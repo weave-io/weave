@@ -402,10 +402,19 @@ export function createWeavePlugin(options: WeavePluginOptions = {}): Plugin {
       },
 
       event: async ({ event }) => {
-        // Only trigger reconciliation on session.created — the first real
-        // session event that indicates the OpenCode runtime store is available.
+        // SDK reconciliation is disabled. The config hook already injects all
+        // Weave agents into OpenCode's in-memory config at startup, which is
+        // sufficient for runtime use. The SDK path (config.update per agent)
+        // is redundant and harmful — each call triggers OpenCode to reload all
+        // plugins, causing an O(n) plugin restart storm for n agents.
+        //
+        // If durable persistence across config reloads is ever needed, it
+        // should be implemented as a single batched config.update() call, not
+        // per-agent writes.
+        //
+        // See: https://github.com/anthropics/weave-vnext/issues/XXX (if applicable)
         if (event.type !== "session.created") return;
-        await runReconciliation();
+        // await runReconciliation();
       },
     };
   };
