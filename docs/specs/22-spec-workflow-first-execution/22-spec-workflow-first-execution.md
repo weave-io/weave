@@ -41,6 +41,8 @@ This feature defines a workflow-first execution model for Weave so execution sem
 
 ### Unit 2: Plan-oriented default workflow with `before-plan` extension
 
+> **⚠ Partial supersession** — The phrase "effective default workflow" in this unit originally implied that ordinary Weave usage is driven by an implicit builtin workflow. [Spec 29 — Default Usage Is Not Workflow-Driven](../29-spec-default-usage-not-workflow-driven/29-spec-default-usage-not-workflow-driven.md) supersedes that implication: ordinary usage is Loom-led, and workflows are explicit, user-invoked constructs. The `before-plan` extension surface, `role planning` step, and `extension_points { before-plan }` publication syntax defined in this unit remain valid for named workflow execution. Read "effective default workflow" below as "the canonical named workflow (`plan-and-execute`) when a user explicitly invokes it."
+
 **Purpose:** Define the baseline workflow shape so users can extend planning without replacing it.
 
 **Functional Requirements:**

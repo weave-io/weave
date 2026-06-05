@@ -133,6 +133,8 @@ The legacy `/start-work` → Tapestry flow is documented in [`docs/legacy-archit
 
 ## Where Issue #52 Fits
 
+> **⚠ Superseded interpretation** — The guidance below (adding `default_workflow`, selecting `plan-and-execute` as a hidden default, updating Loom's prompt to name a workflow) was the original reading of issue #52. [Spec 29 — Default Usage Is Not Workflow-Driven](../specs/29-spec-default-usage-not-workflow-driven/29-spec-default-usage-not-workflow-driven.md) supersedes that interpretation. Ordinary Weave usage is Loom-led; workflows are explicit, user-invoked constructs. The plumbing described below remains valid for named workflow execution; the "default on-ramp" framing does not apply to ordinary usage. Read this section as historical context only.
+
 **Issue #52: `[config] Add builtin default-plan workflow`**
 
 PR #82 built the execution plumbing:
@@ -176,9 +178,11 @@ In summary: **PR #82 built the roads; issue #52 paves the default on-ramp.**
 
 ### What issue #52 would add
 
-- A `default_workflow` DSL field or equivalent engine/adapter convention.
-- Optionally, a default `extend before-plan` configuration in builtins.
-- A Loom prompt or routing update that names the canonical workflow for large work.
+> **⚠ Superseded** — See [Spec 29](../specs/29-spec-default-usage-not-workflow-driven/29-spec-default-usage-not-workflow-driven.md). The items below reflect the original interpretation; they are preserved as historical context.
+
+- ~~A `default_workflow` DSL field or equivalent engine/adapter convention.~~ (Spec 29: ordinary usage is Loom-led; no hidden default workflow is selected.)
+- ~~Optionally, a default `extend before-plan` configuration in builtins.~~ (Spec 29: pre-plan behavior belongs to Loom config/prompt composition, not workflow extension machinery.)
+- ~~A Loom prompt or routing update that names the canonical workflow for large work.~~ (Spec 29: Loom's prompt may describe delegation intent, but it shall not implicitly select a workflow for ordinary usage.)
 
 ---
 
@@ -192,3 +196,4 @@ In summary: **PR #82 built the roads; issue #52 paves the default on-ramp.**
 - [`docs/adapter-boundary.md`](../adapter-boundary.md) — Engine/adapter ownership matrix; Execution Lifecycle Surface section.
 - [`docs/legacy-architecture.md`](../legacy-architecture.md) — Documents the `/start-work` → Tapestry flow this ADR supersedes.
 - [`docs/product-vision.md`](../product-vision.md) — Harness-agnostic architecture and core mental model.
+- [`docs/specs/29-spec-default-usage-not-workflow-driven/29-spec-default-usage-not-workflow-driven.md`](../specs/29-spec-default-usage-not-workflow-driven/29-spec-default-usage-not-workflow-driven.md) — Spec 29: supersedes the "add default_workflow" interpretation; defines ordinary usage as Loom-led.

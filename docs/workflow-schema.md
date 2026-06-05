@@ -10,7 +10,10 @@ This document describes the typed workflow schema. It covers field semantics, th
 - [DSL Reference](dsl-reference.md) — canonical `.weave` DSL syntax reference
 - [Spec 17 — Workflow Extension](specs/17-spec-workflow-extension/17-spec-workflow-extension.md) — `extends`, `insert_before`, `insert_after` config-merge semantics
 - [Spec 22 — Workflow-First Execution](specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md) — `before-plan` extension surface, `role planning`, and execution contract
+- [Spec 29 — Default Usage Is Not Workflow-Driven](specs/29-spec-default-usage-not-workflow-driven/29-spec-default-usage-not-workflow-driven.md) — ordinary usage is Loom-led; workflows are explicit, user-invoked constructs
 - [ADR 0006 — End-to-End Orchestration Flow](adr/0006-end-to-end-orchestration-flow.md) — full Loom → Pattern → Tapestry → Weft/Warp flow; legacy vs. current model; where issue #52 fits
+
+> **Scope note**: Workflows are **explicit, user-invoked** constructs. They are not the default path for ordinary Weave usage. Ordinary usage is Loom-led: Loom handles conversational triage, delegates bounded tasks to Shuttle, and asks Pattern to create a plan when needed. A workflow begins only when a user explicitly invokes one (e.g. via `/weave:start` or an equivalent adapter command). See [Spec 29](specs/29-spec-default-usage-not-workflow-driven/29-spec-default-usage-not-workflow-driven.md) for the authoritative statement of the default model.
 
 ---
 
