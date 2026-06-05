@@ -21,13 +21,16 @@
  * See `WEAVE_START_COMMAND` and `WEAVE_START_LEGACY_COMMAND` constants below.
  */
 
-import type { WeaveConfig } from "@weave/core";
 import type { PlanStateProvider, RuntimeStore } from "@weave/engine";
 import { logger } from "@weave/engine";
 import { errAsync, type ResultAsync } from "neverthrow";
 
 import type { OpenCodeAdapter } from "./adapter.js";
-import type { RunWorkflowError, RunWorkflowResult } from "./run-workflow.js";
+import type {
+  RunWorkflowError,
+  RunWorkflowInput,
+  RunWorkflowResult,
+} from "./run-workflow.js";
 import { runWorkflow } from "./run-workflow.js";
 
 // ---------------------------------------------------------------------------
@@ -109,8 +112,12 @@ export interface StartPlanExecutionInput {
    *
    * Must include the workflow referenced by `workflowName` (defaults to
    * `tapestry-execution`).
+   *
+   * Typed as `RunWorkflowInput["config"]` to avoid a direct `@weave/core`
+   * import — the adapter boundary requires that core types flow through
+   * adapter-owned modules, not be imported directly.
    */
-  readonly config: WeaveConfig;
+  readonly config: RunWorkflowInput["config"];
 
   /**
    * Provider for querying plan file state.

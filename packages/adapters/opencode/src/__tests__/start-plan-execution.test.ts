@@ -27,7 +27,6 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import type { WeaveConfig } from "@weave/core";
 import type { PlanStateError, PlanStateProvider } from "@weave/engine";
 import { createInMemoryRuntimeStore } from "@weave/engine";
 import { errAsync, okAsync, type ResultAsync } from "neverthrow";
@@ -35,6 +34,7 @@ import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 import { OpenCodeAdapter } from "../adapter.js";
 import {
   DEFAULT_EXECUTION_WORKFLOW,
+  type StartPlanExecutionInput,
   startPlanExecution,
   WEAVE_START_COMMAND,
   WEAVE_START_LEGACY_COMMAND,
@@ -104,7 +104,7 @@ class FailingPlanStateProvider implements PlanStateProvider {
  * Uses `agent_signal` for all steps in tests that don't need plan-oriented
  * completion, to keep fixtures simple.
  */
-const TAPESTRY_EXECUTION_CONFIG: WeaveConfig = {
+const TAPESTRY_EXECUTION_CONFIG: StartPlanExecutionInput["config"] = {
   agents: {
     shuttle: {
       description: "Shuttle (Domain Specialist)",
@@ -190,7 +190,7 @@ const TAPESTRY_EXECUTION_CONFIG: WeaveConfig = {
  * Used for tests that need a successful `runWorkflow` call without plan-oriented
  * completion methods.
  */
-const SIMPLE_EXECUTION_CONFIG: WeaveConfig = {
+const SIMPLE_EXECUTION_CONFIG: StartPlanExecutionInput["config"] = {
   agents: {
     shuttle: {
       description: "Shuttle (Domain Specialist)",
