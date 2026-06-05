@@ -1,12 +1,17 @@
 /**
- * Integration tests for `runWorkflow` — the end-to-end workflow execution loop.
+ * Integration tests for `runWorkflow` — explicit named-workflow execution.
  *
  * ## What these tests prove (Spec 22 Unit 4 / ADR 0004)
  *
- * 1. **Explicit user-driven delivery path** — `runWorkflow` is the OpenCode
- *    adapter's explicit user-driven helper for starting durable workflow
- *    execution. It must be called explicitly by a user-authorized trigger
- *    (command, skill, script, or UI). It is never called from idle hooks,
+ * 1. **Explicit named-workflow execution** — `runWorkflow` is the OpenCode
+ *    adapter's helper for running a specific, named workflow declared in
+ *    `.weave/config.weave`. The caller must supply the workflow name; there is
+ *    no implicit or default workflow selection. This is distinct from the
+ *    ordinary Loom-led path (`/weave:start` → `startPlanExecution`), which is
+ *    plan-first and does not require the caller to name a workflow.
+ *
+ *    `runWorkflow` must be called by a user-authorized trigger (command
+ *    handler, script, or UI action). It is never called from idle hooks,
  *    session events, continuation hooks, or lifecycle observations.
  *
  * 2. **`PlanStateProvider` at completion boundaries** — when a workflow step
@@ -15,11 +20,12 @@
  *    - Absent provider → `LifecycleError` (engine fails closed)
  *    - Present provider → completion succeeds when plan state matches
  *
- * 3. **Implicit paths do not start execution** — `runWorkflow` is not wired
- *    to any idle hook, session event, or continuation hook in the OpenCode
- *    adapter. The plugin's `event` hook fires only on `session.created` and
- *    performs agent materialization — it never calls `runWorkflow`. The
- *    `config` hook is pure computation and never calls `runWorkflow`.
+ * 3. **Plugin hooks do not start named-workflow execution** — `runWorkflow` is
+ *    not wired to any idle hook, session event, or continuation hook in the
+ *    OpenCode adapter. The plugin's `event` hook fires only on
+ *    `session.created` and performs agent materialization — it never calls
+ *    `runWorkflow` or any other execution-start helper. The `config` hook is
+ *    pure computation and never calls `runWorkflow`.
  *
  * Uses:
  * - `InMemoryRuntimeStore` (no SQLite, no filesystem)
@@ -578,13 +584,20 @@ describe("runWorkflow", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests — explicit user-driven delivery path (Spec 22 Unit 4 / ADR 0004)
+// Tests — explicit named-workflow execution boundary (Spec 22 Unit 4 / ADR 0004)
 // ---------------------------------------------------------------------------
 
-describe("runWorkflow — explicit user-driven delivery path (Spec 22 Unit 4)", () => {
+describe("runWorkflow — explicit named-workflow execution boundary (Spec 22 Unit 4)", () => {
   /**
-   * Proof: `runWorkflow` is an explicit adapter-owned helper that must be
-   * called by a user-authorized trigger. It is not wired to any idle hook,
+   * Proof: `runWorkflow` executes a specific, named workflow — not the
+   * ordinary Loom-led path. The caller must supply `workflowName`; there is
+   * no implicit or default workflow selection.
+   *
+   * This is distinct from `/weave:start` → `startPlanExecution`, which is
+   * plan-first and does not require the caller to name a workflow.
+   *
+   * `runWorkflow` must be called by a user-authorized trigger (command
+   * handler, script, or UI action). It is not wired to any idle hook,
    * session event, or continuation hook.
    *
    * ADR 0004 Decision 2: "Durable execution begins only through an explicit,
@@ -593,10 +606,10 @@ describe("runWorkflow — explicit user-driven delivery path (Spec 22 Unit 4)", 
    * ADR 0004 Decision 3: "Adapters are delivery layers, not semantic owners."
    *
    * This test proves that `runWorkflow` calls `startExecution` internally
-   * (via the engine lifecycle surface) and that the execution only begins
-   * when the function is explicitly invoked — not from any implicit path.
+   * (via the engine lifecycle surface) and that named-workflow execution only
+   * begins when the function is explicitly invoked — not from any implicit path.
    */
-  it("starts execution only when explicitly called — not from idle hooks or session events", async () => {
+  it("starts named-workflow execution only when explicitly called — not from idle hooks or session events", async () => {
     const adapter = new OpenCodeAdapter();
     const store = createInMemoryRuntimeStore();
 
@@ -608,14 +621,15 @@ describe("runWorkflow — explicit user-driven delivery path (Spec 22 Unit 4)", 
       expect(instancesBefore.value).toHaveLength(0);
     }
 
-    // Explicit invocation: the user (or user-authorized trigger) calls runWorkflow.
+    // Explicit invocation: the caller names the workflow and calls runWorkflow.
     // This is the only path that creates a WorkflowInstance and acquires an
     // ExecutionLease — per ADR 0004 Decision 2.
+    // (Contrast with /weave:start → startPlanExecution, which is plan-first.)
     const result = await runWorkflow({
       config: TWO_STEP_CONFIG,
       workflowName: "plan-and-execute",
-      goal: "Explicit user trigger",
-      slug: "explicit-user-trigger",
+      goal: "Explicit named-workflow trigger",
+      slug: "explicit-named-workflow-trigger",
       adapter,
       store,
     });
@@ -623,7 +637,7 @@ describe("runWorkflow — explicit user-driven delivery path (Spec 22 Unit 4)", 
     expect(result.isOk()).toBe(true);
 
     // After explicit invocation: a workflow instance was created.
-    // This proves startExecution was called through the explicit path.
+    // This proves startExecution was called through the explicit named path.
     const instancesAfter = await store.instances.list();
     expect(instancesAfter.isOk()).toBe(true);
     if (instancesAfter.isOk()) {
@@ -632,14 +646,14 @@ describe("runWorkflow — explicit user-driven delivery path (Spec 22 Unit 4)", 
     }
   });
 
-  it("does not start execution when runWorkflow is not called", async () => {
+  it("no named-workflow execution occurs without an explicit runWorkflow call", async () => {
     // Proof: without an explicit runWorkflow call, no WorkflowInstance is
-    // created. This demonstrates that idle hooks, session events, and
-    // continuation hooks cannot implicitly start durable execution.
+    // created. Idle hooks, session events, and continuation hooks do not
+    // call runWorkflow — they cannot implicitly start named-workflow execution.
     const store = createInMemoryRuntimeStore();
 
     // Simulate what an idle hook or session event would do: nothing.
-    // No runWorkflow call is made here.
+    // No runWorkflow call is made here — the store remains empty.
 
     const instancesAfter = await store.instances.list();
     expect(instancesAfter.isOk()).toBe(true);
@@ -649,10 +663,10 @@ describe("runWorkflow — explicit user-driven delivery path (Spec 22 Unit 4)", 
     }
   });
 
-  it("each explicit runWorkflow call creates a distinct WorkflowInstance", async () => {
-    // Proof: each explicit user-authorized trigger creates a separate
-    // WorkflowInstance with a unique ID. This demonstrates that execution
-    // is scoped to explicit invocations, not shared across implicit events.
+  it("each explicit runWorkflow call creates a distinct WorkflowInstance for the named workflow", async () => {
+    // Proof: each explicit named-workflow invocation creates a separate
+    // WorkflowInstance with a unique ID. Execution is scoped to explicit
+    // invocations — not shared across implicit events or plugin hooks.
     const adapter1 = new OpenCodeAdapter();
     const adapter2 = new OpenCodeAdapter();
     const store = createInMemoryRuntimeStore();
@@ -660,8 +674,8 @@ describe("runWorkflow — explicit user-driven delivery path (Spec 22 Unit 4)", 
     const result1 = await runWorkflow({
       config: TWO_STEP_CONFIG,
       workflowName: "plan-and-execute",
-      goal: "First explicit trigger",
-      slug: "first-explicit-trigger",
+      goal: "First named-workflow invocation",
+      slug: "first-named-workflow-invocation",
       adapter: adapter1,
       store,
     });
@@ -669,8 +683,8 @@ describe("runWorkflow — explicit user-driven delivery path (Spec 22 Unit 4)", 
     const result2 = await runWorkflow({
       config: TWO_STEP_CONFIG,
       workflowName: "plan-and-execute",
-      goal: "Second explicit trigger",
-      slug: "second-explicit-trigger",
+      goal: "Second named-workflow invocation",
+      slug: "second-named-workflow-invocation",
       adapter: adapter2,
       store,
     });
@@ -686,18 +700,21 @@ describe("runWorkflow — explicit user-driven delivery path (Spec 22 Unit 4)", 
     }
   });
 
-  it("runWorkflow is the sole execution entry point — not a hook or event handler", async () => {
-    // Structural proof: `runWorkflow` accepts explicit inputs (config,
-    // workflowName, goal, slug, adapter) that must be provided by the caller.
-    // It cannot be called from an idle hook or session event without those
-    // explicit inputs — there is no implicit state that could trigger it.
+  it("runWorkflow requires an explicit workflowName — it is not a hook or event handler", async () => {
+    // Structural proof: `runWorkflow` requires an explicit `workflowName`
+    // that must be provided by the caller. It cannot be called from an idle
+    // hook or session event without those explicit inputs — there is no
+    // implicit state that could trigger it.
+    //
+    // This distinguishes runWorkflow from /weave:start (startPlanExecution),
+    // which selects the workflow implicitly based on plan state.
     //
     // This test verifies the function signature enforces explicit invocation
-    // by checking that required inputs are validated before any store access.
+    // by checking that the workflow name is validated before any store access.
     const adapter = new OpenCodeAdapter();
     const store = createInMemoryRuntimeStore();
 
-    // Missing workflowName → WorkflowNotFound (validated before store access)
+    // Unknown workflowName → WorkflowNotFound (validated before store access)
     const missingWorkflow = await runWorkflow({
       config: TWO_STEP_CONFIG,
       workflowName: "not-a-workflow",
@@ -725,11 +742,11 @@ describe("runWorkflow — explicit user-driven delivery path (Spec 22 Unit 4)", 
 // Tests — PlanStateProvider at completion boundaries (Spec 22 Unit 4)
 // ---------------------------------------------------------------------------
 
-describe("runWorkflow — PlanStateProvider at completion boundaries (Spec 22 Unit 4)", () => {
+describe("runWorkflow — PlanStateProvider at named-workflow completion boundaries (Spec 22 Unit 4)", () => {
   /**
-   * Proof: when a workflow step uses `plan_created` as its completion method,
-   * the engine requires a `PlanStateProvider`. The adapter (OpenCode) is
-   * responsible for supplying this provider — it is not engine-owned I/O.
+   * Proof: when a named-workflow step uses `plan_created` as its completion
+   * method, the engine requires a `PlanStateProvider`. The adapter (OpenCode)
+   * is responsible for supplying this provider — it is not engine-owned I/O.
    *
    * ADR 0004 Decision 3: "Adapters are delivery layers, not semantic owners."
    * Spec 19: "Adapters supply a `PlanStateProvider` implementation via

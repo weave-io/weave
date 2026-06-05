@@ -195,7 +195,7 @@ that gates whether a harness can initiate durable workflow execution.
 
 | Readiness | Meaning | Example |
 | --- | --- | --- |
-| `native` | The harness exposes literal commands (e.g. `/run-workflow`) that the user invokes directly | OpenCode slash commands |
+| `native` | The harness exposes literal commands that the user invokes directly | OpenCode slash commands |
 | `emulated` | No native commands, but an equivalent explicit delivery path exists (skill, script, UI button, or helper) that the user must invoke deliberately | A skill that calls `startExecution` when triggered |
 | `degraded` | An explicit start path exists but is incomplete or inconsistent (e.g. only some workflows are reachable) | Partial command surface |
 | `unsupported` | No reliable explicit start path exists in this harness | Harness has no user-facing execution trigger |
@@ -203,6 +203,15 @@ that gates whether a harness can initiate durable workflow execution.
 `emulated` satisfies the Core Readiness Profile — a harness without literal
 commands can still be fully ready by providing an equivalent explicit delivery
 path (skill, script, or UI). `degraded` and `unsupported` fail the profile.
+
+**Command naming is adapter-owned.** The engine does not prescribe a specific
+command name. For command-capable adapters, `/weave:start` is the preferred
+concrete spelling when feasible — it signals Weave ownership and avoids
+collision with harness-native commands. `/start-work` is legacy/compatibility
+language for the OpenCode adapter only. `/run-workflow` is an explicit
+named-workflow helper (not the general execution entry point) — use it when the
+user wants to invoke a specific named workflow by name rather than starting the
+default execution path.
 
 ### `workflow-step-dispatch` is supporting execution context
 
@@ -221,12 +230,12 @@ Readiness Profile. The two capabilities model different concerns:
 ### Adapter declaration example
 
 ```ts
-// Command harness (native slash commands)
+// Command harness (native slash commands) — /weave:start is the preferred spelling
 {
   id: "command-entrypoints",
   description: "Execution command entrypoints",
   readiness: "native",
-  notes: "Exposes /run-workflow and /resume-workflow commands",
+  notes: "Exposes /weave:start (general execution entry) and /run-workflow (named-workflow helper)",
 }
 
 // Non-command harness (skill/script delivery)
@@ -234,7 +243,7 @@ Readiness Profile. The two capabilities model different concerns:
   id: "command-entrypoints",
   description: "Execution command entrypoints",
   readiness: "emulated",
-  notes: "No native command surface; execution is started via an explicit run-workflow skill invocation that the user must trigger deliberately",
+  notes: "No native command surface; execution is started via an explicit skill invocation that the user must trigger deliberately",
 }
 ```
 

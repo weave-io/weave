@@ -32,7 +32,7 @@ Weave's responsibility is to describe **what agent system should exist** and pro
 - abstract tool/capability policy
 - ordered model preferences
 - skill references and resolution
-- workflow intent
+- workflow intent (for explicitly invoked workflows — see [Spec 29](specs/29-spec-default-usage-not-workflow-driven/29-spec-default-usage-not-workflow-driven.md); ordinary usage is Loom-led, not workflow-driven)
 - **composition APIs** that accept harness context (available models, loaded skills, etc.) and return resolved agent descriptors, prompts, and configurations
 
 Adapters are responsible for deciding **how that intent becomes harness behavior** and for **supplying harness-owned context to Weave's APIs**:

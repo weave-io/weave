@@ -385,14 +385,14 @@ The lifecycle surface distinguishes two categories of operations:
 
 **Adapter delivery of the execution contract** (Spec 22 Unit 4): Commands, hooks, skills, scripts, and UI affordances are all **adapter-owned projections of the same engine-owned execution contract**. The engine defines what execution means — `startExecution` is the sole authorized entry point, and the engine owns all state transitions, lease management, and effect emission. Adapters own the concrete delivery mechanism that exposes the explicit user-authorized trigger in their harness. The engine does not dictate which delivery form an adapter uses; it only requires that `startExecution` is called after an explicit user action. Adapters declare their delivery capability through the `command-entrypoints` readiness value in their `AdapterCapabilityContract`:
 
-- `native` — literal harness commands (e.g. `/run-workflow`)
+- `native` — literal harness commands (command names are adapter-owned; `/weave:start` is the preferred spelling for command-capable adapters when feasible)
 - `emulated` — equivalent explicit delivery via skill, script, or UI (satisfies the Core Readiness Profile)
 - `degraded` — incomplete or inconsistent explicit delivery
 - `unsupported` — no reliable explicit start path
 
 `workflow-step-dispatch` is **supporting execution context** — it models step dispatch within a running execution, not execution entry. It is not a substitute for `command-entrypoints` readiness. See [Adapter Readiness Status](adapter-readiness-status.md#execution-command-readiness-spec-22-unit-4) for the full readiness vocabulary and declaration examples.
 
-**OpenCode adapter evidence** (task 6.3): `packages/adapters/opencode/src/run-workflow.ts` is the OpenCode adapter's explicit user-driven helper — the adapter-owned projection of the engine's `startExecution` lifecycle method. Tests in `packages/adapters/opencode/src/__tests__/run-workflow.test.ts` prove that execution enters only through explicit `runWorkflow` calls, that idle hooks and session events do not start durable execution, and that `PlanStateProvider` is supplied at plan-oriented completion boundaries. See [Adapter Readiness Status](adapter-readiness-status.md#opencode-adapter-delivery-evidence-task-63) for the full evidence summary.
+**OpenCode adapter evidence** (task 6.3): `packages/adapters/opencode/src/run-workflow.ts` is the OpenCode adapter's explicit named-workflow helper — an adapter-owned projection of the engine's `startExecution` lifecycle method for invoking a specific named workflow. It is not the general execution entry point; adapters may expose a general entry command (e.g. `/weave:start`) that selects the default workflow and then calls `startExecution`. Tests in `packages/adapters/opencode/src/__tests__/run-workflow.test.ts` prove that execution enters only through explicit `runWorkflow` calls, that idle hooks and session events do not start durable execution, and that `PlanStateProvider` is supplied at plan-oriented completion boundaries. See [Adapter Readiness Status](adapter-readiness-status.md#opencode-adapter-delivery-evidence-task-63) for the full evidence summary.
 
 ### `beforeTool` — Adapter/Engine Boundary
 

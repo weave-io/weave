@@ -98,6 +98,21 @@ export type {
 export { runWorkflow } from "./run-workflow.js";
 
 // ---------------------------------------------------------------------------
+// Explicit plan execution helper (/weave:start delivery path)
+// ---------------------------------------------------------------------------
+
+export type {
+  StartPlanExecutionError,
+  StartPlanExecutionInput,
+} from "./start-plan-execution.js";
+export {
+  DEFAULT_EXECUTION_WORKFLOW,
+  startPlanExecution,
+  WEAVE_START_COMMAND,
+  WEAVE_START_LEGACY_COMMAND,
+} from "./start-plan-execution.js";
+
+// ---------------------------------------------------------------------------
 // Skill discovery helpers
 // ---------------------------------------------------------------------------
 

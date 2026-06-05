@@ -322,22 +322,24 @@ workflow quick-fix {
 }
 
 workflow tapestry-execution {
-  description "Standard plan execution sequence used by Tapestry"
+  description "Execute an existing named plan end-to-end, then review"
   version 1
 
   step execute {
-    name "Execute each plan task"
+    name "Execute the existing plan"
     type autonomous
     agent shuttle
-    prompt "Execute the delegated task from the plan"
-    completion agent_signal
+    prompt "Execute the existing plan named {{instance.slug}} for: {{instance.goal}}"
+    completion plan_complete {
+      plan_name "{{instance.slug}}"
+    }
   }
 
   step review {
     name "Code review after execution"
     type gate
     agent weft
-    prompt "Review all changes made during plan execution"
+    prompt "Review all changes made during plan execution for: {{instance.goal}}"
     completion review_verdict
     on_reject pause
   }
@@ -346,7 +348,7 @@ workflow tapestry-execution {
     name "Security audit after execution"
     type gate
     agent warp
-    prompt "Security audit of all changes made during plan execution"
+    prompt "Security audit of all changes made during plan execution for: {{instance.goal}}"
     completion review_verdict
     on_reject pause
   }

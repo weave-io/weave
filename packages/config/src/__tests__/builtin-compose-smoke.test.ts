@@ -137,6 +137,51 @@ describe("builtin compose smoke", () => {
     expect(descriptor.composedPrompt).toContain("# Available Agents");
   });
 
+  // ---------------------------------------------------------------------------
+  // Loom default orchestration guidance (Spec 29 — default usage is Loom-led)
+  // ---------------------------------------------------------------------------
+
+  it("loom composedPrompt contains # Default Orchestration section", () => {
+    const descriptor = getDescriptor("loom");
+    expect(descriptor.composedPrompt).toContain("# Default Orchestration");
+  });
+
+  it("loom composedPrompt does NOT contain # Standard Workflows section", () => {
+    const descriptor = getDescriptor("loom");
+    expect(descriptor.composedPrompt).not.toContain("# Standard Workflows");
+  });
+
+  it("loom composedPrompt does NOT contain Workflow Selection routing item", () => {
+    const descriptor = getDescriptor("loom");
+    expect(descriptor.composedPrompt).not.toContain("Workflow Selection");
+  });
+
+  it("loom composedPrompt contains Execution Boundary Decision routing item", () => {
+    const descriptor = getDescriptor("loom");
+    expect(descriptor.composedPrompt).toContain("Execution Boundary Decision");
+  });
+
+  it("loom composedPrompt contains guidance to delegate to Pattern for large work", () => {
+    const descriptor = getDescriptor("loom");
+    expect(descriptor.composedPrompt).toContain("Delegate to Pattern");
+  });
+
+  it("loom composedPrompt contains guidance to stop and tell the user after plan creation", () => {
+    const descriptor = getDescriptor("loom");
+    expect(descriptor.composedPrompt).toContain("Stop and tell the user");
+  });
+
+  it("loom composedPrompt contains explicit start command guidance", () => {
+    const descriptor = getDescriptor("loom");
+    // Adapter-preferred command surface reference
+    expect(descriptor.composedPrompt).toContain("/weave:start");
+  });
+
+  it("loom composedPrompt states workflows are explicit opt-in only", () => {
+    const descriptor = getDescriptor("loom");
+    expect(descriptor.composedPrompt).toContain("opt-in only");
+  });
+
   it("tapestry composedPrompt does NOT contain ## Delegation section (uses delegation.targets loop instead)", () => {
     const descriptor = getDescriptor("tapestry");
     expect(descriptor.composedPrompt).not.toContain("## Delegation");

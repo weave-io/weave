@@ -64,10 +64,18 @@ This replaces the legacy model where `session.idle` could silently resume Tapest
 Adapters expose the execution contract through harness-appropriate mechanisms: commands, skills, hooks, scripts, or UI affordances. The adapter decides how a user triggers execution in a specific harness; the engine decides what happens when that trigger fires.
 
 Examples of valid adapter delivery paths:
-- A harness command (e.g. `/run-workflow`) that calls `startExecution` with a workflow name and goal
+- A harness command that calls `startExecution` with a workflow name and goal (command names are adapter-owned; `/weave:start` is the preferred spelling for command-capable adapters when feasible)
 - A skill invocation that calls `startExecution` after confirming user intent
 - A UI button that calls `startExecution` through an adapter-owned helper
 - A script that calls `startExecution` from a CLI entry point
+
+**Command naming is adapter-owned.** The engine does not prescribe specific
+command names. `/weave:start` is the preferred concrete spelling for
+command-capable adapters — it signals Weave ownership and avoids collision with
+harness-native commands. `/start-work` is legacy/compatibility language for the
+OpenCode adapter only. `/run-workflow` is an explicit named-workflow helper for
+invoking a specific workflow by name — it is not the general execution entry
+point and should not be treated as the default command for ordinary usage.
 
 In all cases, the adapter maps the harness-specific trigger into a `StartExecutionInput` and calls the engine lifecycle method. The engine validates the input, creates the `WorkflowInstance`, acquires the `ExecutionLease`, and returns typed effects. The adapter applies those effects in the harness.
 
@@ -99,9 +107,9 @@ Adapters do not own execution state. They may emit sanitized observations throug
 
 - The engine's `startExecution` lifecycle method is the sole authorized entry point for durable execution. No other code path may create a `WorkflowInstance` or acquire an `ExecutionLease`.
 - Ordinary Loom conversation, session idle events, continuation hooks, and lifecycle observations are explicitly forbidden from implicitly starting durable execution.
-- The OpenCode adapter's `/start-work` hook must be refactored to call `startExecution` rather than producing a `switchAgent` effect directly.
+- The OpenCode adapter's `/start-work` hook must be refactored to call `startExecution` rather than producing a `switchAgent` effect directly. The preferred replacement command name for command-capable adapters is `/weave:start`; `/start-work` may be retained as a compatibility alias but is not the architectural center.
 - The `workContinuation` hook's implicit Tapestry re-injection behavior is superseded by `resumeExecution`, which requires an explicit adapter-mediated trigger.
-- Adapters must declare their execution-contract delivery mechanism through the Spec 07 `command-entrypoints` capability readiness vocabulary (`native`, `emulated`, `degraded`, `unsupported`) rather than assuming every harness exposes literal commands.
+- Adapters must declare their execution-contract delivery mechanism through the Spec 07 `command-entrypoints` capability readiness vocabulary (`native`, `emulated`, `degraded`, `unsupported`) rather than assuming every harness exposes literal commands. Command names are adapter-owned; the engine does not prescribe them.
 
 ### What is now possible
 
@@ -139,6 +147,7 @@ Adapters do not own execution state. They may emit sanitized observations throug
 | `WorkflowInstance` and `ExecutionLease` lifecycle | Engine (`@weave/engine`) | Runtime state is Weave product state, not harness state |
 | Explicit execution boundary enforcement | Engine (`@weave/engine`) | The engine must reject implicit start attempts regardless of adapter |
 | Harness-specific trigger delivery (commands, skills, hooks, scripts, UI) | Adapter | Delivery mechanisms differ by harness |
+| Concrete command names (e.g. `/weave:start`, `/run-workflow`, `/start-work`) | Adapter | Command naming is harness-specific; the engine does not prescribe names |
 | Adapter capability declaration for execution-contract delivery | Adapter | Adapters know what their harness supports |
 | Core Readiness Profile evaluation for execution-contract support | Engine (`@weave/engine`) | Pure function; accepts explicit adapter-supplied inputs |
 | Continuation and compaction recovery behavior | Adapter | Recovery mechanisms are harness-specific; adapters call `resumeExecution` |

@@ -352,8 +352,16 @@ steps that do not use plan-based completion methods.
 
 The OpenCode adapter (`@weave/adapter-opencode`) provides a `runWorkflow`
 convenience function that wraps the full execution lifecycle loop described
-above. It is the recommended entry point for running a workflow end-to-end
-in the OpenCode harness.
+above. It is the recommended helper for running a **specific named workflow**
+end-to-end in the OpenCode harness.
+
+> **Scope note**: `runWorkflow` is an explicit named-workflow helper — it
+> requires a `workflowName` and calls `startExecution` only when invoked
+> deliberately. It is not the general execution entry point for ordinary Weave
+> usage. For command-capable adapters, the general entry command (e.g.
+> `/weave:start`) is the preferred concrete spelling; it may internally call
+> `runWorkflow` with a resolved workflow name. Command names are adapter-owned;
+> the engine does not prescribe them.
 
 ```ts
 import { runWorkflow } from "@weave/adapter-opencode";

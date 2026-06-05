@@ -177,6 +177,8 @@ Generated shuttle agent names follow the pattern `shuttle-{category-name}` (e.g.
 
 ## Workflows
 
+> **Usage model**: Workflows are **explicit, user-invoked** constructs. They are not the default path for ordinary Weave usage. Ordinary usage is Loom-led: Loom handles conversational triage, delegates bounded tasks to Shuttle, and asks Pattern to create a plan when needed. A workflow begins only when a user explicitly invokes one (e.g. via `/weave:start` or an equivalent adapter command). See [Spec 29 — Default Usage Is Not Workflow-Driven](specs/29-spec-default-usage-not-workflow-driven/29-spec-default-usage-not-workflow-driven.md).
+
 Workflows define multi-step execution pipelines with agents, completion conditions, and artifact passing.
 
 ```weave

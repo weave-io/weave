@@ -21,7 +21,7 @@
 - `packages/engine/src/compose.ts` — imported by **6** files
 - `packages/engine/src/logger.ts` — imported by **6** files
 - `packages/adapters/opencode/src/index.ts` — imported by **5** files
-- `packages/cli/src/cli.ts` — imported by **5** files
+- `packages/adapters/opencode/src/adapter.ts` — imported by **5** files
 
 ## Import Map (who imports what)
 

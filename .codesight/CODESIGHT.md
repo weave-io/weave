@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weave/core, @weave/engine, @weave/config, @weave/cli, @weave/adapter-opencode
 
-> 0 routes | 0 models | 0 components | 80 lib files | 4 env vars | 5 middleware | 0% test coverage
-> **Token savings:** this file is ~6,800 tokens. Without it, AI exploration would cost ~31,700 tokens. **Saves ~25,000 tokens per conversation.**
-> **Last scanned:** 2026-06-04 20:06 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 81 lib files | 4 env vars | 5 middleware | 0% test coverage
+> **Token savings:** this file is ~6,900 tokens. Without it, AI exploration would cost ~32,000 tokens. **Saves ~25,100 tokens per conversation.**
+> **Last scanned:** 2026-06-05 01:27 — re-run after significant changes
 
 ---
 
@@ -44,6 +44,13 @@
   - function buildSkillInfoList: (names) => SkillInfo[]
   - function validateDeclaredSkills: (declaredSkills, availableSkills, disabledSkills) => Result<void, MissingSkillsError>
   - interface MissingSkillsError
+- `packages/adapters/opencode/src/start-plan-execution.ts`
+  - function startPlanExecution: (input) => ResultAsync<RunWorkflowResult, StartPlanExecutionError>
+  - interface StartPlanExecutionInput
+  - type StartPlanExecutionError
+  - const WEAVE_START_COMMAND
+  - const WEAVE_START_LEGACY_COMMAND
+  - const DEFAULT_EXECUTION_WORKFLOW
 - `packages/adapters/opencode/src/tool-policy-mapping.ts`
   - function toOpenCodePermission: (permission) => OpenCodePermissionValue
   - function buildReadToolsEntry: (readPermission) => Record<string, boolean> | undefined
@@ -377,7 +384,7 @@
 - `packages/engine/src/compose.ts` — imported by **6** files
 - `packages/engine/src/logger.ts` — imported by **6** files
 - `packages/adapters/opencode/src/index.ts` — imported by **5** files
-- `packages/cli/src/cli.ts` — imported by **5** files
+- `packages/adapters/opencode/src/adapter.ts` — imported by **5** files
 
 ## Import Map (who imports what)
 
@@ -397,7 +404,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 65 test files found
+> 342 test files found
 
 ---
 

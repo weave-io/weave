@@ -33,6 +33,13 @@
   - function buildSkillInfoList: (names) => SkillInfo[]
   - function validateDeclaredSkills: (declaredSkills, availableSkills, disabledSkills) => Result<void, MissingSkillsError>
   - interface MissingSkillsError
+- `packages/adapters/opencode/src/start-plan-execution.ts`
+  - function startPlanExecution: (input) => ResultAsync<RunWorkflowResult, StartPlanExecutionError>
+  - interface StartPlanExecutionInput
+  - type StartPlanExecutionError
+  - const WEAVE_START_COMMAND
+  - const WEAVE_START_LEGACY_COMMAND
+  - const DEFAULT_EXECUTION_WORKFLOW
 - `packages/adapters/opencode/src/tool-policy-mapping.ts`
   - function toOpenCodePermission: (permission) => OpenCodePermissionValue
   - function buildReadToolsEntry: (readPermission) => Record<string, boolean> | undefined
