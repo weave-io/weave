@@ -411,12 +411,12 @@ describe("WeavePlugin — config hook", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests: tool hook registration
+// Tests: slash command registration via config hook
 // ---------------------------------------------------------------------------
 
-describe("WeavePlugin — tool hook", () => {
-  it("Tool_hook_is_defined_when_config_load_succeeds", async () => {
-    const root = await makeTempProject("tool-hook-agent");
+describe("WeavePlugin — slash command registration", () => {
+  it("Config_hook_registers_start_work_command", async () => {
+    const root = await makeTempProject("cmd-start-work-agent");
     const client = new MockOpenCodeClient();
     client.setListResult(okAsync([]));
 
@@ -427,11 +427,19 @@ describe("WeavePlugin — tool hook", () => {
     const input = makeMockPluginInput(root, client);
     const hooks = await plugin(input);
 
-    expect(hooks.tool).toBeDefined();
+    const cfg: { agent?: Record<string, unknown>; command?: Record<string, unknown> } = {};
+    await hooks.config!(cfg as never);
+
+    expect(cfg.command).toBeDefined();
+    expect(cfg.command!["start-work"]).toBeDefined();
+    const cmd = cfg.command!["start-work"] as Record<string, unknown>;
+    expect(typeof cmd.template).toBe("string");
+    expect(cmd.description).toBe("Start executing a Weave plan created by Pattern");
+    expect(cmd.agent).toBe("tapestry");
   });
 
-  it("Tool_hook_has_both_expected_keys", async () => {
-    const root = await makeTempProject("tool-keys-agent");
+  it("Config_hook_registers_weave_start_command", async () => {
+    const root = await makeTempProject("cmd-weave-start-agent");
     const client = new MockOpenCodeClient();
     client.setListResult(okAsync([]));
 
@@ -442,13 +450,19 @@ describe("WeavePlugin — tool hook", () => {
     const input = makeMockPluginInput(root, client);
     const hooks = await plugin(input);
 
-    expect(hooks.tool).toBeDefined();
-    expect(hooks.tool).toHaveProperty("weave:start");
-    expect(hooks.tool).toHaveProperty("start-work");
+    const cfg: { agent?: Record<string, unknown>; command?: Record<string, unknown> } = {};
+    await hooks.config!(cfg as never);
+
+    expect(cfg.command).toBeDefined();
+    expect(cfg.command!["weave:start"]).toBeDefined();
+    const cmd = cfg.command!["weave:start"] as Record<string, unknown>;
+    expect(typeof cmd.template).toBe("string");
+    expect(cmd.description).toBe("Start executing a Weave plan (preferred command)");
+    expect(cmd.agent).toBe("tapestry");
   });
 
-  it("Both_tools_have_required_shape", async () => {
-    const root = await makeTempProject("tool-shape-agent");
+  it("Command_templates_contain_execution_instructions", async () => {
+    const root = await makeTempProject("cmd-template-agent");
     const client = new MockOpenCodeClient();
     client.setListResult(okAsync([]));
 
@@ -459,40 +473,23 @@ describe("WeavePlugin — tool hook", () => {
     const input = makeMockPluginInput(root, client);
     const hooks = await plugin(input);
 
-    const weaveStartTool = hooks.tool?.["weave:start"] as
-      | Record<string, unknown>
-      | undefined;
-    const startWorkTool = hooks.tool?.["start-work"] as
-      | Record<string, unknown>
-      | undefined;
+    const cfg: { agent?: Record<string, unknown>; command?: Record<string, unknown> } = {};
+    await hooks.config!(cfg as never);
 
-    expect(typeof weaveStartTool?.description).toBe("string");
-    expect(typeof weaveStartTool?.args).toBe("object");
-    expect(typeof weaveStartTool?.execute).toBe("function");
+    const startWork = cfg.command!["start-work"] as { template: string };
+    const weaveStart = cfg.command!["weave:start"] as { template: string };
 
-    expect(typeof startWorkTool?.description).toBe("string");
-    expect(typeof startWorkTool?.args).toBe("object");
-    expect(typeof startWorkTool?.execute).toBe("function");
+    // Both templates contain execution instructions
+    expect(startWork.template).toContain("<command-instruction>");
+    expect(startWork.template).toContain("$ARGUMENTS");
+    expect(startWork.template).toContain("<weave-command-envelope>");
+
+    expect(weaveStart.template).toContain("<command-instruction>");
+    expect(weaveStart.template).toContain("$ARGUMENTS");
+    expect(weaveStart.template).toContain("<weave-command-envelope>");
   });
 
-  it("Tools_share_the_same_execute_function", async () => {
-    const root = await makeTempProject("tool-execute-agent");
-    const client = new MockOpenCodeClient();
-    client.setListResult(okAsync([]));
-
-    const plugin = createWeavePlugin({
-      fileReader: projectOnlyReader(root),
-      clientFacade: client,
-    });
-    const input = makeMockPluginInput(root, client);
-    const hooks = await plugin(input);
-
-    expect(hooks.tool?.["weave:start"]?.execute).toBe(
-      hooks.tool?.["start-work"]?.execute,
-    );
-  });
-
-  it("Tool_hook_is_absent_when_config_load_fails", async () => {
+  it("Commands_are_not_registered_when_config_load_fails", async () => {
     const root = await makeTempInvalidProject();
     const client = new MockOpenCodeClient();
 
@@ -503,13 +500,12 @@ describe("WeavePlugin — tool hook", () => {
     const input = makeMockPluginInput(root, client);
     const hooks = await plugin(input);
 
+    // Config load failed → empty hooks, no config hook
     expect(hooks).toEqual({});
-    expect(hooks.tool).toBeUndefined();
-    expect("tool" in hooks).toBe(false);
   });
 
-  it("Tools_are_present_with_empty_workflows", async () => {
-    const root = await makeTempProject("tool-empty-workflows-agent");
+  it("No_tool_hook_is_registered", async () => {
+    const root = await makeTempProject("no-tool-hook-agent");
     const client = new MockOpenCodeClient();
     client.setListResult(okAsync([]));
 
@@ -520,9 +516,8 @@ describe("WeavePlugin — tool hook", () => {
     const input = makeMockPluginInput(root, client);
     const hooks = await plugin(input);
 
-    expect(hooks.tool).toBeDefined();
-    expect(hooks.tool).toHaveProperty("weave:start");
-    expect(hooks.tool).toHaveProperty("start-work");
+    // Tool hook must NOT be present — commands use cfg.command, not Hooks.tool
+    expect(hooks.tool).toBeUndefined();
   });
 });
 
