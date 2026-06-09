@@ -5,7 +5,7 @@ config loading through agent materialization and workflow execution. Use it as
 the authoritative reference when writing a new adapter or migrating an existing
 one.
 
-**Related:** [Adapter Boundary](adapter-boundary.md) · [Product Vision](product-vision.md) · [Execution Lifecycle Surface](adapter-boundary.md#execution-lifecycle-surface) · [Agent Materialization API](adapter-boundary.md#agent-materialization-api) · [Spec 15 — Adapter-Facing Materialization API](specs/15-spec-adapter-facing-materialization-api/) · [Spec 13 — Minimal Execution Lifecycle Surface](specs/13-spec-minimal-execution-lifecycle-surface/13-spec-minimal-execution-lifecycle-surface.md)
+**Related:** [Adapter Boundary](adapter-boundary.md) · [Product Vision](product-vision.md) · [Execution Lifecycle Surface](adapter-boundary.md#execution-lifecycle-surface) · [Agent Materialization API](adapter-boundary.md#agent-materialization-api) · [Spec 15 — Adapter-Facing Materialization API](specs/15-spec-adapter-facing-materialization-api/) · [Spec 13 — Minimal Execution Lifecycle Surface](specs/13-spec-minimal-execution-lifecycle-surface/13-spec-minimal-execution-lifecycle-surface.md) · [Spec 30 — Minimal Runtime Command Lifecycle](specs/30-spec-minimal-runtime-command-lifecycle/30-spec-minimal-runtime-command-lifecycle.md)
 
 ---
 
@@ -438,6 +438,196 @@ double-dispatch the same step.
 
 ---
 
+## Command Surface Registration
+
+Adapters own the concrete command surface that exposes Weave operations to users.
+The engine provides reusable command operations; adapters wire those operations
+to harness-specific delivery mechanisms: slash commands, plugin tools, UI
+actions, or scripts.
+
+### Delivery mechanisms by harness
+
+| Harness | Primary mechanism | Notes |
+| --- | --- | --- |
+| OpenCode | Plugin custom tools | Tools registered via the `tool` hook in the plugin's `Hooks` return |
+| Claude Code | Command markdown files | `.claude/commands/*.md` with execution via MCP or prompt injection |
+| Pi | TBD | Pi adapter is a stub; delivery mechanism not yet determined |
+
+### OpenCode: Plugin custom tools
+
+OpenCode plugins can register custom tools that appear alongside built-in tools.
+This is the correct mechanism for Weave commands because they require execution
+logic (calling engine operations), not just prompt templates.
+
+```ts
+import { tool } from "@opencode-ai/plugin";
+import type { Hooks, Plugin } from "@opencode-ai/plugin";
+import { loadConfig } from "@weave/config";
+import {
+  createInMemoryRuntimeStore,
+  logger,
+  type PlanStateProvider,
+  type RuntimeStore,
+} from "@weave/engine";
+import {
+  OpenCodeAdapter,
+  RuntimeCommandProjection,
+  WEAVE_COMMAND_LABELS,
+} from "@weave/adapter-opencode";
+
+const log = logger.child({ module: "weave-commands" });
+
+export const WeaveCommandsPlugin: Plugin = async ({ directory, client }) => {
+  // Load config once at plugin init
+  const configResult = await loadConfig(directory);
+  if (configResult.isErr()) {
+    log.error({ errors: configResult.error }, "Config load failed");
+    return {};
+  }
+  const config = configResult.value;
+
+  // Create runtime store (use SqliteRuntimeStore for production)
+  const store: RuntimeStore = createInMemoryRuntimeStore();
+
+  // Create adapter instance
+  const adapter = new OpenCodeAdapter({
+    projectRoot: directory,
+    client: /* wrap client in SdkOpenCodeClient */,
+  });
+
+  // Create plan state provider (adapter-owned)
+  const planStateProvider: PlanStateProvider = {
+    // ... implement or use BunFilesystemPlanStateProvider from @weave/config
+  };
+
+  // Create the projection instance for handling commands
+  const projection = new RuntimeCommandProjection();
+
+  return {
+    tool: {
+      // /weave:start — execute an existing plan
+      "weave:start": tool({
+        description: "Execute an existing Weave plan by name",
+        args: {
+          planName: tool.schema.string().describe("Name of the plan to execute"),
+          workflowName: tool.schema.string().optional().describe(
+            "Workflow to use (defaults to tapestry-execution)"
+          ),
+          goal: tool.schema.string().describe("Goal for this execution"),
+        },
+        async execute(args, context) {
+          const result = await projection.handleStartPlan({
+            planName: args.planName,
+            workflowName: args.workflowName,
+            goal: args.goal,
+            slug: args.goal.toLowerCase().replace(/\s+/g, "-"),
+            ownerId: "weave:start",
+            store,
+            planStateProvider,
+            workflows: config.workflows,
+            adapter,
+          });
+
+          // ProjectionResult is always ok — extract the outcome
+          if (result.outcome === "success") {
+            return result.message;
+          }
+          return `Error: ${result.message}`;
+        },
+      }),
+
+      // /weave:run — run a named workflow explicitly
+      "weave:run": tool({
+        description: "Run a named Weave workflow",
+        args: {
+          workflowName: tool.schema.string().describe("Name of the workflow to run"),
+          goal: tool.schema.string().describe("Goal for this workflow execution"),
+        },
+        async execute(args, context) {
+          const result = await projection.handleRunWorkflow({
+            workflowName: args.workflowName,
+            goal: args.goal,
+            slug: args.goal.toLowerCase().replace(/\s+/g, "-"),
+            ownerId: "weave:run",
+            store,
+            planStateProvider,
+            workflows: config.workflows,
+            adapter,
+          });
+
+          if (result.outcome === "success") {
+            return result.message;
+          }
+          return `Error: ${result.message}`;
+        },
+      }),
+    },
+  } satisfies Hooks;
+};
+```
+
+### Key points for command registration
+
+1. **Tools require execution logic** — use plugin custom tools (not markdown
+   command files) when the command needs to call engine operations.
+
+2. **Tool names become slash commands** — a tool named `"weave:start"` is
+   invoked as `/weave:start` in the OpenCode TUI.
+
+3. **Adapter owns argument parsing** — the tool's `args` schema defines what
+   the user provides; the adapter maps those args to engine operation inputs.
+
+4. **Adapter owns result rendering** — the tool's `execute` function returns
+   a string that OpenCode displays to the user.
+
+5. **Config and store are shared** — load config once at plugin init and share
+   the `RuntimeStore` across all command tools.
+
+### Weave command labels
+
+The OpenCode adapter defines preferred command labels in
+`packages/adapters/opencode/src/runtime-command-projection.ts`:
+
+| Engine operation | OpenCode label | Purpose |
+| --- | --- | --- |
+| `startPlan` | `/weave:start` | Execute an existing plan |
+| `runNamedWorkflow` | `/weave:run` | Run a named workflow explicitly |
+| `inspectStatus` | `/weave:status` | Inspect active execution status |
+| `abortExecution` | `/weave:abort` | Abort an active execution |
+| `advanceStep` | `/weave:advance` | Advance a blocked step |
+| `runtimeHealth` | `/weave:health` | Report adapter/runtime health |
+
+Legacy alias: `/start-work` maps to `/weave:start` for backward compatibility.
+
+### Current implementation status
+
+The OpenCode adapter has the projection helpers (`handleStartPlan`,
+`handleRunWorkflow`, etc.) but **does not yet register them as plugin tools**.
+The `plugin.ts` module currently only:
+
+1. Injects agent configs via the `config` hook
+2. Listens for `session.created` events
+
+**To complete the command surface**, add a `tool` hook to the plugin's returned
+`Hooks` object that registers each Weave command as a custom tool. See the
+example above for the pattern.
+
+### Claude Code: Command markdown files
+
+Claude Code uses markdown files in `.claude/commands/` for custom commands.
+Because Claude Code commands are prompt-based (not programmatic), the adapter
+must either:
+
+1. **Inject execution instructions into the prompt** — tell the agent to call
+   an MCP tool or run a script that invokes the engine operation.
+2. **Use MCP server tools** — register Weave operations as MCP tools that
+   Claude Code can call.
+
+This is a known feature gap. See [Claude Code Adapter](claude-code-adapter.md)
+for the current capability matrix.
+
+---
+
 ## Public Exports Reference
 
 All types and functions used in this guide are public exports:
@@ -466,6 +656,11 @@ All types and functions used in this guide are public exports:
 | `RunWorkflowInput` | `@weave/adapter-opencode` | Input type for `runWorkflow` |
 | `RunWorkflowResult` | `@weave/adapter-opencode` | Output type for `runWorkflow` |
 | `RunWorkflowError` | `@weave/adapter-opencode` | Error union for `runWorkflow` |
+| `RuntimeCommandProjection` | `@weave/adapter-opencode` | Class with handlers for all six runtime commands |
+| `startPlanExecution` | `@weave/adapter-opencode` | Standalone helper for `/weave:start` command |
+| `WEAVE_COMMAND_LABELS` | `@weave/adapter-opencode` | Command label constants for OpenCode |
+| `WEAVE_START_COMMAND` | `@weave/adapter-opencode` | Preferred command name (`/weave:start`) |
+| `WEAVE_START_LEGACY_COMMAND` | `@weave/adapter-opencode` | Legacy command name (`/start-work`) |
 
 ---
 
