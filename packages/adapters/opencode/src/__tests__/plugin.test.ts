@@ -165,12 +165,20 @@ async function makeTempInvalidProject(): Promise<string> {
  * prevents the developer's global config from interfering with tests.
  */
 function projectOnlyReader(root: string) {
-  const normalizedRoot = root.replace(/\\/g, "/");
+  // Enforce a path-segment boundary by normalizing with a trailing slash.
+  // This prevents sibling paths like `/tmp/root-other/` from matching when
+  // root is `/tmp/root`.
+  const normalizedRoot = root.replace(/\\/g, "/").replace(/\/$/, "") + "/";
 
   return {
     exists: async (path: string): Promise<boolean> => {
       const normalizedPath = path.replace(/\\/g, "/");
-      if (!normalizedPath.startsWith(normalizedRoot)) return false;
+      if (
+        normalizedPath !== normalizedRoot.slice(0, -1) &&
+        !normalizedPath.startsWith(normalizedRoot)
+      ) {
+        return false;
+      }
       return Bun.file(path).exists();
     },
     read: (path: string) => {
