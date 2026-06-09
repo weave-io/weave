@@ -90,10 +90,11 @@
  */
 
 import { join } from "node:path";
-import type { Hooks, Plugin, PluginInput } from "@opencode-ai/plugin";
+import { tool, type Hooks, type Plugin, type PluginInput } from "@opencode-ai/plugin";
 import { type FileReader, loadConfig } from "@weave/config";
 import {
   type AgentDescriptor,
+  createInMemoryRuntimeStore,
   env,
   logger,
   materializeAgents,
@@ -101,6 +102,10 @@ import {
 } from "@weave/engine";
 
 import { OpenCodeAdapter } from "./adapter.js";
+import {
+  buildStartPlanToolHandler,
+  type StartPlanToolHandlerDeps,
+} from "./command-tools.js";
 import { resolveModelForAgent } from "./model-resolution.js";
 import {
   type OpenCodeClientFacade,
@@ -376,6 +381,22 @@ export function createWeavePlugin(options: WeavePluginOptions = {}): Plugin {
 
     log.info("Weave plugin hooks ready — returning immediately");
 
+    const commandAdapter = new OpenCodeAdapter({ projectRoot: directory });
+    await commandAdapter.init();
+
+    const commandStore = createInMemoryRuntimeStore();
+    const startPlanToolHandlerDeps: StartPlanToolHandlerDeps = {
+      config,
+      adapter: commandAdapter,
+      store: commandStore,
+    };
+    const startPlanHandler = buildStartPlanToolHandler(startPlanToolHandlerDeps);
+
+    log.info(
+      { tools: ["weave:start", "start-work"] },
+      "Weave command tools registered",
+    );
+
     // Return hooks immediately. The config hook is populated now; the event
     // hook defers SDK reconciliation to the first real session.
     return {
@@ -415,6 +436,33 @@ export function createWeavePlugin(options: WeavePluginOptions = {}): Plugin {
         // See: https://github.com/anthropics/weave-vnext/issues/XXX (if applicable)
         if (event.type !== "session.created") return;
         // await runReconciliation();
+      },
+
+      tool: {
+        "weave:start": tool({
+          description:
+            "Execute an existing Weave plan by name. Use this command when you have a plan file in .weave/plans/ and want to start executing it.",
+          args: {
+            planName: tool.schema
+              .string()
+              .describe(
+                "Name of the plan to execute (without .md extension, e.g. 'my-feature')",
+              ),
+          },
+          execute: startPlanHandler,
+        }),
+        "start-work": tool({
+          description:
+            "Execute an existing Weave plan by name (alias for /weave:start).",
+          args: {
+            planName: tool.schema
+              .string()
+              .describe(
+                "Name of the plan to execute (without .md extension, e.g. 'my-feature')",
+              ),
+          },
+          execute: startPlanHandler,
+        }),
       },
     };
   };

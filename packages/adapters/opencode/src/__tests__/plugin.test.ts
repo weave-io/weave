@@ -143,15 +143,42 @@ async function makeTempProject(agentName = "smoke-agent"): Promise<string> {
   return root;
 }
 
+async function makeTempInvalidProject(): Promise<string> {
+  const root = join(
+    tmpdir(),
+    `weave-plugin-invalid-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  );
+  await Bun.write(
+    join(root, ".weave", "config.weave"),
+    [
+      "agent broken {",
+      '  prompt "Missing closing brace"',
+      "",
+    ].join("\n"),
+  );
+  return root;
+}
+
 /**
  * A FileReader that only reads files under `root`. Returns `exists: false` for
  * any path outside `root` (e.g. the global ~/.weave/config.weave). This
  * prevents the developer's global config from interfering with tests.
  */
 function projectOnlyReader(root: string) {
+  // Enforce a path-segment boundary by normalizing with a trailing slash.
+  // This prevents sibling paths like `/tmp/root-other/` from matching when
+  // root is `/tmp/root`.
+  const normalizedRoot = root.replace(/\\/g, "/").replace(/\/$/, "") + "/";
+
   return {
     exists: async (path: string): Promise<boolean> => {
-      if (!path.startsWith(root)) return false;
+      const normalizedPath = path.replace(/\\/g, "/");
+      if (
+        normalizedPath !== normalizedRoot.slice(0, -1) &&
+        !normalizedPath.startsWith(normalizedRoot)
+      ) {
+        return false;
+      }
       return Bun.file(path).exists();
     },
     read: (path: string) => {
@@ -246,30 +273,33 @@ describe("WeavePlugin — PluginModule compatibility", () => {
 // ---------------------------------------------------------------------------
 
 describe("WeavePlugin — config load failure", () => {
-  it("returns empty Hooks when directory has no .weave/config.weave", async () => {
-    // Use a non-existent directory — loadConfig will fail to find any config
+  it("Returns_empty_Hooks_when_config_load_fails", async () => {
+    const root = await makeTempInvalidProject();
     const client = new MockOpenCodeClient();
-    const input = makeMockPluginInput("/nonexistent-weave-test-dir", client);
+    const plugin = createWeavePlugin({
+      fileReader: projectOnlyReader(root),
+      clientFacade: client,
+    });
+    const input = makeMockPluginInput(root, client);
 
-    const hooks = await WeavePlugin(input);
+    const hooks = await plugin(input);
 
-    // Plugin must not throw — it returns {} and logs the error
     expect(hooks).toEqual({});
-    // No SDK calls should have been made
     expect(client.listAgentsCalls).toHaveLength(0);
     expect(client.createAgentCalls).toHaveLength(0);
   });
 
-  it("returns no config hook when config load fails", async () => {
+  it("Returns_no_config_hook_when_config_load_fails", async () => {
+    const root = await makeTempInvalidProject();
     const client = new MockOpenCodeClient();
-    const input = makeMockPluginInput(
-      "/nonexistent-weave-test-dir-fail",
-      client,
-    );
+    const plugin = createWeavePlugin({
+      fileReader: projectOnlyReader(root),
+      clientFacade: client,
+    });
+    const input = makeMockPluginInput(root, client);
 
-    const hooks = await WeavePlugin(input);
+    const hooks = await plugin(input);
 
-    // On failure, no config hook is registered
     expect(hooks.config).toBeUndefined();
   });
 });
@@ -377,6 +407,122 @@ describe("WeavePlugin — config hook", () => {
     expect(cfg.agent!["existing-agent"]).toBe(existingAgent);
     // Weave agent must also be present
     expect(cfg.agent!["preserve-test-agent"]).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: tool hook registration
+// ---------------------------------------------------------------------------
+
+describe("WeavePlugin — tool hook", () => {
+  it("Tool_hook_is_defined_when_config_load_succeeds", async () => {
+    const root = await makeTempProject("tool-hook-agent");
+    const client = new MockOpenCodeClient();
+    client.setListResult(okAsync([]));
+
+    const plugin = createWeavePlugin({
+      fileReader: projectOnlyReader(root),
+      clientFacade: client,
+    });
+    const input = makeMockPluginInput(root, client);
+    const hooks = await plugin(input);
+
+    expect(hooks.tool).toBeDefined();
+  });
+
+  it("Tool_hook_has_both_expected_keys", async () => {
+    const root = await makeTempProject("tool-keys-agent");
+    const client = new MockOpenCodeClient();
+    client.setListResult(okAsync([]));
+
+    const plugin = createWeavePlugin({
+      fileReader: projectOnlyReader(root),
+      clientFacade: client,
+    });
+    const input = makeMockPluginInput(root, client);
+    const hooks = await plugin(input);
+
+    expect(hooks.tool).toBeDefined();
+    expect(hooks.tool).toHaveProperty("weave:start");
+    expect(hooks.tool).toHaveProperty("start-work");
+  });
+
+  it("Both_tools_have_required_shape", async () => {
+    const root = await makeTempProject("tool-shape-agent");
+    const client = new MockOpenCodeClient();
+    client.setListResult(okAsync([]));
+
+    const plugin = createWeavePlugin({
+      fileReader: projectOnlyReader(root),
+      clientFacade: client,
+    });
+    const input = makeMockPluginInput(root, client);
+    const hooks = await plugin(input);
+
+    const weaveStartTool = hooks.tool?.["weave:start"] as
+      | Record<string, unknown>
+      | undefined;
+    const startWorkTool = hooks.tool?.["start-work"] as
+      | Record<string, unknown>
+      | undefined;
+
+    expect(typeof weaveStartTool?.description).toBe("string");
+    expect(typeof weaveStartTool?.args).toBe("object");
+    expect(typeof weaveStartTool?.execute).toBe("function");
+
+    expect(typeof startWorkTool?.description).toBe("string");
+    expect(typeof startWorkTool?.args).toBe("object");
+    expect(typeof startWorkTool?.execute).toBe("function");
+  });
+
+  it("Tools_share_the_same_execute_function", async () => {
+    const root = await makeTempProject("tool-execute-agent");
+    const client = new MockOpenCodeClient();
+    client.setListResult(okAsync([]));
+
+    const plugin = createWeavePlugin({
+      fileReader: projectOnlyReader(root),
+      clientFacade: client,
+    });
+    const input = makeMockPluginInput(root, client);
+    const hooks = await plugin(input);
+
+    expect(hooks.tool?.["weave:start"]?.execute).toBe(
+      hooks.tool?.["start-work"]?.execute,
+    );
+  });
+
+  it("Tool_hook_is_absent_when_config_load_fails", async () => {
+    const root = await makeTempInvalidProject();
+    const client = new MockOpenCodeClient();
+
+    const plugin = createWeavePlugin({
+      fileReader: projectOnlyReader(root),
+      clientFacade: client,
+    });
+    const input = makeMockPluginInput(root, client);
+    const hooks = await plugin(input);
+
+    expect(hooks).toEqual({});
+    expect(hooks.tool).toBeUndefined();
+    expect("tool" in hooks).toBe(false);
+  });
+
+  it("Tools_are_present_with_empty_workflows", async () => {
+    const root = await makeTempProject("tool-empty-workflows-agent");
+    const client = new MockOpenCodeClient();
+    client.setListResult(okAsync([]));
+
+    const plugin = createWeavePlugin({
+      fileReader: projectOnlyReader(root),
+      clientFacade: client,
+    });
+    const input = makeMockPluginInput(root, client);
+    const hooks = await plugin(input);
+
+    expect(hooks.tool).toBeDefined();
+    expect(hooks.tool).toHaveProperty("weave:start");
+    expect(hooks.tool).toHaveProperty("start-work");
   });
 });
 

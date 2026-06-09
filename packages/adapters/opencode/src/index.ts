@@ -137,6 +137,13 @@ export {
 } from "./runtime-command-projection.js";
 
 // ---------------------------------------------------------------------------
+// OpenCode plugin entry point
+// ---------------------------------------------------------------------------
+
+export type { StartPlanToolHandlerDeps } from "./command-tools.js";
+export { buildStartPlanToolHandler } from "./command-tools.js";
+
+// ---------------------------------------------------------------------------
 // Skill discovery helpers
 // ---------------------------------------------------------------------------
 
