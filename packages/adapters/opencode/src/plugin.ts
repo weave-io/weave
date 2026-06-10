@@ -90,11 +90,10 @@
  */
 
 import { join } from "node:path";
-import { tool, type Hooks, type Plugin, type PluginInput } from "@opencode-ai/plugin";
+import type { Hooks, Plugin, PluginInput } from "@opencode-ai/plugin";
 import { type FileReader, loadConfig } from "@weave/config";
 import {
   type AgentDescriptor,
-  createInMemoryRuntimeStore,
   env,
   logger,
   materializeAgents,
@@ -103,9 +102,9 @@ import {
 
 import { OpenCodeAdapter } from "./adapter.js";
 import {
-  buildStartPlanToolHandler,
-  type StartPlanToolHandlerDeps,
-} from "./command-tools.js";
+  START_WORK_COMMAND_TEMPLATE,
+  WEAVE_START_COMMAND_TEMPLATE,
+} from "./command-templates.js";
 import { resolveModelForAgent } from "./model-resolution.js";
 import {
   type OpenCodeClientFacade,
@@ -381,88 +380,59 @@ export function createWeavePlugin(options: WeavePluginOptions = {}): Plugin {
 
     log.info("Weave plugin hooks ready — returning immediately");
 
-    const commandAdapter = new OpenCodeAdapter({ projectRoot: directory });
-    await commandAdapter.init();
-
-    const commandStore = createInMemoryRuntimeStore();
-    const startPlanToolHandlerDeps: StartPlanToolHandlerDeps = {
-      config,
-      adapter: commandAdapter,
-      store: commandStore,
-    };
-    const startPlanHandler = buildStartPlanToolHandler(startPlanToolHandlerDeps);
-
-    log.info(
-      { tools: ["weave:start", "start-work"] },
-      "Weave command tools registered",
-    );
-
     // Return hooks immediately. The config hook is populated now; the event
     // hook defers SDK reconciliation to the first real session.
     return {
       config: async (cfg) => {
-        if (translatedMap.size === 0) return;
+        // --- Agent injection ---
+        if (translatedMap.size > 0) {
+          if (cfg.agent === undefined) {
+            cfg.agent = {};
+          }
 
-        // Ensure cfg.agent exists before patching.
-        if (cfg.agent === undefined) {
-          cfg.agent = {};
+          for (const [agentName, agentConfig] of translatedMap) {
+            // Tag with ownership before injecting so that deferred SDK
+            // reconciliation (session.created) sees the same ownership marker
+            // and classifies these agents as "update" rather than "collision".
+            cfg.agent[agentName] = tagWithOwnership(agentConfig);
+            log.debug({ agent: agentName }, "Agent injected into config hook");
+          }
+
+          log.info(
+            { agentCount: translatedMap.size },
+            "Weave agents injected into OpenCode config",
+          );
         }
 
-        for (const [agentName, agentConfig] of translatedMap) {
-          // Tag with ownership before injecting so that deferred SDK
-          // reconciliation (session.created) sees the same ownership marker
-          // and classifies these agents as "update" rather than "collision".
-          cfg.agent[agentName] = tagWithOwnership(agentConfig);
-          log.debug({ agent: agentName }, "Agent injected into config hook");
+        // --- Command injection ---
+        // Register /start-work and /weave:start as OpenCode slash commands.
+        // These are prompt-based commands (not LLM tools) — they inject the
+        // Tapestry execution template into the conversation when the user
+        // types the command in the TUI.
+        if (cfg.command === undefined) {
+          cfg.command = {};
         }
+
+        cfg.command["start-work"] = {
+          template: START_WORK_COMMAND_TEMPLATE,
+          description: "Start executing a Weave plan created by Pattern",
+          agent: "tapestry",
+        };
+
+        cfg.command["weave:start"] = {
+          template: WEAVE_START_COMMAND_TEMPLATE,
+          description: "Start executing a Weave plan (preferred command)",
+          agent: "tapestry",
+        };
 
         log.info(
-          { agentCount: translatedMap.size },
-          "Weave agents injected into OpenCode config",
+          { commands: ["start-work", "weave:start"] },
+          "Weave slash commands registered",
         );
       },
 
       event: async ({ event }) => {
-        // SDK reconciliation is disabled. The config hook already injects all
-        // Weave agents into OpenCode's in-memory config at startup, which is
-        // sufficient for runtime use. The SDK path (config.update per agent)
-        // is redundant and harmful — each call triggers OpenCode to reload all
-        // plugins, causing an O(n) plugin restart storm for n agents.
-        //
-        // If durable persistence across config reloads is ever needed, it
-        // should be implemented as a single batched config.update() call, not
-        // per-agent writes.
-        //
-        // See: https://github.com/anthropics/weave-vnext/issues/XXX (if applicable)
         if (event.type !== "session.created") return;
-        // await runReconciliation();
-      },
-
-      tool: {
-        "weave:start": tool({
-          description:
-            "Execute an existing Weave plan by name. Use this command when you have a plan file in .weave/plans/ and want to start executing it.",
-          args: {
-            planName: tool.schema
-              .string()
-              .describe(
-                "Name of the plan to execute (without .md extension, e.g. 'my-feature')",
-              ),
-          },
-          execute: startPlanHandler,
-        }),
-        "start-work": tool({
-          description:
-            "Execute an existing Weave plan by name (alias for /weave:start).",
-          args: {
-            planName: tool.schema
-              .string()
-              .describe(
-                "Name of the plan to execute (without .md extension, e.g. 'my-feature')",
-              ),
-          },
-          execute: startPlanHandler,
-        }),
       },
     };
   };

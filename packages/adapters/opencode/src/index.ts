@@ -137,11 +137,13 @@ export {
 } from "./runtime-command-projection.js";
 
 // ---------------------------------------------------------------------------
-// OpenCode plugin entry point
+// Command templates (slash command registration)
 // ---------------------------------------------------------------------------
 
-export type { StartPlanToolHandlerDeps } from "./command-tools.js";
-export { buildStartPlanToolHandler } from "./command-tools.js";
+export {
+  START_WORK_COMMAND_TEMPLATE,
+  WEAVE_START_COMMAND_TEMPLATE,
+} from "./command-templates.js";
 
 // ---------------------------------------------------------------------------
 // Skill discovery helpers
