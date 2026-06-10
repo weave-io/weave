@@ -22,10 +22,6 @@
  * @see docs/adapter-bootstrap.md — Command Surface Registration section
  */
 
-import { logger } from "@weave/engine";
-
-const log = logger.child({ module: "command-templates" });
-
 // ---------------------------------------------------------------------------
 // Protocol envelope — structured metadata for command parsing
 // ---------------------------------------------------------------------------
