@@ -10,7 +10,7 @@ tableOfContents:
 
 `.weave` is a small block-structured DSL. It is not JSON, YAML, or TypeScript.
 
-```text
+```weave
 agent reviewer {
   description "Strict reviewer"
   prompt "Review the current diff."
@@ -76,7 +76,7 @@ Categories generate agents named `shuttle-{category}`.
 
 ## Tool Policy
 
-```text
+```weave
 tool_policy {
   read allow
   write ask
@@ -90,7 +90,7 @@ Capabilities are `read`, `write`, `execute`, `network`, and `delegate`. Permissi
 
 ## Workflow Fields
 
-```text
+```weave
 workflow quick-fix {
   description "Fix a bug and get it reviewed"
   version 1
@@ -111,7 +111,7 @@ Workflow step fields include `name`, `type`, `agent`, `prompt`, `completion`, `i
 
 `before-plan` extension lets projects insert steps before a workflow's planning step.
 
-```text
+```weave
 workflow plan-and-implement {
   extension_points {
     before-plan
@@ -142,7 +142,7 @@ The current valid role value is `planning`.
 
 ## Settings And Disables
 
-```text
+```weave
 disable agents ["warp"]
 disable hooks ["on-session-idle"]
 disable skills ["tdd"]

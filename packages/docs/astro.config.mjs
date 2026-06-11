@@ -1,5 +1,6 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
+import weaveGrammar from './src/shiki/weave.tmLanguage.js';
 
 const site = process.env.SITE_URL ?? 'http://localhost:4321';
 const base = process.env.BASE_PATH ?? '/';
@@ -16,6 +17,12 @@ export default defineConfig({
   // that content byte-faithful without removing any intended typography.
   markdown: {
     smartypants: false,
+    shikiConfig: {
+      langs: [weaveGrammar],
+      langAlias: {
+        weave: 'weave-config',
+      },
+    },
   },
   integrations: [
     starlight({

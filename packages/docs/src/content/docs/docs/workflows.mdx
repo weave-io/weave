@@ -26,7 +26,7 @@ Use a workflow when the work has meaningful stages, handoffs, or gates. A single
 
 Current workflows are ordered `step` blocks. Do not use stale DAG snippets, fan-in `+` syntax, `routes`, or colon-style fields such as `role:`. The DSL is block-structured and uses bare identifiers for enums.
 
-```text
+```weave
 workflow secure-feature {
   description "Plan, implement, and review a feature"
   version 1
@@ -111,7 +111,7 @@ If a step has a `prompt_append` or `prompt_append_file`, it takes precedence for
 
 Workflows can publish extension points for project-specific insertion. The current supported role value is `planning`, used with `before-plan` reconciliation.
 
-```text
+```weave
 workflow plan-and-implement {
   version 1
 

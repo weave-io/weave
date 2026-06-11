@@ -21,7 +21,7 @@ Start with the smallest construct. If you only need a reviewer prompt, add one a
 
 ## Agent Block Walkthrough
 
-```text
+```weave
 agent security-reviewer {
   description "Security-focused reviewer"
   prompt_file "security-reviewer.md"
@@ -67,7 +67,46 @@ Important fields:
 
 Builtins are regular DSL definitions packaged with Weave. To customize a builtin, declare an agent with the same name in global or project config and specify only the fields you need to change.
 
+## Builtin Agent Configuration
+
+The builtin agents are not hard-coded in a separate format. They are declared in ordinary `.weave` DSL inside `packages/config/src/builtins.ts` as `BUILTIN_WEAVE_SOURCE`, then parsed through the same config pipeline as user-authored config.
+
+That means three things are true:
+
+1. Builtins use the same schema and syntax rules as your own config.
+2. Builtins are loaded before global and project config.
+3. Overriding a builtin is normal config merge behavior, not a special API.
+
+Current builtin agents shipped by Weave:
+
+| Agent | Purpose | Default mode |
+| --- | --- | --- |
+| `loom` | Main orchestrator | `primary` |
+| `tapestry` | Plan execution | `primary` |
+| `shuttle` | Domain specialist base agent | `subagent` |
+| `pattern` | Strategic planner | `subagent` |
+| `thread` | Codebase explorer | `subagent` |
+| `spindle` | External researcher | `subagent` |
+| `weft` | Reviewer | `subagent` |
+| `warp` | Security auditor | `subagent` |
+
+The prompt content for these builtins ships with `@weave/config` as prompt files, then gets resolved or inlined during config loading depending on whether Weave is running from source or from a bundle.
+
+If you want the exact current builtin DSL, inspect the source directly:
+
+```bash
+bun packages/cli/src/main.ts prompt list
+bun packages/cli/src/main.ts prompt inspect loom
+```
+
+And for the authoritative implementation:
+
 ```text
+packages/config/src/builtins.ts
+packages/config/prompts/
+```
+
+```weave
 agent loom {
   prompt_append "Before delegating, summarize the user-visible acceptance criteria."
   models ["claude-sonnet-4-5"]
@@ -84,7 +123,7 @@ bun packages/cli/src/main.ts prompt inspect loom
 
 Create custom agents when the role is durable enough to reuse. Keep custom roles focused; one clear responsibility produces better delegation guidance than a generic catch-all role.
 
-```text
+```weave
 agent docs-editor {
   description "Documentation editor"
   prompt "Improve docs for accuracy, structure, and reader task flow."
@@ -111,7 +150,7 @@ bun packages/cli/src/main.ts prompt inspect docs-editor
 
 Categories route domain work by metadata and generate shuttle agents. A category named `frontend` generates `shuttle-frontend`.
 
-```text
+```weave
 category frontend {
   description "Frontend UI, styling, accessibility, and responsive behavior"
   patterns ["src/components/**", "src/pages/**", "**/*.tsx", "**/*.css"]
@@ -146,7 +185,7 @@ Triggers describe when another agent should be considered. They are not routing 
 
 Use `routing.delegation_exclude` when a primary agent should not see a target even though that target exists in config:
 
-```text
+```weave
 agent loom {
   routing {
     delegation_exclude ["warp", "spindle"]

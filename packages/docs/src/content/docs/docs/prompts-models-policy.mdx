@@ -14,7 +14,7 @@ Prompts, model preferences, and tool policy all shape what an agent can do. Weav
 
 An agent can use an inline prompt:
 
-```text
+```weave
 agent reviewer {
   prompt "Review the current diff for correctness and missing tests."
 }
@@ -22,7 +22,7 @@ agent reviewer {
 
 Or a prompt file:
 
-```text
+```weave
 agent reviewer {
   prompt_file "reviewer.md"
 }
@@ -34,7 +34,7 @@ Do not set both `prompt` and `prompt_file`. Prompt files are resolved under the 
 
 Use appends to add project- or workflow-specific instructions without replacing a base prompt.
 
-```text
+```weave
 agent loom {
   prompt_append "Always summarize assumptions before delegating."
 }
@@ -42,7 +42,7 @@ agent loom {
 
 For longer text:
 
-```text
+```weave
 agent loom {
   prompt_append_file "loom-project-rules.md"
 }
@@ -90,7 +90,7 @@ Use \{{delegation.section}} when documenting the placeholder itself.
 
 Models are ordered intent, not guaranteed runtime selection:
 
-```text
+```weave
 agent reviewer {
   models ["claude-sonnet-4-5", "gpt-4o"]
 }
@@ -102,7 +102,7 @@ Adapters own available-model lookup and selected-model lookup because only the c
 
 Tool policy describes abstract capabilities:
 
-```text
+```weave
 tool_policy {
   read allow
   write ask

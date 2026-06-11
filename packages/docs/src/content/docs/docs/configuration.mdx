@@ -69,11 +69,19 @@ builtins < ~/.weave/config.weave < .weave/config.weave
 
 Scalars override. Objects deep-merge. Arrays union-merge. This lets a project add a model preference or prompt append to a builtin agent without duplicating the builtin agent's entire definition.
 
+## Where Builtins Come From
+
+Weave ships a builtin config layer in `packages/config/src/builtins.ts`. That file contains `BUILTIN_WEAVE_SOURCE`, which is ordinary `.weave` DSL for the default built-in agents.
+
+This is important because the builtin layer is not a hidden internal format. It is parsed and validated exactly like user config, then merged into the effective config before `~/.weave/config.weave` and `.weave/config.weave` are applied.
+
+If you are looking for the default definitions for `loom`, `tapestry`, `shuttle`, `pattern`, `thread`, `spindle`, `weft`, or `warp`, that is the canonical source.
+
 ## Prompt Files
 
 Use inline `prompt` for short instructions:
 
-```text
+```weave
 agent reviewer {
   prompt "Review the current diff for correctness and missing tests."
 }
@@ -81,7 +89,7 @@ agent reviewer {
 
 Use `prompt_file` when the prompt is long enough to deserve prose formatting:
 
-```text
+```weave
 agent reviewer {
   prompt_file "reviewer.md"
 }
