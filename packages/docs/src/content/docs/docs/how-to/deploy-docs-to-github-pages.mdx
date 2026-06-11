@@ -1,31 +1,8 @@
 ---
-title: Deploy Docs to GitHub Pages
-description: Build and publish the Astro docs package through the repository workflow.
+title: Deploy Docs Moved
+description: Compatibility route for docs operations guidance.
 ---
 
-Docs deployment is defined in `.github/workflows/deploy-docs.yml`.
+This page is kept for existing links after the public docs consolidation. Docs build, preview, base-path checks, and deployment verification now live in [Runtime Operations](../../runtime-operations/).
 
-## Trigger deployment
-
-Push to `main`, or run the `workflow_dispatch` action manually.
-
-## Build behavior
-
-The workflow:
-
-1. checks out the repository
-2. configures GitHub Pages
-3. installs Bun `1.3.10`
-4. runs `bun install --frozen-lockfile`
-5. runs `bun run docs:build`
-6. uploads `packages/docs/dist`
-7. deploys the Pages artifact
-
-The docs build receives:
-
-```bash
-SITE_URL=https://<owner>.github.io
-BASE_PATH=/<repository-name>
-```
-
-Use those variables locally when testing a subpath deployment.
+Current support note: verify `bun run docs:build` and base-path-safe navigation before deployment.

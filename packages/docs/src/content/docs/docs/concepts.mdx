@@ -1,0 +1,115 @@
+---
+title: Concepts
+description: The mental model behind Weave's config, packages, adapters, and execution boundaries.
+tableOfContents:
+  minHeadingLevel: 2
+  maxHeadingLevel: 3
+---
+
+## Weave As An API Layer
+
+Weave is an API layer for agent configuration. It does not try to replace OpenCode, Claude Code, Pi, or future harnesses. Instead, it gives teams one durable language for describing intent, then lets adapters translate that intent into harness-native configuration and behavior.
+
+The analogy is closer to Neovim's API than to a single editor distribution. Weave owns primitives: agents, categories, workflows, prompt composition, model intent, and abstract policy. Harnesses own their concrete UI, command surface, available models, tools, and runtime affordances.
+
+## The Four Layers
+
+| Layer | Package | Responsibility |
+| --- | --- | --- |
+| Core | `@weave/core` | Tokenize `.weave`, parse AST, validate Zod schemas, and expose typed config. |
+| Config | `@weave/config` | Provide builtin DSL defaults, discover global/project config, resolve prompt paths, and merge layers. |
+| Engine | `@weave/engine` | Compose prompts, generate descriptors, resolve skills from adapter context, model abstract policy, and manage runtime operations. |
+| Adapters | `@weave/adapter-*` | Translate normalized intent into a harness-specific plugin, config, command, or tool-policy surface. |
+
+The boundary is one-way. Core and engine code must not scan harness-owned directories or call harness APIs. Adapters provide explicit context to engine APIs and receive normalized results back.
+
+## Public Constructs
+
+Weave's public configuration model is intentionally small:
+
+| Construct | What it describes |
+| --- | --- |
+| `agent` | A named role with prompt source, model preferences, mode, skills, triggers, routing metadata, and abstract tool policy. |
+| `category` | A domain route that generates a `shuttle-{category}` specialist agent from patterns and category-specific overrides. |
+| `workflow` | Ordered explicit execution steps, completion methods, artifacts, gates, and extension points. |
+| `settings` | Runtime-independent configuration such as `log_level` and runtime journal strictness. |
+| `disable` | Disabled agents, hooks, or skills. |
+
+Unsupported or historical constructs should not be treated as current syntax. In particular, `continuation`, `analytics`, `routes`, DAG fan-in syntax, colon-style `role:`, and `weave build` are not current public instructions.
+
+## Config Layering
+
+Weave reads config from three places:
+
+| Layer | Location | Purpose |
+| --- | --- | --- |
+| Builtins | packaged DSL in `@weave/config` | Default agents and baseline behavior. |
+| Global | `~/.weave/config.weave` | User-level preferences shared across projects. |
+| Project | `.weave/config.weave` | Project-specific overrides and custom roles. |
+
+Merge behavior follows the type of value:
+
+- Scalars override earlier values.
+- Objects deep-merge by key.
+- Arrays union-merge where the schema expects additive lists.
+
+This lets a project override one field on a builtin agent without copying the entire builtin definition.
+
+## Prompt Composition
+
+Prompt text can come from inline strings or files under the config scope's `prompts/` directory. The engine renders prompt sources as Mustache templates, then appends delegation guidance when the primary prompt does not explicitly place a `delegation.*` placeholder.
+
+This design keeps prompt text close to config while avoiding adapter-specific prompt templating. The adapter receives an already-composed descriptor and does not need to know where the text came from.
+
+## Model Intent Vs Selection
+
+Weave config stores ordered model preferences. It does not guarantee that a model is installed, available, or selected in the harness. Model availability and current selection are adapter-owned because they depend on the concrete harness and user environment.
+
+The practical rule: use `models [...]` to express intent and fallback order. Use adapter diagnostics or harness configuration to understand which concrete model is selected at runtime.
+
+## Tool Policy
+
+Tool policy is abstract capability intent:
+
+```text
+tool_policy {
+  read allow
+  write ask
+  execute ask
+  network deny
+  delegate allow
+}
+```
+
+Adapters map those capabilities to concrete harness tools. A read capability may translate to several file-inspection tools in one harness and a different permission model in another. The default for unspecified permissions is conservative; explicitly declare important permissions when a role's safety boundary matters.
+
+## Explicit Execution
+
+Weave separates configuration from execution. The CLI can validate workflows and inspect runtime state, but it does not launch harness runtimes. `weave run` refuses to execute by design.
+
+For OpenCode today, explicit work starts through prompt commands registered by the plugin:
+
+- `/weave:start`
+- `/start-work`
+
+Other labels such as `/weave:run` or `/weave:status` may appear in runtime projection code, but they are not registered OpenCode commands unless an adapter wires them.
+
+## Runtime And Journal Safety
+
+The engine owns normalized runtime state and journal semantics. The runtime journal uses structured entries with size limits and sanitization so adapters can record operational events without leaking raw secrets or oversized payloads.
+
+By default, journal failures are best-effort so the surrounding operation can continue. Strict journal mode can be enabled for environments that prefer failures to propagate.
+
+## Current Support Boundaries
+
+| Boundary | Current state |
+| --- | --- |
+| Implemented adapter | OpenCode only. |
+| OpenCode plugin package | `@weave/adapter-opencode/plugin`. |
+| Registered OpenCode commands | `/weave:start` and `/start-work`. |
+| CLI launcher | No launcher; `weave run` refuses execution. |
+| Future adapters | Claude Code and Pi are product targets, not current implementation guarantees. |
+
+## Next Steps
+
+Read [Configuration](../configuration/) to author config safely. Read [OpenCode](../opencode/) to install the implemented adapter. Use [Package Reference](../reference/packages/) when changing code across the layer boundary.

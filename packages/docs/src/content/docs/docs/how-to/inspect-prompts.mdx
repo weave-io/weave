@@ -1,36 +1,8 @@
 ---
-title: Inspect Prompts
-description: List resolved agents and render composed prompts before launching a harness.
+title: Inspect Prompts Moved
+description: Compatibility route for prompt inspection docs.
 ---
 
-## List agents
+This page is kept for existing links after the public docs consolidation. Prompt inspection now lives in [Configuration](../../configuration/) and [Prompts, Models, and Policy](../../prompts-models-policy/), with command details in [CLI Reference](../../reference/cli/).
 
-```bash
-bun packages/cli/src/main.ts prompt list
-```
-
-This includes builtin agents, user agents, and generated category shuttles, excluding disabled agents.
-
-## List as JSON
-
-```bash
-bun packages/cli/src/main.ts prompt list --json
-```
-
-## Inspect one prompt
-
-```bash
-bun packages/cli/src/main.ts prompt inspect loom
-```
-
-## Inspect metadata and prompt as JSON
-
-```bash
-bun packages/cli/src/main.ts prompt inspect loom --json
-```
-
-The JSON includes the final prompt, resolved mode, models, effective tool policy, skills, and delegation target names.
-
-## Troubleshoot missing prompt files
-
-User `prompt_file` and `prompt_append_file` values resolve relative to the config scope's `prompts/` directory. For a project config, `prompt_file "reviewer.md"` resolves to `.weave/prompts/reviewer.md`.
+Current support note: `weave prompt inspect <agent> --json` is the clearest way to verify composed prompt, model preferences, policy, and delegation targets.

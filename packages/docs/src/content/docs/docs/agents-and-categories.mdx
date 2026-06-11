@@ -1,0 +1,170 @@
+---
+title: Agents and Categories
+description: Define builtin overrides, custom agents, category shuttles, and delegation metadata.
+tableOfContents:
+  minHeadingLevel: 2
+  maxHeadingLevel: 3
+---
+
+## Choose The Right Construct
+
+Agents and categories solve different problems.
+
+| Need | Use |
+| --- | --- |
+| Change how a known role behaves | Override a builtin `agent` by name. |
+| Add a new named role | Create a custom `agent`. |
+| Route a domain of files to a specialist | Create a `category`; Weave generates `shuttle-{category}`. |
+| Hide noisy delegation targets | Add `routing { delegation_exclude [...] }` to the delegating agent. |
+
+Start with the smallest construct. If you only need a reviewer prompt, add one agent. If you need file-pattern-specific routing, add a category.
+
+## Agent Block Walkthrough
+
+```text
+agent security-reviewer {
+  description "Security-focused reviewer"
+  prompt_file "security-reviewer.md"
+  models ["claude-sonnet-4-5", "gpt-4o"]
+  mode subagent
+  temperature 0.1
+  skills ["code-review"]
+
+  triggers [
+    { domain "Security" trigger "Authentication, authorization, secrets, or data exposure changes" }
+    { domain "Architecture" trigger "Security-sensitive boundaries or trust model changes" }
+  ]
+
+  routing {
+    delegation_exclude ["spindle"]
+  }
+
+  tool_policy {
+    read allow
+    write deny
+    execute ask
+    network deny
+    delegate deny
+  }
+}
+```
+
+Important fields:
+
+| Field | Meaning |
+| --- | --- |
+| `description` | Human-readable summary used in delegation guidance and listings. |
+| `prompt` / `prompt_file` | Primary instruction source. Exactly one is allowed. |
+| `models` | Ordered model preference list; concrete availability is adapter-owned. |
+| `mode` | `primary`, `subagent`, or `all`. This is an adapter-facing context hint. |
+| `temperature` | Optional generation preference. |
+| `skills` | Skill names to resolve against adapter-provided available skills. |
+| `triggers` | Delegation metadata used by router prompts. |
+| `routing.delegation_exclude` | Target names to omit from this agent's delegation guidance. |
+| `tool_policy` | Abstract capabilities mapped by adapters. |
+
+## Builtin Overrides
+
+Builtins are regular DSL definitions packaged with Weave. To customize a builtin, declare an agent with the same name in global or project config and specify only the fields you need to change.
+
+```text
+agent loom {
+  prompt_append "Before delegating, summarize the user-visible acceptance criteria."
+  models ["claude-sonnet-4-5"]
+}
+```
+
+Because objects deep-merge, the override does not need to copy the full builtin prompt or tool policy. Validate and inspect after overrides so you can see the final composed descriptor:
+
+```bash
+bun packages/cli/src/main.ts prompt inspect loom
+```
+
+## Custom Agents
+
+Create custom agents when the role is durable enough to reuse. Keep custom roles focused; one clear responsibility produces better delegation guidance than a generic catch-all role.
+
+```text
+agent docs-editor {
+  description "Documentation editor"
+  prompt "Improve docs for accuracy, structure, and reader task flow."
+  mode subagent
+
+  tool_policy {
+    read allow
+    write allow
+    execute ask
+    network deny
+    delegate deny
+  }
+}
+```
+
+Verify it exists:
+
+```bash
+bun packages/cli/src/main.ts prompt list
+bun packages/cli/src/main.ts prompt inspect docs-editor
+```
+
+## Category Shuttles
+
+Categories route domain work by metadata and generate shuttle agents. A category named `frontend` generates `shuttle-frontend`.
+
+```text
+category frontend {
+  description "Frontend UI, styling, accessibility, and responsive behavior"
+  patterns ["src/components/**", "src/pages/**", "**/*.tsx", "**/*.css"]
+  models ["claude-sonnet-4-5"]
+  temperature 0.2
+  prompt_append "Preserve accessibility and design-system consistency."
+
+  tool_policy {
+    read allow
+    write allow
+    execute ask
+    delegate deny
+  }
+}
+```
+
+Categories inherit from the base `shuttle` agent and apply category-specific fields. Adapters decide how generated descriptors become concrete harness resources.
+
+## Collision And Naming Behavior
+
+Generated category agents use the stable name `shuttle-{category}`. Avoid creating a custom agent with the same generated name unless you intentionally want to override that descriptor. When in doubt, run:
+
+```bash
+bun packages/cli/src/main.ts prompt list
+```
+
+Then inspect the exact generated name.
+
+## Delegation Metadata
+
+Triggers describe when another agent should be considered. They are not routing code; they are prompt metadata used to build delegation guidance.
+
+Use `routing.delegation_exclude` when a primary agent should not see a target even though that target exists in config:
+
+```text
+agent loom {
+  routing {
+    delegation_exclude ["warp", "spindle"]
+  }
+}
+```
+
+This filtering is engine-owned. Adapters receive descriptors after delegation targets have been resolved.
+
+## Troubleshooting
+
+| Problem | Check |
+| --- | --- |
+| A custom agent does not appear | Validate config and confirm the agent is not in `disable agents [...]`. |
+| A category shuttle has unexpected prompt text | Inspect `shuttle-{category}` and review the base `shuttle` plus category append. |
+| Delegation guidance is noisy | Add or refine `triggers`, or exclude targets with `routing.delegation_exclude`. |
+| Tool access is too broad | Tighten `tool_policy`; adapters map capabilities to concrete tools. |
+
+## Next Steps
+
+Read [Prompts, Models, and Policy](../prompts-models-policy/) for deeper prompt composition and policy rules. Use [DSL Reference](../reference/dsl/) for field-level syntax.

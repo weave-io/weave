@@ -1,35 +1,8 @@
 ---
-title: Deployment
-description: Public docs deployment workflow and path configuration.
+title: Deployment Reference Moved
+description: Compatibility route for docs operations guidance.
 ---
 
-GitHub Pages deployment lives in `.github/workflows/deploy-docs.yml`.
+This page is kept for existing links after the public docs consolidation. Docs deployment checks now live in [Runtime Operations](../../runtime-operations/).
 
-## Trigger
-
-The workflow runs on pushes to `main` and on manual `workflow_dispatch`.
-
-## Build command
-
-```bash
-bun run docs:build
-```
-
-## Environment
-
-The workflow sets:
-
-```bash
-SITE_URL=https://${{ github.repository_owner }}.github.io
-BASE_PATH=/${{ github.event.repository.name }}
-```
-
-`packages/docs/astro.config.mjs` reads `SITE_URL` and `BASE_PATH` to configure Astro `site` and `base`.
-
-## Artifact
-
-The uploaded Pages artifact is:
-
-```text
-packages/docs/dist
-```
+Current support note: verify docs build, typecheck, and base-path navigation before publishing.

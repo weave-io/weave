@@ -1,39 +1,8 @@
 ---
-title: Runtime Commands
-description: Engine command operations and OpenCode projection labels.
-tableOfContents:
-  minHeadingLevel: 2
-  maxHeadingLevel: 3
+title: Runtime Commands Reference Moved
+description: Compatibility route for runtime operations docs.
 ---
 
-Runtime command operations are engine-owned reusable operations with adapter-owned projection.
+This page is kept for existing links after the public docs consolidation. Runtime command material now lives in [Runtime Operations](../../runtime-operations/), [Workflows](../../workflows/), and [Adapters](adapters/).
 
-## Operation kinds
-
-| Operation | Purpose |
-| --- | --- |
-| `start-plan` | Start execution of a named plan. |
-| `run-named-workflow` | Explicitly run a named workflow. |
-| `inspect-status` | Read execution status. |
-| `abort-execution` | Cancel or pause execution. |
-| `advance-step` | Complete or advance a blocked step. |
-| `runtime-health` | Report adapter/runtime readiness. |
-
-## Outcomes
-
-Every operation returns one of `success`, `failure`, `degraded`, or `unsupported` through typed result data.
-
-## OpenCode labels
-
-The OpenCode projection defines these labels:
-
-| Label | Operation |
-| --- | --- |
-| `/weave:start` | start plan |
-| `/weave:run` | run named workflow |
-| `/weave:status` | inspect status |
-| `/weave:abort` | abort execution |
-| `/weave:advance` | advance step |
-| `/weave:health` | runtime health |
-
-Native TUI abort and advance affordances are documented as degraded in the adapter code; use plugin tooling or scripts when those native UI paths are not wired.
+Current support note: only `/weave:start` and `/start-work` are registered OpenCode prompt commands today.

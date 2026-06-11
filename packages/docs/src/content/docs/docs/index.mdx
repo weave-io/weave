@@ -8,60 +8,64 @@ tableOfContents:
   maxHeadingLevel: 2
 ---
 
-## Start here
+## What Weave Is
 
-Weave is a harness-agnostic prompt and agent-configuration API. You author `.weave` files once, then adapters translate the normalized config into a concrete harness integration.
+Weave is a harness-agnostic prompt and agent-configuration API. You describe agents, categories, workflows, prompts, model preferences, and abstract tool policy in `.weave` files. Weave parses that intent into a normalized configuration; adapters translate it into whatever a concrete harness needs.
 
-- New to Weave: start with [Quickstart](tutorials/quickstart/), then [Install and build](how-to/install-and-build/).
-- OpenCode users: follow [Configure the OpenCode plugin](tutorials/opencode-plugin/), then [Run an explicit execution](tutorials/first-explicit-execution/).
-- Config authors: use the [DSL syntax reference](reference/dsl/syntax/) and field references for [agents](reference/dsl/agents/), [categories](reference/dsl/categories/), [workflows](reference/dsl/workflows/), and [settings](reference/dsl/settings-and-disables/).
-- Integrators: read [Architecture](explanation/architecture/), [Engine and adapter boundary](explanation/engine-adapter-boundary/), and the [OpenCode adapter reference](reference/adapters/opencode/).
+The current public implementation is intentionally narrower than the long-term product vision. The OpenCode adapter is implemented today. Claude Code and Pi are future or placeholder targets. The CLI helps you initialize, validate, inspect, and migrate configuration, but it does not launch agent harnesses for you. `weave run` refuses execution and points you back to adapter-native, explicit execution.
 
-## Documentation map
+## Pick Your Path
 
-Tutorials teach the first successful path:
+Use this page as the map for the consolidated docs. Older tutorial, how-to, explanation, and per-topic reference routes still exist for compatibility, but the primary navigation now lives in the pages below.
 
-- [Quickstart](tutorials/quickstart/) creates and validates a project config.
-- [OpenCode plugin](tutorials/opencode-plugin/) installs the current implemented adapter.
-- [First explicit execution](tutorials/first-explicit-execution/) explains how execution starts through adapter-native command surfaces, not `weave run`.
+| Goal | Start here | What you will learn |
+| --- | --- | --- |
+| Try Weave for the first time | [Getting Started](getting-started/) | Install dependencies, create `.weave/config.weave`, validate it, and connect OpenCode. |
+| Understand the architecture | [Concepts](concepts/) | Why Weave is an API layer, how packages split responsibilities, and where execution boundaries are. |
+| Author real config | [Configuration](configuration/) | Global vs project config, merge order, prompt files, validation, and inspection loops. |
+| Design agent roles | [Agents and Categories](agents-and-categories/) | Builtin overrides, custom agents, generated category shuttles, and delegation metadata. |
+| Tune prompt/model/policy behavior | [Prompts, Models, and Policy](prompts-models-policy/) | Prompt composition, model intent, and abstract tool-policy mapping. |
+| Describe explicit work | [Workflows](workflows/) | Ordered workflow steps, gates, artifacts, extension points, and explicit start surfaces. |
+| Use the implemented adapter | [OpenCode](opencode/) | Plugin installation, registered commands, materialization, logs, and known gaps. |
+| Operate the repo or docs site | [Runtime Operations](runtime-operations/) | Runtime inspection, journal safety, docs builds, previews, and deployment checks. |
 
-How-to guides solve specific tasks:
+## Reference Pages
 
-- [Initialize config](how-to/initialize-config/), [validate config](how-to/validate-config/), [inspect prompts](how-to/inspect-prompts/), and [inspect runtime state](how-to/inspect-runtime-state/).
-- Customize [builtin agents](how-to/customize-builtin-agent/), [custom agents](how-to/add-custom-agent/), [category shuttles](how-to/create-category-shuttle/), [prompt appends](how-to/configure-prompt-appends/), [tool policy](how-to/configure-tool-policy/), [model preferences](how-to/configure-model-preferences/), and [workflows](how-to/extend-workflows/).
+Reference pages answer lookup questions without sending you across many short routes.
 
-Reference pages describe the machinery:
+| Reference | Use it for |
+| --- | --- |
+| [CLI Reference](reference/cli/) | Command syntax, flags, examples, output expectations, and exit behavior. |
+| [DSL Reference](reference/dsl/) | Supported `.weave` syntax, fields, values, workflow extension rules, and unsupported stale syntax. |
+| [Adapter Reference](reference/adapters/) | Adapter support matrix, OpenCode capabilities, command surfaces, and degraded behavior. |
+| [Package Reference](reference/packages/) | Workspace package responsibilities and ownership boundaries. |
 
-- [CLI](reference/cli/), [config loading and merge](reference/config-loading-and-merge/), [prompt composition](reference/prompt-composition/), [tool policy](reference/tool-policy/), [model resolution](reference/model-resolution/), [execution lifecycle](reference/execution-lifecycle/), [runtime store and journal](reference/runtime-store-and-journal/), and [runtime commands](reference/runtime-commands/).
+## Current Support Boundaries
 
-Explanations discuss why Weave is shaped this way:
+These boundaries are repeated across the guides because they prevent common setup mistakes:
 
-- [What is Weave?](explanation/what-is-weave/), [config merge model](explanation/config-merge-model/), [prompt composition design](explanation/prompt-composition-design/), [workflow execution model](explanation/workflow-execution-model/), [runtime and journal design](explanation/runtime-and-journal-design/), [model intent vs selection](explanation/model-intent-vs-selection/), [tool policy design](explanation/tool-policy-design/), and [public vs internal docs](explanation/public-vs-internal-docs/).
+| Topic | Current behavior |
+| --- | --- |
+| Adapter support | Only OpenCode is implemented. Other adapter names are future or placeholder targets. |
+| OpenCode plugin entry | Use `@weave/adapter-opencode/plugin`. |
+| Registered OpenCode commands | The plugin registers `/weave:start` and `/start-work` prompt commands. |
+| Other `/weave:*` labels | `/weave:run`, `/weave:status`, `/weave:abort`, `/weave:advance`, and `/weave:health` are projection/helper labels unless an adapter explicitly wires them. |
+| CLI execution | `weave run` intentionally refuses to start harness runtimes. |
+| Stale syntax | DAG/fan-in snippets, colon-style `role:`, `routes`, and `weave build` are historical or unsupported. |
 
-## What is Weave?
-
-Weave has four public configuration constructs today:
-
-- Agents declare prompts, model intent, mode, skills, routing metadata, and abstract tool policy.
-- Categories generate `shuttle-{category}` specialist agents from glob-like pattern metadata.
-- Workflows declare ordered explicit execution steps, completion methods, artifacts, extension points, and workflow-level prompt appends.
-- Settings and disables configure log level, runtime journal strictness, and disabled agents/hooks/skills.
-
-Only the OpenCode adapter is implemented today. Claude Code and Pi are product targets, but they are not current public adapter implementations.
-
-## Anatomy of a .weave file
+## A Minimal `.weave` File
 
 ```text
 agent reviewer {
-  description "Strict reviewer"
-  prompt "Review the current diff for correctness and missing tests."
+  description "Strict code reviewer"
+  prompt "Review the current diff for correctness, regressions, and missing tests."
   models ["claude-sonnet-4-5"]
   mode subagent
 
   tool_policy {
     read allow
     write deny
-    execute deny
+    execute ask
     network deny
     delegate deny
   }
@@ -83,10 +87,14 @@ settings {
 }
 ```
 
-Validate it with Bun:
+Validate a project config with:
 
 ```bash
 bun packages/cli/src/main.ts validate --project
 ```
 
-`weave run` intentionally refuses to run harness runtimes directly. Use `weave init` to configure a harness, then use the harness-native command surface such as OpenCode's `/weave:start` or `/weave:run` when those surfaces are wired by the adapter.
+Expected result: the command exits successfully and prints a summary with agent, category, workflow, disabled, and log-level counts. If you pass `--json`, it emits the effective validated config for inspection or automation.
+
+## What To Read Next
+
+Read [Getting Started](getting-started/) if you want a complete first setup. Read [Concepts](concepts/) if you are evaluating whether Weave fits your architecture. Read [OpenCode](opencode/) if your immediate goal is to connect the implemented adapter.

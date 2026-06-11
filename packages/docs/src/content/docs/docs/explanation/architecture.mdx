@@ -1,16 +1,8 @@
 ---
-title: Architecture
-description: How core, config, engine, adapters, CLI, and docs fit together.
+title: Architecture Moved
+description: Compatibility route for the consolidated concepts guide.
 ---
 
-Weave is organized into layers with narrow responsibilities.
+This page is kept for existing links after the public docs consolidation. Architecture guidance now lives in [Concepts](../../concepts/), with package responsibilities in [Packages](../../reference/packages/).
 
-`@weave/core` owns the language: lexer, parser, AST, schema, validation, and public config types.
-
-`@weave/config` owns configuration loading: builtin DSL defaults, global/project discovery, prompt path resolution, merge semantics, and plan-state filesystem support.
-
-`@weave/engine` owns harness-neutral composition and runtime semantics: prompt composition, category shuttle generation, model intent helpers, tool policy evaluation, lifecycle methods, runtime store, and command operations.
-
-Adapters own concrete harness integration. The OpenCode adapter translates descriptors into OpenCode config, maps tool policy into OpenCode permission shape, registers plugin hooks, and projects runtime commands into OpenCode labels.
-
-`@weave/cli` is an operator interface over those layers. It does not bypass the architecture by running harnesses directly.
+Current support note: engine APIs must not own harness resource discovery or concrete harness command registration.

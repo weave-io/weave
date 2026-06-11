@@ -35,12 +35,13 @@
  */
 import ThemeToggle from '../components/prototype/ThemeToggle.astro';
 import logo from '../assets/prototype/logo.png';
+import { normalizeBaseUrl, withBaseUrl } from '../utils/base-url';
 import '../styles/prototype/tokens.css';
 
-const base = import.meta.env.BASE_URL;
+const base = normalizeBaseUrl(import.meta.env.BASE_URL);
 const homeHref = base;
-const designSystemHref = `${base}design-system/`;
-const docsHref = `${base}docs/`;
+const designSystemHref = withBaseUrl(base, 'design-system/');
+const docsHref = withBaseUrl(base, 'docs/');
 
 // Page description — preserved as document metadata for the design-system route
 // (custom Astro page, so it is owned here rather than by Starlight's Head).
@@ -124,8 +125,8 @@ const description =
           <div class="type-row"><div class="spec"><b>title · 3xl</b>38 / 500 / -0.025em</div><div class="sample" style="font-size:var(--fs-3xl);font-weight:500;letter-spacing:-0.025em">Author intent once.</div></div>
           <div class="type-row"><div class="spec"><b>heading · xl</b>22 / 500 / -0.015em</div><div class="sample" style="font-size:var(--fs-xl);font-weight:500;letter-spacing:-0.015em">The adapter boundary is one-way.</div></div>
           <div class="type-row"><div class="spec"><b>lede · lg</b>18 / 400</div><div class="sample" style="font-size:var(--fs-lg);color:var(--text-2)">A single .weave file compiles to the surfaces each harness expects.</div></div>
-          <div class="type-row"><div class="spec"><b>body · base</b>14 / 400 / 1.55</div><div class="sample" style="font-size:var(--fs-base);color:var(--text-2)">Categories route work to roles by capability, not by name — declare <code style="font-family:var(--font-mono);background:var(--bg-inset);border:1px solid var(--border-faint);border-radius:4px;padding:1px 5px;color:var(--text)">category edit &#123; routes: [executor] &#125;</code> and the compiler resolves the rest.</div></div>
-          <div class="type-row"><div class="spec"><b>code · mono</b>14 / 500</div><div class="sample" style="font-family:var(--font-mono);font-size:var(--fs-sm)"><span class="kw">workflow</span> <span class="id">migrate_repo</span> <span class="pn">&#123;</span> <span class="kw">stages</span><span class="pn">: [</span><span class="id">survey</span><span class="pn">,</span> <span class="id">plan</span><span class="pn">] &#125;</span></div></div>
+          <div class="type-row"><div class="spec"><b>body · base</b>14 / 400 / 1.55</div><div class="sample" style="font-size:var(--fs-base);color:var(--text-2)">Categories describe a file domain and generate shuttle agents — declare <code style="font-family:var(--font-mono);background:var(--bg-inset);border:1px solid var(--border-faint);border-radius:4px;padding:1px 5px;color:var(--text)">category frontend &#123; patterns ["**/*.tsx"] &#125;</code> and adapters receive the normalized descriptor.</div></div>
+          <div class="type-row"><div class="spec"><b>code · mono</b>14 / 500</div><div class="sample" style="font-family:var(--font-mono);font-size:var(--fs-sm)"><span class="kw">workflow</span> <span class="id">quick_fix</span> <span class="pn">&#123;</span> <span class="kw">step</span> <span class="id">fix</span> <span class="pn">&#123;</span> <span class="kw">type</span> <span class="id">autonomous</span> <span class="pn">&#125;</span> <span class="pn">&#125;</span></div></div>
           <div class="type-row"><div class="spec"><b>caption · mono</b>11 / 500 / +0.08em</div><div class="sample" style="font-family:var(--font-mono);font-size:var(--fs-xs);text-transform:uppercase;letter-spacing:0.08em;color:var(--text-3)">define · compose · delegate · adapt · execute</div></div>
         </div>
       </section>

@@ -1,14 +1,195 @@
 ---
 title: Workflows
-description: Compatibility route for current workflow reference and execution docs.
+description: Define ordered, explicit workflow steps and understand how execution starts safely.
+tableOfContents:
+  minHeadingLevel: 2
+  maxHeadingLevel: 3
 ---
 
-This route is kept for existing links. Current workflow documentation lives in:
+## Why Workflows Exist
 
-- [Workflow DSL reference](reference/dsl/workflows/) for validated syntax and fields.
-- [Workflow extension reference](reference/dsl/workflow-extension/) for `extends`, anchored insertion, and `extend before-plan`.
-- [Execution lifecycle reference](reference/execution-lifecycle/) for engine-owned lifecycle semantics.
-- [Runtime commands reference](reference/runtime-commands/) for adapter-projected command operations.
-- [Workflow execution model](explanation/workflow-execution-model/) for why execution is explicit and user-authorized.
+Workflows describe repeatable, multi-step intent: plan this task, ask for confirmation, implement it, then review the result. They are not background daemons and they do not turn ordinary chat into implicit automation. Weave keeps workflow execution explicit so a user or harness surface has to authorize the start of work.
 
-The current DSL uses ordered `step` blocks. It does not support stale DAG syntax, fan-in `+` syntax, `role:`, `routes`, or `weave build`.
+The CLI validates and inspects workflows. It does not execute them. `weave run` intentionally refuses to start harness runtimes. In the implemented OpenCode adapter, ordinary plan-first execution is started from `/weave:start` or `/start-work` inside OpenCode.
+
+## When To Use A Workflow
+
+Use a workflow when the work has meaningful stages, handoffs, or gates. A single custom agent is usually enough for small one-shot tasks. A workflow is appropriate when you need:
+
+- A planning step before implementation.
+- An interactive or gate step that requires user confirmation or review verdicts.
+- Artifact passing between steps, such as a plan path produced by one step and consumed by another.
+- A standard sequence that multiple users or projects should follow.
+- Extension points such as `before-plan` that allow project-specific steps to be inserted without rewriting the base workflow.
+
+## Ordered Step Model
+
+Current workflows are ordered `step` blocks. Do not use stale DAG snippets, fan-in `+` syntax, `routes`, or colon-style fields such as `role:`. The DSL is block-structured and uses bare identifiers for enums.
+
+```text
+workflow secure-feature {
+  description "Plan, implement, and review a feature"
+  version 1
+
+  step plan {
+    name "Create an implementation plan"
+    type autonomous
+    agent loom
+    prompt "Create a plan for: {{instance.goal}}"
+
+    completion plan_created {
+      plan_name "{{instance.slug}}"
+    }
+
+    outputs [
+      { name "plan_path" description "Path to the generated plan" }
+    ]
+  }
+
+  step review-plan {
+    name "Review the plan"
+    type interactive
+    agent shuttle
+    prompt "Review {{artifacts.plan_path}} before implementation."
+    completion user_confirm
+  }
+
+  step implement {
+    name "Implement the plan"
+    type autonomous
+    agent shuttle
+    prompt "Execute the approved plan at {{artifacts.plan_path}}."
+    completion agent_signal
+
+    inputs [
+      { name "plan_path" description "Plan file to execute" }
+    ]
+  }
+
+  step review {
+    name "Review the implementation"
+    type gate
+    agent warp
+    prompt "Review all changes for correctness and safety."
+    completion review_verdict
+    on_reject pause
+  }
+}
+```
+
+## Step Fields
+
+| Field | Purpose |
+| --- | --- |
+| `name` | Human-readable label for logs, prompts, and review surfaces. |
+| `type` | `autonomous`, `interactive`, or `gate`. Gates can reject or pause work. |
+| `agent` | Agent descriptor that should perform the step. |
+| `prompt` | Step-specific instruction. It can reference workflow instance and artifact context. |
+| `completion` | Condition that tells the runtime how the step is considered complete. |
+| `inputs` / `outputs` | Artifact contracts between steps. |
+| `on_reject` | Gate behavior when a review verdict rejects the work. |
+
+## Completion Methods
+
+Supported completion methods are declarative signals, not arbitrary code hooks:
+
+| Completion | Use it when |
+| --- | --- |
+| `agent_signal` | The agent can report that the step is complete. |
+| `user_confirm` | A human must confirm before the workflow proceeds. |
+| `plan_created` | A planning step creates a named plan artifact. |
+| `plan_complete` | A plan execution step completes the named plan. |
+| `review_verdict` | A reviewer produces an approve/reject verdict. |
+
+## Artifacts And Prompt Context
+
+Artifacts make workflows composable. A planning step can output `plan_path`; later steps can reference `{{artifacts.plan_path}}`. Prompts are rendered through the same composition pipeline as agent prompts, so keep variable names explicit and verify composed prompts during authoring.
+
+If a step has a `prompt_append` or `prompt_append_file`, it takes precedence for that step. Workflow-level prompt appends are used when a step does not define its own append. This lets a workflow add shared instructions without duplicating them in every step.
+
+## Extension Points And `before-plan`
+
+Workflows can publish extension points for project-specific insertion. The current supported role value is `planning`, used with `before-plan` reconciliation.
+
+```text
+workflow plan-and-implement {
+  version 1
+
+  extension_points {
+    before-plan
+  }
+
+  step plan {
+    name "Plan"
+    type autonomous
+    agent loom
+    role planning
+    prompt "Plan {{instance.goal}}"
+    completion plan_created { plan_name "{{instance.slug}}" }
+  }
+}
+
+step collect-context {
+  name "Collect context"
+  type autonomous
+  agent shuttle
+  prompt "Summarize relevant repo context before planning."
+  completion agent_signal
+}
+
+extend before-plan ["collect-context"]
+```
+
+Use `role planning`, not `role:`. If a workflow publishes `before-plan`, it needs exactly one planning step so the engine knows where insertion belongs.
+
+## Starting Work Explicitly
+
+The safe start boundary is adapter-owned. For OpenCode today:
+
+```text
+/weave:start my-plan
+/start-work my-plan
+```
+
+Those commands are prompt-based. They instruct the OpenCode agent to load Weave runtime state, reconcile plan context, and continue with the explicit plan. The CLI-side `weave run` command refuses execution by design.
+
+## Runtime Projection Caveats
+
+The engine has normalized runtime command operations and the OpenCode adapter has labels such as `/weave:run`, `/weave:status`, `/weave:abort`, `/weave:advance`, and `/weave:health`. Public docs must not describe those as registered OpenCode slash commands unless the plugin wires them. Treat them as projection/helper labels for adapter development.
+
+Use the CLI for read-only runtime inspection:
+
+```bash
+bun packages/cli/src/main.ts runtime status
+bun packages/cli/src/main.ts runtime journal --limit 20
+```
+
+## Verification
+
+Validate the config:
+
+```bash
+bun packages/cli/src/main.ts validate --project
+```
+
+Inspect the agents that workflow steps reference:
+
+```bash
+bun packages/cli/src/main.ts prompt list
+bun packages/cli/src/main.ts prompt inspect loom
+```
+
+Then verify the adapter surface inside OpenCode by checking `opencode debug config` for `@weave/adapter-opencode/plugin` and using `/weave:start` or `/start-work` for plan-first execution.
+
+## Troubleshooting
+
+| Problem | What to check |
+| --- | --- |
+| Workflow syntax fails validation | Ensure fields use block syntax, not colon-style historical examples. |
+| `before-plan` insertion fails | Confirm the base workflow publishes `extension_points { before-plan }` and has exactly one `role planning` step. |
+| A step prompt cannot resolve an artifact | Confirm a previous step declares the artifact in `outputs` and the later step declares it in `inputs`. |
+| A user expects `weave run` to execute work | Point them to the adapter-native explicit command surface instead. |
+
+## Next Steps
+
+Use [Runtime Operations](../runtime-operations/) for journal and store inspection. Use [DSL Reference](../reference/dsl/) for field-level lookup. Use [OpenCode](../opencode/) for the implemented command surface.

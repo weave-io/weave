@@ -26,8 +26,11 @@
  * heading's auto slug `#anatomy-of-a-weave-file`); the spec CTA points at the
  * canonical Workflows article via `import.meta.env.BASE_URL`.
  */
-const base = import.meta.env.BASE_URL;
-const workflowsHref = `${base}docs/workflows/`;
+import { normalizeBaseUrl, withBaseUrl } from '../../utils/base-url';
+
+const base = normalizeBaseUrl(import.meta.env.BASE_URL);
+const gettingStartedHref = withBaseUrl(base, 'docs/getting-started/');
+const workflowsHref = withBaseUrl(base, 'docs/workflows/');
 ---
 
 {/* `id="_top"` is the target for Starlight's shell "Skip to content" link.
@@ -46,8 +49,8 @@ const workflowsHref = `${base}docs/workflows/`;
     expects — and keeps the boundary between core and adapters one-way and enforced.
   </p>
   <div class="ctas">
-    <a class="w-btn primary" href="#anatomy-of-a-weave-file">Quickstart →</a>
-    <a class="w-btn" href={workflowsHref}>Read the Workflows spec</a>
+    <a class="w-btn primary" href={gettingStartedHref}>Get started →</a>
+    <a class="w-btn" href={workflowsHref}>Read the workflows guide</a>
   </div>
 </div>
 

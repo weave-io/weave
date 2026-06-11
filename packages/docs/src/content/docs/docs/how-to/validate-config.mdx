@@ -1,42 +1,8 @@
 ---
-title: Validate Config
-description: Validate explicit, project, global, or effective Weave configuration.
+title: Validate Config Moved
+description: Compatibility route for configuration validation docs.
 ---
 
-## Validate effective config
+This page is kept for existing links after the public docs consolidation. Current validation guidance lives in [Configuration](../../configuration/), and exact flags live in [CLI Reference](../../reference/cli/).
 
-```bash
-bun packages/cli/src/main.ts validate
-```
-
-This loads builtins, global config, and project config, then validates the merged result.
-
-## Validate project config only
-
-```bash
-bun packages/cli/src/main.ts validate --project
-```
-
-This checks `.weave/config.weave` in the current project.
-
-## Validate global config only
-
-```bash
-bun packages/cli/src/main.ts validate --global
-```
-
-This checks `~/.weave/config.weave`.
-
-## Validate an explicit path
-
-```bash
-bun packages/cli/src/main.ts validate --path .weave/config.weave
-```
-
-## Emit JSON
-
-```bash
-bun packages/cli/src/main.ts validate --path .weave/config.weave --json
-```
-
-JSON output is the validated `WeaveConfig` shape after parsing and schema defaults.
+Current support note: `weave validate` checks config; it does not execute workflows.

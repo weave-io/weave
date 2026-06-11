@@ -1,0 +1,96 @@
+---
+title: OpenCode
+description: Install and operate the implemented OpenCode adapter.
+tableOfContents:
+  minHeadingLevel: 2
+  maxHeadingLevel: 3
+---
+
+## Current Support Status
+
+OpenCode is the implemented Weave adapter today. Other adapter targets in product docs or package names should be treated as future or placeholder work unless their implementation is present in the repository.
+
+The OpenCode adapter translates normalized Weave descriptors into OpenCode plugin configuration, prompt commands, model/tool-policy behavior, and runtime reconciliation helpers.
+
+## Install The Plugin
+
+Prefer the init flow:
+
+```bash
+bun packages/cli/src/main.ts init --scope local --harness opencode --yes
+```
+
+For manual configuration, add the plugin subpath to OpenCode config:
+
+```json
+{
+  "plugin": ["@weave/adapter-opencode/plugin"]
+}
+```
+
+Use the `/plugin` subpath. The bare package name is not the plugin entry.
+
+## Verify OpenCode Sees It
+
+Run:
+
+```bash
+opencode debug config
+```
+
+Expected result: the resolved OpenCode config includes `@weave/adapter-opencode/plugin` in the plugin array. If it does not, check whether you initialized global vs project config and whether OpenCode is reading the expected config file.
+
+## What The Plugin Registers
+
+The plugin registers two prompt commands:
+
+| Command | Status | Use |
+| --- | --- | --- |
+| `/weave:start` | Preferred | Start plan-first explicit execution. |
+| `/start-work` | Legacy alias | Compatibility with older command naming. |
+
+The plugin does not currently register `/weave:run`, `/weave:status`, `/weave:abort`, `/weave:advance`, or `/weave:health` as normal OpenCode slash commands. Those labels exist in projection code for adapter/runtime work and should be documented as helper or degraded surfaces unless the plugin code changes.
+
+## Config Materialization
+
+At load time, the adapter reads Weave configuration, composes descriptors, generates category shuttles, and maps abstract policy to OpenCode's concrete configuration shape. This means the best debug loop is:
+
+1. Validate `.weave/config.weave` with the CLI.
+2. Inspect composed prompts with `weave prompt inspect`.
+3. Verify OpenCode config with `opencode debug config`.
+4. Start explicit work from inside OpenCode.
+
+## Model And Tool Policy Mapping
+
+Model preferences remain intent until the adapter and harness resolve them. If a preferred model is unavailable in OpenCode, the adapter should either choose the next valid preference or fail clearly, depending on the command surface and context.
+
+Tool policy maps abstract capabilities such as `read`, `write`, `execute`, `network`, and `delegate` to OpenCode-specific tools and permission behavior. Keep policy in `.weave` focused on intent rather than OpenCode tool names.
+
+## Runtime And Logs
+
+Runtime state is stored under the project's `.weave/runtime/` directory by default. The CLI exposes read-only inspection commands:
+
+```bash
+bun packages/cli/src/main.ts runtime status
+bun packages/cli/src/main.ts runtime journal --limit 20
+```
+
+The adapter uses Weave's runtime journal writer for structured entries. Journal entries are sanitized and size-limited; they are not a place for raw secrets or large file contents.
+
+## Common Debug Flow
+
+| Problem | Check |
+| --- | --- |
+| Commands are missing | Confirm `@weave/adapter-opencode/plugin` appears in `opencode debug config`. |
+| Prompt behavior is surprising | Run `prompt inspect <agent> --json` and review composed prompt plus delegation targets. |
+| A category shuttle is missing | Run `prompt list` and look for `shuttle-{category}`. |
+| Execution starts from the wrong place | Use `/weave:start` or `/start-work` inside OpenCode; do not use `weave run`. |
+| Runtime state looks stale | Inspect `.weave/runtime/weave.db` via CLI status and journal commands, not manual mutation. |
+
+## Unsupported Or Degraded Areas
+
+OpenCode support is active, but not every long-term Weave capability is available as a native OpenCode UI affordance. Treat future command labels and adapter targets as implementation details until a plugin registers them and docs are updated.
+
+## Next Steps
+
+Read [Getting Started](../getting-started/) for the full setup path, [Workflows](../workflows/) for explicit execution semantics, and [Adapter Reference](../reference/adapters/) for the support matrix.

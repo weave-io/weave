@@ -1,53 +1,8 @@
 ---
-title: OpenCode Adapter
-description: Implemented OpenCode plugin behavior and command surfaces.
-tableOfContents:
-  minHeadingLevel: 2
-  maxHeadingLevel: 3
+title: OpenCode Adapter Reference Moved
+description: Compatibility route for consolidated OpenCode and adapter docs.
 ---
 
-OpenCode is the implemented adapter today.
+This page is kept for existing links after the public docs consolidation. OpenCode setup and debugging now live in [OpenCode](../../../opencode/), and adapter support lookup lives in [Adapters](../).
 
-## Plugin entry
-
-Use the plugin subpath export:
-
-```jsonc
-{
-  "plugin": ["@weave/adapter-opencode/plugin"]
-}
-```
-
-Do not use the bare `@weave/adapter-opencode` package as an OpenCode plugin entry.
-
-## Config hook
-
-The plugin loads Weave config, materializes agent descriptors, translates them into OpenCode agent config, and injects them into `cfg.agent`.
-
-It also registers prompt-based commands:
-
-- `/weave:start`
-- `/start-work`
-
-These commands send a command template to the `tapestry` agent.
-
-## Runtime projection helpers
-
-Adapter code defines projection helpers for:
-
-- `/weave:start`
-- `/weave:run`
-- `/weave:status`
-- `/weave:abort`
-- `/weave:advance`
-- `/weave:health`
-
-These helpers delegate lifecycle behavior to engine command operations and keep OpenCode-specific labels and rendering in the adapter.
-
-## Tool policy
-
-OpenCode maps Weave's effective tool policy into OpenCode permissions and tool overrides. Abstract capability names remain engine-owned; concrete OpenCode config shape is adapter-owned.
-
-## Logging
-
-When running as a plugin, logs default to `.weave/weave.log` under the project unless `WEAVE_LOG_FILE` is set.
+Current support note: use `@weave/adapter-opencode/plugin`; the registered commands are `/weave:start` and `/start-work`.

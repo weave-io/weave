@@ -1,26 +1,28 @@
 ---
 title: CLI Reference
-description: Current Weave CLI commands and flags.
+description: Current Weave CLI commands, flags, examples, output expectations, and exit behavior.
 tableOfContents:
   minHeadingLevel: 2
   maxHeadingLevel: 3
 ---
 
-The CLI is a setup and inspection tool. It does not launch harness runtimes.
+## Overview
 
-## Global flags
+The Weave CLI initializes, migrates, validates, and inspects configuration. It does not launch harness runtimes. Any command that can fail reports a non-zero exit code and a formatted error; JSON output is available on selected inspection commands.
+
+## Global Flags
 
 | Flag | Meaning |
 | --- | --- |
 | `--help`, `-h` | Show command help. |
-| `--version`, `-V` | Show version when no command is provided. |
+| `--version`, `-V` | Show CLI version when no command is provided. |
 | `--json` | Emit JSON for commands that support it. |
-| `--yes`, `-y` | Non-interactive confirmation for init and migrate flows. |
-| `--force` | Allow overwrites where supported; migration and init create backups as implemented. |
+| `--yes`, `-y` | Confirm interactive init or migrate prompts non-interactively. |
+| `--force` | Allow overwrites where the command supports them. |
 
 ## `weave init`
 
-Create config and optionally install detected harness integration.
+Create global or project config and optionally configure a detected harness.
 
 ```bash
 weave init
@@ -31,18 +33,18 @@ weave init --scope local --harness opencode --yes
 weave init --scope local --all-harnesses --yes
 ```
 
-Flags:
-
 | Flag | Meaning |
 | --- | --- |
 | `--scope global|local` | Choose `~/.weave` or project `.weave`. |
 | `--install-dir <dir>` | Override the directory written by init. |
-| `--harness <name>` | Configure one detected harness. |
+| `--harness <name>` | Configure one detected supported harness. Currently OpenCode is the implemented adapter. |
 | `--all-harnesses` | Configure all detected supported harnesses. |
+
+Expected output: a setup summary describing created config and any harness installation work. Exit `0` means init completed or was cancelled without an error; exit `1` means the requested setup was unavailable or failed.
 
 ## `weave init migrate`
 
-Migrate legacy OpenCode JSONC config into canonical `.weave` DSL.
+Migrate legacy OpenCode JSONC config into `.weave` DSL.
 
 ```bash
 weave init migrate --scope local
@@ -51,11 +53,16 @@ weave init migrate --scope local --yes
 weave init migrate --scope local --yes --force
 ```
 
-Local source is `./.opencode/weave-opencode.jsonc`; global source is `~/.config/opencode/weave-opencode.jsonc`. Destinations are `.weave/config.weave` and `~/.weave/config.weave`.
+| Scope | Source | Destination |
+| --- | --- | --- |
+| Local | `./.opencode/weave-opencode.jsonc` | `.weave/config.weave` |
+| Global | `~/.config/opencode/weave-opencode.jsonc` | `~/.weave/config.weave` |
+
+Expected output: migration plan, warnings when legacy fields cannot map exactly, and the destination path. Use `--force` only after reviewing the destination.
 
 ## `weave validate`
 
-Validate config.
+Validate config and print either a summary or JSON.
 
 ```bash
 weave validate
@@ -67,29 +74,78 @@ weave validate --path .weave/config.weave --json
 
 Without `--path`, `--project`, or `--global`, validation loads the effective config from builtins, global config, and project config.
 
-## `weave prompt`
+Text output includes:
 
-Inspect composed prompts.
+```text
+Weave config is valid.
+agents: <count>
+categories: <count>
+workflows: <count>
+disabled: <count>
+log_level: <level>
+```
+
+Exit `0` means parsing and validation succeeded. Exit `1` means file read, parse, validation, or merge failure.
+
+## `weave prompt list`
+
+List all available agent descriptors after loading config and generating category shuttles.
 
 ```bash
 weave prompt list
 weave prompt list --json
+```
+
+Text output is one agent name per line. JSON output includes names, descriptions, and modes.
+
+## `weave prompt inspect`
+
+Render one composed prompt and metadata.
+
+```bash
 weave prompt inspect loom
 weave prompt inspect loom --json
 ```
 
-## `weave runtime`
+JSON output includes:
+
+- `name`
+- `description`
+- `mode`
+- `models`
+- `temperature`
+- `effectiveToolPolicy`
+- `skills`
+- `delegationTargets`
+- `composedPrompt`
+
+Use this command to verify prompt files, prompt appends, delegation rendering, category shuttles, and tool-policy defaults.
+
+## `weave runtime status`
 
 Inspect the default runtime store without mutating it.
 
 ```bash
 weave runtime status
+```
+
+The default database path is `.weave/runtime/weave.db` relative to the current project. Exit `0` means the inspection command completed, even if the store has no active entries to report.
+
+## `weave runtime journal`
+
+Show recent journal entries.
+
+```bash
 weave runtime journal
 weave runtime journal --limit 20
 ```
 
-The default database path is `.weave/runtime/weave.db` relative to the current project.
+Journal output is for operational inspection. It should not contain raw secrets or large payloads because the runtime journal writer sanitizes and size-limits entries.
 
 ## `weave run`
 
-`weave run` intentionally refuses to run harness runtimes directly and exits with guidance to launch the harness yourself, such as `opencode`. Use adapter-native explicit execution commands inside the harness.
+`weave run` intentionally refuses to run harness runtimes directly. It exits with guidance to launch the harness yourself and use adapter-native explicit execution commands, such as OpenCode's `/weave:start` or `/start-work`.
+
+## Unsupported Commands
+
+There is no current `weave build` command. Use repository scripts such as `bun run build`, `bun run docs:build`, and `bun run typecheck` for workspace operations.

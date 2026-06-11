@@ -1,12 +1,8 @@
 ---
-title: Public vs Internal Docs
-description: How public docs differ from repository design notes, specs, and proof artifacts.
+title: Public Vs Internal Docs Moved
+description: Compatibility route for docs maintenance guidance.
 ---
 
-Public docs under `packages/docs/src/content/docs/docs` are for developers and integrators using current supported features.
+This page is kept for existing links after the public docs consolidation. Public docs maintenance guidance now lives in [Runtime Operations](../../runtime-operations/), with the public route map on [Weave Documentation](../../).
 
-Internal docs under repository `docs/` may include product vision, specs, ADRs, migration context, proof artifacts, future concepts, and historical designs. They are valuable for maintainers, but they can contain concepts that are not current public support.
-
-When public docs and internal design artifacts disagree, public docs should follow current code. In particular, do not document stale workflow DAG syntax, `weave build`, `role:`, `routes`, implemented Claude/Pi adapters, `continuation`, or `analytics` as current features.
-
-Generated `dist/` output and `node_modules/` are not documentation source.
+Current support note: public docs should present implemented support clearly and mark future or historical features as such.

@@ -1,0 +1,131 @@
+---
+title: Runtime Operations
+description: Inspect runtime state, understand journal safety, and maintain the docs site.
+tableOfContents:
+  minHeadingLevel: 2
+  maxHeadingLevel: 3
+---
+
+## Operational Model
+
+Weave's CLI is a setup and inspection tool. It initializes config, migrates legacy files, validates effective config, inspects prompts, and reads runtime state. It does not launch harness runtimes. This distinction matters in automation and QA: a successful CLI run proves configuration is valid, not that OpenCode has executed work.
+
+## Common Command Recipes
+
+| Task | Command |
+| --- | --- |
+| Install dependencies | `bun install` |
+| Build all packages | `bun run build` |
+| Typecheck all packages | `bun run typecheck` |
+| Run tests | `bun test` |
+| Build docs | `bun run docs:build` |
+| Preview docs | `bun run docs:preview` |
+| Validate project config | `bun packages/cli/src/main.ts validate --project` |
+| Inspect runtime status | `bun packages/cli/src/main.ts runtime status` |
+| Show recent journal entries | `bun packages/cli/src/main.ts runtime journal --limit 20` |
+
+## Why `weave run` Refuses
+
+`weave run` exists as an explicit boundary. Instead of starting a harness process implicitly, it exits with guidance to launch the harness yourself and use adapter-native command surfaces. For OpenCode, that means `/weave:start` or `/start-work` inside OpenCode.
+
+This prevents the CLI from pretending to own lifecycle, permissions, UI, or selected model state that belongs to the harness.
+
+## Runtime Store
+
+The default runtime store path is:
+
+```text
+.weave/runtime/weave.db
+```
+
+Treat the store as owned by Weave. Use CLI commands for inspection rather than editing the database directly.
+
+```bash
+bun packages/cli/src/main.ts runtime status
+```
+
+Expected result: the command reports whether the runtime store exists and summarizes known runtime state.
+
+## Journal Inspection
+
+Read recent journal entries:
+
+```bash
+bun packages/cli/src/main.ts runtime journal --limit 20
+```
+
+The journal writer enforces structured envelopes, sanitizes sensitive keys, and limits payload size. By default, journal write failures are best-effort so an adapter operation can continue. Strict journal mode is available for environments that prefer journal failures to propagate.
+
+## Docs Development
+
+Run the docs site locally:
+
+```bash
+bun run docs:dev
+```
+
+Build the static site:
+
+```bash
+bun run docs:build
+```
+
+Preview the built site:
+
+```bash
+bun run docs:preview
+```
+
+Typecheck the docs package:
+
+```bash
+bun run --filter '@weave/docs' typecheck
+```
+
+Expected build output is a static Astro/Starlight site under the docs package output directory. Sentinel QA or browser navigation should be run against a served build or dev server, not against source files.
+
+## Base Path Checks
+
+The public site may be served under a base path such as `/weave`. Internal UI links must join the deployment base with route paths so `/weave` produces `/weave/docs/`, not `/weavedocs/`.
+
+Check links on:
+
+- Landing page CTA buttons.
+- Docs topbar.
+- Design-system topbar.
+- Docs home hero.
+- Search command-palette results.
+
+## GitHub Pages Deployment
+
+Before deploying docs, run:
+
+```bash
+bun run docs:build
+bun run --filter '@weave/docs' typecheck
+```
+
+If the site is deployed under a repository subpath, set the build base environment consistently with the hosting target. After deployment, navigate the landing page, docs home, a guide page, a reference page, and a compatibility route.
+
+## Public Docs Maintenance Rules
+
+When changing public docs:
+
+- Keep primary pages substantial enough to answer the reader's next question.
+- Keep old routes as compatibility pages unless there is a deliberate removal plan.
+- Do not document unsupported syntax as current behavior.
+- Keep adapter support claims aligned with source code.
+- Verify build and typecheck before handing off.
+
+## Troubleshooting
+
+| Problem | Fix |
+| --- | --- |
+| Static links drop the base path | Use the shared base URL helper in Astro UI code. |
+| Search opens `/weavedocs` | Ensure command-palette hrefs are joined through normalized base composition. |
+| Docs build fails on MDX | Check code fences and frontmatter first; unsupported MDX syntax often appears as parser errors. |
+| Runtime journal is empty | Confirm a runtime operation has actually run; validation alone may not create journal entries. |
+
+## Next Steps
+
+Use [CLI Reference](../reference/cli/) for exact command syntax and [OpenCode](../opencode/) for adapter-specific operational checks.

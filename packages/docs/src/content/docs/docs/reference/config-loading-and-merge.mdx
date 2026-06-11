@@ -1,41 +1,8 @@
 ---
-title: Config Loading and Merge
-description: Builtins, discovery locations, prompt path resolution, and merge rules.
-tableOfContents:
-  minHeadingLevel: 2
-  maxHeadingLevel: 3
+title: Config Loading Reference Moved
+description: Compatibility route for the consolidated configuration guide.
 ---
 
-`@weave/config` loads final config in this order:
+This page is kept for existing links after the public docs consolidation. Config loading and merge behavior now live in [Configuration](../../configuration/), with package ownership in [Packages](../packages/).
 
-1. builtins from `packages/config/src/builtins.ts`
-2. global `~/.weave/config.weave`
-3. project `<project>/.weave/config.weave`
-
-Missing user config files are skipped.
-
-## Prompt paths
-
-User `prompt_file` and `prompt_append_file` values resolve under the same scope's `prompts/` directory.
-
-| Scope | Example |
-| --- | --- |
-| global | `~/.weave/prompts/reviewer.md` |
-| project | `.weave/prompts/reviewer.md` |
-
-Builtin prompts are embedded into the bundle so the OpenCode plugin does not rely on runtime filesystem paths for builtin prompts.
-
-## Merge rules
-
-| Value kind | Rule |
-| --- | --- |
-| scalar | Higher-priority value wins. |
-| object | Recursive deep-merge. |
-| array | Union-merge with higher-priority entries first. |
-| workflows | Step-aware merge when `extends` is used. |
-
-Merge priority increases left to right: builtins, global, project.
-
-## Errors
-
-Config loading returns typed errors for file read errors, parse errors, builtin parse errors, and workflow merge errors.
+Current support note: builtins, global config, and project config are loaded in that order.

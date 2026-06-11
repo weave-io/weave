@@ -1,20 +1,8 @@
 ---
-title: Tool Policy
-description: Abstract capability policy and adapter mapping contract.
+title: Tool Policy Reference Moved
+description: Compatibility route for policy docs.
 ---
 
-Weave recognizes five abstract capabilities:
+This page is kept for existing links after the public docs consolidation. Tool policy reference material now lives in [Prompts, Models, and Policy](../../prompts-models-policy/) and [Adapters](adapters/).
 
-| Capability | Meaning |
-| --- | --- |
-| `read` | File or resource reads. |
-| `write` | File or resource writes. |
-| `execute` | Process or command execution. |
-| `delegate` | Spawning or routing to subagents. |
-| `network` | Network access. |
-
-Each capability accepts `allow`, `deny`, or `ask`.
-
-Missing capabilities default to `ask` when the engine builds `EffectiveToolPolicy`.
-
-Adapters own concrete mapping. The engine never hard-codes harness tool names. If an adapter supplies an unmapped concrete tool identifier, the engine returns an explicit `unmapped` decision; adapters must not treat it as implicit allow.
+Current support note: adapters translate abstract capabilities into concrete harness permissions.

@@ -1,28 +1,8 @@
 ---
-title: Runtime Store and Journal
-description: Durable Weave runtime state, default SQLite path, and sanitized journal output.
+title: Runtime Store Reference Moved
+description: Compatibility route for runtime operations docs.
 ---
 
-The runtime store is Weave-owned state under `.weave/runtime/**`.
+This page is kept for existing links after the public docs consolidation. Runtime store and journal material now lives in [Runtime Operations](../../runtime-operations/).
 
-## Default path
-
-The CLI runtime commands read:
-
-```text
-.weave/runtime/weave.db
-```
-
-relative to the current project.
-
-## Stored concepts
-
-Runtime store types include workflow instances, leases, artifacts, sessions, and journal entries. The engine owns these records because they are Weave execution state, not harness-private state.
-
-## Journal safety
-
-Journal output is sanitized. Runtime CLI output excludes raw prompts, completions, transcripts, credentials, cookies, authorization headers, tokens, and raw provider payloads.
-
-## Strict journal setting
-
-`settings.runtime.journal.strict` defaults to `false`. It is the public schema setting for stricter journal behavior as supported by runtime code.
+Current support note: inspect runtime state through CLI commands instead of mutating `.weave/runtime/weave.db` directly.

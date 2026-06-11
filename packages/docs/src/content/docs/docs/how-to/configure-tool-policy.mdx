@@ -1,51 +1,8 @@
 ---
-title: Configure Tool Policy
-description: Set abstract read, write, execute, delegate, and network permissions.
+title: Tool Policy Moved
+description: Compatibility route for policy docs.
 ---
 
-Declare a `tool_policy` block on an agent or category.
+This page is kept for existing links after the public docs consolidation. Tool policy guidance now lives in [Prompts, Models, and Policy](../../prompts-models-policy/), with adapter mapping details in [Adapters](../../reference/adapters/).
 
-```text
-agent auditor {
-  prompt "Audit the code for risk."
-
-  tool_policy {
-    read allow
-    write deny
-    execute deny
-    delegate deny
-    network ask
-  }
-}
-```
-
-Valid permission values are `allow`, `deny`, and `ask`.
-
-## Understand defaults
-
-Any missing capability defaults to `ask` during effective policy evaluation.
-
-```text
-tool_policy {
-  read allow
-}
-```
-
-This means `write`, `execute`, `delegate`, and `network` resolve to `ask`.
-
-## Use category policy
-
-Category policy overrides are merged onto the base `shuttle` policy for the generated `shuttle-{category}` agent.
-
-```text
-category docs {
-  patterns ["docs/**", "**/*.md"]
-  tool_policy {
-    read allow
-    write allow
-    execute deny
-  }
-}
-```
-
-Adapters map abstract capabilities to concrete harness permission systems.
+Current support note: tool policy is abstract capability intent; adapters map it to concrete harness tools.

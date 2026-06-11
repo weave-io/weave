@@ -32,12 +32,14 @@
 import logo from '../../assets/prototype/logo.png';
 import ThemeToggle from '../prototype/ThemeToggle.astro';
 import { docsSearchData } from '../../data/docs-search';
+import { normalizeBaseUrl, withBaseUrl } from '../../utils/base-url';
 
 const { hasSidebar } = Astro.locals.starlightRoute;
 
-const base = import.meta.env.BASE_URL;
+const base = normalizeBaseUrl(import.meta.env.BASE_URL);
 const homeHref = base;
-const docsHref = `${base}docs/`;
+const docsHref = withBaseUrl(base, 'docs/');
+const designSystemHref = withBaseUrl(base, 'design-system/');
 const githubHref = 'https://github.com/weave-io/weave';
 
 // Command-palette data, base-path-resolved. `docs-search.ts` stores raw
@@ -51,7 +53,7 @@ const paletteEntries = docsSearchData.map((entry) => ({
   g: entry.group,
   t: entry.title,
   s: entry.subtitle,
-  href: `${base}${entry.href}`,
+  href: withBaseUrl(base, entry.href),
   ic: entry.icon,
 }));
 const paletteJson = JSON.stringify(paletteEntries);
@@ -64,7 +66,7 @@ const paletteJson = JSON.stringify(paletteEntries);
   </a>
   <nav class="main">
     <a href={docsHref}>Documentation</a>
-    <a href={`${base}design-system/`}>Design system</a>
+    <a href={designSystemHref}>Design system</a>
   </nav>
   <span class="spacer"></span>
   <ThemeToggle />

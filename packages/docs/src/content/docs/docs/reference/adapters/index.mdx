@@ -1,22 +1,82 @@
 ---
 title: Adapters
-description: Current adapter support status.
+description: Adapter support matrix, responsibilities, and OpenCode capability reference.
+tableOfContents:
+  minHeadingLevel: 2
+  maxHeadingLevel: 3
 ---
 
-Adapters translate normalized Weave intent into a concrete harness.
+## Adapter Role
 
-## Current status
+Adapters translate normalized Weave intent into concrete harness configuration and runtime behavior. The engine returns descriptors, prompt text, policy intent, and runtime operations. The adapter decides how those become harness plugins, files, commands, permissions, and UI affordances.
 
-| Adapter target | Status |
+## Support Matrix
+
+| Adapter target | Status | Notes |
+| --- | --- | --- |
+| OpenCode | Implemented | Use `@weave/adapter-opencode/plugin`. |
+| Claude Code | Future/placeholder | Do not document as implemented. |
+| Pi | Future/placeholder | Do not document as implemented. |
+
+## Boundary Ownership
+
+| Weave engine owns | Adapters own |
 | --- | --- |
-| OpenCode | Implemented today. |
-| Claude Code | Future or placeholder target; not a current implementation. |
-| Pi | Future or placeholder target; not a current implementation. |
+| Normalized descriptors | Harness resource discovery. |
+| Prompt composition | Available and selected model lookup. |
+| Skill matching from adapter-provided context | Skill file discovery/loading. |
+| Abstract tool policy | Concrete tool names and permissions. |
+| Runtime command operations | Harness command labels and registration. |
+| Journal semantics | Harness lifecycle integration. |
 
-Use [OpenCode](opencode/) for current adapter behavior.
+## OpenCode Plugin
 
-## Adapter responsibilities
+The plugin entry is:
 
-Adapters own harness resource discovery, available-model lookup, selected-model lookup, concrete tool names, plugin/config generation, command labels, and effect projection.
+```json
+{
+  "plugin": ["@weave/adapter-opencode/plugin"]
+}
+```
 
-The engine owns normalized descriptors, prompt composition, abstract policy, model intent helpers, lifecycle semantics, and runtime state.
+The OpenCode plugin registers:
+
+| Command | Registered? | Notes |
+| --- | --- | --- |
+| `/weave:start` | Yes | Preferred plan-first execution command. |
+| `/start-work` | Yes | Legacy compatibility alias. |
+| `/weave:run` | No | Projection/helper label unless explicitly wired. |
+| `/weave:status` | No | Projection/helper label unless explicitly wired. |
+| `/weave:abort` | No | Projection/helper label unless explicitly wired. |
+| `/weave:advance` | No | Projection/helper label unless explicitly wired. |
+| `/weave:health` | No | Projection/helper label unless explicitly wired. |
+
+## OpenCode Capabilities
+
+| Capability | Current behavior |
+| --- | --- |
+| Config loading | Reads Weave config and composes descriptors. |
+| Category shuttles | Generates `shuttle-{category}` descriptors from categories. |
+| Prompt commands | Registers `/weave:start` and `/start-work`. |
+| Model preferences | Maps ordered intent into OpenCode/harness model behavior where available. |
+| Tool policy | Maps abstract capabilities to OpenCode-specific tool permissions. |
+| Runtime journal | Uses Weave runtime journal semantics for structured entries. |
+
+## Verification
+
+Use:
+
+```bash
+opencode debug config
+```
+
+Expected result: OpenCode shows the Weave plugin entry. Then validate and inspect Weave config separately:
+
+```bash
+bun packages/cli/src/main.ts validate --project
+bun packages/cli/src/main.ts prompt list
+```
+
+## Related Guides
+
+Read [OpenCode](../../opencode/) for setup and operational debugging. Read [Concepts](../../concepts/) for the engine/adapter boundary.

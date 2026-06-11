@@ -1,58 +1,8 @@
 ---
-title: Configure Prompt Appends
-description: Add scoped prompt guidance to agents, categories, workflows, and workflow steps.
+title: Prompt Appends Moved
+description: Compatibility route for prompt composition docs.
 ---
 
-Use `prompt_append` for inline text or `prompt_append_file` for a Markdown file. The two fields are mutually exclusive in the same scope.
+This page is kept for existing links after the public docs consolidation. Prompt append guidance now lives in [Prompts, Models, and Policy](../../prompts-models-policy/), with syntax lookup in [DSL Reference](../../reference/dsl/).
 
-## Agent append
-
-```text
-agent loom {
-  prompt_append "Prefer short progress updates."
-}
-```
-
-## Category append
-
-```text
-category frontend {
-  patterns ["**/*.tsx", "**/*.css"]
-  prompt_append_file "frontend-guidance.md"
-}
-```
-
-For project config, this reads `.weave/prompts/frontend-guidance.md`.
-
-## Workflow append
-
-```text
-workflow quick-fix {
-  extends "quick-fix"
-  version 1
-  prompt_append "Keep each step focused on the reported bug."
-}
-```
-
-Workflow appends apply to steps that do not declare a step-local append.
-
-## Step append
-
-```text
-workflow quick-fix {
-  extends "quick-fix"
-  version 1
-
-  step review {
-    name "Review"
-    type gate
-    agent weft
-    prompt "Review the fix."
-    prompt_append "Block on missing regression tests."
-    completion review_verdict
-    on_reject pause
-  }
-}
-```
-
-Step-local append wins over workflow append for that step.
+Current support note: `prompt_append` and `prompt_append_file` are mutually exclusive.

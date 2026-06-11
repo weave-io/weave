@@ -4,9 +4,8 @@
  *
  * Source of truth: prototype `docs-article.html` (`<div class="diagram">`,
  * lines 155-158, and the compiled-graph `<script>`, lines 276-317). The script
- * builds an SVG figure into `#graphFig` showing the `migrate_repo` workflow's
- * compiled DAG (survey → plan → apply[PARALLEL] → verify[join] with a
- * reviewer + security fan-in).
+ * builds an SVG figure into `#graphFig` showing an ordered workflow with a
+ * planning step, implementation step, and explicit review gate.
  *
  * The script is carried in an Astro `.astro` component (rather than an inline
  * MDX `<script>`) because MDX parses raw `<script>` bodies as JSX expressions,
@@ -19,8 +18,7 @@
 <div class="diagram">
   <div class="fig" id="graphFig"></div>
   <div class="cap">
-    fig.1 — compiled graph for migrate_repo · apply runs PARALLEL · verify joins
-    reviewer + security
+    fig.1 — ordered workflow · plan before implementation · review gate before completion
   </div>
 </div>
 
@@ -102,13 +100,13 @@
     s += edge(xs[0] + nw, y0 + nh / 2, xs[1], y0 + nh / 2);
     s += edge(xs[1] + nw, y0 + nh / 2, xs[2], y0 + nh / 2);
     s += edge(xs[2] + nw, y0 + nh / 2, xs[3], y0 + nh / 2);
-    s += node(xs[0], y0, nw, nh, 'survey', 'explorer.scan');
-    s += node(xs[1], y0, nw, nh, 'plan', 'planner.decompose');
-    s += node(xs[2], y0, nw, nh, 'apply', 'PARALLEL', 'var(--primary)');
-    s += node(xs[3], y0, nw, nh, 'verify', 'audit · join', 'var(--secondary)');
+    s += node(xs[0], y0, nw, nh, 'context', 'collect');
+    s += node(xs[1], y0, nw, nh, 'plan', 'role planning');
+    s += node(xs[2], y0, nw, nh, 'implement', 'agent signal', 'var(--primary)');
+    s += node(xs[3], y0, nw, nh, 'review', 'gate', 'var(--secondary)');
     var rx = 706;
-    s += node(rx, 44, 150, 44, 'reviewer', 'reviewer.audit');
-    s += node(rx, 196, 150, 44, 'security', 'security.audit');
+    s += node(rx, 44, 150, 44, 'approve', 'review verdict');
+    s += node(rx, 196, 150, 44, 'pause', 'on reject');
     s += edge(rx, 66, xs[3] + nw, y0 + 6);
     s += edge(rx, 218, xs[3] + nw, y0 + nh - 6);
     s +=

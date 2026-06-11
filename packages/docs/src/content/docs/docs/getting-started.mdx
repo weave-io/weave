@@ -1,12 +1,175 @@
 ---
 title: Getting Started
-description: Compatibility route for the new quickstart and installation docs.
+description: Install Weave, create a project config, validate it, and connect the OpenCode adapter.
+tableOfContents:
+  minHeadingLevel: 2
+  maxHeadingLevel: 3
 ---
 
-This route is kept for existing links. The current getting-started path is split into focused Diataxis pages:
+## What You Will Build
 
-- [Quickstart](tutorials/quickstart/) teaches the first project config.
-- [Install and build](how-to/install-and-build/) lists Bun workspace commands.
-- [Initialize config](how-to/initialize-config/) creates global or project config.
-- [Configure the OpenCode plugin](tutorials/opencode-plugin/) installs the implemented adapter.
-- [CLI reference](reference/cli/) lists every current command.
+This guide takes you from a checked-out Weave workspace to a validated project configuration that OpenCode can load through the implemented adapter. You will create `.weave/config.weave`, add one custom agent, validate the effective config, inspect a composed prompt, and install the OpenCode plugin entry.
+
+Weave is not a harness runtime. The CLI prepares and inspects configuration. Actual work starts inside the harness through explicit adapter-native commands such as OpenCode's `/weave:start` or `/start-work`.
+
+## Prerequisites
+
+You need:
+
+- Bun installed and available as `bun`.
+- A project directory where you can create `.weave/config.weave`.
+- OpenCode installed if you want to complete the adapter step.
+- A terminal in the Weave repository when running workspace commands from this guide.
+
+Why this matters: Weave is Bun-only. The packages, tests, docs, and CLI entry points are designed around Bun rather than Node.js package-manager workflows.
+
+## Install Workspace Dependencies
+
+From the repository root:
+
+```bash
+bun install
+```
+
+Expected outcome: dependencies are installed for all workspace packages. If install fails, resolve that first; every later command depends on generated lockfile and workspace package resolution being available.
+
+You can verify the workspace can build the docs and TypeScript later with:
+
+```bash
+bun run docs:build
+bun run --filter '@weave/docs' typecheck
+```
+
+## Create A Project Config
+
+Run init in the project you want Weave to configure:
+
+```bash
+bun packages/cli/src/main.ts init --scope local --yes
+```
+
+This creates a local `.weave/` directory. The important file is `.weave/config.weave`; prompt files live under `.weave/prompts/` when you use `prompt_file` or `prompt_append_file`.
+
+If you already have legacy OpenCode JSONC config, use migration instead:
+
+```bash
+bun packages/cli/src/main.ts init migrate --scope local --yes
+```
+
+Expected outcome: the command reports created or migrated files. Init and migrate flows are setup operations; they do not start OpenCode or any other harness.
+
+## Add One Agent
+
+Open `.weave/config.weave` and add a small custom reviewer agent:
+
+```text
+agent reviewer {
+  description "Strict reviewer for project diffs"
+  prompt "Review the current diff for correctness, regressions, and missing tests."
+  models ["claude-sonnet-4-5"]
+  mode subagent
+  temperature 0.1
+
+  tool_policy {
+    read allow
+    write deny
+    execute ask
+    network deny
+    delegate deny
+  }
+}
+```
+
+The fields are intentionally declarative:
+
+- `prompt` is the primary instruction source for the agent.
+- `models` is an ordered preference list; adapters decide what is available in the harness.
+- `mode subagent` says this role is meant for delegated work rather than the primary user-facing role.
+- `tool_policy` is abstract capability intent; adapters map it onto concrete tool names and permission systems.
+
+## Validate And Inspect
+
+Validate the project config:
+
+```bash
+bun packages/cli/src/main.ts validate --project
+```
+
+Expected output shape:
+
+```text
+Weave config is valid.
+agents: 7
+categories: 0
+workflows: 0
+disabled: 0
+log_level: INFO
+```
+
+Counts vary because builtins, global config, and project config are loaded into the effective config. Use JSON output when you need to inspect the merged structure:
+
+```bash
+bun packages/cli/src/main.ts validate --project --json
+```
+
+List available prompt descriptors:
+
+```bash
+bun packages/cli/src/main.ts prompt list
+```
+
+Inspect the composed prompt for your agent:
+
+```bash
+bun packages/cli/src/main.ts prompt inspect reviewer
+```
+
+This is the normal authoring loop: edit `.weave/config.weave`, validate, inspect the composed prompt, then repeat until the intent is correct.
+
+## Connect OpenCode
+
+OpenCode is the implemented adapter today. Configure it during init:
+
+```bash
+bun packages/cli/src/main.ts init --scope local --harness opencode --yes
+```
+
+If you configure OpenCode manually, the plugin entry is:
+
+```json
+{
+  "plugin": ["@weave/adapter-opencode/plugin"]
+}
+```
+
+The plugin registers two prompt commands in OpenCode:
+
+- `/weave:start`, the preferred command for plan-first explicit execution.
+- `/start-work`, the legacy compatibility alias.
+
+Do not assume `/weave:run`, `/weave:status`, `/weave:abort`, `/weave:advance`, or `/weave:health` are registered slash commands. Those labels exist as projection/helper surfaces unless an installed adapter wires them into the harness.
+
+## Verify Installation
+
+Use this checklist before handing the setup to another user:
+
+| Check | Command or action | Expected result |
+| --- | --- | --- |
+| Dependencies installed | `bun install` | Workspace dependencies resolve. |
+| Config parses | `bun packages/cli/src/main.ts validate --project` | Exit code `0`, validity summary printed. |
+| Prompt composes | `bun packages/cli/src/main.ts prompt inspect reviewer` | Rendered prompt and metadata are shown. |
+| OpenCode plugin configured | `opencode debug config` | Config includes `@weave/adapter-opencode/plugin`. |
+| Execution boundary understood | `bun packages/cli/src/main.ts run` | Command refuses execution with guidance. |
+
+## Troubleshooting
+
+| Symptom | Likely cause | Fix |
+| --- | --- | --- |
+| `validate --project` says a file is missing | `.weave/config.weave` was not created in the current project | Run `init --scope local --yes` from the project root or pass `--path`. |
+| Prompt inspection cannot find an agent | The agent is disabled, misspelled, or only generated from a category with another name | Run `prompt list` and inspect the exact generated name. |
+| OpenCode does not show Weave commands | The plugin entry is missing or points at the wrong package path | Use `@weave/adapter-opencode/plugin` and re-check with `opencode debug config`. |
+| A workflow does not start from the CLI | This is expected | Start work inside OpenCode with `/weave:start` or `/start-work`. |
+
+## Next Steps
+
+Read [Configuration](../configuration/) to understand global/project merge behavior. Read [Agents and Categories](../agents-and-categories/) to design real roles. Read [OpenCode](../opencode/) before relying on adapter behavior in a team setup.

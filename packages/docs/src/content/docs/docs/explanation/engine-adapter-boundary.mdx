@@ -1,12 +1,8 @@
 ---
-title: Engine and Adapter Boundary
-description: Why Weave separates normalized intent from harness-specific behavior.
+title: Engine Adapter Boundary Moved
+description: Compatibility route for the consolidated concepts and adapter references.
 ---
 
-The boundary is based on one question: is the code making a harness-specific assumption?
+This page is kept for existing links after the public docs consolidation. Boundary concepts now live in [Concepts](../../concepts/), with adapter ownership lookup in [Adapters](../../reference/adapters/).
 
-The engine may parse Weave config, compose prompts, evaluate abstract policy, produce descriptors, resolve model intent from explicit inputs, and own Weave runtime state. It must not inspect OpenCode's private storage, query a selected model from a harness UI, register concrete hooks, or hard-code concrete tool names.
-
-Adapters may discover harness resources, query available models, read selected model state, translate descriptors, register plugin hooks, choose command labels, and apply lifecycle effects.
-
-This split keeps the core portable. It also makes partial support honest: an adapter can mark a capability native, emulated, degraded, or unsupported without changing the core DSL.
+Current support note: adapters own harness models, tools, command labels, and plugin integration.

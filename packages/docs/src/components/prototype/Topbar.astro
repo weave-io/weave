@@ -15,10 +15,11 @@
  */
 import logo from '../../assets/prototype/logo.png';
 import ThemeToggle from './ThemeToggle.astro';
+import { normalizeBaseUrl, withBaseUrl } from '../../utils/base-url';
 
-const base = import.meta.env.BASE_URL;
+const base = normalizeBaseUrl(import.meta.env.BASE_URL);
 const homeHref = base;
-const docsHref = `${base}docs/`;
+const docsHref = withBaseUrl(base, 'docs/');
 ---
 
 <header class="w-topbar">

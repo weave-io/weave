@@ -1,12 +1,8 @@
 ---
-title: Prompt Composition Design
-description: Why prompt rendering is engine-owned and template context is bounded.
+title: Prompt Composition Design Moved
+description: Compatibility route for prompt composition docs.
 ---
 
-Prompt composition is engine-owned because it is a deterministic interpretation of Weave config. Every adapter should receive the same normalized prompt for the same resolved config.
+This page is kept for existing links after the public docs consolidation. Prompt composition now lives in [Prompts, Models, and Policy](../../prompts-models-policy/), with syntax lookup in [DSL Reference](../../reference/dsl/).
 
-The engine renders prompt sources and appends with Mustache against a bounded context. That context exposes only public, schema-aware fields such as agent identity, category metadata, effective tool policy, and delegation targets.
-
-The bounded context is a security and maintenance boundary. Appends cannot read raw artifact contents, chat history, environment variables, or arbitrary object paths. Unsupported Mustache features such as partials and delimiter changes fail composition instead of creating hidden I/O or execution behavior.
-
-Adapters consume `descriptor.composedPrompt`; they do not re-read prompt files or reimplement template behavior.
+Current support note: unsupported Mustache features fail composition instead of being silently ignored.

@@ -1,36 +1,8 @@
 ---
-title: Initialize Config
-description: Create global or project .weave configuration files.
+title: Initialize Config Moved
+description: Compatibility route for the consolidated configuration guide.
 ---
 
-## Create project config
+This page is kept for existing links after the public docs consolidation. Current initialization guidance lives in [Configuration](../../configuration/), with the full command syntax in [CLI Reference](../../reference/cli/).
 
-```bash
-bun packages/cli/src/main.ts init --scope local --yes
-```
-
-This writes `.weave/config.weave` and creates `.weave/prompts/`.
-
-## Create global config
-
-```bash
-bun packages/cli/src/main.ts init --scope global --yes
-```
-
-This writes `~/.weave/config.weave` and creates `~/.weave/prompts/`.
-
-## Choose a non-default directory
-
-```bash
-bun packages/cli/src/main.ts init --scope local --install-dir .weave --yes
-```
-
-For ordinary use, keep the canonical paths because config discovery checks `~/.weave/config.weave` and `<project>/.weave/config.weave`.
-
-## Configure a detected harness
-
-```bash
-bun packages/cli/src/main.ts init --scope local --harness opencode --yes
-```
-
-Only supported harness installers are installed. OpenCode is the implemented adapter today.
+Current support note: use `weave init --scope local --yes` or `weave init --scope global --yes` depending on where config should live.

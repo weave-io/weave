@@ -1,0 +1,146 @@
+---
+title: Prompts, Models, and Policy
+description: Compose prompts, express model preferences, and map abstract tool policy safely.
+tableOfContents:
+  minHeadingLevel: 2
+  maxHeadingLevel: 3
+---
+
+## Why These Concerns Are Together
+
+Prompts, model preferences, and tool policy all shape what an agent can do. Weave keeps them declarative so the same intent can be translated by different adapters without embedding harness-specific details in `.weave` files.
+
+## Prompt Sources
+
+An agent can use an inline prompt:
+
+```text
+agent reviewer {
+  prompt "Review the current diff for correctness and missing tests."
+}
+```
+
+Or a prompt file:
+
+```text
+agent reviewer {
+  prompt_file "reviewer.md"
+}
+```
+
+Do not set both `prompt` and `prompt_file`. Prompt files are resolved under the config scope's `prompts/` directory.
+
+## Prompt Appends
+
+Use appends to add project- or workflow-specific instructions without replacing a base prompt.
+
+```text
+agent loom {
+  prompt_append "Always summarize assumptions before delegating."
+}
+```
+
+For longer text:
+
+```text
+agent loom {
+  prompt_append_file "loom-project-rules.md"
+}
+```
+
+Do not set both `prompt_append` and `prompt_append_file` on the same object. Step-level appends take precedence over workflow-level appends for workflow step prompt composition.
+
+## Template Context
+
+Prompt sources are rendered with Mustache. Common context paths include:
+
+| Path | Meaning |
+| --- | --- |
+| `{{agent.name}}` | Agent name. |
+| `{{agent.description}}` | Optional agent description. |
+| `{{agent.mode}}` | `primary`, `subagent`, or `all`. |
+| `{{toolPolicy.effective.read}}` | Resolved read permission. |
+| `{{{delegation.section}}}` | Full delegation guidance block. |
+| `{{{delegation.mermaid}}}` | Mermaid diagram only. |
+| `{{#delegation.targets}}...{{/delegation.targets}}` | Iterate eligible delegation targets. |
+
+Use triple braces for delegation fields because the value contains Markdown.
+
+Unsupported Mustache features include partials, delimiter changes, helpers, and lambdas. Composition returns a typed prompt-template error when unsupported syntax is used.
+
+## Delegation Rendering
+
+If the primary prompt source does not reference any `delegation.*` field, Weave appends the full delegation section automatically. Place `{{{delegation.section}}}` yourself when you need exact control over where delegation guidance appears.
+
+```md
+You are {{agent.name}}.
+
+First, decide whether to delegate.
+
+{{{delegation.section}}}
+```
+
+Escaping a placeholder lets you show it literally without triggering fallback suppression:
+
+```md
+Use \{{delegation.section}} when documenting the placeholder itself.
+```
+
+## Model Preferences
+
+Models are ordered intent, not guaranteed runtime selection:
+
+```text
+agent reviewer {
+  models ["claude-sonnet-4-5", "gpt-4o"]
+}
+```
+
+Adapters own available-model lookup and selected-model lookup because only the concrete harness knows what the user has installed or configured. If a subagent requires a model that cannot be mapped, adapters should fail clearly instead of silently degrading to an unsafe or surprising choice.
+
+## Tool Policy
+
+Tool policy describes abstract capabilities:
+
+```text
+tool_policy {
+  read allow
+  write ask
+  execute ask
+  network deny
+  delegate allow
+}
+```
+
+| Capability | Typical meaning |
+| --- | --- |
+| `read` | Inspect files, symbols, or project state. |
+| `write` | Modify project files or generated artifacts. |
+| `execute` | Run commands, tests, builds, or scripts. |
+| `network` | Access remote services or documentation. |
+| `delegate` | Spawn or route work to another agent. |
+
+Permissions are `allow`, `deny`, or `ask`. Adapters map these abstract capabilities to concrete harness tool names. The default for unspecified capabilities is conservative, so declare important permissions explicitly.
+
+## Troubleshooting
+
+| Symptom | Likely cause | Fix |
+| --- | --- | --- |
+| Delegation appears twice | The prompt manually renders delegation and an append repeats it | Keep delegation placement in the primary prompt source. |
+| Delegation is missing | A `delegation.*` placeholder suppresses fallback but renders empty due to context | Inspect the prompt JSON and delegation targets. |
+| A model is not used | The adapter cannot map or select that model | Check harness model availability; treat `models` as preference order. |
+| A tool is unavailable | Abstract policy mapped to a denied or missing concrete tool | Inspect adapter docs and the effective tool policy. |
+
+## Verification
+
+Run:
+
+```bash
+bun packages/cli/src/main.ts prompt inspect loom --json
+```
+
+Review `models`, `effectiveToolPolicy`, `delegationTargets`, and `composedPrompt`. That output is the most direct way to verify what an adapter will receive.
+
+## Next Steps
+
+Use [Agents and Categories](../agents-and-categories/) to apply these fields to roles. Use [OpenCode](../opencode/) to understand current adapter mapping behavior.

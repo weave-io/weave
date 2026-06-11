@@ -1,40 +1,8 @@
 ---
-title: Add a Custom Agent
-description: Declare a new agent with prompt, mode, model intent, skills, triggers, and policy.
+title: Add Custom Agent Moved
+description: Compatibility route for the consolidated agents guide.
 ---
 
-Add an `agent` block to `.weave/config.weave`.
+This page is kept for existing links after the public docs consolidation. Custom agent authoring now lives in [Agents and Categories](../../agents-and-categories/), with prompt and policy details in [Prompts, Models, and Policy](../../prompts-models-policy/).
 
-```text
-agent database-reviewer {
-  description "Reviews persistence and migration safety"
-  prompt_file "database-reviewer.md"
-  models ["claude-sonnet-4-5"]
-  mode subagent
-  temperature 0.1
-  skills ["sql", "code-review"]
-
-  tool_policy {
-    read allow
-    write deny
-    execute deny
-    network deny
-    delegate deny
-  }
-
-  triggers [
-    { domain "Database" trigger "Schema changes, migrations, query safety" }
-  ]
-}
-```
-
-Then create `.weave/prompts/database-reviewer.md`.
-
-Validate and inspect:
-
-```bash
-bun packages/cli/src/main.ts validate --project
-bun packages/cli/src/main.ts prompt inspect database-reviewer
-```
-
-If the agent should delegate to other subagents, set `delegate allow`; otherwise it will have no delegation targets.
+Current support note: use block syntax such as `agent reviewer { ... }`; colon-style fields are not current `.weave` syntax.

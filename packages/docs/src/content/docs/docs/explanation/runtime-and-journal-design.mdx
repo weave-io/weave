@@ -1,12 +1,8 @@
 ---
-title: Runtime and Journal Design
-description: Why Weave has an engine-owned runtime store and sanitized journal.
+title: Runtime And Journal Design Moved
+description: Compatibility route for runtime operations docs.
 ---
 
-The runtime store is a narrow engine-owned persistence boundary. It records Weave execution concepts such as workflow instances, leases, artifacts, session observations, and journal entries.
+This page is kept for existing links after the public docs consolidation. Runtime and journal behavior now live in [Runtime Operations](../../runtime-operations/) and [Concepts](../../concepts/).
 
-This state belongs to Weave, not to OpenCode or any future harness, because lifecycle semantics are shared across adapters. A single runtime vocabulary lets command operations inspect, resume, pause, and audit execution without depending on harness-private storage.
-
-The journal is intentionally sanitized. It should help operators understand state transitions without exposing raw prompts, completions, transcripts, provider payloads, cookies, tokens, or authorization headers.
-
-Adapters may contribute safe observations, but they should not treat the runtime database as their private store.
+Current support note: journal entries are structured, sanitized, and size-limited.

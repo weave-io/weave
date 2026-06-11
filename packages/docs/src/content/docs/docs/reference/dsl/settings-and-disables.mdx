@@ -1,40 +1,8 @@
 ---
-title: Settings and Disables
-description: Supported settings block and disable directives.
+title: Settings And Disables Moved
+description: Compatibility route for the consolidated DSL reference.
 ---
 
-## Disable directives
+This page is kept for existing links after the public docs consolidation. Settings and disables now live in [DSL Reference](../), with config authoring guidance in [Configuration](../../../configuration/).
 
-```text
-disable agents ["warp", "spindle"]
-disable hooks ["on-session-idle"]
-disable skills ["tdd"]
-```
-
-| Directive | Effect |
-| --- | --- |
-| `disable agents [...]` | Omit named agents from materialization and prompt listing. |
-| `disable hooks [...]` | Record disabled hook names for adapter/lifecycle consumers. |
-| `disable skills [...]` | Filter skill references before missing-skill validation. |
-
-## Settings
-
-```text
-settings {
-  log_level INFO
-  runtime {
-    journal {
-      strict false
-    }
-  }
-}
-```
-
-| Field | Values | Default |
-| --- | --- | --- |
-| `log_level` | `TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR`, `FATAL` | `INFO` |
-| `runtime.journal.strict` | boolean | `false` |
-
-Top-level `log_level` is invalid; it must be inside `settings`.
-
-`continuation` and `analytics` are not current validated schema blocks. Treat references to them in old docs or plans as future or historical context, not supported public configuration.
+Current support note: `continuation` and `analytics` are not current validated public schema blocks.

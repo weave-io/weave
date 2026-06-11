@@ -1,0 +1,177 @@
+---
+title: DSL Reference
+description: Supported .weave syntax, top-level forms, fields, and unsupported historical syntax.
+tableOfContents:
+  minHeadingLevel: 2
+  maxHeadingLevel: 3
+---
+
+## Syntax Basics
+
+`.weave` is a small block-structured DSL. It is not JSON, YAML, or TypeScript.
+
+```text
+agent reviewer {
+  description "Strict reviewer"
+  prompt "Review the current diff."
+  models ["claude-sonnet-4-5"]
+  mode subagent
+}
+```
+
+Rules:
+
+| Feature | Syntax |
+| --- | --- |
+| Comments | `# comment` |
+| Strings | Double-quoted strings, or triple-quoted multiline strings. |
+| Arrays | JSON-style arrays such as `["a", "b"]`. |
+| Enums | Bare identifiers such as `allow`, `deny`, `primary`, `subagent`. |
+| Numbers | Bare numeric literals. |
+| Blocks | `keyword name { ... }` for named blocks. |
+
+Do not use colon-style fields such as `role:`. Use `role planning` where the schema supports `role`.
+
+## Top-Level Forms
+
+Supported top-level forms include:
+
+- `agent <name> { ... }`
+- `category <name> { ... }`
+- `workflow <name> { ... }`
+- `step <name> { ... }` for reusable extension steps.
+- `extend before-plan [...]`
+- `disable agents [...]`, `disable hooks [...]`, `disable skills [...]`
+- `settings { ... }`
+
+## Agent Fields
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `description` | string | Human-readable summary. |
+| `prompt` | string | Inline primary prompt. Mutually exclusive with `prompt_file`. |
+| `prompt_file` | string | File under the scope's `prompts/` directory. |
+| `prompt_append` | string | Inline append rendered as a prompt template. |
+| `prompt_append_file` | string | Append file under `prompts/`. |
+| `models` | string[] | Ordered preference list. |
+| `mode` | `primary` \| `subagent` \| `all` | Adapter-facing context hint. |
+| `temperature` | number | Optional generation preference. |
+| `skills` | string[] | Skill names resolved using adapter-provided context. |
+| `triggers` | object[] | Delegation metadata with `domain` and `trigger`. |
+| `routing.delegation_exclude` | string[] | Exclude named targets from delegation guidance. |
+| `tool_policy` | block | Abstract capability permissions. |
+
+## Category Fields
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `description` | string | Human-readable domain summary. |
+| `patterns` | string[] | Glob-like routing metadata. |
+| `models` | string[] | Category-specific model preference override. |
+| `prompt_append` / `prompt_append_file` | string | Added to the generated shuttle prompt. |
+| `temperature` | number | Optional generation preference. |
+| `tool_policy` | block | Category-specific policy applied to the generated shuttle. |
+
+Categories generate agents named `shuttle-{category}`.
+
+## Tool Policy
+
+```text
+tool_policy {
+  read allow
+  write ask
+  execute ask
+  network deny
+  delegate allow
+}
+```
+
+Capabilities are `read`, `write`, `execute`, `network`, and `delegate`. Permissions are `allow`, `deny`, and `ask`.
+
+## Workflow Fields
+
+```text
+workflow quick-fix {
+  description "Fix a bug and get it reviewed"
+  version 1
+
+  step fix {
+    name "Implement the fix"
+    type autonomous
+    agent shuttle
+    prompt "Fix: {{instance.goal}}"
+    completion agent_signal
+  }
+}
+```
+
+Workflow step fields include `name`, `type`, `agent`, `prompt`, `completion`, `inputs`, `outputs`, `role`, and `on_reject` where applicable. Step `type` values are `autonomous`, `interactive`, and `gate`. Completion methods include `agent_signal`, `user_confirm`, `plan_created`, `plan_complete`, and `review_verdict`.
+
+## Workflow Extension
+
+`before-plan` extension lets projects insert steps before a workflow's planning step.
+
+```text
+workflow plan-and-implement {
+  extension_points {
+    before-plan
+  }
+
+  step plan {
+    name "Plan"
+    type autonomous
+    agent loom
+    role planning
+    prompt "Plan {{instance.goal}}"
+    completion plan_created { plan_name "{{instance.slug}}" }
+  }
+}
+
+step collect-context {
+  name "Collect context"
+  type autonomous
+  agent shuttle
+  prompt "Collect context before planning."
+  completion agent_signal
+}
+
+extend before-plan ["collect-context"]
+```
+
+The current valid role value is `planning`.
+
+## Settings And Disables
+
+```text
+disable agents ["warp"]
+disable hooks ["on-session-idle"]
+disable skills ["tdd"]
+
+settings {
+  log_level INFO
+  runtime {
+    journal {
+      strict false
+    }
+  }
+}
+```
+
+`continuation` and `analytics` are not current validated public schema blocks.
+
+## Unsupported Or Historical Syntax
+
+Do not use these as current public instructions:
+
+| Syntax or feature | Status |
+| --- | --- |
+| DAG/fan-in workflow snippets | Historical or future, not current DSL. |
+| `role:` colon syntax | Unsupported; use `role planning` where valid. |
+| `routes` | Unsupported in current public DSL. |
+| `continuation { ... }` | Not current validated public schema. |
+| `analytics { ... }` | Not current validated public schema. |
+| `weave build` | No current CLI command. |
+
+## Related Guides
+
+Use [Configuration](../../configuration/) for authoring and validation workflow. Use [Agents and Categories](../../agents-and-categories/) and [Workflows](../../workflows/) for task-oriented examples.

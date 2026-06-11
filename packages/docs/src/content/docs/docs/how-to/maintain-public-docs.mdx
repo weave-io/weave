@@ -1,30 +1,8 @@
 ---
-title: Maintain Public Docs
-description: Keep public documentation accurate as Weave code changes.
+title: Maintain Public Docs Moved
+description: Compatibility route for public docs maintenance guidance.
 ---
 
-## Use source code as the source of truth
+This page is kept for existing links after the public docs consolidation. Public docs maintenance rules now live in [Runtime Operations](../../runtime-operations/), with the route map on [Weave Documentation](../../).
 
-For public feature documentation, check the current implementation first:
-
-- `packages/core/src/schema.ts` for validated config shape.
-- `packages/core/src/parser.ts` and `packages/core/src/validate.ts` for accepted DSL syntax.
-- `packages/cli/src/cli.ts` and `packages/cli/src/commands/*` for commands.
-- `packages/config/src/*` for discovery, loading, path resolution, builtins, and merge behavior.
-- `packages/engine/src/*` for prompt composition, policy, model intent, lifecycle, runtime store, and command operations.
-- `packages/adapters/opencode/src/*` for the implemented adapter.
-
-## Exclude generated artifacts
-
-Do not document generated `dist/` output or `node_modules/` as source. Public docs live under `packages/docs/src/content/docs/docs`.
-
-## Mark future concepts clearly
-
-Do not present future or placeholder work as current support. Claude Code and Pi are future adapter targets today. `continuation` and `analytics` are not in the current validated schema. Stale workflow DAG syntax, `weave build`, `role:`, and `routes` are not supported public syntax.
-
-## Validate before publishing
-
-```bash
-bun run docs:build
-bun run --filter '@weave/docs' typecheck
-```
+Current support note: keep old routes as compatibility pages unless a separate removal plan exists.

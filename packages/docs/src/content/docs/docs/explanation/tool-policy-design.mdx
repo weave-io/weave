@@ -1,10 +1,8 @@
 ---
-title: Tool Policy Design
-description: Why Weave uses abstract capabilities instead of concrete tool names.
+title: Tool Policy Design Moved
+description: Compatibility route for tool policy docs.
 ---
 
-Concrete tool names differ between harnesses. One harness may call a shell tool `bash`; another may expose a process executor with a different name and permission model.
+This page is kept for existing links after the public docs consolidation. Tool policy concepts now live in [Prompts, Models, and Policy](../../prompts-models-policy/), with adapter mapping in [Adapters](../../reference/adapters/).
 
-Weave therefore declares abstract capabilities: `read`, `write`, `execute`, `delegate`, and `network`. The engine resolves missing fields to `ask`, producing a complete effective policy. Adapters map that abstract policy into concrete harness permissions.
-
-This keeps configs portable and makes unmapped concrete tools explicit. If an adapter cannot classify a concrete tool, the engine does not silently allow it. The adapter must choose a safe harness-specific fallback.
+Current support note: policy uses abstract capabilities, not concrete harness tool names.

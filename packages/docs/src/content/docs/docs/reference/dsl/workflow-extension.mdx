@@ -1,60 +1,8 @@
 ---
-title: Workflow Extension
-description: Step-aware merge behavior for extending workflows.
-tableOfContents:
-  minHeadingLevel: 2
-  maxHeadingLevel: 3
+title: Workflow Extension Reference Moved
+description: Compatibility route for the consolidated DSL reference.
 ---
 
-Workflow merge has special step-aware behavior when an override workflow sets `extends`.
+This page is kept for existing links after the public docs consolidation. Workflow extension syntax now lives in [DSL Reference](../), with explanation and examples in [Workflows](../../../workflows/).
 
-## Same-name replacement
-
-An override step with the same step block name replaces the base step in place.
-
-## Anchored insertion
-
-Use `insert_before` or `insert_after` to place a new step relative to an existing step.
-
-```text
-workflow quick-fix {
-  extends "quick-fix"
-  version 1
-
-  step security {
-    name "Security audit"
-    type gate
-    agent warp
-    prompt "Audit the fix."
-    completion review_verdict
-    on_reject pause
-    insert_after "review"
-  }
-}
-```
-
-The anchor must exist after base resolution. `insert_before` and `insert_after` are mutually exclusive.
-
-## Appending
-
-Override steps with no same-name match and no anchor append after the resolved base steps.
-
-## `before-plan`
-
-A workflow publishes the slot:
-
-```text
-extension_points {
-  before-plan
-}
-```
-
-Top-level config contributes step names:
-
-```text
-extend before-plan ["requirements-check"]
-```
-
-Current v1 behavior has one global `before-plan` bucket applied to workflows that publish the slot. There is no per-workflow targeting.
-
-Publishing `before-plan` requires exactly one step with `role planning`.
+Current support note: `before-plan` extension uses `extend before-plan [...]` and a `role planning` step.

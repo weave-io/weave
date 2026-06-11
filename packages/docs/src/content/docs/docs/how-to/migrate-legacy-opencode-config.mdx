@@ -1,42 +1,8 @@
 ---
-title: Migrate Legacy OpenCode Config
-description: Convert legacy weave-opencode.jsonc files to canonical .weave DSL.
+title: Legacy OpenCode Migration Moved
+description: Compatibility route for the consolidated configuration guide.
 ---
 
-## Local migration
+This page is kept for existing links after the public docs consolidation. Current migration guidance lives in [Configuration](../../configuration/), and command details live in [CLI Reference](../../reference/cli/).
 
-```bash
-bun packages/cli/src/main.ts init migrate --scope local
-```
-
-Source: `./.opencode/weave-opencode.jsonc`
-
-Destination: `./.weave/config.weave`
-
-## Global migration
-
-```bash
-bun packages/cli/src/main.ts init migrate --scope global
-```
-
-Source: `~/.config/opencode/weave-opencode.jsonc`
-
-Destination: `~/.weave/config.weave`
-
-## Run non-interactively
-
-```bash
-bun packages/cli/src/main.ts init migrate --scope local --yes
-```
-
-If the destination exists, use `--force` to allow overwrite. The migrator creates a `.bak` backup before replacing an existing destination.
-
-## After migration
-
-Validate the generated DSL:
-
-```bash
-bun packages/cli/src/main.ts validate --project
-```
-
-The migration preserves the legacy source file and reports skipped fields as warnings.
+Current support note: migration reads legacy OpenCode JSONC and writes canonical `.weave` DSL; review output before using `--force`.
