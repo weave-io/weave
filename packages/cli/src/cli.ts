@@ -59,7 +59,7 @@ export async function run(
     return ok(1);
   }
 
-  const { command, unknownCommand, flags } = parsed.value;
+  const { command, unknownCommand, flags, rest } = parsed.value;
 
   switch (command) {
     case "help": {
@@ -139,15 +139,17 @@ export async function run(
           [
             `${theme.boldYellow("Usage:")} weave prompt <subcommand>`,
             "",
-            `  ${theme.cyan("weave prompt inspect <agent>")}         ${theme.dim("Render the composed prompt for an agent")}`,
-            `  ${theme.cyan("weave prompt inspect <agent> --json")}  ${theme.dim("Output prompt + metadata as JSON")}`,
-            `  ${theme.cyan("weave prompt list")}                    ${theme.dim("List all available agent names")}`,
-            `  ${theme.cyan("weave prompt list --json")}             ${theme.dim("List agents as JSON")}`,
+            `  ${theme.cyan("weave prompt inspect <agent>")}                    ${theme.dim("Render the composed prompt for an agent")}`,
+            `  ${theme.cyan("weave prompt inspect <agent> --json")}             ${theme.dim("Output prompt + metadata as JSON")}`,
+            `  ${theme.cyan("weave prompt list")}                               ${theme.dim("List all available agent names")}`,
+            `  ${theme.cyan("weave prompt list --json")}                        ${theme.dim("List agents as JSON")}`,
+            `  ${theme.cyan("weave prompt self-modify")}                        ${theme.dim("Print the Weave self-modification guide")}`,
+            `  ${theme.cyan("weave prompt self-modify --scope global|local")}   ${theme.dim("Choose config scope")}`,
           ].join("\n"),
         );
         return ok(1);
       }
-      return runPrompt({ terminal, theme, flags });
+      return runPrompt({ terminal, theme, flags, rest });
     }
 
     case "unknown": {

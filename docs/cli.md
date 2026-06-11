@@ -90,6 +90,67 @@ Subcommands:
 
 Running `weave prompt` without a subcommand prints inline usage and exits with code `1`.
 
+## `weave prompt self-modify`
+
+`weave prompt self-modify` prints a deterministic, text-only guide that tells an agent exactly which files to read, what rules to follow, and how to verify changes when modifying Weave's own configuration.
+
+```bash
+weave prompt self-modify                  # guide for global scope (default)
+weave prompt self-modify --scope global   # explicit global scope
+weave prompt self-modify --scope local    # guide for project scope
+```
+
+### v1 constraints
+
+| Constraint | Detail |
+| --- | --- |
+| **Text-only output** | The guide is always plain Markdown text. `--json` is rejected with exit code `1`. |
+| **Scope-only tailoring** | The only accepted flag is `--scope global\|local`. No other tailoring flags are accepted. |
+| **Default scope: global** | When `--scope` is omitted, the guide targets the global scope (`~/.weave/`). |
+| **No extra positional args** | Any extra positional arguments after `self-modify` are rejected with exit code `1`. |
+| **No config loading** | The command does not load or validate the current Weave config. It prints the guide unconditionally. |
+
+### What the guide covers
+
+The printed guide includes:
+
+- The selected scope label (`global (~/.weave/)` or `local (.weave/)`)
+- The canonical config file path and prompts directory path for the scope
+- A pre-flight checklist naming `docs/dsl-reference.md` and `docs/config-loading.md` as required reading
+- A note that `docs/prompt-composition.md` must be read before any prompt-related change
+- A clear statement that **`packages/docs/` is a public mirror, not the canonical source** — the authoritative docs live in `docs/` at the repo root
+- Target-aware rules (global vs. local scope differences)
+- A step-by-step workflow: identify → read DSL section → edit config → place prompt files → validate → inspect
+- Common DSL patterns (override builtin, add agent, add category, disable agent)
+- Prompt-specific rules (Mustache context fields, `{{{delegation.section}}}`, mutual exclusivity of `prompt`/`prompt_file`)
+- Verification commands (`weave validate`, `weave prompt list`, `weave prompt inspect`)
+
+### Canonical doc authority
+
+The guide explicitly names root `docs/` as the canonical source and `packages/docs/` as a public mirror. Agents following the guide must load `docs/dsl-reference.md` and `docs/config-loading.md` from the repo root — not from `packages/docs/`. The two may diverge; `docs/` always wins.
+
+### Base docs first
+
+The guide enforces a **base docs first** reading order:
+
+1. `docs/dsl-reference.md` — DSL syntax reference
+2. `docs/config-loading.md` — merge rules, builtin agents, prompt-file resolution
+3. `docs/prompt-composition.md` — only when the change touches prompt text or prompt fields
+
+Agents must not skip to target-specific or pattern-specific sections without first reading the base docs.
+
+### Loom routing note
+
+When Loom receives a self-modification request, it should:
+
+1. Clarify the config object type (agent override, new agent, category, workflow, settings, disable block) before asking about scope.
+2. Ask about scope only after the object type is clear.
+3. Run `weave prompt self-modify [--scope <scope>]` to obtain the guide.
+4. Load `docs/dsl-reference.md` and `docs/config-loading.md` before any edits.
+5. Load `docs/prompt-composition.md` before any prompt-related edits.
+
+See [Config Loading — Config Discovery](./config-loading.md#config-discovery) for the canonical path definitions used by the guide.
+
 ## `weave init`
 
 `weave init` creates a starter Weave config directory containing `config.weave` and `prompts/`.

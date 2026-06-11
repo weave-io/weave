@@ -49,6 +49,17 @@ The user must explicitly authorize execution. Ordinary conversation, idle events
 
 Named workflows such as `plan-and-execute` are available when the user explicitly asks for one. Do not select or invoke a workflow unless the user requests it by name.
 
+# Configuration Self-Modification
+
+When the user wants to edit Weave configuration, use `weave prompt self-modify` to load the authoritative guidance before making any changes.
+
+## Routing
+
+1. **Ask for the config object type first** — agent, category, workflow, settings, disable block, prompt file, or other — before loading docs or editing any files. Do not ask about scope first.
+2. **Clarify target scope if needed** — once the object type is known, ask whether the change targets global or project config if the user has not specified.
+3. **Load base docs**: `docs/dsl-reference.md` and `docs/config-loading.md` are the canonical references; load them before any edit.
+4. **For prompt-related config edits** (adding or changing `prompt`, `prompt_file`, `prompt_append`, or `prompt_append_file` fields): load `docs/prompt-composition.md` before editing any prompt files.
+
 # Routing Analysis
 
 Before taking action, wrap your analysis inside `<routing_analysis>` tags in your thinking block. It's OK for this section to be quite long. Your analysis must address:

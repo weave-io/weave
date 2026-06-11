@@ -1,16 +1,17 @@
-import { loadConfig, type ConfigLoadError } from "@weave/config";
+import { type ConfigLoadError, loadConfig } from "@weave/config";
 import { formatError, type WeaveConfig } from "@weave/core";
 import {
-  composeAgentDescriptor,
-  generateCategoryShuttles,
   type AgentDescriptor,
   type CategoryMetadata,
   type ComposeError,
+  composeAgentDescriptor,
+  generateCategoryShuttles,
 } from "@weave/engine";
-import { ok, type Result, ResultAsync } from "neverthrow";
+import { ok, type Result, type ResultAsync } from "neverthrow";
 import type { ParsedArgs } from "../args.js";
 import { type CliError, formatCliError } from "../errors.js";
 import type { TerminalIO } from "../io/terminal.js";
+import { renderSelfModifyPrompt } from "../prompts/self-modify.js";
 import type { ThemeColors } from "../theme/colors.js";
 
 const PROMPT_USAGE = [
@@ -20,12 +21,16 @@ const PROMPT_USAGE = [
   "  weave prompt inspect <agent> --json  Output prompt + metadata as JSON",
   "  weave prompt list                    List all available agent names",
   "  weave prompt list --json             List agents as JSON",
+  "  weave prompt self-modify             Print the Weave self-modification guide",
+  "  weave prompt self-modify --scope global|local",
 ].join("\n");
 
 export interface PromptContext {
   terminal: TerminalIO;
   theme: ThemeColors;
   flags: ParsedArgs["flags"];
+  /** Extra positional arguments after the subcommand (from ParsedArgs.rest). */
+  rest?: string[];
   /** Injectable for testing. Defaults to loadConfig(process.cwd()). */
   configLoader?: () => ResultAsync<WeaveConfig, ConfigLoadError[]>;
 }
@@ -68,7 +73,9 @@ function mapConfigLoadErrors(
       }
 
       if (error.type === "BuiltinParseError") {
-        return error.errors.map((parseError) => `builtins:${formatError(parseError)}`);
+        return error.errors.map(
+          (parseError) => `builtins:${formatError(parseError)}`,
+        );
       }
 
       if (error.type === "MergeError") {
@@ -84,7 +91,9 @@ function mapConfigLoadErrors(
   };
 }
 
-function loadPromptConfig(ctx: PromptContext): ResultAsync<WeaveConfig, PromptError> {
+function loadPromptConfig(
+  ctx: PromptContext,
+): ResultAsync<WeaveConfig, PromptError> {
   const cwd = process.cwd();
   const configLoader = ctx.configLoader ?? (() => loadConfig(cwd));
   return configLoader().mapErr((errors) => mapConfigLoadErrors(cwd, errors));
@@ -131,7 +140,9 @@ function toInspectJson(descriptor: AgentDescriptor): PromptInspectJson {
     temperature: descriptor.temperature,
     effectiveToolPolicy: descriptor.effectiveToolPolicy,
     skills: descriptor.skills,
-    delegationTargets: descriptor.delegationTargets.map((target) => target.name),
+    delegationTargets: descriptor.delegationTargets.map(
+      (target) => target.name,
+    ),
     composedPrompt: descriptor.composedPrompt,
   };
 }
@@ -186,7 +197,7 @@ async function runPromptInspect(
       formatCliError({
         type: "AgentNotFound",
         agentName: ctx.flags.agentName,
-        message: `Agent \"${ctx.flags.agentName}\" was not found.`,
+        message: `Agent "${ctx.flags.agentName}" was not found.`,
       }),
     );
     return ok(1);
@@ -216,11 +227,43 @@ async function runPromptInspect(
   }
 
   if (ctx.flags.json) {
-    ctx.terminal.stdout(JSON.stringify(toInspectJson(descriptorResult.value), null, 2));
+    ctx.terminal.stdout(
+      JSON.stringify(toInspectJson(descriptorResult.value), null, 2),
+    );
     return ok(0);
   }
 
   ctx.terminal.stdout(descriptorResult.value.composedPrompt);
+  return ok(0);
+}
+
+async function runPromptSelfModify(
+  ctx: PromptContext,
+): Promise<Result<number, CliError>> {
+  if (ctx.flags.json) {
+    ctx.terminal.stderr(
+      formatCliError({
+        type: "InvalidArgs",
+        message: "'weave prompt self-modify' does not support --json",
+      }),
+    );
+    return ok(1);
+  }
+
+  if (ctx.rest !== undefined && ctx.rest.length > 0) {
+    ctx.terminal.stderr(
+      formatCliError({
+        type: "InvalidArgs",
+        message: `'weave prompt self-modify' does not accept extra arguments: ${ctx.rest.join(" ")}`,
+      }),
+    );
+    return ok(1);
+  }
+
+  const scope = ctx.flags.scope ?? "global";
+  const projectRoot = process.cwd();
+
+  ctx.terminal.stdout(renderSelfModifyPrompt({ scope, projectRoot }));
   return ok(0);
 }
 
@@ -232,9 +275,12 @@ export async function runPrompt(
     return ok(1);
   }
 
-  if (ctx.flags.promptSubcommand === "list") {
-    return runPromptList(ctx);
+  switch (ctx.flags.promptSubcommand) {
+    case "list":
+      return runPromptList(ctx);
+    case "self-modify":
+      return runPromptSelfModify(ctx);
+    default:
+      return runPromptInspect(ctx);
   }
-
-  return runPromptInspect(ctx);
 }

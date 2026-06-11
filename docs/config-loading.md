@@ -2,7 +2,7 @@
 
 `@weave/config` owns the config-discovery, merge, and loading pipeline for Weave. It is the single entry point for reading agent configuration from disk and producing the final merged `WeaveConfig` consumed by the engine.
 
-**Related:** [Product Vision](product-vision.md) · [Adapter Boundary](adapter-boundary.md) · [Model Resolution](model-resolution.md) · [Spec 17 — Workflow Extension DSL](specs/17-spec-workflow-extension/17-spec-workflow-extension.md) · [AGENTS.md](../AGENTS.md) · [Legacy Architecture](legacy-architecture.md) · [`packages/config/src/loader.ts`](../packages/config/src/loader.ts)
+**Related:** [Product Vision](product-vision.md) · [Adapter Boundary](adapter-boundary.md) · [Model Resolution](model-resolution.md) · [Spec 17 — Workflow Extension DSL](specs/17-spec-workflow-extension/17-spec-workflow-extension.md) · [AGENTS.md](../AGENTS.md) · [Legacy Architecture](legacy-architecture.md) · [`packages/config/src/loader.ts`](../packages/config/src/loader.ts) · [CLI — `weave prompt self-modify`](./cli.md#weave-prompt-self-modify)
 
 ---
 
@@ -174,6 +174,17 @@ See [`packages/config/src/errors.ts`](../packages/config/src/errors.ts).
 `weave init migrate` writes migrated config **only** to the canonical paths above — never to ad hoc locations. This is a hard constraint: the config loader only discovers `~/.weave/config.weave` and `<projectRoot>/.weave/config.weave`. A migrated file written anywhere else would be silently ignored at runtime.
 
 The `--install-dir` flag accepted by ordinary `weave init` (for starter-config scaffolding) is **ignored** in migrate mode for this reason. See [CLI — `weave init migrate`](./cli.md#weave-init-migrate) for the full migration contract.
+
+### Self-modification and canonical paths
+
+`weave prompt self-modify` uses the same canonical paths to tell agents exactly where to write config and prompt files. The guide it prints is scope-aware:
+
+- **global** → `~/.weave/config.weave` and `~/.weave/prompts/`
+- **local** → `<projectRoot>/.weave/config.weave` and `<projectRoot>/.weave/prompts/`
+
+Agents following the guide must write to these paths only. Any file written outside these locations will be silently ignored by `discoverAndParse()` at runtime.
+
+See [CLI — `weave prompt self-modify`](./cli.md#weave-prompt-self-modify) for the full self-modification contract.
 
 ---
 

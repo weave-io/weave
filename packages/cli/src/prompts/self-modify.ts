@@ -62,6 +62,9 @@ export function resolveSelfModifyPaths(
  * The output is deterministic: same scope + projectRoot always produces the
  * same text. The canonical content lives in `self-modify.md`; this function
  * resolves paths and renders the Mustache template.
+ *
+ * Path placeholders (`configPath`, `promptsDir`) use triple-brace syntax in
+ * the template so Mustache emits them as raw strings without HTML escaping.
  */
 export function renderSelfModifyPrompt(ctx: SelfModifyContext): string {
   const paths = resolveSelfModifyPaths(ctx);
@@ -69,16 +72,11 @@ export function renderSelfModifyPrompt(ctx: SelfModifyContext): string {
 
   const scopeLabel = isGlobal ? "global (~/.weave/)" : "local (.weave/)";
 
-  // Disable HTML escaping — this is a plain-text prompt, not HTML.
-  const originalEscape = Mustache.escape;
-  Mustache.escape = (s: string) => s;
-  const rendered = Mustache.render(templateSource, {
+  return Mustache.render(templateSource, {
     scope: scopeLabel,
     configPath: paths.configPath,
     promptsDir: paths.promptsDir,
     isGlobal,
     isLocal: !isGlobal,
   });
-  Mustache.escape = originalEscape;
-  return rendered;
 }

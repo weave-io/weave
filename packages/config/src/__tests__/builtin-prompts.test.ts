@@ -219,6 +219,87 @@ describe("builtin prompt files", () => {
     });
   });
 
+  describe("loom.md — configuration self-modification routing", () => {
+    it("mentions weave prompt self-modify command", async () => {
+      const content = await Bun.file(join(PROMPTS_DIR, "loom.md")).text();
+      expect(content).toContain("weave prompt self-modify");
+    });
+
+    it("instructs asking for config object type first, before scope", async () => {
+      const content = await Bun.file(join(PROMPTS_DIR, "loom.md")).text();
+      // Must mention object type
+      const hasObjectType =
+        content.includes("object type") || content.includes("config object");
+      expect(hasObjectType).toBe(true);
+
+      // Object-type step must appear before scope-clarification step in the text
+      const objectTypeIdx = Math.min(
+        content.includes("object type")
+          ? content.indexOf("object type")
+          : Infinity,
+        content.includes("config object")
+          ? content.indexOf("config object")
+          : Infinity,
+      );
+      const scopeIdx = Math.min(
+        content.includes("global") ? content.indexOf("global") : Infinity,
+        content.includes("target scope")
+          ? content.indexOf("target scope")
+          : Infinity,
+      );
+      expect(objectTypeIdx).toBeLessThan(scopeIdx);
+    });
+
+    it("does NOT instruct asking about scope before object type", async () => {
+      const content = await Bun.file(join(PROMPTS_DIR, "loom.md")).text();
+      // The routing section must not lead with scope-first language
+      // Find the routing section
+      const routingStart = content.indexOf("## Routing");
+      expect(routingStart).toBeGreaterThan(-1);
+      const routingSection = content.slice(routingStart, routingStart + 600);
+
+      // Within the routing section, object type must appear before scope
+      const objectTypeIdx = Math.min(
+        routingSection.includes("object type")
+          ? routingSection.indexOf("object type")
+          : Infinity,
+        routingSection.includes("config object")
+          ? routingSection.indexOf("config object")
+          : Infinity,
+      );
+      const scopeIdx = Math.min(
+        routingSection.includes("global")
+          ? routingSection.indexOf("global")
+          : Infinity,
+        routingSection.includes("target scope")
+          ? routingSection.indexOf("target scope")
+          : Infinity,
+      );
+      expect(objectTypeIdx).toBeLessThan(scopeIdx);
+    });
+
+    it("references base docs: dsl-reference.md and config-loading.md", async () => {
+      const content = await Bun.file(join(PROMPTS_DIR, "loom.md")).text();
+      expect(content).toContain("docs/dsl-reference.md");
+      expect(content).toContain("docs/config-loading.md");
+    });
+
+    it("references prompt-composition docs for prompt-related edits", async () => {
+      const content = await Bun.file(join(PROMPTS_DIR, "loom.md")).text();
+      expect(content).toContain("docs/prompt-composition.md");
+    });
+
+    it("instructs clarifying target scope after object type is known", async () => {
+      const content = await Bun.file(join(PROMPTS_DIR, "loom.md")).text();
+      // Scope clarification should still be present, just not first
+      const hasScopeClarification =
+        content.includes("global") ||
+        content.includes("target scope") ||
+        content.includes("ask");
+      expect(hasScopeClarification).toBe(true);
+    });
+  });
+
   describe("tapestry.md — plan execution and delegation guidance", () => {
     it("contains the delegation.targets loop template placeholder", async () => {
       const content = await Bun.file(join(PROMPTS_DIR, "tapestry.md")).text();

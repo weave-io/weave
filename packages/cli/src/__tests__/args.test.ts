@@ -80,6 +80,103 @@ describe("prompt command", () => {
   });
 });
 
+describe("prompt self-modify subcommand", () => {
+  it("Should_parse_prompt_self_modify", () => {
+    const result = parseArgs(["bun", "weave", "prompt", "self-modify"]);
+
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap()).toMatchObject({
+      command: "prompt",
+      flags: { promptSubcommand: "self-modify" },
+    });
+  });
+
+  it("Should_parse_prompt_self_modify_with_scope_global", () => {
+    const result = parseArgs([
+      "bun",
+      "weave",
+      "prompt",
+      "self-modify",
+      "--scope",
+      "global",
+    ]);
+
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap()).toMatchObject({
+      command: "prompt",
+      flags: { promptSubcommand: "self-modify", scope: "global" },
+    });
+  });
+
+  it("Should_parse_prompt_self_modify_with_scope_local", () => {
+    const result = parseArgs([
+      "bun",
+      "weave",
+      "prompt",
+      "self-modify",
+      "--scope",
+      "local",
+    ]);
+
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap()).toMatchObject({
+      command: "prompt",
+      flags: { promptSubcommand: "self-modify", scope: "local" },
+    });
+  });
+
+  it("Should_error_on_missing_scope_value", () => {
+    const result = parseArgs([
+      "bun",
+      "weave",
+      "prompt",
+      "self-modify",
+      "--scope",
+    ]);
+
+    expect(result.isErr()).toBe(true);
+    const error = result._unsafeUnwrapErr();
+    expect(error.type).toBe("MissingFlagValue");
+    expect(error.flag).toBe("--scope");
+  });
+
+  it("Should_error_on_invalid_scope_value", () => {
+    const result = parseArgs([
+      "bun",
+      "weave",
+      "prompt",
+      "self-modify",
+      "--scope",
+      "project",
+    ]);
+
+    expect(result.isErr()).toBe(true);
+    const error = result._unsafeUnwrapErr();
+    expect(error.type).toBe("InvalidFlagValue");
+    expect(error.flag).toBe("--scope");
+    expect(error.message).toContain("project");
+  });
+
+  it("Should_capture_extra_positionals_in_rest", () => {
+    const result = parseArgs([
+      "bun",
+      "weave",
+      "prompt",
+      "self-modify",
+      "--scope",
+      "global",
+      "extra-arg",
+      "another",
+    ]);
+
+    expect(result.isOk()).toBe(true);
+    const parsed = result._unsafeUnwrap();
+    expect(parsed.flags.promptSubcommand).toBe("self-modify");
+    expect(parsed.flags.scope).toBe("global");
+    expect(parsed.rest).toEqual(["extra-arg", "another"]);
+  });
+});
+
 describe("existing commands remain unaffected", () => {
   it("Should_keep_unknown_command_parsing_unchanged", () => {
     const result = parseArgs(["bun", "weave", "frobnicate"]);

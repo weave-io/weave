@@ -5,10 +5,10 @@ files to read, what rules to follow, and how to verify your changes.
 
 ---
 
-## Scope: {{scope}}
+## Scope: {{{scope}}}
 
-**Config file**: `{{configPath}}`
-**Prompt files directory**: `{{promptsDir}}`
+**Config file**: `{{{configPath}}}`
+**Prompt files directory**: `{{{promptsDir}}}`
 
 ---
 
@@ -62,9 +62,9 @@ files to read, what rules to follow, and how to verify your changes.
 1. **Identify the change** — agent override, new agent, category, workflow,
    settings, or disable block.
 2. **Read the relevant DSL section** in `docs/dsl-reference.md`.
-3. **Edit `{{configPath}}`** using the DSL syntax (block-structured, no
+3. **Edit `{{{configPath}}}`** using the DSL syntax (block-structured, no
    semicolons, double-quoted strings, bare enums).
-4. **Place prompt files** (if any) in `{{promptsDir}}`.
+4. **Place prompt files** (if any) in `{{{promptsDir}}}`.
 5. **Validate** — run `weave validate` to confirm the config parses cleanly.
 6. **Inspect** — run `weave prompt inspect <agent>` to verify the composed
    prompt looks correct.
@@ -104,7 +104,7 @@ agent my-helper {
 }
 ```
 
-Place the prompt at `{{promptsDir}}/my-helper.md`.
+Place the prompt at `{{{promptsDir}}}/my-helper.md`.
 
 ### Disable a builtin agent
 

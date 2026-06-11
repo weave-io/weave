@@ -16,7 +16,7 @@
   },
   "scripts": {
     "build": "bun build ./src/index.ts ./src/main.ts --outdir ./dist --target bun && tsc -p tsconfig.build.json --emitDeclarationOnly",
-    "test": "bun test ./src/__tests__ ./src/commands/__tests__ ./src/prompt/__tests__ ./src/detect/__tests__ ./src/installers/__tests__",
+    "test": "bun test ./src",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "clean": "rm -rf dist"
   },

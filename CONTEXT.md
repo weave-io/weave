@@ -180,6 +180,14 @@ _Avoid_: Display name, UI label, rendered agent title
 An adapter-visible harness agent whose configuration lifecycle is owned by Weave rather than authored manually in the harness.
 _Avoid_: Any same-named agent, UI alias, unmanaged agent
 
+**Canonical Documentation Set**:
+The repo-root `docs/` corpus that defines current authoritative Weave behavior and guidance.
+_Avoid_: Public docs site, marketing docs, package docs mirror
+
+**Public Documentation Package**:
+The `packages/docs/` site that publishes public-facing Weave documentation derived from the canonical docs.
+_Avoid_: Source of truth, internal spec set, canonical architecture docs
+
 ## Relationships
 
 - A **WorkflowInstance** stores active execution metadata and artifacts for one workflow run.
@@ -246,6 +254,8 @@ _Avoid_: Any same-named agent, UI alias, unmanaged agent
 - Delegation data inside a **Composed Prompt** is computed from agent `triggers`; a **Prompt Template** may decide where and how that delegation guidance is rendered.
 - A **Delegation Diagram** starts as a current-agent star: the current agent points to each eligible delegation target.
 - A **Weave-managed Agent** is reconciled by its **Canonical Agent Name**, while display-oriented fields may change without changing identity.
+- The **Canonical Documentation Set** is authoritative when Weave behavior and the **Public Documentation Package** disagree.
+- The **Public Documentation Package** should mirror the **Canonical Documentation Set** without replacing it.
 
 ## Prompt Composition Templates
 
@@ -275,3 +285,4 @@ See [ADR 0004 — Workflow-First Execution Contract](docs/adr/0004-workflow-firs
 - "event log" can imply event sourcing; resolved: use **Runtime Journal** for observational runtime history that is not the source of truth.
 - "session runtime snapshot" can imply raw harness state capture; resolved: use **SessionSnapshot** for normalized Weave-visible observations only.
 - "agent name" can mean either a stable identifier or a UI-facing label; resolved: use **Canonical Agent Name** for identity and treat display text as presentation only.
+- "docs" can mean either the canonical repo docs or the public site; resolved: use **Canonical Documentation Set** for repo-root `docs/` and **Public Documentation Package** for `packages/docs/`.

@@ -182,6 +182,90 @@ describe("builtin compose smoke", () => {
     expect(descriptor.composedPrompt).toContain("opt-in only");
   });
 
+  // ---------------------------------------------------------------------------
+  // Loom configuration self-modification routing (Task 6)
+  // ---------------------------------------------------------------------------
+
+  it("loom composedPrompt mentions weave prompt self-modify command", () => {
+    const descriptor = getDescriptor("loom");
+    expect(descriptor.composedPrompt).toContain("weave prompt self-modify");
+  });
+
+  it("loom composedPrompt instructs asking for config object type first, before scope", () => {
+    const descriptor = getDescriptor("loom");
+    const prompt = descriptor.composedPrompt;
+
+    // Must mention object type
+    const hasObjectType =
+      prompt.includes("object type") || prompt.includes("config object");
+    expect(hasObjectType).toBe(true);
+
+    // Object-type step must appear before scope-clarification step
+    const objectTypeIdx = Math.min(
+      prompt.includes("object type") ? prompt.indexOf("object type") : Infinity,
+      prompt.includes("config object")
+        ? prompt.indexOf("config object")
+        : Infinity,
+    );
+    const scopeIdx = Math.min(
+      prompt.includes("global") ? prompt.indexOf("global") : Infinity,
+      prompt.includes("target scope")
+        ? prompt.indexOf("target scope")
+        : Infinity,
+    );
+    expect(objectTypeIdx).toBeLessThan(scopeIdx);
+  });
+
+  it("loom composedPrompt routing section does NOT lead with scope-first language", () => {
+    const descriptor = getDescriptor("loom");
+    const prompt = descriptor.composedPrompt;
+
+    const routingStart = prompt.indexOf("## Routing");
+    expect(routingStart).toBeGreaterThan(-1);
+    const routingSection = prompt.slice(routingStart, routingStart + 600);
+
+    // Within the routing section, object type must appear before scope
+    const objectTypeIdx = Math.min(
+      routingSection.includes("object type")
+        ? routingSection.indexOf("object type")
+        : Infinity,
+      routingSection.includes("config object")
+        ? routingSection.indexOf("config object")
+        : Infinity,
+    );
+    const scopeIdx = Math.min(
+      routingSection.includes("global")
+        ? routingSection.indexOf("global")
+        : Infinity,
+      routingSection.includes("target scope")
+        ? routingSection.indexOf("target scope")
+        : Infinity,
+    );
+    expect(objectTypeIdx).toBeLessThan(scopeIdx);
+  });
+
+  it("loom composedPrompt references base docs dsl-reference.md and config-loading.md", () => {
+    const descriptor = getDescriptor("loom");
+    expect(descriptor.composedPrompt).toContain("docs/dsl-reference.md");
+    expect(descriptor.composedPrompt).toContain("docs/config-loading.md");
+  });
+
+  it("loom composedPrompt references prompt-composition.md for prompt-related edits", () => {
+    const descriptor = getDescriptor("loom");
+    expect(descriptor.composedPrompt).toContain("docs/prompt-composition.md");
+  });
+
+  it("loom composedPrompt instructs clarifying target scope after object type is known", () => {
+    const descriptor = getDescriptor("loom");
+    const prompt = descriptor.composedPrompt;
+    // Scope clarification must still be present (just not first)
+    const hasScopeClarification =
+      prompt.includes("global") ||
+      prompt.includes("target scope") ||
+      prompt.includes("ask");
+    expect(hasScopeClarification).toBe(true);
+  });
+
   it("tapestry composedPrompt does NOT contain ## Delegation section (uses delegation.targets loop instead)", () => {
     const descriptor = getDescriptor("tapestry");
     expect(descriptor.composedPrompt).not.toContain("## Delegation");
