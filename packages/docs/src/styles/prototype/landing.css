@@ -115,8 +115,22 @@
 .docs-tree .t .n { color: var(--text-4); width: 22px; }
 .docs-tree .t.cur { color: var(--primary); }
 
-/* final cta */
-.final { position: relative; isolation: isolate; overflow: hidden; text-align: center; padding: 112px 0; border-bottom: 1px solid var(--border-faint); }
+/* final cta — cursor-following glow */
+.final {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  text-align: center;
+  padding: 112px 0;
+  border-bottom: 1px solid var(--border-faint);
+  /* Glow position in px, relative to the section box. Updated by landing.js on
+     pointer move via requestAnimationFrame. Defaults to centre so the glow is
+     sensibly placed before the first pointer event and when JS is unavailable. */
+  --glow-x: 50%;
+  --glow-y: 50%;
+  /* Eased follow + fade controlled by the .is-tracking state class. */
+  --glow-opacity: 0.5;
+}
 .final::before,
 .final::after {
   content: "";
@@ -126,47 +140,49 @@
   pointer-events: none;
   will-change: transform, opacity;
 }
+/* Primary glow — large, chromatic, tracks the cursor exactly. */
 .final::before {
-  left: 50%;
-  top: 50%;
-  width: min(860px, 92vw);
+  left: 0;
+  top: 0;
+  width: min(720px, 86vw);
   aspect-ratio: 1;
   border-radius: 50%;
   background:
-    radial-gradient(circle at 50% 50%, color-mix(in oklab, var(--primary) 34%, transparent) 0 10%, transparent 50%),
-    conic-gradient(from 0deg, transparent 0deg, color-mix(in oklab, var(--cyan) 24%, transparent) 76deg, color-mix(in oklab, var(--primary) 32%, transparent) 144deg, color-mix(in oklab, var(--secondary) 24%, transparent) 216deg, transparent 300deg);
-  filter: blur(42px);
-  opacity: 0.58;
-  transform: translate3d(-50%, -50%, 0) rotate(0deg) scale(0.86);
-  animation: finalGlowOrbit 14s linear infinite;
+    radial-gradient(circle at 50% 50%, color-mix(in oklab, var(--primary) 34%, transparent) 0 12%, transparent 52%),
+    conic-gradient(from 0deg, transparent 0deg, color-mix(in oklab, var(--cyan) 24%, transparent) 90deg, color-mix(in oklab, var(--primary) 32%, transparent) 180deg, color-mix(in oklab, var(--secondary) 22%, transparent) 270deg, transparent 360deg);
+  filter: blur(46px);
+  opacity: var(--glow-opacity);
+  transform: translate3d(calc(var(--glow-x) - 50%), calc(var(--glow-y) - 50%), 0);
+  transition: opacity var(--t-slow) var(--ease-out);
 }
+/* Secondary glow — smaller, softer, lags slightly behind for depth. */
 .final::after {
-  left: 50%;
-  top: 50%;
-  width: min(620px, 78vw);
+  left: 0;
+  top: 0;
+  width: min(420px, 64vw);
   aspect-ratio: 1;
   border-radius: 50%;
-  background: radial-gradient(circle at 50% 50%, color-mix(in oklab, var(--tertiary) 22%, transparent), transparent 64%);
-  filter: blur(22px);
-  opacity: 0.36;
-  transform: translate3d(-50%, -50%, 0) scale(0.9);
-  animation: finalGlowPulse 5.5s var(--ease-inout) infinite alternate;
+  background: radial-gradient(circle at 50% 50%, color-mix(in oklab, var(--tertiary) 26%, transparent), transparent 66%);
+  filter: blur(26px);
+  opacity: calc(var(--glow-opacity) * 0.7);
+  transform: translate3d(calc(var(--glow-x) - 50%), calc(var(--glow-y) - 50%), 0);
+  transition: opacity var(--t-slow) var(--ease-out), transform var(--t-slow) var(--ease-out);
 }
+/* While the pointer is moving over the section, follow it tightly. The primary
+   glow snaps (no transform transition) so it stays under the cursor; the
+   secondary glow keeps its eased transform for a trailing parallax feel. */
+.final.is-tracking { --glow-opacity: 0.72; }
 .final .wrap { position: relative; z-index: 1; }
 .final h2 { margin: var(--s-5) auto var(--s-4); }
 .final h2 .b { color: var(--primary); }
 .final .ctas { display: flex; gap: var(--s-3); justify-content: center; margin-top: var(--s-6); }
 .final p { color: var(--text-2); max-width: 48ch; margin: 0 auto; }
 
-@keyframes finalGlowOrbit {
-  0% { transform: translate3d(-50%, -50%, 0) rotate(0deg) scale(0.86); opacity: 0.5; }
-  50% { transform: translate3d(-50%, -50%, 0) rotate(180deg) scale(1); opacity: 0.68; }
-  100% { transform: translate3d(-50%, -50%, 0) rotate(360deg) scale(0.86); opacity: 0.5; }
-}
-
-@keyframes finalGlowPulse {
-  from { transform: translate3d(-50%, -50%, 0) scale(0.88); opacity: 0.28; }
-  to { transform: translate3d(-50%, -50%, 0) scale(1.08); opacity: 0.46; }
+/* prefers-reduced-motion: keep a calm, static centred glow (the global rule in
+   tokens.css already disables transitions/animations; here we also pin the
+   glow to the centre so the JS pointer tracker — which we skip — is not needed). */
+@media (prefers-reduced-motion: reduce) {
+  .final { --glow-x: 50%; --glow-y: 50%; --glow-opacity: 0.45; }
 }
 
 /* footer */

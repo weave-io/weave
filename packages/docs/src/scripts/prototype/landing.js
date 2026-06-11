@@ -162,11 +162,14 @@
       link(380, 92, 460, 125, 'gf', 'd2') + link(380, 158, 460, 125, 'gf', 'd3') +
       link(630, 125, 650, 125, 'gf'),
     materialize: defs() +
-      dashbox(250, 70, 230, 150, 'adapter boundary') +
+      dashbox(250, 60, 230, 170, 'adapter boundary') +
       box(40, 120, 150, 50, 'descriptors', 'var(--primary-dim)') +
       box(290, 120, 150, 50, 'opencode plugin', 'var(--secondary)') +
-      box(560, 120, 150, 50, 'subagents') +
-      link(190, 145, 290, 145, 'gf') + link(440, 145, 560, 145, 'gf', 'd2'),
+      box(560, 70, 150, 44, 'subagents') +
+      box(560, 176, 150, 44, 'slash commands') +
+      link(190, 145, 290, 145, 'gf') +
+      link(440, 145, 560, 92, 'gf', 'd2') +
+      link(440, 145, 560, 198, 'gf', 'd3'),
     use: defs() +
       box(40, 110, 150, 50, 'OpenCode TUI', 'var(--primary-dim)') +
       box(300, 55, 170, 44, '/start-work') +
@@ -207,6 +210,54 @@
     els.forEach(function (e) { io.observe(e); });
   }
 
+  /* ---------- CURSOR-FOLLOWING GLOW (final CTA) ---------- */
+  function wireFinalGlow() {
+    var section = document.querySelector('.final');
+    if (!section) return;
+    // Honour reduced-motion: leave the static centred glow from CSS untouched
+    // and never attach the pointer listener.
+    var mq = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)');
+    if (mq && mq.matches) return;
+
+    var rafId = 0;
+    var nextX = 0;
+    var nextY = 0;
+    var leaveTimer = 0;
+
+    function apply() {
+      rafId = 0;
+      section.style.setProperty('--glow-x', nextX + 'px');
+      section.style.setProperty('--glow-y', nextY + 'px');
+    }
+    function schedule() {
+      if (rafId) return;
+      rafId = window.requestAnimationFrame(apply);
+    }
+    function onMove(e) {
+      var rect = section.getBoundingClientRect();
+      nextX = e.clientX - rect.left;
+      nextY = e.clientY - rect.top;
+      if (leaveTimer) { window.clearTimeout(leaveTimer); leaveTimer = 0; }
+      section.classList.add('is-tracking');
+      schedule();
+    }
+    function onLeave() {
+      // Fade the glow back to its resting state; the transform stays put so it
+      // does not jump back to centre abruptly.
+      leaveTimer = window.setTimeout(function () {
+        section.classList.remove('is-tracking');
+      }, 120);
+    }
+
+    // pointermove covers mouse + pen; touch is intentionally excluded so the
+    // glow never fights with scrolling on touch devices.
+    section.addEventListener('pointermove', function (e) {
+      if (e.pointerType === 'touch') return;
+      onMove(e);
+    }, { passive: true });
+    section.addEventListener('pointerleave', onLeave, { passive: true });
+  }
+
   /* ---------- COPY ---------- */
   function wireCopy() {
     document.addEventListener('click', function (e) {
@@ -228,4 +279,5 @@
   wireHow();
   reveal();
   wireCopy();
+  wireFinalGlow();
 })();
