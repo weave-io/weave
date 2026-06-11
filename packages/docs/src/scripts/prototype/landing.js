@@ -53,36 +53,36 @@
     var W = 1200, H = 380;
     var cx = [110, 360, 600, 850, 1090];
     var s = defs();
-    s += col(cx[0], 'DEFINE') + col(cx[1], 'COMPOSE') + col(cx[2], 'DELEGATE') + col(cx[3], 'ADAPT') + col(cx[4], 'EXECUTE');
-    // agent boxes (define)
-    var agents = ['orchestrator', 'planner', 'executor', 'reviewer', 'security'];
+    s += col(cx[0], 'DEFINE') + col(cx[1], 'VALIDATE') + col(cx[2], 'COMPOSE') + col(cx[3], 'ADAPT') + col(cx[4], 'USE');
+    // built-in agents that ship in packages/config/src/builtins.ts
+    var agents = ['loom', 'tapestry', 'shuttle', 'thread', 'weft'];
     var ay0 = 70, ah = 44, ag = 12;
     agents.forEach(function (a, i) {
       s += box(40, ay0 + i * (ah + ag), 140, ah, a, i === 0 ? 'var(--primary-dim)' : 'var(--border-strong)');
     });
-    // compose: workflow box
-    s += box(290, 150, 140, 70, 'migrate_repo', 'var(--primary-dim)');
-    s += '<text x="360" y="138" text-anchor="middle" font-family="var(--font-mono)" font-size="10" fill="var(--text-4)">workflow</text>';
-    // delegate: category router
-    s += box(530, 150, 140, 70, 'category', 'var(--secondary)');
-    s += '<text x="600" y="138" text-anchor="middle" font-family="var(--font-mono)" font-size="10" fill="var(--text-4)">routing</text>';
+    // validate: parser + schema box
+    s += box(290, 150, 140, 70, 'parse + schema', 'var(--primary-dim)');
+    s += '<text x="360" y="138" text-anchor="middle" font-family="var(--font-mono)" font-size="10" fill="var(--text-4)">weave validate</text>';
+    // compose: descriptor and prompt box
+    s += box(530, 150, 140, 70, 'descriptor', 'var(--secondary)');
+    s += '<text x="600" y="138" text-anchor="middle" font-family="var(--font-mono)" font-size="10" fill="var(--text-4)">prompt inspect</text>';
     // adapt: dashed adapter boundary
     s += dashbox(790, 120, 130, 130, 'adapter boundary');
-    s += box(810, 150, 90, 70, 'adapt', 'var(--secondary)');
-    // execute: harness boxes
-    var harness = ['claude-code', 'opencode', 'cursor', 'custom'];
+    s += box(810, 150, 90, 70, 'plugin', 'var(--secondary)');
+    // use: only OpenCode is implemented today; others are documented as placeholders
+    var harness = ['opencode', '/start-work', '/weave:start', 'runtime journal'];
     harness.forEach(function (hn, i) {
       s += box(1010, 60 + i * 74, 160, 50, hn, 'var(--border-strong)');
     });
-    // links: agents -> workflow
+    // links: config -> validation
     [70, 126, 182, 238, 294].forEach(function (y, i) {
       s += link(180, y + 22 - 22, 290, 185, 'gf', i % 2 ? 'd2' : '');
     });
-    // workflow -> category
+    // validation -> composed descriptors
     s += link(430, 185, 530, 185, 'gf', 'd2');
-    // category -> adapter
+    // composed descriptors -> adapter
     s += link(670, 185, 810, 185, 'gf', 'd3');
-    // adapter -> harness
+    // adapter -> OpenCode surfaces
     [85, 159, 233, 307].forEach(function (y, i) {
       s += link(900, 185, 1010, y, 'gf', 'd4');
     });
@@ -101,12 +101,12 @@
       adapter: '<path d="M4 12h6M14 12h6"/><rect x="9" y="8" width="6" height="8" rx="1"/>'
     };
     var data = [
-      ['01', 'agent', 'Agent definitions', 'Six canonical roles plus first-class custom roles, each with inputs, delegates and a model hint.'],
-      ['02', 'route', 'Category routing', 'Intent tags route work to roles by capability — not by name — so swaps stay safe.'],
-      ['03', 'flow', 'Workflow orchestration', 'Declare stages; dependencies are inferred from references. Cycles and dead-ends fail to compile.'],
-      ['04', 'compose', 'Prompt composition', 'Intent compiles into prompts and scaffolding, normalized into one typed graph.'],
-      ['05', 'skill', 'Skill matching', 'Capability signatures bind to roles at compile time, eliminating duplication.'],
-      ['06', 'adapter', 'Adapter architecture', 'A one-way boundary keeps core agnostic while adapters add native surfaces.']
+      ['01', 'agent', 'Agent definitions', 'Declare prompts, prompt files, model preference lists, modes, skills, triggers, and tool policy.'],
+      ['02', 'route', 'Category shuttles', 'A category with file patterns generates a specialized shuttle agent for that area of the codebase.'],
+      ['03', 'flow', 'Ordered workflows', 'Define autonomous, interactive, and gate steps with explicit completion methods and review behavior.'],
+      ['04', 'compose', 'Prompt composition', 'Merge built-ins, project config, prompt files, and Mustache context into inspectable prompts.'],
+      ['05', 'skill', 'Runtime journal', 'Track execution state and journal entries in the Weave runtime store for inspection and recovery.'],
+      ['06', 'adapter', 'OpenCode adapter', 'Materialize Weave agents and slash commands into OpenCode without moving harness logic into core.']
     ];
     var S = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">';
     document.getElementById('capGrid').innerHTML = data.map(function (d) {
@@ -126,10 +126,10 @@
       cat: '<rect x="4" y="4" width="7" height="7" rx="1"/><rect x="13" y="13" width="7" height="7" rx="1"/><path d="M11 7.5h2.5M7.5 11v2.5"/>'
     };
     var data = [
-      ['flow', 'Workflow blocks', 'Stages in declaration order; dependencies inferred, cycles rejected.'],
-      ['agent', 'Agent definitions', 'Role, inputs, delegates and skills — custom roles are first-class.'],
-      ['model', 'Model preference', 'prefer(reasoning, fallback: fast) is a hint; adapters resolve it.'],
-      ['cat', 'Categories & routing', 'Tags route work to roles by capability, never by hard-coded name.']
+      ['flow', 'Workflow blocks', 'Ordered steps use completion methods like agent_signal, plan_created, and review_verdict.'],
+      ['agent', 'Agent definitions', 'Agents can use prompt, prompt_file, prompt_append, models, skills, triggers, and tool_policy.'],
+      ['model', 'Model lists', 'models ["claude-sonnet-4-5"] is adapter-facing preference, not a hard runtime selection.'],
+      ['cat', 'Categories', 'patterns plus prompt_append create focused shuttle variants for frontend, backend, docs, or other domains.']
     ];
     document.getElementById('dslNotes').innerHTML = data.map(function (d) {
       return '<div class="dsl-note"><span class="chip">' + S + ic[d[0]] + '</svg></span>' +
@@ -140,39 +140,41 @@
   /* ---------- HOW IT WORKS ---------- */
   var howGlyphs = {
     define: defs() +
-      box(40, 40, 220, 40, 'agent planner {', 'var(--primary-dim)') +
-      '<text x="60" y="115" font-family="var(--font-mono)" font-size="12" fill="var(--ok)">✓ parser</text>' +
-      '<text x="60" y="145" font-family="var(--font-mono)" font-size="12" fill="var(--ok)">✓ resolver</text>' +
-      '<text x="60" y="175" font-family="var(--font-mono)" font-size="12" fill="var(--ok)">✓ verifier</text>' +
+      box(40, 40, 220, 40, 'agent reviewer {', 'var(--primary-dim)') +
+      '<text x="60" y="110" font-family="var(--font-mono)" font-size="12" fill="var(--ok)">prompt_file "reviewer.md"</text>' +
+      '<text x="60" y="140" font-family="var(--font-mono)" font-size="12" fill="var(--ok)">models ["claude-sonnet-4-5"]</text>' +
+      '<text x="60" y="170" font-family="var(--font-mono)" font-size="12" fill="var(--ok)">tool_policy { read allow }</text>' +
       box(40, 200, 220, 40, '}', 'var(--border-strong)'),
+    validate: defs() +
+      box(40, 100, 170, 50, 'weave validate', 'var(--primary-dim)') +
+      box(300, 70, 150, 44, 'lexer/parser') +
+      box(300, 136, 150, 44, 'zod schema') +
+      box(540, 100, 170, 50, 'typed config', 'var(--secondary)') +
+      link(210, 125, 300, 92, 'gf') + link(210, 125, 300, 158, 'gf', 'd2') +
+      link(450, 92, 540, 125, 'gf', 'd2') + link(450, 158, 540, 125, 'gf', 'd3'),
     compose: defs() +
-      box(40, 110, 130, 50, 'survey', 'var(--primary-dim)') +
-      box(230, 110, 130, 50, 'plan') +
-      box(420, 110, 130, 50, 'apply') +
-      box(610, 110, 110, 50, 'verify', 'var(--secondary)') +
-      link(170, 135, 230, 135, 'gf') + link(360, 135, 420, 135, 'gf', 'd2') + link(550, 135, 610, 135, 'gf', 'd3'),
-    delegate: defs() +
-      box(280, 110, 160, 50, 'category edit', 'var(--secondary)') +
-      box(40, 50, 150, 44, 'executor', 'var(--primary-dim)') +
-      box(40, 180, 150, 44, 'reviewer') +
-      box(540, 50, 150, 44, 'reason') +
-      box(540, 180, 150, 44, 'verify') +
-      link(190, 72, 280, 125, 'gr') + link(190, 202, 280, 145, 'gr', 'd2') +
-      link(440, 125, 540, 72, 'gf', 'd2') + link(440, 145, 540, 202, 'gf', 'd3'),
-    adapt: defs() +
+      box(40, 100, 150, 50, 'built-ins', 'var(--primary-dim)') +
+      box(230, 70, 150, 44, 'project config') +
+      box(230, 136, 150, 44, 'prompt files') +
+      box(460, 100, 170, 50, 'agent descriptor', 'var(--secondary)') +
+      box(650, 100, 90, 50, 'prompt') +
+      link(190, 125, 230, 92, 'gf') + link(190, 125, 230, 158, 'gf', 'd2') +
+      link(380, 92, 460, 125, 'gf', 'd2') + link(380, 158, 460, 125, 'gf', 'd3') +
+      link(630, 125, 650, 125, 'gf'),
+    materialize: defs() +
       dashbox(250, 70, 230, 150, 'adapter boundary') +
-      box(40, 120, 150, 50, 'intent graph', 'var(--primary-dim)') +
-      box(290, 120, 150, 50, 'adapter', 'var(--secondary)') +
-      box(560, 120, 150, 50, 'native surface') +
+      box(40, 120, 150, 50, 'descriptors', 'var(--primary-dim)') +
+      box(290, 120, 150, 50, 'opencode plugin', 'var(--secondary)') +
+      box(560, 120, 150, 50, 'subagents') +
       link(190, 145, 290, 145, 'gf') + link(440, 145, 560, 145, 'gf', 'd2'),
-    execute: defs() +
-      box(40, 110, 150, 50, 'graph runtime', 'var(--primary-dim)') +
-      box(540, 40, 170, 44, 'claude-code') +
-      box(540, 96, 170, 44, 'opencode') +
-      box(540, 152, 170, 44, 'cursor') +
-      box(540, 208, 170, 44, 'custom') +
-      link(190, 135, 540, 62, 'gf') + link(190, 135, 540, 118, 'gf', 'd2') +
-      link(190, 135, 540, 174, 'gf', 'd3') + link(190, 135, 540, 230, 'gf', 'd4')
+    use: defs() +
+      box(40, 110, 150, 50, 'OpenCode TUI', 'var(--primary-dim)') +
+      box(300, 55, 170, 44, '/start-work') +
+      box(300, 118, 170, 44, '/weave:start') +
+      box(300, 181, 170, 44, 'spawned agents') +
+      box(560, 118, 170, 44, 'runtime journal', 'var(--secondary)') +
+      link(190, 135, 300, 77, 'gf') + link(190, 135, 300, 140, 'gf', 'd2') +
+      link(190, 135, 300, 203, 'gf', 'd3') + link(470, 140, 560, 140, 'gf', 'd4')
   };
   function renderHow(step) {
     document.getElementById('howCanvas').innerHTML =
