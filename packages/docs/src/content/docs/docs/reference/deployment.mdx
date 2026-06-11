@@ -1,0 +1,35 @@
+---
+title: Deployment
+description: Public docs deployment workflow and path configuration.
+---
+
+GitHub Pages deployment lives in `.github/workflows/deploy-docs.yml`.
+
+## Trigger
+
+The workflow runs on pushes to `main` and on manual `workflow_dispatch`.
+
+## Build command
+
+```bash
+bun run docs:build
+```
+
+## Environment
+
+The workflow sets:
+
+```bash
+SITE_URL=https://${{ github.repository_owner }}.github.io
+BASE_PATH=/${{ github.event.repository.name }}
+```
+
+`packages/docs/astro.config.mjs` reads `SITE_URL` and `BASE_PATH` to configure Astro `site` and `base`.
+
+## Artifact
+
+The uploaded Pages artifact is:
+
+```text
+packages/docs/dist
+```

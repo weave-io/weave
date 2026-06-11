@@ -1,0 +1,65 @@
+---
+title: Extend Workflows
+description: Replace, insert, append, and compose workflow steps.
+---
+
+Use `extends` to derive a workflow from an existing one.
+
+## Replace a step by name
+
+```text
+workflow quick-fix {
+  extends "quick-fix"
+  version 1
+
+  step review {
+    name "Strict review"
+    type gate
+    agent weft
+    prompt "Review the fix and block on missing regression tests."
+    completion review_verdict
+    on_reject pause
+  }
+}
+```
+
+An override step with the same block name replaces the base step in place.
+
+## Insert near an anchor
+
+```text
+workflow quick-fix {
+  extends "quick-fix"
+  version 1
+
+  step security {
+    name "Security review"
+    type gate
+    agent warp
+    prompt "Audit the fix for security regressions."
+    completion review_verdict
+    on_reject pause
+    insert_after "review"
+  }
+}
+```
+
+Use either `insert_before` or `insert_after`, not both.
+
+## Use before-plan extension points
+
+Workflows may publish:
+
+```text
+extension_points {
+  before-plan
+}
+```
+
+Then top-level composition can list global before-plan step names:
+
+```text
+extend before-plan ["requirements-check"]
+```
+
+The current contract has one global `before-plan` bucket. There is no per-workflow targeting.

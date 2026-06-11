@@ -1,91 +1,14 @@
 ---
 title: Configuration Guide
-description: A quick tour of agents, categories, workflows, and settings.
-tableOfContents:
-  minHeadingLevel: 2
-  maxHeadingLevel: 3
+description: Compatibility route for current configuration docs.
 ---
 
-import CodeBlock from '../../../../components/docs/CodeBlock.astro';
-import ArticleChrome from '../../../../components/docs/ArticleChrome.astro';
-import Feedback from '../../../../components/docs/Feedback.astro';
+This route is kept for existing links. Use the current configuration docs:
 
-export const base = import.meta.env.BASE_URL;
-
-export const cAgent = `<span class="kw">agent</span> <span class="id">loom</span> <span class="pn">{</span>
-  <span class="kw">description</span> <span class="str">"Loom (Main Orchestrator)"</span>
-  <span class="kw">prompt_file</span> <span class="str">"loom.md"</span>
-  <span class="kw">models</span> <span class="pn">[</span><span class="str">"gpt-5"</span><span class="pn">]</span>
-  <span class="kw">mode</span> <span class="id">primary</span>
-<span class="pn">}</span>`;
-
-export const cCategory = `<span class="kw">category</span> <span class="id">frontend</span> <span class="pn">{</span>
-  <span class="kw">description</span> <span class="str">"Frontend UI and UX"</span>
-  <span class="kw">patterns</span> <span class="pn">[</span><span class="str">"src/components/**"</span><span class="pn">,</span> <span class="str">"**/*.tsx"</span><span class="pn">]</span>
-<span class="pn">}</span>`;
-
-export const cWorkflow = `<span class="kw">workflow</span> <span class="id">quick-fix</span> <span class="pn">{</span>
-  <span class="kw">version</span> <span class="pn">1</span>
-
-  <span class="kw">step</span> <span class="id">fix</span> <span class="pn">{</span>
-    <span class="kw">type</span> <span class="id">autonomous</span>
-    <span class="kw">agent</span> <span class="id">shuttle</span>
-    <span class="kw">prompt</span> <span class="str">"Fix: &#123;&#123;instance.goal&#125;&#125;"</span>
-    <span class="kw">completion</span> <span class="id">agent_signal</span>
-  <span class="pn">}</span>
-<span class="pn">}</span>`;
-
-{/* Article route on the canonical prototype article chrome (see workflows.mdx). */}
-
-<div class="crumbs"><a href={`${base}docs/`}>docs</a><span class="sep">›</span><a href={`${base}docs/workflows/`}>core dsl</a><span class="sep">›</span><span style="color:var(--text-2)">configuration</span></div>
-
-<ArticleChrome />
-
-<div class="meta-row">
-  <span class="tag muted">core dsl</span>
-  <span class="stable"><span class="dot"></span> stable · v0.4.7</span>
-  <span>updated 2026-05-26</span>
-</div>
-
-<p class="lede">A quick tour of the four constructs you declare in a <code>.weave</code> file — agents, categories, workflows — and how project config layers over global.</p>
-
-## Config locations
-
-<div class="deflist">
-  <div class="row"><dt>~/.weave/config.weave</dt><dd>global, user-level defaults shared across projects</dd></div>
-  <div class="row"><dt>.weave/config.weave</dt><dd>project-level config, overrides global</dd></div>
-</div>
-
-<p>Project config overrides global config for scalar values, while nested objects merge and arrays union-merge.</p>
-
-## Agents
-
-<p>Agents define prompt sources, model preferences, mode, skills, and tool policy.</p>
-
-<CodeBlock name="config.weave" id="cfg-agent" code={cAgent} />
-
-## Categories
-
-<p>Categories route file-pattern-based work to specialized shuttle agents.</p>
-
-<CodeBlock name="config.weave" id="cfg-category" code={cCategory} />
-
-## Workflows
-
-<p>Workflows define multi-step execution pipelines with explicit completion conditions.</p>
-
-<CodeBlock name="config.weave" id="cfg-workflow" code={cWorkflow} />
-
-## Next reads
-
-<ul>
-  <li><a class="link" href={`${base}docs/reference/cli/`}>CLI Reference</a> — common entry points.</li>
-  <li><a class="link" href={`${base}docs/reference/adapters/`}>Adapters</a> — current adapter targets.</li>
-</ul>
-
-<Feedback />
-
-<div class="prevnext">
-  <a href={`${base}docs/guides/core-concepts/`}><div class="dir">← Previous</div><div class="ttl">Core Concepts</div></a>
-  <a class="next" href={`${base}docs/reference/cli/`}><div class="dir">Next →</div><div class="ttl">CLI Reference</div></a>
-</div>
+- [DSL syntax](../../reference/dsl/syntax/)
+- [Agents](../../reference/dsl/agents/)
+- [Categories](../../reference/dsl/categories/)
+- [Workflows](../../reference/dsl/workflows/)
+- [Settings and disables](../../reference/dsl/settings-and-disables/)
+- [Config loading and merge](../../reference/config-loading-and-merge/)
+- [Prompt composition](../../reference/prompt-composition/)

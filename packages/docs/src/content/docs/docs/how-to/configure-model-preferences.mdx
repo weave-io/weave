@@ -1,0 +1,38 @@
+---
+title: Configure Model Preferences
+description: Set ordered model intent without assuming harness availability.
+---
+
+Model fields are ordered preferences, not guaranteed selections.
+
+## Agent model preferences
+
+```text
+agent loom {
+  models ["gpt-5", "claude-sonnet-4-5"]
+}
+```
+
+## Category model preferences
+
+```text
+category frontend {
+  patterns ["**/*.tsx"]
+  models ["gpt-5"]
+}
+```
+
+Category preferences are used by generated category shuttles.
+
+## How OpenCode resolves models
+
+The OpenCode adapter gathers harness model context, then calls the engine's pure model-intent helper. Priority is:
+
+1. adapter override
+2. UI-selected model for non-subagents
+3. category preference
+4. agent preference
+5. system default
+6. constant fallback `claude-sonnet-4-5`
+
+For explicit subagent model intent, OpenCode fails fast when the first requested model is unavailable and an available-model set was supplied.

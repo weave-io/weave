@@ -1,0 +1,22 @@
+---
+title: Adapters
+description: Current adapter support status.
+---
+
+Adapters translate normalized Weave intent into a concrete harness.
+
+## Current status
+
+| Adapter target | Status |
+| --- | --- |
+| OpenCode | Implemented today. |
+| Claude Code | Future or placeholder target; not a current implementation. |
+| Pi | Future or placeholder target; not a current implementation. |
+
+Use [OpenCode](opencode/) for current adapter behavior.
+
+## Adapter responsibilities
+
+Adapters own harness resource discovery, available-model lookup, selected-model lookup, concrete tool names, plugin/config generation, command labels, and effect projection.
+
+The engine owns normalized descriptors, prompt composition, abstract policy, model intent helpers, lifecycle semantics, and runtime state.

@@ -1,61 +1,14 @@
 ---
 title: Installation
-description: Install Weave in development and build the workspace.
-tableOfContents:
-  minHeadingLevel: 2
-  maxHeadingLevel: 3
+description: Compatibility route for install and build instructions.
 ---
 
-import CodeBlock from '../../../../components/docs/CodeBlock.astro';
-import ArticleChrome from '../../../../components/docs/ArticleChrome.astro';
-import Feedback from '../../../../components/docs/Feedback.astro';
+This route is kept for existing links.
 
-export const base = import.meta.env.BASE_URL;
+Use [Install and build](../../how-to/install-and-build/) for current Bun commands.
 
-{/* Article route on the canonical prototype article chrome (see workflows.mdx). */}
+Useful references:
 
-<div class="crumbs"><a href={`${base}docs/`}>docs</a><span class="sep">›</span><a href={`${base}docs/getting-started/`}>get started</a><span class="sep">›</span><span style="color:var(--text-2)">installation</span></div>
-
-<ArticleChrome />
-
-<div class="meta-row">
-  <span class="tag muted">get started</span>
-  <span class="stable"><span class="dot"></span> stable · v0.4.7</span>
-  <span>updated 2026-05-26</span>
-</div>
-
-<p class="lede">Clone the repository, install dependencies with Bun, build the workspace, and validate the project config.</p>
-
-## Requirements
-
-<ul>
-  <li><a class="link" href="https://bun.sh">Bun</a></li>
-  <li>Git</li>
-</ul>
-
-## Clone and install
-
-<CodeBlock name="terminal" id="in-clone">{`git clone https://github.com/weave-io/weave.git
-cd weave
-bun install`}</CodeBlock>
-
-## Build the workspace
-
-<CodeBlock name="terminal" id="in-build">{`bun run build`}</CodeBlock>
-
-## Validate the project config
-
-<CodeBlock name="terminal" id="in-validate">{`bun run validate-config`}</CodeBlock>
-
-## Useful local commands
-
-<CodeBlock name="terminal" id="in-local">{`bun run typecheck
-bun test
-bun run docs:dev`}</CodeBlock>
-
-<Feedback />
-
-<div class="prevnext">
-  <a href={`${base}docs/getting-started/`}><div class="dir">← Previous</div><div class="ttl">Getting Started</div></a>
-  <a class="next" href={`${base}docs/guides/core-concepts/`}><div class="dir">Next →</div><div class="ttl">Core Concepts</div></a>
-</div>
+- [Packages](../../reference/packages/)
+- [CLI](../../reference/cli/)
+- [Deployment](../../reference/deployment/)

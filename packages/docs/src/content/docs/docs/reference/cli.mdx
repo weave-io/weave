@@ -1,57 +1,95 @@
 ---
 title: CLI Reference
-description: Common Weave CLI entry points.
+description: Current Weave CLI commands and flags.
 tableOfContents:
   minHeadingLevel: 2
   maxHeadingLevel: 3
 ---
 
-import CodeBlock from '../../../../components/docs/CodeBlock.astro';
-import ArticleChrome from '../../../../components/docs/ArticleChrome.astro';
-import Feedback from '../../../../components/docs/Feedback.astro';
+The CLI is a setup and inspection tool. It does not launch harness runtimes.
 
-export const base = import.meta.env.BASE_URL;
+## Global flags
 
-{/* Article route on the canonical prototype article chrome (see workflows.mdx). */}
-
-<div class="crumbs"><a href={`${base}docs/`}>docs</a><span class="sep">›</span><a href={`${base}docs/reference/cli/`}>reference</a><span class="sep">›</span><span style="color:var(--text-2)">cli</span></div>
-
-<ArticleChrome />
-
-<div class="meta-row">
-  <span class="tag muted">reference</span>
-  <span class="stable"><span class="dot"></span> stable · v0.4.7</span>
-  <span>updated 2026-05-26</span>
-</div>
-
-<p class="lede">Common Weave CLI entry points for validating configs, scaffolding new projects, and migrating legacy OpenCode setups.</p>
-
-## `weave validate`
-
-<p>Validate a <code>.weave</code> config.</p>
-
-<CodeBlock name="terminal" id="cli-validate">{`weave validate --project
-weave validate --path .weave/config.weave
-weave validate --path .weave/config.weave --json`}</CodeBlock>
+| Flag | Meaning |
+| --- | --- |
+| `--help`, `-h` | Show command help. |
+| `--version`, `-V` | Show version when no command is provided. |
+| `--json` | Emit JSON for commands that support it. |
+| `--yes`, `-y` | Non-interactive confirmation for init and migrate flows. |
+| `--force` | Allow overwrites where supported; migration and init create backups as implemented. |
 
 ## `weave init`
 
-<p>Create a new config interactively or non-interactively.</p>
+Create config and optionally install detected harness integration.
 
-<CodeBlock name="terminal" id="cli-init">{`weave init
+```bash
+weave init
 weave init --scope local --yes
-weave init --scope global --yes`}</CodeBlock>
+weave init --scope global --yes
+weave init --scope local --install-dir .weave --yes
+weave init --scope local --harness opencode --yes
+weave init --scope local --all-harnesses --yes
+```
+
+Flags:
+
+| Flag | Meaning |
+| --- | --- |
+| `--scope global|local` | Choose `~/.weave` or project `.weave`. |
+| `--install-dir <dir>` | Override the directory written by init. |
+| `--harness <name>` | Configure one detected harness. |
+| `--all-harnesses` | Configure all detected supported harnesses. |
 
 ## `weave init migrate`
 
-<p>Migrate a legacy OpenCode config into the current <code>.weave</code> DSL.</p>
+Migrate legacy OpenCode JSONC config into canonical `.weave` DSL.
 
-<CodeBlock name="terminal" id="cli-migrate">{`weave init migrate --scope local
-weave init migrate --scope global`}</CodeBlock>
+```bash
+weave init migrate --scope local
+weave init migrate --scope global
+weave init migrate --scope local --yes
+weave init migrate --scope local --yes --force
+```
 
-<Feedback />
+Local source is `./.opencode/weave-opencode.jsonc`; global source is `~/.config/opencode/weave-opencode.jsonc`. Destinations are `.weave/config.weave` and `~/.weave/config.weave`.
 
-<div class="prevnext">
-  <a href={`${base}docs/guides/configuration/`}><div class="dir">← Previous</div><div class="ttl">Configuration Guide</div></a>
-  <a class="next" href={`${base}docs/reference/adapters/`}><div class="dir">Next →</div><div class="ttl">Adapters</div></a>
-</div>
+## `weave validate`
+
+Validate config.
+
+```bash
+weave validate
+weave validate --project
+weave validate --global
+weave validate --path .weave/config.weave
+weave validate --path .weave/config.weave --json
+```
+
+Without `--path`, `--project`, or `--global`, validation loads the effective config from builtins, global config, and project config.
+
+## `weave prompt`
+
+Inspect composed prompts.
+
+```bash
+weave prompt list
+weave prompt list --json
+weave prompt inspect loom
+weave prompt inspect loom --json
+```
+
+## `weave runtime`
+
+Inspect the default runtime store without mutating it.
+
+```bash
+weave runtime status
+weave runtime journal
+weave runtime journal --limit 20
+```
+
+The default database path is `.weave/runtime/weave.db` relative to the current project.
+
+## `weave run`
+
+`weave run` intentionally refuses to run harness runtimes directly and exits with guidance to launch the harness yourself, such as `opencode`. Use adapter-native explicit execution commands inside the harness.

@@ -1,0 +1,12 @@
+---
+title: Workflow Execution Model
+description: Why workflows are explicit, ordered, and adapter-invoked.
+---
+
+Workflows represent explicit execution. Ordinary chat with Loom is not automatically workflow-driven.
+
+This design prevents surprising background work. A durable workflow instance can change runtime state, acquire a lease, dispatch agents, and persist artifacts. That must happen only after an explicit user-authorized action, such as an adapter command or script.
+
+The DSL models workflow steps as an ordered list. The engine owns step topology, completion method evaluation, artifact validation, gate outcomes, and lifecycle effects. Adapters own how a user starts execution and how returned effects appear in a harness.
+
+`weave run` refuses for the same reason: Weave should not pretend to be the harness runtime. Use the harness command and its adapter-native execution surface.

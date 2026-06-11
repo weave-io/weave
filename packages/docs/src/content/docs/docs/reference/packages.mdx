@@ -1,0 +1,15 @@
+---
+title: Packages
+description: Public package responsibilities in the Weave workspace.
+---
+
+| Package | Responsibility |
+| --- | --- |
+| `@weave/core` | Lexer, parser, AST, Zod schemas, validation, config types, parse errors. |
+| `@weave/config` | Builtins, config discovery, path resolution, merge, plan state provider. |
+| `@weave/engine` | Prompt composition, descriptors, model intent, tool policy, lifecycle, runtime store, command operations, logging. |
+| `@weave/cli` | CLI argument routing, init, migrate, validate, prompt inspection, runtime inspection. |
+| `@weave/adapter-opencode` | Implemented OpenCode adapter, plugin entry, translation, command projection, tool-policy mapping. |
+| `@weave/docs` | Public Astro/Starlight documentation site. |
+
+The workspace is Bun-only. Use root scripts such as `bun run build`, `bun run typecheck`, and `bun test`.

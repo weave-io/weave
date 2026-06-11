@@ -1,0 +1,34 @@
+---
+title: Create a Category Shuttle
+description: Generate a specialized shuttle agent from a category block.
+---
+
+Categories generate `shuttle-{name}` agents from the base `shuttle` agent.
+
+```text
+category backend {
+  description "Backend APIs, services, and persistence"
+  patterns ["src/api/**", "src/server/**", "src/db/**", "**/*.go"]
+  models ["claude-sonnet-4-5"]
+  temperature 0.2
+  prompt_append "Focus on API contracts, data integrity, and backwards compatibility."
+
+  tool_policy {
+    read allow
+    write allow
+    execute ask
+    network deny
+    delegate deny
+  }
+}
+```
+
+This creates `shuttle-backend` unless an explicit agent named `shuttle-backend` already exists. Such a collision is an error; rename the category or remove the explicit agent.
+
+Inspect it:
+
+```bash
+bun packages/cli/src/main.ts prompt inspect shuttle-backend --json
+```
+
+The generated descriptor includes category metadata with the category name, description, and declared patterns. The engine does not expand the patterns into file lists.

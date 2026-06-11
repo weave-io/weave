@@ -1,0 +1,21 @@
+---
+title: Model Resolution
+description: Engine model intent priority and OpenCode adapter fail-fast behavior.
+---
+
+`models` is ordered intent, not proof that a model exists in a harness.
+
+The engine helper `resolveAdapterModelIntent()` selects by priority:
+
+1. adapter override
+2. UI-selected model, except for `subagent` agents
+3. category preference
+4. agent preference
+5. system default
+6. constant fallback `claude-sonnet-4-5`
+
+The helper is pure. It does not query harness UI state or model registries; adapters pass that context explicitly.
+
+## OpenCode adapter rule
+
+When an agent is `mode subagent`, declares models, and OpenCode supplies an available-model set, the first declared model must be available. If it is not, model resolution returns `ModelNotAvailableError` rather than silently falling back.

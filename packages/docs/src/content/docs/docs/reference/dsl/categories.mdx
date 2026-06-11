@@ -1,0 +1,45 @@
+---
+title: Categories
+description: Category fields and generated shuttle behavior.
+tableOfContents:
+  minHeadingLevel: 2
+  maxHeadingLevel: 3
+---
+
+Categories generate specialist shuttle agents.
+
+```text
+category frontend {
+  description "Frontend UI, styling, and accessibility"
+  patterns ["src/components/**", "**/*.tsx", "**/*.css"]
+  models ["gpt-5"]
+  temperature 0.2
+  prompt_append "Preserve responsive behavior and accessibility."
+
+  tool_policy {
+    read allow
+    write allow
+    execute ask
+    delegate deny
+    network deny
+  }
+}
+```
+
+## Fields
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `description` | string | Optional description. |
+| `patterns` | string[] | Required; must have at least one entry. Patterns are metadata, not engine-expanded file lists. |
+| `models` | string[] | Ordered model intent for the generated shuttle. |
+| `temperature` | number | Must be between `0` and `2`. |
+| `tool_policy` | block | Merged onto the base `shuttle` policy. |
+| `prompt_append` | string | Appended to the base shuttle prompt. |
+| `prompt_append_file` | string | File append resolved under the scope's `prompts/` directory. |
+
+## Generated names
+
+The generated agent name is `shuttle-{category}`. A category named `frontend` creates `shuttle-frontend`.
+
+If an explicit agent with that generated name already exists, materialization reports a category shuttle conflict.

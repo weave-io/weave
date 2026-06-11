@@ -1,0 +1,43 @@
+---
+title: Prompt Composition
+description: How Weave turns prompt sources and appends into adapter-facing descriptors.
+tableOfContents:
+  minHeadingLevel: 2
+  maxHeadingLevel: 3
+---
+
+The engine composes prompts before adapters receive agents.
+
+## Agent composition order
+
+1. Build delegation targets.
+2. Load `prompt` or `prompt_file`.
+3. Build a bounded template context.
+4. Render the primary source as Mustache.
+5. Render and append `prompt_append` or `prompt_append_file`, when present.
+6. Evaluate effective tool policy.
+7. Return an `AgentDescriptor`.
+
+## Template context
+
+Supported public paths include:
+
+| Path | Meaning |
+| --- | --- |
+| `agent.name` | Logical agent name. |
+| `agent.description` | Optional description. |
+| `agent.mode` | `primary`, `subagent`, or `all`. |
+| `agent.skills` | Declared skill names. |
+| `agent.isCategory` | True for generated category shuttles. |
+| `category.name` | Category name for generated shuttles. |
+| `category.description` | Category description for generated shuttles. |
+| `toolPolicy.effective.*` | Resolved capability permissions. |
+| `delegation.targets` | Eligible delegation targets. |
+
+Unsupported Mustache features such as partials, delimiter changes, helpers, lambdas, unsafe prototype paths, and unknown paths fail composition.
+
+## Workflow step prompt composition
+
+Workflow steps render `step.prompt`, then append the effective append. Step-local append wins over workflow-level append. If neither exists, the rendered step prompt is returned unchanged.
+
+There is no automatic fallback delegation block in current composition; prompts must render delegation guidance explicitly.

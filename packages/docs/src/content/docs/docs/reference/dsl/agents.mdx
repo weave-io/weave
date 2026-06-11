@@ -1,0 +1,59 @@
+---
+title: Agents
+description: Agent block fields and validation rules.
+tableOfContents:
+  minHeadingLevel: 2
+  maxHeadingLevel: 3
+---
+
+Agents declare prompt sources and adapter-facing intent.
+
+```text
+agent loom {
+  description "Loom (Main Orchestrator)"
+  display_name "Loom"
+  prompt_file "loom.md"
+  models ["claude-sonnet-4-5"]
+  mode primary
+  temperature 0.1
+  skills ["tdd"]
+
+  tool_policy {
+    read allow
+    write allow
+    execute allow
+    network ask
+    delegate allow
+  }
+
+  routing {
+    delegation_exclude ["warp"]
+  }
+
+  triggers [
+    { domain "Planning" trigger "Complex multi-step tasks" }
+  ]
+}
+```
+
+## Fields
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `description` | string | Human-readable description. |
+| `display_name` | string | Optional presentation label; identity remains the block name. |
+| `prompt` | string | Inline prompt. Mutually exclusive with `prompt_file`. |
+| `prompt_file` | string | File under the scope's `prompts/` directory. Mutually exclusive with `prompt`. |
+| `prompt_append` | string | Inline append rendered as a prompt template. Mutually exclusive with `prompt_append_file`. |
+| `prompt_append_file` | string | Append file under `prompts/`. Mutually exclusive with `prompt_append`. |
+| `models` | string[] | Ordered model intent for adapters. |
+| `temperature` | number | Must be between `0` and `2`. |
+| `mode` | `primary`, `subagent`, `all` | Defaults to `subagent` during composition when omitted. |
+| `tool_policy` | block | Abstract capabilities: `read`, `write`, `execute`, `delegate`, `network`. |
+| `routing.delegation_exclude` | string[] | Exclude named targets from delegation guidance. |
+| `skills` | string[] | Skill intent; adapters own discovery/loading. |
+| `triggers` | array | Delegation metadata with `domain` and `trigger`. |
+
+## Builtins
+
+Builtin agents are declared through the same DSL: `loom`, `tapestry`, `shuttle`, `pattern`, `thread`, `spindle`, `weft`, and `warp`. User config can override them by redeclaring the same name.

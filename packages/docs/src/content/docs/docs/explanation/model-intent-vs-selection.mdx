@@ -1,0 +1,12 @@
+---
+title: Model Intent vs Selection
+description: Why config models are preferences and adapters make final selections.
+---
+
+The `models` field expresses user intent. It is an ordered preference list, not a guarantee that a harness has those models installed or selected.
+
+The engine can compare declared preferences against adapter-supplied context, but it cannot discover available models on its own. That discovery depends on a concrete harness and belongs in the adapter.
+
+This split avoids hidden coupling. A project config can say that an agent prefers `gpt-5`; the OpenCode adapter decides whether that model is available, whether UI-selected model state applies, and whether a strict subagent preference should fail fast.
+
+When model behavior is surprising, inspect the adapter's resolution rules rather than changing core schema semantics.

@@ -1,67 +1,12 @@
 ---
 title: Core Concepts
-description: Understand the main moving parts in Weave.
-tableOfContents:
-  minHeadingLevel: 2
-  maxHeadingLevel: 3
+description: Compatibility route for conceptual docs.
 ---
 
-import ArticleChrome from '../../../../components/docs/ArticleChrome.astro';
-import Feedback from '../../../../components/docs/Feedback.astro';
+This route is kept for existing links. Use the explanation pages for current concepts:
 
-export const base = import.meta.env.BASE_URL;
-
-{/* Article route on the canonical prototype article chrome (see workflows.mdx). */}
-
-<div class="crumbs"><a href={`${base}docs/`}>docs</a><span class="sep">›</span><a href={`${base}docs/workflows/`}>core dsl</a><span class="sep">›</span><span style="color:var(--text-2)">core concepts</span></div>
-
-<ArticleChrome />
-
-<div class="meta-row">
-  <span class="tag muted">core dsl</span>
-  <span class="stable"><span class="dot"></span> stable · v0.4.7</span>
-  <span>updated 2026-05-26</span>
-</div>
-
-<p class="lede">Weave lets you describe agent systems in a harness-agnostic DSL, then materialize that intent inside a concrete harness through an adapter.</p>
-
-## Weave in one sentence
-
-<p>Weave lets you describe agent systems in a <strong style="color:var(--text)">harness-agnostic DSL</strong>, then materialize that intent inside a concrete harness through an adapter.</p>
-
-## The main pieces
-
-### `.weave` DSL
-
-<p>The DSL declares agents, categories, workflows, prompts, delegation metadata, model preferences, and settings.</p>
-
-### Core
-
-<p><code>@weave/core</code> owns the lexer, parser, AST, validation schemas, and normalized config types.</p>
-
-### Config
-
-<p><code>@weave/config</code> loads builtin defaults, discovers config files, resolves prompt files, and merges project plus global config.</p>
-
-### Engine
-
-<p><code>@weave/engine</code> turns normalized config into adapter-facing descriptors and policy decisions.</p>
-
-### Adapters
-
-<p>Adapters translate Weave's normalized intent into harness-specific behavior, tooling, and runtime integration.</p>
-
-## Design principles
-
-<div class="deflist">
-  <div class="row"><dt>DSL-first</dt><dd>Built-in agents use the same model as user-defined agents.</dd></div>
-  <div class="row"><dt>adapter-owned runtime</dt><dd>Harness-specific discovery and runtime integration stay outside the engine.</dd></div>
-  <div class="row"><dt>explicit policy</dt><dd>Tool access and delegation intent are modeled as configuration, not hidden glue code.</dd></div>
-</div>
-
-<Feedback />
-
-<div class="prevnext">
-  <a href={`${base}docs/guides/installation/`}><div class="dir">← Previous</div><div class="ttl">Installation</div></a>
-  <a class="next" href={`${base}docs/guides/configuration/`}><div class="dir">Next →</div><div class="ttl">Configuration Guide</div></a>
-</div>
+- [What is Weave?](../../explanation/what-is-weave/)
+- [Architecture](../../explanation/architecture/)
+- [Engine and adapter boundary](../../explanation/engine-adapter-boundary/)
+- [Workflow execution model](../../explanation/workflow-execution-model/)
+- [Runtime and journal design](../../explanation/runtime-and-journal-design/)

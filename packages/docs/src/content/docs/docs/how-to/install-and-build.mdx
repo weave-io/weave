@@ -1,0 +1,40 @@
+---
+title: Install and Build
+description: Install dependencies, build the workspace, and build the docs site with Bun.
+---
+
+Use Bun for every repository command.
+
+## Install dependencies
+
+```bash
+bun install
+```
+
+## Build all packages
+
+```bash
+bun run build
+```
+
+The root build runs package builds and the docs build. It does not use Node, npm, or yarn.
+
+## Typecheck all packages
+
+```bash
+bun run typecheck
+```
+
+## Build only public docs
+
+```bash
+bun run docs:build
+```
+
+## Develop docs locally
+
+```bash
+bun run docs:dev
+```
+
+Generated `dist/` directories and `node_modules/` are build artifacts and are not public documentation source.

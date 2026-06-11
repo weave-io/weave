@@ -1,0 +1,77 @@
+---
+title: Workflows
+description: Workflow block fields, step fields, completion methods, and validation constraints.
+tableOfContents:
+  minHeadingLevel: 2
+  maxHeadingLevel: 3
+---
+
+Workflows are ordered explicit execution pipelines. They are not the default conversational path.
+
+```text
+workflow quick-fix {
+  description "Fix a bug and get it reviewed"
+  version 1
+
+  step fix {
+    name "Implement the fix"
+    type autonomous
+    agent shuttle
+    prompt "Fix the following issue: {{instance.goal}}"
+    completion agent_signal
+  }
+
+  step review {
+    name "Code review"
+    type gate
+    agent weft
+    prompt "Review the fix for: {{instance.goal}}"
+    completion review_verdict
+    on_reject pause
+  }
+}
+```
+
+## Workflow fields
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `description` | string | Optional workflow description. |
+| `version` | positive integer | Required. |
+| `extends` | string | Optional base workflow name. |
+| `extension_points` | block | Currently supports `before-plan`. |
+| `prompt_append` | string | Workflow-level step prompt append. |
+| `prompt_append_file` | string | Workflow-level append file. |
+| `step` | block | One or more steps unless `extends` is set. |
+
+## Step fields
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| step block name | identifier | Becomes the stable step `name`. |
+| inner `name` | string | Becomes `display_name`. |
+| `role` | `planning` | Required exactly once when publishing `before-plan`; otherwise at most one planning step. |
+| `type` | `autonomous`, `interactive`, `gate` | Required. |
+| `agent` | string/identifier | Agent to dispatch. |
+| `prompt` | string | Required prompt template. |
+| `prompt_append` | string | Step-local append. |
+| `prompt_append_file` | string | Step-local append file. |
+| `completion` | method | Required completion method. |
+| `inputs` | array | Artifact declarations with `name` and `description`. |
+| `outputs` | array | Artifact declarations with `name` and `description`. |
+| `on_reject` | `pause`, `fail`, `retry` | Only valid for `gate` steps. |
+| `reconciliation_handlers` | array | Reasons: `execution-mismatch`, `user-revision-request`, `review-rejection`, `security-rejection`. |
+| `insert_before` | string | Extension anchor; mutually exclusive with `insert_after`. |
+| `insert_after` | string | Extension anchor; mutually exclusive with `insert_before`. |
+
+## Completion methods
+
+| Syntax | Meaning |
+| --- | --- |
+| `completion agent_signal` | Agent signals completion. |
+| `completion user_confirm` | User confirms completion. |
+| `completion review_verdict` | Gate returns approve/reject. |
+| `completion plan_created { plan_name "{{instance.slug}}" }` | Named plan exists. |
+| `completion plan_complete { plan_name "{{instance.slug}}" }` | Named plan is complete. |
+
+`plan_created` and `plan_complete` require adapter-supplied plan state during lifecycle execution.

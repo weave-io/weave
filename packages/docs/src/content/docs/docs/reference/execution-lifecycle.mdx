@@ -1,0 +1,30 @@
+---
+title: Execution Lifecycle
+description: Engine-owned lifecycle methods and explicit execution boundary.
+tableOfContents:
+  minHeadingLevel: 2
+  maxHeadingLevel: 3
+---
+
+The execution lifecycle is engine-owned and adapter-driven. Adapters map harness events into normalized lifecycle inputs; the engine updates Weave runtime state and emits abstract effects.
+
+## Lifecycle methods
+
+| Method | Purpose |
+| --- | --- |
+| `observeSession` | Record a session observation. |
+| `startExecution` | Acquire a lease and begin a workflow instance. |
+| `resumeExecution` | Resume paused or blocked execution. |
+| `handleUserInterrupt` | Pause or cancel by explicit user signal. |
+| `dispatchStep` | Resolve and emit the next step dispatch effect. |
+| `completeStep` | Record step completion and advance, pause, retry, fail, or complete. |
+| `beforeTool` | Evaluate abstract policy before a tool call. |
+| `inspectExecution` | Read execution state without side effects. |
+
+## Boundary invariant
+
+`startExecution` is the sole durable execution entry point. Idle hooks, session observations, background adapter events, and ordinary conversation must not implicitly start workflows.
+
+## Effects
+
+Lifecycle methods emit pure effect records such as `dispatch-agent`, `pause-execution`, and `complete-execution`. Adapters apply those effects in the concrete harness.

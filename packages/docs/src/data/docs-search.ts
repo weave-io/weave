@@ -20,7 +20,12 @@
  */
 
 /** Visual grouping shown as a `.grp` caption in the palette results list. */
-export type DocsSearchGroup = "Pages" | "Specs · ADRs";
+export type DocsSearchGroup =
+  | "Pages"
+  | "Tutorials"
+  | "How-to"
+  | "Reference"
+  | "Explanation";
 
 /** Icon key — maps to the inline SVG set in `docs.js` (`ICON.page` / `ICON.spec`). */
 export type DocsSearchIcon = "page" | "spec";
@@ -43,121 +48,338 @@ export interface DocsSearchEntry {
 }
 
 /**
- * Search index for the live docs routes.
- *
- * Hrefs map to the content routes that exist under `src/content/docs/docs/`:
- *   docs/                         → Introduction (docs/index.mdx)
- *   docs/workflows/               → Workflows (canonical article)
- *   docs/getting-started/         → Getting Started
- *   docs/guides/installation/     → Installation
- *   docs/guides/configuration/    → Configuration Guide
- *   docs/guides/core-concepts/    → Core Concepts
- *   docs/reference/cli/           → CLI Reference
- *   docs/reference/adapters/      → Adapters
- *
- * Section anchors use Astro's auto-generated heading slugs so that selecting a
- * result lands on the matching `#<slug>` section (and the TOC scrollspy in
- * docs.js highlights it).
+ * Search index for the live public docs routes under
+ * `src/content/docs/docs/`. Hrefs are base-less and are joined to BASE_URL by
+ * PageFrame before the palette receives them.
  */
 export const docsSearchData: DocsSearchEntry[] = [
-  // --- Pages -------------------------------------------------------------
   {
     group: "Pages",
-    title: "Introduction",
-    subtitle: "get started · what is Weave",
+    title: "Weave Documentation",
+    subtitle: "docs home · Diataxis map",
     href: "docs/",
     icon: "page",
   },
   {
-    group: "Pages",
+    group: "Tutorials",
     title: "Quickstart",
-    subtitle: "anatomy of a .weave file",
-    href: "docs/#anatomy-of-a-weave-file",
+    subtitle: "create and validate .weave config",
+    href: "docs/tutorials/quickstart/",
     icon: "page",
   },
   {
-    group: "Pages",
-    title: "Getting Started",
-    subtitle: "install · validate · packages",
-    href: "docs/getting-started/",
+    group: "Tutorials",
+    title: "OpenCode Plugin",
+    subtitle: "implemented adapter setup",
+    href: "docs/tutorials/opencode-plugin/",
     icon: "page",
   },
   {
-    group: "Pages",
-    title: "Installation",
-    subtitle: "guide · build the workspace",
-    href: "docs/guides/installation/",
+    group: "Tutorials",
+    title: "First Explicit Execution",
+    subtitle: "adapter-native workflow start",
+    href: "docs/tutorials/first-explicit-execution/",
     icon: "page",
   },
   {
-    group: "Pages",
-    title: "Workflows",
-    subtitle: "core dsl · the DAG model",
-    href: "docs/workflows/",
+    group: "How-to",
+    title: "Install and Build",
+    subtitle: "Bun commands",
+    href: "docs/how-to/install-and-build/",
     icon: "page",
   },
   {
-    group: "Pages",
-    title: "Configuration Guide",
-    subtitle: "core dsl · agents, categories, settings",
-    href: "docs/guides/configuration/",
+    group: "How-to",
+    title: "Initialize Config",
+    subtitle: "global and project config",
+    href: "docs/how-to/initialize-config/",
     icon: "page",
   },
   {
-    group: "Pages",
-    title: "Core Concepts",
-    subtitle: "core dsl · the moving parts",
-    href: "docs/guides/core-concepts/",
+    group: "How-to",
+    title: "Migrate Legacy OpenCode Config",
+    subtitle: "weave-opencode.jsonc to .weave",
+    href: "docs/how-to/migrate-legacy-opencode-config/",
     icon: "page",
   },
   {
-    group: "Pages",
+    group: "How-to",
+    title: "Validate Config",
+    subtitle: "project global explicit effective",
+    href: "docs/how-to/validate-config/",
+    icon: "page",
+  },
+  {
+    group: "How-to",
+    title: "Inspect Prompts",
+    subtitle: "prompt list and inspect",
+    href: "docs/how-to/inspect-prompts/",
+    icon: "page",
+  },
+  {
+    group: "How-to",
+    title: "Customize Builtin Agent",
+    subtitle: "override builtins",
+    href: "docs/how-to/customize-builtin-agent/",
+    icon: "page",
+  },
+  {
+    group: "How-to",
+    title: "Add Custom Agent",
+    subtitle: "agent block recipe",
+    href: "docs/how-to/add-custom-agent/",
+    icon: "page",
+  },
+  {
+    group: "How-to",
+    title: "Create Category Shuttle",
+    subtitle: "generated shuttle agents",
+    href: "docs/how-to/create-category-shuttle/",
+    icon: "page",
+  },
+  {
+    group: "How-to",
+    title: "Configure Prompt Appends",
+    subtitle: "agent category workflow step",
+    href: "docs/how-to/configure-prompt-appends/",
+    icon: "page",
+  },
+  {
+    group: "How-to",
+    title: "Configure Tool Policy",
+    subtitle: "abstract capabilities",
+    href: "docs/how-to/configure-tool-policy/",
+    icon: "page",
+  },
+  {
+    group: "How-to",
+    title: "Configure Model Preferences",
+    subtitle: "ordered model intent",
+    href: "docs/how-to/configure-model-preferences/",
+    icon: "page",
+  },
+  {
+    group: "How-to",
+    title: "Extend Workflows",
+    subtitle: "extends insert_before insert_after",
+    href: "docs/how-to/extend-workflows/",
+    icon: "page",
+  },
+  {
+    group: "How-to",
+    title: "Inspect Runtime State",
+    subtitle: "status and journal",
+    href: "docs/how-to/inspect-runtime-state/",
+    icon: "page",
+  },
+  {
+    group: "How-to",
+    title: "Deploy Docs to GitHub Pages",
+    subtitle: "docs workflow and BASE_PATH",
+    href: "docs/how-to/deploy-docs-to-github-pages/",
+    icon: "page",
+  },
+  {
+    group: "How-to",
+    title: "Maintain Public Docs",
+    subtitle: "source of truth and validation",
+    href: "docs/how-to/maintain-public-docs/",
+    icon: "page",
+  },
+  {
+    group: "Reference",
     title: "CLI Reference",
-    subtitle: "reference · command entry points",
+    subtitle: "init validate prompt runtime run",
     href: "docs/reference/cli/",
-    icon: "page",
+    icon: "spec",
   },
   {
-    group: "Pages",
+    group: "Reference",
+    title: "DSL Syntax",
+    subtitle: "top-level forms and values",
+    href: "docs/reference/dsl/syntax/",
+    icon: "spec",
+  },
+  {
+    group: "Reference",
+    title: "DSL Agents",
+    subtitle: "agent fields and builtins",
+    href: "docs/reference/dsl/agents/",
+    icon: "spec",
+  },
+  {
+    group: "Reference",
+    title: "DSL Categories",
+    subtitle: "category shuttles",
+    href: "docs/reference/dsl/categories/",
+    icon: "spec",
+  },
+  {
+    group: "Reference",
+    title: "DSL Workflows",
+    subtitle: "steps and completion methods",
+    href: "docs/reference/dsl/workflows/",
+    icon: "spec",
+  },
+  {
+    group: "Reference",
+    title: "Settings and Disables",
+    subtitle: "log level runtime journal disables",
+    href: "docs/reference/dsl/settings-and-disables/",
+    icon: "spec",
+  },
+  {
+    group: "Reference",
+    title: "Workflow Extension",
+    subtitle: "extends and before-plan",
+    href: "docs/reference/dsl/workflow-extension/",
+    icon: "spec",
+  },
+  {
+    group: "Reference",
+    title: "Config Loading and Merge",
+    subtitle: "builtins global project merge",
+    href: "docs/reference/config-loading-and-merge/",
+    icon: "spec",
+  },
+  {
+    group: "Reference",
+    title: "Prompt Composition",
+    subtitle: "templates descriptors appends",
+    href: "docs/reference/prompt-composition/",
+    icon: "spec",
+  },
+  {
+    group: "Reference",
+    title: "Tool Policy",
+    subtitle: "allow deny ask capabilities",
+    href: "docs/reference/tool-policy/",
+    icon: "spec",
+  },
+  {
+    group: "Reference",
+    title: "Model Resolution",
+    subtitle: "intent priority and adapter context",
+    href: "docs/reference/model-resolution/",
+    icon: "spec",
+  },
+  {
+    group: "Reference",
+    title: "Execution Lifecycle",
+    subtitle: "lifecycle methods and effects",
+    href: "docs/reference/execution-lifecycle/",
+    icon: "spec",
+  },
+  {
+    group: "Reference",
+    title: "Runtime Store and Journal",
+    subtitle: "weave.db and sanitized output",
+    href: "docs/reference/runtime-store-and-journal/",
+    icon: "spec",
+  },
+  {
+    group: "Reference",
+    title: "Runtime Commands",
+    subtitle: "command operations and labels",
+    href: "docs/reference/runtime-commands/",
+    icon: "spec",
+  },
+  {
+    group: "Reference",
     title: "Adapters",
-    subtitle: "reference · current adapter targets",
+    subtitle: "adapter support status",
     href: "docs/reference/adapters/",
+    icon: "spec",
+  },
+  {
+    group: "Reference",
+    title: "OpenCode Adapter",
+    subtitle: "plugin and command surfaces",
+    href: "docs/reference/adapters/opencode/",
+    icon: "spec",
+  },
+  {
+    group: "Reference",
+    title: "Packages",
+    subtitle: "workspace package responsibilities",
+    href: "docs/reference/packages/",
+    icon: "spec",
+  },
+  {
+    group: "Reference",
+    title: "Deployment",
+    subtitle: "GitHub Pages docs deploy",
+    href: "docs/reference/deployment/",
+    icon: "spec",
+  },
+  {
+    group: "Explanation",
+    title: "What Is Weave?",
+    subtitle: "harness-agnostic config API",
+    href: "docs/explanation/what-is-weave/",
     icon: "page",
   },
-  // --- Workflows article sections ---------------------------------------
   {
-    group: "Specs · ADRs",
-    title: "Workflows · Overview",
-    subtitle: "spec · stages and the DAG",
-    href: "docs/workflows/#overview",
-    icon: "spec",
+    group: "Explanation",
+    title: "Architecture",
+    subtitle: "core config engine adapters",
+    href: "docs/explanation/architecture/",
+    icon: "page",
   },
   {
-    group: "Specs · ADRs",
-    title: "Workflows · Syntax",
-    subtitle: "spec · stage shape",
-    href: "docs/workflows/#syntax",
-    icon: "spec",
+    group: "Explanation",
+    title: "Engine and Adapter Boundary",
+    subtitle: "ownership rules",
+    href: "docs/explanation/engine-adapter-boundary/",
+    icon: "page",
   },
   {
-    group: "Specs · ADRs",
-    title: "Workflows · Inputs & dependencies",
-    subtitle: "spec · inferred edges, fan-in with +",
-    href: "docs/workflows/#inputs--dependencies",
-    icon: "spec",
+    group: "Explanation",
+    title: "Config Merge Model",
+    subtitle: "why layering works this way",
+    href: "docs/explanation/config-merge-model/",
+    icon: "page",
   },
   {
-    group: "Specs · ADRs",
-    title: "Workflows · Runtime contract",
-    subtitle: "spec · adapter-facing surface",
-    href: "docs/workflows/#runtime-contract",
-    icon: "spec",
+    group: "Explanation",
+    title: "Prompt Composition Design",
+    subtitle: "bounded templates",
+    href: "docs/explanation/prompt-composition-design/",
+    icon: "page",
   },
   {
-    group: "Specs · ADRs",
-    title: "Workflows · Common errors",
-    subtitle: "spec · E2101–W2110",
-    href: "docs/workflows/#common-errors",
-    icon: "spec",
+    group: "Explanation",
+    title: "Workflow Execution Model",
+    subtitle: "explicit user-authorized execution",
+    href: "docs/explanation/workflow-execution-model/",
+    icon: "page",
+  },
+  {
+    group: "Explanation",
+    title: "Runtime and Journal Design",
+    subtitle: "durable state and safety",
+    href: "docs/explanation/runtime-and-journal-design/",
+    icon: "page",
+  },
+  {
+    group: "Explanation",
+    title: "Model Intent vs Selection",
+    subtitle: "preferences not availability",
+    href: "docs/explanation/model-intent-vs-selection/",
+    icon: "page",
+  },
+  {
+    group: "Explanation",
+    title: "Tool Policy Design",
+    subtitle: "abstract capabilities",
+    href: "docs/explanation/tool-policy-design/",
+    icon: "page",
+  },
+  {
+    group: "Explanation",
+    title: "Public vs Internal Docs",
+    subtitle: "current support vs future specs",
+    href: "docs/explanation/public-vs-internal-docs/",
+    icon: "page",
   },
 ];

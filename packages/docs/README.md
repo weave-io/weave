@@ -9,32 +9,19 @@ bun run docs:dev
 bun run docs:build
 ```
 
-## Fidelity reference (read this first)
+## Public documentation structure
 
-This package is being rebuilt as an **exact visual/interaction replica** of a
-prototype bundle. The prototype — not the current text — is the source of truth.
+Public docs live under `src/content/docs/docs/` and follow Diataxis:
 
-**Single reference:** [`src/prototype/README.md`](src/prototype/README.md)
-documents the fidelity baseline, the prototype-file → route map, the asset
-destinations, the Starlight override strategy, per-route structural anchors, the
-interaction contract, and the fidelity checks that must pass.
+| Group | Route prefix | Purpose |
+| --- | --- | --- |
+| Tutorials | `/docs/tutorials/` | Teach first successful paths. |
+| How-to | `/docs/how-to/` | Solve specific setup, config, runtime, and maintenance tasks. |
+| Reference | `/docs/reference/` | Describe current CLI, DSL, config, engine, runtime, adapter, package, and deployment behavior. |
+| Explanation | `/docs/explanation/` | Explain architecture and design rationale. |
 
-Implementation plan:
-[`../../.weave/plans/public-docs-prototype-replica.md`](../../.weave/plans/public-docs-prototype-replica.md).
-
-### Route map at a glance
-
-| Public route       | Prototype file        | Astro entry (target)                  |
-| ------------------ | --------------------- | ------------------------------------- |
-| `/`                | `landing-static.html` | `src/pages/index.astro`               |
-| `/docs/`           | `docs-home.html`      | `src/content/docs/docs/index.mdx`     |
-| `/docs/workflows/` | `docs-article.html`   | `src/content/docs/docs/workflows.mdx` |
-| `/design-system/`  | `design-system.html`  | `src/pages/design-system.astro`       |
-
-The fidelity baseline assets are `landing-static.html`, `docs-home.html`,
-`docs-article.html`, `tokens.css`, `docs.css`, `theme.js`, `docs.js`,
-`landing.js`, and `logo.png`. See the prototype README for where each lands in
-this package and which fidelity checks must pass.
+Compatibility routes remain at `/docs/getting-started/`, `/docs/workflows/`,
+and `/docs/guides/*/`; they point readers to the current comprehensive docs.
 
 ## Content sources
 
@@ -43,4 +30,5 @@ this package and which fidelity checks must pass.
 - design-system QA route: `src/pages/design-system.astro`
 
 GitHub Pages deployment is defined in `../../.github/workflows/deploy-docs.yml`
-and publishes `packages/docs/dist`.
+and publishes `packages/docs/dist`. The workflow runs `bun run docs:build` with
+`SITE_URL` and `BASE_PATH` set for GitHub Pages subpath deployment.

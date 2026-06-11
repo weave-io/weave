@@ -1,0 +1,12 @@
+---
+title: What Is Weave?
+description: The mental model for Weave as a harness-agnostic configuration API.
+---
+
+Weave lets developers describe an agent system once in `.weave` DSL. The core packages parse, validate, merge, and normalize that intent. Adapters translate it into a concrete harness.
+
+The closest analogy is an API layer. Weave owns primitives such as agents, prompts, model intent, abstract tool policy, categories, and explicit workflows. A harness owns how those primitives become plugin config, commands, UI affordances, and runtime effects.
+
+Weave is not a universal runtime launcher. The CLI initializes, migrates, validates, inspects prompts, and inspects runtime state. Actual harness sessions start with the harness command, such as `opencode`.
+
+Today, OpenCode is the implemented adapter. Claude Code and Pi remain future or placeholder targets until adapter code ships and these public docs change.

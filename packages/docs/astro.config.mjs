@@ -99,31 +99,95 @@ export default defineConfig({
       editLink: {
         baseUrl: 'https://github.com/weave-io/weave/edit/main/packages/docs/',
       },
-      // Sidebar mirrors the prototype `docs-article.html` `.nav-group` structure
-      // (Get started / Core DSL / Guides / Reference). The Sidebar override maps
-      // these groups onto the prototype `.nav-group` markup, and Starlight marks
-      // the current route with `aria-current="page"` automatically. `Workflows`
-      // is the canonical prototype article and the only `Core DSL` page that
-      // exists as its own route; the remaining entries point at real content
-      // routes so no link is broken. Group badges reproduce the prototype
-      // `.badge` pills.
+      // Public docs use Diataxis groups. Compatibility pages remain exposed so
+      // old links stay valid, but they point readers to the current structure.
       sidebar: [
         {
-          label: 'Get started',
-          items: ['docs', 'docs/getting-started', 'docs/guides/installation'],
+          label: 'Tutorials',
+          items: [
+            'docs',
+            'docs/tutorials/quickstart',
+            'docs/tutorials/opencode-plugin',
+            'docs/tutorials/first-explicit-execution',
+          ],
         },
         {
-          label: 'Core DSL',
-          badge: '3',
+          label: 'How-to',
           items: [
-            'docs/workflows',
-            'docs/guides/configuration',
-            'docs/guides/core-concepts',
+            'docs/how-to/install-and-build',
+            'docs/how-to/initialize-config',
+            'docs/how-to/migrate-legacy-opencode-config',
+            'docs/how-to/validate-config',
+            'docs/how-to/inspect-prompts',
+            'docs/how-to/customize-builtin-agent',
+            'docs/how-to/add-custom-agent',
+            'docs/how-to/create-category-shuttle',
+            'docs/how-to/configure-prompt-appends',
+            'docs/how-to/configure-tool-policy',
+            'docs/how-to/configure-model-preferences',
+            'docs/how-to/extend-workflows',
+            'docs/how-to/inspect-runtime-state',
+            'docs/how-to/deploy-docs-to-github-pages',
+            'docs/how-to/maintain-public-docs',
           ],
         },
         {
           label: 'Reference',
-          items: [{ autogenerate: { directory: 'docs/reference' } }],
+          items: [
+            'docs/reference/cli',
+            {
+              label: 'DSL',
+              items: [
+                'docs/reference/dsl/syntax',
+                'docs/reference/dsl/agents',
+                'docs/reference/dsl/categories',
+                'docs/reference/dsl/workflows',
+                'docs/reference/dsl/settings-and-disables',
+                'docs/reference/dsl/workflow-extension',
+              ],
+            },
+            'docs/reference/config-loading-and-merge',
+            'docs/reference/prompt-composition',
+            'docs/reference/tool-policy',
+            'docs/reference/model-resolution',
+            'docs/reference/execution-lifecycle',
+            'docs/reference/runtime-store-and-journal',
+            'docs/reference/runtime-commands',
+            {
+              label: 'Adapters',
+              items: [
+                'docs/reference/adapters',
+                'docs/reference/adapters/opencode',
+              ],
+            },
+            'docs/reference/packages',
+            'docs/reference/deployment',
+          ],
+        },
+        {
+          label: 'Explanation',
+          items: [
+            'docs/explanation/what-is-weave',
+            'docs/explanation/architecture',
+            'docs/explanation/engine-adapter-boundary',
+            'docs/explanation/config-merge-model',
+            'docs/explanation/prompt-composition-design',
+            'docs/explanation/workflow-execution-model',
+            'docs/explanation/runtime-and-journal-design',
+            'docs/explanation/model-intent-vs-selection',
+            'docs/explanation/tool-policy-design',
+            'docs/explanation/public-vs-internal-docs',
+          ],
+        },
+        {
+          label: 'Compatibility',
+          items: [
+            'docs/getting-started',
+            'docs/workflows',
+            'docs/guides/installation',
+            'docs/guides/core-concepts',
+            'docs/guides/configuration',
+          ],
         },
       ],
     }),

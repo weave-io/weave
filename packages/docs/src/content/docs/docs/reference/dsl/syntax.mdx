@@ -1,0 +1,50 @@
+---
+title: DSL Syntax
+description: Lexical and structural syntax accepted by .weave files.
+tableOfContents:
+  minHeadingLevel: 2
+  maxHeadingLevel: 3
+---
+
+`.weave` is a custom declarative DSL. It is not JSON, YAML, or TypeScript.
+
+## Top-level forms
+
+| Form | Purpose |
+| --- | --- |
+| `agent name { ... }` | Declare or override an agent. |
+| `category name { ... }` | Declare a category that generates a shuttle agent. |
+| `workflow name { ... }` | Declare or extend an explicit execution workflow. |
+| `disable agents [...]` | Disable agents by name. |
+| `disable hooks [...]` | Disable hooks by name. |
+| `disable skills [...]` | Disable skills by name. |
+| `extend before-plan [...]` | Add global before-plan extension steps. |
+| `settings { ... }` | Configure supported settings. |
+
+Unknown top-level assignments are ignored unless they are parsed into a schema-backed field. Top-level `log_level` is rejected; use `settings { log_level INFO }`.
+
+## Values
+
+| Value | Syntax |
+| --- | --- |
+| String | `"text"` |
+| Multiline string | `"""text"""` |
+| Number | `0`, `1`, `0.2` |
+| Boolean | `true`, `false` |
+| Identifier | `allow`, `primary`, `agent_signal` |
+| Array | `["a", "b"]` |
+| Inline block | `{ name "value" description "text" }` |
+
+Commas in arrays are optional after values. Properties use `key value`, with no colon and no semicolon.
+
+## Bare flags
+
+Inside blocks, an identifier followed by a closing brace can act as a boolean `true` flag. Current public use is:
+
+```text
+extension_points {
+  before-plan
+}
+```
+
+The validator normalizes `before-plan` to the schema field `before_plan`.

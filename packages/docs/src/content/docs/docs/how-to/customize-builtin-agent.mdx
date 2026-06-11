@@ -1,0 +1,35 @@
+---
+title: Customize a Builtin Agent
+description: Override builtin agent fields from global or project config.
+---
+
+Builtin agents are ordinary `.weave` declarations loaded before user config. To customize one, redeclare the same agent name in `~/.weave/config.weave` or `.weave/config.weave`.
+
+## Override Loom's model and append guidance
+
+```text
+agent loom {
+  models ["gpt-5"]
+  prompt_append "Prefer concise status updates and ask before network access."
+}
+```
+
+Scalars override lower-priority values. Objects deep-merge. Arrays union-merge with higher-priority entries first.
+
+## Replace a builtin prompt
+
+```text
+agent weft {
+  prompt_file "weft-project.md"
+}
+```
+
+Create `.weave/prompts/weft-project.md` in the same config scope.
+
+## Disable a builtin agent
+
+```text
+disable agents ["warp"]
+```
+
+Disabled agents are omitted from prompt listing, materialization, and delegation targets.

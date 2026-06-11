@@ -1,0 +1,26 @@
+---
+title: Inspect Runtime State
+description: Read the default runtime store status and sanitized journal entries.
+---
+
+The CLI runtime commands are read-only.
+
+## Show runtime status
+
+```bash
+bun packages/cli/src/main.ts runtime status
+```
+
+This reads `.weave/runtime/weave.db` under the current project. If the database is absent, the command exits `0` and creates nothing.
+
+## Show journal entries
+
+```bash
+bun packages/cli/src/main.ts runtime journal --limit 50
+```
+
+`--limit` must be a positive integer. The default is `50`.
+
+## What output excludes
+
+Runtime command output is sanitized. It does not include raw prompts, completions, transcripts, credentials, cookies, authorization headers, tokens, or raw provider payloads.

@@ -1,0 +1,12 @@
+---
+title: Config Merge Model
+description: Why Weave merges builtins, global config, and project config the way it does.
+---
+
+Weave config is layered so shared defaults and project-specific choices can coexist.
+
+Builtins are ordinary DSL and load first. Global config comes next and captures user-level preferences. Project config comes last and expresses repository-specific policy.
+
+Scalars use last-defined-wins because a single selected value such as `temperature` or `mode` should be unambiguous. Objects deep-merge so users can override one field without copying the entire builtin declaration. Arrays union-merge with higher-priority entries first so model preferences and disabled lists can be extended while preserving order.
+
+Workflows need special handling because steps are ordered behavior. `extends` enables replacement, anchored insertion, and append semantics instead of treating step lists as opaque arrays.

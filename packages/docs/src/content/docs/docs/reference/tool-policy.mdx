@@ -1,0 +1,20 @@
+---
+title: Tool Policy
+description: Abstract capability policy and adapter mapping contract.
+---
+
+Weave recognizes five abstract capabilities:
+
+| Capability | Meaning |
+| --- | --- |
+| `read` | File or resource reads. |
+| `write` | File or resource writes. |
+| `execute` | Process or command execution. |
+| `delegate` | Spawning or routing to subagents. |
+| `network` | Network access. |
+
+Each capability accepts `allow`, `deny`, or `ask`.
+
+Missing capabilities default to `ask` when the engine builds `EffectiveToolPolicy`.
+
+Adapters own concrete mapping. The engine never hard-codes harness tool names. If an adapter supplies an unmapped concrete tool identifier, the engine returns an explicit `unmapped` decision; adapters must not treat it as implicit allow.
