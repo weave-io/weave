@@ -1,0 +1,334 @@
+---
+/**
+ * DocsHomeHero — the prototype `.home-hero` block (Hero override).
+ *
+ * Source of truth: prototype `docs-home.html` (`<div class="home-hero">`,
+ * lines 161-169 of the bundle). The prototype renders the docs-home title
+ * inside `.home-hero` rather than a separate page-title `<h1>`. Starlight's
+ * `Page.astro` only suppresses the auto `PageTitle` (`.prose h1#_top`) when a
+ * route declares `hero` frontmatter — in which case it renders the `Hero`
+ * component instead. This override is registered as Starlight's `Hero`
+ * (astro.config.mjs) so the docs index emits `.home-hero` as the first child of
+ * `.docs-main`, matching the prototype DOM exactly with no duplicate heading.
+ *
+ * Only pages that set `hero` frontmatter render this component, so registering
+ * it globally is inert for every other route.
+ *
+ * The page-scoped CSS from the prototype's inline `<style>` block
+ * (`docs-home.html` lines 11-52, 73) is carried here as `is:global` so the home
+ * hero and the section-layout classes used in the MDX body (`secn`, `two`,
+ * `three`, `start-card`, `path-card`, `recent`, `kind-chip`, `conv`) are styled
+ * identically to the prototype. The shared classes (`tag`, `w-btn`, `codeblock`,
+ * `term`, `callout`, `prevnext`, `prose`) and the command-palette styling are
+ * already provided by the ported `tokens.css` / `docs.css` design system.
+ *
+ * The Quickstart CTA targets the Anatomy section on this page (the markdown
+ * heading's auto slug `#anatomy-of-a-weave-file`); the spec CTA points at the
+ * canonical Workflows article via `import.meta.env.BASE_URL`.
+ */
+const base = import.meta.env.BASE_URL;
+const workflowsHref = `${base}docs/workflows/`;
+---
+
+{/* `id="_top"` is the target for Starlight's shell "Skip to content" link.
+    On routes with a PageTitle, Starlight puts `_top` on the `<h1>`; this docs
+    page suppresses PageTitle via `hero` frontmatter, so the hero (the first
+    content element) carries it instead. The TableOfContents override already
+    drops `_top`, so it never appears in the on-this-page list. */}
+<div class="home-hero" id="_top">
+  <span class="tag">documentation · v0.4.7</span>
+  <h1>Welcome to Weave.</h1>
+  <p class="lede">
+    Author intent once. Weave compiles a single <code
+      style="font-family:var(--font-mono);background:var(--bg-inset);border:1px solid var(--border-faint);border-radius:4px;padding:1px 5px;color:var(--text)"
+      >.weave</code
+    > file into the prompts, scaffolding and capability surfaces each AI coding harness
+    expects — and keeps the boundary between core and adapters one-way and enforced.
+  </p>
+  <div class="ctas">
+    <a class="w-btn primary" href="#anatomy-of-a-weave-file">Quickstart →</a>
+    <a class="w-btn" href={workflowsHref}>Read the Workflows spec</a>
+  </div>
+</div>
+
+<style is:global>
+  /* Starlight's heading-links integration appends an `.sl-anchor-link` after
+     every markdown heading. Its hover/opacity styling is scoped to
+     `.sl-markdown-content`, which the prototype `.prose` wrapper does not use,
+     so the icon would otherwise render as a permanently-visible inline SVG. The
+     prototype docs-home headings have no anchor link, so hide it here. This
+     `is:global` block ships only on the docs-home route (the Hero override only
+     renders when `hero` frontmatter is set), so article routes are unaffected. */
+  .docs-main .sl-anchor-link {
+    display: none;
+  }
+
+  /* --- docs-home page-scoped layout (prototype docs-home.html <style>) --- */
+  .home-hero {
+    padding-bottom: var(--s-8);
+    border-bottom: 1px solid var(--border-faint);
+    margin-bottom: var(--s-10);
+  }
+  .home-hero h1 {
+    font-size: var(--fs-3xl);
+    font-weight: 500;
+    letter-spacing: -0.025em;
+    margin: var(--s-4) 0;
+  }
+  .home-hero .lede {
+    font-size: var(--fs-lg);
+    color: var(--text-2);
+    max-width: 56ch;
+  }
+  .home-hero .ctas {
+    display: flex;
+    gap: var(--s-3);
+    margin-top: var(--s-6);
+    flex-wrap: wrap;
+  }
+
+  /* `.secn` sections are numbered with a CSS counter so the prototype `·NN`
+     marker is purely presentational. Keeping the number out of the heading text
+     means Astro's TOC extraction yields the clean prototype label ("Start here",
+     not "·01 Start here"). The counter resets on the `.prose` body that wraps
+     the sections (MarkdownContent override) and increments per `.secn`. */
+  .prose {
+    counter-reset: secn;
+  }
+  .secn {
+    margin: var(--s-12) 0;
+    scroll-margin-top: 72px;
+    counter-increment: secn;
+  }
+  /* Starlight's heading-links integration wraps each markdown heading in a
+     `<div class="sl-heading-wrapper">`, so the prototype's `.secn > h2`
+     direct-child rule no longer matches. We target the heading through the
+     wrapper to reproduce the prototype `.secn > h2` exactly, and zero the
+     `.prose h2` top margin inside a section (the `.secn` margin already provides
+     the inter-section gap, matching the prototype which gives `.secn > h2` only
+     a bottom margin). */
+  .secn > .sl-heading-wrapper {
+    margin-top: 0;
+  }
+  .secn :is(h2, .sl-heading-wrapper > h2) {
+    font-size: var(--fs-xl);
+    font-weight: 500;
+    letter-spacing: -0.015em;
+    margin-top: 0;
+    margin-bottom: var(--s-5);
+    display: flex;
+    align-items: baseline;
+    gap: var(--s-3);
+  }
+  /* Prototype `<span class="num">·NN</span>` reproduced as a counter `::before`
+     (mono, small, dim) so it renders inside the flex heading exactly like the
+     prototype number marker without polluting the TOC heading text. */
+  .secn :is(h2, .sl-heading-wrapper > h2)::before {
+    content: '·' counter(secn, decimal-leading-zero);
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+    color: var(--text-4);
+    font-weight: 500;
+  }
+  .secn > p {
+    color: var(--text-2);
+    margin-bottom: var(--s-4);
+  }
+  /* Prototype docs-home content lives OUTSIDE `.prose`, so its bullet list
+     renders with UA-default list spacing (top margin, no inter-item gap). Inside
+     the Starlight `.prose` wrapper the general `.prose ul`/`.prose li` rules
+     override that (top margin zeroed, 8px between items), which makes the
+     "What is Weave?" list taller than the prototype. Restore the prototype's
+     rendered spacing on the bare section list only. */
+  .secn > ul {
+    margin-top: var(--s-3);
+  }
+  .secn > ul > li {
+    margin-bottom: 0;
+  }
+
+  .two {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--s-4);
+  }
+  .start-card {
+    border: 1px solid var(--border);
+    border-radius: var(--r-3);
+    overflow: hidden;
+    transition:
+      border-color var(--t-fast) var(--ease-out),
+      background var(--t-fast) var(--ease-out);
+  }
+  .start-card:hover {
+    border-color: var(--border-strong);
+    background: var(--bg-elev-1);
+  }
+  .start-card .h {
+    font-family: var(--font-mono);
+    font-size: var(--fs-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-4);
+    padding: var(--s-3) var(--s-5);
+    border-bottom: 1px solid var(--border-faint);
+    background: var(--bg-inset);
+  }
+  .start-card .b {
+    padding: var(--s-5);
+  }
+  .start-card h3 {
+    font-size: var(--fs-md);
+    font-weight: 600;
+    /* Reset the inherited `.prose h3` top margin: in the prototype these cards
+       live outside `.prose`, so the heading has no top margin. Inside the
+       Starlight `.prose` wrapper the general `.prose h3 { margin-top }` rule
+       leaks in at equal specificity, so it must be explicitly zeroed here to
+       match `docs-home.html`. */
+    margin-top: 0;
+    margin-bottom: var(--s-2);
+  }
+  .start-card p {
+    color: var(--text-3);
+    font-size: var(--fs-sm);
+    /* Zero the inherited `.prose p` bottom margin: the prototype card paragraph
+       is the last child of `.b` with no trailing margin. */
+    margin-bottom: 0;
+  }
+  .start-card .f {
+    font-family: var(--font-mono);
+    font-size: var(--fs-xs);
+    color: var(--primary);
+    padding: var(--s-3) var(--s-5);
+    border-top: 1px solid var(--border-faint);
+    display: flex;
+    justify-content: space-between;
+  }
+  .start-card .f .t {
+    color: var(--text-4);
+  }
+
+  .three {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--s-4);
+  }
+  .path-card {
+    border: 1px solid var(--border);
+    border-radius: var(--r-3);
+    padding: var(--s-5);
+  }
+  .path-card h3 {
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+    color: var(--primary);
+    /* See `.start-card h3`: zero the inherited `.prose h3` top margin so the
+       card heading matches the prototype (margin-top: 0). */
+    margin-top: 0;
+    margin-bottom: var(--s-3);
+  }
+  .path-card ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    counter-reset: p;
+  }
+  .path-card li {
+    counter-increment: p;
+    display: flex;
+    gap: var(--s-3);
+    padding: 4px 0;
+    font-size: var(--fs-sm);
+    color: var(--text-2);
+    /* Zero the inherited `.prose li` bottom margin so the path-card list rows
+       are spaced only by their `padding`, matching the prototype. */
+    margin-bottom: 0;
+  }
+  .path-card li::before {
+    content: counter(p, decimal-leading-zero);
+    font-family: var(--font-mono);
+    font-size: var(--fs-xs);
+    color: var(--text-4);
+  }
+  .path-card li a:hover {
+    color: var(--primary);
+  }
+
+  .recent {
+    border: 1px solid var(--border);
+    border-radius: var(--r-3);
+    overflow: hidden;
+  }
+  .recent .r {
+    display: grid;
+    grid-template-columns: 110px 1fr auto auto;
+    gap: var(--s-4);
+    align-items: center;
+    padding: var(--s-3) var(--s-5);
+    border-bottom: 1px solid var(--border-faint);
+    transition: background var(--t-fast) var(--ease-out);
+  }
+  .recent .r:last-child {
+    border-bottom: 0;
+  }
+  .recent .r:hover {
+    background: var(--bg-elev-1);
+  }
+  .recent .date {
+    font-family: var(--font-mono);
+    font-size: var(--fs-xs);
+    color: var(--text-4);
+  }
+  .recent .ttl b {
+    font-weight: 500;
+    color: var(--text);
+  }
+  .recent .ttl span {
+    color: var(--text-3);
+    font-size: var(--fs-sm);
+  }
+  .kind-chip {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 2px 7px;
+    border-radius: var(--r-pill);
+    border: 1px solid;
+  }
+  .kind-chip.guide {
+    color: var(--primary);
+    border-color: var(--primary-dim);
+  }
+  .kind-chip.spec {
+    color: var(--secondary-2);
+    border-color: var(--secondary);
+  }
+  .kind-chip.adr {
+    color: var(--tertiary-2);
+    border-color: var(--tertiary);
+  }
+  .recent .arr {
+    color: var(--text-4);
+    font-family: var(--font-mono);
+  }
+
+  .conv {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-3);
+  }
+
+  @media (max-width: 760px) {
+    .two,
+    .three {
+      grid-template-columns: 1fr;
+    }
+    .recent .r {
+      grid-template-columns: 1fr auto;
+    }
+    .recent .date {
+      display: none;
+    }
+  }
+</style>

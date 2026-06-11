@@ -1,0 +1,509 @@
+---
+/**
+ * Design-system QA route (`/design-system/`) — Astro replica of the prototype
+ * `design-system.html`. This is a standalone reference page (not part of the
+ * Starlight docs collection) used to verify tokens, typography, spacing,
+ * radius/borders/elevation, motion, iconography, component primitives, and the
+ * weave motif against the built site's shared design tokens.
+ *
+ * The prototype DOM, classes, inline styles, and section order are reproduced
+ * verbatim. Only the following are adapted for Astro + GitHub Pages base-path
+ * safety:
+ *   - the shared `tokens.css` is imported (defines the OKLCH tokens, `.w-btn`,
+ *     `.tag`, `.theme-toggle`, `.w-kbd`, `.dot`, and `.w-topbar` chrome);
+ *   - the prototype's page-specific `<style>` block is moved into a global
+ *     `<style is:global>` so the rules also match the DOM injected at runtime
+ *     by the ramps/spacing/icons/motif scripts (Astro scoping would not tag
+ *     script-created nodes);
+ *   - `logo.png` is a bundled asset import (favicon + topbar mark);
+ *   - the shared `ThemeToggle.astro` is reused (its DOM matches the prototype
+ *     `.theme-toggle` markup exactly);
+ *   - prototype `.html` links are rewritten to their final routes through
+ *     `import.meta.env.BASE_URL` (public route shape is root-relative `/`,
+ *     `/docs/`; no project-name prefix is baked into the experience);
+ *   - `theme.js` is bundled via a Vite-processed `<script>` import, and the
+ *     prototype's generator IIFEs (ramps, spacing strip, icon grid, motif
+ *     canvas) are inlined verbatim in a second module script.
+ *
+ * The design-system topbar intentionally differs from the landing
+ * `Topbar.astro` (brand reads `weave / system`, nav is Index/System/Landing/
+ * Docs, no CTAs), so its markup is kept inline here to preserve exact prototype
+ * fidelity rather than diverging the shared landing topbar.
+ *
+ * Mount points the inline generators target are preserved exactly:
+ *   #ramps, #spaceStrip, #iconGrid, #motifCanvas, plus [data-theme-set].
+ */
+import ThemeToggle from '../components/prototype/ThemeToggle.astro';
+import logo from '../assets/prototype/logo.png';
+import '../styles/prototype/tokens.css';
+
+const base = import.meta.env.BASE_URL;
+const homeHref = base;
+const designSystemHref = `${base}design-system/`;
+const docsHref = `${base}docs/`;
+
+// Page description — preserved as document metadata for the design-system route
+// (custom Astro page, so it is owned here rather than by Starlight's Head).
+const description =
+  'The Weave design system: OKLCH color tokens, typography, spacing, motion, iconography, and component primitives, tuned in equal weight for dark and light.';
+---
+
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Weave — design system</title>
+    <meta name="description" content={description} />
+    <link rel="icon" href={logo.src} />
+  </head>
+  <body data-screen-label="Design system">
+    <header class="w-topbar">
+      <a class="brand" href={homeHref}><img src={logo.src} alt="Weave" /><span class="word">weave <span class="sub">/ system</span></span></a>
+      <nav>
+        <a href={homeHref}>Index</a>
+        <a href={designSystemHref} aria-current="page">System</a>
+        <a href={homeHref}>Landing</a>
+        <a href={docsHref}>Docs</a>
+      </nav>
+      <span class="spacer"></span>
+      <ThemeToggle />
+    </header>
+
+    <main class="ds">
+      <section class="ds-hero">
+        <div>
+          <span class="tag">01 · Design system</span>
+          <h1>The system behind Weave. Restraint as a feature.</h1>
+          <p class="intro">A tiny chromatic triad, hairlines doing the structural work, monospace carrying the data. Instruments, not illustration — tuned in equal weight for dark and light.</p>
+        </div>
+        <nav class="ds-toc" aria-label="Sections">
+          <a href="#color"><span>Color</span><span class="n">01</span></a>
+          <a href="#type"><span>Typography</span><span class="n">02</span></a>
+          <a href="#spacing"><span>Spacing</span><span class="n">03</span></a>
+          <a href="#radius"><span>Radius · borders · elevation</span><span class="n">04</span></a>
+          <a href="#motion"><span>Motion</span><span class="n">05</span></a>
+          <a href="#icons"><span>Iconography</span><span class="n">06</span></a>
+          <a href="#components"><span>Component primitives</span><span class="n">07</span></a>
+          <a href="#motif"><span>Weave motif</span><span class="n">08</span></a>
+          <a href="#rationale"><span>Rationale</span><span class="n">09</span></a>
+        </nav>
+      </section>
+
+      <!-- 01 COLOR -->
+      <section class="section" id="color">
+        <div class="sec-head">
+          <div class="left"><span class="nn">·01</span><h2>Color</h2></div>
+          <p class="rationale">Defined in oklch so every hue shares chroma and lightness logic. One blue workhorse, purple and magenta for gradients and code, a cyan highlight. Neutrals are cool graphite leaning near-black.</p>
+        </div>
+
+        <div class="swatch-grid">
+          <div class="swatch"><div class="chip" style="background:var(--bg)"></div><div class="meta"><span class="name">--bg</span><span class="val">0.16 0.012 250</span></div></div>
+          <div class="swatch"><div class="chip" style="background:var(--bg-elev-1)"></div><div class="meta"><span class="name">--bg-elev-1</span><span class="val">0.19 0.014 250</span></div></div>
+          <div class="swatch"><div class="chip" style="background:var(--bg-elev-2)"></div><div class="meta"><span class="name">--bg-elev-2</span><span class="val">0.22 0.016 250</span></div></div>
+          <div class="swatch"><div class="chip" style="background:var(--bg-inset)"></div><div class="meta"><span class="name">--bg-inset</span><span class="val">0.13 0.010 250</span></div></div>
+        </div>
+        <div class="swatch-grid">
+          <div class="swatch"><div class="chip" style="background:var(--primary)"></div><div class="meta"><span class="name">--primary</span><span class="val">0.72 0.16 250</span></div></div>
+          <div class="swatch"><div class="chip" style="background:var(--secondary)"></div><div class="meta"><span class="name">--secondary</span><span class="val">0.58 0.18 290</span></div></div>
+          <div class="swatch"><div class="chip" style="background:var(--tertiary)"></div><div class="meta"><span class="name">--tertiary</span><span class="val">0.68 0.20 330</span></div></div>
+          <div class="swatch"><div class="chip" style="background:var(--cyan)"></div><div class="meta"><span class="name">--cyan</span><span class="val">0.72 0.14 215</span></div></div>
+        </div>
+
+        <div id="ramps"></div>
+      </section>
+
+      <!-- 02 TYPE -->
+      <section class="section" id="type">
+        <div class="sec-head">
+          <div class="left"><span class="nn">·02</span><h2>Typography</h2></div>
+          <p class="rationale">Geist for everything readable, Geist Mono for code, captions, counts and chrome. No third font. Display weights stay at 500 with tight tracking; mono captions are uppercase with open tracking.</p>
+        </div>
+        <div class="type-stack">
+          <div class="type-row"><div class="spec"><b>display · 5xl</b>72 / 500 / -0.03em</div><div class="sample" style="font-size:var(--fs-5xl);font-weight:500;letter-spacing:-0.03em;line-height:1">Compose agents.</div></div>
+          <div class="type-row"><div class="spec"><b>title · 3xl</b>38 / 500 / -0.025em</div><div class="sample" style="font-size:var(--fs-3xl);font-weight:500;letter-spacing:-0.025em">Author intent once.</div></div>
+          <div class="type-row"><div class="spec"><b>heading · xl</b>22 / 500 / -0.015em</div><div class="sample" style="font-size:var(--fs-xl);font-weight:500;letter-spacing:-0.015em">The adapter boundary is one-way.</div></div>
+          <div class="type-row"><div class="spec"><b>lede · lg</b>18 / 400</div><div class="sample" style="font-size:var(--fs-lg);color:var(--text-2)">A single .weave file compiles to the surfaces each harness expects.</div></div>
+          <div class="type-row"><div class="spec"><b>body · base</b>14 / 400 / 1.55</div><div class="sample" style="font-size:var(--fs-base);color:var(--text-2)">Categories route work to roles by capability, not by name — declare <code style="font-family:var(--font-mono);background:var(--bg-inset);border:1px solid var(--border-faint);border-radius:4px;padding:1px 5px;color:var(--text)">category edit &#123; routes: [executor] &#125;</code> and the compiler resolves the rest.</div></div>
+          <div class="type-row"><div class="spec"><b>code · mono</b>14 / 500</div><div class="sample" style="font-family:var(--font-mono);font-size:var(--fs-sm)"><span class="kw">workflow</span> <span class="id">migrate_repo</span> <span class="pn">&#123;</span> <span class="kw">stages</span><span class="pn">: [</span><span class="id">survey</span><span class="pn">,</span> <span class="id">plan</span><span class="pn">] &#125;</span></div></div>
+          <div class="type-row"><div class="spec"><b>caption · mono</b>11 / 500 / +0.08em</div><div class="sample" style="font-family:var(--font-mono);font-size:var(--fs-xs);text-transform:uppercase;letter-spacing:0.08em;color:var(--text-3)">define · compose · delegate · adapt · execute</div></div>
+        </div>
+      </section>
+
+      <!-- 03 SPACING -->
+      <section class="section" id="spacing">
+        <div class="sec-head">
+          <div class="left"><span class="nn">·03</span><h2>Spacing</h2></div>
+          <p class="rationale">A 4px base scale. Component padding lives at s-4/s-6, sections breathe at s-12/s-16, and the major page rhythm steps up to s-24/s-32.</p>
+        </div>
+        <div class="space-strip" id="spaceStrip"></div>
+      </section>
+
+      <!-- 04 RADIUS -->
+      <section class="section" id="radius">
+        <div class="sec-head">
+          <div class="left"><span class="nn">·04</span><h2>Radius, borders, elevation</h2></div>
+          <p class="rationale">Radii cap at 12px — softer reads consumer-app. Borders carry most structure as 1px hairlines; shadows are reserved strictly for floating surfaces.</p>
+        </div>
+        <div class="demo-row">
+          <div class="demo-card" style="border-radius:var(--r-1)"><span class="dl">--r-1 · 4px</span><span class="dt">Controls</span></div>
+          <div class="demo-card" style="border-radius:var(--r-2)"><span class="dl">--r-2 · 6px</span><span class="dt">Buttons, inputs</span></div>
+          <div class="demo-card" style="border-radius:var(--r-3)"><span class="dl">--r-3 · 8px</span><span class="dt">Cards</span></div>
+        </div>
+        <div class="demo-row">
+          <div class="demo-card" style="border-color:var(--border-faint);border-radius:var(--r-3)"><span class="dl">--border-faint</span><span class="dt">Quiet divisions</span></div>
+          <div class="demo-card" style="border-color:var(--border);border-radius:var(--r-3)"><span class="dl">--border</span><span class="dt">Default structure</span></div>
+          <div class="demo-card" style="border-color:transparent;border-radius:var(--r-3);box-shadow:var(--shadow-md);background:var(--bg-elev-2)"><span class="dl">--shadow-md</span><span class="dt">Floating only</span></div>
+        </div>
+      </section>
+
+      <!-- 05 MOTION -->
+      <section class="section" id="motion">
+        <div class="sec-head">
+          <div class="left"><span class="nn">·05</span><h2>Motion</h2></div>
+          <p class="rationale">Three durations, two easings. Motion is informational — it reveals structure, never performs. Hover each card to feel the timing; all of it disables under reduced-motion.</p>
+        </div>
+        <div class="demo-row">
+          <div class="motion-card fast"><span class="dl">--t-fast · 120ms</span><div class="dt">State, hover, press</div><div class="track"><i></i></div></div>
+          <div class="motion-card med"><span class="dl">--t-med · 240ms</span><div class="dt">Panel, slide</div><div class="track"><i></i></div></div>
+          <div class="motion-card slow"><span class="dl">--t-slow · 480ms</span><div class="dt">Reveal, path-draw</div><div class="track"><i></i></div></div>
+        </div>
+      </section>
+
+      <!-- 06 ICONS -->
+      <section class="section" id="icons">
+        <div class="sec-head">
+          <div class="left"><span class="nn">·06</span><h2>Iconography</h2></div>
+          <p class="rationale">A single icon family: 24px viewBox, 1.4px stroke, round caps and joins, no fills, currentColor. Diagrammatic, never illustrative.</p>
+        </div>
+        <div class="icon-grid" id="iconGrid"></div>
+      </section>
+
+      <!-- 07 COMPONENTS -->
+      <section class="section" id="components">
+        <div class="sec-head">
+          <div class="left"><span class="nn">·07</span><h2>Component primitives</h2></div>
+          <p class="rationale">The working parts — buttons, tags, inputs, callouts and code blocks — composed from the same tokens so every surface stays consistent.</p>
+        </div>
+        <div class="prim-grid">
+          <div class="prim">
+            <div class="ph">buttons</div>
+            <div class="body">
+              <button class="w-btn primary">Get started ↗</button>
+              <button class="w-btn blue">Read the docs</button>
+              <button class="w-btn">Default</button>
+              <button class="w-btn ghost">Ghost</button>
+            </div>
+          </div>
+          <div class="prim">
+            <div class="ph">tags · status</div>
+            <div class="body">
+              <span class="tag">stable</span>
+              <span class="tag warm">CTA</span>
+              <span class="tag muted">draft</span>
+              <span class="meta" style="font-family:var(--font-mono);font-size:var(--fs-xs);color:var(--text-3);display:inline-flex;align-items:center;gap:6px"><span class="dot"></span> v0.4.7</span>
+            </div>
+          </div>
+          <div class="prim">
+            <div class="ph">search input</div>
+            <div class="body">
+              <div class="search-input">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg>
+                <span class="ph2">Search docs…</span>
+                <span class="w-kbd">⌘</span><span class="w-kbd">K</span>
+              </div>
+            </div>
+          </div>
+          <div class="prim">
+            <div class="ph">callouts</div>
+            <div class="body" style="flex-direction:column;align-items:stretch">
+              <div class="callout-mini"><span class="kind">Note</span><p>Weave is intentionally not a runtime.</p></div>
+              <div class="callout-mini warn"><span class="kind">Warning</span><p>Cycles and dead-ends are compile errors.</p></div>
+            </div>
+          </div>
+          <div class="prim full">
+            <div class="ph">.weave code block</div>
+            <div class="codeblock" style="border:0;border-radius:0">
+              <div class="code-head"><span class="fdot"></span><span style="color:var(--text-2)">agents.weave</span></div>
+<pre><span class="cm"># six canonical roles; custom roles are first-class</span>
+<span class="kw">agent</span> <span class="id">planner</span> <span class="pn">&#123;</span>
+  <span class="kw">role</span><span class="pn">:</span> <span class="str">"decompose intent into a stage graph"</span>
+  <span class="kw">inputs</span><span class="pn">:</span> <span class="pn">[</span><span class="id">repo</span><span class="pn">,</span> <span class="id">objective</span><span class="pn">]</span>
+  <span class="kw">delegates_to</span><span class="pn">:</span> <span class="pn">[</span><span class="id">executor</span><span class="pn">,</span> <span class="id">reviewer</span><span class="pn">]</span>
+  <span class="kw">model</span><span class="pn">:</span> <span class="fn">prefer</span><span class="pn">(</span><span class="id">reasoning</span><span class="pn">,</span> <span class="kw">fallback</span><span class="pn">:</span> <span class="id">fast</span><span class="pn">)</span>
+<span class="pn">&#125;</span></pre>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 08 MOTIF -->
+      <section class="section" id="motif">
+        <div class="sec-head">
+          <div class="left"><span class="nn">·08</span><h2>Weave motif</h2></div>
+          <p class="rationale">The only decorative element: woven traces between node-rails, echoing the mark. A .weave file is a graph of agents — so the graphic is the product.</p>
+        </div>
+        <div class="motif" id="motifCanvas"></div>
+      </section>
+
+      <!-- 09 RATIONALE -->
+      <section class="section" id="rationale">
+        <div class="sec-head">
+          <div class="left"><span class="nn">·09</span><h2>Rationale</h2></div>
+          <p class="rationale">Why the system looks the way it does.</p>
+        </div>
+        <div class="rat-grid">
+          <div class="rat"><h3>Editor-adjacent</h3><p>The palette and density borrow from code editors. Engineers should feel at home before reading a word.</p></div>
+          <div class="rat"><h3>Triad from the mark</h3><p>Blue, purple and magenta are pulled straight from the woven ribbon — shared chroma, varied hue, nothing invented.</p></div>
+          <div class="rat"><h3>Diagram as first class</h3><p>The weave motif is structural, not ornamental. It maps directly to the agent graph it represents.</p></div>
+          <div class="rat"><h3>Calm motion</h3><p>Paths draw, panels slide. Timing is short and purposeful; reduced-motion turns it all off.</p></div>
+          <div class="rat"><h3>Docs as product</h3><p>The documentation surface gets the same care as marketing — it is where engineers actually live.</p></div>
+          <div class="rat"><h3>Light and dark, equal weight</h3><p>Both themes are tuned natively in oklch. Neither is a translation of the other.</p></div>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      import '../scripts/prototype/theme.js';
+
+      /* ---- ramps ---- */
+      (function () {
+        const ramps = [
+          { name: 'primary', hue: 250, chroma: 0.16 },
+          { name: 'secondary', hue: 290, chroma: 0.18 },
+          { name: 'tertiary', hue: 330, chroma: 0.2 },
+          { name: 'cyan', hue: 215, chroma: 0.14 },
+          { name: 'neutral', hue: 250, chroma: 0.012 },
+        ];
+        const Ls = [0.28, 0.4, 0.52, 0.62, 0.72, 0.82, 0.92];
+        let html = '';
+        ramps.forEach((r) => {
+          html += '<div class="ramp"><span class="lbl">' + r.name + '</span>';
+          Ls.forEach((L) => {
+            const c = r.name === 'neutral' ? r.chroma : r.chroma * (L < 0.5 ? 0.8 : 1);
+            const col = 'oklch(' + L + ' ' + c + ' ' + r.hue + ')';
+            const txt = L > 0.55 ? 'oklch(0.18 0.01 250)' : 'oklch(0.96 0.005 250)';
+            html += '<span class="step" style="background:' + col + ';color:' + txt + '">' + r.hue + '·' + Math.round(L * 100) + '</span>';
+          });
+          html += '</div>';
+        });
+        // semantic ramp
+        const sem = [
+          ['ok', 155, 0.13],
+          ['ok2', 155, 0.1],
+          ['warn', 85, 0.14],
+          ['warn2', 75, 0.1],
+          ['danger', 25, 0.18],
+          ['danger2', 25, 0.12],
+          ['sel', 235, 0.1],
+        ];
+        html += '<div class="ramp"><span class="lbl">semantic</span>';
+        sem.forEach((s) => {
+          const L = 0.72;
+          const col = 'oklch(' + L + ' ' + s[2] + ' ' + s[1] + ')';
+          html += '<span class="step" style="background:' + col + ';color:oklch(0.18 0.01 250)">' + s[1] + '</span>';
+        });
+        html += '</div>';
+        const rampsEl = document.getElementById('ramps');
+        if (rampsEl) rampsEl.innerHTML = html;
+      })();
+
+      /* ---- spacing ---- */
+      (function () {
+        const steps = [
+          ['s-1', 4],
+          ['s-2', 8],
+          ['s-3', 12],
+          ['s-4', 16],
+          ['s-5', 20],
+          ['s-6', 24],
+          ['s-8', 32],
+          ['s-10', 40],
+          ['s-12', 48],
+          ['s-16', 64],
+          ['s-20', 80],
+          ['s-24', 96],
+        ];
+        const stripEl = document.getElementById('spaceStrip');
+        if (stripEl)
+          stripEl.innerHTML = steps
+            .map(
+              (s) =>
+                '<div class="space-row"><div class="box" style="width:' + s[1] + 'px"></div><span class="sl">' + s[0] + ' · ' + s[1] + 'px</span></div>',
+            )
+            .join('');
+      })();
+
+      /* ---- icons ---- */
+      (function () {
+        const S = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">';
+        const I = {
+          weave: '<path d="M3 7h18M3 17h18"/><path d="M6 7c4 0 4 10 8 10M14 7c-4 0-4 10-8 10"/>',
+          graph: '<circle cx="6" cy="6" r="2.2"/><circle cx="18" cy="6" r="2.2"/><circle cx="12" cy="18" r="2.2"/><path d="M7.6 7.5l3 8M16.4 7.5l-3 8M8 6h8"/>',
+          layers: '<path d="M12 3l8 4-8 4-8-4 8-4Z"/><path d="M4 12l8 4 8-4M4 16.5l8 4 8-4"/>',
+          spec: '<path d="M7 3h7l4 4v14H7z"/><path d="M13 3v5h5M10 13h5M10 17h5"/>',
+          docs: '<path d="M6 3h9l4 4v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z"/><path d="M14 3v5h5"/>',
+          code: '<path d="M9 8l-4 4 4 4M15 8l4 4-4 4"/>',
+          search: '<circle cx="11" cy="11" r="6"/><path d="M19 19l-3.6-3.6"/>',
+          router: '<rect x="3" y="13" width="18" height="6" rx="1.5"/><path d="M7 13V8h10v5M12 8V5"/>',
+          observe: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="2.5"/>',
+          check: '<circle cx="12" cy="12" r="8.5"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/>',
+          warn: '<path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17h.01"/>',
+          module: '<rect x="4" y="4" width="7" height="7" rx="1"/><rect x="13" y="4" width="7" height="7" rx="1"/><rect x="4" y="13" width="7" height="7" rx="1"/><rect x="13" y="13" width="7" height="7" rx="1"/>',
+          delegate: '<circle cx="6" cy="12" r="2.2"/><circle cx="18" cy="6" r="2.2"/><circle cx="18" cy="18" r="2.2"/><path d="M8 11l8-4M8 13l8 4"/>',
+          adapter: '<path d="M4 12h6M14 12h6"/><rect x="9" y="8" width="6" height="8" rx="1"/>',
+          guard: '<path d="M12 3l7 3v6c0 4-3 7-7 9-4-2-7-5-7-9V6z"/><path d="M9 12l2 2 4-4"/>',
+          package: '<path d="M12 3l8 4v10l-8 4-8-4V7z"/><path d="M4 7l8 4 8-4M12 11v10"/>',
+        };
+        const gridEl = document.getElementById('iconGrid');
+        if (gridEl)
+          gridEl.innerHTML = Object.entries(I)
+            .map(([n, p]) => '<div class="icon-cell">' + S + p + '</svg><span class="in">' + n + '</span></div>')
+            .join('');
+      })();
+
+      /* ---- motif ---- */
+      (function () {
+        const labels = ['define', 'compose', 'delegate', 'adapt', 'execute'];
+        const W = 1000,
+          H = 240,
+          cols = labels.map((_, i) => 120 + (i * (W - 240)) / 4);
+        let traces = '';
+        const ys = [70, 120, 170];
+        cols.forEach((x, i) => {
+          if (i < cols.length - 1) {
+            ys.forEach((y1, a) => {
+              ys.forEach((y2, b) => {
+                if ((a + b) % 2 === 0) {
+                  const x2 = cols[i + 1];
+                  const grad = i % 2 === 0 ? 'wmf' : 'wmr';
+                  traces +=
+                    '<path d="M' + x + ' ' + y1 + ' C' + (x + 60) + ' ' + y1 + ',' + (x2 - 60) + ' ' + y2 + ',' + x2 + ' ' + y2 + '" stroke="url(#' + grad + ')" stroke-width="' + (1.5 + (a === b ? 1 : 0)) + '" fill="none" opacity="0.8"/>';
+                }
+              });
+            });
+          }
+        });
+        let rails = ys
+          .map((y) => '<line x1="80" y1="' + y + '" x2="' + (W - 80) + '" y2="' + y + '" stroke="var(--border)" stroke-width="1"/>')
+          .join('');
+        let nodes = '';
+        cols.forEach((x, i) => {
+          ys.forEach((y) => {
+            const c = i % 2 === 0 ? 'var(--primary)' : 'var(--tertiary)';
+            nodes += '<circle cx="' + x + '" cy="' + y + '" r="4" fill="var(--bg)" stroke="' + c + '" stroke-width="1.8"/>';
+          });
+          nodes += '<text x="' + x + '" y="210" text-anchor="middle" font-family="var(--font-mono)" font-size="11" fill="var(--text-3)" letter-spacing="0.5">' + labels[i] + '</text>';
+        });
+        const motifEl = document.getElementById('motifCanvas');
+        if (motifEl)
+          motifEl.innerHTML =
+            '<svg viewBox="0 0 ' + W + ' ' + H + '"><defs>' +
+            '<linearGradient id="wmf" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="var(--cyan)" stop-opacity="0"/><stop offset="0.3" stop-color="var(--cyan)"/><stop offset="0.6" stop-color="var(--primary)"/><stop offset="0.85" stop-color="var(--secondary)"/><stop offset="1" stop-color="var(--tertiary)" stop-opacity="0"/></linearGradient>' +
+            '<linearGradient id="wmr" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="var(--tertiary)" stop-opacity="0"/><stop offset="0.3" stop-color="var(--secondary)"/><stop offset="0.6" stop-color="var(--primary)"/><stop offset="0.85" stop-color="var(--cyan)"/><stop offset="1" stop-color="var(--cyan)" stop-opacity="0"/></linearGradient>' +
+            '</defs>' + rails + traces + nodes + '</svg>';
+      })();
+    </script>
+
+    <style is:global>
+      .ds { max-width: 1200px; margin: 0 auto; padding: var(--s-12) var(--s-6) var(--s-24); }
+      .ds-hero { display: grid; grid-template-columns: 1.5fr 1fr; gap: var(--s-12); align-items: start; margin-bottom: var(--s-16); }
+      .ds-hero h1 { font-size: var(--fs-3xl); font-weight: 500; letter-spacing: -0.025em; line-height: 1.08; margin: var(--s-4) 0; max-width: 16ch; }
+      .ds-hero .intro { color: var(--text-2); font-size: var(--fs-md); max-width: 54ch; }
+      .ds-toc { font-family: var(--font-mono); font-size: var(--fs-xs); border: 1px solid var(--border-faint); border-radius: var(--r-3); overflow: hidden; }
+      .ds-toc a { display: flex; justify-content: space-between; gap: var(--s-4); padding: var(--s-2) var(--s-4); color: var(--text-3); border-bottom: 1px solid var(--border-faint); transition: background var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out); }
+      .ds-toc a:last-child { border-bottom: 0; }
+      .ds-toc a:hover { background: var(--bg-elev-1); color: var(--text); }
+      .ds-toc a .n { color: var(--text-4); }
+
+      .section { padding: var(--s-12) 0; border-top: 1px solid var(--border-faint); scroll-margin-top: 64px; }
+      .sec-head { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s-8); margin-bottom: var(--s-8); align-items: baseline; }
+      .sec-head .left { display: flex; align-items: baseline; gap: var(--s-4); }
+      .sec-head .nn { font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--text-4); }
+      .sec-head h2 { font-size: var(--fs-2xl); font-weight: 500; letter-spacing: -0.02em; }
+      .sec-head .rationale { color: var(--text-3); font-size: var(--fs-sm); }
+
+      /* color */
+      .swatch-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--s-3); margin-bottom: var(--s-6); }
+      .swatch { border: 1px solid var(--border-faint); border-radius: var(--r-3); overflow: hidden; }
+      .swatch .chip { height: 72px; }
+      .swatch .meta { padding: var(--s-2) var(--s-3); font-family: var(--font-mono); font-size: 10px; }
+      .swatch .meta .name { color: var(--text-2); }
+      .swatch .meta .val { color: var(--text-4); display: block; margin-top: 2px; }
+      .ramp { display: flex; margin-bottom: var(--s-2); border: 1px solid var(--border-faint); border-radius: var(--r-2); overflow: hidden; }
+      .ramp .step { flex: 1; height: 44px; display: flex; align-items: flex-end; padding: 3px 5px; font-family: var(--font-mono); font-size: 8px; }
+      .ramp .lbl { font-family: var(--font-mono); font-size: 10px; color: var(--text-4); width: 80px; flex: none; display: flex; align-items: center; }
+
+      /* type */
+      .type-stack { border: 1px solid var(--border-faint); border-radius: var(--r-3); overflow: hidden; }
+      .type-row { display: grid; grid-template-columns: 200px 1fr; gap: var(--s-5); padding: var(--s-4) var(--s-5); border-bottom: 1px solid var(--border-faint); align-items: baseline; }
+      .type-row:last-child { border-bottom: 0; }
+      .type-row .spec { font-family: var(--font-mono); font-size: 10px; color: var(--text-4); line-height: 1.7; }
+      .type-row .spec b { color: var(--text-2); display: block; }
+      .type-row .sample { color: var(--text); overflow: hidden; }
+
+      /* spacing */
+      .space-strip { display: flex; flex-direction: column; gap: var(--s-2); }
+      .space-row { display: flex; align-items: center; gap: var(--s-4); }
+      .space-row .box { height: 18px; background: var(--primary-wash); border: 1px solid var(--primary-dim); border-radius: 2px; }
+      .space-row .sl { font-family: var(--font-mono); font-size: 10px; color: var(--text-4); }
+
+      /* cards generic demo */
+      .demo-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--s-4); margin-bottom: var(--s-4); }
+      .demo-card { border: 1px solid var(--border); background: var(--bg-elev-1); padding: var(--s-5); min-height: 96px; display: flex; flex-direction: column; justify-content: space-between; }
+      .demo-card .dl { font-family: var(--font-mono); font-size: 10px; color: var(--text-4); }
+      .demo-card .dt { color: var(--text-2); font-size: var(--fs-sm); }
+
+      /* motion */
+      .motion-card { border: 1px solid var(--border); border-radius: var(--r-3); background: var(--bg-elev-1); padding: var(--s-5); cursor: default; }
+      .motion-card .track { height: 6px; background: var(--bg-inset); border-radius: var(--r-pill); margin-top: var(--s-4); overflow: hidden; }
+      .motion-card .track i { display: block; height: 100%; width: 18%; border-radius: var(--r-pill); background: linear-gradient(90deg, var(--primary), var(--secondary)); transition: width var(--ease-out); }
+      .motion-card.fast .track i { transition-duration: var(--t-fast); }
+      .motion-card.med .track i { transition-duration: var(--t-med); }
+      .motion-card.slow .track i { transition-duration: var(--t-slow); }
+      .motion-card:hover .track i { width: 100%; }
+
+      /* icons */
+      .icon-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 1px; background: var(--border-faint); border: 1px solid var(--border-faint); border-radius: var(--r-3); overflow: hidden; }
+      .icon-cell { background: var(--bg); display: flex; flex-direction: column; align-items: center; gap: var(--s-2); padding: var(--s-4) var(--s-2); color: var(--text-3); transition: background var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out); }
+      .icon-cell:hover { background: var(--bg-elev-1); color: var(--text); }
+      .icon-cell svg { width: 24px; height: 24px; }
+      .icon-cell .in { font-family: var(--font-mono); font-size: 9px; color: var(--text-4); }
+      @media (max-width: 760px) { .icon-grid { grid-template-columns: repeat(4, 1fr); } }
+
+      /* component primitives */
+      .prim-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s-4); }
+      .prim { border: 1px solid var(--border); border-radius: var(--r-3); overflow: hidden; }
+      .prim .ph { font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-4); padding: var(--s-2) var(--s-4); background: var(--bg-inset); border-bottom: 1px solid var(--border-faint); }
+      .prim .body { padding: var(--s-5); display: flex; flex-wrap: wrap; gap: var(--s-3); align-items: center; }
+      .prim.full { grid-column: 1 / -1; }
+      .search-input { display: flex; align-items: center; gap: var(--s-2); height: 34px; padding: 0 var(--s-2) 0 var(--s-3); border: 1px solid var(--border); border-radius: var(--r-2); background: var(--bg-inset); color: var(--text-3); font-size: var(--fs-sm); flex: 1; min-width: 200px; }
+      .search-input svg { width: 15px; height: 15px; }
+      .search-input .ph2 { flex: 1; }
+      .callout-mini { display: grid; grid-template-columns: auto 1fr; gap: var(--s-2) var(--s-3); border: 1px solid var(--border); border-left: 2px solid var(--primary); border-radius: var(--r-2); background: var(--primary-wash); padding: var(--s-3) var(--s-4); width: 100%; }
+      .callout-mini.warn { border-left-color: var(--warn); background: color-mix(in oklab, var(--warn) 12%, transparent); }
+      .callout-mini .kind { grid-column: 1/-1; font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--primary); }
+      .callout-mini.warn .kind { color: var(--warn); }
+      .callout-mini p { margin: 0; font-size: var(--fs-sm); color: var(--text-2); }
+      .codeblock { border: 1px solid var(--border); border-radius: var(--r-3); background: var(--bg-inset); overflow: hidden; }
+      .code-head { display: flex; align-items: center; gap: var(--s-3); height: 36px; padding: 0 var(--s-4); background: var(--bg-elev-1); border-bottom: 1px solid var(--border); font-family: var(--font-mono); font-size: 10px; color: var(--text-3); }
+      .code-head .fdot { width: 8px; height: 8px; border-radius: 50%; background: var(--tertiary); }
+      .codeblock pre { margin: 0; padding: var(--s-4) var(--s-5); font-family: var(--font-mono); font-size: var(--fs-sm); line-height: 1.7; overflow-x: auto; }
+      .kw { color: var(--secondary-2); } .id { color: var(--primary-2); } .str { color: var(--tertiary-2); }
+      .pn { color: var(--text-3); } .cm { color: var(--text-4); font-style: italic; } .fn { color: oklch(0.82 0.10 155); }
+
+      /* motif canvas */
+      .motif { border: 1px solid var(--border); border-radius: var(--r-3); background: var(--bg-inset); padding: var(--s-8) var(--s-6); }
+      .motif svg { width: 100%; height: auto; display: block; }
+
+      /* rationale */
+      .rat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--s-6); }
+      .rat h3 { font-family: var(--font-mono); font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.06em; color: var(--primary); margin-bottom: var(--s-2); }
+      .rat p { color: var(--text-3); font-size: var(--fs-sm); }
+
+      @media (max-width: 760px) {
+        .ds-hero, .sec-head, .swatch-grid, .demo-row, .prim-grid, .rat-grid { grid-template-columns: 1fr; }
+      }
+    </style>
+  </body>
+</html>

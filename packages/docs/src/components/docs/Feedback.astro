@@ -1,0 +1,45 @@
+---
+/**
+ * Feedback — prototype `.feedback` block + its inline toggle script.
+ *
+ * Source of truth: prototype `docs-article.html` (`<div class="feedback">`,
+ * lines 215-223, and the inline feedback `<script>`, lines 320-325). Emits the
+ * prototype DOM verbatim:
+ *
+ *   div.feedback
+ *     span.q                   ← question
+ *     span.btns                ← Yes / No / Suggest an edit buttons ([data-fb])
+ *     span.thanks              ← hidden until a button is clicked
+ *
+ * Clicking any `[data-fb]` button adds `.done` to the block, which (via the
+ * `.feedback.done` rules in ArticleChrome.astro) hides the buttons and reveals
+ * the thanks message — the same behavior as the prototype. The `.feedback`
+ * styling itself is page-scoped in ArticleChrome.astro.
+ *
+ * A unique-enough `id` is generated per render so multiple instances would not
+ * collide; the toggle script is scoped to this element only.
+ */
+const id = `feedback-${Math.random().toString(36).slice(2, 8)}`;
+---
+
+<div class="feedback" id={id}>
+  <span class="q">Was this page helpful?</span>
+  <span class="btns">
+    <button class="w-btn" data-fb>Yes</button>
+    <button class="w-btn" data-fb>No</button>
+    <button class="w-btn ghost" data-fb>Suggest an edit</button>
+  </span>
+  <span class="thanks">✓ thanks for the feedback</span>
+</div>
+
+<script is:inline define:vars={{ id }}>
+  (function () {
+    const fb = document.getElementById(id);
+    if (!fb) return;
+    fb.querySelectorAll('[data-fb]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        fb.classList.add('done');
+      });
+    });
+  })();
+</script>

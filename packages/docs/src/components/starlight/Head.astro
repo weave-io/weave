@@ -1,0 +1,34 @@
+---
+/**
+ * Head override — renders Starlight's computed `<head>` tags (minus the broken
+ * favicon link), then pins the prototype favicon as a bundled asset so the link
+ * resolves under any base path without hard-coding a root-relative URL.
+ *
+ * Starlight injects a favicon `<link rel="shortcut icon">` from the `favicon`
+ * config, but it emits the *raw config path* (`./src/assets/prototype/logo.png`)
+ * joined to the base — a source path that does not exist in the built output,
+ * so it 404s on every docs route (at root base and under any sub-path). We
+ * filter that link out of the computed `head` array and emit a single
+ * Vite-hashed, base-path-safe `<link rel="icon">` instead, matching the
+ * landing/design-system favicon exactly.
+ *
+ * This is part of the Task 4 hard-override set: the docs chrome is rebuilt from
+ * the prototype rather than themed, so Head is the single place that owns the
+ * document-level metadata for docs routes.
+ */
+import logo from '../../assets/prototype/logo.png';
+
+const { head } = Astro.locals.starlightRoute;
+
+// Drop Starlight's auto-injected favicon `<link>`s (any `rel` containing
+// `icon`): they point at the unbuilt source config path and 404. The bundled
+// `<link rel="icon">` below is the single base-safe favicon for docs routes.
+const headTags = head.filter((entry) => {
+  if (entry.tag !== 'link') return true;
+  const rel = entry.attrs?.rel;
+  return typeof rel === 'string' ? !rel.includes('icon') : true;
+});
+---
+
+{headTags.map(({ tag: Tag, attrs, content }) => <Tag {...attrs} set:html={content} />)}
+<link rel="icon" href={logo.src} />

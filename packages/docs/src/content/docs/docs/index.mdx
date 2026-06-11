@@ -1,0 +1,179 @@
+---
+title: Weave Documentation
+description: Author intent once. Weave compiles a single .weave file into the prompts, scaffolding, and capability surfaces each AI coding harness expects.
+# `hero` triggers Starlight's no-PageTitle branch in Page.astro, so the prototype
+# `.home-hero` block (rendered by the DocsHomeHero Hero override) is the first
+# child of `.docs-main` instead of an auto `.prose h1#_top`. The fields are inert
+# because the Hero override emits its own markup; they exist only to flip the
+# branch.
+hero:
+  title: Welcome to Weave.
+# The prototype docs-home TOC lists only the section <h2> headings (depth 2).
+tableOfContents:
+  minHeadingLevel: 2
+  maxHeadingLevel: 2
+---
+
+import CodeBlock from '../../../components/docs/CodeBlock.astro';
+import Callout from '../../../components/docs/Callout.astro';
+
+export const base = import.meta.env.BASE_URL;
+
+export const introCode = `<span class="cm"># three roles and the categories that reach them</span>
+<span class="kw">agent</span> <span class="id">planner</span>  <span class="pn">{</span> <span class="kw">role</span><span class="pn">:</span> <span class="str">"decompose objective into stages"</span> <span class="pn">}</span>
+<span class="kw">agent</span> <span class="id">executor</span> <span class="pn">{</span> <span class="kw">role</span><span class="pn">:</span> <span class="str">"apply edits to the working tree"</span> <span class="pn">}</span>
+<span class="kw">agent</span> <span class="id">reviewer</span> <span class="pn">{</span> <span class="kw">role</span><span class="pn">:</span> <span class="str">"verify diffs against intent"</span> <span class="pn">}</span>
+
+<span class="kw">category</span> <span class="id">edit</span>   <span class="pn">{</span> <span class="kw">routes</span><span class="pn">:</span> <span class="pn">[</span><span class="id">executor</span><span class="pn">] }</span>
+<span class="kw">category</span> <span class="id">verify</span> <span class="pn">{</span> <span class="kw">routes</span><span class="pn">:</span> <span class="pn">[</span><span class="id">reviewer</span><span class="pn">] }</span>`;
+
+{/*
+  Prototype source: `docs-home.html` (`<main class="docs-main">`, lines 160-279).
+  The shell (topbar, sidebar, TOC, command palette) is owned by the Starlight
+  overrides (PageFrame / TwoColumnContent / Sidebar / TableOfContents). This file
+  ports only the docs-home main-content modules. The `.home-hero` block is NOT
+  rendered here — it is the Starlight `Hero` override (DocsHomeHero.astro), which
+  Page.astro emits before this body when `hero` frontmatter is set. Everything
+  below renders inside `.docs-main > .prose` (MarkdownContent override).
+
+  Each `.secn` section opens with a *markdown* `##` heading so Astro collects it
+  into `headings` → the right-hand TOC and the `docs.js` scrollspy / smooth-scroll
+  (`getElementById`) resolve against the auto-generated slug. (Raw-HTML `<h2>` is
+  not collected by Astro's heading pipeline.) The prototype `·NN` marker is NOT
+  part of the heading text — it is rendered by a CSS counter `::before`
+  (DocsHomeHero.astro) so the TOC text stays clean ("Start here", not
+  "·01 Start here"), matching the prototype TOC. Slugs are Astro's auto slugs
+  derived from the heading words; in-page anchors below use those slugs:
+    Start here              → #start-here
+    What is Weave?          → #what-is-weave
+    Paths by role           → #paths-by-role
+    Anatomy of a .weave file→ #anatomy-of-a-weave-file
+    Recently updated        → #recently-updated
+    Conventions             → #conventions
+    Where to next           → #where-to-next
+
+  The `.secn` wrappers keep the prototype layout classes; page-scoped CSS for
+  `secn` / `two` / `three` / `start-card` / `path-card` / `recent` / `kind-chip` /
+  `conv` ships with DocsHomeHero.astro (is:global). The heading type/flex/number
+  styling is reproduced through `.secn ... h2` rules that account for Starlight's
+  `.sl-heading-wrapper` and the `·NN` counter.
+*/}
+
+<section class="secn">
+
+## Start here
+
+  <div class="two">
+    <a class="start-card" href="#anatomy-of-a-weave-file">
+      <div class="h">guide</div>
+      <div class="b"><h3>Quickstart</h3><p>Write your first <code>.weave</code> file, build it for one harness, and read the emitted surfaces.</p></div>
+      <div class="f"><span>open →</span><span class="t">5 min</span></div>
+    </a>
+    <a class="start-card" href="workflows/">
+      <div class="h">spec</div>
+      <div class="b"><h3>Spec first</h3><p>Prefer the formal route? Start with Workflows — the DAG model the whole framework rests on.</p></div>
+      <div class="f"><span>open →</span><span class="t">15 min</span></div>
+    </a>
+  </div>
+</section>
+
+<section class="secn">
+
+## What is Weave?
+
+  <p>Weave is a harness-agnostic prompt and agent-configuration framework. A compiler emits a typed, normalized graph from your intent; per-harness adapters translate that graph into native surfaces. Four constructs carry the whole model:</p>
+  <ul style="color:var(--text-2);padding-left:var(--s-5);margin-bottom:var(--s-4)">
+    <li><strong style="color:var(--text)">Agents</strong> — six canonical roles plus first-class custom roles, each with <code style="font-family:var(--font-mono)">role</code>, <code style="font-family:var(--font-mono)">inputs</code>, <code style="font-family:var(--font-mono)">delegates_to</code>, <code style="font-family:var(--font-mono)">skills</code>, <code style="font-family:var(--font-mono)">model</code>.</li>
+    <li><strong style="color:var(--text)">Categories</strong> — intent tags that route work to roles by capability, not by name.</li>
+    <li><strong style="color:var(--text)">Workflows</strong> — directed acyclic graphs of stages; cycles and dead-ends are compile errors.</li>
+    <li><strong style="color:var(--text)">Skills</strong> — capability signatures bound to roles at compile time.</li>
+  </ul>
+  <Callout label="Note">
+    <p>Weave is intentionally <strong style="color:var(--text)">not a runtime</strong>. It compiles and normalizes intent; execution belongs to whatever harness an adapter targets. The core never imports adapter code or reads harness config.</p>
+  </Callout>
+</section>
+
+<section class="secn">
+
+## Paths by role
+
+  <div class="three">
+    <div class="path-card">
+      <h3>framework author</h3>
+      <ol>
+        <li><a class="link" href="workflows/">Workflows</a></li>
+        <li><a class="link" href="workflows/">Adapter boundary</a></li>
+        <li><a class="link" href="workflows/">Graph normalization</a></li>
+        <li><a class="link" href="workflows/">Custom adapters</a></li>
+      </ol>
+    </div>
+    <div class="path-card">
+      <h3>platform engineer</h3>
+      <ol>
+        <li><a class="link" href="#anatomy-of-a-weave-file">Quickstart</a></li>
+        <li><a class="link" href="workflows/">Multi-harness CI</a></li>
+        <li><a class="link" href="workflows/">Runtime contract</a></li>
+        <li><a class="link" href="workflows/">CLI reference</a></li>
+      </ol>
+    </div>
+    <div class="path-card">
+      <h3>app developer</h3>
+      <ol>
+        <li><a class="link" href="workflows/">Agents</a></li>
+        <li><a class="link" href="workflows/">Categories</a></li>
+        <li><a class="link" href="workflows/">Migrate a repo</a></li>
+        <li><a class="link" href="workflows/">Model preference</a></li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<section class="secn">
+
+## Anatomy of a .weave file
+
+  <p>A minimal file defines a few agents and the categories that route to them. The compiler infers the rest.</p>
+  <CodeBlock name="intro.weave" id="introCode" code={introCode} />
+  <div class="term"><span class="p">$</span> weave build intro.weave --adapter claude-code</div>
+  <p>The build emits a normalized intent graph and the native surfaces Claude Code expects — system prompts, a capability manifest, and a routing table. Swap <code style="font-family:var(--font-mono)">--adapter</code> and the same intent compiles for OpenCode, Cursor, or a generic CLI without touching the source.</p>
+</section>
+
+<section class="secn">
+
+## Recently updated
+
+  <div class="recent">
+    <div class="r"><span class="date">2026-05-26</span><span class="ttl"><b>Workflows</b> · <span>fan-in with + and parallel stages</span></span><span class="kind-chip spec">spec</span><span class="arr">→</span></div>
+    <div class="r"><span class="date">2026-05-22</span><span class="ttl"><b>Custom adapters</b> · <span>capabilities without mutating intent</span></span><span class="kind-chip guide">guide</span><span class="arr">→</span></div>
+    <div class="r"><span class="date">2026-05-18</span><span class="ttl"><b>ADR-001</b> · <span>why the boundary is one-way</span></span><span class="kind-chip adr">adr</span><span class="arr">→</span></div>
+    <div class="r"><span class="date">2026-05-11</span><span class="ttl"><b>Category routing</b> · <span>resolve by capability, not name</span></span><span class="kind-chip guide">guide</span><span class="arr">→</span></div>
+    <div class="r"><span class="date">2026-05-04</span><span class="ttl"><b>Graph normalization</b> · <span>typed edges and inferred deps</span></span><span class="kind-chip spec">spec</span><span class="arr">→</span></div>
+  </div>
+</section>
+
+<section class="secn">
+
+## Conventions
+
+  <div class="conv">
+    <Callout label="Spec" variant="spec">
+      <p>Normative pages use RFC-2119 language — <strong style="color:var(--text)">MUST</strong>, <strong style="color:var(--text)">SHOULD</strong>, <strong style="color:var(--text)">MAY</strong> — and define exact compile and runtime behavior.</p>
+    </Callout>
+    <Callout label="Stability" variant="warn">
+      <p>Constructs marked <strong style="color:var(--text)">stable</strong> follow semantic versioning. Anything labeled experimental can change between minor releases.</p>
+    </Callout>
+    <Callout label="Legacy" variant="legacy">
+      <p>Legacy pages document pre-v0.4 prompt files and the pre-graph runtime. They remain for migration only and are not maintained.</p>
+    </Callout>
+  </div>
+</section>
+
+<section class="secn">
+
+## Where to next
+
+  <div class="prevnext">
+    <a href={base}><div class="dir">← Back</div><div class="ttl">Design package</div></a>
+    <a class="next" href="workflows/"><div class="dir">Next →</div><div class="ttl">Workflows</div></a>
+  </div>
+</section>

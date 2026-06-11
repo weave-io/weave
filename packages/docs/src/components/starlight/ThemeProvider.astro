@@ -1,0 +1,31 @@
+---
+/**
+ * ThemeProvider override — establishes the prototype theme contract instead of
+ * Starlight's default `localStorage["starlight-theme"]` + system-preference
+ * bootstrap.
+ *
+ * The prototype is the single source of truth for theming (see
+ * `src/scripts/prototype/theme.js`): the theme is persisted to
+ * `localStorage["weave-theme"]` (`"light"` / `"dark"`) and reflected on
+ * `html[data-theme]`. The prototype is dark-by-default, so when no choice has
+ * been stored we apply `dark` rather than honoring the OS preference.
+ *
+ * The script is intentionally inlined and runs before paint to avoid a flash
+ * of the wrong theme (FOUC). `theme.js` (loaded by the PageFrame override)
+ * re-applies the saved theme on load and wires the `[data-theme-set]` toggle;
+ * this provider only guarantees the correct initial `data-theme` attribute.
+ */
+---
+
+{/* Inlined to avoid FOUC — runs before the document renders. */}
+<script is:inline>
+  (function () {
+    var KEY = 'weave-theme';
+    var theme = 'dark';
+    try {
+      var saved = localStorage.getItem(KEY);
+      if (saved === 'light' || saved === 'dark') theme = saved;
+    } catch (e) {}
+    document.documentElement.setAttribute('data-theme', theme);
+  })();
+</script>

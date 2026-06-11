@@ -1,0 +1,18 @@
+---
+/**
+ * PageSidebar override — the prototype TOC content for the right column.
+ *
+ * Starlight's default PageSidebar renders a mobile TOC plus a desktop
+ * right-sidebar wrapper with its own `.sl-container` chrome. The prototype TOC
+ * is a single `.toc` aside (provided by the TwoColumnContent override), so this
+ * override drops all of Starlight's wrapper markup and renders only the
+ * prototype TOC body via the TableOfContents override. The mobile TOC is
+ * intentionally omitted: the prototype hides the TOC entirely below 1100px
+ * (docs.css), matching the prototype's mobile docs layout.
+ */
+import TableOfContents from './TableOfContents.astro';
+
+const { toc } = Astro.locals.starlightRoute;
+---
+
+{toc && <TableOfContents />}

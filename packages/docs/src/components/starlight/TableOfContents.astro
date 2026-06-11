@@ -1,0 +1,114 @@
+---
+/**
+ * TableOfContents override — prototype `.toc` body.
+ *
+ * Replaces Starlight's `<starlight-toc>` custom element + nested `<ol>` with
+ * the prototype's flat `.toc-label` + `<ul>` markup that `docs.js` binds to:
+ *   - scrollspy toggles `.toc ul a.active` as sections scroll into view;
+ *   - anchor clicks smooth-scroll with a 72px offset.
+ *
+ * Starlight gives us a nested TOC tree (h2 → children h3). The prototype TOC is
+ * a single flat list where deeper headings carry `li.h3` (extra indent in
+ * docs.css). We flatten the tree here, tagging depth so docs.css styles the
+ * nesting. The synthetic top-of-page "Overview" entry (`#_top`) Starlight emits
+ * is dropped — it has no matching section element for the scrollspy and is not
+ * part of the prototype TOC.
+ *
+ * Below the heading list, the prototype `.toc-meta` block carries page metadata
+ * (styled by docs.css: key/value rows + links). The prototype `docs-article.html`
+ * footer has five rows — `edit → this page`, `source → github ↗`,
+ * `version → …`, `updated → …`, `read → …`. The first two are derived here from
+ * Starlight's per-page `editUrl` (an absolute repo URL, inherently base-path
+ * safe) and the repository root; the latter three come from the optional
+ * `tocMeta` frontmatter (see content.config.ts). Rows render only when their
+ * data exists, so a page without `editUrl` or `tocMeta` simply shows fewer rows
+ * rather than fabricated metadata.
+ */
+const { toc, editUrl, entry } = Astro.locals.starlightRoute;
+const tocMeta = entry.data.tocMeta;
+// Repository "source" link target. `editUrl` points at the per-page edit route;
+// strip the `/edit/<branch>/...` tail to get the repo root for the source row.
+const sourceUrl = 'https://github.com/weave-io/weave';
+const hasMeta = Boolean(editUrl || tocMeta);
+
+// Local shape matching Starlight's `TocItem` (MarkdownHeading + children) so we
+// don't depend on a non-exported virtual-module type.
+interface TocItem {
+  slug: string;
+  text: string;
+  depth: number;
+  children: TocItem[];
+}
+
+interface FlatHeading {
+  slug: string;
+  text: string;
+  depth: number;
+}
+
+function flatten(items: TocItem[], acc: FlatHeading[]): FlatHeading[] {
+  for (const item of items) {
+    if (item.slug !== '_top') {
+      acc.push({ slug: item.slug, text: item.text, depth: item.depth });
+    }
+    if (item.children.length > 0) flatten(item.children, acc);
+  }
+  return acc;
+}
+
+const headings = toc ? flatten(toc.items, []) : [];
+---
+
+{
+  headings.length > 0 && (
+    <>
+      <div class="toc-label">On this page</div>
+      <ul>
+        {headings.map((h) => (
+          <li class={h.depth >= 3 ? 'h3' : undefined}>
+            <a href={`#${h.slug}`}>{h.text}</a>
+          </li>
+        ))}
+      </ul>
+    </>
+  )
+}
+
+{
+  hasMeta && (
+    <div class="toc-meta">
+      {editUrl && (
+        <div>
+          <span class="k">edit</span>
+          <a href={editUrl.href} target="_blank" rel="noopener noreferrer">
+            this page
+          </a>
+        </div>
+      )}
+      <div>
+        <span class="k">source</span>
+        <a href={sourceUrl} target="_blank" rel="noopener noreferrer">
+          github ↗
+        </a>
+      </div>
+      {tocMeta?.version && (
+        <div>
+          <span class="k">version</span>
+          <span>{tocMeta.version}</span>
+        </div>
+      )}
+      {tocMeta?.updated && (
+        <div>
+          <span class="k">updated</span>
+          <span>{tocMeta.updated}</span>
+        </div>
+      )}
+      {tocMeta?.readTime && (
+        <div>
+          <span class="k">read</span>
+          <span>{tocMeta.readTime}</span>
+        </div>
+      )}
+    </div>
+  )
+}

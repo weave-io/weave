@@ -1,0 +1,30 @@
+---
+/**
+ * TwoColumnContent override — the central + right columns of the prototype
+ * docs shell.
+ *
+ * Starlight passes the page TOC via `<slot name="right-sidebar" />` (fed by the
+ * `PageSidebar` override → `TableOfContents`) and the article body via the
+ * default slot. The prototype shell renders the body inside `<main.docs-main>`
+ * and the TOC inside `<aside.toc>` (styled by docs.css). PageFrame's
+ * `div.docs-shell` is a CSS grid of `[ sidebar | main | toc ]`, so here we emit
+ * the `main` and `toc` cells directly — no extra wrapper that would break the
+ * three-column grid.
+ *
+ * The TOC is only rendered when the route actually has one; otherwise the grid
+ * collapses to two columns per the docs.css responsive rules.
+ */
+const { toc } = Astro.locals.starlightRoute;
+---
+
+<main class="docs-main">
+  <slot />
+</main>
+
+{
+  toc && (
+    <aside class="toc">
+      <slot name="right-sidebar" />
+    </aside>
+  )
+}

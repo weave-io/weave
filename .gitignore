@@ -8,6 +8,7 @@ node_modules/
 
 # Build output
 dist/
+.astro/
 *.tsbuildinfo
 # Stray tsc declaration outputs outside dist/
 src/**/*.d.ts

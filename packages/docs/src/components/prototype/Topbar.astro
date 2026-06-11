@@ -1,0 +1,37 @@
+---
+/**
+ * Topbar — prototype `.w-topbar` header for the landing page.
+ *
+ * DOM mirrors `landing-static.html` (lines 146-162): `.brand` (logo + word),
+ * `nav.main` (section anchors + Docs), `.spacer`, the `.theme-toggle`, and two
+ * `.w-btn` CTAs. Styling lives in `tokens.css` (`.w-topbar`, `.brand`, `.w-btn`,
+ * `.theme-toggle`) plus the `.w-topbar nav.main a` rule in `landing.css`.
+ *
+ * Base-path safety: the brand logo is a bundled asset import and every
+ * prototype `.html` link is rewritten to its final route through
+ * `import.meta.env.BASE_URL` (root-relative `/`, `/docs/`), so links resolve
+ * correctly whether the site is served from `/` or any sub-path on GitHub
+ * Pages.
+ */
+import logo from '../../assets/prototype/logo.png';
+import ThemeToggle from './ThemeToggle.astro';
+
+const base = import.meta.env.BASE_URL;
+const homeHref = base;
+const docsHref = `${base}docs/`;
+---
+
+<header class="w-topbar">
+  <a class="brand" href={homeHref}><img src={logo.src} alt="Weave" /><span class="word">weave</span></a>
+  <nav class="main">
+    <a href="#capabilities">Capabilities</a>
+    <a href="#how">How it works</a>
+    <a href="#dsl">DSL</a>
+    <a href="#architecture">Architecture</a>
+    <a href={docsHref}>Docs</a>
+  </nav>
+  <span class="spacer"></span>
+  <ThemeToggle />
+  <a class="w-btn ghost" href={docsHref}>Read the docs</a>
+  <a class="w-btn primary" href={docsHref}>Get started ↗</a>
+</header>

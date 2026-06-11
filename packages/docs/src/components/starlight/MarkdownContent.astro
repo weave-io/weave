@@ -1,0 +1,17 @@
+---
+/**
+ * MarkdownContent override — prototype `.prose` wrapper.
+ *
+ * Starlight's default wraps the body in `.sl-markdown-content` and imports
+ * `style/markdown.css` (the default prose theme). This override swaps that for
+ * the prototype `.prose` container styled by docs.css (headings, lede,
+ * paragraphs, inline code, links, lists, etc.). The default markdown stylesheet
+ * is deliberately not imported, so no Starlight prose styling leaks in.
+ *
+ * Heading `id`s emitted by Starlight's rehype pipeline are preserved on the
+ * rendered `<h2>` / `<h3>` elements, which the prototype TOC scrollspy (docs.js)
+ * binds to via `.toc ul a[href="#id"]`.
+ */
+---
+
+<div class="prose"><slot /></div>

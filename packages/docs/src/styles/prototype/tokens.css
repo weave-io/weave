@@ -1,0 +1,309 @@
+/* ============================================================================
+   Weave — tokens.css
+   Shared design tokens, base reset, and global chrome.
+   Dark is the default theme. Light is fully tuned. Color in oklch.
+   ============================================================================ */
+
+/* Self-hosted Geist faces (base-path-safe; bundled by Astro/Vite).
+   Replaces the prototype's external Google Fonts @import so there are no
+   hard-coded font URLs and no cross-origin 404s under BASE_PATH. The variable
+   families register as "Geist Variable" / "Geist Mono Variable"; the font-family
+   tokens below keep the prototype's "Geist" / "Geist Mono" names as fallbacks. */
+@import '@fontsource-variable/geist/index.css';
+@import '@fontsource-variable/geist-mono/index.css';
+
+/* ---------------------------------------------------------------- TOKENS --- */
+:root,
+[data-theme="dark"] {
+  /* surfaces */
+  --bg:            oklch(0.16 0.012 250);
+  --bg-elev-1:     oklch(0.19 0.014 250);
+  --bg-elev-2:     oklch(0.22 0.016 250);
+  --bg-inset:      oklch(0.13 0.010 250);
+  --border:        oklch(0.28 0.012 250);
+  --border-strong: oklch(0.36 0.014 250);
+  --border-faint:  oklch(0.23 0.010 250);
+  /* text */
+  --text:          oklch(0.96 0.005 250);
+  --text-2:        oklch(0.78 0.008 250);
+  --text-3:        oklch(0.58 0.010 250);
+  --text-4:        oklch(0.42 0.012 250);
+  /* chromatic triad + cyan */
+  --primary:       oklch(0.72 0.16 250);   /* blue · hue 250 */
+  --primary-2:     oklch(0.82 0.10 240);
+  --primary-dim:   oklch(0.42 0.12 255);
+  --primary-wash:  oklch(0.30 0.08 255 / 0.25);
+  --secondary:     oklch(0.58 0.18 290);   /* purple · hue 290 */
+  --secondary-2:   oklch(0.68 0.14 290);
+  --tertiary:      oklch(0.68 0.20 330);   /* magenta · hue 330 */
+  --tertiary-2:    oklch(0.78 0.16 330);
+  --cyan:          oklch(0.72 0.14 215);   /* highlight · hue 215 */
+  --accent-warm:   oklch(0.68 0.20 330);   /* reserved CTA (== tertiary) */
+  --accent-warm-2: oklch(0.78 0.16 330);
+  /* semantic */
+  --ok:            oklch(0.78 0.13 155);
+  --warn:          oklch(0.82 0.14 85);
+  --danger:        oklch(0.72 0.18 25);
+  --selection:     oklch(0.45 0.10 235 / 0.45);
+
+  /* type */
+  --font-sans: "Geist Variable", "Geist", system-ui, -apple-system, sans-serif;
+  --font-mono: "Geist Mono Variable", "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --fs-xs: 11px;  --fs-sm: 12px; --fs-base: 14px; --fs-md: 15px;
+  --fs-lg: 18px;  --fs-xl: 22px; --fs-2xl: 28px;  --fs-3xl: 38px;
+  --fs-4xl: 52px; --fs-5xl: 72px; --fs-6xl: 96px;
+
+  /* spacing (4px base) */
+  --s-1: 4px;  --s-2: 8px;  --s-3: 12px; --s-4: 16px; --s-5: 20px;
+  --s-6: 24px; --s-8: 32px; --s-10: 40px; --s-12: 48px; --s-16: 64px;
+  --s-20: 80px; --s-24: 96px; --s-32: 128px;
+
+  /* radius */
+  --r-1: 4px; --r-2: 6px; --r-3: 8px; --r-4: 12px; --r-pill: 999px;
+
+  /* elevation (floating surfaces only) */
+  --shadow-sm: 0 1px 2px oklch(0 0 0 / 0.4), 0 2px 8px oklch(0 0 0 / 0.3);
+  --shadow-md: 0 8px 24px oklch(0 0 0 / 0.45), 0 2px 8px oklch(0 0 0 / 0.35);
+
+  /* motion */
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-inout: cubic-bezier(0.65, 0, 0.35, 1);
+  --t-fast: 120ms; --t-med: 240ms; --t-slow: 480ms;
+}
+
+[data-theme="light"] {
+  --bg:            oklch(0.99 0.004 240);
+  --bg-elev-1:     oklch(0.985 0.006 240);
+  --bg-elev-2:     oklch(0.97 0.008 240);
+  --bg-inset:      oklch(0.94 0.010 240);
+  --border:        oklch(0.88 0.010 240);
+  --border-strong: oklch(0.78 0.014 240);
+  --border-faint:  oklch(0.92 0.008 240);
+  --text:          oklch(0.22 0.014 250);
+  --text-2:        oklch(0.38 0.012 250);
+  --text-3:        oklch(0.52 0.012 250);
+  --text-4:        oklch(0.68 0.010 250);
+  --primary:       oklch(0.50 0.16 255);
+  --primary-2:     oklch(0.42 0.18 260);
+  --primary-dim:   oklch(0.68 0.10 245);
+  --primary-wash:  oklch(0.80 0.06 255 / 0.4);
+  --secondary:     oklch(0.42 0.18 290);
+  --secondary-2:   oklch(0.52 0.14 290);
+  --tertiary:      oklch(0.52 0.20 330);
+  --tertiary-2:    oklch(0.62 0.16 330);
+  --cyan:          oklch(0.52 0.14 215);
+  --accent-warm:   oklch(0.52 0.20 330);
+  --accent-warm-2: oklch(0.62 0.16 330);
+  --ok:            oklch(0.55 0.14 155);
+  --warn:          oklch(0.62 0.14 75);
+  --danger:        oklch(0.55 0.18 25);
+  --selection:     oklch(0.78 0.10 235 / 0.5);
+}
+
+/* ----------------------------------------------------------------- RESET --- */
+* { box-sizing: border-box; }
+html {
+  -webkit-text-size-adjust: 100%;
+  text-rendering: optimizeLegibility;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--fs-base);
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: "ss01", "cv11", "cv02";
+}
+::selection { background: var(--selection); }
+a { color: inherit; text-decoration: none; }
+img { display: block; max-width: 100%; }
+h1, h2, h3, h4, p { margin: 0; }
+:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+code, pre, .mono { font-family: var(--font-mono); }
+.hr { height: 1px; background: var(--border-faint); border: 0; }
+
+/* ---------------------------------------------------------------- TOPBAR --- */
+.w-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  gap: var(--s-5);
+  padding: 0 var(--s-6);
+  background: color-mix(in oklab, var(--bg) 80%, transparent);
+  backdrop-filter: saturate(1.2) blur(10px);
+  -webkit-backdrop-filter: saturate(1.2) blur(10px);
+  border-bottom: 1px solid var(--border);
+}
+.w-topbar .brand {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+.w-topbar .brand img { width: 28px; height: 28px; border-radius: var(--r-1); }
+.w-topbar .brand .word {
+  font-family: var(--font-mono);
+  font-size: var(--fs-base);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+.w-topbar .brand .word .sub { color: var(--text-3); font-weight: 500; }
+.w-topbar nav { display: flex; align-items: center; gap: var(--s-1); }
+.w-topbar nav a {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+  padding: 6px var(--s-3);
+  border-radius: var(--r-1);
+  transition: background var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out);
+}
+.w-topbar nav a:hover { background: var(--bg-elev-1); color: var(--text-2); }
+.w-topbar nav a[aria-current="page"] { color: var(--text); }
+.w-topbar .spacer { flex: 1; }
+.w-topbar .meta {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+.dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--ok) 20%, transparent);
+}
+
+/* ------------------------------------------------------------------ BTN ---- */
+.w-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-2);
+  height: 32px;
+  padding: 0 var(--s-4);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-2);
+  background: var(--bg-elev-1);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--t-fast) var(--ease-out),
+              border-color var(--t-fast) var(--ease-out),
+              color var(--t-fast) var(--ease-out),
+              transform var(--t-fast) var(--ease-out);
+}
+.w-btn:hover { background: var(--bg-elev-2); border-color: var(--text-4); }
+.w-btn:active { transform: translateY(1px); }
+.w-btn.ghost { background: transparent; border-color: transparent; color: var(--text-2); }
+.w-btn.ghost:hover { background: var(--bg-elev-1); color: var(--text); }
+.w-btn.blue {
+  background: color-mix(in oklab, var(--primary) 16%, var(--bg-elev-1));
+  border-color: color-mix(in oklab, var(--primary) 45%, var(--border-strong));
+  color: var(--primary-2);
+}
+.w-btn.blue:hover { background: color-mix(in oklab, var(--primary) 24%, var(--bg-elev-1)); }
+.w-btn.lg { height: 40px; padding: 0 var(--s-5); font-size: var(--fs-md); }
+.w-btn.primary {
+  background: linear-gradient(135deg, var(--primary), var(--secondary), var(--tertiary));
+  border-color: transparent;
+  color: oklch(0.99 0.01 250);
+  font-weight: 600;
+}
+.w-btn.primary:hover {
+  background: linear-gradient(135deg, var(--primary-2), var(--secondary-2), var(--tertiary-2));
+}
+
+/* ------------------------------------------------------------------ KBD ---- */
+.w-kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border: 1px solid var(--border-strong);
+  border-bottom-width: 2px;
+  border-radius: var(--r-1);
+  background: var(--bg-elev-1);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-2);
+  line-height: 1;
+}
+
+/* --------------------------------------------------------------- GRID BG --- */
+.w-gridbg {
+  background-image:
+    repeating-linear-gradient(to right, var(--border-faint) 0 1px, transparent 1px 56px),
+    repeating-linear-gradient(to bottom, var(--border-faint) 0 1px, transparent 1px 56px);
+}
+
+/* ------------------------------------------------------------------ TAG ---- */
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  height: 22px;
+  padding: 0 var(--s-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-2);
+}
+.tag::before {
+  content: "";
+  width: 5px; height: 5px; border-radius: 50%;
+  background: var(--primary);
+}
+.tag.warm::before { background: var(--accent-warm); }
+.tag.muted { color: var(--text-3); }
+.tag.muted::before { background: var(--text-3); }
+
+/* ------------------------------------------------------------ THEME TOGGLE - */
+.theme-toggle {
+  display: inline-flex;
+  padding: 2px;
+  gap: 2px;
+  background: var(--bg-elev-1);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+}
+.theme-toggle button {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 4px 10px;
+  border-radius: var(--r-pill);
+  cursor: pointer;
+  transition: background var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out);
+}
+.theme-toggle button[aria-pressed="true"] {
+  background: var(--bg-elev-2);
+  color: var(--text);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}

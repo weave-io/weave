@@ -1,0 +1,16 @@
+---
+/**
+ * Search override — intentionally empty.
+ *
+ * Pagefind is disabled (`pagefind: false` in astro.config.mjs), and the
+ * prototype search affordance is the command palette opened from the
+ * `#searchTrigger` box in the sidebar (rendered by the PageFrame override and
+ * driven by docs.js). The default Starlight `<site-search>` dialog must not
+ * render, so this override emits nothing and removes the default search UI and
+ * its styling.
+ *
+ * Note: overriding `Search` (so it differs from the default component) is what
+ * makes Starlight's Header attempt to render search even with Pagefind off —
+ * but our Header override renders nothing, so no stray search markup appears.
+ */
+---

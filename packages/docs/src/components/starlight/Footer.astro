@@ -1,0 +1,41 @@
+---
+/**
+ * Footer override — prototype article footer, no Starlight chrome.
+ *
+ * Starlight's default footer renders an EditLink, a LastUpdated line, the
+ * Pagination prev/next, and the "Built with Starlight" credit. All of those are
+ * disabled in astro.config.mjs (`credits: false`, `lastUpdated: false`,
+ * `pagination: false`) and none of the default markup/styling is emitted here.
+ *
+ * The prototype docs article ends with a `.prevnext` block (docs.css). When
+ * Starlight is configured with pagination it exposes prev/next links on the
+ * route; if present we render them with the prototype `.prevnext` markup so the
+ * footer stays prototype-faithful. With pagination disabled this renders
+ * nothing — later tasks own the in-article `.prevnext` / `.feedback` content.
+ */
+const { pagination } = Astro.locals.starlightRoute;
+const prev = pagination?.prev;
+const next = pagination?.next;
+const hasNav = Boolean(prev || next);
+---
+
+{
+  hasNav && (
+    <nav class="prevnext" aria-label="Pagination">
+      {prev ? (
+        <a class="prev" href={prev.href}>
+          <div class="dir">Previous</div>
+          <div class="ttl">{prev.label}</div>
+        </a>
+      ) : (
+        <span />
+      )}
+      {next && (
+        <a class="next" href={next.href}>
+          <div class="dir">Next</div>
+          <div class="ttl">{next.label}</div>
+        </a>
+      )}
+    </nav>
+  )
+}

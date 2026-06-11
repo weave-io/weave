@@ -1,0 +1,65 @@
+/* ============================================================================
+   Weave — starlight-bridge.css
+   Bridges the prototype design tokens (tokens.css) onto Starlight's CSS custom
+   properties so the Starlight-served docs routes inherit the prototype palette,
+   typography, and surfaces. This file owns ONLY the token remapping; the
+   prototype shell markup/styles live in docs.css and the Starlight component
+   overrides (added in later tasks). No asset URLs are referenced here, so it is
+   inherently BASE_PATH-safe.
+
+   Load order contract: tokens.css must be imported before this file so the
+   prototype custom properties (--bg, --text*, --border*, --primary, fonts, etc.)
+   are defined when these mappings resolve.
+   ============================================================================ */
+
+/* --- Starlight color tokens → prototype surfaces/text/accents --- */
+:root,
+:root[data-theme="dark"],
+:root[data-theme="light"] {
+  /* accent ramp → prototype primary (blue · hue 250) */
+  --sl-color-accent-low: color-mix(in oklab, var(--primary) 20%, var(--bg));
+  --sl-color-accent: var(--primary);
+  --sl-color-accent-high: var(--primary-2);
+
+  /* text ramp → prototype text scale */
+  --sl-color-white: var(--text);
+  --sl-color-gray-1: var(--text);
+  --sl-color-gray-2: var(--text-2);
+  --sl-color-gray-3: var(--text-3);
+  --sl-color-gray-4: var(--text-4);
+  --sl-color-gray-5: var(--border-strong);
+  --sl-color-gray-6: var(--border);
+  --sl-color-gray-7: var(--border-faint);
+  --sl-color-black: var(--bg);
+
+  /* surfaces */
+  --sl-color-bg: var(--bg);
+  --sl-color-bg-nav: color-mix(in oklab, var(--bg) 80%, transparent);
+  --sl-color-bg-sidebar: var(--bg);
+  --sl-color-bg-inline-code: var(--bg-inset);
+  --sl-color-bg-accent: var(--primary);
+
+  /* hairlines */
+  --sl-color-hairline: var(--border);
+  --sl-color-hairline-light: var(--border-faint);
+  --sl-color-hairline-shade: var(--border-strong);
+
+  /* text links / inline elements */
+  --sl-color-text: var(--text-2);
+  --sl-color-text-accent: var(--primary);
+  --sl-color-text-invert: oklch(0.99 0.01 250);
+
+  /* typography → prototype font tokens */
+  --sl-font: var(--font-sans);
+  --sl-font-mono: var(--font-mono);
+}
+
+/* Prototype is dark-by-default; keep Starlight's theme attribute in sync with
+   the prototype's [data-theme] contract so theme.js (data-theme on <html>)
+   drives both layers from a single source of truth. */
+:root {
+  color-scheme: dark;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+}

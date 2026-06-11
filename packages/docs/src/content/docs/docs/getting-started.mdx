@@ -1,0 +1,75 @@
+---
+title: Getting Started
+description: Install Weave, validate a config, and understand the main packages.
+tableOfContents:
+  minHeadingLevel: 2
+  maxHeadingLevel: 3
+---
+
+import CodeBlock from '../../../components/docs/CodeBlock.astro';
+import ArticleChrome from '../../../components/docs/ArticleChrome.astro';
+import Feedback from '../../../components/docs/Feedback.astro';
+
+export const base = import.meta.env.BASE_URL;
+
+{/*
+  Article route using the canonical prototype article chrome (see
+  `workflows.mdx`). Crumbs + ArticleChrome (numbered headings, meta-row,
+  feedback styling, anchor-link hide) + meta-row + lede + numbered `##`
+  headings + prevnext, with content rendered inside `.docs-main > .prose`.
+*/}
+
+<div class="crumbs"><a href={`${base}docs/`}>docs</a><span class="sep">›</span><a href={`${base}docs/getting-started/`}>get started</a><span class="sep">›</span><span style="color:var(--text-2)">getting started</span></div>
+
+<ArticleChrome />
+
+<div class="meta-row">
+  <span class="tag muted">get started</span>
+  <span class="stable"><span class="dot"></span> stable · v0.4.7</span>
+  <span>updated 2026-05-26</span>
+</div>
+
+<p class="lede">Weave runs on Bun. Install the workspace, build the packages, validate a config, and learn the main packages you will work with.</p>
+
+## Requirements
+
+<p>Weave runs on <strong style="color:var(--text)">Bun</strong>. Node.js is not a supported runtime for the project itself.</p>
+
+## Install and build
+
+<CodeBlock name="terminal" id="gs-install">{`git clone https://github.com/weave-io/weave.git
+cd weave
+bun install
+bun run build`}</CodeBlock>
+
+## Common workspace commands
+
+<CodeBlock name="terminal" id="gs-commands">{`bun run typecheck
+bun test
+bun run validate-config
+bun run docs:dev`}</CodeBlock>
+
+## Main packages
+
+<div class="deflist">
+  <div class="row"><dt>@weave/core</dt><dd>lexer, parser, AST, schemas, config types</dd></div>
+  <div class="row"><dt>@weave/config</dt><dd>builtins, discovery, merge semantics, prompt resolution</dd></div>
+  <div class="row"><dt>@weave/engine</dt><dd>harness-agnostic composition APIs</dd></div>
+  <div class="row"><dt>@weave/cli</dt><dd>CLI for init, migration, validation, installation flows</dd></div>
+  <div class="row"><dt>@weave/docs</dt><dd>this Astro + Starlight site</dd></div>
+</div>
+
+## Next reads
+
+<ul>
+  <li><a class="link" href={`${base}docs/guides/installation/`}>Installation</a> — install Weave in development.</li>
+  <li><a class="link" href={`${base}docs/guides/core-concepts/`}>Core Concepts</a> — the main moving parts.</li>
+  <li><a class="link" href={`${base}docs/reference/adapters/`}>Adapters</a> — current adapter targets.</li>
+</ul>
+
+<Feedback />
+
+<div class="prevnext">
+  <a href={`${base}docs/workflows/`}><div class="dir">← Previous</div><div class="ttl">Workflows</div></a>
+  <a class="next" href={`${base}docs/guides/installation/`}><div class="dir">Next →</div><div class="ttl">Installation</div></a>
+</div>

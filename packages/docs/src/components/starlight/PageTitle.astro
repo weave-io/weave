@@ -1,0 +1,17 @@
+---
+/**
+ * PageTitle override — intentionally empty.
+ *
+ * Starlight renders `PageTitle` in its own `ContentPanel`, *above* the markdown
+ * body. The prototype article order is `crumbs → h1 → meta-row → lede`
+ * (`docs-article.html`), so the H1 must follow the crumbs, not precede them.
+ * The H1 is therefore emitted by `ArticleChrome` (rendered just after the
+ * crumbs in every article body) instead of here. Rendering it here as well
+ * would duplicate the title and place a copy before the crumbs, so this
+ * override emits nothing.
+ *
+ * The docs-home route sets `hero` frontmatter, which makes Starlight skip
+ * `PageTitle` entirely (the `DocsHomeHero` override supplies `.home-hero`), so
+ * emptying this component has no effect there.
+ */
+---

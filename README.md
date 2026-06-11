@@ -16,6 +16,7 @@ For a high-level flow diagram of configuration → engine → adapter → harnes
 | [`@weave/config`](./packages/config)                            | Builtin DSL defaults, config discovery, merge semantics, and prompt path resolution        |
 | [`@weave/engine`](./packages/engine)                            | Pure composition APIs for descriptors, model intent, skill resolution, prompts, and policy |
 | [`@weave/cli`](./packages/cli)                                  | `weave` executable for config scaffolding, validation, and harness installation            |
+| [`@weave/docs`](./packages/docs)                                | Public Astro + Starlight documentation site and marketing landing page                     |
 | [`@weave/adapter-opencode`](./packages/adapters/opencode)       | OpenCode plugin adapter                                                                    |
 | [`@weave/adapter-claude-code`](./packages/adapters/claude-code) | Claude Code adapter                                                                        |
 | [`@weave/adapter-pi`](./packages/adapters/pi)                   | Pi adapter                                                                                 |
@@ -104,6 +105,7 @@ weave/
 │   ├── core/                  # DSL lexer, parser, AST, schemas
 │   ├── config/                # Builtins, config discovery, merge, prompt path resolution
 │   ├── engine/                # Harness-agnostic composition APIs and adapter boundary
+│   ├── docs/                  # Astro + Starlight docs site and landing page
 │   └── adapters/
 │       ├── opencode/          # OpenCode plugin adapter
 │       ├── pi/                # Pi adapter
@@ -141,6 +143,12 @@ The build emits compiled output into each package's `dist/` folder:
 ```bash
 # Run type checking across all packages
 bun run typecheck
+
+# Run the docs site locally
+bun run docs:dev
+
+# Build the documentation site for GitHub Pages
+bun run docs:build
 
 # Run all tests
 bun test
@@ -218,6 +226,14 @@ weave validate --path .weave/config.weave
 # Machine-readable JSON output
 weave validate --path .weave/config.weave --json
 ```
+
+## Documentation Site
+
+Weave ships an Astro + Starlight site in [`packages/docs`](./packages/docs). It hosts the public landing page together with the public documentation site.
+
+- local dev: `bun run docs:dev`
+- production build: `bun run docs:build`
+- GitHub Pages deployment: `.github/workflows/deploy-docs.yml`
 
 See [docs/cli.md](./docs/cli.md) for the full command contract, init safety rules, migration behavior, validation output, and installer boundaries.
 

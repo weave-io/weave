@@ -1,0 +1,15 @@
+---
+/**
+ * ContentPanel override — bare passthrough.
+ *
+ * Starlight wraps each content region (page title block, then markdown body +
+ * footer) in a `.content-panel > .sl-container` with its own padding, max-width,
+ * and inter-panel borders. The prototype `.docs-main` column (PageFrame /
+ * TwoColumnContent) already owns the column width and padding, and the prose
+ * styling lives on `.prose` (MarkdownContent override). So this override emits
+ * its children directly with no Starlight container chrome — keeping the
+ * prototype's single-column `.docs-main` layout intact.
+ */
+---
+
+<slot />

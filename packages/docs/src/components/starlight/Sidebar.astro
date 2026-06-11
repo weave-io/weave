@@ -1,0 +1,113 @@
+---
+/**
+ * Sidebar override — prototype `.nav-group` navigation.
+ *
+ * Starlight's default sidebar renders `<SidebarPersister><SidebarSublist>` with
+ * collapsible `<details>` groups and a mobile menu footer. The prototype
+ * sidebar is a flat list of `.nav-group` blocks — each a `.label` (uppercase
+ * mono caption) over a `<ul>` of links, with the current page marked via
+ * `a[aria-current="page"]` (styled by docs.css, including the active accent
+ * rail). This override maps Starlight's normalized `sidebar` entries onto that
+ * markup.
+ *
+ * Top-level groups become `.nav-group` sections; nested groups are flattened
+ * into their parent's list (the prototype sidebar is single-depth), and any
+ * top-level loose links are collected into a leading untitled group. The badge
+ * text on a group label is reproduced as the prototype `.badge` pill.
+ *
+ * This component is rendered into PageFrame's `<slot name="sidebar" />`, inside
+ * the prototype `.sidebar` aside that also holds the `#searchTrigger` box.
+ */
+const { sidebar } = Astro.locals.starlightRoute;
+
+// Local structural mirror of Starlight's `SidebarEntry` (link | group) so we
+// don't import from a hashed, install-specific node_modules path. `Astro.locals
+// .starlightRoute.sidebar` already carries the fully-typed value; these
+// interfaces only describe the fields we read.
+interface SidebarLinkEntry {
+  type: 'link';
+  href: string;
+  label: string;
+  isCurrent: boolean;
+}
+
+interface SidebarGroupEntry {
+  type: 'group';
+  label: string;
+  badge?: { text: string } | undefined;
+  entries: SidebarEntry[];
+}
+
+type SidebarEntry = SidebarLinkEntry | SidebarGroupEntry;
+
+interface NavLink {
+  href: string;
+  label: string;
+  isCurrent: boolean;
+}
+
+interface NavGroup {
+  label: string | null;
+  badge: string | null;
+  links: NavLink[];
+}
+
+function collectLinks(entries: SidebarEntry[], into: NavLink[]): void {
+  for (const entry of entries) {
+    if (entry.type === 'link') {
+      into.push({ href: entry.href, label: entry.label, isCurrent: entry.isCurrent });
+      continue;
+    }
+    collectLinks(entry.entries, into);
+  }
+}
+
+function toGroups(entries: SidebarEntry[]): NavGroup[] {
+  const groups: NavGroup[] = [];
+  const looseLinks: NavLink[] = [];
+
+  for (const entry of entries) {
+    if (entry.type === 'link') {
+      looseLinks.push({ href: entry.href, label: entry.label, isCurrent: entry.isCurrent });
+      continue;
+    }
+    const links: NavLink[] = [];
+    collectLinks(entry.entries, links);
+    groups.push({
+      label: entry.label,
+      badge: entry.badge?.text ?? null,
+      links,
+    });
+  }
+
+  if (looseLinks.length > 0) {
+    groups.unshift({ label: null, badge: null, links: looseLinks });
+  }
+
+  return groups;
+}
+
+const groups = toGroups(sidebar as unknown as SidebarEntry[]);
+---
+
+{
+  groups.map((group) => (
+    <div class="nav-group">
+      {group.label && (
+        <div class="label">
+          <span>{group.label}</span>
+          {group.badge && <span class="badge">{group.badge}</span>}
+        </div>
+      )}
+      <ul>
+        {group.links.map((link) => (
+          <li>
+            <a href={link.href} aria-current={link.isCurrent ? 'page' : undefined}>
+              {link.label}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </div>
+  ))
+}

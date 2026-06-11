@@ -1,0 +1,11 @@
+---
+/**
+ * Header override — intentionally empty.
+ *
+ * Starlight renders `Header` into PageFrame's `<slot name="header" />`. The
+ * prototype docs chrome supplies its own `header.w-topbar` directly inside the
+ * PageFrame override, so the default Starlight header (site title + search +
+ * social icons + theme/language selects) must not render at all. Emitting
+ * nothing here removes the default header markup and its styling entirely.
+ */
+---

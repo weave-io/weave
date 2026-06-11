@@ -1,0 +1,15 @@
+---
+/**
+ * ThemeToggle — prototype `.theme-toggle` control.
+ *
+ * Verbatim DOM from `landing-static.html` (lines 156-159): two buttons wired to
+ * `[data-theme-set]`. `theme.js` reads the clicks, sets `html[data-theme]`,
+ * persists `localStorage["weave-theme"]`, and syncs `aria-pressed`. The initial
+ * `aria-pressed` reflects the prototype's default `data-theme="dark"`.
+ */
+---
+
+<div class="theme-toggle" id="themeToggle">
+  <button data-theme-set="dark" aria-pressed="true">Dark</button>
+  <button data-theme-set="light" aria-pressed="false">Light</button>
+</div>

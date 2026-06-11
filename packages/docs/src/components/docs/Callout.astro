@@ -1,0 +1,36 @@
+---
+/**
+ * Callout — prototype `.callout` admonition.
+ *
+ * Source of truth: prototype `docs-home.html` (lines 196-199, 266-268 of the
+ * bundle). Emits the prototype DOM verbatim:
+ *
+ *   div.callout[.warn|.spec|.legacy]
+ *     span.kind                ← `label` (e.g. "Note", "Spec", "Stability")
+ *     <slot/>                  ← body paragraph(s)
+ *
+ * The optional `variant` maps to the prototype modifier classes
+ * (`warn` / `spec` / `legacy`); the default (no variant) is the primary
+ * accent callout. All four variants are styled by `docs.css`, so this component
+ * only assembles the prototype class string and label.
+ *
+ * The body is provided via the default slot (typically a single `<p>`), matching
+ * the prototype's `<span class="kind">…</span><p>…</p>` grid layout.
+ */
+type Variant = 'note' | 'warn' | 'spec' | 'legacy';
+
+interface Props {
+  /** Label rendered in the `.kind` cell (e.g. "Note", "Spec", "Stability"). */
+  label: string;
+  /** Callout style; `note` (default) is the primary accent callout. */
+  variant?: Variant;
+}
+
+const { label, variant = 'note' } = Astro.props;
+const className = variant === 'note' ? 'callout' : `callout ${variant}`;
+---
+
+<div class={className}>
+  <span class="kind">{label}</span>
+  <slot />
+</div>

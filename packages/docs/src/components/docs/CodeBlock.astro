@@ -1,0 +1,50 @@
+---
+/**
+ * CodeBlock — prototype `.codeblock` with a copyable `<pre>` body.
+ *
+ * Source of truth: prototype `docs-home.html` (`<div class="codeblock">`,
+ * lines 238-247 of the bundle). Emits the prototype DOM verbatim:
+ *
+ *   div.codeblock
+ *     div.code-head            ← traffic-light dot, filename, spacer, copy button
+ *       span.fdot
+ *       span.fname             ← `name`
+ *       span.spacer
+ *       button.copy-btn        ← data-copy="#<id>" (docs.js copy contract)
+ *     pre#<id>                 ← pre-tokenized prototype syntax markup
+ *
+ * The copy button carries `data-copy="#<id>"`; `docs.js` reads that selector,
+ * grabs the matching `<pre>`'s `innerText`, and writes it to the clipboard —
+ * the same contract the prototype uses.
+ *
+ * The `<pre>` body is supplied as the `code` prop (pre-tokenized HTML with the
+ * prototype `.cm` / `.kw` / `.id` / `.str` / `.pn` syntax spans) and emitted
+ * with `set:html`. It is a prop rather than a slot because the `.weave` source
+ * contains literal `{` / `}` braces, which would otherwise collide with MDX's
+ * JSX expression delimiters. When `code` is omitted the default slot is used,
+ * so plain (brace-free) blocks can still nest content directly.
+ *
+ * `id` must be unique per page so the copy target resolves correctly.
+ */
+interface Props {
+  /** Filename label shown in the code head (e.g. "intro.weave"). */
+  name: string;
+  /** Unique id for the <pre>; the copy button targets `#${id}`. */
+  id: string;
+  /** Pre-tokenized inner HTML for the `<pre>` (prototype syntax spans). */
+  code?: string;
+}
+
+const { name, id, code } = Astro.props;
+const copyTarget = `#${id}`;
+---
+
+<div class="codeblock">
+  <div class="code-head">
+    <span class="fdot"></span>
+    <span class="fname">{name}</span>
+    <span class="spacer"></span>
+    <button class="copy-btn" data-copy={copyTarget}>copy</button>
+  </div>
+  {code ? <pre id={id} set:html={code} /> : <pre id={id}><slot /></pre>}
+</div>

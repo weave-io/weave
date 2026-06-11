@@ -1,0 +1,125 @@
+---
+/**
+ * ArticleChrome — page-scoped CSS for the prototype docs *article* layout.
+ *
+ * Source of truth: prototype `docs-article.html`. The shared design system
+ * (`tokens.css` + `docs.css`) already styles every reusable article class
+ * (`.prose`, `.crumbs`, `.lede`, `.codeblock`, `.term`, `.callout`,
+ * `.spec-table`, `.diagram`, `.deflist`, `.prevnext`, `.tag`, `.dot`, `.req`).
+ * Two pieces, however, lived in the prototype's *inline* `<style>` block rather
+ * than the shared sheet — `.meta-row` and `.feedback` — and the numbered `·NN`
+ * heading marker was an inline `<span class="num">` in static HTML.
+ *
+ * Because Astro renders MDX headings as markdown (so Astro collects them into
+ * the right-hand TOC and the `docs.js` scrollspy can resolve their auto-slugs),
+ * we cannot embed the `·NN` span inside the heading text without polluting the
+ * TOC label. Instead, mirroring the docs-home `.secn` counter approach
+ * (DocsHomeHero.astro), the marker is reproduced as a CSS counter `::before` on
+ * each `.prose h2`. This keeps the TOC text clean ("Overview", not
+ * "·01 Overview") while matching the prototype's numbered headings.
+ *
+ * Every article route renders this component once (typically just below the
+ * crumbs) so the article-only chrome ships with the page and nowhere else. The
+ * styles are `is:global` because the prose body is emitted by the
+ * MarkdownContent override outside this component's scope.
+ *
+ * It also emits the page `<h1>` here. The prototype article order is
+ * `crumbs → h1 → meta-row → lede` (`docs-article.html`), but Starlight's
+ * default `ContentPanel` renders `PageTitle` (the H1) in a separate panel
+ * *above* the markdown body, which would put the H1 before the crumbs. To
+ * reproduce the prototype order, the `PageTitle` override is emptied and the H1
+ * is rendered here — right after the crumbs and before the meta-row — using the
+ * route title. The `id="_top"` is preserved as Starlight's top-of-page anchor.
+ */
+const { entry } = Astro.locals.starlightRoute;
+---
+
+<div class="prose"><h1 id="_top">{entry.data.title}</h1></div>
+
+<style is:global>
+  /* Starlight's heading-links integration appends an `.sl-anchor-link` SVG after
+     every markdown heading; its hover/opacity styling is scoped to
+     `.sl-markdown-content`, which the prototype `.prose` wrapper does not use,
+     so the icon would render as a permanently-visible inline SVG. The prototype
+     article headings have no anchor link, so hide it. */
+  .docs-main .sl-anchor-link {
+    display: none;
+  }
+
+  /* --- Numbered headings (prototype `·NN` markers) ---------------------------
+     The prototype numbers every top-level `.prose h2` with a mono `·NN` marker.
+     We reproduce it as a CSS counter so the number is purely presentational and
+     never leaks into the TOC heading text. The counter resets on the `.prose`
+     body (MarkdownContent override) and increments per `h2`. Starlight wraps
+     each heading in `<div class="sl-heading-wrapper">`, so we target the wrapper
+     and add the marker to the inner `<h2>` via `::before`. The shared docs.css
+     already provides the `.prose h2` flex layout and `.prose h2 .num` styling;
+     this only supplies the generated marker for markdown headings.
+
+     `h3` headings (e.g. "Stage shape", "Fan-in with +") are intentionally NOT
+     numbered, matching the prototype. */
+  .prose {
+    counter-reset: section-num;
+  }
+  .prose :is(h2, .sl-heading-wrapper.level-h2 > h2) {
+    counter-increment: section-num;
+  }
+  .prose :is(h2, .sl-heading-wrapper.level-h2 > h2)::before {
+    content: '·' counter(section-num, decimal-leading-zero);
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+    color: var(--text-4);
+    font-weight: 500;
+    margin-right: var(--s-3);
+  }
+
+  /* --- Article meta row (prototype inline `<style>`) ------------------------- */
+  .prose .meta-row {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    flex-wrap: wrap;
+    margin: var(--s-4) 0 0;
+    font-family: var(--font-mono);
+    font-size: var(--fs-xs);
+    color: var(--text-3);
+  }
+  .prose .meta-row .stable {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  /* --- Feedback block (prototype inline `<style>`) -------------------------- */
+  .prose .feedback {
+    border: 1px solid var(--border);
+    border-radius: var(--r-3);
+    padding: var(--s-5);
+    margin-top: var(--s-12);
+    display: flex;
+    align-items: center;
+    gap: var(--s-4);
+    flex-wrap: wrap;
+  }
+  .prose .feedback .q {
+    font-size: var(--fs-sm);
+    color: var(--text-2);
+    flex: 1;
+  }
+  .prose .feedback .btns {
+    display: flex;
+    gap: var(--s-2);
+  }
+  .prose .feedback.done .btns {
+    display: none;
+  }
+  .prose .feedback .thanks {
+    display: none;
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+    color: var(--ok);
+  }
+  .prose .feedback.done .thanks {
+    display: inline;
+  }
+</style>

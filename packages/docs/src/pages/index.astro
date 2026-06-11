@@ -1,0 +1,286 @@
+---
+/**
+ * Landing page (`/`) — Astro replica of the prototype `landing-static.html`.
+ *
+ * The prototype DOM, classes, and section order are reproduced verbatim. Only
+ * the following are adapted for Astro + GitHub Pages base-path safety:
+ *   - the topbar markup is extracted into `Topbar.astro` (same DOM/classes);
+ *   - the inline `<style>` block is loaded from `styles/prototype/landing.css`
+ *     (extracted verbatim in Task 2) plus shared `tokens.css`;
+ *   - `logo.png` is a bundled asset import;
+ *   - prototype `.html` links are rewritten to real routes through
+ *     `import.meta.env.BASE_URL`;
+ *   - `theme.js` and `landing.js` are bundled via Vite-processed `<script>`
+ *     imports so generated SVGs, tabs, copy, reveals, and theme toggle work.
+ *
+ * Interaction hooks the ported scripts depend on are preserved exactly:
+ *   #heroDiagram, #capGrid, #howTabs / #howCanvas, #dslCode / #dslNotes,
+ *   .reveal, .how-tab[data-step], [data-copy], [data-theme-set].
+ */
+import Topbar from '../components/prototype/Topbar.astro';
+import logo from '../assets/prototype/logo.png';
+import '../styles/prototype/tokens.css';
+import '../styles/prototype/landing.css';
+
+const base = import.meta.env.BASE_URL;
+const docsHref = `${base}docs/`;
+// Footer "Workflows" link targets the canonical docs article at its final
+// route, not the docs home. All links are final-route based and joined to
+// BASE_URL so they resolve from `/` or any sub-path.
+const articleHref = `${base}docs/workflows/`;
+const homeHref = base;
+const designSystemHref = `${base}design-system/`;
+const githubHref = 'https://github.com/weave-io/weave';
+
+// Page description — preserved as document metadata for the landing route
+// (custom Astro page, so it is owned here rather than by Starlight's Head).
+const description =
+  'A single .weave file compiles to the prompts, scaffolding, and capability surfaces each AI coding harness expects. Author intent once; adapters translate it natively.';
+
+// Verbatim inner HTML of the prototype's `#dslCode` <pre> (landing-static.html
+// line 265). Rendered via `set:html` so Astro does not interpret the literal
+// `{`/`}` punctuation tokens as JSX expression delimiters — they must survive
+// as `<span class="pn">{</span>` to match the prototype exactly.
+const dslCode = `<span class="l"><span class="cm"># author intent once — adapters translate it</span></span><span class="l"><span class="kw">workflow</span> <span class="id">migrate_repo</span> <span class="pn">{</span></span><span class="l">  <span class="kw">stages</span><span class="pn">:</span> <span class="pn">[</span><span class="id">survey</span><span class="pn">,</span> <span class="id">plan</span><span class="pn">,</span> <span class="id">apply</span><span class="pn">,</span> <span class="id">verify</span><span class="pn">]</span></span><span class="l">  <span class="id">verify</span><span class="pn">:</span> <span class="id">reviewer</span><span class="pn">+</span><span class="id">security</span>  <span class="cm"># fan-in</span></span><span class="l"><span class="pn">}</span></span><span class="l"></span><span class="l"><span class="kw">agent</span> <span class="id">planner</span> <span class="pn">{</span></span><span class="l">  <span class="kw">role</span><span class="pn">:</span> <span class="str">"decompose objective into stages"</span></span><span class="l">  <span class="kw">delegates_to</span><span class="pn">:</span> <span class="pn">[</span><span class="id">executor</span><span class="pn">]</span></span><span class="l">  <span class="kw">model</span><span class="pn">:</span> <span class="fn">prefer</span><span class="pn">(</span><span class="id">reasoning</span><span class="pn">,</span> <span class="kw">fallback</span><span class="pn">:</span> <span class="id">fast</span><span class="pn">)</span></span><span class="l"><span class="pn">}</span></span><span class="l"></span><span class="l"><span class="kw">category</span> <span class="id">edit</span> <span class="pn">{</span> <span class="kw">routes</span><span class="pn">:</span> <span class="pn">[</span><span class="id">executor</span><span class="pn">] }</span></span><span class="l"><span class="kw">category</span> <span class="id">secure</span> <span class="pn">{</span> <span class="kw">routes</span><span class="pn">:</span> <span class="pn">[</span><span class="id">security</span><span class="pn">] }</span></span>`;
+---
+
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Weave — orchestrate agents in a language they share</title>
+    <meta name="description" content={description} />
+    <link rel="icon" href={logo.src} />
+  </head>
+  <body data-screen-label="Landing">
+    <Topbar />
+
+    <!-- HERO -->
+    <section class="hero">
+      <div class="bg"></div>
+      <div class="wrap inner">
+        <div class="eyebrow">
+          <span class="pill">v0.4.7</span>
+          <span class="ann">multi-agent · dsl · harness-agnostic</span>
+        </div>
+        <h1>Orchestrate agents in a <span class="b">language</span> <span class="d">they share.</span></h1>
+        <p class="lede">A single <code>.weave</code> file compiles to the prompts, scaffolding and capability surfaces each AI coding harness expects — Claude Code, OpenCode, Cursor, your own. Author intent once; adapters translate it natively.</p>
+        <div class="ctas">
+          <a class="w-btn primary lg" href={docsHref}>Read the docs</a>
+          <a class="w-btn lg" href="#dsl">Explore the DSL</a>
+          <a class="w-btn ghost lg" href="#architecture">See architecture</a>
+        </div>
+        <div class="hero-meta">6 agent roles · 4 harness adapters · 0 vendor coupling <span class="dot"></span> stable · MIT</div>
+
+        <!-- HERO DIAGRAM -->
+        <div class="editor reveal">
+          <div class="editor-head">
+            <span class="tabs">
+              <span class="tab active">overview.weave</span>
+              <span class="tab">planner.weave</span>
+              <span class="tab">workflows/</span>
+            </span>
+            <span class="spacer"></span>
+            <span>weave run · graph</span>
+          </div>
+          <div class="editor-body" id="heroDiagram"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- WHY -->
+    <section class="section" id="why">
+      <div class="wrap reveal">
+        <span class="kicker">why weave</span>
+        <h2>Agent tooling fragments. Intent shouldn’t.</h2>
+        <div class="duo">
+          <div class="col problem">
+            <h3>The problem</h3>
+            <ul>
+              <li>Prompts are shaped to one vendor’s harness and rot when you switch.</li>
+              <li>Delegation between agents is implicit, undocumented, unverifiable.</li>
+              <li>Skills are duplicated across every role and every repo.</li>
+              <li>Model choices harden into lock-in you can’t reverse.</li>
+            </ul>
+          </div>
+          <div class="col solution">
+            <h3>The Weave solution</h3>
+            <ul>
+              <li>One DSL describes agents, categories, workflows and skills.</li>
+              <li>The compiler emits a typed, normalized intent graph.</li>
+              <li>A one-way adapter boundary keeps core harness-agnostic.</li>
+              <li>Model preference is a capability hint — never a model name.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- CAPABILITIES -->
+    <section class="section" id="capabilities">
+      <div class="wrap reveal">
+        <span class="kicker">capabilities</span>
+        <h2>Six primitives. One coherent model.</h2>
+        <div class="cap-grid" id="capGrid"></div>
+      </div>
+    </section>
+
+    <!-- HOW IT WORKS -->
+    <section class="section" id="how">
+      <div class="wrap reveal">
+        <span class="kicker">how it works</span>
+        <h2>Define → Compose → Delegate → Adapt → Execute.</h2>
+        <div class="how">
+          <div class="how-tabs" id="howTabs">
+            <button class="how-tab active" data-step="define">define</button>
+            <button class="how-tab" data-step="compose">compose</button>
+            <button class="how-tab" data-step="delegate">delegate</button>
+            <button class="how-tab" data-step="adapt">adapt</button>
+            <button class="how-tab" data-step="execute">execute</button>
+          </div>
+          <div class="how-canvas" id="howCanvas"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- DSL -->
+    <section class="section" id="dsl">
+      <div class="wrap reveal">
+        <span class="kicker">the dsl</span>
+        <h2>The whole framework in one readable file.</h2>
+        <div class="dsl">
+          <div class="editor">
+            <div class="editor-head">
+              <span class="fdot" style="width:8px;height:8px;border-radius:50%;background:var(--tertiary)"></span>
+              <span style="color:var(--text-2)">migrate_repo.weave</span>
+              <span class="spacer"></span>
+              <button class="copy-btn" data-copy="#dslCode">copy</button>
+            </div>
+<pre id="dslCode" set:html={dslCode}></pre>
+          </div>
+          <div class="dsl-notes" id="dslNotes"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ARCHITECTURE -->
+    <section class="section" id="architecture">
+      <div class="wrap reveal">
+        <span class="kicker">architecture</span>
+        <h2>A one-way boundary between intent and harness.</h2>
+        <div class="arch">
+          <div class="col left core">
+            <h3>core · harness-agnostic</h3>
+            <ul>
+              <li>parser</li>
+              <li>compiler</li>
+              <li>resolver</li>
+              <li>verifier</li>
+              <li>graph runtime</li>
+            </ul>
+            <p class="rule"><b>MUST NOT</b> import adapter code or read harness config.</p>
+          </div>
+          <div class="col right">
+            <h3 style="color:var(--secondary-2)">adapters · per-harness</h3>
+            <ul>
+              <li><span class="d2"></span> claude-code</li>
+              <li><span class="d2"></span> opencode</li>
+              <li><span class="d2"></span> cursor</li>
+              <li><span class="d2"></span> generic-cli</li>
+              <li><span class="d2"></span> custom</li>
+            </ul>
+            <p class="rule"><b>MAY</b> add capabilities · <b>MUST NOT</b> mutate normalized intent.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- DOCS CTA -->
+    <section class="section" id="docs">
+      <div class="wrap reveal">
+        <span class="kicker">documentation</span>
+        <h2>Docs treated as a first-class surface.</h2>
+        <div class="docs-cta">
+          <div class="card">
+            <p>The spec is written to be read in an afternoon — every construct, every error code, every runtime guarantee, with the same care as the framework itself.</p>
+            <div class="row">
+              <a class="w-btn primary" href={docsHref}>Open the docs</a>
+              <a class="w-btn" href={articleHref}>View an article</a>
+            </div>
+          </div>
+          <div class="docs-tree">
+            <div class="t"><span class="n">01</span> Introduction</div>
+            <div class="t"><span class="n">02</span> Quickstart</div>
+            <div class="t"><span class="n">03</span> Agents</div>
+            <div class="t"><span class="n">04</span> Categories</div>
+            <div class="t cur"><span class="n">05</span> Workflows · current</div>
+            <div class="t"><span class="n">06</span> Skills</div>
+            <div class="t"><span class="n">07</span> Model preference</div>
+            <div class="t"><span class="n">08</span> Adapter boundary</div>
+            <div class="t"><span class="n">09</span> Runtime contract</div>
+            <div class="t"><span class="n">10</span> ADRs & specs</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- FINAL CTA -->
+    <section class="final w-gridbg">
+      <div class="wrap reveal">
+        <span class="tag">v0.4.7 · stable</span>
+        <h2>Stop authoring prompts. Author <span class="b">intent</span>.</h2>
+        <p>MIT-licensed and small enough to read in an afternoon. Compile once; run everywhere your team already works.</p>
+        <div class="ctas">
+          <a class="w-btn primary lg" href={docsHref}>Read the docs</a>
+          <a class="w-btn lg" href="#dsl">Explore the DSL</a>
+        </div>
+      </div>
+    </section>
+
+    <!-- FOOTER -->
+    <footer class="foot">
+      <div class="wrap">
+        <div class="foot-grid">
+          <div class="foot-brand">
+            <div class="word"><img src={logo.src} alt="" style="width:24px;height:24px;border-radius:4px" /> weave</div>
+            <p>A harness-agnostic prompt and agent-configuration framework for infrastructure people.</p>
+          </div>
+          <div>
+            <h4>Product</h4>
+            <ul>
+              <li><a href="#capabilities">Capabilities</a></li>
+              <li><a href="#dsl">The DSL</a></li>
+              <li><a href="#architecture">Architecture</a></li>
+              <li><a href={designSystemHref}>Design system</a></li>
+            </ul>
+          </div>
+          <div>
+            <h4>Docs</h4>
+            <ul>
+              <li><a href={docsHref}>Introduction</a></li>
+              <li><a href={articleHref}>Workflows</a></li>
+              <li><a href={docsHref}>Quickstart</a></li>
+              <li><a href={docsHref}>Reference</a></li>
+            </ul>
+          </div>
+          <div>
+            <h4>Project</h4>
+            <ul>
+              <li><a href={githubHref}>GitHub ↗</a></li>
+              <li><a href={githubHref}>Changelog</a></li>
+              <li><a href={githubHref}>License · MIT</a></li>
+              <li><a href={homeHref}>Design package</a></li>
+            </ul>
+          </div>
+        </div>
+        <div class="foot-meta">weave · v0.4.7 · 2026 — made for infrastructure people</div>
+      </div>
+    </footer>
+
+    <script>
+      import '../scripts/prototype/theme.js';
+      import '../scripts/prototype/landing.js';
+    </script>
+  </body>
+</html>
