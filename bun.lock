@@ -39,9 +39,11 @@
         "@weave/core": "workspace:*",
         "@weave/engine": "workspace:*",
         "figlet": "^1.11.0",
+        "mustache": "^4.2.0",
         "neverthrow": "^8.2.0",
       },
       "devDependencies": {
+        "@types/mustache": "^4.2.6",
         "typescript": "^5.4.5",
       },
     },
