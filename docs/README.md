@@ -18,12 +18,14 @@ The published docs site is built from the Astro + Starlight package at [`package
 | [Prompt Composition](prompt-composition.md) | Mustache templates, delegation section, template context fields |
 | [Tool Policy Evaluation](tool-policy-evaluation.md) | Abstract capabilities, `EffectiveToolPolicy`, adapter mapping |
 | [Workflow Schema](workflow-schema.md) | Workflow fields, step types, completion methods, artifact passing |
-| [CLI](cli.md) | `weave validate`, `weave init`, `weave init migrate`, harness detection |
+| [CLI](cli.md) | `weave validate`, `weave init`, `weave init migrate`, `weave eval run`, harness detection |
 | [DSL Reference](dsl-reference.md) | Canonical `.weave` DSL syntax reference (agents, categories, workflows, settings) |
 | [System Architecture](system-architecture.md) | Package structure, layer responsibilities |
 | [Claude Code Adapter](claude-code-adapter.md) | Claude Code adapter materialization |
 | [Adapter Readiness Status](adapter-readiness-status.md) | Per-adapter capability readiness declarations |
 | [Harness Agent Surface Patterns](harness-agent-surface-patterns.md) | Patterns for adapter-side agent surface materialization |
+| [Agent Evals](agent-evals.md) | Eval architecture, fixture layout, CLI usage, filter semantics, prompt-hash provenance, artifact schema, sanitization rules, raw-artifact policy, CI model |
+| [Eval Sanitization and Publish Pipeline](eval-sanitization-and-publish-pipeline.md) | Allowlist sanitizer, deterministic bundle writer, raw artifact writer, token-gated publish policy |
 | [Legacy Architecture](legacy-architecture.md) | Alpha / OpenCode-era reference (read-only history) |
 
 ---

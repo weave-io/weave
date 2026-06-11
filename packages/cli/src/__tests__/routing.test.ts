@@ -222,3 +222,68 @@ describe("CLI routing", () => {
     expect(combinedOutput).toContain("--scope");
   });
 });
+
+describe("CLI routing — eval", () => {
+  it("Should_route_eval_run_dry_run_to_eval_handler", async () => {
+    const { terminal, result } = cli(["eval", "run", "--dry-run"]);
+    const r = await result;
+    expect(r.isOk()).toBe(true);
+    expect(r._unsafeUnwrap()).toBe(0);
+    const out = terminal.out.join("\n");
+    expect(out).toContain("dry run");
+  });
+
+  it("Should_exit_1_for_bare_eval_command", async () => {
+    const { terminal, result } = cli(["eval"]);
+    const r = await result;
+    expect(r.isOk()).toBe(true);
+    expect(r._unsafeUnwrap()).toBe(1);
+    const err = terminal.err.join("\n");
+    expect(err).toContain("weave eval run");
+  });
+
+  it("Should_not_show_unknown_command_for_bare_eval", async () => {
+    const { terminal, result } = cli(["eval"]);
+    const r = await result;
+    expect(r.isOk()).toBe(true);
+    expect(r._unsafeUnwrap()).toBe(1);
+    expect(terminal.err.join("\n")).not.toContain("Unknown command");
+  });
+
+  it("Should_include_eval_in_help_output", async () => {
+    const { terminal, result } = cli(["--help"]);
+    await result;
+    const out = terminal.out.join("\n");
+    expect(out).toContain("eval");
+  });
+
+  it("Should_show_dry_run_filter_summary_with_agent_flag", async () => {
+    const { terminal, result } = cli([
+      "eval",
+      "run",
+      "--agent",
+      "loom",
+      "--dry-run",
+    ]);
+    const r = await result;
+    expect(r.isOk()).toBe(true);
+    expect(r._unsafeUnwrap()).toBe(0);
+    expect(terminal.out.join("\n")).toContain("loom");
+  });
+
+  it("Should_exit_1_and_report_error_for_invalid_agent_in_eval_run", async () => {
+    const { terminal, result } = cli(["eval", "run", "--agent", "bad agent!"]);
+    const r = await result;
+    expect(r.isOk()).toBe(true);
+    expect(r._unsafeUnwrap()).toBe(1);
+    expect(terminal.err.join("\n")).toContain("Error:");
+  });
+
+  it("Should_exit_1_for_missing_agent_value_in_argv", async () => {
+    const { result } = cli(["eval", "run", "--agent"]);
+    const r = await result;
+    expect(r.isOk()).toBe(true);
+    // parseArgs fails → formatCliError → exit 1
+    expect(r._unsafeUnwrap()).toBe(1);
+  });
+});

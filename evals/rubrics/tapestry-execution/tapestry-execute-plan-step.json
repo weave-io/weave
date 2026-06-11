@@ -1,0 +1,10 @@
+{
+  "case_id": "tapestry-execute-plan-step",
+  "suite": "tapestry-execution",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "agent_signal tool call is the primary completion indicator"
+  }
+}

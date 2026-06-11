@@ -1,0 +1,10 @@
+{
+  "case_id": "tapestry-delegate-to-shuttle",
+  "suite": "tapestry-execution",
+  "scoring": {
+    "outcome_weight": 0.6,
+    "per_expectation_weight": 0.2,
+    "required": true,
+    "notes": "Both delegate tool call and agent mention contribute to partial credit; chain integrity is the main signal"
+  }
+}

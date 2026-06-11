@@ -63,6 +63,13 @@
   - type Command
   - type ArgParseError
 - `packages/cli/src/cli.ts` — function run: (deps?) => Promise<Result<number, CliError>>, interface CliDeps
+- `packages/cli/src/commands/eval.ts`
+  - function readPublishMode: (env, string | undefined>) => BundleWriteMode
+  - function buildLangChainScorer: (evalEnv, langchainModuleLoader?) => void
+  - function runEval: (ctx) => Promise<Result<number, CliError>>
+  - interface EvalContext
+  - interface LangChainOpenAIModule
+  - const WEAVE_EVAL_PUBLISH_MODE_ENV_VAR
 - `packages/cli/src/commands/init.ts`
   - function runInit: (ctx) => Promise<Result<number, CliError>>
   - function installHarnesses: (input) => Promise<number>
@@ -98,7 +105,128 @@
   - type MissingFileError
   - type FileReadError
   - type ParseFailureError
+  - _...5 more_
+- `packages/cli/src/evals/artifact-bundle.ts`
+  - function computeBundleDirName: (gitSha, assembledAt) => string
+  - function assembleScoreFile: (runnerResult, gitSha, assembledAt, dryRun) => BundleScoreFile
+  - function aggregateScoreFile: (suiteName, results, gitSha, assembledAt, dryRun) => BundleScoreFile
+  - function assemblePromptHashRecords: (records) => BundlePromptHashRecord[]
+  - function assembleBundle: (options) => Result<EvalBundle, BundleError>
+  - function assertBundlePublishEligible: (bundle) => Result<undefined, BundleError>
+  - _...6 more_
+- `packages/cli/src/evals/case-loader.ts`
+  - function loadCaseFile: (filePath) => ResultAsync<EvalCase, FixtureSchemaError>
+  - function loadRubricFile: (filePath) => ResultAsync<EvalRubric, FixtureSchemaError>
+  - function loadSuiteCases: (suite, evalsRoot) => ResultAsync<EvalCase[], FixtureSchemaError>
+  - function loadSuiteRubrics: (suite, evalsRoot) => ResultAsync<EvalRubric[], FixtureSchemaError>
+  - function validateCaseFilter: (caseId, cases) => FixtureSchemaError | EvalCase
+  - const EVALS_ROOT
+  - _...1 more_
+- `packages/cli/src/evals/env.ts`
+  - function readEvalEnv: (env, string | undefined>, {...}) => Result<EvalEnv, EvalEnvError>
+  - interface EvalEnv
+  - type EvalEnvError
+  - const DEFAULT_OPENROUTER_BASE_URL
+  - const OPENROUTER_API_KEY_ENV_VAR
+  - const OPENROUTER_BASE_URL_ENV_VAR
+- `packages/cli/src/evals/github-contents-publisher.ts`
+  - class GitHubContentsPublisher
+  - type FetchImpl
+  - type FileReader
+  - const TARGET_REPO
+  - const TARGET_BRANCH
+  - const TARGET_RUNS_PREFIX
+- `packages/cli/src/evals/input-validation.ts`
+  - function parseEvalRunRequest: (inputs) => Result<EvalRunRequest, EvalInputValidationError>
+  - type EvalRunRequest
+  - type EvalRunInputs
+  - type EvalInputValidationError
+  - const KNOWN_EVAL_AGENTS
+  - const KNOWN_EVAL_AGENTS_SORTED: readonly string[]
+- `packages/cli/src/evals/langchain-agent-evals.ts`
+  - function buildRationaleProjection: (run) => string
+  - class RealLangChainJudge
+  - class LangChainAgentEvalsScorer
+  - class StubLangChainJudge
+  - class StubAgentEvalsScorer
+  - interface JudgeInput
+  - _...5 more_
+- `packages/cli/src/evals/loom-routing-runner.ts`
+  - function extractRoutedAgents: (content) => string[]
+  - function redactSecrets: (raw) => string
+  - class LoomRoutingRunner
+  - interface LoomRoutingRunnerOptions
+  - interface LoomRunRequest
+  - const LOOM_ROUTING_SUITE
+- `packages/cli/src/evals/model-matrix.ts`
+  - function loadModelMatrix: (matrixPath) => ResultAsync<ModelMatrix, FixtureSchemaError>
+  - function resolveDefaultModels: (matrix) => ModelMatrixEntry[]
+  - function filterMatrix: (matrix, filterId) => ModelMatrixEntry[]
+  - function validateModelInMatrix: (matrix, modelId) => Result<ModelMatrixEntry, FixtureSchemaError>
+  - const MATRIX_PATH
+  - const MIN_DEFAULT_MODELS
+- `packages/cli/src/evals/openrouter-client.ts`
+  - class OpenRouterClient
+  - class StubModelClient
+  - interface ChatMessage
+  - interface ModelRequest
+  - interface ModelResponse
+  - interface ModelClient
+  - _...1 more_
+- `packages/cli/src/evals/prompt-snapshots.ts`
+  - function composeSnapshot: (input) => ResultAsync<ComposeSnapshotResult, ProvenanceError>
+  - function composeAgentSnapshots: (options) => ResultAsync<ComposeAgentSnapshotsResult, ProvenanceError>
+  - interface ComposeSnapshotInput
+  - interface ComposeSnapshotResult
+  - interface ComposeAgentSnapshotsOptions
+  - interface ComposeAgentSnapshotsResult
+  - _...1 more_
+- `packages/cli/src/evals/provenance.ts`
+  - function deriveSummary: (snapshot) => string
+  - function deriveProvenanceRecord: (snapshot, gitSha, capturedAt) => void
+  - function buildManifest: (records, gitSha, producedAt) => void
+  - function writeManifest: (manifest, outputPath) => ResultAsync<void, ProvenanceError>
+  - function deriveProvenanceManifest: (snapshots, options) => Result<PromptProvenanceManifest, ProvenanceError>
+  - function deriveAndWriteManifest: (snapshots, options) => ResultAsync<PromptProvenanceManifest, ProvenanceError>
   - _...4 more_
+- `packages/cli/src/evals/raw-artifacts.ts`
+  - function rawCaseResultFilename: (caseId, modelId, date) => string
+  - function rawPromptFilename: (agentName, date) => string
+  - function isoToFilesafeDatetime: (iso) => string
+  - class RawArtifactsWriter
+  - const RAW_ARTIFACTS_SUBDIR
+- `packages/cli/src/evals/results-repo.ts`
+  - function validatePublishToken: (env, string | undefined>) => ResultAsync<string, ResultsRepoError>
+  - function validateRepoConfig: (config) => ResultAsync<undefined, ResultsRepoError>
+  - function enforcePublishPolicy: (bundle) => ResultAsync<undefined, ResultsRepoError>
+  - class NoOpResultsRepoPublisher
+  - class StubResultsRepoPublisher
+  - interface PublishBundleRequest
+  - _...2 more_
+- `packages/cli/src/evals/runner.ts`
+  - function buildEvalRunner: (orchestrator) => (request: EvalRunRequest) => Promise<Result<number, CliError>>
+  - class EvalOrchestrator
+  - interface EvalRunMetadata
+  - interface ModelRollup
+  - interface AgentRollup
+  - interface EvalRunSummary
+  - _...3 more_
+- `packages/cli/src/evals/sanitizer.ts`
+  - function sanitizeCaseResultSummary: (summary) => SanitizedCaseResultSummary
+  - function sanitizeScoreRecord: (record) => SanitizedScoreRecord
+  - function sanitizeProvenanceRecord: (record) => SanitizedProvenanceRecord
+  - function sanitizeProvenanceManifest: (manifest) => void
+  - function dropUnknownFields: (input, allowedKeys) => Partial<T>
+  - function assertPublishSafe: (obj, unknown>, context) => Result<undefined, SanitizerError>
+  - _...7 more_
+- `packages/cli/src/evals/tapestry-execution-runner.ts`
+  - function extractDelegationChain: (content) => string[]
+  - function detectCompletionSignal: (content) => boolean
+  - function extractProducedArtifacts: (content, expectedArtifacts) => string[]
+  - class TapestryExecutionRunner
+  - interface TapestryExecutionRunnerOptions
+  - interface TapestryRunRequest
+  - _...1 more_
 - `packages/cli/src/fs/file-system.ts`
   - function describeFileSystemError: (error) => string
   - class BunFileSystem

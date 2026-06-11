@@ -1,0 +1,412 @@
+import { describe, expect, it } from "bun:test";
+import {
+  type EvalRunInputs,
+  KNOWN_EVAL_AGENTS,
+  KNOWN_EVAL_AGENTS_SORTED,
+  parseEvalRunRequest,
+} from "../input-validation.js";
+
+// Helper: build a clean non-CI env map
+function env(
+  overrides: Record<string, string | undefined> = {},
+): Record<string, string | undefined> {
+  return { ...overrides };
+}
+
+// Helper: build inputs with no-CI env as default
+function inputs(
+  overrides: Partial<EvalRunInputs> & {
+    envOverrides?: Record<string, string | undefined>;
+  } = {},
+): EvalRunInputs {
+  const { envOverrides, ...rest } = overrides;
+  return {
+    env: env(envOverrides),
+    ...rest,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Happy path — empty/minimal inputs
+// ---------------------------------------------------------------------------
+
+describe("parseEvalRunRequest — happy paths", () => {
+  it("returns ok with all undefined filters and defaults when inputs are empty", () => {
+    const result = parseEvalRunRequest(inputs());
+    expect(result.isOk()).toBe(true);
+    const req = result._unsafeUnwrap();
+    expect(req.agent).toBeUndefined();
+    expect(req.model).toBeUndefined();
+    expect(req.case).toBeUndefined();
+    expect(req.dryRun).toBe(false);
+    expect(req.rawArtifacts).toBe(false);
+  });
+
+  it("passes through valid agent, model, and case filters", () => {
+    const result = parseEvalRunRequest(
+      inputs({ agent: "loom", model: "claude-sonnet-4-5", case: "case-01" }),
+    );
+    expect(result.isOk()).toBe(true);
+    const req = result._unsafeUnwrap();
+    expect(req.agent).toBe("loom");
+    expect(req.model).toBe("claude-sonnet-4-5");
+    expect(req.case).toBe("case-01");
+  });
+
+  it("accepts identifiers with dots and slashes in model/case (not agent — agent has allowlist)", () => {
+    const result = parseEvalRunRequest(
+      inputs({ agent: "tapestry", model: "provider/model-id:v1" }),
+    );
+    expect(result.isOk()).toBe(true);
+  });
+
+  it("accepts identifiers with @ symbol", () => {
+    const result = parseEvalRunRequest(
+      inputs({ model: "openai/gpt-4o@latest" }),
+    );
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().model).toBe("openai/gpt-4o@latest");
+  });
+
+  it("sets dryRun=true when passed", () => {
+    const result = parseEvalRunRequest(inputs({ dryRun: true }));
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().dryRun).toBe(true);
+  });
+
+  it("sets rawArtifacts=true in non-CI env when passed", () => {
+    const result = parseEvalRunRequest(inputs({ rawArtifacts: true }));
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().rawArtifacts).toBe(true);
+  });
+
+  it("merges env variable filters when no CLI flag is supplied", () => {
+    const result = parseEvalRunRequest(
+      inputs({
+        envOverrides: {
+          WEAVE_EVAL_AGENT: "loom",
+          WEAVE_EVAL_MODEL: "claude-sonnet-4-5",
+          WEAVE_EVAL_CASE: "case-02",
+        },
+      }),
+    );
+    expect(result.isOk()).toBe(true);
+    const req = result._unsafeUnwrap();
+    expect(req.agent).toBe("loom");
+    expect(req.model).toBe("claude-sonnet-4-5");
+    expect(req.case).toBe("case-02");
+  });
+
+  it("collapses identical duplicate values silently", () => {
+    const result = parseEvalRunRequest(
+      inputs({
+        agent: "loom",
+        envOverrides: { WEAVE_EVAL_AGENT: "loom" },
+      }),
+    );
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().agent).toBe("loom");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// EmptyFilterValue errors
+// ---------------------------------------------------------------------------
+
+describe("parseEvalRunRequest — empty filter values", () => {
+  it("rejects empty agent filter", () => {
+    const result = parseEvalRunRequest(inputs({ agent: "" }));
+    expect(result.isErr()).toBe(true);
+    const e = result._unsafeUnwrapErr();
+    expect(e.type).toBe("EmptyFilterValue");
+    if (e.type === "EmptyFilterValue") {
+      expect(e.filter).toBe("agent");
+    }
+    expect(e.message).toContain("--agent");
+  });
+
+  it("rejects whitespace-only agent filter", () => {
+    const result = parseEvalRunRequest(inputs({ agent: "   " }));
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().type).toBe("EmptyFilterValue");
+  });
+
+  it("rejects empty model filter", () => {
+    const result = parseEvalRunRequest(inputs({ model: "" }));
+    expect(result.isErr()).toBe(true);
+    const e = result._unsafeUnwrapErr();
+    expect(e.type).toBe("EmptyFilterValue");
+    if (e.type === "EmptyFilterValue") {
+      expect(e.filter).toBe("model");
+    }
+  });
+
+  it("rejects empty case filter", () => {
+    const result = parseEvalRunRequest(inputs({ case: "" }));
+    expect(result.isErr()).toBe(true);
+    const e = result._unsafeUnwrapErr();
+    expect(e.type).toBe("EmptyFilterValue");
+    if (e.type === "EmptyFilterValue") {
+      expect(e.filter).toBe("case");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// InvalidFilterIdentifier errors
+// ---------------------------------------------------------------------------
+
+describe("parseEvalRunRequest — invalid identifier characters", () => {
+  it("rejects agent with space", () => {
+    const result = parseEvalRunRequest(inputs({ agent: "my agent" }));
+    expect(result.isErr()).toBe(true);
+    const e = result._unsafeUnwrapErr();
+    expect(e.type).toBe("InvalidFilterIdentifier");
+    if (e.type === "InvalidFilterIdentifier") {
+      expect(e.filter).toBe("agent");
+      expect(e.message).toContain("my agent");
+    }
+  });
+
+  it("rejects agent with shell-special characters ($)", () => {
+    const result = parseEvalRunRequest(inputs({ agent: "shuttle$name" }));
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().type).toBe("InvalidFilterIdentifier");
+  });
+
+  it("rejects model with control character", () => {
+    const result = parseEvalRunRequest(inputs({ model: "model\nid" }));
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().type).toBe("InvalidFilterIdentifier");
+  });
+
+  it("rejects case with semicolons (potential injection risk)", () => {
+    const result = parseEvalRunRequest(inputs({ case: "case;drop-db" }));
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().type).toBe("InvalidFilterIdentifier");
+  });
+
+  it("rejects case with regex-special characters (.*)", () => {
+    const result = parseEvalRunRequest(inputs({ case: "case.*" }));
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().type).toBe("InvalidFilterIdentifier");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// RawArtifactsInCI errors
+// ---------------------------------------------------------------------------
+
+describe("parseEvalRunRequest — rawArtifacts CI guard", () => {
+  it("rejects rawArtifacts when CI=true", () => {
+    const result = parseEvalRunRequest(
+      inputs({ rawArtifacts: true, envOverrides: { CI: "true" } }),
+    );
+    expect(result.isErr()).toBe(true);
+    const e = result._unsafeUnwrapErr();
+    expect(e.type).toBe("RawArtifactsInCI");
+    expect(e.message).toContain("--raw-artifacts");
+  });
+
+  it("rejects rawArtifacts when CI=1", () => {
+    const result = parseEvalRunRequest(
+      inputs({ rawArtifacts: true, envOverrides: { CI: "1" } }),
+    );
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().type).toBe("RawArtifactsInCI");
+  });
+
+  it("allows rawArtifacts when CI is not set", () => {
+    const result = parseEvalRunRequest(inputs({ rawArtifacts: true }));
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().rawArtifacts).toBe(true);
+  });
+
+  it("allows rawArtifacts when CI=false", () => {
+    const result = parseEvalRunRequest(
+      inputs({ rawArtifacts: true, envOverrides: { CI: "false" } }),
+    );
+    expect(result.isOk()).toBe(true);
+  });
+
+  it("allows rawArtifacts when CI=0", () => {
+    const result = parseEvalRunRequest(
+      inputs({ rawArtifacts: true, envOverrides: { CI: "0" } }),
+    );
+    expect(result.isOk()).toBe(true);
+  });
+
+  it("does not reject dryRun in CI", () => {
+    const result = parseEvalRunRequest(
+      inputs({ dryRun: true, envOverrides: { CI: "true" } }),
+    );
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().dryRun).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DuplicateConflictingInput errors
+// ---------------------------------------------------------------------------
+
+describe("parseEvalRunRequest — duplicate conflicting inputs", () => {
+  it("rejects conflicting agent from CLI and env", () => {
+    const result = parseEvalRunRequest(
+      inputs({
+        agent: "loom",
+        envOverrides: { WEAVE_EVAL_AGENT: "shuttle" },
+      }),
+    );
+    expect(result.isErr()).toBe(true);
+    const e = result._unsafeUnwrapErr();
+    expect(e.type).toBe("DuplicateConflictingInput");
+    if (e.type === "DuplicateConflictingInput") {
+      expect(e.filter).toBe("agent");
+      expect(e.message).toContain("loom");
+      expect(e.message).toContain("shuttle");
+    }
+  });
+
+  it("rejects conflicting model from CLI and env", () => {
+    const result = parseEvalRunRequest(
+      inputs({
+        model: "model-a",
+        envOverrides: { WEAVE_EVAL_MODEL: "model-b" },
+      }),
+    );
+    expect(result.isErr()).toBe(true);
+    const e = result._unsafeUnwrapErr();
+    expect(e.type).toBe("DuplicateConflictingInput");
+    if (e.type === "DuplicateConflictingInput") {
+      expect(e.filter).toBe("model");
+    }
+  });
+
+  it("rejects conflicting case from CLI and env", () => {
+    const result = parseEvalRunRequest(
+      inputs({
+        case: "case-01",
+        envOverrides: { WEAVE_EVAL_CASE: "case-02" },
+      }),
+    );
+    expect(result.isErr()).toBe(true);
+    const e = result._unsafeUnwrapErr();
+    expect(e.type).toBe("DuplicateConflictingInput");
+    if (e.type === "DuplicateConflictingInput") {
+      expect(e.filter).toBe("case");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// UnknownAgentFilter errors — agent allowlist validation
+// ---------------------------------------------------------------------------
+
+describe("parseEvalRunRequest — agent allowlist validation", () => {
+  it("rejects an unknown agent value (fails closed before any execution)", () => {
+    const result = parseEvalRunRequest(inputs({ agent: "shuttle" }));
+    expect(result.isErr()).toBe(true);
+    const e = result._unsafeUnwrapErr();
+    expect(e.type).toBe("UnknownAgentFilter");
+    if (e.type === "UnknownAgentFilter") {
+      expect(e.value).toBe("shuttle");
+      expect(e.allowedValues).toEqual(
+        expect.arrayContaining(["loom", "tapestry"]),
+      );
+      expect(e.message).toContain("shuttle");
+      expect(e.message).toContain("loom");
+    }
+  });
+
+  it("rejects 'org/shuttle.v2' (not in allowlist even if valid identifier syntax)", () => {
+    const result = parseEvalRunRequest(inputs({ agent: "org/shuttle.v2" }));
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().type).toBe("UnknownAgentFilter");
+  });
+
+  it("accepts 'loom' — known eval agent", () => {
+    const result = parseEvalRunRequest(inputs({ agent: "loom" }));
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().agent).toBe("loom");
+  });
+
+  it("accepts 'tapestry' — known eval agent", () => {
+    const result = parseEvalRunRequest(inputs({ agent: "tapestry" }));
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().agent).toBe("tapestry");
+  });
+
+  it("accepts 'loom-routing' — known eval suite name", () => {
+    const result = parseEvalRunRequest(inputs({ agent: "loom-routing" }));
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().agent).toBe("loom-routing");
+  });
+
+  it("accepts 'tapestry-execution' — known eval suite name", () => {
+    const result = parseEvalRunRequest(inputs({ agent: "tapestry-execution" }));
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().agent).toBe("tapestry-execution");
+  });
+
+  it("rejects 'warp' — not an eval agent (it is a reviewer)", () => {
+    const result = parseEvalRunRequest(inputs({ agent: "warp" }));
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().type).toBe("UnknownAgentFilter");
+  });
+
+  it("rejects unknown agent from env variable (WEAVE_EVAL_AGENT)", () => {
+    const result = parseEvalRunRequest(
+      inputs({ envOverrides: { WEAVE_EVAL_AGENT: "unknown-agent-xyz" } }),
+    );
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().type).toBe("UnknownAgentFilter");
+  });
+
+  it("error message includes the allowed values list", () => {
+    const result = parseEvalRunRequest(inputs({ agent: "bad-agent" }));
+    const e = result._unsafeUnwrapErr();
+    if (e.type === "UnknownAgentFilter") {
+      for (const allowed of KNOWN_EVAL_AGENTS_SORTED) {
+        expect(e.message).toContain(allowed);
+      }
+    }
+  });
+
+  it("undefined agent is not validated against the allowlist (pass-through)", () => {
+    // No --agent filter = all suites run
+    const result = parseEvalRunRequest(inputs({}));
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().agent).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// KNOWN_EVAL_AGENTS exports
+// ---------------------------------------------------------------------------
+
+describe("KNOWN_EVAL_AGENTS — exported constants", () => {
+  it("KNOWN_EVAL_AGENTS contains loom, tapestry, loom-routing, tapestry-execution", () => {
+    expect(KNOWN_EVAL_AGENTS.has("loom")).toBe(true);
+    expect(KNOWN_EVAL_AGENTS.has("tapestry")).toBe(true);
+    expect(KNOWN_EVAL_AGENTS.has("loom-routing")).toBe(true);
+    expect(KNOWN_EVAL_AGENTS.has("tapestry-execution")).toBe(true);
+  });
+
+  it("KNOWN_EVAL_AGENTS does not contain shuttle or warp", () => {
+    expect(
+      KNOWN_EVAL_AGENTS.has(
+        "shuttle" as Parameters<(typeof KNOWN_EVAL_AGENTS)["has"]>[0],
+      ),
+    ).toBe(false);
+    expect(
+      KNOWN_EVAL_AGENTS.has(
+        "warp" as Parameters<(typeof KNOWN_EVAL_AGENTS)["has"]>[0],
+      ),
+    ).toBe(false);
+  });
+
+  it("KNOWN_EVAL_AGENTS_SORTED is sorted alphabetically", () => {
+    const sorted = [...KNOWN_EVAL_AGENTS_SORTED].sort();
+    expect(KNOWN_EVAL_AGENTS_SORTED).toEqual(sorted);
+  });
+});

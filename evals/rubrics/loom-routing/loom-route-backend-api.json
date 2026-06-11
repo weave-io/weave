@@ -1,0 +1,10 @@
+{
+  "case_id": "loom-route-backend-api",
+  "suite": "loom-routing",
+  "scoring": {
+    "outcome_weight": 0.8,
+    "per_expectation_weight": 0.2,
+    "required": true,
+    "notes": "Routing to backend shuttle is the primary signal; transcript mention provides partial credit"
+  }
+}

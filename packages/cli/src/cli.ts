@@ -152,6 +152,11 @@ export async function run(
       return runPrompt({ terminal, theme, flags, rest });
     }
 
+    case "eval": {
+      const { runEval } = await import("./commands/eval.js");
+      return runEval({ terminal, theme, flags });
+    }
+
     case "unknown": {
       const errMsg = formatCliError({
         type: "UnknownCommand",
