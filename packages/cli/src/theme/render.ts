@@ -42,7 +42,7 @@ export class ThemeRenderer {
       "",
       `    ${theme.cyan("--help")}             ${theme.dim("Show this help message")}`,
       `    ${theme.cyan("--version")}          ${theme.dim("Show CLI version")}`,
-      `    ${theme.cyan("--scope")} global|local ${theme.dim("Choose init scope")}`,
+      `    ${theme.cyan("--scope")} global|local ${theme.dim("Choose scope for init and prompt self-modify")}`,
       `    ${theme.cyan("--install-dir")} <dir> ${theme.dim("Choose init config directory")}`,
       `    ${theme.cyan("--path")} <file>       ${theme.dim("Validate an explicit .weave file")}`,
       `    ${theme.cyan("--project")}           ${theme.dim("Validate ./.weave/config.weave")}`,

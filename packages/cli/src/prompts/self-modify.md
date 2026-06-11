@@ -30,6 +30,7 @@ files to read, what rules to follow, and how to verify your changes.
 ## Target-specific rules
 
 {{#isGlobal}}
+
 ### Global scope (`~/.weave/`)
 
 - Changes here apply to **all projects** on this machine.
@@ -42,6 +43,7 @@ files to read, what rules to follow, and how to verify your changes.
   `~/.weave/prompts/<filename>` before the config is loaded.
 {{/isGlobal}}
 {{#isLocal}}
+
 ### Project scope (`.weave/`)
 
 - Changes here apply to **this project only** and override global config.

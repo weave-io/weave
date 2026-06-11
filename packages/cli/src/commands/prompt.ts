@@ -33,6 +33,8 @@ export interface PromptContext {
   rest?: string[];
   /** Injectable for testing. Defaults to loadConfig(process.cwd()). */
   configLoader?: () => ResultAsync<WeaveConfig, ConfigLoadError[]>;
+  /** Current working directory. Defaults to process.cwd(). */
+  cwd?: string;
 }
 
 type PromptError = CliError;
@@ -94,7 +96,7 @@ function mapConfigLoadErrors(
 function loadPromptConfig(
   ctx: PromptContext,
 ): ResultAsync<WeaveConfig, PromptError> {
-  const cwd = process.cwd();
+  const cwd = ctx.cwd ?? process.cwd();
   const configLoader = ctx.configLoader ?? (() => loadConfig(cwd));
   return configLoader().mapErr((errors) => mapConfigLoadErrors(cwd, errors));
 }
@@ -261,7 +263,7 @@ async function runPromptSelfModify(
   }
 
   const scope = ctx.flags.scope ?? "global";
-  const projectRoot = process.cwd();
+  const projectRoot = ctx.cwd ?? process.cwd();
 
   ctx.terminal.stdout(renderSelfModifyPrompt({ scope, projectRoot }));
   return ok(0);

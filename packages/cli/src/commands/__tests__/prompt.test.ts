@@ -54,6 +54,7 @@ function context(
     NonNullable<Parameters<typeof runPrompt>[0]["configLoader"]>
   > = () => okAsync(testConfig),
   rest: string[] = [],
+  cwd?: string,
 ) {
   const terminal = new BufferTerminal();
   return {
@@ -64,6 +65,7 @@ function context(
       flags: flags(overrides),
       rest,
       configLoader,
+      ...(cwd !== undefined ? { cwd } : {}),
     },
   };
 }
@@ -288,6 +290,21 @@ describe("prompt command", () => {
       expect(output).toContain("docs/dsl-reference.md");
       expect(output).toContain("docs/config-loading.md");
       expect(output).toContain("docs/prompt-composition.md");
+    });
+
+    it("Should_use_injected_cwd_for_local_scope_paths", async () => {
+      const { terminal, ctx } = context(
+        { promptSubcommand: "self-modify", scope: "local" },
+        () => okAsync(testConfig),
+        [],
+        "/injected/project/root",
+      );
+
+      const result = await runPrompt(ctx);
+
+      expect(result._unsafeUnwrap()).toBe(0);
+      const output = terminal.out.join("\n");
+      expect(output).toContain("/injected/project/root");
     });
 
     it("Should_exit_1_and_reject_json_flag", async () => {
