@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weave/core, @weave/engine, @weave/config, @weave/cli, @weave/docs, @weave/adapter-opencode
 
-> 0 routes | 0 models | 0 components | 91 lib files | 7 env vars | 5 middleware | 0% test coverage
-> **Token savings:** this file is ~7,500 tokens. Without it, AI exploration would cost ~35,000 tokens. **Saves ~27,500 tokens per conversation.**
-> **Last scanned:** 2026-06-11 15:15 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 92 lib files | 7 env vars | 5 middleware | 0% test coverage
+> **Token savings:** this file is ~7,600 tokens. Without it, AI exploration would cost ~35,200 tokens. **Saves ~27,700 tokens per conversation.**
+> **Last scanned:** 2026-06-11 21:32 — re-run after significant changes
 
 ---
 
@@ -147,6 +147,12 @@
   - interface PromptAdapter
   - type PromptError
   - type PromptOption
+- `packages/cli/src/prompts/self-modify.ts`
+  - function resolveSelfModifyPaths: (ctx) => SelfModifyPaths
+  - function renderSelfModifyPrompt: (ctx) => string
+  - interface SelfModifyContext
+  - interface SelfModifyPaths
+  - type SelfModifyScope
 - `packages/cli/src/theme/ascii-logo.ts`
   - function renderLogo: (theme) => string[]
   - const PLAIN_LOGO_LINES: string[]
@@ -430,7 +436,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 75 test files found
+> 76 test files found
 
 ---
 

@@ -53,8 +53,8 @@ export interface ParsedArgs {
     limit?: number;
     /** runtime subcommand: status | journal */
     runtimeSubcommand?: "status" | "journal";
-    /** prompt subcommand: inspect | list */
-    promptSubcommand?: "inspect" | "list";
+    /** prompt subcommand: inspect | list | self-modify */
+    promptSubcommand?: "inspect" | "list" | "self-modify";
     /** agent name for `prompt inspect <agent>` */
     agentName?: string;
     /**
@@ -151,9 +151,14 @@ export function parseArgs(argv: string[]): Result<ParsedArgs, ArgParseError> {
           message: "--scope requires a value: global or local",
         });
       }
-      if (val === "global" || val === "local") {
-        flags.scope = val;
+      if (val !== "global" && val !== "local") {
+        return err({
+          type: "InvalidFlagValue" as const,
+          flag: "--scope",
+          message: `--scope must be "global" or "local", got "${val}"`,
+        });
       }
+      flags.scope = val;
       continue;
     }
     if (arg === "--path") {
@@ -259,9 +264,9 @@ export function parseArgs(argv: string[]): Result<ParsedArgs, ArgParseError> {
       }
     }
 
-    // prompt subcommands: inspect, list
+    // prompt subcommands: inspect, list, self-modify
     if (command === "prompt" && flags.promptSubcommand === undefined) {
-      if (arg === "inspect" || arg === "list") {
+      if (arg === "inspect" || arg === "list" || arg === "self-modify") {
         flags.promptSubcommand = arg;
         continue;
       }

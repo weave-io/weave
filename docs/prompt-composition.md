@@ -5,7 +5,7 @@ agent to an adapter. The output of that composition step is an
 `AgentDescriptor`: a normalized, harness-agnostic record containing the final
 prompt text plus the other adapter-facing fields derived during composition.
 
-**Related:** [ADR 0001: Prompt Composition Templates](adr/0001-prompt-composition-templates.md) · [Adapter Boundary](adapter-boundary.md) · [Config Loading](config-loading.md) · [Tool Policy Evaluation](tool-policy-evaluation.md) · [Agent Guide / neverthrow rules](../AGENTS.md) · [Context Glossary](../CONTEXT.md)
+**Related:** [ADR 0001: Prompt Composition Templates](adr/0001-prompt-composition-templates.md) · [Adapter Boundary](adapter-boundary.md) · [Config Loading](config-loading.md) · [Tool Policy Evaluation](tool-policy-evaluation.md) · [Agent Guide / neverthrow rules](../AGENTS.md) · [Context Glossary](../CONTEXT.md) · [CLI — `weave prompt self-modify`](cli.md#weave-prompt-self-modify)
 
 ---
 
@@ -29,6 +29,17 @@ harness. They do not re-implement prompt composition rules.
 This boundary follows [Adapter Boundary](adapter-boundary.md): the engine owns
 prompt composition because the rules are reusable, deterministic, and free of
 harness-specific assumptions.
+
+### When to read this doc
+
+Read this doc **before** making any change that touches:
+
+- `prompt` or `prompt_file` values in an agent or category block
+- `prompt_append` or `prompt_append_file` values in an agent, category, or workflow block
+- Mustache template tags in any prompt source
+- Delegation section rendering (`{{{delegation.section}}}`, `{{#delegation.targets}}`)
+
+The `weave prompt self-modify` guide enforces this: it lists `docs/prompt-composition.md` as a required pre-read for prompt-related changes. See [CLI — `weave prompt self-modify`](cli.md#weave-prompt-self-modify).
 
 ### Builtin prompt files
 

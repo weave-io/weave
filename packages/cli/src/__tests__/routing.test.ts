@@ -123,4 +123,102 @@ describe("CLI routing", () => {
     expect(r._unsafeUnwrap()).toBe(0);
     expect(terminal.err.join("\n")).not.toContain("Unknown command");
   });
+
+  it("Should_dispatch_prompt_self_modify_without_unknown_command_error", async () => {
+    const { terminal, result } = cli(["prompt", "self-modify"]);
+
+    const r = await result;
+
+    expect(r.isOk()).toBe(true);
+    expect(r._unsafeUnwrap()).toBe(0);
+    expect(terminal.err.join("\n")).not.toContain("Unknown command");
+  });
+
+  it("Should_include_self_modify_in_bare_prompt_usage", async () => {
+    const { terminal, result } = cli(["prompt"]);
+
+    await result;
+    const combinedOutput = [...terminal.out, ...terminal.err].join("\n");
+
+    expect(combinedOutput).toContain("self-modify");
+  });
+
+  it("Should_include_prompt_self_modify_in_top_level_help", async () => {
+    const { terminal, result } = cli(["--help"]);
+
+    await result;
+    const out = terminal.out.join("\n");
+
+    expect(out).toContain("prompt self-modify");
+  });
+
+  it("Should_exit_0_for_prompt_self_modify_with_explicit_global_scope", async () => {
+    const { terminal, result } = cli([
+      "prompt",
+      "self-modify",
+      "--scope",
+      "global",
+    ]);
+
+    const r = await result;
+
+    expect(r.isOk()).toBe(true);
+    expect(r._unsafeUnwrap()).toBe(0);
+    expect(terminal.err.join("\n")).not.toContain("Unknown command");
+    expect(terminal.out.join("\n")).toContain("global (~/.weave/)");
+  });
+
+  it("Should_exit_0_for_prompt_self_modify_with_local_scope", async () => {
+    const { terminal, result } = cli([
+      "prompt",
+      "self-modify",
+      "--scope",
+      "local",
+    ]);
+
+    const r = await result;
+
+    expect(r.isOk()).toBe(true);
+    expect(r._unsafeUnwrap()).toBe(0);
+    expect(terminal.err.join("\n")).not.toContain("Unknown command");
+    expect(terminal.out.join("\n")).toContain("local (.weave/)");
+  });
+
+  it("Should_exit_1_and_write_error_to_stderr_for_prompt_self_modify_with_json_flag", async () => {
+    const { terminal, result } = cli(["prompt", "self-modify", "--json"]);
+
+    const r = await result;
+
+    expect(r.isOk()).toBe(true);
+    expect(r._unsafeUnwrap()).toBe(1);
+    expect(terminal.err.join("\n")).toContain("does not support --json");
+    expect(terminal.out).toHaveLength(0);
+  });
+
+  it("Should_exit_1_and_write_error_to_stderr_for_prompt_self_modify_with_extra_arg", async () => {
+    const { terminal, result } = cli([
+      "prompt",
+      "self-modify",
+      "unexpected-arg",
+    ]);
+
+    const r = await result;
+
+    expect(r.isOk()).toBe(true);
+    expect(r._unsafeUnwrap()).toBe(1);
+    expect(terminal.err.join("\n")).toContain(
+      "does not accept extra arguments",
+    );
+    expect(terminal.err.join("\n")).toContain("unexpected-arg");
+    expect(terminal.out).toHaveLength(0);
+  });
+
+  it("Should_include_scope_flag_hint_in_bare_prompt_self_modify_usage", async () => {
+    const { terminal, result } = cli(["prompt"]);
+
+    await result;
+    const combinedOutput = [...terminal.out, ...terminal.err].join("\n");
+
+    expect(combinedOutput).toContain("--scope");
+  });
 });

@@ -50,8 +50,11 @@ function flags(
 
 function context(
   overrides: Partial<ParsedArgs["flags"]> = {},
-  configLoader: () => ReturnType<NonNullable<Parameters<typeof runPrompt>[0]["configLoader"]>> =
-    () => okAsync(testConfig),
+  configLoader: () => ReturnType<
+    NonNullable<Parameters<typeof runPrompt>[0]["configLoader"]>
+  > = () => okAsync(testConfig),
+  rest: string[] = [],
+  cwd?: string,
 ) {
   const terminal = new BufferTerminal();
   return {
@@ -60,7 +63,9 @@ function context(
       terminal,
       theme,
       flags: flags(overrides),
+      rest,
       configLoader,
+      ...(cwd !== undefined ? { cwd } : {}),
     },
   };
 }
@@ -72,7 +77,9 @@ describe("prompt command", () => {
     const result = await runPrompt(ctx);
 
     expect(result._unsafeUnwrap()).toBe(1);
-    expect(terminal.err.join("\n")).toContain("Usage: weave prompt <subcommand>");
+    expect(terminal.err.join("\n")).toContain(
+      "Usage: weave prompt <subcommand>",
+    );
     expect(terminal.out).toHaveLength(0);
   });
 
@@ -151,7 +158,9 @@ describe("prompt command", () => {
     const result = await runPrompt(ctx);
 
     expect(result._unsafeUnwrap()).toBe(1);
-    expect(terminal.err.join("\n")).toContain("Usage: weave prompt <subcommand>");
+    expect(terminal.err.join("\n")).toContain(
+      "Usage: weave prompt <subcommand>",
+    );
     expect(terminal.out).toHaveLength(0);
   });
 
@@ -163,9 +172,8 @@ describe("prompt command", () => {
         cause: new Error("boom"),
       },
     ];
-    const { terminal, ctx } = context(
-      { promptSubcommand: "list" },
-      () => errAsync(configErrors),
+    const { terminal, ctx } = context({ promptSubcommand: "list" }, () =>
+      errAsync(configErrors),
     );
 
     const result = await runPrompt(ctx);
@@ -173,5 +181,202 @@ describe("prompt command", () => {
     expect(result._unsafeUnwrap()).toBe(1);
     expect(terminal.err.join("\n")).toContain("/test/config.weave");
     expect(terminal.err.join("\n")).toContain("could not read config");
+  });
+
+  describe("self-modify subcommand", () => {
+    it("Should_succeed_without_calling_configLoader", async () => {
+      // configLoader always fails — self-modify must not call it
+      const failingLoader = () => errAsync([] as ConfigLoadError[]);
+      const { terminal, ctx } = context(
+        { promptSubcommand: "self-modify" },
+        failingLoader,
+      );
+
+      const result = await runPrompt(ctx);
+
+      expect(result._unsafeUnwrap()).toBe(0);
+      expect(terminal.out.join("\n")).toContain(
+        "Weave Self-Modification Guide",
+      );
+      expect(terminal.err).toHaveLength(0);
+    });
+
+    it("Should_default_scope_to_global_when_no_scope_flag", async () => {
+      const { terminal, ctx } = context({ promptSubcommand: "self-modify" });
+
+      const result = await runPrompt(ctx);
+
+      expect(result._unsafeUnwrap()).toBe(0);
+      const output = terminal.out.join("\n");
+      expect(output).toContain("global (~/.weave/)");
+      expect(output).toContain(".weave/config.weave");
+    });
+
+    it("Should_include_global_config_path_in_stdout", async () => {
+      const { terminal, ctx } = context({ promptSubcommand: "self-modify" });
+
+      const result = await runPrompt(ctx);
+
+      expect(result._unsafeUnwrap()).toBe(0);
+      const output = terminal.out.join("\n");
+      // Full path must appear — not just a partial fragment
+      expect(output).toMatch(/\.weave[/\\]config\.weave/);
+      expect(output).toMatch(/\.weave[/\\]prompts/);
+    });
+
+    it("Should_include_doc_references_in_global_scope_stdout", async () => {
+      const { terminal, ctx } = context({ promptSubcommand: "self-modify" });
+
+      const result = await runPrompt(ctx);
+
+      expect(result._unsafeUnwrap()).toBe(0);
+      const output = terminal.out.join("\n");
+      expect(output).toContain("docs/dsl-reference.md");
+      expect(output).toContain("docs/config-loading.md");
+      expect(output).toContain("docs/prompt-composition.md");
+    });
+
+    it("Should_use_explicit_global_scope_when_scope_flag_is_global", async () => {
+      const { terminal, ctx } = context({
+        promptSubcommand: "self-modify",
+        scope: "global",
+      });
+
+      const result = await runPrompt(ctx);
+
+      expect(result._unsafeUnwrap()).toBe(0);
+      const output = terminal.out.join("\n");
+      expect(output).toContain("global (~/.weave/)");
+      expect(output).toContain("all projects");
+    });
+
+    it("Should_use_local_scope_when_scope_flag_is_local", async () => {
+      const { terminal, ctx } = context({
+        promptSubcommand: "self-modify",
+        scope: "local",
+      });
+
+      const result = await runPrompt(ctx);
+
+      expect(result._unsafeUnwrap()).toBe(0);
+      const output = terminal.out.join("\n");
+      expect(output).toContain("local (.weave/)");
+    });
+
+    it("Should_include_local_config_path_in_stdout", async () => {
+      const { terminal, ctx } = context({
+        promptSubcommand: "self-modify",
+        scope: "local",
+      });
+
+      const result = await runPrompt(ctx);
+
+      expect(result._unsafeUnwrap()).toBe(0);
+      const output = terminal.out.join("\n");
+      expect(output).toMatch(/\.weave[/\\]config\.weave/);
+      expect(output).toMatch(/\.weave[/\\]prompts/);
+    });
+
+    it("Should_include_doc_references_in_local_scope_stdout", async () => {
+      const { terminal, ctx } = context({
+        promptSubcommand: "self-modify",
+        scope: "local",
+      });
+
+      const result = await runPrompt(ctx);
+
+      expect(result._unsafeUnwrap()).toBe(0);
+      const output = terminal.out.join("\n");
+      expect(output).toContain("docs/dsl-reference.md");
+      expect(output).toContain("docs/config-loading.md");
+      expect(output).toContain("docs/prompt-composition.md");
+    });
+
+    it("Should_use_injected_cwd_for_local_scope_paths", async () => {
+      const { terminal, ctx } = context(
+        { promptSubcommand: "self-modify", scope: "local" },
+        () => okAsync(testConfig),
+        [],
+        "/injected/project/root",
+      );
+
+      const result = await runPrompt(ctx);
+
+      expect(result._unsafeUnwrap()).toBe(0);
+      const output = terminal.out.join("\n");
+      expect(output).toContain("/injected/project/root");
+    });
+
+    it("Should_exit_1_and_reject_json_flag", async () => {
+      const { terminal, ctx } = context({
+        promptSubcommand: "self-modify",
+        json: true,
+      });
+
+      const result = await runPrompt(ctx);
+
+      expect(result._unsafeUnwrap()).toBe(1);
+      expect(terminal.err.join("\n")).toContain("does not support --json");
+      expect(terminal.out).toHaveLength(0);
+    });
+
+    it("Should_write_json_rejection_to_stderr_not_stdout", async () => {
+      const { terminal, ctx } = context({
+        promptSubcommand: "self-modify",
+        json: true,
+      });
+
+      await runPrompt(ctx);
+
+      // Error must be on stderr only — stdout must be empty
+      expect(terminal.out).toHaveLength(0);
+      expect(terminal.err.join("\n")).toContain("--json");
+    });
+
+    it("Should_exit_1_when_unexpected_rest_args_are_present", async () => {
+      const { terminal, ctx } = context(
+        { promptSubcommand: "self-modify" },
+        () => okAsync(testConfig),
+        ["unexpected-arg"],
+      );
+
+      const result = await runPrompt(ctx);
+
+      expect(result._unsafeUnwrap()).toBe(1);
+      expect(terminal.err.join("\n")).toContain(
+        "does not accept extra arguments",
+      );
+      expect(terminal.err.join("\n")).toContain("unexpected-arg");
+      expect(terminal.out).toHaveLength(0);
+    });
+
+    it("Should_write_extra_args_rejection_to_stderr_not_stdout", async () => {
+      const { terminal, ctx } = context(
+        { promptSubcommand: "self-modify" },
+        () => okAsync(testConfig),
+        ["some-object"],
+      );
+
+      await runPrompt(ctx);
+
+      // Error must be on stderr only — stdout must be empty
+      expect(terminal.out).toHaveLength(0);
+      expect(terminal.err.join("\n")).toContain("some-object");
+    });
+
+    it("Should_include_multiple_extra_args_in_rejection_message", async () => {
+      const { terminal, ctx } = context(
+        { promptSubcommand: "self-modify" },
+        () => okAsync(testConfig),
+        ["arg1", "arg2"],
+      );
+
+      const result = await runPrompt(ctx);
+
+      expect(result._unsafeUnwrap()).toBe(1);
+      const errOutput = terminal.err.join("\n");
+      expect(errOutput).toContain("arg1");
+      expect(errOutput).toContain("arg2");
+    });
   });
 });

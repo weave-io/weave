@@ -137,6 +137,21 @@ describe("banner and help rendering", () => {
     expect(text).toContain("EXAMPLES");
   });
 
+  it("renderHelp includes prompt self-modify in commands", () => {
+    const theme = themeManager.getTheme(false);
+    const help = themeRenderer.renderHelp(theme);
+    const text = help.join("\n");
+    expect(text).toContain("prompt self-modify");
+  });
+
+  it("renderHelp --scope help text mentions both init and prompt self-modify", () => {
+    const theme = themeManager.getTheme(false);
+    const help = themeRenderer.renderHelp(theme);
+    const text = help.join("\n");
+    expect(text).toContain("--scope");
+    expect(text).toContain("prompt self-modify");
+  });
+
   it("renderHelp with NO_COLOR produces no ANSI escapes", () => {
     const theme = themeManager.getTheme(false);
     const help = themeRenderer.renderHelp(theme);

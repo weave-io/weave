@@ -2,7 +2,7 @@
 
 The `.weave` configuration language is a block-structured, declarative DSL for declaring agents, categories, workflows, prompts, delegation intent, model preferences, and settings. It is not TypeScript, JSON, or YAML.
 
-**Related:** [Config Loading](config-loading.md) · [Prompt Composition](prompt-composition.md) · [Workflow Schema](workflow-schema.md) · [Adapter Boundary](adapter-boundary.md)
+**Related:** [Config Loading](config-loading.md) · [Prompt Composition](prompt-composition.md) · [Workflow Schema](workflow-schema.md) · [Adapter Boundary](adapter-boundary.md) · [CLI — `weave prompt self-modify`](cli.md#weave-prompt-self-modify)
 
 > **Status**: This reference reflects the stable, finalized DSL contract. Workflow execution lifecycle details (step completion semantics, artifact integrity) are specified in [Spec 22 — Workflow-First Execution](specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md) and [Spec 24 — Execution Lifecycle Decomposition](specs/24-spec-execution-lifecycle-decomposition/24-spec-execution-lifecycle-decomposition.md), both of which are complete. See [Workflow Schema](workflow-schema.md) for the full typed schema and execution semantics.
 

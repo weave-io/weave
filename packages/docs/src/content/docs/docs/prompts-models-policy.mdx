@@ -131,6 +131,22 @@ Permissions are `allow`, `deny`, or `ask`. Adapters map these abstract capabilit
 | A model is not used | The adapter cannot map or select that model | Check harness model availability; treat `models` as preference order. |
 | A tool is unavailable | Abstract policy mapped to a denied or missing concrete tool | Inspect adapter docs and the effective tool policy. |
 
+## Self-Modification
+
+When an agent needs to modify Weave's own prompt configuration, use `weave prompt self-modify` to obtain a deterministic, text-only guide before making any edits:
+
+```bash
+weave prompt self-modify                  # guide for global scope (default)
+weave prompt self-modify --scope global
+weave prompt self-modify --scope local
+```
+
+The guide lists required reading (`docs/dsl-reference.md`, `docs/config-loading.md`, and `docs/prompt-composition.md` for prompt-related changes), scope-aware canonical paths, and a step-by-step workflow.
+
+In v1, the command is text-only, defaults to `global` scope, accepts only `--scope global|local`, and rejects `--json` plus extra positional tailoring arguments.
+
+**Canonical doc authority**: the guide explicitly states that `docs/` at the repo root is the authoritative source and `packages/docs/` is a public mirror. Agents must read from `docs/` — not from `packages/docs/`. See [CLI Reference](../reference/cli/#weave-prompt-self-modify) for the full command contract.
+
 ## Verification
 
 Run:

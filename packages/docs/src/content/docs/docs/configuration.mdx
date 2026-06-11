@@ -156,6 +156,22 @@ bun packages/cli/src/main.ts prompt inspect loom --json
 
 Use prompt inspection whenever you change `prompt_file`, `prompt_append`, delegation placeholders, category overrides, or `routing.delegation_exclude`.
 
+## Self-Modification Guide
+
+When an agent needs to modify Weave's own configuration, use `weave prompt self-modify` to obtain a deterministic, text-only guide:
+
+```bash
+weave prompt self-modify                  # guide for global scope (default)
+weave prompt self-modify --scope global
+weave prompt self-modify --scope local
+```
+
+The guide names the canonical config and prompts paths for the selected scope, lists required reading (`docs/dsl-reference.md` and `docs/config-loading.md`), and provides a step-by-step workflow for safe config edits.
+
+In v1, the command is text-only, defaults to `global` scope, accepts only `--scope global|local`, and rejects `--json` plus extra positional tailoring arguments.
+
+**Canonical doc authority**: the guide explicitly states that `docs/` at the repo root is the authoritative source and `packages/docs/` is a public mirror. Agents must read from `docs/` — not from `packages/docs/`. See [CLI Reference](../reference/cli/#weave-prompt-self-modify) for the full command contract.
+
 ## Troubleshooting
 
 | Problem | Why it happens | Fix |
