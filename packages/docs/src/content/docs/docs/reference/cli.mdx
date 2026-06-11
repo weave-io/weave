@@ -163,6 +163,26 @@ The printed guide includes:
 
 The guide explicitly names repo-root `docs/` as the canonical source and `packages/docs/` as a public mirror. Agents following the guide must load `docs/dsl-reference.md` and `docs/config-loading.md` from the repo root — not from `packages/docs/`. The two may diverge; `docs/` always wins.
 
+### Base docs first
+
+The guide enforces a **base docs first** reading order:
+
+1. `docs/dsl-reference.md` — DSL syntax reference
+2. `docs/config-loading.md` — merge rules, builtin agents, prompt-file resolution
+3. `docs/prompt-composition.md` — only when the change touches prompt text or prompt fields
+
+Agents must not skip to target-specific sections without first reading the base docs.
+
+### Loom routing note
+
+When Loom receives a self-modification request, it should:
+
+1. Clarify the config object type before asking about scope.
+2. Ask about scope only after the object type is clear.
+3. Run `weave prompt self-modify [--scope <scope>]` to obtain the guide.
+4. Load `docs/dsl-reference.md` and `docs/config-loading.md` before any edits.
+5. Load `docs/prompt-composition.md` before any prompt-related edits.
+
 ## `weave runtime status`
 
 Inspect the default runtime store without mutating it.
