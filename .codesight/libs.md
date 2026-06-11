@@ -136,6 +136,12 @@
   - interface PromptAdapter
   - type PromptError
   - type PromptOption
+- `packages/cli/src/prompts/self-modify.ts`
+  - function resolveSelfModifyPaths: (ctx) => SelfModifyPaths
+  - function renderSelfModifyPrompt: (ctx) => string
+  - interface SelfModifyContext
+  - interface SelfModifyPaths
+  - type SelfModifyScope
 - `packages/cli/src/theme/ascii-logo.ts`
   - function renderLogo: (theme) => string[]
   - const PLAIN_LOGO_LINES: string[]
