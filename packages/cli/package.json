@@ -16,18 +16,23 @@
   },
   "scripts": {
     "build": "bun build ./src/index.ts ./src/main.ts --outdir ./dist --target bun && tsc -p tsconfig.build.json --emitDeclarationOnly",
-    "test": "bun test ./src",
+    "test": "bun test ./src/__tests__ ./src/commands/__tests__ ./src/prompt/__tests__ ./src/detect/__tests__ ./src/installers/__tests__ ./src/evals/__tests__",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "clean": "rm -rf dist"
   },
   "dependencies": {
     "@clack/prompts": "^0.10.0",
+    "@langchain/core": "^1.1.48",
+    "@langchain/openai": "^1.4.7",
     "@weave/config": "workspace:*",
     "@weave/core": "workspace:*",
     "@weave/engine": "workspace:*",
+    "agentevals": "^0.0.7",
     "figlet": "^1.11.0",
     "mustache": "^4.2.0",
-    "neverthrow": "^8.2.0"
+    "neverthrow": "^8.2.0",
+    "openevals": "^0.2.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/mustache": "^4.2.6",

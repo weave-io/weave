@@ -1,0 +1,355 @@
+name: Agent Evals
+
+# Manual-only: no push/PR/schedule triggers.
+# Only a repository collaborator with workflow_dispatch permission can run this.
+on:
+  workflow_dispatch:
+    inputs:
+      agent:
+        description: |
+          Optional agent name filter. Leave blank to run all agents.
+          Allowed values: loom, tapestry, loom-routing, tapestry-execution
+        required: false
+        default: ""
+        type: string
+      model:
+        description: |
+          Optional model ID filter. Leave blank to run the full default model matrix.
+          Allowed values: anthropic/claude-opus-4.5, anthropic/claude-sonnet-4.5,
+          openai/gpt-5.5
+        required: false
+        default: ""
+        type: string
+      case:
+        description: |
+          Optional eval case ID filter. Leave blank to run all cases.
+          Allowed values (hardcoded from evals/cases/**):
+            loom-route-backend-api
+            loom-route-frontend-ui
+            loom-route-ambiguous-direct-shuttle
+            tapestry-execute-plan-step
+            tapestry-delegate-to-shuttle
+          A regex-only guard is applied as a second defence for forward-compatibility.
+        required: false
+        default: ""
+        type: string
+
+# Minimal permissions: read-only for the source repo.
+#
+# PUBLISH POLICY:
+#   External publication of eval results to weave-io/weave-agent-evals is
+#   handled by the CLI's GitHubContentsPublisher via WEAVE_EVAL_PUBLISH_MODE=publish
+#   and EVAL_RESULTS_REPO_TOKEN. The token is consumed only by the CLI and passed
+#   exclusively as an HTTP Authorization header — it never appears in shell command
+#   arguments, workflow logs, or artifact content.
+#
+#   The CLI's ArtifactBundleWriter runs the full sanitizer pipeline before any
+#   external push:
+#     1. assertPublishSafe() on every assembled object
+#     2. assertJsonPublishSafe() on every serialized JSON string
+#     3. enforcePublishPolicy() (dry-run blocking, score file presence check)
+#
+#   Raw artifacts (raw/ subdirectory) are NEVER published. The CLI's
+#   GitHubContentsPublisher discovers only top-level *.json files and
+#   explicitly excludes anything under raw/.
+#
+#   Do NOT add manual git clone/push with EVAL_RESULTS_REPO_TOKEN in the URL —
+#   that would bypass the CLI's sanitizer and expose the token in process args.
+#
+# id-token: none   — no OIDC needed (no cloud provider push)
+# packages: none   — no package registry operations
+# pull-requests: none — no PR write operations
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Job 1: Validate dispatch inputs before any eval execution.
+  #
+  # Raw dispatch inputs are validated against strict allowlists and regex
+  # BEFORE reaching the eval job. Validation failures abort the workflow
+  # without any eval execution or secret access.
+  # ---------------------------------------------------------------------------
+  validate-inputs:
+    name: Validate dispatch inputs
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      agent: ${{ steps.check.outputs.agent }}
+      model: ${{ steps.check.outputs.model }}
+      case:  ${{ steps.check.outputs.case }}
+    steps:
+      - name: Validate and sanitize inputs
+        id: check
+        # Raw dispatch inputs are bound to env vars before any processing.
+        # They are NEVER interpolated into shell strings (${{ ... }} expands
+        # only in the `env:` block, not in command arguments).
+        env:
+          RAW_AGENT: ${{ github.event.inputs.agent }}
+          RAW_MODEL: ${{ github.event.inputs.model }}
+          RAW_CASE:  ${{ github.event.inputs.case }}
+        run: |
+          set -euo pipefail
+
+          # ---------------------------------------------------------------------------
+          # Allowlists — kept in sync with model-matrix.json and evals/cases/**/
+          # ---------------------------------------------------------------------------
+
+          # Agent allowlist: suite names and logical agent names.
+          # "loom" and "tapestry" are the logical agent names; the suite names
+          # "loom-routing" and "tapestry-execution" are also accepted to mirror
+          # EvalOrchestrator.shouldRunSuite() which matches on either.
+          ALLOWED_AGENTS="loom tapestry loom-routing tapestry-execution"
+
+          # Model allowlist: exact model IDs from evals/model-matrix.json.
+          ALLOWED_MODELS="anthropic/claude-opus-4.5 anthropic/claude-sonnet-4.5 openai/gpt-5.5"
+
+          # Case allowlist: exact case IDs from evals/cases/**/
+          # Hardcoded here because eval fixture discovery is a CLI/adapter concern.
+          # If cases are added, update this list and the input description above.
+          ALLOWED_CASES="loom-route-backend-api loom-route-frontend-ui loom-route-ambiguous-direct-shuttle tapestry-execute-plan-step tapestry-delegate-to-shuttle"
+
+          # Identifier regex: mirrors VALID_IDENTIFIER_RE from input-validation.ts.
+          # Anchored; only alphanumerics, underscore, dot, slash, colon, at, hyphen.
+          # This is a second-layer guard for forward-compatibility.
+          IDENT_RE='^[A-Za-z0-9_./:@-]+$'
+
+          # ---------------------------------------------------------------------------
+          # Validate --agent input
+          # ---------------------------------------------------------------------------
+          AGENT_OUT=""
+          if [ -n "${RAW_AGENT}" ]; then
+            if ! printf '%s' "${RAW_AGENT}" | grep -qE "${IDENT_RE}"; then
+              echo "::error::Invalid agent input: only A-Za-z0-9_./:@- are allowed"
+              exit 1
+            fi
+            MATCHED=false
+            for a in ${ALLOWED_AGENTS}; do
+              if [ "${RAW_AGENT}" = "${a}" ]; then MATCHED=true; break; fi
+            done
+            if [ "${MATCHED}" = "false" ]; then
+              echo "::error::Unknown agent '${RAW_AGENT}'. Allowed: ${ALLOWED_AGENTS}"
+              exit 1
+            fi
+            AGENT_OUT="${RAW_AGENT}"
+          fi
+
+          # ---------------------------------------------------------------------------
+          # Validate --model input
+          # ---------------------------------------------------------------------------
+          MODEL_OUT=""
+          if [ -n "${RAW_MODEL}" ]; then
+            if ! printf '%s' "${RAW_MODEL}" | grep -qE "${IDENT_RE}"; then
+              echo "::error::Invalid model input: only A-Za-z0-9_./:@- are allowed"
+              exit 1
+            fi
+            MATCHED=false
+            for m in ${ALLOWED_MODELS}; do
+              if [ "${RAW_MODEL}" = "${m}" ]; then MATCHED=true; break; fi
+            done
+            if [ "${MATCHED}" = "false" ]; then
+              echo "::error::Unknown model '${RAW_MODEL}'. Allowed: ${ALLOWED_MODELS}"
+              exit 1
+            fi
+            MODEL_OUT="${RAW_MODEL}"
+          fi
+
+          # ---------------------------------------------------------------------------
+          # Validate --case input
+          #
+          # Validated against the hardcoded case allowlist from evals/cases/**
+          # (see the ALLOWED_CASES variable above). The regex guard is applied
+          # first as a fast-fail for obviously malformed values, then the allowlist
+          # enforces only known case IDs can be passed to the CLI.
+          #
+          # The allowlist MUST be kept in sync with evals/cases/**. When a new case
+          # is added under evals/cases/, add its "id" field value to ALLOWED_CASES
+          # and to the input description at the top of this file.
+          # ---------------------------------------------------------------------------
+          CASE_OUT=""
+          if [ -n "${RAW_CASE}" ]; then
+            if ! printf '%s' "${RAW_CASE}" | grep -qE "${IDENT_RE}"; then
+              echo "::error::Invalid case input: only A-Za-z0-9_./:@- are allowed"
+              exit 1
+            fi
+            MATCHED=false
+            for c in ${ALLOWED_CASES}; do
+              if [ "${RAW_CASE}" = "${c}" ]; then MATCHED=true; break; fi
+            done
+            if [ "${MATCHED}" = "false" ]; then
+              echo "::error::Unknown case '${RAW_CASE}'. Allowed: ${ALLOWED_CASES}"
+              exit 1
+            fi
+            CASE_OUT="${RAW_CASE}"
+          fi
+
+          # ---------------------------------------------------------------------------
+          # Emit validated outputs — never the raw dispatch values.
+          # Downstream jobs reference these outputs, not the raw inputs.
+          # ---------------------------------------------------------------------------
+          {
+            printf 'agent=%s\n' "${AGENT_OUT}"
+            printf 'model=%s\n' "${MODEL_OUT}"
+            printf 'case=%s\n'  "${CASE_OUT}"
+          } >> "${GITHUB_OUTPUT}"
+
+          echo "Validation passed: agent='${AGENT_OUT}' model='${MODEL_OUT}' case='${CASE_OUT}'"
+
+  # ---------------------------------------------------------------------------
+  # Job 2: Run evals and publish sanitized bundles to weave-io/weave-agent-evals.
+  #
+  # SECURITY CONTRACT:
+  #   - Source checkout uses persist-credentials: false — no implicit
+  #     GITHUB_TOKEN write capability in later steps.
+  #   - OPENROUTER_API_KEY is scoped to the eval run step only; it is not
+  #     present in any other step.
+  #   - EVAL_RESULTS_REPO_TOKEN is scoped to the eval run step only; it is not
+  #     present in any other step. The CLI reads this token and passes it
+  #     exclusively as an HTTP Authorization header to the GitHub Contents API.
+  #     The token never appears in shell command arguments, log output, or
+  #     serialized artifact content.
+  #   - WEAVE_EVAL_PUBLISH_MODE=publish activates the GitHubContentsPublisher
+  #     in the CLI's EvalOrchestrator. Only sanitized bundle files (*.json at
+  #     the top level of eval-bundles/<bundle-dir>/) are published; the raw/
+  #     subdirectory is never included.
+  #   - No git clone/push with tokens in shell command arguments or URL strings.
+  #   - No manual bypass of the CLI's sanitizer/publish policy.
+  #   - Upload-artifact is kept as a backup for local inspection; it reads only
+  #     from the workspace path and uses no stored secrets.
+  # ---------------------------------------------------------------------------
+  run-evals:
+    name: Run agent evals
+    runs-on: ubuntu-latest
+    needs: validate-inputs
+    permissions:
+      contents: read
+    steps:
+      # -----------------------------------------------------------------------
+      # Step 1: Checkout source repo.
+      #
+      # persist-credentials: false — the GITHUB_TOKEN credential is dropped
+      # immediately after checkout. This ensures no implicit source-repo write
+      # capability leaks into later steps.
+      # -----------------------------------------------------------------------
+      - name: Checkout source repo
+        # actions/checkout v4.2.2
+        # SHA pinned to the upstream commit for this tag — immune to tag mutation.
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+
+      # -----------------------------------------------------------------------
+      # Step 2: Set up Bun runtime.
+      #
+      # Pinned by full commit SHA to prevent supply-chain substitution.
+      # -----------------------------------------------------------------------
+      - name: Set up Bun
+        # oven-sh/setup-bun v2.2.0
+        # SHA pinned to the upstream commit for this tag.
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: "1.3.10"
+
+      # -----------------------------------------------------------------------
+      # Step 3: Install dependencies.
+      #
+      # --frozen-lockfile: any lockfile drift causes a hard failure here rather
+      # than silently upgrading transitive dependencies at eval time.
+      # -----------------------------------------------------------------------
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # -----------------------------------------------------------------------
+      # Step 4: Build the CLI.
+      # -----------------------------------------------------------------------
+      - name: Build
+        run: bun run build
+
+      # -----------------------------------------------------------------------
+      # Step 5: Run agent evals and publish results.
+      #
+      # Filters are passed as WEAVE_EVAL_* environment variables, NOT as argv.
+      # parseEvalRunRequest() in the CLI reads these env vars, validates them
+      # again (regex + duplicate-conflict check), and merges them into the
+      # trusted EvalRunRequest. The CLI command receives no filter arguments.
+      #
+      # OPENROUTER_API_KEY and EVAL_RESULTS_REPO_TOKEN are both scoped to
+      # this step only — they are not available in any other step.
+      #
+      # SECURITY — token handling:
+      #   - EVAL_RESULTS_REPO_TOKEN is read by GitHubContentsPublisher in the
+      #     CLI and passed ONLY as an HTTP Authorization header to the GitHub
+      #     Contents API. It is never included in shell command arguments,
+      #     log messages, serialized JSON, or workflow artifacts.
+      #   - WEAVE_EVAL_PUBLISH_MODE=publish enables GitHubContentsPublisher.
+      #     The CLI's ArtifactBundleWriter runs assertPublishSafe() and
+      #     assertJsonPublishSafe() on every artifact before publication.
+      #   - Only top-level *.json files from eval-bundles/<bundle-dir>/ are
+      #     published; the raw/ subdirectory is explicitly excluded by the CLI.
+      #   - Do NOT add raw-artifact flags or bypass the CLI sanitizer.
+      # -----------------------------------------------------------------------
+      - name: Run agent evals
+        env:
+          # Secret: OpenRouter inference API key.
+          # Scoped to this step only — not available in any other step.
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          # Secret: GitHub PAT for publishing to weave-io/weave-agent-evals.
+          # Scoped to this step only — not available in any other step.
+          # The CLI reads this token and passes it ONLY as an HTTP Authorization
+          # header. It never appears in shell command arguments or log output.
+          EVAL_RESULTS_REPO_TOKEN: ${{ secrets.EVAL_RESULTS_REPO_TOKEN }}
+          # Publish mode: activates GitHubContentsPublisher in the CLI.
+          # Set to "local" to disable external publication (e.g. for dry runs).
+          WEAVE_EVAL_PUBLISH_MODE: "publish"
+          # Validated filter values — forwarded as env vars, never as argv.
+          # Empty string means "no filter" (all agents / models / cases).
+          WEAVE_EVAL_AGENT: ${{ needs.validate-inputs.outputs.agent }}
+          WEAVE_EVAL_MODEL: ${{ needs.validate-inputs.outputs.model }}
+          WEAVE_EVAL_CASE:  ${{ needs.validate-inputs.outputs.case }}
+          # CI=true prevents --raw-artifacts from being accepted (policy guard
+          # in packages/cli/src/evals/input-validation.ts: RawArtifactsInCI).
+          CI: "true"
+          # Surface the run ID for metadata (safe: numeric only, no secrets).
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          # No filter flags in argv. The CLI reads WEAVE_EVAL_* from the env.
+          # Bundle artifacts are written locally to eval-bundles/ in the workspace,
+          # then published to weave-io/weave-agent-evals via the GitHub Contents API.
+          bun packages/cli/src/main.ts eval run
+
+      # -----------------------------------------------------------------------
+      # Step 6: Upload local bundle artifacts (backup).
+      #
+      # Keeps a local copy of the bundle for inspection even when external
+      # publication succeeds. This step uses no stored secrets and does not
+      # perform any git operations.
+      #
+      # SECURITY:
+      #   - No tokens are used in this step.
+      #   - No git clone/push occurs.
+      #   - All bundle content has already been sanitized by ArtifactBundleWriter
+      #     (assertPublishSafe + assertJsonPublishSafe) before being written to disk.
+      #   - The upload-artifact action only reads from the workspace path; it does
+      #     not authenticate to any external service with a stored secret.
+      #   - The raw/ subdirectory is excluded because upload-artifact reads only
+      #     what the CLI wrote to eval-bundles/. The CLI never writes raw/ files
+      #     when CI=true (--raw-artifacts is rejected by the CI guard).
+      # -----------------------------------------------------------------------
+      - name: Upload eval bundle artifacts
+        # actions/upload-artifact v4.6.2
+        # SHA pinned to the upstream commit for this tag — immune to tag mutation.
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        # always() ensures artifacts are uploaded even when the eval step exits
+        # non-zero (e.g. one or more cases failed or publication failed).
+        # Partial results are still useful for diagnosis and historical comparison.
+        if: always()
+        with:
+          name: eval-bundles-${{ github.run_id }}
+          # eval-bundles/ is the default bundle root written by EvalOrchestrator.
+          # See EvalOrchestratorOptions.bundleRoot in packages/cli/src/evals/runner.ts.
+          path: eval-bundles/
+          # Retain artifacts for 30 days. Evals are expensive; keep enough history
+          # for regression analysis without indefinite storage growth.
+          retention-days: 30

@@ -38,6 +38,7 @@ Thumbs.db
 # Test artifacts
 coverage/
 .nyc_output/
+eval-bundles/
 
 # Temporary files
 tmp/

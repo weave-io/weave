@@ -1,0 +1,27 @@
+{
+  "id": "tapestry-delegate-to-shuttle",
+  "description": "Tapestry should delegate a domain-specific subtask to shuttle and await the result before continuing",
+  "suite": "tapestry-execution",
+  "allowed_agents": ["tapestry", "shuttle", "loom"],
+  "allowed_models": [
+    "anthropic/claude-opus-4.5",
+    "anthropic/claude-sonnet-4.5",
+    "openai/gpt-5.5"
+  ],
+  "expected_outcome": {
+    "kind": "delegation_chain",
+    "chain": ["tapestry", "shuttle"]
+  },
+  "accepted_alternates": ["shuttle-backend", "shuttle-frontend"],
+  "transcript_expectations": [
+    {
+      "check": "tool_called",
+      "tool_name": "delegate"
+    },
+    {
+      "check": "agent_mentioned",
+      "agent_name": "shuttle"
+    }
+  ],
+  "tags": ["delegation", "execution"]
+}

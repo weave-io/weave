@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weave/core, @weave/engine, @weave/config, @weave/cli, @weave/docs, @weave/adapter-opencode
 
-> 0 routes | 0 models | 0 components | 92 lib files | 7 env vars | 5 middleware | 0% test coverage
-> **Token savings:** this file is ~7,600 tokens. Without it, AI exploration would cost ~35,200 tokens. **Saves ~27,700 tokens per conversation.**
-> **Last scanned:** 2026-06-11 21:32 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 109 lib files | 7 env vars | 5 middleware | 0% test coverage
+> **Token savings:** this file is ~9,400 tokens. Without it, AI exploration would cost ~39,700 tokens. **Saves ~30,300 tokens per conversation.**
+> **Last scanned:** 2026-06-12 06:34 — re-run after significant changes
 
 ---
 
@@ -74,6 +74,13 @@
   - type Command
   - type ArgParseError
 - `packages/cli/src/cli.ts` — function run: (deps?) => Promise<Result<number, CliError>>, interface CliDeps
+- `packages/cli/src/commands/eval.ts`
+  - function readPublishMode: (env, string | undefined>) => BundleWriteMode
+  - function buildLangChainScorer: (evalEnv, langchainModuleLoader?) => void
+  - function runEval: (ctx) => Promise<Result<number, CliError>>
+  - interface EvalContext
+  - interface LangChainOpenAIModule
+  - const WEAVE_EVAL_PUBLISH_MODE_ENV_VAR
 - `packages/cli/src/commands/init.ts`
   - function runInit: (ctx) => Promise<Result<number, CliError>>
   - function installHarnesses: (input) => Promise<number>
@@ -109,7 +116,130 @@
   - type MissingFileError
   - type FileReadError
   - type ParseFailureError
+  - _...5 more_
+- `packages/cli/src/evals/artifact-bundle.ts`
+  - function computeBundleDirName: (gitSha, assembledAt) => string
+  - function assembleScoreFile: (runnerResult, gitSha, assembledAt, dryRun) => BundleScoreFile
+  - function aggregateScoreFile: (suiteName, results, gitSha, assembledAt, dryRun) => BundleScoreFile
+  - function assemblePromptHashRecords: (records) => BundlePromptHashRecord[]
+  - function assembleBundle: (options) => Result<EvalBundle, BundleError>
+  - function assertBundlePublishEligible: (bundle) => Result<undefined, BundleError>
+  - _...6 more_
+- `packages/cli/src/evals/case-loader.ts`
+  - function loadCaseFile: (filePath) => ResultAsync<EvalCase, FixtureSchemaError>
+  - function loadRubricFile: (filePath) => ResultAsync<EvalRubric, FixtureSchemaError>
+  - function loadSuiteCases: (suite, evalsRoot) => ResultAsync<EvalCase[], FixtureSchemaError>
+  - function loadSuiteRubrics: (suite, evalsRoot) => ResultAsync<EvalRubric[], FixtureSchemaError>
+  - function validateCaseFilter: (caseId, cases) => FixtureSchemaError | EvalCase
+  - const EVALS_ROOT
+  - _...1 more_
+- `packages/cli/src/evals/env.ts`
+  - function readEvalEnv: (env, string | undefined>, {...}) => Result<EvalEnv, EvalEnvError>
+  - interface EvalEnv
+  - type EvalEnvError
+  - const DEFAULT_OPENROUTER_BASE_URL
+  - const OPENROUTER_API_KEY_ENV_VAR
+  - const OPENROUTER_BASE_URL_ENV_VAR
+- `packages/cli/src/evals/github-contents-publisher.ts`
+  - class GitHubContentsPublisher
+  - type FetchImpl
+  - type FileReader
+  - const TARGET_REPO
+  - const TARGET_BRANCH
+  - const TARGET_RUNS_PREFIX
+- `packages/cli/src/evals/input-validation.ts`
+  - function parseEvalRunRequest: (inputs) => Result<EvalRunRequest, EvalInputValidationError>
+  - type EvalRunRequest
+  - type EvalRunInputs
+  - type EvalInputValidationError
+  - const KNOWN_EVAL_AGENTS
+  - const KNOWN_EVAL_AGENTS_SORTED: readonly string[]
+- `packages/cli/src/evals/langchain-agent-evals.ts`
+  - function buildRationaleProjection: (run) => string
+  - class RealLangChainJudge
+  - class LangChainAgentEvalsScorer
+  - class StubLangChainJudge
+  - class StubAgentEvalsScorer
+  - interface JudgeInput
+  - _...5 more_
+- `packages/cli/src/evals/loom-routing-runner.ts`
+  - function extractRoutedAgents: (content) => string[]
+  - function redactSecrets: (raw) => string
+  - class LoomRoutingRunner
+  - interface LoomRoutingRunnerOptions
+  - interface LoomRunRequest
+  - const LOOM_ROUTING_SUITE
+- `packages/cli/src/evals/model-matrix.ts`
+  - function loadModelMatrix: (matrixPath) => ResultAsync<ModelMatrix, FixtureSchemaError>
+  - function resolveDefaultModels: (matrix) => ModelMatrixEntry[]
+  - function filterMatrix: (matrix, filterId) => ModelMatrixEntry[]
+  - function validateModelInMatrix: (matrix, modelId) => Result<ModelMatrixEntry, FixtureSchemaError>
+  - const MATRIX_PATH
+  - const MIN_DEFAULT_MODELS
+- `packages/cli/src/evals/openrouter-client.ts`
+  - class OpenRouterClient
+  - class StubModelClient
+  - interface ChatMessage
+  - interface ModelRequest
+  - interface ModelResponse
+  - interface ModelClient
+  - _...1 more_
+- `packages/cli/src/evals/prompt-snapshots.ts`
+  - function composeSnapshot: (input) => ResultAsync<ComposeSnapshotResult, ProvenanceError>
+  - function composeAgentSnapshots: (options) => ResultAsync<ComposeAgentSnapshotsResult, ProvenanceError>
+  - interface ComposeSnapshotInput
+  - interface ComposeSnapshotResult
+  - interface ComposeAgentSnapshotsOptions
+  - interface ComposeAgentSnapshotsResult
+  - _...1 more_
+- `packages/cli/src/evals/provenance.ts`
+  - function deriveSummary: (snapshot) => string
+  - function deriveProvenanceRecord: (snapshot, gitSha, capturedAt) => void
+  - function buildManifest: (records, gitSha, producedAt) => void
+  - function writeManifest: (manifest, outputPath) => ResultAsync<void, ProvenanceError>
+  - function deriveProvenanceManifest: (snapshots, options) => Result<PromptProvenanceManifest, ProvenanceError>
+  - function deriveAndWriteManifest: (snapshots, options) => ResultAsync<PromptProvenanceManifest, ProvenanceError>
   - _...4 more_
+- `packages/cli/src/evals/raw-artifacts.ts`
+  - function sanitizeFilenamePart: (raw) => string
+  - function rawCaseResultFilename: (caseId, modelId, date) => string
+  - function rawPromptFilename: (agentName, date) => string
+  - function isoToFilesafeDatetime: (iso) => string
+  - class RawArtifactsWriter
+  - class MemoryFileWriter
+  - _...3 more_
+- `packages/cli/src/evals/results-repo.ts`
+  - function validatePublishToken: (env, string | undefined>) => ResultAsync<string, ResultsRepoError>
+  - function validateRepoConfig: (config) => ResultAsync<undefined, ResultsRepoError>
+  - function enforcePublishPolicy: (bundle) => ResultAsync<undefined, ResultsRepoError>
+  - class NoOpResultsRepoPublisher
+  - class StubResultsRepoPublisher
+  - interface PublishBundleRequest
+  - _...2 more_
+- `packages/cli/src/evals/runner.ts`
+  - function buildEvalRunner: (orchestrator) => (request: EvalRunRequest) => Promise<Result<number, CliError>>
+  - class EvalOrchestrator
+  - interface EvalRunMetadata
+  - interface ModelRollup
+  - interface AgentRollup
+  - interface EvalRunSummary
+  - _...3 more_
+- `packages/cli/src/evals/sanitizer.ts`
+  - function sanitizeCaseResultSummary: (summary) => SanitizedCaseResultSummary
+  - function sanitizeScoreRecord: (record) => SanitizedScoreRecord
+  - function sanitizeProvenanceRecord: (record) => SanitizedProvenanceRecord
+  - function sanitizeProvenanceManifest: (manifest) => void
+  - function dropUnknownFields: (input, allowedKeys) => Partial<T>
+  - function assertPublishSafe: (obj, unknown>, context) => Result<undefined, SanitizerError>
+  - _...7 more_
+- `packages/cli/src/evals/tapestry-execution-runner.ts`
+  - function extractDelegationChain: (content) => string[]
+  - function detectCompletionSignal: (content) => boolean
+  - function extractProducedArtifacts: (content, expectedArtifacts) => string[]
+  - class TapestryExecutionRunner
+  - interface TapestryExecutionRunnerOptions
+  - interface TapestryRunRequest
+  - _...1 more_
 - `packages/cli/src/fs/file-system.ts`
   - function describeFileSystemError: (error) => string
   - class BunFileSystem
@@ -397,46 +527,46 @@
 
 ## Most Imported Files (change these carefully)
 
-- `packages/cli/src/theme/colors.ts` — imported by **17** files
+- `packages/cli/src/evals/types.ts` — imported by **20** files
+- `packages/cli/src/theme/colors.ts` — imported by **19** files
+- `packages/cli/src/io/terminal.ts` — imported by **17** files
 - `packages/engine/src/runtime/types.ts` — imported by **16** files
-- `packages/cli/src/io/terminal.ts` — imported by **15** files
+- `packages/cli/src/args.ts` — imported by **13** files
 - `packages/engine/src/runtime/store.ts` — imported by **13** files
 - `packages/cli/src/fs/file-system.ts` — imported by **12** files
 - `packages/engine/src/logger.ts` — imported by **12** files
-- `packages/cli/src/args.ts` — imported by **11** files
 - `packages/engine/src/runtime/errors.ts` — imported by **11** files
 - `packages/engine/src/execution-lifecycle/metadata.ts` — imported by **11** files
 - `packages/engine/src/execution-lifecycle/lease.ts` — imported by **10** files
 - `packages/engine/src/execution-lifecycle/errors.ts` — imported by **10** files
 - `packages/adapters/opencode/src/sdk-types.ts` — imported by **9** files
+- `packages/cli/src/errors.ts` — imported by **9** files
 - `packages/adapters/opencode/src/adapter.ts` — imported by **8** files
 - `packages/core/src/tokens.ts` — imported by **8** files
-- `packages/cli/src/errors.ts` — imported by **7** files
+- `packages/cli/src/evals/openrouter-client.ts` — imported by **7** files
 - `packages/engine/src/execution-lifecycle.ts` — imported by **7** files
 - `packages/cli/src/prompt/index.ts` — imported by **6** files
-- `packages/core/src/errors.ts` — imported by **6** files
-- `packages/engine/src/tool-policy.ts` — imported by **6** files
-- `packages/engine/src/__tests__/execution-lifecycle/fixtures.ts` — imported by **6** files
+- `packages/cli/src/evals/langchain-agent-evals.ts` — imported by **6** files
 
 ## Import Map (who imports what)
 
-- `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`, `packages/cli/src/commands/__tests__/migrate.test.ts` +12 more
+- `packages/cli/src/evals/types.ts` ← `packages/cli/src/commands/eval.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/github-contents-publisher.test.ts`, `packages/cli/src/evals/__tests__/loom-routing-runner.test.ts`, `packages/cli/src/evals/__tests__/loom-routing-runner.test.ts` +15 more
+- `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts` +14 more
+- `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts` +12 more
 - `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts` +11 more
-- `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`, `packages/cli/src/commands/__tests__/migrate.test.ts` +10 more
+- `packages/cli/src/args.ts` ← `packages/cli/src/__tests__/args.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/prompt.test.ts` +8 more
 - `packages/engine/src/runtime/store.ts` ← `packages/engine/src/__tests__/runtime-journal.test.ts`, `packages/engine/src/execution-lifecycle/artifacts.ts`, `packages/engine/src/execution-lifecycle/dispatch.ts`, `packages/engine/src/execution-lifecycle/inspection.ts`, `packages/engine/src/execution-lifecycle/interrupts.ts` +8 more
 - `packages/cli/src/fs/file-system.ts` ← `packages/cli/src/__tests__/file-system.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`, `packages/cli/src/commands/__tests__/migrate.test.ts`, `packages/cli/src/commands/__tests__/validate.test.ts` +7 more
 - `packages/engine/src/logger.ts` ← `packages/engine/src/compose.ts`, `packages/engine/src/index.ts`, `packages/engine/src/runtime/journal-writer.ts`, `packages/engine/src/runtime/sqlite/store.ts`, `packages/engine/src/runtime-command-operations/control.ts` +7 more
-- `packages/cli/src/args.ts` ← `packages/cli/src/__tests__/args.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/prompt.test.ts`, `packages/cli/src/commands/__tests__/runtime.test.ts` +6 more
 - `packages/engine/src/runtime/errors.ts` ← `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-journal.test.ts`, `packages/engine/src/__tests__/runtime-journal.test.ts`, `packages/engine/src/execution-lifecycle/lease.ts`, `packages/engine/src/runtime/fingerprint.ts` +6 more
 - `packages/engine/src/execution-lifecycle/metadata.ts` ← `packages/engine/src/execution-lifecycle/before-tool.ts`, `packages/engine/src/execution-lifecycle/completion.ts`, `packages/engine/src/execution-lifecycle/dispatch.ts`, `packages/engine/src/execution-lifecycle/index.ts`, `packages/engine/src/execution-lifecycle/inspection.ts` +6 more
-- `packages/engine/src/execution-lifecycle/lease.ts` ← `packages/engine/src/execution-lifecycle/artifacts.ts`, `packages/engine/src/execution-lifecycle/completion.ts`, `packages/engine/src/execution-lifecycle/dispatch.ts`, `packages/engine/src/execution-lifecycle/inspection.ts`, `packages/engine/src/execution-lifecycle/interrupts.ts` +5 more
 
 ---
 
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 76 test files found
+> 94 test files found
 
 ---
 

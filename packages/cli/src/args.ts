@@ -20,6 +20,7 @@ export type Command =
   | "run"
   | "prompt"
   | "runtime"
+  | "eval"
   | "unknown";
 
 export interface ParsedArgs {
@@ -62,6 +63,18 @@ export interface ParsedArgs {
      * Undefined for ordinary `weave init`.
      */
     initSubmode?: "migrate";
+    /** eval subcommand: "run" when `weave eval run` is invoked. */
+    evalSubcommand?: "run";
+    /** --agent <name> filter for `weave eval run` */
+    evalAgent?: string;
+    /** --model <id> filter for `weave eval run` */
+    evalModel?: string;
+    /** --case <id> filter for `weave eval run` */
+    evalCase?: string;
+    /** --dry-run flag for `weave eval run` — skips actual execution */
+    dryRun?: boolean;
+    /** --raw-artifacts flag for `weave eval run` — explicit local-only opt-in */
+    rawArtifacts?: boolean;
   };
 }
 
@@ -98,6 +111,8 @@ export function parseArgs(argv: string[]): Result<ParsedArgs, ArgParseError> {
     allHarnesses: false,
     project: false,
     global: false,
+    dryRun: false,
+    rawArtifacts: false,
   };
 
   let command: Command | undefined;
@@ -138,6 +153,14 @@ export function parseArgs(argv: string[]): Result<ParsedArgs, ArgParseError> {
     }
     if (arg === "--global") {
       flags.global = true;
+      continue;
+    }
+    if (arg === "--dry-run") {
+      flags.dryRun = true;
+      continue;
+    }
+    if (arg === "--raw-artifacts") {
+      flags.rawArtifacts = true;
       continue;
     }
 
@@ -221,6 +244,42 @@ export function parseArgs(argv: string[]): Result<ParsedArgs, ArgParseError> {
       flags.limit = parsed;
       continue;
     }
+    if (arg === "--agent") {
+      const val = args[++i];
+      if (!val || val.startsWith("-")) {
+        return err({
+          type: "MissingFlagValue" as const,
+          flag: "--agent",
+          message: "--agent requires an agent name",
+        });
+      }
+      flags.evalAgent = val;
+      continue;
+    }
+    if (arg === "--model") {
+      const val = args[++i];
+      if (!val || val.startsWith("-")) {
+        return err({
+          type: "MissingFlagValue" as const,
+          flag: "--model",
+          message: "--model requires a model identifier",
+        });
+      }
+      flags.evalModel = val;
+      continue;
+    }
+    if (arg === "--case") {
+      const val = args[++i];
+      if (!val || val.startsWith("-")) {
+        return err({
+          type: "MissingFlagValue" as const,
+          flag: "--case",
+          message: "--case requires a case identifier",
+        });
+      }
+      flags.evalCase = val;
+      continue;
+    }
 
     // Commands
     if (!command) {
@@ -239,6 +298,9 @@ export function parseArgs(argv: string[]): Result<ParsedArgs, ArgParseError> {
           break;
         case "runtime":
           command = "runtime";
+          break;
+        case "eval":
+          command = "eval";
           break;
         default:
           command = "unknown";
@@ -280,6 +342,14 @@ export function parseArgs(argv: string[]): Result<ParsedArgs, ArgParseError> {
     ) {
       flags.agentName = arg;
       continue;
+    }
+
+    // eval subcommands: "run"
+    if (command === "eval" && flags.evalSubcommand === undefined) {
+      if (arg === "run") {
+        flags.evalSubcommand = "run";
+        continue;
+      }
     }
 
     // Everything else goes into rest

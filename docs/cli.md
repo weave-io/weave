@@ -7,6 +7,7 @@ Related docs:
 - [Adapter boundary](./adapter-boundary.md)
 - [Product vision](./product-vision.md)
 - [Config Loading](./config-loading.md)
+- [Agent Evals](./agent-evals.md)
 
 ## Local PATH installation
 
@@ -348,6 +349,164 @@ Harness writes only happen after explicit non-interactive flags or interactive c
 ## No runtime execution
 
 Weave configures harnesses; harnesses run themselves. `weave run`, if encountered for transition compatibility, exits with a message directing users to `weave init` and harness-specific launch commands.
+
+## `weave eval run`
+
+`weave eval run` executes agent evaluation suites against the built-in model matrix. It is the primary eval entry point for CI and local verification.
+
+```bash
+weave eval run                                        # run all suites against default models (3)
+weave eval run --agent loom                           # restrict to loom-routing suite
+weave eval run --agent tapestry                       # restrict to tapestry-execution suite
+weave eval run --model anthropic/claude-sonnet-4.5    # restrict to one model (exact match)
+weave eval run --case loom-route-backend-api          # restrict to one case ID (exact match)
+weave eval run --dry-run                              # print what would run, no execution
+weave eval run --raw-artifacts                        # emit raw prompt text locally (NEVER in CI)
+```
+
+Filters can also be supplied via environment variables — useful in CI workflow dispatch:
+
+```bash
+WEAVE_EVAL_AGENT=loom weave eval run
+WEAVE_EVAL_MODEL=anthropic/claude-sonnet-4.5 weave eval run
+WEAVE_EVAL_CASE=loom-route-backend-api weave eval run
+```
+
+CLI flags and env vars are merged. Conflicting values for the same filter key (CLI vs env) cause a hard `DuplicateConflictingInput` error. Same-value duplicates are silently collapsed.
+
+### Required environment variable
+
+```bash
+export OPENROUTER_API_KEY=<your-key>
+```
+
+`OPENROUTER_API_KEY` must be set before running `weave eval run`. The runner validates it at startup and aborts immediately if absent or empty. The key value is **never logged, printed, or serialized** anywhere in the eval pipeline — it is passed directly to the OpenRouter HTTP client and treated as a secret.
+
+### Filter semantics
+
+All three filters use **strict exact-match**:
+
+- `--agent` must match either the suite name (`loom-routing`, `tapestry-execution`) or the short agent name (`loom`, `tapestry`). No other values are accepted.
+- `--model` must exactly match a model `id` in `evals/model-matrix.json`. No substring matching. An unmatched value causes `EmptyModelSet` and lists allowed IDs.
+- `--case` must exactly match the `id` field in a case fixture file. No glob or prefix matching.
+
+No filter means all values in that dimension are included. A no-filter run executes all three default models against all cases in both suites.
+
+### `--dry-run`
+
+Dry-run prints filters and confirms no execution will occur. No model calls are made, no artifacts are written, and exit code is always `0`. Use this to verify a filter combination before running live.
+
+```bash
+weave eval run --agent loom --model anthropic/claude-sonnet-4.5 --dry-run
+```
+
+### `--raw-artifacts` — local-only, never CI
+
+> **Security warning**: `--raw-artifacts` is rejected in CI environments (`CI=true`). Passing it in a CI workflow step is a hard validation error. Raw artifacts contain composed prompt text and full transcripts and must never be committed or published.
+
+When enabled locally, raw artifacts are written to `eval-bundles/<sha7>-<date>/raw/`. Filename components are sanitized before write, and the resolved path must stay under `raw/`. Add this directory to `.gitignore`. Raw files must never be committed to any repository.
+
+### Prompt provenance
+
+Every eval run produces a **prompt provenance manifest** — a publishable JSON record that captures the state of agent prompts without storing raw prompt text. Manifests are hash-first and summary-first:
+
+| Field | Description |
+|---|---|
+| `hash` | SHA-256 hex digest of the composed prompt (UTF-8 encoded) |
+| `summary` | Sanitized human-readable description of prompt provenance |
+| `byteLength` | Byte length of the composed prompt (UTF-8) |
+| `charLength` | Character length of the composed prompt |
+| `sources` | Source descriptors: `builtin`, `file`, `inline`, or `generated` per layer |
+| `gitSha` | Git commit SHA at capture time |
+| `capturedAt` | ISO 8601 timestamp |
+
+The hash is deterministic: the same composed prompt always yields the same hash. Hash changes in CI signal prompt drift without exposing prompt content.
+
+### Eval source layout
+
+```text
+packages/cli/src/evals/
+├── types.ts                    Zod schemas and inferred types for fixtures and provenance
+├── case-loader.ts              Loads eval case and rubric fixtures
+├── model-matrix.ts             Loads and validates the model matrix
+├── input-validation.ts         Parses and validates CLI flags for eval run
+├── prompt-snapshots.ts         Composes agent prompts and produces PromptSnapshot records
+├── provenance.ts               Derives PromptProvenanceRecord and PromptProvenanceManifest
+├── sanitizer.ts                Central allowlist sanitizer (source of truth for publishable fields)
+├── artifact-bundle.ts          ArtifactBundleWriter — deterministic bundle write
+├── raw-artifacts.ts            RawArtifactsWriter — local-only raw artifact write
+├── results-repo.ts             ResultsRepoPublisher interface and policy enforcement
+├── runner.ts                   EvalOrchestrator — top-level orchestration
+├── loom-routing-runner.ts      LoomRoutingRunner
+├── tapestry-execution-runner.ts  TapestryExecutionRunner
+├── openrouter-client.ts        OpenRouter model inference client
+├── langchain-agent-evals.ts    LangChain AgentEvals scorer (rubric judge)
+└── env.ts                      readEvalEnv — OPENROUTER_API_KEY validation
+```
+
+Eval fixture layout:
+
+```text
+evals/
+├── model-matrix.json           Canonical model matrix (default 3: see file for current models)
+├── cases/
+│   ├── loom-routing/           Loom routing eval cases
+│   └── tapestry-execution/     Tapestry execution eval cases
+└── rubrics/
+    ├── loom-routing/           Scoring rubrics for loom-routing cases
+    └── tapestry-execution/     Scoring rubrics for tapestry-execution cases
+```
+
+### Artifact bundle layout
+
+Bundles are written to `eval-bundles/<gitSha7>-<YYYY-MM-DD>/`:
+
+```text
+eval-bundles/
+└── abc1234-2026-06-10/
+    ├── bundle-index.json           Top-level bundle manifest
+    ├── run-summary.json            Aggregate pass/fail counts
+    ├── score-loom-routing.json     Sanitized score records (no rationale text)
+    ├── score-tapestry-execution.json
+    ├── prompt-hashes.json          Prompt hash records (no raw text)
+    └── provenance-manifest.json    Full sanitized provenance manifest
+```
+
+The directory name is deterministic: the same git SHA and date always produce the same path.
+
+### CI artifact model
+
+The eval CI workflow is **manual-only** (`workflow_dispatch`). It does not run on push, PR, or schedule.
+
+In CI, the workflow:
+
+1. Runs `weave eval run` with no filters (all suites, all default models).
+2. Writes sanitized `eval-bundles/` artifacts locally within the workflow runner.
+3. **Publishes** the sanitized bundle to `weave-io/weave-agent-evals` via the GitHub REST Contents API (`GitHubContentsPublisher`). Files land under `runs/<sha7>-<YYYY-MM-DD>/` in the target repo.
+4. Uploads the bundle directory as a GitHub Actions artifact named `eval-bundles-<run-id>` with **30-day retention** (backup for local inspection). The run ID is included in metadata only when `GITHUB_RUN_ID` is digits-only.
+
+The workflow sets `WEAVE_EVAL_PUBLISH_MODE=publish` in the eval run step env block, which activates `GitHubContentsPublisher`. The `raw/` subdirectory is never included in the published bundle — it is filtered by `GitHubContentsPublisher` before any upload. See [Agent Evals — CI Artifact Model](./agent-evals.md#ci-artifact-model) for the full CI specification, environment variable table, and security invariants.
+
+### Publish token (`EVAL_RESULTS_REPO_TOKEN`)
+
+`EVAL_RESULTS_REPO_TOKEN` gates external bundle publication. It must be configured as an encrypted GitHub Actions repository secret. In the CI workflow, it is passed to the eval run step **only** — it is never available in the upload-artifact step or any other step.
+
+- Token must have write access scoped to `weave-io/weave-agent-evals` only.
+- `ArtifactBundleWriter` enforces its presence before any external push.
+- `GitHubContentsPublisher` passes the token exclusively as an `Authorization: Bearer <token>` HTTP header — never in URLs, shell arguments, log output, or artifact content.
+- `enforcePublishPolicy()` re-runs the full sanitizer on the bundle before any file is pushed.
+
+### Security warnings summary
+
+> **Never do any of the following**:
+>
+> - Commit or log `OPENROUTER_API_KEY` values.
+> - Commit or log `EVAL_RESULTS_REPO_TOKEN` values.
+> - Use `--raw-artifacts` in any CI workflow step.
+> - Commit files from `eval-bundles/raw/` or any file containing `composedPrompt` or `rawContent`.
+> - Pass raw artifacts to `ArtifactBundleWriter` — all publishable output must go through `sanitizer.ts`.
+
+See [Agent Evals](./agent-evals.md) for the full architecture, security checklist, and guide to adding new eval cases.
 
 ## CLI command module structure
 

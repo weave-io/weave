@@ -17,7 +17,8 @@ export type CliError =
   | ValidationFailureError
   | AgentNotFoundError
   | CompositionFailureError
-  | UnknownCommandError;
+  | UnknownCommandError
+  | EvalValidationError;
 
 export type InvalidArgsError = {
   type: "InvalidArgs";
@@ -67,6 +68,11 @@ export type UnknownCommandError = {
   message: string;
 };
 
+export type EvalValidationError = {
+  type: "EvalValidation";
+  message: string;
+};
+
 // ---------------------------------------------------------------------------
 // Formatting
 // ---------------------------------------------------------------------------
@@ -90,5 +96,7 @@ export function formatCliError(error: CliError): string {
       return `Error: Failed to compose prompt for agent "${error.agentName}"\n\n${error.message}`;
     case "UnknownCommand":
       return `Error: Unknown command "${error.command}"\n  ${error.message}`;
+    case "EvalValidation":
+      return `Error: ${error.message}`;
   }
 }

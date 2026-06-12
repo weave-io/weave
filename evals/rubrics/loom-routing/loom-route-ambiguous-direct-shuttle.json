@@ -1,0 +1,10 @@
+{
+  "case_id": "loom-route-ambiguous-direct-shuttle",
+  "suite": "loom-routing",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Fallback to generic shuttle is critical; the negative assertion (no category tool called) is weighted as a partial signal"
+  }
+}
