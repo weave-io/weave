@@ -190,11 +190,13 @@
   - function deriveAndWriteManifest: (snapshots, options) => ResultAsync<PromptProvenanceManifest, ProvenanceError>
   - _...4 more_
 - `packages/cli/src/evals/raw-artifacts.ts`
+  - function sanitizeFilenamePart: (raw) => string
   - function rawCaseResultFilename: (caseId, modelId, date) => string
   - function rawPromptFilename: (agentName, date) => string
   - function isoToFilesafeDatetime: (iso) => string
   - class RawArtifactsWriter
-  - const RAW_ARTIFACTS_SUBDIR
+  - class MemoryFileWriter
+  - _...3 more_
 - `packages/cli/src/evals/results-repo.ts`
   - function validatePublishToken: (env, string | undefined>) => ResultAsync<string, ResultsRepoError>
   - function validateRepoConfig: (config) => ResultAsync<undefined, ResultsRepoError>

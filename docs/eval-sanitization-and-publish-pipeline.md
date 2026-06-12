@@ -125,10 +125,10 @@ Raw artifacts (`RawCaseResultArtifact`, `RawPromptArtifact`) contain raw transcr
 
 | Artifact | Filename |
 |---|---|
-| `RawCaseResultArtifact` | `case-<caseId>-<safeModelId>-<YYYY-MM-DD>.json` |
-| `RawPromptArtifact` | `prompt-<agentName>-<YYYY-MM-DD>.json` |
+| `RawCaseResultArtifact` | `case-<safeCaseId>-<safeModelId>-<YYYY-MM-DDTHH-MM-SS-mmmZ>.json` |
+| `RawPromptArtifact` | `prompt-<safeAgentName>-<YYYY-MM-DDTHH-MM-SS-mmmZ>.json` |
 
-Model ID slashes are replaced with underscores to produce valid filenames.
+Case IDs, model IDs, and agent names are sanitized before they become filename components. Slashes, backslashes, traversal segments such as `..`, and other unsafe characters are replaced or stripped. The writer also checks the resolved path before write so raw artifacts stay inside `<localBundleDir>/raw/`.
 
 #### Two-Direction Marker Check
 

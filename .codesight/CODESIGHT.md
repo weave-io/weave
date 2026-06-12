@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weave/core, @weave/engine, @weave/config, @weave/cli, @weave/docs, @weave/adapter-opencode
 
-> 0 routes | 0 models | 0 components | 108 lib files | 7 env vars | 5 middleware | 0% test coverage
-> **Token savings:** this file is ~9,300 tokens. Without it, AI exploration would cost ~39,400 tokens. **Saves ~30,100 tokens per conversation.**
-> **Last scanned:** 2026-06-11 18:01 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 109 lib files | 7 env vars | 5 middleware | 0% test coverage
+> **Token savings:** this file is ~9,400 tokens. Without it, AI exploration would cost ~39,700 tokens. **Saves ~30,300 tokens per conversation.**
+> **Last scanned:** 2026-06-12 06:27 — re-run after significant changes
 
 ---
 
@@ -201,11 +201,13 @@
   - function deriveAndWriteManifest: (snapshots, options) => ResultAsync<PromptProvenanceManifest, ProvenanceError>
   - _...4 more_
 - `packages/cli/src/evals/raw-artifacts.ts`
+  - function sanitizeFilenamePart: (raw) => string
   - function rawCaseResultFilename: (caseId, modelId, date) => string
   - function rawPromptFilename: (agentName, date) => string
   - function isoToFilesafeDatetime: (iso) => string
   - class RawArtifactsWriter
-  - const RAW_ARTIFACTS_SUBDIR
+  - class MemoryFileWriter
+  - _...3 more_
 - `packages/cli/src/evals/results-repo.ts`
   - function validatePublishToken: (env, string | undefined>) => ResultAsync<string, ResultsRepoError>
   - function validateRepoConfig: (config) => ResultAsync<undefined, ResultsRepoError>
@@ -564,7 +566,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 93 test files found
+> 94 test files found
 
 ---
 

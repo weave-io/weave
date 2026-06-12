@@ -17,9 +17,13 @@
  *   - Run metadata contains bunVersion, repoSha, filters, publishMode.
  *   - Run metadata never contains API key, token, or raw env values.
  *   - workflowRunId is populated from GITHUB_RUN_ID when digits-only.
- *   - workflowRunId is null when GITHUB_RUN_ID contains non-digit chars.
+ *   - workflowRunId is null when GITHUB_RUN_ID contains any non-digit chars (including hyphens).
  *   - Raw artifacts are written only when rawArtifacts === true.
- *   - No real network, git, LangChain, or file-system calls in any test.
+ *   - No real network, git, LangChain, or file-system calls in the unit test sections.
+ *
+ * Integration sections (labeled "integration"):
+ *   - Use `REAL_EVALS_ROOT` (repo fixtures) with injected StubModelClient/StubAgentEvalsScorer.
+ *   - Write to OS temp dir (`os.tmpdir()`); no hardcoded host paths.
  *
  * All external dependencies are injected:
  *   - `StubModelClient` for model inference.
@@ -38,6 +42,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { err, ok, ResultAsync } from "neverthrow";
 import type { EvalRunRequest } from "../input-validation.js";
@@ -63,7 +68,7 @@ import type {
 // Constants
 // ---------------------------------------------------------------------------
 
-const TEMP_DIR = "/var/folders/m8/6hhxrywx6739r5bhjfdzj3kw0000gn/T/opencode";
+const TEMP_DIR = tmpdir();
 const FAKE_EVALS_ROOT = join(TEMP_DIR, "fake-evals-runner-test");
 const FAKE_BUNDLE_ROOT = join(TEMP_DIR, "fake-bundles-runner-test");
 const FAKE_GIT_SHA = "abc1234def5678901234567890123456789012ab";
@@ -583,7 +588,7 @@ describe("EvalOrchestrator — workflowRunId metadata", () => {
     }
   });
 
-  it("workflowRunId accepts digit-and-hyphen run IDs", async () => {
+  it("workflowRunId is null when GITHUB_RUN_ID contains hyphens (digits-only contract)", async () => {
     const orchestrator = new EvalOrchestrator(
       makeOptions({
         env: { OPENROUTER_API_KEY: FAKE_API_KEY, GITHUB_RUN_ID: "123-456" },
@@ -592,7 +597,8 @@ describe("EvalOrchestrator — workflowRunId metadata", () => {
     const result = await orchestrator.run(makeRequest());
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      expect(result.value.metadata.workflowRunId).toBe("123-456");
+      // "123-456" has hyphens → digits-only contract rejects it
+      expect(result.value.metadata.workflowRunId).toBeNull();
     }
   });
 });

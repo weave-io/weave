@@ -4,10 +4,10 @@
  * Verifies:
  *   - `rawCaseResultFilename()` produces correct filename formats.
  *   - `rawPromptFilename()` produces correct filename formats.
- *   - `RawArtifactsWriter.writeCaseResultArtifact()` writes a file in the
- *     `raw/` subdirectory with the correct content.
- *   - `RawArtifactsWriter.writePromptArtifact()` writes a file in the
- *     `raw/` subdirectory with the correct content.
+ *   - `RawArtifactsWriter.writeCaseResultArtifact()` writes to the
+ *     `raw/` path with the correct content via the injected `MemoryFileWriter`.
+ *   - `RawArtifactsWriter.writePromptArtifact()` writes to the
+ *     `raw/` path with the correct content via the injected `MemoryFileWriter`.
  *   - Both write methods return `RawArtifactsDisabled` when the writer is
  *     constructed with `rawArtifactsEnabled: false`.
  *   - Written artifacts contain `composedPrompt` or `rawContent` markers.
@@ -16,35 +16,33 @@
  *   - Raw artifact output is blocked unless explicitly enabled via the
  *     `rawArtifactsEnabled: true` constructor flag.
  *   - Filenames sanitize model ID slashes to underscores.
+ *   - Filenames sanitize path traversal, slashes, and backslashes in caseId,
+ *     agentName, and modelId — written paths always remain under `<bundle>/raw/`.
+ *   - `MemoryFileWriter` records all writes in-memory (no real I/O).
  *
  * Test isolation:
- *   - All writes go to `TEMP_DIR` (not the project directory).
+ *   - All writes go through `MemoryFileWriter` — no real files are created.
  *   - No real model, scorer, git, or network calls.
  *   - All fixtures are constructed inline.
  */
 
 import { describe, expect, it } from "bun:test";
-import { resolve } from "node:path";
 import {
   isoToFilesafeDatetime,
+  MemoryFileWriter,
   RAW_ARTIFACTS_SUBDIR,
   RawArtifactsWriter,
   rawCaseResultFilename,
   rawPromptFilename,
+  sanitizeFilenamePart,
 } from "../raw-artifacts.js";
 import type { RawCaseResultArtifact, RawPromptArtifact } from "../types.js";
 
 // ---------------------------------------------------------------------------
-// Test directory
+// Constants
 // ---------------------------------------------------------------------------
 
-const TEMP_DIR = "/var/folders/m8/6hhxrywx6739r5bhjfdzj3kw0000gn/T/opencode";
-
-let _counter = 0;
-function uid(): string {
-  return String(Date.now()) + String(++_counter);
-}
-
+const BUNDLE_DIR = "/fake/bundle";
 const FIXED_DATE = "2026-01-15";
 const FIXED_TIMESTAMP = `${FIXED_DATE}T12:00:00.000Z`;
 
@@ -293,7 +291,8 @@ describe("rawPromptFilename", () => {
 
 describe("RawArtifactsWriter (disabled)", () => {
   it("writeCaseResultArtifact returns RawArtifactsDisabled when disabled", async () => {
-    const writer = new RawArtifactsWriter("/tmp/bundle", false);
+    const mem = new MemoryFileWriter();
+    const writer = new RawArtifactsWriter(BUNDLE_DIR, false, mem);
     const artifact = makeCaseResultArtifact();
     const result = await writer.writeCaseResultArtifact(
       artifact,
@@ -303,20 +302,26 @@ describe("RawArtifactsWriter (disabled)", () => {
     expect(result.isErr()).toBe(true);
     const error = result._unsafeUnwrapErr();
     expect(error.type).toBe("RawArtifactsDisabled");
+    // No writes should have occurred
+    expect(mem.writes.size).toBe(0);
   });
 
   it("writePromptArtifact returns RawArtifactsDisabled when disabled", async () => {
-    const writer = new RawArtifactsWriter("/tmp/bundle", false);
+    const mem = new MemoryFileWriter();
+    const writer = new RawArtifactsWriter(BUNDLE_DIR, false, mem);
     const artifact = makePromptArtifact();
     const result = await writer.writePromptArtifact(artifact, FIXED_TIMESTAMP);
 
     expect(result.isErr()).toBe(true);
     const error = result._unsafeUnwrapErr();
     expect(error.type).toBe("RawArtifactsDisabled");
+    // No writes should have occurred
+    expect(mem.writes.size).toBe(0);
   });
 
   it("writeCaseResultArtifacts returns empty written array with one error when disabled", async () => {
-    const writer = new RawArtifactsWriter("/tmp/bundle", false);
+    const mem = new MemoryFileWriter();
+    const writer = new RawArtifactsWriter(BUNDLE_DIR, false, mem);
     const artifacts = [
       makeCaseResultArtifact(),
       makeCaseResultArtifact({ caseId: "case-2", modelId: "openai/gpt-4o" }),
@@ -331,31 +336,29 @@ describe("RawArtifactsWriter (disabled)", () => {
     expect(written).toHaveLength(0);
     expect(errors).toHaveLength(2);
     expect(errors[0]?.type).toBe("RawArtifactsDisabled");
+    // No writes should have occurred
+    expect(mem.writes.size).toBe(0);
   });
 
   it("no files are written when disabled", async () => {
-    // Use a path that should not exist — if a write happens, Bun.file would find it
-    const writer = new RawArtifactsWriter(
-      "/tmp/definitely-nonexistent-raw-bundle",
-      false,
-    );
+    const mem = new MemoryFileWriter();
+    const writer = new RawArtifactsWriter(BUNDLE_DIR, false, mem);
     await writer.writeCaseResultArtifact(
       makeCaseResultArtifact(),
       FIXED_TIMESTAMP,
     );
-    // No assertion needed on the file — just verify no exception was thrown
-    // and the result was an error (covered by other test)
+    expect(mem.writes.size).toBe(0);
   });
 });
 
 // ---------------------------------------------------------------------------
-// RawArtifactsWriter — enabled mode (writes to TEMP_DIR)
+// RawArtifactsWriter — enabled mode (uses MemoryFileWriter — no real I/O)
 // ---------------------------------------------------------------------------
 
 describe("RawArtifactsWriter (enabled)", () => {
-  it("writeCaseResultArtifact writes to the raw/ subdirectory", async () => {
-    const bundleDir = resolve(TEMP_DIR, `raw-writer-${uid()}`);
-    const writer = new RawArtifactsWriter(bundleDir, true);
+  it("writeCaseResultArtifact writes to the raw/ subdirectory path", async () => {
+    const mem = new MemoryFileWriter();
+    const writer = new RawArtifactsWriter(BUNDLE_DIR, true, mem);
     const artifact = makeCaseResultArtifact();
 
     const result = await writer.writeCaseResultArtifact(
@@ -367,11 +370,14 @@ describe("RawArtifactsWriter (enabled)", () => {
     const filePath = result._unsafeUnwrap();
     expect(filePath).toContain("raw/");
     expect(filePath).toContain("case-route-to-shuttle");
+    // Verify the mock recorded exactly one write at the returned path
+    expect(mem.writes.size).toBe(1);
+    expect(mem.writes.has(filePath)).toBe(true);
   });
 
-  it("writeCaseResultArtifact creates a valid JSON file", async () => {
-    const bundleDir = resolve(TEMP_DIR, `raw-writer-json-${uid()}`);
-    const writer = new RawArtifactsWriter(bundleDir, true);
+  it("writeCaseResultArtifact stores valid JSON content", async () => {
+    const mem = new MemoryFileWriter();
+    const writer = new RawArtifactsWriter(BUNDLE_DIR, true, mem);
     const artifact = makeCaseResultArtifact();
 
     const result = await writer.writeCaseResultArtifact(
@@ -380,29 +386,35 @@ describe("RawArtifactsWriter (enabled)", () => {
     );
     expect(result.isOk()).toBe(true);
 
-    const content = await Bun.file(result._unsafeUnwrap()).json();
-    expect(content.caseId).toBe("route-to-shuttle");
-    expect(content.modelId).toBe("anthropic/claude-sonnet-4.5");
+    const filePath = result._unsafeUnwrap();
+    const rawContent = mem.getContent(filePath);
+    expect(rawContent).toBeDefined();
+    const parsed = JSON.parse(rawContent!);
+    expect(parsed.caseId).toBe("route-to-shuttle");
+    expect(parsed.modelId).toBe("anthropic/claude-sonnet-4.5");
   });
 
-  it("written case result file contains composedPrompt", async () => {
-    const bundleDir = resolve(TEMP_DIR, `raw-writer-prompt-${uid()}`);
-    const writer = new RawArtifactsWriter(bundleDir, true);
+  it("written case result content contains composedPrompt", async () => {
+    const mem = new MemoryFileWriter();
+    const writer = new RawArtifactsWriter(BUNDLE_DIR, true, mem);
     const artifact = makeCaseResultArtifact({
       composedPrompt: "You are Loom.",
     });
 
-    await writer.writeCaseResultArtifact(artifact, FIXED_TIMESTAMP);
-    const filePath = (
-      await writer.writeCaseResultArtifact(artifact, FIXED_TIMESTAMP)
-    )._unsafeUnwrap();
-    const content = await Bun.file(filePath).text();
+    const result = await writer.writeCaseResultArtifact(
+      artifact,
+      FIXED_TIMESTAMP,
+    );
+    expect(result.isOk()).toBe(true);
+
+    const filePath = result._unsafeUnwrap();
+    const content = mem.getContent(filePath) ?? "";
     expect(content).toContain("composedPrompt");
   });
 
-  it("written case result file contains rawContent", async () => {
-    const bundleDir = resolve(TEMP_DIR, `raw-writer-raw-${uid()}`);
-    const writer = new RawArtifactsWriter(bundleDir, true);
+  it("written case result content contains rawContent", async () => {
+    const mem = new MemoryFileWriter();
+    const writer = new RawArtifactsWriter(BUNDLE_DIR, true, mem);
     const artifact = makeCaseResultArtifact({
       rawContent: "Model answer here.",
     });
@@ -412,13 +424,15 @@ describe("RawArtifactsWriter (enabled)", () => {
       FIXED_TIMESTAMP,
     );
     expect(result.isOk()).toBe(true);
-    const content = await Bun.file(result._unsafeUnwrap()).text();
+
+    const filePath = result._unsafeUnwrap();
+    const content = mem.getContent(filePath) ?? "";
     expect(content).toContain("rawContent");
   });
 
-  it("written case result file contains transcript", async () => {
-    const bundleDir = resolve(TEMP_DIR, `raw-writer-tx-${uid()}`);
-    const writer = new RawArtifactsWriter(bundleDir, true);
+  it("written case result content contains transcript", async () => {
+    const mem = new MemoryFileWriter();
+    const writer = new RawArtifactsWriter(BUNDLE_DIR, true, mem);
     const artifact = makeCaseResultArtifact();
 
     const result = await writer.writeCaseResultArtifact(
@@ -426,13 +440,15 @@ describe("RawArtifactsWriter (enabled)", () => {
       FIXED_TIMESTAMP,
     );
     expect(result.isOk()).toBe(true);
-    const content = await Bun.file(result._unsafeUnwrap()).text();
+
+    const filePath = result._unsafeUnwrap();
+    const content = mem.getContent(filePath) ?? "";
     expect(content).toContain("transcript");
   });
 
-  it("writePromptArtifact writes to the raw/ subdirectory", async () => {
-    const bundleDir = resolve(TEMP_DIR, `raw-writer-pa-${uid()}`);
-    const writer = new RawArtifactsWriter(bundleDir, true);
+  it("writePromptArtifact writes to the raw/ subdirectory path", async () => {
+    const mem = new MemoryFileWriter();
+    const writer = new RawArtifactsWriter(BUNDLE_DIR, true, mem);
     const artifact = makePromptArtifact();
 
     const result = await writer.writePromptArtifact(artifact, FIXED_TIMESTAMP);
@@ -441,24 +457,28 @@ describe("RawArtifactsWriter (enabled)", () => {
     const filePath = result._unsafeUnwrap();
     expect(filePath).toContain("raw/");
     expect(filePath).toContain("prompt-loom");
+    expect(mem.writes.has(filePath)).toBe(true);
   });
 
-  it("writePromptArtifact creates a valid JSON file with composedPrompt", async () => {
-    const bundleDir = resolve(TEMP_DIR, `raw-writer-paj-${uid()}`);
-    const writer = new RawArtifactsWriter(bundleDir, true);
+  it("writePromptArtifact stores valid JSON content with composedPrompt", async () => {
+    const mem = new MemoryFileWriter();
+    const writer = new RawArtifactsWriter(BUNDLE_DIR, true, mem);
     const artifact = makePromptArtifact({ agentName: "tapestry" });
 
     const result = await writer.writePromptArtifact(artifact, FIXED_TIMESTAMP);
     expect(result.isOk()).toBe(true);
 
-    const content = await Bun.file(result._unsafeUnwrap()).json();
-    expect(content.agentName).toBe("tapestry");
-    expect(typeof content.composedPrompt).toBe("string");
+    const filePath = result._unsafeUnwrap();
+    const rawContent = mem.getContent(filePath);
+    expect(rawContent).toBeDefined();
+    const parsed = JSON.parse(rawContent!);
+    expect(parsed.agentName).toBe("tapestry");
+    expect(typeof parsed.composedPrompt).toBe("string");
   });
 
   it("writeCaseResultArtifacts writes all artifacts in batch", async () => {
-    const bundleDir = resolve(TEMP_DIR, `raw-writer-batch-${uid()}`);
-    const writer = new RawArtifactsWriter(bundleDir, true);
+    const mem = new MemoryFileWriter();
+    const writer = new RawArtifactsWriter(BUNDLE_DIR, true, mem);
     const artifacts = [
       makeCaseResultArtifact({ caseId: "case-1" }),
       makeCaseResultArtifact({ caseId: "case-2" }),
@@ -472,27 +492,47 @@ describe("RawArtifactsWriter (enabled)", () => {
     const { written, errors } = result._unsafeUnwrap();
     expect(written).toHaveLength(2);
     expect(errors).toHaveLength(0);
+    // Both paths were captured by the mock
+    expect(mem.writes.size).toBe(2);
   });
 
   it("writeCaseResultArtifacts continues on individual write failures", async () => {
-    // Write to a directory that partially exists
-    const bundleDir = resolve(TEMP_DIR, `raw-writer-batch-err-${uid()}`);
-    const writer = new RawArtifactsWriter(bundleDir, true);
+    // Simulate a write failure for one artifact by injecting a throwing writer
+    let callCount = 0;
+    const failOnSecond: import("../raw-artifacts.js").RawFileWriter = {
+      write(path: string, content: string): Promise<void> {
+        callCount++;
+        if (callCount === 2) {
+          return Promise.reject(new Error("Simulated write failure"));
+        }
+        return Promise.resolve();
+      },
+    };
 
-    // First artifact is valid
-    const goodArtifact = makeCaseResultArtifact({ caseId: "case-good" });
+    const writer = new RawArtifactsWriter(BUNDLE_DIR, true, failOnSecond);
+    const artifacts = [
+      makeCaseResultArtifact({ caseId: "case-good" }),
+      makeCaseResultArtifact({
+        caseId: "case-fail",
+        modelId: "openai/gpt-4o",
+      }),
+    ];
+
     const result = await writer.writeCaseResultArtifacts(
-      [goodArtifact],
+      artifacts,
       FIXED_TIMESTAMP,
     );
     expect(result.isOk()).toBe(true);
-    const { written } = result._unsafeUnwrap();
+    const { written, errors } = result._unsafeUnwrap();
+    // First succeeds, second fails
     expect(written).toHaveLength(1);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.type).toBe("RawArtifactWriteError");
   });
 
   it("filename includes sanitized model ID (no slashes)", async () => {
-    const bundleDir = resolve(TEMP_DIR, `raw-writer-modelid-${uid()}`);
-    const writer = new RawArtifactsWriter(bundleDir, true);
+    const mem = new MemoryFileWriter();
+    const writer = new RawArtifactsWriter(BUNDLE_DIR, true, mem);
     const artifact = makeCaseResultArtifact({
       caseId: "my-case",
       modelId: "anthropic/claude-sonnet-4.5",
@@ -507,16 +547,78 @@ describe("RawArtifactsWriter (enabled)", () => {
     expect(filePath).not.toContain("anthropic/claude"); // slash sanitized
     expect(filePath).toContain("anthropic_claude"); // underscore replacement
   });
+
+  it("written path is under the bundle raw/ directory", async () => {
+    const mem = new MemoryFileWriter();
+    const bundleDir = "/my/custom/bundle";
+    const writer = new RawArtifactsWriter(bundleDir, true, mem);
+    const artifact = makeCaseResultArtifact();
+
+    const result = await writer.writeCaseResultArtifact(
+      artifact,
+      FIXED_TIMESTAMP,
+    );
+    expect(result.isOk()).toBe(true);
+    const filePath = result._unsafeUnwrap();
+    // Path must be under <bundleDir>/raw/
+    expect(filePath.startsWith(`${bundleDir}/raw/`)).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
-// RawArtifactsWriter — blocking write of artifacts without raw content markers
+// MemoryFileWriter — seam contract verification
+// ---------------------------------------------------------------------------
+
+describe("MemoryFileWriter", () => {
+  it("records writes in the writes map", async () => {
+    const mem = new MemoryFileWriter();
+    await mem.write("/some/path/file.json", '{"key":"value"}');
+    expect(mem.writes.size).toBe(1);
+    expect(mem.writes.get("/some/path/file.json")).toBe('{"key":"value"}');
+  });
+
+  it("getContent returns content for a known path", async () => {
+    const mem = new MemoryFileWriter();
+    await mem.write("/a/b.json", "hello");
+    expect(mem.getContent("/a/b.json")).toBe("hello");
+  });
+
+  it("getContent returns undefined for an unknown path", () => {
+    const mem = new MemoryFileWriter();
+    expect(mem.getContent("/nonexistent.json")).toBeUndefined();
+  });
+
+  it("allPaths returns sorted list of written paths", async () => {
+    const mem = new MemoryFileWriter();
+    await mem.write("/z/c.json", "c");
+    await mem.write("/a/b.json", "b");
+    expect(mem.allPaths()).toEqual(["/a/b.json", "/z/c.json"]);
+  });
+
+  it("clear resets all captured writes", async () => {
+    const mem = new MemoryFileWriter();
+    await mem.write("/some/file.json", "data");
+    mem.clear();
+    expect(mem.writes.size).toBe(0);
+  });
+
+  it("overwrites existing content on repeated write to same path", async () => {
+    const mem = new MemoryFileWriter();
+    await mem.write("/file.json", "first");
+    await mem.write("/file.json", "second");
+    expect(mem.getContent("/file.json")).toBe("second");
+    expect(mem.writes.size).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// RawArtifactsWriter — marker validation
 // ---------------------------------------------------------------------------
 
 describe("RawArtifactsWriter — marker validation", () => {
-  it("blocks writing a case result artifact with no composedPrompt or rawContent", async () => {
-    const bundleDir = resolve(TEMP_DIR, `raw-writer-marker-${uid()}`);
-    const writer = new RawArtifactsWriter(bundleDir, true);
+  it("allows writing when raw marker keys are present even if values are empty", async () => {
+    const mem = new MemoryFileWriter();
+    const writer = new RawArtifactsWriter(BUNDLE_DIR, true, mem);
 
     // Construct an artifact with empty composedPrompt and rawContent
     const artifact: RawCaseResultArtifact = {
@@ -532,17 +634,13 @@ describe("RawArtifactsWriter — marker validation", () => {
       artifact,
       FIXED_TIMESTAMP,
     );
-    // Empty composedPrompt and rawContent mean the JSON won't contain the marker strings
-    // The JSON would be: "composedPrompt":"" — which still contains the key name.
-    // So this should actually succeed (the key name is present even if value is empty).
-    // This test verifies the behavior is consistent.
-    // The marker check looks for the JSON key name, not the value.
+    // The marker check looks for raw JSON key names, not non-empty values.
     expect(result.isOk()).toBe(true);
   });
 
   it("allows writing when composedPrompt field is present (even if empty value)", async () => {
-    const bundleDir = resolve(TEMP_DIR, `raw-writer-marker-ok-${uid()}`);
-    const writer = new RawArtifactsWriter(bundleDir, true);
+    const mem = new MemoryFileWriter();
+    const writer = new RawArtifactsWriter(BUNDLE_DIR, true, mem);
 
     const artifact = makeCaseResultArtifact({ composedPrompt: "some content" });
     const result = await writer.writeCaseResultArtifact(
@@ -550,5 +648,304 @@ describe("RawArtifactsWriter — marker validation", () => {
       FIXED_TIMESTAMP,
     );
     expect(result.isOk()).toBe(true);
+    // Verify the write was actually captured
+    expect(mem.writes.size).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// sanitizeFilenamePart — unit tests
+// ---------------------------------------------------------------------------
+
+describe("sanitizeFilenamePart", () => {
+  it("leaves safe alphanumeric-hyphen-underscore-dot strings unchanged", () => {
+    expect(sanitizeFilenamePart("route-to-shuttle")).toBe("route-to-shuttle");
+    expect(sanitizeFilenamePart("my_case.v2")).toBe("my_case.v2");
+    expect(sanitizeFilenamePart("abc123")).toBe("abc123");
+  });
+
+  it("replaces forward slashes with underscores", () => {
+    const result = sanitizeFilenamePart("anthropic/claude-sonnet-4.5");
+    expect(result).not.toContain("/");
+    expect(result).toContain("anthropic_claude-sonnet-4");
+  });
+
+  it("replaces backslashes with underscores", () => {
+    const result = sanitizeFilenamePart("path\\to\\agent");
+    expect(result).not.toContain("\\");
+    expect(result).toBe("path_to_agent");
+  });
+
+  it("replaces ../ path traversal with safe underscores", () => {
+    const result = sanitizeFilenamePart("../evil");
+    expect(result).not.toContain("..");
+    expect(result).not.toContain("/");
+    // After step1: .._evil; step2: .._evil; step3: .._evil → __evil; step4: strip leading dot → __evil
+    expect(result).not.toMatch(/^\./);
+  });
+
+  it("replaces ..\\  backslash traversal with safe underscores", () => {
+    const result = sanitizeFilenamePart("..\\evil");
+    expect(result).not.toContain("..");
+    expect(result).not.toContain("\\");
+  });
+
+  it("collapses embedded .. into __", () => {
+    const result = sanitizeFilenamePart("a..b");
+    expect(result).not.toContain("..");
+    expect(result).toBe("a__b");
+  });
+
+  it("strips leading dots", () => {
+    const result = sanitizeFilenamePart("..hidden");
+    // After all steps the result must not start with a dot
+    expect(result).not.toMatch(/^\./);
+  });
+
+  it("returns _ for an empty string", () => {
+    expect(sanitizeFilenamePart("")).toBe("_");
+  });
+
+  it("returns _ for a string of only unsafe chars that reduce to empty", () => {
+    // All slashes/backslashes strip to nothing meaningful
+    const result = sanitizeFilenamePart("../");
+    expect(result.length).toBeGreaterThan(0);
+    expect(result).not.toContain("/");
+    expect(result).not.toContain("\\");
+    expect(result).not.toContain("..");
+  });
+
+  it("preserves model ID dots (e.g. 4.5) in the output", () => {
+    const result = sanitizeFilenamePart("anthropic/claude-sonnet-4.5");
+    // Single dots between digits must remain
+    expect(result).toContain("4.5");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Path traversal safety — rawCaseResultFilename
+// ---------------------------------------------------------------------------
+
+describe("rawCaseResultFilename — path traversal safety", () => {
+  it("sanitizes ../ in caseId — no traversal segments in filename", () => {
+    const name = rawCaseResultFilename(
+      "../evil",
+      "openai/gpt-4o",
+      FIXED_TIMESTAMP,
+    );
+    expect(name).not.toContain("..");
+    expect(name).not.toContain("/");
+    expect(name).not.toContain("\\");
+  });
+
+  it("sanitizes slash in caseId", () => {
+    const name = rawCaseResultFilename(
+      "foo/bar",
+      "openai/gpt-4o",
+      FIXED_TIMESTAMP,
+    );
+    expect(name).not.toContain("/");
+    // The slash in the modelId is also sanitized, so neither component leaks slashes
+    expect(name.startsWith("case-")).toBe(true);
+    expect(name.endsWith(".json")).toBe(true);
+  });
+
+  it("sanitizes backslash in caseId", () => {
+    const name = rawCaseResultFilename(
+      "foo\\bar",
+      "openai/gpt-4o",
+      FIXED_TIMESTAMP,
+    );
+    expect(name).not.toContain("\\");
+    expect(name).not.toContain("/");
+  });
+
+  it("sanitizes ../ in modelId — no traversal segments in filename", () => {
+    const name = rawCaseResultFilename("my-case", "../evil", FIXED_TIMESTAMP);
+    expect(name).not.toContain("..");
+    expect(name).not.toContain("/");
+    expect(name).not.toContain("\\");
+  });
+
+  it("sanitizes backslash in modelId", () => {
+    const name = rawCaseResultFilename(
+      "my-case",
+      "evil\\model",
+      FIXED_TIMESTAMP,
+    );
+    expect(name).not.toContain("\\");
+  });
+
+  it("still replaces slashes in modelId with underscores (existing behaviour)", () => {
+    const name = rawCaseResultFilename(
+      "my-case",
+      "anthropic/claude-sonnet-4.5",
+      FIXED_TIMESTAMP,
+    );
+    expect(name).not.toContain("/");
+    expect(name).toContain("anthropic_claude-sonnet-4.5");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Path traversal safety — rawPromptFilename
+// ---------------------------------------------------------------------------
+
+describe("rawPromptFilename — path traversal safety", () => {
+  it("sanitizes ../ in agentName — no traversal segments in filename", () => {
+    const name = rawPromptFilename("../evil", FIXED_TIMESTAMP);
+    expect(name).not.toContain("..");
+    expect(name).not.toContain("/");
+    expect(name).not.toContain("\\");
+  });
+
+  it("sanitizes slash in agentName", () => {
+    const name = rawPromptFilename("some/agent", FIXED_TIMESTAMP);
+    expect(name).not.toContain("/");
+    expect(name.startsWith("prompt-")).toBe(true);
+  });
+
+  it("sanitizes backslash in agentName", () => {
+    const name = rawPromptFilename("some\\agent", FIXED_TIMESTAMP);
+    expect(name).not.toContain("\\");
+    expect(name).not.toContain("/");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Path containment — writeCaseResultArtifact
+// ---------------------------------------------------------------------------
+
+describe("RawArtifactsWriter — path containment (writeCaseResultArtifact)", () => {
+  it("path stays under raw/ with a normal caseId", async () => {
+    const mem = new MemoryFileWriter();
+    const writer = new RawArtifactsWriter(BUNDLE_DIR, true, mem);
+    const artifact = makeCaseResultArtifact({ caseId: "normal-case" });
+
+    const result = await writer.writeCaseResultArtifact(
+      artifact,
+      FIXED_TIMESTAMP,
+    );
+    expect(result.isOk()).toBe(true);
+    const filePath = result._unsafeUnwrap();
+    expect(filePath.startsWith(`${BUNDLE_DIR}/raw/`)).toBe(true);
+  });
+
+  it("path stays under raw/ even with ../ in caseId", async () => {
+    const mem = new MemoryFileWriter();
+    const writer = new RawArtifactsWriter(BUNDLE_DIR, true, mem);
+    // The sanitizer rewrites ../evil → a safe component; containment must hold
+    const artifact = makeCaseResultArtifact({ caseId: "../evil" });
+
+    const result = await writer.writeCaseResultArtifact(
+      artifact,
+      FIXED_TIMESTAMP,
+    );
+    expect(result.isOk()).toBe(true);
+    const filePath = result._unsafeUnwrap();
+    expect(filePath.startsWith(`${BUNDLE_DIR}/raw/`)).toBe(true);
+    expect(filePath).not.toContain("..");
+  });
+
+  it("path stays under raw/ even with slash in caseId", async () => {
+    const mem = new MemoryFileWriter();
+    const writer = new RawArtifactsWriter(BUNDLE_DIR, true, mem);
+    const artifact = makeCaseResultArtifact({ caseId: "sub/case" });
+
+    const result = await writer.writeCaseResultArtifact(
+      artifact,
+      FIXED_TIMESTAMP,
+    );
+    expect(result.isOk()).toBe(true);
+    const filePath = result._unsafeUnwrap();
+    // Strip the bundle prefix and verify no extra directory segments from the caseId
+    const relativeToBundle = filePath.slice(`${BUNDLE_DIR}/`.length);
+    expect(relativeToBundle.startsWith("raw/")).toBe(true);
+    // No slash in the filename portion (after raw/)
+    const filenameOnly = relativeToBundle.slice("raw/".length);
+    expect(filenameOnly).not.toContain("/");
+  });
+
+  it("path stays under raw/ even with backslash in caseId", async () => {
+    const mem = new MemoryFileWriter();
+    const writer = new RawArtifactsWriter(BUNDLE_DIR, true, mem);
+    const artifact = makeCaseResultArtifact({ caseId: "sub\\case" });
+
+    const result = await writer.writeCaseResultArtifact(
+      artifact,
+      FIXED_TIMESTAMP,
+    );
+    expect(result.isOk()).toBe(true);
+    const filePath = result._unsafeUnwrap();
+    expect(filePath.startsWith(`${BUNDLE_DIR}/raw/`)).toBe(true);
+  });
+
+  it("path stays under raw/ even with ../ in modelId", async () => {
+    const mem = new MemoryFileWriter();
+    const writer = new RawArtifactsWriter(BUNDLE_DIR, true, mem);
+    const artifact = makeCaseResultArtifact({ modelId: "../evil" });
+
+    const result = await writer.writeCaseResultArtifact(
+      artifact,
+      FIXED_TIMESTAMP,
+    );
+    expect(result.isOk()).toBe(true);
+    const filePath = result._unsafeUnwrap();
+    expect(filePath.startsWith(`${BUNDLE_DIR}/raw/`)).toBe(true);
+    expect(filePath).not.toContain("..");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Path containment — writePromptArtifact
+// ---------------------------------------------------------------------------
+
+describe("RawArtifactsWriter — path containment (writePromptArtifact)", () => {
+  it("path stays under raw/ with a normal agentName", async () => {
+    const mem = new MemoryFileWriter();
+    const writer = new RawArtifactsWriter(BUNDLE_DIR, true, mem);
+    const artifact = makePromptArtifact({ agentName: "loom" });
+
+    const result = await writer.writePromptArtifact(artifact, FIXED_TIMESTAMP);
+    expect(result.isOk()).toBe(true);
+    const filePath = result._unsafeUnwrap();
+    expect(filePath.startsWith(`${BUNDLE_DIR}/raw/`)).toBe(true);
+  });
+
+  it("path stays under raw/ even with ../ in agentName", async () => {
+    const mem = new MemoryFileWriter();
+    const writer = new RawArtifactsWriter(BUNDLE_DIR, true, mem);
+    const artifact = makePromptArtifact({ agentName: "../evil" });
+
+    const result = await writer.writePromptArtifact(artifact, FIXED_TIMESTAMP);
+    expect(result.isOk()).toBe(true);
+    const filePath = result._unsafeUnwrap();
+    expect(filePath.startsWith(`${BUNDLE_DIR}/raw/`)).toBe(true);
+    expect(filePath).not.toContain("..");
+  });
+
+  it("path stays under raw/ even with slash in agentName", async () => {
+    const mem = new MemoryFileWriter();
+    const writer = new RawArtifactsWriter(BUNDLE_DIR, true, mem);
+    const artifact = makePromptArtifact({ agentName: "some/agent" });
+
+    const result = await writer.writePromptArtifact(artifact, FIXED_TIMESTAMP);
+    expect(result.isOk()).toBe(true);
+    const filePath = result._unsafeUnwrap();
+    const relativeToBundle = filePath.slice(`${BUNDLE_DIR}/`.length);
+    expect(relativeToBundle.startsWith("raw/")).toBe(true);
+    const filenameOnly = relativeToBundle.slice("raw/".length);
+    expect(filenameOnly).not.toContain("/");
+  });
+
+  it("path stays under raw/ even with backslash in agentName", async () => {
+    const mem = new MemoryFileWriter();
+    const writer = new RawArtifactsWriter(BUNDLE_DIR, true, mem);
+    const artifact = makePromptArtifact({ agentName: "some\\agent" });
+
+    const result = await writer.writePromptArtifact(artifact, FIXED_TIMESTAMP);
+    expect(result.isOk()).toBe(true);
+    const filePath = result._unsafeUnwrap();
+    expect(filePath.startsWith(`${BUNDLE_DIR}/raw/`)).toBe(true);
   });
 });

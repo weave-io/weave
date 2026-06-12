@@ -117,7 +117,8 @@ export interface EvalRunMetadata {
    *
    * Populated from `GITHUB_RUN_ID` (GitHub Actions) or similar CI variables.
    * `null` when not running in a recognised CI environment.
-   * Never contains API keys or secrets — only the workflow run number/ID.
+   * Never contains API keys or secrets — only the numeric workflow run ID.
+   * Values containing non-digit characters are rejected to prevent env leakage.
    */
   workflowRunId: string | null;
   /**
@@ -1030,7 +1031,7 @@ export class EvalOrchestrator {
    * Only safe, bounded values are included:
    *   - `Bun.version` — semver string, always safe
    *   - `repoSha` — 40-char hex SHA or `"unknown"`
-   *   - `workflowRunId` — numeric string from CI env or `null`
+   *   - `workflowRunId` — digits-only numeric string from CI env or `null`
    *   - Filter values — already validated identifiers from `EvalRunRequest`
    *   - Booleans for policy flags
    *
@@ -1063,17 +1064,18 @@ export class EvalOrchestrator {
    * Reads `GITHUB_RUN_ID` (GitHub Actions). Only the run ID value is used —
    * no tokens, no secrets, no repo URLs. Returns `null` outside CI.
    *
-   * The value is validated to contain only digits and hyphens (typical for
-   * numeric CI run IDs) to prevent leaking arbitrary env content.
+   * GitHub Actions run IDs are numeric (e.g. `"12345678"`). The value is
+   * validated to contain only digits to prevent leaking arbitrary env content.
+   * Values with hyphens or other non-digit characters are rejected.
    */
   private resolveWorkflowRunId(): string | null {
     const githubRunId = this.env.GITHUB_RUN_ID;
     if (githubRunId === undefined || githubRunId.trim() === "") {
       return null;
     }
-    // Validate: only allow digits and hyphens (prevents arbitrary env leakage)
+    // Validate: only allow digits (GitHub run IDs are numeric integers)
     const trimmed = githubRunId.trim();
-    if (/^[\d-]+$/.test(trimmed)) {
+    if (/^\d+$/.test(trimmed)) {
       return trimmed;
     }
     return null;

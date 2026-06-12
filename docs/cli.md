@@ -404,7 +404,7 @@ weave eval run --agent loom --model anthropic/claude-sonnet-4.5 --dry-run
 
 > **Security warning**: `--raw-artifacts` is rejected in CI environments (`CI=true`). Passing it in a CI workflow step is a hard validation error. Raw artifacts contain composed prompt text and full transcripts and must never be committed or published.
 
-When enabled locally, raw artifacts are written to `eval-bundles/<sha7>-<date>/raw/`. Add this directory to `.gitignore`. Raw files must never be committed to any repository.
+When enabled locally, raw artifacts are written to `eval-bundles/<sha7>-<date>/raw/`. Filename components are sanitized before write, and the resolved path must stay under `raw/`. Add this directory to `.gitignore`. Raw files must never be committed to any repository.
 
 ### Prompt provenance
 
@@ -483,7 +483,7 @@ In CI, the workflow:
 1. Runs `weave eval run` with no filters (all suites, all default models).
 2. Writes sanitized `eval-bundles/` artifacts locally within the workflow runner.
 3. **Publishes** the sanitized bundle to `weave-io/weave-agent-evals` via the GitHub REST Contents API (`GitHubContentsPublisher`). Files land under `runs/<sha7>-<YYYY-MM-DD>/` in the target repo.
-4. Uploads the bundle directory as a GitHub Actions artifact named `eval-bundles-<run-id>` with **30-day retention** (backup for local inspection).
+4. Uploads the bundle directory as a GitHub Actions artifact named `eval-bundles-<run-id>` with **30-day retention** (backup for local inspection). The run ID is included in metadata only when `GITHUB_RUN_ID` is digits-only.
 
 The workflow sets `WEAVE_EVAL_PUBLISH_MODE=publish` in the eval run step env block, which activates `GitHubContentsPublisher`. The `raw/` subdirectory is never included in the published bundle — it is filtered by `GitHubContentsPublisher` before any upload. See [Agent Evals — CI Artifact Model](./agent-evals.md#ci-artifact-model) for the full CI specification, environment variable table, and security invariants.
 
