@@ -22,6 +22,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import type { Result } from "neverthrow";
 import { err, ok } from "neverthrow";
@@ -44,7 +45,7 @@ import type {
 // Helpers
 // ---------------------------------------------------------------------------
 
-const TEMP_DIR = "/var/folders/m8/6hhxrywx6739r5bhjfdzj3kw0000gn/T/opencode";
+const TEMP_DIR = tmpdir();
 
 let _counter = 0;
 function uid(): string {
