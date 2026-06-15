@@ -1124,10 +1124,14 @@ export class EvalOrchestrator {
  * the exit-code integer expected by the command handler.
  *
  * Exit codes:
- *   - `0` — all required cases passed (`allSuitesGreen === true`)
- *   - `1` — one or more required cases failed or a hard error occurred
+ *   - `0` — orchestration completed and produced a report, even when one or
+ *     more eval cases missed their pass threshold (`allSuitesGreen === false`)
+ *   - `1` — a hard error occurred or a suite-level partial failure prevented
+ *     part of the run from producing results
  *
- * The caller may also inspect `summary.partialFailures` for per-suite errors.
+ * Threshold misses are data in the published bundle, not process failures. The
+ * caller may inspect `summary.allSuitesGreen` and `summary.partialFailures` to
+ * decide whether to apply a separate quality gate.
  *
  * @param orchestrator - The configured `EvalOrchestrator` instance.
  * @returns A runner function suitable for `EvalContext.runner`.
@@ -1141,8 +1145,7 @@ export function buildEvalRunner(
       return err(result.error);
     }
     const summary = result.value;
-    const exitCode =
-      summary.allSuitesGreen && summary.partialFailures.length === 0 ? 0 : 1;
+    const exitCode = summary.partialFailures.length === 0 ? 0 : 1;
     return ok(exitCode);
   };
 }

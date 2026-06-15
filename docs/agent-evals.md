@@ -33,7 +33,7 @@ weave eval run
     │   │   └── GitHubContentsPublisher  (publish mode only) → weave-io/weave-agent-evals
     │   └── RawArtifactsWriter?        (--raw-artifacts only) write raw/ subdirectory
     │
-    └── EvalRunSummary                 Returned to CLI handler (exit 0/1)
+    └── EvalRunSummary                 Returned to CLI handler (reporting status)
 ```
 
 All publishable output passes through the central allowlist sanitizer in `packages/cli/src/evals/sanitizer.ts` before being written. Raw artifacts are written to a separate `raw/` subdirectory that is never included in publishable bundles or external publication.
@@ -281,6 +281,8 @@ The eval CI workflow is **manual-only** (`workflow_dispatch`). It cannot be trig
 2. Writes sanitized `eval-bundles/` artifacts locally within the workflow runner.
 3. **Publishes** the sanitized bundle to `weave-io/weave-agent-evals` via the GitHub REST Contents API (`GitHubContentsPublisher`). Files land under `runs/<sha7>-<YYYY-MM-DD>/` in the target repo.
 4. Uploads the bundle directory as a GitHub Actions artifact named `eval-bundles-<run-id>` with **30-day retention** (backup for local inspection).
+
+Eval threshold misses are reported in `run-summary.json` and the per-suite score files, but they do not fail the CLI process. The CI job fails only for hard orchestration problems such as invalid inputs, missing secrets, model matrix/load failures, bundle write failures, publication failures, or suite-level partial failures that prevent complete results from being produced.
 
 ### What CI does NOT do
 

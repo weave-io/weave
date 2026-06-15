@@ -354,6 +354,8 @@ Weave configures harnesses; harnesses run themselves. `weave run`, if encountere
 
 `weave eval run` executes agent evaluation suites against the built-in model matrix. It is the primary eval entry point for CI and local verification.
 
+Completed eval runs exit with code `0` even when one or more cases miss their pass threshold. Threshold misses are captured in `run-summary.json` and per-suite score files. The command exits non-zero for hard orchestration failures such as invalid input, missing secrets, model matrix/load failures, bundle write/publish failures, or suite-level partial failures that prevent complete results.
+
 ```bash
 weave eval run                                        # run all suites against default models (3)
 weave eval run --agent loom                           # restrict to loom-routing suite

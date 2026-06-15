@@ -12,7 +12,7 @@
  *   - allSuitesGreen is false when any required case fails.
  *   - allSuitesGreen is true when all required cases pass.
  *   - buildEvalRunner maps green summary → exit 0.
- *   - buildEvalRunner maps non-green summary → exit 1.
+ *   - buildEvalRunner maps threshold misses with complete results → exit 0.
  *   - buildEvalRunner maps partialFailures → exit 1.
  *   - Run metadata contains bunVersion, repoSha, filters, publishMode.
  *   - Run metadata never contains API key, token, or raw env values.
@@ -233,6 +233,47 @@ function makePassingScoreRecord(
     },
     weightedTotal: 1.0,
     passed: true,
+    required: true,
+    scoredAt: new Date().toISOString(),
+  };
+}
+
+/**
+ * Build a minimal failing `NormalizedScoreRecord` for a loom-routing case.
+ *
+ * This represents a completed eval case that missed its pass threshold. The
+ * CLI should publish/report this as eval data, not treat it as process failure.
+ */
+function makeFailingScoreRecord(
+  caseId: string,
+  modelId: string,
+): NormalizedScoreRecord {
+  const inactiveDim: DimensionScore = {
+    score: 0.0,
+    rationale: "n/a",
+    applicable: false,
+  };
+  const failingDim: DimensionScore = {
+    score: 0.0,
+    rationale: "Incorrect route.",
+    applicable: true,
+  };
+  return {
+    caseId,
+    modelId,
+    suite: "loom-routing",
+    dimensions: {
+      routingCorrectness: failingDim,
+      delegationCorrectness: inactiveDim,
+      executionCompleteness: inactiveDim,
+      rationaleQuality: {
+        score: 0.2,
+        rationale: "Sparse rationale.",
+        applicable: true,
+      },
+    },
+    weightedTotal: 0.0,
+    passed: false,
     required: true,
     scoredAt: new Date().toISOString(),
   };
@@ -608,7 +649,7 @@ describe("EvalOrchestrator — workflowRunId metadata", () => {
 // ---------------------------------------------------------------------------
 
 describe("buildEvalRunner — exit code mapping", () => {
-  it("returns ok(0) when all suites are green (empty suites are vacuously green)", async () => {
+  it("returns ok(1) when partial failures prevent complete results", async () => {
     const orchestrator = new EvalOrchestrator(makeOptions());
     const runner = buildEvalRunner(orchestrator);
     const result = await runner(makeRequest());
@@ -642,6 +683,39 @@ describe("buildEvalRunner — exit code mapping", () => {
     if (result.isOk()) {
       // Partial failures (empty fixture sets) → exit 1
       expect(result.value).toBe(1);
+    }
+  });
+
+  it("returns ok(0) when complete eval results miss thresholds", async () => {
+    const caseId = "loom-route-backend-api";
+    const modelId = "anthropic/claude-sonnet-4.5";
+    const scorer = new StubAgentEvalsScorer();
+    scorer.setDefaultRecord(makeFailingScoreRecord(caseId, modelId));
+    const orchestrator = new EvalOrchestrator(
+      makeOptions({ scorer, evalsRoot: REAL_EVALS_ROOT }),
+    );
+    const runner = buildEvalRunner(orchestrator);
+    const request = makeRequest({
+      agent: "loom",
+      model: modelId,
+      case: caseId,
+    });
+
+    const summaryResult = await orchestrator.run(request);
+    expect(summaryResult.isOk()).toBe(true);
+    if (summaryResult.isOk()) {
+      expect(summaryResult.value.allSuitesGreen).toBe(false);
+      expect(summaryResult.value.failedCases).toBeGreaterThan(0);
+      expect(summaryResult.value.partialFailures).toHaveLength(0);
+    }
+
+    const result = await runner(request);
+
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      // Threshold misses are reported in artifacts and summaries, not as a
+      // process failure. Hard partialFailures still return exit 1 above.
+      expect(result.value).toBe(0);
     }
   });
 });
