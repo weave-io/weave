@@ -289,6 +289,22 @@ jobs:
       #     published; the raw/ subdirectory is explicitly excluded by the CLI.
       #   - Do NOT add raw-artifact flags or bypass the CLI sanitizer.
       # -----------------------------------------------------------------------
+      - name: Dry-run agent evals in CI env
+        env:
+          # No secrets are needed for dry-run. This step exercises the same
+          # no-argv filter path as the publish step without model calls or writes.
+          WEAVE_EVAL_PUBLISH_MODE: "publish"
+          WEAVE_EVAL_AGENT: ${{ needs.validate-inputs.outputs.agent }}
+          WEAVE_EVAL_MODEL: ${{ needs.validate-inputs.outputs.model }}
+          WEAVE_EVAL_CASE:  ${{ needs.validate-inputs.outputs.case }}
+          CI: "true"
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          # No filter flags in argv. This verifies that blank dispatch inputs
+          # and eval control env vars are accepted by the CLI in GitHub Actions.
+          bun packages/cli/src/main.ts eval run --dry-run
+
       - name: Run agent evals
         env:
           # Secret: OpenRouter inference API key.

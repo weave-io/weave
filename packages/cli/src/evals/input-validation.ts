@@ -22,7 +22,8 @@
  *   - Empty eval filter environment variables are treated as absent.
  *     GitHub Actions workflow dispatch always projects blank optional
  *     inputs into env, and blank means no filter in that context.
- *   - Unknown filter keys are rejected.
+ *   - Unknown `WEAVE_EVAL_*` env vars are rejected, except for known
+ *     non-filter eval control vars such as `WEAVE_EVAL_PUBLISH_MODE`.
  */
 
 import { err, ok, type Result } from "neverthrow";
@@ -236,24 +237,32 @@ function normalizeEnvFilterValue(
 }
 
 // ---------------------------------------------------------------------------
-// Known filter keys
+// Known eval env keys
 // ---------------------------------------------------------------------------
 
-const KNOWN_FILTER_KEYS = new Set(["agent", "model", "case"]);
+const KNOWN_EVAL_ENV_KEYS = new Set([
+  "WEAVE_EVAL_AGENT",
+  "WEAVE_EVAL_MODEL",
+  "WEAVE_EVAL_CASE",
+  "WEAVE_EVAL_PUBLISH_MODE",
+]);
 
 /**
- * Guard against unknown filter keys supplied via env overrides or future
- * callers. The set of allowed keys is intentionally closed.
+ * Guard against unknown WEAVE_EVAL_* env vars supplied via env overrides or
+ * future callers. The set of allowed eval env vars is intentionally closed.
+ * It includes both filter vars and known non-filter control vars.
  */
-function validateFilterKey(
+function validateEvalEnvKey(
   key: string,
 ): Result<void, EvalInputValidationError> {
-  if (KNOWN_FILTER_KEYS.has(key)) return ok(undefined);
+  if (KNOWN_EVAL_ENV_KEYS.has(key)) return ok(undefined);
   return err({
     type: "InvalidFilterIdentifier",
     filter: key,
     value: key,
-    message: `Unknown filter key "${key}"; allowed keys are: agent, model, case`,
+    message:
+      `Unknown eval env var "${key}"; allowed WEAVE_EVAL_* vars are: ` +
+      [...KNOWN_EVAL_ENV_KEYS].sort().join(", "),
   });
 }
 
@@ -348,13 +357,13 @@ export function parseEvalRunRequest(
   if (caseValidation.isErr()) return err(caseValidation.error);
   const validatedCase = caseValidation.value;
 
-  // Validate unknown filter keys in env
-  const envFilterKeys = Object.keys(env).filter((k) =>
+  // Validate unknown WEAVE_EVAL_* env vars. WEAVE_EVAL_PUBLISH_MODE is a
+  // control var, not a filter, but it is part of the eval env contract.
+  const evalEnvKeys = Object.keys(env).filter((k) =>
     k.startsWith("WEAVE_EVAL_"),
   );
-  for (const envKey of envFilterKeys) {
-    const filterKey = envKey.replace(/^WEAVE_EVAL_/, "").toLowerCase();
-    const keyValidation = validateFilterKey(filterKey);
+  for (const envKey of evalEnvKeys) {
+    const keyValidation = validateEvalEnvKey(envKey);
     if (keyValidation.isErr()) return err(keyValidation.error);
   }
 

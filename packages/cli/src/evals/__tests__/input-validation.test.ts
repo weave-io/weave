@@ -114,6 +114,25 @@ describe("parseEvalRunRequest — happy paths", () => {
     expect(req.case).toBeUndefined();
   });
 
+  it("allows publish mode with blank CI env filters", () => {
+    const result = parseEvalRunRequest(
+      inputs({
+        envOverrides: {
+          CI: "true",
+          WEAVE_EVAL_PUBLISH_MODE: "publish",
+          WEAVE_EVAL_AGENT: "",
+          WEAVE_EVAL_MODEL: "",
+          WEAVE_EVAL_CASE: "",
+        },
+      }),
+    );
+    expect(result.isOk()).toBe(true);
+    const req = result._unsafeUnwrap();
+    expect(req.agent).toBeUndefined();
+    expect(req.model).toBeUndefined();
+    expect(req.case).toBeUndefined();
+  });
+
   it("treats whitespace-only env filter values as absent", () => {
     const result = parseEvalRunRequest(
       inputs({
@@ -235,6 +254,20 @@ describe("parseEvalRunRequest — invalid identifier characters", () => {
     const result = parseEvalRunRequest(inputs({ case: "case.*" }));
     expect(result.isErr()).toBe(true);
     expect(result._unsafeUnwrapErr().type).toBe("InvalidFilterIdentifier");
+  });
+
+  it("rejects unknown WEAVE_EVAL_* env vars", () => {
+    const result = parseEvalRunRequest(
+      inputs({ envOverrides: { WEAVE_EVAL_AGNET: "loom" } }),
+    );
+    expect(result.isErr()).toBe(true);
+    const e = result._unsafeUnwrapErr();
+    expect(e.type).toBe("InvalidFilterIdentifier");
+    if (e.type === "InvalidFilterIdentifier") {
+      expect(e.filter).toBe("WEAVE_EVAL_AGNET");
+      expect(e.message).toContain("Unknown eval env var");
+      expect(e.message).toContain("WEAVE_EVAL_PUBLISH_MODE");
+    }
   });
 });
 

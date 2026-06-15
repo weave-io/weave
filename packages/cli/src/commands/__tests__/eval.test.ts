@@ -151,6 +151,8 @@ describe("runEval run — dry-run", () => {
         dryRun: true,
       },
       {
+        CI: "true",
+        WEAVE_EVAL_PUBLISH_MODE: "publish",
         WEAVE_EVAL_AGENT: "",
         WEAVE_EVAL_MODEL: "",
         WEAVE_EVAL_CASE: "",
