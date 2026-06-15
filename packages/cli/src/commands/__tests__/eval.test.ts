@@ -144,6 +144,25 @@ describe("runEval run — dry-run", () => {
     expect(out).toContain("No filters");
   });
 
+  it("shows no-filter message when CI env filters are blank", async () => {
+    const { terminal, ctx } = context(
+      {
+        evalSubcommand: "run",
+        dryRun: true,
+      },
+      {
+        WEAVE_EVAL_AGENT: "",
+        WEAVE_EVAL_MODEL: "",
+        WEAVE_EVAL_CASE: "",
+      },
+    );
+    const result = await runEval(ctx);
+    expect(result._unsafeUnwrap()).toBe(0);
+    const out = terminal.out.join("\n");
+    expect(out).toContain("No filters");
+    expect(terminal.err.join("")).toBe("");
+  });
+
   it("shows raw-artifacts in dry-run summary when enabled", async () => {
     const { terminal, ctx } = context({
       evalSubcommand: "run",

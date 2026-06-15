@@ -372,7 +372,7 @@ WEAVE_EVAL_MODEL=anthropic/claude-sonnet-4.5 weave eval run
 WEAVE_EVAL_CASE=loom-route-backend-api weave eval run
 ```
 
-CLI flags and env vars are merged. Conflicting values for the same filter key (CLI vs env) cause a hard `DuplicateConflictingInput` error. Same-value duplicates are silently collapsed.
+CLI flags and env vars are merged. Conflicting values for the same filter key (CLI vs env) cause a hard `DuplicateConflictingInput` error. Same-value duplicates are silently collapsed. Empty env filter values are treated as unset, which lets CI workflow dispatch pass blank optional inputs when you want no filter. Empty CLI flag values are still rejected.
 
 ### Required environment variable
 
@@ -390,7 +390,7 @@ All three filters use **strict exact-match**:
 - `--model` must exactly match a model `id` in `evals/model-matrix.json`. No substring matching. An unmatched value causes `EmptyModelSet` and lists allowed IDs.
 - `--case` must exactly match the `id` field in a case fixture file. No glob or prefix matching.
 
-No filter means all values in that dimension are included. A no-filter run executes all three default models against all cases in both suites.
+No filter means all values in that dimension are included. A no-filter run executes all three default models against all cases in both suites. For env-backed filters, unset and empty values both mean no filter.
 
 ### `--dry-run`
 
