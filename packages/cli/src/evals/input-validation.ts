@@ -19,6 +19,9 @@
  *     dry-run or live execution is attempted.
  *   - Duplicate conflicting inputs (same filter key provided twice
  *     via different sources) are rejected with a typed error.
+ *   - Empty eval filter environment variables are treated as absent.
+ *     GitHub Actions workflow dispatch always projects blank optional
+ *     inputs into env, and blank means no filter in that context.
  *   - Unknown filter keys are rejected.
  */
 
@@ -217,6 +220,21 @@ function isCI(env: Record<string, string | undefined>): boolean {
   return ci !== undefined && ci !== "" && ci !== "0" && ci !== "false";
 }
 
+/**
+ * Normalize optional env-backed filter values.
+ *
+ * CLI flags still reject empty strings, because an explicit `--agent ""` is a
+ * caller error. Env vars are different: GitHub Actions writes blank workflow
+ * dispatch inputs as empty strings, and in that context blank means no filter.
+ */
+function normalizeEnvFilterValue(
+  value: string | undefined,
+): string | undefined {
+  if (value === undefined) return undefined;
+  if (value.trim() === "") return undefined;
+  return value;
+}
+
 // ---------------------------------------------------------------------------
 // Known filter keys
 // ---------------------------------------------------------------------------
@@ -283,9 +301,9 @@ export function parseEvalRunRequest(
 
   // Validate filter keys present via env (WEAVE_EVAL_AGENT etc.) before
   // processing their values. We only support the three known filter keys.
-  const envAgent = env.WEAVE_EVAL_AGENT;
-  const envModel = env.WEAVE_EVAL_MODEL;
-  const envCase = env.WEAVE_EVAL_CASE;
+  const envAgent = normalizeEnvFilterValue(env.WEAVE_EVAL_AGENT);
+  const envModel = normalizeEnvFilterValue(env.WEAVE_EVAL_MODEL);
+  const envCase = normalizeEnvFilterValue(env.WEAVE_EVAL_CASE);
 
   // Resolve agent filter: merge CLI flag + env variable
   const agentMerge = detectDuplicate("agent", inputs.agent, envAgent);

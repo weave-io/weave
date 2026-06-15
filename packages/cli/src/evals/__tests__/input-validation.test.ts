@@ -97,6 +97,51 @@ describe("parseEvalRunRequest — happy paths", () => {
     expect(req.case).toBe("case-02");
   });
 
+  it("treats empty env filter values as absent", () => {
+    const result = parseEvalRunRequest(
+      inputs({
+        envOverrides: {
+          WEAVE_EVAL_AGENT: "",
+          WEAVE_EVAL_MODEL: "",
+          WEAVE_EVAL_CASE: "",
+        },
+      }),
+    );
+    expect(result.isOk()).toBe(true);
+    const req = result._unsafeUnwrap();
+    expect(req.agent).toBeUndefined();
+    expect(req.model).toBeUndefined();
+    expect(req.case).toBeUndefined();
+  });
+
+  it("treats whitespace-only env filter values as absent", () => {
+    const result = parseEvalRunRequest(
+      inputs({
+        envOverrides: {
+          WEAVE_EVAL_AGENT: "   ",
+          WEAVE_EVAL_MODEL: "\t",
+          WEAVE_EVAL_CASE: "\n",
+        },
+      }),
+    );
+    expect(result.isOk()).toBe(true);
+    const req = result._unsafeUnwrap();
+    expect(req.agent).toBeUndefined();
+    expect(req.model).toBeUndefined();
+    expect(req.case).toBeUndefined();
+  });
+
+  it("lets a CLI flag override an empty env filter value", () => {
+    const result = parseEvalRunRequest(
+      inputs({
+        agent: "loom",
+        envOverrides: { WEAVE_EVAL_AGENT: "" },
+      }),
+    );
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().agent).toBe("loom");
+  });
+
   it("collapses identical duplicate values silently", () => {
     const result = parseEvalRunRequest(
       inputs({

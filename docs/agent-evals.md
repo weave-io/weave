@@ -315,6 +315,8 @@ The `runs/` prefix keeps all historical run bundles under one directory in the t
 | `WEAVE_EVAL_MODEL` | Optional. Filter to one model. |
 | `WEAVE_EVAL_CASE` | Optional. Filter to one case ID. |
 
+Blank eval filter env vars are treated as unset. This matches GitHub Actions workflow dispatch, where leaving an optional input blank still exports an empty string into the eval job environment. Empty means no filter, not an invalid filter.
+
 `GITHUB_RUN_ID`, when present, is projected into run metadata only if it is digits-only. Values with hyphens, letters, or other characters are treated as absent so arbitrary environment content cannot leak into artifacts.
 
 > **Security warning**: `OPENROUTER_API_KEY` and `EVAL_RESULTS_REPO_TOKEN` are secrets. They must be stored as encrypted GitHub Actions repository secrets. They must never appear in workflow logs, artifact content, or commit history. Both are scoped to the eval run step **only** — no other step can access them.
