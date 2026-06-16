@@ -107,13 +107,13 @@
   - type ParseFailureError
   - _...5 more_
 - `packages/cli/src/evals/artifact-bundle.ts`
+  - function computeRunIdPrefix: (gitSha, assembledAt) => string
+  - function computeRunId: (prefix, sequence) => string
   - function computeBundleDirName: (gitSha, assembledAt) => string
+  - function resolveNextSequence: (runsDir, prefix) => Promise<number>
   - function assembleScoreFile: (runnerResult, gitSha, assembledAt, dryRun) => BundleScoreFile
   - function aggregateScoreFile: (suiteName, results, gitSha, assembledAt, dryRun) => BundleScoreFile
-  - function assemblePromptHashRecords: (records) => BundlePromptHashRecord[]
-  - function assembleBundle: (options) => Result<EvalBundle, BundleError>
-  - function assertBundlePublishEligible: (bundle) => Result<undefined, BundleError>
-  - _...6 more_
+  - _...10 more_
 - `packages/cli/src/evals/case-loader.ts`
   - function loadCaseFile: (filePath) => ResultAsync<EvalCase, FixtureSchemaError>
   - function loadRubricFile: (filePath) => ResultAsync<EvalRubric, FixtureSchemaError>
@@ -122,6 +122,14 @@
   - function validateCaseFilter: (caseId, cases) => FixtureSchemaError | EvalCase
   - const EVALS_ROOT
   - _...1 more_
+- `packages/cli/src/evals/dashboard-indexes.ts`
+  - function buildLatestSnapshot: (run, updatedAt) => LatestRunSnapshot
+  - function buildLastNRuns: (runs, maxRuns, updatedAt) => LastNRunsIndex
+  - function generateDashboardIndexes: (runs, updatedAt, lastN) => Result<GeneratedIndexes, DashboardIndexError>
+  - function validateDashboardManifestCompatibility: (raw) => Result<DashboardManifest, DashboardIndexError>
+  - function validateSuiteHistoryCompatibility: (raw, suiteName) => Result<SuiteHistoryManifest, DashboardIndexError>
+  - function validateLatestSnapshotCompatibility: (raw) => Result<LatestRunSnapshot, DashboardIndexError>
+  - _...16 more_
 - `packages/cli/src/evals/env.ts`
   - function readEvalEnv: (env, string | undefined>, {...}) => Result<EvalEnv, EvalEnvError>
   - interface EvalEnv
@@ -130,12 +138,13 @@
   - const OPENROUTER_API_KEY_ENV_VAR
   - const OPENROUTER_BASE_URL_ENV_VAR
 - `packages/cli/src/evals/github-contents-publisher.ts`
+  - function isIndexArtifactAllowed: (fileName) => boolean
   - class GitHubContentsPublisher
   - type FetchImpl
   - type FileReader
   - const TARGET_REPO
   - const TARGET_BRANCH
-  - const TARGET_RUNS_PREFIX
+  - _...8 more_
 - `packages/cli/src/evals/input-validation.ts`
   - function parseEvalRunRequest: (inputs) => Result<EvalRunRequest, EvalInputValidationError>
   - type EvalRunRequest
@@ -145,12 +154,13 @@
   - const KNOWN_EVAL_AGENTS_SORTED: readonly string[]
 - `packages/cli/src/evals/langchain-agent-evals.ts`
   - function buildRationaleProjection: (run) => string
+  - function buildCaseExplanation: (scoreBucket, _passed, required, outcomeKind, applicableDimensions, dryRun) => string
+  - function buildPublicExplanation: (scoreRecord, "weightedTotal" | "passed" | "required" | "dimensions"
+  >, evalCase, "expected_outcome">, dryRun) => CaseResultSummary["publicExplanation"]
+  - function buildSuiteExplanation: (passedCases, totalCases, suiteGreen, dryRun) => string
+  - function buildModelExplanation: (overallBucket, passedCases, totalCases, dryRun) => string
   - class RealLangChainJudge
-  - class LangChainAgentEvalsScorer
-  - class StubLangChainJudge
-  - class StubAgentEvalsScorer
-  - interface JudgeInput
-  - _...5 more_
+  - _...10 more_
 - `packages/cli/src/evals/loom-routing-runner.ts`
   - function extractRoutedAgents: (content) => string[]
   - function redactSecrets: (raw) => string
@@ -197,6 +207,28 @@
   - class RawArtifactsWriter
   - class MemoryFileWriter
   - _...3 more_
+- `packages/cli/src/evals/report-bundle.ts`
+  - function assembleCaseEntry: (row, suite) => PublicCaseEntry
+  - function assembleSuiteSummary: (scoreFile, gitSha, assembledAt) => Result<SuiteSummaryEntry, ReportAssemblyError>
+  - function assemblePublicReportBundle: (bundle, _runId) => Result<PublicReportBundle, ReportAssemblyError>
+  - function assembleDashboardManifest: (existingEntries, newEntry, updatedAt) => Result<DashboardManifest, ReportAssemblyError>
+  - function buildDashboardEntry: (bundle, runId, bundleReportPath) => DashboardEntry
+  - function assembleModelComparisonManifest: (bundle, runId) => Result<ModelComparisonManifest, ReportAssemblyError>
+  - _...2 more_
+- `packages/cli/src/evals/report-markdown.ts`
+  - function isMarkdownSafe: (text) => boolean
+  - function sanitizeMdValue: (text) => string
+  - function renderCaseRow: (entry) => string
+  - function renderSuiteSummary: (summary) => string
+  - function renderPublicReportBundle: (bundle) => string
+- `packages/cli/src/evals/report-schema.ts`
+  - function computeScoreBucket: (weightedTotal, dryRun) => ScoreBucket
+  - type ExplanationSource
+  - type ScoreBucket
+  - type BoundedExplanation
+  - type PublicCaseEntry
+  - type SuiteSummaryEntry
+  - _...26 more_
 - `packages/cli/src/evals/results-repo.ts`
   - function validatePublishToken: (env, string | undefined>) => ResultAsync<string, ResultsRepoError>
   - function validateRepoConfig: (config) => ResultAsync<undefined, ResultsRepoError>
@@ -220,7 +252,7 @@
   - function sanitizeProvenanceManifest: (manifest) => void
   - function dropUnknownFields: (input, allowedKeys) => Partial<T>
   - function assertPublishSafe: (obj, unknown>, context) => Result<undefined, SanitizerError>
-  - _...7 more_
+  - _...11 more_
 - `packages/cli/src/evals/tapestry-execution-runner.ts`
   - function extractDelegationChain: (content) => string[]
   - function detectCompletionSignal: (content) => boolean

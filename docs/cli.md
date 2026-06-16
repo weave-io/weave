@@ -406,7 +406,7 @@ weave eval run --agent loom --model anthropic/claude-sonnet-4.5 --dry-run
 
 > **Security warning**: `--raw-artifacts` is rejected in CI environments (`CI=true`). Passing it in a CI workflow step is a hard validation error. Raw artifacts contain composed prompt text and full transcripts and must never be committed or published.
 
-When enabled locally, raw artifacts are written to `eval-bundles/<sha7>-<date>/raw/`. Filename components are sanitized before write, and the resolved path must stay under `raw/`. Add this directory to `.gitignore`. Raw files must never be committed to any repository.
+When enabled locally, raw artifacts are written to `eval-bundles/runs/<runId>/raw/`. Filename components are sanitized before write, and the resolved path must stay under `raw/`. Add this directory to `.gitignore`. Raw files must never be committed to any repository.
 
 ### Prompt provenance
 
@@ -461,20 +461,36 @@ evals/
 
 ### Artifact bundle layout
 
-Bundles are written to `eval-bundles/<gitSha7>-<YYYY-MM-DD>/`:
+Each run writes to an immutable, uniquely sequenced directory under `eval-bundles/runs/`. The run ID has the form `<sha7>-<YYYY-MM-DD>-<NNN>`, where `NNN` is a zero-padded sequence number auto-incremented across runs on the same commit and calendar date:
 
 ```text
 eval-bundles/
-└── abc1234-2026-06-10/
-    ├── bundle-index.json           Top-level bundle manifest
-    ├── run-summary.json            Aggregate pass/fail counts
-    ├── score-loom-routing.json     Sanitized score records (no rationale text)
-    ├── score-tapestry-execution.json
-    ├── prompt-hashes.json          Prompt hash records (no raw text)
-    └── provenance-manifest.json    Full sanitized provenance manifest
+├── dashboard-manifest.json          Derived index — all runs, newest-first (mutable)
+├── latest.json                      Derived index — most-recent run snapshot (mutable)
+├── last-N-runs.json                 Derived index — last 10 runs, newest-first (mutable)
+├── suite-history-loom-routing.json  Derived index — pass-rate time series (mutable)
+├── suite-history-tapestry-execution.json
+└── runs/
+    └── abc1234-2026-06-10-001/      Immutable run directory (never overwritten)
+        ├── bundle-index.json         Top-level manifest (publicFiles lists only allowlisted files)
+        ├── run-summary.json          Aggregate pass/fail counts (internal, not published)
+        ├── score-loom-routing.json   Sanitized score records (internal, not published)
+        ├── score-tapestry-execution.json
+        ├── prompt-hashes.json        Prompt hash records (internal, not published)
+        ├── provenance-manifest.json  Full sanitized provenance manifest (internal)
+        ├── public-report.json        Public dashboard report (PublicReportBundle schema)
+        └── public-report.md          Human-readable Markdown report (download-only)
 ```
 
-The directory name is deterministic: the same git SHA and date always produce the same path.
+**Immutable run directories**: the sequence number (`-001`, `-002`, …) guarantees no prior run's artifacts are ever overwritten. A second run on the same SHA and date produces `abc1234-2026-06-10-002/`.
+
+**Derived index files**: `DashboardIndexWriter` regenerates `dashboard-manifest.json`, `latest.json`, `last-N-runs.json`, and `suite-history-*.json` after each run from the immutable `public-report.json` artifacts. Indexes are never the canonical source — they can always be fully reproduced from immutable run artifacts.
+
+**`schemaVersion` is mandatory**: every published artifact (run artifacts and index files) carries a `schemaVersion` integer. Downstream consumers MUST reject any file whose `schemaVersion` they do not recognise.
+
+**`public-report.json` (`PublicReportBundle` schema)**: the primary dashboard-facing artifact. Contains per-suite case entries, score buckets, optional bounded explanations, and aggregate pass/fail counts. All explanation fields derive exclusively from allowlisted structured sources (score bucket labels, rubric templates, structured signals) — never from raw model output or rationale strings.
+
+**`public-report.md`**: a download-only Markdown summary. Never injected as HTML into any web page.
 
 ### CI artifact model
 
@@ -484,7 +500,7 @@ In CI, the workflow:
 
 1. Runs `weave eval run` with no filters (all suites, all default models).
 2. Writes sanitized `eval-bundles/` artifacts locally within the workflow runner.
-3. **Publishes** the sanitized bundle to `weave-io/weave-agent-evals` via the GitHub REST Contents API (`GitHubContentsPublisher`). Files land under `runs/<sha7>-<YYYY-MM-DD>/` in the target repo.
+3. **Publishes** the sanitized bundle to `weave-io/weave-agent-evals` via the GitHub REST Contents API (`GitHubContentsPublisher`). Immutable run artifacts land under `runs/v1/<sha7>-<YYYY-MM-DD>-<NNN>/` and derived index files are updated under `indexes/v1/` in the target repo.
 4. Uploads the bundle directory as a GitHub Actions artifact named `eval-bundles-<run-id>` with **30-day retention** (backup for local inspection). The run ID is included in metadata only when `GITHUB_RUN_ID` is digits-only.
 
 The workflow sets `WEAVE_EVAL_PUBLISH_MODE=publish` in the eval run step env block, which activates `GitHubContentsPublisher`. The `raw/` subdirectory is never included in the published bundle — it is filtered by `GitHubContentsPublisher` before any upload. See [Agent Evals — CI Artifact Model](./agent-evals.md#ci-artifact-model) for the full CI specification, environment variable table, and security invariants.
@@ -505,7 +521,7 @@ The workflow sets `WEAVE_EVAL_PUBLISH_MODE=publish` in the eval run step env blo
 > - Commit or log `OPENROUTER_API_KEY` values.
 > - Commit or log `EVAL_RESULTS_REPO_TOKEN` values.
 > - Use `--raw-artifacts` in any CI workflow step.
-> - Commit files from `eval-bundles/raw/` or any file containing `composedPrompt` or `rawContent`.
+> - Commit files from `eval-bundles/runs/<runId>/raw/` or any file containing `composedPrompt` or `rawContent`.
 > - Pass raw artifacts to `ArtifactBundleWriter` — all publishable output must go through `sanitizer.ts`.
 
 See [Agent Evals](./agent-evals.md) for the full architecture, security checklist, and guide to adding new eval cases.

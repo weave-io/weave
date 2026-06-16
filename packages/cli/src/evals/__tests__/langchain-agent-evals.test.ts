@@ -2065,3 +2065,780 @@ describe("buildRationaleProjection — structured safe projection for judge", ()
     expect(typeof RATIONALE_PROJECTION_MAX_CHARS).toBe("number");
   });
 });
+
+// ---------------------------------------------------------------------------
+// buildCaseExplanation — deterministic structured-input explanation generator
+// ---------------------------------------------------------------------------
+
+import {
+  buildCaseExplanation,
+  buildPublicExplanation,
+} from "../langchain-agent-evals.js";
+import {
+  EXPLANATION_MAX_CHARS,
+  FORBIDDEN_EXPLANATION_PATTERNS,
+} from "../report-schema.js";
+
+describe("buildCaseExplanation — bounded explanation from structured inputs", () => {
+  it("returns 'dry-run; no model was called' for dry-run results", () => {
+    const text = buildCaseExplanation(
+      "skip",
+      false,
+      true,
+      "agent_routing",
+      [],
+      true,
+    );
+    expect(text).toBe("dry-run; no model was called");
+  });
+
+  it("returns 'dry-run; no model was called' for 'skip' bucket even when dryRun=false", () => {
+    const text = buildCaseExplanation(
+      "skip",
+      false,
+      true,
+      "agent_routing",
+      [],
+      false,
+    );
+    expect(text).toBe("dry-run; no model was called");
+  });
+
+  it("includes 'passed' when bucket is 'pass'", () => {
+    const text = buildCaseExplanation(
+      "pass",
+      true,
+      true,
+      "agent_routing",
+      ["routingCorrectness"],
+      false,
+    );
+    expect(text).toContain("passed");
+  });
+
+  it("includes 'partially passed' when bucket is 'partial'", () => {
+    const text = buildCaseExplanation(
+      "partial",
+      false,
+      false,
+      "agent_routing",
+      ["routingCorrectness"],
+      false,
+    );
+    expect(text).toContain("partially passed");
+  });
+
+  it("includes 'failed' when bucket is 'fail'", () => {
+    const text = buildCaseExplanation(
+      "fail",
+      false,
+      true,
+      "agent_routing",
+      [],
+      false,
+    );
+    expect(text).toContain("failed");
+  });
+
+  it("includes 'routing' for agent_routing outcome kind", () => {
+    const text = buildCaseExplanation(
+      "pass",
+      true,
+      true,
+      "agent_routing",
+      ["routingCorrectness"],
+      false,
+    );
+    expect(text).toContain("routing");
+  });
+
+  it("includes 'delegation' for delegation_chain outcome kind", () => {
+    const text = buildCaseExplanation(
+      "pass",
+      true,
+      true,
+      "delegation_chain",
+      ["delegationCorrectness"],
+      false,
+    );
+    expect(text).toContain("delegation");
+  });
+
+  it("includes 'execution' for task_completion outcome kind", () => {
+    const text = buildCaseExplanation(
+      "pass",
+      true,
+      true,
+      "task_completion",
+      ["executionCompleteness"],
+      false,
+    );
+    expect(text).toContain("execution");
+  });
+
+  it("includes 'required' for required cases", () => {
+    const text = buildCaseExplanation(
+      "pass",
+      true,
+      true,
+      "agent_routing",
+      [],
+      false,
+    );
+    expect(text).toContain("required");
+  });
+
+  it("includes 'optional' for non-required cases", () => {
+    const text = buildCaseExplanation(
+      "fail",
+      false,
+      false,
+      "agent_routing",
+      [],
+      false,
+    );
+    expect(text).toContain("optional");
+  });
+
+  it("lists applicable dimension names in the explanation", () => {
+    const text = buildCaseExplanation(
+      "pass",
+      true,
+      true,
+      "agent_routing",
+      ["routingCorrectness", "rationaleQuality"],
+      false,
+    );
+    expect(text).toContain("routingCorrectness");
+    expect(text).toContain("rationaleQuality");
+  });
+
+  it("caps to at most 3 applicable dimension names in the explanation", () => {
+    const text = buildCaseExplanation(
+      "pass",
+      true,
+      true,
+      "agent_routing",
+      [
+        "routingCorrectness",
+        "delegationCorrectness",
+        "executionCompleteness",
+        "rationaleQuality",
+      ],
+      false,
+    );
+    // At most 3 dimensions in the label
+    const dimCount = (text.match(/Correctness|Completeness|Quality/g) ?? [])
+      .length;
+    expect(dimCount).toBeLessThanOrEqual(3);
+  });
+
+  it("is deterministic — same inputs always produce the same text", () => {
+    const inputs: Parameters<typeof buildCaseExplanation> = [
+      "pass",
+      true,
+      true,
+      "agent_routing",
+      ["routingCorrectness"],
+      false,
+    ];
+    const t1 = buildCaseExplanation(...inputs);
+    const t2 = buildCaseExplanation(...inputs);
+    expect(t1).toBe(t2);
+  });
+
+  it("never exceeds EXPLANATION_MAX_CHARS characters", () => {
+    // Test with maximal inputs
+    const text = buildCaseExplanation(
+      "partial",
+      false,
+      true,
+      "agent_routing",
+      ["routingCorrectness", "delegationCorrectness", "rationaleQuality"],
+      false,
+    );
+    expect(text.length).toBeLessThanOrEqual(EXPLANATION_MAX_CHARS);
+  });
+
+  it("does not match any FORBIDDEN_EXPLANATION_PATTERNS", () => {
+    const text = buildCaseExplanation(
+      "pass",
+      true,
+      true,
+      "agent_routing",
+      ["routingCorrectness"],
+      false,
+    );
+    for (const { name, pattern } of FORBIDDEN_EXPLANATION_PATTERNS) {
+      expect(pattern.test(text)).toBe(false);
+    }
+  });
+
+  it("does not contain raw rationale, transcript markers, or chain-of-thought indicators", () => {
+    const text = buildCaseExplanation(
+      "fail",
+      false,
+      true,
+      "delegation_chain",
+      [],
+      false,
+    );
+    // Must not contain forbidden raw-output markers
+    expect(text.toLowerCase()).not.toContain("rationale:");
+    expect(text.toLowerCase()).not.toContain("score:");
+    expect(text.toLowerCase()).not.toContain("justification:");
+    expect(text.toLowerCase()).not.toContain("<thinking>");
+    expect(text.toLowerCase()).not.toContain("user:");
+    expect(text.toLowerCase()).not.toContain("assistant:");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Adversarial tests — raw input in outcomeKind parameter
+  // ---------------------------------------------------------------------------
+  // The outcomeKind parameter comes from EvalCase.expected_outcome.kind which
+  // is a discriminated union with a fixed set of literals. We still guard
+  // against unknown values reaching the function.
+
+  it("handles unknown outcome kinds gracefully (no forbidden patterns)", () => {
+    // An unknown kind should not produce forbidden patterns even if the identifier
+    // itself looks unusual — identifiers are validated at fixture load time
+    const text = buildCaseExplanation(
+      "pass",
+      true,
+      true,
+      "tool_call",
+      [],
+      false,
+    );
+    for (const { name, pattern } of FORBIDDEN_EXPLANATION_PATTERNS) {
+      expect(pattern.test(text)).toBe(false);
+    }
+  });
+
+  it("never contains raw prompt, transcript role markers, or leakage sentinels", () => {
+    // A leakage sentinel that should NEVER appear in the output
+    const leakageSentinel = "LEAKAGE_SENTINEL_SECRET_XYZ";
+    // The outcome kind is an enum identifier — leakage sentinel cannot enter through it
+    const text = buildCaseExplanation(
+      "fail",
+      false,
+      true,
+      "agent_routing",
+      ["routingCorrectness"],
+      false,
+    );
+    expect(text).not.toContain(leakageSentinel);
+    expect(text).not.toContain("rawContent");
+    expect(text).not.toContain("transcript");
+    expect(text).not.toContain("composedPrompt");
+    expect(text).not.toContain("sk-");
+    expect(text).not.toContain("Bearer");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildPublicExplanation — threads explanation into CaseResultSummary field
+// ---------------------------------------------------------------------------
+
+describe("buildPublicExplanation — CaseResultSummary.publicExplanation generation", () => {
+  it("returns a publicExplanation object for a scored (non-dry-run) result", () => {
+    const scoreRecord = makeScoreRecord({
+      passed: true,
+      weightedTotal: 1.0,
+      required: true,
+    });
+    const evalCase = makeAgentRoutingCase();
+    const expl = buildPublicExplanation(scoreRecord, evalCase, false);
+    expect(expl).toBeDefined();
+    expect(typeof expl?.text).toBe("string");
+    expect((expl?.text ?? "").length).toBeGreaterThan(0);
+  });
+
+  it("returns explanation with source='structured_signal' when applicable dims present", () => {
+    const scoreRecord = makeScoreRecord({
+      passed: true,
+      weightedTotal: 1.0,
+      required: true,
+    });
+    const evalCase = makeAgentRoutingCase();
+    const expl = buildPublicExplanation(scoreRecord, evalCase, false);
+    expect(expl?.source).toBe("structured_signal");
+  });
+
+  it("returns explanation with source='score_bucket_label' when no applicable dims and not required", () => {
+    const noApplicableDims = makeScoreRecord({
+      passed: true,
+      weightedTotal: 0.9,
+      required: false,
+      dimensions: {
+        routingCorrectness: { score: 1.0, rationale: "x", applicable: false },
+        delegationCorrectness: {
+          score: 1.0,
+          rationale: "x",
+          applicable: false,
+        },
+        executionCompleteness: {
+          score: 1.0,
+          rationale: "x",
+          applicable: false,
+        },
+        rationaleQuality: { score: 1.0, rationale: "x", applicable: false },
+      },
+    });
+    const evalCase = makeAgentRoutingCase();
+    const expl = buildPublicExplanation(noApplicableDims, evalCase, false);
+    expect(expl?.source).toBe("score_bucket_label");
+  });
+
+  it("returns dry-run explanation for dryRun=true", () => {
+    const scoreRecord = makeScoreRecord({ passed: false, weightedTotal: 0.0 });
+    const evalCase = makeAgentRoutingCase();
+    const expl = buildPublicExplanation(scoreRecord, evalCase, true);
+    expect(expl?.text).toContain("dry-run");
+  });
+
+  it("explanation text never exceeds EXPLANATION_MAX_CHARS", () => {
+    const scoreRecord = makeScoreRecord({
+      passed: true,
+      weightedTotal: 1.0,
+      required: true,
+    });
+    const evalCase = makeAgentRoutingCase();
+    const expl = buildPublicExplanation(scoreRecord, evalCase, false);
+    expect((expl?.text ?? "").length).toBeLessThanOrEqual(
+      EXPLANATION_MAX_CHARS,
+    );
+  });
+
+  it("explanation text contains no forbidden patterns", () => {
+    const scoreRecord = makeScoreRecord({ passed: false, weightedTotal: 0.0 });
+    const evalCase = makeAgentRoutingCase();
+    const expl = buildPublicExplanation(scoreRecord, evalCase, false);
+    for (const { pattern } of FORBIDDEN_EXPLANATION_PATTERNS) {
+      expect(pattern.test(expl?.text ?? "")).toBe(false);
+    }
+  });
+
+  it("is reproducible — same inputs produce the same explanation text", () => {
+    const scoreRecord = makeScoreRecord({
+      passed: true,
+      weightedTotal: 0.95,
+      required: true,
+    });
+    const evalCase = makeAgentRoutingCase();
+    const e1 = buildPublicExplanation(scoreRecord, evalCase, false);
+    const e2 = buildPublicExplanation(scoreRecord, evalCase, false);
+    expect(e1?.text).toBe(e2?.text);
+    expect(e1?.source).toBe(e2?.source);
+  });
+
+  it("adversarial: explanation does not contain raw rationale text even when rationale looks like a summary", () => {
+    const temptingRationale =
+      "The model correctly routed to shuttle. Score: 1.0 justification: excellent";
+    const scoreRecord: NormalizedScoreRecord = {
+      caseId: "test-case-01",
+      modelId: "anthropic/claude-sonnet-4.5",
+      suite: "loom-routing",
+      dimensions: {
+        routingCorrectness: {
+          score: 1.0,
+          rationale: temptingRationale, // adversarial rationale text
+          applicable: true,
+        },
+        delegationCorrectness: {
+          score: 1.0,
+          rationale: "N/A",
+          applicable: false,
+        },
+        executionCompleteness: {
+          score: 1.0,
+          rationale: "N/A",
+          applicable: false,
+        },
+        rationaleQuality: {
+          score: 0.9,
+          rationale: temptingRationale,
+          applicable: true,
+        },
+      },
+      weightedTotal: 0.95,
+      passed: true,
+      required: true,
+      scoredAt: SCORED_AT,
+    };
+    const evalCase = makeAgentRoutingCase();
+    const expl = buildPublicExplanation(scoreRecord, evalCase, false);
+    // The raw rationale text must never appear in the public explanation
+    expect(expl?.text).not.toContain(temptingRationale);
+    expect(expl?.text).not.toContain("Score: 1.0");
+    expect(expl?.text).not.toContain("justification:");
+    expect(expl?.text).not.toContain("The model correctly routed");
+  });
+
+  it("adversarial: explanation does not contain chain-of-thought fragments", () => {
+    // Even if the raw content or transcript had chain-of-thought, the explanation
+    // must not contain it because it's derived from structured inputs only
+    const scoreRecord = makeScoreRecord({
+      passed: true,
+      weightedTotal: 1.0,
+      required: true,
+    });
+    const evalCase = makeAgentRoutingCase();
+    const expl = buildPublicExplanation(scoreRecord, evalCase, false);
+    expect(expl?.text).not.toContain("<thinking>");
+    expect(expl?.text).not.toContain("<cot>");
+    expect(expl?.text).not.toContain("<reasoning>");
+  });
+
+  it("adversarial: explanation does not contain secret-like patterns", () => {
+    const scoreRecord = makeScoreRecord({
+      passed: false,
+      weightedTotal: 0.0,
+      required: true,
+    });
+    const evalCase = makeAgentRoutingCase();
+    const expl = buildPublicExplanation(scoreRecord, evalCase, false);
+    // No secret-like patterns
+    expect(expl?.text).not.toMatch(/sk-[A-Za-z0-9]{8,}/);
+    expect(expl?.text).not.toMatch(/Bearer\s+[A-Za-z0-9]{10,}/);
+    expect(expl?.text).not.toMatch(/ghp_[A-Za-z0-9]{8,}/);
+  });
+
+  it("adversarial: explanation does not contain transcript role markers", () => {
+    const scoreRecord = makeScoreRecord({ passed: true, weightedTotal: 0.95 });
+    const evalCase = makeAgentRoutingCase();
+    const expl = buildPublicExplanation(scoreRecord, evalCase, false);
+    expect(expl?.text).not.toMatch(/\n?User\s*:/);
+    expect(expl?.text).not.toMatch(/\n?Assistant\s*:/);
+    expect(expl?.text).not.toMatch(/\n?Human\s*:/);
+  });
+
+  it("adversarial: explanation is reproducible even when adversarial data is in score record fields", () => {
+    // The rationale fields contain adversarial text — but since the explanation
+    // is derived from structured inputs only, the output must be stable and clean
+    const adversarialRationale =
+      "rationale: score: 1.0 justification: <thinking>route to shuttle</thinking>";
+    const scoreRecord: NormalizedScoreRecord = {
+      caseId: "test-case-01",
+      modelId: "anthropic/claude-sonnet-4.5",
+      suite: "loom-routing",
+      dimensions: {
+        routingCorrectness: {
+          score: 1.0,
+          rationale: adversarialRationale,
+          applicable: true,
+        },
+        delegationCorrectness: {
+          score: 1.0,
+          rationale: "N/A",
+          applicable: false,
+        },
+        executionCompleteness: {
+          score: 1.0,
+          rationale: "N/A",
+          applicable: false,
+        },
+        rationaleQuality: {
+          score: 0.9,
+          rationale: adversarialRationale,
+          applicable: true,
+        },
+      },
+      weightedTotal: 0.95,
+      passed: true,
+      required: true,
+      scoredAt: SCORED_AT,
+    };
+    const evalCase = makeAgentRoutingCase();
+    const expl1 = buildPublicExplanation(scoreRecord, evalCase, false);
+    const expl2 = buildPublicExplanation(scoreRecord, evalCase, false);
+
+    // Reproducible
+    expect(expl1?.text).toBe(expl2?.text);
+    // No forbidden patterns
+    for (const { pattern } of FORBIDDEN_EXPLANATION_PATTERNS) {
+      expect(pattern.test(expl1?.text ?? "")).toBe(false);
+    }
+    // Bounded
+    expect((expl1?.text ?? "").length).toBeLessThanOrEqual(
+      EXPLANATION_MAX_CHARS,
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildCaseExplanation — type-safety: OutcomeKind prevents arbitrary strings
+// ---------------------------------------------------------------------------
+
+describe("buildCaseExplanation — OutcomeKind type-safety prevents arbitrary-string reflection", () => {
+  // The OutcomeKind union is closed: "agent_routing" | "delegation_chain" |
+  // "task_completion" | "tool_call". Every branch maps to a hardcoded safe label
+  // in outcomeKindLabel(). No arbitrary string can flow into the output text.
+
+  it("tool_call maps to safe fixed label 'tool-call' (not reflected verbatim)", () => {
+    const text = buildCaseExplanation(
+      "pass",
+      true,
+      true,
+      "tool_call",
+      [],
+      false,
+    );
+    // The hardcoded label "tool-call" appears, not "tool_call" verbatim
+    expect(text).toContain("tool-call");
+    // No forbidden patterns
+    for (const { pattern } of FORBIDDEN_EXPLANATION_PATTERNS) {
+      expect(pattern.test(text)).toBe(false);
+    }
+  });
+
+  it("all four OutcomeKind values produce non-empty, bounded, safe text", () => {
+    const kinds = [
+      "agent_routing",
+      "delegation_chain",
+      "task_completion",
+      "tool_call",
+    ] as const;
+    for (const kind of kinds) {
+      const text = buildCaseExplanation("pass", true, true, kind, [], false);
+      expect(text.length).toBeGreaterThan(0);
+      expect(text.length).toBeLessThanOrEqual(EXPLANATION_MAX_CHARS);
+      for (const { pattern } of FORBIDDEN_EXPLANATION_PATTERNS) {
+        expect(pattern.test(text)).toBe(false);
+      }
+    }
+  });
+
+  it("adversarial: a malicious string cannot be reflected into explanation via OutcomeKind (TypeScript enforces the union)", () => {
+    // TypeScript prevents passing `"INJECTED<thinking>payload</thinking>"` as
+    // OutcomeKind at compile time. At runtime (e.g. test assertion level), we
+    // verify that even if someone coerces the type, the output is always safe.
+    //
+    // We simulate a coerced (cast) malicious value to prove runtime safety.
+    // In real production code this cannot happen because TypeScript's type
+    // system prevents arbitrary strings from satisfying `OutcomeKind`.
+    const malicious =
+      "<thinking>rationale: score: 1.0 justification: LEAKAGE</thinking>" as unknown as import("../langchain-agent-evals.js").OutcomeKind;
+
+    // Because buildCaseExplanation maps via outcomeKindLabel() which only
+    // accepts the four closed literals, a coerced unknown value falls through
+    // to the default "tool-call" label and the malicious string is NEVER
+    // reflected in the output.
+    // Note: TypeScript would reject `malicious` at the type level (without the
+    // `as unknown as` coercion), so this test exercises the defense-in-depth
+    // runtime behavior against maliciously coerced values.
+    const text = buildCaseExplanation("pass", true, true, malicious, [], false);
+    expect(text).not.toContain("thinking");
+    expect(text).not.toContain("LEAKAGE");
+    expect(text).not.toContain("rationale:");
+    expect(text).not.toContain("justification:");
+    for (const { pattern } of FORBIDDEN_EXPLANATION_PATTERNS) {
+      expect(pattern.test(text)).toBe(false);
+    }
+    expect(text.length).toBeLessThanOrEqual(EXPLANATION_MAX_CHARS);
+  });
+
+  it("adversarial: leakage sentinel in a cast OutcomeKind does not appear in output", () => {
+    const sentinel = "LEAKAGE_SENTINEL_SECRET_XYZ_rationale:score:1";
+    const text = buildCaseExplanation(
+      "fail",
+      false,
+      true,
+      sentinel as unknown as import("../langchain-agent-evals.js").OutcomeKind,
+      [],
+      false,
+    );
+    expect(text).not.toContain(sentinel);
+    expect(text).not.toContain("LEAKAGE_SENTINEL");
+    expect(text).not.toContain("rationale:");
+    for (const { pattern } of FORBIDDEN_EXPLANATION_PATTERNS) {
+      expect(pattern.test(text)).toBe(false);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildSuiteExplanation — suite-level bounded explanation
+// ---------------------------------------------------------------------------
+
+import {
+  buildModelExplanation,
+  buildSuiteExplanation,
+  type OutcomeKind,
+} from "../langchain-agent-evals.js";
+
+describe("buildSuiteExplanation — bounded explanation from aggregate suite signals", () => {
+  it("returns a dry-run label for dry-run suites", () => {
+    const text = buildSuiteExplanation(0, 5, false, true);
+    expect(text).toContain("dry-run");
+    expect(text).toContain("5");
+  });
+
+  it("indicates 'green' when suiteGreen is true", () => {
+    const text = buildSuiteExplanation(10, 10, true, false);
+    expect(text).toContain("green");
+  });
+
+  it("indicates 'not green' when suiteGreen is false", () => {
+    const text = buildSuiteExplanation(8, 10, false, false);
+    expect(text).toContain("not green");
+  });
+
+  it("includes pass/fail counts in the text", () => {
+    const text = buildSuiteExplanation(7, 10, false, false);
+    expect(text).toContain("7");
+    expect(text).toContain("10");
+  });
+
+  it("handles all-pass case (zero failures)", () => {
+    const text = buildSuiteExplanation(5, 5, true, false);
+    expect(text).toContain("passed");
+    expect(text).not.toContain("failed");
+  });
+
+  it("handles all-fail case", () => {
+    const text = buildSuiteExplanation(0, 5, false, false);
+    expect(text).toContain("0");
+    expect(text).toContain("5");
+    expect(text).toContain("failed");
+  });
+
+  it("never exceeds EXPLANATION_MAX_CHARS", () => {
+    const text = buildSuiteExplanation(999, 1000, false, false);
+    expect(text.length).toBeLessThanOrEqual(EXPLANATION_MAX_CHARS);
+  });
+
+  it("never matches any FORBIDDEN_EXPLANATION_PATTERNS", () => {
+    const inputs: Array<[number, number, boolean, boolean]> = [
+      [10, 10, true, false],
+      [7, 10, false, false],
+      [0, 5, false, false],
+      [5, 5, false, true],
+    ];
+    for (const [passed, total, green, dry] of inputs) {
+      const text = buildSuiteExplanation(passed, total, green, dry);
+      for (const { name, pattern } of FORBIDDEN_EXPLANATION_PATTERNS) {
+        expect(pattern.test(text)).toBe(false);
+      }
+    }
+  });
+
+  it("is deterministic — same inputs produce identical text", () => {
+    const t1 = buildSuiteExplanation(8, 10, false, false);
+    const t2 = buildSuiteExplanation(8, 10, false, false);
+    expect(t1).toBe(t2);
+  });
+
+  it("does not contain raw prompts, transcripts, rationale markers, or secrets", () => {
+    const text = buildSuiteExplanation(9, 10, true, false);
+    expect(text).not.toContain("rationale");
+    expect(text).not.toContain("transcript");
+    expect(text).not.toContain("composedPrompt");
+    expect(text).not.toContain("rawContent");
+    expect(text).not.toMatch(/sk-[A-Za-z0-9]{8,}/);
+    expect(text).not.toMatch(/Bearer\s+[A-Za-z0-9]{10,}/);
+  });
+
+  it("adversarial: passing adversarial counts does not produce forbidden patterns", () => {
+    // Even with edge-case numeric inputs, the output is structured and safe
+    const text = buildSuiteExplanation(0, 0, false, false);
+    for (const { pattern } of FORBIDDEN_EXPLANATION_PATTERNS) {
+      expect(pattern.test(text)).toBe(false);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildModelExplanation — model-level bounded explanation
+// ---------------------------------------------------------------------------
+
+describe("buildModelExplanation — bounded explanation from aggregate model signals", () => {
+  it("returns a dry-run label for dry-run model results", () => {
+    const text = buildModelExplanation("skip", 0, 5, true);
+    expect(text).toContain("dry-run");
+    expect(text).toContain("5");
+  });
+
+  it("returns a dry-run label when bucket is 'skip' even if dryRun=false", () => {
+    const text = buildModelExplanation("skip", 0, 3, false);
+    expect(text).toContain("dry-run");
+  });
+
+  it("includes 'pass' label for pass bucket", () => {
+    const text = buildModelExplanation("pass", 10, 10, false);
+    expect(text).toContain("pass");
+  });
+
+  it("includes 'partial' label for partial bucket", () => {
+    const text = buildModelExplanation("partial", 7, 10, false);
+    expect(text).toContain("partial");
+  });
+
+  it("includes 'fail' label for fail bucket", () => {
+    const text = buildModelExplanation("fail", 2, 10, false);
+    expect(text).toContain("fail");
+  });
+
+  it("includes pass/fail counts in the text", () => {
+    const text = buildModelExplanation("partial", 6, 10, false);
+    expect(text).toContain("6");
+    expect(text).toContain("10");
+  });
+
+  it("handles zero total cases", () => {
+    const text = buildModelExplanation("pass", 0, 0, false);
+    expect(text).toContain("no cases run");
+    expect(text.length).toBeGreaterThan(0);
+  });
+
+  it("never exceeds EXPLANATION_MAX_CHARS", () => {
+    const text = buildModelExplanation("partial", 999, 1000, false);
+    expect(text.length).toBeLessThanOrEqual(EXPLANATION_MAX_CHARS);
+  });
+
+  it("never matches any FORBIDDEN_EXPLANATION_PATTERNS", () => {
+    const inputs: Array<
+      [import("../report-schema.js").ScoreBucket, number, number, boolean]
+    > = [
+      ["pass", 10, 10, false],
+      ["partial", 7, 10, false],
+      ["fail", 2, 10, false],
+      ["skip", 0, 5, true],
+      ["pass", 0, 0, false],
+    ];
+    for (const [bucket, passed, total, dry] of inputs) {
+      const text = buildModelExplanation(bucket, passed, total, dry);
+      for (const { name, pattern } of FORBIDDEN_EXPLANATION_PATTERNS) {
+        expect(pattern.test(text)).toBe(false);
+      }
+    }
+  });
+
+  it("is deterministic — same inputs produce identical text", () => {
+    const t1 = buildModelExplanation("partial", 7, 10, false);
+    const t2 = buildModelExplanation("partial", 7, 10, false);
+    expect(t1).toBe(t2);
+  });
+
+  it("does not contain raw prompts, transcripts, rationale markers, or secrets", () => {
+    const text = buildModelExplanation("pass", 9, 10, false);
+    expect(text).not.toContain("rationale");
+    expect(text).not.toContain("transcript");
+    expect(text).not.toContain("composedPrompt");
+    expect(text).not.toContain("rawContent");
+    expect(text).not.toMatch(/sk-[A-Za-z0-9]{8,}/);
+    expect(text).not.toMatch(/Bearer\s+[A-Za-z0-9]{10,}/);
+  });
+
+  it("adversarial: all ScoreBucket values produce safe bounded output", () => {
+    const buckets = ["pass", "partial", "fail", "skip"] as const;
+    for (const bucket of buckets) {
+      const text = buildModelExplanation(bucket, 5, 10, false);
+      expect(text.length).toBeGreaterThan(0);
+      expect(text.length).toBeLessThanOrEqual(EXPLANATION_MAX_CHARS);
+      for (const { pattern } of FORBIDDEN_EXPLANATION_PATTERNS) {
+        expect(pattern.test(text)).toBe(false);
+      }
+    }
+  });
+});

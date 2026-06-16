@@ -573,6 +573,16 @@ describe("EvalOrchestrator — run summary structure", () => {
     }
   });
 
+  it("runId is null when no runner results were produced (empty fixture sets)", async () => {
+    // With an empty evalsRoot, no runner results are produced → runId is null
+    const orchestrator = new EvalOrchestrator(makeOptions());
+    const result = await orchestrator.run(makeRequest());
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.runId).toBeNull();
+    }
+  });
+
   it("allSuitesGreen is true when no required cases ran (vacuously)", async () => {
     // With empty fixture sets, no required cases exist → vacuously green
     const orchestrator = new EvalOrchestrator(makeOptions());
@@ -1286,10 +1296,10 @@ describe("EvalOrchestrator — raw artifact filename timestamp integration", () 
 
     // Verify raw artifact file was written
     // The file is in <bundleDir>/raw/<filename>.json
-    // bundleDir is under bundleRoot, named <shortSha>-<YYYY-MM-DD>
+    // bundleDir is under bundleRoot/runs/, named <shortSha>-<YYYY-MM-DD>-<NNN>
     const bundleDirEntries = await Array.fromAsync(
       (async function* () {
-        const glob = new Bun.Glob(`${bundleRoot}/*/raw/*.json`);
+        const glob = new Bun.Glob(`${bundleRoot}/runs/*/raw/*.json`);
         for await (const file of glob.scan({ cwd: "/" })) {
           yield file;
         }
@@ -1371,8 +1381,9 @@ describe("EvalOrchestrator — raw artifact filename timestamp integration", () 
     expect(r2.isOk()).toBe(true);
 
     // Collect all raw artifact files written across both runs
+    // Each run is in its own immutable run dir under runs/
     const rawFiles: string[] = [];
-    const glob = new Bun.Glob(`${bundleRoot}/*/raw/*.json`);
+    const glob = new Bun.Glob(`${bundleRoot}/runs/*/raw/*.json`);
     for await (const file of glob.scan({ cwd: "/" })) {
       rawFiles.push(file);
     }
@@ -1400,21 +1411,19 @@ describe("EvalOrchestrator — raw artifact filename timestamp integration", () 
     expect(uniqueFilenames.size).toBeGreaterThanOrEqual(1);
   });
 
-  it("score file in bundle dir is overwritten on second run (not stale)", async () => {
-    // The bundle dir is deterministic: <gitSha[0..7]>-<YYYY-MM-DD>
-    // Both runs use the same assembledAt date → same bundle dir.
-    // score-loom-routing.json is a fixed filename → it is overwritten.
-    // This test verifies the score file is fresh after the second run.
+  it("repeat runs on the same commit and date produce distinct immutable run directories (no overwrite)", async () => {
+    // The new layout uses runs/<runId>/ with an auto-incremented sequence number.
+    // Two runs on the same commit + same date get runs/aabbccd-2026-01-15-001/
+    // and runs/aabbccd-2026-01-15-002/ — the first run's artifacts are preserved.
     const modelId = "anthropic/claude-sonnet-4.5";
     const caseId = "loom-route-backend-api";
     const sharedSha = `aabbccd${"d".repeat(33)}`; // 40-char SHA
-    const bundleRoot = join(TEMP_DIR, `score-overwrite-${uid()}`);
-    // Use a fixed date for deterministic bundle dir name
-    const assembledDate = "2026-01-15T10:00:00.000Z";
+    const bundleRoot = join(TEMP_DIR, `no-overwrite-${uid()}`);
+    // Both runs use the same assembledAt date — only the time differs
+    const assembledDate1 = "2026-01-15T10:00:00.000Z";
+    const assembledDate2 = "2026-01-15T20:00:00.000Z";
 
-    function buildOrchestratorForOverwrite(
-      assembledAt: string,
-    ): EvalOrchestrator {
+    function buildOrchestratorForRun(assembledAt: string): EvalOrchestrator {
       const modelClient = new StubModelClient();
       modelClient.setDefaultResponse({
         model: modelId,
@@ -1426,7 +1435,7 @@ describe("EvalOrchestrator — raw artifact filename timestamp integration", () 
       return new EvalOrchestrator({
         modelClient,
         scorer,
-        promptProvider: new MockPromptProvider("Overwrite test prompt."),
+        promptProvider: new MockPromptProvider("No-overwrite test prompt."),
         snapshotProvider: new StubSnapshotProvider(),
         gitShaProvider: makeGitShaProvider(sharedSha),
         bundleRoot,
@@ -1444,28 +1453,221 @@ describe("EvalOrchestrator — raw artifact filename timestamp integration", () 
       rawArtifacts: false,
     };
 
-    // Run 1: produces score file
-    const r1 = await buildOrchestratorForOverwrite(assembledDate).run(request);
+    // Run 1
+    const r1 = await buildOrchestratorForRun(assembledDate1).run(request);
     expect(r1.isOk()).toBe(true);
+    if (!r1.isOk()) return;
+    const runId1 = r1.value.runId;
+    expect(runId1).not.toBeNull();
+    expect(runId1).toMatch(/-001$/);
 
-    // Read the assembledAt from the score file after run 1
-    const expectedDir = `${bundleRoot}/aabbccd-2026-01-15`;
-    const scoreFile1Content = (await Bun.file(
-      `${expectedDir}/score-loom-routing.json`,
-    ).json()) as { assembledAt: string };
-    expect(scoreFile1Content.assembledAt).toBe(assembledDate);
-
-    // Run 2 with a DIFFERENT assembledAt (same date, different time) → same dir, overwritten
-    const assembledDate2 = "2026-01-15T20:00:00.000Z";
-    const r2 = await buildOrchestratorForOverwrite(assembledDate2).run(request);
+    // Run 2 with the same SHA and date → gets sequence 002
+    const r2 = await buildOrchestratorForRun(assembledDate2).run(request);
     expect(r2.isOk()).toBe(true);
+    if (!r2.isOk()) return;
+    const runId2 = r2.value.runId;
+    expect(runId2).not.toBeNull();
+    expect(runId2).toMatch(/-002$/);
 
-    // The score file must now contain the SECOND assembledAt (overwritten)
+    // The two run IDs must be distinct
+    expect(runId1).not.toBe(runId2);
+
+    // Both run directories must exist independently
+    const run1Dir = `${bundleRoot}/runs/${runId1}`;
+    const run2Dir = `${bundleRoot}/runs/${runId2}`;
+    expect(run1Dir).not.toBe(run2Dir);
+
+    // Run 1's score file preserves the first assembledAt (not overwritten)
+    const scoreFile1Content = (await Bun.file(
+      `${run1Dir}/score-loom-routing.json`,
+    ).json()) as { assembledAt: string };
+    expect(scoreFile1Content.assembledAt).toBe(assembledDate1);
+
+    // Run 2's score file has the second assembledAt in its own dir
     const scoreFile2Content = (await Bun.file(
-      `${expectedDir}/score-loom-routing.json`,
+      `${run2Dir}/score-loom-routing.json`,
     ).json()) as { assembledAt: string };
     expect(scoreFile2Content.assembledAt).toBe(assembledDate2);
-    // And NOT the old one
-    expect(scoreFile2Content.assembledAt).not.toBe(assembledDate);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Blocker 1: generateIndexes wired into production eval bundle-write path
+//
+// Proves that:
+//   1. A normal (non-dry-run) orchestrator run with real runner results
+//      writes dashboard index files (generateIndexes: true path).
+//   2. A dry-run orchestrator run does NOT generate indexes (dry-run stays
+//      local-only, no indexes produced, no publisher called).
+//   3. When mode is "publish" and runner results exist, the publisher receives
+//      non-empty indexFileNames (indexes were generated and passed through).
+// ---------------------------------------------------------------------------
+
+describe("EvalOrchestrator — generateIndexes wired into production path", () => {
+  it("normal (non-dry-run) run with real results writes dashboard index files to bundleRoot", async () => {
+    const modelId = "anthropic/claude-sonnet-4.5";
+    const caseId = "loom-route-backend-api";
+    const bundleRoot = join(TEMP_DIR, `gen-idx-prod-${uid()}`);
+
+    const modelClient = new StubModelClient();
+    modelClient.setDefaultResponse({
+      model: modelId,
+      content: 'I will route to the "shuttle-backend" agent.',
+    });
+    const scorer = new StubAgentEvalsScorer();
+    scorer.setDefaultRecord(makePassingScoreRecord(caseId, modelId));
+
+    const orchestrator = new EvalOrchestrator({
+      modelClient,
+      scorer,
+      promptProvider: new MockPromptProvider("You are Loom."),
+      snapshotProvider: new StubSnapshotProvider(),
+      gitShaProvider: makeGitShaProvider(),
+      bundleRoot,
+      evalsRoot: REAL_EVALS_ROOT,
+      assembledAt: FIXED_TIMESTAMP,
+      env: { OPENROUTER_API_KEY: FAKE_API_KEY },
+    });
+
+    const result = await orchestrator.run({
+      agent: "loom",
+      model: modelId,
+      case: caseId,
+      dryRun: false,
+      rawArtifacts: false,
+    });
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    // Runner results exist → bundle was written → indexes were generated
+    expect(result.value.runId).not.toBeNull();
+
+    // dashboard-manifest.json must exist at bundleRoot (not inside runs/)
+    const manifestContent = (await Bun.file(
+      `${bundleRoot}/dashboard-manifest.json`,
+    ).json()) as { totalRuns: number; schemaVersion: number };
+    expect(typeof manifestContent.totalRuns).toBe("number");
+    expect(manifestContent.totalRuns).toBeGreaterThan(0);
+    expect(typeof manifestContent.schemaVersion).toBe("number");
+
+    // latest.json must also exist at bundleRoot
+    const latestContent = (await Bun.file(
+      `${bundleRoot}/latest.json`,
+    ).json()) as { runId: string };
+    expect(typeof latestContent.runId).toBe("string");
+    expect(result.value.runId).not.toBeNull();
+    if (result.value.runId === null) return;
+    expect(latestContent.runId).toBe(result.value.runId);
+  });
+
+  it("dry-run orchestrator run does NOT write dashboard index files", async () => {
+    const modelId = "anthropic/claude-sonnet-4.5";
+    const caseId = "loom-route-backend-api";
+    const bundleRoot = join(TEMP_DIR, `gen-idx-dryrun-${uid()}`);
+
+    const modelClient = new StubModelClient();
+    modelClient.setDefaultResponse({
+      model: modelId,
+      content: 'I will route to the "shuttle-backend" agent.',
+    });
+    const scorer = new StubAgentEvalsScorer();
+    scorer.setDefaultRecord(makePassingScoreRecord(caseId, modelId));
+
+    const orchestrator = new EvalOrchestrator({
+      modelClient,
+      scorer,
+      promptProvider: new MockPromptProvider("You are Loom."),
+      snapshotProvider: new StubSnapshotProvider(),
+      gitShaProvider: makeGitShaProvider(),
+      bundleRoot,
+      evalsRoot: REAL_EVALS_ROOT,
+      assembledAt: FIXED_TIMESTAMP,
+      env: { OPENROUTER_API_KEY: FAKE_API_KEY },
+    });
+
+    const result = await orchestrator.run({
+      agent: "loom",
+      model: modelId,
+      case: caseId,
+      dryRun: true, // dry-run: generateIndexes must be false
+      rawArtifacts: false,
+    });
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    // dashboard-manifest.json must NOT exist for dry-run
+    const manifestExists = await Bun.file(
+      `${bundleRoot}/dashboard-manifest.json`,
+    )
+      .text()
+      .then(() => true)
+      .catch(() => false);
+    expect(manifestExists).toBe(false);
+  });
+
+  it("publish mode with runner results passes indexFileNames to the publisher", async () => {
+    const modelId = "anthropic/claude-sonnet-4.5";
+    const caseId = "loom-route-backend-api";
+    const bundleRoot = join(TEMP_DIR, `gen-idx-publish-${uid()}`);
+
+    const modelClient = new StubModelClient();
+    modelClient.setDefaultResponse({
+      model: modelId,
+      content: 'I will route to the "shuttle-backend" agent.',
+    });
+    const scorer = new StubAgentEvalsScorer();
+    scorer.setDefaultRecord(makePassingScoreRecord(caseId, modelId));
+
+    const publisher = new StubResultsRepoPublisher();
+    publisher.setDefaultSuccess({
+      commitSha: "idx-commit-sha",
+      branch: "main",
+      filesPublished: 5,
+      simulated: false,
+    });
+
+    const orchestrator = new EvalOrchestrator({
+      modelClient,
+      scorer,
+      promptProvider: new MockPromptProvider("You are Loom."),
+      snapshotProvider: new StubSnapshotProvider(),
+      gitShaProvider: makeGitShaProvider(),
+      bundleRoot,
+      evalsRoot: REAL_EVALS_ROOT,
+      publishMode: "publish",
+      publisher,
+      assembledAt: FIXED_TIMESTAMP,
+      env: {
+        OPENROUTER_API_KEY: FAKE_API_KEY,
+        EVAL_RESULTS_REPO_TOKEN: "fake-publish-token",
+      },
+    });
+
+    const result = await orchestrator.run({
+      agent: "loom",
+      model: modelId,
+      case: caseId,
+      dryRun: false,
+      rawArtifacts: false,
+    });
+
+    expect(result.isOk()).toBe(true);
+
+    // Publisher was called
+    expect(publisher.calls).toHaveLength(1);
+    const publishCall = publisher.calls[0];
+    expect(publishCall).toBeDefined();
+    if (publishCall === undefined) return;
+
+    // indexFileNames must be present and non-empty (indexes were generated)
+    expect(publishCall.indexFileNames).toBeDefined();
+    expect((publishCall.indexFileNames ?? []).length).toBeGreaterThan(0);
+    // dashboard-manifest.json must be among the published index names
+    expect(publishCall.indexFileNames).toContain("dashboard-manifest.json");
+
+    // localBundleRoot must be provided (needed for publisher to read index files)
+    expect(publishCall.localBundleRoot).toBeDefined();
   });
 });

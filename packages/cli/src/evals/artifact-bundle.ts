@@ -1,25 +1,40 @@
 /**
- * Deterministic eval result bundle writer.
+ * Immutable run artifact bundle writer.
  *
- * Assembles publishable eval artifacts into a deterministic directory layout
- * suitable for committing to an external results repository. Every artifact
- * written by this module passes through the central allowlist sanitizer before
- * being serialized to JSON. Publish mode is token-gated.
+ * Assembles publishable eval artifacts into an immutable, versioned directory
+ * layout suitable for committing to an external results repository. Every
+ * artifact written by this module passes through the central allowlist
+ * sanitizer before being serialized to JSON. Publish mode is token-gated.
  *
  * # Bundle layout
  *
  * Each bundle is written to:
  *
- *   `<bundleRoot>/<gitSha>-<YYYY-MM-DD>/`
+ *   `<bundleRoot>/runs/<runId>/`
  *   ├── bundle-index.json          Top-level bundle manifest
  *   ├── run-summary.json           Aggregate pass/fail/counts
  *   ├── score-<suite>.json         Per-suite sanitized score records (all models aggregated)
  *   ├── prompt-hashes.json         Stable prompt hash records (no raw text)
- *   └── provenance-manifest.json   Full sanitized provenance manifest (optional)
+ *   ├── provenance-manifest.json   Full sanitized provenance manifest (optional)
+ *   ├── public-report.json         Public dashboard report (PublicReportBundle schema)
+ *   └── public-report.md           Human-readable Markdown report (optional)
  *
- * The directory name is deterministic: `<gitSha[0..7]>-<YYYY-MM-DD>`. The
- * same inputs always produce the same layout and file contents. This makes
- * bundle directories reproducible for content-addressable storage and diff.
+ * # Immutable run IDs
+ *
+ * The run ID has the form `<gitSha[0..7]>-<YYYY-MM-DD>-<NNN>` where `NNN`
+ * is a zero-padded three-digit sequence number (001, 002, …) auto-incremented
+ * by scanning the existing `runs/` subdirectory at write time.
+ *
+ * This guarantees that repeat runs on the same commit and same calendar date
+ * each receive a unique, immutable directory — no prior run's artifacts are
+ * ever overwritten. The `runs/` parent directory organizes all run subdirs.
+ *
+ * Example:
+ *   - First run:  `runs/abc123d-2026-01-15-001/`
+ *   - Second run: `runs/abc123d-2026-01-15-002/`
+ *   - Next day:   `runs/abc123d-2026-01-16-001/`
+ *
+ * When `gitSha === "unknown"`, the prefix is `unknown`.
  *
  * # Score file aggregation (multi-model runs)
  *
@@ -56,6 +71,9 @@
 
 import { basename, join } from "node:path";
 import { err, ok, type Result, ResultAsync } from "neverthrow";
+import { DashboardIndexWriter } from "./dashboard-indexes.js";
+import { assemblePublicReportBundle } from "./report-bundle.js";
+import { renderPublicReportBundle } from "./report-markdown.js";
 import type { ResultsRepoPublisher } from "./results-repo.js";
 import {
   assertJsonPublishSafe,
@@ -89,6 +107,15 @@ export const EVAL_RESULTS_REPO_TOKEN_ENV_VAR = "EVAL_RESULTS_REPO_TOKEN";
  * backward-incompatible way.
  */
 export const BUNDLE_SCHEMA_VERSION = 1;
+
+/**
+ * The subdirectory under `bundleRoot` where all immutable run directories live.
+ *
+ * All run artifacts are written under `<bundleRoot>/runs/<runId>/`.
+ * This keeps run artifacts separate from any top-level index files that
+ * future publishers may add.
+ */
+export const RUNS_SUBDIR = "runs";
 
 // ---------------------------------------------------------------------------
 // Bundle write options
@@ -157,6 +184,27 @@ export interface WriteBundleOptions {
    * inject `StubResultsRepoPublisher` in tests.
    */
   publisher?: ResultsRepoPublisher;
+  /**
+   * Whether to write a human-readable `public-report.md` alongside
+   * `public-report.json`. Defaults to `false`.
+   *
+   * When `true`, the Markdown report is rendered from `PublicReportBundle`
+   * and written to `public-report.md` in the run directory.
+   */
+  writeMarkdown?: boolean;
+  /**
+   * Whether to regenerate dashboard index files after the immutable run
+   * artifacts are assembled.
+   *
+   * When `true`, `DashboardIndexWriter.rebuildFromRuns()` is called after
+   * all local run artifact files are written. Dashboard indexes are updated
+   * only after the immutable run artifacts are fully assembled — never before.
+   * Index generation failures are non-fatal (they do not prevent the local
+   * bundle write from being reported as successful).
+   *
+   * Defaults to `false`.
+   */
+  generateIndexes?: boolean;
 }
 
 /**
@@ -165,34 +213,114 @@ export interface WriteBundleOptions {
 export interface BundleWriteResult {
   /** The bundle that was written. */
   bundle: EvalBundle;
-  /** Absolute path of the bundle directory. */
+  /** Absolute path of the run directory (`<bundleRoot>/runs/<runId>/`). */
   bundleDir: string;
+  /** The immutable run ID (e.g. `abc123d-2026-01-15-001`). */
+  runId: string;
   /** Paths of all files written. */
   filesWritten: string[];
+  /**
+   * Names of dashboard index files written (relative names, not absolute paths).
+   * Empty when `generateIndexes` is `false` or when index generation produced
+   * no runs (e.g. no readable `public-report.json` found).
+   * Index generation failures are silently omitted here — the bundle write
+   * result is still `ok` even when index generation fails.
+   */
+  indexFilesWritten: string[];
 }
 
 // ---------------------------------------------------------------------------
-// Deterministic bundle path computation
+// Deterministic run ID computation
 // ---------------------------------------------------------------------------
 
 /**
- * Compute the deterministic bundle directory name.
+ * Compute the base run ID prefix (without sequence number).
  *
- * Format: `<gitSha[0..7]>-<YYYY-MM-DD>` (e.g. `abc1234-2026-01-15`).
+ * Format: `<gitSha[0..7]>-<YYYY-MM-DD>` (e.g. `abc123d-2026-01-15`).
  *
  * When `gitSha === "unknown"`, uses `unknown` as the prefix.
  *
  * @param gitSha - The git SHA (40-char hex or `"unknown"`).
  * @param assembledAt - ISO 8601 timestamp used for the date component.
- * @returns Deterministic directory name segment.
+ * @returns Run ID prefix (without sequence number).
  */
-export function computeBundleDirName(
+export function computeRunIdPrefix(
   gitSha: string,
   assembledAt: string,
 ): string {
   const shortSha = gitSha === "unknown" ? "unknown" : gitSha.slice(0, 7);
   const date = assembledAt.slice(0, 10); // YYYY-MM-DD from ISO 8601
   return `${shortSha}-${date}`;
+}
+
+/**
+ * Compute a complete immutable run ID with a sequence number.
+ *
+ * Format: `<gitSha[0..7]>-<YYYY-MM-DD>-<NNN>` where NNN is zero-padded
+ * to three digits (e.g. `abc123d-2026-01-15-001`).
+ *
+ * @param prefix - The run ID prefix from `computeRunIdPrefix()`.
+ * @param sequence - The one-based sequence number (1, 2, 3, …).
+ * @returns The full immutable run ID.
+ */
+export function computeRunId(prefix: string, sequence: number): string {
+  const seq = String(sequence).padStart(3, "0");
+  return `${prefix}-${seq}`;
+}
+
+/**
+ * @deprecated Use `computeRunIdPrefix()` instead.
+ *
+ * Retained for test compatibility. Returns the same format as the old
+ * `<sha7>-<YYYY-MM-DD>` bundle dir name (the prefix without sequence).
+ */
+export function computeBundleDirName(
+  gitSha: string,
+  assembledAt: string,
+): string {
+  return computeRunIdPrefix(gitSha, assembledAt);
+}
+
+/**
+ * Resolve the next available sequence number for a run ID prefix.
+ *
+ * Scans the `runs/` directory under `runsDir` for existing subdirectories
+ * that match the pattern `<prefix>-<NNN>`. The next sequence number is one
+ * greater than the highest existing number (or 1 when none exist).
+ *
+ * This is a best-effort scan — race conditions in concurrent processes are
+ * not guarded against (eval runs are designed to be sequential).
+ *
+ * @param runsDir - The absolute path to the `runs/` parent directory.
+ * @param prefix - The run ID prefix (e.g. `abc123d-2026-01-15`).
+ * @returns The next sequence number (1-based).
+ */
+export async function resolveNextSequence(
+  runsDir: string,
+  prefix: string,
+): Promise<number> {
+  const scanner = new Bun.Glob(`${prefix}-[0-9][0-9][0-9]`);
+
+  let maxSeq = 0;
+  try {
+    for await (const entry of scanner.scan({
+      cwd: runsDir,
+      onlyFiles: false,
+    })) {
+      // entry is just the dir name (no path prefix when scanning with cwd)
+      const match = entry.match(/-(\d{3})$/);
+      if (match === null) continue;
+      const sequenceText = match[1];
+      if (sequenceText === undefined) continue;
+      const seq = parseInt(sequenceText, 10);
+      if (seq > maxSeq) maxSeq = seq;
+    }
+  } catch {
+    // runsDir does not exist yet — first run, sequence is 1
+    return 1;
+  }
+
+  return maxSeq + 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -426,7 +554,25 @@ export function assembleBundle(options: {
 // ---------------------------------------------------------------------------
 
 /**
- * Writes sanitized eval result bundles to a deterministic directory layout.
+ * Writes immutable eval result bundles to a versioned `runs/` directory layout.
+ *
+ * ## Immutable run directories
+ *
+ * Each call to `writeBundle()` produces a unique run directory under
+ * `<bundleRoot>/runs/<runId>/`. The run ID has the form
+ * `<sha7>-<YYYY-MM-DD>-<NNN>` where NNN is auto-incremented by scanning
+ * existing sibling directories. This guarantees no prior run's artifacts
+ * are ever overwritten, even when the same commit is evaluated twice on the
+ * same calendar day.
+ *
+ * ## Public report
+ *
+ * In addition to the internal bundle files, `writeBundle()` always assembles
+ * and writes `public-report.json` (a `PublicReportBundle` from `report-bundle.ts`).
+ * When `writeMarkdown: true` is set, `public-report.md` is also written.
+ *
+ * When the `PublicReportBundle` assembly fails (e.g. empty score files),
+ * the public report files are omitted rather than failing the whole bundle write.
  *
  * ## Sanitization
  *
@@ -440,11 +586,6 @@ export function assembleBundle(options: {
  * When `mode === "publish"`, the writer verifies `EVAL_RESULTS_REPO_TOKEN`
  * is present before writing any files. Dry-run bundles are always local-only.
  *
- * ## Determinism
- *
- * Bundle directory names are derived from `gitSha[0..7]` and the date
- * component of `assembledAt`. The same inputs always produce the same path.
- *
  * ## Usage
  *
  * ```ts
@@ -454,31 +595,38 @@ export function assembleBundle(options: {
  *   provenanceManifest,
  *   gitSha,
  *   mode: "publish",
+ *   writeMarkdown: true,
  * });
+ * // result.value.runId → "abc123d-2026-01-15-001"
+ * // result.value.bundleDir → "/var/eval-bundles/runs/abc123d-2026-01-15-001"
  * ```
  */
 export class ArtifactBundleWriter {
   constructor(
     /**
-     * Root directory under which bundle subdirectories are created.
+     * Root directory under which the `runs/` subdirectory is created.
      * Must be an absolute path.
      */
     private readonly bundleRoot: string,
   ) {}
 
   /**
-   * Assemble and write a publishable eval result bundle.
+   * Assemble and write an immutable eval result bundle.
    *
    * Steps:
    * 1. Resolve `assembledAt` and `mode` defaults.
    * 2. For `"publish"` mode: verify `EVAL_RESULTS_REPO_TOKEN` is set.
    * 3. Assemble the `EvalBundle` (pure; runs through sanitizer).
-   * 4. Compute the deterministic bundle directory path.
-   * 5. Write each artifact file, calling `assertJsonPublishSafe()` on every
+   * 4. Compute the run ID prefix and scan for the next sequence number.
+   * 5. Create `<bundleRoot>/runs/<runId>/` as the immutable run directory.
+   * 6. Write each artifact file, calling `assertJsonPublishSafe()` on every
    *    JSON string before writing.
-   * 6. If `mode === "publish"` and a `publisher` is provided, call it with the
+   * 7. Assemble and write `public-report.json` (and optionally `public-report.md`).
+   * 8. If `generateIndexes` is `true`, call `DashboardIndexWriter.rebuildFromRuns()`
+   *    AFTER all immutable run artifacts are assembled. Index failures are non-fatal.
+   * 9. If `mode === "publish"` and a `publisher` is provided, call it with the
    *    written bundle. Publication failures are surfaced as `BundleError`.
-   * 7. Return the `BundleWriteResult`.
+   * 10. Return the `BundleWriteResult` including `runId` and `indexFilesWritten`.
    *
    * @param options - Write options including runner results, provenance, and mode.
    * @returns `ResultAsync<BundleWriteResult, BundleError>`.
@@ -490,6 +638,8 @@ export class ArtifactBundleWriter {
     const mode = options.mode ?? "local";
     const dryRun = options.dryRun ?? false;
     const env = options.env ?? Bun.env;
+    const writeMarkdown = options.writeMarkdown ?? false;
+    const generateIndexes = options.generateIndexes ?? false;
 
     // Policy: dry-run bundles are always local-only
     const effectiveMode: BundleWriteMode = dryRun ? "local" : mode;
@@ -527,40 +677,100 @@ export class ArtifactBundleWriter {
     }
 
     const bundle = bundleResult.value;
-    const dirName = computeBundleDirName(options.gitSha, assembledAt);
-    const bundleDir = join(this.bundleRoot, dirName);
 
-    // Write all bundle files locally first
-    return this.writeBundleFiles(
-      bundle,
-      bundleDir,
-      options.provenanceManifest,
-    ).andThen((writeResult) => {
-      // If mode is not "publish" or no publisher provided, return immediately
-      if (effectiveMode !== "publish" || options.publisher === undefined) {
-        return ResultAsync.fromSafePromise(Promise.resolve(writeResult));
-      }
+    // Compute run ID: resolve prefix then scan for next sequence number
+    const runsDir = join(this.bundleRoot, RUNS_SUBDIR);
+    const prefix = computeRunIdPrefix(options.gitSha, assembledAt);
 
-      // Call the external publisher with the written bundle.
-      // Token presence was already verified above (token gate).
-      // Publication failures are surfaced as BundleError values.
-      return options.publisher
-        .publish({
-          bundle,
-          localBundleDir: bundleDir,
-          // Derive relative file names using basename() for separator-agnostic
-          // normalization — works correctly on both POSIX (/) and Windows (\) paths.
-          fileNames: writeResult.filesWritten.map((fp) => basename(fp)),
-          env,
-        })
-        .map((): BundleWriteResult => writeResult)
-        .mapErr(
-          (repoErr): BundleError => ({
-            type: "BundleWriteError",
-            path: bundleDir,
-            message: `External publication to results repository failed: ${repoErr.message}`,
-          }),
+    return ResultAsync.fromPromise(
+      resolveNextSequence(runsDir, prefix),
+      (cause): BundleError => ({
+        type: "BundleWriteError",
+        path: runsDir,
+        message:
+          `Failed to resolve next run sequence in "${runsDir}": ` +
+          `${cause instanceof Error ? cause.message : String(cause)}`,
+      }),
+    ).andThen((sequence) => {
+      const runId = computeRunId(prefix, sequence);
+      const bundleDir = join(runsDir, runId);
+
+      // Write all bundle files locally first (immutable run artifacts)
+      return this.writeBundleFiles(
+        bundle,
+        bundleDir,
+        runId,
+        options.provenanceManifest,
+        writeMarkdown,
+      ).andThen((writeResult) => {
+        // Step 8: Regenerate dashboard indexes AFTER immutable run artifacts
+        // are fully assembled. Non-fatal: index failures never block the
+        // local bundle write from succeeding.
+        //
+        // We use a plain Promise (not ResultAsync) here so that the error
+        // type stays `never` on the outer chain — index failures are absorbed
+        // inside the promise and returned as an empty array.
+        const indexPromise: Promise<string[]> = generateIndexes
+          ? Promise.resolve(
+              new DashboardIndexWriter(this.bundleRoot).rebuildFromRuns().then(
+                (r) => (r.isOk() ? r.value.filesWritten : []),
+                () => [] as string[],
+              ),
+            ).then((v) => v)
+          : Promise.resolve([] as string[]);
+
+        return ResultAsync.fromSafePromise(indexPromise).andThen(
+          (indexFilesWritten) => {
+            const writeResultWithIndexes: BundleWriteResult = {
+              ...writeResult,
+              indexFilesWritten,
+            };
+
+            // If mode is not "publish" or no publisher provided, return immediately
+            if (
+              effectiveMode !== "publish" ||
+              options.publisher === undefined
+            ) {
+              return ResultAsync.fromSafePromise(
+                Promise.resolve(writeResultWithIndexes),
+              );
+            }
+
+            // Call the external publisher with the written bundle.
+            // Token presence was already verified above (token gate).
+            // Publication failures are surfaced as BundleError values.
+            //
+            // Pass `localBundleRoot` and `indexFileNames` so the publisher can
+            // upload dashboard index files (at repo root level) after the
+            // immutable run artifacts. Index filenames come from `indexFilesWritten`
+            // which are relative basenames written by `DashboardIndexWriter`.
+            return options.publisher
+              .publish({
+                bundle,
+                localBundleDir: bundleDir,
+                // Derive relative file names using basename() for separator-agnostic
+                // normalization — works correctly on both POSIX (/) and Windows (\) paths.
+                fileNames: writeResult.filesWritten.map((fp) => basename(fp)),
+                // Provide bundle root and index file names so the publisher can
+                // upload generated indexes at the repository root level (after
+                // the immutable run artifacts). Only set when indexes were generated.
+                localBundleRoot:
+                  indexFilesWritten.length > 0 ? this.bundleRoot : undefined,
+                indexFileNames:
+                  indexFilesWritten.length > 0 ? indexFilesWritten : undefined,
+                env,
+              })
+              .map((): BundleWriteResult => writeResultWithIndexes)
+              .mapErr(
+                (repoErr): BundleError => ({
+                  type: "BundleWriteError",
+                  path: bundleDir,
+                  message: `External publication to results repository failed: ${repoErr.message}`,
+                }),
+              );
+          },
         );
+      });
     });
   }
 
@@ -568,13 +778,27 @@ export class ArtifactBundleWriter {
    * Write all bundle artifact files to `bundleDir`.
    *
    * Each file is sanitized before writing via `assertJsonPublishSafe()`.
+   * Also assembles and writes `public-report.json` (and optionally
+   * `public-report.md`) from the assembled bundle.
+   *
+   * `bundle-index.json` is written LAST so that its `publicFiles` field can
+   * accurately enumerate the allowlisted public files that were actually
+   * written to the run directory. Only `bundle-index.json`,
+   * `public-report.json`, and `public-report.md` are enumerated in
+   * `publicFiles` — internal artifacts (`run-summary.json`, `score-*.json`,
+   * `prompt-hashes.json`, `provenance-manifest.json`) are never listed.
    */
   private writeBundleFiles(
     bundle: EvalBundle,
     bundleDir: string,
+    runId: string,
     provenanceManifest: PromptProvenanceManifest | null,
+    writeMarkdown: boolean,
   ): ResultAsync<BundleWriteResult, BundleError> {
     const filesWritten: string[] = [];
+
+    // Track which public files were actually written (for bundle-index.json publicFiles field)
+    const publicFilesWritten: string[] = [];
 
     // Helper: serialize, safety-check, and write a single JSON file
     const writeJson = (
@@ -614,26 +838,32 @@ export class ArtifactBundleWriter {
       );
     };
 
-    // Write bundle-index.json (top-level manifest without large nested arrays)
-    const bundleIndex = {
-      version: bundle.version,
-      assembledAt: bundle.assembledAt,
-      gitSha: bundle.gitSha,
-      dryRun: bundle.dryRun,
-      runSummary: bundle.runSummary,
-      provenanceRef: bundle.provenanceRef,
-      scoreFiles: bundle.scoreFiles.map((sf) => sf.suite),
+    // Helper: write a plain text file (no JSON safety check needed — Markdown)
+    const writeText = (
+      text: string,
+      fileName: string,
+    ): ResultAsync<string, BundleError> => {
+      const filePath = join(bundleDir, fileName);
+      return ResultAsync.fromPromise(
+        Bun.write(filePath, text).then(() => filePath),
+        (cause): BundleError => ({
+          type: "BundleWriteError",
+          path: filePath,
+          message:
+            `Failed to write bundle file "${filePath}": ` +
+            `${cause instanceof Error ? cause.message : String(cause)}`,
+        }),
+      );
     };
 
+    // Write internal artifacts first (before bundle-index.json),
+    // then write bundle-index.json last so publicFiles is accurate.
+
     const writeSequence = writeJson(
-      bundleIndex,
-      "bundle-index.json",
-      "bundle-index",
+      bundle.runSummary,
+      "run-summary.json",
+      "run-summary",
     )
-      .andThen((indexPath) => {
-        filesWritten.push(indexPath);
-        return writeJson(bundle.runSummary, "run-summary.json", "run-summary");
-      })
       .andThen((summaryPath) => {
         filesWritten.push(summaryPath);
         // Write score files for each suite
@@ -693,11 +923,92 @@ export class ArtifactBundleWriter {
           );
         });
       })
+      .andThen(() => {
+        // Assemble and write public-report.json
+        // Assembly failures are non-fatal: public-report.json is omitted when
+        // the bundle has no score files (e.g. empty dry-run with no cases).
+        const reportResult = assemblePublicReportBundle(bundle, runId);
+        if (reportResult.isErr()) {
+          // Non-fatal: log-level omission, not a hard error
+          return ResultAsync.fromSafePromise<void, BundleError>(
+            Promise.resolve(),
+          );
+        }
+        const publicReport = reportResult.value;
+
+        return writeJson(
+          publicReport,
+          "public-report.json",
+          "public-report",
+        ).andThen((reportPath) => {
+          filesWritten.push(reportPath);
+          // Track public-report.json as a public file
+          publicFilesWritten.push("public-report.json");
+
+          // Optionally write public-report.md
+          if (!writeMarkdown) {
+            return ResultAsync.fromSafePromise<void, BundleError>(
+              Promise.resolve(),
+            );
+          }
+          const markdown = renderPublicReportBundle(publicReport);
+          return writeText(markdown, "public-report.md").andThen((mdPath) => {
+            filesWritten.push(mdPath);
+            // Track public-report.md as a public file
+            publicFilesWritten.push("public-report.md");
+            return ResultAsync.fromSafePromise<void, BundleError>(
+              Promise.resolve(),
+            );
+          });
+        });
+      })
+      .andThen(() => {
+        // Write bundle-index.json LAST so publicFiles accurately enumerates
+        // the allowlisted public run artifacts that were actually written.
+        // bundle-index.json itself is always a public file (it is the manifest).
+        //
+        // NEVER list internal artifacts in publicFiles:
+        //   - run-summary.json      (internal aggregate, not for public consumption)
+        //   - score-*.json          (internal per-suite scores, not for public consumption)
+        //   - prompt-hashes.json    (internal, not for public consumption)
+        //   - provenance-manifest.json (internal, not for public consumption)
+        //
+        // Only publicFiles should be fetched by website loaders.
+        const publicFiles: string[] = [
+          "bundle-index.json",
+          ...publicFilesWritten,
+        ];
+
+        const bundleIndex = {
+          schemaVersion: BUNDLE_SCHEMA_VERSION,
+          assembledAt: bundle.assembledAt,
+          gitSha: bundle.gitSha,
+          dryRun: bundle.dryRun,
+          runId,
+          runSummary: bundle.runSummary,
+          // publicFiles: closed list of allowlisted public artifacts for this run.
+          // Website loaders MUST only fetch files listed here — no directory walking.
+          publicFiles,
+        };
+
+        return writeJson(
+          bundleIndex,
+          "bundle-index.json",
+          "bundle-index",
+        ).andThen((indexPath) => {
+          filesWritten.push(indexPath);
+          return ResultAsync.fromSafePromise<void, BundleError>(
+            Promise.resolve(),
+          );
+        });
+      })
       .map(
         (): BundleWriteResult => ({
           bundle,
           bundleDir,
+          runId,
           filesWritten,
+          indexFilesWritten: [],
         }),
       );
 

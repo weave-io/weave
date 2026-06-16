@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weave/core, @weave/engine, @weave/config, @weave/cli, @weave/docs, @weave/adapter-opencode
 
-> 0 routes | 0 models | 0 components | 109 lib files | 7 env vars | 5 middleware | 0% test coverage
-> **Token savings:** this file is ~9,400 tokens. Without it, AI exploration would cost ~39,700 tokens. **Saves ~30,300 tokens per conversation.**
-> **Last scanned:** 2026-06-12 06:34 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 113 lib files | 7 env vars | 5 middleware | 0% test coverage
+> **Token savings:** this file is ~10,000 tokens. Without it, AI exploration would cost ~40,700 tokens. **Saves ~30,700 tokens per conversation.**
+> **Last scanned:** 2026-06-16 20:43 — re-run after significant changes
 
 ---
 
@@ -118,13 +118,13 @@
   - type ParseFailureError
   - _...5 more_
 - `packages/cli/src/evals/artifact-bundle.ts`
+  - function computeRunIdPrefix: (gitSha, assembledAt) => string
+  - function computeRunId: (prefix, sequence) => string
   - function computeBundleDirName: (gitSha, assembledAt) => string
+  - function resolveNextSequence: (runsDir, prefix) => Promise<number>
   - function assembleScoreFile: (runnerResult, gitSha, assembledAt, dryRun) => BundleScoreFile
   - function aggregateScoreFile: (suiteName, results, gitSha, assembledAt, dryRun) => BundleScoreFile
-  - function assemblePromptHashRecords: (records) => BundlePromptHashRecord[]
-  - function assembleBundle: (options) => Result<EvalBundle, BundleError>
-  - function assertBundlePublishEligible: (bundle) => Result<undefined, BundleError>
-  - _...6 more_
+  - _...10 more_
 - `packages/cli/src/evals/case-loader.ts`
   - function loadCaseFile: (filePath) => ResultAsync<EvalCase, FixtureSchemaError>
   - function loadRubricFile: (filePath) => ResultAsync<EvalRubric, FixtureSchemaError>
@@ -133,6 +133,14 @@
   - function validateCaseFilter: (caseId, cases) => FixtureSchemaError | EvalCase
   - const EVALS_ROOT
   - _...1 more_
+- `packages/cli/src/evals/dashboard-indexes.ts`
+  - function buildLatestSnapshot: (run, updatedAt) => LatestRunSnapshot
+  - function buildLastNRuns: (runs, maxRuns, updatedAt) => LastNRunsIndex
+  - function generateDashboardIndexes: (runs, updatedAt, lastN) => Result<GeneratedIndexes, DashboardIndexError>
+  - function validateDashboardManifestCompatibility: (raw) => Result<DashboardManifest, DashboardIndexError>
+  - function validateSuiteHistoryCompatibility: (raw, suiteName) => Result<SuiteHistoryManifest, DashboardIndexError>
+  - function validateLatestSnapshotCompatibility: (raw) => Result<LatestRunSnapshot, DashboardIndexError>
+  - _...16 more_
 - `packages/cli/src/evals/env.ts`
   - function readEvalEnv: (env, string | undefined>, {...}) => Result<EvalEnv, EvalEnvError>
   - interface EvalEnv
@@ -141,12 +149,13 @@
   - const OPENROUTER_API_KEY_ENV_VAR
   - const OPENROUTER_BASE_URL_ENV_VAR
 - `packages/cli/src/evals/github-contents-publisher.ts`
+  - function isIndexArtifactAllowed: (fileName) => boolean
   - class GitHubContentsPublisher
   - type FetchImpl
   - type FileReader
   - const TARGET_REPO
   - const TARGET_BRANCH
-  - const TARGET_RUNS_PREFIX
+  - _...8 more_
 - `packages/cli/src/evals/input-validation.ts`
   - function parseEvalRunRequest: (inputs) => Result<EvalRunRequest, EvalInputValidationError>
   - type EvalRunRequest
@@ -156,12 +165,13 @@
   - const KNOWN_EVAL_AGENTS_SORTED: readonly string[]
 - `packages/cli/src/evals/langchain-agent-evals.ts`
   - function buildRationaleProjection: (run) => string
+  - function buildCaseExplanation: (scoreBucket, _passed, required, outcomeKind, applicableDimensions, dryRun) => string
+  - function buildPublicExplanation: (scoreRecord, "weightedTotal" | "passed" | "required" | "dimensions"
+  >, evalCase, "expected_outcome">, dryRun) => CaseResultSummary["publicExplanation"]
+  - function buildSuiteExplanation: (passedCases, totalCases, suiteGreen, dryRun) => string
+  - function buildModelExplanation: (overallBucket, passedCases, totalCases, dryRun) => string
   - class RealLangChainJudge
-  - class LangChainAgentEvalsScorer
-  - class StubLangChainJudge
-  - class StubAgentEvalsScorer
-  - interface JudgeInput
-  - _...5 more_
+  - _...10 more_
 - `packages/cli/src/evals/loom-routing-runner.ts`
   - function extractRoutedAgents: (content) => string[]
   - function redactSecrets: (raw) => string
@@ -208,6 +218,28 @@
   - class RawArtifactsWriter
   - class MemoryFileWriter
   - _...3 more_
+- `packages/cli/src/evals/report-bundle.ts`
+  - function assembleCaseEntry: (row, suite) => PublicCaseEntry
+  - function assembleSuiteSummary: (scoreFile, gitSha, assembledAt) => Result<SuiteSummaryEntry, ReportAssemblyError>
+  - function assemblePublicReportBundle: (bundle, _runId) => Result<PublicReportBundle, ReportAssemblyError>
+  - function assembleDashboardManifest: (existingEntries, newEntry, updatedAt) => Result<DashboardManifest, ReportAssemblyError>
+  - function buildDashboardEntry: (bundle, runId, bundleReportPath) => DashboardEntry
+  - function assembleModelComparisonManifest: (bundle, runId) => Result<ModelComparisonManifest, ReportAssemblyError>
+  - _...2 more_
+- `packages/cli/src/evals/report-markdown.ts`
+  - function isMarkdownSafe: (text) => boolean
+  - function sanitizeMdValue: (text) => string
+  - function renderCaseRow: (entry) => string
+  - function renderSuiteSummary: (summary) => string
+  - function renderPublicReportBundle: (bundle) => string
+- `packages/cli/src/evals/report-schema.ts`
+  - function computeScoreBucket: (weightedTotal, dryRun) => ScoreBucket
+  - type ExplanationSource
+  - type ScoreBucket
+  - type BoundedExplanation
+  - type PublicCaseEntry
+  - type SuiteSummaryEntry
+  - _...26 more_
 - `packages/cli/src/evals/results-repo.ts`
   - function validatePublishToken: (env, string | undefined>) => ResultAsync<string, ResultsRepoError>
   - function validateRepoConfig: (config) => ResultAsync<undefined, ResultsRepoError>
@@ -231,7 +263,7 @@
   - function sanitizeProvenanceManifest: (manifest) => void
   - function dropUnknownFields: (input, allowedKeys) => Partial<T>
   - function assertPublishSafe: (obj, unknown>, context) => Result<undefined, SanitizerError>
-  - _...7 more_
+  - _...11 more_
 - `packages/cli/src/evals/tapestry-execution-runner.ts`
   - function extractDelegationChain: (content) => string[]
   - function detectCompletionSignal: (content) => boolean
@@ -527,9 +559,10 @@
 
 ## Most Imported Files (change these carefully)
 
-- `packages/cli/src/evals/types.ts` — imported by **20** files
+- `packages/cli/src/evals/types.ts` — imported by **22** files
 - `packages/cli/src/theme/colors.ts` — imported by **19** files
 - `packages/cli/src/io/terminal.ts` — imported by **17** files
+- `packages/cli/src/evals/report-schema.ts` — imported by **17** files
 - `packages/engine/src/runtime/types.ts` — imported by **16** files
 - `packages/cli/src/args.ts` — imported by **13** files
 - `packages/engine/src/runtime/store.ts` — imported by **13** files
@@ -543,30 +576,29 @@
 - `packages/cli/src/errors.ts` — imported by **9** files
 - `packages/adapters/opencode/src/adapter.ts` — imported by **8** files
 - `packages/core/src/tokens.ts` — imported by **8** files
+- `packages/cli/src/evals/artifact-bundle.ts` — imported by **7** files
 - `packages/cli/src/evals/openrouter-client.ts` — imported by **7** files
 - `packages/engine/src/execution-lifecycle.ts` — imported by **7** files
-- `packages/cli/src/prompt/index.ts` — imported by **6** files
-- `packages/cli/src/evals/langchain-agent-evals.ts` — imported by **6** files
 
 ## Import Map (who imports what)
 
-- `packages/cli/src/evals/types.ts` ← `packages/cli/src/commands/eval.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/github-contents-publisher.test.ts`, `packages/cli/src/evals/__tests__/loom-routing-runner.test.ts`, `packages/cli/src/evals/__tests__/loom-routing-runner.test.ts` +15 more
+- `packages/cli/src/evals/types.ts` ← `packages/cli/src/commands/eval.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/github-contents-publisher.test.ts`, `packages/cli/src/evals/__tests__/loom-routing-runner.test.ts`, `packages/cli/src/evals/__tests__/loom-routing-runner.test.ts` +17 more
 - `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts` +14 more
 - `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts` +12 more
+- `packages/cli/src/evals/report-schema.ts` ← `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts` +12 more
 - `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts` +11 more
 - `packages/cli/src/args.ts` ← `packages/cli/src/__tests__/args.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/prompt.test.ts` +8 more
 - `packages/engine/src/runtime/store.ts` ← `packages/engine/src/__tests__/runtime-journal.test.ts`, `packages/engine/src/execution-lifecycle/artifacts.ts`, `packages/engine/src/execution-lifecycle/dispatch.ts`, `packages/engine/src/execution-lifecycle/inspection.ts`, `packages/engine/src/execution-lifecycle/interrupts.ts` +8 more
 - `packages/cli/src/fs/file-system.ts` ← `packages/cli/src/__tests__/file-system.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`, `packages/cli/src/commands/__tests__/migrate.test.ts`, `packages/cli/src/commands/__tests__/validate.test.ts` +7 more
 - `packages/engine/src/logger.ts` ← `packages/engine/src/compose.ts`, `packages/engine/src/index.ts`, `packages/engine/src/runtime/journal-writer.ts`, `packages/engine/src/runtime/sqlite/store.ts`, `packages/engine/src/runtime-command-operations/control.ts` +7 more
 - `packages/engine/src/runtime/errors.ts` ← `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-journal.test.ts`, `packages/engine/src/__tests__/runtime-journal.test.ts`, `packages/engine/src/execution-lifecycle/lease.ts`, `packages/engine/src/runtime/fingerprint.ts` +6 more
-- `packages/engine/src/execution-lifecycle/metadata.ts` ← `packages/engine/src/execution-lifecycle/before-tool.ts`, `packages/engine/src/execution-lifecycle/completion.ts`, `packages/engine/src/execution-lifecycle/dispatch.ts`, `packages/engine/src/execution-lifecycle/index.ts`, `packages/engine/src/execution-lifecycle/inspection.ts` +6 more
 
 ---
 
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 94 test files found
+> 99 test files found
 
 ---
 

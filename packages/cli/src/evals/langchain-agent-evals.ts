@@ -60,7 +60,13 @@
 
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { err, ok, ResultAsync } from "neverthrow";
+import {
+  computeScoreBucket,
+  EXPLANATION_MAX_CHARS,
+  type ScoreBucket,
+} from "./report-schema.js";
 import type {
+  CaseResultSummary,
   DimensionScore,
   EvalCase,
   EvalRubric,
@@ -830,6 +836,273 @@ function notApplicableDimension(reason: string): DimensionScore {
     rationale: `Not applicable: ${reason}`,
     applicable: false,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Public explanation generation — deterministic, structured, bounded
+// ---------------------------------------------------------------------------
+
+/**
+ * The closed set of outcome kind literals accepted by `buildCaseExplanation`.
+ *
+ * This is the discriminant set from `ExpectedOutcomeSchema`. Using an explicit
+ * union type prevents arbitrary strings from flowing into explanation text —
+ * callers that hold `EvalCase.expected_outcome.kind` (a discriminated union
+ * literal) satisfy this type; callers that hold a raw `string` must first
+ * narrow or map to this union.
+ */
+export type OutcomeKind =
+  | "agent_routing"
+  | "delegation_chain"
+  | "task_completion"
+  | "tool_call";
+
+/**
+ * Map an `OutcomeKind` to its short, human-readable label used in
+ * public explanation text.
+ *
+ * This is a pure, closed mapping — every `OutcomeKind` member maps to
+ * a hardcoded safe string. No arbitrary text can enter through this function.
+ */
+function outcomeKindLabel(kind: OutcomeKind): string {
+  if (kind === "agent_routing") return "routing";
+  if (kind === "delegation_chain") return "delegation";
+  if (kind === "task_completion") return "execution";
+  // "tool_call" — map to a safe fixed label, never reflect the identifier directly
+  return "tool-call";
+}
+
+/**
+ * Build the public explanation text for a case result summary.
+ *
+ * # Security contract
+ *
+ * This function MUST derive the explanation exclusively from the
+ * following pre-enumerated, allowlisted structured inputs:
+ *   - `scoreBucket`: a `ScoreBucket` enum value ("pass"/"partial"/"fail"/"skip")
+ *   - `passed`: boolean
+ *   - `required`: boolean
+ *   - `outcomeKind`: a closed `OutcomeKind` literal (discriminated union, not `string`)
+ *   - `applicableDimensions`: list of dimension names (identifiers, no content)
+ *
+ * It MUST NOT accept or include:
+ *   - Raw model output (`ModelRunOutput.rawContent`)
+ *   - Transcript content (`ModelRunOutput.transcript`)
+ *   - Rationale strings (`DimensionScore.rationale`)
+ *   - Prompt text or any string sourced from prompt buffers
+ *   - LLM-generated or freeform summary text
+ *   - Chain-of-thought or scratchpad content
+ *   - Arbitrary unknown outcome kind strings reflected verbatim into text
+ *
+ * The resulting text is deterministic: the same structured inputs always
+ * produce the same explanation string.
+ *
+ * @param scoreBucket - The `ScoreBucket` computed from `weightedTotal`.
+ * @param passed - Whether the case passed.
+ * @param required - Whether this case was required in the rubric.
+ * @param outcomeKind - The case outcome kind (closed `OutcomeKind` union literal).
+ * @param applicableDimensions - Names of applicable scoring dimensions.
+ * @param dryRun - Whether this was a dry-run result.
+ * @returns The bounded public explanation text (never exceeds `EXPLANATION_MAX_CHARS`).
+ */
+export function buildCaseExplanation(
+  scoreBucket: ScoreBucket,
+  _passed: boolean,
+  required: boolean,
+  outcomeKind: OutcomeKind,
+  applicableDimensions: string[],
+  dryRun: boolean,
+): string {
+  // Dry-run cases always get the skip explanation
+  if (dryRun || scoreBucket === "skip") {
+    return "dry-run; no model was called";
+  }
+
+  // Build a deterministic, template-driven explanation from structured signals only.
+  let bucketLabel = "failed";
+  if (scoreBucket === "pass") {
+    bucketLabel = "passed";
+  }
+  if (scoreBucket === "partial") {
+    bucketLabel = "partially passed";
+  }
+
+  // Outcome kind label — maps the closed OutcomeKind union to safe readable labels.
+  // NO arbitrary string is reflected; every label is hardcoded in outcomeKindLabel().
+  const outcomeLabel = outcomeKindLabel(outcomeKind);
+
+  // Required-gate label
+  const requiredLabel = required ? "required" : "optional";
+
+  // Applicable dimensions label (identifiers only, bounded count)
+  const dimLabel =
+    applicableDimensions.length > 0
+      ? applicableDimensions.slice(0, 3).join(", ")
+      : "none";
+
+  const text = `${requiredLabel} ${outcomeLabel} case ${bucketLabel}; dimensions: ${dimLabel}`;
+
+  // Truncate to the declared maximum (should never exceed it with structured inputs,
+  // but enforced as a hard cap for defense-in-depth)
+  if (text.length > EXPLANATION_MAX_CHARS) {
+    return `${text.slice(0, EXPLANATION_MAX_CHARS - 1)}…`;
+  }
+
+  return text;
+}
+
+/**
+ * Build the `publicExplanation` field for a `CaseResultSummary`.
+ *
+ * Derives the explanation from pre-enumerated structured signals only:
+ * the score bucket, pass/fail boolean, required flag, outcome kind, and
+ * applicable dimension names. No raw model content is used.
+ *
+ * The `source` is always `"structured_signal"` when applicable dimensions
+ * are present, or `"score_bucket_label"` when only the bucket drives the label.
+ *
+ * @param scoreRecord - The normalized score record from the scorer.
+ * @param evalCase - The eval case fixture (outcome kind from its schema).
+ * @param dryRun - Whether this was a dry-run result.
+ * @returns The `publicExplanation` object for `CaseResultSummary`.
+ */
+export function buildPublicExplanation(
+  scoreRecord: Pick<
+    NormalizedScoreRecord,
+    "weightedTotal" | "passed" | "required" | "dimensions"
+  >,
+  evalCase: Pick<EvalCase, "expected_outcome">,
+  dryRun: boolean,
+): CaseResultSummary["publicExplanation"] {
+  const scoreBucket = computeScoreBucket(scoreRecord.weightedTotal, dryRun);
+
+  // Collect applicable dimension names (identifiers only — no rationale text)
+  const applicableDimensions = (
+    Object.entries(scoreRecord.dimensions) as Array<
+      [ScoringDimension, DimensionScore]
+    >
+  )
+    .filter(([, dim]) => dim.applicable)
+    .map(([name]) => name);
+
+  const outcomeKind = evalCase.expected_outcome.kind;
+
+  const text = buildCaseExplanation(
+    scoreBucket,
+    scoreRecord.passed,
+    scoreRecord.required,
+    outcomeKind,
+    applicableDimensions,
+    dryRun,
+  );
+
+  // When applicable dimensions are present or the case is required, use
+  // "structured_signal" since multiple structured inputs combine. Otherwise
+  // the bucket label alone drives the explanation.
+  const source: NonNullable<CaseResultSummary["publicExplanation"]>["source"] =
+    applicableDimensions.length > 0 || scoreRecord.required
+      ? "structured_signal"
+      : "score_bucket_label";
+
+  return { text, source };
+}
+
+/**
+ * Build a short bounded explanation for a suite summary.
+ *
+ * # Security contract
+ *
+ * Derived exclusively from pre-enumerated structured inputs:
+ *   - `passedCases`: integer count
+ *   - `totalCases`: integer count
+ *   - `suiteGreen`: boolean
+ *   - `dryRun`: boolean
+ *
+ * Never uses raw model output, rationale strings, transcript content,
+ * chain-of-thought text, prompt text, or LLM-generated summaries.
+ *
+ * @param passedCases - Number of cases that passed.
+ * @param totalCases - Total number of cases in the suite.
+ * @param suiteGreen - Whether all required cases passed.
+ * @param dryRun - Whether this was a dry-run.
+ * @returns A bounded explanation string (never exceeds `EXPLANATION_MAX_CHARS`).
+ */
+export function buildSuiteExplanation(
+  passedCases: number,
+  totalCases: number,
+  suiteGreen: boolean,
+  dryRun: boolean,
+): string {
+  if (dryRun) {
+    return `dry-run suite; ${totalCases} case(s) in workload`;
+  }
+
+  const greenLabel = suiteGreen ? "green" : "not green";
+  const failedCases = totalCases - passedCases;
+
+  const text =
+    failedCases === 0
+      ? `suite ${greenLabel}; all ${totalCases} case(s) passed`
+      : `suite ${greenLabel}; ${passedCases}/${totalCases} passed, ${failedCases} failed`;
+
+  // Hard cap for defense-in-depth
+  if (text.length > EXPLANATION_MAX_CHARS) {
+    return `${text.slice(0, EXPLANATION_MAX_CHARS - 1)}…`;
+  }
+
+  return text;
+}
+
+/**
+ * Build a short bounded explanation for a model comparison entry.
+ *
+ * # Security contract
+ *
+ * Derived exclusively from pre-enumerated structured inputs:
+ *   - `overallBucket`: `ScoreBucket` enum value
+ *   - `passedCases`: integer count
+ *   - `totalCases`: integer count
+ *   - `dryRun`: boolean
+ *
+ * Never uses raw model output, rationale strings, transcript content,
+ * chain-of-thought text, prompt text, or LLM-generated summaries.
+ *
+ * @param overallBucket - The overall score bucket for this model.
+ * @param passedCases - Number of cases that passed for this model.
+ * @param totalCases - Total cases run for this model.
+ * @param dryRun - Whether this was a dry-run.
+ * @returns A bounded explanation string (never exceeds `EXPLANATION_MAX_CHARS`).
+ */
+export function buildModelExplanation(
+  overallBucket: ScoreBucket,
+  passedCases: number,
+  totalCases: number,
+  dryRun: boolean,
+): string {
+  if (dryRun || overallBucket === "skip") {
+    return `dry-run model; ${totalCases} case(s) in workload`;
+  }
+
+  let bucketLabel = "fail";
+  if (overallBucket === "pass") {
+    bucketLabel = "pass";
+  }
+  if (overallBucket === "partial") {
+    bucketLabel = "partial";
+  }
+
+  const failedCases = totalCases - passedCases;
+  const text =
+    totalCases === 0
+      ? `model bucket: ${bucketLabel}; no cases run`
+      : `model bucket: ${bucketLabel}; ${passedCases}/${totalCases} passed, ${failedCases} failed`;
+
+  // Hard cap for defense-in-depth
+  if (text.length > EXPLANATION_MAX_CHARS) {
+    return `${text.slice(0, EXPLANATION_MAX_CHARS - 1)}…`;
+  }
+
+  return text;
 }
 
 // ---------------------------------------------------------------------------

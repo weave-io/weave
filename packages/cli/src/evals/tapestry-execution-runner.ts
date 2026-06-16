@@ -70,7 +70,10 @@ import {
   loadSuiteRubrics,
   validateCaseFilter,
 } from "./case-loader.js";
-import type { AgentEvalsScorer } from "./langchain-agent-evals.js";
+import {
+  type AgentEvalsScorer,
+  buildPublicExplanation,
+} from "./langchain-agent-evals.js";
 import type { ModelClient } from "./openrouter-client.js";
 import type {
   CaseResult,
@@ -834,6 +837,14 @@ export class TapestryExecutionRunner {
             scoreRecord.dimensions,
           );
 
+          // Build public explanation before sanitization — derived from
+          // structured inputs only (no raw model output or rationale text)
+          const publicExplanation = buildPublicExplanation(
+            scoreRecord,
+            evalCase,
+            false,
+          );
+
           const summary: CaseResultSummary = {
             caseId: evalCase.id,
             modelId,
@@ -844,6 +855,7 @@ export class TapestryExecutionRunner {
             dimensionScores,
             scoredAt: scoreRecord.scoredAt,
             dryRun: false,
+            publicExplanation,
           };
 
           const rawArtifact: RawCaseResultArtifact | undefined = rawArtifacts

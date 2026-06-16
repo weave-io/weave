@@ -41,7 +41,10 @@
 
 import { describe, expect, it } from "bun:test";
 import { err, ok, ResultAsync } from "neverthrow";
-import { StubAgentEvalsScorer } from "../langchain-agent-evals.js";
+import {
+  buildPublicExplanation,
+  StubAgentEvalsScorer,
+} from "../langchain-agent-evals.js";
 import {
   extractRoutedAgents,
   LOOM_ROUTING_SUITE,
@@ -394,6 +397,12 @@ function executeCaseWithStubs(
           dimensionScores,
           scoredAt: scoreRecord.scoredAt,
           dryRun: false,
+          // Build public explanation from structured inputs only (mirrors production path)
+          publicExplanation: buildPublicExplanation(
+            scoreRecord,
+            evalCase,
+            false,
+          ),
         };
 
         const rawArtifact: RawCaseResultArtifact | undefined = rawArtifacts
@@ -2194,6 +2203,315 @@ describe("LoomRoutingRunner — provider failure prevents model calls", () => {
     const result = await runner.run({ rawArtifacts: true });
     expect(result.isErr()).toBe(true);
     expect(result._unsafeUnwrapErr().type).toBe("PromptProviderFailed");
+    expect(modelClient.calls).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// LoomRoutingRunner — publicExplanation generation
+// ---------------------------------------------------------------------------
+
+describe("LoomRoutingRunner — publicExplanation field in CaseResultSummary", () => {
+  it("CaseResultSummary.publicExplanation is present for a successful scored result", async () => {
+    const modelClient = new StubModelClient();
+    modelClient.enqueueResponse({
+      content: "I will delegate to the shuttle agent.",
+      model: "anthropic/claude-sonnet-4.5",
+    });
+
+    const scorer = new StubAgentEvalsScorer();
+    scorer.setDefaultRecord(
+      makeNormalizedScoreRecord({ passed: true, weightedTotal: 1.0 }),
+    );
+
+    const evalCase = makeAgentRoutingCase();
+    const rubric = makeEvalRubric();
+    const runner = new InMemoryLoomRunner(
+      { modelClient, scorer },
+      [evalCase],
+      [rubric],
+    );
+
+    const result = await runner.run();
+    expect(result.isOk()).toBe(true);
+    const runnerResult = result._unsafeUnwrap();
+    expect(runnerResult.caseResults).toHaveLength(1);
+
+    const caseResult = runnerResult.caseResults[0];
+    expect(caseResult).toBeDefined();
+    const { publicExplanation } = caseResult!.summary;
+    expect(publicExplanation).toBeDefined();
+    expect(typeof publicExplanation?.text).toBe("string");
+    expect((publicExplanation?.text ?? "").length).toBeGreaterThan(0);
+  });
+
+  it("publicExplanation.text is bounded to EXPLANATION_MAX_CHARS", async () => {
+    const { EXPLANATION_MAX_CHARS } = await import("../report-schema.js");
+
+    const modelClient = new StubModelClient();
+    modelClient.setDefaultResponse({
+      content: "Delegate to shuttle.",
+      model: "anthropic/claude-sonnet-4.5",
+    });
+
+    const scorer = new StubAgentEvalsScorer();
+    scorer.setDefaultRecord(
+      makeNormalizedScoreRecord({ passed: true, weightedTotal: 1.0 }),
+    );
+
+    const evalCase = makeAgentRoutingCase();
+    const rubric = makeEvalRubric();
+    const runner = new InMemoryLoomRunner(
+      { modelClient, scorer },
+      [evalCase],
+      [rubric],
+    );
+
+    const result = await runner.run();
+    const caseResult = result._unsafeUnwrap().caseResults[0];
+    const { publicExplanation } = caseResult!.summary;
+    expect((publicExplanation?.text ?? "").length).toBeLessThanOrEqual(
+      EXPLANATION_MAX_CHARS,
+    );
+  });
+
+  it("publicExplanation.text contains no forbidden explanation patterns", async () => {
+    const { FORBIDDEN_EXPLANATION_PATTERNS } = await import(
+      "../report-schema.js"
+    );
+
+    const modelClient = new StubModelClient();
+    modelClient.setDefaultResponse({
+      content: "Route to shuttle.",
+      model: "anthropic/claude-sonnet-4.5",
+    });
+
+    const scorer = new StubAgentEvalsScorer();
+    scorer.setDefaultRecord(
+      makeNormalizedScoreRecord({ passed: false, weightedTotal: 0.0 }),
+    );
+
+    const evalCase = makeAgentRoutingCase();
+    const rubric = makeEvalRubric();
+    const runner = new InMemoryLoomRunner(
+      { modelClient, scorer },
+      [evalCase],
+      [rubric],
+    );
+
+    const result = await runner.run();
+    const caseResult = result._unsafeUnwrap().caseResults[0];
+    const { publicExplanation } = caseResult!.summary;
+    const text = publicExplanation?.text ?? "";
+    for (const { name, pattern } of FORBIDDEN_EXPLANATION_PATTERNS) {
+      expect(pattern.test(text)).toBe(false);
+    }
+  });
+
+  it("publicExplanation.source is a valid enum value", async () => {
+    const modelClient = new StubModelClient();
+    modelClient.setDefaultResponse({
+      content: "Route to shuttle.",
+      model: "anthropic/claude-sonnet-4.5",
+    });
+
+    const scorer = new StubAgentEvalsScorer();
+    scorer.setDefaultRecord(
+      makeNormalizedScoreRecord({ passed: true, weightedTotal: 0.95 }),
+    );
+
+    const evalCase = makeAgentRoutingCase();
+    const runner = new InMemoryLoomRunner(
+      { modelClient, scorer },
+      [evalCase],
+      [makeEvalRubric()],
+    );
+
+    const result = await runner.run();
+    const caseResult = result._unsafeUnwrap().caseResults[0];
+    const { publicExplanation } = caseResult!.summary;
+    const validSources = [
+      "score_bucket_label",
+      "structured_signal",
+      "rubric_template",
+    ];
+    expect(validSources.includes(publicExplanation?.source ?? "")).toBe(true);
+  });
+
+  it("publicExplanation is reproducible — same inputs produce the same text", async () => {
+    const makeRunner = () => {
+      const modelClient = new StubModelClient();
+      modelClient.setDefaultResponse({
+        content: "Delegate to shuttle.",
+        model: "anthropic/claude-sonnet-4.5",
+      });
+      const scorer = new StubAgentEvalsScorer();
+      scorer.setDefaultRecord(
+        makeNormalizedScoreRecord({
+          passed: true,
+          weightedTotal: 1.0,
+          required: true,
+        }),
+      );
+      return new InMemoryLoomRunner(
+        { modelClient, scorer },
+        [makeAgentRoutingCase()],
+        [makeEvalRubric()],
+      );
+    };
+
+    const r1 = await makeRunner().run();
+    const r2 = await makeRunner().run();
+    const e1 = r1._unsafeUnwrap().caseResults[0]?.summary.publicExplanation;
+    const e2 = r2._unsafeUnwrap().caseResults[0]?.summary.publicExplanation;
+    expect(e1?.text).toBe(e2?.text);
+    expect(e1?.source).toBe(e2?.source);
+  });
+
+  it("publicExplanation does NOT contain raw rationale text from the scorer", async () => {
+    const adversarialRationale =
+      "rationale: score: 1.0 justification: The model perfectly routed to shuttle. Excellent delegation.";
+
+    const modelClient = new StubModelClient();
+    modelClient.setDefaultResponse({
+      content: "Delegate to shuttle.",
+      model: "anthropic/claude-sonnet-4.5",
+    });
+
+    const scorer = new StubAgentEvalsScorer();
+    // The score record has adversarial rationale text
+    const scoreRecord = makeNormalizedScoreRecord({
+      passed: true,
+      weightedTotal: 1.0,
+      dimensions: {
+        routingCorrectness: {
+          score: 1.0,
+          rationale: adversarialRationale,
+          applicable: true,
+        },
+        delegationCorrectness: {
+          score: 1.0,
+          rationale: adversarialRationale,
+          applicable: false,
+        },
+        executionCompleteness: {
+          score: 1.0,
+          rationale: adversarialRationale,
+          applicable: false,
+        },
+        rationaleQuality: {
+          score: 0.9,
+          rationale: adversarialRationale,
+          applicable: true,
+        },
+      },
+    });
+    scorer.setDefaultRecord(scoreRecord);
+
+    const evalCase = makeAgentRoutingCase();
+    const runner = new InMemoryLoomRunner(
+      { modelClient, scorer },
+      [evalCase],
+      [makeEvalRubric()],
+    );
+
+    const result = await runner.run();
+    const caseResult = result._unsafeUnwrap().caseResults[0];
+    const { publicExplanation } = caseResult!.summary;
+    const text = publicExplanation?.text ?? "";
+
+    // The adversarial rationale text must NOT appear in the public explanation
+    expect(text).not.toContain(adversarialRationale);
+    expect(text).not.toContain("score: 1.0");
+    expect(text).not.toContain("justification:");
+    expect(text).not.toContain("rationale:");
+    expect(text).not.toContain("The model perfectly routed");
+  });
+
+  it("publicExplanation does NOT contain raw model response content (transcript leakage guard)", async () => {
+    const leakageSentinel = "LEAKAGE_SENTINEL_SECRET_XYZ_12345";
+
+    const modelClient = new StubModelClient();
+    modelClient.setDefaultResponse({
+      content: `I will route to shuttle. ${leakageSentinel}`,
+      model: "anthropic/claude-sonnet-4.5",
+    });
+
+    const scorer = new StubAgentEvalsScorer();
+    scorer.setDefaultRecord(
+      makeNormalizedScoreRecord({ passed: true, weightedTotal: 1.0 }),
+    );
+
+    const evalCase = makeAgentRoutingCase();
+    const runner = new InMemoryLoomRunner(
+      { modelClient, scorer },
+      [evalCase],
+      [makeEvalRubric()],
+    );
+
+    const result = await runner.run();
+    const caseResult = result._unsafeUnwrap().caseResults[0];
+    const { publicExplanation } = caseResult!.summary;
+    const text = publicExplanation?.text ?? "";
+
+    // The raw model response sentinel must NOT appear in the public explanation
+    expect(text).not.toContain(leakageSentinel);
+    expect(text).not.toContain("LEAKAGE_SENTINEL");
+  });
+
+  it("publicExplanation does NOT contain prompt text (prompt leakage guard)", async () => {
+    const promptSentinel = "SYSTEM_PROMPT_SECRET_CONTENT_ABC123";
+    const mockProvider = {
+      getPrompt: (_: string) =>
+        ResultAsync.fromSafePromise(
+          Promise.resolve(`You are Loom. ${promptSentinel}`),
+        ),
+    };
+
+    const modelClient = new StubModelClient();
+    modelClient.setDefaultResponse({
+      content: "Route to shuttle.",
+      model: "anthropic/claude-sonnet-4.5",
+    });
+
+    const scorer = new StubAgentEvalsScorer();
+    scorer.setDefaultRecord(
+      makeNormalizedScoreRecord({ passed: true, weightedTotal: 0.9 }),
+    );
+
+    const evalCase = makeAgentRoutingCase();
+    const runner = new InMemoryLoomRunner(
+      { modelClient, scorer, promptProvider: mockProvider },
+      [evalCase],
+      [makeEvalRubric()],
+    );
+
+    const result = await runner.run();
+    const caseResult = result._unsafeUnwrap().caseResults[0];
+    const { publicExplanation } = caseResult!.summary;
+    const text = publicExplanation?.text ?? "";
+
+    // The prompt sentinel must NOT appear in the public explanation
+    expect(text).not.toContain(promptSentinel);
+    expect(text).not.toContain("SYSTEM_PROMPT_SECRET");
+  });
+
+  it("dry-run results have summary.dryRun=true and no model calls are made", async () => {
+    const modelClient = new StubModelClient();
+    const scorer = new StubAgentEvalsScorer();
+    const evalCase = makeAgentRoutingCase();
+
+    const runner = new InMemoryLoomRunner(
+      { modelClient, scorer },
+      [evalCase],
+      [],
+    );
+
+    const result = await runner.run({ dryRun: true });
+    expect(result.isOk()).toBe(true);
+    const caseResult = result._unsafeUnwrap().caseResults[0];
+    expect(caseResult?.summary.dryRun).toBe(true);
+    // modelClient must not have been called for dry-runs
     expect(modelClient.calls).toHaveLength(0);
   });
 });
