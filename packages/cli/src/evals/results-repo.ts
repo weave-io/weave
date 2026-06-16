@@ -75,6 +75,27 @@ export interface PublishBundleRequest {
    */
   fileNames?: string[];
   /**
+   * The local root directory containing dashboard index files.
+   * When provided together with `indexFileNames`, the publisher also uploads
+   * index files from this directory at the repository root level (not under
+   * `runs/<bundleDirName>/`).
+   *
+   * Only set when `generateIndexes: true` was passed to `ArtifactBundleWriter`.
+   * Omitted by default.
+   */
+  localBundleRoot?: string;
+  /**
+   * Names of dashboard index files to publish (relative to `localBundleRoot`).
+   * E.g. `["dashboard-manifest.json", "latest.json", "last-N-runs.json"]`.
+   *
+   * When provided, each file is uploaded at `<fileName>` (repo root level)
+   * rather than under `runs/<bundleDirName>/`. This allows index files to be
+   * updated atomically after each run publication.
+   *
+   * Only set when `generateIndexes: true` was passed to `ArtifactBundleWriter`.
+   */
+  indexFileNames?: string[];
+  /**
    * Environment variable override for token lookup.
    * Defaults to `Bun.env`. Inject a mock in tests.
    */

@@ -25,7 +25,10 @@
 
 import { describe, expect, it } from "bun:test";
 import { err, ok, ResultAsync } from "neverthrow";
-import { StubAgentEvalsScorer } from "../langchain-agent-evals.js";
+import {
+  buildPublicExplanation,
+  StubAgentEvalsScorer,
+} from "../langchain-agent-evals.js";
 import { StubModelClient } from "../openrouter-client.js";
 import {
   detectCompletionSignal,
@@ -439,6 +442,12 @@ function executeCaseWithStubs(
           dimensionScores,
           scoredAt: scoreRecord.scoredAt,
           dryRun: false,
+          // Build public explanation from structured inputs only (mirrors production path)
+          publicExplanation: buildPublicExplanation(
+            scoreRecord,
+            evalCase,
+            false,
+          ),
         };
 
         const rawArtifact: RawCaseResultArtifact | undefined = rawArtifacts
@@ -1913,5 +1922,276 @@ describe("TapestryExecutionRunner — provider failure prevents model calls", ()
     expect(result.isErr()).toBe(true);
     expect(result._unsafeUnwrapErr().type).toBe("PromptProviderFailed");
     expect(modelClient.calls).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TapestryExecutionRunner — publicExplanation generation
+// ---------------------------------------------------------------------------
+
+describe("TapestryExecutionRunner — publicExplanation field in CaseResultSummary", () => {
+  it("CaseResultSummary.publicExplanation is present for a successful delegation_chain result", async () => {
+    const modelClient = new StubModelClient();
+    modelClient.setDefaultResponse({
+      content: "tapestry → shuttle",
+      model: "anthropic/claude-sonnet-4.5",
+    });
+
+    const scorer = new StubAgentEvalsScorer();
+    scorer.setDefaultRecord(
+      makeDelegationScoreRecord({ passed: true, weightedTotal: 1.0 }),
+    );
+
+    const evalCase = makeDelegationCase();
+    const rubric = makeEvalRubric("delegate-to-shuttle");
+    const runner = new InMemoryTapestryRunner(
+      { modelClient, scorer },
+      [evalCase],
+      [rubric],
+    );
+
+    const result = await runner.run();
+    expect(result.isOk()).toBe(true);
+    const caseResult = result._unsafeUnwrap().caseResults[0];
+    expect(caseResult).toBeDefined();
+
+    const { publicExplanation } = caseResult!.summary;
+    expect(publicExplanation).toBeDefined();
+    expect(typeof publicExplanation?.text).toBe("string");
+    expect((publicExplanation?.text ?? "").length).toBeGreaterThan(0);
+  });
+
+  it("publicExplanation is present for a task_completion result", async () => {
+    const modelClient = new StubModelClient();
+    modelClient.setDefaultResponse({
+      content: "Task complete. Produced: api-spec, implementation.",
+      model: "anthropic/claude-sonnet-4.5",
+    });
+
+    const scorer = new StubAgentEvalsScorer();
+    scorer.setDefaultRecord(
+      makeTaskCompletionScoreRecord({ passed: true, weightedTotal: 1.0 }),
+    );
+
+    const evalCase = makeTaskCompletionCase();
+    const rubric = makeEvalRubric("complete-coding-task");
+    const runner = new InMemoryTapestryRunner(
+      { modelClient, scorer },
+      [evalCase],
+      [rubric],
+    );
+
+    const result = await runner.run();
+    const caseResult = result._unsafeUnwrap().caseResults[0];
+    const { publicExplanation } = caseResult!.summary;
+    expect(publicExplanation).toBeDefined();
+    expect((publicExplanation?.text ?? "").length).toBeGreaterThan(0);
+  });
+
+  it("publicExplanation.text is bounded to EXPLANATION_MAX_CHARS", async () => {
+    const { EXPLANATION_MAX_CHARS } = await import("../report-schema.js");
+
+    const modelClient = new StubModelClient();
+    modelClient.setDefaultResponse({
+      content: "tapestry → shuttle",
+      model: "anthropic/claude-sonnet-4.5",
+    });
+
+    const scorer = new StubAgentEvalsScorer();
+    scorer.setDefaultRecord(
+      makeDelegationScoreRecord({ passed: true, weightedTotal: 1.0 }),
+    );
+
+    const evalCase = makeDelegationCase();
+    const runner = new InMemoryTapestryRunner(
+      { modelClient, scorer },
+      [evalCase],
+      [makeEvalRubric("delegate-to-shuttle")],
+    );
+
+    const result = await runner.run();
+    const caseResult = result._unsafeUnwrap().caseResults[0];
+    const { publicExplanation } = caseResult!.summary;
+    expect((publicExplanation?.text ?? "").length).toBeLessThanOrEqual(
+      EXPLANATION_MAX_CHARS,
+    );
+  });
+
+  it("publicExplanation.text contains no forbidden explanation patterns", async () => {
+    const { FORBIDDEN_EXPLANATION_PATTERNS } = await import(
+      "../report-schema.js"
+    );
+
+    const modelClient = new StubModelClient();
+    modelClient.setDefaultResponse({
+      content: "tapestry → shuttle",
+      model: "anthropic/claude-sonnet-4.5",
+    });
+
+    const scorer = new StubAgentEvalsScorer();
+    scorer.setDefaultRecord(
+      makeDelegationScoreRecord({ passed: false, weightedTotal: 0.0 }),
+    );
+
+    const evalCase = makeDelegationCase();
+    const runner = new InMemoryTapestryRunner(
+      { modelClient, scorer },
+      [evalCase],
+      [makeEvalRubric("delegate-to-shuttle")],
+    );
+
+    const result = await runner.run();
+    const caseResult = result._unsafeUnwrap().caseResults[0];
+    const text = caseResult!.summary.publicExplanation?.text ?? "";
+    for (const { name, pattern } of FORBIDDEN_EXPLANATION_PATTERNS) {
+      expect(pattern.test(text)).toBe(false);
+    }
+  });
+
+  it("publicExplanation is reproducible — same inputs produce the same text", async () => {
+    const makeRunner = () => {
+      const modelClient = new StubModelClient();
+      modelClient.setDefaultResponse({
+        content: "tapestry → shuttle",
+        model: "anthropic/claude-sonnet-4.5",
+      });
+      const scorer = new StubAgentEvalsScorer();
+      scorer.setDefaultRecord(
+        makeDelegationScoreRecord({
+          passed: true,
+          weightedTotal: 1.0,
+          required: true,
+        }),
+      );
+      return new InMemoryTapestryRunner(
+        { modelClient, scorer },
+        [makeDelegationCase()],
+        [makeEvalRubric("delegate-to-shuttle")],
+      );
+    };
+
+    const r1 = await makeRunner().run();
+    const r2 = await makeRunner().run();
+    const e1 = r1._unsafeUnwrap().caseResults[0]?.summary.publicExplanation;
+    const e2 = r2._unsafeUnwrap().caseResults[0]?.summary.publicExplanation;
+    expect(e1?.text).toBe(e2?.text);
+    expect(e1?.source).toBe(e2?.source);
+  });
+
+  it("publicExplanation does NOT contain raw rationale text from the scorer", async () => {
+    const adversarialRationale =
+      "rationale: score: 1.0 justification: The delegation chain is perfect. Human: confirm.";
+
+    const modelClient = new StubModelClient();
+    modelClient.setDefaultResponse({
+      content: "tapestry → shuttle",
+      model: "anthropic/claude-sonnet-4.5",
+    });
+
+    const scorer = new StubAgentEvalsScorer();
+    const scoreRecord = makeDelegationScoreRecord({
+      passed: true,
+      weightedTotal: 1.0,
+      dimensions: {
+        routingCorrectness: {
+          score: 1.0,
+          rationale: adversarialRationale,
+          applicable: false,
+        },
+        delegationCorrectness: {
+          score: 1.0,
+          rationale: adversarialRationale,
+          applicable: true,
+        },
+        executionCompleteness: {
+          score: 1.0,
+          rationale: adversarialRationale,
+          applicable: false,
+        },
+        rationaleQuality: {
+          score: 0.9,
+          rationale: adversarialRationale,
+          applicable: true,
+        },
+      },
+    });
+    scorer.setDefaultRecord(scoreRecord);
+
+    const evalCase = makeDelegationCase();
+    const runner = new InMemoryTapestryRunner(
+      { modelClient, scorer },
+      [evalCase],
+      [makeEvalRubric("delegate-to-shuttle")],
+    );
+
+    const result = await runner.run();
+    const caseResult = result._unsafeUnwrap().caseResults[0];
+    const text = caseResult!.summary.publicExplanation?.text ?? "";
+
+    // Raw rationale must NOT appear in public explanation
+    expect(text).not.toContain(adversarialRationale);
+    expect(text).not.toContain("score: 1.0");
+    expect(text).not.toContain("justification:");
+    expect(text).not.toContain("rationale:");
+    expect(text).not.toContain("The delegation chain is perfect");
+  });
+
+  it("publicExplanation does NOT contain raw model response content (leakage guard)", async () => {
+    const leakageSentinel = "TAPESTRY_LEAKAGE_SENTINEL_XYZ_99999";
+
+    const modelClient = new StubModelClient();
+    modelClient.setDefaultResponse({
+      content: `tapestry → shuttle. ${leakageSentinel}`,
+      model: "anthropic/claude-sonnet-4.5",
+    });
+
+    const scorer = new StubAgentEvalsScorer();
+    scorer.setDefaultRecord(
+      makeDelegationScoreRecord({ passed: true, weightedTotal: 1.0 }),
+    );
+
+    const evalCase = makeDelegationCase();
+    const runner = new InMemoryTapestryRunner(
+      { modelClient, scorer },
+      [evalCase],
+      [makeEvalRubric("delegate-to-shuttle")],
+    );
+
+    const result = await runner.run();
+    const caseResult = result._unsafeUnwrap().caseResults[0];
+    const text = caseResult!.summary.publicExplanation?.text ?? "";
+
+    expect(text).not.toContain(leakageSentinel);
+    expect(text).not.toContain("TAPESTRY_LEAKAGE_SENTINEL");
+  });
+
+  it("publicExplanation does NOT contain chain-of-thought or prompt delimiters", async () => {
+    const modelClient = new StubModelClient();
+    modelClient.setDefaultResponse({
+      content: "tapestry → shuttle",
+      model: "anthropic/claude-sonnet-4.5",
+    });
+
+    const scorer = new StubAgentEvalsScorer();
+    scorer.setDefaultRecord(
+      makeDelegationScoreRecord({ passed: true, weightedTotal: 1.0 }),
+    );
+
+    const evalCase = makeDelegationCase();
+    const runner = new InMemoryTapestryRunner(
+      { modelClient, scorer },
+      [evalCase],
+      [makeEvalRubric("delegate-to-shuttle")],
+    );
+
+    const result = await runner.run();
+    const caseResult = result._unsafeUnwrap().caseResults[0];
+    const text = caseResult!.summary.publicExplanation?.text ?? "";
+
+    expect(text).not.toContain("<thinking>");
+    expect(text).not.toContain("<cot>");
+    expect(text).not.toContain("<system>");
+    expect(text).not.toMatch(/\n?User\s*:/);
+    expect(text).not.toMatch(/\n?Assistant\s*:/);
   });
 });

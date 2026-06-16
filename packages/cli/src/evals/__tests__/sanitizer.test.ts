@@ -22,16 +22,21 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import { EXPLANATION_MAX_CHARS } from "../report-schema.js";
 import {
+  assertExplanationSafe,
   assertJsonPublishSafe,
   assertPublishSafe,
+  buildExplanation,
   dropUnknownFields,
+  FORBIDDEN_EXPLANATION_SOURCE_DESCRIPTORS,
   REDACTED,
   SENSITIVE_FIELD_NAMES,
   sanitizeCaseResultSummary,
   sanitizeProvenanceManifest,
   sanitizeProvenanceRecord,
   sanitizeScoreRecord,
+  truncateExplanation,
 } from "../sanitizer.js";
 import type {
   CaseResultSummary,
@@ -847,5 +852,450 @@ describe("SENSITIVE_FIELD_NAMES includes localDiagnostic", () => {
       "RawErrorSummary",
     );
     expect(result.isOk()).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// truncateExplanation
+// ---------------------------------------------------------------------------
+
+describe("truncateExplanation", () => {
+  it("returns the string unchanged when within limit", () => {
+    const text = "A".repeat(EXPLANATION_MAX_CHARS);
+    expect(truncateExplanation(text)).toBe(text);
+  });
+
+  it("returns the string unchanged for empty input", () => {
+    expect(truncateExplanation("")).toBe("");
+  });
+
+  it("truncates strings exceeding EXPLANATION_MAX_CHARS", () => {
+    const text = "A".repeat(EXPLANATION_MAX_CHARS + 50);
+    const result = truncateExplanation(text);
+    expect(result.length).toBe(EXPLANATION_MAX_CHARS);
+  });
+
+  it("appends ellipsis character when truncating", () => {
+    const text = "A".repeat(EXPLANATION_MAX_CHARS + 1);
+    const result = truncateExplanation(text);
+    expect(result.endsWith("…")).toBe(true);
+  });
+
+  it("produces a string of exactly EXPLANATION_MAX_CHARS when truncated", () => {
+    const text = "X".repeat(EXPLANATION_MAX_CHARS + 100);
+    const result = truncateExplanation(text);
+    expect(result.length).toBe(EXPLANATION_MAX_CHARS);
+  });
+
+  it("short strings are returned unchanged", () => {
+    const text = "Short explanation.";
+    expect(truncateExplanation(text)).toBe(text);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FORBIDDEN_EXPLANATION_SOURCE_DESCRIPTORS
+// ---------------------------------------------------------------------------
+
+describe("FORBIDDEN_EXPLANATION_SOURCE_DESCRIPTORS", () => {
+  it("contains raw_rationale", () => {
+    expect(FORBIDDEN_EXPLANATION_SOURCE_DESCRIPTORS.has("raw_rationale")).toBe(
+      true,
+    );
+  });
+
+  it("contains dimension_rationale", () => {
+    expect(
+      FORBIDDEN_EXPLANATION_SOURCE_DESCRIPTORS.has("dimension_rationale"),
+    ).toBe(true);
+  });
+
+  it("contains transcript_content", () => {
+    expect(
+      FORBIDDEN_EXPLANATION_SOURCE_DESCRIPTORS.has("transcript_content"),
+    ).toBe(true);
+  });
+
+  it("contains raw_content", () => {
+    expect(FORBIDDEN_EXPLANATION_SOURCE_DESCRIPTORS.has("raw_content")).toBe(
+      true,
+    );
+  });
+
+  it("contains composed_prompt", () => {
+    expect(
+      FORBIDDEN_EXPLANATION_SOURCE_DESCRIPTORS.has("composed_prompt"),
+    ).toBe(true);
+  });
+
+  it("contains raw_prompt", () => {
+    expect(FORBIDDEN_EXPLANATION_SOURCE_DESCRIPTORS.has("raw_prompt")).toBe(
+      true,
+    );
+  });
+
+  it("contains llm_freeform_summary", () => {
+    expect(
+      FORBIDDEN_EXPLANATION_SOURCE_DESCRIPTORS.has("llm_freeform_summary"),
+    ).toBe(true);
+  });
+
+  it("contains chain_of_thought", () => {
+    expect(
+      FORBIDDEN_EXPLANATION_SOURCE_DESCRIPTORS.has("chain_of_thought"),
+    ).toBe(true);
+  });
+
+  it("contains cot", () => {
+    expect(FORBIDDEN_EXPLANATION_SOURCE_DESCRIPTORS.has("cot")).toBe(true);
+  });
+
+  it("contains thinking", () => {
+    expect(FORBIDDEN_EXPLANATION_SOURCE_DESCRIPTORS.has("thinking")).toBe(true);
+  });
+
+  it("does not contain score_bucket_label (allowed source)", () => {
+    expect(
+      FORBIDDEN_EXPLANATION_SOURCE_DESCRIPTORS.has("score_bucket_label"),
+    ).toBe(false);
+  });
+
+  it("does not contain operator_note (allowed source)", () => {
+    expect(FORBIDDEN_EXPLANATION_SOURCE_DESCRIPTORS.has("operator_note")).toBe(
+      false,
+    );
+  });
+
+  it("does not contain rubric_template (allowed source)", () => {
+    expect(
+      FORBIDDEN_EXPLANATION_SOURCE_DESCRIPTORS.has("rubric_template"),
+    ).toBe(false);
+  });
+
+  it("does not contain structured_signal (allowed source)", () => {
+    expect(
+      FORBIDDEN_EXPLANATION_SOURCE_DESCRIPTORS.has("structured_signal"),
+    ).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildExplanation
+// ---------------------------------------------------------------------------
+
+describe("buildExplanation", () => {
+  it("returns ok for a valid score_bucket_label explanation", () => {
+    const result = buildExplanation(
+      "Routing matched expected agent.",
+      "score_bucket_label",
+      "bucket_derivation",
+    );
+    expect(result.isOk()).toBe(true);
+  });
+
+  it("returns ok for a valid rubric_template explanation", () => {
+    const result = buildExplanation(
+      "Case passes per rubric template.",
+      "rubric_template",
+      "rubric_file",
+    );
+    expect(result.isOk()).toBe(true);
+  });
+
+  it("returns ok for a valid structured_signal explanation", () => {
+    const result = buildExplanation(
+      "routing_matched: true, chain_verified: false",
+      "structured_signal",
+      "typed_score_fields",
+    );
+    expect(result.isOk()).toBe(true);
+  });
+
+  it("returns ok for a valid operator_note explanation", () => {
+    const result = buildExplanation(
+      "Confirmed correct by team lead.",
+      "operator_note",
+      "human_review",
+    );
+    expect(result.isOk()).toBe(true);
+  });
+
+  // --- Forbidden source descriptor rejection ---
+
+  it("returns err with ExplanationSourceForbidden for 'raw_rationale'", () => {
+    const result = buildExplanation(
+      "The model was correct.",
+      "operator_note",
+      "raw_rationale",
+    );
+    expect(result.isErr()).toBe(true);
+    const error = result._unsafeUnwrapErr();
+    expect(error.type).toBe("ExplanationSourceForbidden");
+    if (error.type === "ExplanationSourceForbidden") {
+      expect(error.sourceDescriptor).toBe("raw_rationale");
+    }
+  });
+
+  it("returns err with ExplanationSourceForbidden for 'transcript_content'", () => {
+    const result = buildExplanation(
+      "Some content.",
+      "operator_note",
+      "transcript_content",
+    );
+    expect(result.isErr()).toBe(true);
+    const error = result._unsafeUnwrapErr();
+    expect(error.type).toBe("ExplanationSourceForbidden");
+  });
+
+  it("returns err with ExplanationSourceForbidden for 'llm_freeform_summary'", () => {
+    const result = buildExplanation(
+      "The model performed well.",
+      "operator_note",
+      "llm_freeform_summary",
+    );
+    expect(result.isErr()).toBe(true);
+    const error = result._unsafeUnwrapErr();
+    expect(error.type).toBe("ExplanationSourceForbidden");
+  });
+
+  it("returns err with ExplanationSourceForbidden for 'composed_prompt'", () => {
+    const result = buildExplanation(
+      "You are Loom...",
+      "operator_note",
+      "composed_prompt",
+    );
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().type).toBe("ExplanationSourceForbidden");
+  });
+
+  it("returns err with ExplanationSourceForbidden for 'raw_content'", () => {
+    const result = buildExplanation(
+      "Some model output.",
+      "operator_note",
+      "raw_content",
+    );
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().type).toBe("ExplanationSourceForbidden");
+  });
+
+  it("returns err with ExplanationSourceForbidden for 'chain_of_thought'", () => {
+    const result = buildExplanation(
+      "Step 1, Step 2...",
+      "operator_note",
+      "chain_of_thought",
+    );
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().type).toBe("ExplanationSourceForbidden");
+  });
+
+  it("returns err with ExplanationSourceForbidden for 'dimension_rationale'", () => {
+    const result = buildExplanation(
+      "routing was correct",
+      "operator_note",
+      "dimension_rationale",
+    );
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().type).toBe("ExplanationSourceForbidden");
+  });
+
+  // --- Overlong text rejection ---
+
+  it("returns err with ExplanationTooLong when text exceeds EXPLANATION_MAX_CHARS", () => {
+    const result = buildExplanation(
+      "A".repeat(EXPLANATION_MAX_CHARS + 1),
+      "operator_note",
+      "human_review",
+    );
+    expect(result.isErr()).toBe(true);
+    const error = result._unsafeUnwrapErr();
+    expect(error.type).toBe("ExplanationTooLong");
+    if (error.type === "ExplanationTooLong") {
+      expect(error.actualLength).toBe(EXPLANATION_MAX_CHARS + 1);
+      expect(error.maxLength).toBe(EXPLANATION_MAX_CHARS);
+    }
+  });
+
+  it("accepts text of exactly EXPLANATION_MAX_CHARS", () => {
+    const result = buildExplanation(
+      "A".repeat(EXPLANATION_MAX_CHARS),
+      "operator_note",
+      "human_review",
+    );
+    expect(result.isOk()).toBe(true);
+  });
+
+  // --- Forbidden pattern rejection ---
+
+  it("returns err with ExplanationForbiddenPattern for <thinking> tag", () => {
+    const result = buildExplanation(
+      "<thinking>Reason here</thinking>",
+      "operator_note",
+      "human_review",
+    );
+    expect(result.isErr()).toBe(true);
+    const error = result._unsafeUnwrapErr();
+    expect(error.type).toBe("ExplanationForbiddenPattern");
+    if (error.type === "ExplanationForbiddenPattern") {
+      expect(error.patternName).toBe("chain_of_thought_xml");
+    }
+  });
+
+  it("returns err with ExplanationForbiddenPattern for transcript role marker", () => {
+    const result = buildExplanation(
+      "Observed:\nUser: do X\nAssistant: done",
+      "operator_note",
+      "human_review",
+    );
+    expect(result.isErr()).toBe(true);
+    const error = result._unsafeUnwrapErr();
+    expect(error.type).toBe("ExplanationForbiddenPattern");
+    if (error.type === "ExplanationForbiddenPattern") {
+      expect(error.patternName).toBe("transcript_role_marker");
+    }
+  });
+
+  it("returns err with ExplanationForbiddenPattern for rationale: marker", () => {
+    const result = buildExplanation(
+      "rationale: model selected correctly",
+      "operator_note",
+      "human_review",
+    );
+    expect(result.isErr()).toBe(true);
+    const error = result._unsafeUnwrapErr();
+    expect(error.type).toBe("ExplanationForbiddenPattern");
+    if (error.type === "ExplanationForbiddenPattern") {
+      expect(error.patternName).toBe("raw_rationale_marker");
+    }
+  });
+
+  it("returns err with ExplanationForbiddenPattern for secret token pattern", () => {
+    const result = buildExplanation(
+      "Using key: sk-abcdefghijklmnopqrstu",
+      "operator_note",
+      "human_review",
+    );
+    expect(result.isErr()).toBe(true);
+    const error = result._unsafeUnwrapErr();
+    expect(error.type).toBe("ExplanationForbiddenPattern");
+    if (error.type === "ExplanationForbiddenPattern") {
+      expect(error.patternName).toBe("secret_token_pattern");
+    }
+  });
+
+  // Source descriptor check fires before length check
+  it("returns ExplanationSourceForbidden before ExplanationTooLong when both fail", () => {
+    const result = buildExplanation(
+      "A".repeat(EXPLANATION_MAX_CHARS + 1),
+      "operator_note",
+      "raw_rationale", // forbidden source
+    );
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().type).toBe("ExplanationSourceForbidden");
+  });
+
+  // Length check fires before pattern check
+  it("returns ExplanationTooLong before ExplanationForbiddenPattern when both fail", () => {
+    const paddedRationale =
+      "rationale: some text " + "A".repeat(EXPLANATION_MAX_CHARS);
+    const result = buildExplanation(
+      paddedRationale,
+      "operator_note",
+      "human_review",
+    );
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().type).toBe("ExplanationTooLong");
+  });
+
+  it("returned BoundedExplanation has correct text and source", () => {
+    const result = buildExplanation(
+      "Routing was correct.",
+      "score_bucket_label",
+      "bucket_derivation",
+    );
+    expect(result.isOk()).toBe(true);
+    const value = result._unsafeUnwrap();
+    expect(value.text).toBe("Routing was correct.");
+    expect(value.source).toBe("score_bucket_label");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// assertExplanationSafe
+// ---------------------------------------------------------------------------
+
+describe("assertExplanationSafe", () => {
+  it("returns ok for a clean, short explanation", () => {
+    const result = assertExplanationSafe("Case passed as expected.");
+    expect(result.isOk()).toBe(true);
+  });
+
+  it("returns err with ExplanationTooLong for overlong text", () => {
+    const result = assertExplanationSafe("A".repeat(EXPLANATION_MAX_CHARS + 1));
+    expect(result.isErr()).toBe(true);
+    const error = result._unsafeUnwrapErr();
+    expect(error.type).toBe("ExplanationTooLong");
+  });
+
+  it("returns err with ExplanationForbiddenPattern for <thinking>", () => {
+    const result = assertExplanationSafe("<thinking>...</thinking>");
+    expect(result.isErr()).toBe(true);
+    const error = result._unsafeUnwrapErr();
+    expect(error.type).toBe("ExplanationForbiddenPattern");
+  });
+
+  it("returns err with ExplanationForbiddenPattern for transcript role marker", () => {
+    const result = assertExplanationSafe("Start\nAssistant: reply");
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().type).toBe("ExplanationForbiddenPattern");
+  });
+
+  it("returns err for rationale: marker", () => {
+    const result = assertExplanationSafe("rationale: the model was correct");
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().type).toBe("ExplanationForbiddenPattern");
+  });
+
+  it("error message includes the context string", () => {
+    const result = assertExplanationSafe(
+      "A".repeat(EXPLANATION_MAX_CHARS + 1),
+      "suite-summary-explanation",
+    );
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().message).toContain(
+      "suite-summary-explanation",
+    );
+  });
+
+  it("accepts explanation at exactly EXPLANATION_MAX_CHARS", () => {
+    const result = assertExplanationSafe("A".repeat(EXPLANATION_MAX_CHARS));
+    expect(result.isOk()).toBe(true);
+  });
+
+  it("returns ok for empty string (length check only; empty passes pattern guards)", () => {
+    // Empty strings pass forbidden-pattern checks since no pattern matches empty
+    // (length guard only fires for strings OVER the limit).
+    const result = assertExplanationSafe("");
+    expect(result.isOk()).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// truncateExplanation then buildExplanation round-trip
+// ---------------------------------------------------------------------------
+
+describe("truncateExplanation + buildExplanation round-trip", () => {
+  it("truncated clean text produces a valid BoundedExplanation", () => {
+    const longText = "Clean explanation. ".repeat(30); // well over 300 chars
+    const truncated = truncateExplanation(longText);
+    expect(truncated.length).toBe(EXPLANATION_MAX_CHARS);
+    const result = buildExplanation(truncated, "operator_note", "human_review");
+    expect(result.isOk()).toBe(true);
+  });
+
+  it("truncating does not introduce forbidden patterns for clean text", () => {
+    const longText = "A".repeat(EXPLANATION_MAX_CHARS + 200);
+    const truncated = truncateExplanation(longText);
+    const safeResult = assertExplanationSafe(truncated);
+    expect(safeResult.isOk()).toBe(true);
   });
 });

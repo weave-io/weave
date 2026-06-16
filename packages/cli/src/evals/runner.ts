@@ -233,6 +233,13 @@ export interface EvalRunSummary {
   allSuitesGreen: boolean;
   /** Absolute path of the bundle directory written by the orchestrator. */
   bundleDir: string;
+  /**
+   * The immutable run ID for this run (e.g. `abc123d-2026-01-15-001`).
+   *
+   * `null` when no runner results were produced (empty fixture sets) and the
+   * bundle write was short-circuited.
+   */
+  runId: string | null;
   /** Paths of all files written by the bundle writer. */
   filesWritten: string[];
   /**
@@ -590,6 +597,7 @@ export class EvalOrchestrator {
                 runnerResults,
                 partialFailures,
                 writeResult.bundleDir,
+                writeResult.runId,
                 writeResult.filesWritten,
               );
               return summary;
@@ -843,13 +851,17 @@ export class EvalOrchestrator {
     provenanceManifest: PromptProvenanceManifest | null,
     gitSha: string,
     request: EvalRunRequest,
-  ): ResultAsync<{ bundleDir: string; filesWritten: string[] }, CliError> {
+  ): ResultAsync<
+    { bundleDir: string; runId: string | null; filesWritten: string[] },
+    CliError
+  > {
     // Skip writing when there are no results to bundle
     if (runnerResults.length === 0) {
       // Return a synthetic empty result — the bundle root is still the configured dir
       return ResultAsync.fromSafePromise(
         Promise.resolve({
           bundleDir: this.bundleRoot,
+          runId: null,
           filesWritten: [] as string[],
         }),
       );
@@ -890,9 +902,15 @@ export class EvalOrchestrator {
             dryRun: request.dryRun,
             env: this.env,
             publisher,
+            // Generate dashboard indexes on every normal (non-dry-run) run so that
+            // `weave eval run` always produces dashboard-manifest.json, latest.json,
+            // last-N-runs.json, suite history, and model-comparison indexes.
+            // Dry-runs are skipped because they produce no real model output.
+            generateIndexes: !request.dryRun,
           })
           .map((writeResult) => ({
             bundleDir: writeResult.bundleDir,
+            runId: writeResult.runId,
             filesWritten: writeResult.filesWritten,
           }))
           .mapErr(
@@ -953,6 +971,7 @@ export class EvalOrchestrator {
     runnerResults: RunnerResult[],
     partialFailures: RunnerError[],
     bundleDir: string,
+    runId: string | null,
     filesWritten: string[],
   ): EvalRunSummary {
     // Aggregate totals
@@ -982,6 +1001,7 @@ export class EvalOrchestrator {
       failedCases,
       allSuitesGreen,
       bundleDir,
+      runId,
       filesWritten,
       partialFailures,
     };

@@ -49,6 +49,13 @@
  */
 
 import { err, ok, type Result } from "neverthrow";
+import {
+  type BoundedExplanation,
+  EXPLANATION_MAX_CHARS,
+  type ExplanationSource,
+  FORBIDDEN_EXPLANATION_PATTERNS,
+  type ReportSchemaError,
+} from "./report-schema.js";
 import type {
   CaseResultSummary,
   NormalizedScoreRecord,
@@ -179,6 +186,17 @@ export interface SanitizedCaseResultSummary {
   readonly scoredAt: string;
   /** Whether this is a dry-run result. */
   readonly dryRun: boolean;
+  /**
+   * Optional bounded public explanation (allowlisted structured-signal text only).
+   * Never contains raw model output, rationale strings, or transcript content.
+   */
+  readonly publicExplanation?: {
+    readonly text: string;
+    readonly source:
+      | "score_bucket_label"
+      | "structured_signal"
+      | "rubric_template";
+  };
 }
 
 /**
@@ -228,6 +246,16 @@ export function sanitizeCaseResultSummary(
     dimensionScores,
     scoredAt: summary.scoredAt,
     dryRun: summary.dryRun,
+    // publicExplanation is allowlisted: it contains only bounded structured-signal
+    // text with no raw model output, rationale, or transcript content
+    ...(summary.publicExplanation !== undefined
+      ? {
+          publicExplanation: {
+            text: summary.publicExplanation.text,
+            source: summary.publicExplanation.source,
+          },
+        }
+      : {}),
   };
 }
 
@@ -488,6 +516,169 @@ export function assertJsonPublishSafe(
           `Publish-mode safety violation: sensitive field "${field}" detected in ${context} JSON. ` +
           `Sanitize the data with the appropriate sanitize*() function before serializing.`,
         field,
+      });
+    }
+  }
+
+  return ok(undefined);
+}
+
+// ---------------------------------------------------------------------------
+// Explanation field sanitization
+// ---------------------------------------------------------------------------
+
+/**
+ * Forbidden source descriptors — strings that callers must NEVER pass as an
+ * explanation source. These represent raw text channels that must not enter
+ * any public report explanation field.
+ *
+ * When any of these is detected as the origin of an explanation string,
+ * `buildExplanation()` returns a typed `ReportSchemaError`.
+ */
+export const FORBIDDEN_EXPLANATION_SOURCE_DESCRIPTORS = new Set<string>([
+  "raw_rationale",
+  "dimension_rationale",
+  "transcript_content",
+  "raw_content",
+  "composed_prompt",
+  "raw_prompt",
+  "llm_freeform_summary",
+  "chain_of_thought",
+  "cot",
+  "thinking",
+]);
+
+/**
+ * Truncate an explanation string to `EXPLANATION_MAX_CHARS` characters.
+ *
+ * When `text.length <= EXPLANATION_MAX_CHARS`, `text` is returned unchanged.
+ * When longer, the string is sliced to `EXPLANATION_MAX_CHARS - 1` characters
+ * and a `…` character is appended, preserving the length cap.
+ *
+ * This function performs NO forbidden-pattern checks. After truncation,
+ * callers must still validate the text through `buildExplanation()` or the
+ * `BoundedExplanationSchema` before including it in a public report.
+ *
+ * @param text - The raw explanation string to truncate.
+ * @returns The (possibly truncated) explanation string.
+ */
+export function truncateExplanation(text: string): string {
+  if (text.length <= EXPLANATION_MAX_CHARS) return text;
+  return text.slice(0, EXPLANATION_MAX_CHARS - 1) + "…";
+}
+
+/**
+ * Build a validated `BoundedExplanation` for use in a public report field.
+ *
+ * Performs all safety checks in order:
+ *   1. Rejects `sourceDescriptor` values in `FORBIDDEN_EXPLANATION_SOURCE_DESCRIPTORS`.
+ *      This is the primary guard against raw rationale strings, transcript content,
+ *      composed prompt text, and LLM freeform summary passes.
+ *   2. Rejects overlong `text` (> `EXPLANATION_MAX_CHARS` characters).
+ *      Callers should pre-truncate using `truncateExplanation()`.
+ *   3. Rejects text matching any `FORBIDDEN_EXPLANATION_PATTERNS` entry.
+ *      This is the secondary guard against chain-of-thought markers, transcript
+ *      role labels, raw rationale markers, and secret patterns.
+ *   4. Returns a valid `BoundedExplanation` when all checks pass.
+ *
+ * The `sourceDescriptor` parameter is a human-readable label describing where
+ * the text came from (used in error messages). It is distinct from the
+ * `ExplanationSource` enum field on `BoundedExplanation` — the latter
+ * declares the approved category (e.g. `"score_bucket_label"`), while
+ * `sourceDescriptor` is a caller-supplied origin label that must NOT be in
+ * the forbidden set.
+ *
+ * @param text - The explanation text (should be pre-truncated).
+ * @param source - The allowlisted `ExplanationSource` enum value.
+ * @param sourceDescriptor - A human-readable origin label (checked against
+ *   `FORBIDDEN_EXPLANATION_SOURCE_DESCRIPTORS`).
+ * @returns `ok(BoundedExplanation)` when valid; `err(ReportSchemaError)` when rejected.
+ */
+export function buildExplanation(
+  text: string,
+  source: ExplanationSource,
+  sourceDescriptor: string,
+): Result<BoundedExplanation, ReportSchemaError> {
+  // Guard 1: reject forbidden source descriptors (raw rationale, transcript, etc.)
+  if (FORBIDDEN_EXPLANATION_SOURCE_DESCRIPTORS.has(sourceDescriptor)) {
+    return err({
+      type: "ExplanationSourceForbidden",
+      sourceDescriptor,
+      message:
+        `Explanation source "${sourceDescriptor}" is forbidden in public report fields. ` +
+        `Raw rationale strings, transcript content, composed prompt text, ` +
+        `chain-of-thought traces, and LLM freeform summaries must never be used ` +
+        `as explanation inputs. Use a rubric_template, score_bucket_label, ` +
+        `structured_signal, or operator_note instead.`,
+    });
+  }
+
+  // Guard 2: reject overlong text
+  if (text.length > EXPLANATION_MAX_CHARS) {
+    return err({
+      type: "ExplanationTooLong",
+      actualLength: text.length,
+      maxLength: EXPLANATION_MAX_CHARS,
+      message:
+        `Explanation text is ${text.length} characters, which exceeds the ` +
+        `${EXPLANATION_MAX_CHARS}-character limit. Call truncateExplanation() ` +
+        `before passing to buildExplanation().`,
+    });
+  }
+
+  // Guard 3: reject forbidden patterns
+  for (const { name, pattern } of FORBIDDEN_EXPLANATION_PATTERNS) {
+    if (pattern.test(text)) {
+      return err({
+        type: "ExplanationForbiddenPattern",
+        patternName: name,
+        message:
+          `Explanation text matches forbidden pattern "${name}". ` +
+          `Raw transcript content, rationale strings, chain-of-thought traces, ` +
+          `prompt text, and LLM freeform summaries are not permitted in ` +
+          `public report explanation fields.`,
+      });
+    }
+  }
+
+  return ok({ text, source });
+}
+
+/**
+ * Assert that an explanation string does not match any forbidden patterns.
+ *
+ * A lighter-weight check than `buildExplanation()` — only validates the text
+ * content without requiring a source declaration. Use this in the sanitizer
+ * pipeline when the source has already been validated.
+ *
+ * @param text - The explanation text to validate.
+ * @param context - Optional description for error messages.
+ * @returns `ok(undefined)` when clean; `err(ReportSchemaError)` when a
+ *          forbidden pattern is detected.
+ */
+export function assertExplanationSafe(
+  text: string,
+  context = "explanation field",
+): Result<undefined, ReportSchemaError> {
+  if (text.length > EXPLANATION_MAX_CHARS) {
+    return err({
+      type: "ExplanationTooLong",
+      actualLength: text.length,
+      maxLength: EXPLANATION_MAX_CHARS,
+      message:
+        `Explanation text in ${context} is ${text.length} characters, which exceeds ` +
+        `the ${EXPLANATION_MAX_CHARS}-character limit.`,
+    });
+  }
+
+  for (const { name, pattern } of FORBIDDEN_EXPLANATION_PATTERNS) {
+    if (pattern.test(text)) {
+      return err({
+        type: "ExplanationForbiddenPattern",
+        patternName: name,
+        message:
+          `Explanation text in ${context} matches forbidden pattern "${name}". ` +
+          `Raw content must not appear in public report explanation fields.`,
       });
     }
   }

@@ -892,6 +892,25 @@ export interface CaseResultSummary {
    * Dry-run results have zero scores and are for workload inspection only.
    */
   dryRun: boolean;
+  /**
+   * Optional bounded public explanation for why this case received its score bucket.
+   *
+   * Generated deterministically from allowlisted structured inputs only:
+   * pass/fail booleans, score buckets, outcome kind enums, required flags,
+   * and rubric metadata. NEVER derived from raw model output, rationale strings,
+   * transcript content, chain-of-thought text, prompt text, or LLM-generated
+   * freeform summaries.
+   *
+   * When present: bounded to `EXPLANATION_MAX_CHARS`, source-attributed, and
+   * validated to contain no forbidden patterns.
+   * When absent: the score bucket and passed/failed boolean are self-explanatory.
+   */
+  publicExplanation?: {
+    /** The explanation text (bounded, sanitized). */
+    text: string;
+    /** The declared source of the explanation text. */
+    source: "score_bucket_label" | "structured_signal" | "rubric_template";
+  };
 }
 
 /**
@@ -1106,6 +1125,11 @@ export interface BundleScoreFile {
     dimensionScores: Record<string, { score: number; applicable: boolean }>;
     scoredAt: string;
     dryRun: boolean;
+    /** Optional bounded public explanation (allowlisted structured-signal text only). */
+    publicExplanation?: {
+      text: string;
+      source: "score_bucket_label" | "structured_signal" | "rubric_template";
+    };
   }>;
   /** Aggregate pass/fail totals. */
   totals: {
