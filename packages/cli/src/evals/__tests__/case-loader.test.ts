@@ -27,6 +27,7 @@ import { describe, expect, it } from "bun:test";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import {
+  KNOWN_AGENTS,
   loadCaseFile,
   loadRubricFile,
   loadSuiteCases,
@@ -332,6 +333,20 @@ describe("loadCaseFile — schema validation failures", () => {
       expect(e.file).toBe(filePath);
       expect(e.message).toContain("totally-unknown-agent");
     }
+  });
+
+  it("accepts current VNext category shuttles and thread", async () => {
+    expect(KNOWN_AGENTS.has("thread")).toBe(true);
+    expect(KNOWN_AGENTS.has("shuttle-core")).toBe(true);
+    expect(KNOWN_AGENTS.has("shuttle-engine")).toBe(true);
+    expect(KNOWN_AGENTS.has("shuttle-adapters")).toBe(true);
+    expect(KNOWN_AGENTS.has("shuttle-docs")).toBe(true);
+    expect(KNOWN_AGENTS.has("shuttle-scripts")).toBe(true);
+  });
+
+  it("keeps legacy category shuttles valid for historical fixtures", async () => {
+    expect(KNOWN_AGENTS.has("shuttle-backend")).toBe(true);
+    expect(KNOWN_AGENTS.has("shuttle-frontend")).toBe(true);
   });
 
   it("returns FixtureFileNotFound for a missing file path", async () => {

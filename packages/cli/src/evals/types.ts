@@ -664,9 +664,11 @@ export interface NormalizedScoreRecord {
   /**
    * Whether the case is considered passing.
    *
-   * A case passes when `weightedTotal >= PASS_THRESHOLD` (0.5 by default)
-   * AND, when the rubric marks it `required`, the primary dimension is fully
-   * correct (`score === 1.0`).
+   * A case passes when an applicable primary structural dimension is
+   * near-perfect (`score >= 0.95`), or when `weightedTotal >= PASS_THRESHOLD`
+   * (0.5 by default) and non-required cases do not need a near-perfect primary
+   * dimension. Required cases with only partial primary correctness do not pass
+   * on rationale quality alone.
    */
   passed: boolean;
   /**

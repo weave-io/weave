@@ -95,10 +95,14 @@ And in `packages/cli/src/commands/eval.ts`:
 
 | Suite | Runner | What it tests |
 |---|---|---|
-| `loom-routing` | `LoomRoutingRunner` | Loom routes requests to the correct agent or category |
-| `tapestry-execution` | `TapestryExecutionRunner` | Tapestry executes steps and delegates to sub-agents |
+| `loom-routing` | `LoomRoutingRunner` | Loom emits text-observable routing signals for the primary route, with evidence/review follow-ups treated separately from the primary implementation agent |
+| `tapestry-execution` | `TapestryExecutionRunner` | Tapestry emits text-observable completion and delegation-chain signals for plan execution |
 
 Both suites share the same case schema, rubric schema, and model matrix. They are run in parallel across all models in the effective model set.
+
+The current eval runners are **text-only prompt evals**: they call OpenRouter chat completions and extract signals from assistant text. They do not execute harness tools or capture real tool-call events. Fixture authors should therefore assert observable text signals such as agent mentions, routed agents, delegation chains, completion phrases, and produced artifact names. Do not use a text-only fixture to require an unobservable real tool invocation or the absence of a tool invocation; reserve those checks for a future harness-backed trajectory runner.
+
+Tapestry eval prompts include a minimal synthetic plan context (`Plan file`, remaining `- [ ]` task, and todo state) so the prompt, runner input, and fixture expectations all describe plan execution rather than a free-floating chat request.
 
 ---
 

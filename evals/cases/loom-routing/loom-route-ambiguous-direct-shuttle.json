@@ -2,7 +2,7 @@
   "id": "loom-route-ambiguous-direct-shuttle",
   "description": "Make the project settings experience easier to use.",
   "suite": "loom-routing",
-  "allowed_agents": ["loom", "shuttle"],
+  "allowed_agents": ["loom", "thread", "shuttle"],
   "allowed_models": [
     "anthropic/claude-opus-4.5",
     "anthropic/claude-sonnet-4.5",
@@ -11,13 +11,13 @@
   "expected_outcome": {
     "kind": "agent_routing",
     "target_agent": "shuttle",
-    "via": []
+    "via": ["thread"]
   },
   "accepted_alternates": [],
   "transcript_expectations": [
     {
-      "check": "no_tool_called",
-      "tool_name": "delegate_to_category"
+      "check": "agent_mentioned",
+      "agent_name": "shuttle"
     }
   ],
   "tags": ["routing", "fallback"]

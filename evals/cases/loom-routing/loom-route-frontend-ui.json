@@ -2,7 +2,7 @@
   "id": "loom-route-frontend-ui",
   "description": "Update the project settings panel component to show loading and error states.",
   "suite": "loom-routing",
-  "allowed_agents": ["loom", "shuttle", "shuttle-frontend"],
+  "allowed_agents": ["loom", "thread", "shuttle", "shuttle-frontend", "weft"],
   "allowed_models": [
     "anthropic/claude-opus-4.5",
     "anthropic/claude-sonnet-4.5",
@@ -10,14 +10,14 @@
   ],
   "expected_outcome": {
     "kind": "agent_routing",
-    "target_agent": "shuttle-frontend",
+    "target_agent": "shuttle",
     "via": []
   },
-  "accepted_alternates": ["shuttle"],
+  "accepted_alternates": ["shuttle", "shuttle-frontend"],
   "transcript_expectations": [
     {
       "check": "agent_mentioned",
-      "agent_name": "shuttle-frontend"
+      "agent_name": "shuttle"
     }
   ],
   "tags": ["routing", "frontend"]

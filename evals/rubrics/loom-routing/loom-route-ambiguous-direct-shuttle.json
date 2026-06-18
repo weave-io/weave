@@ -5,6 +5,6 @@
     "outcome_weight": 0.7,
     "per_expectation_weight": 0.3,
     "required": true,
-    "notes": "Fallback to generic shuttle is critical; the negative assertion (no category tool called) is weighted as a partial signal"
+    "notes": "Fallback to generic shuttle is critical for ambiguous but bounded work. Thread may appear first for evidence gathering when the task asks to improve an existing experience. Do not require text-only evals to prove absence of a real category-delegation tool call."
   }
 }

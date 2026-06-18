@@ -31,6 +31,7 @@ import {
 } from "../langchain-agent-evals.js";
 import { StubModelClient } from "../openrouter-client.js";
 import {
+  buildUserMessage,
   detectCompletionSignal,
   extractDelegationChain,
   extractProducedArtifacts,
@@ -612,6 +613,21 @@ describe("extractDelegationChain", () => {
     expect(result).toContain("shuttle");
   });
 
+  it("prefers explicit arrow chain over earlier standalone mentions", () => {
+    const content = [
+      "@shuttle",
+      "Delegation sequence: `tapestry → shuttle`",
+      "Awaiting shuttle result.",
+    ].join("\n");
+    const result = extractDelegationChain(content);
+    expect(result).toEqual(["tapestry", "shuttle"]);
+  });
+
+  it("extracts chains containing current project category shuttles", () => {
+    const result = extractDelegationChain("tapestry → shuttle-engine");
+    expect(result).toEqual(["tapestry", "shuttle-engine"]);
+  });
+
   it("does not extract chains with unknown agent names", () => {
     const result = extractDelegationChain("tapestry → unknown-agent");
     // unknown-agent is not in the known set; chain length should be < 2 or empty
@@ -712,6 +728,28 @@ describe("extractProducedArtifacts", () => {
   it("returns empty array when expectedArtifacts is empty", () => {
     const result = extractProducedArtifacts("lots of content", []);
     expect(result).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildUserMessage — synthetic plan context
+// ---------------------------------------------------------------------------
+
+describe("buildUserMessage", () => {
+  it("includes synthetic plan context for delegation cases", () => {
+    const message = buildUserMessage(makeDelegationCase());
+    expect(message).toContain("Synthetic eval plan context");
+    expect(message).toContain("Plan file: .weave/plans/eval-tapestry-plan.md");
+    expect(message).toContain("- [ ] 1/1");
+    expect(message).toContain("tapestry → shuttle");
+  });
+
+  it("includes synthetic plan context and textual completion signal for task cases", () => {
+    const message = buildUserMessage(makeTaskCompletionCase());
+    expect(message).toContain("Synthetic eval plan context");
+    expect(message).toContain("Current todo state: one pending task");
+    expect(message).toContain('Signal completion with "task complete"');
+    expect(message).not.toContain("agent_signal");
   });
 });
 

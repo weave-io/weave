@@ -257,10 +257,10 @@
   - function extractDelegationChain: (content) => string[]
   - function detectCompletionSignal: (content) => boolean
   - function extractProducedArtifacts: (content, expectedArtifacts) => string[]
+  - function buildUserMessage: (evalCase) => string
   - class TapestryExecutionRunner
   - interface TapestryExecutionRunnerOptions
-  - interface TapestryRunRequest
-  - _...1 more_
+  - _...2 more_
 - `packages/cli/src/fs/file-system.ts`
   - function describeFileSystemError: (error) => string
   - class BunFileSystem

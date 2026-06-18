@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 113 lib files | 7 env vars | 5 middleware | 0% test coverage
 > **Token savings:** this file is ~10,000 tokens. Without it, AI exploration would cost ~40,700 tokens. **Saves ~30,700 tokens per conversation.**
-> **Last scanned:** 2026-06-16 20:43 — re-run after significant changes
+> **Last scanned:** 2026-06-18 10:53 — re-run after significant changes
 
 ---
 
@@ -268,10 +268,10 @@
   - function extractDelegationChain: (content) => string[]
   - function detectCompletionSignal: (content) => boolean
   - function extractProducedArtifacts: (content, expectedArtifacts) => string[]
+  - function buildUserMessage: (evalCase) => string
   - class TapestryExecutionRunner
   - interface TapestryExecutionRunnerOptions
-  - interface TapestryRunRequest
-  - _...1 more_
+  - _...2 more_
 - `packages/cli/src/fs/file-system.ts`
   - function describeFileSystemError: (error) => string
   - class BunFileSystem
