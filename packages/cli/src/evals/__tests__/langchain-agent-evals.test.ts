@@ -15,7 +15,7 @@
  *   - Score clamping: out-of-range judge outputs are clamped to [0, 1].
  *   - Weighted total computation uses rubric outcome_weight and
  *     per_expectation_weight correctly.
- *   - Pass/fail gate: required cases require the primary dimension to be 1.0.
+ *   - Pass/fail gate: required cases require a near-perfect primary dimension.
  *   - `StubLangChainJudge` records calls, returns FIFO results, falls back to
  *     default, and returns typed `NotConfigured` when unconfigured.
  *   - `StubAgentEvalsScorer` records calls and returns FIFO results, default,
@@ -319,9 +319,9 @@ describe("LangChainAgentEvalsScorer — agent_routing case", () => {
     const scorer = new LangChainAgentEvalsScorer(judge);
 
     const result = await scorer.score(
-      makeRun(),
-      makeAgentRoutingCase(),
-      [makeRubric()],
+      makeRun({ caseId: "test-case-03" }),
+      makeTaskCompletionCase(),
+      [makeRubric("test-case-03", "tapestry-execution")],
       SCORED_AT,
     );
 
@@ -329,7 +329,7 @@ describe("LangChainAgentEvalsScorer — agent_routing case", () => {
     expect(record.dimensions.rationaleQuality.applicable).toBe(true);
   });
 
-  it("judge is called twice for agent_routing (routing + rationale)", async () => {
+  it("judge is called once for agent_routing rationale only", async () => {
     const judge = new StubLangChainJudge();
     judge.setDefaultOutput({ score: 0.8, rationale: "Reasonable." });
     const scorer = new LangChainAgentEvalsScorer(judge);
@@ -341,26 +341,53 @@ describe("LangChainAgentEvalsScorer — agent_routing case", () => {
       SCORED_AT,
     );
 
-    // routing + rationale = 2 calls; delegation and execution are short-circuited
-    expect(judge.calls).toHaveLength(2);
+    expect(judge.calls).toHaveLength(1);
+    expect(judge.calls[0]?.dimension).toBe("rationaleQuality");
   });
 
-  it("judge call for routing has dimension='routingCorrectness'", async () => {
+  it("routing correctness is deterministic from accepted routed agents", async () => {
     const judge = new StubLangChainJudge();
     judge.setDefaultOutput({ score: 1.0, rationale: "Correct." });
     const scorer = new LangChainAgentEvalsScorer(judge);
 
-    await scorer.score(
-      makeRun(),
-      makeAgentRoutingCase(),
+    const result = await scorer.score(
+      makeRun({ routedAgents: ["thread", "shuttle-backend"] }),
+      makeAgentRoutingCase({ accepted_alternates: ["shuttle-backend"] }),
       [makeRubric()],
       SCORED_AT,
     );
 
-    const routingCall = judge.calls.find(
-      (c) => c.dimension === "routingCorrectness",
+    const record = result._unsafeUnwrap();
+    expect(record.dimensions.routingCorrectness.score).toBe(1);
+    expect(record.dimensions.routingCorrectness.rationale).toContain(
+      "shuttle-backend",
     );
-    expect(routingCall).toBeDefined();
+    expect(judge.calls.some((c) => c.dimension === "routingCorrectness")).toBe(
+      false,
+    );
+  });
+
+  it("routing correctness accepts matched via-only staged routes", async () => {
+    const judge = new StubLangChainJudge();
+    judge.setDefaultOutput({ score: 0.5, rationale: "Sparse rationale." });
+    const scorer = new LangChainAgentEvalsScorer(judge);
+
+    const result = await scorer.score(
+      makeRun({ routedAgents: ["thread"] }),
+      makeAgentRoutingCase({
+        expected_outcome: {
+          kind: "agent_routing",
+          target_agent: "shuttle",
+          via: ["thread"],
+        },
+      }),
+      [makeRubric()],
+      SCORED_AT,
+    );
+
+    const record = result._unsafeUnwrap();
+    expect(record.dimensions.routingCorrectness.score).toBe(1);
+    expect(record.passed).toBe(true);
   });
 
   it("non-applicable dimension score is 1.0 (neutral, not penalizing)", async () => {
@@ -589,7 +616,7 @@ describe("LangChainAgentEvalsScorer — score clamping", () => {
     );
 
     const record = result._unsafeUnwrap();
-    expect(record.dimensions.routingCorrectness.score).toBe(0.75);
+    expect(record.dimensions.routingCorrectness.score).toBe(1);
     expect(record.dimensions.rationaleQuality.score).toBe(0.75);
   });
 });
@@ -605,9 +632,9 @@ describe("LangChainAgentEvalsScorer — weighted total", () => {
     const scorer = new LangChainAgentEvalsScorer(judge);
 
     const result = await scorer.score(
-      makeRun(),
-      makeAgentRoutingCase(),
-      [makeRubric()],
+      makeRun({ caseId: "test-case-03" }),
+      makeTaskCompletionCase(),
+      [makeRubric("test-case-03", "tapestry-execution")],
       SCORED_AT,
     );
 
@@ -637,9 +664,9 @@ describe("LangChainAgentEvalsScorer — weighted total", () => {
     const scorer = new LangChainAgentEvalsScorer(judge);
 
     const result = await scorer.score(
-      makeRun(),
-      makeAgentRoutingCase(),
-      [makeRubric()],
+      makeRun({ caseId: "test-case-03" }),
+      makeTaskCompletionCase(),
+      [makeRubric("test-case-03", "tapestry-execution")],
       SCORED_AT,
     );
 
@@ -648,14 +675,14 @@ describe("LangChainAgentEvalsScorer — weighted total", () => {
   });
 
   it("uses rubric outcome_weight and per_expectation_weight", async () => {
-    // routing score = 1.0, rationale score = 0.0
+    // execution score = 1.0, rationale score = 0.0
     const judge = new StubLangChainJudge();
-    judge.enqueueOutput({ score: 1.0, rationale: "Perfect routing." }); // routing
+    judge.enqueueOutput({ score: 1.0, rationale: "Perfect execution." }); // execution
     judge.enqueueOutput({ score: 0.0, rationale: "No rationale." }); // rationale
     const scorer = new LangChainAgentEvalsScorer(judge);
 
-    // outcome_weight=0.8 for routing, per_expectation_weight=0.2 for rationale
-    const rubric = makeRubric("test-case-01", "loom-routing", {
+    // outcome_weight=0.8 for execution, per_expectation_weight=0.2 for rationale
+    const rubric = makeRubric("test-case-03", "tapestry-execution", {
       scoring: {
         outcome_weight: 0.8,
         per_expectation_weight: 0.2,
@@ -664,14 +691,14 @@ describe("LangChainAgentEvalsScorer — weighted total", () => {
     });
 
     const result = await scorer.score(
-      makeRun(),
-      makeAgentRoutingCase(),
+      makeRun({ caseId: "test-case-03", completionSignalled: true }),
+      makeTaskCompletionCase(),
       [rubric],
       SCORED_AT,
     );
 
     const record = result._unsafeUnwrap();
-    // routing:1.0 × 0.8 + rationale:0.0 × 0.2 = 0.8 total weight = 1.0 → normalised = 0.8/1.0 = 0.8
+    // execution:1.0 × 0.8 + rationale:0.0 × 0.2 = 0.8 total weight = 1.0 → normalised = 0.8/1.0 = 0.8
     expect(record.weightedTotal).toBeCloseTo(0.8, 5);
   });
 });
@@ -681,14 +708,14 @@ describe("LangChainAgentEvalsScorer — weighted total", () => {
 // ---------------------------------------------------------------------------
 
 describe("LangChainAgentEvalsScorer — pass/fail gate", () => {
-  it("passed is true when weightedTotal >= PASS_THRESHOLD and primary dimension is 1.0", async () => {
+  it("passed is true when primary dimension is perfect", async () => {
     const judge = makePerfectJudge();
     const scorer = new LangChainAgentEvalsScorer(judge);
 
     const result = await scorer.score(
-      makeRun(),
-      makeAgentRoutingCase(),
-      [makeRubric()],
+      makeRun({ caseId: "test-case-03" }),
+      makeTaskCompletionCase(),
+      [makeRubric("test-case-03", "tapestry-execution")],
       SCORED_AT,
     );
 
@@ -702,9 +729,9 @@ describe("LangChainAgentEvalsScorer — pass/fail gate", () => {
     const scorer = new LangChainAgentEvalsScorer(judge);
 
     const result = await scorer.score(
-      makeRun(),
-      makeAgentRoutingCase(),
-      [makeRubric()],
+      makeRun({ caseId: "test-case-03" }),
+      makeTaskCompletionCase(),
+      [makeRubric("test-case-03", "tapestry-execution")],
       SCORED_AT,
     );
 
@@ -713,15 +740,15 @@ describe("LangChainAgentEvalsScorer — pass/fail gate", () => {
     expect(record.passed).toBe(false);
   });
 
-  it("required cases require primary dimension = 1.0 even above threshold", async () => {
-    // routing score = 0.7 (above threshold if threshold were 0.5), rationale = 0.9
-    // but primary dim is NOT 1.0, and the case is required → must fail
+  it("required cases require near-perfect primary dimension even above threshold", async () => {
+    // execution score = 0.7 (above threshold if threshold were 0.5), rationale = 0.9
+    // but primary dim is below the near-perfect gate, and the case is required → must fail
     const judge = new StubLangChainJudge();
-    judge.enqueueOutput({ score: 0.7, rationale: "Partial routing." }); // routing
+    judge.enqueueOutput({ score: 0.7, rationale: "Partial execution." }); // execution
     judge.enqueueOutput({ score: 0.9, rationale: "Good rationale." }); // rationale
     const scorer = new LangChainAgentEvalsScorer(judge);
 
-    const rubric = makeRubric("test-case-01", "loom-routing", {
+    const rubric = makeRubric("test-case-03", "tapestry-execution", {
       scoring: {
         outcome_weight: 0.5,
         per_expectation_weight: 0.5,
@@ -730,26 +757,57 @@ describe("LangChainAgentEvalsScorer — pass/fail gate", () => {
     });
 
     const result = await scorer.score(
-      makeRun(),
-      makeAgentRoutingCase(),
+      makeRun({ caseId: "test-case-03", completionSignalled: true }),
+      makeTaskCompletionCase(),
       [rubric],
       SCORED_AT,
     );
 
     const record = result._unsafeUnwrap();
-    // routing:0.7 × 0.5 + rationale:0.9 × 0.5 = 0.8 total weight=1.0 → 0.8 ≥ 0.5
-    // but required && primary dim (routing) ≠ 1.0 → passed = false
+    // execution:0.7 × 0.5 + rationale:0.9 × 0.5 = 0.8 total weight=1.0 → 0.8 ≥ 0.5
+    // but required && primary dim (execution) is below the near-perfect gate → passed = false
     expect(record.weightedTotal).toBeGreaterThanOrEqual(PASS_THRESHOLD);
     expect(record.passed).toBe(false);
   });
 
+  it("required cases pass when primary dimension is near-perfect even with weak rationale", async () => {
+    const judge = new StubLangChainJudge();
+    judge.enqueueOutput({
+      score: 0.95,
+      rationale: "Nearly complete execution.",
+    });
+    judge.enqueueOutput({ score: 0.0, rationale: "Sparse rationale." });
+    const scorer = new LangChainAgentEvalsScorer(judge);
+
+    const rubric = makeRubric("test-case-03", "tapestry-execution", {
+      scoring: {
+        outcome_weight: 0.5,
+        per_expectation_weight: 0.5,
+        required: true,
+      },
+    });
+
+    const result = await scorer.score(
+      makeRun({ caseId: "test-case-03", completionSignalled: true }),
+      makeTaskCompletionCase(),
+      [rubric],
+      SCORED_AT,
+    );
+
+    const record = result._unsafeUnwrap();
+    expect(record.dimensions.executionCompleteness.score).toBe(0.95);
+    expect(record.dimensions.rationaleQuality.score).toBe(0.0);
+    expect(record.weightedTotal).toBeLessThan(PASS_THRESHOLD);
+    expect(record.passed).toBe(true);
+  });
+
   it("non-required cases pass on total alone (primary dim does not need to be 1.0)", async () => {
     const judge = new StubLangChainJudge();
-    judge.enqueueOutput({ score: 0.7, rationale: "Partial routing." }); // routing
+    judge.enqueueOutput({ score: 0.7, rationale: "Partial execution." }); // execution
     judge.enqueueOutput({ score: 0.9, rationale: "Good rationale." }); // rationale
     const scorer = new LangChainAgentEvalsScorer(judge);
 
-    const rubric = makeRubric("test-case-01", "loom-routing", {
+    const rubric = makeRubric("test-case-03", "tapestry-execution", {
       scoring: {
         outcome_weight: 0.5,
         per_expectation_weight: 0.5,
@@ -758,8 +816,8 @@ describe("LangChainAgentEvalsScorer — pass/fail gate", () => {
     });
 
     const result = await scorer.score(
-      makeRun(),
-      makeAgentRoutingCase(),
+      makeRun({ caseId: "test-case-03", completionSignalled: true }),
+      makeTaskCompletionCase(),
       [rubric],
       SCORED_AT,
     );
@@ -814,17 +872,20 @@ describe("LangChainAgentEvalsScorer — error propagation from judge", () => {
     const judge = new StubLangChainJudge();
     const adapterErr: ScoringError = {
       type: "ScorerAdapterError",
-      caseId: "test-case-01",
-      dimension: "routingCorrectness",
+      caseId: "test-case-02",
+      dimension: "delegationCorrectness",
       message: "LangChain model timed out",
     };
     judge.setDefaultError(adapterErr);
     const scorer = new LangChainAgentEvalsScorer(judge);
 
     const result = await scorer.score(
-      makeRun(),
-      makeAgentRoutingCase(),
-      [makeRubric()],
+      makeRun({
+        caseId: "test-case-02",
+        delegationChain: ["tapestry", "shuttle"],
+      }),
+      makeDelegationCase(),
+      [makeRubric("test-case-02", "tapestry-execution")],
       SCORED_AT,
     );
 
@@ -838,20 +899,23 @@ describe("LangChainAgentEvalsScorer — error propagation from judge", () => {
 
   it("surfaces rationale quality error when judge fails on that dimension", async () => {
     const judge = new StubLangChainJudge();
-    // First call (routing) succeeds; second call (rationale) fails
-    judge.enqueueOutput({ score: 1.0, rationale: "Correct routing." });
+    // First call (delegation) succeeds; second call (rationale) fails
+    judge.enqueueOutput({ score: 1.0, rationale: "Correct delegation." });
     judge.enqueueError({
       type: "ScorerAdapterError",
-      caseId: "test-case-01",
+      caseId: "test-case-02",
       dimension: "rationaleQuality",
       message: "Rationale judge failed",
     });
     const scorer = new LangChainAgentEvalsScorer(judge);
 
     const result = await scorer.score(
-      makeRun(),
-      makeAgentRoutingCase(),
-      [makeRubric()],
+      makeRun({
+        caseId: "test-case-02",
+        delegationChain: ["tapestry", "shuttle"],
+      }),
+      makeDelegationCase(),
+      [makeRubric("test-case-02", "tapestry-execution")],
       SCORED_AT,
     );
 

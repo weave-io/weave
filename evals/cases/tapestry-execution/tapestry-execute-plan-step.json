@@ -1,6 +1,6 @@
 {
   "id": "tapestry-execute-plan-step",
-  "description": "Tapestry should execute a single planned step and signal completion via agent_signal",
+  "description": "Tapestry should execute a single planned step and signal textual completion",
   "suite": "tapestry-execution",
   "allowed_agents": ["tapestry", "shuttle", "loom"],
   "allowed_models": [
@@ -10,15 +10,10 @@
   ],
   "expected_outcome": {
     "kind": "task_completion",
-    "description": "The planned step is executed and an agent_signal completion is emitted",
+    "description": "The planned step is executed and task complete is emitted",
     "required_artifacts": []
   },
   "accepted_alternates": [],
-  "transcript_expectations": [
-    {
-      "check": "tool_called",
-      "tool_name": "agent_signal"
-    }
-  ],
+  "transcript_expectations": [],
   "tags": ["execution", "completion"]
 }

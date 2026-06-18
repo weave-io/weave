@@ -825,6 +825,65 @@ describe("extractRoutedAgents — delegation-sequence format", () => {
     const result = extractRoutedAgents(content);
     expect(result).toContain("warp");
   });
+
+  it("extracts current project category shuttles", () => {
+    const content = "Route to shuttle-engine for engine composition work.";
+    const result = extractRoutedAgents(content);
+    expect(result).toContain("shuttle-engine");
+    expect(result).not.toContain("shuttle");
+  });
+
+  it("extracts thread as an evidence-gathering route", () => {
+    const content =
+      "Delegation Sequence:\n1. [Sequential] thread: Explore settings structure\n2. [Sequential] shuttle: Implement endpoint";
+    const result = extractRoutedAgents(content);
+    expect(result).toContain("thread");
+    expect(result).toContain("shuttle");
+  });
+
+  it("does not extract negated backticked agent mentions", () => {
+    const content =
+      "No `pattern` plan is needed. Route to shuttle for implementation.";
+    const result = extractRoutedAgents(content);
+    expect(result).toContain("shuttle");
+    expect(result).not.toContain("pattern");
+  });
+
+  it("extracts XML-style weave agent invocations", () => {
+    const content = [
+      "<weave_agent>",
+      "<agent>thread</agent>",
+      "</weave_agent>",
+      '<weave><invoke name="shuttle"></invoke></weave>',
+      "<weave:invoke_agent><agent_name>shuttle-backend</agent_name></weave:invoke_agent>",
+    ].join("\n");
+    const result = extractRoutedAgents(content);
+    expect(result).toContain("thread");
+    expect(result).toContain("shuttle");
+    expect(result).toContain("shuttle-backend");
+  });
+
+  it("extracts todo-item agent prefixes from Loom sidebar output", () => {
+    const content = [
+      "<items>",
+      "<item>thread: Survey settings UI/config</item>",
+      "<item>shuttle: Identify pain points</item>",
+      "</items>",
+    ].join("\n");
+    const result = extractRoutedAgents(content);
+    expect(result).toContain("thread");
+    expect(result).toContain("shuttle");
+  });
+
+  it("extracts XML agent name attributes and Markdown-bold agent mentions", () => {
+    const content = [
+      '<agent name="thread">Explore settings UX</agent>',
+      "Delegating to **shuttle** to update the panel.",
+    ].join("\n");
+    const result = extractRoutedAgents(content);
+    expect(result).toContain("thread");
+    expect(result).toContain("shuttle");
+  });
 });
 
 // ---------------------------------------------------------------------------

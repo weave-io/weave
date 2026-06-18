@@ -156,9 +156,9 @@ describe("builtin compose smoke", () => {
     expect(descriptor.composedPrompt).not.toContain("Workflow Selection");
   });
 
-  it("loom composedPrompt contains Execution Boundary Decision routing item", () => {
+  it("loom composedPrompt contains private Routing Decision guidance", () => {
     const descriptor = getDescriptor("loom");
-    expect(descriptor.composedPrompt).toContain("Execution Boundary Decision");
+    expect(descriptor.composedPrompt).toContain("# Routing Decision");
   });
 
   it("loom composedPrompt contains guidance to delegate to Pattern for large work", () => {

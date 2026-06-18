@@ -108,8 +108,14 @@ export const LOOM_ROUTING_SUITE = "loom-routing";
 const ROUTING_AGENT_NAMES = [
   "loom",
   "tapestry",
+  "thread",
   "shuttle",
   "shuttle-backend",
+  "shuttle-core",
+  "shuttle-engine",
+  "shuttle-adapters",
+  "shuttle-docs",
+  "shuttle-scripts",
   "shuttle-frontend",
   "shuttle-infra",
   "warp",
@@ -190,6 +196,37 @@ function makePrimarySubstrings(agent: string): string[] {
     `assign to ${agent}`,
     `send to ${agent}`,
   ];
+}
+
+function isNegatedMentionLine(line: string, agent: string): boolean {
+  const plainLine = line.replace(/[`"']/g, "");
+  const escaped = agent.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const agentPattern = `\\b${escaped}\\b`;
+  const negatedPatterns = [
+    new RegExp(`\\bno\\s+${agentPattern}\\b`, "i"),
+    new RegExp(
+      `\\bnot\\s+(?:use|using|needed|need|route|routing|delegate|delegating)[^\\n]*${agentPattern}`,
+      "i",
+    ),
+    new RegExp(
+      `\\b${agentPattern}\\b[^\\n]{0,32}\\b(?:no|not needed|not required|unnecessary)\\b`,
+      "i",
+    ),
+    new RegExp(`\\bwithout\\s+${agentPattern}\\b`, "i"),
+  ];
+  return negatedPatterns.some((pattern) => pattern.test(plainLine));
+}
+
+function hasStandaloneAgentPattern(lower: string, pattern: string): boolean {
+  let searchFrom = 0;
+  while (searchFrom < lower.length) {
+    const index = lower.indexOf(pattern, searchFrom);
+    if (index < 0) return false;
+    const afterAgentIndex = index + pattern.length;
+    if (lower.charAt(afterAgentIndex) !== "-") return true;
+    searchFrom = afterAgentIndex;
+  }
+  return false;
 }
 
 /**
@@ -302,17 +339,44 @@ export function extractRoutedAgents(content: string): string[] {
       `[parallel] ${agent}`,
       `sequential] ${agent}`,
       `parallel] ${agent}`,
+      `<agent>${agent}</agent>`,
+      `<agent_name>${agent}</agent_name>`,
+      `<agent_id>${agent}</agent_id>`,
+      `<${agent}>`,
+      `<invoke name="${agent}"`,
+      `<invoke name='${agent}'`,
+      `agent="${agent}"`,
+      `agent='${agent}'`,
+      `agent name="${agent}"`,
+      `agent name='${agent}'`,
+      `agent_id="${agent}"`,
+      `agent_id='${agent}'`,
+      `<item>${agent}:`,
+      `<item>${agent} `,
+      `>${agent}:`,
+      `**${agent}**`,
+      `**${agent}**:`,
     ];
 
     let matched = false;
     for (const pattern of patterns) {
-      if (lower.includes(pattern) && !seen.has(agent)) {
+      if (hasStandaloneAgentPattern(lower, pattern) && !seen.has(agent)) {
         matched = true;
         break;
       }
     }
 
     if (!matched) {
+      continue;
+    }
+
+    const matchingLines = lower
+      .split(/\n/)
+      .filter((line) => line.includes(agent));
+    if (
+      matchingLines.length > 0 &&
+      matchingLines.every((line) => isNegatedMentionLine(line, agent))
+    ) {
       continue;
     }
 

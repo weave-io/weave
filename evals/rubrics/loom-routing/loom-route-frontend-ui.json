@@ -5,6 +5,6 @@
     "outcome_weight": 0.8,
     "per_expectation_weight": 0.2,
     "required": true,
-    "notes": "Routing to frontend shuttle is the primary signal; transcript mention provides partial credit"
+    "notes": "Routing to the generic shuttle is the primary signal in the current text-only VNext fixture set; thread may appear as evidence gathering before implementation, and reviewer follow-ups should not invalidate the primary route."
   }
 }

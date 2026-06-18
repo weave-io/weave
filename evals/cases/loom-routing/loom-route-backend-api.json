@@ -2,7 +2,7 @@
   "id": "loom-route-backend-api",
   "description": "Add a backend API endpoint for retrieving project settings.",
   "suite": "loom-routing",
-  "allowed_agents": ["loom", "shuttle", "shuttle-backend"],
+  "allowed_agents": ["loom", "thread", "shuttle", "shuttle-backend", "weft", "warp"],
   "allowed_models": [
     "anthropic/claude-opus-4.5",
     "anthropic/claude-sonnet-4.5",
@@ -10,14 +10,14 @@
   ],
   "expected_outcome": {
     "kind": "agent_routing",
-    "target_agent": "shuttle-backend",
+    "target_agent": "shuttle",
     "via": []
   },
-  "accepted_alternates": ["shuttle"],
+  "accepted_alternates": ["shuttle", "shuttle-backend"],
   "transcript_expectations": [
     {
       "check": "agent_mentioned",
-      "agent_name": "shuttle-backend"
+      "agent_name": "shuttle"
     }
   ],
   "tags": ["routing", "backend"]

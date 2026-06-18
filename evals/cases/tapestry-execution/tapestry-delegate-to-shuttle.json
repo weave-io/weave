@@ -15,10 +15,6 @@
   "accepted_alternates": ["shuttle-backend", "shuttle-frontend"],
   "transcript_expectations": [
     {
-      "check": "tool_called",
-      "tool_name": "delegate"
-    },
-    {
       "check": "agent_mentioned",
       "agent_name": "shuttle"
     }

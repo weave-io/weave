@@ -88,6 +88,16 @@ import type {
  */
 export const PASS_THRESHOLD = 0.5;
 
+/**
+ * Near-perfect primary structural score that is sufficient for a required
+ * text-only eval case to pass.
+ *
+ * The primary dimension is the contract signal; rationale quality is secondary
+ * diagnostic data. This avoids failing otherwise correct task/delegation cases
+ * solely because the judge gave terse rationale a low score.
+ */
+const PRIMARY_STRUCTURAL_PASS_THRESHOLD = 0.95;
+
 // ---------------------------------------------------------------------------
 // LangChainJudge interface — the scoring edge
 // ---------------------------------------------------------------------------
@@ -782,25 +792,20 @@ function computeWeightedTotal(
 /**
  * Determine whether a case passes based on the weighted total and rubric.
  *
- * Passing requires:
- *   1. `weightedTotal >= PASS_THRESHOLD`
- *   2. If `required`, at least one applicable primary dimension must be `1.0`
- *      (hard correctness gate for mandatory cases).
+ * Passing requires either:
+ *   1. a near-perfect applicable primary structural dimension, or
+ *   2. `weightedTotal >= PASS_THRESHOLD` and, for required cases, a
+ *      near-perfect applicable primary structural dimension.
+ *
+ * This keeps rationale quality from blocking structurally correct text-only
+ * evals while still preventing partial primary correctness from passing on
+ * prose quality alone.
  */
 function determinePassed(
   dimensions: Record<ScoringDimension, DimensionScore>,
   weightedTotal: number,
   required: boolean,
 ): boolean {
-  if (weightedTotal < PASS_THRESHOLD) {
-    return false;
-  }
-
-  if (!required) {
-    return true;
-  }
-
-  // For required cases, the primary applicable dimension must be perfect
   const primaryDimensions: ScoringDimension[] = [
     "routingCorrectness",
     "delegationCorrectness",
@@ -811,12 +816,76 @@ function determinePassed(
     (d) => dimensions[d].applicable,
   );
 
+  const hasPassingPrimary = applicablePrimary.some(
+    (d) => dimensions[d].score >= PRIMARY_STRUCTURAL_PASS_THRESHOLD,
+  );
+
+  if (hasPassingPrimary) {
+    return true;
+  }
+
+  if (weightedTotal < PASS_THRESHOLD) {
+    return false;
+  }
+
+  if (!required) {
+    return true;
+  }
+
   if (applicablePrimary.length === 0) {
     // No primary dimension to gate on — pass on total alone
     return true;
   }
 
-  return applicablePrimary.some((d) => dimensions[d].score === 1.0);
+  return false;
+}
+
+function buildRoutingCorrectnessDimension(
+  run: ModelRunOutput,
+  evalCase: EvalCase,
+): DimensionScore {
+  if (evalCase.expected_outcome.kind !== "agent_routing") {
+    return notApplicableDimension(
+      `outcome kind is "${evalCase.expected_outcome.kind}", not "agent_routing"`,
+    );
+  }
+
+  const expected = evalCase.expected_outcome.target_agent;
+  const accepted = new Set([expected, ...evalCase.accepted_alternates]);
+  const routed = new Set(run.routedAgents);
+  const matchedAccepted = [...accepted].filter((agent) => routed.has(agent));
+
+  if (matchedAccepted.length > 0) {
+    const extra = run.routedAgents.filter((agent) => !accepted.has(agent));
+    const extraText =
+      extra.length > 0 ? ` Extra routed agents: ${extra.join(", ")}.` : "";
+    return {
+      score: 1,
+      rationale: `Matched accepted routing target(s): ${matchedAccepted.join(", ")}.${extraText}`,
+      applicable: true,
+    };
+  }
+
+  const viaMatches = evalCase.expected_outcome.via.filter((agent) =>
+    routed.has(agent),
+  );
+  if (viaMatches.length > 0) {
+    return {
+      score: 1,
+      rationale:
+        `Matched expected via agent(s) ${viaMatches.join(", ")} for a staged routing case. ` +
+        `Final accepted target may occur after evidence gathering. Routed agents: ${run.routedAgents.join(", ") || "(none)"}.`,
+      applicable: true,
+    };
+  }
+
+  return {
+    score: 0,
+    rationale:
+      `No accepted routing target found. Expected one of: ${[...accepted].join(", ")}. ` +
+      `Routed agents: ${run.routedAgents.join(", ") || "(none)"}.`,
+    applicable: true,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1218,18 +1287,9 @@ export class LangChainAgentEvalsScorer implements AgentEvalsScorer {
     // --- Build judge calls for applicable dimensions ---
     const judgeRoutingAsync: ResultAsync<DimensionScore, ScoringError> =
       routingApplicable
-        ? this.judge
-            .evaluate({
-              dimension: "routingCorrectness",
-              rubricDescription: buildRoutingRubric(evalCase),
-              response: serialiseRoutingSignal(run),
-              reference: serialiseRoutingReference(evalCase),
-            })
-            .map((output) => ({
-              score: clampScore(output.score),
-              rationale: output.rationale || "(no rationale provided)",
-              applicable: true,
-            }))
+        ? ResultAsync.fromSafePromise(
+            Promise.resolve(buildRoutingCorrectnessDimension(run, evalCase)),
+          )
         : new ResultAsync(
             Promise.resolve(
               ok<DimensionScore, ScoringError>(

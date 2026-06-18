@@ -107,8 +107,14 @@ export const TAPESTRY_EXECUTION_SUITE = "tapestry-execution";
 const DELEGATION_AGENT_NAMES = [
   "loom",
   "tapestry",
+  "thread",
   "shuttle",
   "shuttle-backend",
+  "shuttle-core",
+  "shuttle-engine",
+  "shuttle-adapters",
+  "shuttle-docs",
+  "shuttle-scripts",
   "shuttle-frontend",
   "shuttle-infra",
   "warp",
@@ -156,6 +162,11 @@ export function extractDelegationChain(content: string): string[] {
   );
   const agentSet = new Set(sortedNames);
 
+  const explicitChain = extractExplicitArrowChain(lower, sortedNames, agentSet);
+  if (explicitChain.length >= 2) {
+    return explicitChain;
+  }
+
   // Tokenise: split on whitespace and punctuation, try to find chains
   // by looking for known agent names adjacent to chain connectors
   const connectorPattern = /([→\->]|then|delegates?\s+to|delegating\s+to)/gi;
@@ -190,6 +201,37 @@ export function extractDelegationChain(content: string): string[] {
   }
 
   return chain;
+}
+
+function extractExplicitArrowChain(
+  lower: string,
+  sortedNames: readonly string[],
+  agentSet: ReadonlySet<string>,
+): string[] {
+  const lines = lower.split(/\n/);
+  for (const line of lines) {
+    if (!line.includes("→") && !line.includes("->")) {
+      continue;
+    }
+    const segments = line
+      .replace(/`/g, "")
+      .split(/→|->/)
+      .map((segment) => segment.trim());
+    const chain: string[] = [];
+    for (const segment of segments) {
+      const match = sortedNames.find((agent) => segment.includes(agent));
+      if (match !== undefined && !chain.includes(match)) {
+        chain.push(match);
+      }
+    }
+    if (chain.length < 2) {
+      continue;
+    }
+    if (chain.every((member) => agentSet.has(member))) {
+      return chain;
+    }
+  }
+  return [];
 }
 
 /**
@@ -444,14 +486,22 @@ function buildDryRunResult(evalCase: EvalCase, modelId: string): CaseResult {
  * a response that can be parsed for delegation chains, completion signals,
  * or produced artifacts.
  */
-function buildUserMessage(evalCase: EvalCase): string {
+export function buildUserMessage(evalCase: EvalCase): string {
   const outcome = evalCase.expected_outcome;
+  const planContext = [
+    "Synthetic eval plan context:",
+    "Plan file: .weave/plans/eval-tapestry-plan.md",
+    "Remaining tasks:",
+    `- [ ] 1/1 ${evalCase.description}`,
+    "Current todo state: one pending task, no completed tasks.",
+    "Treat this as a text-only eval: express delegation/completion in your response; no real harness tools are available.",
+  ].join("\n");
 
   if (outcome.kind === "delegation_chain") {
     const chain = outcome.chain.join(" → ");
     return (
-      `Execute the following task using the appropriate delegation chain.\n` +
-      `Task: ${evalCase.description}\n` +
+      `${planContext}\n\n` +
+      `Execute the remaining plan task using the appropriate delegation chain.\n` +
       `Express the delegation sequence clearly (e.g., "${chain}").`
     );
   }
@@ -462,14 +512,14 @@ function buildUserMessage(evalCase: EvalCase): string {
         ? `\nRequired artifacts: ${outcome.required_artifacts.join(", ")}`
         : "";
     return (
-      `Complete the following task and signal when done.\n` +
-      `Task: ${evalCase.description}${artifacts}\n` +
+      `${planContext}\n\n` +
+      `Complete the remaining plan task and signal when done.${artifacts}\n` +
       `Signal completion with "task complete" when done.`
     );
   }
 
   // Fallback for other outcome kinds
-  return `Task: ${evalCase.description}`;
+  return `${planContext}\n\nTask: ${evalCase.description}`;
 }
 
 // ---------------------------------------------------------------------------

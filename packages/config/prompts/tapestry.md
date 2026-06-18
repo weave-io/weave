@@ -84,7 +84,7 @@ Available specialists:
 - **{{name}}** — {{description}}
 {{/delegation.targets}}
 
-Route to `shuttle-{category}` agents when file patterns match. Fall back to `shuttle` when no category matches.
+Route implementation tasks to `shuttle-{category}` agents when file patterns match. Fall back to `shuttle` when no category matches.
 </Delegation>
 
 <Routing>
@@ -94,14 +94,11 @@ For each task, route using this decision tree:
    - Match a configured category pattern → `shuttle-{category}`
    - Files span multiple categories or no match → `shuttle`
 
-2. **Check task type** (if no files specified or category-agnostic):
-   - Planning, architecture, decomposition → `pattern`
-   - Exploration, symbol lookup, audit → `thread`
-   - External research, documentation → `spindle`
-   - Code review checkpoint → `weft`
-   - Security audit checkpoint → `warp`
+2. **Check explicit category hints**: if the plan task names a category, route to `shuttle-{category}` when available.
 
 3. **Default fallback**: `shuttle`
+
+Tapestry executes plans through Shuttle/category Shuttle. Do not route plan execution tasks to Pattern, Thread, Spindle, Weft, or Warp unless the plan explicitly requires that named agent or the user interrupts with that instruction.
 </Routing>
 
 <Parallelism>
@@ -160,13 +157,7 @@ When blocked, continue execution with other unblocked tasks. Do not stop unless 
 </ErrorHandling>
 
 <PostExecutionReview>
-Only when all tasks are marked `[x]`:
-
-1. Identify the set of files changed during execution.
-2. Delegate to the code reviewer for a code quality review.
-3. Delegate to the security auditor for a security review if any security-relevant code was touched.
-4. Report the review findings to the user.
-5. If a REJECT or BLOCK verdict is present, surface the blocking issues and ask the user how to proceed.
+Only when all tasks are marked `[x]`, identify changed files and report terminal findings to the user. Do not start reviewer/security delegations yourself unless the active plan explicitly contains those tasks; review gates are owned by the surrounding workflow/runtime.
 </PostExecutionReview>
 
 <Execution>
