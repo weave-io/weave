@@ -1416,3 +1416,295 @@ describe("GitHubContentsPublisher — immutable run artifact protection", () => 
     expect(runBody.sha).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// GitHubContentsPublisher — readRemoteRunIds (RemoteSequenceReader)
+// ---------------------------------------------------------------------------
+
+describe("GitHubContentsPublisher — readRemoteRunIds", () => {
+  /**
+   * Build a base64-encoded "file content" response body that the GitHub
+   * Contents API returns for a file.
+   *
+   * The manifest JSON is base64-encoded and wrapped in the GitHub response
+   * envelope `{ content: "<base64>", sha: "<sha>" }`.
+   */
+  function makeContentsApiResponse(manifestJson: string): string {
+    const base64 = Buffer.from(manifestJson).toString("base64");
+    return JSON.stringify({ content: base64, sha: "manifest-sha-abc" });
+  }
+
+  it("returns matching run IDs when remote manifest has same prefix -001", async () => {
+    const prefix = "abc123d-2026-06-19";
+    const manifest = JSON.stringify({
+      schemaVersion: 1,
+      updatedAt: "2026-06-19T00:00:00.000Z",
+      totalRuns: 1,
+      runs: [
+        {
+          runId: `${prefix}-001`,
+          assembledAt: "2026-06-19T12:00:00.000Z",
+          gitSha: "abc123d",
+          dryRun: false,
+          allSuitesGreen: true,
+          totalCases: 2,
+          passedCases: 2,
+          failedCases: 0,
+          suites: ["loom-routing"],
+          bundleReportPath: `runs/v1/${prefix}-001/public-report.json`,
+        },
+      ],
+    });
+
+    const fetchImpl: FetchImpl = async (_req) =>
+      new Response(makeContentsApiResponse(manifest), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+
+    const publisher = new GitHubContentsPublisher(
+      fetchImpl,
+      makeStubFileReader(),
+    );
+
+    const result = await publisher.readRemoteRunIds(prefix, FAKE_TOKEN);
+    expect(result.isOk()).toBe(true);
+    const ids = result._unsafeUnwrap();
+    expect(ids).toContain(`${prefix}-001`);
+    expect(ids).toHaveLength(1);
+  });
+
+  it("returns empty array when remote manifest has no matching prefix entries", async () => {
+    const prefix = "abc123d-2026-06-19";
+    const manifest = JSON.stringify({
+      schemaVersion: 1,
+      updatedAt: "2026-06-19T00:00:00.000Z",
+      totalRuns: 1,
+      runs: [
+        {
+          runId: "deadbee-2026-06-19-001", // different SHA
+          assembledAt: "2026-06-19T12:00:00.000Z",
+          gitSha: "deadbee",
+          dryRun: false,
+          allSuitesGreen: true,
+          totalCases: 1,
+          passedCases: 1,
+          failedCases: 0,
+          suites: ["loom-routing"],
+          bundleReportPath: "runs/v1/deadbee-2026-06-19-001/public-report.json",
+        },
+      ],
+    });
+
+    const fetchImpl: FetchImpl = async (_req) =>
+      new Response(makeContentsApiResponse(manifest), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+
+    const publisher = new GitHubContentsPublisher(
+      fetchImpl,
+      makeStubFileReader(),
+    );
+
+    const result = await publisher.readRemoteRunIds(prefix, FAKE_TOKEN);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap()).toHaveLength(0);
+  });
+
+  it("returns ok([]) when remote manifest returns 404 (not yet published)", async () => {
+    const fetchImpl: FetchImpl = async (_req) =>
+      new Response(JSON.stringify({ message: "Not Found" }), { status: 404 });
+
+    const publisher = new GitHubContentsPublisher(
+      fetchImpl,
+      makeStubFileReader(),
+    );
+
+    const result = await publisher.readRemoteRunIds(
+      "abc123d-2026-06-19",
+      FAKE_TOKEN,
+    );
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap()).toHaveLength(0);
+  });
+
+  it("returns ok([]) on network error (fetch throws)", async () => {
+    const fetchImpl: FetchImpl = async (_req) => {
+      throw new Error("ECONNREFUSED: Network connection refused");
+    };
+
+    const publisher = new GitHubContentsPublisher(
+      fetchImpl,
+      makeStubFileReader(),
+    );
+
+    const result = await publisher.readRemoteRunIds(
+      "abc123d-2026-06-19",
+      FAKE_TOKEN,
+    );
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap()).toHaveLength(0);
+  });
+
+  it("returns ok([]) when response body contains malformed JSON", async () => {
+    const fetchImpl: FetchImpl = async (_req) =>
+      new Response("not-json", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+
+    const publisher = new GitHubContentsPublisher(
+      fetchImpl,
+      makeStubFileReader(),
+    );
+
+    const result = await publisher.readRemoteRunIds(
+      "abc123d-2026-06-19",
+      FAKE_TOKEN,
+    );
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap()).toHaveLength(0);
+  });
+
+  it("returns ok([]) when manifest JSON has no 'runs' array", async () => {
+    const manifest = JSON.stringify({
+      schemaVersion: 1,
+      updatedAt: "2026-06-19T00:00:00.000Z",
+      totalRuns: 0,
+      // 'runs' field intentionally omitted
+    });
+
+    const fetchImpl: FetchImpl = async (_req) =>
+      new Response(makeContentsApiResponse(manifest), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+
+    const publisher = new GitHubContentsPublisher(
+      fetchImpl,
+      makeStubFileReader(),
+    );
+
+    const result = await publisher.readRemoteRunIds(
+      "abc123d-2026-06-19",
+      FAKE_TOKEN,
+    );
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap()).toHaveLength(0);
+  });
+
+  it("returns only matching prefix IDs and ignores other prefixes", async () => {
+    const prefix = "abc123d-2026-06-19";
+    const manifest = JSON.stringify({
+      schemaVersion: 1,
+      updatedAt: "2026-06-19T00:00:00.000Z",
+      totalRuns: 3,
+      runs: [
+        {
+          runId: `${prefix}-001`,
+          assembledAt: "2026-06-19T10:00:00.000Z",
+          gitSha: "abc123d",
+          dryRun: false,
+          allSuitesGreen: true,
+          totalCases: 1,
+          passedCases: 1,
+          failedCases: 0,
+          suites: ["loom-routing"],
+          bundleReportPath: `runs/v1/${prefix}-001/public-report.json`,
+        },
+        {
+          runId: "deadbee-2026-06-19-002", // different SHA
+          assembledAt: "2026-06-19T11:00:00.000Z",
+          gitSha: "deadbee",
+          dryRun: false,
+          allSuitesGreen: true,
+          totalCases: 1,
+          passedCases: 1,
+          failedCases: 0,
+          suites: ["tapestry-execution"],
+          bundleReportPath: "runs/v1/deadbee-2026-06-19-002/public-report.json",
+        },
+        {
+          runId: `${prefix}-003`, // same prefix
+          assembledAt: "2026-06-19T12:00:00.000Z",
+          gitSha: "abc123d",
+          dryRun: false,
+          allSuitesGreen: true,
+          totalCases: 1,
+          passedCases: 1,
+          failedCases: 0,
+          suites: ["loom-routing"],
+          bundleReportPath: `runs/v1/${prefix}-003/public-report.json`,
+        },
+      ],
+    });
+
+    const fetchImpl: FetchImpl = async (_req) =>
+      new Response(makeContentsApiResponse(manifest), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+
+    const publisher = new GitHubContentsPublisher(
+      fetchImpl,
+      makeStubFileReader(),
+    );
+
+    const result = await publisher.readRemoteRunIds(prefix, FAKE_TOKEN);
+    expect(result.isOk()).toBe(true);
+    const ids = result._unsafeUnwrap();
+    expect(ids).toContain(`${prefix}-001`);
+    expect(ids).toContain(`${prefix}-003`);
+    expect(ids).not.toContain("deadbee-2026-06-19-002");
+    expect(ids).toHaveLength(2);
+  });
+
+  it("GET request uses Authorization header with token (token not in URL)", async () => {
+    const capturedRequests: Request[] = [];
+    const fetchImpl: FetchImpl = async (req) => {
+      capturedRequests.push(req);
+      return new Response(JSON.stringify({ message: "Not Found" }), {
+        status: 404,
+      });
+    };
+
+    const publisher = new GitHubContentsPublisher(
+      fetchImpl,
+      makeStubFileReader(),
+    );
+
+    await publisher.readRemoteRunIds("abc123d-2026-06-19", FAKE_TOKEN);
+
+    expect(capturedRequests).toHaveLength(1);
+    const req = capturedRequests[0]!;
+    // Token must be in Authorization header ONLY
+    expect(req.headers.get("Authorization")).toBe(`Bearer ${FAKE_TOKEN}`);
+    // Token must NOT appear in the URL
+    expect(req.url).not.toContain(FAKE_TOKEN);
+    // GET method
+    expect(req.method).toBe("GET");
+  });
+
+  it("GET request targets indexes/v1/dashboard-manifest.json path", async () => {
+    const capturedRequests: Request[] = [];
+    const fetchImpl: FetchImpl = async (req) => {
+      capturedRequests.push(req);
+      return new Response(JSON.stringify({ message: "Not Found" }), {
+        status: 404,
+      });
+    };
+
+    const publisher = new GitHubContentsPublisher(
+      fetchImpl,
+      makeStubFileReader(),
+    );
+
+    await publisher.readRemoteRunIds("abc123d-2026-06-19", FAKE_TOKEN);
+
+    expect(capturedRequests).toHaveLength(1);
+    const req = capturedRequests[0]!;
+    expect(req.url).toContain("indexes/v1/dashboard-manifest.json");
+    expect(req.url).toContain("weave-io/weave-agent-evals");
+  });
+});

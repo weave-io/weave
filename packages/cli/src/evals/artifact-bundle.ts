@@ -67,6 +67,22 @@
  *
  * Dry-run bundles are always written as local-only even when mode is
  * `"publish"`, because dry-run results contain no real model output.
+ *
+ * # Remote-aware sequence allocation (publish mode)
+ *
+ * In `"publish"` mode, `writeBundle()` uses a `RemoteSequenceReader` to look
+ * up the highest existing run-ID sequence for the current prefix in the remote
+ * results repository before allocating the next local sequence number.  This
+ * prevents collisions when a CI rerun produces the same `<sha7>-<date>` prefix
+ * that was already published (e.g. re-running the same commit on the same day).
+ *
+ * The reader fetches `indexes/v1/dashboard-manifest.json` from the remote repo,
+ * extracts run IDs that share the current prefix, and returns them alongside
+ * the local scan results.  `resolveNextSequence()` then picks `max(local, remote) + 1`.
+ *
+ * Any failure in the remote read (404, network error, malformed JSON) is
+ * treated as "no remote runs found" — the allocation falls back to local-only
+ * safely.
  */
 
 import { basename, join } from "node:path";
@@ -91,6 +107,42 @@ import type {
   PromptProvenanceRecord,
   RunnerResult,
 } from "./types.js";
+
+// ---------------------------------------------------------------------------
+// Remote sequence reader interface
+// ---------------------------------------------------------------------------
+
+/**
+ * Reads run IDs that already exist in the remote results repository for a
+ * given prefix, so that `resolveNextSequence()` can allocate a collision-free
+ * sequence number even when the same commit+date combination was published
+ * previously.
+ *
+ * Implementations must be fail-safe: any error (network, 404, parse failure,
+ * invalid JSON) MUST return `ok([])` rather than propagating an error, so that
+ * the allocation can always fall back to local-only.
+ *
+ * @example
+ * ```ts
+ * const reader: RemoteSequenceReader = {
+ *   readRemoteRunIds: (prefix, token) =>
+ *     publisher.readRemoteRunIds(prefix, token),
+ * };
+ * ```
+ */
+export interface RemoteSequenceReader {
+  /**
+   * Return all run IDs in the remote repository that start with `prefix`.
+   *
+   * Implementations MUST return `ok([])` rather than `err(…)` on any
+   * failure — the caller treats absence as "no remote runs".
+   *
+   * @param prefix - The run ID prefix to match (e.g. `abc123d-2026-01-15`).
+   * @param token  - The publish token (passed as Authorization header).
+   * @returns `ok(runIds)` on success or `ok([])` on any failure.
+   */
+  readRemoteRunIds(prefix: string, token: string): ResultAsync<string[], never>;
+}
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -205,6 +257,24 @@ export interface WriteBundleOptions {
    * Defaults to `false`.
    */
   generateIndexes?: boolean;
+  /**
+   * Optional remote sequence reader used in `"publish"` mode to discover
+   * run IDs that already exist in the remote results repository.
+   *
+   * When provided and mode is `"publish"`, `writeBundle()` calls
+   * `readRemoteRunIds(prefix, token)` before allocating the next local
+   * sequence number so that reruns on the same commit+date combination
+   * receive `-002`, `-003`, etc., instead of colliding with an already-
+   * published `-001`.
+   *
+   * Any failure in the reader (network error, 404, malformed JSON) is
+   * silently treated as "no remote runs" — the allocation falls back to
+   * local-only safely.
+   *
+   * Inject `GitHubContentsPublisher` in production.  Inject a stub in tests.
+   * When omitted, remote-aware sequencing is disabled.
+   */
+  remoteSequenceReader?: RemoteSequenceReader;
 }
 
 /**
@@ -288,16 +358,25 @@ export function computeBundleDirName(
  * that match the pattern `<prefix>-<NNN>`. The next sequence number is one
  * greater than the highest existing number (or 1 when none exist).
  *
+ * When `remoteRunIds` is supplied (publish mode), the function also scans
+ * those IDs for matching entries so that the allocated sequence is higher
+ * than both the local and remote maximums.  This prevents collisions when
+ * the same commit+date prefix was already published to the remote repo.
+ *
  * This is a best-effort scan — race conditions in concurrent processes are
  * not guarded against (eval runs are designed to be sequential).
  *
- * @param runsDir - The absolute path to the `runs/` parent directory.
- * @param prefix - The run ID prefix (e.g. `abc123d-2026-01-15`).
+ * @param runsDir      - The absolute path to the `runs/` parent directory.
+ * @param prefix       - The run ID prefix (e.g. `abc123d-2026-01-15`).
+ * @param remoteRunIds - Optional list of run IDs already present in the
+ *                       remote repository for the same prefix.  Pass an
+ *                       empty array or omit for local-only allocation.
  * @returns The next sequence number (1-based).
  */
 export async function resolveNextSequence(
   runsDir: string,
   prefix: string,
+  remoteRunIds: string[] = [],
 ): Promise<number> {
   const scanner = new Bun.Glob(`${prefix}-[0-9][0-9][0-9]`);
 
@@ -316,11 +395,32 @@ export async function resolveNextSequence(
       if (seq > maxSeq) maxSeq = seq;
     }
   } catch {
-    // runsDir does not exist yet — first run, sequence is 1
-    return 1;
+    // runsDir does not exist yet — first run, start from 0 so we can still
+    // factor in the remote maximum below before returning.
+  }
+
+  // Factor in remote run IDs for the same prefix.
+  // We only look at IDs that exactly match `<prefix>-NNN` where NNN is
+  // a three-digit decimal, to avoid false positives from other prefixes.
+  const prefixPattern = new RegExp(`^${escapeRegExp(prefix)}-(\\d{3})$`);
+  for (const remoteId of remoteRunIds) {
+    const match = remoteId.match(prefixPattern);
+    if (match === null) continue;
+    const sequenceText = match[1];
+    if (sequenceText === undefined) continue;
+    const seq = parseInt(sequenceText, 10);
+    if (seq > maxSeq) maxSeq = seq;
   }
 
   return maxSeq + 1;
+}
+
+/**
+ * Escape a string so it can be safely embedded in a `RegExp` pattern.
+ * Escapes: `\ ^ $ . | ? * + ( ) [ ] { }`.
+ */
+function escapeRegExp(s: string): string {
+  return s.replace(/[\\^$.|?*+()[\]{}]/g, "\\$&");
 }
 
 // ---------------------------------------------------------------------------
@@ -678,100 +778,122 @@ export class ArtifactBundleWriter {
 
     const bundle = bundleResult.value;
 
-    // Compute run ID: resolve prefix then scan for next sequence number
+    // Compute run ID: resolve prefix then scan for next sequence number.
+    // In publish mode, also query the remote repo for existing run IDs so we
+    // don't collide with a previously published run on the same commit+date.
     const runsDir = join(this.bundleRoot, RUNS_SUBDIR);
     const prefix = computeRunIdPrefix(options.gitSha, assembledAt);
 
-    return ResultAsync.fromPromise(
-      resolveNextSequence(runsDir, prefix),
-      (cause): BundleError => ({
-        type: "BundleWriteError",
-        path: runsDir,
-        message:
-          `Failed to resolve next run sequence in "${runsDir}": ` +
-          `${cause instanceof Error ? cause.message : String(cause)}`,
+    // Fetch remote run IDs when a reader is provided and mode is "publish".
+    // Any failure in the remote read is swallowed — the result is always
+    // ok([]) on failure, so the type is ResultAsync<string[], never>.
+    const remoteRunIdsAsync: ResultAsync<string[], never> =
+      effectiveMode === "publish" && options.remoteSequenceReader !== undefined
+        ? (() => {
+            const token = env[EVAL_RESULTS_REPO_TOKEN_ENV_VAR] ?? "";
+            return options.remoteSequenceReader.readRemoteRunIds(
+              prefix,
+              token.trim(),
+            );
+          })()
+        : ResultAsync.fromSafePromise(Promise.resolve([] as string[]));
+
+    return remoteRunIdsAsync.andThen((remoteRunIds) =>
+      ResultAsync.fromPromise(
+        resolveNextSequence(runsDir, prefix, remoteRunIds),
+        (cause): BundleError => ({
+          type: "BundleWriteError",
+          path: runsDir,
+          message:
+            `Failed to resolve next run sequence in "${runsDir}": ` +
+            `${cause instanceof Error ? cause.message : String(cause)}`,
+        }),
+      ).andThen((sequence) => {
+        const runId = computeRunId(prefix, sequence);
+        const bundleDir = join(runsDir, runId);
+
+        // Write all bundle files locally first (immutable run artifacts)
+        return this.writeBundleFiles(
+          bundle,
+          bundleDir,
+          runId,
+          options.provenanceManifest,
+          writeMarkdown,
+        ).andThen((writeResult) => {
+          // Step 8: Regenerate dashboard indexes AFTER immutable run artifacts
+          // are fully assembled. Non-fatal: index failures never block the
+          // local bundle write from succeeding.
+          //
+          // We use a plain Promise (not ResultAsync) here so that the error
+          // type stays `never` on the outer chain — index failures are absorbed
+          // inside the promise and returned as an empty array.
+          const indexPromise: Promise<string[]> = generateIndexes
+            ? Promise.resolve(
+                new DashboardIndexWriter(this.bundleRoot)
+                  .rebuildFromRuns()
+                  .then(
+                    (r) => (r.isOk() ? r.value.filesWritten : []),
+                    () => [] as string[],
+                  ),
+              ).then((v) => v)
+            : Promise.resolve([] as string[]);
+
+          return ResultAsync.fromSafePromise(indexPromise).andThen(
+            (indexFilesWritten) => {
+              const writeResultWithIndexes: BundleWriteResult = {
+                ...writeResult,
+                indexFilesWritten,
+              };
+
+              // If mode is not "publish" or no publisher provided, return immediately
+              if (
+                effectiveMode !== "publish" ||
+                options.publisher === undefined
+              ) {
+                return ResultAsync.fromSafePromise(
+                  Promise.resolve(writeResultWithIndexes),
+                );
+              }
+
+              // Call the external publisher with the written bundle.
+              // Token presence was already verified above (token gate).
+              // Publication failures are surfaced as BundleError values.
+              //
+              // Pass `localBundleRoot` and `indexFileNames` so the publisher can
+              // upload dashboard index files (at repo root level) after the
+              // immutable run artifacts. Index filenames come from `indexFilesWritten`
+              // which are relative basenames written by `DashboardIndexWriter`.
+              return options.publisher
+                .publish({
+                  bundle,
+                  localBundleDir: bundleDir,
+                  // Derive relative file names using basename() for separator-agnostic
+                  // normalization — works correctly on both POSIX (/) and Windows (\) paths.
+                  fileNames: writeResult.filesWritten.map((fp) => basename(fp)),
+                  // Provide bundle root and index file names so the publisher can
+                  // upload generated indexes at the repository root level (after
+                  // the immutable run artifacts). Only set when indexes were generated.
+                  localBundleRoot:
+                    indexFilesWritten.length > 0 ? this.bundleRoot : undefined,
+                  indexFileNames:
+                    indexFilesWritten.length > 0
+                      ? indexFilesWritten
+                      : undefined,
+                  env,
+                })
+                .map((): BundleWriteResult => writeResultWithIndexes)
+                .mapErr(
+                  (repoErr): BundleError => ({
+                    type: "BundleWriteError",
+                    path: bundleDir,
+                    message: `External publication to results repository failed: ${repoErr.message}`,
+                  }),
+                );
+            },
+          );
+        });
       }),
-    ).andThen((sequence) => {
-      const runId = computeRunId(prefix, sequence);
-      const bundleDir = join(runsDir, runId);
-
-      // Write all bundle files locally first (immutable run artifacts)
-      return this.writeBundleFiles(
-        bundle,
-        bundleDir,
-        runId,
-        options.provenanceManifest,
-        writeMarkdown,
-      ).andThen((writeResult) => {
-        // Step 8: Regenerate dashboard indexes AFTER immutable run artifacts
-        // are fully assembled. Non-fatal: index failures never block the
-        // local bundle write from succeeding.
-        //
-        // We use a plain Promise (not ResultAsync) here so that the error
-        // type stays `never` on the outer chain — index failures are absorbed
-        // inside the promise and returned as an empty array.
-        const indexPromise: Promise<string[]> = generateIndexes
-          ? Promise.resolve(
-              new DashboardIndexWriter(this.bundleRoot).rebuildFromRuns().then(
-                (r) => (r.isOk() ? r.value.filesWritten : []),
-                () => [] as string[],
-              ),
-            ).then((v) => v)
-          : Promise.resolve([] as string[]);
-
-        return ResultAsync.fromSafePromise(indexPromise).andThen(
-          (indexFilesWritten) => {
-            const writeResultWithIndexes: BundleWriteResult = {
-              ...writeResult,
-              indexFilesWritten,
-            };
-
-            // If mode is not "publish" or no publisher provided, return immediately
-            if (
-              effectiveMode !== "publish" ||
-              options.publisher === undefined
-            ) {
-              return ResultAsync.fromSafePromise(
-                Promise.resolve(writeResultWithIndexes),
-              );
-            }
-
-            // Call the external publisher with the written bundle.
-            // Token presence was already verified above (token gate).
-            // Publication failures are surfaced as BundleError values.
-            //
-            // Pass `localBundleRoot` and `indexFileNames` so the publisher can
-            // upload dashboard index files (at repo root level) after the
-            // immutable run artifacts. Index filenames come from `indexFilesWritten`
-            // which are relative basenames written by `DashboardIndexWriter`.
-            return options.publisher
-              .publish({
-                bundle,
-                localBundleDir: bundleDir,
-                // Derive relative file names using basename() for separator-agnostic
-                // normalization — works correctly on both POSIX (/) and Windows (\) paths.
-                fileNames: writeResult.filesWritten.map((fp) => basename(fp)),
-                // Provide bundle root and index file names so the publisher can
-                // upload generated indexes at the repository root level (after
-                // the immutable run artifacts). Only set when indexes were generated.
-                localBundleRoot:
-                  indexFilesWritten.length > 0 ? this.bundleRoot : undefined,
-                indexFileNames:
-                  indexFilesWritten.length > 0 ? indexFilesWritten : undefined,
-                env,
-              })
-              .map((): BundleWriteResult => writeResultWithIndexes)
-              .mapErr(
-                (repoErr): BundleError => ({
-                  type: "BundleWriteError",
-                  path: bundleDir,
-                  message: `External publication to results repository failed: ${repoErr.message}`,
-                }),
-              );
-          },
-        );
-      });
-    });
+    );
   }
 
   /**

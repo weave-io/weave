@@ -16,6 +16,9 @@
  *   - bundle-index.json, run-summary.json, and score-*.json are always written.
  *   - provenance-manifest.json is written when a manifest is supplied.
  *   - prompt-hashes.json is written when prompt hash records are present.
+ *   - `resolveNextSequence()` factors in remote run IDs to avoid collisions.
+ *   - `ArtifactBundleWriter.writeBundle()` calls `remoteSequenceReader` in publish mode.
+ *   - Remote sequence reader failures fall back to local-only allocation.
  *
  * Test isolation:
  *   - All writes go to `TEMP_DIR` (not the project directory).
@@ -27,6 +30,7 @@
 import { describe, expect, it } from "bun:test";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
+import { ResultAsync } from "neverthrow";
 import {
   ArtifactBundleWriter,
   aggregateScoreFile,
@@ -38,6 +42,7 @@ import {
   computeRunId,
   computeRunIdPrefix,
   EVAL_RESULTS_REPO_TOKEN_ENV_VAR,
+  type RemoteSequenceReader,
   RUNS_SUBDIR,
   resolveNextSequence,
 } from "../artifact-bundle.js";
@@ -295,6 +300,63 @@ describe("resolveNextSequence", () => {
     await Bun.write(`${runsDir}/abc123d-2026-01-15-001/.keep`, "");
     const seq = await resolveNextSequence(runsDir, "abc123d-2026-01-15");
     expect(seq).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveNextSequence — remote run ID awareness
+// ---------------------------------------------------------------------------
+
+describe("resolveNextSequence — remote run IDs", () => {
+  it("factors in remote -001 when local is empty → returns 2", async () => {
+    const runsDir = resolve(TEMP_DIR, `rrs-remote-001-${uid()}`);
+    // Local runs dir does not exist; remote has -001
+    const seq = await resolveNextSequence(runsDir, "abc123d-2026-01-15", [
+      "abc123d-2026-01-15-001",
+    ]);
+    expect(seq).toBe(2);
+  });
+
+  it("local -003 and remote -005 yields -006 (remote wins)", async () => {
+    const runsDir = resolve(TEMP_DIR, `rrs-remote-max-${uid()}`);
+    // Local has up to 003
+    await Bun.write(`${runsDir}/abc123d-2026-01-15-001/.keep`, "");
+    await Bun.write(`${runsDir}/abc123d-2026-01-15-002/.keep`, "");
+    await Bun.write(`${runsDir}/abc123d-2026-01-15-003/.keep`, "");
+    // Remote has up to 005
+    const seq = await resolveNextSequence(runsDir, "abc123d-2026-01-15", [
+      "abc123d-2026-01-15-004",
+      "abc123d-2026-01-15-005",
+    ]);
+    expect(seq).toBe(6);
+  });
+
+  it("remote IDs for a different prefix are ignored", async () => {
+    const runsDir = resolve(TEMP_DIR, `rrs-remote-prefix-${uid()}`);
+    // Remote has a run for a different SHA prefix
+    const seq = await resolveNextSequence(runsDir, "abc123d-2026-01-15", [
+      "deadbee-2026-01-15-007",
+      "abc123d-2026-01-16-003",
+    ]);
+    // Both remote IDs have different prefixes — local is empty → seq 1
+    expect(seq).toBe(1);
+  });
+
+  it("empty remoteRunIds array behaves like local-only allocation", async () => {
+    const runsDir = resolve(TEMP_DIR, `rrs-remote-empty-${uid()}`);
+    await Bun.write(`${runsDir}/abc123d-2026-01-15-002/.keep`, "");
+    const seq = await resolveNextSequence(runsDir, "abc123d-2026-01-15", []);
+    expect(seq).toBe(3);
+  });
+
+  it("local max higher than remote → uses local max + 1", async () => {
+    const runsDir = resolve(TEMP_DIR, `rrs-local-max-${uid()}`);
+    await Bun.write(`${runsDir}/abc123d-2026-01-15-008/.keep`, "");
+    // Remote only has -003
+    const seq = await resolveNextSequence(runsDir, "abc123d-2026-01-15", [
+      "abc123d-2026-01-15-003",
+    ]);
+    expect(seq).toBe(9);
   });
 });
 
@@ -3336,5 +3398,280 @@ describe("ArtifactBundleWriter — publish mode with generateIndexes", () => {
     expect(result.isOk()).toBe(true);
     const { indexFilesWritten } = result._unsafeUnwrap();
     expect(indexFilesWritten.length).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ArtifactBundleWriter — remoteSequenceReader (publish-mode collision avoidance)
+// ---------------------------------------------------------------------------
+
+/**
+ * A minimal `RemoteSequenceReader` stub for injection in tests.
+ *
+ * Returns the configured `runIds` list (filtered by prefix inside
+ * `resolveNextSequence`) without any real network call.
+ */
+function makeRemoteReaderStub(
+  runIds: string[],
+): RemoteSequenceReader & { calls: Array<{ prefix: string; token: string }> } {
+  const calls: Array<{ prefix: string; token: string }> = [];
+  return {
+    calls,
+    readRemoteRunIds(
+      prefix: string,
+      token: string,
+    ): ResultAsync<string[], never> {
+      calls.push({ prefix, token });
+      return ResultAsync.fromSafePromise(Promise.resolve([...runIds]));
+    },
+  };
+}
+
+/** Make a `StubResultsRepoPublisher` preconfigured with a success result. */
+function makeRsrStubPublisher(): StubResultsRepoPublisher {
+  const stub = new StubResultsRepoPublisher();
+  stub.setDefaultSuccess({
+    commitSha: "stub-sha",
+    branch: "main",
+    filesPublished: 0,
+    simulated: true,
+  });
+  return stub;
+}
+
+describe("ArtifactBundleWriter — remoteSequenceReader", () => {
+  it("remote manifest -001 causes next allocation -002 when local is empty", async () => {
+    const bundleRoot = resolve(TEMP_DIR, `rsr-remote-001-${uid()}`);
+    const writer = new ArtifactBundleWriter(bundleRoot);
+    const stub = makeRsrStubPublisher();
+    // Remote already has -001 for the same prefix
+    const prefix = computeRunIdPrefix(FIXED_GIT_SHA, FIXED_TIMESTAMP);
+    const remoteReader = makeRemoteReaderStub([`${prefix}-001`]);
+
+    const result = await writer.writeBundle({
+      runnerResults: [makeRunnerResult()],
+      provenanceManifest: null,
+      gitSha: FIXED_GIT_SHA,
+      assembledAt: FIXED_TIMESTAMP,
+      mode: "publish",
+      dryRun: false,
+      publisher: stub,
+      remoteSequenceReader: remoteReader,
+      env: makeEnvWithToken(),
+    });
+
+    expect(result.isOk()).toBe(true);
+    const { runId } = result._unsafeUnwrap();
+    // Remote had -001 → next must be -002
+    expect(runId).toMatch(/-002$/);
+  });
+
+  it("local -003 and remote -005 yields -006", async () => {
+    const bundleRoot = resolve(TEMP_DIR, `rsr-local-remote-${uid()}`);
+    const writer = new ArtifactBundleWriter(bundleRoot);
+    const stub = makeRsrStubPublisher();
+    const prefix = computeRunIdPrefix(FIXED_GIT_SHA, FIXED_TIMESTAMP);
+
+    // Pre-create local runs/ dirs for -001, -002, -003
+    const runsDir = `${bundleRoot}/${RUNS_SUBDIR}`;
+    await Bun.write(`${runsDir}/${prefix}-001/.keep`, "");
+    await Bun.write(`${runsDir}/${prefix}-002/.keep`, "");
+    await Bun.write(`${runsDir}/${prefix}-003/.keep`, "");
+
+    // Remote has -004 and -005
+    const remoteReader = makeRemoteReaderStub([
+      `${prefix}-004`,
+      `${prefix}-005`,
+    ]);
+
+    const result = await writer.writeBundle({
+      runnerResults: [makeRunnerResult()],
+      provenanceManifest: null,
+      gitSha: FIXED_GIT_SHA,
+      assembledAt: FIXED_TIMESTAMP,
+      mode: "publish",
+      dryRun: false,
+      publisher: stub,
+      remoteSequenceReader: remoteReader,
+      env: makeEnvWithToken(),
+    });
+
+    expect(result.isOk()).toBe(true);
+    const { runId } = result._unsafeUnwrap();
+    expect(runId).toMatch(/-006$/);
+  });
+
+  it("remote IDs for other prefixes are ignored", async () => {
+    const bundleRoot = resolve(TEMP_DIR, `rsr-other-prefix-${uid()}`);
+    const writer = new ArtifactBundleWriter(bundleRoot);
+    const stub = makeRsrStubPublisher();
+    // Remote has entries only for a different SHA or date — should not count
+    const remoteReader = makeRemoteReaderStub([
+      "deadbee-2026-01-15-007", // different SHA
+      "abc123d-2026-01-16-003", // different date
+    ]);
+
+    const result = await writer.writeBundle({
+      runnerResults: [makeRunnerResult()],
+      provenanceManifest: null,
+      gitSha: FIXED_GIT_SHA,
+      assembledAt: FIXED_TIMESTAMP,
+      mode: "publish",
+      dryRun: false,
+      publisher: stub,
+      remoteSequenceReader: remoteReader,
+      env: makeEnvWithToken(),
+    });
+
+    expect(result.isOk()).toBe(true);
+    const { runId } = result._unsafeUnwrap();
+    // No matching prefix → first run gets -001
+    expect(runId).toMatch(/-001$/);
+  });
+
+  it("remote reader failure falls back to local-only allocation", async () => {
+    const bundleRoot = resolve(TEMP_DIR, `rsr-fallback-${uid()}`);
+    const writer = new ArtifactBundleWriter(bundleRoot);
+    const stub = makeRsrStubPublisher();
+
+    // Reader that always returns ok([]) to simulate unavailable remote
+    const silentFallbackReader: RemoteSequenceReader = {
+      readRemoteRunIds(_prefix, _token): ResultAsync<string[], never> {
+        return ResultAsync.fromSafePromise(Promise.resolve([] as string[]));
+      },
+    };
+
+    const result = await writer.writeBundle({
+      runnerResults: [makeRunnerResult()],
+      provenanceManifest: null,
+      gitSha: FIXED_GIT_SHA,
+      assembledAt: FIXED_TIMESTAMP,
+      mode: "publish",
+      dryRun: false,
+      publisher: stub,
+      remoteSequenceReader: silentFallbackReader,
+      env: makeEnvWithToken(),
+    });
+
+    expect(result.isOk()).toBe(true);
+    const { runId } = result._unsafeUnwrap();
+    // Fallback: no remote IDs → local first-run → -001
+    expect(runId).toMatch(/-001$/);
+  });
+
+  it("remoteSequenceReader is NOT called in local mode", async () => {
+    const bundleRoot = resolve(TEMP_DIR, `rsr-local-mode-${uid()}`);
+    const writer = new ArtifactBundleWriter(bundleRoot);
+    const remoteReader = makeRemoteReaderStub([]);
+
+    const result = await writer.writeBundle({
+      runnerResults: [makeRunnerResult()],
+      provenanceManifest: null,
+      gitSha: FIXED_GIT_SHA,
+      assembledAt: FIXED_TIMESTAMP,
+      mode: "local",
+      dryRun: false,
+      remoteSequenceReader: remoteReader,
+      // No env token needed in local mode
+    });
+
+    expect(result.isOk()).toBe(true);
+    // Reader must not have been called for local mode
+    expect(remoteReader.calls).toHaveLength(0);
+  });
+
+  it("remoteSequenceReader is NOT called when dry-run forces local mode", async () => {
+    const bundleRoot = resolve(TEMP_DIR, `rsr-dryrun-local-${uid()}`);
+    const writer = new ArtifactBundleWriter(bundleRoot);
+    const stub = makeRsrStubPublisher();
+    const remoteReader = makeRemoteReaderStub([]);
+
+    const result = await writer.writeBundle({
+      runnerResults: [makeRunnerResult()],
+      provenanceManifest: null,
+      gitSha: FIXED_GIT_SHA,
+      assembledAt: FIXED_TIMESTAMP,
+      mode: "publish",
+      dryRun: true, // dry-run forces local regardless of mode
+      publisher: stub,
+      remoteSequenceReader: remoteReader,
+      env: makeEnvWithToken(),
+    });
+
+    expect(result.isOk()).toBe(true);
+    // Dry-run overrides publish → local mode → reader not called
+    expect(remoteReader.calls).toHaveLength(0);
+  });
+
+  it("remoteSequenceReader is called with the correct prefix and token", async () => {
+    const bundleRoot = resolve(TEMP_DIR, `rsr-token-passthru-${uid()}`);
+    const writer = new ArtifactBundleWriter(bundleRoot);
+    const stub = makeRsrStubPublisher();
+    const remoteReader = makeRemoteReaderStub([]);
+    const token = "ghp_fake_token_for_testing";
+
+    await writer.writeBundle({
+      runnerResults: [makeRunnerResult()],
+      provenanceManifest: null,
+      gitSha: FIXED_GIT_SHA,
+      assembledAt: FIXED_TIMESTAMP,
+      mode: "publish",
+      dryRun: false,
+      publisher: stub,
+      remoteSequenceReader: remoteReader,
+      env: { [EVAL_RESULTS_REPO_TOKEN_ENV_VAR]: token },
+    });
+
+    expect(remoteReader.calls).toHaveLength(1);
+    const call = remoteReader.calls[0]!;
+    expect(call.prefix).toBe(
+      computeRunIdPrefix(FIXED_GIT_SHA, FIXED_TIMESTAMP),
+    );
+    expect(call.token).toBe(token);
+  });
+
+  it("publisher immutable create-only protection: second write uses -002 when remote reports -001 already exists", async () => {
+    // This confirms that the remote-sequence feature feeds the right run ID
+    // to the publisher — the publisher's immutable-file guard is not bypassed.
+    //
+    // We use a simple StubResultsRepoPublisher that always succeeds, and
+    // verify that the run IDs are correctly sequenced across two writes.
+    const bundleRoot = resolve(TEMP_DIR, `rsr-immutable-${uid()}`);
+    const writer = new ArtifactBundleWriter(bundleRoot);
+    const prefix = computeRunIdPrefix(FIXED_GIT_SHA, FIXED_TIMESTAMP);
+
+    // First write: remote reader says nothing exists → gets -001
+    const stub1 = makeRsrStubPublisher();
+    const r1 = await writer.writeBundle({
+      runnerResults: [makeRunnerResult()],
+      provenanceManifest: null,
+      gitSha: FIXED_GIT_SHA,
+      assembledAt: FIXED_TIMESTAMP,
+      mode: "publish",
+      dryRun: false,
+      publisher: stub1,
+      remoteSequenceReader: makeRemoteReaderStub([]),
+      env: makeEnvWithToken(),
+    });
+    expect(r1.isOk()).toBe(true);
+    expect(r1._unsafeUnwrap().runId).toMatch(/-001$/);
+
+    // Second write: remote reader now reports -001 as already published
+    // → allocates -002 (skips local scan which sees -001 too, picks max+1=2)
+    const stub2 = makeRsrStubPublisher();
+    const r2 = await writer.writeBundle({
+      runnerResults: [makeRunnerResult()],
+      provenanceManifest: null,
+      gitSha: FIXED_GIT_SHA,
+      assembledAt: FIXED_TIMESTAMP,
+      mode: "publish",
+      dryRun: false,
+      publisher: stub2,
+      remoteSequenceReader: makeRemoteReaderStub([`${prefix}-001`]),
+      env: makeEnvWithToken(),
+    });
+    expect(r2.isOk()).toBe(true);
+    // Local already has -001 as well, so max(local=1, remote=1)+1 = 2
+    expect(r2._unsafeUnwrap().runId).toMatch(/-002$/);
   });
 });

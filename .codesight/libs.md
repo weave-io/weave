@@ -110,10 +110,10 @@
   - function computeRunIdPrefix: (gitSha, assembledAt) => string
   - function computeRunId: (prefix, sequence) => string
   - function computeBundleDirName: (gitSha, assembledAt) => string
-  - function resolveNextSequence: (runsDir, prefix) => Promise<number>
+  - function resolveNextSequence: (runsDir, prefix, remoteRunIds) => Promise<number>
   - function assembleScoreFile: (runnerResult, gitSha, assembledAt, dryRun) => BundleScoreFile
   - function aggregateScoreFile: (suiteName, results, gitSha, assembledAt, dryRun) => BundleScoreFile
-  - _...10 more_
+  - _...11 more_
 - `packages/cli/src/evals/case-loader.ts`
   - function loadCaseFile: (filePath) => ResultAsync<EvalCase, FixtureSchemaError>
   - function loadRubricFile: (filePath) => ResultAsync<EvalRubric, FixtureSchemaError>
