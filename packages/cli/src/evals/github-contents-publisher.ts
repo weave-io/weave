@@ -48,6 +48,7 @@
  *   - Exact names: `dashboard-manifest.json`, `latest.json`, `last-N-runs.json`.
  *   - Pattern: `suite-history-<suiteName>.json` (per-suite history).
  *   - Pattern: `model-comparison-<runId>.json` (per-run model comparison).
+ *   - Pattern: `scenario-history-<suiteName>.json` (per-suite scenario history).
  * All other names (including any containing `/`, `\`, or `..`) are rejected.
  * Index artifacts are mutable — they are updated atomically after each
  * successful run publication. They are ALWAYS written AFTER all immutable run
@@ -60,6 +61,7 @@
  *   indexes/v1/last-N-runs.json
  *   indexes/v1/suite-history-loom-routing.json
  *   indexes/v1/model-comparison-abc1234-2026-06-11-001.json
+ *   indexes/v1/scenario-history-loom-routing.json
  *
  * Website consumers MUST fetch specific known paths — they MUST NOT enumerate
  * the `indexes/v1/` directory. The exact paths to fetch are declared by the
@@ -205,6 +207,15 @@ export const MODEL_COMPARISON_INDEX_PATTERN =
   /^model-comparison-[a-zA-Z0-9][\w.-]*\.json$/;
 
 /**
+ * Pattern for per-suite scenario history index files.
+ *
+ * Matches: `scenario-history-<suiteName>.json`
+ * where `<suiteName>` contains only word characters, hyphens, and dots.
+ */
+export const SCENARIO_HISTORY_INDEX_PATTERN =
+  /^scenario-history-[a-zA-Z0-9][\w.-]*\.json$/;
+
+/**
  * Determine whether a file name is permitted in the derived index directory.
  *
  * Accepts:
@@ -212,6 +223,7 @@ export const MODEL_COMPARISON_INDEX_PATTERN =
  *     latest.json, last-N-runs.json).
  *   - Names matching `SUITE_HISTORY_INDEX_PATTERN` (suite-history-<suite>.json).
  *   - Names matching `MODEL_COMPARISON_INDEX_PATTERN` (model-comparison-<runId>.json).
+ *   - Names matching `SCENARIO_HISTORY_INDEX_PATTERN` (scenario-history-<suite>.json).
  *
  * Rejects everything else — including names with path separators, traversal
  * segments, or arbitrary patterns.
@@ -233,6 +245,7 @@ export function isIndexArtifactAllowed(fileName: string): boolean {
   if (INDEX_ARTIFACT_EXACT_ALLOWLIST.has(fileName)) return true;
   if (SUITE_HISTORY_INDEX_PATTERN.test(fileName)) return true;
   if (MODEL_COMPARISON_INDEX_PATTERN.test(fileName)) return true;
+  if (SCENARIO_HISTORY_INDEX_PATTERN.test(fileName)) return true;
   return false;
 }
 

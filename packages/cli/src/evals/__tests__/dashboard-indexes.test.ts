@@ -28,6 +28,7 @@ import { RUNS_SUBDIR } from "../artifact-bundle.js";
 import {
   buildLastNRuns,
   buildLatestSnapshot,
+  buildScenarioHistories,
   DASHBOARD_MANIFEST_FILE,
   DashboardIndexWriter,
   DEFAULT_LAST_N,
@@ -37,15 +38,19 @@ import {
   LATEST_SNAPSHOT_SCHEMA_VERSION,
   MODEL_COMPARISON_FILE_PREFIX,
   type RunDescriptor,
+  SCENARIO_HISTORY_FILE_PREFIX,
   SUITE_HISTORY_FILE_PREFIX,
   validateDashboardManifestCompatibility,
   validateLatestSnapshotCompatibility,
   validatePublicReportBundleCompatibility,
+  validateScenarioHistoryCompatibility,
   validateSuiteHistoryCompatibility,
 } from "../dashboard-indexes.js";
 import {
   DASHBOARD_MANIFEST_SCHEMA_VERSION,
   type PublicReportBundle,
+  SCENARIO_HISTORY_MAX_RUNS,
+  SCENARIO_HISTORY_SCHEMA_VERSION,
 } from "../report-schema.js";
 
 // ---------------------------------------------------------------------------
@@ -1236,5 +1241,847 @@ describe("DashboardIndexWriter.rebuildFromRuns", () => {
     for (let i = 0; i < assembledAts.length - 1; i++) {
       expect(assembledAts[i]! <= assembledAts[i + 1]!).toBe(true);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildScenarioHistories — unit tests
+// ---------------------------------------------------------------------------
+
+describe("buildScenarioHistories — single run, two models", () => {
+  const RUN_ID = "abc1234-2026-01-15-001";
+  const ASSEMBLED_AT = "2026-01-15T12:00:00.000Z";
+  const SUITE = "loom-routing";
+
+  function singleRunTwoModels(): RunDescriptor[] {
+    return [
+      {
+        runId: RUN_ID,
+        bundle: {
+          schemaVersion: 1,
+          assembledAt: ASSEMBLED_AT,
+          gitSha: FIXED_GIT_SHA_1,
+          dryRun: false,
+          runSummary: {
+            totalCases: 2,
+            passedCases: 2,
+            failedCases: 0,
+            allSuitesGreen: true,
+            suites: [SUITE],
+          },
+          suiteSummaries: [
+            {
+              schemaVersion: 1 as const,
+              suite: SUITE,
+              assembledAt: ASSEMBLED_AT,
+              gitSha: FIXED_GIT_SHA_1,
+              totalCases: 2,
+              passedCases: 2,
+              failedCases: 0,
+              suiteGreen: true,
+              cases: [
+                {
+                  caseId: "route-to-shuttle",
+                  modelId: "anthropic/claude-sonnet-4.5",
+                  suite: SUITE,
+                  scoreBucket: "pass" as const,
+                  passed: true,
+                  required: true,
+                  dryRun: false,
+                  scoredAt: ASSEMBLED_AT,
+                },
+                {
+                  caseId: "route-to-shuttle",
+                  modelId: "openai/gpt-4o",
+                  suite: SUITE,
+                  scoreBucket: "pass" as const,
+                  passed: true,
+                  required: true,
+                  dryRun: false,
+                  scoredAt: ASSEMBLED_AT,
+                },
+              ],
+            },
+          ],
+        },
+      },
+    ];
+  }
+
+  it("produces a scenario history for the suite", () => {
+    const histories = buildScenarioHistories(
+      singleRunTwoModels(),
+      FIXED_UPDATED_AT,
+    );
+    expect(histories.has(SUITE)).toBe(true);
+  });
+
+  it("scenario history has schemaVersion 1", () => {
+    const histories = buildScenarioHistories(
+      singleRunTwoModels(),
+      FIXED_UPDATED_AT,
+    );
+    const h = histories.get(SUITE)!;
+    expect(h.schemaVersion).toBe(SCENARIO_HISTORY_SCHEMA_VERSION);
+  });
+
+  it("scenario history has correct suite name", () => {
+    const histories = buildScenarioHistories(
+      singleRunTwoModels(),
+      FIXED_UPDATED_AT,
+    );
+    const h = histories.get(SUITE)!;
+    expect(h.suite).toBe(SUITE);
+  });
+
+  it("scenario history has updatedAt from parameter", () => {
+    const histories = buildScenarioHistories(
+      singleRunTwoModels(),
+      FIXED_UPDATED_AT,
+    );
+    const h = histories.get(SUITE)!;
+    expect(h.updatedAt).toBe(FIXED_UPDATED_AT);
+  });
+
+  it("produces one scenario entry per caseId", () => {
+    const histories = buildScenarioHistories(
+      singleRunTwoModels(),
+      FIXED_UPDATED_AT,
+    );
+    const h = histories.get(SUITE)!;
+    expect(h.scenarios).toHaveLength(1);
+    expect(h.scenarios[0]!.caseId).toBe("route-to-shuttle");
+  });
+
+  it("scenario entry title defaults to caseId", () => {
+    const histories = buildScenarioHistories(
+      singleRunTwoModels(),
+      FIXED_UPDATED_AT,
+    );
+    const h = histories.get(SUITE)!;
+    expect(h.scenarios[0]!.title).toBe("route-to-shuttle");
+  });
+
+  it("scenario entry lastRuns has one entry for the single run", () => {
+    const histories = buildScenarioHistories(
+      singleRunTwoModels(),
+      FIXED_UPDATED_AT,
+    );
+    const h = histories.get(SUITE)!;
+    const scenario = h.scenarios[0]!;
+    expect(scenario.lastRuns).toHaveLength(1);
+  });
+
+  it("run entry has correct runId and assembledAt", () => {
+    const histories = buildScenarioHistories(
+      singleRunTwoModels(),
+      FIXED_UPDATED_AT,
+    );
+    const h = histories.get(SUITE)!;
+    const runEntry = h.scenarios[0]!.lastRuns[0]!;
+    expect(runEntry.runId).toBe(RUN_ID);
+    expect(runEntry.assembledAt).toBe(ASSEMBLED_AT);
+  });
+
+  it("status is 'pass' when all models pass", () => {
+    const histories = buildScenarioHistories(
+      singleRunTwoModels(),
+      FIXED_UPDATED_AT,
+    );
+    const h = histories.get(SUITE)!;
+    const runEntry = h.scenarios[0]!.lastRuns[0]!;
+    expect(runEntry.status).toBe("pass");
+    expect(runEntry.passed).toBe(true);
+  });
+
+  it("counts totalModels, passedModels, failedModels, skippedModels correctly", () => {
+    const histories = buildScenarioHistories(
+      singleRunTwoModels(),
+      FIXED_UPDATED_AT,
+    );
+    const h = histories.get(SUITE)!;
+    const runEntry = h.scenarios[0]!.lastRuns[0]!;
+    expect(runEntry.totalModels).toBe(2);
+    expect(runEntry.passedModels).toBe(2);
+    expect(runEntry.failedModels).toBe(0);
+    expect(runEntry.skippedModels).toBe(0);
+  });
+});
+
+describe("buildScenarioHistories — aggregation status rules", () => {
+  const SUITE = "loom-routing";
+
+  function makeRunWithCaseEntries(
+    runId: string,
+    assembledAt: string,
+    caseId: string,
+    entries: Array<{
+      passed: boolean;
+      dryRun?: boolean;
+      scoreBucket?: "pass" | "fail" | "partial" | "skip";
+    }>,
+  ): RunDescriptor {
+    return {
+      runId,
+      bundle: {
+        schemaVersion: 1,
+        assembledAt,
+        gitSha: FIXED_GIT_SHA_1,
+        dryRun: false,
+        runSummary: {
+          totalCases: 1,
+          passedCases: entries.filter((e) => e.passed).length,
+          failedCases: entries.filter((e) => !e.passed).length,
+          allSuitesGreen: entries.every((e) => e.passed),
+          suites: [SUITE],
+        },
+        suiteSummaries: [
+          {
+            schemaVersion: 1 as const,
+            suite: SUITE,
+            assembledAt,
+            gitSha: FIXED_GIT_SHA_1,
+            totalCases: entries.length,
+            passedCases: entries.filter((e) => e.passed).length,
+            failedCases: entries.filter((e) => !e.passed).length,
+            suiteGreen: entries.every((e) => e.passed),
+            cases: entries.map((e, i) => ({
+              caseId,
+              modelId: `model-${i}`,
+              suite: SUITE,
+              scoreBucket:
+                e.scoreBucket ??
+                (e.passed ? ("pass" as const) : ("fail" as const)),
+              passed: e.passed,
+              required: true,
+              dryRun: e.dryRun ?? false,
+              scoredAt: assembledAt,
+            })),
+          },
+        ],
+      },
+    };
+  }
+
+  it("status is 'fail' when all models fail", () => {
+    const run = makeRunWithCaseEntries(
+      "r1",
+      "2026-01-15T12:00:00.000Z",
+      "case-a",
+      [{ passed: false }, { passed: false }],
+    );
+    const histories = buildScenarioHistories([run], FIXED_UPDATED_AT);
+    const entry = histories.get(SUITE)!.scenarios[0]!.lastRuns[0]!;
+    expect(entry.status).toBe("fail");
+    expect(entry.passed).toBe(false);
+    expect(entry.passedModels).toBe(0);
+    expect(entry.failedModels).toBe(2);
+    expect(entry.totalModels).toBe(2);
+  });
+
+  it("status is 'partial' when some models pass and some fail", () => {
+    const run = makeRunWithCaseEntries(
+      "r1",
+      "2026-01-15T12:00:00.000Z",
+      "case-b",
+      [{ passed: true }, { passed: false }, { passed: true }],
+    );
+    const histories = buildScenarioHistories([run], FIXED_UPDATED_AT);
+    const entry = histories.get(SUITE)!.scenarios[0]!.lastRuns[0]!;
+    expect(entry.status).toBe("partial");
+    expect(entry.passed).toBe(false);
+    expect(entry.passedModels).toBe(2);
+    expect(entry.failedModels).toBe(1);
+  });
+
+  it("status is 'skip' when all entries are dryRun", () => {
+    const run = makeRunWithCaseEntries(
+      "r1",
+      "2026-01-15T12:00:00.000Z",
+      "case-c",
+      [
+        { passed: false, dryRun: true, scoreBucket: "skip" },
+        { passed: false, dryRun: true, scoreBucket: "skip" },
+      ],
+    );
+    const histories = buildScenarioHistories([run], FIXED_UPDATED_AT);
+    const entry = histories.get(SUITE)!.scenarios[0]!.lastRuns[0]!;
+    expect(entry.status).toBe("skip");
+    expect(entry.passed).toBe(false);
+    expect(entry.totalModels).toBe(0);
+    expect(entry.skippedModels).toBe(2);
+  });
+
+  it("status is 'skip' when scoreBucket is 'skip' (non-dryRun)", () => {
+    const run = makeRunWithCaseEntries(
+      "r1",
+      "2026-01-15T12:00:00.000Z",
+      "case-d",
+      [{ passed: false, dryRun: false, scoreBucket: "skip" }],
+    );
+    const histories = buildScenarioHistories([run], FIXED_UPDATED_AT);
+    const entry = histories.get(SUITE)!.scenarios[0]!.lastRuns[0]!;
+    expect(entry.status).toBe("skip");
+    expect(entry.totalModels).toBe(0);
+    expect(entry.skippedModels).toBe(1);
+  });
+});
+
+describe("buildScenarioHistories — multiple runs, lastRuns ordering", () => {
+  const SUITE = "loom-routing";
+
+  function makeSimpleRun(
+    runId: string,
+    assembledAt: string,
+    passed: boolean,
+  ): RunDescriptor {
+    return {
+      runId,
+      bundle: {
+        schemaVersion: 1,
+        assembledAt,
+        gitSha: FIXED_GIT_SHA_1,
+        dryRun: false,
+        runSummary: {
+          totalCases: 1,
+          passedCases: passed ? 1 : 0,
+          failedCases: passed ? 0 : 1,
+          allSuitesGreen: passed,
+          suites: [SUITE],
+        },
+        suiteSummaries: [
+          {
+            schemaVersion: 1 as const,
+            suite: SUITE,
+            assembledAt,
+            gitSha: FIXED_GIT_SHA_1,
+            totalCases: 1,
+            passedCases: passed ? 1 : 0,
+            failedCases: passed ? 0 : 1,
+            suiteGreen: passed,
+            cases: [
+              {
+                caseId: "test-case",
+                modelId: "model-a",
+                suite: SUITE,
+                scoreBucket: passed ? ("pass" as const) : ("fail" as const),
+                passed,
+                required: true,
+                dryRun: false,
+                scoredAt: assembledAt,
+              },
+            ],
+          },
+        ],
+      },
+    };
+  }
+
+  it("lastRuns is ordered oldest-first for multiple runs", () => {
+    // Supply oldest-first (as expected by buildScenarioHistories)
+    const runs = [
+      makeSimpleRun("r1", "2026-01-13T12:00:00.000Z", true),
+      makeSimpleRun("r2", "2026-01-14T12:00:00.000Z", false),
+      makeSimpleRun("r3", "2026-01-15T12:00:00.000Z", true),
+    ];
+    const histories = buildScenarioHistories(runs, FIXED_UPDATED_AT);
+    const scenario = histories.get(SUITE)!.scenarios[0]!;
+    expect(scenario.lastRuns).toHaveLength(3);
+    // Oldest-first: r1, r2, r3
+    expect(scenario.lastRuns[0]!.runId).toBe("r1");
+    expect(scenario.lastRuns[1]!.runId).toBe("r2");
+    expect(scenario.lastRuns[2]!.runId).toBe("r3");
+  });
+
+  it("lastRuns is capped at SCENARIO_HISTORY_MAX_RUNS (10)", () => {
+    // Build 12 runs
+    const runs = Array.from({ length: 12 }, (_, i) => {
+      const day = String(i + 1).padStart(2, "0");
+      return makeSimpleRun(
+        `r${i + 1}`,
+        `2026-01-${day}T12:00:00.000Z`,
+        i % 2 === 0,
+      );
+    });
+    const histories = buildScenarioHistories(runs, FIXED_UPDATED_AT);
+    const scenario = histories.get(SUITE)!.scenarios[0]!;
+    expect(scenario.lastRuns).toHaveLength(SCENARIO_HISTORY_MAX_RUNS);
+  });
+
+  it("lastRuns cap retains the most recent N runs", () => {
+    const runs = Array.from({ length: 12 }, (_, i) => {
+      const day = String(i + 1).padStart(2, "0");
+      return makeSimpleRun(`r${i + 1}`, `2026-01-${day}T12:00:00.000Z`, true);
+    });
+    const histories = buildScenarioHistories(runs, FIXED_UPDATED_AT);
+    const scenario = histories.get(SUITE)!.scenarios[0]!;
+    // After capping at 10, runs r3..r12 (the last 10) should remain
+    expect(scenario.lastRuns[0]!.runId).toBe("r3");
+    expect(scenario.lastRuns[9]!.runId).toBe("r12");
+  });
+});
+
+describe("buildScenarioHistories — description from explanation", () => {
+  const SUITE = "loom-routing";
+
+  it("description is undefined when no explanation is available", () => {
+    const runs: RunDescriptor[] = [
+      {
+        runId: "r1",
+        bundle: {
+          schemaVersion: 1,
+          assembledAt: "2026-01-15T12:00:00.000Z",
+          gitSha: FIXED_GIT_SHA_1,
+          dryRun: false,
+          runSummary: {
+            totalCases: 1,
+            passedCases: 1,
+            failedCases: 0,
+            allSuitesGreen: true,
+            suites: [SUITE],
+          },
+          suiteSummaries: [
+            {
+              schemaVersion: 1 as const,
+              suite: SUITE,
+              assembledAt: "2026-01-15T12:00:00.000Z",
+              gitSha: FIXED_GIT_SHA_1,
+              totalCases: 1,
+              passedCases: 1,
+              failedCases: 0,
+              suiteGreen: true,
+              cases: [
+                {
+                  caseId: "no-explain-case",
+                  modelId: "model-a",
+                  suite: SUITE,
+                  scoreBucket: "pass" as const,
+                  passed: true,
+                  required: true,
+                  dryRun: false,
+                  scoredAt: "2026-01-15T12:00:00.000Z",
+                  // no explanation
+                },
+              ],
+            },
+          ],
+        },
+      },
+    ];
+    const histories = buildScenarioHistories(runs, FIXED_UPDATED_AT);
+    const scenario = histories.get(SUITE)!.scenarios[0]!;
+    expect(scenario.description).toBeUndefined();
+  });
+
+  it("description is set from the first non-empty explanation.text found", () => {
+    const runs: RunDescriptor[] = [
+      {
+        runId: "r1",
+        bundle: {
+          schemaVersion: 1,
+          assembledAt: "2026-01-15T12:00:00.000Z",
+          gitSha: FIXED_GIT_SHA_1,
+          dryRun: false,
+          runSummary: {
+            totalCases: 1,
+            passedCases: 1,
+            failedCases: 0,
+            allSuitesGreen: true,
+            suites: [SUITE],
+          },
+          suiteSummaries: [
+            {
+              schemaVersion: 1 as const,
+              suite: SUITE,
+              assembledAt: "2026-01-15T12:00:00.000Z",
+              gitSha: FIXED_GIT_SHA_1,
+              totalCases: 1,
+              passedCases: 1,
+              failedCases: 0,
+              suiteGreen: true,
+              cases: [
+                {
+                  caseId: "explained-case",
+                  modelId: "model-a",
+                  suite: SUITE,
+                  scoreBucket: "pass" as const,
+                  passed: true,
+                  required: true,
+                  dryRun: false,
+                  scoredAt: "2026-01-15T12:00:00.000Z",
+                  explanation: {
+                    text: "Routing matched the expected agent.",
+                    source: "score_bucket_label" as const,
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      },
+    ];
+    const histories = buildScenarioHistories(runs, FIXED_UPDATED_AT);
+    const scenario = histories.get(SUITE)!.scenarios[0]!;
+    expect(scenario.description).toBe("Routing matched the expected agent.");
+  });
+
+  it("description is updated from the newest non-empty explanation.text", () => {
+    const oldBundle = makeBundle({ assembledAt: "2026-01-15T12:00:00.000Z" });
+    oldBundle.suiteSummaries[0]!.cases[0]!.explanation = {
+      text: "Older explanation.",
+      source: "score_bucket_label",
+    };
+
+    const newBundle = makeBundle({ assembledAt: "2026-01-16T12:00:00.000Z" });
+    newBundle.suiteSummaries[0]!.cases[0]!.explanation = {
+      text: "Newer explanation.",
+      source: "score_bucket_label",
+    };
+
+    const histories = buildScenarioHistories(
+      [
+        { runId: "old-run", bundle: oldBundle },
+        { runId: "new-run", bundle: newBundle },
+      ],
+      FIXED_UPDATED_AT,
+    );
+
+    const scenario = histories
+      .get(SUITE)!
+      .scenarios.find((entry) => entry.caseId === "route-to-shuttle")!;
+    expect(scenario.description).toBe("Newer explanation.");
+  });
+});
+
+describe("buildScenarioHistories — multi-suite", () => {
+  it("produces separate histories for each suite", () => {
+    const runs: RunDescriptor[] = [
+      {
+        runId: "r1",
+        bundle: makeBundle({
+          assembledAt: "2026-01-15T12:00:00.000Z",
+          suites: ["loom-routing", "tapestry-execution"],
+          suiteSummaries: [
+            {
+              schemaVersion: 1 as const,
+              suite: "loom-routing",
+              assembledAt: "2026-01-15T12:00:00.000Z",
+              gitSha: FIXED_GIT_SHA_1,
+              totalCases: 1,
+              passedCases: 1,
+              failedCases: 0,
+              suiteGreen: true,
+              cases: [
+                {
+                  caseId: "loom-case",
+                  modelId: "model-a",
+                  suite: "loom-routing",
+                  scoreBucket: "pass" as const,
+                  passed: true,
+                  required: true,
+                  dryRun: false,
+                  scoredAt: "2026-01-15T12:00:00.000Z",
+                },
+              ],
+            },
+            {
+              schemaVersion: 1 as const,
+              suite: "tapestry-execution",
+              assembledAt: "2026-01-15T12:00:00.000Z",
+              gitSha: FIXED_GIT_SHA_1,
+              totalCases: 1,
+              passedCases: 0,
+              failedCases: 1,
+              suiteGreen: false,
+              cases: [
+                {
+                  caseId: "tapestry-case",
+                  modelId: "model-a",
+                  suite: "tapestry-execution",
+                  scoreBucket: "fail" as const,
+                  passed: false,
+                  required: true,
+                  dryRun: false,
+                  scoredAt: "2026-01-15T12:00:00.000Z",
+                },
+              ],
+            },
+          ],
+        }),
+      },
+    ];
+
+    const histories = buildScenarioHistories(runs, FIXED_UPDATED_AT);
+    expect(histories.has("loom-routing")).toBe(true);
+    expect(histories.has("tapestry-execution")).toBe(true);
+
+    const loom = histories.get("loom-routing")!;
+    expect(loom.scenarios[0]!.caseId).toBe("loom-case");
+    expect(loom.scenarios[0]!.lastRuns[0]!.status).toBe("pass");
+
+    const tapestry = histories.get("tapestry-execution")!;
+    expect(tapestry.scenarios[0]!.caseId).toBe("tapestry-case");
+    expect(tapestry.scenarios[0]!.lastRuns[0]!.status).toBe("fail");
+  });
+});
+
+describe("generateDashboardIndexes — includes scenarioHistories", () => {
+  it("GeneratedIndexes includes scenarioHistories map", () => {
+    const runs = makeRuns([
+      {
+        runId: "abc1234-2026-01-15-001",
+        assembledAt: "2026-01-15T12:00:00.000Z",
+      },
+    ]);
+    const result = generateDashboardIndexes(
+      runs,
+      FIXED_UPDATED_AT,
+    )._unsafeUnwrap();
+    expect(result.scenarioHistories).toBeDefined();
+    expect(result.scenarioHistories instanceof Map).toBe(true);
+  });
+
+  it("scenarioHistories has entry for loom-routing from makeBundle fixture", () => {
+    const runs = makeRuns([
+      {
+        runId: "abc1234-2026-01-15-001",
+        assembledAt: "2026-01-15T12:00:00.000Z",
+      },
+    ]);
+    const result = generateDashboardIndexes(
+      runs,
+      FIXED_UPDATED_AT,
+    )._unsafeUnwrap();
+    expect(result.scenarioHistories.has("loom-routing")).toBe(true);
+  });
+
+  it("is deterministic for identical inputs", () => {
+    const runs = makeRuns([
+      {
+        runId: "abc1234-2026-01-15-001",
+        assembledAt: "2026-01-15T12:00:00.000Z",
+      },
+    ]);
+    const r1 = generateDashboardIndexes(runs, FIXED_UPDATED_AT)._unsafeUnwrap();
+    const r2 = generateDashboardIndexes(runs, FIXED_UPDATED_AT)._unsafeUnwrap();
+    const h1 = JSON.stringify([...r1.scenarioHistories]);
+    const h2 = JSON.stringify([...r2.scenarioHistories]);
+    expect(h1).toBe(h2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validateScenarioHistoryCompatibility
+// ---------------------------------------------------------------------------
+
+describe("validateScenarioHistoryCompatibility", () => {
+  it("returns ok for a valid scenario history index", () => {
+    const valid = {
+      schemaVersion: SCENARIO_HISTORY_SCHEMA_VERSION,
+      suite: "loom-routing",
+      updatedAt: FIXED_UPDATED_AT,
+      scenarios: [],
+    };
+    const result = validateScenarioHistoryCompatibility(valid, "loom-routing");
+    expect(result.isOk()).toBe(true);
+  });
+
+  it("returns SchemaVersionMismatch for wrong version", () => {
+    const raw = {
+      schemaVersion: 999,
+      suite: "loom-routing",
+      updatedAt: FIXED_UPDATED_AT,
+      scenarios: [],
+    };
+    const result = validateScenarioHistoryCompatibility(raw, "loom-routing");
+    expect(result.isErr()).toBe(true);
+    const error = result._unsafeUnwrapErr();
+    expect(error.type).toBe("SchemaVersionMismatch");
+    if (error.type === "SchemaVersionMismatch") {
+      expect(error.foundVersion).toBe(999);
+      expect(error.expectedVersion).toBe(SCENARIO_HISTORY_SCHEMA_VERSION);
+    }
+  });
+
+  it("returns SchemaVersionMismatch when schemaVersion is missing", () => {
+    const result = validateScenarioHistoryCompatibility(
+      { suite: "loom-routing", updatedAt: FIXED_UPDATED_AT, scenarios: [] },
+      "loom-routing",
+    );
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().type).toBe("SchemaVersionMismatch");
+  });
+
+  it("returns SchemaVersionMismatch for null input", () => {
+    const result = validateScenarioHistoryCompatibility(null, "loom-routing");
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().type).toBe("SchemaVersionMismatch");
+  });
+
+  it("returns IndexParseError when schema validation fails despite correct version", () => {
+    const raw = {
+      schemaVersion: SCENARIO_HISTORY_SCHEMA_VERSION,
+      // Missing suite, updatedAt, scenarios
+    };
+    const result = validateScenarioHistoryCompatibility(raw, "loom-routing");
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().type).toBe("IndexParseError");
+  });
+
+  it("includes suite name in error path", () => {
+    const raw = {
+      schemaVersion: 999,
+      suite: "loom-routing",
+      updatedAt: FIXED_UPDATED_AT,
+      scenarios: [],
+    };
+    const result = validateScenarioHistoryCompatibility(raw, "loom-routing");
+    const error = result._unsafeUnwrapErr();
+    if (error.type === "SchemaVersionMismatch") {
+      expect(error.path).toContain("loom-routing");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DashboardIndexWriter — writes scenario-history files
+// ---------------------------------------------------------------------------
+
+describe("DashboardIndexWriter.rebuildFromRuns — scenario-history files", () => {
+  it("writes scenario-history-loom-routing.json for a single loom-routing run", async () => {
+    const bundleRoot = resolve(TEMP_DIR, `idx-scenario-single-${uid()}`);
+    const runId = "abc123d-2026-01-15-001";
+    const bundle = makeBundle({ assembledAt: "2026-01-15T12:00:00.000Z" });
+    await Bun.write(
+      join(bundleRoot, RUNS_SUBDIR, runId, "public-report.json"),
+      JSON.stringify(bundle, null, 2),
+    );
+
+    const writer = new DashboardIndexWriter(bundleRoot, FIXED_UPDATED_AT);
+    const result = await writer.rebuildFromRuns();
+    expect(result.isOk()).toBe(true);
+    const { filesWritten } = result._unsafeUnwrap();
+    expect(
+      filesWritten.some((f) => f.startsWith(SCENARIO_HISTORY_FILE_PREFIX)),
+    ).toBe(true);
+    expect(filesWritten).toContain("scenario-history-loom-routing.json");
+  });
+
+  it("scenario-history file has correct schemaVersion and suite", async () => {
+    const bundleRoot = resolve(TEMP_DIR, `idx-scenario-version-${uid()}`);
+    const runId = "abc123d-2026-01-15-001";
+    const bundle = makeBundle({ assembledAt: "2026-01-15T12:00:00.000Z" });
+    await Bun.write(
+      join(bundleRoot, RUNS_SUBDIR, runId, "public-report.json"),
+      JSON.stringify(bundle, null, 2),
+    );
+
+    const writer = new DashboardIndexWriter(bundleRoot, FIXED_UPDATED_AT);
+    await writer.rebuildFromRuns();
+
+    const scenPath = join(bundleRoot, "scenario-history-loom-routing.json");
+    const content = await Bun.file(scenPath).json();
+    expect(content.schemaVersion).toBe(SCENARIO_HISTORY_SCHEMA_VERSION);
+    expect(content.suite).toBe("loom-routing");
+    expect(content.updatedAt).toBe(FIXED_UPDATED_AT);
+  });
+
+  it("scenario-history scenarios is an array with one entry per caseId", async () => {
+    const bundleRoot = resolve(TEMP_DIR, `idx-scenario-cases-${uid()}`);
+    const runId = "abc123d-2026-01-15-001";
+    const bundle = makeBundle({ assembledAt: "2026-01-15T12:00:00.000Z" });
+    await Bun.write(
+      join(bundleRoot, RUNS_SUBDIR, runId, "public-report.json"),
+      JSON.stringify(bundle, null, 2),
+    );
+
+    const writer = new DashboardIndexWriter(bundleRoot, FIXED_UPDATED_AT);
+    await writer.rebuildFromRuns();
+
+    const scenPath = join(bundleRoot, "scenario-history-loom-routing.json");
+    const content = await Bun.file(scenPath).json();
+    // makeBundle fixture has route-to-shuttle + route-to-warp
+    expect(Array.isArray(content.scenarios)).toBe(true);
+    expect(content.scenarios.length).toBeGreaterThan(0);
+  });
+
+  it("scenario-history lastRuns entries are oldest-first across multiple runs", async () => {
+    const bundleRoot = resolve(TEMP_DIR, `idx-scenario-order-${uid()}`);
+    const runs = [
+      { runId: "abc123d-2026-01-15-001", date: "2026-01-15" },
+      { runId: "abc123d-2026-01-16-001", date: "2026-01-16" },
+      { runId: "abc123d-2026-01-17-001", date: "2026-01-17" },
+    ];
+
+    for (const { runId, date } of runs) {
+      const bundle = makeBundle({ assembledAt: `${date}T12:00:00.000Z` });
+      await Bun.write(
+        join(bundleRoot, RUNS_SUBDIR, runId, "public-report.json"),
+        JSON.stringify(bundle, null, 2),
+      );
+    }
+
+    const writer = new DashboardIndexWriter(bundleRoot, FIXED_UPDATED_AT);
+    await writer.rebuildFromRuns();
+
+    const scenPath = join(bundleRoot, "scenario-history-loom-routing.json");
+    const content = await Bun.file(scenPath).json();
+    const firstScenario = content.scenarios[0];
+    const assembledAts: string[] = firstScenario.lastRuns.map(
+      (r: { assembledAt: string }) => r.assembledAt,
+    );
+    // Must be oldest-first
+    for (let i = 0; i < assembledAts.length - 1; i++) {
+      expect(assembledAts[i]! <= assembledAts[i + 1]!).toBe(true);
+    }
+  });
+
+  it("scenario-history lastRuns is capped at SCENARIO_HISTORY_MAX_RUNS (10) across many runs", async () => {
+    const bundleRoot = resolve(TEMP_DIR, `idx-scenario-cap-${uid()}`);
+
+    // Write 12 runs — expect only 10 entries in lastRuns
+    for (let i = 1; i <= 12; i++) {
+      const runId = `abc123d-2026-01-${String(i).padStart(2, "0")}-001`;
+      const date = `2026-01-${String(i).padStart(2, "0")}`;
+      const bundle = makeBundle({ assembledAt: `${date}T12:00:00.000Z` });
+      await Bun.write(
+        join(bundleRoot, RUNS_SUBDIR, runId, "public-report.json"),
+        JSON.stringify(bundle, null, 2),
+      );
+    }
+
+    const writer = new DashboardIndexWriter(bundleRoot, FIXED_UPDATED_AT);
+    await writer.rebuildFromRuns();
+
+    const scenPath = join(bundleRoot, "scenario-history-loom-routing.json");
+    const content = await Bun.file(scenPath).json();
+    const firstScenario = content.scenarios[0];
+    expect(firstScenario.lastRuns.length).toBeLessThanOrEqual(
+      SCENARIO_HISTORY_MAX_RUNS,
+    );
+    expect(firstScenario.lastRuns.length).toBe(SCENARIO_HISTORY_MAX_RUNS);
+  });
+
+  it("scenario-history is reproducible across multiple rebuilds", async () => {
+    const bundleRoot = resolve(TEMP_DIR, `idx-scenario-repro-${uid()}`);
+    const runId = "abc123d-2026-01-15-001";
+    const bundle = makeBundle({ assembledAt: "2026-01-15T12:00:00.000Z" });
+    await Bun.write(
+      join(bundleRoot, RUNS_SUBDIR, runId, "public-report.json"),
+      JSON.stringify(bundle, null, 2),
+    );
+
+    const writer = new DashboardIndexWriter(bundleRoot, FIXED_UPDATED_AT);
+    await writer.rebuildFromRuns();
+    const content1 = await Bun.file(
+      join(bundleRoot, "scenario-history-loom-routing.json"),
+    ).text();
+
+    await writer.rebuildFromRuns();
+    const content2 = await Bun.file(
+      join(bundleRoot, "scenario-history-loom-routing.json"),
+    ).text();
+
+    expect(content1).toBe(content2);
   });
 });

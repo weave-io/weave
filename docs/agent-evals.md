@@ -254,7 +254,7 @@ The local run directory contains all bundle files. However, only the files in `R
 
 After each bundle write, `DashboardIndexWriter` (`dashboard-indexes.ts`) scans all existing `runs/<runId>/public-report.json` artifacts and regenerates derived index files at the bundle root. The complete local layout (run artifacts + derived indexes) is shown in the tree above.
 
-When published to the external results repository, only the files in `INDEX_ARTIFACT_ALLOWLIST` are uploaded to `indexes/v1/`. The current allowlist includes `dashboard-manifest.json`, `latest.json`, `last-N-runs.json`, `suite-history-<suite>.json`, and `model-comparison-<runId>.json`.
+When published to the external results repository, only the files in `INDEX_ARTIFACT_ALLOWLIST` are uploaded to `indexes/v1/`. The current allowlist includes `dashboard-manifest.json`, `latest.json`, `last-N-runs.json`, `suite-history-<suite>.json`, `model-comparison-<runId>.json`, and `scenario-history-<suite>.json`.
 
 **Immutable vs. mutable artifacts:**
 
@@ -266,12 +266,14 @@ When published to the external results repository, only the files in `INDEX_ARTI
 | `last-N-runs.json` | Mutable | Short TTL; check `updatedAt` |
 | `suite-history-*.json` | Mutable | Short TTL; check `updatedAt` |
 | `model-comparison-*.json` | Mutable | Short TTL; check `updatedAt` |
+| `scenario-history-*.json` | Mutable | Short TTL; check `updatedAt` |
 
 **Ordering guarantees:**
 - `dashboard-manifest.json` runs: newest-first by `assembledAt`.
 - `suite-history-*.json` history: oldest-first by `assembledAt`.
 - `model-comparison-*.json` models: alphabetical by `modelId`.
 - `last-N-runs.json` runs: newest-first, capped at 10 (configurable).
+- `scenario-history-*.json` scenarios: per-case `lastRuns` oldest-first, capped at 10 per case.
 
 **Stale / schema-version detection:**
 
@@ -279,9 +281,59 @@ Mutable index files carry `schemaVersion` and `updatedAt`. Website consumers MUS
 1. Reject any index where `schemaVersion` does not match the expected version.
 2. Compare `updatedAt` against a freshness threshold and re-fetch when stale.
 
-Use `validateDashboardManifestCompatibility()`, `validateSuiteHistoryCompatibility()`, and `validateLatestSnapshotCompatibility()` from `dashboard-indexes.ts` to perform these checks. Each function returns `ok(parsed)` or `err(DashboardIndexError)` with a typed `SchemaVersionMismatch` or `IndexParseError` variant.
+Use `validateDashboardManifestCompatibility()`, `validateSuiteHistoryCompatibility()`, `validateLatestSnapshotCompatibility()`, and `validateScenarioHistoryCompatibility()` from `dashboard-indexes.ts` to perform these checks. Each function returns `ok(parsed)` or `err(DashboardIndexError)` with a typed `SchemaVersionMismatch` or `IndexParseError` variant.
 
 **Index generation is always derived:** `DashboardIndexWriter.rebuildFromRuns()` reads all existing `runs/<runId>/public-report.json` artifacts and regenerates every index file from scratch. Indexes are never the canonical source — they can always be fully reproduced from immutable run artifacts.
+
+### `scenario-history-<suite>.json` — per-case scenario history index
+
+Published as `indexes/v1/scenario-history-<suite>.json`. Provides a per-case view of recent run outcomes derived from `public-report.json` data. One file per suite.
+
+**Shape** (`ScenarioHistoryIndex` in `report-schema.ts`):
+
+```json
+{
+  "schemaVersion": 1,
+  "suite": "loom-routing",
+  "updatedAt": "2026-01-20T10:00:00.000Z",
+  "scenarios": [
+    {
+      "caseId": "loom-route-backend-api",
+      "title": "loom-route-backend-api",
+      "description": "Routing matched the expected agent.",
+      "lastRuns": [
+        {
+          "runId": "abc1234-2026-01-15-001",
+          "assembledAt": "2026-01-15T12:00:00.000Z",
+          "status": "pass",
+          "passed": true,
+          "totalModels": 3,
+          "passedModels": 3,
+          "failedModels": 0,
+          "skippedModels": 0
+        }
+      ]
+    }
+  ]
+}
+```
+
+**Aggregation rules** (applied per caseId per run across all model runs):
+
+| Status | Condition |
+|---|---|
+| `"pass"` | All considered model entries passed AND at least one was considered |
+| `"fail"` | At least one considered model entry exists AND none passed |
+| `"partial"` | At least one considered entry passed AND at least one failed |
+| `"skip"` | No considered entries (all are `dryRun=true` or `scoreBucket="skip"`) |
+
+"Considered" means `!dryRun && scoreBucket !== "skip"`.
+
+**`lastRuns` ordering and cap**: per-case run entries are in **oldest-first** chronological order (ascending `assembledAt`). Website consumers wanting newest-first should reverse the array. The array is capped at `SCENARIO_HISTORY_MAX_RUNS` (10): when more than 10 runs exist for a case, the oldest are evicted.
+
+**`title` and `description`**: `title` defaults to `caseId` (the `PublicCaseEntry` schema does not carry a dedicated title field). `description` is the first non-empty `explanation.text` found across all model runs for the case (bounded by `EXPLANATION_MAX_CHARS`, sourced from allowlisted explanation sources only). It is omitted when no allowlisted explanation is available.
+
+**Backfill**: the index is fully derived from existing immutable `public-report.json` artifacts. Running `DashboardIndexWriter.rebuildFromRuns()` on any directory containing existing run directories will regenerate all scenario-history indexes from scratch. There is no separate backfill command — a full rebuild is sufficient.
 
 ### Fields present in publishable artifacts
 
@@ -375,7 +427,8 @@ indexes/v1/                                   Derived mutable index artifacts
 ├── latest.json                               Most-recent run snapshot (mutable)
 ├── last-N-runs.json                          Last N runs index (mutable)
 ├── suite-history-<suite>.json                Per-suite pass-rate history (mutable)
-└── model-comparison-<runId>.json             Per-run model comparison table (mutable)
+├── model-comparison-<runId>.json             Per-run model comparison table (mutable)
+└── scenario-history-<suite>.json             Per-suite per-case run history (mutable)
 
 runs/v1/                                      Immutable run artifact directories
 └── <sha7>-<YYYY-MM-DD>-<NNN>/               Immutable run directory
@@ -403,6 +456,7 @@ runs/v1/                                      Immutable run artifact directories
 | `last-N-runs.json` | Last N runs (mutable) |
 | `suite-history-<suite>.json` | Per-suite pass-rate history (mutable) |
 | `model-comparison-<runId>.json` | Per-run model comparison (mutable) |
+| `scenario-history-<suite>.json` | Per-suite per-case run history (mutable) |
 
 Any file outside these allowlists is rejected before upload — even if the caller explicitly requests it. File names containing `/`, `\`, or `..` are always rejected.
 
@@ -551,7 +605,7 @@ Before committing eval-related changes, verify:
 - [ ] Any new explanation-rendering surface applies `MARKDOWN_INJECTION_PATTERNS` checks (Markdown renderer) or `escapeHtml()` (HTML renderer) before emitting the value.
 - [ ] Changes to `FORBIDDEN_EXPLANATION_PATTERNS` include test coverage in `report-schema.test.ts` and `report-markdown.test.ts`.
 - [ ] Any new public run artifact file name is added to `RUN_ARTIFACT_ALLOWLIST` in `github-contents-publisher.ts`.
-- [ ] Any new public index file name is added to `INDEX_ARTIFACT_ALLOWLIST` in `github-contents-publisher.ts`.
+- [ ] Any new public index file name pattern is added to `isIndexArtifactAllowed()` in `github-contents-publisher.ts` (either as an exact entry in `INDEX_ARTIFACT_EXACT_ALLOWLIST` or as a new pattern constant).
 - [ ] `bundle-index.json` does not enumerate internal-only files (`run-summary.json`, `score-*.json`, `provenance-manifest.json`, `prompt-hashes.json`) — only `RUN_ARTIFACT_ALLOWLIST` members.
 - [ ] Publisher error messages do not include remote file paths, run IDs, or any information that could leak path structure or secrets.
 - [ ] Website loaders fetch exact known paths (starting from `indexes/v1/dashboard-manifest.json`) — no directory enumeration.

@@ -78,6 +78,13 @@ import {
   type ModelComparisonManifest,
   type PublicReportBundle,
   PublicReportBundleSchema,
+  SCENARIO_HISTORY_MAX_RUNS,
+  SCENARIO_HISTORY_SCHEMA_VERSION,
+  type ScenarioHistoryEntry,
+  type ScenarioHistoryIndex,
+  ScenarioHistoryIndexSchema,
+  type ScenarioRunHistoryEntry,
+  type ScenarioRunStatus,
   type SuiteHistoryManifest,
   SuiteHistoryManifestSchema,
 } from "./report-schema.js";
@@ -126,6 +133,11 @@ export const MODEL_COMPARISON_FILE_PREFIX = "model-comparison-";
  * File name for the last-N-runs index.
  */
 export const LAST_N_RUNS_FILE = "last-N-runs.json";
+
+/**
+ * File name prefix for per-suite scenario history indexes.
+ */
+export const SCENARIO_HISTORY_FILE_PREFIX = "scenario-history-";
 
 // ---------------------------------------------------------------------------
 // Freshness metadata helpers
@@ -293,6 +305,8 @@ export interface GeneratedIndexes {
   latestSnapshot: LatestRunSnapshot;
   /** Last-N-runs index. */
   lastNRuns: LastNRunsIndex;
+  /** Per-suite scenario history indexes, keyed by suite name. */
+  scenarioHistories: Map<string, ScenarioHistoryIndex>;
 }
 
 // ---------------------------------------------------------------------------
@@ -364,6 +378,159 @@ export function buildLastNRuns(
   };
 }
 
+// ---------------------------------------------------------------------------
+// Scenario history generation helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Derive the aggregate `ScenarioRunStatus` for one case in one run.
+ *
+ * A "considered" entry is any PublicCaseEntry where `!dryRun` and
+ * `scoreBucket !== "skip"`.
+ *
+ * Aggregation rules:
+ *   - `"pass"`    — all considered entries passed AND at least one was considered.
+ *   - `"fail"`    — at least one considered entry exists AND none passed.
+ *   - `"partial"` — at least one considered entry passed AND at least one failed.
+ *   - `"skip"`    — no considered entries (all are dryRun/skip).
+ */
+function deriveScenarioRunStatus(
+  passedModels: number,
+  failedModels: number,
+  totalModels: number,
+): ScenarioRunStatus {
+  if (totalModels === 0) return "skip";
+  if (passedModels === totalModels) return "pass";
+  if (passedModels === 0) return "fail";
+  return "partial";
+}
+
+/**
+ * Build `ScenarioHistoryIndex` maps from a set of run descriptors.
+ *
+ * Iterates runs oldest-first (to build chronological lastRuns arrays) and
+ * groups PublicCaseEntry records by suite → caseId → runId.
+ *
+ * @param runsOldestFirst - Run descriptors sorted oldest-first.
+ * @param updatedAt - ISO 8601 timestamp for the index.
+ * @returns Map from suite name → `ScenarioHistoryIndex`.
+ */
+export function buildScenarioHistories(
+  runsOldestFirst: RunDescriptor[],
+  updatedAt: string,
+): Map<string, ScenarioHistoryIndex> {
+  // suite → caseId → ScenarioHistoryEntry (mutable during build)
+  const suiteMap = new Map<string, Map<string, ScenarioHistoryEntry>>();
+
+  for (const { runId, bundle } of runsOldestFirst) {
+    for (const suiteSummary of bundle.suiteSummaries) {
+      const suite = suiteSummary.suite;
+
+      if (!suiteMap.has(suite)) {
+        suiteMap.set(suite, new Map());
+      }
+      const caseMap = suiteMap.get(suite)!;
+
+      // Group entries by caseId
+      const caseGroups = new Map<string, typeof suiteSummary.cases>();
+      for (const entry of suiteSummary.cases) {
+        const group = caseGroups.get(entry.caseId) ?? [];
+        group.push(entry);
+        caseGroups.set(entry.caseId, group);
+      }
+
+      for (const [caseId, entries] of caseGroups) {
+        // Compute model counts
+        let passedModels = 0;
+        let failedModels = 0;
+        let skippedModels = 0;
+
+        for (const e of entries) {
+          const isSkipped = e.dryRun || e.scoreBucket === "skip";
+          if (isSkipped) {
+            skippedModels++;
+          } else if (e.passed) {
+            passedModels++;
+          } else {
+            failedModels++;
+          }
+        }
+
+        const totalModels = passedModels + failedModels;
+        const status = deriveScenarioRunStatus(
+          passedModels,
+          failedModels,
+          totalModels,
+        );
+
+        const runEntry: ScenarioRunHistoryEntry = {
+          runId,
+          assembledAt: bundle.assembledAt,
+          status,
+          passed: status === "pass",
+          totalModels,
+          passedModels,
+          failedModels,
+          skippedModels,
+        };
+
+        let latestDescription: string | undefined;
+        for (const e of entries) {
+          if (e.explanation?.text) {
+            latestDescription = e.explanation.text;
+            break;
+          }
+        }
+
+        const existing = caseMap.get(caseId);
+        if (existing === undefined) {
+          caseMap.set(caseId, {
+            caseId,
+            title: caseId,
+            description: latestDescription,
+            lastRuns: [runEntry],
+          });
+        } else {
+          // Runs are processed oldest-first, so a non-empty explanation from
+          // this run is newer than the current description and should replace it.
+          if (latestDescription !== undefined) {
+            existing.description = latestDescription;
+          }
+
+          // Append run — oldest-first; cap at SCENARIO_HISTORY_MAX_RUNS
+          const newRuns = [...existing.lastRuns, runEntry];
+          existing.lastRuns =
+            newRuns.length > SCENARIO_HISTORY_MAX_RUNS
+              ? newRuns.slice(newRuns.length - SCENARIO_HISTORY_MAX_RUNS)
+              : newRuns;
+        }
+      }
+    }
+  }
+
+  // Build validated ScenarioHistoryIndex for each suite
+  const result = new Map<string, ScenarioHistoryIndex>();
+
+  for (const [suite, caseMap] of suiteMap) {
+    const scenarios: ScenarioHistoryEntry[] = [...caseMap.values()];
+
+    const parsed = ScenarioHistoryIndexSchema.safeParse({
+      schemaVersion: SCENARIO_HISTORY_SCHEMA_VERSION,
+      suite,
+      updatedAt,
+      scenarios,
+    });
+
+    if (parsed.success) {
+      result.set(suite, parsed.data);
+    }
+    // Invalid entries are silently skipped — they should not occur in practice
+    // since all inputs are already validated PublicReportBundle data.
+  }
+
+  return result;
+}
+
 /**
  * Generate all dashboard indexes from an ordered set of run descriptors.
  *
@@ -378,6 +545,8 @@ export function buildLastNRuns(
  *   - `modelComparisons` contains one entry per run.
  *   - `latestSnapshot` reflects `runs[0]`.
  *   - `lastNRuns.runs` will be in newest-first order, capped at `lastN`.
+ *   - `scenarioHistories[*].scenarios[*].lastRuns` will be in oldest-first order,
+ *     capped at `SCENARIO_HISTORY_MAX_RUNS` per case.
  *
  * @param runs - All run descriptors, sorted newest-first.
  * @param updatedAt - ISO 8601 timestamp for all mutable index files.
@@ -539,12 +708,16 @@ export function generateDashboardIndexes(
   // --- Last-N runs: newest-first, capped at lastN ---
   const lastNRuns = buildLastNRuns(runs, lastN, updatedAt);
 
+  // --- Scenario history indexes: one per suite, oldest-first per case ---
+  const scenarioHistories = buildScenarioHistories(runsOldestFirst, updatedAt);
+
   return ok({
     dashboardManifest,
     suiteHistories,
     modelComparisons,
     latestSnapshot,
     lastNRuns,
+    scenarioHistories,
   });
 }
 
@@ -773,6 +946,59 @@ export function validatePublicReportBundleCompatibility(
       type: "IndexParseError",
       path: filePath,
       message: `public-report.json for run "${runId}" failed schema validation: ${parsed.error.issues.map((i) => i.message).join("; ")}`,
+    });
+  }
+
+  return ok(parsed.data);
+}
+
+/**
+ * Validate a raw `ScenarioHistoryIndex` object for version compatibility.
+ *
+ * @param raw - The raw parsed JSON object.
+ * @param suiteName - The suite name (for error path construction).
+ * @returns `ok(ScenarioHistoryIndex)` when compatible; `err(DashboardIndexError)` when not.
+ */
+export function validateScenarioHistoryCompatibility(
+  raw: unknown,
+  suiteName: string,
+): Result<ScenarioHistoryIndex, DashboardIndexError> {
+  const filePath = `${SCENARIO_HISTORY_FILE_PREFIX}${suiteName}.json`;
+
+  if (
+    raw === null ||
+    typeof raw !== "object" ||
+    !("schemaVersion" in raw) ||
+    typeof (raw as Record<string, unknown>).schemaVersion !== "number"
+  ) {
+    return err({
+      type: "SchemaVersionMismatch",
+      path: filePath,
+      foundVersion: -1,
+      expectedVersion: SCENARIO_HISTORY_SCHEMA_VERSION,
+      message: `Scenario history index for "${suiteName}" is missing a numeric schemaVersion field.`,
+    });
+  }
+
+  const found = (raw as Record<string, unknown>).schemaVersion as number;
+  if (found !== SCENARIO_HISTORY_SCHEMA_VERSION) {
+    return err({
+      type: "SchemaVersionMismatch",
+      path: filePath,
+      foundVersion: found,
+      expectedVersion: SCENARIO_HISTORY_SCHEMA_VERSION,
+      message:
+        `Scenario history index for "${suiteName}" has schemaVersion ${found}, ` +
+        `expected ${SCENARIO_HISTORY_SCHEMA_VERSION}. The index must be regenerated.`,
+    });
+  }
+
+  const parsed = ScenarioHistoryIndexSchema.safeParse(raw);
+  if (!parsed.success) {
+    return err({
+      type: "IndexParseError",
+      path: filePath,
+      message: `Scenario history index for "${suiteName}" failed schema validation: ${parsed.error.issues.map((i) => i.message).join("; ")}`,
     });
   }
 
@@ -1010,6 +1236,21 @@ export class DashboardIndexWriter {
       })
       .andThen(() => writeJson(indexes.latestSnapshot, LATEST_SNAPSHOT_FILE))
       .andThen(() => writeJson(indexes.lastNRuns, LAST_N_RUNS_FILE))
+      .andThen(() => {
+        // Write all scenario history indexes
+        return [...indexes.scenarioHistories.entries()].reduce(
+          (acc, [suite, scenarioHistory]) =>
+            acc.andThen(() =>
+              writeJson(
+                scenarioHistory,
+                `${SCENARIO_HISTORY_FILE_PREFIX}${suite}.json`,
+              ),
+            ),
+          ResultAsync.fromSafePromise<void, DashboardIndexError>(
+            Promise.resolve(),
+          ),
+        );
+      })
       .map(() => ({ filesWritten }));
   }
 }

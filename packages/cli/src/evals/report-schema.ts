@@ -91,6 +91,11 @@ export const SUITE_HISTORY_SCHEMA_VERSION = 1;
  */
 export const MODEL_COMPARISON_SCHEMA_VERSION = 1;
 
+/**
+ * Current schema version for scenario history index (`ScenarioHistoryIndex`).
+ */
+export const SCENARIO_HISTORY_SCHEMA_VERSION = 1;
+
 // ---------------------------------------------------------------------------
 // Forbidden explanation patterns
 // ---------------------------------------------------------------------------
@@ -801,6 +806,159 @@ export const ModelComparisonManifestSchema = z
 export type ModelComparisonManifest = z.infer<
   typeof ModelComparisonManifestSchema
 >;
+
+// ---------------------------------------------------------------------------
+// Scenario history index
+// ---------------------------------------------------------------------------
+
+/**
+ * Run-level aggregate status for a single case across all models in one run.
+ *
+ * Aggregation rules (applied to all non-dry-run PublicCaseEntry records for a
+ * given caseId in a given run):
+ *
+ *   - `"pass"`    — all considered model entries passed AND at least one model
+ *                   was considered (i.e. not dryRun/skip).
+ *   - `"fail"`    — at least one considered model entry exists AND none passed.
+ *   - `"partial"` — at least one considered model passed AND at least one failed.
+ *   - `"skip"`    — no considered entries (all are dryRun/skip).
+ *
+ * "Considered" means `!dryRun && scoreBucket !== "skip"`.
+ */
+export const ScenarioRunStatusSchema = z.enum([
+  "pass",
+  "partial",
+  "fail",
+  "skip",
+]);
+
+export type ScenarioRunStatus = z.infer<typeof ScenarioRunStatusSchema>;
+
+/**
+ * One run's aggregate result for a single case across all models.
+ *
+ * No per-model detail — only aggregate counts and a status bucket.
+ * The schema uses strict mode — unknown keys are rejected at parse time.
+ */
+export const ScenarioRunHistoryEntrySchema = z
+  .object({
+    /** The immutable run ID (e.g. `abc1234-2026-01-15-001`). */
+    runId: z
+      .string()
+      .min(1, "runId must be non-empty")
+      .regex(
+        /^[A-Za-z0-9._-]+$/,
+        "runId must contain only alphanumerics, dots, underscores, or hyphens",
+      ),
+    /** ISO 8601 assembly timestamp of the run (from `assembledAt` in public-report.json). */
+    assembledAt: z.string().min(1, "assembledAt must be non-empty"),
+    /**
+     * Aggregate status bucket for this case across all model runs.
+     * Derived — never stored raw; recomputed from PublicCaseEntry records.
+     */
+    status: ScenarioRunStatusSchema,
+    /** Whether the case fully passed (status === "pass"). */
+    passed: z.boolean(),
+    /** Total number of model runs considered (not dryRun/skip). */
+    totalModels: z.number().int().nonnegative(),
+    /** Number of model runs that passed. */
+    passedModels: z.number().int().nonnegative(),
+    /** Number of model runs that failed. */
+    failedModels: z.number().int().nonnegative(),
+    /** Number of model runs that were skipped (dryRun or scoreBucket === "skip"). */
+    skippedModels: z.number().int().nonnegative(),
+  })
+  .strict();
+
+export type ScenarioRunHistoryEntry = z.infer<
+  typeof ScenarioRunHistoryEntrySchema
+>;
+
+/**
+ * Per-case scenario history entry containing a bounded window of recent run results.
+ *
+ * `lastRuns` contains the last N (≤ 10) run history entries for this case,
+ * in oldest-first chronological order. Website consumers wanting "newest-first"
+ * should reverse the array.
+ *
+ * `title` defaults to `caseId` when no richer metadata is available from the
+ * public report (PublicCaseEntry does not carry a title field).
+ * `description` is the most-recent non-empty explanation text from any model
+ * run of this case (allowlisted source, bounded), or omitted.
+ *
+ * The schema uses strict mode — unknown keys are rejected at parse time.
+ */
+export const ScenarioHistoryEntrySchema = z
+  .object({
+    /** The eval case ID. Must match the `caseId` in PublicCaseEntry. */
+    caseId: z.string().min(1, "caseId must be non-empty"),
+    /**
+     * Human-readable case title.
+     * Defaults to `caseId` when no richer metadata is available.
+     */
+    title: z.string().min(1, "title must be non-empty"),
+    /**
+     * Optional short description of the case.
+     * Derived from the most-recent non-empty `explanation.text` across all
+     * model runs for this case. Bounded by `EXPLANATION_MAX_CHARS`.
+     * Omitted when no allowlisted explanation is available.
+     */
+    description: z.string().min(1).max(EXPLANATION_MAX_CHARS).optional(),
+    /**
+     * Most-recent N run results for this case, oldest-first.
+     * Capped at `SCENARIO_HISTORY_MAX_RUNS`.
+     */
+    lastRuns: z.array(ScenarioRunHistoryEntrySchema),
+  })
+  .strict();
+
+export type ScenarioHistoryEntry = z.infer<typeof ScenarioHistoryEntrySchema>;
+
+/**
+ * Maximum number of recent run entries retained per case in the scenario
+ * history index. Older entries are evicted when this cap is exceeded.
+ */
+export const SCENARIO_HISTORY_MAX_RUNS = 10;
+
+/**
+ * Scenario history index for one eval suite.
+ *
+ * Published as `indexes/v1/scenario-history-<suite>.json`. Provides a
+ * per-case view of recent run outcomes across all models.
+ *
+ * Consumers can use this index to:
+ *   - Identify consistently flaky or regressing cases.
+ *   - Detect when a case first started failing.
+ *   - Assess per-case trends without loading individual public-report.json files.
+ *
+ * The schema uses strict mode — unknown keys are rejected at parse time.
+ */
+export const ScenarioHistoryIndexSchema = z
+  .object({
+    /**
+     * Schema version for this record type.
+     * Consumers MUST reject `schemaVersion` values they do not recognise.
+     */
+    schemaVersion: z
+      .number()
+      .int()
+      .positive()
+      .refine((v) => v === SCENARIO_HISTORY_SCHEMA_VERSION, {
+        message: `schemaVersion must be ${SCENARIO_HISTORY_SCHEMA_VERSION} for ScenarioHistoryIndex`,
+      }),
+    /** The eval suite name (e.g. `"loom-routing"`, `"tapestry-execution"`). */
+    suite: z.string().min(1, "suite must be non-empty"),
+    /** ISO 8601 timestamp when this index was last updated. */
+    updatedAt: z.string().min(1, "updatedAt must be non-empty"),
+    /**
+     * Per-case scenario history entries.
+     * Each entry holds up to `SCENARIO_HISTORY_MAX_RUNS` recent run results.
+     */
+    scenarios: z.array(ScenarioHistoryEntrySchema),
+  })
+  .strict();
+
+export type ScenarioHistoryIndex = z.infer<typeof ScenarioHistoryIndexSchema>;
 
 // ---------------------------------------------------------------------------
 // Schema error types
