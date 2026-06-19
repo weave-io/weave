@@ -43,6 +43,11 @@ import {
   PublicCaseEntrySchema,
   PublicReportBundleSchema,
   REPORT_BUNDLE_SCHEMA_VERSION,
+  SCENARIO_HISTORY_MAX_RUNS,
+  SCENARIO_HISTORY_SCHEMA_VERSION,
+  ScenarioHistoryEntrySchema,
+  ScenarioHistoryIndexSchema,
+  ScenarioRunHistoryEntrySchema,
   ScoreBucketSchema,
   SUITE_HISTORY_SCHEMA_VERSION,
   SUITE_SUMMARY_SCHEMA_VERSION,
@@ -1702,5 +1707,265 @@ describe("BoundedExplanation rejects raw text explanation inputs", () => {
       source: "score_bucket_label",
     });
     expect(result.success).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ScenarioRunHistoryEntrySchema
+// ---------------------------------------------------------------------------
+
+describe("ScenarioRunHistoryEntrySchema", () => {
+  function makeValidRunHistoryEntry(overrides: Record<string, unknown> = {}) {
+    return {
+      runId: "abc1234-2026-01-15-001",
+      assembledAt: "2026-01-15T12:00:00.000Z",
+      status: "pass",
+      passed: true,
+      totalModels: 3,
+      passedModels: 3,
+      failedModels: 0,
+      skippedModels: 0,
+      ...overrides,
+    };
+  }
+
+  it("accepts a valid run history entry", () => {
+    const result = ScenarioRunHistoryEntrySchema.safeParse(
+      makeValidRunHistoryEntry(),
+    );
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects when runId is empty", () => {
+    const result = ScenarioRunHistoryEntrySchema.safeParse(
+      makeValidRunHistoryEntry({ runId: "" }),
+    );
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects when runId contains path separators", () => {
+    const result = ScenarioRunHistoryEntrySchema.safeParse(
+      makeValidRunHistoryEntry({ runId: "abc/def" }),
+    );
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts status 'pass'", () => {
+    const result = ScenarioRunHistoryEntrySchema.safeParse(
+      makeValidRunHistoryEntry({ status: "pass", passed: true }),
+    );
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts status 'fail'", () => {
+    const result = ScenarioRunHistoryEntrySchema.safeParse(
+      makeValidRunHistoryEntry({ status: "fail", passed: false }),
+    );
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts status 'partial'", () => {
+    const result = ScenarioRunHistoryEntrySchema.safeParse(
+      makeValidRunHistoryEntry({ status: "partial", passed: false }),
+    );
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts status 'skip'", () => {
+    const result = ScenarioRunHistoryEntrySchema.safeParse(
+      makeValidRunHistoryEntry({
+        status: "skip",
+        passed: false,
+        totalModels: 0,
+      }),
+    );
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects invalid status value", () => {
+    const result = ScenarioRunHistoryEntrySchema.safeParse(
+      makeValidRunHistoryEntry({ status: "unknown" }),
+    );
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects negative model counts", () => {
+    const result = ScenarioRunHistoryEntrySchema.safeParse(
+      makeValidRunHistoryEntry({ passedModels: -1 }),
+    );
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects unknown keys (strict mode)", () => {
+    const result = ScenarioRunHistoryEntrySchema.safeParse(
+      makeValidRunHistoryEntry({ extraField: "bad" }),
+    );
+    expect(result.success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ScenarioHistoryEntrySchema
+// ---------------------------------------------------------------------------
+
+describe("ScenarioHistoryEntrySchema", () => {
+  function makeValidHistoryEntry(overrides: Record<string, unknown> = {}) {
+    return {
+      caseId: "route-to-shuttle",
+      title: "route-to-shuttle",
+      lastRuns: [
+        {
+          runId: "abc1234-2026-01-15-001",
+          assembledAt: "2026-01-15T12:00:00.000Z",
+          status: "pass",
+          passed: true,
+          totalModels: 2,
+          passedModels: 2,
+          failedModels: 0,
+          skippedModels: 0,
+        },
+      ],
+      ...overrides,
+    };
+  }
+
+  it("accepts a valid scenario history entry", () => {
+    const result = ScenarioHistoryEntrySchema.safeParse(
+      makeValidHistoryEntry(),
+    );
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts an entry with an optional description", () => {
+    const result = ScenarioHistoryEntrySchema.safeParse(
+      makeValidHistoryEntry({
+        description: "Routes requests to the shuttle agent.",
+      }),
+    );
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects when description exceeds EXPLANATION_MAX_CHARS", () => {
+    const result = ScenarioHistoryEntrySchema.safeParse(
+      makeValidHistoryEntry({
+        description: "x".repeat(EXPLANATION_MAX_CHARS + 1),
+      }),
+    );
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects empty caseId", () => {
+    const result = ScenarioHistoryEntrySchema.safeParse(
+      makeValidHistoryEntry({ caseId: "" }),
+    );
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects empty title", () => {
+    const result = ScenarioHistoryEntrySchema.safeParse(
+      makeValidHistoryEntry({ title: "" }),
+    );
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects unknown keys (strict mode)", () => {
+    const result = ScenarioHistoryEntrySchema.safeParse(
+      makeValidHistoryEntry({ sensitiveField: "bad" }),
+    );
+    expect(result.success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ScenarioHistoryIndexSchema
+// ---------------------------------------------------------------------------
+
+describe("ScenarioHistoryIndexSchema", () => {
+  function makeValidScenarioIndex(overrides: Record<string, unknown> = {}) {
+    return {
+      schemaVersion: SCENARIO_HISTORY_SCHEMA_VERSION,
+      suite: "loom-routing",
+      updatedAt: "2026-01-20T10:00:00.000Z",
+      scenarios: [],
+      ...overrides,
+    };
+  }
+
+  it("accepts a valid empty scenario history index", () => {
+    const result = ScenarioHistoryIndexSchema.safeParse(
+      makeValidScenarioIndex(),
+    );
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts a valid index with scenarios", () => {
+    const result = ScenarioHistoryIndexSchema.safeParse(
+      makeValidScenarioIndex({
+        scenarios: [
+          {
+            caseId: "route-to-shuttle",
+            title: "route-to-shuttle",
+            lastRuns: [
+              {
+                runId: "abc1234-2026-01-15-001",
+                assembledAt: "2026-01-15T12:00:00.000Z",
+                status: "pass",
+                passed: true,
+                totalModels: 2,
+                passedModels: 2,
+                failedModels: 0,
+                skippedModels: 0,
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects wrong schemaVersion", () => {
+    const result = ScenarioHistoryIndexSchema.safeParse(
+      makeValidScenarioIndex({ schemaVersion: 999 }),
+    );
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects missing schemaVersion", () => {
+    const { schemaVersion: _, ...rest } = makeValidScenarioIndex() as Record<
+      string,
+      unknown
+    >;
+    const result = ScenarioHistoryIndexSchema.safeParse(rest);
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects empty suite name", () => {
+    const result = ScenarioHistoryIndexSchema.safeParse(
+      makeValidScenarioIndex({ suite: "" }),
+    );
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects empty updatedAt", () => {
+    const result = ScenarioHistoryIndexSchema.safeParse(
+      makeValidScenarioIndex({ updatedAt: "" }),
+    );
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects unknown keys (strict mode)", () => {
+    const result = ScenarioHistoryIndexSchema.safeParse(
+      makeValidScenarioIndex({ unexpectedKey: "bad" }),
+    );
+    expect(result.success).toBe(false);
+  });
+
+  it("SCENARIO_HISTORY_SCHEMA_VERSION constant is 1", () => {
+    expect(SCENARIO_HISTORY_SCHEMA_VERSION).toBe(1);
+  });
+
+  it("SCENARIO_HISTORY_MAX_RUNS constant is 10", () => {
+    expect(SCENARIO_HISTORY_MAX_RUNS).toBe(10);
   });
 });

@@ -125,11 +125,11 @@
 - `packages/cli/src/evals/dashboard-indexes.ts`
   - function buildLatestSnapshot: (run, updatedAt) => LatestRunSnapshot
   - function buildLastNRuns: (runs, maxRuns, updatedAt) => LastNRunsIndex
+  - function buildScenarioHistories: (runsOldestFirst, updatedAt) => Map<string, ScenarioHistoryIndex>
   - function generateDashboardIndexes: (runs, updatedAt, lastN) => Result<GeneratedIndexes, DashboardIndexError>
   - function validateDashboardManifestCompatibility: (raw) => Result<DashboardManifest, DashboardIndexError>
   - function validateSuiteHistoryCompatibility: (raw, suiteName) => Result<SuiteHistoryManifest, DashboardIndexError>
-  - function validateLatestSnapshotCompatibility: (raw) => Result<LatestRunSnapshot, DashboardIndexError>
-  - _...16 more_
+  - _...19 more_
 - `packages/cli/src/evals/env.ts`
   - function readEvalEnv: (env, string | undefined>, {...}) => Result<EvalEnv, EvalEnvError>
   - interface EvalEnv
@@ -144,7 +144,7 @@
   - type FileReader
   - const TARGET_REPO
   - const TARGET_BRANCH
-  - _...8 more_
+  - _...9 more_
 - `packages/cli/src/evals/input-validation.ts`
   - function parseEvalRunRequest: (inputs) => Result<EvalRunRequest, EvalInputValidationError>
   - type EvalRunRequest
@@ -228,7 +228,7 @@
   - type BoundedExplanation
   - type PublicCaseEntry
   - type SuiteSummaryEntry
-  - _...26 more_
+  - _...36 more_
 - `packages/cli/src/evals/results-repo.ts`
   - function validatePublishToken: (env, string | undefined>) => ResultAsync<string, ResultsRepoError>
   - function validateRepoConfig: (config) => ResultAsync<undefined, ResultsRepoError>

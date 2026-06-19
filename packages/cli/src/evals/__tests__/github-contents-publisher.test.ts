@@ -53,6 +53,7 @@ import {
   MODEL_COMPARISON_INDEX_PATTERN,
   REMOTE_LAYOUT_VERSION,
   RUN_ARTIFACT_ALLOWLIST,
+  SCENARIO_HISTORY_INDEX_PATTERN,
   SUITE_HISTORY_INDEX_PATTERN,
   TARGET_BRANCH,
   TARGET_INDEXES_PREFIX,
@@ -369,6 +370,43 @@ describe("GitHubContentsPublisher — isIndexArtifactAllowed", () => {
     );
     expect(
       MODEL_COMPARISON_INDEX_PATTERN.test("model-comparison-a/b.json"),
+    ).toBe(false);
+  });
+
+  it("permits scenario-history-loom-routing.json (pattern match)", () => {
+    expect(isIndexArtifactAllowed("scenario-history-loom-routing.json")).toBe(
+      true,
+    );
+  });
+
+  it("permits scenario-history-tapestry-execution.json (pattern match)", () => {
+    expect(
+      isIndexArtifactAllowed("scenario-history-tapestry-execution.json"),
+    ).toBe(true);
+  });
+
+  it("rejects scenario-history- with no suite name suffix", () => {
+    expect(isIndexArtifactAllowed("scenario-history-.json")).toBe(false);
+  });
+
+  it("rejects scenario-history with path separator", () => {
+    expect(isIndexArtifactAllowed("scenario-history-a/b.json")).toBe(false);
+  });
+
+  it("SCENARIO_HISTORY_INDEX_PATTERN matches scenario-history-<suite>.json forms", () => {
+    expect(
+      SCENARIO_HISTORY_INDEX_PATTERN.test("scenario-history-loom-routing.json"),
+    ).toBe(true);
+    expect(
+      SCENARIO_HISTORY_INDEX_PATTERN.test(
+        "scenario-history-tapestry-execution.json",
+      ),
+    ).toBe(true);
+    expect(SCENARIO_HISTORY_INDEX_PATTERN.test("scenario-history-.json")).toBe(
+      false,
+    );
+    expect(
+      SCENARIO_HISTORY_INDEX_PATTERN.test("scenario-history-a/b.json"),
     ).toBe(false);
   });
 });
