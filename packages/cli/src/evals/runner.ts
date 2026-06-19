@@ -51,6 +51,7 @@ import type { CliError } from "../errors.js";
 import {
   ArtifactBundleWriter,
   type BundleWriteMode,
+  type RemoteSequenceReader,
 } from "./artifact-bundle.js";
 import {
   type EvalEnv,
@@ -890,9 +891,23 @@ export class EvalOrchestrator {
       return new GitHubContentsPublisher();
     };
 
+    const isRemoteSequenceReader = (
+      value: ResultsRepoPublisher | undefined,
+    ): value is ResultsRepoPublisher & RemoteSequenceReader => {
+      return (
+        value !== undefined &&
+        "readRemoteRunIds" in value &&
+        typeof value.readRemoteRunIds === "function"
+      );
+    };
+
     return ResultAsync.fromSafePromise(resolvePublisher()).andThen(
-      (publisher) =>
-        writer
+      (publisher) => {
+        const remoteSequenceReader = isRemoteSequenceReader(publisher)
+          ? publisher
+          : undefined;
+
+        return writer
           .writeBundle({
             runnerResults,
             provenanceManifest,
@@ -902,6 +917,7 @@ export class EvalOrchestrator {
             dryRun: request.dryRun,
             env: this.env,
             publisher,
+            remoteSequenceReader,
             // Generate dashboard indexes on every normal (non-dry-run) run so that
             // `weave eval run` always produces dashboard-manifest.json, latest.json,
             // last-N-runs.json, suite history, and model-comparison indexes.
@@ -918,7 +934,8 @@ export class EvalOrchestrator {
               type: "EvalValidation",
               message: `Bundle write failed: ${bundleErr.message}`,
             }),
-          ),
+          );
+      },
     );
   }
 

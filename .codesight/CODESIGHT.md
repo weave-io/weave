@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 113 lib files | 7 env vars | 5 middleware | 0% test coverage
 > **Token savings:** this file is ~10,000 tokens. Without it, AI exploration would cost ~40,700 tokens. **Saves ~30,700 tokens per conversation.**
-> **Last scanned:** 2026-06-19 08:39 — re-run after significant changes
+> **Last scanned:** 2026-06-19 14:28 — re-run after significant changes
 
 ---
 
@@ -121,10 +121,10 @@
   - function computeRunIdPrefix: (gitSha, assembledAt) => string
   - function computeRunId: (prefix, sequence) => string
   - function computeBundleDirName: (gitSha, assembledAt) => string
-  - function resolveNextSequence: (runsDir, prefix) => Promise<number>
+  - function resolveNextSequence: (runsDir, prefix, remoteRunIds) => Promise<number>
   - function assembleScoreFile: (runnerResult, gitSha, assembledAt, dryRun) => BundleScoreFile
   - function aggregateScoreFile: (suiteName, results, gitSha, assembledAt, dryRun) => BundleScoreFile
-  - _...10 more_
+  - _...11 more_
 - `packages/cli/src/evals/case-loader.ts`
   - function loadCaseFile: (filePath) => ResultAsync<EvalCase, FixtureSchemaError>
   - function loadRubricFile: (filePath) => ResultAsync<EvalRubric, FixtureSchemaError>
@@ -576,9 +576,9 @@
 - `packages/cli/src/errors.ts` — imported by **9** files
 - `packages/adapters/opencode/src/adapter.ts` — imported by **8** files
 - `packages/core/src/tokens.ts` — imported by **8** files
-- `packages/cli/src/evals/artifact-bundle.ts` — imported by **7** files
 - `packages/cli/src/evals/openrouter-client.ts` — imported by **7** files
 - `packages/engine/src/execution-lifecycle.ts` — imported by **7** files
+- `packages/cli/src/prompt/index.ts` — imported by **6** files
 
 ## Import Map (who imports what)
 

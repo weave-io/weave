@@ -202,6 +202,10 @@ The `hash` is deterministic: the same composed prompt always yields the same has
 
 Each run writes an immutable bundle to a unique, sequenced directory under `eval-bundles/runs/`. The run ID has the form `<sha7>-<YYYY-MM-DD>-<NNN>` where `NNN` is a zero-padded three-digit sequence number that auto-increments by scanning existing `runs/` siblings. This guarantees no prior run's artifacts are ever overwritten even when the same commit is evaluated twice on the same calendar day.
 
+In **`"publish"` mode** the sequence allocator is also **remote-aware**: before choosing the next `NNN`, `ArtifactBundleWriter` reads `indexes/v1/dashboard-manifest.json` from `weave-io/weave-agent-evals` (via `GitHubContentsPublisher.readRemoteRunIds`) to find the highest sequence already published for the same `<sha7>-<YYYY-MM-DD>` prefix. The next sequence is then `max(local_max, remote_max) + 1`. This prevents a CI rerun on the same commit+date from attempting to re-publish an already-taken run ID (e.g. `-001`) and instead allocates `-002`, `-003`, and so on.
+
+If the remote manifest is absent (404), unavailable (network error), or unparseable (malformed JSON), the allocator falls back to local-only sequencing safely — it never hard-fails on a remote read error.
+
 ```
 eval-bundles/
 ├── dashboard-manifest.json          Derived — all runs, newest-first (schemaVersion + updatedAt)

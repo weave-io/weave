@@ -107,7 +107,10 @@
 import { basename, join } from "node:path";
 import { logger } from "@weave/engine";
 import { err, ok, type Result, ResultAsync } from "neverthrow";
-import { EVAL_RESULTS_REPO_TOKEN_ENV_VAR } from "./artifact-bundle.js";
+import {
+  EVAL_RESULTS_REPO_TOKEN_ENV_VAR,
+  type RemoteSequenceReader,
+} from "./artifact-bundle.js";
 import {
   enforcePublishPolicy,
   type PublishBundleRequest,
@@ -335,7 +338,9 @@ export type FileReader = (path: string) => Promise<string>;
  * while immutable run artifacts are left untouched (the GitHub Contents API will
  * reject attempts to overwrite them with mismatched SHA, surfaced as PublishFailed).
  */
-export class GitHubContentsPublisher implements ResultsRepoPublisher {
+export class GitHubContentsPublisher
+  implements ResultsRepoPublisher, RemoteSequenceReader
+{
   private readonly log = logger.child({ module: "github-contents-publisher" });
 
   constructor(
@@ -768,6 +773,122 @@ export class GitHubContentsPublisher implements ResultsRepoPublisher {
       // Network or parse failure — proceed without SHA (create attempt)
       return { exists: false, sha: null };
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Public: remote run ID reader (implements RemoteSequenceReader)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Fetch all run IDs from `indexes/v1/dashboard-manifest.json` in the remote
+   * results repository that share the given prefix.
+   *
+   * Implements the `RemoteSequenceReader` interface so that `writeBundle()` can
+   * use this publisher directly as the reader without a separate adapter object.
+   *
+   * Returns `ok([])` on any failure (404, network error, malformed JSON,
+   * missing `runs` array) so callers always fall back to local-only allocation
+   * safely.
+   *
+   * Token is passed as an `Authorization: Bearer` header only — never in the
+   * URL or logged.
+   *
+   * @param prefix - The run ID prefix to filter on (e.g. `abc123d-2026-01-15`).
+   * @param token  - GitHub PAT token.
+   * @returns `ok(runIds)` — always succeeds (empty list on any failure).
+   */
+  readRemoteRunIds(
+    prefix: string,
+    token: string,
+  ): ResultAsync<string[], never> {
+    return ResultAsync.fromSafePromise(
+      this.fetchRemoteManifestRunIds(prefix, token),
+    );
+  }
+
+  /**
+   * Internal implementation for `readRemoteRunIds`.
+   *
+   * Fetches `indexes/v1/dashboard-manifest.json`, parses the JSON, extracts
+   * `runs[].runId`, and returns IDs that begin with `${prefix}-`.
+   *
+   * All errors are swallowed; the function always resolves (never rejects).
+   */
+  private async fetchRemoteManifestRunIds(
+    prefix: string,
+    token: string,
+  ): Promise<string[]> {
+    const manifestPath = `${TARGET_INDEXES_PREFIX}/dashboard-manifest.json`;
+    const apiUrl = `${GITHUB_API_BASE}/repos/${TARGET_REPO}/contents/${manifestPath}`;
+
+    let response: Response;
+    try {
+      const request = new Request(apiUrl, {
+        method: "GET",
+        headers: {
+          // Token in Authorization header ONLY — never in URL or body
+          Authorization: `Bearer ${token}`,
+          Accept: "application/vnd.github+json",
+          "X-GitHub-Api-Version": "2022-11-28",
+          "User-Agent": "weave-eval-publisher/1.0",
+        },
+      });
+      response = await this.fetchImpl(request);
+    } catch {
+      // Network error — fall back to local-only
+      return [];
+    }
+
+    if (!response.ok) {
+      // 404 or other error — manifest not yet published or unavailable; fall back
+      return [];
+    }
+
+    // The GitHub Contents API returns file metadata including a base64-encoded
+    // `content` field.  Decode and parse the manifest JSON.
+    let manifestText: string;
+    try {
+      const body = (await response.json()) as Record<string, unknown>;
+      const rawContent = body.content;
+      if (typeof rawContent !== "string") return [];
+      // GitHub API base64-encodes file content with newlines every 60 chars;
+      // strip whitespace before decoding.
+      const cleanedContent = rawContent.replace(/\s/g, "");
+      manifestText = Buffer.from(cleanedContent, "base64").toString("utf-8");
+    } catch {
+      return [];
+    }
+
+    // Parse the manifest JSON and extract run IDs that match the prefix.
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(manifestText);
+    } catch {
+      return [];
+    }
+
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      !Array.isArray((parsed as Record<string, unknown>).runs)
+    ) {
+      return [];
+    }
+
+    const runs = (parsed as Record<string, unknown>).runs as unknown[];
+    const matchingIds: string[] = [];
+    const prefixDash = `${prefix}-`;
+
+    for (const run of runs) {
+      if (typeof run !== "object" || run === null) continue;
+      const runId = (run as Record<string, unknown>).runId;
+      if (typeof runId !== "string") continue;
+      if (runId.startsWith(prefixDash)) {
+        matchingIds.push(runId);
+      }
+    }
+
+    return matchingIds;
   }
 
   // ---------------------------------------------------------------------------

@@ -19,9 +19,9 @@
 - `packages/cli/src/errors.ts` — imported by **9** files
 - `packages/adapters/opencode/src/adapter.ts` — imported by **8** files
 - `packages/core/src/tokens.ts` — imported by **8** files
-- `packages/cli/src/evals/artifact-bundle.ts` — imported by **7** files
 - `packages/cli/src/evals/openrouter-client.ts` — imported by **7** files
 - `packages/engine/src/execution-lifecycle.ts` — imported by **7** files
+- `packages/cli/src/prompt/index.ts` — imported by **6** files
 
 ## Import Map (who imports what)
 
