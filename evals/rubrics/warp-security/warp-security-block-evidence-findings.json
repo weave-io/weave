@@ -1,0 +1,10 @@
+{
+  "case_id": "warp-security-block-evidence-findings",
+  "suite": "warp-security",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Score only observable blocking security structure: capped blocker count, severity tags, and evidence-backed findings from assistant text."
+  }
+}

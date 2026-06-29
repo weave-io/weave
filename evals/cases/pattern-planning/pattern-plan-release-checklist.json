@@ -1,0 +1,40 @@
+{
+  "id": "pattern-plan-release-checklist",
+  "description": "Create a release-readiness plan for the eval pipeline that names the touched files, orders the work, and ties each task to acceptance verification.",
+  "suite": "pattern-planning",
+  "allowed_agents": ["pattern"],
+  "allowed_models": [
+    "anthropic/claude-opus-4.5",
+    "anthropic/claude-sonnet-4.5",
+    "openai/gpt-5.5"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "The plan should provide observable planning structure for release work.",
+    "required_artifacts": [
+      "plan_scope_explicit",
+      "plan_file_tasks",
+      "plan_sequence_explicit",
+      "plan_acceptance_coverage"
+    ]
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "#files"
+    },
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "evals/README.md"
+    },
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "#acceptance"
+    }
+  ],
+  "tags": ["planning", "release", "checklist"]
+}

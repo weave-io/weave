@@ -7,8 +7,9 @@ on:
     inputs:
       agent:
         description: |
-          Optional agent name filter. Leave blank to run all agents.
-          Allowed values: loom, tapestry, loom-routing, tapestry-execution
+          Optional agent name filter. Leave blank to run all seven text-only suite families.
+          Allowed values are validated against the shared eval suite registry:
+          loom, tapestry, shuttle, spindle, pattern, weft, warp, loom-routing, tapestry-execution, shuttle-execution, spindle-tools, pattern-planning, weft-review, warp-security
         required: false
         default: ""
         type: string
@@ -29,7 +30,18 @@ on:
             loom-route-ambiguous-direct-shuttle
             tapestry-execute-plan-step
             tapestry-delegate-to-shuttle
+            shuttle-execution-report-structured-evidence
+            shuttle-execution-report-tests-and-assumptions
+            spindle-tools-citations-facts-confidence
+            spindle-tools-source-boundary-network-claims
+            pattern-plan-settings-refactor
+            pattern-plan-release-checklist
+            weft-review-clean-approval
+            weft-review-reject-blocker-citation
+            warp-security-fast-exit-approve
+            warp-security-block-evidence-findings
           A regex-only guard is applied as a second defence for forward-compatibility.
+          The workflow dry-run step validates this same allowlist before any live model call.
         required: false
         default: ""
         type: string
@@ -97,18 +109,17 @@ jobs:
           # ---------------------------------------------------------------------------
 
           # Agent allowlist: suite names and logical agent names.
-          # "loom" and "tapestry" are the logical agent names; the suite names
-          # "loom-routing" and "tapestry-execution" are also accepted to mirror
+          # Short agent names and suite IDs are both accepted to mirror
           # EvalOrchestrator.shouldRunSuite() which matches on either.
-          ALLOWED_AGENTS="loom tapestry loom-routing tapestry-execution"
+          ALLOWED_AGENTS="loom tapestry shuttle spindle pattern weft warp loom-routing tapestry-execution shuttle-execution spindle-tools pattern-planning weft-review warp-security"
 
           # Model allowlist: exact model IDs from evals/model-matrix.json.
           ALLOWED_MODELS="anthropic/claude-opus-4.5 anthropic/claude-sonnet-4.5 openai/gpt-5.5"
 
           # Case allowlist: exact case IDs from evals/cases/**/
-          # Hardcoded here because eval fixture discovery is a CLI/adapter concern.
-          # If cases are added, update this list and the input description above.
-          ALLOWED_CASES="loom-route-backend-api loom-route-frontend-ui loom-route-ambiguous-direct-shuttle tapestry-execute-plan-step tapestry-delegate-to-shuttle"
+          # This workflow must stay in sync with the shared registry-backed CLI
+          # validation and fixture set; workflow-sync.test.ts enforces parity.
+          ALLOWED_CASES="loom-route-backend-api loom-route-frontend-ui loom-route-ambiguous-direct-shuttle tapestry-execute-plan-step tapestry-delegate-to-shuttle shuttle-execution-report-structured-evidence shuttle-execution-report-tests-and-assumptions spindle-tools-citations-facts-confidence spindle-tools-source-boundary-network-claims pattern-plan-settings-refactor pattern-plan-release-checklist weft-review-clean-approval weft-review-reject-blocker-citation warp-security-fast-exit-approve warp-security-block-evidence-findings"
 
           # Identifier regex: mirrors VALID_IDENTIFIER_RE from input-validation.ts.
           # Anchored; only alphanumerics, underscore, dot, slash, colon, at, hyphen.
@@ -293,6 +304,10 @@ jobs:
         env:
           # No secrets are needed for dry-run. This step exercises the same
           # no-argv filter path as the publish step without model calls or writes.
+          # It still validates the same registry-backed suite/model/case inputs
+          # and fail-closes on invalid filters or text-only contract violations.
+          # It is the documented contributor preflight path for validating
+          # suite/model/case filters without OPENROUTER_API_KEY.
           WEAVE_EVAL_PUBLISH_MODE: "publish"
           WEAVE_EVAL_AGENT: ${{ needs.validate-inputs.outputs.agent }}
           WEAVE_EVAL_MODEL: ${{ needs.validate-inputs.outputs.model }}

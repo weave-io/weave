@@ -7,7 +7,9 @@
  *   1. Validates the environment (API key check via `readEvalEnv`).
  *   2. Loads and validates the model matrix; resolves the effective model set.
  *   3. Composes prompt snapshots and derives the provenance manifest.
- *   4. Fans out across both eval suites (loom-routing, tapestry-execution)
+ *   4. Fans out across all registered eval suites (loom-routing,
+ *      tapestry-execution, shuttle-execution, spindle-tools,
+ *      pattern-planning, weft-review, warp-security)
  *      with the effective model/case/agent filters.
  *   5. Aggregates per-runner results into a run-level summary with
  *      per-agent and per-model rollups.
@@ -72,12 +74,24 @@ import {
 } from "./model-matrix.js";
 import type { ModelClient } from "./openrouter-client.js";
 import {
+  PATTERN_PLANNING_SUITE,
+  PatternPlanningRunner,
+} from "./pattern-planning-runner.js";
+import {
   bunGitShaProvider,
   deriveProvenanceManifest,
   type GitShaProvider,
 } from "./provenance.js";
 import { RawArtifactsWriter } from "./raw-artifacts.js";
 import type { ResultsRepoPublisher } from "./results-repo.js";
+import {
+  SHUTTLE_EXECUTION_SUITE,
+  ShuttleExecutionRunner,
+} from "./shuttle-execution-runner.js";
+import {
+  SPINDLE_TOOLS_SUITE,
+  SpindleToolsRunner,
+} from "./spindle-tools-runner.js";
 import {
   TAPESTRY_EXECUTION_SUITE,
   TapestryExecutionRunner,
@@ -90,6 +104,12 @@ import type {
   RunnerError,
   RunnerResult,
 } from "./types.js";
+import { EVAL_SHORT_AGENT_FILTERS, EVAL_SUITE_REGISTRY } from "./types.js";
+import {
+  WARP_SECURITY_SUITE,
+  WarpSecurityRunner,
+} from "./warp-security-runner.js";
+import { WEFT_REVIEW_SUITE, WeftReviewRunner } from "./weft-review-runner.js";
 
 // ---------------------------------------------------------------------------
 // Run metadata — sanitized record embedded in the run summary
@@ -185,7 +205,7 @@ export interface ModelRollup {
  * Aggregate pass/fail rollup for a single eval suite (agent).
  */
 export interface AgentRollup {
-  /** The eval suite name (e.g. `"loom-routing"`, `"tapestry-execution"`). */
+  /** The eval suite name (e.g. `"loom-routing"`, `"tapestry-execution"`, `"shuttle-execution"`, `"spindle-tools"`, `"pattern-planning"`, `"weft-review"`, `"warp-security"`). */
   suite: string;
   /** Total cases run in this suite. */
   totalCases: number;
@@ -337,7 +357,7 @@ export interface SnapshotProvider {
   /**
    * Retrieve `PromptSnapshot` records for the named agents.
    *
-   * @param agentNames - The agent names to snapshot (e.g. `["loom", "tapestry"]`).
+   * @param agentNames - The agent names to snapshot (e.g. `["loom", "tapestry", "shuttle"]`).
    * @returns A promise resolving to the collected snapshots (may be partial
    *          when individual agents fail to compose — errors are not surfaced
    *          here, snapshots for successfully composed agents are returned).
@@ -367,10 +387,9 @@ export interface EvalOrchestratorOptions {
    */
   scorer: AgentEvalsScorer;
   /**
-   * Prompt provider for both Loom and Tapestry agents.
+   * Prompt provider for all eval-covered agents.
    *
-   * When set, the provider is passed to both `LoomRoutingRunner` and
-   * `TapestryExecutionRunner`. When omitted, each runner constructs its
+   * When set, the provider is passed to all suite runners. When omitted, each runner constructs its
    * own default provider via `composeAgentSnapshots`.
    *
    * Tests always inject a `MockPromptProvider` to avoid git/network/fs calls.
@@ -380,7 +399,7 @@ export interface EvalOrchestratorOptions {
    * Prompt snapshot provider for provenance manifest derivation.
    *
    * Called once before suites run to collect `PromptSnapshot` records for
-   * the Loom and Tapestry agents. These snapshots feed into the provenance
+   * all eval-covered agents. These snapshots feed into the provenance
    * manifest so the published bundle contains real prompt hashes — not an
    * empty manifest derived from `[]`.
    *
@@ -655,7 +674,7 @@ export class EvalOrchestrator {
    * models in the resolved model set.
    *
    * When an `--agent` filter is set, only the suite for that agent is run.
-   * When no agent filter is set, both suites run for every model.
+   * When no agent filter is set, all registered suites run for every model.
    *
    * When a `--model` filter is set, only the matching model runs (the
    * `modelEntries` array has already been filtered to one entry by
@@ -672,6 +691,11 @@ export class EvalOrchestrator {
    * For each model in `modelEntries`:
    *   - Run the Loom suite (if not filtered out by agent filter)
    *   - Run the Tapestry suite (if not filtered out by agent filter)
+   *   - Run the Shuttle suite (if not filtered out by agent filter)
+   *   - Run the Spindle suite (if not filtered out by agent filter)
+   *   - Run the Pattern suite (if not filtered out by agent filter)
+   *   - Run the Weft suite (if not filtered out by agent filter)
+   *   - Run the Warp suite (if not filtered out by agent filter)
    *
    * Results are accumulated sequentially to avoid race conditions on the
    * shared `runnerResults` and `partialFailures` arrays.
@@ -693,16 +717,8 @@ export class EvalOrchestrator {
     },
     CliError
   > {
-    // Determine which suites to run based on agent filter
-    const runLoom = this.shouldRunSuite(
-      request.agent,
-      LOOM_ROUTING_SUITE,
-      "loom",
-    );
-    const runTapestry = this.shouldRunSuite(
-      request.agent,
-      TAPESTRY_EXECUTION_SUITE,
-      "tapestry",
+    const selectedSuites = EVAL_SUITE_REGISTRY.filter((suite) =>
+      this.shouldRunSuite(request.agent, suite.suiteId, suite.shortAgentFilter),
     );
 
     const runnerResults: RunnerResult[] = [];
@@ -721,17 +737,12 @@ export class EvalOrchestrator {
       for (const modelEntry of modelEntries) {
         const modelFilter = modelEntry.id;
 
-        if (runLoom) {
-          const result = await this.runLoomSuite(request, modelFilter);
-          if (result.isOk()) {
-            runnerResults.push(result.value);
-          } else {
-            partialFailures.push(result.error);
-          }
-        }
-
-        if (runTapestry) {
-          const result = await this.runTapestrySuite(request, modelFilter);
+        for (const suite of selectedSuites) {
+          const result = await this.runSuiteById(
+            suite.suiteId,
+            request,
+            modelFilter,
+          );
           if (result.isOk()) {
             runnerResults.push(result.value);
           } else {
@@ -743,12 +754,11 @@ export class EvalOrchestrator {
 
     return ResultAsync.fromSafePromise(
       executeSuites().then(async () => {
-        // Collect prompt snapshots for Loom and Tapestry before deriving provenance.
+        // Collect prompt snapshots for all eval-covered agents before deriving provenance.
         // The snapshot provider returns publishable hash-only records — no raw text.
-        const snapshots = await this.snapshotProvider.getSnapshots([
-          "loom",
-          "tapestry",
-        ]);
+        const snapshots = await this.snapshotProvider.getSnapshots(
+          EVAL_SHORT_AGENT_FILTERS,
+        );
         // Derive provenance manifest from the collected snapshots
         const provenanceManifest = this.deriveProvenance(snapshots, repoSha);
         return { runnerResults, partialFailures, provenanceManifest };
@@ -769,6 +779,48 @@ export class EvalOrchestrator {
   ): boolean {
     if (agentFilter === undefined) return true;
     return agentFilter === agentName || agentFilter === suiteName;
+  }
+
+  private runSuiteById(
+    suiteId: string,
+    request: EvalRunRequest,
+    modelFilter: string | undefined,
+  ): ResultAsync<RunnerResult, RunnerError> {
+    if (suiteId === LOOM_ROUTING_SUITE) {
+      return this.runLoomSuite(request, modelFilter);
+    }
+
+    if (suiteId === TAPESTRY_EXECUTION_SUITE) {
+      return this.runTapestrySuite(request, modelFilter);
+    }
+
+    if (suiteId === SHUTTLE_EXECUTION_SUITE) {
+      return this.runShuttleSuite(request, modelFilter);
+    }
+
+    if (suiteId === SPINDLE_TOOLS_SUITE) {
+      return this.runSpindleSuite(request, modelFilter);
+    }
+
+    if (suiteId === PATTERN_PLANNING_SUITE) {
+      return this.runPatternSuite(request, modelFilter);
+    }
+
+    if (suiteId === WEFT_REVIEW_SUITE) {
+      return this.runWeftSuite(request, modelFilter);
+    }
+
+    if (suiteId === WARP_SECURITY_SUITE) {
+      return this.runWarpSuite(request, modelFilter);
+    }
+
+    return ResultAsync.fromSafePromise(Promise.resolve(undefined)).andThen(() =>
+      err({
+        type: "UnknownEvalSuite",
+        suite: suiteId,
+        message: `Eval suite "${suiteId}" is not registered with the orchestrator.`,
+      } satisfies RunnerError),
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -813,6 +865,101 @@ export class EvalOrchestrator {
     });
   }
 
+  private runPatternSuite(
+    request: EvalRunRequest,
+    modelFilter: string | undefined,
+  ): ResultAsync<RunnerResult, RunnerError> {
+    const runner = new PatternPlanningRunner({
+      modelClient: this.modelClient,
+      scorer: this.scorer,
+      promptProvider: this.promptProvider,
+      evalsRoot: this.evalsRoot,
+    });
+
+    return runner.run({
+      caseFilter: request.case,
+      modelFilter,
+      dryRun: request.dryRun,
+      rawArtifacts: request.rawArtifacts,
+    });
+  }
+
+  private runShuttleSuite(
+    request: EvalRunRequest,
+    modelFilter: string | undefined,
+  ): ResultAsync<RunnerResult, RunnerError> {
+    const runner = new ShuttleExecutionRunner({
+      modelClient: this.modelClient,
+      scorer: this.scorer,
+      promptProvider: this.promptProvider,
+      evalsRoot: this.evalsRoot,
+    });
+
+    return runner.run({
+      caseFilter: request.case,
+      modelFilter,
+      dryRun: request.dryRun,
+      rawArtifacts: request.rawArtifacts,
+    });
+  }
+
+  private runSpindleSuite(
+    request: EvalRunRequest,
+    modelFilter: string | undefined,
+  ): ResultAsync<RunnerResult, RunnerError> {
+    const runner = new SpindleToolsRunner({
+      modelClient: this.modelClient,
+      scorer: this.scorer,
+      promptProvider: this.promptProvider,
+      evalsRoot: this.evalsRoot,
+    });
+
+    return runner.run({
+      caseFilter: request.case,
+      modelFilter,
+      dryRun: request.dryRun,
+      rawArtifacts: request.rawArtifacts,
+    });
+  }
+
+  private runWeftSuite(
+    request: EvalRunRequest,
+    modelFilter: string | undefined,
+  ): ResultAsync<RunnerResult, RunnerError> {
+    const runner = new WeftReviewRunner({
+      modelClient: this.modelClient,
+      scorer: this.scorer,
+      promptProvider: this.promptProvider,
+      evalsRoot: this.evalsRoot,
+    });
+
+    return runner.run({
+      caseFilter: request.case,
+      modelFilter,
+      dryRun: request.dryRun,
+      rawArtifacts: request.rawArtifacts,
+    });
+  }
+
+  private runWarpSuite(
+    request: EvalRunRequest,
+    modelFilter: string | undefined,
+  ): ResultAsync<RunnerResult, RunnerError> {
+    const runner = new WarpSecurityRunner({
+      modelClient: this.modelClient,
+      scorer: this.scorer,
+      promptProvider: this.promptProvider,
+      evalsRoot: this.evalsRoot,
+    });
+
+    return runner.run({
+      caseFilter: request.case,
+      modelFilter,
+      dryRun: request.dryRun,
+      rawArtifacts: request.rawArtifacts,
+    });
+  }
+
   // ---------------------------------------------------------------------------
   // Private: provenance derivation
   // ---------------------------------------------------------------------------
@@ -825,7 +972,7 @@ export class EvalOrchestrator {
    * fails so the bundle can still be written without provenance.
    *
    * In production, `snapshots` is populated by the `SnapshotProvider` which
-   * calls `composeAgentSnapshots` to hash both the Loom and Tapestry prompts.
+   * calls `composeAgentSnapshots` to hash all eval-covered prompts.
    * In tests, the snapshot provider is a stub that returns controlled records.
    */
   private deriveProvenance(
@@ -918,6 +1065,10 @@ export class EvalOrchestrator {
             env: this.env,
             publisher,
             remoteSequenceReader,
+            // Produce the human-readable Markdown report alongside the JSON
+            // report for every non-dry-run bundle so all suite families surface
+            // through the same public reporting pipeline.
+            writeMarkdown: !request.dryRun,
             // Generate dashboard indexes on every normal (non-dry-run) run so that
             // `weave eval run` always produces dashboard-manifest.json, latest.json,
             // last-N-runs.json, suite history, and model-comparison indexes.
@@ -1195,7 +1346,7 @@ export function buildEvalRunner(
  * Build the default `SnapshotProvider` used when no override is injected.
  *
  * The default provider calls `composeAgentSnapshots` from `prompt-snapshots.ts`
- * to hash the Loom and Tapestry prompts using the real `@weave/config` and
+ * to hash all eval-covered prompts using the real `@weave/config` and
  * `@weave/engine` composition pipeline. Errors during snapshot composition for
  * individual agents are swallowed — the provider returns whatever snapshots it
  * could collect, possibly an empty array. The orchestrator then derives a
@@ -1230,4 +1381,8 @@ function makeDefaultSnapshotProvider(): SnapshotProvider {
       }
     },
   };
+}
+
+export function getEvalCoveredPromptAgents(): readonly string[] {
+  return EVAL_SHORT_AGENT_FILTERS;
 }

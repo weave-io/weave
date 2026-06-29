@@ -27,7 +27,7 @@ weave eval run
     │   └── resolveDefaultModels()     Apply --model filter or use default 3
     │
     ├── EvalOrchestrator.run()
-    │   ├── executeSuites()            Fan out: LoomRoutingRunner + TapestryExecutionRunner
+    │   ├── executeSuites()            Fan out: suite runners from the shared registry
     │   │   └── (per model × per suite)
     │   ├── deriveProvenanceManifest() Hash prompts → PromptProvenanceManifest
     │   ├── ArtifactBundleWriter       Sanitize → write eval-bundles/runs/<sha7>-<date>-<NNN>/
@@ -43,18 +43,40 @@ All publishable output passes through the central allowlist sanitizer in `packag
 
 ## Fixture Layout
 
+The fixture tree is intentionally flat and registry-shaped. Each of the seven supported suite families gets exactly one case directory and one rubric directory, and contributors should treat those suite IDs as the canonical names used by CLI filters, workflow inputs, and publishable reporting.
+
 ```
 evals/
 ├── model-matrix.json              Canonical model allowlist (default 3 models)
 ├── cases/
 │   ├── loom-routing/              Loom agent routing eval cases
 │   │   └── <case-id>.json
-│   └── tapestry-execution/        Tapestry execution/delegation eval cases
+│   ├── tapestry-execution/        Tapestry execution/delegation eval cases
+│   │   └── <case-id>.json
+│   ├── shuttle-execution/         Shuttle delegated-task reporting eval cases
+│   │   └── <case-id>.json
+│   ├── spindle-tools/             Spindle research-structure eval cases
+│   │   └── <case-id>.json
+│   ├── pattern-planning/          Pattern planning structure eval cases
+│   │   └── <case-id>.json
+│   ├── weft-review/               Weft review-structure eval cases
+│   │   └── <case-id>.json
+│   └── warp-security/             Warp security-review structure eval cases
 │       └── <case-id>.json
 └── rubrics/
     ├── loom-routing/              Scoring rubrics keyed by case ID
     │   └── <case-id>.json
-    └── tapestry-execution/
+    ├── tapestry-execution/
+    │   └── <case-id>.json
+    ├── shuttle-execution/
+    │   └── <case-id>.json
+    ├── spindle-tools/
+    │   └── <case-id>.json
+    ├── pattern-planning/
+    │   └── <case-id>.json
+    ├── weft-review/
+    │   └── <case-id>.json
+    └── warp-security/
         └── <case-id>.json
 ```
 
@@ -78,6 +100,11 @@ packages/cli/src/evals/
 ├── runner.ts                 EvalOrchestrator — top-level orchestration
 ├── loom-routing-runner.ts    LoomRoutingRunner
 ├── tapestry-execution-runner.ts  TapestryExecutionRunner
+├── shuttle-execution-runner.ts   ShuttleExecutionRunner
+├── spindle-tools-runner.ts       SpindleToolsRunner
+├── pattern-planning-runner.ts    PatternPlanningRunner
+├── weft-review-runner.ts         WeftReviewRunner
+├── warp-security-runner.ts       WarpSecurityRunner
 ├── openrouter-client.ts      OpenRouterClient for model inference
 ├── langchain-agent-evals.ts  LangChainAgentEvalsScorer (rubric scoring judge)
 ├── dashboard-indexes.ts      DashboardIndexWriter — derived mutable dashboard indexes
@@ -93,16 +120,77 @@ And in `packages/cli/src/commands/eval.ts`:
 
 ## Eval Suites
 
+Weave currently supports **seven text-only suite families**. Every registered suite is synthetic and text-observable by design.
+
 | Suite | Runner | What it tests |
 |---|---|---|
 | `loom-routing` | `LoomRoutingRunner` | Loom emits text-observable routing signals for the primary route, with evidence/review follow-ups treated separately from the primary implementation agent |
 | `tapestry-execution` | `TapestryExecutionRunner` | Tapestry emits text-observable completion and delegation-chain signals for plan execution |
+| `shuttle-execution` | `ShuttleExecutionRunner` | Shuttle emits bounded delegated-task completion reports with task intake reflection, file awareness, acceptance confirmation, and final evidence reporting from assistant text |
+| `spindle-tools` | `SpindleToolsRunner` | Spindle emits source-cited research structure with explicit `Source facts`, `Interpretation`, `Sources`, and bounded confidence from assistant text |
+| `pattern-planning` | `PatternPlanningRunner` | Pattern emits structurally explicit plans with observable scope, file-task, sequencing, and acceptance signals |
+| `weft-review` | `WeftReviewRunner` | Weft emits structurally explicit review verdicts, blocker counts, and actionable file-cited approval or rejection signals |
+| `warp-security` | `WarpSecurityRunner` | Warp emits structurally explicit security triage, capped blocker counts, and evidence-backed findings from assistant text |
 
-Both suites share the same case schema, rubric schema, and model matrix. They are run in parallel across all models in the effective model set.
+All suites share the same case schema, rubric schema, and model matrix. They are run in parallel across all models in the effective model set.
 
 The current eval runners are **text-only prompt evals**: they call OpenRouter chat completions and extract signals from assistant text. They do not execute harness tools or capture real tool-call events. Fixture authors should therefore assert observable text signals such as agent mentions, routed agents, delegation chains, completion phrases, and produced artifact names. Do not use a text-only fixture to require an unobservable real tool invocation or the absence of a tool invocation; reserve those checks for a future harness-backed trajectory runner.
 
+The seven current families are: `loom-routing`, `tapestry-execution`, `shuttle-execution`, `spindle-tools`, `pattern-planning`, `weft-review`, and `warp-security`.
+
+### Text-only contract and explicit non-goal
+
+Current evals are for **assistant-text structure only**. They are not runtime-backed harness evals. That means:
+
+- supported assertions must be visible in plain user or assistant text
+- hidden tool telemetry, shell history, filesystem mutation, browser events, and network traces are out of scope
+- runtime-backed trajectory evals are an explicit non-goal of the current fixture contract and must not be encoded into present-day cases
+
+The CLI now enforces that contract **before any dry-run or live model execution**. Each suite is registered in a shared metadata registry (`packages/cli/src/evals/types.ts`) that defines:
+
+- the canonical suite ID
+- the accepted short `--agent` filter
+- the allowed `expected_outcome.kind` values for that suite
+- the allowed `transcript_expectations` checks and roles for text-only evals
+
+Fail-closed consequences:
+
+- unknown suite IDs are rejected before fixture discovery/execution
+- `tool_call` expected outcomes are rejected for current text-only suites
+- `tool_called`, `no_tool_called`, and `content_contains` with `role: "tool"` are rejected for current text-only suites
+- workflow-dispatch agent allowlists and CLI agent filters are expected to mirror the same registry
+
+Forbidden assertion shapes in the current seven-suite surface are therefore:
+
+- `expected_outcome.kind: "tool_call"`
+- `transcript_expectations.check: "tool_called"`
+- `transcript_expectations.check: "no_tool_called"`
+- `transcript_expectations.check: "content_contains"` with `role: "tool"`
+
+### Recommended authoring pattern for new cases
+
+When adding a new case, start from the text the runner can actually score:
+
+1. pick one of the seven registered suites
+2. encode the whole scenario in the case description and suite prompt shape, with no hidden repo or runtime dependency
+3. choose only suite-allowed `expected_outcome.kind` values
+4. use `transcript_expectations` only for text-visible checks on `user` or `assistant` roles
+5. prefer structural markers over semantic judgment, for example headings, verdict lines, agent names, file references, artifact names, blocker counts, and acceptance confirmations
+6. verify the case with `weave eval run --case <case-id> --dry-run` before any live run
+
+If the dry run fails, treat that as a contract problem, not as a harmless preview warning. Dry-run is intentionally fail-closed for invalid suite filters, model filters, case IDs, and text-only assertion violations.
+
 Tapestry eval prompts include a minimal synthetic plan context (`Plan file`, remaining `- [ ]` task, and todo state) so the prompt, runner input, and fixture expectations all describe plan execution rather than a free-floating chat request.
+
+Shuttle execution prompts likewise inject a synthetic delegated task envelope (`Task [N/M]`, `What`, `Files`, `Acceptance`, context, and learnings) and score only what the final report says about completion. Cases pass only when the assistant mirrors that structure and reports bounded evidence such as files changed, commands/tests run, assumptions, and explicit acceptance confirmation.
+
+Pattern planning eval prompts likewise constrain the model toward structural planning output. The runner extracts deterministic signals only — explicit scope, file-backed tasks, sequencing, and acceptance coverage — and projects those into `required_artifacts`/completion signals before invoking the existing scorer path. This keeps planning assertions structural rather than semantic freeform wish-casting.
+
+Weft review eval prompts are synthetic by design. The case description and runner prompt fully describe the review target so the suite never needs a live patch or hidden repository state. The runner scores only text-observable review structure: `[APPROVE]` or `[REJECT]`, blocker count, approval and rejection discipline, and actionable file references.
+
+Warp security eval prompts are synthetic by design too. The suite scores only text-observable security review structure: `APPROVE` or `BLOCK`, bounded blocker counts, and evidence-backed finding groups with file references. It does not attempt runtime exploit execution, live secret scanning, or exploit validation.
+
+Spindle tools eval prompts are synthetic too. The suite scores only text-observable research structure: inline citations, a distinct `Source facts` section, a distinct `Interpretation` section, a bounded `Confidence:` line, and a final `Sources:` list. It does not attempt to prove that a browser, search tool, or network event actually occurred; those runtime-only assertions are rejected by the shared text-only fixture contract unless they are surfaced as ordinary plain-text claims in the answer.
 
 ---
 
@@ -115,12 +203,21 @@ weave eval run
 # Filter to a single agent suite
 weave eval run --agent loom
 weave eval run --agent tapestry
+weave eval run --agent shuttle
+weave eval run --agent spindle
+weave eval run --agent pattern
+weave eval run --agent weft
+weave eval run --agent warp
 
 # Filter to a single model
 weave eval run --model anthropic/claude-sonnet-4.5
 
 # Filter to a single case ID
 weave eval run --case loom-route-backend-api
+weave eval run --case shuttle-execution-report-structured-evidence
+weave eval run --case spindle-tools-citations-facts-confidence
+weave eval run --case weft-review-clean-approval
+weave eval run --case warp-security-block-evidence-findings
 
 # Combine filters (AND semantics — all three must match)
 weave eval run --agent loom --model anthropic/claude-sonnet-4.5 --case loom-route-backend-api
@@ -140,6 +237,8 @@ WEAVE_EVAL_MODEL=anthropic/claude-sonnet-4.5
 WEAVE_EVAL_CASE=loom-route-backend-api
 ```
 
+`--dry-run` validates the same suite, model, and case allowlists as a live run, but it does **not** require `OPENROUTER_API_KEY` because no model call is made.
+
 To enable external publication of results, set:
 
 ```bash
@@ -155,19 +254,19 @@ CLI flags and env vars are merged: if both are set for the same filter key with 
 
 All three filters use **strict exact-match** semantics:
 
-- `--agent` must exactly match either the suite name (`loom-routing`, `tapestry-execution`) or the short agent name (`loom`, `tapestry`).
+- `--agent` must exactly match either the suite name (`loom-routing`, `tapestry-execution`, `shuttle-execution`, `spindle-tools`, `pattern-planning`, `weft-review`, `warp-security`) or the short agent name (`loom`, `tapestry`, `shuttle`, `spindle`, `pattern`, `weft`, `warp`).
 - `--model` must exactly match a model `id` in `evals/model-matrix.json`. No substring matching. If the value does not match any matrix entry, the run aborts with `EmptyModelSet` and lists the allowed IDs.
 - `--case` must exactly match the `id` field in a case fixture file. No glob or prefix matching.
 
-No filter means all values in that dimension are included. Default no-filter runs all three default models against all cases in both suites.
+No filter means all values in that dimension are included. Default no-filter runs all three default models against all cases in all registered suites.
 
-### Required environment variable
+### Required environment variable for live runs
 
 ```
 OPENROUTER_API_KEY=<your-key>
 ```
 
-This variable must be set before running `weave eval run`. The runner validates it at startup and aborts with `EnvironmentError` if absent or empty. The key value is **never logged, printed, or serialized** — it is passed directly to the OpenRouter HTTP client and treated as a secret throughout.
+This variable must be set before any non-dry-run `weave eval run`. Dry runs skip model execution and do not require the key. Live runs validate the key at startup and abort with `EnvironmentError` if absent or empty. The key value is **never logged, printed, or serialized** — it is passed directly to the OpenRouter HTTP client and treated as a secret throughout.
 
 ---
 
@@ -211,18 +310,35 @@ eval-bundles/
 ├── dashboard-manifest.json          Derived — all runs, newest-first (schemaVersion + updatedAt)
 ├── latest.json                      Derived — most-recent run aggregate (schemaVersion + updatedAt)
 ├── last-N-runs.json                 Derived — last 10 runs, newest-first (schemaVersion + updatedAt)
-├── suite-history-loom-routing.json  Derived — pass-rate time series, oldest-first
+├── suite-history-loom-routing.json      Derived — pass-rate time series, oldest-first
 ├── suite-history-tapestry-execution.json
+├── suite-history-shuttle-execution.json
+├── suite-history-spindle-tools.json
+├── suite-history-pattern-planning.json
+├── suite-history-weft-review.json
+├── suite-history-warp-security.json
+├── scenario-history-loom-routing.json   Derived — per-case model-status history
+├── scenario-history-tapestry-execution.json
+├── scenario-history-shuttle-execution.json
+├── scenario-history-spindle-tools.json
+├── scenario-history-pattern-planning.json
+├── scenario-history-weft-review.json
+├── scenario-history-warp-security.json
 └── runs/
     └── abc1234-2026-06-10-001/      Immutable run directory (NEVER overwritten)
         ├── bundle-index.json          Top-level manifest (publicFiles lists only allowlisted files)
         ├── run-summary.json           Aggregate pass/fail counts and per-suite rollups (internal)
         ├── score-loom-routing.json    Sanitized score records for loom-routing suite (internal)
         ├── score-tapestry-execution.json
+        ├── score-shuttle-execution.json
+        ├── score-spindle-tools.json
+        ├── score-pattern-planning.json
+        ├── score-weft-review.json
+        ├── score-warp-security.json
         ├── prompt-hashes.json         Prompt hash records (no raw text) (internal)
         ├── provenance-manifest.json   Full sanitized provenance manifest (internal)
         ├── public-report.json         Public dashboard report (PublicReportBundle schema)
-        └── public-report.md           Human-readable Markdown report (download-only, optional)
+        └── public-report.md           Human-readable Markdown report (download-only)
 ```
 
 **Immutable run directories**: a second run on the same SHA and same date produces `abc1234-2026-06-10-002/`, and so on — every run is always isolated. Run artifacts under `runs/<runId>/` are the canonical source of truth; indexes are fully derived from them.
@@ -520,14 +636,15 @@ Do not increase retention without a specific operational reason.
 
 ## Adding a New Eval Case
 
-1. Choose the suite: `loom-routing` or `tapestry-execution`.
+1. Choose the suite: `loom-routing`, `tapestry-execution`, `shuttle-execution`, `spindle-tools`, `pattern-planning`, `weft-review`, or `warp-security`.
 2. Create `evals/cases/<suite>/<case-id>.json` following the case schema in `evals/README.md`.
 3. Create the matching `evals/rubrics/<suite>/<case-id>.json` rubric file.
 4. Ensure `id` in the case file exactly matches `case_id` in the rubric and the JSON filename (without `.json`).
 5. If referencing a new agent name in `allowed_agents`, add it to `KNOWN_AGENTS` in `packages/cli/src/evals/case-loader.ts`.
-6. Run `bun test ./packages/cli/src/evals/__tests__` to confirm all fixtures load without errors.
-7. Run a local dry run to verify the case is picked up: `weave eval run --case <case-id> --dry-run`.
-8. Run a live local eval to confirm scoring: `weave eval run --case <case-id>` (requires `OPENROUTER_API_KEY`).
+6. Keep the case text-only: do not use `expected_outcome.kind: "tool_call"`, `tool_called`, `no_tool_called`, or `content_contains` with `role: "tool"`.
+7. Run `bun test ./packages/cli/src/evals/__tests__` to confirm all fixtures load without errors.
+8. Run a local dry run to verify the case is picked up: `weave eval run --case <case-id> --dry-run`.
+9. Run a live local eval to confirm scoring: `weave eval run --case <case-id>` (requires `OPENROUTER_API_KEY`).
 
 ### Case schema quick reference
 
@@ -585,7 +702,9 @@ weave eval run --case loom-route-backend-api --dry-run
 weave eval run --agent loom --model anthropic/claude-sonnet-4.5 --case loom-route-backend-api --dry-run
 ```
 
-Dry-run output lists filters and confirms no execution will occur. Exit code is always `0` for a dry run.
+Dry-run output lists filters and confirms no execution will occur. A valid dry run exits `0`. An invalid dry run exits non-zero, typically `1`, because the CLI still validates suite filters, model filters, case IDs, and text-only contract limits before it skips model execution.
+
+Dry-run is the recommended contributor preflight path because it exercises the same filter validation and fixture-discovery contract without requiring secrets or making model calls.
 
 ---
 

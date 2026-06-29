@@ -1,0 +1,49 @@
+{
+  "id": "pattern-plan-settings-refactor",
+  "description": "Create an implementation plan for refactoring the project settings workflow with explicit scope, file-backed tasks, sequencing, and acceptance coverage.",
+  "suite": "pattern-planning",
+  "allowed_agents": ["pattern"],
+  "allowed_models": [
+    "anthropic/claude-opus-4.5",
+    "anthropic/claude-sonnet-4.5",
+    "openai/gpt-5.5"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "The plan should surface structural planning quality signals the text runner can observe.",
+    "required_artifacts": [
+      "plan_scope_explicit",
+      "plan_file_tasks",
+      "plan_sequence_explicit",
+      "plan_acceptance_coverage"
+    ]
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "#scope"
+    },
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "#files"
+    },
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "#sequence"
+    },
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "#acceptance"
+    },
+    {
+      "check": "agent_mentioned",
+      "agent_name": "pattern"
+    }
+  ],
+  "tags": ["planning", "structure", "pattern"]
+}

@@ -31,12 +31,15 @@ import {
   LangChainAgentEvalsScorer,
   RealLangChainJudge,
 } from "../evals/langchain-agent-evals.js";
-import { LOOM_ROUTING_SUITE } from "../evals/loom-routing-runner.js";
 import { filterMatrix, loadModelMatrix } from "../evals/model-matrix.js";
 import { OpenRouterClient } from "../evals/openrouter-client.js";
 import { buildEvalRunner, EvalOrchestrator } from "../evals/runner.js";
-import { TAPESTRY_EXECUTION_SUITE } from "../evals/tapestry-execution-runner.js";
 import type { EvalCase } from "../evals/types.js";
+import {
+  EVAL_SHORT_AGENT_FILTERS,
+  EVAL_SUITE_IDS,
+  EVAL_SUITE_REGISTRY,
+} from "../evals/types.js";
 import type { TerminalIO } from "../io/terminal.js";
 import type { ThemeColors } from "../theme/colors.js";
 
@@ -121,11 +124,14 @@ const EVAL_USAGE = [
   "Usage: weave eval <subcommand>",
   "",
   "  weave eval run                        Run all configured evals",
-  "  weave eval run --agent <name>         Filter to a specific agent",
+  "  weave eval run --agent <name>         Filter to a specific short agent or suite",
   "  weave eval run --model <id>           Filter to a specific model",
   "  weave eval run --case <id>            Filter to a specific case",
   "  weave eval run --dry-run              Print what would run without executing",
   "  weave eval run --raw-artifacts        Emit raw artifacts to disk (local-only)",
+  "",
+  `  Short agents: ${EVAL_SHORT_AGENT_FILTERS.join(", ")}`,
+  `  Suites: ${EVAL_SUITE_IDS.join(", ")}`,
 ].join("\n");
 
 // ---------------------------------------------------------------------------
@@ -215,42 +221,29 @@ async function defaultValidateFilters(
   if (request.case !== undefined) {
     const caseId = request.case;
 
-    // Determine which suites to load based on the agent filter
-    const runLoom =
-      request.agent === undefined ||
-      request.agent === "loom" ||
-      request.agent === LOOM_ROUTING_SUITE;
-    const runTapestry =
-      request.agent === undefined ||
-      request.agent === "tapestry" ||
-      request.agent === TAPESTRY_EXECUTION_SUITE;
+    const selectedSuites = EVAL_SUITE_REGISTRY.filter((suite) => {
+      if (request.agent === undefined) {
+        return true;
+      }
+
+      return (
+        request.agent === suite.shortAgentFilter ||
+        request.agent === suite.suiteId
+      );
+    });
 
     // Load cases from all applicable suites
     const allCases: EvalCase[] = [];
 
-    if (runLoom) {
-      const loomResult = await loadSuiteCases(LOOM_ROUTING_SUITE, evalsRoot);
-      if (loomResult.isErr()) {
+    for (const suite of selectedSuites) {
+      const suiteResult = await loadSuiteCases(suite.suiteId, evalsRoot);
+      if (suiteResult.isErr()) {
         return err({
           type: "EvalValidation",
-          message: `Case fixture load failed (${LOOM_ROUTING_SUITE}): ${loomResult.error.message}`,
+          message: `Case fixture load failed (${suite.suiteId}): ${suiteResult.error.message}`,
         });
       }
-      allCases.push(...loomResult.value);
-    }
-
-    if (runTapestry) {
-      const tapestryResult = await loadSuiteCases(
-        TAPESTRY_EXECUTION_SUITE,
-        evalsRoot,
-      );
-      if (tapestryResult.isErr()) {
-        return err({
-          type: "EvalValidation",
-          message: `Case fixture load failed (${TAPESTRY_EXECUTION_SUITE}): ${tapestryResult.error.message}`,
-        });
-      }
-      allCases.push(...tapestryResult.value);
+      allCases.push(...suiteResult.value);
     }
 
     const match = allCases.find((c) => c.id === caseId);

@@ -52,6 +52,7 @@ import {
   SCENARIO_HISTORY_MAX_RUNS,
   SCENARIO_HISTORY_SCHEMA_VERSION,
 } from "../report-schema.js";
+import { EVAL_SUITE_REGISTRY } from "../types.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -528,6 +529,50 @@ describe("generateDashboardIndexes — multi-suite runs", () => {
     )._unsafeUnwrap();
     expect(indexes.suiteHistories.has("loom-routing")).toBe(true);
     expect(indexes.suiteHistories.has("tapestry-execution")).toBe(true);
+  });
+
+  it("suiteHistories supports all seven suite families", () => {
+    const suites = EVAL_SUITE_REGISTRY.map((suite) => suite.suiteId);
+    const run: RunDescriptor = {
+      runId: "abc1234-2026-01-15-001",
+      bundle: makeBundle({
+        assembledAt: "2026-01-15T12:00:00.000Z",
+        suites,
+        suiteSummaries: suites.map((suite, index) => ({
+          schemaVersion: 1 as const,
+          suite,
+          assembledAt: "2026-01-15T12:00:00.000Z",
+          gitSha: FIXED_GIT_SHA_1,
+          totalCases: 1,
+          passedCases: 1,
+          failedCases: 0,
+          suiteGreen: true,
+          cases: [
+            {
+              caseId: `${suite}-case-${index + 1}`,
+              modelId: "model-a",
+              suite,
+              scoreBucket: "pass" as const,
+              passed: true,
+              required: true,
+              dryRun: false,
+              scoredAt: "2026-01-15T12:00:00.000Z",
+            },
+          ],
+        })),
+      }),
+    };
+
+    const indexes = generateDashboardIndexes(
+      [run],
+      FIXED_UPDATED_AT,
+    )._unsafeUnwrap();
+    expect(indexes.dashboardManifest.runs[0]?.suites).toEqual(suites);
+    expect(indexes.suiteHistories.size).toBe(EVAL_SUITE_REGISTRY.length);
+    for (const suite of suites) {
+      expect(indexes.suiteHistories.has(suite)).toBe(true);
+      expect(indexes.scenarioHistories.has(suite)).toBe(true);
+    }
   });
 
   it("model comparison manifest aligns per-suite pass rates", () => {

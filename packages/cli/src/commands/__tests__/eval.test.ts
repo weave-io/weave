@@ -80,6 +80,18 @@ describe("runEval — no subcommand", () => {
     await runEval(ctx);
     expect(terminal.out.join("\n")).toBe("");
   });
+
+  it("usage lists all short agents and suite IDs", async () => {
+    const { terminal, ctx } = context();
+    await runEval(ctx);
+    const err = terminal.err.join("\n");
+    expect(err).toContain(
+      "Short agents: loom, tapestry, shuttle, spindle, pattern, weft, warp",
+    );
+    expect(err).toContain(
+      "Suites: loom-routing, tapestry-execution, shuttle-execution, spindle-tools, pattern-planning, weft-review, warp-security",
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -112,6 +124,56 @@ describe("runEval run — dry-run", () => {
     });
     await runEval(ctx);
     expect(terminal.out.join("\n")).toContain("loom");
+  });
+
+  it("shows shuttle agent filter in dry-run summary", async () => {
+    const { terminal, ctx } = context({
+      evalSubcommand: "run",
+      dryRun: true,
+      evalAgent: "shuttle",
+    });
+    await runEval(ctx);
+    expect(terminal.out.join("\n")).toContain("shuttle");
+  });
+
+  it("shows spindle agent filter in dry-run summary", async () => {
+    const { terminal, ctx } = context({
+      evalSubcommand: "run",
+      dryRun: true,
+      evalAgent: "spindle",
+    });
+    await runEval(ctx);
+    expect(terminal.out.join("\n")).toContain("spindle");
+  });
+
+  it("shows pattern agent filter in dry-run summary", async () => {
+    const { terminal, ctx } = context({
+      evalSubcommand: "run",
+      dryRun: true,
+      evalAgent: "pattern",
+    });
+    await runEval(ctx);
+    expect(terminal.out.join("\n")).toContain("pattern");
+  });
+
+  it("shows weft agent filter in dry-run summary", async () => {
+    const { terminal, ctx } = context({
+      evalSubcommand: "run",
+      dryRun: true,
+      evalAgent: "weft",
+    });
+    await runEval(ctx);
+    expect(terminal.out.join("\n")).toContain("weft");
+  });
+
+  it("shows warp agent filter in dry-run summary", async () => {
+    const { terminal, ctx } = context({
+      evalSubcommand: "run",
+      dryRun: true,
+      evalAgent: "warp",
+    });
+    await runEval(ctx);
+    expect(terminal.out.join("\n")).toContain("warp");
   });
 
   it("shows model filter in dry-run summary", async () => {

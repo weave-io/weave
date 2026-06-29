@@ -82,7 +82,15 @@ const UPDATED_AT_FIRST_BUILD = "2026-06-11T12:00:00.000Z";
 const UPDATED_AT_SECOND_BUILD = "2026-06-11T13:00:00.000Z";
 
 // Allowlisted suite names that appear in the fixture
-const KNOWN_SUITES = ["loom-routing", "tapestry-execution"] as const;
+const KNOWN_SUITES = [
+  "loom-routing",
+  "tapestry-execution",
+  "shuttle-execution",
+  "spindle-tools",
+  "pattern-planning",
+  "weft-review",
+  "warp-security",
+] as const;
 
 // Expected GitHub Raw base for ENDPOINTS check
 const EXPECTED_ENDPOINT_BASE =
@@ -208,6 +216,86 @@ function makeRun1Results(): RunnerResult[] {
         ASSEMBLED_AT_RUN1,
       ),
     ]),
+    makeRunnerResult("shuttle-execution", [
+      makeCaseResult(
+        "shuttle-report-structured",
+        "anthropic/claude-sonnet-4.5",
+        "shuttle-execution",
+        true,
+        ASSEMBLED_AT_RUN1,
+      ),
+      makeCaseResult(
+        "shuttle-report-structured",
+        "openai/gpt-4o",
+        "shuttle-execution",
+        true,
+        ASSEMBLED_AT_RUN1,
+      ),
+    ]),
+    makeRunnerResult("spindle-tools", [
+      makeCaseResult(
+        "spindle-citations-confidence",
+        "anthropic/claude-sonnet-4.5",
+        "spindle-tools",
+        true,
+        ASSEMBLED_AT_RUN1,
+      ),
+      makeCaseResult(
+        "spindle-citations-confidence",
+        "openai/gpt-4o",
+        "spindle-tools",
+        true,
+        ASSEMBLED_AT_RUN1,
+      ),
+    ]),
+    makeRunnerResult("pattern-planning", [
+      makeCaseResult(
+        "pattern-plan-release",
+        "anthropic/claude-sonnet-4.5",
+        "pattern-planning",
+        true,
+        ASSEMBLED_AT_RUN1,
+      ),
+      makeCaseResult(
+        "pattern-plan-release",
+        "openai/gpt-4o",
+        "pattern-planning",
+        false,
+        ASSEMBLED_AT_RUN1,
+      ),
+    ]),
+    makeRunnerResult("weft-review", [
+      makeCaseResult(
+        "weft-approve-clean",
+        "anthropic/claude-sonnet-4.5",
+        "weft-review",
+        true,
+        ASSEMBLED_AT_RUN1,
+      ),
+      makeCaseResult(
+        "weft-approve-clean",
+        "openai/gpt-4o",
+        "weft-review",
+        true,
+        ASSEMBLED_AT_RUN1,
+      ),
+    ]),
+    makeRunnerResult("warp-security", [
+      makeCaseResult(
+        "warp-fast-approve",
+        "anthropic/claude-sonnet-4.5",
+        "warp-security",
+        true,
+        ASSEMBLED_AT_RUN1,
+      ),
+      makeCaseResult(
+        "warp-fast-approve",
+        "openai/gpt-4o",
+        "warp-security",
+        true,
+        ASSEMBLED_AT_RUN1,
+      ),
+    ]),
   ];
 }
 
@@ -259,6 +347,86 @@ function makeRun2Results(): RunnerResult[] {
         "openai/gpt-4o",
         "tapestry-execution",
         true, // gpt now passes
+        ASSEMBLED_AT_RUN2,
+      ),
+    ]),
+    makeRunnerResult("shuttle-execution", [
+      makeCaseResult(
+        "shuttle-report-structured",
+        "anthropic/claude-sonnet-4.5",
+        "shuttle-execution",
+        true,
+        ASSEMBLED_AT_RUN2,
+      ),
+      makeCaseResult(
+        "shuttle-report-structured",
+        "openai/gpt-4o",
+        "shuttle-execution",
+        true,
+        ASSEMBLED_AT_RUN2,
+      ),
+    ]),
+    makeRunnerResult("spindle-tools", [
+      makeCaseResult(
+        "spindle-citations-confidence",
+        "anthropic/claude-sonnet-4.5",
+        "spindle-tools",
+        true,
+        ASSEMBLED_AT_RUN2,
+      ),
+      makeCaseResult(
+        "spindle-citations-confidence",
+        "openai/gpt-4o",
+        "spindle-tools",
+        true,
+        ASSEMBLED_AT_RUN2,
+      ),
+    ]),
+    makeRunnerResult("pattern-planning", [
+      makeCaseResult(
+        "pattern-plan-release",
+        "anthropic/claude-sonnet-4.5",
+        "pattern-planning",
+        true,
+        ASSEMBLED_AT_RUN2,
+      ),
+      makeCaseResult(
+        "pattern-plan-release",
+        "openai/gpt-4o",
+        "pattern-planning",
+        true,
+        ASSEMBLED_AT_RUN2,
+      ),
+    ]),
+    makeRunnerResult("weft-review", [
+      makeCaseResult(
+        "weft-approve-clean",
+        "anthropic/claude-sonnet-4.5",
+        "weft-review",
+        true,
+        ASSEMBLED_AT_RUN2,
+      ),
+      makeCaseResult(
+        "weft-approve-clean",
+        "openai/gpt-4o",
+        "weft-review",
+        true,
+        ASSEMBLED_AT_RUN2,
+      ),
+    ]),
+    makeRunnerResult("warp-security", [
+      makeCaseResult(
+        "warp-fast-approve",
+        "anthropic/claude-sonnet-4.5",
+        "warp-security",
+        true,
+        ASSEMBLED_AT_RUN2,
+      ),
+      makeCaseResult(
+        "warp-fast-approve",
+        "openai/gpt-4o",
+        "warp-security",
+        true,
         ASSEMBLED_AT_RUN2,
       ),
     ]),
@@ -450,6 +618,33 @@ describe("E2E fixture flow: publish two runs → rebuild indexes → validate we
         (f) =>
           f.startsWith(SUITE_HISTORY_FILE_PREFIX) &&
           f.includes("tapestry-execution"),
+      ),
+    ).toBe(true);
+    expect(
+      filesWritten1.some(
+        (f) =>
+          f.startsWith(SUITE_HISTORY_FILE_PREFIX) &&
+          f.includes("shuttle-execution"),
+      ),
+    ).toBe(true);
+    expect(
+      filesWritten1.some(
+        (f) =>
+          f.startsWith(SUITE_HISTORY_FILE_PREFIX) &&
+          f.includes("spindle-tools"),
+      ),
+    ).toBe(true);
+    expect(
+      filesWritten1.some(
+        (f) =>
+          f.startsWith(SUITE_HISTORY_FILE_PREFIX) &&
+          f.includes("pattern-planning"),
+      ),
+    ).toBe(true);
+    expect(
+      filesWritten1.some(
+        (f) =>
+          f.startsWith(SUITE_HISTORY_FILE_PREFIX) && f.includes("weft-review"),
       ),
     ).toBe(true);
     expect(

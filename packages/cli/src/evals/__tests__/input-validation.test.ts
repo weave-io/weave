@@ -5,6 +5,7 @@ import {
   KNOWN_EVAL_AGENTS_SORTED,
   parseEvalRunRequest,
 } from "../input-validation.js";
+import { EVAL_AGENT_FILTERS, EVAL_SUITE_REGISTRY } from "../types.js";
 
 // Helper: build a clean non-CI env map
 function env(
@@ -382,16 +383,18 @@ describe("parseEvalRunRequest — duplicate conflicting inputs", () => {
 
 describe("parseEvalRunRequest — agent allowlist validation", () => {
   it("rejects an unknown agent value (fails closed before any execution)", () => {
-    const result = parseEvalRunRequest(inputs({ agent: "shuttle" }));
+    const result = parseEvalRunRequest(
+      inputs({ agent: "unknown-shuttle-agent" }),
+    );
     expect(result.isErr()).toBe(true);
     const e = result._unsafeUnwrapErr();
     expect(e.type).toBe("UnknownAgentFilter");
     if (e.type === "UnknownAgentFilter") {
-      expect(e.value).toBe("shuttle");
+      expect(e.value).toBe("unknown-shuttle-agent");
       expect(e.allowedValues).toEqual(
         expect.arrayContaining(["loom", "tapestry"]),
       );
-      expect(e.message).toContain("shuttle");
+      expect(e.message).toContain("unknown-shuttle-agent");
       expect(e.message).toContain("loom");
     }
   });
@@ -426,10 +429,64 @@ describe("parseEvalRunRequest — agent allowlist validation", () => {
     expect(result._unsafeUnwrap().agent).toBe("tapestry-execution");
   });
 
-  it("rejects 'warp' — not an eval agent (it is a reviewer)", () => {
+  it("accepts 'shuttle' — known eval agent", () => {
+    const result = parseEvalRunRequest(inputs({ agent: "shuttle" }));
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().agent).toBe("shuttle");
+  });
+
+  it("accepts 'shuttle-execution' — known eval suite name", () => {
+    const result = parseEvalRunRequest(inputs({ agent: "shuttle-execution" }));
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().agent).toBe("shuttle-execution");
+  });
+
+  it("accepts 'spindle' — known eval agent", () => {
+    const result = parseEvalRunRequest(inputs({ agent: "spindle" }));
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().agent).toBe("spindle");
+  });
+
+  it("accepts 'spindle-tools' — known eval suite name", () => {
+    const result = parseEvalRunRequest(inputs({ agent: "spindle-tools" }));
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().agent).toBe("spindle-tools");
+  });
+
+  it("accepts 'pattern' — known eval agent", () => {
+    const result = parseEvalRunRequest(inputs({ agent: "pattern" }));
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().agent).toBe("pattern");
+  });
+
+  it("accepts 'pattern-planning' — known eval suite name", () => {
+    const result = parseEvalRunRequest(inputs({ agent: "pattern-planning" }));
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().agent).toBe("pattern-planning");
+  });
+
+  it("accepts 'weft' — known eval agent", () => {
+    const result = parseEvalRunRequest(inputs({ agent: "weft" }));
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().agent).toBe("weft");
+  });
+
+  it("accepts 'weft-review' — known eval suite name", () => {
+    const result = parseEvalRunRequest(inputs({ agent: "weft-review" }));
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().agent).toBe("weft-review");
+  });
+
+  it("accepts 'warp' — known eval agent for warp-security", () => {
     const result = parseEvalRunRequest(inputs({ agent: "warp" }));
-    expect(result.isErr()).toBe(true);
-    expect(result._unsafeUnwrapErr().type).toBe("UnknownAgentFilter");
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().agent).toBe("warp");
+  });
+
+  it("accepts 'warp-security' — known eval suite name", () => {
+    const result = parseEvalRunRequest(inputs({ agent: "warp-security" }));
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().agent).toBe("warp-security");
   });
 
   it("rejects unknown agent from env variable (WEAVE_EVAL_AGENT)", () => {
@@ -463,24 +520,57 @@ describe("parseEvalRunRequest — agent allowlist validation", () => {
 // ---------------------------------------------------------------------------
 
 describe("KNOWN_EVAL_AGENTS — exported constants", () => {
-  it("KNOWN_EVAL_AGENTS contains loom, tapestry, loom-routing, tapestry-execution", () => {
-    expect(KNOWN_EVAL_AGENTS.has("loom")).toBe(true);
-    expect(KNOWN_EVAL_AGENTS.has("tapestry")).toBe(true);
-    expect(KNOWN_EVAL_AGENTS.has("loom-routing")).toBe(true);
-    expect(KNOWN_EVAL_AGENTS.has("tapestry-execution")).toBe(true);
+  it("KNOWN_EVAL_AGENTS is sourced from the shared eval suite registry", () => {
+    expect([...KNOWN_EVAL_AGENTS].sort()).toEqual(
+      [...EVAL_AGENT_FILTERS].sort(),
+    );
   });
 
-  it("KNOWN_EVAL_AGENTS does not contain shuttle or warp", () => {
+  it("shared registry contributes exactly one short agent and one suite ID per suite", () => {
+    const expectedValues = EVAL_SUITE_REGISTRY.flatMap((suite) => [
+      suite.shortAgentFilter,
+      suite.suiteId,
+    ]).sort();
+    expect(KNOWN_EVAL_AGENTS_SORTED).toEqual(expectedValues);
+  });
+
+  it("KNOWN_EVAL_AGENTS contains shuttle and shuttle-execution", () => {
     expect(
       KNOWN_EVAL_AGENTS.has(
         "shuttle" as Parameters<(typeof KNOWN_EVAL_AGENTS)["has"]>[0],
       ),
-    ).toBe(false);
+    ).toBe(true);
+    expect(
+      KNOWN_EVAL_AGENTS.has(
+        "shuttle-execution" as Parameters<(typeof KNOWN_EVAL_AGENTS)["has"]>[0],
+      ),
+    ).toBe(true);
+  });
+
+  it("KNOWN_EVAL_AGENTS contains spindle and spindle-tools", () => {
+    expect(
+      KNOWN_EVAL_AGENTS.has(
+        "spindle" as Parameters<(typeof KNOWN_EVAL_AGENTS)["has"]>[0],
+      ),
+    ).toBe(true);
+    expect(
+      KNOWN_EVAL_AGENTS.has(
+        "spindle-tools" as Parameters<(typeof KNOWN_EVAL_AGENTS)["has"]>[0],
+      ),
+    ).toBe(true);
+  });
+
+  it("KNOWN_EVAL_AGENTS contains warp and warp-security", () => {
     expect(
       KNOWN_EVAL_AGENTS.has(
         "warp" as Parameters<(typeof KNOWN_EVAL_AGENTS)["has"]>[0],
       ),
-    ).toBe(false);
+    ).toBe(true);
+    expect(
+      KNOWN_EVAL_AGENTS.has(
+        "warp-security" as Parameters<(typeof KNOWN_EVAL_AGENTS)["has"]>[0],
+      ),
+    ).toBe(true);
   });
 
   it("KNOWN_EVAL_AGENTS_SORTED is sorted alphabetically", () => {

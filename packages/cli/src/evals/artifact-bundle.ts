@@ -43,9 +43,9 @@
  * suite. The file name is always `score-<suite>.json` and contains all case
  * result rows from every model that ran against that suite.
  *
- * This ensures that a full 5-model × 2-suite run (10 runner results) produces
- * exactly 2 score files — `score-loom-routing.json` and
- * `score-tapestry-execution.json` — each with all model rows, instead of
+ * This ensures that a full multi-model run produces exactly one score file per
+ * suite (for example `score-loom-routing.json`, `score-tapestry-execution.json`,
+ * and `score-pattern-planning.json`) with all model rows, instead of
  * overwriting on each model pass.
  *
  * # Sanitization contract
@@ -241,7 +241,9 @@ export interface WriteBundleOptions {
    * `public-report.json`. Defaults to `false`.
    *
    * When `true`, the Markdown report is rendered from `PublicReportBundle`
-   * and written to `public-report.md` in the run directory.
+   * and written to `public-report.md` in the run directory. The orchestrator
+   * enables this for normal runs so every suite family gets the same public
+   * JSON and Markdown reporting surface.
    */
   writeMarkdown?: boolean;
   /**

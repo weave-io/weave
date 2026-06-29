@@ -27,6 +27,7 @@
  */
 
 import { err, ok, type Result } from "neverthrow";
+import { EVAL_AGENT_FILTERS } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -137,20 +138,16 @@ const VALID_IDENTIFIER_RE = /^[A-Za-z0-9_./:@-]+$/;
  *
  * - Logical agent names (`loom`, `tapestry`) match `shouldRunSuite()` in the
  *   orchestrator's `agentName` branch.
- * - Suite names (`loom-routing`, `tapestry-execution`) match the `suiteName`
- *   branch and mirror the workflow ALLOWED_AGENTS list.
+ * - Suite names (`loom-routing`, `tapestry-execution`, `shuttle-execution`,
+ *   `pattern-planning`, `weft-review`, `warp-security`) match the `suiteName` branch and mirror the workflow
+ *   ALLOWED_AGENTS list.
  *
  * Unknown values fail closed with a typed `UnknownAgentFilter` error so that
  * typos surface immediately rather than silently executing zero cases.
  *
  * Exported for use in tests and workflow sync checks.
  */
-export const KNOWN_EVAL_AGENTS = new Set([
-  "loom",
-  "tapestry",
-  "loom-routing",
-  "tapestry-execution",
-] as const);
+export const KNOWN_EVAL_AGENTS = new Set(EVAL_AGENT_FILTERS);
 
 /** Sorted array of permitted agent filter values (for error messages). */
 export const KNOWN_EVAL_AGENTS_SORTED: readonly string[] = [

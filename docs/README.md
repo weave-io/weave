@@ -24,7 +24,7 @@ The published docs site is built from the Astro + Starlight package at [`package
 | [Claude Code Adapter](claude-code-adapter.md) | Claude Code adapter materialization |
 | [Adapter Readiness Status](adapter-readiness-status.md) | Per-adapter capability readiness declarations |
 | [Harness Agent Surface Patterns](harness-agent-surface-patterns.md) | Patterns for adapter-side agent surface materialization |
-| [Agent Evals](agent-evals.md) | Eval architecture, fixture layout, CLI usage, filter semantics, prompt-hash provenance, immutable run bundle schema, `schemaVersion` mandate, dashboard index derivation, sanitization rules, raw-artifact policy, CI model |
+| [Agent Evals](agent-evals.md) | Eval architecture, all seven text-only suite families, fixture layout, CLI usage, dry-run validation behavior, filter semantics, forbidden text-only assertion shapes, recommended case-authoring pattern, prompt-hash provenance, immutable run bundle schema, `schemaVersion` mandate, dashboard index derivation, sanitization rules, raw-artifact policy, CI model |
 | [Eval Sanitization and Publish Pipeline](eval-sanitization-and-publish-pipeline.md) | Allowlist sanitizer, deterministic bundle writer, raw artifact writer, token-gated publish policy, `schemaVersion` and freshness rules, website data flow, `/evals/` legacy coexistence |
 | [Eval XSS Policy](eval-xss-policy.md) | Markdown and report rendering XSS policy, `explanation` field schema-level blocking, `escapeHtml()` requirements, banned rendering paths, defence-in-depth layers, test coverage |
 | [Legacy Architecture](legacy-architecture.md) | Alpha / OpenCode-era reference (read-only history) |

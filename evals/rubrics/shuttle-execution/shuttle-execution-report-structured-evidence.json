@@ -1,0 +1,10 @@
+{
+  "case_id": "shuttle-execution-report-structured-evidence",
+  "suite": "shuttle-execution",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Score only delegated-task structure that is visible in assistant text: bounded task intake, file awareness, acceptance confirmation, and evidence reporting."
+  }
+}

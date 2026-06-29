@@ -99,6 +99,13 @@ export const docsSearchData: DocsSearchEntry[] = [
   },
   {
     group: "Guides",
+    title: "Evals",
+    subtitle: "text-only eval suites, filters, dry-run, reports",
+    href: "docs/evals/",
+    icon: "page",
+  },
+  {
+    group: "Guides",
     title: "OpenCode",
     subtitle: "implemented adapter setup and commands",
     href: "docs/opencode/",

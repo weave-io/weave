@@ -27,6 +27,7 @@ import { describe, expect, it } from "bun:test";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import {
+  EVALS_ROOT,
   KNOWN_AGENTS,
   loadCaseFile,
   loadRubricFile,
@@ -35,6 +36,7 @@ import {
   validateCaseFilter,
 } from "../case-loader.js";
 import type { EvalCase } from "../types.js";
+import { EVAL_SUITE_REGISTRY } from "../types.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -138,6 +140,8 @@ describe("loadCaseFile — happy paths", () => {
     const filePath = await writeTempJson(
       "valid-completion",
       makeCase({
+        suite: "tapestry-execution",
+        allowed_agents: ["tapestry", "shuttle"],
         expected_outcome: {
           kind: "task_completion",
           description: "Task is done",
@@ -151,10 +155,45 @@ describe("loadCaseFile — happy paths", () => {
     expect(c.expected_outcome.kind).toBe("task_completion");
   });
 
+  it("loads a valid shuttle-execution task_completion fixture", async () => {
+    const filePath = await writeTempJson(
+      "valid-shuttle-execution",
+      makeCase({
+        suite: "shuttle-execution",
+        allowed_agents: ["shuttle"],
+        expected_outcome: {
+          kind: "task_completion",
+          description:
+            "Final shuttle report reflects task structure and evidence.",
+          required_artifacts: [
+            "shuttle_task_intake_structured",
+            "shuttle_files_acknowledged",
+            "shuttle_acceptance_confirmed",
+            "shuttle_evidence_reported",
+          ],
+        },
+        transcript_expectations: [
+          {
+            check: "content_contains",
+            role: "assistant",
+            contains: "Files changed",
+          },
+          { check: "agent_mentioned", agent_name: "shuttle" },
+        ],
+      }),
+    );
+    const result = await loadCaseFile(filePath);
+    expect(result.isOk()).toBe(true);
+    const c = result._unsafeUnwrap();
+    expect(c.suite).toBe("shuttle-execution");
+    expect(c.allowed_agents).toEqual(["shuttle"]);
+  });
+
   it("loads a valid delegation_chain case fixture", async () => {
     const filePath = await writeTempJson(
       "valid-delegation",
       makeCase({
+        suite: "tapestry-execution",
         expected_outcome: {
           kind: "delegation_chain",
           chain: ["tapestry", "shuttle"],
@@ -168,9 +207,134 @@ describe("loadCaseFile — happy paths", () => {
     expect(c.expected_outcome.kind).toBe("delegation_chain");
   });
 
-  it("loads a valid tool_call case fixture", async () => {
+  it("loads a valid pattern-planning task_completion fixture", async () => {
     const filePath = await writeTempJson(
-      "valid-tool-call",
+      "valid-pattern-planning",
+      makeCase({
+        suite: "pattern-planning",
+        allowed_agents: ["pattern"],
+        expected_outcome: {
+          kind: "task_completion",
+          description: "Plan includes explicit structural signals",
+          required_artifacts: [
+            "plan_scope_explicit",
+            "plan_file_tasks",
+            "plan_sequence_explicit",
+            "plan_acceptance_coverage",
+          ],
+        },
+        transcript_expectations: [
+          { check: "content_contains", role: "assistant", contains: "#scope" },
+          { check: "agent_mentioned", agent_name: "pattern" },
+        ],
+      }),
+    );
+    const result = await loadCaseFile(filePath);
+    expect(result.isOk()).toBe(true);
+    const c = result._unsafeUnwrap();
+    expect(c.suite).toBe("pattern-planning");
+    expect(c.allowed_agents).toEqual(["pattern"]);
+  });
+
+  it("loads a valid spindle-tools task_completion fixture", async () => {
+    const filePath = await writeTempJson(
+      "valid-spindle-tools",
+      makeCase({
+        suite: "spindle-tools",
+        allowed_agents: ["spindle"],
+        expected_outcome: {
+          kind: "task_completion",
+          description:
+            "Research answer contains citations, separated facts, and confidence.",
+          required_artifacts: [
+            "spindle_inline_citations_present",
+            "spindle_source_facts_separated",
+            "spindle_confidence_reported",
+            "spindle_sources_list_present",
+          ],
+        },
+        transcript_expectations: [
+          {
+            check: "content_contains",
+            role: "assistant",
+            contains: "Source facts",
+          },
+          {
+            check: "content_contains",
+            role: "assistant",
+            contains: "Confidence:",
+          },
+        ],
+      }),
+    );
+    const result = await loadCaseFile(filePath);
+    expect(result.isOk()).toBe(true);
+    const c = result._unsafeUnwrap();
+    expect(c.suite).toBe("spindle-tools");
+    expect(c.allowed_agents).toEqual(["spindle"]);
+  });
+
+  it("loads a valid weft-review task_completion fixture", async () => {
+    const filePath = await writeTempJson(
+      "valid-weft-review",
+      makeCase({
+        suite: "weft-review",
+        allowed_agents: ["weft"],
+        expected_outcome: {
+          kind: "task_completion",
+          description: "Review contains verdict and blocker/file discipline",
+          required_artifacts: [
+            "review_verdict_present",
+            "review_file_refs_present",
+          ],
+        },
+        transcript_expectations: [
+          {
+            check: "content_contains",
+            role: "assistant",
+            contains: "[APPROVE]",
+          },
+        ],
+      }),
+    );
+    const result = await loadCaseFile(filePath);
+    expect(result.isOk()).toBe(true);
+    const c = result._unsafeUnwrap();
+    expect(c.suite).toBe("weft-review");
+    expect(c.allowed_agents).toEqual(["weft"]);
+  });
+
+  it("loads a valid warp-security task_completion fixture", async () => {
+    const filePath = await writeTempJson(
+      "valid-warp-security",
+      makeCase({
+        suite: "warp-security",
+        allowed_agents: ["warp"],
+        expected_outcome: {
+          kind: "task_completion",
+          description:
+            "Security review contains verdict, capped blocker count, and evidence-backed findings.",
+          required_artifacts: [
+            "security_verdict_present",
+            "security_blocker_count_capped",
+            "security_findings_evidence_backed",
+          ],
+        },
+        transcript_expectations: [
+          { check: "content_contains", role: "assistant", contains: "BLOCK" },
+        ],
+      }),
+    );
+    const result = await loadCaseFile(filePath);
+    expect(result.isOk()).toBe(true);
+    const c = result._unsafeUnwrap();
+    expect(c.suite).toBe("warp-security");
+    expect(c.allowed_agents).toEqual(["warp"]);
+  });
+
+  it("rejects a tool_call case fixture for a text-only suite", async () => {
+    const filePath = await writeTempJson(
+      "invalid-tool-call",
       makeCase({
         expected_outcome: {
           kind: "tool_call",
@@ -180,9 +344,9 @@ describe("loadCaseFile — happy paths", () => {
       }),
     );
     const result = await loadCaseFile(filePath);
-    expect(result.isOk()).toBe(true);
-    const c = result._unsafeUnwrap();
-    expect(c.expected_outcome.kind).toBe("tool_call");
+    expect(result.isErr()).toBe(true);
+    const e = result._unsafeUnwrapErr();
+    expect(e.type).toBe("UnsupportedTextEvalAssertion");
   });
 
   it("applies defaults for optional array fields", async () => {
@@ -212,16 +376,61 @@ describe("loadCaseFile — happy paths", () => {
       makeCase({
         transcript_expectations: [
           { check: "content_contains", role: "assistant", contains: "hello" },
-          { check: "tool_called", tool_name: "delegate" },
           { check: "agent_mentioned", agent_name: "shuttle" },
-          { check: "no_tool_called", tool_name: "dangerous_tool" },
         ],
       }),
     );
     const result = await loadCaseFile(filePath);
     expect(result.isOk()).toBe(true);
     const c = result._unsafeUnwrap();
-    expect(c.transcript_expectations).toHaveLength(4);
+    expect(c.transcript_expectations).toHaveLength(2);
+  });
+
+  it("rejects runtime-only transcript expectations for text-only suites", async () => {
+    const filePath = await writeTempJson(
+      "runtime-transcript-expectations",
+      makeCase({
+        transcript_expectations: [
+          { check: "tool_called", tool_name: "delegate" },
+          { check: "no_tool_called", tool_name: "dangerous_tool" },
+          { check: "content_contains", role: "tool", contains: "delegate" },
+        ],
+      }),
+    );
+    const result = await loadCaseFile(filePath);
+    expect(result.isErr()).toBe(true);
+    const e = result._unsafeUnwrapErr();
+    expect(e.type).toBe("UnsupportedTextEvalAssertion");
+    if (e.type === "UnsupportedTextEvalAssertion") {
+      expect(e.issues).toHaveLength(3);
+    }
+  });
+
+  it("rejects spindle-tools network-event assertions via the shared text-only contract", async () => {
+    const filePath = await writeTempJson(
+      "spindle-network-assertions",
+      makeCase({
+        suite: "spindle-tools",
+        allowed_agents: ["spindle"],
+        expected_outcome: {
+          kind: "tool_call",
+          tool_name: "web_search",
+        },
+        transcript_expectations: [
+          { check: "tool_called", tool_name: "web_search" },
+          { check: "no_tool_called", tool_name: "browser_open" },
+          { check: "content_contains", role: "tool", contains: "GET https://" },
+        ],
+      }),
+    );
+    const result = await loadCaseFile(filePath);
+    expect(result.isErr()).toBe(true);
+    const e = result._unsafeUnwrapErr();
+    expect(e.type).toBe("UnsupportedTextEvalAssertion");
+    if (e.type === "UnsupportedTextEvalAssertion") {
+      expect(e.suite).toBe("spindle-tools");
+      expect(e.issues).toHaveLength(4);
+    }
   });
 });
 
@@ -305,6 +514,16 @@ describe("loadCaseFile — schema validation failures", () => {
     const result = await loadCaseFile(filePath);
     expect(result.isErr()).toBe(true);
     expect(result._unsafeUnwrapErr().type).toBe("FixtureValidationFailed");
+  });
+
+  it("returns UnknownEvalSuite for a fixture with an unregistered suite", async () => {
+    const filePath = await writeTempJson(
+      "unknown-suite",
+      makeCase({ suite: "unknown-suite" }),
+    );
+    const result = await loadCaseFile(filePath);
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().type).toBe("UnknownEvalSuite");
   });
 
   it("returns FixtureValidationFailed for delegation_chain with fewer than 2 agents", async () => {
@@ -455,11 +674,18 @@ describe("loadSuiteCases", () => {
     expect(result._unsafeUnwrap()).toHaveLength(0);
   });
 
-  it("returns empty array for a non-existent suite directory", async () => {
+  it("returns empty array for a known suite whose directory does not exist", async () => {
     const evalsRoot = resolve(TEMP_DIR, `evals-root-nonexistent-${uid()}`);
-    const result = await loadSuiteCases("nonexistent-suite", evalsRoot);
+    const result = await loadSuiteCases("loom-routing", evalsRoot);
     expect(result.isOk()).toBe(true);
     expect(result._unsafeUnwrap()).toHaveLength(0);
+  });
+
+  it("rejects an unregistered suite before discovery", async () => {
+    const evalsRoot = resolve(TEMP_DIR, `evals-root-unknown-suite-${uid()}`);
+    const result = await loadSuiteCases("unknown-suite", evalsRoot);
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().type).toBe("UnknownEvalSuite");
   });
 
   it("returns a FixtureValidationFailed error when one case file is invalid", async () => {
@@ -531,6 +757,13 @@ describe("loadSuiteRubrics", () => {
     const result = await loadSuiteRubrics("tapestry-execution", evalsRoot);
     expect(result.isErr()).toBe(true);
     expect(result._unsafeUnwrapErr().type).toBe("FixtureValidationFailed");
+  });
+
+  it("rejects an unregistered rubric suite before discovery", async () => {
+    const evalsRoot = resolve(TEMP_DIR, `evals-root-bad-rubric-suite-${uid()}`);
+    const result = await loadSuiteRubrics("unknown-suite", evalsRoot);
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().type).toBe("UnknownEvalSuite");
   });
 });
 
@@ -616,6 +849,63 @@ describe("validateCaseFilter", () => {
     const result = validateCaseFilter("any-case", []);
     if ("type" in result && result.type === "FixtureValidationFailed") {
       expect(result.message).toContain("(none)");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Real fixture inventory drift checks
+// ---------------------------------------------------------------------------
+
+describe("real fixture inventory stays in sync with the shared eval registry", () => {
+  const expectedSuites = EVAL_SUITE_REGISTRY.map(
+    (suite) => suite.suiteId,
+  ).sort();
+
+  function discoverSuiteDirNames(kind: "cases" | "rubrics"): string[] {
+    const suiteRoot = resolve(EVALS_ROOT, kind);
+    const glob = new Bun.Glob("*/*.json");
+
+    try {
+      return [
+        ...new Set(
+          Array.from(glob.scanSync(suiteRoot))
+            .map((name) => name.split("/")[0])
+            .filter(
+              (name): name is string => name !== undefined && name.length > 0,
+            ),
+        ),
+      ].sort();
+    } catch {
+      return [];
+    }
+  }
+
+  it("cases/ and rubrics/ directories exactly match the registered suite IDs", () => {
+    expect(discoverSuiteDirNames("cases")).toEqual(expectedSuites);
+    expect(discoverSuiteDirNames("rubrics")).toEqual(expectedSuites);
+  });
+
+  it("every registered suite has at least one real case fixture and one matching rubric", async () => {
+    for (const suite of expectedSuites) {
+      const casesResult = await loadSuiteCases(suite, EVALS_ROOT);
+      const rubricsResult = await loadSuiteRubrics(suite, EVALS_ROOT);
+
+      expect(casesResult.isOk()).toBe(true);
+      expect(rubricsResult.isOk()).toBe(true);
+      if (casesResult.isErr() || rubricsResult.isErr()) continue;
+
+      const cases = casesResult.value;
+      const rubrics = rubricsResult.value;
+
+      expect(cases.length).toBeGreaterThan(0);
+      expect(rubrics.length).toBe(cases.length);
+
+      const rubricIds = new Set(rubrics.map((rubric) => rubric.case_id));
+      for (const evalCase of cases) {
+        expect(evalCase.suite).toBe(suite);
+        expect(rubricIds.has(evalCase.id)).toBe(true);
+      }
     }
   });
 });

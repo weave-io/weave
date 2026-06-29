@@ -1,0 +1,44 @@
+{
+  "id": "shuttle-execution-report-structured-evidence",
+  "description": "Shuttle should reflect delegated task intake, acknowledge the listed files, confirm acceptance coverage, and report concrete commands/tests as textual completion evidence without claiming real tool telemetry.",
+  "suite": "shuttle-execution",
+  "allowed_agents": ["shuttle"],
+  "allowed_models": [
+    "anthropic/claude-opus-4.5",
+    "anthropic/claude-sonnet-4.5",
+    "openai/gpt-5.5"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "Emit Shuttle-style evidence reporting that mirrors the delegated task contract from assistant text only.",
+    "required_artifacts": [
+      "shuttle_task_intake_structured",
+      "shuttle_files_acknowledged",
+      "shuttle_acceptance_confirmed",
+      "shuttle_evidence_reported"
+    ]
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "Files changed"
+    },
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "Commands run"
+    },
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "ALL acceptance criteria are met"
+    },
+    {
+      "check": "agent_mentioned",
+      "agent_name": "shuttle"
+    }
+  ],
+  "tags": ["execution", "delegated-task", "evidence"]
+}

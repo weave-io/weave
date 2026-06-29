@@ -1,0 +1,10 @@
+{
+  "case_id": "shuttle-execution-report-tests-and-assumptions",
+  "suite": "shuttle-execution",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Score only assistant-visible final evidence reporting. Do not require real file mutation, tool traces, or hidden harness telemetry."
+  }
+}

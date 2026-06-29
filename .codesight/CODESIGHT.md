@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weave/core, @weave/engine, @weave/config, @weave/cli, @weave/docs, @weave/adapter-opencode
 
-> 0 routes | 0 models | 0 components | 113 lib files | 7 env vars | 5 middleware | 0% test coverage
-> **Token savings:** this file is ~10,000 tokens. Without it, AI exploration would cost ~40,700 tokens. **Saves ~30,700 tokens per conversation.**
-> **Last scanned:** 2026-06-19 14:28 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 119 lib files | 7 env vars | 5 middleware | 0% test coverage
+> **Token savings:** this file is ~11,100 tokens. Without it, AI exploration would cost ~42,300 tokens. **Saves ~31,200 tokens per conversation.**
+> **Last scanned:** 2026-06-29 18:04 — re-run after significant changes
 
 ---
 
@@ -194,6 +194,14 @@
   - interface ModelResponse
   - interface ModelClient
   - _...1 more_
+- `packages/cli/src/evals/pattern-planning-runner.ts`
+  - function extractPlanningSignals: (content) => void
+  - function redactSecrets: (raw) => string
+  - function buildUserMessage: (evalCase) => string
+  - class PatternPlanningRunner
+  - interface PatternPlanningRunnerOptions
+  - interface PatternPlanningRunRequest
+  - _...1 more_
 - `packages/cli/src/evals/prompt-snapshots.ts`
   - function composeSnapshot: (input) => ResultAsync<ComposeSnapshotResult, ProvenanceError>
   - function composeAgentSnapshots: (options) => ResultAsync<ComposeAgentSnapshotsResult, ProvenanceError>
@@ -221,7 +229,7 @@
 - `packages/cli/src/evals/report-bundle.ts`
   - function assembleCaseEntry: (row, suite) => PublicCaseEntry
   - function assembleSuiteSummary: (scoreFile, gitSha, assembledAt) => Result<SuiteSummaryEntry, ReportAssemblyError>
-  - function assemblePublicReportBundle: (bundle, _runId) => Result<PublicReportBundle, ReportAssemblyError>
+  - function assemblePublicReportBundle: (bundle, runId) => Result<PublicReportBundle, ReportAssemblyError>
   - function assembleDashboardManifest: (existingEntries, newEntry, updatedAt) => Result<DashboardManifest, ReportAssemblyError>
   - function buildDashboardEntry: (bundle, runId, bundleReportPath) => DashboardEntry
   - function assembleModelComparisonManifest: (bundle, runId) => Result<ModelComparisonManifest, ReportAssemblyError>
@@ -250,12 +258,12 @@
   - _...2 more_
 - `packages/cli/src/evals/runner.ts`
   - function buildEvalRunner: (orchestrator) => (request: EvalRunRequest) => Promise<Result<number, CliError>>
+  - function getEvalCoveredPromptAgents: () => readonly string[]
   - class EvalOrchestrator
   - interface EvalRunMetadata
   - interface ModelRollup
   - interface AgentRollup
-  - interface EvalRunSummary
-  - _...3 more_
+  - _...4 more_
 - `packages/cli/src/evals/sanitizer.ts`
   - function sanitizeCaseResultSummary: (summary) => SanitizedCaseResultSummary
   - function sanitizeScoreRecord: (record) => SanitizedScoreRecord
@@ -264,6 +272,22 @@
   - function dropUnknownFields: (input, allowedKeys) => Partial<T>
   - function assertPublishSafe: (obj, unknown>, context) => Result<undefined, SanitizerError>
   - _...11 more_
+- `packages/cli/src/evals/shuttle-execution-runner.ts`
+  - function extractShuttleExecutionSignals: (content) => ShuttleExecutionSignals
+  - function redactSecrets: (raw) => string
+  - function buildUserMessage: (evalCase) => string
+  - class ShuttleExecutionRunner
+  - interface ShuttleExecutionSignals
+  - interface ShuttleExecutionRunnerOptions
+  - _...2 more_
+- `packages/cli/src/evals/spindle-tools-runner.ts`
+  - function extractSpindleResearchSignals: (content) => SpindleResearchSignals
+  - function redactSecrets: (raw) => string
+  - function buildUserMessage: (evalCase) => string
+  - class SpindleToolsRunner
+  - interface SpindleResearchSignals
+  - interface SpindleToolsRunnerOptions
+  - _...2 more_
 - `packages/cli/src/evals/tapestry-execution-runner.ts`
   - function extractDelegationChain: (content) => string[]
   - function detectCompletionSignal: (content) => boolean
@@ -271,6 +295,30 @@
   - function buildUserMessage: (evalCase) => string
   - class TapestryExecutionRunner
   - interface TapestryExecutionRunnerOptions
+  - _...2 more_
+- `packages/cli/src/evals/types.ts`
+  - function getEvalSuiteMetadata: (suiteId) => EvalSuiteMetadata | undefined
+  - function isKnownEvalSuiteId: (suiteId) => boolean
+  - interface EvalSuiteMetadata
+  - interface PromptSourceDescriptor
+  - interface PromptSnapshot
+  - interface RawPromptArtifact
+  - _...51 more_
+- `packages/cli/src/evals/warp-security-runner.ts`
+  - function extractSecuritySignals: (content) => SecuritySignals
+  - function redactSecrets: (raw) => string
+  - function buildUserMessage: (evalCase) => string
+  - class WarpSecurityRunner
+  - interface SecuritySignals
+  - interface WarpSecurityRunnerOptions
+  - _...2 more_
+- `packages/cli/src/evals/weft-review-runner.ts`
+  - function extractReviewSignals: (content) => ReviewSignals
+  - function redactSecrets: (raw) => string
+  - function buildUserMessage: (evalCase) => string
+  - class WeftReviewRunner
+  - interface ReviewSignals
+  - interface WeftReviewRunnerOptions
   - _...2 more_
 - `packages/cli/src/fs/file-system.ts`
   - function describeFileSystemError: (error) => string
@@ -559,9 +607,10 @@
 
 ## Most Imported Files (change these carefully)
 
-- `packages/cli/src/evals/types.ts` — imported by **22** files
+- `packages/cli/src/evals/types.ts` — imported by **35** files
 - `packages/cli/src/theme/colors.ts` — imported by **19** files
 - `packages/cli/src/io/terminal.ts` — imported by **17** files
+- `packages/cli/src/evals/openrouter-client.ts` — imported by **17** files
 - `packages/cli/src/evals/report-schema.ts` — imported by **17** files
 - `packages/engine/src/runtime/types.ts` — imported by **16** files
 - `packages/cli/src/args.ts` — imported by **13** files
@@ -574,31 +623,99 @@
 - `packages/engine/src/execution-lifecycle/errors.ts` — imported by **10** files
 - `packages/adapters/opencode/src/sdk-types.ts` — imported by **9** files
 - `packages/cli/src/errors.ts` — imported by **9** files
+- `packages/cli/src/evals/prompt-snapshots.ts` — imported by **9** files
 - `packages/adapters/opencode/src/adapter.ts` — imported by **8** files
 - `packages/core/src/tokens.ts` — imported by **8** files
-- `packages/cli/src/evals/openrouter-client.ts` — imported by **7** files
 - `packages/engine/src/execution-lifecycle.ts` — imported by **7** files
-- `packages/cli/src/prompt/index.ts` — imported by **6** files
 
 ## Import Map (who imports what)
 
-- `packages/cli/src/evals/types.ts` ← `packages/cli/src/commands/eval.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/github-contents-publisher.test.ts`, `packages/cli/src/evals/__tests__/loom-routing-runner.test.ts`, `packages/cli/src/evals/__tests__/loom-routing-runner.test.ts` +17 more
+- `packages/cli/src/evals/types.ts` ← `packages/cli/src/commands/eval.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/dashboard-indexes.test.ts`, `packages/cli/src/evals/__tests__/github-contents-publisher.test.ts` +30 more
 - `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts` +14 more
 - `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts` +12 more
+- `packages/cli/src/evals/openrouter-client.ts` ← `packages/cli/src/commands/eval.ts`, `packages/cli/src/evals/__tests__/loom-routing-runner.test.ts`, `packages/cli/src/evals/__tests__/pattern-planning-runner.test.ts`, `packages/cli/src/evals/__tests__/runner.test.ts`, `packages/cli/src/evals/__tests__/shuttle-execution-runner.test.ts` +12 more
 - `packages/cli/src/evals/report-schema.ts` ← `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts` +12 more
 - `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts` +11 more
 - `packages/cli/src/args.ts` ← `packages/cli/src/__tests__/args.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/prompt.test.ts` +8 more
 - `packages/engine/src/runtime/store.ts` ← `packages/engine/src/__tests__/runtime-journal.test.ts`, `packages/engine/src/execution-lifecycle/artifacts.ts`, `packages/engine/src/execution-lifecycle/dispatch.ts`, `packages/engine/src/execution-lifecycle/inspection.ts`, `packages/engine/src/execution-lifecycle/interrupts.ts` +8 more
 - `packages/cli/src/fs/file-system.ts` ← `packages/cli/src/__tests__/file-system.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`, `packages/cli/src/commands/__tests__/migrate.test.ts`, `packages/cli/src/commands/__tests__/validate.test.ts` +7 more
 - `packages/engine/src/logger.ts` ← `packages/engine/src/compose.ts`, `packages/engine/src/index.ts`, `packages/engine/src/runtime/journal-writer.ts`, `packages/engine/src/runtime/sqlite/store.ts`, `packages/engine/src/runtime-command-operations/control.ts` +7 more
-- `packages/engine/src/runtime/errors.ts` ← `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-journal.test.ts`, `packages/engine/src/__tests__/runtime-journal.test.ts`, `packages/engine/src/execution-lifecycle/lease.ts`, `packages/engine/src/runtime/fingerprint.ts` +6 more
 
 ---
 
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 99 test files found
+> 104 test files found
+
+---
+
+# CI/CD Pipelines
+
+## GitHub Actions (3 workflows)
+
+| Workflow | Triggers | Jobs | Deploy | Environments |
+|---|---|---|---|---|
+| Agent Evals | workflow_dispatch | 2 | — | — |
+| CI | push, pull_request | 1 | — | — |
+| Deploy Docs | push, workflow_dispatch | 2 | — | github-pages |
+
+### Agent Evals
+
+> `.github/workflows/agent-evals.yml`
+
+- **validate-inputs** on `ubuntu-latest` — 1 steps
+- **run-evals** on `ubuntu-latest` — 7 steps (needs: validate-inputs)
+  - `actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+  - `actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02`
+
+### Deploy Docs
+
+> `.github/workflows/deploy-docs.yml`
+
+> Concurrency: `github-pages`
+
+- **build** on `ubuntu-latest` — 6 steps
+  - `actions/checkout@v4`
+  - `actions/configure-pages@v5`
+  - `oven-sh/setup-bun@v2`
+  - `actions/upload-pages-artifact@v3`
+- **deploy** on `ubuntu-latest` — 1 steps (needs: build)
+  - `actions/deploy-pages@v4`
+
+### Secrets
+
+- `EVAL_RESULTS_REPO_TOKEN`
+- `OPENROUTER_API_KEY`
+
+---
+_Source: .github/workflows/agent-evals.yml, .github/workflows/ci.yml, .github/workflows/deploy-docs.yml_
+_Generated by codesight-cicd-plugin_
+
+---
+
+# Git Hooks
+
+> **Note for agents:** These hooks fire automatically on git operations and will block the operation if they fail.
+
+## `pre-commit` — husky
+
+- **set**: `set -euo pipefail`
+- **echo**: `echo "▶ codesight..."`
+- **npx**: `npx codesight`
+- **git**: `git add .codesight/`
+- **echo**: `echo "▶ lint-staged..."`
+- **bunx**: `bunx lint-staged`
+- **echo**: `echo "▶ typecheck..."`
+- **bun**: `bun run typecheck`
+- **echo**: `echo "▶ validate-config..."`
+- **bun**: `bun run validate-config`
+- **echo**: `echo "▶ test..."`
+- **bun**: `bun test --recursive`
+- **echo**: `echo "✔ all checks passed"`
+
+_Source: .husky/pre-commit_
 
 ---
 

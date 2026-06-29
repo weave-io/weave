@@ -1,0 +1,44 @@
+{
+  "id": "warp-security-block-evidence-findings",
+  "description": "Synthetic security review summary: `packages/cli/src/evals/openrouter-client.ts` now logs raw Authorization headers and `packages/cli/src/evals/sanitizer.ts` misses secret-bearing query parameters. Block only if the review uses a capped blocker count and each finding is backed by evidence, impact, and a file-cited fix.",
+  "suite": "warp-security",
+  "allowed_agents": ["warp"],
+  "allowed_models": [
+    "anthropic/claude-opus-4.5",
+    "anthropic/claude-sonnet-4.5",
+    "openai/gpt-5.5"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "Emit a BLOCK verdict with evidence-backed security findings and capped blocker counts.",
+    "required_artifacts": [
+      "security_verdict_present",
+      "security_verdict_block",
+      "security_blocker_count_capped",
+      "security_findings_present",
+      "security_severity_present",
+      "security_findings_evidence_backed",
+      "security_file_refs_present",
+      "security_blocking_format_disciplined"
+    ]
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "BLOCK"
+    },
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "FINDING:"
+    },
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "EVIDENCE:"
+    }
+  ],
+  "tags": ["security", "block", "evidence"]
+}

@@ -1,0 +1,41 @@
+{
+  "id": "shuttle-execution-report-tests-and-assumptions",
+  "description": "Shuttle should finish a bounded delegated task by listing files changed, commands/tests run, assumptions made, and explicit acceptance confirmation in the final text report.",
+  "suite": "shuttle-execution",
+  "allowed_agents": ["shuttle"],
+  "allowed_models": [
+    "anthropic/claude-opus-4.5",
+    "anthropic/claude-sonnet-4.5",
+    "openai/gpt-5.5"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "Emit a final Shuttle evidence report with assumptions and test results from assistant text only.",
+    "required_artifacts": [
+      "shuttle_task_intake_structured",
+      "shuttle_files_acknowledged",
+      "shuttle_acceptance_confirmed",
+      "shuttle_evidence_reported",
+      "shuttle_test_results_reported"
+    ]
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "Test results"
+    },
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "Issues/assumptions"
+    },
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "ALL acceptance criteria are met"
+    }
+  ],
+  "tags": ["execution", "reporting", "assumptions"]
+}

@@ -1,0 +1,37 @@
+{
+  "id": "weft-review-reject-blocker-citation",
+  "description": "Synthetic review summary: `packages/cli/src/commands/eval.ts` accepts a malformed verdict sequence and `packages/cli/src/evals/weft-review-runner.ts` forgets to cite file-specific blockers. Reject only if the review uses [REJECT], counts blockers, and each blocker cites an actionable file reference.",
+  "suite": "weft-review",
+  "allowed_agents": ["weft"],
+  "allowed_models": [
+    "anthropic/claude-opus-4.5",
+    "anthropic/claude-sonnet-4.5",
+    "openai/gpt-5.5"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "Emit a structurally valid rejection review with explicit blockers tied to files.",
+    "required_artifacts": [
+      "review_verdict_present",
+      "review_verdict_reject",
+      "review_blockers_present",
+      "review_blocker_file_refs",
+      "review_rejection_disciplined",
+      "review_blockers_cited"
+    ]
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "[REJECT]"
+    },
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "BLOCKER:"
+    }
+  ],
+  "tags": ["review", "rejection", "blockers"]
+}

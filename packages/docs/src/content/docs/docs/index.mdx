@@ -26,6 +26,7 @@ Use this page as the map for the consolidated docs. Older tutorial, how-to, expl
 | Design agent roles | [Agents and Categories](agents-and-categories/) | Builtin overrides, custom agents, generated category shuttles, and delegation metadata. |
 | Tune prompt/model/policy behavior | [Prompts, Models, and Policy](prompts-models-policy/) | Prompt composition, model intent, and abstract tool-policy mapping. |
 | Describe explicit work | [Workflows](workflows/) | Ordered workflow steps, gates, artifacts, extension points, and explicit start surfaces. |
+| Run text-only evals | [Evals](evals/) | What `weave eval run` covers today, how to filter or dry-run suites, and what reports it produces. |
 | Use the implemented adapter | [OpenCode](opencode/) | Plugin installation, registered commands, materialization, logs, and known gaps. |
 | Operate the repo or docs site | [Runtime Operations](runtime-operations/) | Runtime inspection, journal safety, docs builds, previews, and deployment checks. |
 
@@ -35,6 +36,7 @@ Reference pages answer lookup questions without sending you across many short ro
 
 | Reference | Use it for |
 | --- | --- |
+| [Evals](evals/) | Public eval scope, supported suites, text-only limits, and reporting overview. |
 | [CLI Reference](reference/cli/) | Command syntax, flags, examples, output expectations, and exit behavior. |
 | [DSL Reference](reference/dsl/) | Supported `.weave` syntax, fields, values, workflow extension rules, and unsupported stale syntax. |
 | [Adapter Reference](reference/adapters/) | Adapter support matrix, OpenCode capabilities, command surfaces, and degraded behavior. |
@@ -51,6 +53,7 @@ These boundaries are repeated across the guides because they prevent common setu
 | Registered OpenCode commands | The plugin registers `/weave:start` and `/start-work` prompt commands. |
 | Other `/weave:*` labels | `/weave:run`, `/weave:status`, `/weave:abort`, `/weave:advance`, and `/weave:health` are projection/helper labels unless an adapter explicitly wires them. |
 | CLI execution | `weave run` intentionally refuses to start harness runtimes. |
+| Eval support | `weave eval run` supports seven text-only suite families. Runtime-backed evals are not part of the current public surface. |
 | Stale syntax | DAG/fan-in snippets, colon-style `role:`, `routes`, and `weave build` are historical or unsupported. |
 
 ## A Minimal `.weave` File

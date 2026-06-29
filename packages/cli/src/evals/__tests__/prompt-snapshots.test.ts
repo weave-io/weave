@@ -361,16 +361,24 @@ describe("composeSnapshot — error paths", () => {
 // ---------------------------------------------------------------------------
 
 describe("composeAgentSnapshots — integration with builtin config", () => {
-  it("composes snapshots for default agents (loom and tapestry)", async () => {
+  it("composes snapshots for default eval agents", async () => {
     const result = await composeAgentSnapshots();
     expect(result.isOk()).toBe(true);
 
     const { snapshots, errors } = result._unsafeUnwrap();
     expect(errors).toHaveLength(0);
-    expect(snapshots).toHaveLength(2);
+    expect(snapshots).toHaveLength(7);
 
     const agentNames = snapshots.map((s) => s.agentName).sort();
-    expect(agentNames).toEqual(["loom", "tapestry"]);
+    expect(agentNames).toEqual([
+      "loom",
+      "pattern",
+      "shuttle",
+      "spindle",
+      "tapestry",
+      "warp",
+      "weft",
+    ]);
   });
 
   it("all snapshots have valid 64-char hex hashes", async () => {
@@ -394,6 +402,28 @@ describe("composeAgentSnapshots — integration with builtin config", () => {
     expect(loom).toBeDefined();
     expect(tapestry).toBeDefined();
     expect(loom?.hash).not.toBe(tapestry?.hash);
+  });
+
+  it("includes a shuttle snapshot in the default agent set", async () => {
+    const result = await composeAgentSnapshots();
+    expect(result.isOk()).toBe(true);
+
+    const shuttle = result
+      ._unsafeUnwrap()
+      .snapshots.find((snapshot) => snapshot.agentName === "shuttle");
+    expect(shuttle).toBeDefined();
+    expect(shuttle?.hash).toHaveLength(64);
+  });
+
+  it("includes a spindle snapshot in the default agent set", async () => {
+    const result = await composeAgentSnapshots();
+    expect(result.isOk()).toBe(true);
+
+    const spindle = result
+      ._unsafeUnwrap()
+      .snapshots.find((snapshot) => snapshot.agentName === "spindle");
+    expect(spindle).toBeDefined();
+    expect(spindle?.hash).toHaveLength(64);
   });
 
   it("does not include raw artifacts by default", async () => {

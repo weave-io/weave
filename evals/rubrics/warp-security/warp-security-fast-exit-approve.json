@@ -1,0 +1,10 @@
+{
+  "case_id": "warp-security-fast-exit-approve",
+  "suite": "warp-security",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Score only observable fast-exit security triage: APPROVE verdict, zero blockers, and no findings."
+  }
+}

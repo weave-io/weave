@@ -825,6 +825,30 @@ describe("renderPublicReportBundle (clean inputs)", () => {
     expect(md).toContain("**Failed**:");
   });
 
+  it("includes the full suite list in the run summary", () => {
+    const bundle = makePublicReportBundle({
+      runSummary: {
+        totalCases: 7,
+        passedCases: 5,
+        failedCases: 2,
+        allSuitesGreen: false,
+        suites: [
+          "loom-routing",
+          "tapestry-execution",
+          "shuttle-execution",
+          "spindle-tools",
+          "pattern-planning",
+          "weft-review",
+          "warp-security",
+        ],
+      },
+    });
+    const md = renderPublicReportBundle(bundle);
+    expect(md).toContain(
+      "**Suites**: loom-routing, tapestry-execution, shuttle-execution, spindle-tools, pattern-planning, weft-review, warp-security",
+    );
+  });
+
   it("renders suite summaries within the bundle", () => {
     const bundle = makePublicReportBundle();
     const md = renderPublicReportBundle(bundle);

@@ -1,0 +1,10 @@
+{
+  "case_id": "pattern-plan-settings-refactor",
+  "suite": "pattern-planning",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Score only observable planning structure signals; do not require unobservable tool execution or semantic taste judgments."
+  }
+}
