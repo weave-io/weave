@@ -42,6 +42,144 @@ export const IdentifierSchema = z
   .regex(IDENTIFIER_RE, "identifier may only contain A-Z a-z 0-9 _ . / : @ -");
 
 // ---------------------------------------------------------------------------
+// Shared eval suite metadata registry
+// ---------------------------------------------------------------------------
+
+/**
+ * Expected outcome kinds supported by the fixture schema.
+ */
+export const EXPECTED_OUTCOME_KINDS = [
+  "agent_routing",
+  "task_completion",
+  "delegation_chain",
+  "tool_call",
+] as const;
+
+export type ExpectedOutcomeKind = (typeof EXPECTED_OUTCOME_KINDS)[number];
+
+/**
+ * Transcript expectation checks supported by the fixture schema.
+ */
+export const TRANSCRIPT_EXPECTATION_CHECKS = [
+  "content_contains",
+  "tool_called",
+  "agent_mentioned",
+  "no_tool_called",
+] as const;
+
+export type TranscriptExpectationCheck =
+  (typeof TRANSCRIPT_EXPECTATION_CHECKS)[number];
+
+/**
+ * Transcript roles supported by `content_contains` expectations.
+ */
+export const TRANSCRIPT_EXPECTATION_ROLES = [
+  "user",
+  "assistant",
+  "tool",
+] as const;
+
+export type TranscriptExpectationRole =
+  (typeof TRANSCRIPT_EXPECTATION_ROLES)[number];
+
+/**
+ * Shared metadata for one eval suite.
+ *
+ * This registry is the single source of truth for:
+ *   - known eval suite IDs
+ *   - short `--agent` filter values
+ *   - per-suite text-visible assertion contracts
+ */
+export interface EvalSuiteMetadata {
+  suiteId: string;
+  shortAgentFilter: string;
+  allowedExpectedOutcomeKinds: readonly ExpectedOutcomeKind[];
+  allowedTranscriptChecks: readonly TranscriptExpectationCheck[];
+  allowedContentRoles: readonly TranscriptExpectationRole[];
+}
+
+/**
+ * Text-eval suite registry.
+ *
+ * These suites are text-only: they may assert only signals visible in model
+ * text output. Runtime-only assertions such as `tool_call`, `tool_called`,
+ * `no_tool_called`, or `content_contains` on `tool` role are rejected before
+ * any dry-run or live model execution begins, including attempted network- or
+ * tool-event assertions in research-oriented suites.
+ */
+export const EVAL_SUITE_REGISTRY: readonly EvalSuiteMetadata[] = [
+  {
+    suiteId: "loom-routing",
+    shortAgentFilter: "loom",
+    allowedExpectedOutcomeKinds: ["agent_routing"],
+    allowedTranscriptChecks: ["content_contains", "agent_mentioned"],
+    allowedContentRoles: ["user", "assistant"],
+  },
+  {
+    suiteId: "tapestry-execution",
+    shortAgentFilter: "tapestry",
+    allowedExpectedOutcomeKinds: ["task_completion", "delegation_chain"],
+    allowedTranscriptChecks: ["content_contains", "agent_mentioned"],
+    allowedContentRoles: ["user", "assistant"],
+  },
+  {
+    suiteId: "shuttle-execution",
+    shortAgentFilter: "shuttle",
+    allowedExpectedOutcomeKinds: ["task_completion"],
+    allowedTranscriptChecks: ["content_contains", "agent_mentioned"],
+    allowedContentRoles: ["user", "assistant"],
+  },
+  {
+    suiteId: "spindle-tools",
+    shortAgentFilter: "spindle",
+    allowedExpectedOutcomeKinds: ["task_completion"],
+    allowedTranscriptChecks: ["content_contains", "agent_mentioned"],
+    allowedContentRoles: ["user", "assistant"],
+  },
+  {
+    suiteId: "pattern-planning",
+    shortAgentFilter: "pattern",
+    allowedExpectedOutcomeKinds: ["task_completion"],
+    allowedTranscriptChecks: ["content_contains", "agent_mentioned"],
+    allowedContentRoles: ["user", "assistant"],
+  },
+  {
+    suiteId: "weft-review",
+    shortAgentFilter: "weft",
+    allowedExpectedOutcomeKinds: ["task_completion"],
+    allowedTranscriptChecks: ["content_contains", "agent_mentioned"],
+    allowedContentRoles: ["user", "assistant"],
+  },
+  {
+    suiteId: "warp-security",
+    shortAgentFilter: "warp",
+    allowedExpectedOutcomeKinds: ["task_completion"],
+    allowedTranscriptChecks: ["content_contains", "agent_mentioned"],
+    allowedContentRoles: ["user", "assistant"],
+  },
+] as const;
+
+export const EVAL_SUITE_IDS = EVAL_SUITE_REGISTRY.map((suite) => suite.suiteId);
+
+export const EVAL_SHORT_AGENT_FILTERS = EVAL_SUITE_REGISTRY.map(
+  (suite) => suite.shortAgentFilter,
+);
+
+export const EVAL_AGENT_FILTERS = [
+  ...new Set([...EVAL_SHORT_AGENT_FILTERS, ...EVAL_SUITE_IDS]),
+].sort();
+
+export function getEvalSuiteMetadata(
+  suiteId: string,
+): EvalSuiteMetadata | undefined {
+  return EVAL_SUITE_REGISTRY.find((suite) => suite.suiteId === suiteId);
+}
+
+export function isKnownEvalSuiteId(suiteId: string): boolean {
+  return getEvalSuiteMetadata(suiteId) !== undefined;
+}
+
+// ---------------------------------------------------------------------------
 // Expected outcome — discriminated union
 // ---------------------------------------------------------------------------
 
@@ -112,7 +250,7 @@ export const TranscriptExpectationSchema = z.discriminatedUnion("check", [
   z.object({
     check: z.literal("content_contains"),
     /** Which transcript participant to check: user, assistant, or tool. */
-    role: z.enum(["user", "assistant", "tool"]),
+    role: z.enum(TRANSCRIPT_EXPECTATION_ROLES),
     /** Substring that must appear in at least one message from this role. */
     contains: z.string().min(1, "contains must be non-empty"),
   }),
@@ -191,7 +329,9 @@ export const EvalCaseSchema = z.object({
   description: z.string().min(1, "description must be non-empty"),
   /**
    * The eval suite this case belongs to.
-   * Convention: `loom-routing` | `tapestry-execution`.
+   * Convention: `loom-routing` | `tapestry-execution` |
+   * `shuttle-execution` | `spindle-tools` | `pattern-planning` |
+   * `weft-review` | `warp-security`.
    */
   suite: IdentifierSchema,
   /**
@@ -327,6 +467,25 @@ export type ModelMatrix = z.infer<typeof ModelMatrixSchema>;
  * surface actionable error messages that include the file name.
  */
 export type FixtureSchemaError =
+  | {
+      type: "UnknownEvalSuite";
+      /** Suite ID that is not present in `EVAL_SUITE_REGISTRY`. */
+      suite: string;
+      /** Optional offending fixture file path. */
+      file?: string;
+      message: string;
+    }
+  | {
+      type: "UnsupportedTextEvalAssertion";
+      /** Path to the offending fixture. */
+      file: string;
+      /** Suite whose contract was violated. */
+      suite: string;
+      /** Human-readable summary. */
+      message: string;
+      /** Contract violations with structured paths. */
+      issues: Array<{ path: string; message: string }>;
+    }
   | {
       type: "FixtureValidationFailed";
       /** Absolute or relative path to the offending fixture file. */
@@ -867,7 +1026,7 @@ export interface CaseResultSummary {
   caseId: string;
   /** The model identifier used for this run. */
   modelId: string;
-  /** The suite this case belongs to (`"loom-routing"` | `"tapestry-execution"`). */
+  /** The suite this case belongs to (`"loom-routing"` | `"tapestry-execution"` | `"shuttle-execution"` | `"spindle-tools"` | `"pattern-planning"` | `"weft-review"` | `"warp-security"`). */
   suite: string;
   /** Whether the case passed (score >= threshold, required gate satisfied). */
   passed: boolean;
@@ -990,6 +1149,17 @@ export interface CaseResult {
 export type RunnerError =
   | {
       /**
+       * A suite outside the shared eval suite registry was targeted.
+       *
+       * This is a fail-closed guard: dry runs and live runs may only execute
+       * suites declared in `EVAL_SUITE_REGISTRY`.
+       */
+      type: "UnknownEvalSuite";
+      suite: string;
+      message: string;
+    }
+  | {
+      /**
        * No cases were found for the requested suite (after filters applied).
        *
        * Returned when the case set is empty — either the suite has no fixture
@@ -1109,7 +1279,7 @@ export interface RunnerResult {
  * No raw content, rationales, or transcript fields are present.
  */
 export interface BundleScoreFile {
-  /** The eval suite name (`"loom-routing"` | `"tapestry-execution"`). */
+  /** The eval suite name (`"loom-routing"` | `"tapestry-execution"` | `"shuttle-execution"` | `"spindle-tools"` | `"pattern-planning"` | `"weft-review"` | `"warp-security"`). */
   suite: string;
   /** ISO 8601 timestamp when the bundle was assembled. */
   assembledAt: string;

@@ -183,6 +183,14 @@
   - interface ModelResponse
   - interface ModelClient
   - _...1 more_
+- `packages/cli/src/evals/pattern-planning-runner.ts`
+  - function extractPlanningSignals: (content) => void
+  - function redactSecrets: (raw) => string
+  - function buildUserMessage: (evalCase) => string
+  - class PatternPlanningRunner
+  - interface PatternPlanningRunnerOptions
+  - interface PatternPlanningRunRequest
+  - _...1 more_
 - `packages/cli/src/evals/prompt-snapshots.ts`
   - function composeSnapshot: (input) => ResultAsync<ComposeSnapshotResult, ProvenanceError>
   - function composeAgentSnapshots: (options) => ResultAsync<ComposeAgentSnapshotsResult, ProvenanceError>
@@ -210,7 +218,7 @@
 - `packages/cli/src/evals/report-bundle.ts`
   - function assembleCaseEntry: (row, suite) => PublicCaseEntry
   - function assembleSuiteSummary: (scoreFile, gitSha, assembledAt) => Result<SuiteSummaryEntry, ReportAssemblyError>
-  - function assemblePublicReportBundle: (bundle, _runId) => Result<PublicReportBundle, ReportAssemblyError>
+  - function assemblePublicReportBundle: (bundle, runId) => Result<PublicReportBundle, ReportAssemblyError>
   - function assembleDashboardManifest: (existingEntries, newEntry, updatedAt) => Result<DashboardManifest, ReportAssemblyError>
   - function buildDashboardEntry: (bundle, runId, bundleReportPath) => DashboardEntry
   - function assembleModelComparisonManifest: (bundle, runId) => Result<ModelComparisonManifest, ReportAssemblyError>
@@ -239,12 +247,12 @@
   - _...2 more_
 - `packages/cli/src/evals/runner.ts`
   - function buildEvalRunner: (orchestrator) => (request: EvalRunRequest) => Promise<Result<number, CliError>>
+  - function getEvalCoveredPromptAgents: () => readonly string[]
   - class EvalOrchestrator
   - interface EvalRunMetadata
   - interface ModelRollup
   - interface AgentRollup
-  - interface EvalRunSummary
-  - _...3 more_
+  - _...4 more_
 - `packages/cli/src/evals/sanitizer.ts`
   - function sanitizeCaseResultSummary: (summary) => SanitizedCaseResultSummary
   - function sanitizeScoreRecord: (record) => SanitizedScoreRecord
@@ -253,6 +261,22 @@
   - function dropUnknownFields: (input, allowedKeys) => Partial<T>
   - function assertPublishSafe: (obj, unknown>, context) => Result<undefined, SanitizerError>
   - _...11 more_
+- `packages/cli/src/evals/shuttle-execution-runner.ts`
+  - function extractShuttleExecutionSignals: (content) => ShuttleExecutionSignals
+  - function redactSecrets: (raw) => string
+  - function buildUserMessage: (evalCase) => string
+  - class ShuttleExecutionRunner
+  - interface ShuttleExecutionSignals
+  - interface ShuttleExecutionRunnerOptions
+  - _...2 more_
+- `packages/cli/src/evals/spindle-tools-runner.ts`
+  - function extractSpindleResearchSignals: (content) => SpindleResearchSignals
+  - function redactSecrets: (raw) => string
+  - function buildUserMessage: (evalCase) => string
+  - class SpindleToolsRunner
+  - interface SpindleResearchSignals
+  - interface SpindleToolsRunnerOptions
+  - _...2 more_
 - `packages/cli/src/evals/tapestry-execution-runner.ts`
   - function extractDelegationChain: (content) => string[]
   - function detectCompletionSignal: (content) => boolean
@@ -260,6 +284,30 @@
   - function buildUserMessage: (evalCase) => string
   - class TapestryExecutionRunner
   - interface TapestryExecutionRunnerOptions
+  - _...2 more_
+- `packages/cli/src/evals/types.ts`
+  - function getEvalSuiteMetadata: (suiteId) => EvalSuiteMetadata | undefined
+  - function isKnownEvalSuiteId: (suiteId) => boolean
+  - interface EvalSuiteMetadata
+  - interface PromptSourceDescriptor
+  - interface PromptSnapshot
+  - interface RawPromptArtifact
+  - _...51 more_
+- `packages/cli/src/evals/warp-security-runner.ts`
+  - function extractSecuritySignals: (content) => SecuritySignals
+  - function redactSecrets: (raw) => string
+  - function buildUserMessage: (evalCase) => string
+  - class WarpSecurityRunner
+  - interface SecuritySignals
+  - interface WarpSecurityRunnerOptions
+  - _...2 more_
+- `packages/cli/src/evals/weft-review-runner.ts`
+  - function extractReviewSignals: (content) => ReviewSignals
+  - function redactSecrets: (raw) => string
+  - function buildUserMessage: (evalCase) => string
+  - class WeftReviewRunner
+  - interface ReviewSignals
+  - interface WeftReviewRunnerOptions
   - _...2 more_
 - `packages/cli/src/fs/file-system.ts`
   - function describeFileSystemError: (error) => string

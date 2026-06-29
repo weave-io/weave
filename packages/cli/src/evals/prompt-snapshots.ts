@@ -2,8 +2,9 @@
  * Prompt snapshot composition for `weave eval` provenance.
  *
  * Composes fully-rendered prompts for a named set of agents (by default
- * `loom` and `tapestry`) using the existing `@weave/config` and
- * `@weave/engine` APIs, then produces eval-owned `PromptSnapshot` records
+ * `loom`, `tapestry`, `shuttle`, `spindle`, `pattern`, `weft`, and `warp`)
+ * using the existing `@weave/config` and `@weave/engine` APIs, then produces
+ * eval-owned `PromptSnapshot` records
  * that include:
  *   - a stable SHA-256 hash of the composed prompt
  *   - byte and character lengths
@@ -32,6 +33,7 @@ import type {
   ProvenanceError,
   RawPromptArtifact,
 } from "./types.js";
+import { EVAL_SHORT_AGENT_FILTERS } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -40,11 +42,12 @@ import type {
 /**
  * The default set of agent names for which snapshots are composed.
  *
- * Only `loom` and `tapestry` are included by default because they are the
- * primary orchestration agents whose prompt stability matters most for eval
- * reproducibility.
+ * The default set is sourced from the shared eval suite registry short-agent
+ * filters (`loom`, `tapestry`, `shuttle`, `spindle`, `pattern`, `weft`,
+ * `warp`) so provenance stays aligned with the full seven-suite runnable
+ * surface.
  */
-export const DEFAULT_SNAPSHOT_AGENTS = ["loom", "tapestry"] as const;
+export const DEFAULT_SNAPSHOT_AGENTS = [...EVAL_SHORT_AGENT_FILTERS] as const;
 
 // ---------------------------------------------------------------------------
 // SHA-256 hashing (Web Crypto — Bun-native)
@@ -267,7 +270,7 @@ export interface ComposeAgentSnapshotsOptions {
   projectRoot?: string;
   /**
    * The agent names to compose snapshots for.
-   * Defaults to `DEFAULT_SNAPSHOT_AGENTS` (`["loom", "tapestry"]`).
+   * Defaults to `DEFAULT_SNAPSHOT_AGENTS` (`["loom", "tapestry", "shuttle", "spindle", "pattern", "weft", "warp"]`).
    */
   agentNames?: readonly string[];
   /**
@@ -297,8 +300,9 @@ export interface ComposeAgentSnapshotsResult {
 }
 
 /**
- * Compose prompt snapshots for the specified agents (default: Loom and
- * Tapestry) using the merged Weave config loaded from `projectRoot`.
+ * Compose prompt snapshots for the specified agents (default: Loom, Tapestry,
+ * Shuttle, Spindle, Pattern, Weft, and Warp) using the merged Weave config
+ * loaded from `projectRoot`.
  *
  * The function always succeeds at the top level — per-agent failures are
  * accumulated in `result.errors` rather than rejecting the entire result.

@@ -222,8 +222,9 @@ export function assembleSuiteSummary(
  */
 export function assemblePublicReportBundle(
   bundle: EvalBundle,
-  _runId: string,
+  runId: string,
 ): Result<PublicReportBundle, ReportAssemblyError> {
+  void runId;
   if (bundle.scoreFiles.length === 0) {
     return err({
       type: "EmptyBundle",

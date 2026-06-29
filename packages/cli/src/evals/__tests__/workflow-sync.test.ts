@@ -18,11 +18,13 @@
  *
  * The tests:
  *   1. Read and parse the YAML workflow file as plain text (no YAML parser
- *      dependency — Bun glob + Bun.file are sufficient for extracting the
+ *      dependency, Bun glob + Bun.file are sufficient for extracting the
  *      allowlist lines).
+ *   1a. Read the shared eval suite registry so the workflow agent allowlist stays
+ *       aligned with the same source the CLI uses.
  *   2. Load `evals/model-matrix.json` via `loadModelMatrix()`.
  *   3. Glob all `evals/cases/**\/*.json` files and load their `id` fields.
- *   4. Assert that the workflow allowlists are supersets of (or identical to)
+ *   4. Assert that the workflow allowlists are supersets of, or identical to,
  *      the fixture IDs and model IDs so that every known model/case can be
  *      specified via workflow dispatch without being rejected.
  *
@@ -37,6 +39,7 @@ import { describe, expect, it } from "bun:test";
 import { resolve } from "node:path";
 import { EVALS_ROOT, loadCaseFile } from "../case-loader.js";
 import { loadModelMatrix } from "../model-matrix.js";
+import { EVAL_AGENT_FILTERS } from "../types.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -223,7 +226,7 @@ describe("workflow-sync — agent-evals.yml ALLOWED_CASES matches evals/cases/**
 });
 
 describe("workflow-sync — agent-evals.yml ALLOWED_AGENTS matches known eval agents", () => {
-  it("workflow ALLOWED_AGENTS contains loom, tapestry, loom-routing, tapestry-execution", async () => {
+  it("workflow ALLOWED_AGENTS exactly matches the shared eval registry", async () => {
     const workflowText = await Bun.file(WORKFLOW_PATH).text();
 
     // Extract the ALLOWED_AGENTS variable value from the workflow script
@@ -235,9 +238,34 @@ describe("workflow-sync — agent-evals.yml ALLOWED_AGENTS matches known eval ag
         ? match[1].trim().split(/\s+/).filter(Boolean)
         : [];
 
-    expect(allowedAgents).toContain("loom");
-    expect(allowedAgents).toContain("tapestry");
-    expect(allowedAgents).toContain("loom-routing");
-    expect(allowedAgents).toContain("tapestry-execution");
+    expect(allowedAgents.sort()).toEqual([...EVAL_AGENT_FILTERS].sort());
+  });
+
+  it("workflow ALLOWED_CASES count includes shuttle-execution and spindle-tools fixtures", async () => {
+    const workflowText = await Bun.file(WORKFLOW_PATH).text();
+    const allowedCases = extractWorkflowAllowedCases(workflowText);
+
+    expect(allowedCases).toContain(
+      "shuttle-execution-report-structured-evidence",
+    );
+    expect(allowedCases).toContain(
+      "shuttle-execution-report-tests-and-assumptions",
+    );
+    expect(allowedCases).toContain("spindle-tools-citations-facts-confidence");
+    expect(allowedCases).toContain(
+      "spindle-tools-source-boundary-network-claims",
+    );
+  });
+
+  it("workflow ALLOWED_CASES count includes pattern, weft, and warp fixtures", async () => {
+    const workflowText = await Bun.file(WORKFLOW_PATH).text();
+    const allowedCases = extractWorkflowAllowedCases(workflowText);
+
+    expect(allowedCases).toContain("pattern-plan-settings-refactor");
+    expect(allowedCases).toContain("pattern-plan-release-checklist");
+    expect(allowedCases).toContain("weft-review-clean-approval");
+    expect(allowedCases).toContain("weft-review-reject-blocker-citation");
+    expect(allowedCases).toContain("warp-security-fast-exit-approve");
+    expect(allowedCases).toContain("warp-security-block-evidence-findings");
   });
 });

@@ -1,0 +1,10 @@
+{
+  "case_id": "spindle-tools-source-boundary-network-claims",
+  "suite": "spindle-tools",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Score only the text-visible explanation of the network/tool boundary: citations, source facts vs interpretation, and explicit confidence."
+  }
+}

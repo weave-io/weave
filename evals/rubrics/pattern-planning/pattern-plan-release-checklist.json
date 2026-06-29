@@ -1,0 +1,10 @@
+{
+  "case_id": "pattern-plan-release-checklist",
+  "suite": "pattern-planning",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Award credit for explicit scope, file-linked steps, ordering, and acceptance checks surfaced in plan text."
+  }
+}

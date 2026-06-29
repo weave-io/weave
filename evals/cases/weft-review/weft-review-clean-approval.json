@@ -1,0 +1,36 @@
+{
+  "id": "weft-review-clean-approval",
+  "description": "Synthetic review summary: `packages/cli/src/evals/runner.ts` now preserves fail-closed suite selection and `evals/README.md` documents the new workflow. Approve only if the review uses an explicit verdict tag, cites reviewed files, and raises no blockers.",
+  "suite": "weft-review",
+  "allowed_agents": ["weft"],
+  "allowed_models": [
+    "anthropic/claude-opus-4.5",
+    "anthropic/claude-sonnet-4.5",
+    "openai/gpt-5.5"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "Emit a structurally valid approval review with explicit verdict and actionable file references.",
+    "required_artifacts": [
+      "review_verdict_present",
+      "review_verdict_approve",
+      "review_blockers_zero",
+      "review_file_refs_present",
+      "review_approval_disciplined"
+    ]
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "[APPROVE]"
+    },
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "Reviewed files:"
+    }
+  ],
+  "tags": ["review", "approval", "structure"]
+}

@@ -1,0 +1,45 @@
+{
+  "id": "spindle-tools-citations-facts-confidence",
+  "description": "Synthetic research brief: [1] Bun compatibility docs allow node:path and node:os in Bun-only projects. [2] Weave runtime policy forbids Node fs and child_process usage. Summarize the guidance with source-cited facts, clear interpretation, and explicit confidence.",
+  "suite": "spindle-tools",
+  "allowed_agents": ["spindle"],
+  "allowed_models": [
+    "anthropic/claude-opus-4.5",
+    "anthropic/claude-sonnet-4.5",
+    "openai/gpt-5.5"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "Emit a research answer with inline citations, separate source facts from interpretation, list sources, and report confidence.",
+    "required_artifacts": [
+      "spindle_inline_citations_present",
+      "spindle_source_facts_separated",
+      "spindle_confidence_reported",
+      "spindle_sources_list_present"
+    ]
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "Source facts"
+    },
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "Interpretation"
+    },
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "Confidence:"
+    },
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "Sources:"
+    }
+  ],
+  "tags": ["research", "citations", "confidence"]
+}

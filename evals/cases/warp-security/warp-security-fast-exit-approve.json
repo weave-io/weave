@@ -1,0 +1,35 @@
+{
+  "id": "warp-security-fast-exit-approve",
+  "description": "Synthetic security review summary: `evals/README.md` only adds fixture documentation and `packages/cli/src/evals/runner.ts` changes wording without changing execution paths. Approve only if the review fast-exits with a zero-blocker verdict and no findings.",
+  "suite": "warp-security",
+  "allowed_agents": ["warp"],
+  "allowed_models": [
+    "anthropic/claude-opus-4.5",
+    "anthropic/claude-sonnet-4.5",
+    "openai/gpt-5.5"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "Emit a text-only APPROVE verdict with fast-exit triage and no blocking findings.",
+    "required_artifacts": [
+      "security_verdict_present",
+      "security_verdict_approve",
+      "security_blocker_count_capped",
+      "security_fast_exit_approve"
+    ]
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "APPROVE"
+    },
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "BLOCKERS: 0/3"
+    }
+  ],
+  "tags": ["security", "approve", "triage"]
+}

@@ -50,6 +50,7 @@ import {
 } from "../report-schema.js";
 import { assertJsonPublishSafe } from "../sanitizer.js";
 import type { BundleScoreFile, EvalBundle } from "../types.js";
+import { EVAL_SUITE_REGISTRY } from "../types.js";
 
 // ---------------------------------------------------------------------------
 // Fixture builders
@@ -533,6 +534,35 @@ describe("assemblePublicReportBundle (clean inputs)", () => {
     const suites = report.suiteSummaries.map((s) => s.suite);
     expect(suites).toContain("loom-routing");
     expect(suites).toContain("tapestry-execution");
+  });
+
+  it("assembled bundle preserves seven-suite run summaries", () => {
+    const suiteNames = EVAL_SUITE_REGISTRY.map((suite) => suite.suiteId);
+    const bundle = makeEvalBundle({
+      scoreFiles: suiteNames.map((suite, index) =>
+        makeBundleScoreFile({
+          suite,
+          results: [makeScoreRow({ caseId: `case-${index + 1}` })],
+          totals: {
+            totalCases: 1,
+            passedCases: 1,
+            failedCases: 0,
+            suiteGreen: true,
+          },
+        }),
+      ),
+      runSummary: {
+        totalCases: suiteNames.length,
+        passedCases: suiteNames.length,
+        failedCases: 0,
+        allSuitesGreen: true,
+        suites: suiteNames,
+      },
+    });
+
+    const result = assemblePublicReportBundle(bundle, "abc123d-2026-01-01-001");
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().runSummary.suites).toEqual(suiteNames);
   });
 
   it("assembled bundle totalCases is sum across all suite summaries", () => {

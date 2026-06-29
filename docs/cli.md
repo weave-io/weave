@@ -354,14 +354,24 @@ Weave configures harnesses; harnesses run themselves. `weave run`, if encountere
 
 `weave eval run` executes agent evaluation suites against the built-in model matrix. It is the primary eval entry point for CI and local verification.
 
+The current eval surface covers **seven text-only suite families**: `loom-routing`, `tapestry-execution`, `shuttle-execution`, `spindle-tools`, `pattern-planning`, `weft-review`, and `warp-security`. These suite IDs are the canonical fixture and reporting families, and their short `--agent` aliases are `loom`, `tapestry`, `shuttle`, `spindle`, `pattern`, `weft`, and `warp`. These suites score only text-visible structure from assistant output. Runtime-backed harness evals, real tool telemetry, and hidden environment side effects are outside the current contract.
+
 Completed eval runs exit with code `0` even when one or more cases miss their pass threshold. Threshold misses are captured in `run-summary.json` and per-suite score files. The command exits non-zero for hard orchestration failures such as invalid input, missing secrets, model matrix/load failures, bundle write/publish failures, or suite-level partial failures that prevent complete results.
 
 ```bash
 weave eval run                                        # run all suites against default models (3)
 weave eval run --agent loom                           # restrict to loom-routing suite
 weave eval run --agent tapestry                       # restrict to tapestry-execution suite
+weave eval run --agent shuttle                        # restrict to shuttle-execution suite
+weave eval run --agent spindle                        # restrict to spindle-tools suite
+weave eval run --agent pattern                        # restrict to pattern-planning suite
+weave eval run --agent weft                           # restrict to weft-review suite
+weave eval run --agent warp                           # restrict to warp-security suite
 weave eval run --model anthropic/claude-sonnet-4.5    # restrict to one model (exact match)
 weave eval run --case loom-route-backend-api          # restrict to one case ID (exact match)
+weave eval run --case shuttle-execution-report-structured-evidence  # restrict to one shuttle-execution case
+weave eval run --case weft-review-clean-approval      # restrict to one weft-review case
+weave eval run --case warp-security-block-evidence-findings  # restrict to one warp-security case
 weave eval run --dry-run                              # print what would run, no execution
 weave eval run --raw-artifacts                        # emit raw prompt text locally (NEVER in CI)
 ```
@@ -376,6 +386,8 @@ WEAVE_EVAL_CASE=loom-route-backend-api weave eval run
 
 CLI flags and env vars are merged. Conflicting values for the same filter key (CLI vs env) cause a hard `DuplicateConflictingInput` error. Same-value duplicates are silently collapsed. Empty env filter values are treated as unset, which lets CI workflow dispatch pass blank optional inputs when you want no filter. Empty CLI flag values are still rejected.
 
+The same validation runs before both dry-run and live execution. Unknown suite filters, model IDs, or case IDs fail closed before any runner logic executes.
+
 ### Required environment variable
 
 ```bash
@@ -384,19 +396,23 @@ export OPENROUTER_API_KEY=<your-key>
 
 `OPENROUTER_API_KEY` must be set before running `weave eval run`. The runner validates it at startup and aborts immediately if absent or empty. The key value is **never logged, printed, or serialized** anywhere in the eval pipeline — it is passed directly to the OpenRouter HTTP client and treated as a secret.
 
+Dry-run is the one exception: `weave eval run --dry-run` does not build live model clients and does not require `OPENROUTER_API_KEY`.
+
 ### Filter semantics
 
 All three filters use **strict exact-match**:
 
-- `--agent` must match either the suite name (`loom-routing`, `tapestry-execution`) or the short agent name (`loom`, `tapestry`). No other values are accepted.
+- `--agent` must match either the suite name (`loom-routing`, `tapestry-execution`, `shuttle-execution`, `spindle-tools`, `pattern-planning`, `weft-review`, `warp-security`) or the short agent name (`loom`, `tapestry`, `shuttle`, `spindle`, `pattern`, `weft`, `warp`). No other values are accepted.
 - `--model` must exactly match a model `id` in `evals/model-matrix.json`. No substring matching. An unmatched value causes `EmptyModelSet` and lists allowed IDs.
 - `--case` must exactly match the `id` field in a case fixture file. No glob or prefix matching.
 
-No filter means all values in that dimension are included. A no-filter run executes all three default models against all cases in both suites. For env-backed filters, unset and empty values both mean no filter.
+No filter means all values in that dimension are included. A no-filter run executes all three default models against all cases in all registered suites. For env-backed filters, unset and empty values both mean no filter.
 
 ### `--dry-run`
 
-Dry-run prints filters and confirms no execution will occur. No model calls are made, no artifacts are written, and exit code is always `0`. Use this to verify a filter combination before running live.
+Dry-run prints filters and confirms no execution will occur. No model calls are made, no artifacts are written, and secrets are not required. Dry-run still performs the same input validation as a live run, so invalid suite filters, model IDs, case IDs, or forbidden text-only fixture assertions exit non-zero instead of silently succeeding. Use this to verify a filter combination before running live.
+
+This is the recommended contributor preflight path because it exercises the same filter, suite, and fixture-allowlist checks without requiring secrets.
 
 ```bash
 weave eval run --agent loom --model anthropic/claude-sonnet-4.5 --dry-run
@@ -407,6 +423,8 @@ weave eval run --agent loom --model anthropic/claude-sonnet-4.5 --dry-run
 > **Security warning**: `--raw-artifacts` is rejected in CI environments (`CI=true`). Passing it in a CI workflow step is a hard validation error. Raw artifacts contain composed prompt text and full transcripts and must never be committed or published.
 
 When enabled locally, raw artifacts are written to `eval-bundles/runs/<runId>/raw/`. Filename components are sanitized before write, and the resolved path must stay under `raw/`. Add this directory to `.gitignore`. Raw files must never be committed to any repository.
+
+Current text-only suites also reject runtime-only assertion shapes before execution. In practice, fixture authors must not use `expected_outcome.kind: "tool_call"`, `transcript_expectations.check: "tool_called"`, `transcript_expectations.check: "no_tool_called"`, or `content_contains` with `role: "tool"` for the seven supported suite families.
 
 ### Prompt provenance
 
@@ -441,6 +459,11 @@ packages/cli/src/evals/
 ├── runner.ts                   EvalOrchestrator — top-level orchestration
 ├── loom-routing-runner.ts      LoomRoutingRunner
 ├── tapestry-execution-runner.ts  TapestryExecutionRunner
+├── shuttle-execution-runner.ts ShuttleExecutionRunner
+├── spindle-tools-runner.ts     SpindleToolsRunner
+├── pattern-planning-runner.ts  PatternPlanningRunner
+├── weft-review-runner.ts       WeftReviewRunner
+├── warp-security-runner.ts     WarpSecurityRunner
 ├── openrouter-client.ts        OpenRouter model inference client
 ├── langchain-agent-evals.ts    LangChain AgentEvals scorer (rubric judge)
 └── env.ts                      readEvalEnv — OPENROUTER_API_KEY validation
@@ -453,10 +476,20 @@ evals/
 ├── model-matrix.json           Canonical model matrix (default 3: see file for current models)
 ├── cases/
 │   ├── loom-routing/           Loom routing eval cases
-│   └── tapestry-execution/     Tapestry execution eval cases
+│   ├── tapestry-execution/     Tapestry execution eval cases
+│   ├── shuttle-execution/      Shuttle delegated-task reporting eval cases
+│   ├── spindle-tools/          Spindle research-structure eval cases
+│   ├── pattern-planning/       Pattern planning eval cases
+│   ├── weft-review/            Weft review eval cases
+│   └── warp-security/          Warp security eval cases
 └── rubrics/
     ├── loom-routing/           Scoring rubrics for loom-routing cases
-    └── tapestry-execution/     Scoring rubrics for tapestry-execution cases
+    ├── tapestry-execution/     Scoring rubrics for tapestry-execution cases
+    ├── shuttle-execution/      Scoring rubrics for shuttle-execution cases
+    ├── spindle-tools/          Scoring rubrics for spindle-tools cases
+    ├── pattern-planning/       Scoring rubrics for pattern-planning cases
+    ├── weft-review/            Scoring rubrics for weft-review cases
+    └── warp-security/          Scoring rubrics for warp-security cases
 ```
 
 ### Artifact bundle layout
@@ -470,12 +503,22 @@ eval-bundles/
 ├── last-N-runs.json                 Derived index — last 10 runs, newest-first (mutable)
 ├── suite-history-loom-routing.json  Derived index — pass-rate time series (mutable)
 ├── suite-history-tapestry-execution.json
+├── suite-history-shuttle-execution.json
+├── suite-history-spindle-tools.json
+├── suite-history-pattern-planning.json
+├── suite-history-weft-review.json
+├── suite-history-warp-security.json
 └── runs/
     └── abc1234-2026-06-10-001/      Immutable run directory (never overwritten)
         ├── bundle-index.json         Top-level manifest (publicFiles lists only allowlisted files)
         ├── run-summary.json          Aggregate pass/fail counts (internal, not published)
         ├── score-loom-routing.json   Sanitized score records (internal, not published)
         ├── score-tapestry-execution.json
+        ├── score-shuttle-execution.json
+        ├── score-spindle-tools.json
+        ├── score-pattern-planning.json
+        ├── score-weft-review.json
+        ├── score-warp-security.json
         ├── prompt-hashes.json        Prompt hash records (internal, not published)
         ├── provenance-manifest.json  Full sanitized provenance manifest (internal)
         ├── public-report.json        Public dashboard report (PublicReportBundle schema)
@@ -484,7 +527,7 @@ eval-bundles/
 
 **Immutable run directories**: the sequence number (`-001`, `-002`, …) guarantees no prior run's artifacts are ever overwritten. A second run on the same SHA and date produces `abc1234-2026-06-10-002/`.
 
-**Derived index files**: `DashboardIndexWriter` regenerates `dashboard-manifest.json`, `latest.json`, `last-N-runs.json`, and `suite-history-*.json` after each run from the immutable `public-report.json` artifacts. Indexes are never the canonical source — they can always be fully reproduced from immutable run artifacts.
+**Derived index files**: `DashboardIndexWriter` regenerates `dashboard-manifest.json`, `latest.json`, `last-N-runs.json`, `suite-history-*.json`, `scenario-history-*.json`, and per-run `model-comparison-*.json` after each run from the immutable `public-report.json` artifacts. Indexes are never the canonical source, they can always be fully reproduced from immutable run artifacts.
 
 **`schemaVersion` is mandatory**: every published artifact (run artifacts and index files) carries a `schemaVersion` integer. Downstream consumers MUST reject any file whose `schemaVersion` they do not recognise.
 

@@ -47,6 +47,14 @@ import {
   resolveNextSequence,
 } from "../artifact-bundle.js";
 import {
+  DASHBOARD_MANIFEST_FILE,
+  LAST_N_RUNS_FILE,
+  LATEST_SNAPSHOT_FILE,
+  MODEL_COMPARISON_FILE_PREFIX,
+  SCENARIO_HISTORY_FILE_PREFIX,
+  SUITE_HISTORY_FILE_PREFIX,
+} from "../dashboard-indexes.js";
+import {
   assembleCaseEntry,
   assembleModelComparisonManifest,
   assemblePublicReportBundle,
@@ -146,7 +154,15 @@ function makeProvenanceManifest(): PromptProvenanceManifest {
     version: 1,
     producedAt: FIXED_TIMESTAMP,
     gitSha: FIXED_GIT_SHA,
-    records: [makeProvenanceRecord("loom"), makeProvenanceRecord("tapestry")],
+    records: [
+      makeProvenanceRecord("loom"),
+      makeProvenanceRecord("tapestry"),
+      makeProvenanceRecord("shuttle"),
+      makeProvenanceRecord("spindle"),
+      makeProvenanceRecord("pattern"),
+      makeProvenanceRecord("weft"),
+      makeProvenanceRecord("warp"),
+    ],
   };
 }
 
@@ -849,7 +865,7 @@ describe("assembleBundle", () => {
     const ref = result._unsafeUnwrap().provenanceRef;
     expect(ref).not.toBeNull();
     expect(ref?.manifestPath).toBe("provenance-manifest.json");
-    expect(ref?.agentCount).toBe(2); // loom + tapestry in fixture
+    expect(ref?.agentCount).toBe(7);
   });
 
   it("promptHashRecords are empty when no manifest is supplied", () => {
@@ -871,7 +887,7 @@ describe("assembleBundle", () => {
       assembledAt: FIXED_TIMESTAMP,
       dryRun: false,
     });
-    expect(result._unsafeUnwrap().promptHashRecords).toHaveLength(2);
+    expect(result._unsafeUnwrap().promptHashRecords).toHaveLength(7);
   });
 
   it("bundle JSON passes assertJsonPublishSafe", () => {
@@ -1048,6 +1064,25 @@ describe("ArtifactBundleWriter.writeBundle", () => {
     );
     expect(loomScore).toBeDefined();
     expect(tapestryScore).toBeDefined();
+  });
+
+  it("writes public-report.md by default through orchestrator-facing settings when writeMarkdown is enabled", async () => {
+    const bundleRoot = resolve(TEMP_DIR, `bundle-writer-default-md-${uid()}`);
+    const writer = new ArtifactBundleWriter(bundleRoot);
+
+    const result = await writer.writeBundle({
+      runnerResults: [makeRunnerResult()],
+      provenanceManifest: null,
+      gitSha: FIXED_GIT_SHA,
+      assembledAt: FIXED_TIMESTAMP,
+      mode: "local",
+      dryRun: false,
+      writeMarkdown: true,
+    });
+
+    expect(result.isOk()).toBe(true);
+    const { filesWritten } = result._unsafeUnwrap();
+    expect(filesWritten.some((f) => f.includes("public-report.md"))).toBe(true);
   });
 
   it("writes provenance-manifest.json when manifest is supplied", async () => {
@@ -1894,6 +1929,39 @@ describe("ArtifactBundleWriter — generateIndexes option", () => {
     );
     expect(
       indexFilesWritten.some((f) => f.startsWith("model-comparison-")),
+    ).toBe(true);
+    expect(
+      indexFilesWritten.some((f) => f.startsWith("scenario-history-")),
+    ).toBe(true);
+  });
+
+  it("indexFilesWritten includes the publish-safe scenario history family alongside other index families", async () => {
+    const bundleRoot = resolve(TEMP_DIR, `gen-idx-family-${uid()}`);
+    const writer = new ArtifactBundleWriter(bundleRoot);
+
+    const result = await writer.writeBundle({
+      runnerResults: [makeRunnerResult()],
+      provenanceManifest: null,
+      gitSha: FIXED_GIT_SHA,
+      assembledAt: FIXED_TIMESTAMP,
+      mode: "local",
+      dryRun: false,
+      generateIndexes: true,
+    });
+
+    expect(result.isOk()).toBe(true);
+    const { indexFilesWritten } = result._unsafeUnwrap();
+    expect(indexFilesWritten).toContain(DASHBOARD_MANIFEST_FILE);
+    expect(indexFilesWritten).toContain(LATEST_SNAPSHOT_FILE);
+    expect(indexFilesWritten).toContain(LAST_N_RUNS_FILE);
+    expect(
+      indexFilesWritten.some((f) => f.startsWith(SUITE_HISTORY_FILE_PREFIX)),
+    ).toBe(true);
+    expect(
+      indexFilesWritten.some((f) => f.startsWith(SCENARIO_HISTORY_FILE_PREFIX)),
+    ).toBe(true);
+    expect(
+      indexFilesWritten.some((f) => f.startsWith(MODEL_COMPARISON_FILE_PREFIX)),
     ).toBe(true);
   });
 

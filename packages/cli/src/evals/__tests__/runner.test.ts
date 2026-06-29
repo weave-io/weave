@@ -5,7 +5,7 @@
  *   - Pre-flight: missing API key → typed `CliError`, exit 1, no model calls.
  *   - Pre-flight: model matrix load failure → `CliError`, no suite runs.
  *   - Pre-flight: unknown model filter → `CliError` with allowlist hint.
- *   - Suite fan-out: both Loom and Tapestry suites run when no agent filter.
+ *   - Suite fan-out: all registered suites run when no agent filter.
  *   - Suite fan-out: only the matching suite runs when agent filter is set.
  *   - Per-suite hard failures (NoCasesFound) accumulate as partialFailures.
  *   - Run-level summary has correct agentRollups and modelRollups.
@@ -54,6 +54,7 @@ import {
   buildEvalRunner,
   EvalOrchestrator,
   type EvalOrchestratorOptions,
+  getEvalCoveredPromptAgents,
   type SnapshotProvider,
 } from "../runner.js";
 import type {
@@ -63,6 +64,7 @@ import type {
   PromptSnapshot,
   ProvenanceError,
 } from "../types.js";
+import { EVAL_SHORT_AGENT_FILTERS, EVAL_SUITE_REGISTRY } from "../types.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -362,12 +364,24 @@ describe("EvalOrchestrator — model matrix", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Suite fan-out: both suites run by default
+// Suite fan-out: all registered suites run by default
 // ---------------------------------------------------------------------------
 
 describe("EvalOrchestrator — suite fan-out", () => {
+  it("shared suite registry still enumerates all seven eval families", () => {
+    expect(EVAL_SUITE_REGISTRY.map((suite) => suite.suiteId)).toEqual([
+      "loom-routing",
+      "tapestry-execution",
+      "shuttle-execution",
+      "spindle-tools",
+      "pattern-planning",
+      "weft-review",
+      "warp-security",
+    ]);
+  });
+
   it("returns ok(summary) when env and matrix are valid (even with empty fixture sets)", async () => {
-    // evalsRoot points to non-existent dir → both suites produce NoCasesFound
+    // evalsRoot points to non-existent dir → all registered suites produce NoCasesFound
     // which is accumulated as partialFailures, not a hard error
     const orchestrator = new EvalOrchestrator(makeOptions());
     const result = await orchestrator.run(makeRequest());
@@ -375,13 +389,13 @@ describe("EvalOrchestrator — suite fan-out", () => {
     expect(result.isOk()).toBe(true);
   });
 
-  it("both suites appear in partialFailures when fixtures are missing", async () => {
+  it("registered suites appear in partialFailures when fixtures are missing", async () => {
     const orchestrator = new EvalOrchestrator(makeOptions());
     const result = await orchestrator.run(makeRequest());
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
       const summary = result.value;
-      // With 3 default models × 2 suites, expect up to 6 partial failures
+      // With 3 default models × 7 suites, expect up to 21 partial failures
       // (NoCasesFound or PromptProviderFailed for each model × suite pair)
       const failureTypes = summary.partialFailures.map((f) => f.type);
       // NoCasesFound (or PromptProviderFailed) expected for each missing suite
@@ -390,8 +404,8 @@ describe("EvalOrchestrator — suite fan-out", () => {
   });
 
   it("fan-out across all default models: partialFailures count reflects model × suite combinations", async () => {
-    // With 3 default models and 2 suites and no fixture data, we get
-    // 3 models × 2 suites = 6 partial failures (NoCasesFound per combination).
+    // With 3 default models and 7 suites and no fixture data, we get
+    // 3 models × 7 suites = 21 partial failures (NoCasesFound per combination).
     // This verifies that the orchestrator fans out across the full default matrix,
     // not just the first model.
     const orchestrator = new EvalOrchestrator(makeOptions());
@@ -412,8 +426,8 @@ describe("EvalOrchestrator — suite fan-out", () => {
     );
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      // One model × 2 suites = at most 2 partial failures
-      expect(result.value.partialFailures.length).toBeLessThanOrEqual(2);
+      // One model × 7 suites = at most 7 partial failures
+      expect(result.value.partialFailures.length).toBeLessThanOrEqual(7);
     }
   });
 
@@ -424,7 +438,7 @@ describe("EvalOrchestrator — suite fan-out", () => {
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
       // Loom suite only, 3 default models → at most 3 partial failures
-      // (one NoCasesFound per model, tapestry is skipped)
+      // (one NoCasesFound per model, other suites are skipped)
       expect(result.value.partialFailures.length).toBeLessThanOrEqual(3);
     }
   });
@@ -435,6 +449,42 @@ describe("EvalOrchestrator — suite fan-out", () => {
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
       // Tapestry suite only, 3 default models → at most 3 partial failures
+      expect(result.value.partialFailures.length).toBeLessThanOrEqual(3);
+    }
+  });
+
+  it("agent filter 'shuttle' restricts to shuttle suite only across all default models", async () => {
+    const orchestrator = new EvalOrchestrator(makeOptions());
+    const result = await orchestrator.run(makeRequest({ agent: "shuttle" }));
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.partialFailures.length).toBeLessThanOrEqual(3);
+    }
+  });
+
+  it("agent filter 'spindle' restricts to spindle suite only across all default models", async () => {
+    const orchestrator = new EvalOrchestrator(makeOptions());
+    const result = await orchestrator.run(makeRequest({ agent: "spindle" }));
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.partialFailures.length).toBeLessThanOrEqual(3);
+    }
+  });
+
+  it("agent filter 'weft' restricts to weft suite only across all default models", async () => {
+    const orchestrator = new EvalOrchestrator(makeOptions());
+    const result = await orchestrator.run(makeRequest({ agent: "weft" }));
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.partialFailures.length).toBeLessThanOrEqual(3);
+    }
+  });
+
+  it("agent filter 'warp' restricts to warp suite only across all default models", async () => {
+    const orchestrator = new EvalOrchestrator(makeOptions());
+    const result = await orchestrator.run(makeRequest({ agent: "warp" }));
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
       expect(result.value.partialFailures.length).toBeLessThanOrEqual(3);
     }
   });
@@ -838,28 +888,27 @@ describe("EvalOrchestrator — multi-model fan-out", () => {
   it("no model filter: all default models are attempted (default matrix has 3 models)", async () => {
     // With no --model filter, the orchestrator should run suites for ALL models
     // in the default matrix. With fake evalsRoot (no fixtures), each combination
-    // produces a NoCasesFound partial failure. With 3 default models × 2 suites,
-    // we expect exactly 6 partial failures.
+    // produces a NoCasesFound partial failure. With 3 default models × 7 suites,
+    // we expect exactly 21 partial failures.
     const orchestrator = new EvalOrchestrator(makeOptions());
     const result = await orchestrator.run(makeRequest());
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      // 3 models × 2 suites = 6 partial failures (NoCasesFound for each)
-      expect(result.value.partialFailures.length).toBe(6);
+      // 3 models × 7 suites = 21 partial failures (NoCasesFound for each)
+      expect(result.value.partialFailures.length).toBe(21);
     }
   });
 
   it("model filter limits execution to one model only", async () => {
-    // With --model filter, only the matching model runs → at most 2 partial failures
-    // (one per suite for the single model).
+    // With --model filter, only the matching model runs.
     const orchestrator = new EvalOrchestrator(makeOptions());
     const result = await orchestrator.run(
       makeRequest({ model: "anthropic/claude-sonnet-4.5" }),
     );
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      // 1 model × 2 suites = 2 partial failures
-      expect(result.value.partialFailures.length).toBe(2);
+      // 1 model × 7 suites = 7 partial failures
+      expect(result.value.partialFailures.length).toBe(7);
     }
   });
 
@@ -881,6 +930,42 @@ describe("EvalOrchestrator — multi-model fan-out", () => {
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
       // 3 models × 1 suite = 3 partial failures
+      expect(result.value.partialFailures.length).toBe(3);
+    }
+  });
+
+  it("agent filter 'shuttle' + no model filter: 3 partial failures (one per default model)", async () => {
+    const orchestrator = new EvalOrchestrator(makeOptions());
+    const result = await orchestrator.run(makeRequest({ agent: "shuttle" }));
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.partialFailures.length).toBe(3);
+    }
+  });
+
+  it("agent filter 'spindle' + no model filter: 3 partial failures (one per default model)", async () => {
+    const orchestrator = new EvalOrchestrator(makeOptions());
+    const result = await orchestrator.run(makeRequest({ agent: "spindle" }));
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.partialFailures.length).toBe(3);
+    }
+  });
+
+  it("agent filter 'weft' + no model filter: 3 partial failures (one per default model)", async () => {
+    const orchestrator = new EvalOrchestrator(makeOptions());
+    const result = await orchestrator.run(makeRequest({ agent: "weft" }));
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.partialFailures.length).toBe(3);
+    }
+  });
+
+  it("agent filter 'warp' + no model filter: 3 partial failures (one per default model)", async () => {
+    const orchestrator = new EvalOrchestrator(makeOptions());
+    const result = await orchestrator.run(makeRequest({ agent: "warp" }));
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
       expect(result.value.partialFailures.length).toBe(3);
     }
   });
@@ -908,6 +993,11 @@ describe("EvalOrchestrator — snapshot provider for provenance", () => {
     const snapshotProvider = new StubSnapshotProvider([
       makeSnapshot("loom", "aabbccdd"),
       makeSnapshot("tapestry", "eeff0011"),
+      makeSnapshot("shuttle", "11223344"),
+      makeSnapshot("spindle", "99aabbcc"),
+      makeSnapshot("pattern", "22334455"),
+      makeSnapshot("weft", "33445566"),
+      makeSnapshot("warp", "44556677"),
     ]);
     const orchestrator = new EvalOrchestrator(
       makeOptions({ snapshotProvider }),
@@ -917,10 +1007,15 @@ describe("EvalOrchestrator — snapshot provider for provenance", () => {
 
     // The snapshot provider must be called exactly once per orchestrator run
     expect(snapshotProvider.calls).toHaveLength(1);
-    // And it should be called with loom and tapestry
+    // And it should be called with all suite-backed prompt agents
     if (snapshotProvider.calls[0] !== undefined) {
       expect(snapshotProvider.calls[0]).toContain("loom");
       expect(snapshotProvider.calls[0]).toContain("tapestry");
+      expect(snapshotProvider.calls[0]).toContain("shuttle");
+      expect(snapshotProvider.calls[0]).toContain("spindle");
+      expect(snapshotProvider.calls[0]).toContain("pattern");
+      expect(snapshotProvider.calls[0]).toContain("weft");
+      expect(snapshotProvider.calls[0]).toContain("warp");
     }
   });
 
@@ -956,12 +1051,17 @@ describe("EvalOrchestrator — snapshot provider for provenance", () => {
     // Orchestrator still completes successfully even with no provenance snapshots
   });
 
-  it("snapshot provider with loom and tapestry snapshots is called regardless of agent filter", async () => {
-    // Even when filtering to only loom suite, both agent snapshots should be collected
+  it("snapshot provider with suite-backed snapshots is called regardless of agent filter", async () => {
+    // Even when filtering to only loom suite, all suite-backed snapshots should be collected
     // because provenance covers all orchestrated agents, not just the filtered suite.
     const snapshotProvider = new StubSnapshotProvider([
       makeSnapshot("loom", "aa"),
       makeSnapshot("tapestry", "bb"),
+      makeSnapshot("shuttle", "cc"),
+      makeSnapshot("spindle", "zz"),
+      makeSnapshot("pattern", "dd"),
+      makeSnapshot("weft", "ee"),
+      makeSnapshot("warp", "ff"),
     ]);
     const orchestrator = new EvalOrchestrator(
       makeOptions({ snapshotProvider }),
@@ -971,6 +1071,22 @@ describe("EvalOrchestrator — snapshot provider for provenance", () => {
 
     // Snapshot provider still called once (for provenance, not per suite)
     expect(snapshotProvider.calls).toHaveLength(1);
+  });
+
+  it("snapshot provider uses short agent filters from the shared registry", async () => {
+    const snapshotProvider = new StubSnapshotProvider([]);
+    const orchestrator = new EvalOrchestrator(
+      makeOptions({ snapshotProvider }),
+    );
+
+    await orchestrator.run(makeRequest());
+
+    expect(snapshotProvider.calls).toHaveLength(1);
+    expect(snapshotProvider.calls[0]).toEqual(EVAL_SHORT_AGENT_FILTERS);
+  });
+
+  it("getEvalCoveredPromptAgents stays aligned with the shared short-agent registry", () => {
+    expect(getEvalCoveredPromptAgents()).toEqual(EVAL_SHORT_AGENT_FILTERS);
   });
 });
 

@@ -10,9 +10,8 @@
  * is involved.
  *
  * Policy:
- *   - Unknown `suite` names are not rejected at the loader level — the
- *     glob simply returns no files. Callers can treat an empty result as
- *     an error when appropriate.
+ *   - Unknown `suite` names are rejected fail-closed against the shared
+ *     suite registry before discovery or model execution.
  *   - Unknown `case` IDs (from a `--case` filter) are validated against
  *     the loaded fixture set and fail with a typed `FixtureValidationFailed`
  *     error that identifies the offending file.
@@ -24,11 +23,14 @@
 import { resolve } from "node:path";
 import { err, ok, ResultAsync } from "neverthrow";
 import {
+  EVAL_SUITE_IDS,
   type EvalCase,
   EvalCaseSchema,
   type EvalRubric,
   EvalRubricSchema,
   type FixtureSchemaError,
+  getEvalSuiteMetadata,
+  isKnownEvalSuiteId,
 } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -56,16 +58,16 @@ export const KNOWN_AGENTS = new Set([
   "tapestry",
   "thread",
   "shuttle",
-  "shuttle-backend",
   "shuttle-core",
   "shuttle-engine",
   "shuttle-adapters",
   "shuttle-docs",
   "shuttle-scripts",
+  "shuttle-backend",
   "shuttle-frontend",
   "shuttle-infra",
-  "warp",
   "weft",
+  "warp",
   "spindle",
   "pattern",
 ]);
@@ -135,6 +137,86 @@ function validateAllowedAgents(
   return undefined;
 }
 
+function validateKnownSuite(
+  suite: string,
+  filePath?: string,
+): FixtureSchemaError | undefined {
+  if (isKnownEvalSuiteId(suite)) {
+    return undefined;
+  }
+
+  return {
+    type: "UnknownEvalSuite",
+    suite,
+    file: filePath,
+    message:
+      `Unknown eval suite "${suite}". ` +
+      `Known suites: ${EVAL_SUITE_IDS.join(", ")}`,
+  };
+}
+
+function validateTextEvalContract(
+  caseFixture: EvalCase,
+  filePath: string,
+): FixtureSchemaError | undefined {
+  const suiteMetadata = getEvalSuiteMetadata(caseFixture.suite);
+  if (suiteMetadata === undefined) {
+    return validateKnownSuite(caseFixture.suite, filePath);
+  }
+
+  const issues: Array<{ path: string; message: string }> = [];
+
+  if (
+    !suiteMetadata.allowedExpectedOutcomeKinds.includes(
+      caseFixture.expected_outcome.kind,
+    )
+  ) {
+    issues.push({
+      path: "expected_outcome.kind",
+      message:
+        `Unsupported expected_outcome.kind "${caseFixture.expected_outcome.kind}" for text-only suite ` +
+        `"${caseFixture.suite}". Allowed kinds: ${suiteMetadata.allowedExpectedOutcomeKinds.join(", ")}`,
+    });
+  }
+
+  caseFixture.transcript_expectations.forEach((expectation, index) => {
+    if (!suiteMetadata.allowedTranscriptChecks.includes(expectation.check)) {
+      issues.push({
+        path: `transcript_expectations.${index}.check`,
+        message:
+          `Unsupported transcript expectation check "${expectation.check}" for text-only suite ` +
+          `"${caseFixture.suite}". Allowed checks: ${suiteMetadata.allowedTranscriptChecks.join(", ")}`,
+      });
+    }
+
+    if (
+      expectation.check === "content_contains" &&
+      !suiteMetadata.allowedContentRoles.includes(expectation.role)
+    ) {
+      issues.push({
+        path: `transcript_expectations.${index}.role`,
+        message:
+          `Unsupported transcript role "${expectation.role}" for text-only suite ` +
+          `"${caseFixture.suite}". Allowed roles: ${suiteMetadata.allowedContentRoles.join(", ")}`,
+      });
+    }
+  });
+
+  if (issues.length === 0) {
+    return undefined;
+  }
+
+  return {
+    type: "UnsupportedTextEvalAssertion",
+    file: filePath,
+    suite: caseFixture.suite,
+    message:
+      `Text-only eval fixture contract rejected unsupported assertions in case ` +
+      `"${caseFixture.id}" for suite "${caseFixture.suite}".`,
+    issues,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Single-file loaders
 // ---------------------------------------------------------------------------
@@ -159,9 +241,19 @@ export function loadCaseFile(
       } satisfies FixtureSchemaError);
     }
 
+    const suiteError = validateKnownSuite(parsed.data.suite, filePath);
+    if (suiteError !== undefined) {
+      return err(suiteError);
+    }
+
     const agentError = validateAllowedAgents(parsed.data, filePath);
     if (agentError !== undefined) {
       return err(agentError);
+    }
+
+    const contractError = validateTextEvalContract(parsed.data, filePath);
+    if (contractError !== undefined) {
+      return err(contractError);
     }
 
     return ok(parsed.data);
@@ -208,6 +300,13 @@ export function loadSuiteCases(
   suite: string,
   evalsRoot: string = EVALS_ROOT,
 ): ResultAsync<EvalCase[], FixtureSchemaError> {
+  const suiteError = validateKnownSuite(suite);
+  if (suiteError !== undefined) {
+    return ResultAsync.fromSafePromise(
+      Promise.resolve([] as EvalCase[]),
+    ).andThen(() => err(suiteError));
+  }
+
   const casesDir = resolve(evalsRoot, "cases", suite);
   const glob = new Bun.Glob("*.json");
   let fileNames: string[];
@@ -247,6 +346,13 @@ export function loadSuiteRubrics(
   suite: string,
   evalsRoot: string = EVALS_ROOT,
 ): ResultAsync<EvalRubric[], FixtureSchemaError> {
+  const suiteError = validateKnownSuite(suite);
+  if (suiteError !== undefined) {
+    return ResultAsync.fromSafePromise(
+      Promise.resolve([] as EvalRubric[]),
+    ).andThen(() => err(suiteError));
+  }
+
   const rubricsDir = resolve(evalsRoot, "rubrics", suite);
   const glob = new Bun.Glob("*.json");
   let fileNames: string[];

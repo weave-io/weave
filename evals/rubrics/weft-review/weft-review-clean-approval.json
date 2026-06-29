@@ -1,0 +1,10 @@
+{
+  "case_id": "weft-review-clean-approval",
+  "suite": "weft-review",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Score only observable review structure: verdict tag, zero-blocker approval discipline, and actionable file references from assistant text."
+  }
+}

@@ -308,6 +308,7 @@ export function renderSuiteSummary(summary: SuiteSummaryEntry): string {
  *   - H2 heading with overall green/red status
  *   - Run metadata (git SHA, assembled timestamp, dry-run flag)
  *   - Aggregate run summary (total, passed, failed across all suites)
+ *   - Explicit suite list covering every included suite family
  *   - Per-suite sections rendered by `renderSuiteSummary()`
  *
  * The document is bounded by the size of the bundle — no unbounded string
@@ -337,6 +338,7 @@ export function renderPublicReportBundle(bundle: PublicReportBundle): string {
   lines.push(
     `**Total cases**: ${bundle.runSummary.totalCases} | **Passed**: ${bundle.runSummary.passedCases} | **Failed**: ${bundle.runSummary.failedCases}`,
   );
+  lines.push(`**Suites**: ${bundle.runSummary.suites.join(", ")}`);
   lines.push("");
 
   for (const suiteSummary of bundle.suiteSummaries) {
