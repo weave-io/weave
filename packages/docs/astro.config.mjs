@@ -125,6 +125,7 @@ export default defineConfig({
             'docs/agents-and-categories',
             'docs/prompts-models-policy',
             'docs/workflows',
+            'docs/evals',
             'docs/opencode',
             'docs/runtime-operations',
           ],

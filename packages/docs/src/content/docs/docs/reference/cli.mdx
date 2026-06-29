@@ -10,6 +10,8 @@ tableOfContents:
 
 The Weave CLI initializes, migrates, validates, and inspects configuration. It does not launch harness runtimes. Any command that can fail reports a non-zero exit code and a formatted error; JSON output is available on selected inspection commands.
 
+For the public eval overview, see [Evals](../evals/).
+
 ## Global Flags
 
 | Flag | Meaning |
@@ -203,6 +205,36 @@ weave runtime journal --limit 20
 ```
 
 Journal output is for operational inspection. It should not contain raw secrets or large payloads because the runtime journal writer sanitizes and size-limits entries.
+
+## `weave eval run`
+
+Run Weave's public eval suites against the configured model matrix.
+
+```bash
+weave eval run
+weave eval run --agent loom
+weave eval run --model anthropic/claude-sonnet-4.5
+weave eval run --case loom-route-backend-api
+weave eval run --dry-run
+```
+
+Current support is limited to **seven text-only suite families**:
+
+- `loom-routing`
+- `tapestry-execution`
+- `shuttle-execution`
+- `spindle-tools`
+- `pattern-planning`
+- `weft-review`
+- `warp-security`
+
+`--agent` also accepts the short aliases `loom`, `tapestry`, `shuttle`, `spindle`, `pattern`, `weft`, and `warp`.
+
+Important boundary: this command scores **text-observable output only**. It does not run runtime-backed harness evals or verify hidden tool activity, filesystem mutation, browser events, or network traces.
+
+`--dry-run` validates the requested filters and prints what would run without making model calls. Completed eval runs report threshold misses in artifacts rather than failing the command for ordinary case-level misses. Hard input, environment, or orchestration failures still exit non-zero.
+
+See [Evals](../evals/) for the public overview and reporting model.
 
 ## `weave run`
 

@@ -1,0 +1,87 @@
+---
+title: Evals
+description: Run Weave's public text-only eval suites, filter them, and understand the high-level reporting artifacts.
+tableOfContents:
+  minHeadingLevel: 2
+  maxHeadingLevel: 3
+---
+
+## What `weave eval run` Is
+
+`weave eval run` is Weave's eval entry point for local verification and CI. It runs the registered eval suites against the built-in model matrix and writes a run summary plus report artifacts.
+
+This surface is intentionally narrow today. It is for **text-only prompt evals**, not harness-runtime execution.
+
+## Supported Suite Families
+
+The current public surface supports seven suite families:
+
+- `loom-routing`
+- `tapestry-execution`
+- `shuttle-execution`
+- `spindle-tools`
+- `pattern-planning`
+- `weft-review`
+- `warp-security`
+
+These are the canonical suite IDs used by filters, fixtures, and reports. The `--agent` flag also accepts the short aliases `loom`, `tapestry`, `shuttle`, `spindle`, `pattern`, `weft`, and `warp`.
+
+## Text-only Boundary
+
+Current evals score only what is visible in assistant text. They are useful for checking routing, structure, delegation signals, review format, planning shape, and similar text-observable behavior.
+
+What they do **not** do:
+
+- run a real harness session
+- verify actual tool calls or hidden tool telemetry
+- inspect filesystem mutations, shell history, browser events, or network traces
+
+Runtime-backed trajectory evals are an explicit non-goal of the current public eval contract.
+
+## Basic Usage
+
+Run all suites against the default model set:
+
+```bash
+weave eval run
+```
+
+Filter to one suite family:
+
+```bash
+weave eval run --agent loom
+weave eval run --agent shuttle
+```
+
+Filter to one model or one case:
+
+```bash
+weave eval run --model anthropic/claude-sonnet-4.5
+weave eval run --case loom-route-backend-api
+```
+
+Preview what would run without making model calls:
+
+```bash
+weave eval run --dry-run
+weave eval run --agent loom --model anthropic/claude-sonnet-4.5 --dry-run
+```
+
+Filters use exact-match semantics. Dry-run keeps the same filter validation, but skips live model execution.
+
+## Artifacts and Reporting
+
+Each run produces a small set of high-level artifacts under `eval-bundles/`, including:
+
+- a run summary with pass/fail rollups
+- per-suite score outputs
+- prompt-hash provenance records
+- a public JSON report
+- a human-readable Markdown report
+
+Published reporting is sanitized and structured for dashboards and historical comparisons. Raw prompt or transcript artifacts are a separate local-only debugging path and are not part of the public reporting surface.
+
+## Learn More
+
+- See the [CLI Reference](./reference/cli/#weave-eval-run) for flags and behavior.
+- See the repo docs in `docs/agent-evals.md` for contributor-level architecture and internal details.
