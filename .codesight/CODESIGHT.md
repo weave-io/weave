@@ -7,6 +7,7 @@
 > **Token savings:** this file is ~11,100 tokens. Without it, AI exploration would cost ~42,300 tokens. **Saves ~31,200 tokens per conversation.**
 > **Last scanned:** 2026-06-29 18:04 — re-run after significant changes
 
+
 ---
 
 # Libraries
