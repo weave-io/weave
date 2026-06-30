@@ -5,6 +5,6 @@
     "outcome_weight": 0.7,
     "per_expectation_weight": 0.3,
     "required": true,
-    "notes": "Score only observable review structure: verdict tag, zero-blocker approval discipline, and actionable file references from assistant text."
+    "notes": "Fairness/alignment: score only observable review structure, [APPROVE], zero blockers, and reviewed-file references from assistant text. Do not grade verbosity or tone beyond those structural signals."
   }
 }

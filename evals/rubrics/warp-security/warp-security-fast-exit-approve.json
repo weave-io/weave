@@ -5,6 +5,6 @@
     "outcome_weight": 0.7,
     "per_expectation_weight": 0.3,
     "required": true,
-    "notes": "Score only observable fast-exit security triage: APPROVE verdict, zero blockers, and no findings."
+    "notes": "Fairness/alignment: score only observable assistant-text fast-exit triage, APPROVE verdict, `BLOCKERS: 0/3`, and no findings. Do not grade tone or extra commentary beyond that text-visible structure."
   }
 }

@@ -43,7 +43,7 @@ All publishable output passes through the central allowlist sanitizer in `packag
 
 ## Fixture Layout
 
-The fixture tree is intentionally flat and registry-shaped. Each of the seven supported suite families gets exactly one case directory and one rubric directory, and contributors should treat those suite IDs as the canonical names used by CLI filters, workflow inputs, and publishable reporting.
+The fixture tree is intentionally flat and registry-shaped. The shared eval suite registry defines the current seven-suite text-only surface, and each registered suite gets exactly one case directory and one rubric directory. Contributors should treat those suite IDs as the canonical names used by CLI filters, workflow inputs, prompt snapshot coverage, sync tests, and publishable reporting.
 
 ```
 evals/
@@ -120,7 +120,7 @@ And in `packages/cli/src/commands/eval.ts`:
 
 ## Eval Suites
 
-Weave currently supports **seven text-only suite families**. Every registered suite is synthetic and text-observable by design.
+Weave currently supports a **seven-suite text-only eval surface**. Every registered suite is synthetic and text-observable by design.
 
 | Suite | Runner | What it tests |
 |---|---|---|
@@ -132,11 +132,212 @@ Weave currently supports **seven text-only suite families**. Every registered su
 | `weft-review` | `WeftReviewRunner` | Weft emits structurally explicit review verdicts, blocker counts, and actionable file-cited approval or rejection signals |
 | `warp-security` | `WarpSecurityRunner` | Warp emits structurally explicit security triage, capped blocker counts, and evidence-backed findings from assistant text |
 
-All suites share the same case schema, rubric schema, and model matrix. They are run in parallel across all models in the effective model set.
+All suites share the same case schema, rubric schema, and model matrix. The shared suite registry is the source of truth for suite IDs, short `--agent` aliases, prompt snapshot coverage, and registry-driven sync tests. Suites are run in parallel across all models in the effective model set.
 
-The current eval runners are **text-only prompt evals**: they call OpenRouter chat completions and extract signals from assistant text. They do not execute harness tools or capture real tool-call events. Fixture authors should therefore assert observable text signals such as agent mentions, routed agents, delegation chains, completion phrases, and produced artifact names. Do not use a text-only fixture to require an unobservable real tool invocation or the absence of a tool invocation; reserve those checks for a future harness-backed trajectory runner.
+The current eval runners are **text-only prompt evals**: they call OpenRouter chat completions and extract signals from assistant text. They do not execute harness tools, inspect side effects, or capture real tool-call telemetry. Fixture authors should therefore assert observable text signals such as agent mentions, routed agents, delegation chains, completion phrases, and produced artifact names. Do not use a text-only fixture to require unobservable runtime behavior. Reserve those checks for a future harness-backed trajectory runner.
 
 The seven current families are: `loom-routing`, `tapestry-execution`, `shuttle-execution`, `spindle-tools`, `pattern-planning`, `weft-review`, and `warp-security`.
+
+### 2026-06-30 provisional baseline for phase-1 fairness work
+
+This section is a historical baseline from Milestone 1. It describes the pre-cleanup state that informed later fairness work, not the current fixture contract.
+
+This milestone baseline is intentionally low confidence. We currently have:
+
+- one local dry-run on the current worktree (`bun packages/cli/src/main.ts eval run --dry-run`), which confirmed that the shipped suites/cases still validate and would execute
+- one published live dashboard run today, `60c3ebd-2026-06-30-001`, from commit `60c3ebda45d49d2b413ef658d2d7cbacf57708c7`
+
+That means the classification below is a **provisional evidence baseline**, not a stable benchmark. It is good enough to sequence phase 1, but not good enough to generalize about long-term prompt quality or model quality.
+
+#### Evidence used for this baseline
+
+1. Local dry-run on the current checkout, `bun packages/cli/src/main.ts eval run --dry-run`
+2. Published dashboard manifest, `weave-io/weave-agent-evals/indexes/v1/dashboard-manifest.json` (`totalRuns: 1`)
+3. Published live report bundle, `weave-io/weave-agent-evals/runs/v1/60c3ebd-2026-06-30-001/public-report.json`
+4. Shipped fixtures in:
+   - `evals/cases/loom-routing/*.json`
+   - `evals/cases/tapestry-execution/*.json`
+   - `evals/cases/warp-security/*.json`
+   - `evals/cases/weft-review/*.json`
+   - `evals/cases/pattern-planning/*.json`
+5. Matching rubrics in:
+   - `evals/rubrics/loom-routing/*.json`
+   - `evals/rubrics/tapestry-execution/*.json`
+   - `evals/rubrics/warp-security/*.json`
+   - `evals/rubrics/weft-review/*.json`
+   - `evals/rubrics/pattern-planning/*.json`
+6. Current runner behavior in:
+   - `packages/cli/src/evals/loom-routing-runner.ts`
+   - `packages/cli/src/evals/tapestry-execution-runner.ts`
+   - `packages/cli/src/evals/pattern-planning-runner.ts`
+   - `packages/cli/src/evals/weft-review-runner.ts`
+   - `packages/cli/src/evals/warp-security-runner.ts`
+
+#### Suite-level triage
+
+| Suite | Live run snapshot | Primary phase-1 label | Why |
+|---|---:|---|---|
+| `loom-routing` | 8/9 passed | runner issue | The only hard fail is `loom-route-ambiguous-direct-shuttle`, and the runner still carried legacy category-shuttle and evidence-gathering routing heuristics that could distort extraction. |
+| `tapestry-execution` | 6/6 passed, all partial | case/rubric issue | Current cases pass, but the shipped rubric notes still described old tool-call style evidence that text-only evals do not actually score. |
+| `warp-security` | 5/6 passed | prompt mismatch | The case/rubric contract already matches the runner's text-only structure fairly closely. The remaining miss is inconsistent output shape on `APPROVE` fast-exit formatting. |
+| `weft-review` | 4/6 passed | prompt mismatch | `weft-review-reject-blocker-citation` fails when the answer does not reliably emit the strict review shape the runner scores, especially explicit blocker lines with file-cited action. |
+| `pattern-planning` | 4/6 passed | case/rubric issue | The fixtures still lean on exact marker strings like `#scope` / `#files` / `#sequence` / `#acceptance`, while the documented contract says planning cases should stay structural rather than exact-tag dependent. |
+
+#### Case-by-case classification
+
+| Agent | Suite | Case | Live evidence | Label | Why this is the current best fit |
+|---|---|---|---|---|---|
+| Loom | `loom-routing` | `loom-route-backend-api` | pass/partial across all 3 models | drift cleanup | The case still allowed legacy category-shuttle aliases even though the current rubric already centered generic `shuttle`. This looked like stale fixture language, not an active scoring blocker. |
+| Loom | `loom-routing` | `loom-route-frontend-ui` | pass/partial across all 3 models | drift cleanup | Same pattern as backend, the case still carried legacy category-shuttle aliases while the VNext text-only contract scored generic `shuttle`. |
+| Loom | `loom-routing` | `loom-route-ambiguous-direct-shuttle` | 1 fail, 2 partial | runner issue | This is the only Loom case with a true failure in the live run, and the runner still contains legacy route-name and evidence-gathering heuristics that can change which route is extracted first. |
+| Tapestry | `tapestry-execution` | `tapestry-delegate-to-shuttle` | partial across all 3 models | case/rubric issue | The case still listed legacy category-shuttle alternates, and the rubric note still talked about delegate tool calls even though the current suite is text-only. |
+| Tapestry | `tapestry-execution` | `tapestry-execute-plan-step` | partial across all 3 models | case/rubric issue | The rubric note still treated a tool-call style completion signal as primary even though that was no longer the real contract. The live partials were better explained by stale rubric language than by a runner bug. |
+| Warp | `warp-security` | `warp-security-block-evidence-findings` | partial/pass across all 3 models | prompt mismatch | The runner, case, and rubric already agree on BLOCK plus evidence-backed findings. The remaining misses are about the model not always emitting the exact strong structure, not about unsupported assertions. |
+| Warp | `warp-security` | `warp-security-fast-exit-approve` | 1 fail, 1 partial, 1 pass | prompt mismatch | The failing pattern is inconsistent fast-exit formatting (`APPROVE`, `BLOCKERS: 0/3`, no findings), which matches a prompt-output shape problem more than fixture drift. |
+| Weft | `weft-review` | `weft-review-clean-approval` | pass across all 3 models | drift cleanup | This case is already behaving like a healthy text-only structural check. It still belongs in the phase-1 baseline, but it does not point to a runner or rubric bug today. |
+| Weft | `weft-review` | `weft-review-reject-blocker-citation` | 1 partial, 2 fails | prompt mismatch | The runner wants explicit `[REJECT]` plus actionable `BLOCKER:` lines with file references. The case and rubric are already aligned with that structure, so the miss is primarily output-shape mismatch. |
+| Pattern | `pattern-planning` | `pattern-plan-settings-refactor` | 2 pass, 1 fail | case/rubric issue | The case still requires exact marker text such as `#scope`, `#files`, `#sequence`, `#acceptance`, plus an `agent_mentioned: pattern` check. That is stricter and more style-specific than the documented structural contract. |
+| Pattern | `pattern-planning` | `pattern-plan-release-checklist` | 2 partial, 1 fail | case/rubric issue | This case also leans on exact marker strings instead of purely structural planning signals, so it is better classified as fixture-contract cleanup first. |
+
+#### What phase 1 should assume from this baseline
+
+- Start with **runner fairness** for Loom first.
+- Treat **Tapestry** as mostly a case/rubric contract cleanup problem before touching prompts.
+- Treat **Warp** and **Weft** as likely prompt-shape problems unless new local live evidence shows runner or fixture drift.
+- Treat **Pattern** as fixture-contract cleanup first, because the current cases are more style-coupled than the documented structural contract.
+- Reconfirm all of the above after the next live/local checkpoint, because one dashboard run is not enough to claim stability.
+
+### 2026-06-30 phase 1B fixture-alignment cleanup
+
+Phase 1B keeps the scoring contract explicit: this work is **fixture/rubric fairness**, not prompt tuning.
+
+- Loom routing cases now describe direct text-visible routing only. They no longer encode legacy category-shuttle alternates, and the ambiguous fallback case no longer requires an evidence-gathering pre-hop.
+- Tapestry execution cases and rubric notes now describe only text-visible delegation or completion. They do not talk about hidden runtime progress or tool-call-only evidence.
+- Pattern planning cases now rely on structural artifacts only. Exact transcript checks for `#scope`, `#files`, `#sequence`, `#acceptance`, or self-identification as `pattern` are intentionally out of contract.
+- Warp and Weft rubric notes now say out loud that they score only observable assistant-text review structure. They do not reward taste, tone, or hidden repository context.
+
+### 2026-06-30 phase 1 checkpoint rerun and fairness gate
+
+This checkpoint reran the narrowed local evidence after the runner and fixture fairness work landed.
+
+#### Commands used
+
+1. Dry-run preflight: `bun packages/cli/src/main.ts eval run --dry-run`
+2. Narrow live suite reruns:
+   - `bun packages/cli/src/main.ts eval run --agent loom`
+   - `bun packages/cli/src/main.ts eval run --agent tapestry`
+   - `bun packages/cli/src/main.ts eval run --agent warp`
+   - `bun packages/cli/src/main.ts eval run --agent weft`
+   - `bun packages/cli/src/main.ts eval run --agent pattern`
+3. Single-case raw-artifact spot checks:
+   - `bun packages/cli/src/main.ts eval run --agent loom --case loom-route-ambiguous-direct-shuttle --raw-artifacts`
+   - `bun packages/cli/src/main.ts eval run --agent tapestry --case tapestry-execute-plan-step --raw-artifacts`
+   - `bun packages/cli/src/main.ts eval run --agent warp --case warp-security-fast-exit-approve --raw-artifacts`
+   - `bun packages/cli/src/main.ts eval run --agent weft --case weft-review-reject-blocker-citation --raw-artifacts`
+   - `bun packages/cli/src/main.ts eval run --agent pattern --case pattern-plan-settings-refactor --raw-artifacts`
+
+#### Local checkpoint summary
+
+| Agent | Evidence | Result | Gate read |
+| --- | --- | --- | --- |
+| Loom | suite rerun `06e5f44-2026-06-30-002`, raw case rerun `06e5f44-2026-06-30-007` | suite `5/9` passed, narrowed case `2/3` passed | Remaining miss is no longer a fairness problem. The failing raw output delegated to `thread` first instead of routing directly to `shuttle`, which is a prompt-orchestration choice. |
+| Tapestry | suite rerun `06e5f44-2026-06-30-003`, raw case rerun `06e5f44-2026-06-30-008` | suite `6/6` passed, narrowed case `3/3` passed | No remaining fairness blocker in this suite. The contract is coherent enough to leave phase 1. |
+| Warp | suite rerun `06e5f44-2026-06-30-004`, raw case rerun `06e5f44-2026-06-30-009` | suite `5/6` passed, narrowed case `2/3` passed | Remaining miss is structural. The failing output used bracketed verdict style (`[APPROVE]`) while the case expects the plain fast-exit verdict line (`APPROVE`). |
+| Weft | suite rerun `06e5f44-2026-06-30-005`, raw case rerun `06e5f44-2026-06-30-010` | suite `4/6` passed, narrowed case `1/3` passed | Remaining misses are structural. The builtin review format prefers a numbered “Blocking Issues” block, while the case expects strict `BLOCKER:` lines with the exact rejection shape. |
+| Pattern | suite rerun `06e5f44-2026-06-30-006`, raw case rerun `06e5f44-2026-06-30-011` | suite `4/6` passed, narrowed case `2/3` passed | Remaining miss is structural. The failing output acknowledged the task but did not emit the requested inline plan artifacts at all. |
+
+#### Decision record
+
+**Decision**: yes, phase 2 prompt work is justified.
+
+The checkpoint evidence is now good enough to say the remaining misses are **mostly prompt-output structure and prompt-behavior misses, not eval unfairness**:
+
+- Loom still misses when it chooses an exploratory `thread` pre-hop instead of the now-correct direct text routing contract.
+- Tapestry is green after the fairness/alignment work, which is the clearest sign that the runner and fixtures are no longer the main problem there.
+- Warp still misses on fast-exit formatting shape, not on impossible assertions.
+- Weft still misses on verdict and blocker formatting shape, not on hidden runtime expectations.
+- Pattern still misses when it declines to emit the requested plan structure, not because the case requires unsupported tags or tool telemetry.
+
+This remains a **directional local checkpoint**, not a long-term benchmark. We still have only one published dashboard run, so the conclusion is limited to the current local fast loop: phase 1 fairness work is sufficient, and the next justified step is prompt-focused phase 2 work for Loom, Warp, Weft, and Pattern.
+
+### 2026-06-30 phase 2 checkpoint rerun and prompt-quality gate
+
+This checkpoint reran the highest-ROI prompt suites after Milestones 6-8 and compared them to the phase-1 checkpoint. The goal was simple: separate real structural gains from one-off formatting wins.
+
+#### Commands used
+
+1. Dry-run preflight: `bun packages/cli/src/main.ts eval run --dry-run`
+2. Targeted phase-2 suite reruns:
+   - `bun packages/cli/src/main.ts eval run --agent weft`
+   - `bun packages/cli/src/main.ts eval run --agent pattern`
+   - `bun packages/cli/src/main.ts eval run --agent shuttle`
+   - `bun packages/cli/src/main.ts eval run --agent spindle`
+3. Cross-suite smoke on one shared model:
+   - `bun packages/cli/src/main.ts eval run --model anthropic/claude-sonnet-4.5`
+
+#### Comparison against the phase-1 checkpoint
+
+| Suite | Phase-1 checkpoint | Phase-2 targeted rerun | Cross-suite smoke | Read |
+| --- | --- | --- | --- | --- |
+| `weft-review` | `4/6` passed, run `06e5f44-2026-06-30-005` | `5/6` passed, run `06e5f44-2026-06-30-012` | `0/2` passed on Sonnet, run `06e5f44-2026-06-30-017` | There is a real but narrow gain: `weft-review-reject-blocker-citation` improved from `1/3` models passing to `2/3`. That is still fragile. The Sonnet smoke run failed both Weft cases, so the improvement is not stable across models. |
+| `pattern-planning` | `4/6` passed, run `06e5f44-2026-06-30-006` | `2/6` passed, run `06e5f44-2026-06-30-016` | `2/2` passed on Sonnet, run `06e5f44-2026-06-30-017` | This is the clearest overfit signal in the checkpoint. Sonnet got cleaner structure, but Opus and GPT-5.5 regressed hard enough to push the full suite backward. That is a model-specific formatting win, not a robust prompt improvement. |
+| `shuttle-execution` | no phase-1 checkpoint rerun, this suite was out of Milestone 5 scope | `4/6` passed, run `06e5f44-2026-06-30-014` | `2/2` passed on Sonnet, run `06e5f44-2026-06-30-017` | The prompt now elicits the desired report shape more reliably, especially on `shuttle-execution-report-tests-and-assumptions`. Still, there is no true phase-1 checkpoint baseline for this suite, so this is promising directional evidence, not proof that more prompt work will pay off. |
+| `spindle-tools` | no phase-1 checkpoint rerun, this suite was out of Milestone 5 scope | `4/6` passed, run `06e5f44-2026-06-30-015` | `0/2` passed on Sonnet, run `06e5f44-2026-06-30-017` | No stable gain is visible. Both Spindle cases stayed below green in the three-model rerun and both failed again in the Sonnet smoke. This still looks like prompt-output instability, not a clean structural improvement. |
+
+#### Guard-suite read from the cross-suite smoke
+
+- `tapestry-execution` stayed green at `2/2` on Sonnet in run `06e5f44-2026-06-30-017`.
+- `warp-security` stayed green at `2/2` on Sonnet in run `06e5f44-2026-06-30-017`.
+- `loom-routing` fell to `1/3` on Sonnet in the same smoke run, but Loom was not part of the phase-2 prompt batch. Treat that as directional noise for now, not as evidence that the phase-2 prompt edits helped or hurt Loom.
+
+#### Decision record
+
+**Decision**: stop further prompt work for now.
+
+The phase-2 rerun does not show the kind of broad, repeatable gain that would justify another prompt-tuning round:
+
+- Weft improved, but only narrowly, and the improvement disappeared in the shared Sonnet smoke.
+- Pattern regressed overall, which is strong evidence of model-specific overfitting.
+- Shuttle looks better, but it lacks a phase-1 checkpoint baseline, so we cannot honestly call it a phase-2 win yet.
+- Spindle still fails in the same general place, with no cross-model strengthening signal.
+
+The honest read is that phase 2 found a few useful structure nudges, but not a stable multi-model quality lift. The next step should be to stop prompt tuning and return to evidence collection or eval cleanup if more work is needed, rather than chase more formatting-sensitive prompt edits.
+
+### 2026-06-30 final decision gate, rubric and recommendation
+
+This is the final gate for Milestone 10. The rule is simple:
+
+- Continue prompt work only when fairness and rubric alignment are stable, and the remaining misses are mostly honest answers that fail on consistent output structure.
+- Return to eval cleanup when failures still point to runner ambiguity, rubric wording drift, stale fixture assumptions, missing baseline evidence, or model-to-model instability large enough that prompt edits would mostly chase one-model wins.
+
+#### Explicit answers
+
+1. **What was rerun after phase 1?**
+   - Dry-run preflight: `bun packages/cli/src/main.ts eval run --dry-run`
+   - Narrow live suite reruns: `--agent loom`, `--agent tapestry`, `--agent warp`, `--agent weft`, `--agent pattern`
+   - Single-case raw-artifact spot checks: `loom-route-ambiguous-direct-shuttle`, `tapestry-execute-plan-step`, `warp-security-fast-exit-approve`, `weft-review-reject-blocker-citation`, `pattern-plan-settings-refactor`
+
+2. **What was rerun after phase 2?**
+   - Dry-run preflight: `bun packages/cli/src/main.ts eval run --dry-run`
+   - Targeted prompt-suite reruns: `--agent weft`, `--agent pattern`, `--agent shuttle`, `--agent spindle`
+   - Cross-suite one-model smoke: `bun packages/cli/src/main.ts eval run --model anthropic/claude-sonnet-4.5`
+
+3. **What evidence justifies more prompt work versus more eval cleanup?**
+   - Evidence would justify **more prompt work** only when a suite stays aligned after reruns and the misses remain mostly the same structural shape across models.
+   - The current evidence instead justifies **more eval cleanup or more evidence collection before more prompt edits**:
+     - `weft-review` improved only narrowly, `4/6` to `5/6`, and then failed `0/2` in the Sonnet smoke.
+     - `pattern-planning` regressed overall, `4/6` to `2/6`, even though Sonnet alone looked better. That is overfit, not stable improvement.
+     - `shuttle-execution` looked promising at `4/6`, but it had no true phase-1 checkpoint baseline, so it is not honest evidence for another prompt round yet.
+     - `spindle-tools` stayed unstable, `4/6` in the targeted rerun and `0/2` in the Sonnet smoke.
+     - Guard suites matter too: `tapestry-execution` and `warp-security` stayed green in the smoke, while `loom-routing` dropped to `1/3` on Sonnet. That keeps the overall picture too noisy to claim prompt stability.
+
+#### Final recommendation
+
+**Recommendation: stop further prompt work for now and return to eval cleanup / evidence gathering.**
+
+The deciding factor is not that prompt edits never helped. They did help in a few narrow places. The problem is that the gains were not stable enough across reruns or across models to justify another prompt-only loop. The strongest signals after phase 2 are still checkpoint honesty problems: missing baseline parity for some suites, model-specific drift, and regressions large enough that another prompt pass would likely optimize for one model while making the multi-model picture worse.
+
+In short, the final rubric lands on the eval-cleanup side, not the prompt-work side.
 
 ### Text-only contract and explicit non-goal
 
@@ -184,13 +385,19 @@ Tapestry eval prompts include a minimal synthetic plan context (`Plan file`, rem
 
 Shuttle execution prompts likewise inject a synthetic delegated task envelope (`Task [N/M]`, `What`, `Files`, `Acceptance`, context, and learnings) and score only what the final report says about completion. Cases pass only when the assistant mirrors that structure and reports bounded evidence such as files changed, commands/tests run, assumptions, and explicit acceptance confirmation.
 
-Pattern planning eval prompts likewise constrain the model toward structural planning output. The runner extracts deterministic signals only — explicit scope, file-backed tasks, sequencing, and acceptance coverage — and projects those into `required_artifacts`/completion signals before invoking the existing scorer path. This keeps planning assertions structural rather than semantic freeform wish-casting.
+The default Shuttle prompt is aligned to that contract too. It now tells Shuttle to restate the task in a compact `Task intake` section, then report `Files changed`, `Commands run and their output`, `Test results`, `Issues encountered or assumptions made`, and `Acceptance confirmation`. The honesty boundary is explicit: Shuttle must not claim hidden file-mutation proof, tool telemetry, browser activity, network activity, or other runtime evidence it did not directly observe.
 
-Weft review eval prompts are synthetic by design. The case description and runner prompt fully describe the review target so the suite never needs a live patch or hidden repository state. The runner scores only text-observable review structure: `[APPROVE]` or `[REJECT]`, blocker count, approval and rejection discipline, and actionable file references.
+Pattern planning eval prompts likewise constrain the model toward structural planning output. The shared contract is now the same in the builtin prompt and the eval runner: plans should make scope explicit with a `## Scope` section, make order explicit with dependency or ordering language such as `## Dependencies and Order` or `**Depends on**`, cite exact file paths in task-level `**Files**` fields, and include per-task acceptance criteria under `**Acceptance**`. The runner still accepts legacy `#scope` / `#files` / `#sequence` / `#acceptance` tags when they appear, but those tags are compatibility signals, not the primary contract. The runner projects only those deterministic structural signals into `required_artifacts` and completion signals before invoking the existing scorer path. This keeps planning assertions structural rather than semantic freeform wish-casting.
+
+Weft review eval prompts are synthetic by design. The case description and runner prompt fully describe the review target so the suite never needs a live patch or hidden repository state. The runner scores only text-observable review structure: `[APPROVE]` or `[REJECT]`, a `Reviewed files:` line, blocker count, approval and rejection discipline, and actionable file references.
+
+The builtin Weft prompt is intentionally aligned to that visible contract without lowering review standards. It now tells Weft to open with exactly one bracketed verdict tag, always name the reviewed files, and express merge-blocking findings as one actionable `BLOCKER:` line per issue with backticked file references. The honesty contract still applies: Weft must not invent runtime evidence, passing tests, or line numbers that were not actually provided in the review context.
 
 Warp security eval prompts are synthetic by design too. The suite scores only text-observable security review structure: `APPROVE` or `BLOCK`, bounded blocker counts, and evidence-backed finding groups with file references. It does not attempt runtime exploit execution, live secret scanning, or exploit validation.
 
 Spindle tools eval prompts are synthetic too. The suite scores only text-observable research structure: inline citations, a distinct `Source facts` section, a distinct `Interpretation` section, a bounded `Confidence:` line, and a final `Sources:` list. It does not attempt to prove that a browser, search tool, or network event actually occurred; those runtime-only assertions are rejected by the shared text-only fixture contract unless they are surfaced as ordinary plain-text claims in the answer.
+
+The default Spindle prompt now reinforces the same visible structure. It asks for a short direct answer, a `Source facts` section containing only cited source-grounded claims, a separate `Interpretation` section, a `Sources` list with exact page or section references, and a final bounded confidence line. It also makes the runtime honesty rule explicit: Spindle may use network access when it is actually available, but it must never imply that live browsing or other tool activity definitely happened unless that happened in the current runtime.
 
 ---
 
@@ -237,7 +444,7 @@ WEAVE_EVAL_MODEL=anthropic/claude-sonnet-4.5
 WEAVE_EVAL_CASE=loom-route-backend-api
 ```
 
-`--dry-run` validates the same suite, model, and case allowlists as a live run, but it does **not** require `OPENROUTER_API_KEY` because no model call is made.
+`--dry-run` now exercises the same suite fixture/rubric loading path as a live run, so shipped case/rubric drift fails closed before any model call would happen. It still does **not** require `OPENROUTER_API_KEY` because dry-run skips model execution.
 
 To enable external publication of results, set:
 
@@ -702,9 +909,9 @@ weave eval run --case loom-route-backend-api --dry-run
 weave eval run --agent loom --model anthropic/claude-sonnet-4.5 --case loom-route-backend-api --dry-run
 ```
 
-Dry-run output lists filters and confirms no execution will occur. A valid dry run exits `0`. An invalid dry run exits non-zero, typically `1`, because the CLI still validates suite filters, model filters, case IDs, and text-only contract limits before it skips model execution.
+Dry-run output lists filters and confirms no execution will occur. A valid dry run exits `0`. An invalid dry run exits non-zero, typically `1`, because the CLI still validates suite filters, model IDs, case IDs, text-only contract limits, and real suite fixture/rubric loading before it skips model execution.
 
-Dry-run is the recommended contributor preflight path because it exercises the same filter validation and fixture-discovery contract without requiring secrets or making model calls.
+Dry-run is the recommended contributor preflight path because it exercises the same filter validation and suite fixture/rubric loading contract as a live run without requiring secrets, making model calls, or writing artifacts.
 
 ---
 

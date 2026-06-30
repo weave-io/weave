@@ -49,6 +49,9 @@ const SECRET_REDACTION_PATTERNS: Array<[RegExp, string]> = [
 ];
 
 const FILE_BULLET_RE = /^\s*[-*]\s+[^\n]+$/gim;
+const TASK_INTAKE_HEADER_RE = /^\s*(?:##+\s*)?Task intake\s*:?\s*$/im;
+const WHAT_LINE_RE = /^\s*(?:[-*]\s+)?(?:\*\*)?What(?:\*\*)?:\s+.+$/im;
+const FILES_LINE_RE = /^\s*(?:[-*]\s+)?(?:\*\*)?Files(?:\*\*)?:\s+.+$/im;
 const FILE_PATH_RE =
   /`([^`]+)`|\b(?:[A-Za-z0-9_.-]+\/)+[A-Za-z0-9_.-]+\b|\b[A-Za-z0-9_.-]+\.(?:ts|tsx|js|jsx|json|md|weave|yml|yaml|css|scss|html|go|rs|py)\b/g;
 const ACCEPTANCE_HEADER_RE =
@@ -94,9 +97,15 @@ export function extractShuttleExecutionSignals(
   const acceptanceLines = [...content.matchAll(ACCEPTANCE_CHECK_RE)];
   const commandLines = [...content.matchAll(COMMAND_LINE_RE)];
   const testResultLines = [...content.matchAll(TEST_RESULT_RE)];
+  const taskIntakeRestated =
+    TASK_INTAKE_HEADER_RE.test(content) &&
+    WHAT_LINE_RE.test(content) &&
+    FILES_LINE_RE.test(content) &&
+    ACCEPTANCE_HEADER_RE.test(content);
 
   const taskIntakeStructured =
     /\btask\s*\[\d+\/\d+\]\b/i.test(content) ||
+    taskIntakeRestated ||
     lower.includes("acceptance:") ||
     lower.includes("files changed") ||
     lower.includes("commands run");
@@ -309,7 +318,9 @@ export function buildUserMessage(evalCase: EvalCase): string {
     "**Learnings**: Do not claim real file mutation or tool telemetry.",
     "",
     "Respond exactly like Shuttle reporting completed delegated work.",
-    "Include sections for Files changed, Commands run and their output, Test results, Issues/assumptions, and explicit acceptance confirmation.",
+    "Start with a 'Task intake' section that restates What, Files, and Acceptance.",
+    "Then include sections for Files changed, Commands run and their output, Test results, Issues encountered or assumptions made, and Acceptance confirmation.",
+    "In Acceptance confirmation, confirm each acceptance criterion explicitly and keep all evidence text-only.",
     requiredArtifacts.length > 0
       ? `Required structural signals: ${requiredArtifacts.join(", ")}`
       : "Required structural signals: none",

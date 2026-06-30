@@ -41,7 +41,19 @@ const TASK_LINE_RE = /^\s*(?:[-*]|\d+\.)\s+.+$/gm;
 const FILE_TOKEN_RE =
   /`([^`]+)`|\b(?:[A-Za-z0-9_.-]+\/)+[A-Za-z0-9_.-]+\b|\b[A-Za-z0-9_.-]+\.(?:ts|tsx|js|jsx|json|md|weave|yml|yaml|css|scss|html)\b/g;
 const ACCEPTANCE_LINE_RE =
-  /^\s*(?:[-*]|\d+\.)\s+(?:acceptance|verify|confirm|ensure|assert|expect)\b.+$/gim;
+  /^\s*(?:[-*]|\d+\.)\s+(?:acceptance|verify|confirm|ensure|assert|expect)\b.+$|^\s*[-*]?\s*(?:\*\*)?acceptance(?:\s+criteria)?(?:\*\*)?\s*:/gim;
+
+const SCOPE_HEADING_RE = /^\s*(?:#{1,6}\s*)?scope\b\s*:?(?:\s|$)/im;
+const FILES_HEADING_RE = /^\s*(?:#{1,6}\s*)?files?\b\s*:?(?:\s|$)/im;
+const FILES_FIELD_RE = /^\s*[-*]?\s*(?:\*\*)?files?(?:\*\*)?\s*:/im;
+const ORDER_HEADING_RE =
+  /^\s*(?:#{1,6}\s*)?(?:sequence|order|implementation order|dependencies and order)\b\s*:?(?:\s|$)/im;
+const DEPENDENCY_FIELD_RE =
+  /^\s*[-*]?\s*(?:\*\*)?(?:depends on|dependencies?)(?:\*\*)?\s*:/im;
+const ACCEPTANCE_HEADING_RE =
+  /^\s*(?:#{1,6}\s*)?acceptance(?:\s+criteria)?\b\s*:?(?:\s|$)/im;
+const ACCEPTANCE_FIELD_RE =
+  /^\s*[-*]?\s*(?:\*\*)?acceptance(?:\s+criteria)?(?:\*\*)?\s*:/im;
 
 const STRUCTURAL_ARTIFACTS = [
   "plan_scope_explicit",
@@ -64,22 +76,28 @@ function detectStructuralArtifacts(content: string): StructuralArtifact[] {
   }
 
   const produced: StructuralArtifact[] = [];
-  if (tags.has("scope") || /^\s*(?:#{1,6}\s*)?scope\s*:/im.test(content)) {
+  if (tags.has("scope") || SCOPE_HEADING_RE.test(content)) {
     produced.push("plan_scope_explicit");
   }
-  if (tags.has("files") || /^\s*(?:#{1,6}\s*)?files?\s*:/im.test(content)) {
+  if (
+    tags.has("files") ||
+    FILES_HEADING_RE.test(content) ||
+    FILES_FIELD_RE.test(content)
+  ) {
     produced.push("plan_file_tasks");
   }
   if (
     tags.has("sequence") ||
-    /^\s*(?:#{1,6}\s*)?(?:sequence|order)\s*:/im.test(content) ||
+    ORDER_HEADING_RE.test(content) ||
+    DEPENDENCY_FIELD_RE.test(content) ||
     /\bstep\s+1\b/.test(lower)
   ) {
     produced.push("plan_sequence_explicit");
   }
   if (
     tags.has("acceptance") ||
-    /^\s*(?:#{1,6}\s*)?acceptance(?:\s+criteria)?\s*:/im.test(content) ||
+    ACCEPTANCE_HEADING_RE.test(content) ||
+    ACCEPTANCE_FIELD_RE.test(content) ||
     /\bacceptance\s+criteria\b/.test(lower)
   ) {
     produced.push("plan_acceptance_coverage");
@@ -120,6 +138,28 @@ export function extractPlanningSignals(content: string): {
   };
 }
 
+function requiredPlanningArtifacts(evalCase: EvalCase): string[] {
+  if (evalCase.expected_outcome.kind !== "task_completion") {
+    return [];
+  }
+
+  return evalCase.expected_outcome.required_artifacts;
+}
+
+function hasRequiredPlanningArtifacts(
+  evalCase: EvalCase,
+  producedArtifacts: readonly string[],
+): boolean {
+  const requiredArtifacts = requiredPlanningArtifacts(evalCase);
+  if (requiredArtifacts.length === 0) {
+    return false;
+  }
+
+  return requiredArtifacts.every((artifact) =>
+    producedArtifacts.includes(artifact),
+  );
+}
+
 function buildModelRunOutput(
   evalCase: EvalCase,
   modelId: string,
@@ -139,11 +179,10 @@ function buildModelRunOutput(
     delegationChain: [],
     transcript,
     rawContent: content,
-    completionSignalled:
-      signals.scopeExplicit &&
-      signals.fileBackedTasks &&
-      signals.sequencingExplicit &&
-      signals.acceptanceCoverage,
+    completionSignalled: hasRequiredPlanningArtifacts(
+      evalCase,
+      signals.producedArtifacts,
+    ),
     producedArtifacts: signals.producedArtifacts,
   };
 }
@@ -284,10 +323,8 @@ export function buildUserMessage(evalCase: EvalCase): string {
     "Create a concise implementation plan.",
     `Goal: ${evalCase.description}`,
     "Respond as a text-only plan, not code.",
-    "Include explicit scope, file-backed tasks, sequencing, and acceptance coverage.",
-    "Use headings or bullets if helpful.",
-    "Emit structural tags exactly when satisfied:",
-    "#scope #files #sequence #acceptance",
+    "Include explicit scope, file-backed tasks, sequencing with dependency language, and acceptance coverage.",
+    "Use clear section headings and task fields such as `## Scope`, `## Dependencies and Order`, `**Files**`, and `**Acceptance**`.",
     requiredArtifacts.length > 0
       ? `Required structural signals: ${requiredArtifacts.join(", ")}`
       : "Required structural signals: none",

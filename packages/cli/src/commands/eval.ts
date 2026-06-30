@@ -28,13 +28,26 @@ import {
   parseEvalRunRequest,
 } from "../evals/input-validation.js";
 import {
+  type AgentEvalsScorer,
   LangChainAgentEvalsScorer,
   RealLangChainJudge,
 } from "../evals/langchain-agent-evals.js";
 import { filterMatrix, loadModelMatrix } from "../evals/model-matrix.js";
-import { OpenRouterClient } from "../evals/openrouter-client.js";
+import {
+  type ModelClient,
+  type ModelClientError,
+  type ModelRequest,
+  type ModelResponse,
+  OpenRouterClient,
+} from "../evals/openrouter-client.js";
 import { buildEvalRunner, EvalOrchestrator } from "../evals/runner.js";
-import type { EvalCase } from "../evals/types.js";
+import type {
+  EvalCase,
+  EvalRubric,
+  ModelRunOutput,
+  NormalizedScoreRecord,
+  ScoringError,
+} from "../evals/types.js";
 import {
   EVAL_SHORT_AGENT_FILTERS,
   EVAL_SUITE_IDS,
@@ -299,35 +312,92 @@ async function runEvalRun(ctx: EvalContext): Promise<Result<number, CliError>> {
     return ok(1);
   }
 
-  if (request.dryRun) {
-    terminal.stdout(renderDryRunSummary(request, theme));
-    return ok(0);
-  }
-
   if (ctx.runner !== undefined) {
     const result = await ctx.runner(request);
     if (result.isErr()) {
       terminal.stderr(formatCliError(result.error));
       return ok(1);
     }
+    if (request.dryRun) {
+      terminal.stdout(renderDryRunSummary(request, theme));
+    }
     return ok(result.value);
   }
 
-  // No injected runner: construct the real production orchestrator.
+  // No injected runner: construct the appropriate production orchestrator.
   // This path uses real external dependencies (OpenRouter, LangChain, git).
-  // Tests always inject a mock runner and never reach this branch.
-  const liveRunnerResult = await buildLiveRunner(ctx.env);
-  if (liveRunnerResult.isErr()) {
-    terminal.stderr(formatCliError(liveRunnerResult.error));
+  // Dry-runs intentionally use a validation-only runner that exercises the
+  // same suite fixture/rubric path without requiring secrets, model calls,
+  // or artifact writes.
+  const runnerResult = request.dryRun
+    ? buildDryRunRunner(ctx.env)
+    : await buildLiveRunner(ctx.env);
+  if (runnerResult.isErr()) {
+    terminal.stderr(formatCliError(runnerResult.error));
     return ok(1);
   }
-  const liveRunner = liveRunnerResult.value;
-  const liveResult = await liveRunner(request);
-  if (liveResult.isErr()) {
-    terminal.stderr(formatCliError(liveResult.error));
+  const runner = runnerResult.value;
+  const executionResult = await runner(request);
+  if (executionResult.isErr()) {
+    terminal.stderr(formatCliError(executionResult.error));
     return ok(1);
   }
-  return ok(liveResult.value);
+  if (request.dryRun) {
+    terminal.stdout(renderDryRunSummary(request, theme));
+  }
+  return ok(executionResult.value);
+}
+
+class DryRunModelClient implements ModelClient {
+  complete(
+    _request: ModelRequest,
+  ): ResultAsync<ModelResponse, ModelClientError> {
+    return new ResultAsync(
+      Promise.resolve(
+        err({
+          type: "NotConfigured" as const,
+          callIndex: 0,
+          message:
+            "DryRunModelClient should never be called. Dry-run validation must not make model requests.",
+        }),
+      ),
+    );
+  }
+}
+
+class DryRunScorer implements AgentEvalsScorer {
+  score(
+    _run: ModelRunOutput,
+    _evalCase: EvalCase,
+    _rubrics: EvalRubric[],
+    _scoredAt?: string,
+  ): ResultAsync<NormalizedScoreRecord, ScoringError> {
+    return new ResultAsync(
+      Promise.resolve(
+        err({
+          type: "NotConfigured" as const,
+          callIndex: 0,
+          message:
+            "DryRunScorer should never be called. Dry-run validation must not score model output.",
+        }),
+      ),
+    );
+  }
+}
+
+function buildDryRunRunner(
+  env?: Record<string, string | undefined>,
+): Result<
+  (request: EvalRunRequest) => Promise<Result<number, CliError>>,
+  CliError
+> {
+  const orchestrator = new EvalOrchestrator({
+    modelClient: new DryRunModelClient(),
+    scorer: new DryRunScorer(),
+    env: env ?? Bun.env,
+  });
+
+  return ok(buildEvalRunner(orchestrator));
 }
 
 /**

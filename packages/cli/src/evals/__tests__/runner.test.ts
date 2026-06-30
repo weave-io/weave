@@ -190,6 +190,25 @@ function makeOptions(
   };
 }
 
+async function writeInvalidDryRunFixtureRoot(): Promise<string> {
+  const evalsRoot = join(TEMP_DIR, `invalid-dry-run-fixtures-${uid()}`);
+  await Bun.write(
+    join(evalsRoot, "cases/loom-routing/bad-case.json"),
+    JSON.stringify({
+      description: "missing id should fail schema validation",
+      suite: "loom-routing",
+      allowed_agents: ["loom"],
+      allowed_models: ["anthropic/claude-sonnet-4.5"],
+      expected_outcome: {
+        kind: "agent_routing",
+        target_agent: "loom",
+        via: [],
+      },
+    }),
+  );
+  return evalsRoot;
+}
+
 // ---------------------------------------------------------------------------
 // Integration helpers — used by raw-artifact timestamp integration tests
 // ---------------------------------------------------------------------------
@@ -216,7 +235,7 @@ function makePassingScoreRecord(
   };
   const activeDim: DimensionScore = {
     score: 1.0,
-    rationale: "Correctly routed to shuttle-backend.",
+    rationale: "Correctly routed to shuttle.",
     applicable: true,
   };
   return {
@@ -327,6 +346,63 @@ describe("EvalOrchestrator — environment validation", () => {
       expect(msg).not.toContain("sk-");
     }
   });
+
+  it("skips OPENROUTER_API_KEY validation in dry-run while still loading real fixtures", async () => {
+    const modelClient = new StubModelClient();
+    const scorer = new StubAgentEvalsScorer();
+    const orchestrator = new EvalOrchestrator(
+      makeOptions({
+        env: {},
+        modelClient,
+        scorer,
+        evalsRoot: REAL_EVALS_ROOT,
+      }),
+    );
+
+    const result = await orchestrator.run(
+      makeRequest({
+        dryRun: true,
+        agent: "loom",
+        model: "anthropic/claude-sonnet-4.5",
+        case: "loom-route-backend-api",
+      }),
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (result.isErr()) return;
+
+    expect(result.value.totalCases).toBe(1);
+    expect(result.value.partialFailures).toHaveLength(0);
+    expect(result.value.runId).toBeNull();
+    expect(result.value.filesWritten).toEqual([]);
+    expect(modelClient.calls).toHaveLength(0);
+    expect(scorer.calls).toHaveLength(0);
+  });
+
+  it("dry-run surfaces fixture-load failures through the real suite path", async () => {
+    const evalsRoot = await writeInvalidDryRunFixtureRoot();
+    const orchestrator = new EvalOrchestrator(
+      makeOptions({
+        env: {},
+        evalsRoot,
+      }),
+    );
+
+    const result = await orchestrator.run(
+      makeRequest({
+        dryRun: true,
+        agent: "loom",
+        model: "anthropic/claude-sonnet-4.5",
+      }),
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (result.isErr()) return;
+
+    expect(result.value.totalCases).toBe(0);
+    expect(result.value.partialFailures).toHaveLength(1);
+    expect(result.value.partialFailures[0]?.type).toBe("FixtureLoadError");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -368,16 +444,11 @@ describe("EvalOrchestrator — model matrix", () => {
 // ---------------------------------------------------------------------------
 
 describe("EvalOrchestrator — suite fan-out", () => {
-  it("shared suite registry still enumerates all seven eval families", () => {
-    expect(EVAL_SUITE_REGISTRY.map((suite) => suite.suiteId)).toEqual([
-      "loom-routing",
-      "tapestry-execution",
-      "shuttle-execution",
-      "spindle-tools",
-      "pattern-planning",
-      "weft-review",
-      "warp-security",
-    ]);
+  it("shared suite registry still enumerates the seven-suite text-only surface", () => {
+    expect(EVAL_SUITE_REGISTRY).toHaveLength(7);
+    expect(EVAL_SUITE_REGISTRY.map((suite) => suite.shortAgentFilter)).toEqual(
+      EVAL_SHORT_AGENT_FILTERS,
+    );
   });
 
   it("returns ok(summary) when env and matrix are valid (even with empty fixture sets)", async () => {
@@ -395,7 +466,8 @@ describe("EvalOrchestrator — suite fan-out", () => {
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
       const summary = result.value;
-      // With 3 default models × 7 suites, expect up to 21 partial failures
+      // With 3 default models × registry suite count, expect one failure per
+      // model × suite combination when fixtures are missing.
       // (NoCasesFound or PromptProviderFailed for each model × suite pair)
       const failureTypes = summary.partialFailures.map((f) => f.type);
       // NoCasesFound (or PromptProviderFailed) expected for each missing suite
@@ -404,8 +476,8 @@ describe("EvalOrchestrator — suite fan-out", () => {
   });
 
   it("fan-out across all default models: partialFailures count reflects model × suite combinations", async () => {
-    // With 3 default models and 7 suites and no fixture data, we get
-    // 3 models × 7 suites = 21 partial failures (NoCasesFound per combination).
+    // With 3 default models and the current registry suite count, we get one
+    // partial failure per model × suite combination (NoCasesFound here).
     // This verifies that the orchestrator fans out across the full default matrix,
     // not just the first model.
     const orchestrator = new EvalOrchestrator(makeOptions());
@@ -426,8 +498,9 @@ describe("EvalOrchestrator — suite fan-out", () => {
     );
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      // One model × 7 suites = at most 7 partial failures
-      expect(result.value.partialFailures.length).toBeLessThanOrEqual(7);
+      expect(result.value.partialFailures.length).toBeLessThanOrEqual(
+        EVAL_SUITE_REGISTRY.length,
+      );
     }
   });
 
@@ -1166,7 +1239,7 @@ describe("EvalOrchestrator — publishMode: 'publish' integration", () => {
     const modelClient = new StubModelClient();
     modelClient.setDefaultResponse({
       model: modelId,
-      content: 'I will route to "shuttle-backend" agent for this task.',
+      content: 'I will route to "shuttle" agent for this task.',
     });
 
     const scorer = new StubAgentEvalsScorer();
@@ -1233,7 +1306,7 @@ describe("EvalOrchestrator — publishMode: 'publish' integration", () => {
     const modelClient = new StubModelClient();
     modelClient.setDefaultResponse({
       model: modelId,
-      content: 'Route to "shuttle-backend" agent.',
+      content: 'Route to "shuttle" agent.',
     });
 
     const scorer = new StubAgentEvalsScorer();
@@ -1294,7 +1367,7 @@ describe("EvalOrchestrator — publishMode: 'publish' integration", () => {
     const modelClient = new StubModelClient();
     modelClient.setDefaultResponse({
       model: modelId,
-      content: 'Route to "shuttle-backend" agent.',
+      content: 'Route to "shuttle" agent.',
     });
 
     const scorer = new StubAgentEvalsScorer();
@@ -1367,11 +1440,10 @@ describe("EvalOrchestrator — raw artifact filename timestamp integration", () 
     const caseId = "loom-route-backend-api";
 
     const modelClient = new StubModelClient();
-    // Return content that includes a routing signal for shuttle-backend
+    // Return content that includes a routing signal for shuttle
     modelClient.setDefaultResponse({
       model: modelId,
-      content:
-        'I will route to the "shuttle-backend" agent for this backend API task.',
+      content: 'I will route to the "shuttle" agent for this backend API task.',
     });
 
     const scorer = new StubAgentEvalsScorer();
@@ -1458,7 +1530,7 @@ describe("EvalOrchestrator — raw artifact filename timestamp integration", () 
       const modelClient = new StubModelClient();
       modelClient.setDefaultResponse({
         model: modelId,
-        content: 'Route to "shuttle-backend" agent.',
+        content: 'Route to "shuttle" agent.',
       });
       const scorer = new StubAgentEvalsScorer();
       scorer.setDefaultRecord(makePassingScoreRecord(caseId, modelId));
@@ -1543,7 +1615,7 @@ describe("EvalOrchestrator — raw artifact filename timestamp integration", () 
       const modelClient = new StubModelClient();
       modelClient.setDefaultResponse({
         model: modelId,
-        content: 'Route to "shuttle-backend" agent.',
+        content: 'Route to "shuttle" agent.',
       });
       const scorer = new StubAgentEvalsScorer();
       scorer.setDefaultRecord(makePassingScoreRecord(caseId, modelId));
@@ -1628,7 +1700,7 @@ describe("EvalOrchestrator — generateIndexes wired into production path", () =
     const modelClient = new StubModelClient();
     modelClient.setDefaultResponse({
       model: modelId,
-      content: 'I will route to the "shuttle-backend" agent.',
+      content: 'I will route to the "shuttle" agent.',
     });
     const scorer = new StubAgentEvalsScorer();
     scorer.setDefaultRecord(makePassingScoreRecord(caseId, modelId));
@@ -1685,7 +1757,7 @@ describe("EvalOrchestrator — generateIndexes wired into production path", () =
     const modelClient = new StubModelClient();
     modelClient.setDefaultResponse({
       model: modelId,
-      content: 'I will route to the "shuttle-backend" agent.',
+      content: 'I will route to the "shuttle" agent.',
     });
     const scorer = new StubAgentEvalsScorer();
     scorer.setDefaultRecord(makePassingScoreRecord(caseId, modelId));
@@ -1731,7 +1803,7 @@ describe("EvalOrchestrator — generateIndexes wired into production path", () =
     const modelClient = new StubModelClient();
     modelClient.setDefaultResponse({
       model: modelId,
-      content: 'I will route to the "shuttle-backend" agent.',
+      content: 'I will route to the "shuttle" agent.',
     });
     const scorer = new StubAgentEvalsScorer();
     scorer.setDefaultRecord(makePassingScoreRecord(caseId, modelId));

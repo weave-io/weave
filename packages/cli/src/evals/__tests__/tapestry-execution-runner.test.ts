@@ -376,7 +376,10 @@ function executeCaseWithStubs(
 
   const matchPromise = modelResultAsync
     .andThen((response) => {
-      const delegationChain = extractDelegationChain(response.content);
+      const delegationChain = normalizeDelegationChainForTest(
+        evalCase,
+        extractDelegationChain(response.content),
+      );
       const completionSignalled = detectCompletionSignal(response.content);
       const expectedArtifacts =
         evalCase.expected_outcome.kind === "task_completion"
@@ -510,6 +513,34 @@ function executeCaseWithStubs(
   );
 }
 
+function normalizeDelegationChainForTest(
+  evalCase: EvalCase,
+  delegationChain: string[],
+): string[] {
+  if (evalCase.expected_outcome.kind !== "delegation_chain") {
+    return delegationChain;
+  }
+
+  if (delegationChain.length === 0) {
+    return delegationChain;
+  }
+
+  const normalized = [...delegationChain];
+  const finalExpectedAgent =
+    evalCase.expected_outcome.chain[evalCase.expected_outcome.chain.length - 1];
+  const finalActualAgent = normalized[normalized.length - 1];
+
+  if (finalExpectedAgent === undefined || finalActualAgent === undefined) {
+    return normalized;
+  }
+
+  if (evalCase.accepted_alternates.includes(finalActualAgent)) {
+    normalized[normalized.length - 1] = finalExpectedAgent;
+  }
+
+  return normalized;
+}
+
 function buildRationales(
   dimensions: NormalizedScoreRecord["dimensions"],
 ): Partial<Record<ScoringDimension, string>> {
@@ -596,6 +627,20 @@ describe("extractDelegationChain", () => {
     expect(result).toEqual(["tapestry", "shuttle"]);
   });
 
+  it("infers the synthetic envelope's implicit tapestry delegator", () => {
+    const result = extractDelegationChain(
+      "I will delegate to shuttle for the remaining plan task and wait for the result.",
+    );
+    expect(result).toEqual(["tapestry", "shuttle"]);
+  });
+
+  it("extracts dynamic shuttle category names without a baked legacy list", () => {
+    const result = extractDelegationChain(
+      "Tapestry delegates to shuttle-observability for instrumentation work.",
+    );
+    expect(result).toEqual(["tapestry", "shuttle-observability"]);
+  });
+
   it("returns empty array for single agent (requires at least 2)", () => {
     const result = extractDelegationChain("Only shuttle is mentioned.");
     expect(result.length).toBeLessThan(2);
@@ -680,10 +725,16 @@ describe("detectCompletionSignal", () => {
     expect(detectCompletionSignal("TASK COMPLETE")).toBe(true);
   });
 
-  it("returns false for 'almost done' (not an exact signal)", () => {
-    // 'done' is a substring — this tests heuristic partial matching
-    // The implementation uses includes() so 'done' in 'almost done' matches
-    expect(detectCompletionSignal("Almost done with the work.")).toBe(true);
+  it("returns false for vague progress phrases that are not explicit completion", () => {
+    expect(detectCompletionSignal("Almost done with the work.")).toBe(false);
+  });
+
+  it("detects plan-step completion phrasing from the synthetic execution envelope", () => {
+    expect(
+      detectCompletionSignal(
+        "The remaining plan task is complete and the plan step is done.",
+      ),
+    ).toBe(true);
   });
 });
 
@@ -1097,6 +1148,32 @@ describe("TapestryExecutionRunner — delegation_chain cases", () => {
     const scorerCall = scorer.calls[0];
     expect(scorerCall?.run.delegationChain).toBeDefined();
     expect(scorerCall?.run.delegationChain.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("normalizes accepted alternate shuttle variants back to the canonical expected delegate", async () => {
+    const modelClient = new StubModelClient();
+    modelClient.setDefaultResponse({
+      model: "anthropic/claude-sonnet-4.5",
+      content: "tapestry → shuttle-backend",
+    });
+
+    const scorer = new StubAgentEvalsScorer();
+    scorer.setDefaultRecord(makeDelegationScoreRecord());
+
+    const runner = new InMemoryTapestryRunner(
+      { modelClient, scorer },
+      [
+        makeDelegationCase({
+          accepted_alternates: ["shuttle-backend", "shuttle-frontend"],
+        }),
+      ],
+      [makeEvalRubric()],
+    );
+
+    await runner.run();
+
+    const scorerCall = scorer.calls[0];
+    expect(scorerCall?.run.delegationChain).toEqual(["tapestry", "shuttle"]);
   });
 
   it("result summary reflects delegationCorrectness dimension", async () => {

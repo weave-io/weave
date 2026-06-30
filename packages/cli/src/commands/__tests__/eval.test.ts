@@ -99,7 +99,7 @@ describe("runEval — no subcommand", () => {
 // ---------------------------------------------------------------------------
 
 describe("runEval run — dry-run", () => {
-  it("exits 0 in dry-run mode without calling runner", async () => {
+  it("exits 0 in dry-run mode after calling the injected runner", async () => {
     let runnerCalled = false;
     const { terminal, ctx } = context(
       { evalSubcommand: "run", dryRun: true },
@@ -111,7 +111,7 @@ describe("runEval run — dry-run", () => {
     );
     const result = await runEval(ctx);
     expect(result._unsafeUnwrap()).toBe(0);
-    expect(runnerCalled).toBe(false);
+    expect(runnerCalled).toBe(true);
     const out = terminal.out.join("\n");
     expect(out).toContain("dry run");
   });
@@ -180,10 +180,10 @@ describe("runEval run — dry-run", () => {
     const { terminal, ctx } = context({
       evalSubcommand: "run",
       dryRun: true,
-      evalModel: "claude-sonnet-4-5",
+      evalModel: "anthropic/claude-sonnet-4.5",
     });
     await runEval(ctx);
-    expect(terminal.out.join("\n")).toContain("claude-sonnet-4-5");
+    expect(terminal.out.join("\n")).toContain("anthropic/claude-sonnet-4.5");
   });
 
   it("shows case filter in dry-run summary", async () => {
@@ -235,6 +235,28 @@ describe("runEval run — dry-run", () => {
     });
     await runEval(ctx);
     expect(terminal.out.join("\n")).toContain("Raw artifacts");
+  });
+
+  it("dry-run without injected runner validates real suite fixtures without OPENROUTER_API_KEY", async () => {
+    const terminal = new BufferTerminal();
+    const ctx: EvalContext = {
+      terminal,
+      theme: themeManager.getTheme(false),
+      flags: flags({
+        evalSubcommand: "run",
+        dryRun: true,
+        evalAgent: "loom",
+        evalModel: "anthropic/claude-sonnet-4.5",
+        evalCase: "loom-route-backend-api",
+      }),
+      env: {},
+    };
+
+    const result = await runEval(ctx);
+
+    expect(result._unsafeUnwrap()).toBe(0);
+    expect(terminal.out.join("\n")).toContain("dry run");
+    expect(terminal.err.join("")).toBe("");
   });
 });
 
@@ -388,7 +410,7 @@ describe("runEval run — live path scorer policy", () => {
     expect(terminal.err.join("\n")).toContain("Error:");
   });
 
-  it("dry-run does not call any scorer or model (injected runner not called)", async () => {
+  it("dry-run still delegates through the injected runner", async () => {
     let runnerCalled = false;
     const { terminal, ctx } = context(
       { evalSubcommand: "run", dryRun: true },
@@ -399,10 +421,8 @@ describe("runEval run — live path scorer policy", () => {
       },
     );
     const result = await runEval(ctx);
-    // dry-run exits before runner is called
     expect(result._unsafeUnwrap()).toBe(0);
-    expect(runnerCalled).toBe(false);
-    // Only stdout output (the dry-run summary), no stderr errors
+    expect(runnerCalled).toBe(true);
     expect(terminal.out.join("\n")).toContain("dry run");
     expect(terminal.err.join("")).toBe("");
   });
@@ -658,6 +678,7 @@ describe("runEval run — defaultValidateFilters real fixture integration", () =
       flags: flags({
         evalSubcommand: "run",
         dryRun: true,
+        evalAgent: "loom",
         evalCase: "loom-route-backend-api",
       }),
       env: {},

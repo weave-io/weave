@@ -1,6 +1,6 @@
 {
   "id": "warp-security-block-evidence-findings",
-  "description": "Synthetic security review summary: `packages/cli/src/evals/openrouter-client.ts` now logs raw Authorization headers and `packages/cli/src/evals/sanitizer.ts` misses secret-bearing query parameters. Block only if the review uses a capped blocker count and each finding is backed by evidence, impact, and a file-cited fix.",
+  "description": "Text-only synthetic security review: `packages/cli/src/evals/openrouter-client.ts` now logs raw Authorization headers and `packages/cli/src/evals/sanitizer.ts` misses secret-bearing query parameters. Block only if the assistant text uses a capped blocker count and each finding is backed by evidence, impact, and a file-cited fix.",
   "suite": "warp-security",
   "allowed_agents": ["warp"],
   "allowed_models": [

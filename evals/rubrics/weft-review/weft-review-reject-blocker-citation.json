@@ -5,6 +5,6 @@
     "outcome_weight": 0.7,
     "per_expectation_weight": 0.3,
     "required": true,
-    "notes": "Score only observable rejection discipline: [REJECT], blocker count, and actionable file-cited blockers in assistant text."
+    "notes": "Fairness/alignment: score only observable review structure, [REJECT], explicit BLOCKER lines, and actionable file-cited blockers in assistant text. Do not require hidden diff context or style preferences beyond those signals."
   }
 }

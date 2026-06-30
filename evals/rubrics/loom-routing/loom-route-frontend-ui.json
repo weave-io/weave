@@ -5,6 +5,6 @@
     "outcome_weight": 0.8,
     "per_expectation_weight": 0.2,
     "required": true,
-    "notes": "Routing to the generic shuttle is the primary signal in the current text-only VNext fixture set; thread may appear as evidence gathering before implementation, and reviewer follow-ups should not invalidate the primary route."
+    "notes": "Fairness/alignment: score only observable text routing. Credit direct routing to `shuttle`, ignore follow-up reviewer mentions, and do not require legacy category names or real delegation telemetry."
   }
 }

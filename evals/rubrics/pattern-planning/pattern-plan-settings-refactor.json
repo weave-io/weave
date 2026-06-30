@@ -5,6 +5,6 @@
     "outcome_weight": 0.7,
     "per_expectation_weight": 0.3,
     "required": true,
-    "notes": "Score only observable planning structure signals; do not require unobservable tool execution or semantic taste judgments."
+    "notes": "Fairness/alignment: score only the structural planning artifacts the runner extracts, explicit scope, file-backed tasks, sequencing, and acceptance coverage. Do not require exact tag spellings like `#scope` or self-identification as Pattern."
   }
 }

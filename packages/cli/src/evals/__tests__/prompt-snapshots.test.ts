@@ -26,7 +26,31 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { composeAgentSnapshots, composeSnapshot } from "../prompt-snapshots.js";
+import {
+  composeAgentSnapshots,
+  composeSnapshot,
+  DEFAULT_SNAPSHOT_AGENTS,
+} from "../prompt-snapshots.js";
+import { EVAL_SHORT_AGENT_FILTERS } from "../types.js";
+
+const WEFT_PROMPT_APPROVAL_CONTRACT =
+  "The first line must start with exactly one verdict tag: `[APPROVE]` or `[REJECT]`.";
+const WEFT_PROMPT_REVIEWED_FILES_CONTRACT =
+  "The second line must be `Reviewed files:` with backticked file paths.";
+const WEFT_PROMPT_BLOCKER_CONTRACT =
+  "Every `BLOCKER:` line must cite a specific file path";
+const PATTERN_PROMPT_SCOPE_CONTRACT =
+  "An explicit `## Scope` section that says what is in scope, what is out of scope, and any important constraints.";
+const PATTERN_PROMPT_ORDER_CONTRACT = "## Dependencies and Order";
+const PATTERN_PROMPT_ACCEPTANCE_CONTRACT =
+  "Put acceptance criteria under each task's `**Acceptance**` field";
+const SHUTTLE_PROMPT_TASK_INTAKE_CONTRACT = "1. `Task intake`";
+const SHUTTLE_PROMPT_HONESTY_CONTRACT =
+  "Do not claim hidden proof of file mutation, tool-call telemetry, browser activity, network activity, or runtime events you did not directly observe.";
+const SPINDLE_PROMPT_FACTS_CONTRACT =
+  "A `Source facts` section containing only claims grounded in cited sources.";
+const SPINDLE_PROMPT_HONESTY_CONTRACT =
+  "If network access is actually available in your runtime, use it to fetch documentation pages, specifications, and changelogs directly when needed.";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -361,24 +385,20 @@ describe("composeSnapshot — error paths", () => {
 // ---------------------------------------------------------------------------
 
 describe("composeAgentSnapshots — integration with builtin config", () => {
+  it("default snapshot coverage stays aligned with the shared eval registry", () => {
+    expect(DEFAULT_SNAPSHOT_AGENTS).toEqual(EVAL_SHORT_AGENT_FILTERS);
+  });
+
   it("composes snapshots for default eval agents", async () => {
     const result = await composeAgentSnapshots();
     expect(result.isOk()).toBe(true);
 
     const { snapshots, errors } = result._unsafeUnwrap();
     expect(errors).toHaveLength(0);
-    expect(snapshots).toHaveLength(7);
+    expect(snapshots).toHaveLength(EVAL_SHORT_AGENT_FILTERS.length);
 
     const agentNames = snapshots.map((s) => s.agentName).sort();
-    expect(agentNames).toEqual([
-      "loom",
-      "pattern",
-      "shuttle",
-      "spindle",
-      "tapestry",
-      "warp",
-      "weft",
-    ]);
+    expect(agentNames).toEqual([...EVAL_SHORT_AGENT_FILTERS].sort());
   });
 
   it("all snapshots have valid 64-char hex hashes", async () => {
@@ -404,26 +424,21 @@ describe("composeAgentSnapshots — integration with builtin config", () => {
     expect(loom?.hash).not.toBe(tapestry?.hash);
   });
 
-  it("includes a shuttle snapshot in the default agent set", async () => {
+  it("default agent set includes every shared registry short alias", async () => {
     const result = await composeAgentSnapshots();
     expect(result.isOk()).toBe(true);
 
-    const shuttle = result
-      ._unsafeUnwrap()
-      .snapshots.find((snapshot) => snapshot.agentName === "shuttle");
-    expect(shuttle).toBeDefined();
-    expect(shuttle?.hash).toHaveLength(64);
-  });
+    const snapshotsByAgent = new Map(
+      result
+        ._unsafeUnwrap()
+        .snapshots.map((snapshot) => [snapshot.agentName, snapshot]),
+    );
 
-  it("includes a spindle snapshot in the default agent set", async () => {
-    const result = await composeAgentSnapshots();
-    expect(result.isOk()).toBe(true);
-
-    const spindle = result
-      ._unsafeUnwrap()
-      .snapshots.find((snapshot) => snapshot.agentName === "spindle");
-    expect(spindle).toBeDefined();
-    expect(spindle?.hash).toHaveLength(64);
+    for (const agentName of EVAL_SHORT_AGENT_FILTERS) {
+      const snapshot = snapshotsByAgent.get(agentName);
+      expect(snapshot).toBeDefined();
+      expect(snapshot?.hash).toHaveLength(64);
+    }
   });
 
   it("does not include raw artifacts by default", async () => {
@@ -443,6 +458,66 @@ describe("composeAgentSnapshots — integration with builtin config", () => {
     for (const artifact of rawArtifacts) {
       expect(artifact.composedPrompt.length).toBeGreaterThan(0);
     }
+  });
+
+  it("weft snapshot raw prompt preserves the review-shape contract", async () => {
+    const result = await composeAgentSnapshots({
+      agentNames: ["weft"],
+      rawArtifacts: true,
+    });
+    expect(result.isOk()).toBe(true);
+
+    const artifact = result._unsafeUnwrap().rawArtifacts[0];
+    expect(artifact?.agentName).toBe("weft");
+    expect(artifact?.composedPrompt).toContain(WEFT_PROMPT_APPROVAL_CONTRACT);
+    expect(artifact?.composedPrompt).toContain(
+      WEFT_PROMPT_REVIEWED_FILES_CONTRACT,
+    );
+    expect(artifact?.composedPrompt).toContain(WEFT_PROMPT_BLOCKER_CONTRACT);
+  });
+
+  it("pattern snapshot raw prompt preserves the planning-structure contract", async () => {
+    const result = await composeAgentSnapshots({
+      agentNames: ["pattern"],
+      rawArtifacts: true,
+    });
+    expect(result.isOk()).toBe(true);
+
+    const artifact = result._unsafeUnwrap().rawArtifacts[0];
+    expect(artifact?.agentName).toBe("pattern");
+    expect(artifact?.composedPrompt).toContain(PATTERN_PROMPT_SCOPE_CONTRACT);
+    expect(artifact?.composedPrompt).toContain(PATTERN_PROMPT_ORDER_CONTRACT);
+    expect(artifact?.composedPrompt).toContain(
+      PATTERN_PROMPT_ACCEPTANCE_CONTRACT,
+    );
+  });
+
+  it("shuttle snapshot raw prompt preserves the delegated-task reporting contract", async () => {
+    const result = await composeAgentSnapshots({
+      agentNames: ["shuttle"],
+      rawArtifacts: true,
+    });
+    expect(result.isOk()).toBe(true);
+
+    const artifact = result._unsafeUnwrap().rawArtifacts[0];
+    expect(artifact?.agentName).toBe("shuttle");
+    expect(artifact?.composedPrompt).toContain(
+      SHUTTLE_PROMPT_TASK_INTAKE_CONTRACT,
+    );
+    expect(artifact?.composedPrompt).toContain(SHUTTLE_PROMPT_HONESTY_CONTRACT);
+  });
+
+  it("spindle snapshot raw prompt preserves the cited-facts and honesty contract", async () => {
+    const result = await composeAgentSnapshots({
+      agentNames: ["spindle"],
+      rawArtifacts: true,
+    });
+    expect(result.isOk()).toBe(true);
+
+    const artifact = result._unsafeUnwrap().rawArtifacts[0];
+    expect(artifact?.agentName).toBe("spindle");
+    expect(artifact?.composedPrompt).toContain(SPINDLE_PROMPT_FACTS_CONTRACT);
+    expect(artifact?.composedPrompt).toContain(SPINDLE_PROMPT_HONESTY_CONTRACT);
   });
 
   it("running twice produces identical hashes (deterministic)", async () => {

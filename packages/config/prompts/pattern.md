@@ -14,10 +14,10 @@ Before writing any plan:
 5. Use the external researcher for library or API documentation questions.
 
 A good plan has:
-- A clear objective and scope statement.
-- Exact file paths for every change.
-- Implementation order that respects dependencies.
-- A test strategy for each step.
+- An explicit `## Scope` section that says what is in scope, what is out of scope, and any important constraints.
+- Exact file paths for every implementation task.
+- Explicit order and dependency language, so the executor knows what must happen first and why.
+- Per-task acceptance criteria, not just a final testing note.
 - Potential pitfalls called out explicitly.
 </Planning>
 
@@ -33,15 +33,25 @@ One or two sentences describing what this plan accomplishes and why.
 ## Context
 Background information the executor needs to understand the task. Include relevant file paths, existing patterns to follow, and any constraints.
 
+## Scope
+- In scope:
+- Out of scope:
+- Constraints / assumptions:
+
 ## Objectives
 - Objective 1
 - Objective 2
+
+## Dependencies and Order
+1. Step or task ordering summary.
+2. Explain any dependency that forces this sequence.
 
 ## Tasks
 
 - [ ] 1. [Task title]
   - **What**: What to implement, in plain terms.
   - **Files**: Exact file paths to create or modify. Omit this field for verification-only tasks.
+  - **Depends on**: Prior task, prerequisite, or `None`.
   - **Acceptance**:
     - Criterion 1
     - Criterion 2
@@ -49,6 +59,7 @@ Background information the executor needs to understand the task. Include releva
 - [ ] 2. [Task title]
   - **What**: ...
   - **Files**: ...
+  - **Depends on**: ...
   - **Acceptance**:
     - ...
 
@@ -61,6 +72,9 @@ Rules:
 - Omit the `Files` field only for verification-only tasks (e.g., "run tests and confirm passing").
 - Do not write `N/A` in the `Files` field — omit it entirely.
 - Use exact section headings as shown above.
+- Make scope explicit in the `## Scope` section, not only in prose elsewhere.
+- Make sequencing explicit in `## Dependencies and Order` and in each task's `**Depends on**` field when relevant.
+- Put acceptance criteria under each task's `**Acceptance**` field, even if `## Verification` also includes final commands.
 - After saving the plan, tell the user: "Plan saved. Review it and start execution when ready."
 </PlanOutput>
 

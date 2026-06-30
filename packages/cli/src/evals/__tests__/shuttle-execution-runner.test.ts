@@ -514,7 +514,11 @@ function assembleRunnerResult(
 describe("extractShuttleExecutionSignals", () => {
   it("detects bounded shuttle evidence-report structure from assistant text", () => {
     const content = [
-      "Task [1/1]: Synthetic Shuttle delegated task",
+      "Task intake",
+      "What: Update the shuttle execution suite docs and report concrete completion evidence.",
+      "Files: packages/cli/src/evals/shuttle-execution-runner.ts, evals/README.md",
+      "Acceptance:",
+      "- Reflect bounded task intake",
       "Files changed:",
       "- `packages/cli/src/evals/shuttle-execution-runner.ts`: added structured parsing",
       "Commands run:",
@@ -544,10 +548,11 @@ describe("buildUserMessage", () => {
     const message = buildUserMessage(makeExecutionCase());
     expect(message).toContain("Task [1/1]: Synthetic Shuttle delegated task");
     expect(message).toContain("**Files**:");
+    expect(message).toContain("Task intake");
     expect(message).toContain(
       "Do not claim real file mutation or tool telemetry",
     );
-    expect(message).toContain("Files changed");
+    expect(message).toContain("Acceptance confirmation");
   });
 });
 
@@ -572,6 +577,11 @@ describe("ShuttleExecutionRunner", () => {
     modelClient.setDefaultResponse({
       model: "anthropic/claude-sonnet-4.5",
       content: [
+        "Task intake:",
+        "What: Update the shuttle execution suite docs and report concrete completion evidence.",
+        "Files: packages/cli/src/evals/shuttle-execution-runner.ts, evals/README.md",
+        "Acceptance:",
+        "- Reflect bounded task intake, file-list awareness, acceptance-criteria confirmation, and final evidence reporting from text only.",
         "Files changed:",
         "- `packages/cli/src/evals/shuttle-execution-runner.ts`: added task-structure parsing",
         "Commands run:",
@@ -608,6 +618,11 @@ describe("ShuttleExecutionRunner", () => {
     modelClient.setDefaultResponse({
       model: "anthropic/claude-sonnet-4.5",
       content: [
+        "Task intake:",
+        "What: Confirm the delegated shuttle task.",
+        "Files: evals/README.md",
+        "Acceptance:",
+        "- Report bounded evidence from assistant text only.",
         "Files changed:",
         "- `evals/README.md`: documented shuttle-execution fixtures",
         "Commands run:",

@@ -4,13 +4,11 @@
  * Connects all evaluation pipeline components into a single, policy-aware
  * orchestration flow:
  *
- *   1. Validates the environment (API key check via `readEvalEnv`).
+ *   1. Validates the environment (API key check via `readEvalEnv`) for live runs.
  *   2. Loads and validates the model matrix; resolves the effective model set.
  *   3. Composes prompt snapshots and derives the provenance manifest.
- *   4. Fans out across all registered eval suites (loom-routing,
- *      tapestry-execution, shuttle-execution, spindle-tools,
- *      pattern-planning, weft-review, warp-security)
- *      with the effective model/case/agent filters.
+ *   4. Fans out across all suites in the shared eval registry with the
+ *      effective model/case/agent filters.
  *   5. Aggregates per-runner results into a run-level summary with
  *      per-agent and per-model rollups.
  *   6. Writes the publishable bundle via `ArtifactBundleWriter`.
@@ -21,6 +19,10 @@
  *
  * # Policy contracts
  *
+ *   - Dry-runs skip environment validation, model calls, prompt snapshot
+ *     provenance, bundle writes, raw-artifact writes, and external
+ *     publication. They still load the real suite fixtures/rubrics through the
+ *     shared runner path so fixture-contract drift fails closed.
  *   - Partial failures (per-case errors) surface as typed `CliError` values
  *     in the returned summary — they never cause the orchestrator to throw.
  *   - The orchestrator never publishes unsanitized or raw-default intermediate
@@ -56,7 +58,6 @@ import {
   type RemoteSequenceReader,
 } from "./artifact-bundle.js";
 import {
-  type EvalEnv,
   type EvalEnvError,
   OPENROUTER_API_KEY_ENV_VAR,
   readEvalEnv,
@@ -563,20 +564,25 @@ export class EvalOrchestrator {
   run(request: EvalRunRequest): ResultAsync<EvalRunSummary, CliError> {
     const startedAt = new Date().toISOString();
 
-    // Step 1: Validate environment — fail fast before any model calls
-    const envResult = readEvalEnv(this.env);
-    if (envResult.isErr()) {
-      const envErr = envResult.error;
-      return new ResultAsync(
-        Promise.resolve(
-          err<EvalRunSummary, CliError>({
-            type: "EvalValidation",
-            message: this.sanitizeEnvErrorMessage(envErr),
-          }),
-        ),
-      );
+    // Step 1: Validate environment for live runs only.
+    //
+    // Dry-runs intentionally skip API-key validation because they do not make
+    // model calls. They still execute the real suite fixture/rubric loading
+    // path via `executeSuites()`.
+    if (!request.dryRun) {
+      const envResult = readEvalEnv(this.env);
+      if (envResult.isErr()) {
+        const envErr = envResult.error;
+        return new ResultAsync(
+          Promise.resolve(
+            err<EvalRunSummary, CliError>({
+              type: "EvalValidation",
+              message: this.sanitizeEnvErrorMessage(envErr),
+            }),
+          ),
+        );
+      }
     }
-    const evalEnv = envResult.value;
 
     // Step 2: Load the model matrix and resolve effective model set
     return this.resolveModelSet(request).andThen((modelEntries) => {
@@ -588,43 +594,55 @@ export class EvalOrchestrator {
       const metadata = this.buildRunMetadata(request, repoSha, startedAt);
 
       // Step 5: Execute suites and collect results
-      return this.executeSuites(
-        request,
-        evalEnv,
-        modelEntries,
-        repoSha,
-      ).andThen(({ runnerResults, partialFailures, provenanceManifest }) => {
-        // Step 6: Write the bundle
-        return this.writeBundle(
-          runnerResults,
-          provenanceManifest,
-          repoSha,
-          request,
-        ).andThen((writeResult) => {
-          // Step 7: Optionally write raw artifacts
-          const rawArtifactResults = request.rawArtifacts
-            ? this.writeRawArtifacts(runnerResults, writeResult.bundleDir)
-            : Promise.resolve({
-                written: [] as string[],
-                errors: [] as string[],
-              });
+      return this.executeSuites(request, modelEntries, repoSha).andThen(
+        ({ runnerResults, partialFailures, provenanceManifest }) => {
+          if (request.dryRun) {
+            return ResultAsync.fromSafePromise(
+              Promise.resolve(
+                this.assembleRunSummary(
+                  metadata,
+                  runnerResults,
+                  partialFailures,
+                  this.bundleRoot,
+                  null,
+                  [],
+                ),
+              ),
+            );
+          }
 
-          return ResultAsync.fromSafePromise(rawArtifactResults).map(
-            (_rawResult) => {
-              // Step 8: Assemble run-level summary
-              const summary = this.assembleRunSummary(
-                metadata,
-                runnerResults,
-                partialFailures,
-                writeResult.bundleDir,
-                writeResult.runId,
-                writeResult.filesWritten,
-              );
-              return summary;
-            },
-          );
-        });
-      });
+          // Step 6: Write the bundle
+          return this.writeBundle(
+            runnerResults,
+            provenanceManifest,
+            repoSha,
+            request,
+          ).andThen((writeResult) => {
+            // Step 7: Optionally write raw artifacts
+            const rawArtifactResults = request.rawArtifacts
+              ? this.writeRawArtifacts(runnerResults, writeResult.bundleDir)
+              : Promise.resolve({
+                  written: [] as string[],
+                  errors: [] as string[],
+                });
+
+            return ResultAsync.fromSafePromise(rawArtifactResults).map(
+              (_rawResult) => {
+                // Step 8: Assemble run-level summary
+                const summary = this.assembleRunSummary(
+                  metadata,
+                  runnerResults,
+                  partialFailures,
+                  writeResult.bundleDir,
+                  writeResult.runId,
+                  writeResult.filesWritten,
+                );
+                return summary;
+              },
+            );
+          });
+        },
+      );
     });
   }
 
@@ -700,13 +718,11 @@ export class EvalOrchestrator {
    * Results are accumulated sequentially to avoid race conditions on the
    * shared `runnerResults` and `partialFailures` arrays.
    *
-   * The final `EvalRunSummary` will contain one `AgentRollup` per (suite ×
-   * model) combination that produced results, and one `ModelRollup` per
-   * model across all suites.
+   * The final `EvalRunSummary` will contain one runner rollup per executed
+   * suite/model combination, and one `ModelRollup` per model across all suites.
    */
   private executeSuites(
     request: EvalRunRequest,
-    _evalEnv: EvalEnv,
     modelEntries: ModelMatrixEntry[],
     repoSha: string,
   ): ResultAsync<
@@ -754,10 +770,19 @@ export class EvalOrchestrator {
 
     return ResultAsync.fromSafePromise(
       executeSuites().then(async () => {
-        // Collect prompt snapshots for all eval-covered agents before deriving provenance.
+        if (request.dryRun) {
+          return {
+            runnerResults,
+            partialFailures,
+            provenanceManifest: null,
+          };
+        }
+
+        // Collect prompt snapshots for the shared eval-covered agent surface
+        // before deriving provenance.
         // The snapshot provider returns publishable hash-only records — no raw text.
         const snapshots = await this.snapshotProvider.getSnapshots(
-          EVAL_SHORT_AGENT_FILTERS,
+          getEvalCoveredPromptAgents(),
         );
         // Derive provenance manifest from the collected snapshots
         const provenanceManifest = this.deriveProvenance(snapshots, repoSha);
@@ -1066,7 +1091,7 @@ export class EvalOrchestrator {
             publisher,
             remoteSequenceReader,
             // Produce the human-readable Markdown report alongside the JSON
-            // report for every non-dry-run bundle so all suite families surface
+            // report for every non-dry-run bundle so all registered suites surface
             // through the same public reporting pipeline.
             writeMarkdown: !request.dryRun,
             // Generate dashboard indexes on every normal (non-dry-run) run so that

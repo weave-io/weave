@@ -1,6 +1,6 @@
 {
   "id": "pattern-plan-settings-refactor",
-  "description": "Create an implementation plan for refactoring the project settings workflow with explicit scope, file-backed tasks, sequencing, and acceptance coverage.",
+  "description": "Create a text-only implementation plan for refactoring the project settings workflow with explicit scope, file-backed tasks, sequencing, and acceptance coverage.",
   "suite": "pattern-planning",
   "allowed_agents": ["pattern"],
   "allowed_models": [
@@ -19,31 +19,6 @@
     ]
   },
   "accepted_alternates": [],
-  "transcript_expectations": [
-    {
-      "check": "content_contains",
-      "role": "assistant",
-      "contains": "#scope"
-    },
-    {
-      "check": "content_contains",
-      "role": "assistant",
-      "contains": "#files"
-    },
-    {
-      "check": "content_contains",
-      "role": "assistant",
-      "contains": "#sequence"
-    },
-    {
-      "check": "content_contains",
-      "role": "assistant",
-      "contains": "#acceptance"
-    },
-    {
-      "check": "agent_mentioned",
-      "agent_name": "pattern"
-    }
-  ],
+  "transcript_expectations": [],
   "tags": ["planning", "structure", "pattern"]
 }
