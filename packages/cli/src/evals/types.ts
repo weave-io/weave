@@ -1110,6 +1110,51 @@ export interface RawCaseResultArtifact {
    */
   dimensionRationales: Partial<Record<ScoringDimension, string>>;
   /**
+   * Optional deterministic runner-local diagnostics.
+   *
+   * Used to explain extraction outcomes without relying on judge rationale or
+   * raw freeform interpretation. Local-only; never publish.
+   */
+  runnerDiagnostics?: {
+    /** Artifact identifiers the runner detected from the assistant text. */
+    detectedArtifacts: string[];
+    /** Required artifact identifiers that the runner did not detect. */
+    missingRequiredArtifacts: string[];
+    /** Structured Loom routing signals used to explain route extraction outcomes. */
+    routingSignals?: {
+      /** Raw extracted agent mentions before canonicalization. */
+      extractedAgents: string[];
+      /** Canonical routed agents after normalizing accepted shuttle variants. */
+      canonicalRoutedAgents: string[];
+      /** Primary implementation-routing agents used for scoring. */
+      primaryRoutedAgents: string[];
+      /** Exploratory or evidence-gathering agents kept out of the primary route. */
+      exploratoryAgents: string[];
+      /** Expected routing target from the fixture. */
+      expectedTarget: string;
+      /** Accepted routing targets after canonicalization. */
+      acceptedTargets: string[];
+      /** First primary routing target observed after canonicalization. */
+      observedPrimaryTarget?: string;
+      /** Bounded classification for local regression triage. */
+      classification:
+        | "matched-primary-target"
+        | "acceptable-but-nonprimary-exploratory-route"
+        | "wrong-primary-target"
+        | "extraction-miss";
+    };
+    /** Structured planning-signal booleans and counts used by the runner. */
+    planningSignals?: {
+      scopeExplicit: boolean;
+      fileBackedTasks: boolean;
+      sequencingExplicit: boolean;
+      acceptanceCoverage: boolean;
+      taskCount: number;
+      fileCount: number;
+      acceptanceCount: number;
+    };
+  };
+  /**
    * Bounded error summary, if the run or scoring step failed.
    *
    * Uses `RawErrorSummary` (not a raw string) to enforce a type-level cap

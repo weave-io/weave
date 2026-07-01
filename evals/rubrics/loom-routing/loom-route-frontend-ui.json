@@ -5,6 +5,6 @@
     "outcome_weight": 0.8,
     "per_expectation_weight": 0.2,
     "required": true,
-    "notes": "Fairness/alignment: score only observable text routing. Credit direct routing to `shuttle`, ignore follow-up reviewer mentions, and do not require legacy category names or real delegation telemetry."
+    "notes": "Fairness/alignment: score only observable text routing. Credit the primary implementation route to `shuttle`, treat category shuttles as equivalent to `shuttle`, ignore exploratory `thread` context and follow-up reviewer mentions when they are not the primary implementation target, and do not require real delegation telemetry."
   }
 }

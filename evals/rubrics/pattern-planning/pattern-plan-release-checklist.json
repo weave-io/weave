@@ -5,6 +5,6 @@
     "outcome_weight": 0.7,
     "per_expectation_weight": 0.3,
     "required": true,
-    "notes": "Fairness/alignment: score only the structural planning artifacts the runner extracts, explicit scope, file-backed tasks, sequencing, and acceptance coverage. Do not require exact file-name mentions or exact marker tags when the same structure is otherwise observable."
+    "notes": "Fairness/alignment: score only the structural planning artifacts the runner extracts, explicit scope, file-backed tasks, sequencing, and acceptance coverage. Do not require exact marker tags or one exact heading phrase when the same structure is otherwise observable. Do require task-level file ownership and task-level acceptance or success criteria, so a plan with only a top-level file list or only a final verification note still fails for missing structure."
   }
 }

@@ -162,12 +162,13 @@
   - class RealLangChainJudge
   - _...10 more_
 - `packages/cli/src/evals/loom-routing-runner.ts`
+  - function analyzeLoomRouting: (content) => LoomRoutingAnalysis
   - function extractRoutedAgents: (content) => string[]
   - function redactSecrets: (raw) => string
   - class LoomRoutingRunner
+  - interface LoomRoutingAnalysis
   - interface LoomRoutingRunnerOptions
-  - interface LoomRunRequest
-  - const LOOM_ROUTING_SUITE
+  - _...2 more_
 - `packages/cli/src/evals/model-matrix.ts`
   - function loadModelMatrix: (matrixPath) => ResultAsync<ModelMatrix, FixtureSchemaError>
   - function resolveDefaultModels: (matrix) => ModelMatrixEntry[]
@@ -251,8 +252,8 @@
   - class EvalOrchestrator
   - interface EvalRunMetadata
   - interface ModelRollup
-  - interface AgentRollup
-  - _...4 more_
+  - interface RepeatabilityComparisonKey
+  - _...13 more_
 - `packages/cli/src/evals/sanitizer.ts`
   - function sanitizeCaseResultSummary: (summary) => SanitizedCaseResultSummary
   - function sanitizeScoreRecord: (record) => SanitizedScoreRecord

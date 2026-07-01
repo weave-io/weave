@@ -46,6 +46,7 @@ import {
   StubAgentEvalsScorer,
 } from "../langchain-agent-evals.js";
 import {
+  analyzeLoomRouting,
   extractRoutedAgents,
   LOOM_ROUTING_SUITE,
   LoomRoutingRunner,
@@ -341,10 +342,11 @@ function executeCaseWithStubs(
 
   const matchPromise = modelResultAsync
     .andThen((response) => {
+      const routingAnalysis = analyzeLoomRouting(response.content);
       const runOutput: ModelRunOutput = {
         caseId: evalCase.id,
         modelId,
-        routedAgents: extractRoutedAgents(response.content),
+        routedAgents: routingAnalysis.primaryRoutedAgents,
         delegationChain: [],
         transcript: [
           { role: "user", content: userMessage },
@@ -361,10 +363,11 @@ function executeCaseWithStubs(
           runOutput,
           scoreRecord,
           composedPrompt: systemPrompt,
+          routingAnalysis,
         }));
     })
     .match<CaseResult>(
-      ({ runOutput, scoreRecord, composedPrompt }) => {
+      ({ runOutput, scoreRecord, composedPrompt, routingAnalysis }) => {
         const dimensionScores: Record<
           ScoringDimension,
           { score: number; applicable: boolean }
@@ -422,6 +425,56 @@ function executeCaseWithStubs(
                   ? scoreRecord.dimensions.rationaleQuality.rationale
                   : undefined,
               },
+              runnerDiagnostics:
+                evalCase.expected_outcome.kind === "agent_routing"
+                  ? (() => {
+                      let classification:
+                        | "extraction-miss"
+                        | "acceptable-but-nonprimary-exploratory-route"
+                        | "matched-primary-target"
+                        | "wrong-primary-target" = "wrong-primary-target";
+
+                      if (routingAnalysis.extractedAgents.length === 0) {
+                        classification = "extraction-miss";
+                      } else if (
+                        routingAnalysis.exploratoryAgents.length > 0 &&
+                        routingAnalysis.primaryRoutedAgents[0] === "shuttle"
+                      ) {
+                        classification =
+                          "acceptable-but-nonprimary-exploratory-route";
+                      } else if (
+                        routingAnalysis.primaryRoutedAgents[0] === "shuttle"
+                      ) {
+                        classification = "matched-primary-target";
+                      }
+
+                      return {
+                        detectedArtifacts: [],
+                        missingRequiredArtifacts: [],
+                        routingSignals: {
+                          extractedAgents: routingAnalysis.extractedAgents,
+                          canonicalRoutedAgents:
+                            routingAnalysis.canonicalRoutedAgents,
+                          primaryRoutedAgents:
+                            routingAnalysis.primaryRoutedAgents,
+                          exploratoryAgents: routingAnalysis.exploratoryAgents,
+                          expectedTarget:
+                            evalCase.expected_outcome.target_agent === "shuttle"
+                              ? "shuttle"
+                              : evalCase.expected_outcome.target_agent,
+                          acceptedTargets: [
+                            evalCase.expected_outcome.target_agent,
+                            ...evalCase.accepted_alternates,
+                          ].map((agent) =>
+                            agent.startsWith("shuttle-") ? "shuttle" : agent,
+                          ),
+                          observedPrimaryTarget:
+                            routingAnalysis.primaryRoutedAgents[0],
+                          classification,
+                        },
+                      };
+                    })()
+                  : undefined,
             }
           : undefined;
 
@@ -613,6 +666,41 @@ describe("extractRoutedAgents", () => {
     // This is a best-effort heuristic — the test just verifies the function
     // doesn't throw and returns an array
     expect(Array.isArray(result)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// analyzeLoomRouting — primary vs exploratory route semantics
+// ---------------------------------------------------------------------------
+
+describe("analyzeLoomRouting", () => {
+  it("treats exploratory thread pre-hops as non-primary when shuttle follows", () => {
+    const result = analyzeLoomRouting(
+      "Delegation Sequence:\n1. [Sequential] thread: Explore the current settings UX\n2. [Sequential] shuttle: Implement the settings UX update",
+    );
+
+    expect(result.extractedAgents).toEqual(["thread", "shuttle"]);
+    expect(result.exploratoryAgents).toEqual(["thread"]);
+    expect(result.primaryRoutedAgents).toEqual(["shuttle"]);
+  });
+
+  it("canonicalizes category shuttles to shuttle for primary routing", () => {
+    const result = analyzeLoomRouting(
+      "Route to shuttle-backend for the API work.",
+    );
+
+    expect(result.extractedAgents).toEqual(["shuttle-backend"]);
+    expect(result.canonicalRoutedAgents).toEqual(["shuttle"]);
+    expect(result.primaryRoutedAgents).toEqual(["shuttle"]);
+  });
+
+  it("keeps thread primary when there is no implementation shuttle route", () => {
+    const result = analyzeLoomRouting(
+      "Delegate to thread to investigate the confusing settings behavior.",
+    );
+
+    expect(result.extractedAgents).toEqual(["thread"]);
+    expect(result.primaryRoutedAgents).toEqual(["thread"]);
   });
 });
 
@@ -1384,6 +1472,50 @@ describe("LoomRoutingRunner — execution with scoring", () => {
     expect(callRequest?.messages.some((m) => m.role === "system")).toBe(true);
   });
 
+  it("scores the primary shuttle route even when thread appears first as exploratory context", async () => {
+    const modelClient = new StubModelClient();
+    modelClient.setDefaultResponse({
+      model: "anthropic/claude-sonnet-4.5",
+      content:
+        "Delegation Sequence:\n1. [Sequential] thread: Explore the existing settings flow\n2. [Sequential] shuttle: Implement the settings UX improvements",
+    });
+
+    const scorer = new StubAgentEvalsScorer();
+    scorer.setDefaultRecord(makeNormalizedScoreRecord());
+
+    const runner = new InMemoryLoomRunner(
+      { modelClient, scorer, loomSystemPrompt: "Test" },
+      [makeAgentRoutingCase({ id: "ambiguous" })],
+      [makeEvalRubric("ambiguous")],
+    );
+
+    await runner.run();
+
+    expect(scorer.calls[0]?.run.routedAgents).toEqual(["shuttle"]);
+  });
+
+  it("preserves a wrong primary route when shuttle is only mentioned as a follow-up", async () => {
+    const modelClient = new StubModelClient();
+    modelClient.setDefaultResponse({
+      model: "anthropic/claude-sonnet-4.5",
+      content:
+        "Delegate to thread to investigate the settings problem first. Follow up with shuttle after the investigation if implementation work is needed.",
+    });
+
+    const scorer = new StubAgentEvalsScorer();
+    scorer.setDefaultRecord(makeNormalizedScoreRecord({ passed: false }));
+
+    const runner = new InMemoryLoomRunner(
+      { modelClient, scorer, loomSystemPrompt: "Test" },
+      [makeAgentRoutingCase({ id: "wrong-primary" })],
+      [makeEvalRubric("wrong-primary")],
+    );
+
+    await runner.run();
+
+    expect(scorer.calls[0]?.run.routedAgents).toEqual(["thread"]);
+  });
+
   it("model error is accumulated as zero-score result, suite continues", async () => {
     const modelClient = new StubModelClient();
     // First case errors, second case succeeds
@@ -2126,6 +2258,116 @@ describe("LoomRoutingRunner — localDiagnostic in rawArtifact errorSummary", ()
 });
 
 // ---------------------------------------------------------------------------
+// LoomRoutingRunner — routing runner diagnostics
+// ---------------------------------------------------------------------------
+
+describe("LoomRoutingRunner — routing runner diagnostics", () => {
+  it("classifies matched primary shuttle routes", async () => {
+    const modelClient = new StubModelClient();
+    modelClient.setDefaultResponse({
+      model: "anthropic/claude-sonnet-4.5",
+      content: "Route to shuttle-backend for the API work.",
+    });
+    const scorer = new StubAgentEvalsScorer();
+    scorer.setDefaultRecord(makeNormalizedScoreRecord());
+
+    const runner = new InMemoryLoomRunner(
+      { modelClient, scorer },
+      [makeAgentRoutingCase({ id: "backend" })],
+      [makeEvalRubric("backend")],
+    );
+
+    const result = await runner.run({ rawArtifacts: true });
+    const signals =
+      result._unsafeUnwrap().caseResults[0]?.rawArtifact?.runnerDiagnostics
+        ?.routingSignals;
+
+    expect(signals?.classification).toBe("matched-primary-target");
+    expect(signals?.canonicalRoutedAgents).toEqual(["shuttle"]);
+    expect(signals?.primaryRoutedAgents).toEqual(["shuttle"]);
+  });
+
+  it("classifies acceptable but non-primary exploratory routes in the ambiguous case", async () => {
+    const modelClient = new StubModelClient();
+    modelClient.setDefaultResponse({
+      model: "anthropic/claude-sonnet-4.5",
+      content:
+        "1. [Sequential] thread: Explore why the settings experience feels confusing\n2. [Sequential] shuttle: Implement the chosen improvement",
+    });
+    const scorer = new StubAgentEvalsScorer();
+    scorer.setDefaultRecord(makeNormalizedScoreRecord());
+
+    const runner = new InMemoryLoomRunner(
+      { modelClient, scorer },
+      [makeAgentRoutingCase({ id: "ambiguous" })],
+      [makeEvalRubric("ambiguous")],
+    );
+
+    const result = await runner.run({ rawArtifacts: true });
+    const signals =
+      result._unsafeUnwrap().caseResults[0]?.rawArtifact?.runnerDiagnostics
+        ?.routingSignals;
+
+    expect(signals?.classification).toBe(
+      "acceptable-but-nonprimary-exploratory-route",
+    );
+    expect(signals?.extractedAgents).toEqual(["thread", "shuttle"]);
+    expect(signals?.exploratoryAgents).toEqual(["thread"]);
+    expect(signals?.observedPrimaryTarget).toBe("shuttle");
+  });
+
+  it("classifies wrong primary targets when shuttle is absent from the extracted route", async () => {
+    const modelClient = new StubModelClient();
+    modelClient.setDefaultResponse({
+      model: "anthropic/claude-sonnet-4.5",
+      content: "Delegate to thread to investigate the issue.",
+    });
+    const scorer = new StubAgentEvalsScorer();
+    scorer.setDefaultRecord(makeNormalizedScoreRecord({ passed: false }));
+
+    const runner = new InMemoryLoomRunner(
+      { modelClient, scorer },
+      [makeAgentRoutingCase({ id: "wrong" })],
+      [makeEvalRubric("wrong")],
+    );
+
+    const result = await runner.run({ rawArtifacts: true });
+    const signals =
+      result._unsafeUnwrap().caseResults[0]?.rawArtifact?.runnerDiagnostics
+        ?.routingSignals;
+
+    expect(signals?.classification).toBe("wrong-primary-target");
+    expect(signals?.observedPrimaryTarget).toBe("thread");
+  });
+
+  it("classifies extraction misses when no route can be extracted", async () => {
+    const modelClient = new StubModelClient();
+    modelClient.setDefaultResponse({
+      model: "anthropic/claude-sonnet-4.5",
+      content:
+        "This needs thoughtful handling, but I am not choosing an agent here.",
+    });
+    const scorer = new StubAgentEvalsScorer();
+    scorer.setDefaultRecord(makeNormalizedScoreRecord({ passed: false }));
+
+    const runner = new InMemoryLoomRunner(
+      { modelClient, scorer },
+      [makeAgentRoutingCase({ id: "miss" })],
+      [makeEvalRubric("miss")],
+    );
+
+    const result = await runner.run({ rawArtifacts: true });
+    const signals =
+      result._unsafeUnwrap().caseResults[0]?.rawArtifact?.runnerDiagnostics
+        ?.routingSignals;
+
+    expect(signals?.classification).toBe("extraction-miss");
+    expect(signals?.extractedAgents).toEqual([]);
+    expect(signals?.primaryRoutedAgents).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // LoomRoutingRunner — provider failure prevents model calls
 // ---------------------------------------------------------------------------
 
@@ -2331,7 +2573,8 @@ describe("LoomRoutingRunner — publicExplanation field in CaseResultSummary", (
 
     const result = await runner.run();
     const caseResult = result._unsafeUnwrap().caseResults[0];
-    const { publicExplanation } = caseResult!.summary;
+    expect(caseResult).toBeDefined();
+    const publicExplanation = caseResult?.summary.publicExplanation;
     expect((publicExplanation?.text ?? "").length).toBeLessThanOrEqual(
       EXPLANATION_MAX_CHARS,
     );
@@ -2363,9 +2606,10 @@ describe("LoomRoutingRunner — publicExplanation field in CaseResultSummary", (
 
     const result = await runner.run();
     const caseResult = result._unsafeUnwrap().caseResults[0];
-    const { publicExplanation } = caseResult!.summary;
+    expect(caseResult).toBeDefined();
+    const publicExplanation = caseResult?.summary.publicExplanation;
     const text = publicExplanation?.text ?? "";
-    for (const { name, pattern } of FORBIDDEN_EXPLANATION_PATTERNS) {
+    for (const { pattern } of FORBIDDEN_EXPLANATION_PATTERNS) {
       expect(pattern.test(text)).toBe(false);
     }
   });
@@ -2391,7 +2635,8 @@ describe("LoomRoutingRunner — publicExplanation field in CaseResultSummary", (
 
     const result = await runner.run();
     const caseResult = result._unsafeUnwrap().caseResults[0];
-    const { publicExplanation } = caseResult!.summary;
+    expect(caseResult).toBeDefined();
+    const publicExplanation = caseResult?.summary.publicExplanation;
     const validSources = [
       "score_bucket_label",
       "structured_signal",
@@ -2479,7 +2724,8 @@ describe("LoomRoutingRunner — publicExplanation field in CaseResultSummary", (
 
     const result = await runner.run();
     const caseResult = result._unsafeUnwrap().caseResults[0];
-    const { publicExplanation } = caseResult!.summary;
+    expect(caseResult).toBeDefined();
+    const publicExplanation = caseResult?.summary.publicExplanation;
     const text = publicExplanation?.text ?? "";
 
     // The adversarial rationale text must NOT appear in the public explanation
@@ -2513,7 +2759,8 @@ describe("LoomRoutingRunner — publicExplanation field in CaseResultSummary", (
 
     const result = await runner.run();
     const caseResult = result._unsafeUnwrap().caseResults[0];
-    const { publicExplanation } = caseResult!.summary;
+    expect(caseResult).toBeDefined();
+    const publicExplanation = caseResult?.summary.publicExplanation;
     const text = publicExplanation?.text ?? "";
 
     // The raw model response sentinel must NOT appear in the public explanation
@@ -2550,7 +2797,8 @@ describe("LoomRoutingRunner — publicExplanation field in CaseResultSummary", (
 
     const result = await runner.run();
     const caseResult = result._unsafeUnwrap().caseResults[0];
-    const { publicExplanation } = caseResult!.summary;
+    expect(caseResult).toBeDefined();
+    const publicExplanation = caseResult?.summary.publicExplanation;
     const text = publicExplanation?.text ?? "";
 
     // The prompt sentinel must NOT appear in the public explanation

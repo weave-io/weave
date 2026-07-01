@@ -521,6 +521,7 @@ eval-bundles/
         ├── score-warp-security.json
         ├── prompt-hashes.json        Prompt hash records (internal, not published)
         ├── provenance-manifest.json  Full sanitized provenance manifest (internal)
+        ├── repeatability-diagnostics.json  Local-only rerun comparison aid (internal, not published)
         ├── public-report.json        Public dashboard report (PublicReportBundle schema)
         └── public-report.md          Human-readable Markdown report (download-only)
 ```
@@ -534,6 +535,8 @@ eval-bundles/
 **`public-report.json` (`PublicReportBundle` schema)**: the primary dashboard-facing artifact. Contains per-suite case entries, score buckets, optional bounded explanations, and aggregate pass/fail counts. All explanation fields derive exclusively from allowlisted structured sources (score bucket labels, rubric templates, structured signals) — never from raw model output or rationale strings.
 
 **`public-report.md`**: a download-only Markdown summary. Never injected as HTML into any web page.
+
+**`repeatability-diagnostics.json`**: a local-only developer artifact written for every non-dry run with real results. It compares the current run against earlier local runs with the exact same `--agent`, `--model`, and `--case` filter tuple plus the same effective suite set. This is the fastest way to see whether a Pattern or Loom result is stable across reruns or just one-run noise. It is intentionally not published and not part of the dashboard contract.
 
 ### CI artifact model
 
@@ -561,11 +564,35 @@ The workflow sets `WEAVE_EVAL_PUBLISH_MODE=publish` in the eval run step env blo
 
 The current milestone guidance is to **stop further prompt tuning for now** and prefer eval cleanup or more evidence collection first. The final decision rubric and the exact reruns that support it live in [Agent Evals, 2026-06-30 final decision gate, rubric and recommendation](./agent-evals.md#2026-06-30-final-decision-gate-rubric-and-recommendation).
 
+For the current Pattern and Loom stabilization work, contributors should use the stricter evidence-freeze workflow in [Agent Evals, 2026-07-01 regression freeze for Pattern and Loom](./agent-evals.md#2026-07-01-regression-freeze-for-pattern-and-loom) before touching cases, rubrics, runners, or prompts.
+
+For repeated local Pattern and Loom verification, also use [Agent Evals, 2026-07-01 repeatability diagnostics for Pattern and Loom reruns](./agent-evals.md#2026-07-01-repeatability-diagnostics-for-pattern-and-loom-reruns). That section defines the rerun batch and how to read `repeatability-diagnostics.json` so Sonnet regressions and GPT-5.5 gains are judged across repeated executions instead of from a single run.
+
 Short version:
 
 - After phase 1, the reruns were the dry-run preflight, narrowed live suite reruns for Loom, Tapestry, Warp, Weft, and Pattern, plus one raw-artifact spot check per narrowed case.
 - After phase 2, the reruns were the dry-run preflight, targeted prompt-suite reruns for Weft, Pattern, Shuttle, and Spindle, plus a one-model Sonnet cross-suite smoke.
 - The evidence favors eval cleanup over more prompt work because the visible gains were narrow or model-specific, Pattern regressed overall, Spindle stayed unstable, Shuttle lacks a true phase-1 checkpoint baseline, and Weft's small gain disappeared in the Sonnet smoke.
+
+For Pattern and Loom specifically, the required local command sequence is now:
+
+1. `bun packages/cli/src/main.ts eval run --dry-run --agent pattern`
+2. `bun packages/cli/src/main.ts eval run --dry-run --agent loom`
+3. `bun packages/cli/src/main.ts eval run --agent pattern`
+4. `bun packages/cli/src/main.ts eval run --agent loom`
+5. `bun packages/cli/src/main.ts eval run --agent pattern --model anthropic/claude-opus-4.5`
+6. `bun packages/cli/src/main.ts eval run --agent pattern --model anthropic/claude-sonnet-4.5`
+7. `bun packages/cli/src/main.ts eval run --agent pattern --model openai/gpt-5.5`
+8. `bun packages/cli/src/main.ts eval run --agent loom --model anthropic/claude-opus-4.5`
+9. `bun packages/cli/src/main.ts eval run --agent loom --model anthropic/claude-sonnet-4.5`
+10. `bun packages/cli/src/main.ts eval run --agent loom --model openai/gpt-5.5`
+11. `bun packages/cli/src/main.ts eval run --agent pattern --case pattern-plan-settings-refactor --raw-artifacts`
+12. `bun packages/cli/src/main.ts eval run --agent pattern --case pattern-plan-release-checklist --raw-artifacts`
+13. `bun packages/cli/src/main.ts eval run --agent loom --case loom-route-backend-api --raw-artifacts`
+14. `bun packages/cli/src/main.ts eval run --agent loom --case loom-route-frontend-ui --raw-artifacts`
+15. `bun packages/cli/src/main.ts eval run --agent loom --case loom-route-ambiguous-direct-shuttle --raw-artifacts`
+
+Use those commands to confirm the published comparison between `60c3ebd-2026-06-30-001` and `40c1cee-2026-07-01-001`. If the regression reproduces only on one model, or only in one run without repeatable raw-output evidence, the correct next step is still more evidence gathering, not prompt tuning.
 
 ### Security warnings summary
 
