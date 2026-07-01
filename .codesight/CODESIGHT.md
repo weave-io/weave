@@ -4,8 +4,8 @@
 > **Monorepo:** @weave/core, @weave/engine, @weave/config, @weave/cli, @weave/docs, @weave/adapter-opencode
 
 > 0 routes | 0 models | 0 components | 119 lib files | 7 env vars | 5 middleware | 0% test coverage
-> **Token savings:** this file is ~11,100 tokens. Without it, AI exploration would cost ~42,300 tokens. **Saves ~31,100 tokens per conversation.**
-> **Last scanned:** 2026-07-01 17:02 — re-run after significant changes
+> **Token savings:** this file is ~11,200 tokens. Without it, AI exploration would cost ~42,300 tokens. **Saves ~31,100 tokens per conversation.**
+> **Last scanned:** 2026-07-01 18:17 — re-run after significant changes
 
 ---
 
@@ -174,12 +174,12 @@
   - _...10 more_
 - `packages/cli/src/evals/loom-routing-runner.ts`
   - function analyzeLoomRouting: (content) => LoomRoutingAnalysis
+  - function buildRoutingRunnerDiagnostics: (evalCase, analysis) => NonNullable<RawCaseResultArtifact["runnerDiagnostics"]> | undefined
   - function extractRoutedAgents: (content) => string[]
   - function redactSecrets: (raw) => string
   - class LoomRoutingRunner
   - interface LoomRoutingAnalysis
-  - interface LoomRoutingRunnerOptions
-  - _...2 more_
+  - _...3 more_
 - `packages/cli/src/evals/model-matrix.ts`
   - function loadModelMatrix: (matrixPath) => ResultAsync<ModelMatrix, FixtureSchemaError>
   - function resolveDefaultModels: (matrix) => ModelMatrixEntry[]
@@ -197,12 +197,12 @@
   - _...1 more_
 - `packages/cli/src/evals/pattern-planning-runner.ts`
   - function extractPlanningSignals: (content) => void
+  - function buildPlanningRunnerDiagnostics: (evalCase, signals) => NonNullable<RawCaseResultArtifact["runnerDiagnostics"]>
+  - function buildModelRunOutput: (evalCase, modelId, userMessage, content) => ModelRunOutput
   - function redactSecrets: (raw) => string
   - function buildUserMessage: (evalCase) => string
   - class PatternPlanningRunner
-  - interface PatternPlanningRunnerOptions
-  - interface PatternPlanningRunRequest
-  - _...1 more_
+  - _...3 more_
 - `packages/cli/src/evals/prompt-snapshots.ts`
   - function composeSnapshot: (input) => ResultAsync<ComposeSnapshotResult, ProvenanceError>
   - function composeAgentSnapshots: (options) => ResultAsync<ComposeAgentSnapshotsResult, ProvenanceError>

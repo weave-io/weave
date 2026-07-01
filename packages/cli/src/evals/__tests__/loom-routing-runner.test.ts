@@ -47,6 +47,7 @@ import {
 } from "../langchain-agent-evals.js";
 import {
   analyzeLoomRouting,
+  buildRoutingRunnerDiagnostics,
   extractRoutedAgents,
   LOOM_ROUTING_SUITE,
   LoomRoutingRunner,
@@ -425,56 +426,10 @@ function executeCaseWithStubs(
                   ? scoreRecord.dimensions.rationaleQuality.rationale
                   : undefined,
               },
-              runnerDiagnostics:
-                evalCase.expected_outcome.kind === "agent_routing"
-                  ? (() => {
-                      let classification:
-                        | "extraction-miss"
-                        | "acceptable-but-nonprimary-exploratory-route"
-                        | "matched-primary-target"
-                        | "wrong-primary-target" = "wrong-primary-target";
-
-                      if (routingAnalysis.extractedAgents.length === 0) {
-                        classification = "extraction-miss";
-                      } else if (
-                        routingAnalysis.exploratoryAgents.length > 0 &&
-                        routingAnalysis.primaryRoutedAgents[0] === "shuttle"
-                      ) {
-                        classification =
-                          "acceptable-but-nonprimary-exploratory-route";
-                      } else if (
-                        routingAnalysis.primaryRoutedAgents[0] === "shuttle"
-                      ) {
-                        classification = "matched-primary-target";
-                      }
-
-                      return {
-                        detectedArtifacts: [],
-                        missingRequiredArtifacts: [],
-                        routingSignals: {
-                          extractedAgents: routingAnalysis.extractedAgents,
-                          canonicalRoutedAgents:
-                            routingAnalysis.canonicalRoutedAgents,
-                          primaryRoutedAgents:
-                            routingAnalysis.primaryRoutedAgents,
-                          exploratoryAgents: routingAnalysis.exploratoryAgents,
-                          expectedTarget:
-                            evalCase.expected_outcome.target_agent === "shuttle"
-                              ? "shuttle"
-                              : evalCase.expected_outcome.target_agent,
-                          acceptedTargets: [
-                            evalCase.expected_outcome.target_agent,
-                            ...evalCase.accepted_alternates,
-                          ].map((agent) =>
-                            agent.startsWith("shuttle-") ? "shuttle" : agent,
-                          ),
-                          observedPrimaryTarget:
-                            routingAnalysis.primaryRoutedAgents[0],
-                          classification,
-                        },
-                      };
-                    })()
-                  : undefined,
+              runnerDiagnostics: buildRoutingRunnerDiagnostics(
+                evalCase,
+                routingAnalysis,
+              ),
             }
           : undefined;
 

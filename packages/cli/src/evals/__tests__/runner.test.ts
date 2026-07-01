@@ -1860,6 +1860,78 @@ describe("EvalOrchestrator — raw artifact filename timestamp integration", () 
     expect(diag.comparableRunCount).toBe(1);
     expect(diag.comparableRunIds).toEqual([narrowedRun.value.runId]);
   });
+
+  it("repeatability diagnostics ignore previous artifacts with incompatible schemaVersion", async () => {
+    const modelId = "anthropic/claude-sonnet-4.5";
+    const caseId = "loom-route-backend-api";
+    const bundleRoot = join(TEMP_DIR, `repeatability-stale-${uid()}`);
+    const staleRunId = "stale000-2026-07-01-001";
+    const staleDir = join(bundleRoot, "runs", staleRunId);
+
+    await Bun.spawn(["mkdir", "-p", staleDir]).exited;
+
+    await Bun.write(
+      join(staleDir, "repeatability-diagnostics.json"),
+      JSON.stringify({
+        schemaVersion: 999,
+        comparisonKey: {
+          agentFilter: "loom",
+          modelFilter: modelId,
+          caseFilter: caseId,
+          suites: ["loom-routing"],
+        },
+        currentRun: {
+          runId: staleRunId,
+          repoSha: "deadbeef",
+          startedAt: "2026-07-01T00:00:00.000Z",
+          bundleDir: staleDir,
+          suites: [],
+        },
+        comparableRunIds: [staleRunId],
+        comparableRunCount: 1,
+        driftSummary: { models: [], caseModels: [] },
+      }),
+    );
+
+    const modelClient = new StubModelClient();
+    modelClient.setDefaultResponse({
+      model: modelId,
+      content: 'I will route to the "shuttle" agent.',
+    });
+    const scorer = new StubAgentEvalsScorer();
+    scorer.setDefaultRecord(makePassingScoreRecord(caseId, modelId));
+
+    const orchestrator = new EvalOrchestrator({
+      modelClient,
+      scorer,
+      promptProvider: new MockPromptProvider("You are Loom. Route tasks."),
+      snapshotProvider: new StubSnapshotProvider(),
+      gitShaProvider: makeGitShaProvider(),
+      bundleRoot,
+      evalsRoot: REAL_EVALS_ROOT,
+      env: { OPENROUTER_API_KEY: FAKE_API_KEY },
+    });
+
+    const result = await orchestrator.run({
+      agent: "loom",
+      model: modelId,
+      case: caseId,
+      dryRun: false,
+      rawArtifacts: false,
+    });
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    const diagnostics = result.value.repeatabilityDiagnostics;
+    expect(diagnostics).not.toBeNull();
+    if (diagnostics === null) return;
+    expect(result.value.runId).not.toBeNull();
+    if (result.value.runId === null) return;
+
+    expect(diagnostics.comparableRunCount).toBe(1);
+    expect(diagnostics.comparableRunIds).toEqual([result.value.runId]);
+  });
 });
 
 // ---------------------------------------------------------------------------

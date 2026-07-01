@@ -136,7 +136,7 @@ All suites share the same case schema, rubric schema, and model matrix. The shar
 
 The current eval runners are **text-only prompt evals**: they call OpenRouter chat completions and extract signals from assistant text. They do not execute harness tools, inspect side effects, or capture real tool-call telemetry. Fixture authors should therefore assert observable text signals such as agent mentions, routed agents, delegation chains, completion phrases, and produced artifact names. Do not use a text-only fixture to require unobservable runtime behavior. Reserve those checks for a future harness-backed trajectory runner.
 
-#### 2026-07-01 Loom routing stabilization, primary vs exploratory route rules
+### 2026-07-01 Loom routing stabilization, primary vs exploratory route rules
 
 The Loom suite now makes the routing contract more explicit so regressions are explainable without prompt rewrites.
 

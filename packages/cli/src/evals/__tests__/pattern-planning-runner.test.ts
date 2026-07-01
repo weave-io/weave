@@ -6,6 +6,8 @@ import {
 } from "../langchain-agent-evals.js";
 import { StubModelClient } from "../openrouter-client.js";
 import {
+  buildModelRunOutput,
+  buildPlanningRunnerDiagnostics,
   buildUserMessage,
   extractPlanningSignals,
   PATTERN_PLANNING_SUITE,
@@ -20,7 +22,6 @@ import type {
   DimensionScore,
   EvalCase,
   EvalRubric,
-  ModelRunOutput,
   NormalizedScoreRecord,
   PromptProvider,
   RawCaseResultArtifact,
@@ -294,26 +295,13 @@ function executeCaseWithStubs(
 
   const matchPromise = modelResultAsync
     .andThen((response) => {
-      const signals = extractPlanningSignals(response.content);
-      const requiredArtifacts =
-        evalCase.expected_outcome.kind === "task_completion"
-          ? evalCase.expected_outcome.required_artifacts
-          : [];
-      const runOutput: ModelRunOutput = {
-        caseId: evalCase.id,
+      const runOutput = buildModelRunOutput(
+        evalCase,
         modelId,
-        routedAgents: signals.scopeExplicit ? ["pattern"] : [],
-        delegationChain: [],
-        transcript: [
-          { role: "user", content: userMessage },
-          { role: "assistant", content: response.content },
-        ],
-        rawContent: response.content,
-        completionSignalled: requiredArtifacts.every((artifact) =>
-          signals.producedArtifacts.includes(artifact),
-        ),
-        producedArtifacts: signals.producedArtifacts,
-      };
+        userMessage,
+        response.content,
+      );
+      const signals = extractPlanningSignals(response.content);
 
       return anyRunner.scorer
         .score(runOutput, evalCase, rubrics)
@@ -322,17 +310,10 @@ function executeCaseWithStubs(
           scoreRecord,
           composedPrompt: systemPrompt,
           signals,
-          requiredArtifacts,
         }));
     })
     .match<CaseResult>(
-      ({
-        runOutput,
-        scoreRecord,
-        composedPrompt,
-        signals,
-        requiredArtifacts,
-      }) => {
+      ({ runOutput, scoreRecord, composedPrompt, signals }) => {
         const summary: CaseResultSummary = {
           caseId: evalCase.id,
           modelId,
@@ -377,21 +358,10 @@ function executeCaseWithStubs(
               transcript: runOutput.transcript,
               rawContent: runOutput.rawContent,
               dimensionRationales: buildRationales(scoreRecord.dimensions),
-              runnerDiagnostics: {
-                detectedArtifacts: signals.producedArtifacts,
-                missingRequiredArtifacts: requiredArtifacts.filter(
-                  (artifact) => !signals.producedArtifacts.includes(artifact),
-                ),
-                planningSignals: {
-                  scopeExplicit: signals.scopeExplicit,
-                  fileBackedTasks: signals.fileBackedTasks,
-                  sequencingExplicit: signals.sequencingExplicit,
-                  acceptanceCoverage: signals.acceptanceCoverage,
-                  taskCount: signals.taskCount,
-                  fileCount: signals.fileCount,
-                  acceptanceCount: signals.acceptanceCount,
-                },
-              },
+              runnerDiagnostics: buildPlanningRunnerDiagnostics(
+                evalCase,
+                signals,
+              ),
             }
           : undefined;
 
@@ -554,8 +524,8 @@ describe("extractPlanningSignals", () => {
       "pattern plan",
       "#scope Focus on settings workflow and no auth changes.",
       "#files",
-      "1. Update `packages/cli/src/evals/pattern-planning-runner.ts`.",
-      "2. Update evals/README.md to document the suite.",
+      "- [ ] Update `packages/cli/src/evals/pattern-planning-runner.ts`.",
+      "- [ ] Update `evals/README.md` to document the suite.",
       "#sequence Execute the loader updates before docs.",
       "#acceptance",
       "- Verify dry-run loads the suite.",
@@ -578,6 +548,21 @@ describe("extractPlanningSignals", () => {
     expect(signals.fileBackedTasks).toBe(false);
     expect(signals.acceptanceCoverage).toBe(false);
     expect(signals.producedArtifacts).toEqual([]);
+  });
+
+  it("does not treat a legacy #files section without task structure as file-backed tasks", () => {
+    const signals = extractPlanningSignals(
+      [
+        "#scope Release cleanup only.",
+        "#files",
+        "`packages/cli/src/evals/pattern-planning-runner.ts`",
+        "`docs/agent-evals.md`",
+      ].join("\n"),
+    );
+
+    expect(signals.scopeExplicit).toBe(true);
+    expect(signals.fileBackedTasks).toBe(false);
+    expect(signals.producedArtifacts).toEqual(["plan_scope_explicit"]);
   });
 
   it("accepts builtin-style formatting variations without exact marker tags", () => {
@@ -655,9 +640,9 @@ describe("extractPlanningSignals", () => {
 
     expect(signals.producedArtifacts).toEqual([
       "plan_scope_explicit",
-      "plan_file_tasks",
       "plan_sequence_explicit",
     ]);
+    expect(signals.fileBackedTasks).toBe(false);
     expect(signals.acceptanceCoverage).toBe(false);
   });
 });

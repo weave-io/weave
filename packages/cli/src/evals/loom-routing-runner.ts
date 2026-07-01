@@ -283,7 +283,7 @@ export function analyzeLoomRouting(content: string): LoomRoutingAnalysis {
   };
 }
 
-function buildRoutingRunnerDiagnostics(
+export function buildRoutingRunnerDiagnostics(
   evalCase: EvalCase,
   analysis: LoomRoutingAnalysis,
 ): NonNullable<RawCaseResultArtifact["runnerDiagnostics"]> | undefined {
@@ -299,28 +299,11 @@ function buildRoutingRunnerDiagnostics(
   );
   const observedPrimaryTarget = analysis.primaryRoutedAgents[0];
 
-  let classification:
-    | "matched-primary-target"
-    | "acceptable-but-nonprimary-exploratory-route"
-    | "wrong-primary-target"
-    | "extraction-miss" = "extraction-miss";
-
-  if (analysis.extractedAgents.length === 0) {
-    classification = "extraction-miss";
-  } else if (
-    analysis.exploratoryAgents.length > 0 &&
-    observedPrimaryTarget !== undefined &&
-    acceptedTargets.includes(observedPrimaryTarget)
-  ) {
-    classification = "acceptable-but-nonprimary-exploratory-route";
-  } else if (
-    observedPrimaryTarget !== undefined &&
-    acceptedTargets.includes(observedPrimaryTarget)
-  ) {
-    classification = "matched-primary-target";
-  } else {
-    classification = "wrong-primary-target";
-  }
+  const classification = classifyRoutingDiagnostics(
+    analysis,
+    observedPrimaryTarget,
+    acceptedTargets,
+  );
 
   return {
     detectedArtifacts: [],
@@ -338,6 +321,37 @@ function buildRoutingRunnerDiagnostics(
       classification,
     },
   };
+}
+
+function classifyRoutingDiagnostics(
+  analysis: LoomRoutingAnalysis,
+  observedPrimaryTarget: string | undefined,
+  acceptedTargets: readonly string[],
+):
+  | "matched-primary-target"
+  | "acceptable-but-nonprimary-exploratory-route"
+  | "wrong-primary-target"
+  | "extraction-miss" {
+  if (analysis.extractedAgents.length === 0) {
+    return "extraction-miss";
+  }
+
+  if (
+    analysis.exploratoryAgents.length > 0 &&
+    observedPrimaryTarget !== undefined &&
+    acceptedTargets.includes(observedPrimaryTarget)
+  ) {
+    return "acceptable-but-nonprimary-exploratory-route";
+  }
+
+  if (
+    observedPrimaryTarget !== undefined &&
+    acceptedTargets.includes(observedPrimaryTarget)
+  ) {
+    return "matched-primary-target";
+  }
+
+  return "wrong-primary-target";
 }
 
 /**

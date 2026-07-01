@@ -109,7 +109,9 @@ function detectStructuralArtifacts(
     produced.push("plan_scope_explicit");
   }
   if (
-    (tags.has("files") && evidence.fileCount > 0) ||
+    (tags.has("files") &&
+      evidence.hasTaskStructure &&
+      evidence.fileCount > 0) ||
     ((FILES_HEADING_RE.test(content) || FILES_FIELD_RE.test(content)) &&
       evidence.hasTaskStructure &&
       evidence.fileCount > 0) ||
@@ -245,7 +247,7 @@ function missingRequiredPlanningArtifacts(
   );
 }
 
-function buildPlanningRunnerDiagnostics(
+export function buildPlanningRunnerDiagnostics(
   evalCase: EvalCase,
   signals: PlanningSignals,
 ): NonNullable<RawCaseResultArtifact["runnerDiagnostics"]> {
@@ -267,7 +269,7 @@ function buildPlanningRunnerDiagnostics(
   };
 }
 
-function buildModelRunOutput(
+export function buildModelRunOutput(
   evalCase: EvalCase,
   modelId: string,
   userMessage: string,

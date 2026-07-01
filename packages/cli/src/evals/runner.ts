@@ -322,6 +322,8 @@ export interface RepeatabilityDiagnosticsArtifact {
   };
 }
 
+const REPEATABILITY_DIAGNOSTICS_SCHEMA_VERSION = 1 as const;
+
 /**
  * Compact summary reference returned to callers after writing the local
  * repeatability artifact.
@@ -1352,7 +1354,7 @@ export class EvalOrchestrator {
       });
 
       const artifact: RepeatabilityDiagnosticsArtifact = {
-        schemaVersion: 1,
+        schemaVersion: REPEATABILITY_DIAGNOSTICS_SCHEMA_VERSION,
         generatedAt: new Date().toISOString(),
         comparisonKey,
         currentRun,
@@ -1398,9 +1400,10 @@ export class EvalOrchestrator {
     const artifacts: RepeatabilityDiagnosticsArtifact[] = [];
     for (const filePath of files) {
       try {
-        const parsed = (await Bun.file(
-          filePath,
-        ).json()) as RepeatabilityDiagnosticsArtifact;
+        const parsed = (await Bun.file(filePath).json()) as unknown;
+        if (!this.isCompatibleRepeatabilityArtifact(parsed)) {
+          continue;
+        }
         if (
           !this.sameRepeatabilityComparisonKey(
             parsed.comparisonKey,
@@ -1414,6 +1417,40 @@ export class EvalOrchestrator {
     }
 
     return artifacts;
+  }
+
+  private isCompatibleRepeatabilityArtifact(
+    value: unknown,
+  ): value is RepeatabilityDiagnosticsArtifact {
+    if (typeof value !== "object" || value === null) {
+      return false;
+    }
+
+    const candidate = value as {
+      schemaVersion?: unknown;
+      comparisonKey?: unknown;
+      currentRun?: unknown;
+    };
+
+    if (candidate.schemaVersion !== REPEATABILITY_DIAGNOSTICS_SCHEMA_VERSION) {
+      return false;
+    }
+
+    if (
+      typeof candidate.comparisonKey !== "object" ||
+      candidate.comparisonKey === null
+    ) {
+      return false;
+    }
+
+    if (
+      typeof candidate.currentRun !== "object" ||
+      candidate.currentRun === null
+    ) {
+      return false;
+    }
+
+    return true;
   }
 
   private buildRepeatabilityComparisonKey(
