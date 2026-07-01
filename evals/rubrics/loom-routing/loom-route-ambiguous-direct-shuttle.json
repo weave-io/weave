@@ -5,6 +5,6 @@
     "outcome_weight": 0.7,
     "per_expectation_weight": 0.3,
     "required": true,
-    "notes": "Fairness/alignment: this case checks bounded ambiguous-work fallback in text only. Credit direct routing to `shuttle`, and do not require a `thread` pre-hop, legacy category names, or real delegation/tool-call evidence."
+    "notes": "Fairness/alignment: this case checks bounded ambiguous-work fallback in text only. Credit the primary implementation route to `shuttle`. Treat category shuttles such as `shuttle-backend` or `shuttle-frontend` as equivalent to `shuttle` for scoring. If the answer mentions exploratory `thread` work first but still makes `shuttle` the primary implementation handoff, treat that as acceptable but non-primary exploratory context rather than a failure. Do not require a `thread` pre-hop or real delegation/tool-call evidence."
   }
 }

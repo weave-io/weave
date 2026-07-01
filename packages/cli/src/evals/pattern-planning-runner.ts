@@ -37,7 +37,10 @@ import type {
 export const PATTERN_PLANNING_SUITE = "pattern-planning";
 
 const STRUCTURAL_TAG_RE = /(?:^|\s)#(?<tag>[a-z_][a-z0-9_-]*)\b/gim;
-const TASK_LINE_RE = /^\s*(?:[-*]|\d+\.)\s+.+$/gm;
+const TASK_CHECKBOX_LINE_RE = /^\s*[-*]\s*\[[ xX]?\]\s+.+$/gm;
+const TASK_NUMBERED_LINE_RE = /^\s*\d+\.\s+.+$/gm;
+const TASKS_HEADING_RE = /^\s*(?:#{1,6}\s*)?tasks?\b\s*:?(?:\s|$)/im;
+const WHAT_FIELD_RE = /^\s*[-*]?\s*(?:\*\*)?what(?:\*\*)?\s*:/gim;
 const FILE_TOKEN_RE =
   /`([^`]+)`|\b(?:[A-Za-z0-9_.-]+\/)+[A-Za-z0-9_.-]+\b|\b[A-Za-z0-9_.-]+\.(?:ts|tsx|js|jsx|json|md|weave|yml|yaml|css|scss|html)\b/g;
 const ACCEPTANCE_LINE_RE =
@@ -46,14 +49,23 @@ const ACCEPTANCE_LINE_RE =
 const SCOPE_HEADING_RE = /^\s*(?:#{1,6}\s*)?scope\b\s*:?(?:\s|$)/im;
 const FILES_HEADING_RE = /^\s*(?:#{1,6}\s*)?files?\b\s*:?(?:\s|$)/im;
 const FILES_FIELD_RE = /^\s*[-*]?\s*(?:\*\*)?files?(?:\*\*)?\s*:/im;
+const FILES_FIELD_GLOBAL_RE = /^\s*[-*]?\s*(?:\*\*)?files?(?:\*\*)?\s*:/gim;
 const ORDER_HEADING_RE =
-  /^\s*(?:#{1,6}\s*)?(?:sequence|order|implementation order|dependencies and order)\b\s*:?(?:\s|$)/im;
+  /^\s*(?:#{1,6}\s*)?(?:sequence|order|order of operations|implementation order|execution order|dependencies and order)\b\s*:?(?:\s|$)/im;
 const DEPENDENCY_FIELD_RE =
   /^\s*[-*]?\s*(?:\*\*)?(?:depends on|dependencies?)(?:\*\*)?\s*:/im;
+const DEPENDENCY_FIELD_GLOBAL_RE =
+  /^\s*[-*]?\s*(?:\*\*)?(?:depends on|dependencies?)(?:\*\*)?\s*:/gim;
 const ACCEPTANCE_HEADING_RE =
-  /^\s*(?:#{1,6}\s*)?acceptance(?:\s+criteria)?\b\s*:?(?:\s|$)/im;
+  /^\s*(?:#{1,6}\s*)?(?:acceptance(?:\s+criteria)?|success\s+criteria)\b\s*:?(?:\s|$)/im;
 const ACCEPTANCE_FIELD_RE =
   /^\s*[-*]?\s*(?:\*\*)?acceptance(?:\s+criteria)?(?:\*\*)?\s*:/im;
+const ACCEPTANCE_FIELD_GLOBAL_RE =
+  /^\s*[-*]?\s*(?:\*\*)?acceptance(?:\s+criteria)?(?:\*\*)?\s*:/gim;
+const SUCCESS_CRITERIA_FIELD_RE =
+  /^\s*[-*]?\s*(?:\*\*)?(?:success|completion)\s+criteria(?:\*\*)?\s*:/im;
+const SUCCESS_CRITERIA_FIELD_GLOBAL_RE =
+  /^\s*[-*]?\s*(?:\*\*)?(?:success|completion)\s+criteria(?:\*\*)?\s*:/gim;
 
 const STRUCTURAL_ARTIFACTS = [
   "plan_scope_explicit",
@@ -64,7 +76,24 @@ const STRUCTURAL_ARTIFACTS = [
 
 type StructuralArtifact = (typeof STRUCTURAL_ARTIFACTS)[number];
 
-function detectStructuralArtifacts(content: string): StructuralArtifact[] {
+function countMatches(content: string, pattern: RegExp): number {
+  return [...content.matchAll(pattern)].length;
+}
+
+type PlanningSignals = ReturnType<typeof extractPlanningSignals>;
+
+function detectStructuralArtifacts(
+  content: string,
+  evidence: {
+    hasTaskStructure: boolean;
+    fileCount: number;
+    fileFieldCount: number;
+    acceptanceCount: number;
+    acceptanceFieldCount: number;
+    successCriteriaFieldCount: number;
+    numberedLineCount: number;
+  },
+): StructuralArtifact[] {
   const lower = content.toLowerCase();
   const tags = new Set<string>();
 
@@ -80,9 +109,15 @@ function detectStructuralArtifacts(content: string): StructuralArtifact[] {
     produced.push("plan_scope_explicit");
   }
   if (
-    tags.has("files") ||
-    FILES_HEADING_RE.test(content) ||
-    FILES_FIELD_RE.test(content)
+    (tags.has("files") &&
+      evidence.hasTaskStructure &&
+      evidence.fileCount > 0) ||
+    ((FILES_HEADING_RE.test(content) || FILES_FIELD_RE.test(content)) &&
+      evidence.hasTaskStructure &&
+      evidence.fileCount > 0) ||
+    (evidence.fileFieldCount > 0 &&
+      evidence.hasTaskStructure &&
+      evidence.fileCount > 0)
   ) {
     produced.push("plan_file_tasks");
   }
@@ -90,15 +125,20 @@ function detectStructuralArtifacts(content: string): StructuralArtifact[] {
     tags.has("sequence") ||
     ORDER_HEADING_RE.test(content) ||
     DEPENDENCY_FIELD_RE.test(content) ||
-    /\bstep\s+1\b/.test(lower)
+    /\bstep\s+1\b/.test(lower) ||
+    (TASKS_HEADING_RE.test(content) && evidence.numberedLineCount >= 2)
   ) {
     produced.push("plan_sequence_explicit");
   }
   if (
-    tags.has("acceptance") ||
+    (tags.has("acceptance") && evidence.acceptanceCount > 0) ||
     ACCEPTANCE_HEADING_RE.test(content) ||
     ACCEPTANCE_FIELD_RE.test(content) ||
-    /\bacceptance\s+criteria\b/.test(lower)
+    SUCCESS_CRITERIA_FIELD_RE.test(content) ||
+    /\bacceptance\s+criteria\b/.test(lower) ||
+    ((evidence.acceptanceFieldCount > 0 ||
+      evidence.successCriteriaFieldCount > 0) &&
+      evidence.hasTaskStructure)
   ) {
     produced.push("plan_acceptance_coverage");
   }
@@ -116,20 +156,58 @@ export function extractPlanningSignals(content: string): {
   acceptanceCount: number;
   producedArtifacts: string[];
 } {
-  const taskCount = [...content.matchAll(TASK_LINE_RE)].length;
+  const checklistTaskCount = countMatches(content, TASK_CHECKBOX_LINE_RE);
+  const numberedLineCount = countMatches(content, TASK_NUMBERED_LINE_RE);
+  const whatFieldCount = countMatches(content, WHAT_FIELD_RE);
+  const fileFieldCount = countMatches(content, FILES_FIELD_GLOBAL_RE);
+  const dependencyCount = countMatches(content, DEPENDENCY_FIELD_GLOBAL_RE);
+  const acceptanceFieldCount = countMatches(
+    content,
+    ACCEPTANCE_FIELD_GLOBAL_RE,
+  );
+  const successCriteriaFieldCount = countMatches(
+    content,
+    SUCCESS_CRITERIA_FIELD_GLOBAL_RE,
+  );
   const fileMatches = [...content.matchAll(FILE_TOKEN_RE)];
-  const acceptanceCount = [...content.matchAll(ACCEPTANCE_LINE_RE)].length;
-  const producedArtifacts = detectStructuralArtifacts(content);
+  const acceptanceCount = countMatches(content, ACCEPTANCE_LINE_RE);
+  const hasTaskStructure =
+    checklistTaskCount > 0 ||
+    whatFieldCount > 0 ||
+    fileFieldCount > 0 ||
+    acceptanceFieldCount > 0 ||
+    successCriteriaFieldCount > 0 ||
+    TASKS_HEADING_RE.test(content);
+  const taskCount = Math.max(
+    checklistTaskCount,
+    whatFieldCount,
+    fileFieldCount,
+    acceptanceFieldCount + successCriteriaFieldCount,
+    TASKS_HEADING_RE.test(content) ? numberedLineCount : 0,
+  );
+  const producedArtifacts = detectStructuralArtifacts(content, {
+    hasTaskStructure,
+    fileCount: fileMatches.length,
+    fileFieldCount,
+    acceptanceCount,
+    acceptanceFieldCount,
+    successCriteriaFieldCount,
+    numberedLineCount,
+  });
 
   return {
     scopeExplicit: producedArtifacts.includes("plan_scope_explicit"),
     fileBackedTasks:
       producedArtifacts.includes("plan_file_tasks") ||
-      (taskCount > 0 && fileMatches.length > 0),
+      (taskCount > 0 && fileFieldCount > 0 && fileMatches.length > 0),
     sequencingExplicit:
-      producedArtifacts.includes("plan_sequence_explicit") || taskCount >= 2,
+      producedArtifacts.includes("plan_sequence_explicit") ||
+      dependencyCount > 0 ||
+      (TASKS_HEADING_RE.test(content) && numberedLineCount >= 2),
     acceptanceCoverage:
       producedArtifacts.includes("plan_acceptance_coverage") ||
+      ((acceptanceFieldCount > 0 || successCriteriaFieldCount > 0) &&
+        taskCount > 0) ||
       acceptanceCount > 0,
     taskCount,
     fileCount: fileMatches.length,
@@ -160,7 +238,38 @@ function hasRequiredPlanningArtifacts(
   );
 }
 
-function buildModelRunOutput(
+function missingRequiredPlanningArtifacts(
+  evalCase: EvalCase,
+  producedArtifacts: readonly string[],
+): string[] {
+  return requiredPlanningArtifacts(evalCase).filter(
+    (artifact) => !producedArtifacts.includes(artifact),
+  );
+}
+
+export function buildPlanningRunnerDiagnostics(
+  evalCase: EvalCase,
+  signals: PlanningSignals,
+): NonNullable<RawCaseResultArtifact["runnerDiagnostics"]> {
+  return {
+    detectedArtifacts: signals.producedArtifacts,
+    missingRequiredArtifacts: missingRequiredPlanningArtifacts(
+      evalCase,
+      signals.producedArtifacts,
+    ),
+    planningSignals: {
+      scopeExplicit: signals.scopeExplicit,
+      fileBackedTasks: signals.fileBackedTasks,
+      sequencingExplicit: signals.sequencingExplicit,
+      acceptanceCoverage: signals.acceptanceCoverage,
+      taskCount: signals.taskCount,
+      fileCount: signals.fileCount,
+      acceptanceCount: signals.acceptanceCount,
+    },
+  };
+}
+
+export function buildModelRunOutput(
   evalCase: EvalCase,
   modelId: string,
   userMessage: string,
@@ -617,6 +726,10 @@ export class PatternPlanningRunner {
                 rawContent: runOutput.rawContent,
                 dimensionRationales: buildDimensionRationales(
                   scoreRecord.dimensions,
+                ),
+                runnerDiagnostics: buildPlanningRunnerDiagnostics(
+                  evalCase,
+                  extractPlanningSignals(runOutput.rawContent),
                 ),
               }
             : undefined;

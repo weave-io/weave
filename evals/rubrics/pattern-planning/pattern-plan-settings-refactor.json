@@ -5,6 +5,6 @@
     "outcome_weight": 0.7,
     "per_expectation_weight": 0.3,
     "required": true,
-    "notes": "Fairness/alignment: score only the structural planning artifacts the runner extracts, explicit scope, file-backed tasks, sequencing, and acceptance coverage. Do not require exact tag spellings like `#scope` or self-identification as Pattern."
+    "notes": "Fairness/alignment: score only the structural planning artifacts the runner extracts, explicit scope, file-backed tasks, sequencing, and acceptance coverage. Accept harmless heading variation such as `## Scope`, `### Scope`, `## Order of Operations`, `**Files**`, or `Success Criteria` when the same task-level structure is observable. Treat a loose file list or a final testing note without task-level structure as missing planning structure, not as a formatting win."
   }
 }

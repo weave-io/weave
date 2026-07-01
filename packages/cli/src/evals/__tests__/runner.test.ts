@@ -19,6 +19,7 @@
  *   - workflowRunId is populated from GITHUB_RUN_ID when digits-only.
  *   - workflowRunId is null when GITHUB_RUN_ID contains any non-digit chars (including hyphens).
  *   - Raw artifacts are written only when rawArtifacts === true.
+ *   - Repeatability diagnostics are written for non-dry runs and compare only exact-filter reruns.
  *   - No real network, git, LangChain, or file-system calls in the unit test sections.
  *
  * Integration sections (labeled "integration"):
@@ -693,6 +694,24 @@ describe("EvalOrchestrator — run summary structure", () => {
     if (result.isOk()) {
       expect(typeof result.value.bundleDir).toBe("string");
       expect(result.value.bundleDir.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("rawArtifactsWritten is empty when rawArtifacts is false", async () => {
+    const orchestrator = new EvalOrchestrator(makeOptions());
+    const result = await orchestrator.run(makeRequest());
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.rawArtifactsWritten).toEqual([]);
+    }
+  });
+
+  it("repeatabilityDiagnostics is null when no runner results were produced", async () => {
+    const orchestrator = new EvalOrchestrator(makeOptions());
+    const result = await orchestrator.run(makeRequest());
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.repeatabilityDiagnostics).toBeNull();
     }
   });
 
@@ -1515,6 +1534,11 @@ describe("EvalOrchestrator — raw artifact filename timestamp integration", () 
       // Must be filesystem-safe (no raw colons)
       expect(filename).not.toContain(":");
     }
+
+    expect(summary.rawArtifactsWritten.length).toBeGreaterThan(0);
+    for (const writtenPath of summary.rawArtifactsWritten) {
+      expect(writtenPath).toContain("/raw/");
+    }
   });
 
   it("raw artifact filename time component is distinct on sequential runs (no collision on same day)", async () => {
@@ -1676,6 +1700,237 @@ describe("EvalOrchestrator — raw artifact filename timestamp integration", () 
       `${run2Dir}/score-loom-routing.json`,
     ).json()) as { assembledAt: string };
     expect(scoreFile2Content.assembledAt).toBe(assembledDate2);
+  });
+
+  it("writes repeatability diagnostics for live runs and accumulates comparable exact-filter reruns", async () => {
+    const modelId = "anthropic/claude-sonnet-4.5";
+    const caseId = "loom-route-backend-api";
+    const bundleRoot = join(TEMP_DIR, `repeatability-${uid()}`);
+
+    function buildOrchestrator(content: string): EvalOrchestrator {
+      const modelClient = new StubModelClient();
+      modelClient.setDefaultResponse({ model: modelId, content });
+
+      const scorer = new StubAgentEvalsScorer();
+      scorer.setDefaultRecord(makePassingScoreRecord(caseId, modelId));
+
+      return new EvalOrchestrator({
+        modelClient,
+        scorer,
+        promptProvider: new MockPromptProvider("You are Loom. Route tasks."),
+        snapshotProvider: new StubSnapshotProvider(),
+        gitShaProvider: makeGitShaProvider(),
+        bundleRoot,
+        evalsRoot: REAL_EVALS_ROOT,
+        env: { OPENROUTER_API_KEY: FAKE_API_KEY },
+      });
+    }
+
+    const request = {
+      agent: "loom" as const,
+      model: modelId,
+      case: caseId,
+      dryRun: false,
+      rawArtifacts: false,
+    };
+
+    const run1 = await buildOrchestrator(
+      'I will route to the "shuttle" agent.',
+    ).run(request);
+    expect(run1.isOk()).toBe(true);
+    if (!run1.isOk()) return;
+
+    const diag1 = run1.value.repeatabilityDiagnostics;
+    expect(diag1).not.toBeNull();
+    if (diag1 === null) return;
+    expect(run1.value.runId).not.toBeNull();
+    if (run1.value.runId === null) return;
+    expect(diag1.comparableRunCount).toBe(1);
+    expect(diag1.comparableRunIds).toEqual([run1.value.runId]);
+
+    const artifact1 = await Bun.file(diag1.filePath).json();
+    expect(artifact1).toMatchObject({
+      schemaVersion: 1,
+      comparisonKey: {
+        agentFilter: "loom",
+        modelFilter: modelId,
+        caseFilter: caseId,
+        suites: ["loom-routing"],
+      },
+      comparableRunCount: 1,
+    });
+
+    const run2 = await buildOrchestrator(
+      'Route the task to the "shuttle" agent.',
+    ).run(request);
+    expect(run2.isOk()).toBe(true);
+    if (!run2.isOk()) return;
+
+    const diag2 = run2.value.repeatabilityDiagnostics;
+    expect(diag2).not.toBeNull();
+    if (diag2 === null) return;
+    expect(run2.value.runId).not.toBeNull();
+    if (run2.value.runId === null) return;
+    expect(diag2.comparableRunCount).toBe(2);
+    expect(diag2.comparableRunIds).toEqual([
+      run1.value.runId,
+      run2.value.runId,
+    ]);
+
+    const artifact2 = (await Bun.file(diag2.filePath).json()) as {
+      comparableRunCount: number;
+      comparableRunIds: string[];
+      driftSummary: {
+        models: Array<{ classification: string; comparableRunCount: number }>;
+        caseModels: Array<{
+          classification: string;
+          comparableRunCount: number;
+        }>;
+      };
+    };
+    expect(artifact2.comparableRunCount).toBe(2);
+    expect(artifact2.comparableRunIds).toEqual([
+      run1.value.runId,
+      run2.value.runId,
+    ]);
+    expect(artifact2.driftSummary.models).toHaveLength(1);
+    expect(artifact2.driftSummary.models[0]).toMatchObject({
+      classification: "consistent",
+      comparableRunCount: 2,
+    });
+    expect(artifact2.driftSummary.caseModels).toHaveLength(1);
+    expect(artifact2.driftSummary.caseModels[0]).toMatchObject({
+      classification: "consistent-pass",
+      comparableRunCount: 2,
+    });
+  });
+
+  it("repeatability diagnostics ignore previous runs with different exact filters", async () => {
+    const modelId = "anthropic/claude-sonnet-4.5";
+    const caseId = "loom-route-backend-api";
+    const bundleRoot = join(TEMP_DIR, `repeatability-filtered-${uid()}`);
+
+    function buildOrchestrator(): EvalOrchestrator {
+      const modelClient = new StubModelClient();
+      modelClient.setDefaultResponse({
+        model: modelId,
+        content: 'I will route to the "shuttle" agent.',
+      });
+
+      const scorer = new StubAgentEvalsScorer();
+      scorer.setDefaultRecord(makePassingScoreRecord(caseId, modelId));
+
+      return new EvalOrchestrator({
+        modelClient,
+        scorer,
+        promptProvider: new MockPromptProvider("You are Loom. Route tasks."),
+        snapshotProvider: new StubSnapshotProvider(),
+        gitShaProvider: makeGitShaProvider(),
+        bundleRoot,
+        evalsRoot: REAL_EVALS_ROOT,
+        env: { OPENROUTER_API_KEY: FAKE_API_KEY },
+      });
+    }
+
+    const broadRun = await buildOrchestrator().run({
+      agent: "loom",
+      model: modelId,
+      case: undefined,
+      dryRun: false,
+      rawArtifacts: false,
+    });
+    expect(broadRun.isOk()).toBe(true);
+
+    const narrowedRun = await buildOrchestrator().run({
+      agent: "loom",
+      model: modelId,
+      case: caseId,
+      dryRun: false,
+      rawArtifacts: false,
+    });
+    expect(narrowedRun.isOk()).toBe(true);
+    if (!narrowedRun.isOk()) return;
+
+    const diag = narrowedRun.value.repeatabilityDiagnostics;
+    expect(diag).not.toBeNull();
+    if (diag === null) return;
+    expect(narrowedRun.value.runId).not.toBeNull();
+    if (narrowedRun.value.runId === null) return;
+
+    expect(diag.comparableRunCount).toBe(1);
+    expect(diag.comparableRunIds).toEqual([narrowedRun.value.runId]);
+  });
+
+  it("repeatability diagnostics ignore previous artifacts with incompatible schemaVersion", async () => {
+    const modelId = "anthropic/claude-sonnet-4.5";
+    const caseId = "loom-route-backend-api";
+    const bundleRoot = join(TEMP_DIR, `repeatability-stale-${uid()}`);
+    const staleRunId = "stale000-2026-07-01-001";
+    const staleDir = join(bundleRoot, "runs", staleRunId);
+
+    await Bun.spawn(["mkdir", "-p", staleDir]).exited;
+
+    await Bun.write(
+      join(staleDir, "repeatability-diagnostics.json"),
+      JSON.stringify({
+        schemaVersion: 999,
+        comparisonKey: {
+          agentFilter: "loom",
+          modelFilter: modelId,
+          caseFilter: caseId,
+          suites: ["loom-routing"],
+        },
+        currentRun: {
+          runId: staleRunId,
+          repoSha: "deadbeef",
+          startedAt: "2026-07-01T00:00:00.000Z",
+          bundleDir: staleDir,
+          suites: [],
+        },
+        comparableRunIds: [staleRunId],
+        comparableRunCount: 1,
+        driftSummary: { models: [], caseModels: [] },
+      }),
+    );
+
+    const modelClient = new StubModelClient();
+    modelClient.setDefaultResponse({
+      model: modelId,
+      content: 'I will route to the "shuttle" agent.',
+    });
+    const scorer = new StubAgentEvalsScorer();
+    scorer.setDefaultRecord(makePassingScoreRecord(caseId, modelId));
+
+    const orchestrator = new EvalOrchestrator({
+      modelClient,
+      scorer,
+      promptProvider: new MockPromptProvider("You are Loom. Route tasks."),
+      snapshotProvider: new StubSnapshotProvider(),
+      gitShaProvider: makeGitShaProvider(),
+      bundleRoot,
+      evalsRoot: REAL_EVALS_ROOT,
+      env: { OPENROUTER_API_KEY: FAKE_API_KEY },
+    });
+
+    const result = await orchestrator.run({
+      agent: "loom",
+      model: modelId,
+      case: caseId,
+      dryRun: false,
+      rawArtifacts: false,
+    });
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    const diagnostics = result.value.repeatabilityDiagnostics;
+    expect(diagnostics).not.toBeNull();
+    if (diagnostics === null) return;
+    expect(result.value.runId).not.toBeNull();
+    if (result.value.runId === null) return;
+
+    expect(diagnostics.comparableRunCount).toBe(1);
+    expect(diagnostics.comparableRunIds).toEqual([result.value.runId]);
   });
 });
 

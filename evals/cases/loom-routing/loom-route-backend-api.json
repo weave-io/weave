@@ -1,6 +1,6 @@
 {
   "id": "loom-route-backend-api",
-  "description": "Text-only routing task: add a backend API endpoint for retrieving project settings.",
+  "description": "Choose the primary implementation route for this text-only task: add a backend API endpoint for retrieving project settings.",
   "suite": "loom-routing",
   "allowed_agents": ["loom", "thread", "shuttle", "weft", "warp"],
   "allowed_models": [
