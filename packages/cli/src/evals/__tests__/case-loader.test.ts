@@ -909,3 +909,132 @@ describe("real fixture inventory stays in sync with the shared eval registry", (
     }
   });
 });
+
+describe("phase 1B fairness fixtures stay aligned with text-only runner contracts", () => {
+  it("loom and tapestry fixtures no longer encode legacy shuttle alternates or thread pre-hops", async () => {
+    const loomBackend = await loadCaseFile(
+      resolve(EVALS_ROOT, "cases/loom-routing/loom-route-backend-api.json"),
+    );
+    const loomFrontend = await loadCaseFile(
+      resolve(EVALS_ROOT, "cases/loom-routing/loom-route-frontend-ui.json"),
+    );
+    const loomAmbiguous = await loadCaseFile(
+      resolve(
+        EVALS_ROOT,
+        "cases/loom-routing/loom-route-ambiguous-direct-shuttle.json",
+      ),
+    );
+    const tapestryDelegate = await loadCaseFile(
+      resolve(
+        EVALS_ROOT,
+        "cases/tapestry-execution/tapestry-delegate-to-shuttle.json",
+      ),
+    );
+
+    expect(loomBackend.isOk()).toBe(true);
+    expect(loomFrontend.isOk()).toBe(true);
+    expect(loomAmbiguous.isOk()).toBe(true);
+    expect(tapestryDelegate.isOk()).toBe(true);
+    if (
+      loomBackend.isErr() ||
+      loomFrontend.isErr() ||
+      loomAmbiguous.isErr() ||
+      tapestryDelegate.isErr()
+    ) {
+      return;
+    }
+
+    expect(loomBackend.value.accepted_alternates).toEqual([]);
+    expect(loomFrontend.value.accepted_alternates).toEqual([]);
+    expect(loomBackend.value.allowed_agents).not.toContain("shuttle-backend");
+    expect(loomFrontend.value.allowed_agents).not.toContain("shuttle-frontend");
+
+    if (loomAmbiguous.value.expected_outcome.kind === "agent_routing") {
+      expect(loomAmbiguous.value.expected_outcome.via).toEqual([]);
+    }
+
+    expect(tapestryDelegate.value.accepted_alternates).toEqual([]);
+    expect(tapestryDelegate.value.allowed_agents).toEqual([
+      "tapestry",
+      "shuttle",
+    ]);
+  });
+
+  it("pattern planning fixtures rely on structural artifacts instead of exact tag transcript checks", async () => {
+    const settingsCase = await loadCaseFile(
+      resolve(
+        EVALS_ROOT,
+        "cases/pattern-planning/pattern-plan-settings-refactor.json",
+      ),
+    );
+    const releaseCase = await loadCaseFile(
+      resolve(
+        EVALS_ROOT,
+        "cases/pattern-planning/pattern-plan-release-checklist.json",
+      ),
+    );
+
+    expect(settingsCase.isOk()).toBe(true);
+    expect(releaseCase.isOk()).toBe(true);
+    if (settingsCase.isErr() || releaseCase.isErr()) {
+      return;
+    }
+
+    expect(settingsCase.value.transcript_expectations).toEqual([]);
+    expect(releaseCase.value.transcript_expectations).toEqual([]);
+
+    if (settingsCase.value.expected_outcome.kind === "task_completion") {
+      expect(settingsCase.value.expected_outcome.required_artifacts).toEqual([
+        "plan_scope_explicit",
+        "plan_file_tasks",
+        "plan_sequence_explicit",
+        "plan_acceptance_coverage",
+      ]);
+    }
+  });
+
+  it("warp and weft rubrics describe fairness intent around observable assistant-text structure", async () => {
+    const warpBlock = await loadRubricFile(
+      resolve(
+        EVALS_ROOT,
+        "rubrics/warp-security/warp-security-block-evidence-findings.json",
+      ),
+    );
+    const warpApprove = await loadRubricFile(
+      resolve(
+        EVALS_ROOT,
+        "rubrics/warp-security/warp-security-fast-exit-approve.json",
+      ),
+    );
+    const weftReject = await loadRubricFile(
+      resolve(
+        EVALS_ROOT,
+        "rubrics/weft-review/weft-review-reject-blocker-citation.json",
+      ),
+    );
+    const weftApprove = await loadRubricFile(
+      resolve(
+        EVALS_ROOT,
+        "rubrics/weft-review/weft-review-clean-approval.json",
+      ),
+    );
+
+    expect(warpBlock.isOk()).toBe(true);
+    expect(warpApprove.isOk()).toBe(true);
+    expect(weftReject.isOk()).toBe(true);
+    expect(weftApprove.isOk()).toBe(true);
+    if (
+      warpBlock.isErr() ||
+      warpApprove.isErr() ||
+      weftReject.isErr() ||
+      weftApprove.isErr()
+    ) {
+      return;
+    }
+
+    expect(warpBlock.value.scoring.notes).toContain("Fairness/alignment");
+    expect(warpApprove.value.scoring.notes).toContain("assistant-text");
+    expect(weftReject.value.scoring.notes).toContain("assistant text");
+    expect(weftApprove.value.scoring.notes).toContain("Fairness/alignment");
+  });
+});

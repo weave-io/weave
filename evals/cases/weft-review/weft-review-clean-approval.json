@@ -1,6 +1,6 @@
 {
   "id": "weft-review-clean-approval",
-  "description": "Synthetic review summary: `packages/cli/src/evals/runner.ts` now preserves fail-closed suite selection and `evals/README.md` documents the new workflow. Approve only if the review uses an explicit verdict tag, cites reviewed files, and raises no blockers.",
+  "description": "Text-only synthetic review: `packages/cli/src/evals/runner.ts` now preserves fail-closed suite selection and `evals/README.md` documents the new workflow. Approve only if the assistant text uses an explicit verdict tag, cites reviewed files, and raises no blockers.",
   "suite": "weft-review",
   "allowed_agents": ["weft"],
   "allowed_models": [

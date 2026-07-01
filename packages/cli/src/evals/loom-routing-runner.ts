@@ -105,24 +105,25 @@ export const LOOM_ROUTING_SUITE = "loom-routing";
  * Agent name patterns used to extract routing signals from model responses.
  * The runner searches model content for these patterns (case-insensitive).
  */
-const ROUTING_AGENT_NAMES = [
+const ROUTING_BASE_AGENT_NAMES = [
   "loom",
   "tapestry",
   "thread",
   "shuttle",
-  "shuttle-backend",
-  "shuttle-core",
-  "shuttle-engine",
-  "shuttle-adapters",
-  "shuttle-docs",
-  "shuttle-scripts",
-  "shuttle-frontend",
-  "shuttle-infra",
   "warp",
   "weft",
   "spindle",
   "pattern",
 ] as const;
+
+/**
+ * Dynamic category-shuttle matcher.
+ *
+ * Avoids baking stale project-specific shuttle names into the runner while
+ * still allowing current `shuttle-{category}` targets to be extracted from
+ * text when the model explicitly names them.
+ */
+const DYNAMIC_SHUTTLE_AGENT_RE = /\bshuttle-[a-z0-9_-]+\b/gi;
 
 // ---------------------------------------------------------------------------
 // Routing signal extraction
@@ -217,16 +218,33 @@ function isNegatedMentionLine(line: string, agent: string): boolean {
   return negatedPatterns.some((pattern) => pattern.test(plainLine));
 }
 
-function hasStandaloneAgentPattern(lower: string, pattern: string): boolean {
+function findStandaloneAgentPatternIndex(
+  lower: string,
+  pattern: string,
+): number | undefined {
   let searchFrom = 0;
   while (searchFrom < lower.length) {
     const index = lower.indexOf(pattern, searchFrom);
-    if (index < 0) return false;
+    if (index < 0) return undefined;
     const afterAgentIndex = index + pattern.length;
-    if (lower.charAt(afterAgentIndex) !== "-") return true;
+    if (lower.charAt(afterAgentIndex) !== "-") return index;
     searchFrom = afterAgentIndex;
   }
-  return false;
+  return undefined;
+}
+
+function collectRoutingAgentCandidates(content: string): string[] {
+  const lower = content.toLowerCase();
+  const candidates = new Set<string>(ROUTING_BASE_AGENT_NAMES);
+
+  for (const match of lower.matchAll(DYNAMIC_SHUTTLE_AGENT_RE)) {
+    const agent = match[0];
+    if (agent !== "") {
+      candidates.add(agent);
+    }
+  }
+
+  return [...candidates];
 }
 
 /**
@@ -307,12 +325,11 @@ function isOnlySecondaryRole(lower: string, agent: string): boolean {
  */
 export function extractRoutedAgents(content: string): string[] {
   const lower = content.toLowerCase();
-  const seen = new Set<string>();
-  const result: string[] = [];
+  const matches: Array<{ agent: string; index: number }> = [];
 
-  // Sort by length descending so longer names (e.g. shuttle-backend) are
-  // matched before shorter prefixes (e.g. shuttle).
-  const sortedNames = [...ROUTING_AGENT_NAMES].sort(
+  // Sort by length descending for matching only, so longer names such as
+  // `shuttle-engine` win over the `shuttle` prefix at the same location.
+  const sortedNames = collectRoutingAgentCandidates(content).sort(
     (a, b) => b.length - a.length,
   );
 
@@ -358,15 +375,18 @@ export function extractRoutedAgents(content: string): string[] {
       `**${agent}**:`,
     ];
 
-    let matched = false;
+    let firstMatchIndex: number | undefined;
     for (const pattern of patterns) {
-      if (hasStandaloneAgentPattern(lower, pattern) && !seen.has(agent)) {
-        matched = true;
-        break;
+      const index = findStandaloneAgentPatternIndex(lower, pattern);
+      if (index === undefined) {
+        continue;
+      }
+      if (firstMatchIndex === undefined || index < firstMatchIndex) {
+        firstMatchIndex = index;
       }
     }
 
-    if (!matched) {
+    if (firstMatchIndex === undefined) {
       continue;
     }
 
@@ -386,11 +406,17 @@ export function extractRoutedAgents(content: string): string[] {
       continue;
     }
 
-    seen.add(agent);
-    result.push(agent);
+    matches.push({ agent, index: firstMatchIndex });
   }
 
-  return result;
+  matches.sort((left, right) => {
+    if (left.index !== right.index) {
+      return left.index - right.index;
+    }
+    return right.agent.length - left.agent.length;
+  });
+
+  return [...new Set(matches.map((match) => match.agent))];
 }
 
 // ---------------------------------------------------------------------------

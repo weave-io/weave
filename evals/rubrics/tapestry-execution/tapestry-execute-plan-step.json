@@ -5,6 +5,6 @@
     "outcome_weight": 0.7,
     "per_expectation_weight": 0.3,
     "required": true,
-    "notes": "agent_signal tool call is the primary completion indicator"
+    "notes": "Fairness/alignment: score only assistant-text completion of the synthetic remaining plan task. Do not require `agent_signal`, harness events, or other runtime-only completion evidence."
   }
 }

@@ -286,11 +286,12 @@ export function buildUserMessage(evalCase: EvalCase): string {
     "Perform a text-only external research synthesis using only the synthetic source brief below.",
     `Synthetic research brief: ${evalCase.description}`,
     "Do not assume live browsing, tool telemetry, hidden network access, or unpublished sources.",
+    "Open with a short direct answer to the research question.",
     "Write a section titled 'Source facts' that uses inline citations such as [1] and [2].",
     "Write a separate section titled 'Interpretation' for your analysis or synthesis.",
+    "In the final 'Sources:' section, list each cited source as a numbered entry such as '- [1] ...'.",
     "End with a bounded confidence line in the form 'Confidence: high', 'Confidence: medium', or 'Confidence: low'.",
-    "Include a final 'Sources:' section listing the cited sources.",
-    "If you mention network or tool usage, present it only as an explicit plain-text claim rather than an implied event.",
+    "If you mention network or tool usage, present it only as an explicit plain-text claim rather than an implied event, and do not imply that browsing definitely occurred.",
     requiredArtifacts.length > 0
       ? `Required structural signals: ${requiredArtifacts.join(", ")}`
       : "Required structural signals: none",

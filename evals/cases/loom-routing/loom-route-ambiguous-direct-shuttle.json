@@ -1,6 +1,6 @@
 {
   "id": "loom-route-ambiguous-direct-shuttle",
-  "description": "Make the project settings experience easier to use.",
+  "description": "Text-only routing task: make the project settings experience easier to use.",
   "suite": "loom-routing",
   "allowed_agents": ["loom", "thread", "shuttle"],
   "allowed_models": [
@@ -11,7 +11,7 @@
   "expected_outcome": {
     "kind": "agent_routing",
     "target_agent": "shuttle",
-    "via": ["thread"]
+    "via": []
   },
   "accepted_alternates": [],
   "transcript_expectations": [

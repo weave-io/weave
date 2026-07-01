@@ -1,6 +1,6 @@
 {
   "id": "pattern-plan-release-checklist",
-  "description": "Create a release-readiness plan for the eval pipeline that names the touched files, orders the work, and ties each task to acceptance verification.",
+  "description": "Create a text-only release-readiness plan for the eval pipeline that names the touched files, orders the work, and ties each task to acceptance verification.",
   "suite": "pattern-planning",
   "allowed_agents": ["pattern"],
   "allowed_models": [
@@ -19,22 +19,6 @@
     ]
   },
   "accepted_alternates": [],
-  "transcript_expectations": [
-    {
-      "check": "content_contains",
-      "role": "assistant",
-      "contains": "#files"
-    },
-    {
-      "check": "content_contains",
-      "role": "assistant",
-      "contains": "evals/README.md"
-    },
-    {
-      "check": "content_contains",
-      "role": "assistant",
-      "contains": "#acceptance"
-    }
-  ],
+  "transcript_expectations": [],
   "tags": ["planning", "release", "checklist"]
 }

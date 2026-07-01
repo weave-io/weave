@@ -5,6 +5,6 @@
     "outcome_weight": 0.6,
     "per_expectation_weight": 0.2,
     "required": true,
-    "notes": "Both delegate tool call and agent mention contribute to partial credit; chain integrity is the main signal"
+    "notes": "Fairness/alignment: score only the expressed text delegation chain, with any explicit shuttle mention as secondary evidence. Do not require delegate tool calls, awaited runtime results, or other hidden execution telemetry."
   }
 }

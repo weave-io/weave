@@ -1,8 +1,8 @@
 {
   "id": "tapestry-delegate-to-shuttle",
-  "description": "Tapestry should delegate a domain-specific subtask to shuttle and await the result before continuing",
+  "description": "Text-only execution case: Tapestry should clearly express delegation of the domain-specific subtask to shuttle.",
   "suite": "tapestry-execution",
-  "allowed_agents": ["tapestry", "shuttle", "loom"],
+  "allowed_agents": ["tapestry", "shuttle"],
   "allowed_models": [
     "anthropic/claude-opus-4.5",
     "anthropic/claude-sonnet-4.5",
@@ -12,7 +12,7 @@
     "kind": "delegation_chain",
     "chain": ["tapestry", "shuttle"]
   },
-  "accepted_alternates": ["shuttle-backend", "shuttle-frontend"],
+  "accepted_alternates": [],
   "transcript_expectations": [
     {
       "check": "agent_mentioned",

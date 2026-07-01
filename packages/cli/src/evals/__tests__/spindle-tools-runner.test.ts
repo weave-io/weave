@@ -381,6 +381,7 @@ describe("buildUserMessage", () => {
 
     expect(message).toContain("text-only external research synthesis");
     expect(message).toContain("Do not assume live browsing");
+    expect(message).toContain("Open with a short direct answer");
     expect(message).toContain("Source facts");
     expect(message).toContain("Interpretation");
     expect(message).toContain("Confidence: high");

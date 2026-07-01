@@ -14,9 +14,10 @@
  *     regex unless intentionally permitted (we restrict to
  *     `[A-Za-z0-9_.\-/:]` to keep identifiers unambiguous).
  *   - The `agent` filter is additionally validated against a closed
- *     allowlist of known agent/suite names. Unknown agent values fail
- *     closed with a typed `UnknownAgentFilter` error before any
- *     dry-run or live execution is attempted.
+ *     allowlist of known agent/suite names derived from the shared eval
+ *     suite registry. Unknown agent values fail closed with a typed
+ *     `UnknownAgentFilter` error before any dry-run or live execution is
+ *     attempted.
  *   - Duplicate conflicting inputs (same filter key provided twice
  *     via different sources) are rejected with a typed error.
  *   - Empty eval filter environment variables are treated as absent.
@@ -139,13 +140,14 @@ const VALID_IDENTIFIER_RE = /^[A-Za-z0-9_./:@-]+$/;
  * - Logical agent names (`loom`, `tapestry`) match `shouldRunSuite()` in the
  *   orchestrator's `agentName` branch.
  * - Suite names (`loom-routing`, `tapestry-execution`, `shuttle-execution`,
- *   `pattern-planning`, `weft-review`, `warp-security`) match the `suiteName` branch and mirror the workflow
- *   ALLOWED_AGENTS list.
+ *   `spindle-tools`, `pattern-planning`, `weft-review`, `warp-security`)
+ *   match the `suiteName` branch.
  *
  * Unknown values fail closed with a typed `UnknownAgentFilter` error so that
  * typos surface immediately rather than silently executing zero cases.
  *
- * Exported for use in tests and workflow sync checks.
+ * Exported for use in tests and workflow sync checks so those surfaces stay
+ * aligned with the shared registry instead of maintaining a separate source.
  */
 export const KNOWN_EVAL_AGENTS = new Set(EVAL_AGENT_FILTERS);
 

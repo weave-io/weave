@@ -546,6 +546,14 @@ describe("buildUserMessage", () => {
     expect(message).toContain("[APPROVE] or [REJECT]");
     expect(message).toContain("Do not assume access to a real repository");
   });
+
+  it("states the reviewed-files line and blocker citation discipline", () => {
+    const message = buildUserMessage(makeRejectCase());
+    expect(message).toContain("Reviewed files:");
+    expect(message).toContain("one BLOCKER: line per blocking issue");
+    expect(message).toContain("backticked file reference");
+    expect(message).toContain("action verb");
+  });
 });
 
 describe("WeftReviewRunner", () => {

@@ -1,18 +1,19 @@
 /**
- * Workflow sync tests — verify that `agent-evals.yml` allowlists are consistent
- * with `evals/model-matrix.json` and the case fixture IDs under `evals/cases/**`.
+ * Workflow sync tests — verify that `agent-evals.yml` mirrors the shared eval
+ * registry and current fixture/model allowlists.
  *
  * # Purpose
  *
  * The GitHub Actions workflow at `.github/workflows/agent-evals.yml` contains
- * two hardcoded allowlists:
+ * dispatch allowlists that must stay aligned with repo-owned sources:
  *
  *   - `ALLOWED_MODELS` — must match the model IDs in `evals/model-matrix.json`.
  *   - `ALLOWED_CASES`  — must match the `id` fields in `evals/cases/**\/*.json`.
  *
- * These allowlists are maintained manually and can drift when new models or
- * cases are added. These tests detect drift early so CI catches it before the
- * workflow is used in production.
+ * These allowlists are maintained in workflow YAML, while the canonical suite
+ * surface lives in the shared registry under `packages/cli/src/evals/types.ts`.
+ * These tests detect drift early so CI catches it before the workflow is used
+ * in production.
  *
  * # Approach
  *
@@ -20,8 +21,8 @@
  *   1. Read and parse the YAML workflow file as plain text (no YAML parser
  *      dependency, Bun glob + Bun.file are sufficient for extracting the
  *      allowlist lines).
- *   1a. Read the shared eval suite registry so the workflow agent allowlist stays
- *       aligned with the same source the CLI uses.
+ *   1a. Read the shared eval suite registry so workflow agent validation stays
+ *       aligned with the same source the CLI and prompt snapshots use.
  *   2. Load `evals/model-matrix.json` via `loadModelMatrix()`.
  *   3. Glob all `evals/cases/**\/*.json` files and load their `id` fields.
  *   4. Assert that the workflow allowlists are supersets of, or identical to,
@@ -39,7 +40,7 @@ import { describe, expect, it } from "bun:test";
 import { resolve } from "node:path";
 import { EVALS_ROOT, loadCaseFile } from "../case-loader.js";
 import { loadModelMatrix } from "../model-matrix.js";
-import { EVAL_AGENT_FILTERS } from "../types.js";
+import { EVAL_AGENT_FILTERS, EVAL_SUITE_REGISTRY } from "../types.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -78,6 +79,12 @@ function extractWorkflowAllowedModels(workflowText: string): string[] {
  */
 function extractWorkflowAllowedCases(workflowText: string): string[] {
   const match = workflowText.match(/ALLOWED_CASES\s*=\s*"([^"]+)"/);
+  if (match === null || match[1] === undefined) return [];
+  return match[1].trim().split(/\s+/).filter(Boolean);
+}
+
+function extractWorkflowAllowedAgents(workflowText: string): string[] {
+  const match = workflowText.match(/ALLOWED_AGENTS\s*=\s*"([^"]+)"/);
   if (match === null || match[1] === undefined) return [];
   return match[1].trim().split(/\s+/).filter(Boolean);
 }
@@ -229,43 +236,32 @@ describe("workflow-sync — agent-evals.yml ALLOWED_AGENTS matches known eval ag
   it("workflow ALLOWED_AGENTS exactly matches the shared eval registry", async () => {
     const workflowText = await Bun.file(WORKFLOW_PATH).text();
 
-    // Extract the ALLOWED_AGENTS variable value from the workflow script
-    const match = workflowText.match(/ALLOWED_AGENTS\s*=\s*"([^"]+)"/);
-    expect(match).not.toBeNull();
-
-    const allowedAgents =
-      match !== null && match[1] !== undefined
-        ? match[1].trim().split(/\s+/).filter(Boolean)
-        : [];
+    const allowedAgents = extractWorkflowAllowedAgents(workflowText);
 
     expect(allowedAgents.sort()).toEqual([...EVAL_AGENT_FILTERS].sort());
   });
 
-  it("workflow ALLOWED_CASES count includes shuttle-execution and spindle-tools fixtures", async () => {
+  it("workflow ALLOWED_CASES covers every suite present in the shared registry", async () => {
     const workflowText = await Bun.file(WORKFLOW_PATH).text();
     const allowedCases = extractWorkflowAllowedCases(workflowText);
 
-    expect(allowedCases).toContain(
-      "shuttle-execution-report-structured-evidence",
+    const fixtureLoadResults = await Promise.all(
+      discoverCaseFilePaths().map((path) => loadCaseFile(path)),
     );
-    expect(allowedCases).toContain(
-      "shuttle-execution-report-tests-and-assumptions",
-    );
-    expect(allowedCases).toContain("spindle-tools-citations-facts-confidence");
-    expect(allowedCases).toContain(
-      "spindle-tools-source-boundary-network-claims",
-    );
-  });
+    const workflowCaseSet = new Set(allowedCases);
 
-  it("workflow ALLOWED_CASES count includes pattern, weft, and warp fixtures", async () => {
-    const workflowText = await Bun.file(WORKFLOW_PATH).text();
-    const allowedCases = extractWorkflowAllowedCases(workflowText);
+    const suitesWithWorkflowCases = new Set<string>();
+    for (const result of fixtureLoadResults) {
+      if (result.isErr()) {
+        throw new Error(`Failed to load case fixture: ${result.error.message}`);
+      }
+      if (workflowCaseSet.has(result.value.id)) {
+        suitesWithWorkflowCases.add(result.value.suite);
+      }
+    }
 
-    expect(allowedCases).toContain("pattern-plan-settings-refactor");
-    expect(allowedCases).toContain("pattern-plan-release-checklist");
-    expect(allowedCases).toContain("weft-review-clean-approval");
-    expect(allowedCases).toContain("weft-review-reject-blocker-citation");
-    expect(allowedCases).toContain("warp-security-fast-exit-approve");
-    expect(allowedCases).toContain("warp-security-block-evidence-findings");
+    expect([...suitesWithWorkflowCases].sort()).toEqual(
+      EVAL_SUITE_REGISTRY.map((suite) => suite.suiteId).sort(),
+    );
   });
 });

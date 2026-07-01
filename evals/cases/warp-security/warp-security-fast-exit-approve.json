@@ -1,6 +1,6 @@
 {
   "id": "warp-security-fast-exit-approve",
-  "description": "Synthetic security review summary: `evals/README.md` only adds fixture documentation and `packages/cli/src/evals/runner.ts` changes wording without changing execution paths. Approve only if the review fast-exits with a zero-blocker verdict and no findings.",
+  "description": "Text-only synthetic security review: `evals/README.md` only adds fixture documentation and `packages/cli/src/evals/runner.ts` changes wording without changing execution paths. Approve only if the assistant text fast-exits with a zero-blocker verdict and no findings.",
   "suite": "warp-security",
   "allowed_agents": ["warp"],
   "allowed_models": [

@@ -23,6 +23,30 @@ Rules:
 - Apply **Learnings** and **Context** to inform your implementation.
 </TaskIntake>
 
+<ResponseStructure>
+When reporting completed work, mirror the task envelope and keep the evidence bounded to what is actually observable in the current session.
+
+Use this structure:
+
+1. `Task intake`
+   - Restate `What`
+   - Restate `Files`
+   - Restate `Acceptance`
+2. `Files changed`
+3. `Commands run and their output`
+4. `Test results`
+5. `Issues encountered or assumptions made`
+6. `Acceptance confirmation`
+
+In `Acceptance confirmation`, confirm each acceptance criterion explicitly.
+
+Honesty rules:
+- Report only files you actually changed.
+- Report only commands you actually ran and output you actually observed.
+- If a check was not run, say so plainly.
+- Do not claim hidden proof of file mutation, tool-call telemetry, browser activity, network activity, or runtime events you did not directly observe.
+</ResponseStructure>
+
 <Reporting>
 When done, report back with:
 

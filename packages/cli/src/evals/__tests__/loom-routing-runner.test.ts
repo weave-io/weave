@@ -596,17 +596,14 @@ describe("extractRoutedAgents", () => {
     const result = extractRoutedAgents(
       "delegate to warp first, then route to shuttle.",
     );
-    // Both agents should be detected
-    expect(result).toContain("warp");
-    expect(result).toContain("shuttle");
-    // warp should appear before shuttle since it's mentioned first
-    const warpIdx = result.indexOf("warp");
-    const shuttleIdx = result.indexOf("shuttle");
-    expect(warpIdx).toBeGreaterThanOrEqual(0);
-    expect(shuttleIdx).toBeGreaterThanOrEqual(0);
-    // Note: ordering depends on iteration order of the sorted agent names
-    // and the first-mention matching — we only assert both are detected
-    expect(result.length).toBeGreaterThanOrEqual(2);
+    expect(result).toEqual(["warp", "shuttle"]);
+  });
+
+  it("prefers textual first mention over legacy/static agent list ordering", () => {
+    const result = extractRoutedAgents(
+      "route to shuttle first, then delegate to thread for evidence gathering.",
+    );
+    expect(result).toEqual(["shuttle", "thread"]);
   });
 
   it("does not extract agent names mentioned without routing context", () => {
@@ -831,6 +828,12 @@ describe("extractRoutedAgents — delegation-sequence format", () => {
     const result = extractRoutedAgents(content);
     expect(result).toContain("shuttle-engine");
     expect(result).not.toContain("shuttle");
+  });
+
+  it("extracts dynamic shuttle category names without a baked allowlist entry", () => {
+    const content = "Route to shuttle-observability for tracing work.";
+    const result = extractRoutedAgents(content);
+    expect(result).toEqual(["shuttle-observability"]);
   });
 
   it("extracts thread as an evidence-gathering route", () => {

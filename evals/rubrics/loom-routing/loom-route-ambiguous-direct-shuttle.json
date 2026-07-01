@@ -5,6 +5,6 @@
     "outcome_weight": 0.7,
     "per_expectation_weight": 0.3,
     "required": true,
-    "notes": "Fallback to generic shuttle is critical for ambiguous but bounded work. Thread may appear first for evidence gathering when the task asks to improve an existing experience. Do not require text-only evals to prove absence of a real category-delegation tool call."
+    "notes": "Fairness/alignment: this case checks bounded ambiguous-work fallback in text only. Credit direct routing to `shuttle`, and do not require a `thread` pre-hop, legacy category names, or real delegation/tool-call evidence."
   }
 }

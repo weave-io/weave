@@ -104,41 +104,54 @@ export const TAPESTRY_EXECUTION_SUITE = "tapestry-execution";
 /**
  * Known agent names used for delegation chain extraction.
  */
-const DELEGATION_AGENT_NAMES = [
+const DELEGATION_BASE_AGENT_NAMES = [
   "loom",
   "tapestry",
   "thread",
   "shuttle",
-  "shuttle-backend",
-  "shuttle-core",
-  "shuttle-engine",
-  "shuttle-adapters",
-  "shuttle-docs",
-  "shuttle-scripts",
-  "shuttle-frontend",
-  "shuttle-infra",
   "warp",
   "weft",
   "spindle",
   "pattern",
 ] as const;
 
+const DYNAMIC_SHUTTLE_AGENT_RE = /\bshuttle-[a-z0-9_-]+\b/gi;
+
 /**
  * Completion signal phrases (case-insensitive).
  */
-const COMPLETION_SIGNALS = [
-  "task complete",
-  "task completed",
-  "task is complete",
-  "task is done",
-  "completed successfully",
-  "execution complete",
-  "done",
-  "finished",
-  "implementation complete",
-  "all steps completed",
-  "workflow complete",
+const COMPLETION_SIGNAL_PATTERNS = [
+  /\btask complete\b/i,
+  /\btask completed\b/i,
+  /\btask is complete\b/i,
+  /\bexecution complete\b/i,
+  /\bimplementation complete\b/i,
+  /\ball steps completed\b/i,
+  /\bworkflow complete\b/i,
+  /\bplan step (?:is )?complete\b/i,
+  /\bremaining plan task (?:is )?complete\b/i,
+  /\bcompleted successfully\b/i,
+  /\bdone with (?:the )?(?:task|step|plan)\b/i,
+  /\b(?:task|step|plan) (?:is )?done\b/i,
+  /\ball steps are done\b/i,
+  /\bfinished (?:the )?(?:task|step|plan)\b/i,
+  /\b(?:task|step|plan) (?:is )?finished\b/i,
+  /\bworkflow is finished\b/i,
 ];
+
+function collectDelegationAgentCandidates(content: string): string[] {
+  const lower = content.toLowerCase();
+  const candidates = new Set<string>(DELEGATION_BASE_AGENT_NAMES);
+
+  for (const match of lower.matchAll(DYNAMIC_SHUTTLE_AGENT_RE)) {
+    const agent = match[0];
+    if (agent !== "") {
+      candidates.add(agent);
+    }
+  }
+
+  return [...candidates];
+}
 
 // ---------------------------------------------------------------------------
 // Response parsing
@@ -157,7 +170,7 @@ export function extractDelegationChain(content: string): string[] {
   const lower = content.toLowerCase();
 
   // Sort agent names by length descending to match longer names first
-  const sortedNames = [...DELEGATION_AGENT_NAMES].sort(
+  const sortedNames = collectDelegationAgentCandidates(content).sort(
     (a, b) => b.length - a.length,
   );
   const agentSet = new Set(sortedNames);
@@ -165,6 +178,14 @@ export function extractDelegationChain(content: string): string[] {
   const explicitChain = extractExplicitArrowChain(lower, sortedNames, agentSet);
   if (explicitChain.length >= 2) {
     return explicitChain;
+  }
+
+  const implicitTapestryChain = extractImplicitTapestryDelegation(
+    lower,
+    sortedNames,
+  );
+  if (implicitTapestryChain.length >= 2) {
+    return implicitTapestryChain;
   }
 
   // Tokenise: split on whitespace and punctuation, try to find chains
@@ -195,12 +216,40 @@ export function extractDelegationChain(content: string): string[] {
 
   // Validate all members are known agents
   for (const member of chain) {
-    if (!agentSet.has(member as (typeof DELEGATION_AGENT_NAMES)[number])) {
+    if (!agentSet.has(member as (typeof DELEGATION_BASE_AGENT_NAMES)[number])) {
       return [];
     }
   }
 
   return chain;
+}
+
+function extractImplicitTapestryDelegation(
+  lower: string,
+  sortedNames: readonly string[],
+): string[] {
+  for (const agent of sortedNames) {
+    if (agent === "tapestry") {
+      continue;
+    }
+
+    const patterns = [
+      `delegate to ${agent}`,
+      `delegates to ${agent}`,
+      `delegating to ${agent}`,
+      `hand off to ${agent}`,
+      `handoff to ${agent}`,
+      `route to ${agent}`,
+      `send to ${agent}`,
+      `assign to ${agent}`,
+    ];
+
+    if (patterns.some((pattern) => lower.includes(pattern))) {
+      return ["tapestry", agent];
+    }
+  }
+
+  return [];
 }
 
 function extractExplicitArrowChain(
@@ -240,8 +289,35 @@ function extractExplicitArrowChain(
  * Exported for unit testing.
  */
 export function detectCompletionSignal(content: string): boolean {
-  const lower = content.toLowerCase();
-  return COMPLETION_SIGNALS.some((signal) => lower.includes(signal));
+  return COMPLETION_SIGNAL_PATTERNS.some((pattern) => pattern.test(content));
+}
+
+function normalizeDelegationChain(
+  evalCase: EvalCase,
+  delegationChain: string[],
+): string[] {
+  if (evalCase.expected_outcome.kind !== "delegation_chain") {
+    return delegationChain;
+  }
+
+  if (delegationChain.length === 0) {
+    return delegationChain;
+  }
+
+  const normalized = [...delegationChain];
+  const expectedChain = evalCase.expected_outcome.chain;
+  const finalExpectedAgent = expectedChain[expectedChain.length - 1];
+  const finalActualAgent = normalized[normalized.length - 1];
+
+  if (finalExpectedAgent === undefined || finalActualAgent === undefined) {
+    return normalized;
+  }
+
+  if (evalCase.accepted_alternates.includes(finalActualAgent)) {
+    normalized[normalized.length - 1] = finalExpectedAgent;
+  }
+
+  return normalized;
 }
 
 /**
@@ -276,7 +352,10 @@ function buildModelRunOutput(
   userMessage: string,
   content: string,
 ): ModelRunOutput {
-  const delegationChain = extractDelegationChain(content);
+  const delegationChain = normalizeDelegationChain(
+    evalCase,
+    extractDelegationChain(content),
+  );
   const completionSignalled = detectCompletionSignal(content);
 
   const expectedArtifacts =

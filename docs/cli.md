@@ -354,7 +354,7 @@ Weave configures harnesses; harnesses run themselves. `weave run`, if encountere
 
 `weave eval run` executes agent evaluation suites against the built-in model matrix. It is the primary eval entry point for CI and local verification.
 
-The current eval surface covers **seven text-only suite families**: `loom-routing`, `tapestry-execution`, `shuttle-execution`, `spindle-tools`, `pattern-planning`, `weft-review`, and `warp-security`. These suite IDs are the canonical fixture and reporting families, and their short `--agent` aliases are `loom`, `tapestry`, `shuttle`, `spindle`, `pattern`, `weft`, and `warp`. These suites score only text-visible structure from assistant output. Runtime-backed harness evals, real tool telemetry, and hidden environment side effects are outside the current contract.
+The current eval surface is a **shared seven-suite text-only registry**: `loom-routing`, `tapestry-execution`, `shuttle-execution`, `spindle-tools`, `pattern-planning`, `weft-review`, and `warp-security`. These suite IDs are the canonical fixture and reporting names, and their short `--agent` aliases are `loom`, `tapestry`, `shuttle`, `spindle`, `pattern`, `weft`, and `warp`. The same registry drives CLI filter validation, prompt snapshot coverage, and workflow sync tests. These suites score only text-visible structure from assistant output. They do not prove tool execution, harness side effects, or hidden environment state.
 
 Completed eval runs exit with code `0` even when one or more cases miss their pass threshold. Threshold misses are captured in `run-summary.json` and per-suite score files. The command exits non-zero for hard orchestration failures such as invalid input, missing secrets, model matrix/load failures, bundle write/publish failures, or suite-level partial failures that prevent complete results.
 
@@ -410,9 +410,9 @@ No filter means all values in that dimension are included. A no-filter run execu
 
 ### `--dry-run`
 
-Dry-run prints filters and confirms no execution will occur. No model calls are made, no artifacts are written, and secrets are not required. Dry-run still performs the same input validation as a live run, so invalid suite filters, model IDs, case IDs, or forbidden text-only fixture assertions exit non-zero instead of silently succeeding. Use this to verify a filter combination before running live.
+Dry-run prints filters and confirms no execution will occur. No model calls are made, no artifacts are written, and secrets are not required. Dry-run still performs the same input validation and suite fixture/rubric loading path as a live run, so invalid suite filters, model IDs, case IDs, malformed shipped fixtures, or forbidden text-only fixture assertions exit non-zero instead of silently succeeding. Use this to verify a filter combination before running live.
 
-This is the recommended contributor preflight path because it exercises the same filter, suite, and fixture-allowlist checks without requiring secrets.
+This is the recommended contributor preflight path because it exercises the same filter and suite-validation path without requiring secrets.
 
 ```bash
 weave eval run --agent loom --model anthropic/claude-sonnet-4.5 --dry-run
@@ -424,7 +424,7 @@ weave eval run --agent loom --model anthropic/claude-sonnet-4.5 --dry-run
 
 When enabled locally, raw artifacts are written to `eval-bundles/runs/<runId>/raw/`. Filename components are sanitized before write, and the resolved path must stay under `raw/`. Add this directory to `.gitignore`. Raw files must never be committed to any repository.
 
-Current text-only suites also reject runtime-only assertion shapes before execution. In practice, fixture authors must not use `expected_outcome.kind: "tool_call"`, `transcript_expectations.check: "tool_called"`, `transcript_expectations.check: "no_tool_called"`, or `content_contains` with `role: "tool"` for the seven supported suite families.
+Current text-only suites also reject runtime-only assertion shapes before execution. In practice, fixture authors must not use `expected_outcome.kind: "tool_call"`, `transcript_expectations.check: "tool_called"`, `transcript_expectations.check: "no_tool_called"`, or `content_contains` with `role: "tool"` anywhere on the current seven-suite surface.
 
 ### Prompt provenance
 
@@ -556,6 +556,16 @@ The workflow sets `WEAVE_EVAL_PUBLISH_MODE=publish` in the eval run step env blo
 - `ArtifactBundleWriter` enforces its presence before any external push.
 - `GitHubContentsPublisher` passes the token exclusively as an `Authorization: Bearer <token>` HTTP header — never in URLs, shell arguments, log output, or artifact content.
 - `enforcePublishPolicy()` re-runs the full sanitizer on the bundle before any file is pushed.
+
+### Current checkpoint decision guidance
+
+The current milestone guidance is to **stop further prompt tuning for now** and prefer eval cleanup or more evidence collection first. The final decision rubric and the exact reruns that support it live in [Agent Evals, 2026-06-30 final decision gate, rubric and recommendation](./agent-evals.md#2026-06-30-final-decision-gate-rubric-and-recommendation).
+
+Short version:
+
+- After phase 1, the reruns were the dry-run preflight, narrowed live suite reruns for Loom, Tapestry, Warp, Weft, and Pattern, plus one raw-artifact spot check per narrowed case.
+- After phase 2, the reruns were the dry-run preflight, targeted prompt-suite reruns for Weft, Pattern, Shuttle, and Spindle, plus a one-model Sonnet cross-suite smoke.
+- The evidence favors eval cleanup over more prompt work because the visible gains were narrow or model-specific, Pattern regressed overall, Spindle stayed unstable, Shuttle lacks a true phase-1 checkpoint baseline, and Weft's small gain disappeared in the Sonnet smoke.
 
 ### Security warnings summary
 

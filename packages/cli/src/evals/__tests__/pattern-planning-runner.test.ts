@@ -54,11 +54,18 @@ function makePlanningCase(overrides: Partial<EvalCase> = {}): EvalCase {
     },
     accepted_alternates: [],
     transcript_expectations: [
-      { check: "content_contains", role: "assistant", contains: "#scope" },
-      { check: "content_contains", role: "assistant", contains: "#files" },
-      { check: "content_contains", role: "assistant", contains: "#sequence" },
-      { check: "content_contains", role: "assistant", contains: "#acceptance" },
-      { check: "agent_mentioned", agent_name: "pattern" },
+      { check: "content_contains", role: "assistant", contains: "## Scope" },
+      {
+        check: "content_contains",
+        role: "assistant",
+        contains: "## Dependencies and Order",
+      },
+      { check: "content_contains", role: "assistant", contains: "**Files**" },
+      {
+        check: "content_contains",
+        role: "assistant",
+        contains: "**Acceptance**",
+      },
     ],
     tags: ["planning", "structure"],
     ...overrides,
@@ -474,17 +481,31 @@ function assembleRunnerResult(
 }
 
 describe("extractPlanningSignals", () => {
-  it("detects all structural planning signals from tagged plan text", () => {
+  it("detects all structural planning signals from builtin-style plan text", () => {
     const content = [
-      "pattern plan",
-      "#scope Focus on settings workflow and no auth changes.",
-      "#files",
-      "1. Update `packages/cli/src/evals/pattern-planning-runner.ts`.",
-      "2. Update evals/README.md to document the suite.",
-      "#sequence Execute the loader updates before docs.",
-      "#acceptance",
-      "- Verify dry-run loads the suite.",
-      "- Confirm scoring uses deterministic signals.",
+      "# Release planning alignment",
+      "",
+      "## Scope",
+      "- In scope: settings workflow planning and eval contract updates.",
+      "- Out of scope: auth refactors.",
+      "",
+      "## Dependencies and Order",
+      "1. Update runner detection before snapshot and docs assertions.",
+      "2. Update docs after the contract is final.",
+      "",
+      "## Tasks",
+      "- [ ] 1. Update runner detection.",
+      "  - **What**: Recognize builtin plan structure.",
+      "  - **Files**: `packages/cli/src/evals/pattern-planning-runner.ts`.",
+      "  - **Depends on**: None.",
+      "  - **Acceptance**:",
+      "    - Detect `## Scope` and `**Acceptance**` fields.",
+      "- [ ] 2. Update docs.",
+      "  - **What**: Document the structural planning contract.",
+      "  - **Files**: `docs/agent-evals.md`.",
+      "  - **Depends on**: Task 1.",
+      "  - **Acceptance**:",
+      "    - Verify docs match the runner and prompt.",
     ].join("\n");
 
     const signals = extractPlanningSignals(content);
@@ -503,6 +524,27 @@ describe("extractPlanningSignals", () => {
     ]);
   });
 
+  it("still detects legacy structural tags when they appear", () => {
+    const content = [
+      "pattern plan",
+      "#scope Focus on settings workflow and no auth changes.",
+      "#files",
+      "1. Update `packages/cli/src/evals/pattern-planning-runner.ts`.",
+      "2. Update evals/README.md to document the suite.",
+      "#sequence Execute the loader updates before docs.",
+      "#acceptance",
+      "- Verify dry-run loads the suite.",
+    ].join("\n");
+
+    const signals = extractPlanningSignals(content);
+    expect(signals.producedArtifacts).toEqual([
+      "plan_scope_explicit",
+      "plan_file_tasks",
+      "plan_sequence_explicit",
+      "plan_acceptance_coverage",
+    ]);
+  });
+
   it("does not infer coverage from vague prose alone", () => {
     const signals = extractPlanningSignals(
       "We should think about the work and maybe touch a file later.",
@@ -512,13 +554,33 @@ describe("extractPlanningSignals", () => {
     expect(signals.acceptanceCoverage).toBe(false);
     expect(signals.producedArtifacts).toEqual([]);
   });
+
+  it("does not treat partial structural coverage as complete planning execution", () => {
+    const signals = extractPlanningSignals(
+      [
+        "#scope Narrow plan scope.",
+        "#files",
+        "1. Update `packages/cli/src/evals/pattern-planning-runner.ts`.",
+        "#sequence Do the runner change first.",
+      ].join("\n"),
+    );
+
+    expect(signals.producedArtifacts).toEqual([
+      "plan_scope_explicit",
+      "plan_file_tasks",
+      "plan_sequence_explicit",
+    ]);
+    expect(signals.acceptanceCoverage).toBe(false);
+  });
 });
 
 describe("buildUserMessage", () => {
   it("requests structural planning signals explicitly", () => {
     const message = buildUserMessage(makePlanningCase());
     expect(message).toContain("explicit scope");
-    expect(message).toContain("#scope #files #sequence #acceptance");
+    expect(message).toContain("## Scope");
+    expect(message).toContain("**Files**");
+    expect(message).toContain("dependency language");
     expect(message).toContain("plan_scope_explicit");
   });
 });
@@ -545,14 +607,22 @@ describe("PatternPlanningRunner", () => {
     modelClient.setDefaultResponse({
       model: "anthropic/claude-sonnet-4.5",
       content: [
-        "pattern will produce the plan.",
-        "#scope Refactor settings planning only.",
-        "#files",
-        "1. Update `packages/cli/src/evals/pattern-planning-runner.ts`.",
-        "2. Update `evals/README.md`.",
-        "#sequence Complete runner changes before docs.",
-        "#acceptance",
-        "- Verify dry-run works.",
+        "# Refactor settings planning",
+        "## Scope",
+        "- In scope: planning contract updates only.",
+        "## Dependencies and Order",
+        "1. Complete runner changes before docs.",
+        "## Tasks",
+        "- [ ] 1. Update runner detection.",
+        "  - **Files**: `packages/cli/src/evals/pattern-planning-runner.ts`.",
+        "  - **Depends on**: None.",
+        "  - **Acceptance**:",
+        "    - Verify structural detection works.",
+        "- [ ] 2. Update docs.",
+        "  - **Files**: `docs/agent-evals.md`.",
+        "  - **Depends on**: Task 1.",
+        "  - **Acceptance**:",
+        "    - Confirm the documented contract matches the prompt.",
       ].join("\n"),
     });
 
@@ -582,12 +652,51 @@ describe("PatternPlanningRunner", () => {
     ]);
   });
 
+  it("keeps completionSignalled false until every required structural artifact is present", async () => {
+    const modelClient = new StubModelClient();
+    modelClient.setDefaultResponse({
+      model: "anthropic/claude-sonnet-4.5",
+      content: [
+        "# Refactor settings planning",
+        "## Scope",
+        "- In scope: planning contract updates only.",
+        "## Dependencies and Order",
+        "1. Complete runner changes before docs.",
+        "## Tasks",
+        "- [ ] 1. Update runner detection.",
+        "  - **Files**: `packages/cli/src/evals/pattern-planning-runner.ts`.",
+        "  - **Depends on**: None.",
+      ].join("\n"),
+    });
+
+    const scorer = new StubAgentEvalsScorer();
+    scorer.setDefaultRecord(
+      makePlanningScoreRecord({ passed: false, weightedTotal: 0.4 }),
+    );
+
+    const runner = new InMemoryPatternRunner(
+      { modelClient, scorer, patternSystemPrompt: "test" },
+      [makePlanningCase()],
+      [makeEvalRubric()],
+    );
+
+    await runner.run();
+
+    const scorerCall = scorer.calls[0];
+    expect(scorerCall?.run.producedArtifacts).toEqual([
+      "plan_scope_explicit",
+      "plan_file_tasks",
+      "plan_sequence_explicit",
+    ]);
+    expect(scorerCall?.run.completionSignalled).toBe(false);
+  });
+
   it("loads raw artifacts only when requested", async () => {
     const modelClient = new StubModelClient();
     modelClient.setDefaultResponse({
       model: "anthropic/claude-sonnet-4.5",
       content:
-        "pattern\n#scope\n#files\n1. Update `a.ts`\n#sequence\n#acceptance\n- Verify",
+        "## Scope\n- In scope: eval contract only.\n## Dependencies and Order\n1. Update `a.ts` before docs.\n## Tasks\n- [ ] 1. Example\n  - **Files**: `a.ts`\n  - **Depends on**: None\n  - **Acceptance**:\n    - Verify",
     });
     const scorer = new StubAgentEvalsScorer();
     scorer.setDefaultRecord(makePlanningScoreRecord());

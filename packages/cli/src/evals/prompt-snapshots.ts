@@ -44,8 +44,8 @@ import { EVAL_SHORT_AGENT_FILTERS } from "./types.js";
  *
  * The default set is sourced from the shared eval suite registry short-agent
  * filters (`loom`, `tapestry`, `shuttle`, `spindle`, `pattern`, `weft`,
- * `warp`) so provenance stays aligned with the full seven-suite runnable
- * surface.
+ * `warp`) so provenance stays aligned with the same seven-suite text-only
+ * surface used by CLI filter validation and workflow sync tests.
  */
 export const DEFAULT_SNAPSHOT_AGENTS = [...EVAL_SHORT_AGENT_FILTERS] as const;
 
