@@ -171,8 +171,10 @@ export function extractPlanningSignals(content: string): {
   );
   const fileMatches = [...content.matchAll(FILE_TOKEN_RE)];
   const acceptanceCount = countMatches(content, ACCEPTANCE_LINE_RE);
+  const hasTasksHeading = TASKS_HEADING_RE.test(content);
+  const hasNumberedTaskStructure = hasTasksHeading && numberedLineCount > 0;
   const hasExplicitTaskMarkers =
-    checklistTaskCount > 0 || TASKS_HEADING_RE.test(content);
+    checklistTaskCount > 0 || hasNumberedTaskStructure;
   const hasTaskStructure = hasExplicitTaskMarkers;
   const taskCount = hasExplicitTaskMarkers
     ? Math.max(
@@ -180,7 +182,7 @@ export function extractPlanningSignals(content: string): {
         whatFieldCount,
         fileFieldCount,
         acceptanceFieldCount + successCriteriaFieldCount,
-        TASKS_HEADING_RE.test(content) ? numberedLineCount : 0,
+        hasNumberedTaskStructure ? numberedLineCount : 0,
       )
     : 0;
   const producedArtifacts = detectStructuralArtifacts(content, {
