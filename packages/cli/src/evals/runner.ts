@@ -329,11 +329,40 @@ const REPEATABILITY_DIAGNOSTICS_SCHEMA_VERSION = 1 as const;
  * repeatability artifact.
  */
 export interface RepeatabilityDiagnosticsSummary {
+  status: "written";
   filePath: string;
   comparisonKey: RepeatabilityComparisonKey;
   comparableRunIds: string[];
   comparableRunCount: number;
+  errors: RepeatabilityDiagnosticsError[];
 }
+
+export type RepeatabilityDiagnosticsError =
+  | {
+      type: "RepeatabilityDiagnosticsScanError";
+      bundleRoot: string;
+      message: string;
+    }
+  | {
+      type: "RepeatabilityDiagnosticsReadError";
+      filePath: string;
+      message: string;
+    }
+  | {
+      type: "RepeatabilityDiagnosticsWriteError";
+      filePath: string;
+      message: string;
+    };
+
+export interface RepeatabilityDiagnosticsFailure {
+  status: "failed";
+  comparisonKey: RepeatabilityComparisonKey;
+  errors: RepeatabilityDiagnosticsError[];
+}
+
+export type RepeatabilityDiagnosticsResult =
+  | RepeatabilityDiagnosticsSummary
+  | RepeatabilityDiagnosticsFailure;
 
 // ---------------------------------------------------------------------------
 // Per-agent (suite) rollup
@@ -403,8 +432,8 @@ export interface EvalRunSummary {
   filesWritten: string[];
   /** Paths of any local-only raw artifact files written for this run. */
   rawArtifactsWritten: string[];
-  /** Summary reference for the local repeatability artifact, when written. */
-  repeatabilityDiagnostics: RepeatabilityDiagnosticsSummary | null;
+  /** Summary or failure record for local repeatability diagnostics, when attempted. */
+  repeatabilityDiagnostics: RepeatabilityDiagnosticsResult | null;
   /**
    * Typed `RunnerError` values for suites that encountered hard failures
    * (e.g. fixture load errors, prompt provider failures).
@@ -771,27 +800,33 @@ export class EvalOrchestrator {
 
             return ResultAsync.fromSafePromise(rawArtifactResults).andThen(
               (rawResult) =>
-                ResultAsync.fromSafePromise(
-                  this.writeRepeatabilityDiagnostics(
-                    metadata,
-                    runnerResults,
-                    writeResult.bundleDir,
-                    writeResult.runId,
-                  ),
-                ).map((repeatabilityDiagnostics) => {
-                  // Step 8: Assemble run-level summary
-                  const summary = this.assembleRunSummary(
-                    metadata,
-                    runnerResults,
-                    partialFailures,
-                    writeResult.bundleDir,
-                    writeResult.runId,
-                    writeResult.filesWritten,
-                    rawResult.written,
-                    repeatabilityDiagnostics,
-                  );
-                  return summary;
-                }),
+                this.writeRepeatabilityDiagnostics(
+                  metadata,
+                  runnerResults,
+                  writeResult.bundleDir,
+                  writeResult.runId,
+                )
+                  .orElse((failure) =>
+                    ResultAsync.fromSafePromise(
+                      Promise.resolve<RepeatabilityDiagnosticsResult | null>(
+                        failure,
+                      ),
+                    ),
+                  )
+                  .map((repeatabilityDiagnostics) => {
+                    // Step 8: Assemble run-level summary
+                    const summary = this.assembleRunSummary(
+                      metadata,
+                      runnerResults,
+                      partialFailures,
+                      writeResult.bundleDir,
+                      writeResult.runId,
+                      writeResult.filesWritten,
+                      rawResult.written,
+                      repeatabilityDiagnostics,
+                    );
+                    return summary;
+                  }),
             );
           });
         },
@@ -1319,104 +1354,194 @@ export class EvalOrchestrator {
    * directory, is never added to the publishable bundle, and compares the
    * current run only against earlier runs with the exact same filter tuple.
    */
-  private async writeRepeatabilityDiagnostics(
+  private writeRepeatabilityDiagnostics(
     metadata: EvalRunMetadata,
     runnerResults: RunnerResult[],
     bundleDir: string,
     runId: string | null,
-  ): Promise<RepeatabilityDiagnosticsSummary | null> {
+  ): ResultAsync<
+    RepeatabilityDiagnosticsResult | null,
+    RepeatabilityDiagnosticsFailure
+  > {
     if (runId === null || runnerResults.length === 0) {
-      return null;
+      return ResultAsync.fromSafePromise(Promise.resolve(null));
     }
 
-    try {
-      const comparisonKey = this.buildRepeatabilityComparisonKey(
-        metadata,
-        runnerResults,
-      );
-      const currentRun = this.buildRepeatabilityRunSnapshot(
-        metadata,
-        runnerResults,
-        bundleDir,
-        runId,
-      );
-      const previousArtifacts = await this.readComparableRepeatabilityArtifacts(
-        comparisonKey,
-        bundleDir,
-      );
-      const comparableRuns = [
-        ...previousArtifacts.map((item) => item.currentRun),
-        currentRun,
-      ].sort((a, b) => {
-        const timeCompare = a.startedAt.localeCompare(b.startedAt);
-        if (timeCompare !== 0) return timeCompare;
-        return a.runId.localeCompare(b.runId);
-      });
-
-      const artifact: RepeatabilityDiagnosticsArtifact = {
-        schemaVersion: REPEATABILITY_DIAGNOSTICS_SCHEMA_VERSION,
-        generatedAt: new Date().toISOString(),
-        comparisonKey,
-        currentRun,
-        comparableRunIds: comparableRuns.map((run) => run.runId),
-        comparableRunCount: comparableRuns.length,
-        driftSummary: {
-          models: this.buildRepeatabilityModelDriftSummaries(comparableRuns),
-          caseModels:
-            this.buildRepeatabilityCaseModelDriftSummaries(comparableRuns),
-        },
-      };
-
-      const filePath = join(bundleDir, "repeatability-diagnostics.json");
-      await Bun.write(filePath, JSON.stringify(artifact, null, 2));
-
-      return {
-        filePath,
-        comparisonKey,
-        comparableRunIds: artifact.comparableRunIds,
-        comparableRunCount: artifact.comparableRunCount,
-      };
-    } catch {
-      return null;
-    }
-  }
-
-  private async readComparableRepeatabilityArtifacts(
-    comparisonKey: RepeatabilityComparisonKey,
-    currentBundleDir: string,
-  ): Promise<RepeatabilityDiagnosticsArtifact[]> {
-    const files: string[] = [];
-    const glob = new Bun.Glob(
-      `${this.bundleRoot}/runs/*/repeatability-diagnostics.json`,
+    const comparisonKey = this.buildRepeatabilityComparisonKey(
+      metadata,
+      runnerResults,
+    );
+    const currentRun = this.buildRepeatabilityRunSnapshot(
+      metadata,
+      runnerResults,
+      bundleDir,
+      runId,
     );
 
-    for await (const file of glob.scan({ cwd: "/" })) {
-      if (file.startsWith(`${currentBundleDir}/`)) {
-        continue;
-      }
-      files.push(file);
-    }
+    return this.readComparableRepeatabilityArtifacts(comparisonKey, bundleDir)
+      .mapErr(
+        (error): RepeatabilityDiagnosticsFailure => ({
+          status: "failed",
+          comparisonKey,
+          errors: [error],
+        }),
+      )
+      .andThen(({ artifacts: previousArtifacts, errors }) => {
+        const comparableRuns = [
+          ...previousArtifacts.map((item) => item.currentRun),
+          currentRun,
+        ].sort((a, b) => {
+          const timeCompare = a.startedAt.localeCompare(b.startedAt);
+          if (timeCompare !== 0) return timeCompare;
+          return a.runId.localeCompare(b.runId);
+        });
 
-    const artifacts: RepeatabilityDiagnosticsArtifact[] = [];
-    for (const filePath of files) {
-      try {
-        const parsed = (await Bun.file(filePath).json()) as unknown;
-        if (!this.isCompatibleRepeatabilityArtifact(parsed)) {
-          continue;
-        }
-        if (
-          !this.sameRepeatabilityComparisonKey(
-            parsed.comparisonKey,
-            comparisonKey,
+        const artifact: RepeatabilityDiagnosticsArtifact = {
+          schemaVersion: REPEATABILITY_DIAGNOSTICS_SCHEMA_VERSION,
+          generatedAt: new Date().toISOString(),
+          comparisonKey,
+          currentRun,
+          comparableRunIds: comparableRuns.map((run) => run.runId),
+          comparableRunCount: comparableRuns.length,
+          driftSummary: {
+            models: this.buildRepeatabilityModelDriftSummaries(comparableRuns),
+            caseModels:
+              this.buildRepeatabilityCaseModelDriftSummaries(comparableRuns),
+          },
+        };
+
+        const filePath = join(bundleDir, "repeatability-diagnostics.json");
+        return this.writeRepeatabilityDiagnosticsArtifact(filePath, artifact)
+          .map(
+            (): RepeatabilityDiagnosticsSummary => ({
+              status: "written",
+              filePath,
+              comparisonKey,
+              comparableRunIds: artifact.comparableRunIds,
+              comparableRunCount: artifact.comparableRunCount,
+              errors,
+            }),
           )
-        ) {
-          continue;
-        }
-        artifacts.push(parsed);
-      } catch {}
-    }
+          .mapErr(
+            (error): RepeatabilityDiagnosticsFailure => ({
+              status: "failed",
+              comparisonKey,
+              errors: [...errors, error],
+            }),
+          );
+      });
+  }
 
-    return artifacts;
+  private readComparableRepeatabilityArtifacts(
+    comparisonKey: RepeatabilityComparisonKey,
+    currentBundleDir: string,
+  ): ResultAsync<
+    {
+      artifacts: RepeatabilityDiagnosticsArtifact[];
+      errors: RepeatabilityDiagnosticsError[];
+    },
+    RepeatabilityDiagnosticsError
+  > {
+    return this.listRepeatabilityArtifactPaths(currentBundleDir).andThen(
+      (files) =>
+        ResultAsync.fromSafePromise(
+          (async () => {
+            const artifacts: RepeatabilityDiagnosticsArtifact[] = [];
+            const errors: RepeatabilityDiagnosticsError[] = [];
+
+            for (const filePath of files) {
+              const artifactResult =
+                await this.readRepeatabilityArtifact(filePath);
+
+              if (artifactResult.isErr()) {
+                errors.push(artifactResult.error);
+                continue;
+              }
+
+              const artifact = artifactResult.value;
+              if (artifact === null) {
+                continue;
+              }
+
+              if (
+                !this.sameRepeatabilityComparisonKey(
+                  artifact.comparisonKey,
+                  comparisonKey,
+                )
+              ) {
+                continue;
+              }
+
+              artifacts.push(artifact);
+            }
+
+            return { artifacts, errors };
+          })(),
+        ),
+    );
+  }
+
+  private listRepeatabilityArtifactPaths(
+    currentBundleDir: string,
+  ): ResultAsync<string[], RepeatabilityDiagnosticsError> {
+    return ResultAsync.fromPromise(
+      (async () => {
+        const files: string[] = [];
+        const glob = new Bun.Glob(
+          `${this.bundleRoot}/runs/*/repeatability-diagnostics.json`,
+        );
+
+        for await (const file of glob.scan({ cwd: "/" })) {
+          if (file.startsWith(`${currentBundleDir}/`)) {
+            continue;
+          }
+          files.push(file);
+        }
+
+        return files;
+      })(),
+      (cause): RepeatabilityDiagnosticsError => ({
+        type: "RepeatabilityDiagnosticsScanError",
+        bundleRoot: this.bundleRoot,
+        message: this.formatRepeatabilityDiagnosticsCause(cause),
+      }),
+    );
+  }
+
+  private readRepeatabilityArtifact(
+    filePath: string,
+  ): ResultAsync<
+    RepeatabilityDiagnosticsArtifact | null,
+    RepeatabilityDiagnosticsError
+  > {
+    return ResultAsync.fromThrowable(
+      () => Bun.file(filePath).json(),
+      (cause): RepeatabilityDiagnosticsError => ({
+        type: "RepeatabilityDiagnosticsReadError",
+        filePath,
+        message: this.formatRepeatabilityDiagnosticsCause(cause),
+      }),
+    )().map((parsed) => {
+      if (!this.isCompatibleRepeatabilityArtifact(parsed)) {
+        return null;
+      }
+
+      return parsed;
+    });
+  }
+
+  private writeRepeatabilityDiagnosticsArtifact(
+    filePath: string,
+    artifact: RepeatabilityDiagnosticsArtifact,
+  ): ResultAsync<void, RepeatabilityDiagnosticsError> {
+    return ResultAsync.fromThrowable(
+      () => Bun.write(filePath, JSON.stringify(artifact, null, 2)),
+      (cause): RepeatabilityDiagnosticsError => ({
+        type: "RepeatabilityDiagnosticsWriteError",
+        filePath,
+        message: this.formatRepeatabilityDiagnosticsCause(cause),
+      }),
+    )().map(() => undefined);
   }
 
   private isCompatibleRepeatabilityArtifact(
@@ -1762,7 +1887,7 @@ export class EvalOrchestrator {
     runId: string | null,
     filesWritten: string[],
     rawArtifactsWritten: string[],
-    repeatabilityDiagnostics: RepeatabilityDiagnosticsSummary | null,
+    repeatabilityDiagnostics: RepeatabilityDiagnosticsResult | null,
   ): EvalRunSummary {
     // Aggregate totals
     const totalCases = runnerResults.reduce((s, rr) => s + rr.totalCases, 0);
@@ -1921,6 +2046,18 @@ export class EvalOrchestrator {
       `the OpenRouter base URL override is not a valid http/https URL. ` +
       `Remove OPENROUTER_BASE_URL to use the default.`
     );
+  }
+
+  private formatRepeatabilityDiagnosticsCause(cause: unknown): string {
+    if (cause instanceof Error) {
+      return cause.message;
+    }
+
+    if (typeof cause === "string") {
+      return cause;
+    }
+
+    return "Unknown repeatability diagnostics failure.";
   }
 }
 

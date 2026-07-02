@@ -57,6 +57,7 @@ import {
   type EvalOrchestratorOptions,
   type EvalRunMetadata,
   getEvalCoveredPromptAgents,
+  type RepeatabilityDiagnosticsError,
   type RepeatabilityRunSnapshot,
   type SnapshotProvider,
 } from "../runner.js";
@@ -1747,10 +1748,13 @@ describe("EvalOrchestrator — raw artifact filename timestamp integration", () 
     const diag1 = run1.value.repeatabilityDiagnostics;
     expect(diag1).not.toBeNull();
     if (diag1 === null) return;
+    expect(diag1.status).toBe("written");
+    if (diag1.status !== "written") return;
     expect(run1.value.runId).not.toBeNull();
     if (run1.value.runId === null) return;
     expect(diag1.comparableRunCount).toBe(1);
     expect(diag1.comparableRunIds).toEqual([run1.value.runId]);
+    expect(diag1.errors).toEqual([]);
 
     const artifact1 = await Bun.file(diag1.filePath).json();
     expect(artifact1).toMatchObject({
@@ -1773,6 +1777,8 @@ describe("EvalOrchestrator — raw artifact filename timestamp integration", () 
     const diag2 = run2.value.repeatabilityDiagnostics;
     expect(diag2).not.toBeNull();
     if (diag2 === null) return;
+    expect(diag2.status).toBe("written");
+    if (diag2.status !== "written") return;
     expect(run2.value.runId).not.toBeNull();
     if (run2.value.runId === null) return;
     expect(diag2.comparableRunCount).toBe(2);
@@ -1806,6 +1812,63 @@ describe("EvalOrchestrator — raw artifact filename timestamp integration", () 
     expect(artifact2.driftSummary.caseModels[0]).toMatchObject({
       classification: "consistent-pass",
       comparableRunCount: 2,
+    });
+  });
+
+  it("surfaces repeatability read failures in the run summary while still writing current diagnostics", async () => {
+    const modelId = "anthropic/claude-sonnet-4.5";
+    const caseId = "loom-route-backend-api";
+    const bundleRoot = join(TEMP_DIR, `repeatability-read-failure-${uid()}`);
+    const staleRunId = "stale000-2026-07-01-001";
+    const staleDir = join(bundleRoot, "runs", staleRunId);
+
+    await Bun.spawn(["mkdir", "-p", staleDir]).exited;
+    await Bun.write(
+      join(staleDir, "repeatability-diagnostics.json"),
+      "{ definitely-not-valid-json",
+    );
+
+    const modelClient = new StubModelClient();
+    modelClient.setDefaultResponse({
+      model: modelId,
+      content: 'I will route to the "shuttle" agent.',
+    });
+    const scorer = new StubAgentEvalsScorer();
+    scorer.setDefaultRecord(makePassingScoreRecord(caseId, modelId));
+
+    const orchestrator = new EvalOrchestrator({
+      modelClient,
+      scorer,
+      promptProvider: new MockPromptProvider("You are Loom. Route tasks."),
+      snapshotProvider: new StubSnapshotProvider(),
+      gitShaProvider: makeGitShaProvider(),
+      bundleRoot,
+      evalsRoot: REAL_EVALS_ROOT,
+      env: { OPENROUTER_API_KEY: FAKE_API_KEY },
+    });
+
+    const result = await orchestrator.run({
+      agent: "loom",
+      model: modelId,
+      case: caseId,
+      dryRun: false,
+      rawArtifacts: false,
+    });
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    const diagnostics = result.value.repeatabilityDiagnostics;
+    expect(diagnostics).not.toBeNull();
+    if (diagnostics === null) return;
+    expect(diagnostics.status).toBe("written");
+    if (diagnostics.status !== "written") return;
+
+    expect(diagnostics.comparableRunCount).toBe(1);
+    expect(diagnostics.errors).toHaveLength(1);
+    expect(diagnostics.errors[0]).toMatchObject({
+      type: "RepeatabilityDiagnosticsReadError",
+      filePath: join(staleDir, "repeatability-diagnostics.json"),
     });
   });
 
@@ -1969,6 +2032,8 @@ describe("EvalOrchestrator — raw artifact filename timestamp integration", () 
     const diag = narrowedRun.value.repeatabilityDiagnostics;
     expect(diag).not.toBeNull();
     if (diag === null) return;
+    expect(diag.status).toBe("written");
+    if (diag.status !== "written") return;
     expect(narrowedRun.value.runId).not.toBeNull();
     if (narrowedRun.value.runId === null) return;
 
@@ -2041,11 +2106,70 @@ describe("EvalOrchestrator — raw artifact filename timestamp integration", () 
     const diagnostics = result.value.repeatabilityDiagnostics;
     expect(diagnostics).not.toBeNull();
     if (diagnostics === null) return;
+    expect(diagnostics.status).toBe("written");
+    if (diagnostics.status !== "written") return;
     expect(result.value.runId).not.toBeNull();
     if (result.value.runId === null) return;
 
     expect(diagnostics.comparableRunCount).toBe(1);
     expect(diagnostics.comparableRunIds).toEqual([result.value.runId]);
+    expect(diagnostics.errors).toEqual([]);
+  });
+
+  it("returns a typed write error when repeatability diagnostics cannot be written", async () => {
+    const orchestrator = new EvalOrchestrator(makeOptions());
+    const directoryPath = join(TEMP_DIR, `repeatability-write-error-${uid()}`);
+
+    await Bun.spawn(["mkdir", "-p", directoryPath]).exited;
+
+    const result = await (
+      orchestrator as unknown as {
+        writeRepeatabilityDiagnosticsArtifact: (
+          filePath: string,
+          artifact: {
+            schemaVersion: 1;
+            generatedAt: string;
+            comparisonKey: {
+              agentFilter: string | null;
+              modelFilter: string | null;
+              caseFilter: string | null;
+              suites: string[];
+            };
+            currentRun: RepeatabilityRunSnapshot;
+            comparableRunIds: string[];
+            comparableRunCount: number;
+            driftSummary: { models: []; caseModels: [] };
+          },
+        ) => ResultAsync<void, RepeatabilityDiagnosticsError>;
+      }
+    ).writeRepeatabilityDiagnosticsArtifact(directoryPath, {
+      schemaVersion: 1,
+      generatedAt: FIXED_TIMESTAMP,
+      comparisonKey: {
+        agentFilter: "loom",
+        modelFilter: null,
+        caseFilter: null,
+        suites: ["loom-routing"],
+      },
+      currentRun: {
+        runId: "run-1",
+        repoSha: FAKE_GIT_SHA,
+        startedAt: FIXED_TIMESTAMP,
+        bundleDir: "/tmp/bundle",
+        suites: [],
+      },
+      comparableRunIds: ["run-1"],
+      comparableRunCount: 1,
+      driftSummary: { models: [], caseModels: [] },
+    });
+
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error).toMatchObject({
+        type: "RepeatabilityDiagnosticsWriteError",
+        filePath: directoryPath,
+      });
+    }
   });
 });
 

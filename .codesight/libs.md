@@ -253,7 +253,7 @@
   - interface EvalRunMetadata
   - interface ModelRollup
   - interface RepeatabilityComparisonKey
-  - _...13 more_
+  - _...16 more_
 - `packages/cli/src/evals/sanitizer.ts`
   - function sanitizeCaseResultSummary: (summary) => SanitizedCaseResultSummary
   - function sanitizeScoreRecord: (record) => SanitizedScoreRecord

@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 119 lib files | 7 env vars | 5 middleware | 0% test coverage
 > **Token savings:** this file is ~11,200 tokens. Without it, AI exploration would cost ~42,300 tokens. **Saves ~31,100 tokens per conversation.**
-> **Last scanned:** 2026-07-02 06:55 — re-run after significant changes
+> **Last scanned:** 2026-07-02 07:18 — re-run after significant changes
 
 ---
 
@@ -264,7 +264,7 @@
   - interface EvalRunMetadata
   - interface ModelRollup
   - interface RepeatabilityComparisonKey
-  - _...13 more_
+  - _...16 more_
 - `packages/cli/src/evals/sanitizer.ts`
   - function sanitizeCaseResultSummary: (summary) => SanitizedCaseResultSummary
   - function sanitizeScoreRecord: (record) => SanitizedScoreRecord
