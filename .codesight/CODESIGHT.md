@@ -4,8 +4,9 @@
 > **Monorepo:** @weave/core, @weave/engine, @weave/config, @weave/cli, @weave/docs, @weave/adapter-opencode
 
 > 0 routes | 0 models | 0 components | 119 lib files | 7 env vars | 5 middleware | 0% test coverage
-> **Token savings:** this file is ~11,100 tokens. Without it, AI exploration would cost ~42,300 tokens. **Saves ~31,200 tokens per conversation.**
-> **Last scanned:** 2026-06-30 18:53 — re-run after significant changes
+> **Token savings:** this file is ~11,200 tokens. Without it, AI exploration would cost ~42,300 tokens. **Saves ~31,100 tokens per conversation.**
+> **Last scanned:** 2026-07-02 07:20 — re-run after significant changes
+
 ---
 
 # Libraries
@@ -172,12 +173,13 @@
   - class RealLangChainJudge
   - _...10 more_
 - `packages/cli/src/evals/loom-routing-runner.ts`
+  - function analyzeLoomRouting: (content) => LoomRoutingAnalysis
+  - function buildRoutingRunnerDiagnostics: (evalCase, analysis) => NonNullable<RawCaseResultArtifact["runnerDiagnostics"]> | undefined
   - function extractRoutedAgents: (content) => string[]
   - function redactSecrets: (raw) => string
   - class LoomRoutingRunner
-  - interface LoomRoutingRunnerOptions
-  - interface LoomRunRequest
-  - const LOOM_ROUTING_SUITE
+  - interface LoomRoutingAnalysis
+  - _...3 more_
 - `packages/cli/src/evals/model-matrix.ts`
   - function loadModelMatrix: (matrixPath) => ResultAsync<ModelMatrix, FixtureSchemaError>
   - function resolveDefaultModels: (matrix) => ModelMatrixEntry[]
@@ -195,12 +197,12 @@
   - _...1 more_
 - `packages/cli/src/evals/pattern-planning-runner.ts`
   - function extractPlanningSignals: (content) => void
+  - function buildPlanningRunnerDiagnostics: (evalCase, signals) => NonNullable<RawCaseResultArtifact["runnerDiagnostics"]>
+  - function buildModelRunOutput: (evalCase, modelId, userMessage, content) => ModelRunOutput
   - function redactSecrets: (raw) => string
   - function buildUserMessage: (evalCase) => string
   - class PatternPlanningRunner
-  - interface PatternPlanningRunnerOptions
-  - interface PatternPlanningRunRequest
-  - _...1 more_
+  - _...3 more_
 - `packages/cli/src/evals/prompt-snapshots.ts`
   - function composeSnapshot: (input) => ResultAsync<ComposeSnapshotResult, ProvenanceError>
   - function composeAgentSnapshots: (options) => ResultAsync<ComposeAgentSnapshotsResult, ProvenanceError>
@@ -261,8 +263,8 @@
   - class EvalOrchestrator
   - interface EvalRunMetadata
   - interface ModelRollup
-  - interface AgentRollup
-  - _...4 more_
+  - interface RepeatabilityComparisonKey
+  - _...16 more_
 - `packages/cli/src/evals/sanitizer.ts`
   - function sanitizeCaseResultSummary: (summary) => SanitizedCaseResultSummary
   - function sanitizeScoreRecord: (record) => SanitizedScoreRecord
@@ -606,7 +608,7 @@
 
 ## Most Imported Files (change these carefully)
 
-- `packages/cli/src/evals/types.ts` — imported by **36** files
+- `packages/cli/src/evals/types.ts` — imported by **35** files
 - `packages/cli/src/theme/colors.ts` — imported by **19** files
 - `packages/cli/src/io/terminal.ts` — imported by **17** files
 - `packages/cli/src/evals/report-schema.ts` — imported by **17** files
@@ -629,7 +631,7 @@
 
 ## Import Map (who imports what)
 
-- `packages/cli/src/evals/types.ts` ← `packages/cli/src/commands/eval.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/dashboard-indexes.test.ts`, `packages/cli/src/evals/__tests__/github-contents-publisher.test.ts` +31 more
+- `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/dashboard-indexes.test.ts`, `packages/cli/src/evals/__tests__/github-contents-publisher.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts` +30 more
 - `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts` +14 more
 - `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts` +12 more
 - `packages/cli/src/evals/report-schema.ts` ← `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts` +12 more

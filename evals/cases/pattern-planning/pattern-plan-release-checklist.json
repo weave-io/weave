@@ -1,6 +1,6 @@
 {
   "id": "pattern-plan-release-checklist",
-  "description": "Create a text-only release-readiness plan for the eval pipeline that names the touched files, orders the work, and ties each task to acceptance verification.",
+  "description": "Create a text-only release-readiness plan for the eval pipeline that names the touched files for each task, makes the work order or dependency chain explicit, and ties each task to acceptance, success, or completion verification rather than a loose final note.",
   "suite": "pattern-planning",
   "allowed_agents": ["pattern"],
   "allowed_models": [
@@ -10,7 +10,7 @@
   ],
   "expected_outcome": {
     "kind": "task_completion",
-    "description": "The plan should provide observable planning structure for release work.",
+    "description": "The plan should provide observable planning structure for release work, and harmless heading variations should still count when the same task-level structure is present.",
     "required_artifacts": [
       "plan_scope_explicit",
       "plan_file_tasks",

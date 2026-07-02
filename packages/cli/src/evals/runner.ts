@@ -199,6 +199,172 @@ export interface ModelRollup {
 }
 
 // ---------------------------------------------------------------------------
+// Repeatability diagnostics
+// ---------------------------------------------------------------------------
+
+/**
+ * Exact filter tuple used to decide whether two runs are comparable for local
+ * repeatability diagnostics.
+ */
+export interface RepeatabilityComparisonKey {
+  agentFilter: string | null;
+  modelFilter: string | null;
+  caseFilter: string | null;
+  suites: string[];
+}
+
+/**
+ * One case result snapshot stored in the local repeatability artifact.
+ */
+export interface RepeatabilityCaseSnapshot {
+  caseId: string;
+  passed: boolean;
+  required: boolean;
+  weightedTotal: number;
+  dryRun: boolean;
+}
+
+/**
+ * One model slice within a suite snapshot stored in the local repeatability
+ * artifact.
+ */
+export interface RepeatabilityModelSnapshot {
+  modelId: string;
+  totalCases: number;
+  passedCases: number;
+  failedCases: number;
+  passRate: number | null;
+  cases: RepeatabilityCaseSnapshot[];
+}
+
+/**
+ * One suite snapshot stored in the local repeatability artifact.
+ */
+export interface RepeatabilitySuiteSnapshot {
+  suite: string;
+  totalCases: number;
+  passedCases: number;
+  failedCases: number;
+  suiteGreen: boolean;
+  models: RepeatabilityModelSnapshot[];
+}
+
+/**
+ * The current run's normalized snapshot used for local rerun comparison.
+ */
+export interface RepeatabilityRunSnapshot {
+  runId: string;
+  repoSha: string;
+  startedAt: string;
+  bundleDir: string;
+  suites: RepeatabilitySuiteSnapshot[];
+}
+
+/**
+ * Per-model comparison summary across comparable reruns.
+ */
+export interface RepeatabilityModelDriftSummary {
+  suite: string;
+  modelId: string;
+  comparableRunCount: number;
+  classification: "single-run" | "consistent" | "drifted";
+  passRateRange: {
+    min: number | null;
+    max: number | null;
+  };
+  runs: Array<{
+    runId: string;
+    passedCases: number;
+    totalCases: number;
+    failedCases: number;
+    passRate: number | null;
+  }>;
+}
+
+/**
+ * Per-case, per-model comparison summary across comparable reruns.
+ */
+export interface RepeatabilityCaseModelDriftSummary {
+  suite: string;
+  caseId: string;
+  modelId: string;
+  comparableRunCount: number;
+  classification:
+    | "single-run"
+    | "consistent-pass"
+    | "consistent-fail"
+    | "mixed";
+  weightedTotalRange: {
+    min: number;
+    max: number;
+  };
+  runs: Array<{
+    runId: string;
+    passed: boolean;
+    required: boolean;
+    weightedTotal: number;
+  }>;
+}
+
+/**
+ * Serialized local-only repeatability artifact written next to a run bundle.
+ */
+export interface RepeatabilityDiagnosticsArtifact {
+  schemaVersion: 1;
+  generatedAt: string;
+  comparisonKey: RepeatabilityComparisonKey;
+  currentRun: RepeatabilityRunSnapshot;
+  comparableRunIds: string[];
+  comparableRunCount: number;
+  driftSummary: {
+    models: RepeatabilityModelDriftSummary[];
+    caseModels: RepeatabilityCaseModelDriftSummary[];
+  };
+}
+
+const REPEATABILITY_DIAGNOSTICS_SCHEMA_VERSION = 1 as const;
+
+/**
+ * Compact summary reference returned to callers after writing the local
+ * repeatability artifact.
+ */
+export interface RepeatabilityDiagnosticsSummary {
+  status: "written";
+  filePath: string;
+  comparisonKey: RepeatabilityComparisonKey;
+  comparableRunIds: string[];
+  comparableRunCount: number;
+  errors: RepeatabilityDiagnosticsError[];
+}
+
+export type RepeatabilityDiagnosticsError =
+  | {
+      type: "RepeatabilityDiagnosticsScanError";
+      bundleRoot: string;
+      message: string;
+    }
+  | {
+      type: "RepeatabilityDiagnosticsReadError";
+      filePath: string;
+      message: string;
+    }
+  | {
+      type: "RepeatabilityDiagnosticsWriteError";
+      filePath: string;
+      message: string;
+    };
+
+export interface RepeatabilityDiagnosticsFailure {
+  status: "failed";
+  comparisonKey: RepeatabilityComparisonKey;
+  errors: RepeatabilityDiagnosticsError[];
+}
+
+export type RepeatabilityDiagnosticsResult =
+  | RepeatabilityDiagnosticsSummary
+  | RepeatabilityDiagnosticsFailure;
+
+// ---------------------------------------------------------------------------
 // Per-agent (suite) rollup
 // ---------------------------------------------------------------------------
 
@@ -262,8 +428,12 @@ export interface EvalRunSummary {
    * bundle write was short-circuited.
    */
   runId: string | null;
-  /** Paths of all files written by the bundle writer. */
+  /** Paths of all publishable/internal bundle files written by the bundle writer. */
   filesWritten: string[];
+  /** Paths of any local-only raw artifact files written for this run. */
+  rawArtifactsWritten: string[];
+  /** Summary or failure record for local repeatability diagnostics, when attempted. */
+  repeatabilityDiagnostics: RepeatabilityDiagnosticsResult | null;
   /**
    * Typed `RunnerError` values for suites that encountered hard failures
    * (e.g. fixture load errors, prompt provider failures).
@@ -606,6 +776,8 @@ export class EvalOrchestrator {
                   this.bundleRoot,
                   null,
                   [],
+                  [],
+                  null,
                 ),
               ),
             );
@@ -626,19 +798,35 @@ export class EvalOrchestrator {
                   errors: [] as string[],
                 });
 
-            return ResultAsync.fromSafePromise(rawArtifactResults).map(
-              (_rawResult) => {
-                // Step 8: Assemble run-level summary
-                const summary = this.assembleRunSummary(
+            return ResultAsync.fromSafePromise(rawArtifactResults).andThen(
+              (rawResult) =>
+                this.writeRepeatabilityDiagnostics(
                   metadata,
                   runnerResults,
-                  partialFailures,
                   writeResult.bundleDir,
                   writeResult.runId,
-                  writeResult.filesWritten,
-                );
-                return summary;
-              },
+                )
+                  .orElse((failure) =>
+                    ResultAsync.fromSafePromise(
+                      Promise.resolve<RepeatabilityDiagnosticsResult | null>(
+                        failure,
+                      ),
+                    ),
+                  )
+                  .map((repeatabilityDiagnostics) => {
+                    // Step 8: Assemble run-level summary
+                    const summary = this.assembleRunSummary(
+                      metadata,
+                      runnerResults,
+                      partialFailures,
+                      writeResult.bundleDir,
+                      writeResult.runId,
+                      writeResult.filesWritten,
+                      rawResult.written,
+                      repeatabilityDiagnostics,
+                    );
+                    return summary;
+                  }),
             );
           });
         },
@@ -1156,6 +1344,538 @@ export class EvalOrchestrator {
   }
 
   // ---------------------------------------------------------------------------
+  // Private: repeatability diagnostics write
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Write a local-only repeatability artifact for the current run.
+   *
+   * The artifact is intentionally developer-facing. It stays in the local run
+   * directory, is never added to the publishable bundle, and compares the
+   * current run only against earlier runs with the exact same filter tuple.
+   */
+  private writeRepeatabilityDiagnostics(
+    metadata: EvalRunMetadata,
+    runnerResults: RunnerResult[],
+    bundleDir: string,
+    runId: string | null,
+  ): ResultAsync<
+    RepeatabilityDiagnosticsResult | null,
+    RepeatabilityDiagnosticsFailure
+  > {
+    if (runId === null || runnerResults.length === 0) {
+      return ResultAsync.fromSafePromise(Promise.resolve(null));
+    }
+
+    const comparisonKey = this.buildRepeatabilityComparisonKey(
+      metadata,
+      runnerResults,
+    );
+    const currentRun = this.buildRepeatabilityRunSnapshot(
+      metadata,
+      runnerResults,
+      bundleDir,
+      runId,
+    );
+
+    return this.readComparableRepeatabilityArtifacts(comparisonKey, bundleDir)
+      .mapErr(
+        (error): RepeatabilityDiagnosticsFailure => ({
+          status: "failed",
+          comparisonKey,
+          errors: [error],
+        }),
+      )
+      .andThen(({ artifacts: previousArtifacts, errors }) => {
+        const comparableRuns = [
+          ...previousArtifacts.map((item) => item.currentRun),
+          currentRun,
+        ].sort((a, b) => {
+          const timeCompare = a.startedAt.localeCompare(b.startedAt);
+          if (timeCompare !== 0) return timeCompare;
+          return a.runId.localeCompare(b.runId);
+        });
+
+        const artifact: RepeatabilityDiagnosticsArtifact = {
+          schemaVersion: REPEATABILITY_DIAGNOSTICS_SCHEMA_VERSION,
+          generatedAt: new Date().toISOString(),
+          comparisonKey,
+          currentRun,
+          comparableRunIds: comparableRuns.map((run) => run.runId),
+          comparableRunCount: comparableRuns.length,
+          driftSummary: {
+            models: this.buildRepeatabilityModelDriftSummaries(comparableRuns),
+            caseModels:
+              this.buildRepeatabilityCaseModelDriftSummaries(comparableRuns),
+          },
+        };
+
+        const filePath = join(bundleDir, "repeatability-diagnostics.json");
+        return this.writeRepeatabilityDiagnosticsArtifact(filePath, artifact)
+          .map(
+            (): RepeatabilityDiagnosticsSummary => ({
+              status: "written",
+              filePath,
+              comparisonKey,
+              comparableRunIds: artifact.comparableRunIds,
+              comparableRunCount: artifact.comparableRunCount,
+              errors,
+            }),
+          )
+          .mapErr(
+            (error): RepeatabilityDiagnosticsFailure => ({
+              status: "failed",
+              comparisonKey,
+              errors: [...errors, error],
+            }),
+          );
+      });
+  }
+
+  private readComparableRepeatabilityArtifacts(
+    comparisonKey: RepeatabilityComparisonKey,
+    currentBundleDir: string,
+  ): ResultAsync<
+    {
+      artifacts: RepeatabilityDiagnosticsArtifact[];
+      errors: RepeatabilityDiagnosticsError[];
+    },
+    RepeatabilityDiagnosticsError
+  > {
+    return this.listRepeatabilityArtifactPaths(currentBundleDir).andThen(
+      (files) =>
+        ResultAsync.fromSafePromise(
+          (async () => {
+            const artifacts: RepeatabilityDiagnosticsArtifact[] = [];
+            const errors: RepeatabilityDiagnosticsError[] = [];
+
+            for (const filePath of files) {
+              const artifactResult =
+                await this.readRepeatabilityArtifact(filePath);
+
+              if (artifactResult.isErr()) {
+                errors.push(artifactResult.error);
+                continue;
+              }
+
+              const artifact = artifactResult.value;
+              if (artifact === null) {
+                continue;
+              }
+
+              if (
+                !this.sameRepeatabilityComparisonKey(
+                  artifact.comparisonKey,
+                  comparisonKey,
+                )
+              ) {
+                continue;
+              }
+
+              artifacts.push(artifact);
+            }
+
+            return { artifacts, errors };
+          })(),
+        ),
+    );
+  }
+
+  private listRepeatabilityArtifactPaths(
+    currentBundleDir: string,
+  ): ResultAsync<string[], RepeatabilityDiagnosticsError> {
+    return ResultAsync.fromPromise(
+      (async () => {
+        const files: string[] = [];
+        const glob = new Bun.Glob(
+          `${this.bundleRoot}/runs/*/repeatability-diagnostics.json`,
+        );
+
+        for await (const file of glob.scan({ cwd: "/" })) {
+          if (file.startsWith(`${currentBundleDir}/`)) {
+            continue;
+          }
+          files.push(file);
+        }
+
+        return files;
+      })(),
+      (cause): RepeatabilityDiagnosticsError => ({
+        type: "RepeatabilityDiagnosticsScanError",
+        bundleRoot: this.bundleRoot,
+        message: this.formatRepeatabilityDiagnosticsCause(cause),
+      }),
+    );
+  }
+
+  private readRepeatabilityArtifact(
+    filePath: string,
+  ): ResultAsync<
+    RepeatabilityDiagnosticsArtifact | null,
+    RepeatabilityDiagnosticsError
+  > {
+    return ResultAsync.fromThrowable(
+      () => Bun.file(filePath).json(),
+      (cause): RepeatabilityDiagnosticsError => ({
+        type: "RepeatabilityDiagnosticsReadError",
+        filePath,
+        message: this.formatRepeatabilityDiagnosticsCause(cause),
+      }),
+    )().map((parsed) => {
+      if (!this.isCompatibleRepeatabilityArtifact(parsed)) {
+        return null;
+      }
+
+      return parsed;
+    });
+  }
+
+  private writeRepeatabilityDiagnosticsArtifact(
+    filePath: string,
+    artifact: RepeatabilityDiagnosticsArtifact,
+  ): ResultAsync<void, RepeatabilityDiagnosticsError> {
+    return ResultAsync.fromThrowable(
+      () => Bun.write(filePath, JSON.stringify(artifact, null, 2)),
+      (cause): RepeatabilityDiagnosticsError => ({
+        type: "RepeatabilityDiagnosticsWriteError",
+        filePath,
+        message: this.formatRepeatabilityDiagnosticsCause(cause),
+      }),
+    )().map(() => undefined);
+  }
+
+  private isCompatibleRepeatabilityArtifact(
+    value: unknown,
+  ): value is RepeatabilityDiagnosticsArtifact {
+    if (typeof value !== "object" || value === null) {
+      return false;
+    }
+
+    const candidate = value as {
+      schemaVersion?: unknown;
+      comparisonKey?: unknown;
+      currentRun?: unknown;
+    };
+
+    if (candidate.schemaVersion !== REPEATABILITY_DIAGNOSTICS_SCHEMA_VERSION) {
+      return false;
+    }
+
+    if (
+      typeof candidate.comparisonKey !== "object" ||
+      candidate.comparisonKey === null
+    ) {
+      return false;
+    }
+
+    if (
+      typeof candidate.currentRun !== "object" ||
+      candidate.currentRun === null
+    ) {
+      return false;
+    }
+
+    return true;
+  }
+
+  private buildRepeatabilityComparisonKey(
+    metadata: EvalRunMetadata,
+    runnerResults: RunnerResult[],
+  ): RepeatabilityComparisonKey {
+    const suites = [
+      ...new Set(runnerResults.map((result) => result.suite)),
+    ].sort();
+
+    return {
+      agentFilter: metadata.agentFilter,
+      modelFilter: metadata.modelFilter,
+      caseFilter: metadata.caseFilter,
+      suites,
+    };
+  }
+
+  private sameRepeatabilityComparisonKey(
+    left: RepeatabilityComparisonKey,
+    right: RepeatabilityComparisonKey,
+  ): boolean {
+    if (left.agentFilter !== right.agentFilter) return false;
+    if (left.modelFilter !== right.modelFilter) return false;
+    if (left.caseFilter !== right.caseFilter) return false;
+    if (left.suites.length !== right.suites.length) return false;
+
+    for (let index = 0; index < left.suites.length; index += 1) {
+      if (left.suites[index] !== right.suites[index]) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  private buildRepeatabilityRunSnapshot(
+    metadata: EvalRunMetadata,
+    runnerResults: RunnerResult[],
+    bundleDir: string,
+    runId: string,
+  ): RepeatabilityRunSnapshot {
+    const suites = [...new Set(runnerResults.map((result) => result.suite))]
+      .sort((a, b) => a.localeCompare(b))
+      .map((suite) => {
+        const suiteResults = runnerResults.filter(
+          (result) => result.suite === suite,
+        );
+        const totalCases = suiteResults.reduce(
+          (sum, result) => sum + result.totalCases,
+          0,
+        );
+        const passedCases = suiteResults.reduce(
+          (sum, result) => sum + result.passedCases,
+          0,
+        );
+        const failedCases = suiteResults.reduce(
+          (sum, result) => sum + result.failedCases,
+          0,
+        );
+        const suiteGreen = suiteResults.every((result) => result.suiteGreen);
+        const modelGroups = new Map<
+          string,
+          RepeatabilityModelSnapshot["cases"]
+        >();
+
+        for (const result of suiteResults) {
+          for (const caseResult of result.caseResults) {
+            const modelId = caseResult.summary.modelId;
+            const existing = modelGroups.get(modelId) ?? [];
+            existing.push({
+              caseId: caseResult.summary.caseId,
+              passed: caseResult.summary.passed,
+              required: caseResult.summary.required,
+              weightedTotal: caseResult.summary.weightedTotal,
+              dryRun: caseResult.summary.dryRun,
+            });
+            modelGroups.set(modelId, existing);
+          }
+        }
+
+        const models = [...modelGroups.entries()]
+          .map(([modelId, cases]) => {
+            const passedModelCases = cases.filter(
+              (caseSnapshot) => caseSnapshot.passed,
+            ).length;
+            const failedModelCases = cases.length - passedModelCases;
+
+            return {
+              modelId,
+              totalCases: cases.length,
+              passedCases: passedModelCases,
+              failedCases: failedModelCases,
+              passRate:
+                cases.length === 0 ? null : passedModelCases / cases.length,
+              cases: [...cases].sort((a, b) =>
+                a.caseId.localeCompare(b.caseId),
+              ),
+            } satisfies RepeatabilityModelSnapshot;
+          })
+          .sort((a, b) => a.modelId.localeCompare(b.modelId));
+
+        return {
+          suite,
+          totalCases,
+          passedCases,
+          failedCases,
+          suiteGreen,
+          models,
+        } satisfies RepeatabilitySuiteSnapshot;
+      });
+
+    return {
+      runId,
+      repoSha: metadata.repoSha,
+      startedAt: metadata.startedAt,
+      bundleDir,
+      suites,
+    };
+  }
+
+  private buildRepeatabilityModelDriftSummaries(
+    comparableRuns: RepeatabilityRunSnapshot[],
+  ): RepeatabilityModelDriftSummary[] {
+    const groups = new Map<
+      string,
+      Array<{
+        suite: string;
+        modelId: string;
+        runId: string;
+        passedCases: number;
+        totalCases: number;
+        failedCases: number;
+        passRate: number | null;
+      }>
+    >();
+
+    for (const run of comparableRuns) {
+      for (const suite of run.suites) {
+        for (const model of suite.models) {
+          const key = `${suite.suite}::${model.modelId}`;
+          const existing = groups.get(key) ?? [];
+          existing.push({
+            suite: suite.suite,
+            modelId: model.modelId,
+            runId: run.runId,
+            passedCases: model.passedCases,
+            totalCases: model.totalCases,
+            failedCases: model.failedCases,
+            passRate: model.passRate,
+          });
+          groups.set(key, existing);
+        }
+      }
+    }
+
+    return [...groups.values()]
+      .flatMap((runs) => {
+        const firstRun = runs[0];
+        if (firstRun === undefined) {
+          return [];
+        }
+
+        const passRates = runs
+          .map((run) => run.passRate)
+          .filter((value): value is number => value !== null);
+        const minPassRate =
+          passRates.length === 0 ? null : Math.min(...passRates);
+        const maxPassRate =
+          passRates.length === 0 ? null : Math.max(...passRates);
+        const classification = this.classifyModelDrift(runs);
+
+        return [
+          {
+            suite: firstRun.suite,
+            modelId: firstRun.modelId,
+            comparableRunCount: runs.length,
+            classification,
+            passRateRange: {
+              min: minPassRate,
+              max: maxPassRate,
+            },
+            runs,
+          } satisfies RepeatabilityModelDriftSummary,
+        ];
+      })
+      .sort((a, b) => {
+        const suiteCompare = a.suite.localeCompare(b.suite);
+        if (suiteCompare !== 0) return suiteCompare;
+        return a.modelId.localeCompare(b.modelId);
+      });
+  }
+
+  private classifyModelDrift(
+    runs: Array<{
+      passedCases: number;
+      totalCases: number;
+      failedCases: number;
+      passRate: number | null;
+    }>,
+  ): "single-run" | "consistent" | "drifted" {
+    if (runs.length <= 1) return "single-run";
+
+    const first = runs[0];
+    if (first === undefined) {
+      return "single-run";
+    }
+
+    const allSame = runs.every(
+      (run) =>
+        run.passedCases === first.passedCases &&
+        run.totalCases === first.totalCases &&
+        run.failedCases === first.failedCases &&
+        run.passRate === first.passRate,
+    );
+
+    return allSame ? "consistent" : "drifted";
+  }
+
+  private buildRepeatabilityCaseModelDriftSummaries(
+    comparableRuns: RepeatabilityRunSnapshot[],
+  ): RepeatabilityCaseModelDriftSummary[] {
+    const groups = new Map<
+      string,
+      Array<{
+        suite: string;
+        caseId: string;
+        modelId: string;
+        runId: string;
+        passed: boolean;
+        required: boolean;
+        weightedTotal: number;
+      }>
+    >();
+
+    for (const run of comparableRuns) {
+      for (const suite of run.suites) {
+        for (const model of suite.models) {
+          for (const caseSnapshot of model.cases) {
+            const key = `${suite.suite}::${caseSnapshot.caseId}::${model.modelId}`;
+            const existing = groups.get(key) ?? [];
+            existing.push({
+              suite: suite.suite,
+              caseId: caseSnapshot.caseId,
+              modelId: model.modelId,
+              runId: run.runId,
+              passed: caseSnapshot.passed,
+              required: caseSnapshot.required,
+              weightedTotal: caseSnapshot.weightedTotal,
+            });
+            groups.set(key, existing);
+          }
+        }
+      }
+    }
+
+    return [...groups.values()]
+      .flatMap((runs) => {
+        const firstRun = runs[0];
+        if (firstRun === undefined) {
+          return [];
+        }
+
+        const weightedTotals = runs.map((run) => run.weightedTotal);
+        return [
+          {
+            suite: firstRun.suite,
+            caseId: firstRun.caseId,
+            modelId: firstRun.modelId,
+            comparableRunCount: runs.length,
+            classification: this.classifyCaseModelDrift(runs),
+            weightedTotalRange: {
+              min: Math.min(...weightedTotals),
+              max: Math.max(...weightedTotals),
+            },
+            runs,
+          } satisfies RepeatabilityCaseModelDriftSummary,
+        ];
+      })
+      .sort((a, b) => {
+        const suiteCompare = a.suite.localeCompare(b.suite);
+        if (suiteCompare !== 0) return suiteCompare;
+        const caseCompare = a.caseId.localeCompare(b.caseId);
+        if (caseCompare !== 0) return caseCompare;
+        return a.modelId.localeCompare(b.modelId);
+      });
+  }
+
+  private classifyCaseModelDrift(
+    runs: Array<{ passed: boolean }>,
+  ): "single-run" | "consistent-pass" | "consistent-fail" | "mixed" {
+    if (runs.length <= 1) return "single-run";
+
+    const passCount = runs.filter((run) => run.passed).length;
+    if (passCount === runs.length) return "consistent-pass";
+    if (passCount === 0) return "consistent-fail";
+    return "mixed";
+  }
+
+  // ---------------------------------------------------------------------------
   // Private: run summary assembly
   // ---------------------------------------------------------------------------
 
@@ -1166,6 +1886,8 @@ export class EvalOrchestrator {
     bundleDir: string,
     runId: string | null,
     filesWritten: string[],
+    rawArtifactsWritten: string[],
+    repeatabilityDiagnostics: RepeatabilityDiagnosticsResult | null,
   ): EvalRunSummary {
     // Aggregate totals
     const totalCases = runnerResults.reduce((s, rr) => s + rr.totalCases, 0);
@@ -1196,6 +1918,8 @@ export class EvalOrchestrator {
       bundleDir,
       runId,
       filesWritten,
+      rawArtifactsWritten,
+      repeatabilityDiagnostics,
       partialFailures,
     };
   }
@@ -1322,6 +2046,18 @@ export class EvalOrchestrator {
       `the OpenRouter base URL override is not a valid http/https URL. ` +
       `Remove OPENROUTER_BASE_URL to use the default.`
     );
+  }
+
+  private formatRepeatabilityDiagnosticsCause(cause: unknown): string {
+    if (cause instanceof Error) {
+      return cause.message;
+    }
+
+    if (typeof cause === "string") {
+      return cause;
+    }
+
+    return "Unknown repeatability diagnostics failure.";
   }
 }
 

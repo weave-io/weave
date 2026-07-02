@@ -1,6 +1,6 @@
 {
   "id": "pattern-plan-settings-refactor",
-  "description": "Create a text-only implementation plan for refactoring the project settings workflow with explicit scope, file-backed tasks, sequencing, and acceptance coverage.",
+  "description": "Create a text-only implementation plan for refactoring the project settings workflow. Make the scope explicit, tie each implementation task to exact files, make ordering or dependency constraints visible, and include per-task acceptance or success criteria even if the headings use harmless formatting variations.",
   "suite": "pattern-planning",
   "allowed_agents": ["pattern"],
   "allowed_models": [
@@ -10,7 +10,7 @@
   ],
   "expected_outcome": {
     "kind": "task_completion",
-    "description": "The plan should surface structural planning quality signals the text runner can observe.",
+    "description": "The plan should surface structural planning quality signals the text runner can observe, without requiring exact marker spellings when the same task-level structure is still visible.",
     "required_artifacts": [
       "plan_scope_explicit",
       "plan_file_tasks",

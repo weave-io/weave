@@ -136,6 +136,25 @@ All suites share the same case schema, rubric schema, and model matrix. The shar
 
 The current eval runners are **text-only prompt evals**: they call OpenRouter chat completions and extract signals from assistant text. They do not execute harness tools, inspect side effects, or capture real tool-call telemetry. Fixture authors should therefore assert observable text signals such as agent mentions, routed agents, delegation chains, completion phrases, and produced artifact names. Do not use a text-only fixture to require unobservable runtime behavior. Reserve those checks for a future harness-backed trajectory runner.
 
+### 2026-07-01 Loom routing stabilization, primary vs exploratory route rules
+
+The Loom suite now makes the routing contract more explicit so regressions are explainable without prompt rewrites.
+
+- The scorer still evaluates only text-visible routing signals.
+- Dynamic category shuttles such as `shuttle-backend` and `shuttle-frontend` are canonicalized to the current text-only target `shuttle` for Loom scoring.
+- `thread` is treated separately when the surrounding text clearly marks it as exploratory work, for example `Explore`, `Investigate`, `Survey`, or similar evidence-gathering phrasing.
+- In the ambiguous direct-shuttle case, an answer can mention exploratory `thread` work first and still count as an acceptable routing answer when the primary implementation handoff is explicitly `shuttle`.
+- A pure `thread` route with no explicit implementation handoff remains a real miss, not a fairness win.
+
+When contributors run `weave eval run --agent loom --case <case-id> --raw-artifacts`, the local raw artifact now includes `runnerDiagnostics.routingSignals` for Loom cases. Use that field to separate four failure reads:
+
+1. `matched-primary-target`: the runner saw the expected primary implementation route.
+2. `acceptable-but-nonprimary-exploratory-route`: the answer mentioned exploratory routing, usually `thread`, but still made `shuttle` the primary implementation handoff.
+3. `wrong-primary-target`: the runner extracted a different primary implementation route.
+4. `extraction-miss`: the runner could not extract any routing target at all.
+
+This keeps the ambiguous case stable. It no longer swings on under-specified wording alone, and it distinguishes optional exploration from the implementation route that Loom is supposed to choose.
+
 The seven current families are: `loom-routing`, `tapestry-execution`, `shuttle-execution`, `spindle-tools`, `pattern-planning`, `weft-review`, and `warp-security`.
 
 ### 2026-06-30 provisional baseline for phase-1 fairness work
@@ -259,6 +278,110 @@ The checkpoint evidence is now good enough to say the remaining misses are **mos
 - Pattern still misses when it declines to emit the requested plan structure, not because the case requires unsupported tags or tool telemetry.
 
 This remains a **directional local checkpoint**, not a long-term benchmark. We still have only one published dashboard run, so the conclusion is limited to the current local fast loop: phase 1 fairness work is sufficient, and the next justified step is prompt-focused phase 2 work for Loom, Warp, Weft, and Pattern.
+
+### 2026-07-01 regression freeze for Pattern and Loom
+
+Before changing `pattern-planning` cases, rubrics, runners, or prompts, freeze the comparison baseline around the two known published runs:
+
+- baseline run: `60c3ebd-2026-06-30-001`
+- latest regression run: `40c1cee-2026-07-01-001`
+
+This is the required evidence pack for the stabilization work. Do not start prompt tuning from memory, one screenshot, or one model-specific anecdote.
+
+#### Known published comparison
+
+| Scope | `60c3ebd-2026-06-30-001` | `40c1cee-2026-07-01-001` | Delta | Read |
+| --- | ---: | ---: | ---: | --- |
+| Overall | `31/45` | `30/45` | `-1` | Small global movement, so this does **not** look like a total eval outage. |
+| `pattern-planning` | `4/6` | `1/6` | `-3` | Sharp regression, strong enough to block prompt work until the suite is revalidated. |
+| `loom-routing` | `8/9` | `5/9` | `-3` | Same pattern as Pattern, large suite-local regression rather than harmless noise. |
+| `shuttle-execution` | improved | improved | n/a | Improvement elsewhere is part of the evidence that the failure is not system-wide. |
+| `spindle-tools` | improved | improved | n/a | Same read, the regression is concentrated in Pattern and Loom. |
+
+#### Observed model inconsistency to preserve
+
+Treat these as the comparison facts that must be checked first in local reruns:
+
+- the regressions are **not** assumed to be uniform across the default model matrix
+- Sonnet is the main regression suspect called out by the current stabilization plan
+- GPT-5.5 is the main counterexample suspect, meaning some apparent wins may be model-specific rather than stable suite improvements
+- because of that split, a single-model improvement does **not** justify prompt edits
+
+If a rerun improves only one model while another default model still regresses, the correct read is still "blocked, gather more evidence."
+
+#### Stabilization hypotheses to test before any edits
+
+1. **Pattern runner detection drift**: the model emitted a structurally valid plan, but `pattern-planning` artifact extraction missed it.
+2. **Pattern fixture phrasing drift**: the cases or rubrics over-prefer one formatting style and convert harmless variation into a failure.
+3. **Loom route extraction drift**: the runner extracted a non-primary route first, especially in the ambiguous direct-shuttle case.
+4. **Loom case semantics drift**: the case wording invites exploratory `thread` behavior that the text-only contract should treat separately from the primary route.
+5. **Real prompt or model regression**: the assistant truly omitted required planning or routing structure.
+6. **Cross-model instability**: one model got better while another got worse, so the change is not yet trustworthy enough for prompt work.
+
+Keep this list explicit in notes and rerun summaries. The whole point of the stabilization pass is to decide which of these hypotheses survives contact with repeatable evidence.
+
+#### Required local reproduction workflow
+
+Run these commands in order before touching Pattern or Loom fixtures, rubrics, runners, or prompts.
+
+1. Dry-run preflight:
+
+   - `bun packages/cli/src/main.ts eval run --dry-run --agent pattern`
+   - `bun packages/cli/src/main.ts eval run --dry-run --agent loom`
+
+2. Full targeted suite reruns across the default model set:
+
+   - `bun packages/cli/src/main.ts eval run --agent pattern`
+   - `bun packages/cli/src/main.ts eval run --agent loom`
+
+3. Per-model isolation reruns for Pattern:
+
+   - `bun packages/cli/src/main.ts eval run --agent pattern --model anthropic/claude-opus-4.5`
+   - `bun packages/cli/src/main.ts eval run --agent pattern --model anthropic/claude-sonnet-4.5`
+   - `bun packages/cli/src/main.ts eval run --agent pattern --model openai/gpt-5.5`
+
+4. Per-model isolation reruns for Loom:
+
+   - `bun packages/cli/src/main.ts eval run --agent loom --model anthropic/claude-opus-4.5`
+   - `bun packages/cli/src/main.ts eval run --agent loom --model anthropic/claude-sonnet-4.5`
+   - `bun packages/cli/src/main.ts eval run --agent loom --model openai/gpt-5.5`
+
+5. Raw-artifact spot checks for the shipped Pattern cases:
+
+   - `bun packages/cli/src/main.ts eval run --agent pattern --case pattern-plan-settings-refactor --raw-artifacts`
+   - `bun packages/cli/src/main.ts eval run --agent pattern --case pattern-plan-release-checklist --raw-artifacts`
+
+6. Raw-artifact spot checks for the shipped Loom cases:
+
+   - `bun packages/cli/src/main.ts eval run --agent loom --case loom-route-backend-api --raw-artifacts`
+   - `bun packages/cli/src/main.ts eval run --agent loom --case loom-route-frontend-ui --raw-artifacts`
+   - `bun packages/cli/src/main.ts eval run --agent loom --case loom-route-ambiguous-direct-shuttle --raw-artifacts`
+
+#### What to record from that workflow
+
+For each suite, collect all of the following before making changes:
+
+- suite-level pass count for the default matrix
+- per-model pass counts for Opus, Sonnet, and GPT-5.5
+- failing or partial case IDs
+- raw-output evidence showing whether the model omitted required structure or the runner failed to detect it
+- whether the miss repeats across reruns or appears one-run noisy
+
+#### What counts as regression confirmation
+
+Treat the regression as confirmed when all three are true:
+
+1. the dry-run passes, so fixture loading and filter validation are not the immediate problem
+2. a targeted rerun still lands materially below the `60c3ebd-2026-06-30-001` baseline for the same suite, or reproduces the same failing case pattern seen in `40c1cee-2026-07-01-001`
+3. the per-model and raw-artifact evidence still leaves either a repeatable extraction problem or a repeatable model-output miss
+
+If you cannot satisfy all three, do not claim a stable regression yet.
+
+#### Why prompt work is still blocked
+
+Prompt work stays blocked until this evidence pack exists because the current comparison still leaves open three competing explanations: runner extraction drift, fixture-contract drift, and real prompt or model regression. The Pattern and Loom deltas are large enough to matter, but the model inconsistency is also large enough that a prompt edit could easily optimize one model while making the default matrix less stable overall.
+
+Only after the commands above are rerun and the hypotheses are narrowed should case, rubric, runner, or prompt changes begin.
 
 ### 2026-06-30 phase 2 checkpoint rerun and prompt-quality gate
 
@@ -388,6 +511,280 @@ Shuttle execution prompts likewise inject a synthetic delegated task envelope (`
 The default Shuttle prompt is aligned to that contract too. It now tells Shuttle to restate the task in a compact `Task intake` section, then report `Files changed`, `Commands run and their output`, `Test results`, `Issues encountered or assumptions made`, and `Acceptance confirmation`. The honesty boundary is explicit: Shuttle must not claim hidden file-mutation proof, tool telemetry, browser activity, network activity, or other runtime evidence it did not directly observe.
 
 Pattern planning eval prompts likewise constrain the model toward structural planning output. The shared contract is now the same in the builtin prompt and the eval runner: plans should make scope explicit with a `## Scope` section, make order explicit with dependency or ordering language such as `## Dependencies and Order` or `**Depends on**`, cite exact file paths in task-level `**Files**` fields, and include per-task acceptance criteria under `**Acceptance**`. The runner still accepts legacy `#scope` / `#files` / `#sequence` / `#acceptance` tags when they appear, but those tags are compatibility signals, not the primary contract. The runner projects only those deterministic structural signals into `required_artifacts` and completion signals before invoking the existing scorer path. This keeps planning assertions structural rather than semantic freeform wish-casting.
+
+#### 2026-07-01 Pattern stabilization, structural alignment rules
+
+The Pattern suite now draws a harder line between formatting variation and missing plan structure.
+
+- Accepted as equivalent structure:
+  - `## Scope` or `### Scope`
+  - `## Dependencies and Order`, `## Order of Operations`, or task-level `**Depends on**`
+  - task-level `**Files**`, `Files:`, or equivalent file fields with exact paths
+  - task-level `**Acceptance**`, `Acceptance Criteria:`, `Success Criteria:`, or `Completion Criteria:`
+- Not accepted as equivalent structure:
+  - a top-level `## Files` section with no task-level file ownership
+  - a final testing or verification note with no task-level acceptance coverage
+  - vague prose that mentions files or order without observable task structure
+
+When contributors run `--raw-artifacts` for Pattern cases, the local raw artifact now includes deterministic `runnerDiagnostics` for the planning extractor. Use that to separate two different failures:
+
+1. **Runner failed to detect a valid plan**: raw output visibly contains task-level scope, files, order, and acceptance structure, but `runnerDiagnostics.missingRequiredArtifacts` still reports one or more missing artifacts.
+2. **Model omitted required planning structure**: the raw output itself lacks one or more required task-level structures, and `runnerDiagnostics.missingRequiredArtifacts` matches that omission.
+
+For the two shipped Pattern cases, the intended read is:
+
+- `pattern-plan-settings-refactor`: task-level implementation planning, exact file ownership, explicit order, and per-task acceptance or success criteria
+- `pattern-plan-release-checklist`: release-readiness sequencing with exact file ownership per task, not just a free-floating checklist or final verification block
+
+This keeps the suite focused on observable planning shape while making local reruns explainable when regressions recur.
+
+#### 2026-07-01 repeatability diagnostics for Pattern and Loom reruns
+
+Pattern and Loom now write one extra local-only artifact on every non-dry run: `repeatability-diagnostics.json` in the run directory root next to `run-summary.json` and `public-report.json`.
+
+- It is **developer diagnostics only**. It is not part of the published dashboard surface.
+- It compares the current run only against earlier local runs with the **exact same filter tuple**: `agentFilter`, `modelFilter`, `caseFilter`, and effective suite list.
+- That means `--agent loom --model anthropic/claude-sonnet-4.5 --case loom-route-backend-api` compares only to earlier reruns with those same three filters, not to a broader `--agent loom` suite run.
+- The artifact shows drift at two levels:
+  - per suite × per model pass-rate drift
+  - per suite × per case × per model pass/fail drift
+
+Use it to answer the question this milestone cares about: is a Sonnet regression or GPT-5.5 gain repeating across reruns, or did it happen once?
+
+Key fields to read:
+
+- `comparisonKey`: proves which reruns are actually comparable
+- `comparableRunIds`: the exact prior runs included in the comparison set
+- `driftSummary.models[*].classification`
+  - `single-run`: only one comparable run exists, not enough evidence yet
+  - `consistent`: same suite-level result for that model across comparable reruns
+  - `drifted`: suite-level result changed across comparable reruns
+- `driftSummary.caseModels[*].classification`
+  - `single-run`: only one comparable run exists
+  - `consistent-pass`: that case kept passing for that model
+  - `consistent-fail`: that case kept failing for that model
+  - `mixed`: that case flipped across comparable reruns
+
+This is the shortest useful read:
+
+- if Sonnet shows `drifted` or many `mixed` case-model entries, treat the regression as unstable and keep gathering evidence
+- if GPT-5.5 shows `consistent` with mostly `consistent-pass` on the same cases across reruns, the gain is likely real instead of one-run noise
+- if both models are still `single-run`, do not claim anything about stability yet
+
+#### 2026-07-01 post-stabilization prompt authorization gate
+
+The earlier 2026-06-30 phase-1 decision that prompt work looked justified is now historical context only. After the Pattern and Loom regression freeze, this is the controlling go/no-go gate for any new prompt edits.
+
+Prompt work may begin only when **all** of the following are true:
+
+1. **Stable local rerun pattern exists**
+   - For `--agent pattern` and `--agent loom`, at least two comparable non-dry local reruns exist for the full-suite filter tuple.
+   - For the currently suspect per-model reruns, at least two comparable non-dry local reruns exist per model.
+   - `repeatability-diagnostics.json` shows no `single-run` status for the decision-making suite/model entries.
+   - The relevant entries are mostly `consistent`, `consistent-pass`, or `consistent-fail`, not `drifted` or `mixed`.
+
+2. **No unresolved Pattern fixture or runner ambiguity remains**
+   - Raw artifacts and `runnerDiagnostics.missingRequiredArtifacts` agree on why each remaining Pattern failure happened.
+   - If raw output visibly contains task-level scope, files, order, and acceptance structure, that extraction miss must be fixed before prompt work.
+   - If case wording or rubric wording still leaves a reasonable formatting variant in doubt, that fixture ambiguity must be fixed before prompt work.
+
+3. **No unresolved Loom fixture or runner ambiguity remains**
+   - Raw artifacts and `runnerDiagnostics.routingSignals` agree on the failure class for each remaining Loom miss.
+   - Any `extraction-miss`, `wrong-primary-target` caused by extraction order, or ambiguous exploratory-vs-primary read must be cleaned up before prompt work.
+   - Prompt work is allowed only after the remaining misses are clearly real primary-route misses, not routing-classification uncertainty.
+
+4. **At least one repeated cross-model checkpoint exists**
+   - Run at least one full repeated checkpoint that includes Pattern and Loom across the default model matrix after the stabilization changes.
+   - The checkpoint must be repeatable, meaning the same suite/model pattern appears in a later comparable rerun instead of only once.
+   - A one-model win is not enough. The evidence must show how Opus, Sonnet, and GPT-5.5 behave together.
+
+5. **The evidence pack is written down explicitly**
+   - Record suite-level pass counts for the default matrix.
+   - Record per-model pass counts for Opus, Sonnet, and GPT-5.5.
+   - Record the failing or partial case IDs.
+   - Record which raw artifacts prove model omission versus extractor miss.
+   - Record the comparable local run IDs used by `repeatability-diagnostics.json`.
+
+#### Go criteria: prompt work is authorized
+
+Tapestry or Shuttle may authorize prompt edits only when the evidence says all of the following at the same time:
+
+- Pattern reruns are repeatable enough that remaining failures classify as model output misses, not extractor or fixture uncertainty.
+- Loom reruns are repeatable enough that remaining failures classify as real routing misses, not extraction-order or exploratory-route ambiguity.
+- The same failure shape repeats across at least one repeated cross-model checkpoint.
+- No required decision entry is still `single-run`.
+- The planned prompt change is aimed at a repeated structural miss, not at a one-off model-specific formatting anecdote.
+
+If those conditions hold, the next step may be prompt work.
+
+#### No-go criteria: return to eval cleanup instead
+
+Tapestry or Shuttle must stop prompt work and return to eval cleanup when **any** of the following is true:
+
+- Pattern or Loom still has unresolved fixture wording ambiguity.
+- Pattern or Loom still has unresolved runner extraction ambiguity.
+- The latest evidence depends on only one comparable rerun for a relevant suite/model path.
+- `repeatability-diagnostics.json` still shows `drifted` suite-model results or many `mixed` case-model results for the path driving the decision.
+- The only visible improvement is model-specific, for example Sonnet improves while Opus or GPT-5.5 still regress.
+- The cross-model checkpoint does not repeat cleanly in a later comparable rerun.
+- The raw artifact cannot yet distinguish model omission from extractor miss.
+
+When any no-go condition is hit, the correct next step is another round of eval cleanup or evidence gathering, not speculative prompt tuning.
+
+#### Repeatable local workflow for Pattern and Loom
+
+Run these as a matched rerun batch when comparing Pattern and Loom across the current model matrix.
+
+1. Dry-run preflight once:
+
+   - `bun packages/cli/src/main.ts eval run --dry-run --agent pattern`
+   - `bun packages/cli/src/main.ts eval run --dry-run --agent loom`
+
+2. Full suite reruns, repeat at least twice per suite:
+
+   - `bun packages/cli/src/main.ts eval run --agent pattern`
+   - `bun packages/cli/src/main.ts eval run --agent pattern`
+   - `bun packages/cli/src/main.ts eval run --agent loom`
+   - `bun packages/cli/src/main.ts eval run --agent loom`
+
+3. Per-model reruns, repeat at least twice for each suspect model:
+
+   - `bun packages/cli/src/main.ts eval run --agent pattern --model anthropic/claude-sonnet-4.5`
+   - `bun packages/cli/src/main.ts eval run --agent pattern --model anthropic/claude-sonnet-4.5`
+   - `bun packages/cli/src/main.ts eval run --agent pattern --model openai/gpt-5.5`
+   - `bun packages/cli/src/main.ts eval run --agent pattern --model openai/gpt-5.5`
+   - `bun packages/cli/src/main.ts eval run --agent loom --model anthropic/claude-sonnet-4.5`
+   - `bun packages/cli/src/main.ts eval run --agent loom --model anthropic/claude-sonnet-4.5`
+   - `bun packages/cli/src/main.ts eval run --agent loom --model openai/gpt-5.5`
+   - `bun packages/cli/src/main.ts eval run --agent loom --model openai/gpt-5.5`
+
+4. Case-level spot checks with raw artifacts when a rerun still looks unstable:
+
+   - `bun packages/cli/src/main.ts eval run --agent pattern --model anthropic/claude-sonnet-4.5 --case pattern-plan-settings-refactor --raw-artifacts`
+   - `bun packages/cli/src/main.ts eval run --agent pattern --model openai/gpt-5.5 --case pattern-plan-release-checklist --raw-artifacts`
+   - `bun packages/cli/src/main.ts eval run --agent loom --model anthropic/claude-sonnet-4.5 --case loom-route-ambiguous-direct-shuttle --raw-artifacts`
+   - `bun packages/cli/src/main.ts eval run --agent loom --model openai/gpt-5.5 --case loom-route-backend-api --raw-artifacts`
+
+#### How to read the rerun bundle quickly
+
+For each run directory under `eval-bundles/runs/<runId>/`:
+
+1. read `run-summary.json` for the suite-level pass count
+2. read `repeatability-diagnostics.json` for whether the result is repeating or drifting
+3. if the case-model classification is `mixed`, open the matching raw artifact and runner diagnostics to decide whether the flip came from output variance or extraction variance
+
+That keeps the workflow local and repeatable without changing prompts or redesigning the published dashboard.
+
+### 2026-07-01 post-stabilization local baseline for Pattern and Loom
+
+This is the current handoff checkpoint after the Pattern and Loom stabilization work. It compares the new local reruns against both published reference runs and records the controlling read for any future prompt-specific follow-up.
+
+#### Commands used
+
+1. Dry-run preflight:
+   - `bun packages/cli/src/main.ts eval run --dry-run --agent pattern`
+   - `bun packages/cli/src/main.ts eval run --dry-run --agent loom`
+2. Full-suite reruns, repeated twice:
+   - `bun packages/cli/src/main.ts eval run --agent pattern`
+   - `bun packages/cli/src/main.ts eval run --agent pattern`
+   - `bun packages/cli/src/main.ts eval run --agent loom`
+   - `bun packages/cli/src/main.ts eval run --agent loom`
+3. Suspect per-model reruns, repeated twice:
+   - `bun packages/cli/src/main.ts eval run --agent pattern --model anthropic/claude-sonnet-4.5`
+   - `bun packages/cli/src/main.ts eval run --agent pattern --model anthropic/claude-sonnet-4.5`
+   - `bun packages/cli/src/main.ts eval run --agent pattern --model openai/gpt-5.5`
+   - `bun packages/cli/src/main.ts eval run --agent pattern --model openai/gpt-5.5`
+   - `bun packages/cli/src/main.ts eval run --agent loom --model anthropic/claude-sonnet-4.5`
+   - `bun packages/cli/src/main.ts eval run --agent loom --model anthropic/claude-sonnet-4.5`
+   - `bun packages/cli/src/main.ts eval run --agent loom --model openai/gpt-5.5`
+   - `bun packages/cli/src/main.ts eval run --agent loom --model openai/gpt-5.5`
+4. Raw-artifact spot checks:
+   - `bun packages/cli/src/main.ts eval run --agent pattern --model anthropic/claude-sonnet-4.5 --case pattern-plan-settings-refactor --raw-artifacts`
+   - `bun packages/cli/src/main.ts eval run --agent pattern --model openai/gpt-5.5 --case pattern-plan-release-checklist --raw-artifacts`
+   - `bun packages/cli/src/main.ts eval run --agent loom --model anthropic/claude-sonnet-4.5 --case loom-route-ambiguous-direct-shuttle --raw-artifacts`
+   - `bun packages/cli/src/main.ts eval run --agent loom --model openai/gpt-5.5 --case loom-route-backend-api --raw-artifacts`
+
+#### Suite-level comparison against both published runs
+
+| Suite | `60c3ebd-2026-06-30-001` | `40c1cee-2026-07-01-001` | Local repeated baseline | Read |
+| --- | ---: | ---: | ---: | --- |
+| `pattern-planning` | `4/6` | `1/6` | `3/6` in `07aad50-2026-07-01-001` and `07aad50-2026-07-01-002` | Improved from the regression run, still below the original published baseline. |
+| `loom-routing` | `8/9` | `5/9` | `6/9` in `07aad50-2026-07-01-003` and `07aad50-2026-07-01-004` | Improved from the regression run, still below the original published baseline. |
+
+#### Per-model evidence pack
+
+| Suite | Model | `60c3ebd-2026-06-30-001` | `40c1cee-2026-07-01-001` | Local full-suite reruns | Local per-model reruns | Current read |
+| --- | --- | ---: | ---: | --- | --- | --- |
+| `pattern-planning` | Opus | `2/2` | `0/2` | `1/2`, consistent across `07aad50-...-001` and `...-002` | not isolated in this batch | Partial recovery, still below the older baseline. |
+| `pattern-planning` | Sonnet | `2/2` | `1/2` | `2/2`, consistent across `07aad50-...-001` and `...-002` | `2/2` in `07aad50-...-005` and `...-006`, both consistent | Real improvement signal on Sonnet. |
+| `pattern-planning` | GPT-5.5 | `0/2` | `0/2` | `0/2`, consistent across `07aad50-...-001` and `...-002` | `1/2` then `0/2` in `07aad50-...-007` and `...-008`, classified `drifted` | Still noisy and still blocked. |
+| `loom-routing` | Opus | `2/3` | `1/3` | `2/3`, consistent across `07aad50-...-003` and `...-004` | not isolated in this batch | Recovered to the older baseline. |
+| `loom-routing` | Sonnet | `3/3` | `1/3` | `1/3`, consistent at suite level across `07aad50-...-003` and `...-004` | `2/3` in `07aad50-...-009` and `...-010`, but case results are still `mixed` | Still noisy, the full-suite and isolated reads do not agree. |
+| `loom-routing` | GPT-5.5 | `3/3` | `3/3` | `3/3`, consistent across `07aad50-...-003` and `...-004` | `3/3` in `07aad50-...-011` and `...-012`, both consistent | Stable green counterexample, not enough on its own to authorize prompt work. |
+
+#### Current failing and unstable case IDs
+
+- `pattern-planning`, full-suite local baseline:
+  - Opus: `pattern-plan-release-checklist` failed in both repeated suite runs.
+  - Sonnet: no failing cases in either repeated suite run.
+  - GPT-5.5: `pattern-plan-release-checklist` and `pattern-plan-settings-refactor` failed in both repeated suite runs.
+- `pattern-planning`, GPT-5.5 isolated reruns:
+  - `pattern-plan-settings-refactor` stayed `consistent-fail`.
+  - `pattern-plan-release-checklist` flipped from pass to fail and was classified `mixed`.
+- `loom-routing`, full-suite local baseline:
+  - Opus: `loom-route-ambiguous-direct-shuttle` failed in both repeated suite runs.
+  - Sonnet: suite-level result stayed `1/3`, but the failing case set moved between `loom-route-ambiguous-direct-shuttle`, `loom-route-backend-api`, and `loom-route-frontend-ui`.
+  - GPT-5.5: no failing cases in either repeated suite run.
+- `loom-routing`, Sonnet isolated reruns:
+  - `loom-route-backend-api` stayed `consistent-pass`.
+  - `loom-route-ambiguous-direct-shuttle` and `loom-route-frontend-ui` were both classified `mixed`.
+
+#### Raw-artifact read, model omission versus extractor miss
+
+- `07aad50-2026-07-01-013`, `pattern-plan-settings-refactor`, Sonnet:
+  - `runnerDiagnostics.detectedArtifacts` contains all four required planning artifacts.
+  - `missingRequiredArtifacts` is empty.
+  - Read: extractor looks healthy on the passing Sonnet path.
+- `07aad50-2026-07-01-014`, `pattern-plan-release-checklist`, GPT-5.5:
+  - the answer stopped at a clarifying question and never emitted a plan.
+  - `missingRequiredArtifacts` lists all four required planning artifacts.
+  - Read: this is a real model-output miss, not a Pattern extractor miss.
+- `07aad50-2026-07-01-015`, `loom-route-ambiguous-direct-shuttle`, Sonnet:
+  - `routingSignals.extractedAgents` contains only `thread`.
+  - `routingSignals.classification` is `wrong-primary-target`.
+  - Read: this miss is explainable as a real routing miss in that run, not an extraction-order bug.
+- `07aad50-2026-07-01-016`, `loom-route-backend-api`, GPT-5.5:
+  - `routingSignals.observedPrimaryTarget` is `shuttle`.
+  - `routingSignals.classification` is `matched-primary-target`.
+  - Read: Loom extraction still recognizes a clean direct handoff when the model gives one.
+
+#### Repeatability read
+
+- Full-suite comparable run IDs:
+  - Pattern: `07aad50-2026-07-01-001`, `07aad50-2026-07-01-002`
+  - Loom: `07aad50-2026-07-01-003`, `07aad50-2026-07-01-004`
+- Per-model comparable run IDs:
+  - Pattern Sonnet: `07aad50-2026-07-01-005`, `07aad50-2026-07-01-006`
+  - Pattern GPT-5.5: `07aad50-2026-07-01-007`, `07aad50-2026-07-01-008`
+  - Loom Sonnet: `07aad50-2026-07-01-009`, `07aad50-2026-07-01-010`
+  - Loom GPT-5.5: `07aad50-2026-07-01-011`, `07aad50-2026-07-01-012`
+- Pattern now has a repeatable full-suite `3/6` result, but GPT-5.5 still shows a `drifted` suite-model classification and a `mixed` release-checklist path.
+- Loom now has a repeatable full-suite `6/9` result, but Sonnet still shows `mixed` case-model entries and its isolated `2/3` reruns do not match the full-suite `1/3` read.
+- GPT-5.5 remains the stable positive counterexample for Loom, and Sonnet remains the stable positive counterexample for Pattern. Those one-model wins are useful diagnostics, but they do not satisfy the cross-model authorization gate by themselves.
+
+#### Decision record
+
+**Stabilized read: improved, still noisy.**
+
+**Recommendation: more evidence/alignment needed.**
+
+Why this is still the right call:
+
+1. Pattern improved from the `1/6` published regression to a repeatable local `3/6`, but it still has not regained the older `4/6` published baseline and GPT-5.5 remains unstable.
+2. Loom improved from the `5/9` published regression to a repeatable local `6/9`, but it still has not regained the older `8/9` published baseline and Sonnet still flips at the case level.
+3. The raw artifacts are now good enough to separate clear model omissions from clear routing misses in the sampled cases, but the post-stabilization prompt authorization gate is still not met because relevant decision paths remain `drifted` or `mixed`, and the best-looking gains are still model-specific.
+
+Until those noisy paths settle, treat this milestone as a documented baseline handoff, not as prompt authorization.
 
 Weft review eval prompts are synthetic by design. The case description and runner prompt fully describe the review target so the suite never needs a live patch or hidden repository state. The runner scores only text-observable review structure: `[APPROVE]` or `[REJECT]`, a `Reviewed files:` line, blocker count, approval and rejection discipline, and actionable file references.
 

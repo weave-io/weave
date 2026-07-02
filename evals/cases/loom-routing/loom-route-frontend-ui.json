@@ -1,6 +1,6 @@
 {
   "id": "loom-route-frontend-ui",
-  "description": "Text-only routing task: update the project settings panel component to show loading and error states.",
+  "description": "Choose the primary implementation route for this text-only task: update the project settings panel component to show loading and error states.",
   "suite": "loom-routing",
   "allowed_agents": ["loom", "thread", "shuttle", "weft"],
   "allowed_models": [

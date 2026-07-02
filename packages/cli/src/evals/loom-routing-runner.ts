@@ -183,6 +183,178 @@ const SECONDARY_ROLE_INDICATORS = [
 ];
 
 /**
+ * Phrases that mark `thread` as exploratory evidence-gathering rather than the
+ * primary implementation route.
+ */
+const EXPLORATORY_THREAD_INDICATORS = [
+  "explore",
+  "exploring",
+  "investigate",
+  "investigating",
+  "survey",
+  "gather context",
+  "gather evidence",
+  "research",
+  "understand",
+  "inspect",
+  "audit",
+  "discover",
+  "triage",
+];
+
+/**
+ * Canonicalize category shuttle names back to the text-only `shuttle` contract
+ * used by the current Loom fixtures and rubrics.
+ */
+function canonicalizeRoutingAgent(agent: string): string {
+  if (agent.startsWith("shuttle-")) {
+    return "shuttle";
+  }
+  return agent;
+}
+
+function uniqueInOrder(values: string[]): string[] {
+  return [...new Set(values)];
+}
+
+function collectAgentLines(lower: string, agent: string): string[] {
+  return lower.split(/\n/).filter((line) => line.includes(agent));
+}
+
+function isExploratoryThreadAgent(lower: string, agent: string): boolean {
+  if (agent !== "thread") {
+    return false;
+  }
+
+  const lines = collectAgentLines(lower, agent);
+  if (lines.length === 0) {
+    return false;
+  }
+
+  return lines.some((line) =>
+    EXPLORATORY_THREAD_INDICATORS.some((indicator) => line.includes(indicator)),
+  );
+}
+
+export interface LoomRoutingAnalysis {
+  extractedAgents: string[];
+  canonicalRoutedAgents: string[];
+  primaryRoutedAgents: string[];
+  exploratoryAgents: string[];
+}
+
+/**
+ * Analyze Loom routing text into raw extracted agents, canonical routed agents,
+ * and the primary implementation route used for scoring.
+ */
+export function analyzeLoomRouting(content: string): LoomRoutingAnalysis {
+  const lower = content.toLowerCase();
+  const extractedAgents = extractRoutedAgents(content);
+  const exploratoryAgents = uniqueInOrder(
+    extractedAgents
+      .filter((agent) => isExploratoryThreadAgent(lower, agent))
+      .map((agent) => canonicalizeRoutingAgent(agent)),
+  );
+
+  const canonicalRoutedAgents = uniqueInOrder(
+    extractedAgents.map((agent) => canonicalizeRoutingAgent(agent)),
+  );
+
+  const primaryRoutedAgents = uniqueInOrder(
+    extractedAgents
+      .filter((agent) => !isExploratoryThreadAgent(lower, agent))
+      .map((agent) => canonicalizeRoutingAgent(agent)),
+  );
+
+  if (primaryRoutedAgents.length > 0) {
+    return {
+      extractedAgents,
+      canonicalRoutedAgents,
+      primaryRoutedAgents,
+      exploratoryAgents,
+    };
+  }
+
+  return {
+    extractedAgents,
+    canonicalRoutedAgents,
+    primaryRoutedAgents: canonicalRoutedAgents,
+    exploratoryAgents,
+  };
+}
+
+export function buildRoutingRunnerDiagnostics(
+  evalCase: EvalCase,
+  analysis: LoomRoutingAnalysis,
+): NonNullable<RawCaseResultArtifact["runnerDiagnostics"]> | undefined {
+  if (evalCase.expected_outcome.kind !== "agent_routing") {
+    return undefined;
+  }
+
+  const acceptedTargets = uniqueInOrder(
+    [
+      evalCase.expected_outcome.target_agent,
+      ...evalCase.accepted_alternates,
+    ].map((agent) => canonicalizeRoutingAgent(agent)),
+  );
+  const observedPrimaryTarget = analysis.primaryRoutedAgents[0];
+
+  const classification = classifyRoutingDiagnostics(
+    analysis,
+    observedPrimaryTarget,
+    acceptedTargets,
+  );
+
+  return {
+    detectedArtifacts: [],
+    missingRequiredArtifacts: [],
+    routingSignals: {
+      extractedAgents: analysis.extractedAgents,
+      canonicalRoutedAgents: analysis.canonicalRoutedAgents,
+      primaryRoutedAgents: analysis.primaryRoutedAgents,
+      exploratoryAgents: analysis.exploratoryAgents,
+      expectedTarget: canonicalizeRoutingAgent(
+        evalCase.expected_outcome.target_agent,
+      ),
+      acceptedTargets,
+      observedPrimaryTarget,
+      classification,
+    },
+  };
+}
+
+function classifyRoutingDiagnostics(
+  analysis: LoomRoutingAnalysis,
+  observedPrimaryTarget: string | undefined,
+  acceptedTargets: readonly string[],
+):
+  | "matched-primary-target"
+  | "acceptable-but-nonprimary-exploratory-route"
+  | "wrong-primary-target"
+  | "extraction-miss" {
+  if (analysis.extractedAgents.length === 0) {
+    return "extraction-miss";
+  }
+
+  if (
+    analysis.exploratoryAgents.length > 0 &&
+    observedPrimaryTarget !== undefined &&
+    acceptedTargets.includes(observedPrimaryTarget)
+  ) {
+    return "acceptable-but-nonprimary-exploratory-route";
+  }
+
+  if (
+    observedPrimaryTarget !== undefined &&
+    acceptedTargets.includes(observedPrimaryTarget)
+  ) {
+    return "matched-primary-target";
+  }
+
+  return "wrong-primary-target";
+}
+
+/**
  * Primary routing phrase + agent substrings. When any of these appear verbatim
  * in the content (case-insensitively), the agent is the explicit primary target.
  */
@@ -436,7 +608,7 @@ function buildModelRunOutput(
   userMessage: string,
   content: string,
 ): ModelRunOutput {
-  const routedAgents = extractRoutedAgents(content);
+  const routedAgents = analyzeLoomRouting(content).primaryRoutedAgents;
 
   const transcript: TranscriptMessage[] = [
     { role: "user", content: userMessage },
@@ -1059,16 +1231,25 @@ export class LoomRoutingRunner {
           };
 
           const rawArtifact: RawCaseResultArtifact | undefined = rawArtifacts
-            ? {
-                caseId: evalCase.id,
-                modelId,
-                composedPrompt,
-                transcript: runOutput.transcript,
-                rawContent: runOutput.rawContent,
-                dimensionRationales: buildDimensionRationales(
-                  scoreRecord.dimensions,
-                ),
-              }
+            ? (() => {
+                const routingDiagnostics = buildRoutingRunnerDiagnostics(
+                  evalCase,
+                  analyzeLoomRouting(runOutput.rawContent),
+                );
+                return {
+                  caseId: evalCase.id,
+                  modelId,
+                  composedPrompt,
+                  transcript: runOutput.transcript,
+                  rawContent: runOutput.rawContent,
+                  dimensionRationales: buildDimensionRationales(
+                    scoreRecord.dimensions,
+                  ),
+                  ...(routingDiagnostics !== undefined
+                    ? { runnerDiagnostics: routingDiagnostics }
+                    : {}),
+                };
+              })()
             : undefined;
 
           return { summary, rawArtifact };

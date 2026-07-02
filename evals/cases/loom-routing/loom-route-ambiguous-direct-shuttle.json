@@ -1,6 +1,6 @@
 {
   "id": "loom-route-ambiguous-direct-shuttle",
-  "description": "Text-only routing task: make the project settings experience easier to use.",
+  "description": "Choose the primary implementation route for this text-only task: make the project settings experience easier to use. Exploratory thread work may be mentioned, but the primary implementation handoff should still be explicit.",
   "suite": "loom-routing",
   "allowed_agents": ["loom", "thread", "shuttle"],
   "allowed_models": [
