@@ -55,15 +55,19 @@ import {
   buildEvalRunner,
   EvalOrchestrator,
   type EvalOrchestratorOptions,
+  type EvalRunMetadata,
   getEvalCoveredPromptAgents,
+  type RepeatabilityRunSnapshot,
   type SnapshotProvider,
 } from "../runner.js";
 import type {
+  CaseResult,
   DimensionScore,
   NormalizedScoreRecord,
   PromptProvider,
   PromptSnapshot,
   ProvenanceError,
+  RunnerResult,
 } from "../types.js";
 import { EVAL_SHORT_AGENT_FILTERS, EVAL_SUITE_REGISTRY } from "../types.js";
 
@@ -1803,6 +1807,117 @@ describe("EvalOrchestrator — raw artifact filename timestamp integration", () 
       classification: "consistent-pass",
       comparableRunCount: 2,
     });
+  });
+
+  it("groups repeatability snapshots by summary.modelId within each suite", () => {
+    const orchestrator = new EvalOrchestrator(makeOptions());
+    const metadata: EvalRunMetadata = {
+      bunVersion: "1.2.20",
+      repoSha: FAKE_GIT_SHA,
+      workflowRunId: null,
+      agentFilter: "loom",
+      modelFilter: null,
+      caseFilter: null,
+      rawArtifactsEnabled: false,
+      publishMode: "local" as const,
+      startedAt: FIXED_TIMESTAMP,
+    };
+    const makeCaseResult = (
+      caseId: string,
+      modelId: string,
+      passed: boolean,
+    ): CaseResult => ({
+      summary: {
+        caseId,
+        modelId,
+        suite: "loom-routing",
+        passed,
+        required: true,
+        weightedTotal: passed ? 1 : 0,
+        dimensionScores: {
+          routingCorrectness: { score: passed ? 1 : 0, applicable: true },
+          delegationCorrectness: { score: 0, applicable: false },
+          executionCompleteness: { score: 0, applicable: false },
+          rationaleQuality: { score: 0, applicable: false },
+        },
+        scoredAt: FIXED_TIMESTAMP,
+        dryRun: false,
+      },
+    });
+    const runnerResults: RunnerResult[] = [
+      {
+        suite: "loom-routing",
+        suiteGreen: false,
+        caseResults: [
+          makeCaseResult("case-b", "openai/gpt-5", false),
+          makeCaseResult("case-a", "anthropic/claude-sonnet-4.5", true),
+          makeCaseResult("case-c", "openai/gpt-5", true),
+        ],
+        totalCases: 3,
+        passedCases: 2,
+        failedCases: 1,
+        completedAt: FIXED_TIMESTAMP,
+      },
+    ];
+
+    const snapshot = (
+      orchestrator as unknown as {
+        buildRepeatabilityRunSnapshot: (
+          metadata: EvalRunMetadata,
+          runnerResults: RunnerResult[],
+          bundleDir: string,
+          runId: string,
+        ) => RepeatabilityRunSnapshot;
+      }
+    ).buildRepeatabilityRunSnapshot(
+      metadata,
+      runnerResults,
+      "/tmp/bundle",
+      "run-1",
+    );
+
+    expect(snapshot.suites).toHaveLength(1);
+    expect(snapshot.suites[0]?.models).toEqual([
+      {
+        modelId: "anthropic/claude-sonnet-4.5",
+        totalCases: 1,
+        passedCases: 1,
+        failedCases: 0,
+        passRate: 1,
+        cases: [
+          {
+            caseId: "case-a",
+            passed: true,
+            required: true,
+            weightedTotal: 1,
+            dryRun: false,
+          },
+        ],
+      },
+      {
+        modelId: "openai/gpt-5",
+        totalCases: 2,
+        passedCases: 1,
+        failedCases: 1,
+        passRate: 0.5,
+        cases: [
+          {
+            caseId: "case-b",
+            passed: false,
+            required: true,
+            weightedTotal: 0,
+            dryRun: false,
+          },
+          {
+            caseId: "case-c",
+            passed: true,
+            required: true,
+            weightedTotal: 1,
+            dryRun: false,
+          },
+        ],
+      },
+    ]);
   });
 
   it("repeatability diagnostics ignore previous runs with different exact filters", async () => {

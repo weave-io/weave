@@ -1512,27 +1512,43 @@ export class EvalOrchestrator {
           0,
         );
         const suiteGreen = suiteResults.every((result) => result.suiteGreen);
-        const models = suiteResults
-          .map((result) => {
-            const modelId = result.caseResults[0]?.summary.modelId ?? "unknown";
+        const modelGroups = new Map<
+          string,
+          RepeatabilityModelSnapshot["cases"]
+        >();
+
+        for (const result of suiteResults) {
+          for (const caseResult of result.caseResults) {
+            const modelId = caseResult.summary.modelId;
+            const existing = modelGroups.get(modelId) ?? [];
+            existing.push({
+              caseId: caseResult.summary.caseId,
+              passed: caseResult.summary.passed,
+              required: caseResult.summary.required,
+              weightedTotal: caseResult.summary.weightedTotal,
+              dryRun: caseResult.summary.dryRun,
+            });
+            modelGroups.set(modelId, existing);
+          }
+        }
+
+        const models = [...modelGroups.entries()]
+          .map(([modelId, cases]) => {
+            const passedModelCases = cases.filter(
+              (caseSnapshot) => caseSnapshot.passed,
+            ).length;
+            const failedModelCases = cases.length - passedModelCases;
+
             return {
               modelId,
-              totalCases: result.totalCases,
-              passedCases: result.passedCases,
-              failedCases: result.failedCases,
+              totalCases: cases.length,
+              passedCases: passedModelCases,
+              failedCases: failedModelCases,
               passRate:
-                result.totalCases === 0
-                  ? null
-                  : result.passedCases / result.totalCases,
-              cases: result.caseResults
-                .map((caseResult) => ({
-                  caseId: caseResult.summary.caseId,
-                  passed: caseResult.summary.passed,
-                  required: caseResult.summary.required,
-                  weightedTotal: caseResult.summary.weightedTotal,
-                  dryRun: caseResult.summary.dryRun,
-                }))
-                .sort((a, b) => a.caseId.localeCompare(b.caseId)),
+                cases.length === 0 ? null : passedModelCases / cases.length,
+              cases: [...cases].sort((a, b) =>
+                a.caseId.localeCompare(b.caseId),
+              ),
             } satisfies RepeatabilityModelSnapshot;
           })
           .sort((a, b) => a.modelId.localeCompare(b.modelId));

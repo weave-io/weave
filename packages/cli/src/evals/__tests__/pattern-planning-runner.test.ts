@@ -628,6 +628,29 @@ describe("extractPlanningSignals", () => {
     ]);
   });
 
+  it("does not let top-level fields unlock task structure without an explicit task marker", () => {
+    const signals = extractPlanningSignals(
+      [
+        "## Scope",
+        "- In scope: release cleanup.",
+        "What: Update the runner contract.",
+        "Files: `packages/cli/src/evals/pattern-planning-runner.ts`",
+        "Acceptance:",
+        "- Verify task structure stays strict.",
+      ].join("\n"),
+    );
+
+    expect(signals.scopeExplicit).toBe(true);
+    expect(signals.fileBackedTasks).toBe(false);
+    expect(signals.sequencingExplicit).toBe(false);
+    expect(signals.acceptanceCoverage).toBe(true);
+    expect(signals.taskCount).toBe(0);
+    expect(signals.producedArtifacts).toEqual([
+      "plan_scope_explicit",
+      "plan_acceptance_coverage",
+    ]);
+  });
+
   it("does not treat partial structural coverage as complete planning execution", () => {
     const signals = extractPlanningSignals(
       [
