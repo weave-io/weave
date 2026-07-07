@@ -31,7 +31,7 @@
  * @see packages/engine/src/runtime-command-operations/types.ts
  */
 
-import type { WorkflowConfig } from "@weave/core";
+import type { WorkflowConfig } from "@weaveio/weave-core";
 import { errAsync } from "neverthrow";
 import { completeStep, handleUserInterrupt } from "../execution-lifecycle.js";
 import { logger } from "../logger.js";

@@ -46,24 +46,24 @@ $ bun run lint && bun run typecheck && bun run build && bun run test
 Checked 78 files in 20ms. No fixes applied.
 
 # typecheck
-@weave/core typecheck: Exited with code 0
-@weave/config typecheck: Exited with code 0
-@weave/engine typecheck: Exited with code 0
-@weave/adapter-opencode typecheck: Exited with code 0
-@weave/cli typecheck: Exited with code 0
+@weaveio/weave-core typecheck: Exited with code 0
+@weaveio/weave-config typecheck: Exited with code 0
+@weaveio/weave-engine typecheck: Exited with code 0
+@weaveio/weave-adapter-opencode typecheck: Exited with code 0
+@weaveio/weave-cli typecheck: Exited with code 0
 
 # build
-@weave/core build: Bundled 88 modules in 27ms — index.js 0.58 MB
-@weave/engine build: Bundled 117 modules in 16ms — index.js 0.70 MB
-@weave/config build: Bundled 125 modules in 16ms — index.js 0.72 MB
-@weave/cli build: Bundled 151 modules in 15ms
-@weave/adapter-opencode build: Bundled 1 module in 3ms
+@weaveio/weave-core build: Bundled 88 modules in 27ms — index.js 0.58 MB
+@weaveio/weave-engine build: Bundled 117 modules in 16ms — index.js 0.70 MB
+@weaveio/weave-config build: Bundled 125 modules in 16ms — index.js 0.72 MB
+@weaveio/weave-cli build: Bundled 151 modules in 15ms
+@weaveio/weave-adapter-opencode build: Bundled 1 module in 3ms
 
 # test
-@weave/core test:  130 pass, 0 fail
-@weave/config test:  43 pass, 0 fail
-@weave/engine test:  256 pass, 0 fail
-@weave/cli test:  68 pass, 0 fail
+@weaveio/weave-core test:  130 pass, 0 fail
+@weaveio/weave-config test:  43 pass, 0 fail
+@weaveio/weave-engine test:  256 pass, 0 fail
+@weaveio/weave-cli test:  68 pass, 0 fail
 
 Total: 512 pass, 0 fail
 ```
@@ -150,7 +150,7 @@ File exists at `docs/tool-policy-evaluation.md` with sections covering:
 ## Sanitization Confirmation
 
 No harness-specific tool names appear in:
-- `packages/engine/src/run-agent-effects.ts` — only abstract types from `@weave/core`
+- `packages/engine/src/run-agent-effects.ts` — only abstract types from `@weaveio/weave-core`
   and `EffectiveToolPolicy` from `tool-policy.ts`
 - `packages/engine/src/runner.ts` — no harness names; only abstract capability keys
 - `packages/engine/src/__tests__/runner.test.ts` — all agent names are synthetic

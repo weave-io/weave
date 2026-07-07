@@ -2,11 +2,11 @@
 
 ## Introduction/Overview
 
-This feature turns `@weave/adapter-opencode` from a partial reference package into a real first-slice adapter that can materialize Weave agents into OpenCode. The goal is to complete the adapter-owned materialization path using an injected OpenCode client in plugin/runtime context, while preserving the existing engine/adapter boundary and deferring broader workflow-lifecycle parity.
+This feature turns `@weaveio/weave-adapter-opencode` from a partial reference package into a real first-slice adapter that can materialize Weave agents into OpenCode. The goal is to complete the adapter-owned materialization path using an injected OpenCode client in plugin/runtime context, while preserving the existing engine/adapter boundary and deferring broader workflow-lifecycle parity.
 
 ## Goals
 
-- Deliver a real SDK-backed materialization path for Weave agents in `@weave/adapter-opencode`.
+- Deliver a real SDK-backed materialization path for Weave agents in `@weaveio/weave-adapter-opencode`.
 - Keep `descriptor.name` as the canonical identity for Weave-managed OpenCode agents.
 - Resolve and validate models and skills using the current engine contracts instead of silent fallback behavior.
 - Protect manually managed OpenCode agents from accidental overwrite by requiring explicit Weave ownership before update.
@@ -15,7 +15,7 @@ This feature turns `@weave/adapter-opencode` from a partial reference package in
 ## User Stories
 
 - **As a Weave adapter developer**, I want `spawnSubagent()` to materialize real OpenCode agents so that the adapter package is no longer only an in-memory translation stub.
-- **As a Weave maintainer**, I want the OpenCode adapter to follow the documented engine/adapter boundary so that adapter work does not leak harness-specific behavior back into `@weave/engine`.
+- **As a Weave maintainer**, I want the OpenCode adapter to follow the documented engine/adapter boundary so that adapter work does not leak harness-specific behavior back into `@weaveio/weave-engine`.
 - **As a user configuring Weave agents**, I want my declared models, prompts, tool policy, and skills to be validated against the OpenCode runtime so that adapter output matches authored intent.
 - **As an OpenCode user with existing agents**, I want Weave materialization to avoid clobbering non-Weave agents so that adopting Weave does not destroy manual harness configuration.
 
@@ -77,7 +77,7 @@ This feature turns `@weave/adapter-opencode` from a partial reference package in
 
 **Functional Requirements:**
 - The system shall document the final adapter shape in the spec, adapter docs, and a new ADR covering the SDK-first and plugin/runtime-first decisions.
-- The system shall update repository documentation that describes `@weave/adapter-opencode` so it no longer implies the package is only a placeholder after this slice lands.
+- The system shall update repository documentation that describes `@weaveio/weave-adapter-opencode` so it no longer implies the package is only a placeholder after this slice lands.
 - The system shall preserve the explicit first-slice non-goals: no workflow/lifecycle parity expansion, no file/config-first path, no delete/prune reconciliation, no engine-boundary drift unless blocked, and no soft-skip for missing declared skills.
 - The system shall meet a three-layer acceptance bar: pure unit tests, adapter tests with a mocked injected client, and a documented manual smoke path in plugin/runtime context.
 
@@ -118,7 +118,7 @@ No specific visual design requirements identified. The user-facing design concer
 - Current official OpenCode SDK guidance shows provider/model discovery through SDK resources such as `client.app.providers()`, supporting the chosen resolve-and-validate model strategy.
 - Current OpenCode guidance also indicates config is validated strictly and config-time changes are not hot-reloaded; if implementation touches config-adjacent surfaces for smoke testing or integration notes, documentation must treat restart requirements and schema validation as operational constraints rather than assume live reload.
 - Context7 research did not provide a definitive current public example for agent CRUD/reconciliation APIs in `@opencode-ai/sdk` ~1.15.x. Implementation should therefore keep the SDK interaction behind a narrow adapter-owned client facade so exact OpenCode method names can evolve without changing engine-facing contracts.
-- The repository already treats `@weave/adapter-opencode` as a partial reference package. This spec keeps the work adapter-local and avoids engine-boundary drift unless a true blocker appears.
+- The repository already treats `@weaveio/weave-adapter-opencode` as a partial reference package. This spec keeps the work adapter-local and avoids engine-boundary drift unless a true blocker appears.
 
 ## Security Considerations
 
@@ -130,7 +130,7 @@ No specific visual design requirements identified. The user-facing design concer
 
 ## Success Metrics
 
-1. **Real materialization path**: `@weave/adapter-opencode` can create or update Weave-managed agents through an SDK-backed path in plugin/runtime context with no engine API changes.
+1. **Real materialization path**: `@weaveio/weave-adapter-opencode` can create or update Weave-managed agents through an SDK-backed path in plugin/runtime context with no engine API changes.
 2. **Safe validation behavior**: unsupported explicit models, unresolved declared skills, and foreign-agent collisions fail with intentional, test-covered errors instead of silent fallback or overwrite.
 3. **Acceptance completeness**: the slice passes the agreed three-layer bar of unit tests, mocked-client adapter tests, and documented manual smoke validation.
 
@@ -139,4 +139,4 @@ No specific visual design requirements identified. The user-facing design concer
 1. **Approved assumption — SDK surface isolation**: the implementation shall hide the exact OpenCode agent list/create/update calls behind `packages/adapters/opencode/src/opencode-client.ts`, so SDK or plugin-runtime method-name uncertainty remains adapter-local and does not change engine-facing contracts.
 2. **Approved assumption — fail-closed ownership proof**: the implementation shall update an existing same-named agent only when Weave ownership can be proven through a supported adapter-visible marker; otherwise reconciliation shall fail closed with a collision error instead of overwriting the agent.
 
-Manual smoke validation shall use the OpenCode CLI/runtime with no extra plugins enabled except `@weave/adapter-opencode`, because the user's normal configuration still contains the legacy weave integration.
+Manual smoke validation shall use the OpenCode CLI/runtime with no extra plugins enabled except `@weaveio/weave-adapter-opencode`, because the user's normal configuration still contains the legacy weave integration.

@@ -2,7 +2,7 @@
 
 | File | Why It Is Relevant |
 | --- | --- |
-| `packages/engine/src/plan-state-provider.ts` | New file: `PlanStateProvider` interface and `PlanStateError` union exported from `@weave/engine`. |
+| `packages/engine/src/plan-state-provider.ts` | New file: `PlanStateProvider` interface and `PlanStateError` union exported from `@weaveio/weave-engine`. |
 | `packages/engine/src/index.ts` | Export `PlanStateProvider` and `PlanStateError` from the engine barrel. |
 | `packages/engine/src/execution-lifecycle.ts` | Add `planStateProvider?: PlanStateProvider` to `CompleteStepInput`; replace `checkPlanFileExists`/`checkPlanComplete` with provider delegation; add absent-provider guard. |
 | `packages/config/src/plan-state-provider.ts` | New file: `BunFilesystemPlanStateProvider` — default Bun-backed implementation. |
@@ -16,7 +16,7 @@
 - Unit tests for `completeStep` plan paths must use a mock `PlanStateProvider` — never real filesystem I/O.
 - Use `bun test packages/engine/src/__tests__/execution-lifecycle.test.ts` for focused lifecycle validation.
 - Use `bun run typecheck` to verify the full workspace compiles after changes.
-- Follow the engine/adapter boundary: the engine owns the interface and validation; `@weave/config` owns the default Bun implementation.
+- Follow the engine/adapter boundary: the engine owns the interface and validation; `@weaveio/weave-config` owns the default Bun implementation.
 
 ## Tasks
 
@@ -26,7 +26,7 @@
 
 - Code review artifact: `packages/engine/src/plan-state-provider.ts` contains only the interface and error union — no implementation code, no `Bun.file()` calls.
 - Typecheck: `bun run typecheck` passes with the new file.
-- Export test: `PlanStateProvider` and `PlanStateError` are importable from `@weave/engine`.
+- Export test: `PlanStateProvider` and `PlanStateError` are importable from `@weaveio/weave-engine`.
 
 #### 1.0 Tasks
 
@@ -61,12 +61,12 @@
 
 ---
 
-### [ ] 3.0 Implement `BunFilesystemPlanStateProvider` in `@weave/config`
+### [ ] 3.0 Implement `BunFilesystemPlanStateProvider` in `@weaveio/weave-config`
 
 #### 3.0 Proof Artifact(s)
 
 - Code review artifact: `packages/config/src/plan-state-provider.ts` uses `Bun.file()` and applies the safe-name regex before constructing paths.
-- Export test: `BunFilesystemPlanStateProvider` is importable from `@weave/config`.
+- Export test: `BunFilesystemPlanStateProvider` is importable from `@weaveio/weave-config`.
 - Typecheck: `bun run typecheck` passes with the new file.
 
 #### 3.0 Tasks

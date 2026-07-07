@@ -20,7 +20,7 @@
  */
 
 import { beforeEach, describe, expect, it } from "bun:test";
-import { parseConfig } from "@weave/core";
+import { parseConfig } from "@weaveio/weave-core";
 import {
   completeStep,
   createInMemoryRuntimeStore,
@@ -30,7 +30,7 @@ import {
   observeSession,
   startExecution,
   type WorkflowExecutionContext,
-} from "@weave/engine";
+} from "@weaveio/weave-engine";
 import { MockAdapter } from "./mock-adapter.js";
 
 // ---------------------------------------------------------------------------

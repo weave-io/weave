@@ -5,7 +5,7 @@
  * - Lifecycle input types accept valid values (runtime shape checks)
  * - Lifecycle error discriminants are correct
  * - LifecycleEffect union includes RunAgentEffect as a variant (via DispatchAgentEffect)
- * - Public import paths compile (imports from @weave/engine)
+ * - Public import paths compile (imports from @weaveio/weave-engine)
  * - SafeMetadata structural constraint
  * - Error factory helpers produce correct discriminants
  * - ExecutionOperationKind discriminated union (Spec 22 Unit 1)
@@ -16,7 +16,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import type { RunAgentEffect } from "@weave/engine";
+import type { RunAgentEffect } from "@weaveio/weave-engine";
 import {
   type ArtifactInputDecl,
   type ArtifactInputRole,
@@ -80,7 +80,7 @@ import {
   validateAuthorizationSource,
   validateReconciliationSource,
   type WorkflowExecutionContext,
-} from "@weave/engine";
+} from "@weaveio/weave-engine";
 import { errAsync, okAsync } from "neverthrow";
 
 // ---------------------------------------------------------------------------
@@ -673,8 +673,8 @@ describe("BeforeToolInput / BeforeToolOutput", () => {
 // ---------------------------------------------------------------------------
 
 describe("public import paths", () => {
-  it("lifecycle error factories are importable from @weave/engine", () => {
-    // These are already imported at the top of this file from @weave/engine.
+  it("lifecycle error factories are importable from @weaveio/weave-engine", () => {
+    // These are already imported at the top of this file from @weaveio/weave-engine.
     // If the imports compile and resolve, this test passes.
     expect(typeof lifecycleValidationError).toBe("function");
     expect(typeof lifecycleNotFoundError).toBe("function");
@@ -683,7 +683,7 @@ describe("public import paths", () => {
     expect(typeof lifecyclePolicyDecisionError).toBe("function");
   });
 
-  it("ID factory helpers are importable from @weave/engine", () => {
+  it("ID factory helpers are importable from @weaveio/weave-engine", () => {
     expect(typeof createWorkflowInstanceId).toBe("function");
     expect(typeof createExecutionLeaseId).toBe("function");
     expect(typeof createSessionSnapshotId).toBe("function");
@@ -2979,7 +2979,7 @@ describe("startExecution: WorkflowExecutionContext", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // WorkflowExecutionContext type is importable from @weave/engine
+  // WorkflowExecutionContext type is importable from @weaveio/weave-engine
   // ---------------------------------------------------------------------------
 
   it("WorkflowExecutionContext type is importable and structurally correct", () => {
@@ -3790,7 +3790,7 @@ describe("dispatchStep: configured workflow step resolution", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // PromptMetadata type is importable from @weave/engine
+  // PromptMetadata type is importable from @weaveio/weave-engine
   // ---------------------------------------------------------------------------
 
   it("PromptMetadata type is importable and structurally correct", () => {

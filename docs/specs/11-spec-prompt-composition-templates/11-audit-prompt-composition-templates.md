@@ -22,7 +22,7 @@
 | Source File | Read | Standards Extracted | Conflicts |
 | --- | --- | --- | --- |
 | `AGENTS.md` | yes | Use Bun only; use `neverthrow` result types for expected failures; update docs for non-trivial behavior changes. | none |
-| `README.md` | yes | Workspace package boundaries; `@weave/engine` owns pure composition APIs; use `bun install`, `bun run build`, `bun run typecheck`, `bun run test`. | none |
+| `README.md` | yes | Workspace package boundaries; `@weaveio/weave-engine` owns pure composition APIs; use `bun install`, `bun run build`, `bun run typecheck`, `bun run test`. | none |
 | `packages/engine/README.md` | yes | Engine consumes validated config and adapter-supplied context; engine must not make harness-specific assumptions; prefer pure helpers. | none |
 | `package.json` | yes | Root scripts include `bun run lint`, `bun run typecheck`, `bun run build`, and `bun run test`; workspaces include engine/config/core packages. | none |
 | `packages/engine/package.json` | yes | Engine package scripts include package-scoped build/test/typecheck; current dependencies lack `mustache`. | none |

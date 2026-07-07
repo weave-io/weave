@@ -2,7 +2,7 @@
 
 ## Task Summary
 
-This task proves the execution lifecycle vocabulary is defined, typed, and exported from `@weave/engine`. It establishes the shared typed vocabulary for adapter-to-engine lifecycle calls: input/output types for all 7 lifecycle methods, a discriminated `LifecycleError` union, a `LifecycleEffect` union containing `RunAgentEffect` as the dispatch variant, and `SafeMetadata` that structurally excludes credentials and raw payloads.
+This task proves the execution lifecycle vocabulary is defined, typed, and exported from `@weaveio/weave-engine`. It establishes the shared typed vocabulary for adapter-to-engine lifecycle calls: input/output types for all 7 lifecycle methods, a discriminated `LifecycleError` union, a `LifecycleEffect` union containing `RunAgentEffect` as the dispatch variant, and `SafeMetadata` that structurally excludes credentials and raw payloads.
 
 ## What This Task Proves
 
@@ -28,13 +28,13 @@ This task proves the execution lifecycle vocabulary is defined, typed, and expor
 
 **Command:**
 ```bash
-bun run --filter '@weave/engine' typecheck
+bun run --filter '@weaveio/weave-engine' typecheck
 ```
 
 **Result summary:** Exit code 0 — all lifecycle types, error unions, effect unions, and index exports are valid TypeScript.
 
 ```
-@weave/engine typecheck: Exited with code 0
+@weaveio/weave-engine typecheck: Exited with code 0
 ```
 
 ## Artifact: Test suite pass
@@ -45,7 +45,7 @@ bun run --filter '@weave/engine' typecheck
 
 **Command:**
 ```bash
-bun run --filter '@weave/engine' test
+bun run --filter '@weaveio/weave-engine' test
 ```
 
 **Result summary:** 778 pass, 0 fail across 18 files (43 new lifecycle tests included).

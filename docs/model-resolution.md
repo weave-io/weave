@@ -72,7 +72,7 @@ When an adapter translates a generated category shuttle, it should pass those ca
 Because generated category shuttles always have `mode: "subagent"`, `resolveAdapterModelIntent()` skips `uiSelectedModel` for them and resolves directly from explicit category or agent model preferences before falling back to adapter defaults.
 
 ```ts
-import { resolveAdapterModelIntent } from "@weave/engine";
+import { resolveAdapterModelIntent } from "@weaveio/weave-engine";
 
 const resolved = resolveAdapterModelIntent({
   agentName: "shuttle-frontend",

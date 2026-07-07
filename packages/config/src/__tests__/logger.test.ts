@@ -2,7 +2,7 @@
  * Unit tests for `packages/config/src/logger.ts`.
  *
  * Verifies that the config logger uses the shared `logDestination` from
- * `@weave/engine`. This is the invariant that makes silent startup work in
+ * `@weaveio/weave-engine`. This is the invariant that makes silent startup work in
  * the OpenCode plugin path:
  *
  * - The plugin calls `redirectLogsToFile(...)` which calls
@@ -19,7 +19,7 @@
 import { describe, expect, it } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { logDestination, redirectLogsToFile } from "@weave/engine";
+import { logDestination, redirectLogsToFile } from "@weaveio/weave-engine";
 
 describe("config logger — shared destination invariant", () => {
   it("config logger writes to the engine logDestination (same MutableDestination)", async () => {

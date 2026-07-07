@@ -6,7 +6,7 @@ Task 2 defines the engine-owned Runtime Store domain interfaces without tying ca
 New files introduce branded ID types, domain records (`WorkflowInstance`, `ExecutionLease`,
 `SessionSnapshot`, `RuntimeJournalEntry`), a discriminated `RuntimeStoreError` union, focused
 repository interfaces, a composed `RuntimeStore`, and a transaction/unit-of-work API.
-All public types are exported from `@weave/engine` without exposing SQLite internals.
+All public types are exported from `@weaveio/weave-engine` without exposing SQLite internals.
 
 ---
 
@@ -46,11 +46,11 @@ Ran 58 tests across 1 file. [66.00ms]
 ## Typecheck Output
 
 ```
-bun run --filter '@weave/engine' typecheck
+bun run --filter '@weaveio/weave-engine' typecheck
 ```
 
 ```
-@weave/engine typecheck: Exited with code 0
+@weaveio/weave-engine typecheck: Exited with code 0
 ```
 
 ```
@@ -59,11 +59,11 @@ bun run typecheck
 
 ```
 $ tsc --noEmit -p tsconfig.json && bun run --filter '*' typecheck
-@weave/core typecheck: Exited with code 0
-@weave/engine typecheck: Exited with code 0
-@weave/adapter-opencode typecheck: Exited with code 0
-@weave/config typecheck: Exited with code 0
-@weave/cli typecheck: Exited with code 0
+@weaveio/weave-core typecheck: Exited with code 0
+@weaveio/weave-engine typecheck: Exited with code 0
+@weaveio/weave-adapter-opencode typecheck: Exited with code 0
+@weaveio/weave-config typecheck: Exited with code 0
+@weaveio/weave-cli typecheck: Exited with code 0
 ```
 
 ---
@@ -100,7 +100,7 @@ Ran 1090 tests across 36 files. [162.00ms]
 | 9 | Composed `RuntimeStore` exposes focused sub-repositories | ✅ |
 | 10 | Transaction/unit-of-work interface defined | ✅ |
 | 11 | All runtime public types exported from `packages/engine/src/index.ts` (no SQLite internals) | ✅ |
-| 12 | `bun run --filter '@weave/engine' typecheck` passes | ✅ Exited with code 0 |
+| 12 | `bun run --filter '@weaveio/weave-engine' typecheck` passes | ✅ Exited with code 0 |
 | 13 | Contract tests pass: `bun test packages/engine/src/__tests__/runtime-contract.test.ts` | ✅ 58 pass, 0 fail |
 
 ---

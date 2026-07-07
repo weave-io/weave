@@ -20,7 +20,7 @@
  * All private helpers are co-located here to keep the call graph readable.
  */
 
-import type { WorkflowConfig, WorkflowStep } from "@weave/core";
+import type { WorkflowConfig, WorkflowStep } from "@weaveio/weave-core";
 import type { ResultAsync } from "neverthrow";
 import { err, errAsync, ok, okAsync, type Result } from "neverthrow";
 import type {

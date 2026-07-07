@@ -1,8 +1,8 @@
-# @weave/core
+# @weaveio/weave-core
 
 Core DSL lexer, parser, AST, Zod schemas, validation, and `parseConfig()` pipeline for Weave.
 
-`@weave/core` is intentionally harness-agnostic. It understands the `.weave` DSL and produces validated `WeaveConfig` values; it does **not** know about OpenCode, Pi, Claude Code, harness UI state, concrete tool names, skill file locations, or runtime plugin behavior.
+`@weaveio/weave-core` is intentionally harness-agnostic. It understands the `.weave` DSL and produces validated `WeaveConfig` values; it does **not** know about OpenCode, Pi, Claude Code, harness UI state, concrete tool names, skill file locations, or runtime plugin behavior.
 
 ## Overview
 
@@ -16,7 +16,7 @@ This package provides the foundational config pipeline used by the rest of Weave
 
 ## Boundary Rules
 
-`@weave/core` owns only DSL structure and validation.
+`@weaveio/weave-core` owns only DSL structure and validation.
 
 It does **not**:
 
@@ -27,12 +27,12 @@ It does **not**:
 - spawn agents in a harness
 - expose `defineConfig()` or JavaScript object config APIs
 
-Skill and model declarations are **intent**. Adapters provide harness-owned context to `@weave/engine` composition APIs, which resolve that intent for a specific harness.
+Skill and model declarations are **intent**. Adapters provide harness-owned context to `@weaveio/weave-engine` composition APIs, which resolve that intent for a specific harness.
 
 ## Usage
 
 ```ts
-import { parseConfig } from "@weave/core";
+import { parseConfig } from "@weaveio/weave-core";
 
 const source = `
 agent coder {
@@ -57,7 +57,7 @@ const result = parseConfig(source);
 result.match(
   (config) => {
     // config.agents.coder.skills is ["tdd"] — a skill reference, not loaded content.
-    // Adapters provide available skill content to @weave/engine later.
+    // Adapters provide available skill content to @weaveio/weave-engine later.
   },
   (errors) => {
     // Surface parse/validation errors to the caller.

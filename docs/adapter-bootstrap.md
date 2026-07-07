@@ -11,7 +11,7 @@ one.
 
 > **`WeaveRunner` has been removed.**
 >
-> The transitional `WeaveRunner` class (previously exported from `@weave/engine`)
+> The transitional `WeaveRunner` class (previously exported from `@weaveio/weave-engine`)
 > is no longer the recommended bootstrap path. Adapters should call
 > `loadConfig` → `materializeAgents` directly and wire the execution lifecycle
 > surface themselves. The snippets below show the correct pattern.
@@ -29,14 +29,14 @@ loadConfig()  →  materializeAgents()  →  adapter loop: spawnSubagent(descrip
 ### Full runnable example
 
 ```ts
-import { loadConfig } from "@weave/config";
+import { loadConfig } from "@weaveio/weave-config";
 import {
   logger,
   materializeAgents,
   type AgentDescriptor,
   type MaterializationError,
   type MaterializedAgent,
-} from "@weave/engine";
+} from "@weaveio/weave-engine";
 
 const log = logger.child({ module: "my-adapter" });
 
@@ -124,10 +124,10 @@ bootstrap(process.cwd()).catch((err) => {
 
 ### Key points
 
-- `loadConfig` is from `@weave/config`. It merges builtins, global
+- `loadConfig` is from `@weaveio/weave-config`. It merges builtins, global
   (`~/.weave/config.weave`), and project (`.weave/config.weave`) layers and
   returns `ResultAsync<WeaveConfig, ConfigLoadError[]>`.
-- `materializeAgents` is from `@weave/engine`. It accepts only
+- `materializeAgents` is from `@weaveio/weave-engine`. It accepts only
   `{ config: WeaveConfig }` — no `HarnessAdapter` required.
 - `MaterializationPlan` has two fields:
   - `agents: MaterializedAgent[]` — ordered, disabled-filtered descriptors ready
@@ -148,7 +148,7 @@ abstract API that adapters call after mapping concrete harness events into
 normalized inputs.
 
 ```ts
-import { loadConfig } from "@weave/config";
+import { loadConfig } from "@weaveio/weave-config";
 import {
   completeStep,
   createInMemoryRuntimeStore,
@@ -159,7 +159,7 @@ import {
   type LifecycleEffect,
   type RuntimeStore,
   type WorkflowExecutionContext,
-} from "@weave/engine";
+} from "@weaveio/weave-engine";
 
 const log = logger.child({ module: "my-adapter-workflow" });
 
@@ -225,10 +225,10 @@ async function bootstrapWorkflow(projectRoot: string): Promise<void> {
 
   // 2. Create a RuntimeStore.
   //
-  //    For production use, prefer SqliteRuntimeStore from @weave/engine.
+  //    For production use, prefer SqliteRuntimeStore from @weaveio/weave-engine.
   //    For tests or ephemeral runs, InMemoryRuntimeStore is sufficient.
   //
-  //    NOTE: BunFilesystemPlanStateProvider (from @weave/config) will provide
+  //    NOTE: BunFilesystemPlanStateProvider (from @weaveio/weave-config) will provide
   //    filesystem-backed plan state for plan_created / plan_complete completion
   //    methods. See Spec 19 (task 18) for the full PlanStateProvider interface
   //    and BunFilesystemPlanStateProvider implementation.
@@ -295,7 +295,7 @@ async function bootstrapWorkflow(projectRoot: string): Promise<void> {
   //    records completion, advances the workflow, and returns the next effects.
   //
   //    The planStateProvider parameter (injected here as undefined for brevity)
-  //    will be a BunFilesystemPlanStateProvider from @weave/config in production
+  //    will be a BunFilesystemPlanStateProvider from @weaveio/weave-config in production
   //    use — required for plan_created / plan_complete completion methods.
   //    See Spec 19 for the full interface.
   const completeResult = await completeStep(
@@ -337,11 +337,11 @@ for the full `LifecycleError` discriminated union and `LifecycleEffect` type.
 ### `planStateProvider` and `BunFilesystemPlanStateProvider`
 
 `completeStep` accepts an optional third argument: a `PlanStateProvider`
-(interface from `@weave/engine`). This provider is required when a workflow step
+(interface from `@weaveio/weave-engine`). This provider is required when a workflow step
 uses `plan_created` or `plan_complete` completion methods — it reads and writes
 plan files under `.weave/plans/`.
 
-`BunFilesystemPlanStateProvider` (from `@weave/config`) is the production
+`BunFilesystemPlanStateProvider` (from `@weaveio/weave-config`) is the production
 implementation backed by Bun's filesystem APIs. It will be available once
 [Spec 19](specs/) is implemented (task 18). Until then, pass `undefined` for
 steps that do not use plan-based completion methods.
@@ -350,7 +350,7 @@ steps that do not use plan-based completion methods.
 
 ## OpenCode Adapter: `runWorkflow` Helper
 
-The OpenCode adapter (`@weave/adapter-opencode`) provides a `runWorkflow`
+The OpenCode adapter (`@weaveio/weave-adapter-opencode`) provides a `runWorkflow`
 convenience function that wraps the full execution lifecycle loop described
 above. It is the recommended helper for running a **specific named workflow**
 end-to-end in the OpenCode harness.
@@ -364,10 +364,10 @@ end-to-end in the OpenCode harness.
 > the engine does not prescribe them.
 
 ```ts
-import { runWorkflow } from "@weave/adapter-opencode";
-import { OpenCodeAdapter } from "@weave/adapter-opencode";
-import { createInMemoryRuntimeStore } from "@weave/engine";
-import { loadConfig } from "@weave/config";
+import { runWorkflow } from "@weaveio/weave-adapter-opencode";
+import { OpenCodeAdapter } from "@weaveio/weave-adapter-opencode";
+import { createInMemoryRuntimeStore } from "@weaveio/weave-engine";
+import { loadConfig } from "@weaveio/weave-config";
 
 const adapter = new OpenCodeAdapter({ projectRoot: process.cwd() });
 await adapter.init();
@@ -462,18 +462,18 @@ logic (calling engine operations), not just prompt templates.
 ```ts
 import { tool } from "@opencode-ai/plugin";
 import type { Hooks, Plugin } from "@opencode-ai/plugin";
-import { loadConfig } from "@weave/config";
+import { loadConfig } from "@weaveio/weave-config";
 import {
   createInMemoryRuntimeStore,
   logger,
   type PlanStateProvider,
   type RuntimeStore,
-} from "@weave/engine";
+} from "@weaveio/weave-engine";
 import {
   OpenCodeAdapter,
   RuntimeCommandProjection,
   WEAVE_COMMAND_LABELS,
-} from "@weave/adapter-opencode";
+} from "@weaveio/weave-adapter-opencode";
 
 const log = logger.child({ module: "weave-commands" });
 
@@ -497,7 +497,7 @@ export const WeaveCommandsPlugin: Plugin = async ({ directory, client }) => {
 
   // Create plan state provider (adapter-owned)
   const planStateProvider: PlanStateProvider = {
-    // ... implement or use BunFilesystemPlanStateProvider from @weave/config
+    // ... implement or use BunFilesystemPlanStateProvider from @weaveio/weave-config
   };
 
   // Create the projection instance for handling commands
@@ -634,33 +634,33 @@ All types and functions used in this guide are public exports:
 
 | Symbol | Package | Description |
 | --- | --- | --- |
-| `loadConfig` | `@weave/config` | Load and merge all config layers |
-| `materializeAgents` | `@weave/engine` | Compose all adapter-facing agent descriptors |
-| `MaterializationPlan` | `@weave/engine` | `{ agents, errors }` — partial-by-default plan shape |
-| `MaterializedAgent` | `@weave/engine` | `{ agentName, descriptor }` pair |
-| `MaterializationError` | `@weave/engine` | `CategoryShuttleConflict` or `DescriptorCompositionFailure` |
-| `AgentDescriptor` | `@weave/engine` | Stable adapter-facing descriptor (prompt, models, policy, …) |
-| `startExecution` | `@weave/engine` | Begin a workflow execution |
-| `resumeExecution` | `@weave/engine` | Resume a paused execution |
-| `handleUserInterrupt` | `@weave/engine` | Handle a user-initiated interrupt |
-| `dispatchStep` | `@weave/engine` | Dispatch the next workflow step |
-| `completeStep` | `@weave/engine` | Record step completion and advance the workflow |
-| `beforeTool` | `@weave/engine` | Evaluate abstract tool policy before a tool executes |
-| `observeSession` | `@weave/engine` | Record a normalized session observation |
-| `LifecycleEffect` | `@weave/engine` | `dispatch-agent` / `pause-execution` / `complete-execution` |
-| `LifecycleError` | `@weave/engine` | Discriminated union: `validation`, `not_found`, `lease_conflict`, `persistence`, `policy_decision` |
-| `createInMemoryRuntimeStore` | `@weave/engine` | In-memory `RuntimeStore` for tests and ephemeral runs |
-| `SqliteRuntimeStore` | `@weave/engine` | Production SQLite-backed `RuntimeStore` |
-| `logger` | `@weave/engine` | Shared pino logger instance |
-| `runWorkflow` | `@weave/adapter-opencode` | End-to-end workflow execution loop for the OpenCode adapter |
-| `RunWorkflowInput` | `@weave/adapter-opencode` | Input type for `runWorkflow` |
-| `RunWorkflowResult` | `@weave/adapter-opencode` | Output type for `runWorkflow` |
-| `RunWorkflowError` | `@weave/adapter-opencode` | Error union for `runWorkflow` |
-| `RuntimeCommandProjection` | `@weave/adapter-opencode` | Class with handlers for all six runtime commands |
-| `startPlanExecution` | `@weave/adapter-opencode` | Standalone helper for `/weave:start` command |
-| `WEAVE_COMMAND_LABELS` | `@weave/adapter-opencode` | Command label constants for OpenCode |
-| `WEAVE_START_COMMAND` | `@weave/adapter-opencode` | Preferred command name (`/weave:start`) |
-| `WEAVE_START_LEGACY_COMMAND` | `@weave/adapter-opencode` | Legacy command name (`/start-work`) |
+| `loadConfig` | `@weaveio/weave-config` | Load and merge all config layers |
+| `materializeAgents` | `@weaveio/weave-engine` | Compose all adapter-facing agent descriptors |
+| `MaterializationPlan` | `@weaveio/weave-engine` | `{ agents, errors }` — partial-by-default plan shape |
+| `MaterializedAgent` | `@weaveio/weave-engine` | `{ agentName, descriptor }` pair |
+| `MaterializationError` | `@weaveio/weave-engine` | `CategoryShuttleConflict` or `DescriptorCompositionFailure` |
+| `AgentDescriptor` | `@weaveio/weave-engine` | Stable adapter-facing descriptor (prompt, models, policy, …) |
+| `startExecution` | `@weaveio/weave-engine` | Begin a workflow execution |
+| `resumeExecution` | `@weaveio/weave-engine` | Resume a paused execution |
+| `handleUserInterrupt` | `@weaveio/weave-engine` | Handle a user-initiated interrupt |
+| `dispatchStep` | `@weaveio/weave-engine` | Dispatch the next workflow step |
+| `completeStep` | `@weaveio/weave-engine` | Record step completion and advance the workflow |
+| `beforeTool` | `@weaveio/weave-engine` | Evaluate abstract tool policy before a tool executes |
+| `observeSession` | `@weaveio/weave-engine` | Record a normalized session observation |
+| `LifecycleEffect` | `@weaveio/weave-engine` | `dispatch-agent` / `pause-execution` / `complete-execution` |
+| `LifecycleError` | `@weaveio/weave-engine` | Discriminated union: `validation`, `not_found`, `lease_conflict`, `persistence`, `policy_decision` |
+| `createInMemoryRuntimeStore` | `@weaveio/weave-engine` | In-memory `RuntimeStore` for tests and ephemeral runs |
+| `SqliteRuntimeStore` | `@weaveio/weave-engine` | Production SQLite-backed `RuntimeStore` |
+| `logger` | `@weaveio/weave-engine` | Shared pino logger instance |
+| `runWorkflow` | `@weaveio/weave-adapter-opencode` | End-to-end workflow execution loop for the OpenCode adapter |
+| `RunWorkflowInput` | `@weaveio/weave-adapter-opencode` | Input type for `runWorkflow` |
+| `RunWorkflowResult` | `@weaveio/weave-adapter-opencode` | Output type for `runWorkflow` |
+| `RunWorkflowError` | `@weaveio/weave-adapter-opencode` | Error union for `runWorkflow` |
+| `RuntimeCommandProjection` | `@weaveio/weave-adapter-opencode` | Class with handlers for all six runtime commands |
+| `startPlanExecution` | `@weaveio/weave-adapter-opencode` | Standalone helper for `/weave:start` command |
+| `WEAVE_COMMAND_LABELS` | `@weaveio/weave-adapter-opencode` | Command label constants for OpenCode |
+| `WEAVE_START_COMMAND` | `@weaveio/weave-adapter-opencode` | Preferred command name (`/weave:start`) |
+| `WEAVE_START_LEGACY_COMMAND` | `@weaveio/weave-adapter-opencode` | Legacy command name (`/start-work`) |
 
 ---
 
@@ -675,7 +675,7 @@ interface.
 
 All Weave loggers — both the engine logger (`weave`) and the config logger
 (`weave:config`) — write to the **same** `MutableDestination` instance exported
-as `logDestination` from `@weave/engine`. This is the key invariant that makes
+as `logDestination` from `@weaveio/weave-engine`. This is the key invariant that makes
 silent startup work in the OpenCode plugin path.
 
 `packages/config/src/logger.ts` creates its pino instance with `logDestination`
@@ -696,7 +696,7 @@ The OpenCode plugin calls `redirectLogsToFile()` at the very start of
 `createWeavePlugin` to redirect all Weave logs to a project-local file:
 
 ```ts
-import { redirectLogsToFile } from "@weave/engine";
+import { redirectLogsToFile } from "@weaveio/weave-engine";
 
 // Redirect all Weave logs (engine + config) to a file before any log calls.
 await redirectLogsToFile(join(directory, ".weave/weave.log"));

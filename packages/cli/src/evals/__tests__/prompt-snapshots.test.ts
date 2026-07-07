@@ -61,7 +61,7 @@ const SPINDLE_PROMPT_HONESTY_CONTRACT =
  * prompt files — they are embedded in the builtin DSL source).
  *
  * Returns the WeaveConfig with prompt content already available via the
- * `prompt` field (inlined by `@weave/config`'s `inlineBuiltinPrompts`).
+ * `prompt` field (inlined by `@weaveio/weave-config`'s `inlineBuiltinPrompts`).
  *
  * Note: `getBuiltinConfig()` returns the raw parsed config WITHOUT inlining.
  * For tests we use `composeAgentSnapshots()` (which calls `loadConfig()` and
@@ -83,9 +83,9 @@ function makeInlineAgentConfig(prompt: string) {
  */
 function makeMinimalConfig(
   agents: Record<string, ReturnType<typeof makeInlineAgentConfig>>,
-): import("@weave/core").WeaveConfig {
+): import("@weaveio/weave-core").WeaveConfig {
   return {
-    agents: agents as import("@weave/core").WeaveConfig["agents"],
+    agents: agents as import("@weaveio/weave-core").WeaveConfig["agents"],
     categories: {},
     workflows: {},
     disabled: { agents: [], hooks: [], skills: [] },
@@ -315,7 +315,7 @@ describe("composeSnapshot — source descriptors", () => {
       {} as Record<string, ReturnType<typeof makeInlineAgentConfig>>,
     );
     // Build the config with an agent that has both prompt and prompt_append
-    const configWithAppend: import("@weave/core").WeaveConfig = {
+    const configWithAppend: import("@weaveio/weave-core").WeaveConfig = {
       ...config,
       agents: {
         "appended-agent": {

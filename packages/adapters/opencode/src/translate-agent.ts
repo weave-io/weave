@@ -10,7 +10,7 @@
  * directly from `@opencode-ai/sdk`.
  */
 
-import type { AgentDescriptor } from "@weave/engine";
+import type { AgentDescriptor } from "@weaveio/weave-engine";
 import { err, ok, type Result } from "neverthrow";
 
 import type { OpenCodeAgentConfig } from "./sdk-types.js";

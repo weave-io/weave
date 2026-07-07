@@ -49,7 +49,7 @@ import type {
   RuntimeHealthData,
   RuntimeStore,
   StepAdvancedData,
-} from "@weave/engine";
+} from "@weaveio/weave-engine";
 import {
   abortExecution,
   advanceStep,
@@ -59,7 +59,7 @@ import {
   runNamedWorkflow,
   runtimeHealth,
   startPlan,
-} from "@weave/engine";
+} from "@weaveio/weave-engine";
 
 import type { OpenCodeAdapter } from "./adapter.js";
 import { buildProjectEffect } from "./projection-helpers.js";
@@ -722,7 +722,7 @@ export class RuntimeCommandProjection {
  * This is a convenience helper for tests and plugin entry points that need
  * to construct a health report without duplicating the capability contract
  * boilerplate. Production callers should build a full capability contract
- * using `buildAdapterHealthReport` from `@weave/engine`.
+ * using `buildAdapterHealthReport` from `@weaveio/weave-engine`.
  *
  * The report declares `command-entrypoints` as `emulated` (OpenCode exposes
  * slash commands as the explicit delivery path) and all other required
@@ -749,7 +749,7 @@ export function buildOpenCodeHealthReport(overrides?: {
           id: "config-materialization",
           description: "Load and materialize .weave/config.weave",
           readiness: "native",
-          notes: "OpenCode adapter reads config via @weave/config discovery",
+          notes: "OpenCode adapter reads config via @weaveio/weave-config discovery",
         },
         {
           id: "agent-materialization",
@@ -812,7 +812,7 @@ export function buildOpenCodeHealthReport(overrides?: {
           description: "Log structured events via pino",
           readiness: "native",
           notes:
-            "All adapter modules use the shared pino logger from @weave/engine",
+            "All adapter modules use the shared pino logger from @weaveio/weave-engine",
         },
         {
           id: "token-usage-reporting",
@@ -835,6 +835,6 @@ export function buildOpenCodeHealthReport(overrides?: {
  * Create a default `InMemoryRuntimeStore` for use in projection handlers.
  *
  * Convenience re-export for callers that need a store without importing
- * directly from `@weave/engine`.
+ * directly from `@weaveio/weave-engine`.
  */
-export { createInMemoryRuntimeStore as createDefaultStore } from "@weave/engine";
+export { createInMemoryRuntimeStore as createDefaultStore } from "@weaveio/weave-engine";

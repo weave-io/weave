@@ -33,8 +33,8 @@ Ran 113 tests across 3 files. [64.00ms]
 Interpretation: category metadata types compile through `AgentDescriptor`, descriptor composition, and runner materialization.
 
 ```text
-$ bun run --filter '@weave/engine' typecheck
-@weave/engine typecheck: Exited with code 0
+$ bun run --filter '@weaveio/weave-engine' typecheck
+@weaveio/weave-engine typecheck: Exited with code 0
 ```
 
 ## Artifact: Pattern Preservation Evidence

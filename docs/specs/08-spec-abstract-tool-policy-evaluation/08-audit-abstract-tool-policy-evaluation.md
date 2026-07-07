@@ -26,7 +26,7 @@
 | `package.json` | yes | Root scripts include `bun run lint`, `bun run typecheck`, `bun run build`, and `bun run test`. | none |
 | `.github/workflows/ci.yml` | yes | CI runs Bun install, lint, typecheck, build, and test. | none |
 | `biome.json` | yes | No `console`, no explicit `any`, no nested ternary, 2-space formatting, kebab/snake-case filenames. | none |
-| `tsconfig.json` | yes | Strict TypeScript, `bun-types`, workspace aliases for `@weave/*`. | none |
+| `tsconfig.json` | yes | Strict TypeScript, `bun-types`, workspace aliases for `@weaveio/*`. | none |
 | `bunfig.toml` | yes | Bun tests use preload, 5s timeout, and smol mode. | none |
 | `CONTRIBUTING.md` | not present | No additional contribution standards discovered. | none |
 | `.github/pull_request_template.md` | not present | No PR-template-specific planning requirements discovered. | none |

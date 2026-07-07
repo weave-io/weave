@@ -22,7 +22,7 @@
 | Source File | Read | Standards Extracted | Conflicts |
 | --- | --- | --- | --- |
 | `AGENTS.md` | yes | Bun-only runtime; engine/adapter boundary must follow `docs/adapter-boundary.md`; use `neverthrow`, isolated mock tests, and living docs | none |
-| `README.md` | yes | TypeScript-first harness-agnostic API; `@weave/engine` owns pure composition APIs; use `bun run build`, `bun run typecheck`, `bun run test` | none |
+| `README.md` | yes | TypeScript-first harness-agnostic API; `@weaveio/weave-engine` owns pure composition APIs; use `bun run build`, `bun run typecheck`, `bun run test` | none |
 | `docs/adapter-boundary.md` | yes | Engine owns normalized descriptors; adapters own discovery/materialization; `AgentDescriptor` fields are adapter-facing and harness-neutral | none |
 | `docs/product-vision.md` | yes | Weave returns normalized descriptors/prompts/policies; adapters own model lookup, skill discovery, concrete tool names, and display-name mapping | none |
 | `package.json` | yes | Workspace scripts: `lint`, `typecheck`, `build`, `test`; lint-staged runs Biome check/write | none |
@@ -30,6 +30,6 @@
 | `.github/workflows/ci.yml` | yes | CI installs with Bun 1.3.10 and runs lint, typecheck, build, test | none |
 | `biome.json` | yes | 2-space formatting; double quotes and semicolons; no explicit `any`, no console, no nested ternary, kebab/snake file names | none |
 | `bunfig.toml` | yes | Bun test timeout 5000ms; smol mode; preload `scripts/test-setup.ts` | none |
-| `tsconfig.json` | yes | Strict TypeScript; module resolution `bundler`; `bun-types`; source paths for `@weave/*` packages | none |
+| `tsconfig.json` | yes | Strict TypeScript; module resolution `bundler`; `bun-types`; source paths for `@weaveio/*` packages | none |
 | `CONTRIBUTING.md` | not found | n/a | none |
 | `.github/pull_request_template.md` | not found | n/a | none |

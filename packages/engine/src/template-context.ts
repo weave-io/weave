@@ -16,7 +16,7 @@
  * Only `AgentPromptTemplateContext` and `TemplateContextError` are exported.
  */
 
-import type { DelegationTrigger } from "@weave/core";
+import type { DelegationTrigger } from "@weaveio/weave-core";
 import { ok, type Result } from "neverthrow";
 
 import type { DelegationTarget } from "./compose.js";

@@ -49,9 +49,9 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import type { WeaveConfig } from "@weave/core";
-import type { PlanStateError, PlanStateProvider } from "@weave/engine";
-import { createInMemoryRuntimeStore } from "@weave/engine";
+import type { WeaveConfig } from "@weaveio/weave-core";
+import type { PlanStateError, PlanStateProvider } from "@weaveio/weave-engine";
+import { createInMemoryRuntimeStore } from "@weaveio/weave-engine";
 import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 
 import { OpenCodeAdapter } from "../index.js";

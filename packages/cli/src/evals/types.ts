@@ -3,7 +3,7 @@
  *
  * These schemas define the allowlisted shape for eval case fixtures
  * (`evals/cases/**\/*.json`) and rubric files (`evals/rubrics/**\/*.json`).
- * They are independent of the DSL config schemas in `@weave/core`.
+ * They are independent of the DSL config schemas in `@weaveio/weave-core`.
  *
  * Design notes:
  *   - All identifiers are constrained to the IDENTIFIER_RE pattern to

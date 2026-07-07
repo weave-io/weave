@@ -34,7 +34,7 @@
  * All SDK type imports flow through `./sdk-types`.
  */
 
-import type { SkillInfo } from "@weave/engine";
+import type { SkillInfo } from "@weaveio/weave-engine";
 import { err, ok, type Result } from "neverthrow";
 
 // ---------------------------------------------------------------------------

@@ -28,7 +28,7 @@
     {
       "id": "config-materialization",
       "readiness": "native",
-      "notes": "OpenCode adapter reads config via @weave/config discovery"
+      "notes": "OpenCode adapter reads config via @weaveio/weave-config discovery"
     },
     {
       "id": "agent-materialization",
@@ -78,7 +78,7 @@
     {
       "id": "event-logging",
       "readiness": "native",
-      "notes": "All adapter modules use the shared pino logger from @weave/engine"
+      "notes": "All adapter modules use the shared pino logger from @weaveio/weave-engine"
     },
     {
       "id": "token-usage-reporting",

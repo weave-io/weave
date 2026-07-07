@@ -16,7 +16,7 @@ import {
   queryError,
   resumeExecution,
   startExecution,
-} from "@weave/engine";
+} from "@weaveio/weave-engine";
 import { leaseId, wfId } from "./fixtures.js";
 
 // ---------------------------------------------------------------------------

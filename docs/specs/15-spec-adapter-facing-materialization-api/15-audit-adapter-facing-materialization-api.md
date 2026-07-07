@@ -22,7 +22,7 @@
 | Source File | Read | Standards Extracted | Conflicts |
 | --- | --- | --- | --- |
 | `AGENTS.md` | yes | Bun-only; `neverthrow` for expected failures; engine APIs accept explicit harness context and return normalized results | none |
-| `README.md` | yes | `@weave/engine` owns pure composition APIs; adapters supply harness context and materialize results; use documented Bun commands | none |
+| `README.md` | yes | `@weaveio/weave-engine` owns pure composition APIs; adapters supply harness context and materialize results; use documented Bun commands | none |
 | `package.json` | yes | workspace scripts include lint, typecheck, build, test; Biome lint; Bun workspace filters | none |
 | `packages/engine/package.json` | yes | engine tests use `bun test ./src/__tests__`; typecheck uses `tsc --noEmit`; build targets Bun | none |
 | `.github/workflows/ci.yml` | yes | CI installs with frozen lockfile, then runs lint, typecheck, build, test | none |

@@ -266,11 +266,11 @@ No errors. Warnings are pre-existing unused-import warnings unrelated to Task 5.
 
 ```
 $ tsc --noEmit -p tsconfig.json && bun run --filter '*' typecheck
-@weave/core typecheck: Exited with code 0
-@weave/engine typecheck: Exited with code 0
-@weave/config typecheck: Exited with code 0
-@weave/cli typecheck: Exited with code 0
-@weave/adapter-opencode typecheck: Exited with code 0
+@weaveio/weave-core typecheck: Exited with code 0
+@weaveio/weave-engine typecheck: Exited with code 0
+@weaveio/weave-config typecheck: Exited with code 0
+@weaveio/weave-cli typecheck: Exited with code 0
+@weaveio/weave-adapter-opencode typecheck: Exited with code 0
 ```
 
 All packages: exit code `0`.
@@ -293,11 +293,11 @@ Files tested:
 ### `bun run build`
 
 ```
-@weave/core build: Exited with code 0
-@weave/engine build: Exited with code 0
-@weave/config build: Exited with code 0
-@weave/cli build: Exited with code 0
-@weave/adapter-opencode build: Exited with code 0
+@weaveio/weave-core build: Exited with code 0
+@weaveio/weave-engine build: Exited with code 0
+@weaveio/weave-config build: Exited with code 0
+@weaveio/weave-cli build: Exited with code 0
+@weaveio/weave-adapter-opencode build: Exited with code 0
 ```
 
 All packages: exit code `0`.

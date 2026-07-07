@@ -44,7 +44,7 @@ Task 5.0 proves **Spec 22 Unit 4**: workflow-level and step-level prompt appends
 | `bun test compose.test.ts template-renderer.test.ts` | ✅ PASSED | 165 pass, 0 fail, 384 expect() calls |
 | All 5 task-5.0 test files combined | ✅ PASSED | 455 pass, 0 fail, 1134 expect() calls |
 | `bun run typecheck` | ❌ FAILED | 3 pre-existing CLI errors in `packages/cli/src/commands/init.ts` (unrelated) |
-| `bun run build` | ⚠️ PARTIAL | `@weave/core`, `@weave/engine`, `@weave/config` built successfully. Failed in `@weave/cli` on same pre-existing `init.ts` issue |
+| `bun run build` | ⚠️ PARTIAL | `@weaveio/weave-core`, `@weaveio/weave-engine`, `@weaveio/weave-config` built successfully. Failed in `@weaveio/weave-cli` on same pre-existing `init.ts` issue |
 
 **Pre-existing blocker note**: All failures are caused by a pre-existing parse/redeclaration error in `packages/cli/src/commands/init.ts` (`noInvalidUseBeforeDeclaration` at 1228:7, `noRedeclare` at 1240:9). This file is outside the scope of task 5.0. Engine, core, config, and adapter-opencode packages are clean.
 
@@ -411,7 +411,7 @@ export {
 } from "./compose.js";
 ```
 
-These exports make `composeWorkflowStepPrompt` and `detectAppendCollisions` available to adapters and tests via `@weave/engine`.
+These exports make `composeWorkflowStepPrompt` and `detectAppendCollisions` available to adapters and tests via `@weaveio/weave-engine`.
 
 ---
 

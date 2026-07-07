@@ -8,7 +8,7 @@
  * ArtifactIntegrityMetadata, and the extended ArtifactRef with monotonic revision
  * and approval-state tracking.
  *
- * These types are engine-owned and live in @weave/engine, not @weave/core.
+ * These types are engine-owned and live in @weaveio/weave-engine, not @weaveio/weave-core.
  * No SQLite or Kysely types are referenced here — this file is pure domain.
  *
  * @see docs/specs/12-spec-runtime-persistence/12-spec-runtime-persistence.md

@@ -3,7 +3,7 @@
  *
  * Composes fully-rendered prompts for a named set of agents (by default
  * `loom`, `tapestry`, `shuttle`, `spindle`, `pattern`, `weft`, and `warp`)
- * using the existing `@weave/config` and `@weave/engine` APIs, then produces
+ * using the existing `@weaveio/weave-config` and `@weaveio/weave-engine` APIs, then produces
  * eval-owned `PromptSnapshot` records
  * that include:
  *   - a stable SHA-256 hash of the composed prompt
@@ -17,15 +17,15 @@
  * Design notes:
  *   - Hashing uses the Web Crypto API (`crypto.subtle.digest`) — Bun-native,
  *     no Node `crypto` import required.
- *   - Config loading is delegated to `@weave/config`'s `loadConfig()`.
- *   - Prompt composition is delegated to `@weave/engine`'s
+ *   - Config loading is delegated to `@weaveio/weave-config`'s `loadConfig()`.
+ *   - Prompt composition is delegated to `@weaveio/weave-engine`'s
  *     `composeAgentDescriptor()`.
  *   - All failures are returned as typed `ProvenanceError` values via
  *     `ResultAsync` — no exceptions propagate.
  */
 
-import { loadConfig } from "@weave/config";
-import { composeAgentDescriptor } from "@weave/engine";
+import { loadConfig } from "@weaveio/weave-config";
+import { composeAgentDescriptor } from "@weaveio/weave-engine";
 import { errAsync, ok, ResultAsync } from "neverthrow";
 import type {
   PromptSnapshot,
@@ -156,7 +156,7 @@ function inferSourceDescriptors(
  */
 export interface ComposeSnapshotInput {
   /** Resolved Weave configuration. */
-  config: import("@weave/core").WeaveConfig;
+  config: import("@weaveio/weave-core").WeaveConfig;
   /** The agent name to compose a snapshot for. */
   agentName: string;
 }
@@ -177,7 +177,7 @@ export interface ComposeSnapshotResult {
 /**
  * Compose a `PromptSnapshot` (and raw artifact) for a single agent.
  *
- * Uses `composeAgentDescriptor` from `@weave/engine` to produce the fully
+ * Uses `composeAgentDescriptor` from `@weaveio/weave-engine` to produce the fully
  * rendered prompt, then hashes the result and collects source descriptors.
  *
  * Returns `err(ProvenanceError)` on:

@@ -25,13 +25,13 @@ This task proves that `beforeTool` is implemented as a pure policy evaluation fu
 
 **Command:**
 ```bash
-bun run --filter '@weave/engine' typecheck
+bun run --filter '@weaveio/weave-engine' typecheck
 ```
 
 **Result summary:** Exit code 0.
 
 ```
-@weave/engine typecheck: Exited with code 0
+@weaveio/weave-engine typecheck: Exited with code 0
 ```
 
 ## Artifact: Test suite pass
@@ -40,7 +40,7 @@ bun run --filter '@weave/engine' typecheck
 
 **Command:**
 ```bash
-bun run --filter '@weave/engine' test
+bun run --filter '@weaveio/weave-engine' test
 ```
 
 **Result summary:** 837 pass, 0 fail across 18 files.

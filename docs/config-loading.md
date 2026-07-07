@@ -1,6 +1,6 @@
 # Config Loading
 
-`@weave/config` owns the config-discovery, merge, and loading pipeline for Weave. It is the single entry point for reading agent configuration from disk and producing the final merged `WeaveConfig` consumed by the engine.
+`@weaveio/weave-config` owns the config-discovery, merge, and loading pipeline for Weave. It is the single entry point for reading agent configuration from disk and producing the final merged `WeaveConfig` consumed by the engine.
 
 **Related:** [Product Vision](product-vision.md) · [Adapter Boundary](adapter-boundary.md) · [Model Resolution](model-resolution.md) · [Spec 17 — Workflow Extension DSL](specs/17-spec-workflow-extension/17-spec-workflow-extension.md) · [AGENTS.md](../AGENTS.md) · [Legacy Architecture](legacy-architecture.md) · [`packages/config/src/loader.ts`](../packages/config/src/loader.ts) · [CLI — `weave prompt self-modify`](./cli.md#weave-prompt-self-modify)
 
@@ -95,7 +95,7 @@ These are wrapped in `MergeError` and returned from `mergeConfigsResult`. The `l
 `mergeConfigsResult` is the preferred API — it returns `Result<WeaveConfig, MergeError[]>` and never throws. `mergeConfigs` is a deprecated wrapper that throws the first `MergeError` for callers that haven't migrated yet.
 
 ```ts
-import { mergeConfigsResult } from "@weave/config";
+import { mergeConfigsResult } from "@weaveio/weave-config";
 
 const result = mergeConfigsResult(builtins, globalConfig, projectConfig);
 result.match(
@@ -114,7 +114,7 @@ result.match(
 
 ## Builtin Agents
 
-Eight built-in agents are shipped with `@weave/config`:
+Eight built-in agents are shipped with `@weaveio/weave-config`:
 
 | Agent      | Mode     | Temperature | Role                |
 | ---------- | -------- | ----------- | ------------------- |
@@ -142,7 +142,7 @@ Eight built-in agents are shipped with `@weave/config`:
 
 Prompt files ship in [`packages/config/prompts/`](../packages/config/prompts/) and are **embedded at build time** using Bun's `with { type: "text" }` import assertion in `builtins.ts`. The embedded content is stored in `BUILTIN_PROMPT_CONTENTS` and inlined into the builtin config by `inlineBuiltinPrompts()` in `loader.ts` before merging.
 
-**Bundle-safe prompt resolution:** Builtin agents use `prompt` (inline content) rather than `prompt_file` (filesystem path) after loading. This is intentional — it makes builtin prompt resolution work correctly when `@weave/config` is bundled into an adapter (e.g. `@weave/adapter-opencode/dist/plugin.js`). See [Prompt File Resolution](#prompt-file-resolution) for details.
+**Bundle-safe prompt resolution:** Builtin agents use `prompt` (inline content) rather than `prompt_file` (filesystem path) after loading. This is intentional — it makes builtin prompt resolution work correctly when `@weaveio/weave-config` is bundled into an adapter (e.g. `@weaveio/weave-adapter-opencode/dist/plugin.js`). See [Prompt File Resolution](#prompt-file-resolution) for details.
 
 ---
 
@@ -214,7 +214,7 @@ See [CLI — Prompt file translation](./cli.md#prompt-file-translation) for the 
 
 Builtin agents are handled differently from user-authored agents. Instead of calling `resolvePromptPaths()` for the builtin layer, `loadConfig()` calls `inlineBuiltinPrompts()` which replaces `prompt_file` references with embedded inline `prompt` content from `BUILTIN_PROMPT_CONTENTS`.
 
-**Why?** `resolvePromptPaths()` uses `import.meta.dir` to compute the builtin root directory. When `@weave/config` is bundled into an adapter (e.g. `@weave/adapter-opencode/dist/plugin.js`), `import.meta.dir` resolves to the adapter's dist directory rather than `packages/config/`. This caused all 8 builtin agents to fail with `DescriptorCompositionFailure` because the resolved path pointed to a non-existent `packages/adapters/opencode/prompts/` directory.
+**Why?** `resolvePromptPaths()` uses `import.meta.dir` to compute the builtin root directory. When `@weaveio/weave-config` is bundled into an adapter (e.g. `@weaveio/weave-adapter-opencode/dist/plugin.js`), `import.meta.dir` resolves to the adapter's dist directory rather than `packages/config/`. This caused all 8 builtin agents to fail with `DescriptorCompositionFailure` because the resolved path pointed to a non-existent `packages/adapters/opencode/prompts/` directory.
 
 **Fix:** `builtins.ts` imports all 8 prompt files as text using Bun's `with { type: "text" }` import assertion. Bun embeds the file content as a string at build time. `inlineBuiltinPrompts()` then replaces `prompt_file` with the embedded `prompt` content, eliminating the runtime filesystem dependency for builtins entirely.
 
@@ -225,7 +225,7 @@ Builtin agents are handled differently from user-authored agents. Instead of cal
 ## Public API
 
 ```ts
-import { loadConfig } from "@weave/config";
+import { loadConfig } from "@weaveio/weave-config";
 
 const result = await loadConfig("/path/to/project");
 
@@ -258,12 +258,12 @@ import {
   discoverAndParse, // Discovery only
   mergeConfigs, // Merge only
   resolvePromptPaths, // Path resolution only
-} from "@weave/config";
+} from "@weaveio/weave-config";
 ```
 
 ---
 
-## Architectural Decision — Why a Separate `@weave/config` Package
+## Architectural Decision — Why a Separate `@weaveio/weave-config` Package
 
 ### Context
 
@@ -271,7 +271,7 @@ The original alpha used a flat loader inside the OpenCode plugin. As the harness
 
 ### Decision
 
-`@weave/config` is a separate workspace package that `@weave/engine`, adapters, and future CLI tools can depend on. Config loading is not a harness concern and does not query harness UI/runtime state.
+`@weaveio/weave-config` is a separate workspace package that `@weaveio/weave-engine`, adapters, and future CLI tools can depend on. Config loading is not a harness concern and does not query harness UI/runtime state.
 
 ### Consequences
 
@@ -279,11 +279,11 @@ The original alpha used a flat loader inside the OpenCode plugin. As the harness
 
 - Config logic is independently testable without an engine harness.
 - Future adapters (or CLI tools) can call `loadConfig()` without pulling in engine dependencies.
-- The builtin DSL-first approach is clean — `@weave/config` ships the DSL source and the `prompts/` files together in the same package.
+- The builtin DSL-first approach is clean — `@weaveio/weave-config` ships the DSL source and the `prompts/` files together in the same package.
 - The package boundary reinforces the product vision: Weave normalizes intent; adapters materialize it for a harness.
 
 **Negative:**
 
 - Contributors must understand that config loading, engine lifecycle, and adapter translation are separate layers.
 
-**Mitigation:** AGENTS.md and the product-vision docs list `@weave/config` explicitly and point contributors to this ADR.
+**Mitigation:** AGENTS.md and the product-vision docs list `@weaveio/weave-config` explicitly and point contributors to this ADR.

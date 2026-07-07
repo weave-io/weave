@@ -1,6 +1,6 @@
 /**
  * BunFilesystemPlanStateProvider — default Bun-backed implementation of
- * `PlanStateProvider` from `@weave/engine`.
+ * `PlanStateProvider` from `@weaveio/weave-engine`.
  *
  * Checks plan file state by reading `.weave/plans/<planName>.md` from the
  * filesystem using `Bun.file()`. All filesystem I/O lives here — the engine
@@ -10,7 +10,7 @@
  * @see docs/adapter-boundary.md — Plan State Provider subsection
  */
 
-import type { PlanStateError, PlanStateProvider } from "@weave/engine";
+import type { PlanStateError, PlanStateProvider } from "@weaveio/weave-engine";
 import { errAsync, ResultAsync } from "neverthrow";
 
 // ---------------------------------------------------------------------------

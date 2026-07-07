@@ -1,5 +1,5 @@
 /**
- * Public API for @weave/cli.
+ * Public API for @weaveio/weave-cli.
  *
  * Exports command handlers and testable modules for programmatic
  * use and testing. End users invoke the CLI through the `weave`

@@ -9,14 +9,14 @@
  * It must not import directly from `@opencode-ai/sdk`.
  */
 
-import { BunFilesystemPlanStateProvider } from "@weave/config";
+import { BunFilesystemPlanStateProvider } from "@weaveio/weave-config";
 import type {
   AgentDescriptor,
   HarnessAdapter,
   PlanStateProvider,
   SkillInfo,
-} from "@weave/engine";
-import { logger } from "@weave/engine";
+} from "@weaveio/weave-engine";
+import { logger } from "@weaveio/weave-engine";
 import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 import {
   type OpenCodeModelContext,
@@ -80,7 +80,7 @@ export interface OpenCodeAdapterOptions {
    * @example
    * ```ts
    * import { createOpencodeClient } from "@opencode-ai/sdk";
-   * import { OpenCodeAdapter, SdkOpenCodeClient } from "@weave/adapter-opencode";
+   * import { OpenCodeAdapter, SdkOpenCodeClient } from "@weaveio/weave-adapter-opencode";
    *
    * const sdkClient = createOpencodeClient({ directory: projectDir });
    * const adapter = new OpenCodeAdapter({

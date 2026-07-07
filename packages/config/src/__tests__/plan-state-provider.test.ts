@@ -6,16 +6,16 @@
  * - planExists returns ok(true) when file exists, ok(false) when absent
  * - isPlanComplete returns ok(true) when no incomplete checkboxes, ok(false) otherwise
  * - ProviderUnavailable is returned for I/O errors
- * - BunFilesystemPlanStateProvider is importable from @weave/config
- * - PlanStateProvider and PlanStateError are importable from @weave/engine
+ * - BunFilesystemPlanStateProvider is importable from @weaveio/weave-config
+ * - PlanStateProvider and PlanStateError are importable from @weaveio/weave-engine
  */
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
 import { rmdir, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BunFilesystemPlanStateProvider } from "@weave/config";
-import type { PlanStateError, PlanStateProvider } from "@weave/engine";
+import { BunFilesystemPlanStateProvider } from "@weaveio/weave-config";
+import type { PlanStateError, PlanStateProvider } from "@weaveio/weave-engine";
 
 // ---------------------------------------------------------------------------
 // Isolated temp directory — no real project files touched
@@ -52,7 +52,7 @@ async function removePlan(slug: string): Promise<void> {
 // ---------------------------------------------------------------------------
 
 describe("BunFilesystemPlanStateProvider: imports", () => {
-  it("is importable from @weave/config", () => {
+  it("is importable from @weaveio/weave-config", () => {
     expect(BunFilesystemPlanStateProvider).toBeDefined();
   });
 

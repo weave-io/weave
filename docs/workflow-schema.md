@@ -306,7 +306,7 @@ Key invariants enforced by the schema:
 
 ### Composition syntax — `extend before-plan [ ... ]`
 
-A separate top-level directive names the steps that fill the published slot. This is a **config-level composition** concern resolved by `@weave/config` after generic config-merge, before the engine sees the final `WorkflowConfig`:
+A separate top-level directive names the steps that fill the published slot. This is a **config-level composition** concern resolved by `@weaveio/weave-config` after generic config-merge, before the engine sees the final `WorkflowConfig`:
 
 ```weave
 extend before-plan ["write-spec", "review-spec"]
@@ -353,7 +353,7 @@ step review-spec {
 extend before-plan ["write-spec", "review-spec"]
 ```
 
-**Resulting resolved step order** (after `@weave/config` merge, as seen by the engine):
+**Resulting resolved step order** (after `@weaveio/weave-config` merge, as seen by the engine):
 
 1. `research` — inherited from `plan-and-execute`
 2. `write-spec` — inserted into `before-plan` slot (produces `spec_path`)

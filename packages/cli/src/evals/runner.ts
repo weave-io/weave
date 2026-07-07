@@ -2107,8 +2107,8 @@ export function buildEvalRunner(
  * Build the default `SnapshotProvider` used when no override is injected.
  *
  * The default provider calls `composeAgentSnapshots` from `prompt-snapshots.ts`
- * to hash all eval-covered prompts using the real `@weave/config` and
- * `@weave/engine` composition pipeline. Errors during snapshot composition for
+ * to hash all eval-covered prompts using the real `@weaveio/weave-config` and
+ * `@weaveio/weave-engine` composition pipeline. Errors during snapshot composition for
  * individual agents are swallowed — the provider returns whatever snapshots it
  * could collect, possibly an empty array. The orchestrator then derives a
  * manifest from whatever snapshots are available.

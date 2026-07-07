@@ -11,7 +11,7 @@
 
 ```json
 "dependencies": {
-  "@weave/core": "workspace:*",
+  "@weaveio/weave-core": "workspace:*",
   "kysely": "^0.27.5",
   ...
 }
@@ -227,8 +227,8 @@ Ran 104 tests across 2 files. [411.00ms]
 ### AC 15: Typecheck passes
 
 ```
-$ bun run --filter '@weave/engine' typecheck
-@weave/engine typecheck: Exited with code 0
+$ bun run --filter '@weaveio/weave-engine' typecheck
+@weaveio/weave-engine typecheck: Exited with code 0
 ```
 
 ---

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { ToolPermissionSchema, ToolPolicySchema } from "@weave/core";
+import { ToolPermissionSchema, ToolPolicySchema } from "@weaveio/weave-core";
 import {
   AgentConfigSchema,
   CategoryConfigSchema,
@@ -22,10 +22,10 @@ import {
 } from "../schema.js";
 
 // ---------------------------------------------------------------------------
-// @weave/core barrel — public API assertions
+// @weaveio/weave-core barrel — public API assertions
 // ---------------------------------------------------------------------------
 
-describe("@weave/core barrel exports", () => {
+describe("@weaveio/weave-core barrel exports", () => {
   it("exports ToolPermissionSchema as a Zod enum with allow/deny/ask", () => {
     expect(ToolPermissionSchema).toBeDefined();
     expect(ToolPermissionSchema.safeParse("allow").success).toBe(true);
@@ -52,7 +52,7 @@ describe("@weave/core barrel exports", () => {
     const r = ToolPolicySchema.safeParse({ read: "allow" });
     expect(r.success).toBe(true);
     if (r.success) {
-      const policy: import("@weave/core").ToolPolicy = r.data;
+      const policy: import("@weaveio/weave-core").ToolPolicy = r.data;
       expect(policy.read).toBe("allow");
     }
   });
@@ -62,7 +62,7 @@ describe("@weave/core barrel exports", () => {
     const parsed = ToolPermissionSchema.safeParse("allow");
     expect(parsed.success).toBe(true);
     if (parsed.success) {
-      const perm: import("@weave/core").ToolPermission = parsed.data;
+      const perm: import("@weaveio/weave-core").ToolPermission = parsed.data;
       expect(perm).toBe("allow");
     }
   });

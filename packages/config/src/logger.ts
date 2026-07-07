@@ -1,8 +1,8 @@
-import { logDestination } from "@weave/engine";
+import { logDestination } from "@weaveio/weave-engine";
 import pino from "pino";
 
 /**
- * Package-local pino logger for `@weave/config`.
+ * Package-local pino logger for `@weaveio/weave-config`.
  *
  * All log output from the config discovery, merge, and loading pipeline is
  * emitted under the `"weave:config"` name so it can be filtered independently
@@ -11,7 +11,7 @@ import pino from "pino";
  * ## Shared destination
  *
  * This logger writes to the **same** `MutableDestination` instance exported
- * by `@weave/engine`. This is the key invariant that makes silent startup work
+ * by `@weaveio/weave-engine`. This is the key invariant that makes silent startup work
  * in the OpenCode plugin path:
  *
  * 1. The plugin calls `redirectLogsToFile(join(directory, '.weave/weave.log'))`

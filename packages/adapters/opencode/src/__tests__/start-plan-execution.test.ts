@@ -32,8 +32,8 @@ import type {
   AgentDescriptor,
   PlanStateError,
   PlanStateProvider,
-} from "@weave/engine";
-import { createInMemoryRuntimeStore } from "@weave/engine";
+} from "@weaveio/weave-engine";
+import { createInMemoryRuntimeStore } from "@weaveio/weave-engine";
 import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 
 import { OpenCodeAdapter, type OpenCodeAdapterError } from "../adapter.js";

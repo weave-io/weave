@@ -38,8 +38,8 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import type { PlanStateError, PlanStateProvider } from "@weave/engine";
-import { createInMemoryRuntimeStore } from "@weave/engine";
+import type { PlanStateError, PlanStateProvider } from "@weaveio/weave-engine";
+import { createInMemoryRuntimeStore } from "@weaveio/weave-engine";
 import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 import type { DispatchAgentEffect } from "../execution-lifecycle.js";
 import { startPlan } from "../runtime-command-operations/start-plan.js";

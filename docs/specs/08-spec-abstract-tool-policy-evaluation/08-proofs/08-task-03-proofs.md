@@ -43,11 +43,11 @@ Ran 76 tests across 1 file. [155.00ms]
 
 ```
 $ tsc --noEmit -p tsconfig.json && bun run --filter '*' typecheck
-@weave/core typecheck: Exited with code 0
-@weave/config typecheck: Exited with code 0
-@weave/engine typecheck: Exited with code 0
-@weave/adapter-opencode typecheck: Exited with code 0
-@weave/cli typecheck: Exited with code 0
+@weaveio/weave-core typecheck: Exited with code 0
+@weaveio/weave-config typecheck: Exited with code 0
+@weaveio/weave-engine typecheck: Exited with code 0
+@weaveio/weave-adapter-opencode typecheck: Exited with code 0
+@weaveio/weave-cli typecheck: Exited with code 0
 ```
 
 All workspace packages pass with zero type errors.
@@ -70,7 +70,7 @@ All workspace packages pass with zero type errors.
   * Aligned with Spec 07 `tool-policy-mapping` capability
   * (see `docs/specs/07-spec-adapter-capability-contract/`).
   ```
-- The module imports only `ToolPermission` and `ToolPolicy` from `@weave/core` — no harness packages, no Bun file I/O, no process spawning, no adapter runtime calls.
+- The module imports only `ToolPermission` and `ToolPolicy` from `@weaveio/weave-core` — no harness packages, no Bun file I/O, no process spawning, no adapter runtime calls.
 
 ---
 

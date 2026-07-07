@@ -12,24 +12,24 @@ For a high-level flow diagram of configuration → engine → adapter → harnes
 
 | Package                                                         | Description                                                                                |
 | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| [`@weave/core`](./packages/core)                                | DSL lexer, parser, AST, Zod schemas, and validated config types                            |
-| [`@weave/config`](./packages/config)                            | Builtin DSL defaults, config discovery, merge semantics, and prompt path resolution        |
-| [`@weave/engine`](./packages/engine)                            | Pure composition APIs for descriptors, model intent, skill resolution, prompts, and policy |
-| [`@weave/cli`](./packages/cli)                                  | `weave` executable for config scaffolding, validation, and harness installation            |
-| [`@weave/docs`](./packages/docs)                                | Public Astro + Starlight documentation site and marketing landing page                     |
-| [`@weave/adapter-opencode`](./packages/adapters/opencode)       | OpenCode plugin adapter                                                                    |
-| [`@weave/adapter-claude-code`](./packages/adapters/claude-code) | Claude Code adapter                                                                        |
-| [`@weave/adapter-pi`](./packages/adapters/pi)                   | Pi adapter                                                                                 |
+| [`@weaveio/weave-core`](./packages/core)                                | DSL lexer, parser, AST, Zod schemas, and validated config types                            |
+| [`@weaveio/weave-config`](./packages/config)                            | Builtin DSL defaults, config discovery, merge semantics, and prompt path resolution        |
+| [`@weaveio/weave-engine`](./packages/engine)                            | Pure composition APIs for descriptors, model intent, skill resolution, prompts, and policy |
+| [`@weaveio/weave-cli`](./packages/cli)                                  | `weave` executable for config scaffolding, validation, and harness installation            |
+| [`@weaveio/weave-docs`](./packages/docs)                                | Public Astro + Starlight documentation site and marketing landing page                     |
+| [`@weaveio/weave-adapter-opencode`](./packages/adapters/opencode)       | OpenCode plugin adapter                                                                    |
+| [`@weaveio/adapter-claude-code`](./packages/adapters/claude-code) | Claude Code adapter                                                                        |
+| [`@weaveio/adapter-pi`](./packages/adapters/pi)                   | Pi adapter                                                                                 |
 
 ## OpenCode Adapter Status
 
-`@weave/adapter-opencode` is implemented as a **real first-slice OpenCode plugin adapter**. It can load Weave config, materialize builtin and custom agents, map Weave tool policy into OpenCode permissions, reconcile owned agents safely, and expose Weave-managed agents through the plugin bootstrap path.
+`@weaveio/weave-adapter-opencode` is implemented as a **real first-slice OpenCode plugin adapter**. It can load Weave config, materialize builtin and custom agents, map Weave tool policy into OpenCode permissions, reconcile owned agents safely, and expose Weave-managed agents through the plugin bootstrap path.
 
 Today, the adapter is strongest at **agent/config materialization** and intentionally does **not** yet provide full parity with the legacy `opencode-weave` project.
 
 ### Implemented now
 
-- OpenCode plugin entrypoint via `@weave/adapter-opencode/plugin`
+- OpenCode plugin entrypoint via `@weaveio/weave-adapter-opencode/plugin`
 - builtin + custom agent materialization
 - category-generated shuttle agents through normal config materialization
 - model resolution and fail-fast validation for explicit subagent model intent
@@ -53,7 +53,7 @@ For the normative status and current non-goals, see:
 
 - [Adapter Readiness Status](./docs/adapter-readiness-status.md)
 - [Spec 20 — OpenCode Adapter Materialization](./docs/specs/20-spec-opencode-adapter-materialization/20-spec-opencode-adapter-materialization.md)
-- [@weave/adapter-opencode README](./packages/adapters/opencode/README.md)
+- [@weaveio/weave-adapter-opencode README](./packages/adapters/opencode/README.md)
 
 ### Legacy parity snapshot
 
@@ -83,7 +83,7 @@ In practice, the current OpenCode adapter covers the **materialization foundatio
 
 ### Claude Code adapter
 
-`@weave/adapter-claude-code` currently exists as a package placeholder in the workspace. The harness-agnostic engine/config surfaces it depends on are present, but this adapter does not yet have an equivalent status story to the OpenCode first slice.
+`@weaveio/adapter-claude-code` currently exists as a package placeholder in the workspace. The harness-agnostic engine/config surfaces it depends on are present, but this adapter does not yet have an equivalent status story to the OpenCode first slice.
 
 - current role: placeholder package / future adapter target
 - intended scope: materialize Weave agents into Claude Code using the same engine-owned descriptors and policy surfaces
@@ -91,7 +91,7 @@ In practice, the current OpenCode adapter covers the **materialization foundatio
 
 ### Pi adapter
 
-`@weave/adapter-pi` currently exists as a package placeholder in the workspace. Like Claude Code, it sits behind the current engine/config work and does not yet have a comparable materialization/readiness story documented in the repo README.
+`@weaveio/adapter-pi` currently exists as a package placeholder in the workspace. Like Claude Code, it sits behind the current engine/config work and does not yet have a comparable materialization/readiness story documented in the repo README.
 
 - current role: placeholder package / future adapter target
 - intended scope: materialize Weave agents into Pi using the same adapter boundary and engine-owned descriptors
@@ -135,8 +135,8 @@ The build emits compiled output into each package's `dist/` folder:
 
 | Package | Dist entry |
 | --- | --- |
-| `@weave/adapter-opencode` | `packages/adapters/opencode/dist/index.js` |
-| `@weave/cli` | `packages/cli/dist/main.js` |
+| `@weaveio/weave-adapter-opencode` | `packages/adapters/opencode/dist/index.js` |
+| `@weaveio/weave-cli` | `packages/cli/dist/main.js` |
 
 ## Getting Started (development)
 
@@ -162,7 +162,7 @@ bun run clean
 
 ## CLI
 
-The `@weave/cli` package exposes the `weave` executable. After building, link it into your `PATH` for local development:
+The `@weaveio/weave-cli` package exposes the `weave` executable. After building, link it into your `PATH` for local development:
 
 ```bash
 bun run build
@@ -174,8 +174,8 @@ weave --version
 Once published, the same command surface is available through package runners:
 
 ```bash
-bunx @weave/cli --help
-npx @weave/cli --help
+bunx @weaveio/weave-cli --help
+npx @weaveio/weave-cli --help
 ```
 
 ### `weave init` — scaffold a `.weave` config

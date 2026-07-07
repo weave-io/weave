@@ -9,7 +9,7 @@ This task proves that `startExecution` validates workflow names against declared
 - `startExecution` rejects unknown workflow names with a typed `LifecycleError` before any store I/O.
 - Valid workflow names create `WorkflowInstance` with correct `workflowName`, `goal`, `slug`, `currentStepName` (first step), and acquire an `ExecutionLease`.
 - A second `startExecution` while a lease is active returns a `lease_conflict` error.
-- New `WorkflowExecutionContext` type is exported from `@weave/engine`.
+- New `WorkflowExecutionContext` type is exported from `@weaveio/weave-engine`.
 
 ## Evidence Summary
 
@@ -52,14 +52,14 @@ bun run typecheck
 **Result summary:** All 5 packages exit 0.
 
 ```
-@weave/core typecheck: Exited with code 0
-@weave/engine typecheck: Exited with code 0
-@weave/adapter-opencode typecheck: Exited with code 0
-@weave/config typecheck: Exited with code 0
-@weave/cli typecheck: Exited with code 0
+@weaveio/weave-core typecheck: Exited with code 0
+@weaveio/weave-engine typecheck: Exited with code 0
+@weaveio/weave-adapter-opencode typecheck: Exited with code 0
+@weaveio/weave-config typecheck: Exited with code 0
+@weaveio/weave-cli typecheck: Exited with code 0
 ```
 
-## Artifact: New types exported from @weave/engine
+## Artifact: New types exported from @weaveio/weave-engine
 
 **What it proves:** `WorkflowExecutionContext` is accessible to adapters and downstream consumers.
 

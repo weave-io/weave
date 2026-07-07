@@ -1,4 +1,4 @@
-import type { ConfigError } from "@weave/core";
+import type { ConfigError } from "@weaveio/weave-core";
 import type { MergeError } from "./merge.js";
 
 /**
@@ -24,7 +24,7 @@ export type ConfigLoadError =
   /**
    * A config file was read successfully but the DSL failed to parse or validate.
    * `path` is the absolute path of the offending file.
-   * `errors` contains all parse/validation errors from `@weave/core`.
+   * `errors` contains all parse/validation errors from `@weaveio/weave-core`.
    */
   | {
       type: "ParseError";
@@ -35,7 +35,7 @@ export type ConfigLoadError =
   /**
    * The built-in `.weave` DSL source string failed to parse.
    * This always indicates a bug in `packages/config/src/builtins.ts`.
-   * `errors` contains all parse/validation errors from `@weave/core`.
+   * `errors` contains all parse/validation errors from `@weaveio/weave-core`.
    */
   | {
       type: "BuiltinParseError";

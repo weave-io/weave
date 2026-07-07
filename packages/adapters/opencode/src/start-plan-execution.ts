@@ -9,7 +9,7 @@
  *
  * ## Boundary rule
  *
- * This module is adapter-owned. It must not import from `@weave/core` directly
+ * This module is adapter-owned. It must not import from `@weaveio/weave-core` directly
  * (config types are accepted as parameters, not fetched). Command naming is
  * adapter-owned — the engine never references `WEAVE_START_COMMAND` or
  * `WEAVE_START_LEGACY_COMMAND`.
@@ -28,8 +28,8 @@ import type {
   CommandOperationError,
   PlanStateProvider,
   RuntimeStore,
-} from "@weave/engine";
-import { createInMemoryRuntimeStore, logger, startPlan } from "@weave/engine";
+} from "@weaveio/weave-engine";
+import { createInMemoryRuntimeStore, logger, startPlan } from "@weaveio/weave-engine";
 import { errAsync, type ResultAsync } from "neverthrow";
 
 import type { OpenCodeAdapter } from "./adapter.js";
@@ -126,7 +126,7 @@ export interface StartPlanExecutionInput {
    * Must include the workflow referenced by `workflowName` (defaults to
    * `tapestry-execution`).
    *
-   * Typed as `RunWorkflowInput["config"]` to avoid a direct `@weave/core`
+   * Typed as `RunWorkflowInput["config"]` to avoid a direct `@weaveio/weave-core`
    * import — the adapter boundary requires that core types flow through
    * adapter-owned modules, not be imported directly.
    */

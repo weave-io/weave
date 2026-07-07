@@ -51,7 +51,7 @@ packages/engine/src/__tests__/execution-lifecycle.test.ts:
 ✓ dispatchStep: configured workflow step resolution > composedPrompt is empty string (no raw prompt in effect)
 ✓ dispatchStep: configured workflow step resolution > effect contains no concrete harness tool names
 ✓ dispatchStep: configured workflow step resolution > effect contains no session mutation fields
-✓ dispatchStep: configured workflow step resolution > PromptMetadata type importable from @weave/engine
+✓ dispatchStep: configured workflow step resolution > PromptMetadata type importable from @weaveio/weave-engine
 ✓ dispatchStep: configured workflow step resolution > legacy path preserved when no context provided
 
 164 pass, 0 fail
@@ -71,11 +71,11 @@ bun run typecheck
 **Result summary:** All 5 packages pass with exit 0.
 
 ```
-@weave/core: exit 0
-@weave/engine: exit 0
-@weave/adapter-opencode: exit 0
-@weave/config: exit 0
-@weave/cli: exit 0
+@weaveio/weave-core: exit 0
+@weaveio/weave-engine: exit 0
+@weaveio/weave-adapter-opencode: exit 0
+@weaveio/weave-config: exit 0
+@weaveio/weave-cli: exit 0
 ```
 
 ## Artifact: Effect shape inspection

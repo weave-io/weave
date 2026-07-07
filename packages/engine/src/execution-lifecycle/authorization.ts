@@ -8,7 +8,7 @@
  * @see docs/specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md
  */
 
-import type { ReconciliationReason } from "@weave/core";
+import type { ReconciliationReason } from "@weaveio/weave-core";
 import { err, ok, type Result } from "neverthrow";
 import { lifecyclePolicyDecisionError } from "./errors.js";
 import type {

@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
-import { loadConfig } from "@weave/config";
-import { formatError, parseConfig, type WeaveConfig } from "@weave/core";
+import { loadConfig } from "@weaveio/weave-config";
+import { formatError, parseConfig, type WeaveConfig } from "@weaveio/weave-core";
 import { errAsync, ok, type Result, ResultAsync } from "neverthrow";
 import type { ParsedArgs } from "../args.js";
 import { type CliError, formatCliError } from "../errors.js";

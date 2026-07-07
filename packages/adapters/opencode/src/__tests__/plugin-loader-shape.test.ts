@@ -1,5 +1,5 @@
 /**
- * Regression test: `@weave/adapter-opencode/plugin` loader shape.
+ * Regression test: `@weaveio/weave-adapter-opencode/plugin` loader shape.
  *
  * OpenCode's `getLegacyPlugins` loader iterates **all** named exports of the
  * plugin module and throws `TypeError: Plugin export is not a function` for
@@ -16,7 +16,7 @@
  *
  * ## Why this matters
  *
- * The bare `@weave/adapter-opencode` entry (`dist/index.js`) exports
+ * The bare `@weaveio/weave-adapter-opencode` entry (`dist/index.js`) exports
  * `WEAVE_OWNERSHIP_TAG` (a string) and other non-function values. That caused
  * OpenCode to throw at startup. The `./plugin` subpath (`dist/plugin.js`) was
  * introduced to export only functions. This test is the regression guard that

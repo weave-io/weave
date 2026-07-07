@@ -1,7 +1,7 @@
 # Claude Code Adapter
 
 > **Status**: Planning note — no Claude Code adapter package exists yet.
-> **Purpose**: Define what is required to create `@weave/adapter-claude-code` using the legacy OpenCode feature set as a comparison baseline.
+> **Purpose**: Define what is required to create `@weaveio/weave-adapter-claude-code` using the legacy OpenCode feature set as a comparison baseline.
 
 **Related:** [Product Vision](product-vision.md) · [Adapter Boundary](adapter-boundary.md) · [Legacy Architecture](legacy-architecture.md) · [Model Resolution](model-resolution.md) · [Tool Policy Evaluation](tool-policy-evaluation.md) · [Harness Agent Surface Patterns](harness-agent-surface-patterns.md) · [Spec 07 — Adapter Capability Contract](specs/07-spec-adapter-capability-contract/07-spec-adapter-capability-contract.md) · [Spec 09 — Adapter-Provided Skill Resolution](specs/09-spec-adapter-provided-skill-resolution/09-spec-adapter-provided-skill-resolution.md)
 
@@ -74,7 +74,7 @@ packages/adapters/claude-code/
         └── skill-discovery.test.ts
 ```
 
-The package should be named `@weave/adapter-claude-code` and depend on `@weave/core`, `@weave/engine`, and `neverthrow`.
+The package should be named `@weaveio/weave-adapter-claude-code` and depend on `@weaveio/weave-core`, `@weaveio/weave-engine`, and `neverthrow`.
 
 ---
 
@@ -271,7 +271,7 @@ Support requires a Claude Code lifecycle/plugin API that lets the adapter observ
 
 ## Implementation Order
 
-1. Add the `@weave/adapter-claude-code` package skeleton.
+1. Add the `@weaveio/weave-adapter-claude-code` package skeleton.
 2. Implement pure `AgentConfig` → Claude agent markdown translation.
 3. Implement Claude Code concrete tool classification.
 4. Implement static/adapter-provided model context and model resolution.
@@ -285,7 +285,7 @@ Support requires a Claude Code lifecycle/plugin API that lets the adapter observ
 
 ## Architectural Guidance
 
-Do not move Claude Code resource discovery into `@weave/engine`. The adapter owns Claude Code paths, settings files, command files, tool names, model availability, and runtime limitations.
+Do not move Claude Code resource discovery into `@weaveio/weave-engine`. The adapter owns Claude Code paths, settings files, command files, tool names, model availability, and runtime limitations.
 
 Do not claim legacy OpenCode runtime parity unless there is a concrete Claude Code lifecycle/plugin API that can provide equivalent runtime observation and control.
 

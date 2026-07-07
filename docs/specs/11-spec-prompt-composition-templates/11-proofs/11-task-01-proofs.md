@@ -4,7 +4,7 @@
 
 ```diff
    "dependencies": {
-     "@weave/core": "workspace:*",
+     "@weaveio/weave-core": "workspace:*",
 +    "mustache": "^4.2.0",
      "neverthrow": "^8.2.0",
      "pino": "^9.6.0",
@@ -18,14 +18,14 @@
 
 `@types/mustache` is added as a devDependency because the `mustache` package does not bundle TypeScript types.
 
-## 2. Test Output: `bun run --filter '@weave/engine' test`
+## 2. Test Output: `bun run --filter '@weaveio/weave-engine' test`
 
 ```
-@weave/engine test:  396 pass
-@weave/engine test:  0 fail
-@weave/engine test:  1221 expect() calls
-@weave/engine test: Ran 396 tests across 12 files. [123.00ms]
-@weave/engine test: Exited with code 0
+@weaveio/weave-engine test:  396 pass
+@weaveio/weave-engine test:  0 fail
+@weaveio/weave-engine test:  1221 expect() calls
+@weaveio/weave-engine test: Ran 396 tests across 12 files. [123.00ms]
+@weaveio/weave-engine test: Exited with code 0
 ```
 
 All 396 tests pass, including the 44 new tests in `template-renderer.test.ts`.

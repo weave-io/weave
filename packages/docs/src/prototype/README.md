@@ -213,7 +213,7 @@ Replica is complete only when **all** pass — any visible mismatch means the
 work is unfinished:
 
 1. `bun run docs:build` succeeds.
-2. `bun run --filter '@weave/docs' typecheck` succeeds.
+2. `bun run --filter '@weaveio/weave-docs' typecheck` succeeds.
 3. A root-base build (`bun run docs:build`) resolves every `href`/`src` from
    `/` with no 404s, and a generic sub-path build
    (`BASE_PATH=/sub-path/ SITE_URL=https://example.invalid bun run docs:build`)

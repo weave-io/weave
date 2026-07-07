@@ -13,7 +13,7 @@
  *
  * ## Design constraints
  *
- * - No `@weave/adapter-opencode` imports.
+ * - No `@weaveio/weave-adapter-opencode` imports.
  * - No OpenCode registration code.
  * - No filesystem access, no SQLite, no harness startup.
  * - All mock implementations satisfy the engine interface surface only.
@@ -23,7 +23,7 @@
  * @see packages/engine/src/capability-contract.ts
  */
 
-import type { WorkflowConfig } from "@weave/core";
+import type { WorkflowConfig } from "@weaveio/weave-core";
 import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 import type {
   AdapterCapabilityContract,
@@ -155,7 +155,7 @@ export class MockEffectProjector {
  * - Has a distinct harness name ("mock-second-adapter")
  * - Declares `command-entrypoints` as `emulated` (not `native`)
  * - Records all effect projections without any harness I/O
- * - Never imports `@weave/adapter-opencode` or any OpenCode registration code
+ * - Never imports `@weaveio/weave-adapter-opencode` or any OpenCode registration code
  *
  * Use this fixture in tests that must prove the engine command operations
  * work with a non-OpenCode harness.

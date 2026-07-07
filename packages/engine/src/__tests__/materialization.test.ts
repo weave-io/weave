@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { parseConfig, type WeaveConfig } from "@weave/core";
+import { parseConfig, type WeaveConfig } from "@weaveio/weave-core";
 
 import {
   composeAgentDescriptor,

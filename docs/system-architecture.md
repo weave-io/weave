@@ -18,18 +18,18 @@ Weave turns a declarative `.weave` configuration into normalized agent intent, l
 flowchart TD
   User[User or Project<br/>outside Weave]
 
-  subgraph ConfigPackages["@weave/config + @weave/core"]
+  subgraph ConfigPackages["@weaveio/weave-config + @weaveio/weave-core"]
     ConfigSources[Configuration Sources<br/>built-ins + global + project]
     ConfigLayer[Load + Normalize Config<br/>discover, parse, validate,<br/>resolve prompts, merge]
     NormalizedConfig[Normalized Weave Config<br/>single source of declared intent]
     ConfigSources --> ConfigLayer --> NormalizedConfig
   end
 
-  subgraph EnginePackage["@weave/engine"]
+  subgraph EnginePackage["@weaveio/weave-engine"]
     Engine[Compose System Plan<br/>agents, prompts, categories,<br/>workflows, policies,<br/>model and skill intent]
   end
 
-  subgraph AdapterPackage["@weave/adapter-*"]
+  subgraph AdapterPackage["@weaveio/weave-adapter-*"]
     HarnessContext[Harness-Owned Context<br/>available models, selected model,<br/>available skills, lifecycle events]
     Adapter[Adapter Translator<br/>target-specific materialization]
     HarnessArtifacts[Harness Artifacts<br/>plugins, config, commands,<br/>tools, permissions, runtime wiring]
@@ -57,13 +57,13 @@ flowchart TD
 | Step in diagram | Layer / package | What happens there |
 | --- | --- | --- |
 | User or Project | Outside Weave | Provides project goals, local files, and optional `.weave` configuration. |
-| Configuration Sources | `@weave/config` | Collects built-in defaults plus global and project config layers. |
-| Load + Normalize Config | `@weave/config` with `@weave/core` | Discovers config, parses and validates the DSL, resolves prompt references, and merges layers. |
-| Normalized Weave Config | Output of `@weave/config`; input to `@weave/engine` | Carries the single merged intent model consumed by the engine. |
-| Compose System Plan | `@weave/engine` | Builds harness-agnostic agent descriptors, prompt intent, category shuttles, workflows, policies, model intent, and skill intent. |
+| Configuration Sources | `@weaveio/weave-config` | Collects built-in defaults plus global and project config layers. |
+| Load + Normalize Config | `@weaveio/weave-config` with `@weaveio/weave-core` | Discovers config, parses and validates the DSL, resolves prompt references, and merges layers. |
+| Normalized Weave Config | Output of `@weaveio/weave-config`; input to `@weaveio/weave-engine` | Carries the single merged intent model consumed by the engine. |
+| Compose System Plan | `@weaveio/weave-engine` | Builds harness-agnostic agent descriptors, prompt intent, category shuttles, workflows, policies, model intent, and skill intent. |
 | Harness-Owned Context | Adapter / harness boundary | Supplies facts only the harness can know, such as selected models, available models, available skills, and lifecycle events. |
-| Adapter Translator | `@weave/adapter-*` | Translates engine output and harness context into target-specific behavior. |
-| Harness Artifacts | `@weave/adapter-*` | Produces plugins, config, commands, concrete tool permissions, and runtime wiring for the target harness. |
+| Adapter Translator | `@weaveio/weave-adapter-*` | Translates engine output and harness context into target-specific behavior. |
+| Harness Artifacts | `@weaveio/weave-adapter-*` | Produces plugins, config, commands, concrete tool permissions, and runtime wiring for the target harness. |
 | Harness Runtime | Harness | Runs the concrete integration in OpenCode, Pi, Claude Code, Codex, or another target. |
 | Running Agent Experience | Harness | Hosts the user-facing agents, delegated specialists, reviews, audits, and workflows. |
 
@@ -86,7 +86,7 @@ Configuration is where users declare what they want the agent system to be:
 
 Built-in defaults, global user preferences, and project-specific overrides are treated as configuration layers. Together they describe the desired agent system before any harness-specific behavior is involved.
 
-### 2. The config packages normalize input (`@weave/config` + `@weave/core`)
+### 2. The config packages normalize input (`@weaveio/weave-config` + `@weaveio/weave-core`)
 
 The config packages turn those configuration layers into one normalized configuration:
 
@@ -98,7 +98,7 @@ The config packages turn those configuration layers into one normalized configur
 
 The output is not a harness plugin or runtime object. It is still Weave-owned, harness-agnostic intent.
 
-### 3. The engine composes the system plan (`@weave/engine`)
+### 3. The engine composes the system plan (`@weaveio/weave-engine`)
 
 The engine answers: **what should exist?**
 
@@ -115,7 +115,7 @@ It takes normalized configuration and produces higher-level Weave concepts such 
 
 The engine does not inspect harness UI state, discover harness resources, or register concrete runtime hooks. When it needs harness facts, the adapter passes those facts in explicitly. The one filesystem-side-effect exception is Weave-owned Runtime Store state under `.weave/runtime/**`, which remains distinct from harness-owned runtime state.
 
-### 4. The adapter translates intent for one harness (`@weave/adapter-*`)
+### 4. The adapter translates intent for one harness (`@weaveio/weave-adapter-*`)
 
 The adapter answers: **how does this work in this specific harness?**
 

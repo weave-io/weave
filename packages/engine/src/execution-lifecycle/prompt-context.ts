@@ -8,7 +8,7 @@
  * effects — only its byte length is returned as `PromptMetadata`.
  */
 
-import type { WorkflowStep } from "@weave/core";
+import type { WorkflowStep } from "@weaveio/weave-core";
 import { err, ok, type Result } from "neverthrow";
 import {
   type RendererError,

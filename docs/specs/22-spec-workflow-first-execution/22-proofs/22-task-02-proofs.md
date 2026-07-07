@@ -104,7 +104,7 @@ function normalizeExtensionPoints(raw: Record<string, unknown>): Record<string, 
 
 ## 3. `extend before-plan [ ... ]` Composition Syntax
 
-**Requirement**: Separate top-level directive that names steps to fill the published slot. Distinct from publication syntax — composition is a config-level concern resolved by `@weave/config` after generic config-merge.
+**Requirement**: Separate top-level directive that names steps to fill the published slot. Distinct from publication syntax — composition is a config-level concern resolved by `@weaveio/weave-config` after generic config-merge.
 
 **Schema** (`packages/core/src/schema.ts`):
 

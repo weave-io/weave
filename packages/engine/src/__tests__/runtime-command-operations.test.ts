@@ -46,7 +46,7 @@
  *
  * ## Constraints
  *
- * - No `@weave/adapter-opencode` imports.
+ * - No `@weaveio/weave-adapter-opencode` imports.
  * - No OpenCode registration code.
  * - No filesystem access, no SQLite, no harness startup.
  * - All fallible operations use `neverthrow` ResultAsync.
@@ -56,7 +56,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { createInMemoryRuntimeStore } from "@weave/engine";
+import { createInMemoryRuntimeStore } from "@weaveio/weave-engine";
 import { buildAdapterHealthReport } from "../capability-contract.js";
 import type { OwnerId } from "../runtime/types.js";
 import {

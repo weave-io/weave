@@ -9,7 +9,7 @@
 ## Prerequisites
 
 - OpenCode is installed and accessible (`opencode` CLI or desktop app).
-- `@weave/adapter-opencode` is built (`bun run build` from the repo root).
+- `@weaveio/weave-adapter-opencode` is built (`bun run build` from the repo root).
 - A project directory with a `.weave/config.weave` file is available.
 - The user's normal OpenCode configuration does **not** load the legacy `weave` plugin — use a clean project or temporarily disable it.
 
@@ -47,18 +47,18 @@ agent smoke-test-agent {
 EOF
 ```
 
-### 3. Add `@weave/adapter-opencode` to `opencode.json`
+### 3. Add `@weaveio/weave-adapter-opencode` to `opencode.json`
 
 Create or update `opencode.json` in the test project:
 
 ```jsonc
 // opencode.json — when installed from npm
 {
-  "plugin": ["@weave/adapter-opencode/plugin"]
+  "plugin": ["@weaveio/weave-adapter-opencode/plugin"]
 }
 ```
 
-> **Important**: Use the `@weave/adapter-opencode/plugin` subpath export (not the bare package name). The bare `@weave/adapter-opencode` entry point (`dist/index.js`) exports non-function values (constants, types) that cause OpenCode's `getLegacyPlugins` loader to throw `TypeError: Plugin export is not a function`. The `./plugin` subpath (`dist/plugin.js`) exports only the plugin function and is the correct entry point for OpenCode.
+> **Important**: Use the `@weaveio/weave-adapter-opencode/plugin` subpath export (not the bare package name). The bare `@weaveio/weave-adapter-opencode` entry point (`dist/index.js`) exports non-function values (constants, types) that cause OpenCode's `getLegacyPlugins` loader to throw `TypeError: Plugin export is not a function`. The `./plugin` subpath (`dist/plugin.js`) exports only the plugin function and is the correct entry point for OpenCode.
 
 When referencing the local build directly (e.g. during development):
 
@@ -82,7 +82,7 @@ cd /tmp/weave-smoke-test
 opencode
 ```
 
-OpenCode loads `@weave/adapter-opencode` at startup. The plugin reads `.weave/config.weave` and materializes `smoke-test-agent`.
+OpenCode loads `@weaveio/weave-adapter-opencode` at startup. The plugin reads `.weave/config.weave` and materializes `smoke-test-agent`.
 
 **Expected log output (pino JSON, visible in OpenCode app log):**
 ```json
@@ -134,7 +134,7 @@ Manually create an agent named `smoke-test-agent` in OpenCode **without** the `[
 
 ## Notes
 
-- This checklist uses `@weave/adapter-opencode` only — the legacy `weave` OpenCode plugin must not be active during this test.
+- This checklist uses `@weaveio/weave-adapter-opencode` only — the legacy `weave` OpenCode plugin must not be active during this test.
 - The `[weave-managed]` ownership tag is the primary signal that distinguishes Weave-managed agents from manually created ones.
 - SDK calls flow through `SdkOpenCodeClient` → `client.app.agents()` (list) and `client.config.update()` (create/update).
 - If OpenCode is not running, `listAgents()` will return a `ListAgentsError` and materialization will fail with a clear error message.

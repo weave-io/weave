@@ -36,19 +36,19 @@
  * @see packages/engine/src/runtime-command-operations/run-named-workflow.ts
  */
 
-import type { WeaveConfig } from "@weave/core";
+import type { WeaveConfig } from "@weaveio/weave-core";
 import type {
   CommandOperationError,
   LifecycleEffect,
   LifecycleError,
   PlanStateProvider,
   RuntimeStore,
-} from "@weave/engine";
+} from "@weaveio/weave-engine";
 import {
   createInMemoryRuntimeStore,
   logger,
   runNamedWorkflow,
-} from "@weave/engine";
+} from "@weaveio/weave-engine";
 import type { ResultAsync } from "neverthrow";
 
 import type { OpenCodeAdapter } from "./index.js";

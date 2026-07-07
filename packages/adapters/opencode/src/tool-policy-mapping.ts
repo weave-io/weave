@@ -21,7 +21,7 @@
  * has no per-read-tool approval mechanism.
  */
 
-import type { EffectiveToolPolicy } from "@weave/engine";
+import type { EffectiveToolPolicy } from "@weaveio/weave-engine";
 import type { OpenCodeAgentConfig } from "./sdk-types.js";
 
 // ---------------------------------------------------------------------------

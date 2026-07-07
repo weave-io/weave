@@ -10,7 +10,7 @@ This spec is intentionally distinct from [Spec 14 — Preserve Category Metadata
 
 ## Goals
 
-- Establish `AgentDescriptor` as the exported, stable adapter-facing descriptor type from `@weave/engine`.
+- Establish `AgentDescriptor` as the exported, stable adapter-facing descriptor type from `@weaveio/weave-engine`.
 - Clarify descriptor identity semantics, including stable internal `name`/id and optional `displayName` presentation metadata.
 - Define which prompt, model, policy, skill, delegation, and category fields adapters may consume without relying on transitional runner behavior.
 - Document what adapters remain responsible for after receiving descriptors, including concrete model resolution, tool-name mapping, file generation, and feature-gap emulation.
@@ -31,7 +31,7 @@ This spec is intentionally distinct from [Spec 14 — Preserve Category Metadata
 **Purpose:** Establish the exported adapter-facing descriptor vocabulary and clarify how adapters should interpret agent identity fields.
 
 **Functional Requirements:**
-- The system shall export and document `AgentDescriptor` from `@weave/engine` as the stable adapter-facing descriptor type.
+- The system shall export and document `AgentDescriptor` from `@weaveio/weave-engine` as the stable adapter-facing descriptor type.
 - The descriptor shall include a stable harness-neutral internal identifier field, currently represented by `name`.
 - The descriptor shall include an optional `displayName` field for presentation metadata when configured or derived by engine-owned descriptor composition.
 - The descriptor contract shall document that `displayName` is not a stable identifier and must not replace `name` for adapter resource identity.
@@ -39,7 +39,7 @@ This spec is intentionally distinct from [Spec 14 — Preserve Category Metadata
 - The descriptor contract shall avoid harness-specific field names such as OpenCode plugin ids, Claude Code file names, or Pi runtime ids.
 
 **Proof Artifacts:**
-- Test: descriptor type import from `@weave/engine` demonstrates adapter consumers can import the stable public type.
+- Test: descriptor type import from `@weaveio/weave-engine` demonstrates adapter consumers can import the stable public type.
 - Test: representative builtin descriptor demonstrates stable `name`/id semantics and optional `displayName` behavior.
 - Documentation: descriptor field table demonstrates internal id versus display-name semantics.
 - Typecheck: `bun run typecheck` demonstrates the public descriptor type compiles for engine and adapter packages.
@@ -146,7 +146,7 @@ The developer experience should emphasize predictable, readable contract documen
 
 ## Success Metrics
 
-1. **Stable type availability**: Adapter packages can import `AgentDescriptor` from `@weave/engine` as the stable adapter-facing descriptor type without depending on runner internals.
+1. **Stable type availability**: Adapter packages can import `AgentDescriptor` from `@weaveio/weave-engine` as the stable adapter-facing descriptor type without depending on runner internals.
 2. **Acceptance coverage**: Tests assert descriptor shape for representative builtin, custom, and generated category agents.
 3. **Boundary clarity**: `docs/adapter-boundary.md` links to this spec and clearly distinguishes engine-owned descriptor construction from adapter-owned concrete materialization.
 4. **Field semantics complete**: Contract documentation covers id/name/display-name semantics, prompt expectations, model intent, abstract tool policy, delegation metadata, category metadata, and disabled-entry behavior.

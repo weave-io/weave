@@ -1,5 +1,5 @@
 import { posix } from "node:path";
-import type { WeaveConfig } from "@weave/core";
+import type { WeaveConfig } from "@weaveio/weave-core";
 import { normalizePath } from "./normalize-path.js";
 import type { ConfigScope } from "./types.js";
 

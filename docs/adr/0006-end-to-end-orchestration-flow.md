@@ -121,7 +121,7 @@ Gate steps are the only steps that can reject. Rejection routes through the engi
 | Concern | Legacy (`/start-work`) | Current (workflow-first) |
 | --- | --- | --- |
 | Execution entry point | `/start-work` OpenCode command → `start-work-hook` → `switchAgent: "tapestry"` effect | `startExecution()` engine lifecycle method, called by adapter after explicit user trigger |
-| Execution semantics owner | OpenCode adapter (hook callbacks, `switchAgent` effects) | Engine (`@weave/engine`) — harness-agnostic |
+| Execution semantics owner | OpenCode adapter (hook callbacks, `switchAgent` effects) | Engine (`@weaveio/weave-engine`) — harness-agnostic |
 | Continuation on idle | `workContinuation` hook fires on every `session.idle`, re-injects Tapestry context implicitly | `resumeExecution()` — requires explicit adapter-mediated trigger; idle hooks may call `observeSession` only |
 | Tapestry's role | Registered via OpenCode-specific hook; activated by `switchAgent` effect | Named agent in `.weave` DSL; dispatched by engine through `RunAgentEffect` |
 | Portability | OpenCode-only | Any harness that implements the adapter delivery path |

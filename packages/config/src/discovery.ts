@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
-import type { WeaveConfig } from "@weave/core";
-import { parseConfig } from "@weave/core";
+import type { WeaveConfig } from "@weaveio/weave-core";
+import { parseConfig } from "@weaveio/weave-core";
 import { err, ok, ResultAsync } from "neverthrow";
 import type { ConfigLoadError } from "./errors.js";
 import { logger } from "./logger.js";

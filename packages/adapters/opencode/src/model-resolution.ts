@@ -3,7 +3,7 @@
  *
  * This module gathers OpenCode model context (available models, UI-selected
  * model, system default) and calls `resolveAdapterModelIntent()` from
- * `@weave/engine` to produce a validated model selection for each agent.
+ * `@weaveio/weave-engine` to produce a validated model selection for each agent.
  *
  * ## Design
  *
@@ -26,13 +26,13 @@
  * programmatically with a specific model in mind, and silent fallback would
  * produce unexpected behavior that is hard to debug.
  *
- * Boundary rule: this module imports engine types only through `@weave/engine`
+ * Boundary rule: this module imports engine types only through `@weaveio/weave-engine`
  * and SDK types only through `./sdk-types`. It must not import directly from
  * `@opencode-ai/sdk`.
  */
 
-import type { AgentDescriptor, ModelResolutionInput } from "@weave/engine";
-import { resolveAdapterModelIntent } from "@weave/engine";
+import type { AgentDescriptor, ModelResolutionInput } from "@weaveio/weave-engine";
+import { resolveAdapterModelIntent } from "@weaveio/weave-engine";
 import { err, ok, type Result } from "neverthrow";
 
 // ---------------------------------------------------------------------------

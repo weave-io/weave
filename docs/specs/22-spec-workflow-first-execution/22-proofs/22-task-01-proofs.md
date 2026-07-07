@@ -41,9 +41,9 @@ Task 1.0 proves **Spec 22 Unit 1**: the execution boundary is explicit, engine-o
 | `bun run lint` | ❌ FAILED | 2 pre-existing errors in `packages/cli/src/commands/init.ts` (unrelated); 105 fixable warnings. Engine files clean. |
 | `bun run validate-config` | ✅ PASSED | `agents: 2, categories: 5, workflows: 0, disabled: 0, log_level: INFO` |
 | `bun run typecheck` | ❌ FAILED | 3 pre-existing CLI errors in `packages/cli/src/commands/init.ts` (duplicate `validationResult`, missing `migratedContent`). Engine files not implicated. |
-| `bun run build` | ⚠️ PARTIAL | `@weave/core`, `@weave/engine`, `@weave/config` built successfully. Failed in `@weave/cli` on the same pre-existing `init.ts` issue. |
+| `bun run build` | ⚠️ PARTIAL | `@weaveio/weave-core`, `@weaveio/weave-engine`, `@weaveio/weave-config` built successfully. Failed in `@weaveio/weave-cli` on the same pre-existing `init.ts` issue. |
 | Task-specific tests | ✅ PASSED | `344 pass, 0 fail, 1119 expect() calls` |
-| Broader package tests | ✅ PASSED | `@weave/core` (224), `@weave/engine` (1062), `@weave/config` (358), `@weave/adapter-opencode` (202). Hung in `@weave/cli` on pre-existing parse error. |
+| Broader package tests | ✅ PASSED | `@weaveio/weave-core` (224), `@weaveio/weave-engine` (1062), `@weaveio/weave-config` (358), `@weaveio/weave-adapter-opencode` (202). Hung in `@weaveio/weave-cli` on pre-existing parse error. |
 
 **Pre-existing blocker note**: All failures and hangs are caused by a pre-existing parse/redeclaration error in `packages/cli/src/commands/init.ts` (`noInvalidUseBeforeDeclaration` at 1228:7, `noRedeclare` at 1240:9). This file is outside the scope of task 1.0. Engine, core, config, and adapter-opencode packages are clean.
 

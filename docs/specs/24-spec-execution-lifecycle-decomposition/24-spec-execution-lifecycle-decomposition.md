@@ -151,7 +151,7 @@ The 4,270-line `execution-lifecycle.ts` monolith was decomposed into 17 focused 
 | `reconciliation.ts` | 418   | `reconcileExecution` implementation                     |
 | `index.ts`          | 111   | Module barrel re-exporting all public symbols           |
 
-The original `execution-lifecycle.ts` is now a **compatibility barrel** (118 lines) that re-exports everything from `./execution-lifecycle/index.js`. All existing imports from `@weave/engine` continue to work unchanged.
+The original `execution-lifecycle.ts` is now a **compatibility barrel** (118 lines) that re-exports everything from `./execution-lifecycle/index.js`. All existing imports from `@weaveio/weave-engine` continue to work unchanged.
 
 ### Legacy no-context paths (Open Question 1)
 
@@ -210,4 +210,4 @@ Total: 66 new tests across 7 test files (plus fixtures).
 ### Verification
 
 - `bun test packages/engine/src/__tests__/execution-lifecycle.test.ts packages/engine/src/__tests__/execution-lifecycle-integration.test.ts packages/engine/src/__tests__/artifact-approval-lifecycle.test.ts packages/engine/src/__tests__/execution-lifecycle/` → **454 pass, 0 fail**
-- `bun run --filter '@weave/engine' typecheck` → **clean** (pre-existing `skill-resolution.test.ts` error is unrelated to this task)
+- `bun run --filter '@weaveio/weave-engine' typecheck` → **clean** (pre-existing `skill-resolution.test.ts` error is unrelated to this task)

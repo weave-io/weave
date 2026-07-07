@@ -82,7 +82,7 @@ const AMBIGUOUS_LEGACY_TOOLS = new Set([
 
 /**
  * Valid log level values accepted by the current DSL settings block.
- * Matches LogLevelSchema in @weave/core.
+ * Matches LogLevelSchema in @weaveio/weave-core.
  */
 const VALID_LOG_LEVELS = new Set([
   "TRACE",

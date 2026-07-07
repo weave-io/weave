@@ -4,7 +4,7 @@
 
 Add a workflow extension surface to the `.weave` DSL that lets users derive new workflows from existing ones — including the four builtin workflows — without copying and re-declaring every step. This solves a common authoring pain point: users who want to add a `spec` step before `plan` in `plan-and-execute`, or insert a compliance gate after `review` in `quick-fix`, currently must copy the entire workflow and maintain it in sync with upstream changes.
 
-The extension surface is a **config-merge concern** owned entirely by `@weave/config`. The engine receives the post-merge `WorkflowConfig` unchanged; no engine or adapter code needs to know whether a workflow was declared inline or derived from a parent.
+The extension surface is a **config-merge concern** owned entirely by `@weaveio/weave-config`. The engine receives the post-merge `WorkflowConfig` unchanged; no engine or adapter code needs to know whether a workflow was declared inline or derived from a parent.
 
 ---
 
@@ -15,7 +15,7 @@ The extension surface is a **config-merge concern** owned entirely by `@weave/co
 - Define unambiguous merge precedence so the resulting step order is deterministic.
 - Define four typed validation errors for invalid extension declarations.
 - Preserve the four builtin workflows unchanged; users gain the ability to extend them without modifying them.
-- Keep the adapter boundary clean: `@weave/config` resolves extension before the engine sees any `WorkflowConfig`.
+- Keep the adapter boundary clean: `@weaveio/weave-config` resolves extension before the engine sees any `WorkflowConfig`.
 
 ---
 
@@ -119,7 +119,7 @@ Both new fields are optional strings. They are stripped from the resolved `Workf
 
 ## Merge Semantics
 
-When a workflow declares `extends`, `@weave/config` resolves the final step list using the following precedence:
+When a workflow declares `extends`, `@weaveio/weave-config` resolves the final step list using the following precedence:
 
 ### Step 1 — Resolve the parent
 
@@ -355,20 +355,20 @@ The builtin workflows are always available as extension targets regardless of wh
 
 ## Adapter Boundary Clause
 
-Workflow extension is a **config-merge concern** owned entirely by `@weave/config`. The resolution algorithm (parent lookup, replacement, insertion, appending, field stripping) runs inside the config merge pipeline before any engine or adapter code is invoked.
+Workflow extension is a **config-merge concern** owned entirely by `@weaveio/weave-config`. The resolution algorithm (parent lookup, replacement, insertion, appending, field stripping) runs inside the config merge pipeline before any engine or adapter code is invoked.
 
-**`@weave/engine` receives the post-merge `WorkflowConfig` unchanged.** The engine does not know whether a workflow was declared inline or derived from a parent. No engine API, no adapter API, and no harness-specific code participates in extension resolution.
+**`@weaveio/weave-engine` receives the post-merge `WorkflowConfig` unchanged.** The engine does not know whether a workflow was declared inline or derived from a parent. No engine API, no adapter API, and no harness-specific code participates in extension resolution.
 
 **Ownership matrix:**
 
 | Concern | Owner | Why |
 | --- | --- | --- |
-| `extends` field parsing | Core (`@weave/core`) | DSL parsing is core-owned |
-| `insert_before` / `insert_after` field parsing | Core (`@weave/core`) | DSL parsing is core-owned |
-| Extension resolution algorithm | Config (`@weave/config`) | Config merge is config-owned |
-| Cycle detection | Config (`@weave/config`) | Part of extension resolution |
-| Validation error types | Core (`@weave/core`) | Shared error vocabulary |
-| Post-merge `WorkflowConfig` consumption | Engine (`@weave/engine`) | Engine receives resolved config |
+| `extends` field parsing | Core (`@weaveio/weave-core`) | DSL parsing is core-owned |
+| `insert_before` / `insert_after` field parsing | Core (`@weaveio/weave-core`) | DSL parsing is core-owned |
+| Extension resolution algorithm | Config (`@weaveio/weave-config`) | Config merge is config-owned |
+| Cycle detection | Config (`@weaveio/weave-config`) | Part of extension resolution |
+| Validation error types | Core (`@weaveio/weave-core`) | Shared error vocabulary |
+| Post-merge `WorkflowConfig` consumption | Engine (`@weaveio/weave-engine`) | Engine receives resolved config |
 | Workflow materialization in harness | Adapter | Harness-specific translation |
 
 See [Spec 17 — Tasks](17-tasks-workflow-extension.md) for the implementation task list and [Spec 17 — Validation](17-validation-workflow-extension.md) for the validation report template.

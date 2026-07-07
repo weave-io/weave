@@ -152,10 +152,10 @@ Test coverage includes:
 
 ---
 
-### AC 11: `bun run --filter '@weave/engine' typecheck` passes
+### AC 11: `bun run --filter '@weaveio/weave-engine' typecheck` passes
 
 ```
-@weave/engine typecheck: Exited with code 0
+@weaveio/weave-engine typecheck: Exited with code 0
 ```
 
 ✅ Confirmed.
@@ -229,7 +229,7 @@ Ran 1207 tests across 38 files. [552.00ms]
 **Design**: `RuntimeJournalWriter` is the only public API for journal emission. Adapters receive a `RuntimeJournalWriter` instance — they do not have direct access to `RuntimeJournalRepository`.
 
 **Properties**:
-- `RuntimeJournalRepository` is not exported from `@weave/engine` as a standalone constructible class — only the interface is exported.
+- `RuntimeJournalRepository` is not exported from `@weaveio/weave-engine` as a standalone constructible class — only the interface is exported.
 - `RuntimeJournalWriter` is exported and is the intended adapter-facing API.
 - The writer enforces all security invariants (validation, sanitization, size limit) before calling `repository.append()`.
 - Adapters cannot bypass the writer to call `append()` directly without implementing the `RuntimeJournalRepository` interface themselves (which would be a deliberate bypass, not an accidental one).

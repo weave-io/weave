@@ -15,7 +15,7 @@ import {
   evaluateEffectiveToolPolicy,
   inspectExecution,
   startExecution,
-} from "@weave/engine";
+} from "@weaveio/weave-engine";
 import { leaseId, wfId } from "./fixtures.js";
 
 const allAllowPolicy = evaluateEffectiveToolPolicy({

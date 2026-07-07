@@ -25,7 +25,7 @@
 
 - Use Bun test files colocated under `packages/adapters/opencode/src/__tests__/` and keep them isolated with mocked clients rather than a live OpenCode runtime.
 - Preserve the first-slice non-goals: no workflow-lifecycle expansion, no prune/delete reconciliation, and no engine API drift unless separately approved.
-- For manual smoke validation, use OpenCode with only `@weave/adapter-opencode` loaded because the user’s normal configuration still contains the legacy weave plugin.
+- For manual smoke validation, use OpenCode with only `@weaveio/weave-adapter-opencode` loaded because the user’s normal configuration still contains the legacy weave plugin.
 - Use workspace quality gates from the repo: `bun run typecheck`, `bun run build`, and targeted Bun adapter tests before relying on smoke evidence.
 
 ## Tasks
@@ -51,7 +51,7 @@
 #### 2.0 Proof Artifact(s)
 
 - Test: `bun test packages/adapters/opencode/src/__tests__/adapter.test.ts` passes with create/update materialization cases demonstrates `spawnSubagent(descriptor)` uses the SDK-backed path.
-- CLI: a sanitized smoke command recorded in validation notes (running OpenCode with only `@weave/adapter-opencode` enabled) produces an agent list or UI-visible agent entry for a Weave-authored agent demonstrates runtime materialization.
+- CLI: a sanitized smoke command recorded in validation notes (running OpenCode with only `@weaveio/weave-adapter-opencode` enabled) produces an agent list or UI-visible agent entry for a Weave-authored agent demonstrates runtime materialization.
 - Diff: `packages/adapters/opencode/src/index.ts` removes the comment that real registration is deferred demonstrates the first-slice path is no longer in-memory only.
 
 #### 2.0 Tasks
@@ -60,7 +60,7 @@
 - [ ] 2.2 Decide and document the exact adapter-local flow for `list existing → reconcile decision → create/update call` inside the new facade/reconciliation modules.
 - [ ] 2.3 Preserve `translatedAgents` only if still needed for test visibility or transitional compatibility; otherwise remove or narrow it so the real SDK path is the primary behavior.
 - [ ] 2.4 Add mocked-client adapter tests proving a successful create path and a successful update path both invoke the expected facade methods.
-- [ ] 2.5 Write a sanitized manual smoke checklist that runs OpenCode with only `@weave/adapter-opencode` enabled and verifies a Weave-authored agent appears after materialization.
+- [ ] 2.5 Write a sanitized manual smoke checklist that runs OpenCode with only `@weaveio/weave-adapter-opencode` enabled and verifies a Weave-authored agent appears after materialization.
 
 ### [ ] 3.0 Implement safe reconciliation using canonical agent identity and ownership checks
 
@@ -101,7 +101,7 @@
 #### 5.0 Proof Artifact(s)
 
 - Document: `docs/adr/0003-opencode-adapter-materialization-shape.md` explains the SDK-first, plugin/runtime-first, and ownership-safe adapter decisions.
-- Document: `docs/adapter-readiness-status.md` and any updated OpenCode adapter docs show `@weave/adapter-opencode` as a real first-slice materialization path with explicit non-goals.
+- Document: `docs/adapter-readiness-status.md` and any updated OpenCode adapter docs show `@weaveio/weave-adapter-opencode` as a real first-slice materialization path with explicit non-goals.
 - Quality gate: `bun run typecheck && bun test packages/adapters/opencode/src/__tests__/adapter.test.ts && bun test packages/adapters/opencode/src/__tests__/reconcile-agent.test.ts && bun test packages/adapters/opencode/src/__tests__/model-resolution.test.ts && bun test packages/adapters/opencode/src/__tests__/skill-discovery.test.ts && bun test packages/adapters/opencode/src/__tests__/run-workflow.test.ts` passes, and the manual smoke checklist records the exact sanitized verification command/path.
 
 #### 5.0 Tasks

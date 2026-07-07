@@ -18,15 +18,15 @@ const log = logger.child({ module: "loader" });
  *
  * This is the bundle-safe alternative to `resolvePromptPaths()` for the
  * builtin layer. Instead of resolving `prompt_file` to an absolute filesystem
- * path (which breaks when `@weave/config` is bundled into an adapter because
+ * path (which breaks when `@weaveio/weave-config` is bundled into an adapter because
  * `import.meta.dir` points to the adapter's dist directory), we substitute the
  * embedded content directly.
  *
  * **Why not use `resolvePromptPaths` for builtins?**
  *
  * `resolvePromptPaths` sets `prompt_file` to an absolute path derived from
- * `import.meta.dir`. When `@weave/config` is bundled into
- * `@weave/adapter-opencode/dist/plugin.js`, `import.meta.dir` resolves to the
+ * `import.meta.dir`. When `@weaveio/weave-config` is bundled into
+ * `@weaveio/weave-adapter-opencode/dist/plugin.js`, `import.meta.dir` resolves to the
  * adapter's dist directory (e.g. `packages/adapters/opencode/dist/`), not
  * `packages/config/`. The resolved path then points to a non-existent
  * `packages/adapters/opencode/prompts/` directory, causing all builtin
@@ -43,9 +43,9 @@ const log = logger.child({ module: "loader" });
  *          unchanged (they will fail at compose time if they have no prompt).
  */
 function inlineBuiltinPrompts(
-  config: import("@weave/core").WeaveConfig,
-): import("@weave/core").WeaveConfig {
-  const inlinedAgents: import("@weave/core").WeaveConfig["agents"] = {};
+  config: import("@weaveio/weave-core").WeaveConfig,
+): import("@weaveio/weave-core").WeaveConfig {
+  const inlinedAgents: import("@weaveio/weave-core").WeaveConfig["agents"] = {};
 
   for (const [name, agent] of Object.entries(config.agents)) {
     const embeddedContent = BUILTIN_PROMPT_CONTENTS[name];
@@ -101,11 +101,11 @@ function inlineBuiltinPrompts(
 export function loadConfig(
   projectRoot?: string,
   fileReader: FileReader = bunFileReader,
-): ResultAsync<import("@weave/core").WeaveConfig, ConfigLoadError[]> {
+): ResultAsync<import("@weaveio/weave-core").WeaveConfig, ConfigLoadError[]> {
   // Step 1: Builtins
   const builtinResult = getBuiltinConfig();
   if (builtinResult.isErr()) {
-    return errAsync<import("@weave/core").WeaveConfig, ConfigLoadError[]>([
+    return errAsync<import("@weaveio/weave-core").WeaveConfig, ConfigLoadError[]>([
       { type: "BuiltinParseError", errors: builtinResult.error },
     ]);
   }
@@ -131,7 +131,7 @@ export function loadConfig(
       ...resolvedDiscovered,
     );
     if (mergeResult.isErr()) {
-      return err<import("@weave/core").WeaveConfig, ConfigLoadError[]>([
+      return err<import("@weaveio/weave-core").WeaveConfig, ConfigLoadError[]>([
         { type: "MergeError", errors: mergeResult.error },
       ]);
     }

@@ -19,8 +19,8 @@ of the `RuntimeStore` interface for use in unit and integration tests.
    `leaseAcquire`, `leaseHeartbeat`, `leaseRelease`, `snapshotRecord`,
    `journalAppend`, `transaction`, `close`.
 4. `createInMemoryRuntimeStore` and `InMemoryRuntimeStore` are exported from
-   the public `@weave/engine` barrel — downstream tests import from
-   `@weave/engine`, not from private engine files.
+   the public `@weaveio/weave-engine` barrel — downstream tests import from
+   `@weaveio/weave-engine`, not from private engine files.
 5. The existing 58-test contract suite (`runtime-contract.test.ts`) continues
    to pass unchanged.
 
@@ -53,9 +53,9 @@ Ran 120 tests across 2 files. [55.00ms]
 ## Evidence: Typecheck
 
 ```
-bun run --filter '@weave/engine' typecheck
+bun run --filter '@weaveio/weave-engine' typecheck
 
-@weave/engine typecheck: Exited with code 0
+@weaveio/weave-engine typecheck: Exited with code 0
 ```
 
 TypeScript reports zero errors. The `TransactionCallback` constraint
@@ -75,7 +75,7 @@ import {
   type InMemoryRuntimeStoreOptions,
   type InMemoryRuntimeStoreFailureConfig,
   type RuntimeStore,
-} from "@weave/engine";
+} from "@weaveio/weave-engine";
 
 // Typecheck proof: return type is assignable to RuntimeStore
 function proof(): RuntimeStore {
@@ -110,6 +110,6 @@ No regressions across the full workspace.
 |------|--------|
 | `packages/engine/src/runtime/memory-store.ts` | New — in-memory `RuntimeStore` implementation with failure injection |
 | `packages/engine/src/index.ts` | Added exports for `createInMemoryRuntimeStore`, `InMemoryRuntimeStore`, `InMemoryRuntimeStoreOptions`, `InMemoryRuntimeStoreFailureConfig` |
-| `packages/engine/src/__tests__/runtime-memory.test.ts` | New — 62 contract tests importing from `@weave/engine` public barrel |
+| `packages/engine/src/__tests__/runtime-memory.test.ts` | New — 62 contract tests importing from `@weaveio/weave-engine` public barrel |
 | `docs/specs/12-spec-runtime-persistence/12-proofs/12-task-05-proofs.md` | This file |
 | `docs/specs/12-spec-runtime-persistence/12-tasks-runtime-persistence.md` | Tasks 5.0–5.7 marked `[x]` |

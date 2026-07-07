@@ -918,7 +918,7 @@ WeaveConfig
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                          DSL Layer (@weave/core)                     │
+│                          DSL Layer (@weaveio/weave-core)                     │
 │                                                                      │
 │  defineConfig({                                                      │
 │    agents: {                                                         │
@@ -944,7 +944,7 @@ WeaveConfig
 └──────────────────────────────────┬──────────────────────────────────┘
                                    │
 ┌──────────────────────────────────▼──────────────────────────────────┐
-│              Weave Config/Engine Layer (@weave/config + @weave/engine)│
+│              Weave Config/Engine Layer (@weaveio/weave-config + @weaveio/weave-engine)│
 │                                                                      │
 │  Normalizes declared intent into adapter-facing descriptors:          │
 │                                                                      │
@@ -967,11 +967,11 @@ WeaveConfig
 └──────────────────────────────────┬──────────────────────────────────┘
                                    │
 ┌──────────────────────────────────▼──────────────────────────────────┐
-│                    Adapter Layer (@weave/adapter-*)                   │
+│                    Adapter Layer (@weaveio/weave-adapter-*)                   │
 │                                                                      │
 │  Translates normalized Weave intent to harness-specific format:      │
 │                                                                      │
-│  @weave/adapter-opencode:                                            │
+│  @weaveio/weave-adapter-opencode:                                            │
 │  - Map normalized Weave agent descriptors → OpenCode AgentConfig     │
 │  - Remap keys to display names                                       │
 │  - Register OpenCode plugin lifecycle hooks                          │
@@ -980,7 +980,7 @@ WeaveConfig
 │  - Handle event routing (session.idle, session.compacted, etc.)      │
 │  - Apply effects via OpenCode SDK client                             │
 │                                                                      │
-│  @weave/adapter-pi:                                                  │
+│  @weaveio/weave-adapter-pi:                                                  │
 │  - Map ResolvedAgentConfig → Pi extension format                     │
 │  - Register Pi-specific hooks and commands                           │
 │                                                                      │

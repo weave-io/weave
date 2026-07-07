@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import type { ToolPermission, ToolPolicy } from "@weave/core";
+import type { ToolPermission, ToolPolicy } from "@weaveio/weave-core";
 import type {
   ConcreteToolClassification,
   EffectiveToolPolicy,

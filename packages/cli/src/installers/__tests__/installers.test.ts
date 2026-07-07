@@ -34,7 +34,7 @@ describe("harness installers", () => {
     );
     expect(
       fs.snapshot()["/home/user/.config/opencode/weave-agents.json"],
-    ).toContain("@weave/cli");
+    ).toContain("@weaveio/weave-cli");
   });
 
   it("is idempotent without force", async () => {

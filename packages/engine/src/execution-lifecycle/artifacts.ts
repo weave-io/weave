@@ -10,7 +10,7 @@
  * - Approval invalidation detection
  */
 
-import type { WorkflowStep } from "@weave/core";
+import type { WorkflowStep } from "@weaveio/weave-core";
 import type { ResultAsync } from "neverthrow";
 import { err, ok, okAsync, type Result } from "neverthrow";
 import type { RuntimeStore } from "../runtime/store.js";

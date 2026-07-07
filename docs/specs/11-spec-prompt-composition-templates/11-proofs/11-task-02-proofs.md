@@ -55,22 +55,22 @@
 
 Note: `generateMermaidDiagram`, `generateDelegationSection`, `projectDelegationTarget`, `escapeMermaidLabel`, `mermaidNodeId` are all internal (not exported from index.ts).
 
-## 3. Typecheck Output: `bun run --filter '@weave/engine' typecheck`
+## 3. Typecheck Output: `bun run --filter '@weaveio/weave-engine' typecheck`
 
 ```
-@weave/engine typecheck: Exited with code 0
+@weaveio/weave-engine typecheck: Exited with code 0
 ```
 
 ✅ Zero TypeScript errors. All exported types compile cleanly.
 
-## 4. Test Output: `bun run --filter '@weave/engine' test`
+## 4. Test Output: `bun run --filter '@weaveio/weave-engine' test`
 
 ```
-@weave/engine test:  460 pass
-@weave/engine test:  0 fail
-@weave/engine test:  1327 expect() calls
-@weave/engine test: Ran 460 tests across 13 files. [66.00ms]
-@weave/engine test: Exited with code 0
+@weaveio/weave-engine test:  460 pass
+@weaveio/weave-engine test:  0 fail
+@weaveio/weave-engine test:  1327 expect() calls
+@weaveio/weave-engine test: Ran 460 tests across 13 files. [66.00ms]
+@weaveio/weave-engine test: Exited with code 0
 ```
 
 64 new tests added in `template-context.test.ts` (460 total, up from 396 after Task 1).

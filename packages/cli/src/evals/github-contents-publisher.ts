@@ -105,7 +105,7 @@
  */
 
 import { basename, join } from "node:path";
-import { logger } from "@weave/engine";
+import { logger } from "@weaveio/weave-engine";
 import { err, ok, type Result, ResultAsync } from "neverthrow";
 import {
   EVAL_RESULTS_REPO_TOKEN_ENV_VAR,

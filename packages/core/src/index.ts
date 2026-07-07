@@ -1,5 +1,5 @@
 /**
- * Public API for @weave/core.
+ * Public API for @weaveio/weave-core.
  *
  * All consumers should import from this barrel — never from internal modules
  * directly. This keeps the internal structure refactorable without breaking

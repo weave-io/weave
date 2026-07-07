@@ -10,11 +10,11 @@
 | `docs/product-vision.md` | Product-level source for Weave-owned normalized intent and adapter-owned harness translation; should link any new policy-evaluation guide if added. |
 | `docs/tool-policy-evaluation.md` | New companion guide for effective tool policy defaults, classification inputs, run-agent effects, and redaction expectations. |
 | `packages/core/src/schema.ts` | Existing source-of-truth definitions for `ToolPermissionSchema`, `ToolPolicySchema`, `ToolPermission`, and `ToolPolicy`. |
-| `packages/core/src/index.ts` | Public `@weave/core` barrel that must export `ToolPolicy` and `ToolPolicySchema` in addition to existing policy exports. |
+| `packages/core/src/index.ts` | Public `@weaveio/weave-core` barrel that must export `ToolPolicy` and `ToolPolicySchema` in addition to existing policy exports. |
 | `packages/core/src/__tests__/schema.test.ts` | Core schema/public-export regression tests proving tool-policy schema behavior remains the source of truth. |
 | `packages/engine/src/tool-policy.ts` | New pure engine module for effective policy types, defaults, evaluation, adapter-facing classifications, and per-tool decisions. |
 | `packages/engine/src/run-agent-effects.ts` | New engine module for sanitized run-agent effect/debug types used by `WeaveRunner` and tests. |
-| `packages/engine/src/index.ts` | Public `@weave/engine` barrel that must export tool-policy helpers, types, constants, and run-agent effect types. |
+| `packages/engine/src/index.ts` | Public `@weaveio/weave-engine` barrel that must export tool-policy helpers, types, constants, and run-agent effect types. |
 | `packages/engine/src/descriptors.ts` | Existing category shuttle generation and `tool_policy` inheritance/override behavior that must be preserved and tested. |
 | `packages/engine/src/runner.ts` | Transitional run-agent materialization path that must emit effective policy effect/debug data while preserving raw adapter pass-through. |
 | `packages/engine/src/adapter.ts` | Transitional `HarnessAdapter` boundary; should not receive a breaking concrete-tool enforcement API for this spec. |
@@ -43,20 +43,20 @@
 
 #### 1.0 Proof Artifact(s)
 
-- Test: `bun test packages/core/src/__tests__/schema.test.ts packages/engine/src/__tests__/tool-policy.test.ts` demonstrates `@weave/core` remains the source of truth for `ToolPermission`, `ToolPolicy`, `ToolPermissionSchema`, and `ToolPolicySchema`, while the engine effective model contains exactly `read`, `write`, `execute`, `delegate`, and `network`.
+- Test: `bun test packages/core/src/__tests__/schema.test.ts packages/engine/src/__tests__/tool-policy.test.ts` demonstrates `@weaveio/weave-core` remains the source of truth for `ToolPermission`, `ToolPolicy`, `ToolPermissionSchema`, and `ToolPolicySchema`, while the engine effective model contains exactly `read`, `write`, `execute`, `delegate`, and `network`.
 - Typecheck: `bun run typecheck` demonstrates public tool-policy exports are usable from downstream workspace packages through `packages/core/src/index.ts` and `packages/engine/src/index.ts`.
-- Code review artifact: `packages/engine/src/tool-policy.ts` imports policy vocabulary from `@weave/core` and does not redefine the `allow` / `deny` / `ask` literals.
+- Code review artifact: `packages/engine/src/tool-policy.ts` imports policy vocabulary from `@weaveio/weave-core` and does not redefine the `allow` / `deny` / `ask` literals.
 
 #### 1.0 Tasks
 
 - [ ] 1.1 Confirm `packages/core/src/schema.ts` already defines `ToolPermissionSchema`, `ToolPolicySchema`, `ToolPermission`, and `ToolPolicy`; do not duplicate these literals or schema definitions in engine code.
 - [ ] 1.2 Update `packages/core/src/index.ts` to export `ToolPolicy` and `ToolPolicySchema` alongside the existing `ToolPermission` and `ToolPermissionSchema` exports.
-- [ ] 1.3 Create `packages/engine/src/tool-policy.ts` and import `ToolPermission` and `ToolPolicy` from `@weave/core` for all engine policy types.
+- [ ] 1.3 Create `packages/engine/src/tool-policy.ts` and import `ToolPermission` and `ToolPolicy` from `@weaveio/weave-core` for all engine policy types.
 - [ ] 1.4 Define an ordered abstract capability constant for exactly `read`, `write`, `execute`, `delegate`, and `network`, typed against `keyof ToolPolicy` so capability names stay tied to the core schema.
 - [ ] 1.5 Define `EffectiveToolPolicy` so every abstract capability has a required `ToolPermission` value, with no optional capability fields.
 - [ ] 1.6 Define a named default permission constant typed as `ToolPermission`, with value `ask`, and document that only an approved future spec may change it.
 - [ ] 1.7 Add `packages/engine/src/__tests__/tool-policy.test.ts` coverage proving the capability list and effective model include exactly the five approved abstract capabilities.
-- [ ] 1.8 Update `packages/core/src/__tests__/schema.test.ts` with a public-barrel assertion proving `ToolPolicy`, `ToolPolicySchema`, `ToolPermission`, and `ToolPermissionSchema` are importable from `@weave/core`.
+- [ ] 1.8 Update `packages/core/src/__tests__/schema.test.ts` with a public-barrel assertion proving `ToolPolicy`, `ToolPolicySchema`, `ToolPermission`, and `ToolPermissionSchema` are importable from `@weaveio/weave-core`.
 - [ ] 1.9 Export the effective policy types/constants from `packages/engine/src/index.ts` without exposing any harness-specific tool names.
 - [ ] 1.10 Run `bun test packages/core/src/__tests__/schema.test.ts packages/engine/src/__tests__/tool-policy.test.ts` and `bun run typecheck` as this parent task's proof commands.
 
@@ -67,7 +67,7 @@
 - Test: `bun test packages/engine/src/__tests__/tool-policy.test.ts` demonstrates explicit `allow`, `deny`, and `ask` values are preserved for configured capabilities.
 - Test: `bun test packages/engine/src/__tests__/tool-policy.test.ts` demonstrates omitted `read`, `write`, `execute`, `delegate`, or `network` fields default to `ask` and the evaluated policy is always complete.
 - Code review artifact: `packages/engine/src/tool-policy.ts` has no harness-owned discovery, concrete tool names, `Bun.file`, process spawning, adapter runtime calls, or harness imports.
-- Typecheck: `bun run typecheck` demonstrates the pure evaluation API is exported from `@weave/engine` and usable without breaking existing packages.
+- Typecheck: `bun run typecheck` demonstrates the pure evaluation API is exported from `@weaveio/weave-engine` and usable without breaking existing packages.
 
 #### 2.0 Tasks
 

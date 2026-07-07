@@ -3,8 +3,7 @@ node_modules/
 ~/
 .bun/
 
-.weave/runtime/
-.weave/state.json
+.weave/
 
 # Build output
 dist/

@@ -70,7 +70,7 @@ No specific design requirements identified.
 - Context assessment found the adapter slice generally healthy, with the main seam issue concentrated in `spawnSubagent` and its callers.
 - Context assessment also found a duplicated denylist in CLI runtime rendering that mirrors engine sanitizer behavior and risks future drift.
 - No latest-standards research was needed because this is repository-internal boundary cleanup rather than a third-party integration design change.
-- If export changes are needed from `@weave/engine`, keep them minimal and clearly documented.
+- If export changes are needed from `@weaveio/weave-engine`, keep them minimal and clearly documented.
 
 ## Security Considerations
 

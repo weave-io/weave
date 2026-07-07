@@ -44,7 +44,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { createInMemoryRuntimeStore } from "@weave/engine";
+import { createInMemoryRuntimeStore } from "@weaveio/weave-engine";
 import { okAsync, type ResultAsync } from "neverthrow";
 import type { DispatchAgentEffect } from "../execution-lifecycle.js";
 import type { ExecutionLeaseId, WorkflowInstanceId } from "../runtime/types.js";

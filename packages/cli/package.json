@@ -1,10 +1,17 @@
 {
-  "name": "@weave/cli",
+  "name": "@weaveio/weave-cli",
   "version": "0.0.1",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "description": "Weave CLI for config scaffolding, validation, and harness installation",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "module": "./dist/index.js",
+  "files": [
+    "dist"
+  ],
   "bin": {
     "weave": "./dist/main.js"
   },
@@ -24,9 +31,9 @@
     "@clack/prompts": "^0.10.0",
     "@langchain/core": "^1.1.48",
     "@langchain/openai": "^1.4.7",
-    "@weave/config": "workspace:*",
-    "@weave/core": "workspace:*",
-    "@weave/engine": "workspace:*",
+    "@weaveio/weave-config": "workspace:*",
+    "@weaveio/weave-core": "workspace:*",
+    "@weaveio/weave-engine": "workspace:*",
     "agentevals": "^0.0.7",
     "figlet": "^1.11.0",
     "mustache": "^4.2.0",

@@ -420,7 +420,7 @@ See [Prompt Composition](prompt-composition.md) for the full specification and [
 
 ## Implementation
 
-The DSL is implemented in `@weave/core`:
+The DSL is implemented in `@weaveio/weave-core`:
 
 | Module | Responsibility |
 | --- | --- |

@@ -5,7 +5,7 @@
 ## Test Output
 
 ```
-bun run --filter '@weave/engine' test
+bun run --filter '@weaveio/weave-engine' test
 
  472 pass
    0 fail

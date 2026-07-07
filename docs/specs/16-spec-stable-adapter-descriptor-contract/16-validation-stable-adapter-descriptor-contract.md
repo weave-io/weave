@@ -17,7 +17,7 @@ Validation Performed By: gpt-5.5
 | Targeted Commands Rerun | 5 / 5 |
 | Final Quality Gate | PASS, exit 0 |
 
-Spec 16 is implemented, tested, documented, and ready for the next workflow step. The stable adapter-facing `AgentDescriptor` contract is exported from `@weave/engine`, includes `displayName` presentation metadata and optional normalized `category` metadata, preserves harness-neutral field semantics, omits disabled descriptors rather than emitting disabled records, and keeps concrete materialization responsibilities adapter-owned.
+Spec 16 is implemented, tested, documented, and ready for the next workflow step. The stable adapter-facing `AgentDescriptor` contract is exported from `@weaveio/weave-engine`, includes `displayName` presentation metadata and optional normalized `category` metadata, preserves harness-neutral field semantics, omits disabled descriptors rather than emitting disabled records, and keeps concrete materialization responsibilities adapter-owned.
 
 No blocking validation issues were found. The final `bun run lint && bun run typecheck && bun test packages/engine/src` gate exits `0`; lint prints pre-existing warning diagnostics in `packages/engine/src/__tests__/skill-resolution.test.ts`, but those diagnostics do not fail the configured gate and are outside the Spec 16 changed source set.
 
@@ -27,7 +27,7 @@ No blocking validation issues were found. The final `bun run lint && bun run typ
 
 | Unit | Requirement Area | Evidence | Status |
 | --- | --- | --- | --- |
-| 1.0 | Export and document stable `AgentDescriptor` from `@weave/engine` | `packages/engine/src/index.ts` exports `AgentDescriptor`; `docs/adapter-boundary.md` and `docs/prompt-composition.md` document the descriptor contract | PASS |
+| 1.0 | Export and document stable `AgentDescriptor` from `@weaveio/weave-engine` | `packages/engine/src/index.ts` exports `AgentDescriptor`; `docs/adapter-boundary.md` and `docs/prompt-composition.md` document the descriptor contract | PASS |
 | 1.0 | Keep `name` as stable internal id | `AgentDescriptor.name: string`; compose tests assert stable builtin/custom names | PASS |
 | 1.0 | Add optional `displayName` presentation metadata | `AgentDescriptor.displayName?: string`; `composeAgentDescriptor()` maps `agentConfig.display_name` without replacing `name` | PASS |
 | 1.0 | Avoid harness-specific id fields | Source and docs expose harness-neutral `name`/`displayName`; no OpenCode/Claude/Pi-specific descriptor ids introduced | PASS |
@@ -226,8 +226,8 @@ Ran 39 tests across 1 file. [42.00ms]
 ```
 
 ```text
-$ bun run --filter '@weave/engine' typecheck
-@weave/engine typecheck: Exited with code 0
+$ bun run --filter '@weaveio/weave-engine' typecheck
+@weaveio/weave-engine typecheck: Exited with code 0
 ```
 
 ```text
@@ -255,11 +255,11 @@ Checked 108 files in 36ms. No fixes applied.
 Found 37 warnings.
 Found 19 infos.
 $ tsc --noEmit -p tsconfig.json && bun run --filter '*' typecheck
-@weave/core typecheck: Exited with code 0
-@weave/engine typecheck: Exited with code 0
-@weave/adapter-opencode typecheck: Exited with code 0
-@weave/config typecheck: Exited with code 0
-@weave/cli typecheck: Exited with code 0
+@weaveio/weave-core typecheck: Exited with code 0
+@weaveio/weave-engine typecheck: Exited with code 0
+@weaveio/weave-adapter-opencode typecheck: Exited with code 0
+@weaveio/weave-config typecheck: Exited with code 0
+@weaveio/weave-cli typecheck: Exited with code 0
 bun test v1.3.13 (bf2e2cec)
 974 pass
 0 fail

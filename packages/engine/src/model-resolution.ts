@@ -1,4 +1,4 @@
-import type { AgentConfig } from "@weave/core";
+import type { AgentConfig } from "@weaveio/weave-core";
 
 /**
  * Last-resort model used only when adapters provide no override, UI-selected
