@@ -53,7 +53,7 @@
 #### 1.0 Proof Artifact(s)
 
 - Test: `bun test packages/engine/src/__tests__/compose.test.ts` passes with assertions that a generated `shuttle-frontend` descriptor exposes category name `frontend`, optional description, patterns such as `src/components/**`, and category-derived identity.
-- Typecheck: `bun run --filter '@weave/engine' typecheck` passes, demonstrating the public `AgentDescriptor` metadata type compiles for engine and adapter consumers.
+- Typecheck: `bun run --filter '@weaveio/weave-engine' typecheck` passes, demonstrating the public `AgentDescriptor` metadata type compiles for engine and adapter consumers.
 - Review: diff for `packages/engine/src/compose.ts` shows descriptor metadata is normalized and contains no harness-specific routing fields, concrete tool names, or adapter-private state.
 
 #### 1.0 Tasks

@@ -13,17 +13,17 @@
     "noEmit": true,
     "types": ["bun-types"],
     "paths": {
-      "@weave/core": ["./packages/core/src/index.ts"],
-      "@weave/core/*": ["./packages/core/src/*"],
-      "@weave/engine": ["./packages/engine/src/index.ts"],
-      "@weave/engine/*": ["./packages/engine/src/*"],
-      "@weave/adapter-opencode": ["./packages/adapters/opencode/src/index.ts"],
-      "@weave/adapter-claude-code": ["./packages/adapters/claude-code/src/index.ts"],
-      "@weave/adapter-pi": ["./packages/adapters/pi/src/index.ts"],
-      "@weave/config": ["./packages/config/src/index.ts"],
-      "@weave/config/*": ["./packages/config/src/*"],
-      "@weave/cli": ["./packages/cli/src/index.ts"],
-      "@weave/cli/*": ["./packages/cli/src/*"]
+      "@weaveio/weave-core": ["./packages/core/src/index.ts"],
+      "@weaveio/weave-core/*": ["./packages/core/src/*"],
+      "@weaveio/weave-engine": ["./packages/engine/src/index.ts"],
+      "@weaveio/weave-engine/*": ["./packages/engine/src/*"],
+      "@weaveio/weave-adapter-opencode": ["./packages/adapters/opencode/src/index.ts"],
+      "@weaveio/weave-adapter-claude-code": ["./packages/adapters/claude-code/src/index.ts"],
+      "@weaveio/weave-adapter-pi": ["./packages/adapters/pi/src/index.ts"],
+      "@weaveio/weave-config": ["./packages/config/src/index.ts"],
+      "@weaveio/weave-config/*": ["./packages/config/src/*"],
+      "@weaveio/weave-cli": ["./packages/cli/src/index.ts"],
+      "@weaveio/weave-cli/*": ["./packages/cli/src/*"]
     }
   },
   "include": [

@@ -8,7 +8,7 @@
  * - Common store setup helpers
  */
 
-import { parseConfig } from "@weave/core";
+import { parseConfig } from "@weaveio/weave-core";
 import {
   createExecutionLeaseId,
   createInMemoryRuntimeStore,
@@ -17,7 +17,7 @@ import {
   type PlanStateError,
   type PlanStateProvider,
   startExecution,
-} from "@weave/engine";
+} from "@weaveio/weave-engine";
 import { errAsync, okAsync } from "neverthrow";
 
 // ---------------------------------------------------------------------------

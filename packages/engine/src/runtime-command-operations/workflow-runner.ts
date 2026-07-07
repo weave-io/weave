@@ -31,7 +31,7 @@
  * @see packages/engine/src/execution-lifecycle/completion.ts — completeStep
  */
 
-import type { WorkflowConfig, WorkflowStep } from "@weave/core";
+import type { WorkflowConfig, WorkflowStep } from "@weaveio/weave-core";
 import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 import {
   completeStep,

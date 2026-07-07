@@ -12,7 +12,7 @@ import {
   reconcileExecution,
   startExecution,
   type WorkflowExecutionContext,
-} from "@weave/engine";
+} from "@weaveio/weave-engine";
 import { cfg, MockPlanStateProvider } from "./fixtures.js";
 
 const WORKFLOW_WITH_HANDLER = cfg(`
@@ -242,10 +242,10 @@ describe("reconcileExecution — validation", () => {
     const result = await reconcileExecution(
       {
         workflowInstanceId: "" as ReturnType<
-          typeof import("@weave/engine").createWorkflowInstanceId
+          typeof import("@weaveio/weave-engine").createWorkflowInstanceId
         >,
         leaseId: "lease-001" as ReturnType<
-          typeof import("@weave/engine").createExecutionLeaseId
+          typeof import("@weaveio/weave-engine").createExecutionLeaseId
         >,
         reason: "user-revision-request",
         authorizationSource: "user",

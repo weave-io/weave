@@ -9,7 +9,7 @@
 ## Summary
 
 Task 5 completes the documentation and acceptance proof for the first-slice
-`@weave/adapter-opencode` materialization path. All five subtasks are complete:
+`@weaveio/weave-adapter-opencode` materialization path. All five subtasks are complete:
 
 | Subtask | Description | Status |
 |---------|-------------|--------|
@@ -23,9 +23,9 @@ Task 5 completes the documentation and acceptance proof for the first-slice
 entry point, `src/adapter.ts` (extracted from `index.ts`), and `plugin.test.ts`.
 The package now exports a real OpenCode `Plugin` function as its default export.
 
-**Task 5 retry 2**: Fixed `bun run --filter @weave/adapter-opencode build` by
+**Task 5 retry 2**: Fixed `bun run --filter @weaveio/weave-adapter-opencode build` by
 updating the adapter's `package.json` build script to build workspace dependencies
-(`@weave/core`, `@weave/engine`, `@weave/config`) before the adapter itself. The
+(`@weaveio/weave-core`, `@weaveio/weave-engine`, `@weaveio/weave-config`) before the adapter itself. The
 `tsc --emitDeclarationOnly` step requires the dependency `dist/` directories to
 exist; the `--filter` command only builds the one package, so dependencies must be
 built explicitly in the script.
@@ -38,7 +38,7 @@ built explicitly in the script.
 
 Documents five key design decisions for the first-slice adapter shape:
 
-1. **SDK-first, plugin/runtime-first entry path** — `@weave/adapter-opencode`
+1. **SDK-first, plugin/runtime-first entry path** — `@weaveio/weave-adapter-opencode`
    is an OpenCode plugin. Users install it via `opencode.json`'s `plugin` array.
    The package exports `WeavePlugin` as its default export — the OpenCode plugin
    entry point. No user-authored wrapper script is required. The plugin loads
@@ -148,11 +148,11 @@ bun test packages/adapters/opencode/src/__tests__/plugin.test.ts
 
 ```
 $ tsc --noEmit -p tsconfig.json && bun run --filter '*' typecheck
-@weave/core typecheck: Exited with code 0
-@weave/engine typecheck: Exited with code 0
-@weave/config typecheck: Exited with code 0
-@weave/adapter-opencode typecheck: Exited with code 0
-@weave/cli typecheck: Exited with code 0
+@weaveio/weave-core typecheck: Exited with code 0
+@weaveio/weave-engine typecheck: Exited with code 0
+@weaveio/weave-config typecheck: Exited with code 0
+@weaveio/weave-adapter-opencode typecheck: Exited with code 0
+@weaveio/weave-cli typecheck: Exited with code 0
 
 bun test v1.3.13 (bf2e2cec)
  165 pass
@@ -193,7 +193,7 @@ materialization via the real SDK path. Key steps:
 
 1. Create `/tmp/weave-smoke-test` with a minimal `.weave/config.weave` declaring
    `smoke-test-agent`.
-2. Add `@weave/adapter-opencode` to `opencode.json`'s `plugin` array — **no
+2. Add `@weaveio/weave-adapter-opencode` to `opencode.json`'s `plugin` array — **no
    user-authored wrapper script required**.
 3. Start OpenCode — the `WeavePlugin` default export is called at startup.
 4. Verify `smoke-test-agent` appears in OpenCode with `[weave-managed]` in its
@@ -207,7 +207,7 @@ materialization via the real SDK path. Key steps:
 OpenCode; `[weave-managed]` tag present; second run is idempotent; foreign agent
 triggers `CollisionError`.
 
-> **Note**: This checklist uses `@weave/adapter-opencode` only. The legacy
+> **Note**: This checklist uses `@weaveio/weave-adapter-opencode` only. The legacy
 > `weave` OpenCode plugin must not be active during this test. Use a clean
 > project or temporarily disable the legacy plugin in `opencode.json`.
 
@@ -245,6 +245,6 @@ triggers `CollisionError`.
 | `adapter-boundary.md` changes stay within current boundary rules and do not invent new engine contracts | ✅ | Only link additions; no ownership rules changed; implementation confirmed existing boundary is correct |
 | Proof file exists with reviewer-friendly context, raw evidence, sanitized smoke checklist path/command, and quality gate results | ✅ | This file |
 | Quality gate passes: `bun run typecheck && bun test [6 test files]` | ✅ | 165/165 tests pass; all 5 packages typecheck clean |
-| `bun run --filter @weave/adapter-opencode build` passes from clean state | ✅ | Build script updated to build `@weave/core`, `@weave/engine`, `@weave/config` first; `tsc --emitDeclarationOnly` succeeds with dist files present |
+| `bun run --filter @weaveio/weave-adapter-opencode build` passes from clean state | ✅ | Build script updated to build `@weaveio/weave-core`, `@weaveio/weave-engine`, `@weaveio/weave-config` first; `tsc --emitDeclarationOnly` succeeds with dist files present |
 | Package exposes a real OpenCode plugin entry surface (not just an adapter class requiring a user-authored wrapper) | ✅ | `src/plugin.ts` exports `WeavePlugin` as default export; `@opencode-ai/plugin` is a declared dependency; `plugin.test.ts` proves the plugin contract |
 | Commit references Task 5 and Spec 20 | ✅ | Conventional Commit with `(adapter-opencode)` scope and task/spec reference in body |

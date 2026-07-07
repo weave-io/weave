@@ -1,8 +1,8 @@
-# @weave/engine
+# @weaveio/weave-engine
 
 Harness-agnostic composition APIs and adapter-boundary helpers for Weave.
 
-`@weave/engine` consumes validated `WeaveConfig` intent and explicit harness context supplied by adapters. It resolves/composes normalized agent descriptors, model intent, skill references, prompts, and policy decisions without knowing the concrete harness runtime.
+`@weaveio/weave-engine` consumes validated `WeaveConfig` intent and explicit harness context supplied by adapters. It resolves/composes normalized agent descriptors, model intent, skill references, prompts, and policy decisions without knowing the concrete harness runtime.
 
 ## Overview
 
@@ -40,9 +40,9 @@ See [../../docs/adapter-boundary.md](../../docs/adapter-boundary.md) for the ful
 ## Usage
 
 ```ts
-import { loadConfig } from "@weave/config";
-import { WeaveRunner } from "@weave/engine";
-import { OpenCodeAdapter } from "@weave/adapter-opencode";
+import { loadConfig } from "@weaveio/weave-config";
+import { WeaveRunner } from "@weaveio/weave-engine";
+import { OpenCodeAdapter } from "@weaveio/weave-adapter-opencode";
 
 const configResult = await loadConfig(process.cwd());
 
@@ -133,7 +133,7 @@ async function onHarnessStepComplete(stepName: string) {
 
 ### Workflow Engine Behavior
 
-The execution lifecycle surface implements the **workflow engine** — the engine-owned subsystem that drives multi-step workflow execution. The engine consumes `WorkflowConfig` (from `@weave/core`) and `WorkflowExecutionContext` (adapter-provided) to:
+The execution lifecycle surface implements the **workflow engine** — the engine-owned subsystem that drives multi-step workflow execution. The engine consumes `WorkflowConfig` (from `@weaveio/weave-core`) and `WorkflowExecutionContext` (adapter-provided) to:
 
 1. **Validate workflow topology** — `startExecution` validates `context.workflowName` against `context.workflows`, sets `currentStepName` to the first step, and acquires an execution lease.
 2. **Dispatch steps** — `dispatchStep` resolves the step from `WorkflowConfig.steps`, uses `step.agent` as the agent name, renders `step.prompt` via `renderTemplate()`, validates declared `step.inputs` artifacts, and emits a `RunAgentEffect` with `completionMethod`, `stepType`, `correlationId`, and `promptMetadata` (byte length only — no raw prompt).

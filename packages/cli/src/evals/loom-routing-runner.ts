@@ -1333,7 +1333,7 @@ function makeDefaultLoomPromptProvider(): PromptProvider {
   return {
     getPrompt: (agentName: string) => {
       // Dynamic import keeps the module boundary clean — prompt-snapshots.ts
-      // imports from @weave/config and @weave/engine; we only pull those in
+      // imports from @weaveio/weave-config and @weaveio/weave-engine; we only pull those in
       // when the default provider is actually used.
       const importPromise = ResultAsync.fromPromise(
         import("./prompt-snapshots.js"),

@@ -29,13 +29,13 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import type { EffectiveToolPolicy } from "@weave/engine";
+import type { EffectiveToolPolicy } from "@weaveio/weave-engine";
 import {
   beforeTool,
   createExecutionLeaseId,
   createWorkflowInstanceId,
   evaluateEffectiveToolPolicy,
-} from "@weave/engine";
+} from "@weaveio/weave-engine";
 import {
   buildReadToolsEntry,
   mapToolPolicy,

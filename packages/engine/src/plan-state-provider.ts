@@ -2,7 +2,7 @@
  * PlanStateProvider — abstract interface for querying plan file state.
  *
  * The engine owns this interface; adapters (or the default Bun-backed
- * implementation in `@weave/config`) own the concrete implementation.
+ * implementation in `@weaveio/weave-config`) own the concrete implementation.
  *
  * This separation keeps `Bun.file()` calls out of the engine and makes
  * plan-state checks testable with mock providers.

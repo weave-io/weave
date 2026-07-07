@@ -15,7 +15,7 @@ import {
   dispatchStep,
   startExecution,
   type WorkflowExecutionContext,
-} from "@weave/engine";
+} from "@weaveio/weave-engine";
 import { cfg } from "./fixtures.js";
 
 const WORKFLOW_WITH_OUTPUT = cfg(`

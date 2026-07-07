@@ -8,7 +8,7 @@ The default implementation stores Runtime Store data in `.weave/runtime/weave.db
 
 ## Goals
 
-- Provide `@weave/engine` Runtime Store interfaces for `WorkflowInstance`, `ExecutionLease`, `SessionSnapshot`, and Runtime Journal records.
+- Provide `@weaveio/weave-engine` Runtime Store interfaces for `WorkflowInstance`, `ExecutionLease`, `SessionSnapshot`, and Runtime Journal records.
 - Provide a default SQLite/Kysely Runtime Store at `.weave/runtime/weave.db` with lazy initialization and code-owned migrations.
 - Expose a composed `RuntimeStore` dependency with focused sub-repositories and a transaction/unit-of-work API.
 - Enforce one active project execution through `ExecutionLease` while keeping the model future-compatible with multiple active executions.
@@ -50,7 +50,7 @@ The default implementation stores Runtime Store data in `.weave/runtime/weave.db
 
 **Functional Requirements:**
 
-- The system shall define runtime domain types in `@weave/engine`, not `@weave/core`: `WorkflowInstance`, `ExecutionLease`, `SessionSnapshot`, `RuntimeJournalEntry`, and related IDs/status enums.
+- The system shall define runtime domain types in `@weaveio/weave-engine`, not `@weaveio/weave-core`: `WorkflowInstance`, `ExecutionLease`, `SessionSnapshot`, `RuntimeJournalEntry`, and related IDs/status enums.
 - `WorkflowInstance.status` shall be one of `created`, `running`, `paused`, `blocked`, `completed`, `failed`, or `cancelled`.
 - `WorkflowInstance` shall store artifact references/metadata only, not artifact contents.
 - `ExecutionLease` shall include `executionId`, Weave-generated `ownerId`, `acquiredAt`, `expiresAt`, and optionally `lastHeartbeatAt`.
@@ -67,7 +67,7 @@ The default implementation stores Runtime Store data in `.weave/runtime/weave.db
 **Proof Artifacts:**
 
 - Tests: engine unit tests prove status validation, lease ownership/expiry behavior, one-active-project conflict, nullable vs required lookups, and transaction behavior.
-- Typecheck: `bun run --filter '@weave/engine' typecheck` proves public runtime types compile and are exported intentionally.
+- Typecheck: `bun run --filter '@weaveio/weave-engine' typecheck` proves public runtime types compile and are exported intentionally.
 
 ### Unit 3: SQLite/Kysely default Runtime Store
 
@@ -126,7 +126,7 @@ The default implementation stores Runtime Store data in `.weave/runtime/weave.db
 
 **Functional Requirements:**
 
-- `@weave/engine` shall export a supported `createInMemoryRuntimeStore()` test utility.
+- `@weaveio/weave-engine` shall export a supported `createInMemoryRuntimeStore()` test utility.
 - The in-memory store shall implement the same `RuntimeStore` interfaces and transaction semantics expected by callers.
 - The in-memory store shall support optional injected failure modes for persistence, journal, and conflict tests.
 - The in-memory store shall not start harnesses, read real harness resources, or write project files.
@@ -134,7 +134,7 @@ The default implementation stores Runtime Store data in `.weave/runtime/weave.db
 **Proof Artifacts:**
 
 - Tests: in-memory store contract tests run against the same behavioral expectations as the SQLite store where practical.
-- Typecheck: downstream package tests can import the utility from `@weave/engine`.
+- Typecheck: downstream package tests can import the utility from `@weaveio/weave-engine`.
 
 ### Unit 6: Minimal CLI runtime inspection
 
@@ -173,7 +173,7 @@ CLI output should be readable by humans and stable enough for TOON-style LLM con
 - Use Bun exclusively for runtime/package/test execution.
 - Use `bun:sqlite` through the internal Kysely dialect; do not use Node `fs`, `child_process`, or Node-only SQLite packages.
 - Use `neverthrow` result types for all fallible repository and runtime persistence APIs.
-- Keep runtime state in `@weave/engine`; keep DSL settings schema in `@weave/core`.
+- Keep runtime state in `@weaveio/weave-engine`; keep DSL settings schema in `@weaveio/weave-core`.
 - Keep adapters behind narrow interfaces; adapters may emit journal observations but do not own Runtime Store mutation.
 - Use pino for warnings such as best-effort journal write failures; do not use `console.*`.
 

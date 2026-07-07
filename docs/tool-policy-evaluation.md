@@ -60,7 +60,7 @@ type EffectiveToolPolicy = {
 
 `EffectiveToolPolicy` is a **fully-resolved** policy where every capability has
 an explicit `ToolPermission` value (`"allow"`, `"deny"`, or `"ask"`). Unlike the
-raw `ToolPolicy` from `@weave/core` — which allows optional fields to represent
+raw `ToolPolicy` from `@weaveio/weave-core` — which allows optional fields to represent
 "not declared" — `EffectiveToolPolicy` requires all five capabilities.
 
 **Why every field is required:** Adapters must not re-implement default-filling
@@ -203,8 +203,8 @@ The `onEffect` callback is supplied to the adapter bootstrap entry point. See
 [Adapter Bootstrap Guide](adapter-bootstrap.md) for the full bootstrap pattern.
 
 ```ts
-import { materializeAgents } from "@weave/engine";
-import type { RunAgentEffect } from "@weave/engine";
+import { materializeAgents } from "@weaveio/weave-engine";
+import type { RunAgentEffect } from "@weaveio/weave-engine";
 
 // onEffect is an optional callback passed alongside materializeAgents
 // (exact wiring depends on your adapter bootstrap — see adapter-bootstrap.md)

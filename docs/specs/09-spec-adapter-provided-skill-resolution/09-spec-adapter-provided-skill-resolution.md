@@ -2,13 +2,13 @@
 
 ## Introduction/Overview
 
-Implement **Adapter-Provided Skill Resolution** in `@weave/engine` so Weave resolves agent `skills [...]` declarations against an explicit list of skills supplied by the adapter or harness. The primary goal is to keep skill matching, disabled-skill filtering, and missing-skill errors in the harness-agnostic engine while preserving adapter ownership of skill discovery, skill loading, file formats, and harness-specific mounting.
+Implement **Adapter-Provided Skill Resolution** in `@weaveio/weave-engine` so Weave resolves agent `skills [...]` declarations against an explicit list of skills supplied by the adapter or harness. The primary goal is to keep skill matching, disabled-skill filtering, and missing-skill errors in the harness-agnostic engine while preserving adapter ownership of skill discovery, skill loading, file formats, and harness-specific mounting.
 
 This spec is based on GitHub issue [#12](https://github.com/weave-io/weave/issues/12) and follows the boundary decision in [`docs/adapter-boundary.md`](../../adapter-boundary.md): adapters discover available skills; the engine only resolves references against adapter-provided context.
 
 ## Goals
 
-- Export a public `SkillInfo`, `ResolvedSkill`, `resolveSkillsForAgent()`, and `resolveSkillsForConfig()` API from `@weave/engine`.
+- Export a public `SkillInfo`, `ResolvedSkill`, `resolveSkillsForAgent()`, and `resolveSkillsForConfig()` API from `@weaveio/weave-engine`.
 - Filter globally disabled skills from agent-level resolution using `config.disabled.skills`.
 - Return explicit `neverthrow` `Result` errors when a non-disabled requested skill is missing from the adapter-provided skill list.
 - Include generated category shuttles in config-wide skill resolution so routed specialist agents receive the same resolution behavior as declared agents.
@@ -45,7 +45,7 @@ This spec is based on GitHub issue [#12](https://github.com/weave-io/weave/issue
 **Purpose:** Provide the core pure helper that resolves one agent's declared skill names against adapter-provided available skills.
 
 **Functional Requirements:**
-- The system shall provide `resolveSkillsForAgent(input)` in `@weave/engine`.
+- The system shall provide `resolveSkillsForAgent(input)` in `@weaveio/weave-engine`.
 - The system shall accept `agentName`, `agentSkills`, `availableSkills`, and `disabledSkills` as explicit input fields.
 - The system shall return a successful `Result` containing resolved skills in the same order as the agent's non-disabled `skills [...]` declaration.
 - The system shall omit requested skills that appear in `disabledSkills` without reporting them as missing.
@@ -64,7 +64,7 @@ This spec is based on GitHub issue [#12](https://github.com/weave-io/weave/issue
 **Purpose:** Extend single-agent resolution across the normalized config so every materialized agent, including generated category shuttles, has deterministic resolved skill data.
 
 **Functional Requirements:**
-- The system shall provide `resolveSkillsForConfig(input)` in `@weave/engine`.
+- The system shall provide `resolveSkillsForConfig(input)` in `@weaveio/weave-engine`.
 - The system shall resolve skills for all declared agents in the provided `WeaveConfig`.
 - The system shall include generated category shuttle descriptors in batch resolution using the same category-generation semantics used by the runner.
 - The system shall apply `config.disabled.skills` consistently to declared agents and generated category shuttles.
@@ -86,7 +86,7 @@ This spec is based on GitHub issue [#12](https://github.com/weave-io/weave/issue
 - The system shall define how adapter-provided available skills are passed into engine resolution before agent materialization.
 - The system shall ensure `WeaveRunner.run()` resolves skills at the existing `TODO(#12)` lifecycle slot using explicit adapter-provided skill context.
 - The system shall expose resolved skills in run-agent debug/effect data or another adapter-facing materialization structure so adapters can mount or apply skills using harness-specific mechanisms.
-- The system shall not scan `.weave/skills/`, global skill directories, OpenCode skill directories, Claude Code skill directories, Pi skill directories, or any other harness-owned resource location from `@weave/engine`.
+- The system shall not scan `.weave/skills/`, global skill directories, OpenCode skill directories, Claude Code skill directories, Pi skill directories, or any other harness-owned resource location from `@weaveio/weave-engine`.
 - The system shall update isolated runner tests and mock adapter fixtures without starting a real harness.
 
 **Proof Artifacts:**
@@ -110,10 +110,10 @@ No specific UI design requirements identified. Any CLI, debug, or diagnostic out
 
 ## Repository Standards
 
-- Follow [`docs/adapter-boundary.md`](../../adapter-boundary.md): adapters own skill discovery/loading, while `@weave/engine` owns skill matching/filtering against explicit inputs.
+- Follow [`docs/adapter-boundary.md`](../../adapter-boundary.md): adapters own skill discovery/loading, while `@weaveio/weave-engine` owns skill matching/filtering against explicit inputs.
 - Follow [`docs/product-vision.md`](../../product-vision.md): Weave provides harness-agnostic primitives and adapters translate those primitives into concrete harness behavior.
 - Follow the public API style of `packages/engine/src/model-resolution.ts`: pure helper, explicit input object, typed output, no direct harness calls, and barrel exports through `packages/engine/src/index.ts`.
-- Use existing schema concepts from `@weave/core`: `AgentConfig.skills` and `disabled.skills` already define the config inputs for this feature.
+- Use existing schema concepts from `@weaveio/weave-core`: `AgentConfig.skills` and `disabled.skills` already define the config inputs for this feature.
 - Use `neverthrow` for expected failure paths, including missing non-disabled skills. Return `Result<T, E>` with discriminated error types rather than throwing exceptions.
 - Use Bun-only tooling and commands: `bun test`, `bun run typecheck`, and workspace scripts as needed.
 - Add isolated tests with mocks and fixtures. Do not start real harnesses, read real harness skill directories, or rely on local user skill files in unit tests.
@@ -145,7 +145,7 @@ No specific UI design requirements identified. Any CLI, debug, or diagnostic out
 
 ## Success Metrics
 
-1. **API availability**: `SkillInfo`, `ResolvedSkill`, `resolveSkillsForAgent()`, and `resolveSkillsForConfig()` are exported from `@weave/engine` and pass `bun run typecheck`.
+1. **API availability**: `SkillInfo`, `ResolvedSkill`, `resolveSkillsForAgent()`, and `resolveSkillsForConfig()` are exported from `@weaveio/weave-engine` and pass `bun run typecheck`.
 2. **Correct filtering**: Tests prove `disabled.skills` suppresses matching requested skills without generating missing-skill errors.
 3. **Clear failures**: Tests prove missing non-disabled skills return typed `Result` errors with agent and skill names.
 4. **Boundary compliance**: Engine skill-resolution code performs no filesystem scanning, harness API calls, or adapter-owned discovery.

@@ -14,10 +14,10 @@ Think of Weave like **Neovim's API layer**: Weave provides primitives and normal
 
 | Layer        | Package            | Responsibility                                                                                                  |
 | ------------ | ------------------ | --------------------------------------------------------------------------------------------------------------- |
-| **Core**     | `@weave/core`      | DSL lexer, parser, AST, Zod schema validation, config types                                                     |
-| **Config**   | `@weave/config`    | Builtin DSL defaults, config discovery, merge semantics, prompt path resolution                                 |
-| **Engine**   | `@weave/engine`    | Composition APIs (skill resolution, model resolution, prompt building), `HarnessAdapter` interface, pino logger |
-| **Adapters** | `@weave/adapter-*` | Harness-specific translation into plugins/configs/tools/UI/runtime behavior                                     |
+| **Core**     | `@weaveio/weave-core`      | DSL lexer, parser, AST, Zod schema validation, config types                                                     |
+| **Config**   | `@weaveio/weave-config`    | Builtin DSL defaults, config discovery, merge semantics, prompt path resolution                                 |
+| **Engine**   | `@weaveio/weave-engine`    | Composition APIs (skill resolution, model resolution, prompt building), `HarnessAdapter` interface, pino logger |
+| **Adapters** | `@weaveio/weave-adapter-*` | Harness-specific translation into plugins/configs/tools/UI/runtime behavior                                     |
 
 ### Engine / Adapter Boundary Guard
 
@@ -510,7 +510,7 @@ try {
 
 ### Reuse types and constants before creating new ones
 
-Before writing a new type, check whether an existing one in `@weave/core` can be extended. Shared constants live in `constants.ts` within the relevant package — check it exists before adding a new one.
+Before writing a new type, check whether an existing one in `@weaveio/weave-core` can be extended. Shared constants live in `constants.ts` within the relevant package — check it exists before adding a new one.
 
 ```ts
 // ✅
@@ -594,7 +594,7 @@ What to mock at each layer:
 | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
 | `WeaveRunner`                      | `HarnessAdapter` — implement the interface with in-memory stubs; adapter-supplied context should be fixture data |
 | `HarnessAdapter` implementations   | File system (`Bun.file` → string fixtures), process (`Bun.spawn` → stub returning controlled output)             |
-| Config loader (`@weave/config`)    | Pass source strings directly; stub `Bun.file()` reads with known content                                         |
+| Config loader (`@weaveio/weave-config`)    | Pass source strings directly; stub `Bun.file()` reads with known content                                         |
 | Any code calling external services | Replace the client with a minimal in-memory stub                                                                 |
 
 **Every critical module must have at least one isolated test file** — with all external dependencies replaced by mocks. "Critical" means any module in `packages/engine/`, any `HarnessAdapter` implementation, and any module that owns state or coordinates multiple components.
@@ -603,10 +603,10 @@ The existing `packages/engine/src/__tests__/runner.test.ts` is the canonical exa
 
 ## Logging
 
-All logging uses the shared pino instance exported from `@weave/engine`. Never use `console.*` anywhere in the codebase.
+All logging uses the shared pino instance exported from `@weaveio/weave-engine`. Never use `console.*` anywhere in the codebase.
 
 ```ts
-import { logger } from "@weave/engine";
+import { logger } from "@weaveio/weave-engine";
 const log = logger.child({ module: "adapter-pi" });
 
 // ✅ structured — fields are queryable in log aggregators

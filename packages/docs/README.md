@@ -1,4 +1,4 @@
-# @weave/docs
+# @weaveio/weave-docs
 
 Astro + Starlight site for Weave's public landing page and public documentation.
 

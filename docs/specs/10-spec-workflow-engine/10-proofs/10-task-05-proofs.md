@@ -126,11 +126,11 @@ Warnings are pre-existing `noNonNullAssertion` style warnings in test files — 
 
 ```
 $ tsc --noEmit -p tsconfig.json && bun run --filter '*' typecheck
-@weave/core typecheck: Exited with code 0
-@weave/engine typecheck: Exited with code 0
-@weave/adapter-opencode typecheck: Exited with code 0
-@weave/config typecheck: Exited with code 0
-@weave/cli typecheck: Exited with code 0
+@weaveio/weave-core typecheck: Exited with code 0
+@weaveio/weave-engine typecheck: Exited with code 0
+@weaveio/weave-adapter-opencode typecheck: Exited with code 0
+@weaveio/weave-config typecheck: Exited with code 0
+@weaveio/weave-cli typecheck: Exited with code 0
 TYPECHECK_EXIT:0
 ```
 
@@ -155,12 +155,12 @@ TEST_EXIT:0
 ### `bun run build` — ✅ EXIT 0
 
 ```
-@weave/cli build:   index.js  1.35 MB  (entry point)
-@weave/cli build:   main.js   1.35 MB  (entry point)
-@weave/cli build: Exited with code 0
-@weave/adapter-opencode build: Bundled 1 module in 2ms
-@weave/adapter-opencode build:   index.js  83 bytes  (entry point)
-@weave/adapter-opencode build: Exited with code 0
+@weaveio/weave-cli build:   index.js  1.35 MB  (entry point)
+@weaveio/weave-cli build:   main.js   1.35 MB  (entry point)
+@weaveio/weave-cli build: Exited with code 0
+@weaveio/weave-adapter-opencode build: Bundled 1 module in 2ms
+@weaveio/weave-adapter-opencode build:   index.js  83 bytes  (entry point)
+@weaveio/weave-adapter-opencode build: Exited with code 0
 BUILD_EXIT:0
 ```
 

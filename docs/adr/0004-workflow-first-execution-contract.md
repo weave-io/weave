@@ -143,13 +143,13 @@ Adapters do not own execution state. They may emit sanitized observations throug
 
 | Concern | Owner | Why |
 | --- | --- | --- |
-| Execution contract definition (`startExecution`, `resumeExecution`, `pauseExecution`, `dispatchStep`, `completeStep`) | Engine (`@weave/engine`) | Semantics must be harness-agnostic and testable without a real harness |
-| `WorkflowInstance` and `ExecutionLease` lifecycle | Engine (`@weave/engine`) | Runtime state is Weave product state, not harness state |
-| Explicit execution boundary enforcement | Engine (`@weave/engine`) | The engine must reject implicit start attempts regardless of adapter |
+| Execution contract definition (`startExecution`, `resumeExecution`, `pauseExecution`, `dispatchStep`, `completeStep`) | Engine (`@weaveio/weave-engine`) | Semantics must be harness-agnostic and testable without a real harness |
+| `WorkflowInstance` and `ExecutionLease` lifecycle | Engine (`@weaveio/weave-engine`) | Runtime state is Weave product state, not harness state |
+| Explicit execution boundary enforcement | Engine (`@weaveio/weave-engine`) | The engine must reject implicit start attempts regardless of adapter |
 | Harness-specific trigger delivery (commands, skills, hooks, scripts, UI) | Adapter | Delivery mechanisms differ by harness |
 | Concrete command names (e.g. `/weave:start`, `/run-workflow`, `/start-work`) | Adapter | Command naming is harness-specific; the engine does not prescribe names |
 | Adapter capability declaration for execution-contract delivery | Adapter | Adapters know what their harness supports |
-| Core Readiness Profile evaluation for execution-contract support | Engine (`@weave/engine`) | Pure function; accepts explicit adapter-supplied inputs |
+| Core Readiness Profile evaluation for execution-contract support | Engine (`@weaveio/weave-engine`) | Pure function; accepts explicit adapter-supplied inputs |
 | Continuation and compaction recovery behavior | Adapter | Recovery mechanisms are harness-specific; adapters call `resumeExecution` |
 
 ---

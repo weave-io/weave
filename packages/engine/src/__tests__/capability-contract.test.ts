@@ -6,7 +6,7 @@
  * - All 19 capability IDs are valid.
  * - CapabilityEntry accepts all readiness levels and required/optional fields.
  * - AdapterCapabilityContract structural assertions.
- * - Tool-policy capability references @weave/core concepts (no duplication).
+ * - Tool-policy capability references @weaveio/weave-core concepts (no duplication).
  * - Public exports are usable from the engine barrel.
  */
 
@@ -17,7 +17,7 @@ import {
   OPTIONAL_CAPABILITIES as BARREL_OPTIONAL,
   REQUIRED_CAPABILITIES as BARREL_REQUIRED,
   evaluateCoreReadinessProfile,
-} from "@weave/engine";
+} from "@weaveio/weave-engine";
 import type {
   AdapterCapabilityContract,
   CapabilityEntry,
@@ -216,14 +216,14 @@ describe("CapabilityEntry", () => {
   });
 
   it("tool-policy-mapping entry can reference ToolPolicy concepts in notes", () => {
-    // Verify the entry can carry notes referencing @weave/core ToolPolicy
+    // Verify the entry can carry notes referencing @weaveio/weave-core ToolPolicy
     // without duplicating the allow/deny/ask enum in this module.
     const entry: CapabilityEntry = {
       id: "tool-policy-mapping",
       description: "Tool policy mapping/enforcement",
       readiness: "native",
       notes:
-        "Maps @weave/core ToolPolicy (allow/deny/ask) to harness permission model",
+        "Maps @weaveio/weave-core ToolPolicy (allow/deny/ask) to harness permission model",
     };
     const result = CapabilityEntrySchema.safeParse(entry);
     expect(result.success).toBe(true);
@@ -287,21 +287,21 @@ describe("AdapterCapabilityContract", () => {
 // ---------------------------------------------------------------------------
 
 describe("engine barrel re-exports", () => {
-  it("exports REQUIRED_CAPABILITIES from @weave/engine", () => {
+  it("exports REQUIRED_CAPABILITIES from @weaveio/weave-engine", () => {
     expect(BARREL_REQUIRED).toHaveLength(12);
     expect(BARREL_REQUIRED).toEqual(REQUIRED_CAPABILITIES);
   });
 
-  it("exports OPTIONAL_CAPABILITIES from @weave/engine", () => {
+  it("exports OPTIONAL_CAPABILITIES from @weaveio/weave-engine", () => {
     expect(BARREL_OPTIONAL).toHaveLength(7);
     expect(BARREL_OPTIONAL).toEqual(OPTIONAL_CAPABILITIES);
   });
 
-  it("exports ALL_CAPABILITY_IDS from @weave/engine", () => {
+  it("exports ALL_CAPABILITY_IDS from @weaveio/weave-engine", () => {
     expect(BARREL_ALL).toHaveLength(19);
   });
 
-  it("exports evaluateCoreReadinessProfile from @weave/engine", () => {
+  it("exports evaluateCoreReadinessProfile from @weaveio/weave-engine", () => {
     expect(typeof evaluateCoreReadinessProfile).toBe("function");
   });
 });

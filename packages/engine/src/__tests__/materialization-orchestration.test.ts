@@ -13,15 +13,15 @@
  */
 
 import { beforeEach, describe, expect, it } from "bun:test";
-import type { WeaveConfig } from "@weave/core";
-import { parseConfig } from "@weave/core";
+import type { WeaveConfig } from "@weaveio/weave-core";
+import { parseConfig } from "@weaveio/weave-core";
 import {
   type MaterializationError,
   type MaterializationPlan,
   type MaterializedAgent,
   materializeAgents,
   resolveSkillsForConfig,
-} from "@weave/engine";
+} from "@weaveio/weave-engine";
 import { MockAdapter } from "./mock-adapter.js";
 
 // ---------------------------------------------------------------------------

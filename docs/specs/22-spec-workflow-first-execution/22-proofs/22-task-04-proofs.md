@@ -45,7 +45,7 @@ Task 4.0 proves **Spec 22 Unit 3**: reconciliation semantics are engine-owned, r
 | `bun test execution-lifecycle.test.ts runtime-contract.test.ts` | ✅ PASSED | 457 pass, 0 fail, 1521 expect() calls |
 | `bun test schema.test.ts validate.test.ts parse_config.test.ts` | ✅ PASSED | 239 pass, 0 fail, 614 expect() calls |
 | `bun run typecheck` | ❌ FAILED | 3 pre-existing CLI errors in `packages/cli/src/commands/init.ts` (unrelated) |
-| `bun run build` | ⚠️ PARTIAL | `@weave/core`, `@weave/engine`, `@weave/config` built successfully. Failed in `@weave/cli` on same pre-existing `init.ts` issue |
+| `bun run build` | ⚠️ PARTIAL | `@weaveio/weave-core`, `@weaveio/weave-engine`, `@weaveio/weave-config` built successfully. Failed in `@weaveio/weave-cli` on same pre-existing `init.ts` issue |
 
 **Pre-existing blocker note**: All failures are caused by a pre-existing parse/redeclaration error in `packages/cli/src/commands/init.ts` (`noInvalidUseBeforeDeclaration` at 1228:7, `noRedeclare` at 1240:9). This file is outside the scope of task 4.0. Engine, core, config, and adapter-opencode packages are clean.
 

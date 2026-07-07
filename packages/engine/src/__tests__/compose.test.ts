@@ -7,8 +7,8 @@ import type {
   WeaveConfig,
   WorkflowConfig,
   WorkflowStep,
-} from "@weave/core";
-import { parseConfig } from "@weave/core";
+} from "@weaveio/weave-core";
+import { parseConfig } from "@weaveio/weave-core";
 
 import {
   type AppendCollision,

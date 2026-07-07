@@ -22,11 +22,11 @@ bun test v1.3.13 (bf2e2cec)
 Command:
 
 ```bash
-bun run --filter '@weave/engine' typecheck
+bun run --filter '@weaveio/weave-engine' typecheck
 ```
 
 Output:
 
 ```text
-@weave/engine typecheck: Exited with code 0
+@weaveio/weave-engine typecheck: Exited with code 0
 ```

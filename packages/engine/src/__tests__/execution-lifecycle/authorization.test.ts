@@ -13,7 +13,7 @@ import {
   RECONCILIATION_REASONS,
   validateAuthorizationSource,
   validateReconciliationSource,
-} from "@weave/engine";
+} from "@weaveio/weave-engine";
 
 describe("validateAuthorizationSource", () => {
   it("accepts 'user' for startExecution", () => {

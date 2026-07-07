@@ -70,7 +70,7 @@ Each proof file was read and verified for existence, content, and evidence quali
 |----------|----------|--------|------------|
 | Unit test suite — workflow start validation | 145 pass, 0 fail | 145 pass, 0 fail (446 expect() calls) | ✅ |
 | Typecheck — workspace-wide compilation | All 5 packages exit 0 | All 5 packages exit 0 | ✅ |
-| New types exported from `@weave/engine` | `WorkflowExecutionContext` in barrel | Confirmed in `index.ts` line 75 | ✅ |
+| New types exported from `@weaveio/weave-engine` | `WorkflowExecutionContext` in barrel | Confirmed in `index.ts` line 75 | ✅ |
 
 **Specific test cases evidenced:** unknown workflow rejection (`not_found`), empty `workflowName` (`validation`), valid instance creation with correct fields, first-step `currentStepName` initialization, lease acquisition, active-lease conflict (`lease_conflict`).
 
@@ -219,11 +219,11 @@ bun test (full workspace)
 → 1542 pass, 0 fail, 4228 expect() calls, 42 files
 
 bun run typecheck
-→ @weave/core: exit 0
-→ @weave/engine: exit 0
-→ @weave/adapter-opencode: exit 0
-→ @weave/config: exit 0
-→ @weave/cli: exit 0
+→ @weaveio/weave-core: exit 0
+→ @weaveio/weave-engine: exit 0
+→ @weaveio/weave-adapter-opencode: exit 0
+→ @weaveio/weave-config: exit 0
+→ @weaveio/weave-cli: exit 0
 
 bun run lint
 → Found 37 warnings. Found 19 infos. EXIT:0

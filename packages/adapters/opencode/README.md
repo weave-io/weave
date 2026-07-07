@@ -1,4 +1,4 @@
-# @weave/adapter-opencode
+# @weaveio/weave-adapter-opencode
 
 OpenCode adapter for Weave.
 
@@ -9,7 +9,7 @@ When loading this adapter as an OpenCode plugin, use the plugin bundle entrypoin
 ```json
 {
   "plugin": [
-    "@weave/adapter-opencode/plugin"
+    "@weaveio/weave-adapter-opencode/plugin"
   ]
 }
 ```
@@ -27,10 +27,10 @@ For a direct file URL during local development, point OpenCode at `dist/plugin.j
 Rebuild the package before using a `dist/` file path so the plugin bundle matches the current source:
 
 ```bash
-bun run --filter @weave/adapter-opencode build
+bun run --filter @weaveio/weave-adapter-opencode build
 ```
 
-Do **not** use the bare package entry (`@weave/adapter-opencode`) or `dist/index.js` as a plugin target. The bare entry is the programmatic barrel and exports non-plugin values in addition to the plugin function, which is incompatible with OpenCode's legacy plugin loader.
+Do **not** use the bare package entry (`@weaveio/weave-adapter-opencode`) or `dist/index.js` as a plugin target. The bare entry is the programmatic barrel and exports non-plugin values in addition to the plugin function, which is incompatible with OpenCode's legacy plugin loader.
 
 ## Isolated OpenCode validation
 
@@ -80,4 +80,4 @@ WEAVE_LOG_FILE=/tmp/weave-debug.log opencode
 
 The log file is created automatically when the plugin starts. Parent directories are created if they do not exist. Logs are written synchronously (one write per log line) to ensure lines are visible immediately even if the process is killed.
 
-**Non-plugin usage**: when `@weave/engine` is used outside the OpenCode plugin path (e.g. in tests or other adapters), logs go to stdout by default unless `WEAVE_LOG_FILE` is set.
+**Non-plugin usage**: when `@weaveio/weave-engine` is used outside the OpenCode plugin path (e.g. in tests or other adapters), logs go to stdout by default unless `WEAVE_LOG_FILE` is set.

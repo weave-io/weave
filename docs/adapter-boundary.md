@@ -2,8 +2,8 @@
 
 Weave is a harness-agnostic orchestration framework with two cooperating halves:
 
-1. **Core Weave API** (`@weave/core`, `@weave/config`, `@weave/engine`) parses DSL config, normalizes agent intent, resolves/composes prompt and policy data, and exposes pure helper APIs.
-2. **Adapters** (`@weave/adapter-opencode`, `@weave/adapter-pi`, etc.) enable Weave inside a concrete harness by discovering harness-owned resources, translating normalized intent, and filling feature gaps when the harness lacks native support.
+1. **Core Weave API** (`@weaveio/weave-core`, `@weaveio/weave-config`, `@weaveio/weave-engine`) parses DSL config, normalizes agent intent, resolves/composes prompt and policy data, and exposes pure helper APIs.
+2. **Adapters** (`@weaveio/weave-adapter-opencode`, `@weaveio/weave-adapter-pi`, etc.) enable Weave inside a concrete harness by discovering harness-owned resources, translating normalized intent, and filling feature gaps when the harness lacks native support.
 
 **Related:** [Product Vision](product-vision.md) · [Adapter Bootstrap Guide](adapter-bootstrap.md) · [Claude Code Adapter](claude-code-adapter.md) · [Model Resolution](model-resolution.md) · [Config Loading](config-loading.md) · [Prompt Composition](prompt-composition.md) · [Tool Policy Evaluation](tool-policy-evaluation.md) · [Adapter Readiness Status](adapter-readiness-status.md) · [ADR 0003 — OpenCode Adapter Materialization Shape](adr/0003-opencode-adapter-materialization-shape.md) · [Runtime Persistence Spec](specs/12-spec-runtime-persistence/12-spec-runtime-persistence.md) · [ADR 0002 — Runtime Persistence Store](adr/0002-runtime-persistence-store.md) · [Spec 09 — Adapter-Provided Skill Resolution](specs/09-spec-adapter-provided-skill-resolution/09-spec-adapter-provided-skill-resolution.md) · [Spec 07 — Adapter Capability Contract](specs/07-spec-adapter-capability-contract/07-spec-adapter-capability-contract.md) · [Spec 08 — Abstract Tool Policy Evaluation](specs/08-spec-abstract-tool-policy-evaluation/08-spec-abstract-tool-policy-evaluation.md) · [Spec 15 — Adapter-Facing Materialization API](specs/15-spec-adapter-facing-materialization-api/15-spec-adapter-facing-materialization-api.md) · [Spec 16 — Stable Adapter Descriptor Contract](specs/16-spec-stable-adapter-descriptor-contract/16-spec-stable-adapter-descriptor-contract.md) · [Spec 17 — Workflow Extension DSL](specs/17-spec-workflow-extension/17-spec-workflow-extension.md) · [Spec 18 — Delegation Exclusion](specs/18-spec-delegation-exclusion/18-spec-delegation-exclusion.md) · [Spec 19 — Plan State Provider](specs/19-spec-plan-state-provider/19-spec-plan-state-provider.md) · [Spec 20 — OpenCode Adapter Materialization](specs/20-spec-opencode-adapter-materialization/20-spec-opencode-adapter-materialization.md) · [Spec 22 — Workflow-First Execution](specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md) · [ADR 0004 — Workflow-First Execution Contract](adr/0004-workflow-first-execution-contract.md) · [Execution Lifecycle Surface](#execution-lifecycle-surface) · [Legacy Architecture](legacy-architecture.md)
 
@@ -21,10 +21,10 @@ Engine-to-adapter calls are acceptable when they use abstract, harness-agnostic 
 
 ## Naming Conventions
 
-Type names in `@weave/core` and `@weave/engine` follow a suffix convention to prevent collisions between the DSL configuration layer and the engine runtime layer:
+Type names in `@weaveio/weave-core` and `@weaveio/weave-engine` follow a suffix convention to prevent collisions between the DSL configuration layer and the engine runtime layer:
 
 - **`*Decl` suffix** — used for core/DSL types that describe **declarative configuration** authored in `.weave` files. These types are parsed from the DSL and validated by Zod schemas. Example: `ArtifactDecl` describes a named artifact input or output declared on a workflow step.
-- **`*Ref` suffix** — used for engine runtime types that describe **persisted handles** or live records in the Runtime Store. These types are created and managed at execution time. Example: `ArtifactRef` (in `@weave/engine`) is a persisted artifact record with a logical name, a relative path, and optional `mimeType`, `description`, and integrity-verification metadata — it stores a reference and metadata only, never raw artifact contents.
+- **`*Ref` suffix** — used for engine runtime types that describe **persisted handles** or live records in the Runtime Store. These types are created and managed at execution time. Example: `ArtifactRef` (in `@weaveio/weave-engine`) is a persisted artifact record with a logical name, a relative path, and optional `mimeType`, `description`, and integrity-verification metadata — it stores a reference and metadata only, never raw artifact contents.
 
 When adding a new type that spans both layers (e.g. a concept declared in DSL config and also tracked at runtime), use `*Decl` for the core/DSL variant and `*Ref` for the engine runtime variant. Never share a single type name across both layers.
 
@@ -34,23 +34,23 @@ When adding a new type that spans both layers (e.g. a concept declared in DSL co
 
 | Concern                                            | Owner                    | Why                                                                     |
 | -------------------------------------------------- | ------------------------ | ----------------------------------------------------------------------- |
-| `.weave` DSL parsing                               | Core (`@weave/core`)     | The DSL is Weave's source of truth                                      |
-| Builtin/global/project config merge                | Config (`@weave/config`) | Config files are Weave-owned inputs                                     |
-| Prompt file path resolution for `.weave/prompts/`  | Config (`@weave/config`) | Prompt files are part of Weave config layers                            |
-| Prompt composition                                 | Engine (`@weave/engine`) | Composition should be reusable and harness-agnostic                     |
-| Category shuttle descriptor generation             | Engine (`@weave/engine`) | Category shuttles are part of normalized delegation topology            |
-| Model intent resolution helper                     | Engine (`@weave/engine`) | Pure helper; adapter supplies harness context                           |
+| `.weave` DSL parsing                               | Core (`@weaveio/weave-core`)     | The DSL is Weave's source of truth                                      |
+| Builtin/global/project config merge                | Config (`@weaveio/weave-config`) | Config files are Weave-owned inputs                                     |
+| Prompt file path resolution for `.weave/prompts/`  | Config (`@weaveio/weave-config`) | Prompt files are part of Weave config layers                            |
+| Prompt composition                                 | Engine (`@weaveio/weave-engine`) | Composition should be reusable and harness-agnostic                     |
+| Category shuttle descriptor generation             | Engine (`@weaveio/weave-engine`) | Category shuttles are part of normalized delegation topology            |
+| Model intent resolution helper                     | Engine (`@weaveio/weave-engine`) | Pure helper; adapter supplies harness context                           |
 | Available model discovery                          | Adapter                  | Model registries and UI state are harness-specific                      |
 | Skill discovery/loading                            | Adapter                  | Skill locations and formats are harness-specific                        |
-| Skill matching/filtering                           | Engine (`@weave/engine`) | Pure resolution against `AgentConfig.skills` and `disabled.skills`      |
-| `.weave/runtime/**` Runtime Store                  | Engine (`@weave/engine`) | Runtime records are Weave product state, not harness resources          |
+| Skill matching/filtering                           | Engine (`@weaveio/weave-engine`) | Pure resolution against `AgentConfig.skills` and `disabled.skills`      |
+| `.weave/runtime/**` Runtime Store                  | Engine (`@weaveio/weave-engine`) | Runtime records are Weave product state, not harness resources          |
 | Plan file state (`.weave/plans/**`)                | Adapter                  | Concrete I/O mechanism is harness/environment-specific; engine owns the `PlanStateProvider` interface only |
-| Artifact integrity metadata (`ArtifactIntegrityMetadata`) | Engine (`@weave/engine`) | Stored in `ArtifactRef` inside the Runtime Store; engine owns the type, comparison logic, and fail-closed policy |
+| Artifact integrity metadata (`ArtifactIntegrityMetadata`) | Engine (`@weaveio/weave-engine`) | Stored in `ArtifactRef` inside the Runtime Store; engine owns the type, comparison logic, and fail-closed policy |
 | Artifact digest computation (reading file, hashing) | Adapter                 | Adapters read artifact files and compute SHA-256 digests before calling `dispatchStep`; the engine never reads artifact file contents |
 | Harness plugin/config generation                   | Adapter                  | Output format is harness-specific                                       |
 | Concrete tool names and permissions                | Adapter                  | Tool identifiers differ by harness                                      |
 | Runtime lifecycle event mapping                    | Adapter                  | Event names and payloads differ by harness                              |
-| Abstract policy/lifecycle decisions                | Engine (`@weave/engine`) | Policy composition should be harness-neutral                            |
+| Abstract policy/lifecycle decisions                | Engine (`@weaveio/weave-engine`) | Policy composition should be harness-neutral                            |
 | Feature-gap emulation (subagents, hooks, commands) | Adapter                  | Missing capability must be implemented in the harness integration layer |
 
 ---
@@ -354,7 +354,7 @@ for the formal spec and proof artifacts.
 
 The **Execution Lifecycle Surface** is the engine-owned abstract API that adapters call after mapping concrete harness events into normalized lifecycle inputs. It supersedes earlier placeholder `registerHook()` designs.
 
-All types are exported from `@weave/engine`. The implementation lives in `packages/engine/src/execution-lifecycle/` (decomposed into focused modules by [Spec 24](specs/24-spec-execution-lifecycle-decomposition/24-spec-execution-lifecycle-decomposition.md)); `packages/engine/src/execution-lifecycle.ts` is a compatibility barrel that re-exports all public symbols.
+All types are exported from `@weaveio/weave-engine`. The implementation lives in `packages/engine/src/execution-lifecycle/` (decomposed into focused modules by [Spec 24](specs/24-spec-execution-lifecycle-decomposition/24-spec-execution-lifecycle-decomposition.md)); `packages/engine/src/execution-lifecycle.ts` is a compatibility barrel that re-exports all public symbols.
 
 ### The 8 Lifecycle Methods
 
@@ -602,7 +602,7 @@ The engine must not write harness config files, spawn harness agents, discover h
 
 The **Plan State Provider** is the engine-owned abstract interface that `completeStep` uses to query plan file state when a workflow step's completion method is `"plan_created"` or `"plan_complete"`. It replaces the previous direct `Bun.file()` calls inside the execution lifecycle, which were a boundary violation.
 
-All types are exported from `@weave/engine` under `packages/engine/src/plan-state-provider.ts`.
+All types are exported from `@weaveio/weave-engine` under `packages/engine/src/plan-state-provider.ts`.
 
 ### Interface
 
@@ -621,9 +621,9 @@ type PlanStateError =
 
 | Concern | Owner | Why |
 | --- | --- | --- |
-| `PlanStateProvider` interface and `PlanStateError` union | Engine (`@weave/engine`) | The engine defines the abstract contract; adapters implement it |
-| `validatePlanName` (safe-name regex) | Engine (`@weave/engine`) | Path traversal prevention must run before any provider call, regardless of implementation |
-| `BunFilesystemPlanStateProvider` (default implementation) | Config (`@weave/config`) | Concrete Bun filesystem I/O belongs outside the engine; `@weave/config` already owns filesystem I/O for config and prompt files |
+| `PlanStateProvider` interface and `PlanStateError` union | Engine (`@weaveio/weave-engine`) | The engine defines the abstract contract; adapters implement it |
+| `validatePlanName` (safe-name regex) | Engine (`@weaveio/weave-engine`) | Path traversal prevention must run before any provider call, regardless of implementation |
+| `BunFilesystemPlanStateProvider` (default implementation) | Config (`@weaveio/weave-config`) | Concrete Bun filesystem I/O belongs outside the engine; `@weaveio/weave-config` already owns filesystem I/O for config and prompt files |
 | Alternative provider implementations (database, remote, test double) | Adapter / test | Concrete I/O mechanism is harness/environment-specific |
 
 ### Engine Behaviour
@@ -634,7 +634,7 @@ type PlanStateError =
 
 ### Adapter Responsibility
 
-Adapters supply a `PlanStateProvider` implementation via `CompleteStepInput.planStateProvider`. For production use, adapters should use `BunFilesystemPlanStateProvider` from `@weave/config`. For tests, adapters should use an in-memory mock that returns controlled results without filesystem I/O.
+Adapters supply a `PlanStateProvider` implementation via `CompleteStepInput.planStateProvider`. For production use, adapters should use `BunFilesystemPlanStateProvider` from `@weaveio/weave-config`. For tests, adapters should use an in-memory mock that returns controlled results without filesystem I/O.
 
 ```ts
 // ✅ Correct: adapter supplies provider; engine calls interface
@@ -645,7 +645,7 @@ const result = await completeStep(
     stepName,
     completionSignal,
     context,
-    planStateProvider: new BunFilesystemPlanStateProvider(), // from @weave/config
+    planStateProvider: new BunFilesystemPlanStateProvider(), // from @weaveio/weave-config
   },
   store,
 );
@@ -688,13 +688,13 @@ const result = await ResultAsync.fromPromise(
 
 ## Engine-Owned Sensitive-Key Policy
 
-The engine owns the canonical denylist of sensitive field names used to sanitize journal entries and session snapshots. This policy is exported from `packages/engine/src/runtime/sanitizer.ts` as `isDeniedKey(key: string): boolean` and re-exported from `@weave/engine`.
+The engine owns the canonical denylist of sensitive field names used to sanitize journal entries and session snapshots. This policy is exported from `packages/engine/src/runtime/sanitizer.ts` as `isDeniedKey(key: string): boolean` and re-exported from `@weaveio/weave-engine`.
 
-**Rule**: CLI rendering layers (e.g. `packages/cli/src/commands/runtime.ts`) must import `isDeniedKey` from `@weave/engine` rather than maintaining a local copy of the denylist. This ensures the rendering layer and the storage layer apply the same policy.
+**Rule**: CLI rendering layers (e.g. `packages/cli/src/commands/runtime.ts`) must import `isDeniedKey` from `@weaveio/weave-engine` rather than maintaining a local copy of the denylist. This ensures the rendering layer and the storage layer apply the same policy.
 
 ```ts
 // ✅ Correct: import from engine
-import { isDeniedKey } from "@weave/engine";
+import { isDeniedKey } from "@weaveio/weave-engine";
 const safeKeys = Object.keys(entry.data).filter((k) => !isDeniedKey(k));
 
 // ❌ Wrong: local copy of the denylist (diverges from engine policy)

@@ -50,11 +50,11 @@ legacy binary signal and the richer capability readiness model.
 ```
 bun run typecheck
 
-@weave/core typecheck: Exited with code 0
-@weave/config typecheck: Exited with code 0
-@weave/engine typecheck: Exited with code 0
-@weave/adapter-opencode typecheck: Exited with code 0
-@weave/cli typecheck: Exited with code 0
+@weaveio/weave-core typecheck: Exited with code 0
+@weaveio/weave-config typecheck: Exited with code 0
+@weaveio/weave-engine typecheck: Exited with code 0
+@weaveio/weave-adapter-opencode typecheck: Exited with code 0
+@weaveio/weave-cli typecheck: Exited with code 0
 ```
 
 ### Lint output
@@ -125,7 +125,7 @@ is a legacy binary installer-support signal. It was introduced before the
 Adapter Capability Contract existed.
 
 Future adapter work should:
-1. Implement `AdapterCapabilityContract` from `@weave/engine`.
+1. Implement `AdapterCapabilityContract` from `@weaveio/weave-engine`.
 2. Call `evaluateCoreReadinessProfile(contract)` to get `ProfileEvaluationResult`.
 3. Derive `supported` from `profileResult.ready` if a boolean is still needed
    for backward compatibility.

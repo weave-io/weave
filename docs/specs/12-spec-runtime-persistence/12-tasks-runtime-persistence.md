@@ -76,7 +76,7 @@
 #### 2.0 Proof Artifact(s)
 
 - Test: `bun test packages/engine/src/__tests__/*runtime*` passes and demonstrates status validation, lease expiry/conflict behavior, find/get lookup semantics, SessionSnapshot field boundaries, and unit-of-work transaction contracts.
-- Typecheck: `bun run --filter '@weave/engine' typecheck` passes and proves `RuntimeStore`, repository interfaces, runtime record types, and `RuntimeStoreError` exports compile.
+- Typecheck: `bun run --filter '@weaveio/weave-engine' typecheck` passes and proves `RuntimeStore`, repository interfaces, runtime record types, and `RuntimeStoreError` exports compile.
 
 #### 2.0 Tasks
 
@@ -141,7 +141,7 @@
 #### 5.0 Proof Artifact(s)
 
 - Test: `bun test packages/engine/src/__tests__/*memory* packages/engine/src/__tests__/*runtime*` passes and demonstrates the in-memory store satisfies the same Runtime Store contract, transaction behavior, conflict behavior, and injectable failure modes as the SQLite store where practical.
-- Typecheck: a downstream test import of `createInMemoryRuntimeStore` from `@weave/engine` typechecks without importing private engine files.
+- Typecheck: a downstream test import of `createInMemoryRuntimeStore` from `@weaveio/weave-engine` typechecks without importing private engine files.
 - Proof artifact: `docs/specs/12-spec-runtime-persistence/12-proofs/12-task-05-proofs.md`
 
 #### 5.0 Tasks
@@ -150,7 +150,7 @@
 - [x] 5.2 Match the Runtime Store repository interfaces, find/get semantics, lease conflict semantics, and transaction/unit-of-work API.
 - [x] 5.3 Add configurable failure injection for persistence, journal, migration/initialization-like, and conflict test scenarios.
 - [x] 5.4 Ensure the in-memory store performs no real filesystem writes, harness startup, harness resource reads, or adapter discovery.
-- [x] 5.5 Export `createInMemoryRuntimeStore()` from `@weave/engine` as a supported test utility.
+- [x] 5.5 Export `createInMemoryRuntimeStore()` from `@weaveio/weave-engine` as a supported test utility.
 - [x] 5.6 Add contract tests shared with or mirroring SQLite behavior for common repository semantics.
 - [x] 5.7 Add typecheck coverage proving downstream tests can import the utility from the public engine package entry point.
 
@@ -159,7 +159,7 @@
 #### 6.0 Proof Artifact(s)
 
 - Test: `bun test packages/cli/src/commands/__tests__/*runtime* packages/cli/src/__tests__/*routing*` passes and demonstrates `weave runtime status`, `weave runtime journal --limit <n>`, missing-runtime behavior, journal limit behavior, deterministic sanitized output, and no Runtime Store mutation.
-- CLI: `bun run --filter '@weave/cli' build` passes and the command routing/help output includes the read-only `runtime status` and `runtime journal --limit <n>` commands.
+- CLI: `bun run --filter '@weaveio/weave-cli' build` passes and the command routing/help output includes the read-only `runtime status` and `runtime journal --limit <n>` commands.
 
 #### 6.0 Tasks
 

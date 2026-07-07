@@ -20,7 +20,7 @@
 - Use `bun test packages/core/src` and `bun test packages/engine/src` for focused test runs.
 - Follow the engine/adapter boundary: exclusion logic lives entirely in `buildDelegationTargets()`; adapters receive pre-filtered `delegationTargets` and must not re-implement exclusion.
 - The `routing` block uses `.strict()` — this is intentional and must not be changed to `.passthrough()` or `.strip()`.
-- The debug log must use the shared pino logger from `@weave/engine`. Never use `console.*`.
+- The debug log must use the shared pino logger from `@weaveio/weave-engine`. Never use `console.*`.
 - Schema change = test change at all four levels (schema, validate, parse_config, and parser if needed). See `AGENTS.md` testing table.
 
 ## Tasks

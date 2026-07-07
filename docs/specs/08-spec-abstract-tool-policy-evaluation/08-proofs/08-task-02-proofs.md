@@ -48,11 +48,11 @@ Ran 57 tests across 1 file. [37.00ms]
 
 ```
 $ tsc --noEmit -p tsconfig.json && bun run --filter '*' typecheck
-@weave/core typecheck: Exited with code 0
-@weave/config typecheck: Exited with code 0
-@weave/engine typecheck: Exited with code 0
-@weave/adapter-opencode typecheck: Exited with code 0
-@weave/cli typecheck: Exited with code 0
+@weaveio/weave-core typecheck: Exited with code 0
+@weaveio/weave-config typecheck: Exited with code 0
+@weaveio/weave-engine typecheck: Exited with code 0
+@weaveio/weave-adapter-opencode typecheck: Exited with code 0
+@weaveio/weave-cli typecheck: Exited with code 0
 ```
 
 All packages pass with zero type errors.
@@ -69,7 +69,7 @@ All packages pass with zero type errors.
 | Harness names (opencode, claude-code, pi, bash, edit, glob) | ✅ Not present |
 | Network I/O | ✅ Not present |
 | `console.*` usage | ✅ Not present |
-| Imports beyond `@weave/core` types | ✅ Only `ToolPermission` and `ToolPolicy` from `@weave/core` |
+| Imports beyond `@weaveio/weave-core` types | ✅ Only `ToolPermission` and `ToolPolicy` from `@weaveio/weave-core` |
 | Return type is `Result<T, E>` | ✅ Plain return — function is deterministic and non-fallible |
 
 The function body uses only the `??` nullish-coalescing operator against the input `policy`

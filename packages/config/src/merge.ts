@@ -3,7 +3,7 @@ import {
   WeaveConfigSchema,
   type WorkflowConfig,
   type WorkflowStep,
-} from "@weave/core";
+} from "@weaveio/weave-core";
 import { err, ok, type Result } from "neverthrow";
 
 // ---------------------------------------------------------------------------

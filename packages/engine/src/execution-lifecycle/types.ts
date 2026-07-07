@@ -8,7 +8,7 @@
  * @see docs/adapter-boundary.md — Execution Lifecycle Surface section
  */
 
-import type { ReconciliationReason, WorkflowConfig } from "@weave/core";
+import type { ReconciliationReason, WorkflowConfig } from "@weaveio/weave-core";
 import type { ResultAsync } from "neverthrow";
 import type { PlanStateProvider } from "../plan-state-provider.js";
 import type { RunAgentEffect } from "../run-agent-effects.js";

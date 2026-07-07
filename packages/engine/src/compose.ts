@@ -5,7 +5,7 @@ import type {
   WeaveConfig,
   WorkflowConfig,
   WorkflowStep,
-} from "@weave/core";
+} from "@weaveio/weave-core";
 import {
   err,
   errAsync,

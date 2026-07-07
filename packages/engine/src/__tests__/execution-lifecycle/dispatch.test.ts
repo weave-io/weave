@@ -14,7 +14,7 @@ import {
   dispatchStep,
   startExecution,
   type WorkflowExecutionContext,
-} from "@weave/engine";
+} from "@weaveio/weave-engine";
 import { cfg } from "./fixtures.js";
 
 const SIMPLE_WORKFLOW = cfg(`
@@ -92,7 +92,7 @@ describe("dispatchStep — legacy (no context)", () => {
       {
         workflowInstanceId: "" as ReturnType<typeof createWorkflowInstanceId>,
         leaseId: "lease-001" as ReturnType<
-          typeof import("@weave/engine").createExecutionLeaseId
+          typeof import("@weaveio/weave-engine").createExecutionLeaseId
         >,
       },
       store,
@@ -174,7 +174,7 @@ describe("dispatchStep — configured (with context)", () => {
       {
         workflowInstanceId: instanceId,
         leaseId: "wrong-lease-id" as ReturnType<
-          typeof import("@weave/engine").createExecutionLeaseId
+          typeof import("@weaveio/weave-engine").createExecutionLeaseId
         >,
         stepName: "plan",
       },

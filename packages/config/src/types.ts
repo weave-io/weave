@@ -2,7 +2,7 @@
  * Represents the scope (origin layer) of a parsed config contribution.
  *
  * Three layers are supported in priority order (lowest → highest):
- * - `"builtin"` — the hard-coded default agents shipped with `@weave/config`
+ * - `"builtin"` — the hard-coded default agents shipped with `@weaveio/weave-config`
  * - `"global"`  — the user's `~/.weave/config.weave`
  * - `"project"` — the project's `.weave/config.weave`
  *

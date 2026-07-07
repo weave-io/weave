@@ -45,14 +45,14 @@ Ran 26 tests across 1 file. [48.00ms]
 ## Evidence: CLI Build
 
 ```
-bun run --filter '@weave/cli' build
+bun run --filter '@weaveio/weave-cli' build
 
-@weave/cli build: Bundled 422 modules in 15ms
-@weave/cli build:
-@weave/cli build:   index.js  1.34 MB  (entry point)
-@weave/cli build:   main.js   1.34 MB  (entry point)
-@weave/cli build:
-@weave/cli build: Exited with code 0
+@weaveio/weave-cli build: Bundled 422 modules in 15ms
+@weaveio/weave-cli build:
+@weaveio/weave-cli build:   index.js  1.34 MB  (entry point)
+@weaveio/weave-cli build:   main.js   1.34 MB  (entry point)
+@weaveio/weave-cli build:
+@weaveio/weave-cli build: Exited with code 0
 ```
 
 ## Evidence: Help Output Includes runtime status and runtime journal

@@ -13,7 +13,7 @@ import type {
   ReconciliationReason,
   WorkflowConfig,
   WorkflowStep,
-} from "@weave/core";
+} from "@weaveio/weave-core";
 import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 import type { PlanStateProvider } from "../plan-state-provider.js";
 import type { RuntimeStore } from "../runtime/store.js";

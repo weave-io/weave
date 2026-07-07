@@ -10,7 +10,7 @@
 | `CONTEXT.md` | Project context referenced by the spec; update only if the active implementation branch already owns context changes or if maintainers confirm it should summarize the new contract. |
 | `README.md` | User-facing command and package overview; update only if readiness reporting becomes discoverable from the public README. |
 | `packages/engine/src/capability-contract.ts` | Likely new pure engine module for capability types, readiness profile definitions, evaluation, health-report inputs, and renderer-ready report models. |
-| `packages/engine/src/index.ts` | Public `@weave/engine` barrel that must export new capability contract types and helpers. |
+| `packages/engine/src/index.ts` | Public `@weaveio/weave-engine` barrel that must export new capability contract types and helpers. |
 | `packages/engine/src/adapter.ts` | Transitional adapter boundary; may receive documentation-only adapter-owned readiness interfaces, but new work must not treat deprecated `registerHook()`/`loadSkill()` as precedent. |
 | `packages/engine/src/model-resolution.ts` | Existing pure-helper pattern to mirror: explicit adapter-supplied context in, normalized result out, no harness queries. |
 | `packages/engine/src/__tests__/capability-contract.test.ts` | New engine tests for readiness values, capability entry shape, schemas, public model behavior, and sanitized fixtures. |
@@ -34,7 +34,7 @@
 
 - Planning assumption: `token usage reporting when harness exposes usage` is a conditional required capability. The report model should include explicit applicability/status so harnesses that do not expose usage do not fail the Core Readiness Profile for that unavailable signal.
 - Planning assumption: Safe Adapter Init should be encoded as adapter-owned declaration/probe input or a small adapter-facing readiness provider, not as a new precedent based on transitional `HarnessAdapter.registerHook()` or `HarnessAdapter.loadSkill()` methods.
-- Planning assumption: `@weave/engine` owns normalized report/result structures and deterministic data contracts; `@weave/cli` may own presentation helpers/fixtures that consume those structures, but full `doctor`, `status`, or `debug` command implementation remains out of scope.
+- Planning assumption: `@weaveio/weave-engine` owns normalized report/result structures and deterministic data contracts; `@weaveio/weave-cli` may own presentation helpers/fixtures that consume those structures, but full `doctor`, `status`, or `debug` command implementation remains out of scope.
 - Keep engine helpers pure and deterministic. Adapters supply static declarations, runtime probe results, harness usage applicability, and any feature-gap emulation notes as explicit inputs.
 - Use `neverthrow` for fallible declaration/probe collection paths. Use Zod schemas only where runtime validation is needed for adapter-provided or external structured inputs.
 - Tests must use synthetic adapter ids, synthetic remediation text, and mocked adapter/probe data. Do not read live harness directories, launch harness processes, register hooks, materialize agents, or commit local runtime details.
@@ -50,7 +50,7 @@
 - Cover exact readiness levels: `native`, `emulated`, `degraded`, and `unsupported`.
 - Define shared capability entries with id, display name/description, readiness, implementation notes, runtime status when available, and blocking impact.
 - Keep required-vs-optional semantics in a readiness profile instead of a binary `supported` flag.
-- Export the public model from `@weave/engine` and reference existing `@weave/core` concepts such as `ToolPolicy` for tool-policy capability metadata rather than duplicating them.
+- Export the public model from `@weaveio/weave-engine` and reference existing `@weaveio/weave-core` concepts such as `ToolPolicy` for tool-policy capability metadata rather than duplicating them.
 - Likely implementation surface: `packages/engine/src/capability-contract.ts` or `packages/engine/src/capabilities.ts`, `packages/engine/src/index.ts`, and `packages/engine/src/__tests__/capability-contract.test.ts`.
 
 #### 1.0 Proof Artifact(s)
@@ -58,8 +58,8 @@
 - Test: `bun test packages/engine/src/__tests__/capability-contract.test.ts` demonstrates the shared model accepts the four approved readiness values and rejects or prevents unsupported states.
 - Test: model fixtures demonstrate capability entries carry id, display/description, readiness, implementation notes, runtime status, and blocking impact without harness-specific data.
 - Typecheck: `bun run typecheck` demonstrates public capability exports are usable across workspace packages.
-- Code review artifact: `packages/engine/src/index.ts` exports the capability model from `@weave/engine`.
-- Code review artifact: tool-policy capability metadata references `@weave/core` `ToolPolicy` concepts instead of duplicating policy enums.
+- Code review artifact: `packages/engine/src/index.ts` exports the capability model from `@weaveio/weave-engine`.
+- Code review artifact: tool-policy capability metadata references `@weaveio/weave-core` `ToolPolicy` concepts instead of duplicating policy enums.
 - Sanitization proof: capability fixtures use synthetic adapter names and synthetic notes only; no credentials, local paths, or harness config contents are committed.
 
 #### 1.0 Tasks
@@ -69,7 +69,7 @@
 - [x] 1.3 Define the shared capability id/display/description model, including stable ids for all required and optional capabilities named by the spec.
 - [x] 1.4 Define capability entry fields for readiness, implementation notes, optional runtime status, blocking impact, source/supplier metadata, remediation hint, and sanitized detail text.
 - [x] 1.5 Add Zod-backed runtime validation only for adapter-provided declaration objects if implementation accepts untrusted structured input; keep inferred TypeScript types as the source of truth.
-- [x] 1.6 Reference `ToolPolicy`/`ToolPolicySchema` concepts from `@weave/core` for the tool-policy mapping/enforcement capability instead of duplicating allow/deny/ask enums.
+- [x] 1.6 Reference `ToolPolicy`/`ToolPolicySchema` concepts from `@weaveio/weave-core` for the tool-policy mapping/enforcement capability instead of duplicating allow/deny/ask enums.
 - [x] 1.7 Add synthetic capability fixtures that prove entries can describe native, emulated, degraded, and unsupported readiness without using local paths, credentials, or real harness config.
 - [x] 1.8 Export the new public types, schemas if any, constants, and helper signatures through `packages/engine/src/index.ts`.
 - [x] 1.9 Add `packages/engine/src/__tests__/capability-contract.test.ts` covering readiness values, required fields, optional runtime-status fields, blocking-impact fields, tool-policy references, and export usability.

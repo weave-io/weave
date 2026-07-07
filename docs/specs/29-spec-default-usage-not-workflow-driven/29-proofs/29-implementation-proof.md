@@ -300,11 +300,11 @@ bun run typecheck
 
 **Output**:
 ```
-@weave/core typecheck: Exited with code 0
-@weave/engine typecheck: Exited with code 0
-@weave/config typecheck: Exited with code 0
-@weave/adapter-opencode typecheck: Exited with code 0
-@weave/cli typecheck: Exited with code 0
+@weaveio/weave-core typecheck: Exited with code 0
+@weaveio/weave-engine typecheck: Exited with code 0
+@weaveio/weave-config typecheck: Exited with code 0
+@weaveio/weave-adapter-opencode typecheck: Exited with code 0
+@weaveio/weave-cli typecheck: Exited with code 0
 ```
 
 ### Build
@@ -315,11 +315,11 @@ bun run build
 
 **Output** (final lines):
 ```
-@weave/adapter-opencode build: Bundled 435 modules in 15ms
-@weave/adapter-opencode build:   index.js  0.89 MB  (entry point)
-@weave/adapter-opencode build: Bundled 431 modules in 15ms
-@weave/adapter-opencode build:   plugin.js  0.84 MB  (entry point)
-@weave/adapter-opencode build: Exited with code 0
+@weaveio/weave-adapter-opencode build: Bundled 435 modules in 15ms
+@weaveio/weave-adapter-opencode build:   index.js  0.89 MB  (entry point)
+@weaveio/weave-adapter-opencode build: Bundled 431 modules in 15ms
+@weaveio/weave-adapter-opencode build:   plugin.js  0.84 MB  (entry point)
+@weaveio/weave-adapter-opencode build: Exited with code 0
 ```
 
 ### All tests

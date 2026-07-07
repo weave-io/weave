@@ -2,14 +2,14 @@
  * Abstract tool-policy vocabulary for the Weave engine.
  *
  * This module defines the engine-level effective policy model. It imports
- * `ToolPermission` and `ToolPolicy` from `@weave/core` and does NOT redefine
+ * `ToolPermission` and `ToolPolicy` from `@weaveio/weave-core` and does NOT redefine
  * the `allow` / `deny` / `ask` literals — those are owned by core.
  *
  * No harness-specific tool names appear here. Adapters are responsible for
  * mapping abstract capabilities to concrete harness tool names.
  */
 
-import type { ToolPermission, ToolPolicy } from "@weave/core";
+import type { ToolPermission, ToolPolicy } from "@weaveio/weave-core";
 
 // ---------------------------------------------------------------------------
 // Abstract capability list
@@ -39,7 +39,7 @@ export const ABSTRACT_CAPABILITIES: (keyof ToolPolicy)[] = [
  * A fully-resolved tool policy where every abstract capability has an
  * explicit `ToolPermission` value.
  *
- * Unlike `ToolPolicy` (from `@weave/core`), which allows optional fields to
+ * Unlike `ToolPolicy` (from `@weaveio/weave-core`), which allows optional fields to
  * represent "not declared", `EffectiveToolPolicy` requires all five
  * capabilities. Adapters compute this by merging declared policy with
  * `DEFAULT_PERMISSION` for any missing capability.

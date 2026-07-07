@@ -140,6 +140,6 @@ The checklist covers:
 
 See: [`20-smoke-checklist-task-02.md`](../20-smoke-checklist-task-02.md)
 
-The checklist is sanitized for use with only `@weave/adapter-opencode` enabled
+The checklist is sanitized for use with only `@weaveio/weave-adapter-opencode` enabled
 (no legacy `weave` plugin). It covers the create, update, and collision paths
 against a live OpenCode instance.

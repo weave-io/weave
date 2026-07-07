@@ -29,14 +29,14 @@ The primary goal is to let adapters observe sessions, start or resume executions
 **Purpose:** Establish the shared typed vocabulary for adapter-to-engine lifecycle calls.
 
 **Functional Requirements:**
-- The system shall define public lifecycle input and output types in `@weave/engine` for `observeSession`, `startExecution`, `resumeExecution`, `handleUserInterrupt`, `dispatchStep`, `completeStep`, and `beforeTool`.
+- The system shall define public lifecycle input and output types in `@weaveio/weave-engine` for `observeSession`, `startExecution`, `resumeExecution`, `handleUserInterrupt`, `dispatchStep`, `completeStep`, and `beforeTool`.
 - The system shall model lifecycle failures with discriminated `neverthrow` error types instead of throwing expected errors.
 - The system shall export lifecycle types from `packages/engine/src/index.ts` so adapters and tests can import them intentionally.
 - The system shall keep lifecycle inputs free of raw harness payloads, raw prompts, credentials, cookies, tokens, authorization headers, and provider-private data.
 - The system shall document each lifecycle method's responsibility, required input fields, returned value, and relationship to the Runtime Store.
 
 **Proof Artifacts:**
-- Typecheck: `bun run typecheck` demonstrates the lifecycle types compile and are exported from `@weave/engine`.
+- Typecheck: `bun run typecheck` demonstrates the lifecycle types compile and are exported from `@weaveio/weave-engine`.
 - Test: engine lifecycle type/unit tests demonstrate valid inputs, invalid or missing required fields where runtime validation exists, and typed error variants.
 - Documentation: lifecycle API documentation links from `docs/adapter-boundary.md` or another architecture doc and describes the MVP surface.
 

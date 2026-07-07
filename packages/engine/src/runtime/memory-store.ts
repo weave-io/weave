@@ -919,7 +919,7 @@ export class InMemoryRuntimeStore implements RuntimeStore {
  *
  * @example
  * ```ts
- * import { createInMemoryRuntimeStore } from "@weave/engine";
+ * import { createInMemoryRuntimeStore } from "@weaveio/weave-engine";
  *
  * const store = createInMemoryRuntimeStore();
  * const result = await store.instances.create({ ... });

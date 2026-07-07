@@ -18,7 +18,7 @@ The implementation conforms to Spec 15 and the task list. All validation gates p
 | --- | --- |
 | `git -C /Users/jose/projects/weave.worktrees/feat-spec-15-materialization-api diff --name-only f55169c..HEAD` | Passed; changed-file list reviewed. |
 | `bun test packages/engine/src/__tests__/materialization.test.ts` | Passed: `21 pass / 0 fail`, 58 expectations. |
-| `bun run --filter '@weave/engine' typecheck` | Passed: `@weave/engine typecheck: Exited with code 0`. |
+| `bun run --filter '@weaveio/weave-engine' typecheck` | Passed: `@weaveio/weave-engine typecheck: Exited with code 0`. |
 | `bun test packages/engine/src/__tests__/runner.test.ts` | Passed: `51 pass / 0 fail`, 140 expectations. |
 | Proof artifact read/scan | Passed; all four proof files exist and contain relevant evidence. |
 | Proof artifact credential scan | Passed; no credential patterns found. |

@@ -2,13 +2,13 @@
 
 ## Introduction/Overview
 
-Add a stable `@weave/engine` materialization API that turns a validated Weave config into adapter-facing agent descriptors without invoking a concrete adapter lifecycle. This solves issue [#70](https://github.com/weave-io/weave/issues/70): adapters, especially the OpenCode adapter and future adapter work such as #15, should not need to reverse-engineer `WeaveRunner` or call `HarnessAdapter.spawnSubagent()` just to obtain adapter-ready configuration.
+Add a stable `@weaveio/weave-engine` materialization API that turns a validated Weave config into adapter-facing agent descriptors without invoking a concrete adapter lifecycle. This solves issue [#70](https://github.com/weave-io/weave/issues/70): adapters, especially the OpenCode adapter and future adapter work such as #15, should not need to reverse-engineer `WeaveRunner` or call `HarnessAdapter.spawnSubagent()` just to obtain adapter-ready configuration.
 
 The primary goal is to expose a pure, typed engine composition surface that includes builtin agents, custom agents, and generated category shuttles in deterministic order while preserving the adapter boundary: the engine composes normalized descriptors, and adapters decide how to write files, register resources, or launch harness-specific behavior.
 
 ## Goals
 
-- Provide a public engine materialization function that adapters can import from `@weave/engine`.
+- Provide a public engine materialization function that adapters can import from `@weaveio/weave-engine`.
 - Return `ResultAsync<MaterializationPlan, never>` from `neverthrow`; accumulate per-agent failures in `MaterializationPlan.errors[]` rather than causing top-level rejection or throwing.
 - Materialize composed agent descriptors for builtin agents, custom agents, and generated category shuttles.
 - Preserve existing runner behavior for disabled agents and category shuttle ordering while making that behavior testable without a concrete adapter.
@@ -34,7 +34,7 @@ The primary goal is to expose a pure, typed engine composition surface that incl
 - The system shall return a `ResultAsync<MaterializationPlan, never>` value that never rejects at the top level; per-agent failures are accumulated into `MaterializationPlan.errors[]`.
 
 **Proof Artifacts:**
-- Test: engine API import test demonstrates adapters can import the materialization function and its public types from `@weave/engine`.
+- Test: engine API import test demonstrates adapters can import the materialization function and its public types from `@weaveio/weave-engine`.
 - Typecheck: `bun run typecheck` demonstrates the exported API, `MaterializationPlan` shape, and discriminated error types compile.
 - Code review artifact: API signature demonstrates no `HarnessAdapter` parameter, no concrete harness names, and `ResultAsync<MaterializationPlan, never>` return type.
 
@@ -143,7 +143,7 @@ The developer experience should be clear for adapter authors: function and type 
 
 ## Success Metrics
 
-1. **Public API availability**: Adapter code can import and call the new materialization function from `@weave/engine` without constructing a `HarnessAdapter`.
+1. **Public API availability**: Adapter code can import and call the new materialization function from `@weaveio/weave-engine` without constructing a `HarnessAdapter`.
 2. **Acceptance coverage**: Tests cover builtins, custom agents, disabled agents, and generated category shuttles, matching issue #70 acceptance criteria.
 3. **No adapter dispatch during materialization**: Tests or code review prove the new function does not call `HarnessAdapter.spawnSubagent()` or other adapter lifecycle methods.
 4. **Deterministic output**: Repeated materialization of the same config produces descriptors in the same order.

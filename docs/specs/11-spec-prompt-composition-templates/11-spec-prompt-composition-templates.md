@@ -4,7 +4,7 @@
 
 Weave will render agent prompt sources as Mustache Prompt Templates during engine-owned prompt composition. This lets built-in and user-authored prompt Markdown place generated data, especially delegation guidance, without exposing raw internal config or pushing composition rules into adapters.
 
-The primary goal is to turn the ADR-defined prompt-template decision into a testable implementation contract for `@weave/engine`, while preserving existing static prompt behavior and adapter-boundary guarantees.
+The primary goal is to turn the ADR-defined prompt-template decision into a testable implementation contract for `@weaveio/weave-engine`, while preserving existing static prompt behavior and adapter-boundary guarantees.
 
 ## Goals
 
@@ -30,7 +30,7 @@ The primary goal is to turn the ADR-defined prompt-template decision into a test
 
 **Functional Requirements:**
 
-- The system shall add the canonical `mustache` package to `@weave/engine`, plus package-provided types or `@types/mustache` if needed.
+- The system shall add the canonical `mustache` package to `@weaveio/weave-engine`, plus package-provided types or `@types/mustache` if needed.
 - The system shall provide an internal renderer module, `packages/engine/src/template-renderer.ts`, that parses templates, extracts real Mustache references, and renders parsed templates using `neverthrow` result types.
 - The system shall support escaped variables, unescaped triple-brace variables, dotted names, comments, sections, inverted sections, list iteration, and `{{.}}`.
 - The system shall reject partials, delimiter changes, lambdas, helpers, function values, filesystem access, environment access, prototype traversal, and other executable or unsafe behavior.
@@ -41,7 +41,7 @@ The primary goal is to turn the ADR-defined prompt-template decision into a test
 
 - Test: `bun test packages/engine/src/__tests__/template-renderer.test.ts` demonstrates supported Mustache rendering, reference extraction, escaped literals, and unsupported-feature failures.
 - Test: renderer tests for unknown, unsafe, and function-valued paths demonstrate strict path enforcement.
-- CLI: `bun run --filter '@weave/engine' test` demonstrates the renderer integrates with the engine package test suite.
+- CLI: `bun run --filter '@weaveio/weave-engine' test` demonstrates the renderer integrates with the engine package test suite.
 
 ### Unit 2: Template Context and Delegation Diagram
 
@@ -61,7 +61,7 @@ The primary goal is to turn the ADR-defined prompt-template decision into a test
 
 - Test: `bun test packages/engine/src/__tests__/template-context.test.ts` demonstrates context shape, category omission, allowed optional paths, and no raw config exposure.
 - Test: delegation context tests demonstrate `delegation.targets` array shape, domain deduplication, trigger details, and empty array when no targets exist.
-- Typecheck: `bun run --filter '@weave/engine' typecheck` demonstrates exported context/error types compile without exposing renderer internals.
+- Typecheck: `bun run --filter '@weaveio/weave-engine' typecheck` demonstrates exported context/error types compile without exposing renderer internals.
 
 ### Unit 3: Compose Pipeline Integration
 
@@ -81,7 +81,7 @@ The primary goal is to turn the ADR-defined prompt-template decision into a test
 
 - Test: updated `packages/engine/src/__tests__/compose.test.ts` demonstrates inline prompt rendering, prompt-file rendering, rendered append behavior, `delegation.targets` iteration, and typed template errors.
 - Test: composed static prompt tests demonstrate backward compatibility for existing custom prompts without template tags.
-- CLI: `bun run --filter '@weave/engine' test` demonstrates the compose pipeline remains isolated from real harnesses.
+- CLI: `bun run --filter '@weaveio/weave-engine' test` demonstrates the compose pipeline remains isolated from real harnesses.
 
 ### Unit 4: Built-in Prompt and Documentation Alignment
 
@@ -126,8 +126,8 @@ Generated delegation guidance should be readable in plain Markdown and useful to
 
 - Use Bun for runtime, package management, tests, and builds; do not introduce Node runtime APIs such as `fs` or `child_process`.
 - Use `neverthrow` result types for fallible rendering and composition paths.
-- Keep prompt composition in `@weave/engine`; adapters consume final `AgentDescriptor` values and do not render templates.
-- Keep prompt-file path resolution in `@weave/config` and prompt text composition in `@weave/engine`.
+- Keep prompt composition in `@weaveio/weave-engine`; adapters consume final `AgentDescriptor` values and do not render templates.
+- Keep prompt-file path resolution in `@weaveio/weave-config` and prompt text composition in `@weaveio/weave-engine`.
 - Follow existing package test patterns with `bun:test` and isolated tests; do not start real harnesses in unit or integration tests.
 - Update docs for non-trivial behavior changes, especially prompt composition, adapter boundary implications, and glossary terms.
 - Avoid leaking Weave-repo implementation details or harness-specific tool names into built-in prompt defaults.
@@ -137,8 +137,8 @@ Generated delegation guidance should be readable in plain Markdown and useful to
 - Current repository context: `packages/engine/src/compose.ts` owns `AgentDescriptor`, delegation target filtering, prompt source loading, and final composed prompt assembly.
 - Current repository context: `packages/config/src/builtins.ts` defines built-in agents, while prompt Markdown lives under `packages/config/prompts/` and is resolved before composition.
 - Current repository context: existing tests include `packages/engine/src/__tests__/compose.test.ts`, `packages/config/src/__tests__/builtin-prompts.test.ts`, and `packages/config/src/__tests__/builtin-compose-smoke.test.ts`.
-- Add `mustache` as an `@weave/engine` dependency because rendering is engine-owned.
-- Export Template Context and template error types from `@weave/engine`, but keep the low-level renderer internal for the first slice.
+- Add `mustache` as an `@weaveio/weave-engine` dependency because rendering is engine-owned.
+- Export Template Context and template error types from `@weaveio/weave-engine`, but keep the low-level renderer internal for the first slice.
 - Renderer validation should use explicit allowed-path metadata beside the Template Context type/builder so typos fail and allowed optional paths can be falsey.
 - The wrapper should parse once, inspect token metadata for real references and unsupported tags, then render with the bounded Template Context.
 - `prompt_append` errors report line/column in the merged append text; fragment provenance between base and category append sources is deferred.

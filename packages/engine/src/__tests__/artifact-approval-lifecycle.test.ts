@@ -20,7 +20,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { parseConfig } from "@weave/core";
+import { parseConfig } from "@weaveio/weave-core";
 import {
   approveArtifact,
   type ConsumedArtifactRecord,
@@ -31,7 +31,7 @@ import {
   dispatchStep,
   startExecution,
   type WorkflowExecutionContext,
-} from "@weave/engine";
+} from "@weaveio/weave-engine";
 
 // ---------------------------------------------------------------------------
 // Helpers

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import type { WeaveConfig } from "@weave/core";
-import { parseConfig } from "@weave/core";
+import type { WeaveConfig } from "@weaveio/weave-core";
+import { parseConfig } from "@weaveio/weave-core";
 import { resolvePromptPaths } from "../resolve.js";
 import type { ConfigScope } from "../types.js";
 

@@ -32,7 +32,7 @@
 #### 1.0 Proof Artifact(s)
 
 - Test: `bun test packages/engine/src/__tests__/skill-resolution.test.ts` passes type-focused coverage demonstrating `SkillInfo.name` is the stable matching key and `ResolvedSkill` preserves adapter-provided metadata without harness discovery.
-- Typecheck: `bun run typecheck` passes demonstrating `SkillInfo`, `ResolvedSkill`, `resolveSkillsForAgent()`, and `resolveSkillsForConfig()` are exported from `@weave/engine`.
+- Typecheck: `bun run typecheck` passes demonstrating `SkillInfo`, `ResolvedSkill`, `resolveSkillsForAgent()`, and `resolveSkillsForConfig()` are exported from `@weaveio/weave-engine`.
 - Code review artifact: `packages/engine/src/skill-resolution.ts` contains no OpenCode, Claude Code, Pi, `Bun.file`, or process-spawning references, demonstrating harness-neutral type definitions.
 
 #### 1.0 Tasks

@@ -2,16 +2,16 @@
 
 ## Introduction/Overview
 
-Extract the plan-file I/O currently embedded in `packages/engine/src/execution-lifecycle.ts` into a `PlanStateProvider` interface owned by `@weave/engine`. Provide a default Bun-backed implementation (`BunFilesystemPlanStateProvider`) in `@weave/config`. Wire the provider into `CompleteStepInput` as an optional field so that adapters and tests can supply any implementation without the engine performing direct filesystem I/O.
+Extract the plan-file I/O currently embedded in `packages/engine/src/execution-lifecycle.ts` into a `PlanStateProvider` interface owned by `@weaveio/weave-engine`. Provide a default Bun-backed implementation (`BunFilesystemPlanStateProvider`) in `@weaveio/weave-config`. Wire the provider into `CompleteStepInput` as an optional field so that adapters and tests can supply any implementation without the engine performing direct filesystem I/O.
 
 This fixes a boundary violation: `checkPlanFileExists` and `checkPlanComplete` in `execution-lifecycle.ts` call `Bun.file()` directly, making the engine responsible for harness-owned filesystem conventions. Under the adapter boundary rules, the engine must not scan harness-owned directories or perform concrete filesystem I/O for resources it does not own. Plan files live under `.weave/plans/` — a Weave-owned path — but the _mechanism_ for reading them (Bun filesystem APIs) is a concrete I/O concern that belongs in an adapter-supplied or config-layer-supplied provider, not in the engine core.
 
 ## Goals
 
-- Define `PlanStateProvider` and `PlanStateError` in `@weave/engine` (`packages/engine/src/plan-state-provider.ts`).
+- Define `PlanStateProvider` and `PlanStateError` in `@weaveio/weave-engine` (`packages/engine/src/plan-state-provider.ts`).
 - Add `planStateProvider?: PlanStateProvider` to `CompleteStepInput`.
 - When `step.completion.method` is `"plan_created"` or `"plan_complete"` and `planStateProvider` is **absent**, `completeStep` returns a typed `policy_decision` error — never silently passes.
-- Provide `BunFilesystemPlanStateProvider` in `@weave/config` as the default implementation for production use.
+- Provide `BunFilesystemPlanStateProvider` in `@weaveio/weave-config` as the default implementation for production use.
 - Keep `validatePlanName` as an internal engine helper; it is a sanitisation concern that any provider may want to apply, and the engine still validates input before calling the provider.
 - Document adapter ownership of plan file state in `docs/adapter-boundary.md`.
 
@@ -20,11 +20,11 @@ This fixes a boundary violation: `checkPlanFileExists` and `checkPlanComplete` i
 - **As an adapter author**, I want to supply a `PlanStateProvider` to `completeStep` so that my adapter controls how plan files are discovered and read, without the engine hard-coding Bun filesystem calls.
 - **As a test author**, I want to inject a mock `PlanStateProvider` into `completeStep` so that plan-completion tests run without touching the real filesystem.
 - **As a Weave engine maintainer**, I want `completeStep` to return a typed error when `plan_created`/`plan_complete` is used without a provider, so that misconfigured callers fail loudly rather than silently skipping plan checks.
-- **As a production adapter author**, I want `BunFilesystemPlanStateProvider` available from `@weave/config` so that I can use the default implementation without re-implementing filesystem logic.
+- **As a production adapter author**, I want `BunFilesystemPlanStateProvider` available from `@weaveio/weave-config` so that I can use the default implementation without re-implementing filesystem logic.
 
 ## Interface and Error Union
 
-Both types are exported from `@weave/engine` via `packages/engine/src/plan-state-provider.ts`.
+Both types are exported from `@weaveio/weave-engine` via `packages/engine/src/plan-state-provider.ts`.
 
 ```ts
 // packages/engine/src/plan-state-provider.ts
@@ -51,7 +51,7 @@ export type PlanStateError =
  * never performs filesystem I/O directly for plan files.
  *
  * Implementations:
- * - `BunFilesystemPlanStateProvider` in `@weave/config` — reads
+ * - `BunFilesystemPlanStateProvider` in `@weaveio/weave-config` — reads
  *   `.weave/plans/<name>.md` using Bun filesystem APIs (production default).
  * - Test doubles — in-memory stubs that return controlled results without
  *   touching the filesystem.
@@ -101,7 +101,7 @@ export interface CompleteStepInput {
    * skipping the plan check.
    *
    * Adapters supply this field using `BunFilesystemPlanStateProvider` (from
-   * `@weave/config`) for production use, or a test double for unit tests.
+   * `@weaveio/weave-config`) for production use, or a test double for unit tests.
    */
   readonly planStateProvider?: PlanStateProvider;
 }
@@ -172,7 +172,7 @@ err(lifecycleValidationError(
 
 ## `validatePlanName` — Internal Engine Helper
 
-`validatePlanName` remains a **private** function inside `packages/engine/src/execution-lifecycle.ts`. It is not exported from `@weave/engine`.
+`validatePlanName` remains a **private** function inside `packages/engine/src/execution-lifecycle.ts`. It is not exported from `@weaveio/weave-engine`.
 
 Rationale:
 - Name sanitisation is a security concern that the engine must enforce before constructing any path or calling any provider.
@@ -192,13 +192,13 @@ Rejected: slashes, dots, backslashes, or any other character that could enable p
 
 ## `BunFilesystemPlanStateProvider` — Default Implementation
 
-The default implementation lives in `@weave/config` at `packages/config/src/plan-state-provider.ts`.
+The default implementation lives in `@weaveio/weave-config` at `packages/config/src/plan-state-provider.ts`.
 
 ```ts
 // packages/config/src/plan-state-provider.ts
 
 import { ResultAsync, ok, err } from "neverthrow";
-import type { PlanStateProvider, PlanStateError } from "@weave/engine";
+import type { PlanStateProvider, PlanStateError } from "@weaveio/weave-engine";
 
 const SAFE_PLAN_NAME = /^[a-zA-Z0-9_-]+$/;
 
@@ -251,15 +251,15 @@ export class BunFilesystemPlanStateProvider implements PlanStateProvider {
 }
 ```
 
-### Why `@weave/config` and not `@weave/engine`?
+### Why `@weaveio/weave-config` and not `@weaveio/weave-engine`?
 
-`@weave/engine` must not contain Bun filesystem calls for harness-owned or adapter-owned resources. The `.weave/plans/` directory is a Weave-owned path, but the _mechanism_ for reading it (Bun filesystem APIs) is a concrete I/O concern. Placing the default implementation in `@weave/config` keeps the engine pure and allows adapters to substitute alternative implementations (e.g. a database-backed provider, a remote provider, or a test double) without modifying engine code.
+`@weaveio/weave-engine` must not contain Bun filesystem calls for harness-owned or adapter-owned resources. The `.weave/plans/` directory is a Weave-owned path, but the _mechanism_ for reading it (Bun filesystem APIs) is a concrete I/O concern. Placing the default implementation in `@weaveio/weave-config` keeps the engine pure and allows adapters to substitute alternative implementations (e.g. a database-backed provider, a remote provider, or a test double) without modifying engine code.
 
-`@weave/config` already performs Bun filesystem I/O for config file discovery and prompt file resolution, so this is consistent with its existing responsibilities.
+`@weaveio/weave-config` already performs Bun filesystem I/O for config file discovery and prompt file resolution, so this is consistent with its existing responsibilities.
 
 ## Export Surface
 
-### `@weave/engine`
+### `@weaveio/weave-engine`
 
 `packages/engine/src/index.ts` exports:
 
@@ -267,7 +267,7 @@ export class BunFilesystemPlanStateProvider implements PlanStateProvider {
 export type { PlanStateProvider, PlanStateError } from "./plan-state-provider.ts";
 ```
 
-### `@weave/config`
+### `@weaveio/weave-config`
 
 `packages/config/src/index.ts` exports:
 
@@ -305,9 +305,9 @@ The engine must validate plan names before constructing paths or calling provide
 
 ## Repository Standards
 
-- Follow the engine/adapter boundary in `docs/adapter-boundary.md`: the engine owns the `PlanStateProvider` interface and validation; adapters and `@weave/config` own concrete implementations.
+- Follow the engine/adapter boundary in `docs/adapter-boundary.md`: the engine owns the `PlanStateProvider` interface and validation; adapters and `@weaveio/weave-config` own concrete implementations.
 - Use `neverthrow` for all fallible operations. `PlanStateProvider` methods return `ResultAsync<T, PlanStateError>`. The engine maps `PlanStateError` to `LifecycleError` at the call site.
-- Use the shared pino logger from `@weave/engine` for any logging inside `BunFilesystemPlanStateProvider`. Never use `console.*`.
+- Use the shared pino logger from `@weaveio/weave-engine` for any logging inside `BunFilesystemPlanStateProvider`. Never use `console.*`.
 - Tests for `completeStep` with plan completion methods must use a mock `PlanStateProvider` — never real filesystem I/O.
 - Export `PlanStateProvider` and `PlanStateError` from `packages/engine/src/index.ts`. Export `BunFilesystemPlanStateProvider` from `packages/config/src/index.ts`.
 - Mention the relevant GitHub issue in any Pull Request created for this work.
@@ -329,8 +329,8 @@ The engine must validate plan names before constructing paths or calling provide
 
 ## Success Metrics
 
-1. **Interface available**: `PlanStateProvider` and `PlanStateError` are importable from `@weave/engine`.
-2. **Default implementation available**: `BunFilesystemPlanStateProvider` is importable from `@weave/config`.
+1. **Interface available**: `PlanStateProvider` and `PlanStateError` are importable from `@weaveio/weave-engine`.
+2. **Default implementation available**: `BunFilesystemPlanStateProvider` is importable from `@weaveio/weave-config`.
 3. **Provider absent → typed error**: `completeStep` with a `plan_created`/`plan_complete` step and no `planStateProvider` returns a `policy_decision` error.
 4. **No Bun.file in engine**: `execution-lifecycle.ts` contains no `Bun.file()` calls after migration.
 5. **Test coverage**: All plan-completion paths are tested with mock providers; no test touches the real filesystem for plan checks.

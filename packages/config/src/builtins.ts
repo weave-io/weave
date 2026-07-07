@@ -1,7 +1,7 @@
 /// <reference path="../../../types/md.d.ts" />
 
-import type { ConfigError, WeaveConfig } from "@weave/core";
-import { parseConfig } from "@weave/core";
+import type { ConfigError, WeaveConfig } from "@weaveio/weave-core";
+import { parseConfig } from "@weaveio/weave-core";
 import type { Result } from "neverthrow";
 
 // ---------------------------------------------------------------------------
@@ -13,7 +13,7 @@ import type { Result } from "neverthrow";
 // at runtime, regardless of where the bundle is executed from.
 //
 // This is the fix for the `import.meta.dir` bundling problem: when
-// `@weave/config` is bundled into `@weave/adapter-opencode/dist/plugin.js`,
+// `@weaveio/weave-config` is bundled into `@weaveio/weave-adapter-opencode/dist/plugin.js`,
 // `import.meta.dir` in `loader.ts` resolves to the adapter's dist directory
 // rather than `packages/config/`. By embedding prompt content here, we
 // eliminate the runtime filesystem dependency for builtins entirely.

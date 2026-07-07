@@ -22,7 +22,7 @@ During design review, that plan changed in several important ways:
 
 ## Decision
 
-Weave will provide a default SQLite-backed **Runtime Store** under `.weave/runtime/weave.db`, owned by `@weave/engine` and accessed through repository interfaces.
+Weave will provide a default SQLite-backed **Runtime Store** under `.weave/runtime/weave.db`, owned by `@weaveio/weave-engine` and accessed through repository interfaces.
 
 Key constraints:
 
@@ -44,8 +44,8 @@ Key constraints:
 
 ### What changes
 
-- `@weave/engine` gains runtime persistence domain types, repository interfaces, a SQLite/Kysely default store, an in-memory store for tests, and a narrow adapter-facing Runtime Journal writer.
-- `@weave/core` gains the `settings` DSL/config shape needed for `settings.log_level` and `settings.runtime.journal.strict`.
+- `@weaveio/weave-engine` gains runtime persistence domain types, repository interfaces, a SQLite/Kysely default store, an in-memory store for tests, and a narrow adapter-facing Runtime Journal writer.
+- `@weaveio/weave-core` gains the `settings` DSL/config shape needed for `settings.log_level` and `settings.runtime.journal.strict`.
 - The CLI gains minimal read-only Runtime Store inspection commands: `weave runtime status` and `weave runtime journal --limit <n>`.
 - `.weave/runtime/` remains ignored by Git and is created lazily on first runtime write/open.
 

@@ -11,7 +11,7 @@ Related docs:
 
 ## Local PATH installation
 
-The CLI package is built with Bun and exposes a `weave` binary from `@weave/cli`.
+The CLI package is built with Bun and exposes a `weave` binary from `@weaveio/weave-cli`.
 
 ```bash
 bun install
@@ -25,13 +25,13 @@ The local link expects the package to be built first because the package `bin` e
 
 ## Package runners
 
-Once `@weave/cli` is publishable, these package-runner forms should execute the same command surface:
+Once `@weaveio/weave-cli` is publishable, these package-runner forms should execute the same command surface:
 
 ```bash
-bunx @weave/cli --help
-npx @weave/cli --help
-npm exec @weave/cli -- --help
-pnpm dlx @weave/cli --help
+bunx @weaveio/weave-cli --help
+npx @weaveio/weave-cli --help
+npm exec @weaveio/weave-cli -- --help
+pnpm dlx @weaveio/weave-cli --help
 ```
 
 ## Theme and accessibility
@@ -209,7 +209,7 @@ weave init --yes           # auto-migrates non-interactively when legacy source 
 
 ### Canonical migration destinations
 
-Migration **always** writes to the canonical Weave config paths. These are the same paths used by `discoverAndParse()` in `@weave/config`:
+Migration **always** writes to the canonical Weave config paths. These are the same paths used by `discoverAndParse()` in `@weaveio/weave-config`:
 
 | Scope    | Destination                         |
 | -------- | ----------------------------------- |
@@ -220,7 +220,7 @@ See [Config Loading — Config Discovery](./config-loading.md#config-discovery) 
 
 ### `--install-dir` behavior in migrate mode
 
-`--install-dir` is **ignored** in migrate mode. Migration always writes to the canonical scope destination (`~/.weave/config.weave` or `<projectRoot>/.weave/config.weave`) regardless of any `--install-dir` value. This is intentional: `--install-dir` is a starter-config scaffolding option for `weave init` that allows non-standard install locations; migration must stay aligned with the canonical paths that `@weave/config` discovers at runtime. Allowing `--install-dir` to redirect migration output would produce a config file that the config loader would never find.
+`--install-dir` is **ignored** in migrate mode. Migration always writes to the canonical scope destination (`~/.weave/config.weave` or `<projectRoot>/.weave/config.weave`) regardless of any `--install-dir` value. This is intentional: `--install-dir` is a starter-config scaffolding option for `weave init` that allows non-standard install locations; migration must stay aligned with the canonical paths that `@weaveio/weave-config` discovers at runtime. Allowing `--install-dir` to redirect migration output would produce a config file that the config loader would never find.
 
 ### Preflight summary
 

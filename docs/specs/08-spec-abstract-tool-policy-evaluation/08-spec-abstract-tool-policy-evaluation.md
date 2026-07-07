@@ -2,7 +2,7 @@
 
 ## Introduction/Overview
 
-Implement **Abstract Tool Policy Evaluation** in `@weave/engine` so Weave can turn an agent's normalized `tool_policy` into explicit, harness-neutral permission decisions before an adapter maps those decisions to concrete harness tools. The primary goal is to keep policy semantics in the engine while preserving adapter ownership of concrete tool names, permission mechanisms, and harness-specific enforcement.
+Implement **Abstract Tool Policy Evaluation** in `@weaveio/weave-engine` so Weave can turn an agent's normalized `tool_policy` into explicit, harness-neutral permission decisions before an adapter maps those decisions to concrete harness tools. The primary goal is to keep policy semantics in the engine while preserving adapter ownership of concrete tool names, permission mechanisms, and harness-specific enforcement.
 
 This spec is based on GitHub issue [#57](https://github.com/weave-io/weave/issues/57) and depends on the adapter-boundary work in issue #9 and the adapter capability contract from issue #49 / [Spec 07](../07-spec-adapter-capability-contract/07-spec-adapter-capability-contract.md).
 
@@ -25,13 +25,13 @@ This spec is based on GitHub issue [#57](https://github.com/weave-io/weave/issue
 
 ### Unit 1: Public Tool Policy Types and Effective Policy Model
 
-**Purpose:** Establish the shared vocabulary and public exports needed by engine helpers, adapters, and tests without duplicating `@weave/core` schema concepts.
+**Purpose:** Establish the shared vocabulary and public exports needed by engine helpers, adapters, and tests without duplicating `@weaveio/weave-core` schema concepts.
 
 **Functional Requirements:**
-- The system shall export `ToolPermission`, `ToolPolicy`, `ToolPermissionSchema`, and `ToolPolicySchema` from `@weave/core` so downstream packages can import the existing source-of-truth types.
+- The system shall export `ToolPermission`, `ToolPolicy`, `ToolPermissionSchema`, and `ToolPolicySchema` from `@weaveio/weave-core` so downstream packages can import the existing source-of-truth types.
 - The system shall define an engine-owned `EffectiveToolPolicy` model that contains exactly one permission for each abstract capability: `read`, `write`, `execute`, `delegate`, and `network`.
 - The system shall define a named default permission for any missing capability field; the default shall be `ask` unless a future approved spec explicitly changes the default.
-- The system shall avoid redefining `allow | deny | ask` literals outside `@weave/core`.
+- The system shall avoid redefining `allow | deny | ask` literals outside `@weaveio/weave-core`.
 
 **Proof Artifacts:**
 - `Test: packages/core/src/__tests__/schema.test.ts passes` demonstrates the core tool policy schema remains the source of truth.
@@ -47,7 +47,7 @@ This spec is based on GitHub issue [#57](https://github.com/weave-io/weave/issue
 - The system shall return the configured permission for any capability present in the input policy.
 - The system shall return the default `ask` permission for any capability omitted from the input policy.
 - The system shall not perform harness I/O, scan harness configuration, inspect concrete tool names, or call adapter runtime APIs while evaluating policy.
-- The system shall expose the policy evaluation API from `@weave/engine` through `packages/engine/src/index.ts`.
+- The system shall expose the policy evaluation API from `@weaveio/weave-engine` through `packages/engine/src/index.ts`.
 
 **Proof Artifacts:**
 - `Test: explicit allow/deny/ask values are preserved` demonstrates each configured permission is evaluated unchanged.
@@ -104,7 +104,7 @@ No specific UI design requirements identified. Any human-readable debug or CLI o
 
 - Follow the engine/adapter boundary in [`docs/adapter-boundary.md`](../../adapter-boundary.md): the engine owns abstract policy decisions, while adapters own concrete tool names and harness-specific permission application.
 - Follow the product vision in [`docs/product-vision.md`](../../product-vision.md): Weave exposes normalized primitives and adapters translate those primitives into concrete harness behavior.
-- Reuse `ToolPolicy` and `ToolPermission` from `@weave/core`; do not duplicate schema literals or hand-written equivalents in the engine.
+- Reuse `ToolPolicy` and `ToolPermission` from `@weaveio/weave-core`; do not duplicate schema literals or hand-written equivalents in the engine.
 - Keep engine helpers pure and adapter-facing, following the style of `packages/engine/src/model-resolution.ts`: explicit input object in, normalized result out, no harness discovery.
 - Use Bun-only tooling: `bun test`, `bun run typecheck`, and workspace package commands as needed.
 - Use `neverthrow` for functions that can fail. Pure non-fallible evaluation helpers may return plain values; fallible classification or validation helpers should return `Result<T, E>` with explicit discriminated error types.

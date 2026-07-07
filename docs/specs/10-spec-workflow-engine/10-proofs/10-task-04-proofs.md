@@ -84,11 +84,11 @@ bun run typecheck
 **Result summary:** All 5 packages pass with exit 0.
 
 ```
-@weave/core: exit 0
-@weave/engine: exit 0
-@weave/adapter-opencode: exit 0
-@weave/config: exit 0
-@weave/cli: exit 0
+@weaveio/weave-core: exit 0
+@weaveio/weave-engine: exit 0
+@weaveio/weave-adapter-opencode: exit 0
+@weaveio/weave-config: exit 0
+@weaveio/weave-cli: exit 0
 ```
 
 ## Artifact: StepCompletionSignal extension

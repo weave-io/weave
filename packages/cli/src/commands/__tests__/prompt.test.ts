@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import type { ConfigLoadError } from "@weave/config";
-import type { WeaveConfig } from "@weave/core";
+import type { ConfigLoadError } from "@weaveio/weave-config";
+import type { WeaveConfig } from "@weaveio/weave-core";
 import { errAsync, okAsync } from "neverthrow";
 import type { ParsedArgs } from "../../args.js";
 import { BufferTerminal } from "../../io/terminal.js";

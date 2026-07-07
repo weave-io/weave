@@ -6,7 +6,7 @@
  * mutation so that invalid generated DSL cannot corrupt the destination.
  */
 
-import { parseConfig } from "@weave/core";
+import { parseConfig } from "@weaveio/weave-core";
 import { errAsync, ResultAsync } from "neverthrow";
 import { starterConfig } from "../config/starter-config.js";
 import { describeFileSystemError, type FileSystem } from "../fs/file-system.js";

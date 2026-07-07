@@ -8,7 +8,7 @@ Task 1.0 formalizes `AgentDescriptor` identity fields. The implementation keeps 
 
 - Adapter-facing descriptors retain stable `name` identity for durable resource mapping.
 - Optional `displayName` is presentation metadata only and does not replace or mutate `name`.
-- `AgentDescriptor` remains exported from `@weave/engine` through `packages/engine/src/index.ts`.
+- `AgentDescriptor` remains exported from `@weaveio/weave-engine` through `packages/engine/src/index.ts`.
 - Documentation now states the distinction between stable identity and display metadata.
 
 ## Evidence Summary
@@ -33,8 +33,8 @@ Ran 34 tests across 1 file. [62.00ms]
 Interpretation: the engine package typechecked successfully, including the public `AgentDescriptor` export from `packages/engine/src/index.ts`.
 
 ```text
-$ bun run --filter '@weave/engine' typecheck
-@weave/engine typecheck: Exited with code 0
+$ bun run --filter '@weaveio/weave-engine' typecheck
+@weaveio/weave-engine typecheck: Exited with code 0
 ```
 
 ## Artifact: Documentation Evidence

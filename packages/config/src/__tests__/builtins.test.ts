@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { parseConfig } from "@weave/core";
+import { parseConfig } from "@weaveio/weave-core";
 import { BUILTIN_WEAVE_SOURCE, getBuiltinConfig } from "../builtins.js";
 
 describe("getBuiltinConfig", () => {

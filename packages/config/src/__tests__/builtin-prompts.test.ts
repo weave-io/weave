@@ -98,7 +98,7 @@ const PLACEHOLDER_TEXT =
   "Placeholder — full prompt content is a future deliverable.";
 
 /**
- * Absolute path to the prompts directory shipped with @weave/config.
+ * Absolute path to the prompts directory shipped with @weaveio/weave-config.
  * Resolved relative to this test file: src/__tests__/ → src/ → packages/config/ → prompts/
  */
 const PROMPTS_DIR = join(import.meta.dir, "..", "..", "prompts");

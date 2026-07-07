@@ -1,8 +1,8 @@
 /**
- * OpenCode plugin entry point for `@weave/adapter-opencode`.
+ * OpenCode plugin entry point for `@weaveio/weave-adapter-opencode`.
  *
  * This module exports the `Plugin` function that OpenCode loads at startup
- * when `@weave/adapter-opencode` is listed in the `plugin` array of
+ * when `@weaveio/weave-adapter-opencode` is listed in the `plugin` array of
  * `opencode.json`. It is the primary runtime integration surface between
  * Weave and OpenCode.
  *
@@ -59,17 +59,17 @@
  *
  * ## Installation
  *
- * Add `@weave/adapter-opencode/plugin` to the `plugin` array in `opencode.json`.
+ * Add `@weaveio/weave-adapter-opencode/plugin` to the `plugin` array in `opencode.json`.
  * Use the subpath export — **not** the bare package name:
  *
  * ```jsonc
  * // opencode.json
  * {
- *   "plugin": ["@weave/adapter-opencode/plugin"]
+ *   "plugin": ["@weaveio/weave-adapter-opencode/plugin"]
  * }
  * ```
  *
- * The bare `@weave/adapter-opencode` entry (`dist/index.js`) exports non-function
+ * The bare `@weaveio/weave-adapter-opencode` entry (`dist/index.js`) exports non-function
  * values (constants, type re-exports) that cause OpenCode's `getLegacyPlugins`
  * loader to throw `TypeError: Plugin export is not a function`. This module
  * (`dist/plugin.js`) exports only the plugin function and is the correct entry
@@ -91,14 +91,14 @@
 
 import { join } from "node:path";
 import type { Hooks, Plugin, PluginInput } from "@opencode-ai/plugin";
-import { type FileReader, loadConfig } from "@weave/config";
+import { type FileReader, loadConfig } from "@weaveio/weave-config";
 import {
   type AgentDescriptor,
   env,
   logger,
   materializeAgents,
   redirectLogsToFile,
-} from "@weave/engine";
+} from "@weaveio/weave-engine";
 
 import { OpenCodeAdapter } from "./adapter.js";
 import {
@@ -404,6 +404,16 @@ export function createWeavePlugin(options: WeavePluginOptions = {}): Plugin {
           );
         }
 
+        // --- Default agent configuration ---
+        // Set Loom as the default agent so new sessions start with the
+        // orchestrator rather than OpenCode's built-in 'build' agent.
+        // Type assertion needed: OpenCode supports `default_agent` but the
+        // @opencode-ai/plugin type definitions may lag behind the runtime.
+        if (translatedMap.has("loom")) {
+          (cfg as Record<string, unknown>).default_agent = "loom";
+          log.info("Set default_agent to 'loom'");
+        }
+
         // --- Command injection ---
         // Register /start-work and /weave:start as OpenCode slash commands.
         // These are prompt-based commands (not LLM tools) — they inject the
@@ -441,7 +451,7 @@ export function createWeavePlugin(options: WeavePluginOptions = {}): Plugin {
 /**
  * Weave OpenCode plugin.
  *
- * Loaded by OpenCode at startup when `@weave/adapter-opencode` is listed in
+ * Loaded by OpenCode at startup when `@weaveio/weave-adapter-opencode` is listed in
  * the `plugin` array of `opencode.json`. Materializes all agents declared in
  * `.weave/config.weave` into the running OpenCode instance.
  *

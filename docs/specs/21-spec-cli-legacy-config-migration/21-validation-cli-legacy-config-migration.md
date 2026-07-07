@@ -151,11 +151,11 @@ Ran 2057 tests across 54 files. [26.01s]
 ```
 $ bun run typecheck
 
-@weave/core typecheck: Exited with code 0
-@weave/engine typecheck: Exited with code 0
-@weave/config typecheck: Exited with code 0
-@weave/adapter-opencode typecheck: Exited with code 0
-@weave/cli typecheck: Exited with code 0
+@weaveio/weave-core typecheck: Exited with code 0
+@weaveio/weave-engine typecheck: Exited with code 0
+@weaveio/weave-config typecheck: Exited with code 0
+@weaveio/weave-adapter-opencode typecheck: Exited with code 0
+@weaveio/weave-cli typecheck: Exited with code 0
 ```
 
 ### D. Build (validator-executed)
@@ -163,11 +163,11 @@ $ bun run typecheck
 ```
 $ bun run build
 
-@weave/core build: Exited with code 0
-@weave/engine build: Exited with code 0
-@weave/config build: Exited with code 0
-@weave/cli build: Exited with code 0
-@weave/adapter-opencode build: Exited with code 0
+@weaveio/weave-core build: Exited with code 0
+@weaveio/weave-engine build: Exited with code 0
+@weaveio/weave-config build: Exited with code 0
+@weaveio/weave-cli build: Exited with code 0
+@weaveio/weave-adapter-opencode build: Exited with code 0
 ```
 
 ### E. Lint (validator-executed)

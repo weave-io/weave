@@ -84,7 +84,7 @@ Files changed for Spec 17 (commits `c7677b6` — DSL parsing, and the pre-existi
 | Merge: `extends` / `insert_before` / `insert_after` stripped from resolved config | ✅ Covered | `mergeWorkflow` returns a `WorkflowConfig` built from `mergeValues` with the resolved `steps`; the `extends` field is not propagated to the merged output (it is consumed during resolution, not forwarded) |
 | Merge: builtin workflows unchanged when no child extends them | ✅ Covered | `merge.test.ts` — "workflow without extends: override steps union-merge with base steps"; builtins remain in their own config layer |
 | Merge: spec example (insert `spec` before `plan` in `plan-and-execute`) produces 7-step order | ✅ Covered | `merge.test.ts` — "insert_before via mergeConfigsResult: spec step before plan in plan-and-execute" asserts `specIdx === planIdx - 1` and all 6 original steps present |
-| Adapter boundary: engine receives post-merge `WorkflowConfig` with no extension fields | ✅ Covered | Extension resolution runs entirely in `@weave/config`; `@weave/engine` imports `WeaveConfig` from `@weave/core` and receives the post-merge result; no engine or adapter code participates in extension resolution |
+| Adapter boundary: engine receives post-merge `WorkflowConfig` with no extension fields | ✅ Covered | Extension resolution runs entirely in `@weaveio/weave-config`; `@weaveio/weave-engine` imports `WeaveConfig` from `@weaveio/weave-core` and receives the post-merge result; no engine or adapter code participates in extension resolution |
 | Documentation: `docs/adapter-boundary.md` links to Spec 17 | ✅ Covered | `docs/adapter-boundary.md` Related section includes "Spec 17 — Workflow Extension DSL" link |
 
 ---
@@ -108,7 +108,7 @@ Files changed for Spec 17 (commits `c7677b6` — DSL parsing, and the pre-existi
 - **Discriminated errors:** ✅ — `WorkflowExtensionError` is a discriminated union with four `type` variants (`UnknownExtendsTarget`, `UnknownInsertionAnchor`, `BothInsertBeforeAndAfter`, `ExtendsCycle`), each with sufficient context for callers to branch safely.
 - **Early returns / no nested ternaries / no nested try-catch:** ✅ — `mergeWorkflow` uses early `return err(...)` guards; no nested ternaries; no try/catch in new code.
 - **Logging:** ✅ — No `console.*` in any new or modified source file.
-- **Engine/adapter boundary:** ✅ — Extension resolution runs entirely in `@weave/config`; `@weave/engine` receives the post-merge `WeaveConfig` with no `extends` or `insert_before`/`insert_after` fields visible to the engine. No adapter code participates in resolution.
+- **Engine/adapter boundary:** ✅ — Extension resolution runs entirely in `@weaveio/weave-config`; `@weaveio/weave-engine` receives the post-merge `WeaveConfig` with no `extends` or `insert_before`/`insert_after` fields visible to the engine. No adapter code participates in resolution.
 - **Tests:** ✅ — All tests use in-memory fixtures (DSL source strings parsed via `parseConfig`); no real harness process; no file I/O in test bodies.
 
 ---

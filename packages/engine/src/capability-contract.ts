@@ -142,11 +142,11 @@ export const CapabilityIdSchema = z.enum([
  * A single capability declaration supplied by an adapter.
  *
  * Tool-policy capability (`tool-policy-mapping`) describes how the adapter
- * maps Weave's `ToolPolicy` (from `@weave/core`) into harness-specific
+ * maps Weave's `ToolPolicy` (from `@weaveio/weave-core`) into harness-specific
  * permission models. The `ToolPolicy` type itself is not duplicated here —
- * adapters reference `@weave/core` for the allow/deny/ask enum values.
+ * adapters reference `@weaveio/weave-core` for the allow/deny/ask enum values.
  *
- * @see {@link ToolPolicySchema} in `@weave/core` for the referenced type.
+ * @see {@link ToolPolicySchema} in `@weaveio/weave-core` for the referenced type.
  */
 export interface CapabilityEntry {
   /** Stable capability identifier. */

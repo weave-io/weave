@@ -31,8 +31,8 @@ This spec is based on GitHub issue [#49](https://github.com/weave-io/weave/issue
 - The system shall define a `CapabilityReadiness` model with exactly these support levels: `native`, `emulated`, `degraded`, and `unsupported`.
 - The system shall define capability entries that record the capability id, display name or description, readiness level, implementation notes, runtime status when available, and blocking impact.
 - The system shall distinguish required capabilities from optional capabilities using a readiness profile rather than a single boolean `supported` flag.
-- The system shall export the public capability types from `@weave/engine` so adapters and CLI code can consume the same definitions.
-- The system shall avoid duplicating existing core types such as `ToolPolicy`; capability entries that describe tool policy support shall reference existing `@weave/core` concepts where relevant.
+- The system shall export the public capability types from `@weaveio/weave-engine` so adapters and CLI code can consume the same definitions.
+- The system shall avoid duplicating existing core types such as `ToolPolicy`; capability entries that describe tool policy support shall reference existing `@weaveio/weave-core` concepts where relevant.
 
 **Proof Artifacts:**
 - `Test: packages/engine/src/__tests__/capability*.test.ts passes` demonstrates the shared model accepts valid readiness values and rejects or prevents unsupported states.
@@ -147,4 +147,4 @@ No specific UI design requirements identified. Human-readable CLI output should 
 
 1. Should `token usage reporting when harness exposes usage` be represented as a conditional required capability with a `not-applicable` style status, or as a required capability whose readiness can be `emulated` only when equivalent usage data is available?
 2. Should the first implementation expose a standalone `SafeAdapterInit` interface, or should safe readiness checks be modeled as an optional method on adapter capability declarations?
-3. Should renderer implementations live in `@weave/engine` as normalized format helpers or in `@weave/cli` as presentation-specific code that consumes engine evaluation results?
+3. Should renderer implementations live in `@weaveio/weave-engine` as normalized format helpers or in `@weaveio/weave-cli` as presentation-specific code that consumes engine evaluation results?

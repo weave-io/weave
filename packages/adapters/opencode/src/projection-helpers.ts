@@ -21,8 +21,8 @@
  * @see docs/adapter-boundary.md
  */
 
-import type { DispatchAgentEffect, WorkflowRunnerError } from "@weave/engine";
-import { logger } from "@weave/engine";
+import type { DispatchAgentEffect, WorkflowRunnerError } from "@weaveio/weave-engine";
+import { logger } from "@weaveio/weave-engine";
 import type { ResultAsync } from "neverthrow";
 
 import type { OpenCodeAdapter } from "./adapter.js";

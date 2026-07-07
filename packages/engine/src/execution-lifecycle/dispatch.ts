@@ -6,7 +6,7 @@
  * and emits a `DispatchAgentEffect` wrapping a `RunAgentEffect`.
  */
 
-import type { WorkflowStep } from "@weave/core";
+import type { WorkflowStep } from "@weaveio/weave-core";
 import type { ResultAsync } from "neverthrow";
 import { err, errAsync, ok, okAsync, type Result } from "neverthrow";
 import type { RunAgentEffect } from "../run-agent-effects.js";

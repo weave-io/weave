@@ -1,12 +1,12 @@
-import { type ConfigLoadError, loadConfig } from "@weave/config";
-import { formatError, type WeaveConfig } from "@weave/core";
+import { type ConfigLoadError, loadConfig } from "@weaveio/weave-config";
+import { formatError, type WeaveConfig } from "@weaveio/weave-core";
 import {
   type AgentDescriptor,
   type CategoryMetadata,
   type ComposeError,
   composeAgentDescriptor,
   generateCategoryShuttles,
-} from "@weave/engine";
+} from "@weaveio/weave-engine";
 import { ok, type Result, type ResultAsync } from "neverthrow";
 import type { ParsedArgs } from "../args.js";
 import { type CliError, formatCliError } from "../errors.js";

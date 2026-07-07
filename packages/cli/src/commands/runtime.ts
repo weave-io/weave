@@ -22,7 +22,7 @@ import {
   type RuntimeStore,
   readSchemaVersion,
   type WorkflowInstance,
-} from "@weave/engine";
+} from "@weaveio/weave-engine";
 import { fromThrowable, ok, type Result } from "neverthrow";
 import type { CliError } from "../errors.js";
 import type { TerminalIO } from "../io/terminal.js";

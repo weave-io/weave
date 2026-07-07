@@ -1,5 +1,5 @@
 {
-  "name": "@weave",
+  "name": "@weaveio/weave",
   "version": "0.0.1",
   "private": true,
   "workspaces": [
@@ -11,19 +11,23 @@
     "packages/adapters/*"
   ],
   "scripts": {
-    "docs:dev": "bun run --filter '@weave/docs' dev",
-    "docs:build": "bun run --filter '@weave/docs' build",
-    "docs:preview": "bun run --filter '@weave/docs' preview",
+    "changeset": "changeset",
+    "docs:dev": "bun run --filter '@weaveio/weave-docs' dev",
+    "docs:build": "bun run --filter '@weaveio/weave-docs' build",
+    "docs:preview": "bun run --filter '@weaveio/weave-docs' preview",
     "validate-config": "bun packages/cli/src/main.ts validate --project",
-    "build": "bun run --filter '@weave/core' build && bun run --filter '@weave/engine' --filter '@weave/config' build && bun run --filter '@weave/cli' build && bun run --filter '@weave/adapter-*' build && bun run --filter '@weave/docs' build",
+    "build": "bun run --filter '@weaveio/weave-core' build && bun run --filter '@weaveio/weave-engine' --filter '@weaveio/weave-config' build && bun run --filter '@weaveio/weave-cli' build && bun run --filter '@weaveio/weave-adapter-*' build && bun run --filter '@weaveio/weave-docs' build",
     "test": "bun run --filter '*' test",
     "typecheck": "tsc --noEmit -p tsconfig.json && bun run --filter '*' typecheck",
     "lint": "biome lint packages/",
     "clean": "find . -type d -name dist -not -path '*/node_modules/*' | xargs rm -rf",
+    "version": "changeset version",
+    "release": "changeset publish",
     "prepare": "husky"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.14",
+    "@changesets/cli": "^2.31.0",
     "bun-types": "latest",
     "husky": "^9.1.7",
     "lint-staged": "^17.0.2",

@@ -16,7 +16,7 @@ This task proves that builtin delegation triggers are now declared in canonical 
 
 - 714 tests pass across the full suite with 0 failures.
 - `builtins.test.ts` extended with 3 new trigger assertions (11 total).
-- New `builtin-compose-smoke.test.ts` (15 tests) crosses `@weave/config` + `@weave/engine` boundary and asserts delegation section presence/absence per agent.
+- New `builtin-compose-smoke.test.ts` (15 tests) crosses `@weaveio/weave-config` + `@weaveio/weave-engine` boundary and asserts delegation section presence/absence per agent.
 
 ## Artifact: Full test suite
 
@@ -70,7 +70,7 @@ bun test packages/config/src/__tests__/builtin-compose-smoke.test.ts
 
 ## Artifact: Typecheck
 
-**What it proves:** No TypeScript errors introduced by adding `@weave/engine` as a workspace dependency to `@weave/config`.
+**What it proves:** No TypeScript errors introduced by adding `@weaveio/weave-engine` as a workspace dependency to `@weaveio/weave-config`.
 
 **Command:**
 

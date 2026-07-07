@@ -1,5 +1,5 @@
 /**
- * @weave/adapter-opencode
+ * @weaveio/weave-adapter-opencode
  *
  * OpenCode harness adapter and plugin entry point for the Weave orchestration
  * framework.
@@ -22,14 +22,14 @@
  * ```jsonc
  * // opencode.json
  * {
- *   "plugin": ["@weave/adapter-opencode/plugin"]
+ *   "plugin": ["@weaveio/weave-adapter-opencode/plugin"]
  * }
  * ```
  *
- * The bare `@weave/adapter-opencode` entry (`dist/index.js`, this file) exports
+ * The bare `@weaveio/weave-adapter-opencode` entry (`dist/index.js`, this file) exports
  * non-function values (constants, type re-exports) that cause OpenCode's
  * `getLegacyPlugins` loader to throw `TypeError: Plugin export is not a function`.
- * Use `@weave/adapter-opencode/plugin` (`dist/plugin.js`) as the OpenCode plugin
+ * Use `@weaveio/weave-adapter-opencode/plugin` (`dist/plugin.js`) as the OpenCode plugin
  * entry point. This barrel is for programmatic use only.
  *
  * Restart OpenCode after adding the plugin. The plugin entry point receives
@@ -180,7 +180,7 @@ export const DEFAULT_PLUGIN_LOG_SUBPATH = ".weave/weave.log";
 /**
  * Default export: the OpenCode `Plugin` function.
  *
- * OpenCode loads this as the plugin entry point when `@weave/adapter-opencode`
+ * OpenCode loads this as the plugin entry point when `@weaveio/weave-adapter-opencode`
  * is listed in `opencode.json`'s `plugin` array.
  */
 export {

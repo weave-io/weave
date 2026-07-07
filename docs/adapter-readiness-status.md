@@ -26,7 +26,7 @@ and adapters can implement them today.
 ## What Adapters Must Implement
 
 Every adapter must implement the three methods on the `HarnessAdapter` interface
-(exported from `@weave/engine`):
+(exported from `@weaveio/weave-engine`):
 
 ```ts
 interface HarnessAdapter {
@@ -71,7 +71,7 @@ See [Adapter Bootstrap Guide](adapter-bootstrap.md) for the canonical
 
 ## OpenCode Adapter — First-Slice Materialization
 
-`@weave/adapter-opencode` is a real first-slice materialization path as of
+`@weaveio/weave-adapter-opencode` is a real first-slice materialization path as of
 [Spec 20](specs/20-spec-opencode-adapter-materialization/20-spec-opencode-adapter-materialization.md).
 It is an **OpenCode plugin**: users install it by adding the package to the
 `plugin` array in their `opencode.json` config. OpenCode loads the plugin at
@@ -113,12 +113,12 @@ future specs:
 ```jsonc
 // opencode.json
 {
-  "plugin": ["@weave/adapter-opencode/plugin"],
+  "plugin": ["@weaveio/weave-adapter-opencode/plugin"],
 }
 ```
 
-> **Important**: Use the `@weave/adapter-opencode/plugin` subpath export, not the bare package name.
-> The bare `@weave/adapter-opencode` entry (`dist/index.js`) exports non-function values (constants,
+> **Important**: Use the `@weaveio/weave-adapter-opencode/plugin` subpath export, not the bare package name.
+> The bare `@weaveio/weave-adapter-opencode` entry (`dist/index.js`) exports non-function values (constants,
 > type re-exports) that cause OpenCode's `getLegacyPlugins` loader to throw
 > `TypeError: Plugin export is not a function`. The `./plugin` subpath (`dist/plugin.js`) exports
 > only the plugin function and is the correct entry point for OpenCode.
@@ -148,7 +148,7 @@ The returned `Hooks` object contains two hooks:
 **No user-authored wrapper script is required.** The `./plugin` bundle is the
 plugin entry point. The `WeavePlugin` function, a `server` alias (for
 `PluginModule` compatibility), and a `createWeavePlugin(options?)` factory are
-all exported from `@weave/adapter-opencode/plugin`.
+all exported from `@weaveio/weave-adapter-opencode/plugin`.
 
 See [ADR 0003 — OpenCode Adapter Materialization Shape](adr/0003-opencode-adapter-materialization-shape.md)
 for the full design rationale and [Spec 20](specs/20-spec-opencode-adapter-materialization/20-spec-opencode-adapter-materialization.md)
@@ -158,7 +158,7 @@ for the normative spec.
 
 ## SDK Version Pin
 
-The OpenCode adapter (`@weave/adapter-opencode`) pins `@opencode-ai/sdk` at
+The OpenCode adapter (`@weaveio/weave-adapter-opencode`) pins `@opencode-ai/sdk` at
 `~1.15.9` (currently resolved to `1.15.10`).
 
 > **Review on SDK major bumps.** The `~` range allows patch updates but not
@@ -175,9 +175,9 @@ The OpenCode adapter (`@weave/adapter-opencode`) pins `@opencode-ai/sdk` at
 | Spec                                                                                                      | Title                              | Adapter impact                                                                                                                                  |
 | --------------------------------------------------------------------------------------------------------- | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | [Spec 15](specs/15-spec-adapter-facing-materialization-api/15-spec-adapter-facing-materialization-api.md) | Adapter-Facing Materialization API | `materializeAgents` is the stable entry point; adapters call it instead of the removed `WeaveRunner`                                            |
-| [Spec 17](specs/17-spec-workflow-extension/17-spec-workflow-extension.md)                                 | Workflow Extension DSL             | `extends`, `insert_before`, `insert_after` resolved by `@weave/config` before the engine sees `WorkflowConfig`; no adapter changes needed       |
+| [Spec 17](specs/17-spec-workflow-extension/17-spec-workflow-extension.md)                                 | Workflow Extension DSL             | `extends`, `insert_before`, `insert_after` resolved by `@weaveio/weave-config` before the engine sees `WorkflowConfig`; no adapter changes needed       |
 | [Spec 18](specs/18-spec-delegation-exclusion/18-spec-delegation-exclusion.md)                             | Delegation Exclusion               | `routing.delegation_exclude` filtered inside `buildDelegationTargets()`; adapters receive pre-filtered `delegationTargets` on `AgentDescriptor` |
-| [Spec 19](specs/19-spec-plan-state-provider/19-spec-plan-state-provider.md)                               | Plan State Provider                | Adapters supply a `PlanStateProvider` to `completeStep`; use `BunFilesystemPlanStateProvider` from `@weave/config` for production               |
+| [Spec 19](specs/19-spec-plan-state-provider/19-spec-plan-state-provider.md)                               | Plan State Provider                | Adapters supply a `PlanStateProvider` to `completeStep`; use `BunFilesystemPlanStateProvider` from `@weaveio/weave-config` for production               |
 | [Spec 22](specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md)                     | Workflow-First Execution           | Commands, hooks, skills, scripts, and UI are adapter-owned projections of the engine-owned execution contract; adapters declare delivery via `command-entrypoints` readiness |
 
 ---
@@ -254,7 +254,7 @@ and [ADR 0004 — Workflow-First Execution Contract](adr/0004-workflow-first-exe
 
 ## OpenCode Adapter Delivery Evidence (Task 6.3)
 
-`@weave/adapter-opencode` provides the canonical example of an adapter-owned projection of the engine-owned execution contract. The delivery path is `packages/adapters/opencode/src/run-workflow.ts` — an explicit user-driven helper that calls `startExecution` only when invoked deliberately by a user-authorized trigger.
+`@weaveio/weave-adapter-opencode` provides the canonical example of an adapter-owned projection of the engine-owned execution contract. The delivery path is `packages/adapters/opencode/src/run-workflow.ts` — an explicit user-driven helper that calls `startExecution` only when invoked deliberately by a user-authorized trigger.
 
 ### What the evidence proves
 

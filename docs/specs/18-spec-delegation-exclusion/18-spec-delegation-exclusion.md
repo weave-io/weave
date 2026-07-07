@@ -288,7 +288,7 @@ See [`docs/prompt-composition.md`](../../prompt-composition.md) for the full tem
 
 ## Interaction with the Materialization API
 
-The materialization API (`materializeAgentDescriptors()` from `@weave/engine`, specified in [Spec 15](../15-spec-adapter-facing-materialization-api/15-spec-adapter-facing-materialization-api.md)) calls `composeAgentDescriptor()`, which calls `buildDelegationTargets()`. Because exclusion is applied inside `buildDelegationTargets()`, materialized `AgentDescriptor.delegationTargets` arrays are already filtered. Adapters receive pre-filtered lists and do not need to inspect `routing.delegation_exclude` themselves.
+The materialization API (`materializeAgentDescriptors()` from `@weaveio/weave-engine`, specified in [Spec 15](../15-spec-adapter-facing-materialization-api/15-spec-adapter-facing-materialization-api.md)) calls `composeAgentDescriptor()`, which calls `buildDelegationTargets()`. Because exclusion is applied inside `buildDelegationTargets()`, materialized `AgentDescriptor.delegationTargets` arrays are already filtered. Adapters receive pre-filtered lists and do not need to inspect `routing.delegation_exclude` themselves.
 
 ## Non-Goals (Out of Scope)
 
@@ -320,7 +320,7 @@ Checking `disabled.agents` first preserves the invariant that disabled agents ar
 
 - Follow the engine/adapter boundary in `docs/adapter-boundary.md`: exclusion logic lives in the engine (`buildDelegationTargets()`); adapters receive pre-filtered `delegationTargets` and must not re-implement exclusion.
 - Use `neverthrow` for fallible functions. `buildDelegationTargets()` is currently pure and synchronous; the debug log addition does not change its return type.
-- Use the shared pino logger from `@weave/engine` for the debug log. Never use `console.*`.
+- Use the shared pino logger from `@weaveio/weave-engine` for the debug log. Never use `console.*`.
 - Schema changes must be reflected in tests at all four levels: unit (schema), transform (validate), and E2E (parse_config). See the testing table in `AGENTS.md`.
 - Mention the relevant GitHub issue in any Pull Request created for this work.
 

@@ -64,7 +64,7 @@ describe("loadConfig", () => {
   it("(a) zero-config: builtin agents have inline prompt content (bundle-safe)", async () => {
     // After the bundle-safe fix, builtin agents use embedded inline `prompt`
     // content instead of `prompt_file` absolute paths. This ensures builtins
-    // compose correctly when @weave/config is bundled into an adapter.
+    // compose correctly when @weaveio/weave-config is bundled into an adapter.
     const reader = mockReader({});
     const result = await withHome(() => loadConfig(PROJECT, reader));
 

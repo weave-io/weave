@@ -11,7 +11,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import type { WeaveConfig } from "@weave/core";
+import type { WeaveConfig } from "@weaveio/weave-core";
 import type { Result } from "neverthrow";
 import type {
   ConfigSkillResolutionResult,

@@ -58,11 +58,11 @@ bun run typecheck
 
 ```text
 $ tsc --noEmit -p tsconfig.json && bun run --filter '*' typecheck
-@weave/core typecheck: Exited with code 0
-@weave/engine typecheck: Exited with code 0
-@weave/adapter-opencode typecheck: Exited with code 0
-@weave/config typecheck: Exited with code 0
-@weave/cli typecheck: Exited with code 0
+@weaveio/weave-core typecheck: Exited with code 0
+@weaveio/weave-engine typecheck: Exited with code 0
+@weaveio/weave-adapter-opencode typecheck: Exited with code 0
+@weaveio/weave-config typecheck: Exited with code 0
+@weaveio/weave-cli typecheck: Exited with code 0
 ```
 
 ## Artifact: test gate
@@ -82,30 +82,30 @@ bun run test
 
 ```text
 $ bun run --filter '*' test
-@weave/core test: bun test v1.3.13 (bf2e2cec)
-@weave/core test:  162 pass
-@weave/core test:  0 fail
-@weave/core test:  475 expect() calls
-@weave/core test: Ran 162 tests across 6 files. [32.00ms]
-@weave/core test: Exited with code 0
-@weave/engine test: bun test v1.3.13 (bf2e2cec)
-@weave/engine test:  972 pass
-@weave/engine test:  0 fail
-@weave/engine test:  2843 expect() calls
-@weave/engine test: Ran 972 tests across 19 files. [682.00ms]
-@weave/engine test: Exited with code 0
-@weave/config test: bun test v1.3.13 (bf2e2cec)
-@weave/config test:  298 pass
-@weave/config test:  0 fail
-@weave/config test:  636 expect() calls
-@weave/config test: Ran 298 tests across 7 files. [73.00ms]
-@weave/config test: Exited with code 0
-@weave/cli test: bun test v1.3.13 (bf2e2cec)
-@weave/cli test:  102 pass
-@weave/cli test:  0 fail
-@weave/cli test:  241 expect() calls
-@weave/cli test: Ran 102 tests across 9 files. [73.00ms]
-@weave/cli test: Exited with code 0
+@weaveio/weave-core test: bun test v1.3.13 (bf2e2cec)
+@weaveio/weave-core test:  162 pass
+@weaveio/weave-core test:  0 fail
+@weaveio/weave-core test:  475 expect() calls
+@weaveio/weave-core test: Ran 162 tests across 6 files. [32.00ms]
+@weaveio/weave-core test: Exited with code 0
+@weaveio/weave-engine test: bun test v1.3.13 (bf2e2cec)
+@weaveio/weave-engine test:  972 pass
+@weaveio/weave-engine test:  0 fail
+@weaveio/weave-engine test:  2843 expect() calls
+@weaveio/weave-engine test: Ran 972 tests across 19 files. [682.00ms]
+@weaveio/weave-engine test: Exited with code 0
+@weaveio/weave-config test: bun test v1.3.13 (bf2e2cec)
+@weaveio/weave-config test:  298 pass
+@weaveio/weave-config test:  0 fail
+@weaveio/weave-config test:  636 expect() calls
+@weaveio/weave-config test: Ran 298 tests across 7 files. [73.00ms]
+@weaveio/weave-config test: Exited with code 0
+@weaveio/weave-cli test: bun test v1.3.13 (bf2e2cec)
+@weaveio/weave-cli test:  102 pass
+@weaveio/weave-cli test:  0 fail
+@weaveio/weave-cli test:  241 expect() calls
+@weaveio/weave-cli test: Ran 102 tests across 9 files. [73.00ms]
+@weaveio/weave-cli test: Exited with code 0
 ```
 
 ## Artifact: git log

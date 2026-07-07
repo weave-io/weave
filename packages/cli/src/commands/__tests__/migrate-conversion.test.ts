@@ -23,7 +23,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { parseConfig } from "@weave/core";
+import { parseConfig } from "@weaveio/weave-core";
 import { MemoryFileSystem } from "../../fs/file-system.js";
 import { BufferTerminal } from "../../io/terminal.js";
 import { StaticPromptAdapter } from "../../prompt/index.js";

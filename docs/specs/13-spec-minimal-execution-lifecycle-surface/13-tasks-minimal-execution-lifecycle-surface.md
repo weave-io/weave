@@ -20,7 +20,7 @@
 
 ### Notes
 
-- Use Bun commands only: `bun run --filter '@weave/engine' test`, `bun run --filter '@weave/engine' typecheck`, and repository-level `bun run test`, `bun run typecheck`, `bun run lint`, `bun run build` where appropriate.
+- Use Bun commands only: `bun run --filter '@weaveio/weave-engine' test`, `bun run --filter '@weaveio/weave-engine' typecheck`, and repository-level `bun run test`, `bun run typecheck`, `bun run lint`, `bun run build` where appropriate.
 - Keep tests isolated from real harnesses. Use `MockAdapter` and `createInMemoryRuntimeStore()` or equivalent in-memory fixtures.
 - Use `neverthrow` `Result`/`ResultAsync` for fallible lifecycle operations and explicit discriminated error types.
 - Do not persist or emit raw prompts, completions, transcripts, credentials, tokens, cookies, authorization headers, or harness-private payloads.
@@ -38,8 +38,8 @@
 
 #### 1.0 Proof Artifact(s)
 
-- Typecheck: `bun run --filter '@weave/engine' typecheck` demonstrates lifecycle types and exports compile.
-- Test: `bun run --filter '@weave/engine' test` with lifecycle type tests demonstrates typed inputs, typed outputs, and discriminated error variants.
+- Typecheck: `bun run --filter '@weaveio/weave-engine' typecheck` demonstrates lifecycle types and exports compile.
+- Test: `bun run --filter '@weaveio/weave-engine' test` with lifecycle type tests demonstrates typed inputs, typed outputs, and discriminated error variants.
 - Documentation: diff for `docs/adapter-boundary.md` and/or `packages/engine/README.md` demonstrates lifecycle method responsibilities and Runtime Store relationship are documented.
 
 #### 1.0 Tasks
@@ -59,7 +59,7 @@
 - Test: `observeSession` test stores a sanitized `SessionSnapshot` and demonstrates secret-like/raw harness fields are excluded.
 - Test: `startExecution` test creates or updates a `WorkflowInstance` and acquires an active `ExecutionLease` with an in-memory Runtime Store.
 - Test: `resumeExecution` test rebinds an available or expired execution and returns a typed conflict for an unexpired foreign lease.
-- CLI/Test output: `bun run --filter '@weave/engine' test` demonstrates lifecycle start/resume behavior passes without a real harness.
+- CLI/Test output: `bun run --filter '@weaveio/weave-engine' test` demonstrates lifecycle start/resume behavior passes without a real harness.
 
 #### 2.0 Tasks
 
@@ -136,8 +136,8 @@
 
 #### 6.0 Tasks
 
-- [x] 6.1 Run `bun run --filter '@weave/engine' test` and resolve engine lifecycle regressions.
-- [x] 6.2 Run `bun run --filter '@weave/engine' typecheck` and resolve engine type/export issues.
+- [x] 6.1 Run `bun run --filter '@weaveio/weave-engine' test` and resolve engine lifecycle regressions.
+- [x] 6.2 Run `bun run --filter '@weaveio/weave-engine' typecheck` and resolve engine type/export issues.
 - [x] 6.3 Run repository-level `bun run lint`, `bun run typecheck`, `bun run build`, and `bun run test`.
 - [x] 6.4 Verify proof artifacts are sanitized and contain no real credentials, tokens, private identifiers, raw prompts, raw completions, transcripts, or harness-private payloads.
 - [x] 6.5 Request Warp security review for tool policy, lifecycle input validation, Runtime Store writes, and adapter trust boundaries.

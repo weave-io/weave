@@ -3,7 +3,7 @@
 | File | Why It Is Relevant |
 | --- | --- |
 | `packages/engine/src/compose.ts` | Defines `AgentDescriptor` and `composeAgentDescriptor()`, the main descriptor contract and construction path. |
-| `packages/engine/src/index.ts` | Public `@weave/engine` barrel export that adapter packages import from. |
+| `packages/engine/src/index.ts` | Public `@weaveio/weave-engine` barrel export that adapter packages import from. |
 | `packages/engine/src/descriptors.ts` | Generates category shuttles and currently controls disabled generated-shuttle omission. |
 | `packages/engine/src/runner.ts` | Existing runtime path that composes descriptors and passes them to adapters; compatibility must be preserved. |
 | `packages/engine/src/template-context.ts` | Holds category prompt context types and may need alignment with descriptor category metadata. |
@@ -20,7 +20,7 @@
 ### Notes
 
 - Tests should use `bun:test` and in-memory fixtures or `MockAdapter`; do not launch a real harness.
-- Use `bun run --filter '@weave/engine' typecheck`, targeted `bun test packages/engine/src/__tests__/...`, and final `bun run lint && bun run typecheck && bun test packages/engine/src` proof commands.
+- Use `bun run --filter '@weaveio/weave-engine' typecheck`, targeted `bun test packages/engine/src/__tests__/...`, and final `bun run lint && bun run typecheck && bun test packages/engine/src` proof commands.
 - Follow the engine/adapter boundary: engine produces normalized descriptors; adapters own concrete harness ids, files, model lookup, tool-name mapping, hooks, and runtime behavior.
 - Keep `AgentDescriptor.skills` as requested skill names only; do not add resolved skill payloads to descriptors.
 - Mention GitHub issue #72 in the eventual PR.
@@ -32,7 +32,7 @@
 #### 1.0 Proof Artifact(s)
 
 - Test: `bun test packages/engine/src/__tests__/compose.test.ts` passes with representative builtin descriptor assertions demonstrating `AgentDescriptor.name` is the stable internal id and optional `displayName` is presentation metadata only.
-- Typecheck: `bun run --filter '@weave/engine' typecheck` passes demonstrating the exported `AgentDescriptor` type, including optional `displayName`, compiles for engine consumers.
+- Typecheck: `bun run --filter '@weaveio/weave-engine' typecheck` passes demonstrating the exported `AgentDescriptor` type, including optional `displayName`, compiles for engine consumers.
 - Documentation: `docs/adapter-boundary.md#stable-adapter-descriptor-contract` field description demonstrates `name` and `displayName` semantics are documented without harness-specific ids.
 
 #### 1.0 Tasks

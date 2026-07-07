@@ -17,7 +17,7 @@
  * @see docs/specs/09-spec-adapter-provided-skill-resolution/09-spec-adapter-provided-skill-resolution.md
  */
 
-import type { WeaveConfig } from "@weave/core";
+import type { WeaveConfig } from "@weaveio/weave-core";
 import { err, ok, type Result } from "neverthrow";
 import { generateCategoryShuttles } from "./descriptors.js";
 

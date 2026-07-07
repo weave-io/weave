@@ -20,7 +20,7 @@
 - Unit tests should be placed alongside existing engine tests under `packages/engine/src/__tests__/`.
 - Use `bun test packages/engine/src/__tests__/materialization.test.ts` for focused materialization validation.
 - Use `bun test packages/engine/src/__tests__/runner.test.ts` when runner internals are changed.
-- Use `bun run --filter '@weave/engine' typecheck` to verify package-level public API typing.
+- Use `bun run --filter '@weaveio/weave-engine' typecheck` to verify package-level public API typing.
 - Follow the engine/adapter boundary: the materialization API accepts explicit context and returns normalized results; it must not scan harness-owned resources or invoke adapter lifecycle methods.
 - Planning assumptions for open questions: start with an ordered materialization result that can include descriptors plus minimal provenance/warnings if useful; do not include skill resolution or category provenance beyond what is needed for issue #70; refactor `WeaveRunner` to consume the API only if compatibility remains straightforward.
 
@@ -30,8 +30,8 @@
 
 #### 1.0 Proof Artifact(s)
 
-- Test: `packages/engine/src/__tests__/materialization.test.ts` import/export test passes and demonstrates adapters can import the materialization function and public types from `@weave/engine`.
-- Typecheck: `bun run --filter '@weave/engine' typecheck` passes and demonstrates the public API, input/output types, and discriminated error types compile.
+- Test: `packages/engine/src/__tests__/materialization.test.ts` import/export test passes and demonstrates adapters can import the materialization function and public types from `@weaveio/weave-engine`.
+- Typecheck: `bun run --filter '@weaveio/weave-engine' typecheck` passes and demonstrates the public API, input/output types, and discriminated error types compile.
 - Code review artifact: `packages/engine/src/materialization.ts` API signature demonstrates no `HarnessAdapter` parameter and no concrete harness-specific type names.
 
 #### 1.0 Tasks
@@ -43,7 +43,7 @@
 - [ ] 1.5 Implement the public function signature as `ResultAsync<MaterializationPlan, never>` from `neverthrow`; per-agent failures accumulate into `MaterializationPlan.errors[]` rather than causing top-level rejection.
 - [ ] 1.6 Export the public materialization function and public types from `packages/engine/src/index.ts`.
 - [ ] 1.7 Add an import/export test that imports the function and types from the package barrel.
-- [ ] 1.8 Run `bun run --filter '@weave/engine' typecheck` and save the command output as the typecheck proof artifact.
+- [ ] 1.8 Run `bun run --filter '@weaveio/weave-engine' typecheck` and save the command output as the typecheck proof artifact.
 
 ### [x] 2.0 Materialize deterministic descriptors for declared and generated agents
 

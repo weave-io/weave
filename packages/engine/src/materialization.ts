@@ -1,4 +1,4 @@
-import type { AgentConfig, WeaveConfig } from "@weave/core";
+import type { AgentConfig, WeaveConfig } from "@weaveio/weave-core";
 import { okAsync, ResultAsync } from "neverthrow";
 
 import {

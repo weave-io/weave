@@ -16,7 +16,7 @@
 | `package.json` | yes | Root scripts: `bun run lint`, `bun run typecheck`, `bun run build`, `bun run test`; Biome/lint-staged workspace setup. | none |
 | `.github/workflows/ci.yml` | yes | CI uses Bun 1.3.10, frozen install, lint, typecheck, build, test. | none |
 | `biome.json` | yes | 2-space formatting; no `console`; no explicit `any`; no nested ternary; kebab/snake-case filenames. | none |
-| `tsconfig.json` | yes | Strict TypeScript, `bun-types`, workspace aliases for `@weave/*`. | none |
+| `tsconfig.json` | yes | Strict TypeScript, `bun-types`, workspace aliases for `@weaveio/*`. | none |
 | `bunfig.toml` | yes | Bun tests use preload, 5s timeout, smol mode. | none |
 | `docs/adapter-boundary.md` | yes | Adapters own discovery/probes/concrete tools; engine accepts explicit context and stays harness-neutral. | none |
 | `docs/product-vision.md` | yes | Weave owns normalized intent; adapters translate into harness behavior and fill feature gaps. | none |
@@ -45,7 +45,7 @@
 | `CapabilityReadiness` has exactly `native`, `emulated`, `degraded`, `unsupported`. | 1.2 | `capability-contract.test.ts`; typecheck. |
 | Capability entries record id, display/description, readiness, implementation notes, runtime status, blocking impact. | 1.3, 1.4, 1.7 | Model fixture tests; sanitized fixture review. |
 | Required vs optional capabilities use readiness profile, not boolean support. | 2.1-2.3, 2.6-2.8 | Readiness tests; coverage guard. |
-| Public capability types exported from `@weave/engine`. | 1.8, 1.10 | `packages/engine/src/index.ts` review; `bun run typecheck`. |
+| Public capability types exported from `@weaveio/weave-engine`. | 1.8, 1.10 | `packages/engine/src/index.ts` review; `bun run typecheck`. |
 | Tool-policy capability avoids duplicating `ToolPolicy`. | 1.6, 1.9 | Tool-policy reference test/review. |
 | Core Readiness Profile exists. | 2.1 | `capability-readiness.test.ts`. |
 | Required capability list is complete. | 2.2, 2.10 | Coverage-guard test. |

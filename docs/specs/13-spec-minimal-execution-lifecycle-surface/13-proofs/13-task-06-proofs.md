@@ -49,11 +49,11 @@ bun run typecheck
 **Result summary:** Exit 0 for all packages.
 
 ```
-@weave/core typecheck: Exited with code 0
-@weave/engine typecheck: Exited with code 0
-@weave/adapter-opencode typecheck: Exited with code 0
-@weave/config typecheck: Exited with code 0
-@weave/cli typecheck: Exited with code 0
+@weaveio/weave-core typecheck: Exited with code 0
+@weaveio/weave-engine typecheck: Exited with code 0
+@weaveio/weave-adapter-opencode typecheck: Exited with code 0
+@weaveio/weave-config typecheck: Exited with code 0
+@weaveio/weave-cli typecheck: Exited with code 0
 ```
 
 ## Artifact: `bun run build`
@@ -79,10 +79,10 @@ bun run test
 **Result summary:** 1402 pass, 0 fail across all packages.
 
 ```
-@weave/core test:    Ran 161 tests across 6 files.
-@weave/engine test:  847 pass, 0 fail — Ran 847 tests across 19 files.
-@weave/config test:  298 pass, 0 fail — Ran 298 tests across 7 files.
-@weave/cli test:      96 pass, 0 fail — Ran 96 tests across 9 files.
+@weaveio/weave-core test:    Ran 161 tests across 6 files.
+@weaveio/weave-engine test:  847 pass, 0 fail — Ran 847 tests across 19 files.
+@weaveio/weave-config test:  298 pass, 0 fail — Ran 298 tests across 7 files.
+@weaveio/weave-cli test:      96 pass, 0 fail — Ran 96 tests across 9 files.
 ```
 
 ## Artifact: Security scan — proof artifacts

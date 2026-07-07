@@ -22,7 +22,7 @@
 - Files Changed vs Expected: 34 changed vs 23 listed in spec (11 additional files justified — see Evidence Appendix §C)
 - `bun run typecheck` → all 5 packages exit 0
 - Targeted adapter quality gate → 165 pass / 0 fail (7 files)
-- `bun run --filter @weave/adapter-opencode build` → exit 0, 407 modules (index) + 404 modules (plugin) bundled
+- `bun run --filter @weaveio/weave-adapter-opencode build` → exit 0, 407 modules (index) + 404 modules (plugin) bundled
 - `bun test` → 1833 pass / 0 fail
 - `opencode debug config` → plugin path resolved in merged config ✅
 - `opencode debug info` → plugin listed and executed; pino log `"Weave plugin starting"` emitted ✅
@@ -74,7 +74,7 @@
 | Bun-only runtime | No `node:fs`, `node:child_process`, `@types/node`, `ts-node` | Verified | `node:fs` violation remediated: `mkdirSync`/`writeFileSync` replaced with `Bun.write()` in `plugin.test.ts` |
 | `node:path` / `node:os` allowed | Bun compatibility modules permitted | Verified | `node:os` (`tmpdir`) used in `plugin.test.ts` is explicitly allowed |
 | `neverthrow` error handling | All fallible functions return `Result<T,E>` or `ResultAsync<T,E>` | Verified | Adapter and reconcile-agent use neverthrow throughout |
-| No `console.*` logging | Use shared pino logger from `@weave/engine` | Verified | Zero `console.` hits in `packages/adapters/opencode/src` |
+| No `console.*` logging | Use shared pino logger from `@weaveio/weave-engine` | Verified | Zero `console.` hits in `packages/adapters/opencode/src` |
 | Conventional Commits | All commits follow `<type>(<scope>): <summary>` | Verified | All 9 commits in range follow the convention |
 | No committed secrets | No credentials, API keys, or secret values in tracked files | Verified | Secret scan found no committed credentials; spec/proof text mentions "secret" only in descriptive prose |
 | Docs updated | Non-trivial changes reflected in `docs/` | Verified | ADR 0003, adapter-readiness-status, adapter-boundary, proof files, smoke checklist all present |
@@ -133,7 +133,7 @@ bun test packages/adapters/opencode/src/__tests__/
 #### A.3 Adapter build
 
 ```
-bun run --filter @weave/adapter-opencode build
+bun run --filter @weaveio/weave-adapter-opencode build
 ```
 
 **Result**: Exit 0. Bundles 407 modules (`index.js`) + 404 modules (`plugin.js`); declaration emit succeeds.

@@ -98,7 +98,7 @@ export class OpenCodeInstaller implements HarnessInstaller {
     }
 
     const modulePath = join(dirname(request.configPath), "weave-agents.json");
-    const content = `${JSON.stringify({ source: WEAVE_ENTRY, generatedBy: "@weave/cli" }, null, 2)}\n`;
+    const content = `${JSON.stringify({ source: WEAVE_ENTRY, generatedBy: "@weaveio/weave-cli" }, null, 2)}\n`;
     return this.fs
       .writeText(modulePath, content)
       .mapErr((error) => ({

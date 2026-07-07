@@ -16,7 +16,7 @@
  * from the effect payload.
  */
 
-import type { CompletionMethod, ToolPolicy } from "@weave/core";
+import type { CompletionMethod, ToolPolicy } from "@weaveio/weave-core";
 import type { AgentDescriptor } from "./compose.js";
 import type { EffectiveToolPolicy } from "./tool-policy.js";
 

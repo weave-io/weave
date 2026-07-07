@@ -622,7 +622,7 @@ export async function buildLangChainScorer(
           type: "EvalValidation" as const,
           message:
             `The @langchain/openai package is required for LangChain scoring but was not found. ` +
-            `Run "bun add @langchain/openai" in the @weave/cli package directory and retry. ` +
+            `Run "bun add @langchain/openai" in the @weaveio/weave-cli package directory and retry. ` +
             `Judge model: ${JUDGE_MODEL_ID}`,
         };
       }

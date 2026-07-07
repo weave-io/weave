@@ -44,7 +44,7 @@
 | Source File | Read | Standards Extracted | Conflicts |
 | --- | --- | --- | --- |
 | `AGENTS.md` | yes | Bun-only runtime; `neverthrow` for fallible paths; docs are first-class deliverables | none |
-| `README.md` | yes | `@weave/config` owns builtins/discovery/merge/prompt resolution; `bun run validate-config`; workspace package boundaries | none |
+| `README.md` | yes | `@weaveio/weave-config` owns builtins/discovery/merge/prompt resolution; `bun run validate-config`; workspace package boundaries | none |
 | `CONTRIBUTING.md` | not found | none | none |
 | `.github/pull_request_template.md` | not found | none | none |
 | `package.json` | yes | `bun run test`, `bun run typecheck`, `bun run lint`, and `bun run build` are repo quality gates | none |

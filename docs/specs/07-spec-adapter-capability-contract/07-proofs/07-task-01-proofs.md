@@ -8,7 +8,7 @@ types and helpers from `packages/engine/src/index.ts`.
 
 **Why it matters**: Establishes the shared vocabulary (readiness levels,
 capability IDs, entry shapes, contract structure) that engine, adapters, CLI,
-and tests can all import from `@weave/engine` without duplicating definitions.
+and tests can all import from `@weaveio/weave-engine` without duplicating definitions.
 
 ## What This Task Proves
 
@@ -19,7 +19,7 @@ and tests can all import from `@weave/engine` without duplicating definitions.
 3. `CapabilityEntry` accepts all readiness levels and all optional fields
    (notes, runtimeStatus, blockingImpact, supplier, remediationHint).
 4. `AdapterCapabilityContract` is structurally valid and schema-validated.
-5. Tool-policy capability references `@weave/core` `ToolPolicy` concepts in
+5. Tool-policy capability references `@weaveio/weave-core` `ToolPolicy` concepts in
    notes rather than duplicating allow/deny/ask enums.
 6. All public types and helpers are re-exported from the engine barrel.
 7. Synthetic fixtures contain no credentials, local paths, or harness secrets.
@@ -42,11 +42,11 @@ Ran 27 tests across 1 file. [95.00ms]
 ```
 bun run typecheck
 
-@weave/core typecheck: Exited with code 0
-@weave/config typecheck: Exited with code 0
-@weave/engine typecheck: Exited with code 0
-@weave/adapter-opencode typecheck: Exited with code 0
-@weave/cli typecheck: Exited with code 0
+@weaveio/weave-core typecheck: Exited with code 0
+@weaveio/weave-config typecheck: Exited with code 0
+@weaveio/weave-engine typecheck: Exited with code 0
+@weaveio/weave-adapter-opencode typecheck: Exited with code 0
+@weaveio/weave-cli typecheck: Exited with code 0
 ```
 
 ### Lint output
@@ -133,7 +133,7 @@ All acceptance criteria for Task 1.0 are met:
 - [x] All 19 capability IDs defined and schema-validated
 - [x] `CapabilityEntry` accepts all readiness levels and optional fields
 - [x] `AdapterCapabilityContract` structurally valid
-- [x] Tool-policy capability references `@weave/core` concepts (no duplication)
+- [x] Tool-policy capability references `@weaveio/weave-core` concepts (no duplication)
 - [x] All public types exported from engine barrel
 - [x] 27 tests pass, 0 fail
 - [x] Typecheck clean across all packages

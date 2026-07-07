@@ -8,7 +8,7 @@
 
 ## Context
 
-Weave's `@weave/adapter-opencode` package needed to evolve from a translation-only stub (that populated an in-memory map but made no SDK calls) into a real first-slice materialization path that registers Weave-authored agents into a running OpenCode instance.
+Weave's `@weaveio/weave-adapter-opencode` package needed to evolve from a translation-only stub (that populated an in-memory map but made no SDK calls) into a real first-slice materialization path that registers Weave-authored agents into a running OpenCode instance.
 
 Four design questions had to be answered before implementation could proceed:
 
@@ -28,7 +28,7 @@ The reference implementation in `~/projects/opencode-weave` (the legacy alpha) s
 
 ### 1. SDK-first, plugin/runtime-first entry path
 
-`@weave/adapter-opencode` is an **OpenCode plugin**. Users install it by adding the package to the `plugin` array in their `opencode.json` config. OpenCode loads the plugin at startup and calls the default-exported `WeavePlugin` function with a runtime context that includes a pre-constructed SDK client.
+`@weaveio/weave-adapter-opencode` is an **OpenCode plugin**. Users install it by adding the package to the `plugin` array in their `opencode.json` config. OpenCode loads the plugin at startup and calls the default-exported `WeavePlugin` function with a runtime context that includes a pre-constructed SDK client.
 
 The package exports a `WeavePlugin` function (and a `server` alias for `PluginModule` compatibility) that:
 
@@ -51,12 +51,12 @@ Both paths are required for full materialization.
 ```jsonc
 // opencode.json — direct plugin installation
 {
-  "plugin": ["@weave/adapter-opencode/plugin"]
+  "plugin": ["@weaveio/weave-adapter-opencode/plugin"]
 }
 ```
 
-> **Important**: Use the `@weave/adapter-opencode/plugin` subpath export, not the bare package name.
-> The bare `@weave/adapter-opencode` entry (`dist/index.js`) exports non-function values (constants,
+> **Important**: Use the `@weaveio/weave-adapter-opencode/plugin` subpath export, not the bare package name.
+> The bare `@weaveio/weave-adapter-opencode` entry (`dist/index.js`) exports non-function values (constants,
 > type re-exports) that cause OpenCode's `getLegacyPlugins` loader to throw `TypeError: Plugin export
 > is not a function`. The `./plugin` subpath (`dist/plugin.js`) exports only the plugin function and
 > is the correct entry point for OpenCode.
@@ -131,7 +131,7 @@ The `[weave-managed]` ownership tag is embedded in the agent's `description` fie
 
 ### What changes
 
-- `@weave/adapter-opencode` is now a real first-slice materialization path, not a translation-only stub.
+- `@weaveio/weave-adapter-opencode` is now a real first-slice materialization path, not a translation-only stub.
 - `spawnSubagent(descriptor)` performs the full `list → reconcile → create/update` flow when a client is injected.
 - `WeavePlugin` now returns a `Hooks` object **immediately** with a `config` hook (injects ownership-tagged agent configs into `cfg.agent`) and an `event` hook (defers SDK reconciliation to `session.created`). This makes agents visible to `opencode debug config` at startup without blocking on SDK/DB calls.
 - The `config` hook applies `tagWithOwnership()` before injecting agents so that deferred reconciliation classifies them as `"update"` rather than `"collision"`, eliminating startup collision spam.
@@ -142,7 +142,7 @@ The `[weave-managed]` ownership tag is embedded in the agent's `description` fie
 
 ### What is now possible
 
-- Users can install `@weave/adapter-opencode` as an OpenCode plugin and have their `.weave/config.weave` agents materialized into OpenCode at startup.
+- Users can install `@weaveio/weave-adapter-opencode` as an OpenCode plugin and have their `.weave/config.weave` agents materialized into OpenCode at startup.
 - Weave-managed agents are protected from accidental overwrite by the `[weave-managed]` ownership check.
 - The adapter can be tested end-to-end with mocked clients — no live OpenCode process required.
 - Future slices can add prune/delete reconciliation, workflow-lifecycle expansion, and richer model context without changing the core injection and ownership patterns established here.

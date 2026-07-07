@@ -81,7 +81,7 @@
 - [ ] 3.3 Export `WorkflowExtensionError` and all variant types from `packages/core/src/index.ts`.
 - [ ] 3.4 Run `bun run typecheck` and save output as proof artifact.
 
-### [ ] 4.0 Implement extension resolution in `@weave/config`
+### [ ] 4.0 Implement extension resolution in `@weaveio/weave-config`
 
 #### 4.0 Proof Artifact(s)
 

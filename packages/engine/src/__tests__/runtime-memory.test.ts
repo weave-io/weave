@@ -5,7 +5,7 @@
  * contract as the SQLite store: find/get semantics, lease conflict semantics,
  * transaction/unit-of-work API, and configurable failure injection.
  *
- * All imports come from the public `@weave/engine` barrel — no private paths.
+ * All imports come from the public `@weaveio/weave-engine` barrel — no private paths.
  *
  * @see docs/specs/12-spec-runtime-persistence/12-spec-runtime-persistence.md
  */
@@ -24,7 +24,7 @@ import {
   journalWriteError,
   queryError,
   type RuntimeStore,
-} from "@weave/engine";
+} from "@weaveio/weave-engine";
 import { errAsync, okAsync } from "neverthrow";
 
 // ---------------------------------------------------------------------------

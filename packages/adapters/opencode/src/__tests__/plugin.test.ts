@@ -42,7 +42,7 @@
 import { describe, expect, it } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { logDestination } from "@weave/engine";
+import { logDestination } from "@weaveio/weave-engine";
 import { okAsync, ResultAsync } from "neverthrow";
 import type { OpenCodeClientError, OpenCodeClientFacade } from "../index.js";
 import {
@@ -613,8 +613,8 @@ describe("WeavePlugin — bundle-safe builtin prompt resolution", () => {
   /**
    * Regression test for the `import.meta.dir` bundling problem.
    *
-   * **Root cause**: When `@weave/config` is bundled into
-   * `@weave/adapter-opencode/dist/plugin.js`, `import.meta.dir` in
+   * **Root cause**: When `@weaveio/weave-config` is bundled into
+   * `@weaveio/weave-adapter-opencode/dist/plugin.js`, `import.meta.dir` in
    * `loader.ts` resolves to the adapter's dist directory instead of
    * `packages/config/`. This caused all 8 builtin prompt-file-backed agents
    * to fail with `DescriptorCompositionFailure` because the resolved path
@@ -997,7 +997,7 @@ describe("WeavePlugin — automatic file-backed logging", () => {
     // the config logger was unaffected — it still wrote to its own stdout sink.
     //
     // Fix: the config logger now uses the same `logDestination` from
-    // `@weave/engine`. After `redirectLogsToFile()`, both the engine logger
+    // `@weaveio/weave-engine`. After `redirectLogsToFile()`, both the engine logger
     // and the config logger write to the file.
     //
     // Verification strategy:

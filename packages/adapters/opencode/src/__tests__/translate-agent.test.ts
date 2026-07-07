@@ -14,7 +14,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import type { AgentDescriptor, EffectiveToolPolicy } from "@weave/engine";
+import type { AgentDescriptor, EffectiveToolPolicy } from "@weaveio/weave-engine";
 import { translateAgent } from "../translate-agent.js";
 
 // ---------------------------------------------------------------------------

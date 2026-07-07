@@ -35,7 +35,7 @@ import {
   handleUserInterrupt,
   startExecution,
   type WorkflowExecutionContext,
-} from "@weave/engine";
+} from "@weaveio/weave-engine";
 import { cfg, MockPlanStateProvider } from "./fixtures.js";
 
 const TWO_STEP_WORKFLOW = cfg(`
@@ -368,7 +368,7 @@ describe("handleUserInterrupt", () => {
       {
         workflowInstanceId: instanceId,
         leaseId: "wrong-lease" as ReturnType<
-          typeof import("@weave/engine").createExecutionLeaseId
+          typeof import("@weaveio/weave-engine").createExecutionLeaseId
         >,
         signal: "pause",
       },

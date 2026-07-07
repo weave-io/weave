@@ -47,7 +47,7 @@ No CRITICAL or HIGH issues. One MEDIUM traceability note (proof doc language vs 
 | T1 | `bun test packages/engine/src/__tests__/capability-contract.test.ts` | Verified | 27 pass, 0 fail, 102 expect() calls — re-run confirmed |
 | T1 | `bun run typecheck` | Verified | All 5 packages exit code 0 — re-run confirmed |
 | T1 | `packages/engine/src/index.ts` exports capability model | Verified | 12 types + 7 exports confirmed via grep |
-| T1 | Tool-policy capability references `@weave/core` concepts | Verified | No policy enum duplication; notes reference `ToolPolicy` concepts |
+| T1 | Tool-policy capability references `@weaveio/weave-core` concepts | Verified | No policy enum duplication; notes reference `ToolPolicy` concepts |
 | T1 | Fixtures sanitized | Verified | No credentials, `/Users/`, API keys in any fixture |
 | T2 | `bun test packages/engine/src/__tests__/capability-readiness.test.ts` | Verified | 25 pass, 0 fail, 92 expect() calls — re-run confirmed |
 | T2 | Coverage guard: 12 required + 7 optional = 19 | Verified | `REQUIRED_CAPABILITIES` and `OPTIONAL_CAPABILITIES` arrays validated by test |
@@ -97,20 +97,20 @@ bun test (all files)
   Ran 415 tests across 28 files. [237ms]
 
 bun run typecheck
-  @weave/core typecheck: Exited with code 0
-  @weave/config typecheck: Exited with code 0
-  @weave/engine typecheck: Exited with code 0
-  @weave/adapter-opencode typecheck: Exited with code 0
-  @weave/cli typecheck: Exited with code 0
+  @weaveio/weave-core typecheck: Exited with code 0
+  @weaveio/weave-config typecheck: Exited with code 0
+  @weaveio/weave-engine typecheck: Exited with code 0
+  @weaveio/weave-adapter-opencode typecheck: Exited with code 0
+  @weaveio/weave-cli typecheck: Exited with code 0
 
 bun run lint
   Checked 75 files in 77ms. No fixes applied.
 
 bun run build
-  @weave/config build: Exited with code 0
-  @weave/engine build: Exited with code 0
-  @weave/cli build: Exited with code 0
-  @weave/adapter-opencode build: Exited with code 0
+  @weaveio/weave-config build: Exited with code 0
+  @weaveio/weave-engine build: Exited with code 0
+  @weaveio/weave-cli build: Exited with code 0
+  @weaveio/weave-adapter-opencode build: Exited with code 0
 ```
 
 ### Capability-Contract File Verification

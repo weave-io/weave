@@ -25,7 +25,7 @@
 ### Notes
 
 - Unit tests should be placed alongside existing package tests under `packages/engine/src/__tests__/` and `packages/config/src/__tests__/`.
-- Use Bun commands from repository docs: `bun run --filter '@weave/engine' test`, `bun run --filter '@weave/engine' typecheck`, `bun test`, `bun run typecheck`, and `bun run lint`.
+- Use Bun commands from repository docs: `bun run --filter '@weaveio/weave-engine' test`, `bun run --filter '@weaveio/weave-engine' typecheck`, `bun test`, `bun run typecheck`, and `bun run lint`.
 - Follow repository style: no `console.*`, no explicit `any`, no nested ternaries, kebab-case or snake_case filenames, and `neverthrow` results for expected failures.
 - Do not start or depend on any real harness; tests must use pure config/engine fixtures or existing builtin composition smoke patterns.
 - Proof artifacts must be sanitized: no real secrets, credentials, private paths beyond repository-relative paths, environment dumps, or harness-specific tokens in built-in prompts.
@@ -36,9 +36,9 @@
 
 #### 1.0 Proof Artifact(s)
 
-- Diff: `packages/engine/package.json` and lockfile show the canonical `mustache` dependency added to `@weave/engine` with types only if required.
+- Diff: `packages/engine/package.json` and lockfile show the canonical `mustache` dependency added to `@weaveio/weave-engine` with types only if required.
 - Test: `bun test packages/engine/src/__tests__/template-renderer.test.ts` covers supported Mustache subset, reference extraction, escaped literal tags, unsupported tags, malformed templates, unknown/unsafe/function-valued paths, and unresolved-tag detection.
-- CLI: `bun run --filter '@weave/engine' test` passes, proving package integration.
+- CLI: `bun run --filter '@weaveio/weave-engine' test` passes, proving package integration.
 - Code review artifact: `packages/engine/src/template-renderer.ts` has no filesystem, environment, process, helper, lambda, or partial-loading behavior and returns `neverthrow` results.
 
 #### 1.0 Tasks
@@ -54,7 +54,7 @@
 - [x] 1.9 Render parsed templates with default Mustache HTML escaping for double braces and support triple braces for trusted Markdown-rich fields.
 - [x] 1.10 Add a post-render unresolved-tag check that fails real unescaped `{{...}}` / `{{{...}}}` leftovers while allowing restored escaped literals.
 - [x] 1.11 Add `packages/engine/src/__tests__/template-renderer.test.ts` covering supported tags, nested sections, comments, `{{.}}`, escaped literals, unknown paths, unsafe paths, function values, unsupported tags, malformed syntax, and unresolved tags.
-- [x] 1.12 Run `bun run --filter '@weave/engine' test` and record the passing renderer proof artifact.
+- [x] 1.12 Run `bun run --filter '@weaveio/weave-engine' test` and record the passing renderer proof artifact.
 
 ### [x] 2.0 Define the bounded Template Context and delegation guidance generator
 
@@ -63,7 +63,7 @@
 - Diff: `packages/engine/src/template-context.ts` contains `AgentPromptTemplateContext`, allowed-path metadata, context builders, and delegation Markdown/Mermaid generation helpers.
 - Test: `bun test packages/engine/src/__tests__/template-context.test.ts` proves agent/category/tool-policy/delegation context shape, optional path behavior, and no raw config exposure.
 - Test: delegation output cases prove stable Mermaid `flowchart TD`, escaped labels, deduplicated domain edge labels, compact bullets, and omitted `delegation-section`/`delegation-mermaid` when no targets exist.
-- Typecheck: `bun run --filter '@weave/engine' typecheck` proves exported context/error types compile without exporting renderer internals.
+- Typecheck: `bun run --filter '@weaveio/weave-engine' typecheck` proves exported context/error types compile without exporting renderer internals.
 
 #### 2.0 Tasks
 
@@ -78,7 +78,7 @@
 - [x] 2.9 Omit `delegation-section` and `delegation-mermaid` when there are no eligible delegation targets while keeping `delegation.targets` as an empty array. **[SUPERSEDED — `delegation-section` and `delegation-mermaid` were removed entirely]**
 - [x] 2.10 Add `packages/engine/src/__tests__/template-context.test.ts` covering context shape, no raw config/model/temperature/path exposure, optional category behavior, allowed optional paths, Mermaid escaping, domain labels, bullets, and no-target omission.
 - [x] 2.11 Export only the intended Template Context and error types from `packages/engine/src/index.ts`; keep low-level renderer functions internal.
-- [x] 2.12 Run `bun run --filter '@weave/engine' typecheck` and record the passing type proof artifact.
+- [x] 2.12 Run `bun run --filter '@weaveio/weave-engine' typecheck` and record the passing type proof artifact.
 
 ### [x] 3.0 Integrate template rendering into `composeAgentDescriptor()`
 
@@ -86,7 +86,7 @@
 
 - Test: updated `packages/engine/src/__tests__/compose.test.ts` proves inline prompt rendering, prompt-file rendering, rendered `prompt_append`, fallback placement, primary-source-only fallback suppression, append references not suppressing fallback, static prompt compatibility, and typed `PromptTemplateError` results.
 - Test: compose error cases prove `agentName`, `sourceKind`, optional `promptFilePath`, line/column where available, and nested reason discriminants.
-- CLI: `bun run --filter '@weave/engine' test` passes without real harnesses.
+- CLI: `bun run --filter '@weaveio/weave-engine' test` passes without real harnesses.
 - Code review artifact: `packages/engine/src/compose.ts` keeps `ResultAsync<AgentDescriptor, ComposeError>`, avoids expected-failure `try/catch`, and does not move prompt logic into adapters.
 
 #### 3.0 Tasks
@@ -101,7 +101,7 @@
 - [x] 3.8 Map renderer/context errors into `PromptTemplateError` with `agentName`, `sourceKind`, optional `promptFilePath`, message, path/tag, and line/column where available.
 - [x] 3.9 Keep `composeAgentDescriptor()` returning `ResultAsync<AgentDescriptor, ComposeError>` and avoid expected-failure `try/catch` control flow.
 - [x] 3.10 Extend `packages/engine/src/__tests__/compose.test.ts` for inline template rendering, prompt-file template rendering, rendered append, fallback placement, source-only suppression, append no-suppress behavior, static prompt compatibility, and typed template error metadata.
-- [x] 3.11 Run `bun run --filter '@weave/engine' test` and record the passing compose proof artifact.
+- [x] 3.11 Run `bun run --filter '@weaveio/weave-engine' test` and record the passing compose proof artifact.
 
 ### [x] 4.0 Align builtin prompts and config smoke coverage with rendered templates
 

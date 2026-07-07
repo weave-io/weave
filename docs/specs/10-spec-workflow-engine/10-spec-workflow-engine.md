@@ -2,7 +2,7 @@
 
 ## Introduction/Overview
 
-Implement the harness-agnostic workflow execution engine in `@weave/engine` so validated `.weave` workflow definitions can drive multi-step dogfood execution. The primary goal is to turn workflow declarations into deterministic runtime behavior: start a workflow instance, dispatch each step to the correct agent, evaluate step completion, pass artifacts forward, and return abstract effects that adapters can materialize in their own harnesses.
+Implement the harness-agnostic workflow execution engine in `@weaveio/weave-engine` so validated `.weave` workflow definitions can drive multi-step dogfood execution. The primary goal is to turn workflow declarations into deterministic runtime behavior: start a workflow instance, dispatch each step to the correct agent, evaluate step completion, pass artifacts forward, and return abstract effects that adapters can materialize in their own harnesses.
 
 This spec is based on GitHub issue [#10](https://github.com/weave-io/weave/issues/10). It builds on the existing workflow schema, runtime persistence store, and execution lifecycle surface while preserving the boundary that the engine owns workflow semantics and adapters own harness-specific event mapping and effect application.
 

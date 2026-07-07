@@ -1,8 +1,8 @@
 /**
  * Integration smoke test: builtin config → compose pipeline.
  *
- * Composes all 8 builtin agents through the public `@weave/config` API
- * (`getBuiltinConfig` + `resolvePromptPaths`) and the public `@weave/engine`
+ * Composes all 8 builtin agents through the public `@weaveio/weave-config` API
+ * (`getBuiltinConfig` + `resolvePromptPaths`) and the public `@weaveio/weave-engine`
  * API (`composeAgentDescriptor`). This test crosses the package boundary to
  * prove the full zero-config pipeline works end-to-end without any harness.
  *
@@ -26,9 +26,9 @@
 
 import { beforeAll, describe, expect, it } from "bun:test";
 import { resolve } from "node:path";
-import type { WeaveConfig } from "@weave/core";
-import type { AgentDescriptor } from "@weave/engine";
-import { composeAgentDescriptor } from "@weave/engine";
+import type { WeaveConfig } from "@weaveio/weave-core";
+import type { AgentDescriptor } from "@weaveio/weave-engine";
+import { composeAgentDescriptor } from "@weaveio/weave-engine";
 import { getBuiltinConfig, resolvePromptPaths } from "../index.js";
 
 // ---------------------------------------------------------------------------

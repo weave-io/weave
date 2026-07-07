@@ -17,7 +17,7 @@ const LOG_LEVELS = [
 ] as const;
 
 /**
- * Schema for all environment variables consumed by @weave/engine.
+ * Schema for all environment variables consumed by @weaveio/weave-engine.
  *
  * Add new variables here as the engine grows. Every variable is
  * validated once at process start so the rest of the codebase works
@@ -82,7 +82,7 @@ export function parseEnv(
 }
 
 /**
- * Validated, typed snapshot of `process.env` for @weave/engine.
+ * Validated, typed snapshot of `process.env` for @weaveio/weave-engine.
  *
  * Evaluated once when the module is first imported. An invalid
  * environment logs a fatal message and exits the process before any

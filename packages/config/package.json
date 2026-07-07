@@ -1,10 +1,17 @@
 {
-  "name": "@weave/config",
+  "name": "@weaveio/weave-config",
   "version": "0.0.1",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "description": "Config discovery, merge, and loading pipeline for Weave",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "module": "./dist/index.js",
+  "files": [
+    "dist"
+  ],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -18,8 +25,8 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@weave/core": "workspace:*",
-    "@weave/engine": "workspace:*",
+    "@weaveio/weave-core": "workspace:*",
+    "@weaveio/weave-engine": "workspace:*",
     "neverthrow": "^8.2.0",
     "pino": "^9.6.0"
   },

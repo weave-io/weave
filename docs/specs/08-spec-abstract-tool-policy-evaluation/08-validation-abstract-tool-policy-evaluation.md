@@ -43,10 +43,10 @@
 
 | FR | Requirement | Status | Evidence |
 |----|-------------|--------|----------|
-| U1-FR1 | Export `ToolPermission`, `ToolPolicy`, `ToolPermissionSchema`, `ToolPolicySchema` from `@weave/core` | ✅ PASS | `packages/core/src/index.ts` lines 59–60, 76–77; schema.test.ts 35 pass |
+| U1-FR1 | Export `ToolPermission`, `ToolPolicy`, `ToolPermissionSchema`, `ToolPolicySchema` from `@weaveio/weave-core` | ✅ PASS | `packages/core/src/index.ts` lines 59–60, 76–77; schema.test.ts 35 pass |
 | U1-FR2 | Engine-owned `EffectiveToolPolicy` with exactly one permission per capability (read/write/execute/delegate/network) | ✅ PASS | `tool-policy.ts` line 47–49: `type EffectiveToolPolicy = { [K in keyof Required<ToolPolicy>]: ToolPermission }` |
 | U1-FR3 | Named default permission for missing capability fields; default is `ask` | ✅ PASS | `tool-policy.ts` line 63: `export const DEFAULT_PERMISSION: ToolPermission = "ask"` |
-| U1-FR4 | No redefinition of `allow \| deny \| ask` literals outside `@weave/core` | ✅ PASS | `tool-policy.ts` imports only `type { ToolPermission, ToolPolicy }` from `@weave/core`; no enum redefinition |
+| U1-FR4 | No redefinition of `allow \| deny \| ask` literals outside `@weaveio/weave-core` | ✅ PASS | `tool-policy.ts` imports only `type { ToolPermission, ToolPolicy }` from `@weaveio/weave-core`; no enum redefinition |
 
 #### Unit 2: Effective Tool Policy Evaluation API
 
@@ -56,7 +56,7 @@
 | U2-FR2 | Returns configured permission for any capability present in input | ✅ PASS | runner.test.ts "effectiveToolPolicy reflects explicit tool_policy values"; tool-policy.test.ts table-driven tests |
 | U2-FR3 | Returns `ask` for any capability omitted from input policy | ✅ PASS | tool-policy.test.ts "undefined policy → all-ask"; runner.test.ts "agent with no tool_policy: effectiveToolPolicy defaults all capabilities to ask" |
 | U2-FR4 | No harness I/O, harness config scan, concrete tool names, or adapter runtime calls | ✅ PASS | `grep -n "Bun.file\|Bun.spawn\|require\|child_process"` returns nothing; code review artifact in 08-task-02-proofs.md |
-| U2-FR5 | Exported from `@weave/engine` via `packages/engine/src/index.ts` | ✅ PASS | `engine/src/index.ts` line 57: `evaluateEffectiveToolPolicy` |
+| U2-FR5 | Exported from `@weaveio/weave-engine` via `packages/engine/src/index.ts` | ✅ PASS | `engine/src/index.ts` line 57: `evaluateEffectiveToolPolicy` |
 
 #### Unit 3: Adapter-Facing Concrete Tool Classification Contract
 
@@ -200,11 +200,11 @@ Ran 512 tests across 29 files. [221.00ms]
 ```
 $ bun run typecheck
 $ tsc --noEmit -p tsconfig.json && bun run --filter '*' typecheck
-@weave/core typecheck: Exited with code 0
-@weave/config typecheck: Exited with code 0
-@weave/engine typecheck: Exited with code 0
-@weave/adapter-opencode typecheck: Exited with code 0
-@weave/cli typecheck: Exited with code 0
+@weaveio/weave-core typecheck: Exited with code 0
+@weaveio/weave-config typecheck: Exited with code 0
+@weaveio/weave-engine typecheck: Exited with code 0
+@weaveio/weave-adapter-opencode typecheck: Exited with code 0
+@weaveio/weave-cli typecheck: Exited with code 0
 ```
 
 ### 4E — Lint Output
@@ -219,11 +219,11 @@ Checked 78 files in 55ms. No fixes applied.
 
 ```
 $ bun run build
-@weave/core build: Bundled 88 modules in 13ms — index.js 0.58 MB
-@weave/engine build: Bundled 117 modules in 14ms — index.js 0.70 MB
-@weave/config build: Bundled 125 modules in 15ms — index.js 0.72 MB
-@weave/cli build: Bundled 151 modules in 15ms — index.js 0.89 MB
-@weave/adapter-opencode build: Bundled 1 module in 2ms — index.js 83 bytes
+@weaveio/weave-core build: Bundled 88 modules in 13ms — index.js 0.58 MB
+@weaveio/weave-engine build: Bundled 117 modules in 14ms — index.js 0.70 MB
+@weaveio/weave-config build: Bundled 125 modules in 15ms — index.js 0.72 MB
+@weaveio/weave-cli build: Bundled 151 modules in 15ms — index.js 0.89 MB
+@weaveio/weave-adapter-opencode build: Bundled 1 module in 2ms — index.js 83 bytes
 All packages: Exited with code 0
 ```
 

@@ -121,7 +121,7 @@ packages/cli/src/
 
 **Consequence**: `packages/cli/src/commands/runtime.ts` shall replace its local `SENSITIVE_KEYS` set with an import from the engine's canonical sanitization module. The comment "Mirrors the denylist in the engine sanitizer" (line 198) shall be removed.
 
-**Implementation (Task 5)**: `isDeniedKey(key: string): boolean` was exported from `packages/engine/src/runtime/sanitizer.ts` and re-exported from `packages/engine/src/index.ts`. `packages/cli/src/commands/runtime.ts` now imports `isDeniedKey` from `@weave/engine` and the local `isSensitiveKey` function (with its duplicated denylist) was removed. The comment "Mirrors the denylist in the engine sanitizer" was removed along with the local copy.
+**Implementation (Task 5)**: `isDeniedKey(key: string): boolean` was exported from `packages/engine/src/runtime/sanitizer.ts` and re-exported from `packages/engine/src/index.ts`. `packages/cli/src/commands/runtime.ts` now imports `isDeniedKey` from `@weaveio/weave-engine` and the local `isSensitiveKey` function (with its duplicated denylist) was removed. The comment "Mirrors the denylist in the engine sanitizer" was removed along with the local copy.
 
 ---
 
