@@ -19,12 +19,12 @@
       "dependencies": {
         "@opencode-ai/plugin": "~1.15.9",
         "@opencode-ai/sdk": "~1.15.9",
-        "@weaveio/weave-config": "workspace:*",
-        "@weaveio/weave-core": "workspace:*",
-        "@weaveio/weave-engine": "workspace:*",
         "neverthrow": "^8.2.0",
       },
       "devDependencies": {
+        "@weaveio/weave-config": "workspace:*",
+        "@weaveio/weave-core": "workspace:*",
+        "@weaveio/weave-engine": "workspace:*",
         "typescript": "^5.4.5",
       },
     },
