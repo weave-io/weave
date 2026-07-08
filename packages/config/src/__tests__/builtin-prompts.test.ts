@@ -85,6 +85,9 @@ const ALLOWED_MUSTACHE_PLACEHOLDERS = [
   // Section/loop placeholders (Mustache block tags)
   "{{#delegation.targets}}",
   "{{/delegation.targets}}",
+  "{{#triggers}}",
+  "{{/triggers}}",
+  "{{trigger}}",
   "{{#isCategory}}",
   "{{/isCategory}}",
   "{{#agent.skills}}",

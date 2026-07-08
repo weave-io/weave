@@ -12,7 +12,7 @@
  *
  * Key assertions:
  * - All 8 builtins compose to non-empty prompts.
- * - Loom (prose-first template) lists specialist agents under `# Available Agents`
+ * - Loom (prose-first template) lists specialist agents under `# Delegation Guidance`
  *   without an embedded Mermaid diagram.
  * - Tapestry (delegate allow) produces a `## Delegation` section with a Mermaid
  *   workflow-sequence diagram.
@@ -132,9 +132,35 @@ describe("builtin compose smoke", () => {
   // Delegating agents: ## Delegation, Mermaid, specialist names
   // ---------------------------------------------------------------------------
 
-  it("loom composedPrompt contains # Available Agents section", () => {
+  it("loom composedPrompt contains # Delegation Guidance section", () => {
     const descriptor = getDescriptor("loom");
-    expect(descriptor.composedPrompt).toContain("# Available Agents");
+    expect(descriptor.composedPrompt).toContain("# Delegation Guidance");
+  });
+
+  it("loom composedPrompt contains trigger-based delegation guidance for each specialist", () => {
+    const descriptor = getDescriptor("loom");
+    // Thread triggers
+    expect(descriptor.composedPrompt).toContain("Tracing symbols, call graphs, and data flow across the codebase");
+    // Spindle triggers
+    expect(descriptor.composedPrompt).toContain("Fetching external documentation, API references, or library guides");
+    // Pattern triggers
+    expect(descriptor.composedPrompt).toContain("Creating structured implementation plans before execution");
+    // Shuttle triggers
+    expect(descriptor.composedPrompt).toContain("Bounded coding tasks, file edits, feature work");
+    // Weft triggers
+    expect(descriptor.composedPrompt).toContain("Reviewing code quality, correctness, and maintainability");
+    // Warp triggers
+    expect(descriptor.composedPrompt).toContain("Auditing code for vulnerabilities, misconfigurations, or unsafe patterns");
+  });
+
+  it("loom composedPrompt contains delegate aggressively guidance", () => {
+    const descriptor = getDescriptor("loom");
+    expect(descriptor.composedPrompt).toContain("Delegate aggressively");
+  });
+
+  it("loom composedPrompt contains slow agents warning", () => {
+    const descriptor = getDescriptor("loom");
+    expect(descriptor.composedPrompt).toContain("Pattern, Spindle, Weft, and Warp can take longer");
   });
 
   // ---------------------------------------------------------------------------
