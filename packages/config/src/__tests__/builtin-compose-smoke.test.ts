@@ -137,20 +137,20 @@ describe("builtin compose smoke", () => {
     expect(descriptor.composedPrompt).toContain("# Delegation Guidance");
   });
 
-  it("loom composedPrompt contains trigger-based delegation guidance for each specialist", () => {
+  it("loom composedPrompt contains routing_hint-based delegation guidance for each specialist", () => {
     const descriptor = getDescriptor("loom");
-    // Thread triggers
-    expect(descriptor.composedPrompt).toContain("Tracing symbols, call graphs, and data flow across the codebase");
-    // Spindle triggers
-    expect(descriptor.composedPrompt).toContain("Fetching external documentation, API references, or library guides");
-    // Pattern triggers
-    expect(descriptor.composedPrompt).toContain("Creating structured implementation plans before execution");
-    // Shuttle triggers
-    expect(descriptor.composedPrompt).toContain("Bounded coding tasks, file edits, feature work");
-    // Weft triggers
-    expect(descriptor.composedPrompt).toContain("Reviewing code quality, correctness, and maintainability");
-    // Warp triggers
-    expect(descriptor.composedPrompt).toContain("Auditing code for vulnerabilities, misconfigurations, or unsafe patterns");
+    // Thread routing hints
+    expect(descriptor.composedPrompt).toContain("Use for fast codebase exploration");
+    // Spindle routing hints
+    expect(descriptor.composedPrompt).toContain("Use for external docs and research");
+    // Pattern routing hints
+    expect(descriptor.composedPrompt).toContain("Use for multi-file features, complex refactors");
+    // Shuttle routing hints
+    expect(descriptor.composedPrompt).toContain("Use for single-file changes, bug fixes");
+    // Weft routing hints
+    expect(descriptor.composedPrompt).toContain("Use after non-trivial changes");
+    // Warp routing hints
+    expect(descriptor.composedPrompt).toContain("MANDATORY when changes touch auth, crypto, tokens");
   });
 
   it("loom composedPrompt contains delegate aggressively guidance", () => {

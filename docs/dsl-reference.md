@@ -74,8 +74,8 @@ agent loom {
   }
 
   triggers [
-    { domain "Orchestration" trigger "Complex multi-step tasks" }
-    { domain "Architecture" trigger "System design and planning" }
+    { domain "Orchestration" trigger "Complex multi-step tasks" routing_hint "Use for work spanning multiple files or components" }
+    { domain "Architecture" trigger "System design and planning" routing_hint "Use when design decisions need to be made before implementation" }
   ]
 
   skills ["tdd", "code-review"]
@@ -103,7 +103,7 @@ agent my-helper {
 | `mode` | `primary` \| `subagent` \| `all` | Adapter-facing context hint. `primary` = main/user-facing; `subagent` = delegated specialist; `all` = usable in both. |
 | `temperature` | number | Sampling temperature hint passed to adapters. |
 | `tool_policy` | block | Abstract capability map. See [Tool Policy](#tool-policy). |
-| `triggers` | array | Delegation metadata for router agents. Each entry: `{ domain "…" trigger "…" }`. |
+| `triggers` | array | Delegation metadata for router agents. Each entry: `{ domain "…" trigger "…" routing_hint "…" }`. The `routing_hint` field is optional and provides prescriptive "Use when..." guidance for delegation routing. |
 | `skills` | string[] | Skill names to load for this agent. |
 
 ### Tool Policy
