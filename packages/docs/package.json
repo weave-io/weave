@@ -17,5 +17,9 @@
     "@fontsource-variable/geist-mono": "^5.2.8",
     "astro": "^6.4.6",
     "typescript": "^6.0.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/weave-io/weave"
   }
 }
