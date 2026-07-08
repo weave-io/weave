@@ -35,5 +35,9 @@
   },
   "lint-staged": {
     "**/*.{ts,tsx,js,jsx,json,jsonc}": "biome check --write --no-errors-on-unmatched"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/weave-io/weave"
   }
 }
