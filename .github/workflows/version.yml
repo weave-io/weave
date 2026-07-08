@@ -15,10 +15,14 @@ jobs:
     permissions:
       contents: write # Required for changesets/action to push version commits
       pull-requests: write # Required for changesets/action to open/update PRs
+    env:
+      HUSKY: "0"
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2

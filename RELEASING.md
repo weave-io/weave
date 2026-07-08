@@ -77,6 +77,36 @@ The **Release** workflow (`release.yml`) triggers on the `published` event and:
 2. Runs `bunx changeset publish` to publish all packages with bumped versions to npm
 3. Uses npm provenance (OIDC) for supply-chain integrity
 
+## Preview / Snapshot Packages
+
+Weave also publishes preview packages from `main` so you can try unreleased changes before a full release.
+
+Every merge to `main` runs the snapshot workflow. The workflow checks for pending changesets and only publishes if unreleased changes exist. If there are no pending changesets (e.g. after merging the version PR), the workflow exits without publishing.
+
+Preview packages use the `preview` dist-tag. Install them with:
+
+```bash
+bun add @weaveio/weave-core@preview
+```
+
+Equivalent commands work for the other public packages:
+
+- `bun add @weaveio/weave-engine@preview`
+- `bun add @weaveio/weave-config@preview`
+- `bun add @weaveio/weave-cli@preview`
+- `bun add @weaveio/weave-adapter-opencode@preview`
+
+Snapshot versions include a timestamp suffix. For example:
+
+```text
+0.1.0-preview-20260708145500
+```
+
+Two details matter:
+
+- Preview publishing requires a pending changeset. A merge to `main` without a changeset produces no snapshot packages.
+- Each new snapshot overwrites the `preview` dist-tag, so `@preview` always points to the latest snapshot only.
+
 ## Quick reference
 
 | Action | Command |
