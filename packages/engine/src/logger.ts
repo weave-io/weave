@@ -163,17 +163,8 @@ export function redirectLogsToFile(filePath: string): Promise<void> {
     mkdir: true,
   });
   logDestination.redirectTo(fileSink);
-  // SonicBoom with `sync: true` opens the file descriptor synchronously in
-  // the constructor. By the time we reach this line the fd is already open
-  // and writable — the "ready" event will never fire because it is only
-  // emitted for async mode. Listening for "ready" here would hang forever.
-  //
-  // We check `fileSink.fd` (set by SonicBoom when the fd is open) to confirm
-  // the sink is already usable, and resolve immediately. For the (unlikely)
-  // case where the fd is not yet assigned, fall back to listening for events.
-  if ((fileSink as unknown as { fd: number }).fd >= 0) {
-    return Promise.resolve();
-  }
+  // Wait for SonicBoom to open the file before resolving. This ensures that
+  // callers who await this function can safely write to the file immediately.
   return new Promise<void>((resolve, reject) => {
     fileSink.once("ready", resolve);
     fileSink.once("error", reject);
