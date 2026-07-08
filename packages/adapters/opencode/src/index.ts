@@ -17,20 +17,18 @@
  *
  * ## Installation as an OpenCode plugin
  *
- * Use the `./plugin` subpath export — **not** the bare package name:
+ * Add the package to the `plugin` array in `opencode.json`:
  *
  * ```jsonc
  * // opencode.json
  * {
- *   "plugin": ["@weaveio/weave-adapter-opencode/plugin"]
+ *   "plugin": ["@weaveio/weave-adapter-opencode"]
  * }
  * ```
  *
- * The bare `@weaveio/weave-adapter-opencode` entry (`dist/index.js`, this file) exports
- * non-function values (constants, type re-exports) that cause OpenCode's
- * `getLegacyPlugins` loader to throw `TypeError: Plugin export is not a function`.
- * Use `@weaveio/weave-adapter-opencode/plugin` (`dist/plugin.js`) as the OpenCode plugin
- * entry point. This barrel is for programmatic use only.
+ * OpenCode resolves the `./server` subpath export from `package.json`, which
+ * points to `dist/plugin.js`. This module exports only the plugin function,
+ * satisfying OpenCode's plugin loader requirements.
  *
  * Restart OpenCode after adding the plugin. The plugin entry point receives
  * the runtime context, constructs an `OpenCodeAdapter` with the injected SDK
