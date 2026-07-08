@@ -90,6 +90,6 @@ jobs:
 
       - name: Publish snapshot
         if: steps.changesets.outputs.has_changesets == 'true'
-        run: bunx changeset publish --tag preview
+        run: bun scripts/publish.ts --tag preview
         env:
           NPM_CONFIG_PROVENANCE: "true"
