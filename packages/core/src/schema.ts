@@ -21,6 +21,7 @@ export const ToolPermissionSchema = z.enum(["allow", "deny", "ask"]);
 export const DelegationTriggerSchema = z.object({
   domain: z.string(),
   trigger: z.string(),
+  routing_hint: z.string().optional(),
 });
 
 export const ToolPolicySchema = z

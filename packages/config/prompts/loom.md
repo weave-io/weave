@@ -12,7 +12,7 @@ When to delegate to each specialist:
 
 {{#delegation.targets}}
 - **{{name}}** — {{description}}{{#triggers}}
-  - {{trigger}}{{/triggers}}
+  - {{routing_hint}}{{/triggers}}
 {{/delegation.targets}}
 
 Delegate aggressively to keep your context lean. Thread and Spindle are cheap (read-only); use them liberally for evidence gathering before routing to implementation agents.

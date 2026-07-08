@@ -77,6 +77,7 @@ export const ALLOWED_TEMPLATE_PATHS: Set<string> = new Set([
   "delegation.targets.triggers",
   "delegation.targets.triggers.domain",
   "delegation.targets.triggers.trigger",
+  "delegation.targets.triggers.routing_hint",
   "delegation.targets.isCategory",
 
   // Fields accessible inside {{#delegation.targets}}{{#isCategory}} sections
@@ -124,8 +125,8 @@ export interface DelegationTargetContextEntry {
   description?: string;
   /** Deduplicated domain strings across all triggers for this target. */
   domains: string[];
-  /** Full trigger details. */
-  triggers: Array<{ domain: string; trigger: string }>;
+  /** Full trigger details including optional routing hints. */
+  triggers: Array<{ domain: string; trigger: string; routing_hint?: string }>;
   /** True when this target is a generated category shuttle agent. */
   isCategory: boolean;
 }
@@ -212,11 +213,17 @@ function projectDelegationTarget(
     }
   }
 
-  const triggers: Array<{ domain: string; trigger: string }> =
-    target.triggers.map((t: DelegationTrigger) => ({
-      domain: t.domain,
-      trigger: t.trigger,
-    }));
+  const triggers: Array<{ domain: string; trigger: string; routing_hint?: string }> =
+    target.triggers.map((t: DelegationTrigger) => {
+      const entry: { domain: string; trigger: string; routing_hint?: string } = {
+        domain: t.domain,
+        trigger: t.trigger,
+      };
+      if (t.routing_hint !== undefined) {
+        entry.routing_hint = t.routing_hint;
+      }
+      return entry;
+    });
 
   const entry: DelegationTargetContextEntry = {
     name: target.name,

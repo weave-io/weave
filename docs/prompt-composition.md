@@ -250,7 +250,7 @@ interface AgentPromptTemplateContext {
       name: string;
       description?: string;
       domains: string[];
-      triggers: Array<{ domain: string; trigger: string }>;
+      triggers: Array<{ domain: string; trigger: string; routing_hint?: string }>;
     }>;
   };
 }
