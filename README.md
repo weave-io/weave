@@ -18,8 +18,8 @@ For a high-level flow diagram of configuration → engine → adapter → harnes
 | [`@weaveio/weave-cli`](./packages/cli)                                  | `weave` executable for config scaffolding, validation, and harness installation            |
 | [`@weaveio/weave-docs`](./packages/docs)                                | Public Astro + Starlight documentation site and marketing landing page                     |
 | [`@weaveio/weave-adapter-opencode`](./packages/adapters/opencode)       | OpenCode plugin adapter                                                                    |
-| [`@weaveio/adapter-claude-code`](./packages/adapters/claude-code) | Claude Code adapter                                                                        |
-| [`@weaveio/adapter-pi`](./packages/adapters/pi)                   | Pi adapter                                                                                 |
+| [`@weaveio/weave-adapter-claude-code`](./packages/adapters/claude-code) | Claude Code adapter                                                                        |
+| [`@weaveio/weave-adapter-pi`](./packages/adapters/pi)                   | Pi adapter                                                                                 |
 
 ## OpenCode Adapter Status
 
@@ -83,7 +83,7 @@ In practice, the current OpenCode adapter covers the **materialization foundatio
 
 ### Claude Code adapter
 
-`@weaveio/adapter-claude-code` currently exists as a package placeholder in the workspace. The harness-agnostic engine/config surfaces it depends on are present, but this adapter does not yet have an equivalent status story to the OpenCode first slice.
+`@weaveio/weave-adapter-claude-code` currently exists as a package placeholder in the workspace. The harness-agnostic engine/config surfaces it depends on are present, but this adapter does not yet have an equivalent status story to the OpenCode first slice.
 
 - current role: placeholder package / future adapter target
 - intended scope: materialize Weave agents into Claude Code using the same engine-owned descriptors and policy surfaces
