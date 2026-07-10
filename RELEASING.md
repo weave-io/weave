@@ -90,6 +90,7 @@ Equivalent commands work for the other public packages:
 - `bun add @weaveio/weave-config@preview`
 - `bun add @weaveio/weave-cli@preview`
 - `bun add @weaveio/weave-adapter-opencode@preview`
+- `bun add @weaveio/weave-adapter-claude-code@preview`
 
 Snapshot versions include a timestamp suffix. For example:
 
@@ -127,3 +128,70 @@ Check the Release workflow logs. Common issues:
 ### Publishing a single package
 
 Changesets handles multi-package publishing automatically. If only one package has a changeset, only that package (and its dependents, if `updateInternalDependencies` is set) will be bumped and published.
+
+---
+
+## Adapter-specific shipping
+
+### `@weaveio/weave-adapter-opencode`
+
+Ships as an npm package loaded directly by OpenCode's plugin system. Users do **not** run `npm install` — they pin the versioned package in their `opencode.json` and OpenCode fetches it from npm at startup:
+
+```json
+{
+  "plugin": [
+    "@weaveio/weave-adapter-opencode@<version>"
+  ]
+}
+```
+
+For preview versions:
+```json
+{
+  "plugin": [
+    "@weaveio/weave-adapter-opencode@0.0.0-preview-20260708134505"
+  ]
+}
+```
+
+### `@weaveio/weave-adapter-claude-code`
+
+Ships in **two channels**:
+
+| Channel | What | How |
+|---------|------|-----|
+| **npm** | `@weaveio/weave-adapter-claude-code` — the composition engine used by `weave compose` | Published via Changesets alongside other packages |
+| **Claude Code marketplace** | `weave-bootstrap` — a static plugin that triggers recomposition on session start | Submitted to `anthropics/claude-plugins-community` via their review process |
+
+#### npm publishing
+
+The adapter package follows the standard Changesets flow — add a changeset, bump, release. It's a build-time dependency of `@weaveio/weave-cli`.
+
+#### Claude Code marketplace plugin
+
+The bootstrap plugin lives at `packages/adapters/claude-code/src/bootstrap/` and is a static directory (no build step). To submit or update it:
+
+1. Ensure the bootstrap files are current (`plugin.json`, `hooks/hooks.json`, `skills/compose/SKILL.md`)
+2. Run `claude plugin validate ./packages/adapters/claude-code/src/bootstrap` to verify structure
+3. Submit via [console.anthropic.com/plugins/submit](https://platform.claude.com/plugins/submit)
+4. The marketplace pins to a commit SHA; pushing new commits auto-bumps the pin after CI passes
+
+The bootstrap plugin version (`plugin.json` → `version`) should be bumped manually when its behavior changes (new hooks, changed compose command, etc.). It is independent of the npm package version.
+
+#### User setup flow
+
+```bash
+# Install CLI (provides weave compose command)
+bun add -D @weaveio/weave-cli
+
+# First-time project setup
+weave compose --adapter claude-code --init
+
+# Inside Claude Code (one-time, if marketplace plugin is published)
+/plugin install weave-bootstrap
+
+# Or without marketplace — use --plugin-dir flags
+claude --plugin-dir ./weave-bootstrap-plugin --plugin-dir .weave/plugins/claude-code
+```
+
+After marketplace install, daily use is just `claude` — the SessionStart hook handles everything.

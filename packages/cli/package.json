@@ -33,6 +33,7 @@
     "@langchain/openai": "^1.4.7",
     "@weaveio/weave-config": "workspace:*",
     "@weaveio/weave-core": "workspace:*",
+    "@weaveio/weave-adapter-claude-code": "workspace:*",
     "@weaveio/weave-engine": "workspace:*",
     "agentevals": "^0.0.7",
     "figlet": "^1.11.0",

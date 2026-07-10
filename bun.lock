@@ -13,6 +13,18 @@
         "typescript": "^5.4.5",
       },
     },
+    "packages/adapters/claude-code": {
+      "name": "@weaveio/weave-adapter-claude-code",
+      "version": "0.0.1",
+      "dependencies": {
+        "neverthrow": "^8.2.0",
+      },
+      "devDependencies": {
+        "@weaveio/weave-core": "workspace:*",
+        "@weaveio/weave-engine": "workspace:*",
+        "typescript": "^5.4.5",
+      },
+    },
     "packages/adapters/opencode": {
       "name": "@weaveio/weave-adapter-opencode",
       "version": "0.0.1",
@@ -38,6 +50,7 @@
         "@clack/prompts": "^0.10.0",
         "@langchain/core": "^1.1.48",
         "@langchain/openai": "^1.4.7",
+        "@weaveio/weave-adapter-claude-code": "workspace:*",
         "@weaveio/weave-config": "workspace:*",
         "@weaveio/weave-core": "workspace:*",
         "@weaveio/weave-engine": "workspace:*",
@@ -510,6 +523,8 @@
     "@vscode/emmet-helper": ["@vscode/emmet-helper@2.11.0", "", { "dependencies": { "emmet": "^2.4.3", "jsonc-parser": "^2.3.0", "vscode-languageserver-textdocument": "^1.0.1", "vscode-languageserver-types": "^3.15.1", "vscode-uri": "^3.0.8" } }, "sha512-QLxjQR3imPZPQltfbWRnHU6JecWTF1QSWhx3GAKQpslx7y3Dp6sIIXhKjiUJ/BR9FX8PVthjr9PD6pNwOJfAzw=="],
 
     "@vscode/l10n": ["@vscode/l10n@0.0.18", "", {}, "sha512-KYSIHVmslkaCDyw013pphY+d7x1qV8IZupYfeIfzNA+nsaWHbn5uPuQRvdRFsa9zFzGeudPuoGoZ1Op4jrJXIQ=="],
+
+    "@weaveio/weave-adapter-claude-code": ["@weaveio/weave-adapter-claude-code@workspace:packages/adapters/claude-code"],
 
     "@weaveio/weave-adapter-opencode": ["@weaveio/weave-adapter-opencode@workspace:packages/adapters/opencode"],
 

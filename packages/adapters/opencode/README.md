@@ -2,19 +2,33 @@
 
 OpenCode adapter for Weave.
 
-## Plugin entrypoint
+## Installation
 
-When loading this adapter as an OpenCode plugin, use the plugin bundle entrypoint:
+Add the adapter as a plugin in your `opencode.json` (or `opencode.jsonc`). Use the **full versioned package specifier**:
 
 ```json
 {
   "plugin": [
-    "@weaveio/weave-adapter-opencode/plugin"
+    "@weaveio/weave-adapter-opencode@0.0.1"
   ]
 }
 ```
 
-For a direct file URL during local development, point OpenCode at `dist/plugin.js`, not `dist/index.js`:
+For preview/snapshot versions:
+
+```json
+{
+  "plugin": [
+    "@weaveio/weave-adapter-opencode@0.0.0-preview-20260708134505"
+  ]
+}
+```
+
+OpenCode resolves the plugin from npm at startup, so the version must be pinned explicitly in the `plugin` array. There is no separate `npm install` step — OpenCode handles package fetching.
+
+## Local development
+
+For local development, point OpenCode at the built `dist/plugin.js` via a file URL:
 
 ```json
 {
@@ -29,8 +43,6 @@ Rebuild the package before using a `dist/` file path so the plugin bundle matche
 ```bash
 bun run --filter @weaveio/weave-adapter-opencode build
 ```
-
-Do **not** use the bare package entry (`@weaveio/weave-adapter-opencode`) or `dist/index.js` as a plugin target. The bare entry is the programmatic barrel and exports non-plugin values in addition to the plugin function, which is incompatible with OpenCode's legacy plugin loader.
 
 ## Isolated OpenCode validation
 

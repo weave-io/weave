@@ -1,6 +1,6 @@
 # Claude Code Adapter
 
-> **Status**: Planning note — no Claude Code adapter package exists yet.
+> **Status**: Initial implementation — materialization adapter (`@weaveio/weave-adapter-claude-code` exists with agent translation, tool classification, model resolution, and skill discovery).
 > **Purpose**: Define what is required to create `@weaveio/weave-adapter-claude-code` using the legacy OpenCode feature set as a comparison baseline.
 
 **Related:** [Product Vision](product-vision.md) · [Adapter Boundary](adapter-boundary.md) · [Legacy Architecture](legacy-architecture.md) · [Model Resolution](model-resolution.md) · [Tool Policy Evaluation](tool-policy-evaluation.md) · [Harness Agent Surface Patterns](harness-agent-surface-patterns.md) · [Spec 07 — Adapter Capability Contract](specs/07-spec-adapter-capability-contract/07-spec-adapter-capability-contract.md) · [Spec 09 — Adapter-Provided Skill Resolution](specs/09-spec-adapter-provided-skill-resolution/09-spec-adapter-provided-skill-resolution.md)
