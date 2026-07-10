@@ -44,6 +44,8 @@ export interface ClaudeCodeAdapterOptions {
   readFile?: (path: string) => Promise<string>;
   /** Injectable file writer for testability. */
   writeFile?: (path: string, content: string) => Promise<void>;
+  /** Injectable file remover for testability. */
+  removeFile?: (path: string) => Promise<void>;
   /** Injectable directory existence checker. */
   exists?: (path: string) => Promise<boolean>;
   /** Injectable directory creator. */
@@ -57,6 +59,7 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
   private readonly readDir: (path: string) => Promise<string[]>;
   private readonly readFile: (path: string) => Promise<string>;
   private readonly writeFile: (path: string, content: string) => Promise<void>;
+  private readonly removeFile: (path: string) => Promise<void>;
   private readonly exists: (path: string) => Promise<boolean>;
   private readonly mkdir: (path: string) => Promise<void>;
 
@@ -70,6 +73,7 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
     this.readDir = options.readDir ?? defaultReadDir;
     this.readFile = options.readFile ?? defaultReadFile;
     this.writeFile = options.writeFile ?? defaultWriteFile;
+    this.removeFile = options.removeFile ?? defaultRemoveFile;
     this.exists = options.exists ?? defaultExists;
     this.mkdir = options.mkdir ?? defaultMkdir;
   }
@@ -173,11 +177,22 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
       JSON.stringify({ name: "weave", version: "1.0.0" }, null, 2),
     );
 
-    // agents/<name>.md
+    // agents/<name>.md — remove stale files before writing new ones
     const agentsDir = join(this.outDir, "agents");
     const agentsDirExists = await this.exists(agentsDir);
     if (!agentsDirExists) {
       await this.mkdir(agentsDir);
+    } else {
+      // Clean up any .md files not in the current pending set so renamed/deleted
+      // agents don't leave ghost files behind.
+      const pendingNames = new Set(this.pendingAgents.map((a) => `${a.name}.md`));
+      const existing = await this.readDir(agentsDir).catch(() => [] as string[]);
+      for (const file of existing) {
+        if (file.endsWith(".md") && !pendingNames.has(file)) {
+          await this.removeFile(join(agentsDir, file));
+          log.info({ file }, "Removed stale Claude Code agent file");
+        }
+      }
     }
     for (const agent of this.pendingAgents) {
       const filePath = join(agentsDir, `${agent.name}.md`);
@@ -209,6 +224,9 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
 // ---------------------------------------------------------------------------
 
 async function defaultReadDir(path: string): Promise<string[]> {
+  // Uses Bun's Node.js compatibility layer — Bun does not expose a native
+  // readdir equivalent outside of node:fs/promises, which Bun implements
+  // as a built-in compat module (same as node:path / node:os).
   const { readdir } = await import("node:fs/promises");
   return readdir(path);
 }
@@ -221,12 +239,19 @@ async function defaultWriteFile(path: string, content: string): Promise<void> {
   await Bun.write(path, content);
 }
 
+async function defaultRemoveFile(path: string): Promise<void> {
+  // Uses Bun's Node.js compatibility layer — same rationale as defaultReadDir.
+  const { unlink } = await import("node:fs/promises");
+  await unlink(path);
+}
+
 async function defaultExists(path: string): Promise<boolean> {
   const file = Bun.file(path);
   return file.exists();
 }
 
 async function defaultMkdir(path: string): Promise<void> {
+  // Uses Bun's Node.js compatibility layer — same rationale as defaultReadDir.
   const { mkdir } = await import("node:fs/promises");
   await mkdir(path, { recursive: true });
 }

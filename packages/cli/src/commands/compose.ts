@@ -5,14 +5,14 @@
  * pushes them through the selected adapter (currently only "claude-code").
  */
 
-import { resolve, join } from "node:path";
+import { resolve, join, relative } from "node:path";
 import { homedir } from "node:os";
 import { loadConfig } from "@weaveio/weave-config";
 import { formatError } from "@weaveio/weave-core";
 import { materializeAgents } from "@weaveio/weave-engine";
 import { logger } from "@weaveio/weave-engine";
 import { ClaudeCodeAdapter, getBootstrapDir, BOOTSTRAP_FILES } from "@weaveio/weave-adapter-claude-code";
-import { ok, type Result, ResultAsync } from "neverthrow";
+import { ok, err, type Result } from "neverthrow";
 import type { ParsedArgs } from "../args.js";
 import { type CliError, formatCliError } from "../errors.js";
 import type { TerminalIO } from "../io/terminal.js";
@@ -58,14 +58,16 @@ async function runBootstrapInit(
     const src = join(srcDir, relPath);
     const dest = join(destDir, relPath);
 
-    const text = await Bun.file(src).text().catch(() => null);
-    if (text === null) {
-      return ok(false); // best-effort; missing source files are rare
+    let text: string;
+    try {
+      text = await Bun.file(src).text();
+    } catch (cause) {
+      return err({ type: "FileReadError", path: src, cause, message: `Could not read bootstrap source file: ${src}` });
     }
     await Bun.write(dest, text);
   }
 
-  const rel = `./${destDir.replace(process.cwd() + "/", "").replace(process.cwd() + "\\", "")}`;
+  const rel = `./${relative(process.cwd(), destDir)}`;
 
   terminal.stdout(
     [

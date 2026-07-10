@@ -10,7 +10,7 @@
 
 1. **Bootstrap plugin** (`weave-bootstrap-plugin/`) — static, version-controlled, installed once. Its `SessionStart` hook runs `bun run weave compose --adapter claude-code` automatically every time Claude Code opens a session in the project, regenerating the generated plugin from the current `.weave/config.weave`.
 
-2. **Generated plugin** (`.weave/plugins/claude-code/`) — produced by the compose command, gitignored, regenerated on every session start. Contains materialized agent markdown files, copied skill files, and a `settings.json` declaring the primary agent.
+2. **Generated plugin** (`.weave/plugins/claude-code/`) — produced by the compose command, gitignored, regenerated on every session start. Contains materialized agent markdown files and a `settings.json` declaring the primary agent.
 
 Unlike the OpenCode adapter (which makes SDK API calls at runtime), the Claude Code adapter is **pure file I/O** — no runtime client is required. Every agent is a `.md` file with YAML frontmatter written to the generated plugin directory.
 
@@ -31,7 +31,6 @@ weave-bootstrap-plugin/              ← static, version-controlled, installed o
 │   ├── shuttle.md                   ← base domain specialist
 │   ├── shuttle-<category>.md        ← one per declared category
 │   └── ...
-├── skills/<skill-name>/SKILL.md     ← copied from resolved skill sources
 └── settings.json                    ← { "agent": "loom" }
 ```
 
@@ -49,9 +48,6 @@ tools:
   - Write
   - Edit
   - Bash
-disallowedTools:
-  - Agent
-maxTurns: 50
 ---
 
 <composed prompt content>
@@ -142,19 +138,19 @@ To regenerate mid-session without restarting:
 
 ## Tool Policy Mapping
 
-The adapter translates Weave's abstract `tool_policy` capabilities into Claude Code's concrete `tools` (allowed) and `disallowedTools` (blocked) frontmatter arrays.
+The adapter translates Weave's abstract `tool_policy` capabilities into Claude Code's concrete `tools` frontmatter array. Only tools with `allow` or `ask` permission are listed; denied tools are simply omitted (Claude Code has no `disallowedTools` support in the current plugin model).
 
-| Weave capability | `allow` or `ask` → `tools` | `deny` → `disallowedTools` |
+| Weave capability | `allow` or `ask` → `tools` | `deny` |
 |---|---|---|
-| `read` | `Read`, `Glob`, `Grep` | `Read`, `Glob`, `Grep` |
-| `write` | `Write`, `Edit` | `Write`, `Edit` |
-| `execute` | `Bash` | `Bash` |
-| `delegate` | `Agent`, `Task` | `Agent`, `Task` |
+| `read` | `Read`, `Glob`, `Grep` | omitted |
+| `write` | `Write`, `Edit` | omitted |
+| `execute` | `Bash` | omitted |
+| `delegate` | `Agent`, `Task` | omitted |
 | `network` | _(no mapping)_ | _(no mapping)_ |
 
 **`ask` behaviour**: `ask` maps to `tools` (same as `allow`). Claude Code's native permission prompting handles the user-confirmation flow — the adapter does not set `permissionMode` on any generated agent (Claude Code restricts this field at the plugin level; setting it produces a security error).
 
-**`network`**: There is no stable Claude Code tool name for network access, so `network` policy is intentionally omitted from both arrays regardless of its value.
+**`network`**: There is no stable Claude Code tool name for network access, so `network` policy is intentionally omitted from the `tools` array regardless of its value.
 
 ---
 
@@ -181,7 +177,7 @@ A model value is always emitted; if the `models` array is empty or no alias matc
 | Client dependency | `OpenCodeClientFacade` | None — pure file I/O |
 | Reconciliation | List → create/update via SDK | Overwrite files on every regeneration |
 | Refresh mechanism | SDK re-registers on change | `/reload-plugins` or session restart |
-| Tool policy | `permissionMode` + patches | `tools` / `disallowedTools` arrays |
+| Tool policy | `permissionMode` + patches | `tools` array (allowed tools only) |
 | Model format | Direct model IDs | Aliases (`sonnet`, `opus`, `haiku`) or full IDs |
 | Runtime lifecycle | Plugin hooks inside OpenCode | `SessionStart` hook via bootstrap plugin |
 

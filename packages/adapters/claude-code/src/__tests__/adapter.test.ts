@@ -239,4 +239,31 @@ describe("ClaudeCodeAdapter", () => {
     expect(content).not.toContain("- Bash");
     expect(content).not.toContain("- Task");
   });
+
+  it("flush removes stale .md files not in the current pending set", async () => {
+    const written: Record<string, string> = {};
+    const removed: string[] = [];
+
+    // Simulate agents dir already exists with an old-agent.md stale file
+    const adapter = new ClaudeCodeAdapter({
+      projectRoot: "/project",
+      homeDir: "/home/user",
+      exists: async () => true,
+      readDir: async (path) => (path.endsWith("agents") ? ["old-agent.md", "plugin.json"] : []),
+      readFile: async () => "",
+      writeFile: async (path, content) => { written[path] = content; },
+      removeFile: async (path) => { removed.push(path); },
+      mkdir: async () => {},
+    });
+
+    await adapter.spawnSubagent(makeDescriptor({ name: "new-agent" }));
+    await adapter.flush();
+
+    // old-agent.md should be removed; plugin.json (non-.md) should not
+    expect(removed).toHaveLength(1);
+    expect(removed[0]).toContain("old-agent.md");
+    // new-agent.md should be written
+    const newAgentPath = Object.keys(written).find((k) => k.endsWith("new-agent.md"));
+    expect(newAgentPath).toBeDefined();
+  });
 });
