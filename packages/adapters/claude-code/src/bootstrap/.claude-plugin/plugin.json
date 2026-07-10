@@ -1,0 +1,5 @@
+{
+  "name": "weave-bootstrap",
+  "description": "Bootstraps Weave agent configuration for Claude Code on session start",
+  "version": "1.0.0"
+}

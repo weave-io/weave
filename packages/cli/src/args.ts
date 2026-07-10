@@ -21,6 +21,7 @@ export type Command =
   | "prompt"
   | "runtime"
   | "eval"
+  | "compose"
   | "unknown";
 
 export interface ParsedArgs {
@@ -75,6 +76,16 @@ export interface ParsedArgs {
     dryRun?: boolean;
     /** --raw-artifacts flag for `weave eval run` — explicit local-only opt-in */
     rawArtifacts?: boolean;
+    /** --adapter <name> for `weave compose` */
+    adapter?: string;
+    /** --project-root <path> for `weave compose` */
+    projectRoot?: string;
+    /** --out-dir <path> for `weave compose` */
+    outDir?: string;
+    /** --init flag for `weave compose` — copies bootstrap plugin into the project */
+    init?: boolean;
+    /** --bootstrap-dir <path> for `weave compose --init` — overrides default output path */
+    bootstrapDir?: string;
   };
 }
 
@@ -161,6 +172,58 @@ export function parseArgs(argv: string[]): Result<ParsedArgs, ArgParseError> {
     }
     if (arg === "--raw-artifacts") {
       flags.rawArtifacts = true;
+      continue;
+    }
+    if (arg === "--adapter") {
+      const val = args[++i];
+      if (!val || val.startsWith("-")) {
+        return err({
+          type: "MissingFlagValue" as const,
+          flag: "--adapter",
+          message: "--adapter requires an adapter name (e.g. claude-code)",
+        });
+      }
+      flags.adapter = val;
+      continue;
+    }
+    if (arg === "--project-root") {
+      const val = args[++i];
+      if (!val || val.startsWith("-")) {
+        return err({
+          type: "MissingFlagValue" as const,
+          flag: "--project-root",
+          message: "--project-root requires a directory path",
+        });
+      }
+      flags.projectRoot = val;
+      continue;
+    }
+    if (arg === "--out-dir") {
+      const val = args[++i];
+      if (!val || val.startsWith("-")) {
+        return err({
+          type: "MissingFlagValue" as const,
+          flag: "--out-dir",
+          message: "--out-dir requires a directory path",
+        });
+      }
+      flags.outDir = val;
+      continue;
+    }
+    if (arg === "--init") {
+      flags.init = true;
+      continue;
+    }
+    if (arg === "--bootstrap-dir") {
+      const val = args[++i];
+      if (!val || val.startsWith("-")) {
+        return err({
+          type: "MissingFlagValue" as const,
+          flag: "--bootstrap-dir",
+          message: "--bootstrap-dir requires a directory path",
+        });
+      }
+      flags.bootstrapDir = val;
       continue;
     }
 
@@ -301,6 +364,9 @@ export function parseArgs(argv: string[]): Result<ParsedArgs, ArgParseError> {
           break;
         case "eval":
           command = "eval";
+          break;
+        case "compose":
+          command = "compose";
           break;
         default:
           command = "unknown";

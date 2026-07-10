@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun run weave compose --adapter claude-code || echo '[weave] compose skipped'",
+            "timeout": 30,
+            "statusMessage": "Composing Weave agents..."
+          }
+        ]
+      }
+    ]
+  }
+}

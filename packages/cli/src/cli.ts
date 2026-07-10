@@ -157,6 +157,11 @@ export async function run(
       return runEval({ terminal, theme, flags });
     }
 
+    case "compose": {
+      const { runCompose } = await import("./commands/compose.js");
+      return runCompose({ terminal, theme, flags });
+    }
+
     case "unknown": {
       const errMsg = formatCliError({
         type: "UnknownCommand",
