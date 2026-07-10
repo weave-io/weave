@@ -49,6 +49,18 @@ export interface AgentTranslationInput {
  * <composed prompt content>
  * ```
  */
+/**
+ * Wraps a YAML scalar value in double quotes if it contains characters that
+ * would be misinterpreted by a YAML parser (`:`, `#`, `"`, newlines).
+ * Already-safe values are returned as-is.
+ */
+function escapeYamlScalar(value: string): string {
+  if (/[:#"\n\r]/.test(value)) {
+    return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  }
+  return value;
+}
+
 export function translateAgentToMarkdown(input: AgentTranslationInput): string {
   const { descriptor, resolvedModel, allowedTools } = input;
 
@@ -57,7 +69,7 @@ export function translateAgentToMarkdown(input: AgentTranslationInput): string {
   frontmatterLines.push(`name: ${descriptor.name}`);
 
   if (descriptor.description) {
-    frontmatterLines.push(`description: ${descriptor.description}`);
+    frontmatterLines.push(`description: ${escapeYamlScalar(descriptor.description)}`);
   }
 
   frontmatterLines.push(`model: ${toClaudeCodeModel(resolvedModel) ?? resolvedModel}`);

@@ -228,7 +228,7 @@ export async function runCompose(
   // 7. Report success
   const outDir =
     flags.outDir ??
-    `${projectRoot}/.weave/plugins/claude-code`;
+    join(projectRoot, ".weave", "plugins", "claude-code");
 
   const successLines = [
     "",
@@ -241,7 +241,7 @@ export async function runCompose(
       ? `  ${theme.boldYellow("Warnings:")} ${matErrors.length} agent(s) skipped — see above.`
       : `  ${theme.dim("Status:")} ${theme.boldCyan("OK")}`,
     "",
-  ].filter(Boolean);
+  ];
 
   terminal.stdout(successLines.join("\n"));
   return ok(0);

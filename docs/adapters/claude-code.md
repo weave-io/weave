@@ -1,6 +1,6 @@
 # Claude Code Adapter Guide
 
-**Related:** [Adapter Boundary](../adapter-boundary.md) · [Adapter Bootstrap Guide](../adapter-bootstrap.md) · [Claude Code Adapter Design](../claude-code-adapter.md) · [Tool Policy Evaluation](../tool-policy-evaluation.md) · [Model Resolution](../model-resolution.md) · [Plan: Claude Code Adapter](.../../.weave/plans/claude-code-adapter.md)
+**Related:** [Adapter Boundary](../adapter-boundary.md) · [Adapter Bootstrap Guide](../adapter-bootstrap.md) · [Claude Code Adapter Design](../claude-code-adapter.md) · [Tool Policy Evaluation](../tool-policy-evaluation.md) · [Model Resolution](../model-resolution.md) · [Plan: Claude Code Adapter](../../.weave/plans/claude-code-adapter.md)
 
 ---
 
@@ -18,7 +18,7 @@ Unlike the OpenCode adapter (which makes SDK API calls at runtime), the Claude C
 
 ## Architecture
 
-```
+```text
 weave-bootstrap-plugin/              ← static, version-controlled, installed once
 ├── .claude-plugin/plugin.json       ← name: "weave-bootstrap", version: "1.0.0"
 ├── hooks/hooks.json                 ← SessionStart → bun run weave compose --adapter claude-code
@@ -91,7 +91,7 @@ This does two things:
 
 Add to `.gitignore`:
 
-```
+```text
 .weave/plugins/
 ```
 
@@ -169,7 +169,7 @@ Weave model preference strings are mapped to Claude Code model aliases. The firs
 | `claude-haiku-3-5`, `claude-haiku-3`, `claude-haiku` | `haiku` |
 | Any other string | Pass through verbatim |
 
-If the `models` array is empty, the `model` field is omitted from the frontmatter and Claude Code uses its default model.
+A model value is always emitted; if the `models` array is empty or no alias match is found, the resolved model string is forwarded verbatim.
 
 ---
 

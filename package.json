@@ -16,7 +16,7 @@
     "docs:build": "bun run --filter '@weaveio/weave-docs' build",
     "docs:preview": "bun run --filter '@weaveio/weave-docs' preview",
     "validate-config": "bun packages/cli/src/main.ts validate --project",
-    "build": "bun run --filter '@weaveio/weave-core' build && bun run --filter '@weaveio/weave-engine' --filter '@weaveio/weave-config' build && bun run --filter '@weaveio/weave-cli' build && bun run --filter '@weaveio/weave-adapter-*' build && bun run --filter '@weaveio/weave-docs' build",
+    "build": "bun run --filter '@weaveio/weave-core' build && bun run --filter '@weaveio/weave-engine' --filter '@weaveio/weave-config' build && bun run --filter '@weaveio/weave-adapter-*' build && bun run --filter '@weaveio/weave-cli' build && bun run --filter '@weaveio/weave-docs' build",
     "test": "bun run --filter '*' test",
     "typecheck": "tsc --noEmit -p tsconfig.json && bun run --filter '*' typecheck",
     "lint": "biome lint packages/",

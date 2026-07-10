@@ -62,8 +62,8 @@ describe("discoverClaudeCodeSkills", () => {
 
     expect(result.isOk()).toBe(true);
     const skills = result._unsafeUnwrap();
-    // Both project and global return "broken.md"
-    expect(skills.length).toBeGreaterThanOrEqual(1);
+    // Both project and global return "broken.md" → 2 skills
+    expect(skills.length).toBe(2);
     expect(skills[0]!.name).toBe("broken");
     const meta = skills[0]!.metadata as { description?: string };
     expect(meta.description).toBeUndefined();

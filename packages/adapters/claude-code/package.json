@@ -20,7 +20,7 @@
     }
   },
   "scripts": {
-    "build": "bun run --filter @weaveio/weave-core build && bun run --filter @weaveio/weave-engine build && bun build ./src/index.ts --outdir ./dist --target bun && tsc -p tsconfig.build.json --emitDeclarationOnly",
+    "build": "bun run --filter @weaveio/weave-core build && bun run --filter @weaveio/weave-engine build && bun build ./src/index.ts --outdir ./dist --target bun && tsc -p tsconfig.build.json --emitDeclarationOnly && node -e \"require('fs').cpSync('./src/bootstrap', './dist/bootstrap', {recursive:true})\"",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "clean": "rm -rf dist"
   },

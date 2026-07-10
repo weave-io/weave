@@ -199,6 +199,8 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
       { agents: this.pendingAgents.length, outDir: this.outDir },
       "Plugin flush complete",
     );
+
+    this.pendingAgents.length = 0;
   }
 }
 

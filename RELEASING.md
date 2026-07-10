@@ -146,6 +146,7 @@ Ships as an npm package loaded directly by OpenCode's plugin system. Users do **
 ```
 
 For preview versions:
+
 ```json
 {
   "plugin": [
