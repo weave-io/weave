@@ -526,12 +526,40 @@ describe("KNOWN_EVAL_AGENTS — exported constants", () => {
     );
   });
 
-  it("shared registry contributes exactly one short agent and one suite ID per suite", () => {
-    const expectedValues = EVAL_SUITE_REGISTRY.flatMap((suite) => [
-      suite.shortAgentFilter,
-      suite.suiteId,
-    ]).sort();
+  it("shared registry contributes unique short agent filters and all suite IDs, deduplicated", () => {
+    // KNOWN_EVAL_AGENTS is the union of all shortAgentFilters and all suiteIds,
+    // with duplicates removed (e.g. "tapestry" appears once even though two
+    // suites share that shortAgentFilter).
+    const expectedValues = [
+      ...new Set([
+        ...EVAL_SUITE_REGISTRY.map((suite) => suite.shortAgentFilter),
+        ...EVAL_SUITE_REGISTRY.map((suite) => suite.suiteId),
+      ]),
+    ].sort();
     expect(KNOWN_EVAL_AGENTS_SORTED).toEqual(expectedValues);
+    // Size is the union size, not 2 * suite count when filters are shared.
+    expect(KNOWN_EVAL_AGENTS_SORTED.length).toBe(expectedValues.length);
+  });
+
+  it("tapestry shortAgentFilter appears once in KNOWN_EVAL_AGENTS while both tapestry suite IDs are present", () => {
+    // Two suites share shortAgentFilter "tapestry"; the set deduplicates it.
+    const tapestryCount = [...KNOWN_EVAL_AGENTS].filter(
+      (v) => v === "tapestry",
+    ).length;
+    expect(tapestryCount).toBe(1);
+    // Both suite IDs must be individually present.
+    expect(
+      KNOWN_EVAL_AGENTS.has(
+        "tapestry-execution" as Parameters<(typeof KNOWN_EVAL_AGENTS)["has"]>[0],
+      ),
+    ).toBe(true);
+    expect(
+      KNOWN_EVAL_AGENTS.has(
+        "tapestry-category-routing" as Parameters<
+          (typeof KNOWN_EVAL_AGENTS)["has"]
+        >[0],
+      ),
+    ).toBe(true);
   });
 
   it("KNOWN_EVAL_AGENTS contains shuttle and shuttle-execution", () => {
