@@ -1,0 +1,24 @@
+{
+  "id": "tcr-05-cross-category",
+  "description": "Route this task to the correct category shuttle or explain the ambiguity. The user wants to wire a new API endpoint to a frontend settings form. The changed files span two categories: `src/4.Presentation/DST.Client/Components/SettingsForm.tsx` (matches `category client-frontend { patterns [\"src/4.Presentation/DST.Client/**\"] }`) and `src/2.Application/DST.Api/Controllers/SettingsController.cs` (matches `category backend-api { patterns [\"src/2.Application/DST.Api/**\"] }`). How should Tapestry route this cross-category task?",
+  "suite": "tapestry-category-routing",
+  "allowed_agents": ["tapestry", "shuttle", "shuttle-client-frontend", "shuttle-backend-api", "loom"],
+  "allowed_models": [
+    "anthropic/claude-opus-4.5",
+    "anthropic/claude-sonnet-4.5",
+    "openai/gpt-5.5"
+  ],
+  "expected_outcome": {
+    "kind": "agent_routing",
+    "target_agent": "shuttle",
+    "via": []
+  },
+  "accepted_alternates": ["shuttle-client-frontend", "shuttle-backend-api", "loom"],
+  "transcript_expectations": [
+    {
+      "check": "agent_mentioned",
+      "agent_name": "shuttle"
+    }
+  ],
+  "tags": ["routing", "category-routing", "cross-category", "ambiguity"]
+}

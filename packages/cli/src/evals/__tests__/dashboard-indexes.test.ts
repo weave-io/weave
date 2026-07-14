@@ -531,7 +531,7 @@ describe("generateDashboardIndexes — multi-suite runs", () => {
     expect(indexes.suiteHistories.has("tapestry-execution")).toBe(true);
   });
 
-  it("suiteHistories supports all seven suite families", () => {
+  it("suiteHistories supports all eight suite families", () => {
     const suites = EVAL_SUITE_REGISTRY.map((suite) => suite.suiteId);
     const run: RunDescriptor = {
       runId: "abc1234-2026-01-15-001",

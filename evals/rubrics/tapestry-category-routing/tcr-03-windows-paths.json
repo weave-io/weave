@@ -1,0 +1,10 @@
+{
+  "case_id": "tcr-03-windows-paths",
+  "suite": "tapestry-category-routing",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Fairness/alignment: the backslash path `src\\4.Presentation\\DST.Client\\Pages\\Home.tsx` is semantically equivalent to the forward-slash form. The model should normalize the path separator and route to `shuttle-client-frontend`. Award full score if the model correctly identifies the match despite the backslash and routes accordingly. Penalise a fallback to `shuttle` on path-separator grounds alone — the semantic path content is unambiguous."
+  }
+}

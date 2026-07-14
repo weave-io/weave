@@ -1,0 +1,10 @@
+{
+  "case_id": "tcr-09-similar-names",
+  "suite": "tapestry-category-routing",
+  "scoring": {
+    "outcome_weight": 0.75,
+    "per_expectation_weight": 0.25,
+    "required": true,
+    "notes": "Required case. Pass gate: routingCorrectness >= 0.95 (deterministic) AND, because transcript_expectations is non-empty and a scorer is present, average qualitative score (delegationCorrectness + executionCompleteness + rationaleQuality) / 3 >= 0.7. routingCorrectness: `shuttle-client-frontend` scores 1.0 (exact-category-match); `shuttle-client-mobile` scores 0.0 (wrong-category — DST.Mobile does not match). The scorer should assess whether the model's rationale cites the `DST.Client` vs `DST.Mobile` path segment distinction as the disambiguating evidence."
+  }
+}

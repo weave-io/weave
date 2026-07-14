@@ -1,0 +1,10 @@
+{
+  "case_id": "tcr-05-cross-category",
+  "suite": "tapestry-category-routing",
+  "scoring": {
+    "outcome_weight": 0.5,
+    "per_expectation_weight": 0.5,
+    "required": false,
+    "notes": "Optional case (required: false) — uses weighted total >= 0.5 to pass. All accepted alternates (`shuttle`, `shuttle-client-frontend`, `shuttle-backend-api`, `loom`) score equally via routingCorrectness (accepted-alternate = 0.8 or exact-category-match = 1.0). When a scorer is present, qualitative dimensions (delegationCorrectness, executionCompleteness, rationaleQuality) from the scorer are used in the weighted total; qualitative threshold does not apply to optional cases. The key qualitative signal for the scorer: the model should acknowledge both categories match and explain its choice (split delegation, dominant-category reasoning, or escalation to loom). A response that routes without acknowledging the ambiguity will receive lower qualitative scores."
+  }
+}

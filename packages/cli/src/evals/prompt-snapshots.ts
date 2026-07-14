@@ -44,10 +44,15 @@ import { EVAL_SHORT_AGENT_FILTERS } from "./types.js";
  *
  * The default set is sourced from the shared eval suite registry short-agent
  * filters (`loom`, `tapestry`, `shuttle`, `spindle`, `pattern`, `weft`,
- * `warp`) so provenance stays aligned with the same seven-suite text-only
- * surface used by CLI filter validation and workflow sync tests.
+ * `warp`) so provenance stays aligned with the same eight-suite text-only
+ * surface used by CLI filter validation and workflow sync tests. Duplicate
+ * short-agent names (e.g. `tapestry`, which backs both `tapestry-execution`
+ * and `tapestry-category-routing`) are deduplicated so each agent is
+ * snapshotted exactly once.
  */
-export const DEFAULT_SNAPSHOT_AGENTS = [...EVAL_SHORT_AGENT_FILTERS] as const;
+export const DEFAULT_SNAPSHOT_AGENTS = [
+  ...new Set(EVAL_SHORT_AGENT_FILTERS),
+] as const;
 
 // ---------------------------------------------------------------------------
 // SHA-256 hashing (Web Crypto — Bun-native)
@@ -326,7 +331,11 @@ export function composeAgentSnapshots(
       }),
     )
     .andThen((config) => {
-      const agentNameArray = Array.from(agentNames);
+      // Deduplicate the supplied agent names so each agent is snapshotted
+      // exactly once, even when the caller passes duplicates (e.g. when
+      // building the list from EVAL_SHORT_AGENT_FILTERS which may repeat
+      // 'tapestry' for multiple suites).
+      const agentNameArray = [...new Set(Array.from(agentNames))];
 
       // Settle all per-agent compositions using .match() to convert each
       // ResultAsync into a discriminated union — this is the canonical pattern

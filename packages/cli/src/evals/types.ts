@@ -157,6 +157,13 @@ export const EVAL_SUITE_REGISTRY: readonly EvalSuiteMetadata[] = [
     allowedTranscriptChecks: ["content_contains", "agent_mentioned"],
     allowedContentRoles: ["user", "assistant"],
   },
+  {
+    suiteId: "tapestry-category-routing",
+    shortAgentFilter: "tapestry",
+    allowedExpectedOutcomeKinds: ["agent_routing"],
+    allowedTranscriptChecks: ["content_contains", "agent_mentioned"],
+    allowedContentRoles: ["user", "assistant"],
+  },
 ] as const;
 
 export const EVAL_SUITE_IDS = EVAL_SUITE_REGISTRY.map((suite) => suite.suiteId);

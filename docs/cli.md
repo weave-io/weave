@@ -354,14 +354,15 @@ Weave configures harnesses; harnesses run themselves. `weave run`, if encountere
 
 `weave eval run` executes agent evaluation suites against the built-in model matrix. It is the primary eval entry point for CI and local verification.
 
-The current eval surface is a **shared seven-suite text-only registry**: `loom-routing`, `tapestry-execution`, `shuttle-execution`, `spindle-tools`, `pattern-planning`, `weft-review`, and `warp-security`. These suite IDs are the canonical fixture and reporting names, and their short `--agent` aliases are `loom`, `tapestry`, `shuttle`, `spindle`, `pattern`, `weft`, and `warp`. The same registry drives CLI filter validation, prompt snapshot coverage, and workflow sync tests. These suites score only text-visible structure from assistant output. They do not prove tool execution, harness side effects, or hidden environment state.
+The current eval surface is a **shared eight-suite text-only registry**: `loom-routing`, `tapestry-execution`, `tapestry-category-routing`, `shuttle-execution`, `spindle-tools`, `pattern-planning`, `weft-review`, and `warp-security`. These suite IDs are the canonical fixture and reporting names, and their short `--agent` aliases are `loom`, `tapestry`, `shuttle`, `spindle`, `pattern`, `weft`, and `warp`. The same registry drives CLI filter validation, prompt snapshot coverage, and workflow sync tests. These suites score only text-visible structure from assistant output. They do not prove tool execution, harness side effects, or hidden environment state.
 
 Completed eval runs exit with code `0` even when one or more cases miss their pass threshold. Threshold misses are captured in `run-summary.json` and per-suite score files. The command exits non-zero for hard orchestration failures such as invalid input, missing secrets, model matrix/load failures, bundle write/publish failures, or suite-level partial failures that prevent complete results.
 
 ```bash
 weave eval run                                        # run all suites against default models (3)
 weave eval run --agent loom                           # restrict to loom-routing suite
-weave eval run --agent tapestry                       # restrict to tapestry-execution suite
+weave eval run --agent tapestry                       # restrict to tapestry-execution and tapestry-category-routing suites
+weave eval run --agent tapestry-category-routing      # restrict to tapestry-category-routing suite only
 weave eval run --agent shuttle                        # restrict to shuttle-execution suite
 weave eval run --agent spindle                        # restrict to spindle-tools suite
 weave eval run --agent pattern                        # restrict to pattern-planning suite
@@ -402,7 +403,7 @@ Dry-run is the one exception: `weave eval run --dry-run` does not build live mod
 
 All three filters use **strict exact-match**:
 
-- `--agent` must match either the suite name (`loom-routing`, `tapestry-execution`, `shuttle-execution`, `spindle-tools`, `pattern-planning`, `weft-review`, `warp-security`) or the short agent name (`loom`, `tapestry`, `shuttle`, `spindle`, `pattern`, `weft`, `warp`). No other values are accepted.
+- `--agent` must match either the suite name (`loom-routing`, `tapestry-execution`, `tapestry-category-routing`, `shuttle-execution`, `spindle-tools`, `pattern-planning`, `weft-review`, `warp-security`) or the short agent name (`loom`, `tapestry`, `shuttle`, `spindle`, `pattern`, `weft`, `warp`). No other values are accepted.
 - `--model` must exactly match a model `id` in `evals/model-matrix.json`. No substring matching. An unmatched value causes `EmptyModelSet` and lists allowed IDs.
 - `--case` must exactly match the `id` field in a case fixture file. No glob or prefix matching.
 
@@ -424,7 +425,7 @@ weave eval run --agent loom --model anthropic/claude-sonnet-4.5 --dry-run
 
 When enabled locally, raw artifacts are written to `eval-bundles/runs/<runId>/raw/`. Filename components are sanitized before write, and the resolved path must stay under `raw/`. Add this directory to `.gitignore`. Raw files must never be committed to any repository.
 
-Current text-only suites also reject runtime-only assertion shapes before execution. In practice, fixture authors must not use `expected_outcome.kind: "tool_call"`, `transcript_expectations.check: "tool_called"`, `transcript_expectations.check: "no_tool_called"`, or `content_contains` with `role: "tool"` anywhere on the current seven-suite surface.
+Current text-only suites also reject runtime-only assertion shapes before execution. In practice, fixture authors must not use `expected_outcome.kind: "tool_call"`, `transcript_expectations.check: "tool_called"`, `transcript_expectations.check: "no_tool_called"`, or `content_contains` with `role: "tool"` anywhere on the current eight-suite surface.
 
 ### Prompt provenance
 

@@ -1,0 +1,10 @@
+{
+  "case_id": "tcr-10-disabled-category",
+  "suite": "tapestry-category-routing",
+  "scoring": {
+    "outcome_weight": 0.65,
+    "per_expectation_weight": 0.35,
+    "required": true,
+    "notes": "Required case. Pass gate: routingCorrectness >= 0.95 (deterministic) AND, because transcript_expectations is non-empty and a scorer is present, average qualitative score (delegationCorrectness + executionCompleteness + rationaleQuality) / 3 >= 0.7. routingCorrectness: generic `shuttle` scores 1.0 (generic-shuttle-fallback with expected target = 'shuttle'); `loom` scores 0.8 (accepted-alternate); routing to `shuttle-client-frontend` scores 0.0 (disabled agents must not receive work). The scorer should assess whether the model's rationale mentions that the category shuttle is disabled and explains the fallback choice."
+  }
+}

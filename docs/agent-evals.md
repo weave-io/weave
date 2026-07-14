@@ -43,7 +43,7 @@ All publishable output passes through the central allowlist sanitizer in `packag
 
 ## Fixture Layout
 
-The fixture tree is intentionally flat and registry-shaped. The shared eval suite registry defines the current seven-suite text-only surface, and each registered suite gets exactly one case directory and one rubric directory. Contributors should treat those suite IDs as the canonical names used by CLI filters, workflow inputs, prompt snapshot coverage, sync tests, and publishable reporting.
+The fixture tree is intentionally flat and registry-shaped. The shared eval suite registry defines the current eight-suite text-only surface, and each registered suite gets exactly one case directory and one rubric directory. Contributors should treat those suite IDs as the canonical names used by CLI filters, workflow inputs, prompt snapshot coverage, sync tests, and publishable reporting.
 
 ```
 evals/
@@ -52,6 +52,8 @@ evals/
 │   ├── loom-routing/              Loom agent routing eval cases
 │   │   └── <case-id>.json
 │   ├── tapestry-execution/        Tapestry execution/delegation eval cases
+│   │   └── <case-id>.json
+│   ├── tapestry-category-routing/ Tapestry category-routing eval cases
 │   │   └── <case-id>.json
 │   ├── shuttle-execution/         Shuttle delegated-task reporting eval cases
 │   │   └── <case-id>.json
@@ -67,6 +69,8 @@ evals/
     ├── loom-routing/              Scoring rubrics keyed by case ID
     │   └── <case-id>.json
     ├── tapestry-execution/
+    │   └── <case-id>.json
+    ├── tapestry-category-routing/
     │   └── <case-id>.json
     ├── shuttle-execution/
     │   └── <case-id>.json
@@ -100,6 +104,7 @@ packages/cli/src/evals/
 ├── runner.ts                 EvalOrchestrator — top-level orchestration
 ├── loom-routing-runner.ts    LoomRoutingRunner
 ├── tapestry-execution-runner.ts  TapestryExecutionRunner
+├── tapestry-category-routing-runner.ts  TapestryCategoryRoutingRunner
 ├── shuttle-execution-runner.ts   ShuttleExecutionRunner
 ├── spindle-tools-runner.ts       SpindleToolsRunner
 ├── pattern-planning-runner.ts    PatternPlanningRunner
@@ -120,12 +125,13 @@ And in `packages/cli/src/commands/eval.ts`:
 
 ## Eval Suites
 
-Weave currently supports a **seven-suite text-only eval surface**. Every registered suite is synthetic and text-observable by design.
+Weave currently supports an **eight-suite text-only eval surface**. Every registered suite is synthetic and text-observable by design.
 
 | Suite | Runner | What it tests |
 |---|---|---|
 | `loom-routing` | `LoomRoutingRunner` | Loom emits text-observable routing signals for the primary route, with evidence/review follow-ups treated separately from the primary implementation agent |
 | `tapestry-execution` | `TapestryExecutionRunner` | Tapestry emits text-observable completion and delegation-chain signals for plan execution |
+| `tapestry-category-routing` | `TapestryCategoryRoutingRunner` | Tapestry emits text-observable category routing signals when delegating to category shuttles |
 | `shuttle-execution` | `ShuttleExecutionRunner` | Shuttle emits bounded delegated-task completion reports with task intake reflection, file awareness, acceptance confirmation, and final evidence reporting from assistant text |
 | `spindle-tools` | `SpindleToolsRunner` | Spindle emits source-cited research structure with explicit `Source facts`, `Interpretation`, `Sources`, and bounded confidence from assistant text |
 | `pattern-planning` | `PatternPlanningRunner` | Pattern emits structurally explicit plans with observable scope, file-task, sequencing, and acceptance signals |
@@ -155,7 +161,7 @@ When contributors run `weave eval run --agent loom --case <case-id> --raw-artifa
 
 This keeps the ambiguous case stable. It no longer swings on under-specified wording alone, and it distinguishes optional exploration from the implementation route that Loom is supposed to choose.
 
-The seven current families are: `loom-routing`, `tapestry-execution`, `shuttle-execution`, `spindle-tools`, `pattern-planning`, `weft-review`, and `warp-security`.
+The eight current families are: `loom-routing`, `tapestry-execution`, `tapestry-category-routing`, `shuttle-execution`, `spindle-tools`, `pattern-planning`, `weft-review`, and `warp-security`.
 
 ### 2026-06-30 provisional baseline for phase-1 fairness work
 
@@ -484,7 +490,7 @@ Fail-closed consequences:
 - `tool_called`, `no_tool_called`, and `content_contains` with `role: "tool"` are rejected for current text-only suites
 - workflow-dispatch agent allowlists and CLI agent filters are expected to mirror the same registry
 
-Forbidden assertion shapes in the current seven-suite surface are therefore:
+Forbidden assertion shapes in the current eight-suite surface are therefore:
 
 - `expected_outcome.kind: "tool_call"`
 - `transcript_expectations.check: "tool_called"`
@@ -495,7 +501,7 @@ Forbidden assertion shapes in the current seven-suite surface are therefore:
 
 When adding a new case, start from the text the runner can actually score:
 
-1. pick one of the seven registered suites
+1. pick one of the eight registered suites
 2. encode the whole scenario in the case description and suite prompt shape, with no hidden repo or runtime dependency
 3. choose only suite-allowed `expected_outcome.kind` values
 4. use `transcript_expectations` only for text-visible checks on `user` or `assistant` roles
@@ -858,7 +864,7 @@ CLI flags and env vars are merged: if both are set for the same filter key with 
 
 All three filters use **strict exact-match** semantics:
 
-- `--agent` must exactly match either the suite name (`loom-routing`, `tapestry-execution`, `shuttle-execution`, `spindle-tools`, `pattern-planning`, `weft-review`, `warp-security`) or the short agent name (`loom`, `tapestry`, `shuttle`, `spindle`, `pattern`, `weft`, `warp`).
+- `--agent` must exactly match either the suite name (`loom-routing`, `tapestry-execution`, `tapestry-category-routing`, `shuttle-execution`, `spindle-tools`, `pattern-planning`, `weft-review`, `warp-security`) or the short agent name (`loom`, `tapestry`, `shuttle`, `spindle`, `pattern`, `weft`, `warp`).
 - `--model` must exactly match a model `id` in `evals/model-matrix.json`. No substring matching. If the value does not match any matrix entry, the run aborts with `EmptyModelSet` and lists the allowed IDs.
 - `--case` must exactly match the `id` field in a case fixture file. No glob or prefix matching.
 

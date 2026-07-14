@@ -1,0 +1,10 @@
+{
+  "case_id": "tcr-07-explicit-hint",
+  "suite": "tapestry-category-routing",
+  "scoring": {
+    "outcome_weight": 0.6,
+    "per_expectation_weight": 0.4,
+    "required": false,
+    "notes": "Optional case (required: false) — uses weighted total >= 0.5 to pass. routingCorrectness: `shuttle-client-frontend` scores 1.0 (exact-category-match); generic `shuttle` scores 0.4 (generic-shuttle-fallback, partial credit). When a scorer is present, qualitative dimensions from the scorer contribute to the weighted total; qualitative threshold does not apply to optional cases. The scorer should assess whether the model explains how it weighted the explicit user hint against path evidence (hint-vs-pattern tension). A response that routes without acknowledging this tension will receive lower qualitative scores."
+  }
+}

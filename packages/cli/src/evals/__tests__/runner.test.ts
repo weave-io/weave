@@ -450,8 +450,8 @@ describe("EvalOrchestrator — model matrix", () => {
 // ---------------------------------------------------------------------------
 
 describe("EvalOrchestrator — suite fan-out", () => {
-  it("shared suite registry still enumerates the seven-suite text-only surface", () => {
-    expect(EVAL_SUITE_REGISTRY).toHaveLength(7);
+  it("shared suite registry still enumerates the eight-suite text-only surface", () => {
+    expect(EVAL_SUITE_REGISTRY).toHaveLength(8);
     expect(EVAL_SUITE_REGISTRY.map((suite) => suite.shortAgentFilter)).toEqual(
       EVAL_SHORT_AGENT_FILTERS,
     );
@@ -527,8 +527,9 @@ describe("EvalOrchestrator — suite fan-out", () => {
     const result = await orchestrator.run(makeRequest({ agent: "tapestry" }));
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      // Tapestry suite only, 3 default models → at most 3 partial failures
-      expect(result.value.partialFailures.length).toBeLessThanOrEqual(3);
+      // Tapestry suites only (tapestry-execution + tapestry-category-routing),
+      // 3 default models → at most 6 partial failures
+      expect(result.value.partialFailures.length).toBeLessThanOrEqual(6);
     }
   });
 
@@ -985,14 +986,14 @@ describe("EvalOrchestrator — multi-model fan-out", () => {
   it("no model filter: all default models are attempted (default matrix has 3 models)", async () => {
     // With no --model filter, the orchestrator should run suites for ALL models
     // in the default matrix. With fake evalsRoot (no fixtures), each combination
-    // produces a NoCasesFound partial failure. With 3 default models × 7 suites,
-    // we expect exactly 21 partial failures.
+    // produces a NoCasesFound partial failure. With 3 default models × 8 suites,
+    // we expect exactly 24 partial failures.
     const orchestrator = new EvalOrchestrator(makeOptions());
     const result = await orchestrator.run(makeRequest());
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      // 3 models × 7 suites = 21 partial failures (NoCasesFound for each)
-      expect(result.value.partialFailures.length).toBe(21);
+      // 3 models × 8 suites = 24 partial failures (NoCasesFound for each)
+      expect(result.value.partialFailures.length).toBe(24);
     }
   });
 
@@ -1004,8 +1005,8 @@ describe("EvalOrchestrator — multi-model fan-out", () => {
     );
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      // 1 model × 7 suites = 7 partial failures
-      expect(result.value.partialFailures.length).toBe(7);
+      // 1 model × 8 suites = 8 partial failures
+      expect(result.value.partialFailures.length).toBe(8);
     }
   });
 
@@ -1021,13 +1022,14 @@ describe("EvalOrchestrator — multi-model fan-out", () => {
   });
 
   it("agent filter 'tapestry' + no model filter: 3 partial failures (one per default model)", async () => {
-    // Only tapestry suite runs, for each of the 3 default models.
+    // Tapestry backs two suites (tapestry-execution and tapestry-category-routing);
+    // with 3 default models → 6 partial failures (2 suites × 3 models).
     const orchestrator = new EvalOrchestrator(makeOptions());
     const result = await orchestrator.run(makeRequest({ agent: "tapestry" }));
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      // 3 models × 1 suite = 3 partial failures
-      expect(result.value.partialFailures.length).toBe(3);
+      // 3 models × 2 tapestry suites = 6 partial failures
+      expect(result.value.partialFailures.length).toBe(6);
     }
   });
 

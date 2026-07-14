@@ -1,0 +1,24 @@
+{
+  "id": "tcr-08-misleading-prose",
+  "description": "Route this task correctly despite misleading prose. The user says: \"Fix the backend API validation for the settings endpoint.\" However, the files being changed are `src/4.Presentation/DST.Client/Components/SettingsForm.tsx` and `src/4.Presentation/DST.Client/Utils/validation.ts`. The active Weave config declares `category client-frontend { patterns [\"src/4.Presentation/DST.Client/**\"] }`. Both files are clearly inside the client-frontend category. Should the model trust the prose or the file paths when routing?",
+  "suite": "tapestry-category-routing",
+  "allowed_agents": ["tapestry", "shuttle", "shuttle-client-frontend", "loom"],
+  "allowed_models": [
+    "anthropic/claude-opus-4.5",
+    "anthropic/claude-sonnet-4.5",
+    "openai/gpt-5.5"
+  ],
+  "expected_outcome": {
+    "kind": "agent_routing",
+    "target_agent": "shuttle-client-frontend",
+    "via": []
+  },
+  "accepted_alternates": ["shuttle"],
+  "transcript_expectations": [
+    {
+      "check": "agent_mentioned",
+      "agent_name": "shuttle-client-frontend"
+    }
+  ],
+  "tags": ["routing", "category-routing", "misleading-prose", "path-wins"]
+}

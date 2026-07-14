@@ -7,9 +7,9 @@ on:
     inputs:
       agent:
         description: |
-          Optional agent name filter. Leave blank to run all seven text-only suite families.
+          Optional agent name filter. Leave blank to run all eight text-only suite families.
           Allowed values are validated against the shared eval suite registry:
-          loom, tapestry, shuttle, spindle, pattern, weft, warp, loom-routing, tapestry-execution, shuttle-execution, spindle-tools, pattern-planning, weft-review, warp-security
+          loom, tapestry, shuttle, spindle, pattern, weft, warp, loom-routing, tapestry-execution, tapestry-category-routing, shuttle-execution, spindle-tools, pattern-planning, weft-review, warp-security
         required: false
         default: ""
         type: string
@@ -30,6 +30,16 @@ on:
             loom-route-ambiguous-direct-shuttle
             tapestry-execute-plan-step
             tapestry-delegate-to-shuttle
+            tcr-01-exact-match
+            tcr-02-multiple-files
+            tcr-03-windows-paths
+            tcr-04-no-match
+            tcr-05-cross-category
+            tcr-06-overlap
+            tcr-07-explicit-hint
+            tcr-08-misleading-prose
+            tcr-09-similar-names
+            tcr-10-disabled-category
             shuttle-execution-report-structured-evidence
             shuttle-execution-report-tests-and-assumptions
             spindle-tools-citations-facts-confidence
@@ -111,7 +121,7 @@ jobs:
           # Agent allowlist: suite names and logical agent names.
           # Short agent names and suite IDs are both accepted to mirror
           # EvalOrchestrator.shouldRunSuite() which matches on either.
-          ALLOWED_AGENTS="loom tapestry shuttle spindle pattern weft warp loom-routing tapestry-execution shuttle-execution spindle-tools pattern-planning weft-review warp-security"
+          ALLOWED_AGENTS="loom tapestry shuttle spindle pattern weft warp loom-routing tapestry-execution tapestry-category-routing shuttle-execution spindle-tools pattern-planning weft-review warp-security"
 
           # Model allowlist: exact model IDs from evals/model-matrix.json.
           ALLOWED_MODELS="anthropic/claude-opus-4.5 anthropic/claude-sonnet-4.5 openai/gpt-5.5"
@@ -119,7 +129,7 @@ jobs:
           # Case allowlist: exact case IDs from evals/cases/**/
           # This workflow must stay in sync with the shared registry-backed CLI
           # validation and fixture set; workflow-sync.test.ts enforces parity.
-          ALLOWED_CASES="loom-route-backend-api loom-route-frontend-ui loom-route-ambiguous-direct-shuttle tapestry-execute-plan-step tapestry-delegate-to-shuttle shuttle-execution-report-structured-evidence shuttle-execution-report-tests-and-assumptions spindle-tools-citations-facts-confidence spindle-tools-source-boundary-network-claims pattern-plan-settings-refactor pattern-plan-release-checklist weft-review-clean-approval weft-review-reject-blocker-citation warp-security-fast-exit-approve warp-security-block-evidence-findings"
+          ALLOWED_CASES="loom-route-backend-api loom-route-frontend-ui loom-route-ambiguous-direct-shuttle tapestry-execute-plan-step tapestry-delegate-to-shuttle shuttle-execution-report-structured-evidence shuttle-execution-report-tests-and-assumptions spindle-tools-citations-facts-confidence spindle-tools-source-boundary-network-claims pattern-plan-settings-refactor pattern-plan-release-checklist weft-review-clean-approval weft-review-reject-blocker-citation warp-security-fast-exit-approve warp-security-block-evidence-findings tcr-01-exact-match tcr-02-multiple-files tcr-03-windows-paths tcr-04-no-match tcr-05-cross-category tcr-06-overlap tcr-07-explicit-hint tcr-08-misleading-prose tcr-09-similar-names tcr-10-disabled-category"
 
           # Identifier regex: mirrors VALID_IDENTIFIER_RE from input-validation.ts.
           # Anchored; only alphanumerics, underscore, dot, slash, colon, at, hyphen.

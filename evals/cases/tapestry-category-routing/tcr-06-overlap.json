@@ -1,0 +1,24 @@
+{
+  "id": "tcr-06-overlap",
+  "description": "Route this task to the correct category shuttle when patterns overlap. The Weave config declares two categories: `category client-frontend { patterns [\"src/4.Presentation/DST.Client/**\"] }` and `category presentation { patterns [\"src/4.Presentation/**\"] }`. The file being changed is `src/4.Presentation/DST.Client/Pages/Login.tsx`. Both patterns match. Which category shuttle should be selected as the primary match, and why?",
+  "suite": "tapestry-category-routing",
+  "allowed_agents": ["tapestry", "shuttle", "shuttle-client-frontend", "loom"],
+  "allowed_models": [
+    "anthropic/claude-opus-4.5",
+    "anthropic/claude-sonnet-4.5",
+    "openai/gpt-5.5"
+  ],
+  "expected_outcome": {
+    "kind": "agent_routing",
+    "target_agent": "shuttle-client-frontend",
+    "via": []
+  },
+  "accepted_alternates": ["shuttle"],
+  "transcript_expectations": [
+    {
+      "check": "agent_mentioned",
+      "agent_name": "shuttle-client-frontend"
+    }
+  ],
+  "tags": ["routing", "category-routing", "overlap", "pattern-specificity"]
+}
