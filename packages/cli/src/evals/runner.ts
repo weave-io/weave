@@ -57,6 +57,7 @@ import {
   type BundleWriteMode,
   type RemoteSequenceReader,
 } from "./artifact-bundle.js";
+import { loadSuiteCases, loadSuiteRubrics } from "./case-loader.js";
 import {
   type EvalEnvError,
   OPENROUTER_API_KEY_ENV_VAR,
@@ -1091,11 +1092,19 @@ export class EvalOrchestrator {
     request: EvalRunRequest,
     modelFilter: string | undefined,
   ): ResultAsync<RunnerResult, RunnerError> {
+    const evalsRoot = this.evalsRoot;
     const runner = new TapestryCategoryRoutingRunner({
       modelClient: this.modelClient,
       scorer: this.scorer,
       promptProvider: this.promptProvider,
-      evalsRoot: this.evalsRoot,
+      caseLoader:
+        evalsRoot !== undefined
+          ? (suite) => loadSuiteCases(suite, evalsRoot)
+          : undefined,
+      rubricLoader:
+        evalsRoot !== undefined
+          ? (suite) => loadSuiteRubrics(suite, evalsRoot)
+          : undefined,
     });
 
     return runner.run({

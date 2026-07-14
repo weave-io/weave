@@ -5,6 +5,6 @@
     "outcome_weight": 0.5,
     "per_expectation_weight": 0.5,
     "required": false,
-    "notes": "Fairness/alignment: this is a genuine cross-category scenario. Credit any of the accepted alternates (`shuttle`, `shuttle-client-frontend`, `shuttle-backend-api`, `loom`) equally — all are reasonable responses to ambiguity. The key scoring signal is rationale quality: the model must acknowledge that both categories match and explain its choice (e.g. split delegation, dominant category, or escalation to `loom`). A response that routes without acknowledging the ambiguity scores lower on rationale quality. Do not require a specific routing choice."
+    "notes": "Optional case (required: false) — uses weighted total >= 0.5 to pass. All accepted alternates (`shuttle`, `shuttle-client-frontend`, `shuttle-backend-api`, `loom`) score equally via routingCorrectness (accepted-alternate = 0.8 or exact-category-match = 1.0). When a scorer is present, qualitative dimensions (delegationCorrectness, executionCompleteness, rationaleQuality) from the scorer are used in the weighted total; qualitative threshold does not apply to optional cases. The key qualitative signal for the scorer: the model should acknowledge both categories match and explain its choice (split delegation, dominant-category reasoning, or escalation to loom). A response that routes without acknowledging the ambiguity will receive lower qualitative scores."
   }
 }

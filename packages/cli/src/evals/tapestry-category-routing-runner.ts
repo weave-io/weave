@@ -24,10 +24,44 @@
  * `shuttle-client-frontend` was expected) scores 0.
  *
  * Scoring dimensions:
- *   - `routingCorrectness`      — exact category shuttle match vs accepted alternates
- *   - `delegationCorrectness`   — rationale quality (route justification)
- *   - `executionCompleteness`   — path evidence present (file patterns, context)
- *   - `rationaleQuality`        — generic shuttle fallback appropriateness
+ *   - `routingCorrectness`      — deterministic: exact category shuttle match vs accepted alternates.
+ *                                 Always computed locally; injected scorer's routing score is ignored.
+ *   - `delegationCorrectness`   — rationale quality (route justification).
+ *                                 Computed by injected scorer when present; local heuristic otherwise.
+ *   - `executionCompleteness`   — path evidence present (file patterns, context).
+ *                                 Computed by injected scorer when present; local heuristic otherwise.
+ *   - `rationaleQuality`        — generic shuttle fallback appropriateness.
+ *                                 Computed by injected scorer when present; local heuristic otherwise.
+ *
+ * # Scorer integration
+ *
+ * When a `scorer` (`AgentEvalsScorer`) is injected, the runner calls it with
+ * the real `ModelRunOutput`, `EvalCase`, and rubric array after extracting the
+ * deterministic routing result. The scorer's `delegationCorrectness`,
+ * `executionCompleteness`, and `rationaleQuality` dimensions replace the local
+ * heuristics in the final score record. The locally computed `routingCorrectness`
+ * is preserved — it always overrides any routing score the scorer may produce.
+ *
+ * Scorer errors are converted to the runner's existing typed per-case error
+ * result (`ScorerAdapterError`), preserving suite continuation and raw artifact
+ * boundaries. A scorer failure never throws — the case receives a zero-score
+ * error result and the suite continues.
+ *
+ * When no scorer is injected, the runner uses local heuristic scoring for all
+ * four dimensions (useful for isolated unit tests).
+ *
+ * # Qualitative pass gate
+ *
+ * For required cases that declare `transcript_expectations` (non-empty), an
+ * additional qualitative threshold is enforced when a scorer is present:
+ * the average of `delegationCorrectness`, `executionCompleteness`, and
+ * `rationaleQuality` must be ≥ `QUALITATIVE_PASS_THRESHOLD` (0.7) for the
+ * case to pass. The deterministic routing gate (≥ 0.95) is always enforced
+ * first — if routing fails, the case fails regardless of qualitative scores.
+ *
+ * When no scorer is present (heuristic path), only the routing gate applies.
+ * Optional cases (required: false) always use weighted scoring regardless of
+ * whether a scorer is present.
  *
  * # Prompt provider
  *
@@ -65,6 +99,7 @@ import type {
   DimensionScore,
   EvalCase,
   EvalRubric,
+  FixtureSchemaError,
   ModelRunOutput,
   NormalizedScoreRecord,
   PromptProvider,
@@ -105,6 +140,16 @@ const GENERIC_SHUTTLE = "shuttle";
  * name the specific category.
  */
 export const GENERIC_SHUTTLE_FALLBACK_SCORE = 0.4;
+
+/**
+ * Minimum average of `delegationCorrectness`, `executionCompleteness`, and
+ * `rationaleQuality` required for a required case with `transcript_expectations`
+ * to pass when a scorer is present.
+ *
+ * Only enforced after the deterministic routing gate (≥ 0.95) passes. Optional
+ * cases (required: false) always use weighted scoring, not this threshold.
+ */
+export const QUALITATIVE_PASS_THRESHOLD = 0.7;
 
 // ---------------------------------------------------------------------------
 // Category-routing extraction (no canonicalization)
@@ -171,21 +216,34 @@ const NEGATION_SUFFIX_RE = /\s+(?:is\s+)?(?:disabled|unavailable|excluded)/i;
 
 /**
  * Return true when the shuttle name at `matchIndex` within `line` is
- * preceded by a negation prefix (within a 40-character window) or
- * followed by a negation suffix (within a 40-character window).
+ * preceded by a negation prefix (within its clause, up to a 40-character
+ * window) or followed by a negation suffix (within a 40-character window).
+ *
+ * Clause boundaries (`; ` and `, `) are respected: the look-behind window
+ * starts at the most recent clause boundary before `matchIndex`, preventing
+ * negation phrases in an earlier clause from bleeding into a later clause.
  */
 function isNegatedMention(
   line: string,
   matchIndex: number,
   matchLength: number,
 ): boolean {
-  const windowBefore = line.slice(Math.max(0, matchIndex - 40), matchIndex);
+  // Find the nearest clause-start boundary before matchIndex (semicolon or comma)
+  const rawWindowStart = Math.max(0, matchIndex - 40);
+  const windowRaw = line.slice(rawWindowStart, matchIndex);
+  const clauseBoundaryIdx = Math.max(
+    windowRaw.lastIndexOf("; "),
+    windowRaw.lastIndexOf(", "),
+  );
+  const clauseWindow =
+    clauseBoundaryIdx >= 0 ? windowRaw.slice(clauseBoundaryIdx + 2) : windowRaw;
+
   const windowAfter = line.slice(
     matchIndex + matchLength,
     matchIndex + matchLength + 40,
   );
   return (
-    NEGATION_PREFIXES_RE.test(windowBefore) ||
+    NEGATION_PREFIXES_RE.test(clauseWindow) ||
     NEGATION_SUFFIX_RE.test(windowAfter)
   );
 }
@@ -222,7 +280,7 @@ export type CategoryRoutingClassification =
  * diagnostics helpers.
  */
 export interface CategoryRoutingAnalysis {
-  /** All `shuttle-{category}` names extracted from the response (no dedup). */
+  /** All `shuttle-{category}` names extracted from the response (deduped, first-mention order). */
   extractedCategoryShuttles: string[];
   /** Whether a generic `shuttle` (without category) was mentioned. */
   genericShuttleMentioned: boolean;
@@ -239,12 +297,19 @@ export interface CategoryRoutingAnalysis {
 /**
  * Extract `shuttle-{category}` routing signals from model output.
  *
- * Does NOT canonicalize to `shuttle`. Prefers matches on explicit routing
- * lines (`→`, `delegate to`, etc.). Falls back to generic `shuttle` detection
- * if no category-qualified name is found.
+ * Does NOT canonicalize to `shuttle`. Uses a deterministic two-pass approach:
  *
- * Returns the ordered list of `shuttle-{category}` names found (deduped,
- * first-mention order).
+ *   Pass 1 — Routing lines only: collect non-negated `shuttle-{category}`
+ *     matches from lines that contain an explicit routing phrase (`→`, `delegate
+ *     to`, etc.) and are not secondary-context lines. These are the primary
+ *     routing targets.
+ *
+ *   Pass 2 — All other non-secondary lines: collect non-negated
+ *     `shuttle-{category}` matches not yet seen. These are supporting mentions
+ *     appended after the primary targets.
+ *
+ * Returns the ordered, deduped list of `shuttle-{category}` names (first-mention
+ * order within each pass; pass-1 results precede pass-2 results).
  *
  * Exported for unit testing.
  */
@@ -253,11 +318,30 @@ export function extractCategoryShuttles(content: string): string[] {
   const seen = new Set<string>();
   const result: string[] = [];
 
+  // Pass 1: routing lines only
   for (const line of lines) {
-    if (isSecondaryLine(line)) {
+    if (isSecondaryLine(line) || !isRoutingLine(line)) {
       continue;
     }
+    const matches = [...line.matchAll(CATEGORY_SHUTTLE_RE)];
+    for (const match of matches) {
+      const name = match[0].toLowerCase();
+      const matchIndex = match.index ?? 0;
+      if (isNegatedMention(line, matchIndex, match[0].length)) {
+        continue;
+      }
+      if (!seen.has(name)) {
+        seen.add(name);
+        result.push(name);
+      }
+    }
+  }
 
+  // Pass 2: remaining non-secondary lines (non-routing diagnostic mentions)
+  for (const line of lines) {
+    if (isSecondaryLine(line) || isRoutingLine(line)) {
+      continue;
+    }
     const matches = [...line.matchAll(CATEGORY_SHUTTLE_RE)];
     for (const match of matches) {
       const name = match[0].toLowerCase();
@@ -276,15 +360,29 @@ export function extractCategoryShuttles(content: string): string[] {
 }
 
 /**
- * Determine whether the content mentions generic `shuttle` (without a
- * category suffix) on a routing line that is NOT a secondary context.
+ * Standalone bare `shuttle` token pattern.
+ *
+ * Matches the word `shuttle` only when it is NOT immediately followed by a
+ * hyphen (which would make it a `shuttle-{category}` name). This ensures
+ * that `shuttle-backend` or `shuttle-client-frontend` are never treated as
+ * generic-shuttle fallbacks.
+ */
+const BARE_SHUTTLE_RE = /\bshuttle(?!-[a-z0-9_-])\b/gi;
+
+/**
+ * Determine whether the content contains a standalone bare `shuttle` token
+ * (not `shuttle-*`) on a routing line that is NOT a secondary context and
+ * NOT a negated mention.
  *
  * A line is considered to have a non-negated category shuttle only when at
  * least one `shuttle-{category}` match on that line is NOT preceded by a
  * negation prefix or followed by a negation suffix. Lines where every
  * category shuttle mention is negated are treated as if no category shuttle
- * is present, so a generic `shuttle` routing signal on the same line can
- * still be detected as a fallback.
+ * is present, so a bare `shuttle` routing signal on the same line can still
+ * be detected as a fallback.
+ *
+ * Negation detection is also applied to the bare `shuttle` token itself:
+ * "do not route to shuttle" does NOT count as a generic fallback.
  *
  * Used to detect fallback behaviour for partial scoring.
  */
@@ -292,12 +390,13 @@ export function detectGenericShuttleFallback(content: string): boolean {
   const lines = content.split(/\n/);
 
   for (const line of lines) {
-    if (isSecondaryLine(line)) {
+    if (isSecondaryLine(line) || !isRoutingLine(line)) {
       continue;
     }
-    const lower = line.toLowerCase();
-    if (!lower.includes(GENERIC_SHUTTLE) || !isRoutingLine(line)) {
-      CATEGORY_SHUTTLE_RE.lastIndex = 0;
+
+    // Find bare shuttle token(s) on this routing line
+    const bareMatches = [...line.matchAll(BARE_SHUTTLE_RE)];
+    if (bareMatches.length === 0) {
       continue;
     }
 
@@ -310,7 +409,16 @@ export function detectGenericShuttleFallback(content: string): boolean {
 
     // Generic shuttle is detectable only when no non-negated category shuttle
     // exists on this routing line.
-    if (!hasNonNegatedCategory) {
+    if (hasNonNegatedCategory) {
+      continue;
+    }
+
+    // Check that at least one bare shuttle mention is non-negated.
+    const hasNonNegatedBare = bareMatches.some(
+      (m) => !isNegatedMention(line, m.index ?? 0, m[0].length),
+    );
+
+    if (hasNonNegatedBare) {
       return true;
     }
   }
@@ -506,7 +614,13 @@ export function scoreDelegationCorrectness(
  * Score `executionCompleteness` (path/context evidence present).
  *
  * Checks whether the model referenced file patterns, directory paths, or
- * domain-specific evidence to justify the category routing.
+ * domain-specific evidence to justify the category routing. Recognizes:
+ *   - Windows absolute paths (`C:\app\screen.tsx`)
+ *   - Windows relative paths (`src\components\Button.tsx`)
+ *   - Unix forward-slash paths (`src/components/Button.tsx`)
+ *   - Glob patterns (`*.tsx`, `**\/components\/**`)
+ *   - Ordinary filenames with extensions (`screen.tsx`, `server.go`)
+ *   - Domain keywords (`frontend`, `backend`, `api`, etc.)
  */
 export function scoreExecutionCompleteness(
   content: string,
@@ -522,10 +636,14 @@ export function scoreExecutionCompleteness(
 
   const lower = content.toLowerCase();
 
-  // File path patterns: *.ts, *.tsx, src/, components/, etc.
+  // File path patterns: Unix forward-slash paths, Windows backslash paths,
+  // glob patterns, and ordinary filenames with extensions.
   const pathPatterns = [
-    /\b\w+\/\w+/,
-    /\*\.\w{1,6}/,
+    /\b\w+\/\w+/, // Unix path segment (src/api)
+    /\b\w+\\\w+/, // Windows backslash path segment (src\api)
+    /[A-Za-z]:\\\S+/, // Windows absolute path (C:\app\screen.tsx)
+    /\*\.\w{1,6}/, // glob *.ext
+    /\b\w+\.\w{1,6}\b/, // filename.ext
     /\bsrc\b/,
     /\bcomponents?\b/,
     /\bpages?\b/,
@@ -765,7 +883,11 @@ function buildErrorResult(
 // Dry-run result
 // ---------------------------------------------------------------------------
 
-function buildDryRunResult(evalCase: EvalCase, modelId: string): CaseResult {
+function buildDryRunResult(
+  evalCase: EvalCase,
+  modelId: string,
+  rubric: EvalRubric | undefined,
+): CaseResult {
   const scoredAt = new Date().toISOString();
 
   const dimensionScores: Record<
@@ -778,12 +900,16 @@ function buildDryRunResult(evalCase: EvalCase, modelId: string): CaseResult {
     rationaleQuality: { score: 0, applicable: false },
   };
 
+  // Derive `required` from the rubric when available; fall back to true
+  // (conservative default) when no rubric is present for this case.
+  const required = rubric !== undefined ? rubric.scoring.required : true;
+
   const summary: CaseResultSummary = {
     caseId: evalCase.id,
     modelId,
     suite: evalCase.suite,
     passed: false,
-    required: evalCase.transcript_expectations.length === 0,
+    required,
     weightedTotal: 0,
     dimensionScores,
     scoredAt,
@@ -799,7 +925,13 @@ function buildDryRunResult(evalCase: EvalCase, modelId: string): CaseResult {
 
 /**
  * Build a `NormalizedScoreRecord` from the four category-aware dimensions
- * for a single case run. The rubric `outcome_weight` gates the `passed` flag.
+ * for a single case run using local heuristics for all dimensions.
+ *
+ * Used when no scorer is injected (heuristic-only path). The rubric
+ * `outcome_weight` gates the `passed` flag.
+ *
+ * Required cases pass when `routingCorrectness >= 0.95`. Optional cases pass
+ * when `weightedTotal >= 0.5`. No qualitative threshold is applied here.
  */
 function buildCategoryScoreRecord(
   evalCase: EvalCase,
@@ -819,7 +951,8 @@ function buildCategoryScoreRecord(
     executionCompleteness.score * (rubric.scoring.per_expectation_weight / 3) +
     rationaleQuality.score * (rubric.scoring.per_expectation_weight / 3);
 
-  // Required cases must have routing correctness >= 0.95 to pass
+  // Required cases must have routing correctness >= 0.95 to pass.
+  // No qualitative threshold without a scorer — only the routing gate applies.
   const passed = rubric.scoring.required
     ? routingCorrectness.score >= 0.95
     : weightedTotal >= 0.5;
@@ -840,6 +973,77 @@ function buildCategoryScoreRecord(
     passed,
     required: rubric.scoring.required,
     scoredAt,
+  };
+}
+
+/**
+ * Merge the locally computed `routingCorrectness` with qualitative dimensions
+ * from an injected scorer's `NormalizedScoreRecord`.
+ *
+ * The locally computed `routingCorrectness` is always authoritative — the
+ * scorer's routing score (if any) is discarded. The scorer's
+ * `delegationCorrectness`, `executionCompleteness`, and `rationaleQuality`
+ * replace the local heuristic dimensions.
+ *
+ * Pass gate (required cases):
+ *   1. `routingCorrectness >= 0.95` (deterministic gate — always enforced)
+ *   2. When the case has `transcript_expectations`: average qualitative score
+ *      ≥ `QUALITATIVE_PASS_THRESHOLD` (executable rationale/evidence gate).
+ *
+ * Optional cases use weighted total >= 0.5.
+ */
+function mergeWithScorerDimensions(
+  evalCase: EvalCase,
+  modelId: string,
+  rubric: EvalRubric,
+  routingCorrectness: DimensionScore,
+  scorerRecord: NormalizedScoreRecord,
+): NormalizedScoreRecord {
+  const delegationCorrectness = scorerRecord.dimensions.delegationCorrectness;
+  const executionCompleteness = scorerRecord.dimensions.executionCompleteness;
+  const rationaleQuality = scorerRecord.dimensions.rationaleQuality;
+
+  const weightedTotal =
+    routingCorrectness.score * rubric.scoring.outcome_weight +
+    delegationCorrectness.score * (rubric.scoring.per_expectation_weight / 3) +
+    executionCompleteness.score * (rubric.scoring.per_expectation_weight / 3) +
+    rationaleQuality.score * (rubric.scoring.per_expectation_weight / 3);
+
+  let passed: boolean;
+  if (rubric.scoring.required) {
+    // Deterministic routing gate is always first
+    const routingPasses = routingCorrectness.score >= 0.95;
+    if (!routingPasses) {
+      passed = false;
+    } else if (evalCase.transcript_expectations.length > 0) {
+      // Qualitative gate: average of three qualitative dimensions must meet threshold
+      const avgQualitative =
+        (delegationCorrectness.score +
+          executionCompleteness.score +
+          rationaleQuality.score) /
+        3;
+      passed = avgQualitative >= QUALITATIVE_PASS_THRESHOLD;
+    } else {
+      passed = true;
+    }
+  } else {
+    passed = weightedTotal >= 0.5;
+  }
+
+  return {
+    caseId: evalCase.id,
+    modelId,
+    suite: evalCase.suite,
+    dimensions: {
+      routingCorrectness,
+      delegationCorrectness,
+      executionCompleteness,
+      rationaleQuality,
+    },
+    weightedTotal,
+    passed,
+    required: rubric.scoring.required,
+    scoredAt: scorerRecord.scoredAt,
   };
 }
 
@@ -897,10 +1101,22 @@ export interface TapestryCategoryRoutingRunnerOptions {
   /** The model client used for inference. Inject `StubModelClient` in tests. */
   modelClient: ModelClient;
   /**
-   * The scorer used to evaluate model run outputs.
-   * When provided, used for judge-based scoring (LangChain path).
-   * When omitted, the runner uses its built-in category-aware heuristic scorer.
-   * Inject `StubAgentEvalsScorer` in tests.
+   * The scorer used to evaluate model run outputs for qualitative dimensions.
+   *
+   * When provided, the runner calls `scorer.score()` with the real
+   * `ModelRunOutput`, `EvalCase`, and rubric array after extracting the
+   * deterministic routing result. The scorer's `delegationCorrectness`,
+   * `executionCompleteness`, and `rationaleQuality` dimensions replace local
+   * heuristics in the final score record.
+   *
+   * The locally computed `routingCorrectness` is always preserved and overrides
+   * any routing score the scorer may produce.
+   *
+   * Scorer errors are converted to typed per-case zero-score error results
+   * (`ScorerAdapterError`) — suite execution continues after a scorer failure.
+   *
+   * When omitted, the runner uses local heuristic scoring for all four
+   * dimensions. Inject `StubAgentEvalsScorer` in tests.
    */
   scorer?: AgentEvalsScorer;
   /**
@@ -920,8 +1136,18 @@ export interface TapestryCategoryRoutingRunnerOptions {
    * MUST NOT be used in production code.
    */
   tapestrySystemPrompt?: string;
-  /** Eval fixture root directory override (for tests). */
-  evalsRoot?: string;
+  /**
+   * Optional case loader function. Defaults to `loadSuiteCases` from
+   * `case-loader.ts`. Inject an in-memory loader in tests to avoid file I/O.
+   */
+  caseLoader?: (suite: string) => ResultAsync<EvalCase[], FixtureSchemaError>;
+  /**
+   * Optional rubric loader function. Defaults to `loadSuiteRubrics` from
+   * `case-loader.ts`. Inject an in-memory loader in tests to avoid file I/O.
+   */
+  rubricLoader?: (
+    suite: string,
+  ) => ResultAsync<EvalRubric[], FixtureSchemaError>;
 }
 
 /** Run request for a `TapestryCategoryRoutingRunner` execution. */
@@ -949,18 +1175,37 @@ export interface TapestryCategoryRoutingRunRequest {
  * correctness (rationale quality), execution completeness (path evidence), and
  * rationale quality (fallback appropriateness).
  *
+ * ## Scorer integration
+ *
+ * When a `scorer` is injected, the runner calls `scorer.score()` with the real
+ * `ModelRunOutput`, `EvalCase`, and rubric array for each case. The scorer's
+ * qualitative dimensions (`delegationCorrectness`, `executionCompleteness`,
+ * `rationaleQuality`) replace local heuristics in the final score record. The
+ * locally computed `routingCorrectness` is preserved and overrides any routing
+ * score from the scorer — category routing correctness is always deterministic.
+ *
+ * Scorer errors are converted to typed per-case zero-score error results
+ * (`ScorerAdapterError`). Suite execution continues after a scorer failure.
+ *
+ * When no scorer is injected, local heuristic scoring is used for all four
+ * dimensions (useful for isolated unit tests without LangChain dependencies).
+ *
+ * ## Pass gates
+ *
+ * Required cases (`required: true`):
+ *   - `routingCorrectness >= 0.95` is always required (deterministic gate).
+ *   - When `transcript_expectations` is non-empty AND a scorer is present:
+ *     average of `delegationCorrectness + executionCompleteness + rationaleQuality`
+ *     must also be ≥ `QUALITATIVE_PASS_THRESHOLD` (0.7).
+ *   - When no scorer is present: only the routing gate applies.
+ *
+ * Optional cases (`required: false`): `weightedTotal >= 0.5`.
+ *
  * ## Prompt composition — hard fail on provider error
  *
  * The prompt is resolved once at the start of `run()` via the provider.
  * If the provider returns an error, the runner returns
  * `err({ type: "PromptProviderFailed" })` immediately.
- *
- * ## Scoring
- *
- * The runner's built-in heuristic scorer is used by default. When a `scorer`
- * is injected, it is used for rationale quality dimensions while the
- * heuristic scorer handles routing correctness. This allows test isolation
- * without LangChain dependencies.
  *
  * ## Usage
  *
@@ -968,6 +1213,7 @@ export interface TapestryCategoryRoutingRunRequest {
  * // Production
  * const runner = new TapestryCategoryRoutingRunner({
  *   modelClient: new OpenRouterClient(env),
+ *   scorer: new LangChainAgentEvalsScorer(judge),
  * });
  *
  * // Tests
@@ -981,12 +1227,19 @@ export class TapestryCategoryRoutingRunner {
   private readonly modelClient: ModelClient;
   private readonly scorer: AgentEvalsScorer | undefined;
   private readonly promptProvider: PromptProvider;
-  private readonly evalsRoot: string | undefined;
+  private readonly caseLoader: (
+    suite: string,
+  ) => ResultAsync<EvalCase[], FixtureSchemaError>;
+  private readonly rubricLoader: (
+    suite: string,
+  ) => ResultAsync<EvalRubric[], FixtureSchemaError>;
 
   constructor(options: TapestryCategoryRoutingRunnerOptions) {
     this.modelClient = options.modelClient;
     this.scorer = options.scorer;
-    this.evalsRoot = options.evalsRoot;
+    this.caseLoader = options.caseLoader ?? ((suite) => loadSuiteCases(suite));
+    this.rubricLoader =
+      options.rubricLoader ?? ((suite) => loadSuiteRubrics(suite));
 
     if (options.promptProvider !== undefined) {
       this.promptProvider = options.promptProvider;
@@ -1015,15 +1268,8 @@ export class TapestryCategoryRoutingRunner {
     const dryRun = request.dryRun ?? false;
     const rawArtifacts = request.rawArtifacts ?? false;
 
-    const casesAsync =
-      this.evalsRoot !== undefined
-        ? loadSuiteCases(TAPESTRY_CATEGORY_ROUTING_SUITE, this.evalsRoot)
-        : loadSuiteCases(TAPESTRY_CATEGORY_ROUTING_SUITE);
-
-    const rubricsAsync =
-      this.evalsRoot !== undefined
-        ? loadSuiteRubrics(TAPESTRY_CATEGORY_ROUTING_SUITE, this.evalsRoot)
-        : loadSuiteRubrics(TAPESTRY_CATEGORY_ROUTING_SUITE);
+    const casesAsync = this.caseLoader(TAPESTRY_CATEGORY_ROUTING_SUITE);
+    const rubricsAsync = this.rubricLoader(TAPESTRY_CATEGORY_ROUTING_SUITE);
 
     return ResultAsync.fromSafePromise(
       Promise.all([casesAsync, rubricsAsync]),
@@ -1085,10 +1331,23 @@ export class TapestryCategoryRoutingRunner {
 
       const workItems = this.buildWorkItems(cases, request.modelFilter);
 
-      if (dryRun) {
-        const caseResults = workItems.map(({ evalCase, modelId }) =>
-          buildDryRunResult(evalCase, modelId),
+      if (workItems.length === 0) {
+        return new ResultAsync(
+          Promise.resolve(
+            err<RunnerResult, RunnerError>({
+              type: "NoCasesFound",
+              suite: TAPESTRY_CATEGORY_ROUTING_SUITE,
+              message: `No cases match model filter "${request.modelFilter ?? "(none)"}" in suite "${TAPESTRY_CATEGORY_ROUTING_SUITE}".`,
+            }),
+          ),
         );
+      }
+
+      if (dryRun) {
+        const caseResults = workItems.map(({ evalCase, modelId }) => {
+          const rubric = rubrics.find((r) => r.case_id === evalCase.id);
+          return buildDryRunResult(evalCase, modelId, rubric);
+        });
         return ResultAsync.fromSafePromise(
           Promise.resolve(
             this.assembleResult(TAPESTRY_CATEGORY_ROUTING_SUITE, caseResults),
@@ -1232,6 +1491,41 @@ export class TapestryCategoryRoutingRunner {
           analysis,
         );
 
+        // When a scorer is injected, call it for qualitative dimensions and
+        // merge with the locally computed deterministic routing score.
+        if (this.scorer !== undefined) {
+          const routingCorrectness = scoreRoutingCorrectness(analysis);
+          return this.scorer
+            .score(runOutput, evalCase, rubrics)
+            .mapErr(
+              (
+                scoringError,
+              ): { type: string; message: string; dimension?: string } => ({
+                type: "ScorerAdapterError",
+                message:
+                  "message" in scoringError
+                    ? String(scoringError.message)
+                    : "Scorer returned an error.",
+                dimension:
+                  "dimension" in scoringError
+                    ? String((scoringError as { dimension: string }).dimension)
+                    : undefined,
+              }),
+            )
+            .map((scorerRecord) => ({
+              runOutput,
+              scoreRecord: mergeWithScorerDimensions(
+                evalCase,
+                modelId,
+                rubric,
+                routingCorrectness,
+                scorerRecord,
+              ),
+              composedPrompt: systemPrompt,
+            }));
+        }
+
+        // No scorer: use local heuristic scoring for all dimensions.
         const scoreRecord = buildCategoryScoreRecord(
           evalCase,
           modelId,

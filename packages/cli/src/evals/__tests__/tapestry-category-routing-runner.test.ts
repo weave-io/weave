@@ -20,31 +20,32 @@
  * Test isolation:
  *   - All model calls go through `StubModelClient`.
  *   - No real file I/O, LangChain, git, or network calls occur.
- *   - Cases and rubrics are constructed inline.
- *   - The runner is constructed via `InMemoryTapestryCategoryRoutingRunner`
- *     which bypasses file-based fixture loading.
+ *   - Cases and rubrics are constructed inline and injected via `caseLoader`
+ *     and `rubricLoader` options — the production `run()` is exercised directly.
  */
 
 import { describe, expect, it } from "bun:test";
-import { err, ok, ResultAsync } from "neverthrow";
+import { err, ResultAsync } from "neverthrow";
+import { StubAgentEvalsScorer } from "../langchain-agent-evals.js";
 import { StubModelClient } from "../openrouter-client.js";
 import {
   analyzeCategoryRouting,
+  detectGenericShuttleFallback,
   extractCategoryShuttles,
   GENERIC_SHUTTLE_FALLBACK_SCORE,
+  QUALITATIVE_PASS_THRESHOLD,
+  scoreExecutionCompleteness,
   scoreRoutingCorrectness,
   TAPESTRY_CATEGORY_ROUTING_SUITE,
   TapestryCategoryRoutingRunner,
   type TapestryCategoryRoutingRunnerOptions,
-  type TapestryCategoryRoutingRunRequest,
 } from "../tapestry-category-routing-runner.js";
 import type {
-  CaseResult,
   EvalCase,
   EvalRubric,
+  NormalizedScoreRecord,
   PromptProvider,
   ProvenanceError,
-  RunnerResult,
 } from "../types.js";
 
 // ---------------------------------------------------------------------------
@@ -85,287 +86,25 @@ function makeEvalRubric(
 }
 
 // ---------------------------------------------------------------------------
-// InMemoryTapestryCategoryRoutingRunner — bypasses file I/O
+// makeRunner — constructs the real TapestryCategoryRoutingRunner with injected
+// in-memory loaders so the production run() pipeline is exercised without file I/O.
 // ---------------------------------------------------------------------------
 
-/**
- * A test double that overrides the fixture-loading step with in-memory
- * cases and rubrics, exercising the full runner pipeline without file I/O.
- */
-class InMemoryTapestryCategoryRoutingRunner extends TapestryCategoryRoutingRunner {
-  private readonly _promptProvider: PromptProvider | undefined;
-
-  constructor(
-    options: TapestryCategoryRoutingRunnerOptions,
-    private readonly cases: EvalCase[],
-    private readonly rubrics: EvalRubric[],
-  ) {
-    super({ ...options, evalsRoot: "/tmp/nonexistent-evals-root-for-tests" });
-    this._promptProvider = options.promptProvider;
-  }
-
-  override run(
-    request: TapestryCategoryRoutingRunRequest = {},
-  ): ResultAsync<RunnerResult, import("../types.js").RunnerError> {
-    const dryRun = request.dryRun ?? false;
-    const rawArtifacts = request.rawArtifacts ?? false;
-
-    let cases = [...this.cases];
-    const rubrics = this.rubrics;
-
-    // Apply case filter
-    if (request.caseFilter !== undefined) {
-      const match = cases.find((c) => c.id === request.caseFilter);
-      if (match === undefined) {
-        const known = cases.map((c) => c.id).join(", ") || "(none)";
-        return new ResultAsync(
-          Promise.resolve(
-            err<RunnerResult, import("../types.js").RunnerError>({
-              type: "CaseFilterNotFound",
-              caseId: request.caseFilter,
-              message: `Case "${request.caseFilter}" not found. Known: ${known}`,
-            }),
-          ),
-        );
-      }
-      cases = [match];
-    }
-
-    if (cases.length === 0) {
-      return new ResultAsync(
-        Promise.resolve(
-          err<RunnerResult, import("../types.js").RunnerError>({
-            type: "NoCasesFound",
-            suite: TAPESTRY_CATEGORY_ROUTING_SUITE,
-            message: `No cases found in suite "${TAPESTRY_CATEGORY_ROUTING_SUITE}".`,
-          }),
-        ),
-      );
-    }
-
-    // Apply model filter
-    const workItems = cases.flatMap((evalCase) => {
-      if (request.modelFilter !== undefined) {
-        if (!evalCase.allowed_models.includes(request.modelFilter)) {
-          return [];
-        }
-        return [{ evalCase, modelId: request.modelFilter }];
-      }
-      const modelId = evalCase.allowed_models[0];
-      if (modelId === undefined) return [];
-      return [{ evalCase, modelId }];
-    });
-
-    if (workItems.length === 0) {
-      return new ResultAsync(
-        Promise.resolve(
-          err<RunnerResult, import("../types.js").RunnerError>({
-            type: "NoCasesFound",
-            suite: TAPESTRY_CATEGORY_ROUTING_SUITE,
-            message: `No cases match model filter "${request.modelFilter}".`,
-          }),
-        ),
-      );
-    }
-
-    if (dryRun) {
-      const caseResults = workItems.map(({ evalCase, modelId }) => ({
-        summary: {
-          caseId: evalCase.id,
-          modelId,
-          suite: evalCase.suite,
-          passed: false,
-          required: evalCase.transcript_expectations.length === 0,
-          weightedTotal: 0,
-          dimensionScores: {
-            routingCorrectness: { score: 0, applicable: false },
-            delegationCorrectness: { score: 0, applicable: false },
-            executionCompleteness: { score: 0, applicable: false },
-            rationaleQuality: { score: 0, applicable: false },
-          },
-          scoredAt: new Date().toISOString(),
-          dryRun: true,
-        },
-      }));
-      return ResultAsync.fromSafePromise(
-        Promise.resolve(
-          assembleRunnerResult(TAPESTRY_CATEGORY_ROUTING_SUITE, caseResults),
-        ),
-      );
-    }
-
-    // Resolve prompt provider
-    const resolvePrompt = (): ResultAsync<
-      string,
-      import("../types.js").RunnerError
-    > => {
-      if (this._promptProvider !== undefined) {
-        return this._promptProvider
-          .getPrompt("tapestry")
-          .mapErr((): import("../types.js").RunnerError => ({
-            type: "PromptProviderFailed",
-            agentName: "tapestry",
-            message: "Tapestry prompt provider failed.",
-          }));
-      }
-      return ResultAsync.fromSafePromise(
-        Promise.resolve("Test Tapestry system prompt"),
-      );
-    };
-
-    return resolvePrompt().andThen((systemPrompt) => {
-      const executeAll = workItems.reduce(
-        (acc, { evalCase, modelId }) =>
-          acc.andThen((results) =>
-            executeCaseInMemory(
-              this,
-              evalCase,
-              modelId,
-              rubrics,
-              rawArtifacts,
-              systemPrompt,
-            ).map((result) => [...results, result]),
-          ),
-        ResultAsync.fromSafePromise(Promise.resolve([] as CaseResult[])),
-      );
-
-      return (executeAll as ResultAsync<CaseResult[], never>).andThen(
-        (caseResults) =>
-          ResultAsync.fromSafePromise(
-            Promise.resolve(
-              assembleRunnerResult(
-                TAPESTRY_CATEGORY_ROUTING_SUITE,
-                caseResults,
-              ),
-            ),
-          ),
-      );
-    });
-  }
-}
-
-function assembleRunnerResult(
-  suite: string,
-  caseResults: CaseResult[],
-): RunnerResult {
-  const passedCases = caseResults.filter((r) => r.summary.passed).length;
-  const failedCases = caseResults.length - passedCases;
-  const suiteGreen = caseResults
-    .filter((r) => r.summary.required && !r.summary.dryRun)
-    .every((r) => r.summary.passed);
-
-  return {
-    suite,
-    suiteGreen,
-    caseResults,
-    totalCases: caseResults.length,
-    passedCases,
-    failedCases,
-    completedAt: new Date().toISOString(),
-  };
-}
-
-function executeCaseInMemory(
-  runner: TapestryCategoryRoutingRunner,
-  evalCase: EvalCase,
-  modelId: string,
+function makeRunner(
+  options: Omit<
+    TapestryCategoryRoutingRunnerOptions,
+    "caseLoader" | "rubricLoader"
+  >,
+  cases: EvalCase[],
   rubrics: EvalRubric[],
-  _rawArtifacts: boolean,
-  systemPrompt: string,
-): ResultAsync<CaseResult, never> {
-  const userMessage = `Task to route: ${evalCase.description}`;
-
-  // Access the model client via duck-typing
-  const anyRunner = runner as unknown as { modelClient: StubModelClient };
-
-  const modelResultAsync = anyRunner.modelClient.complete({
-    model: modelId,
-    messages: [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userMessage },
-    ],
-    temperature: 0.2,
+): TapestryCategoryRoutingRunner {
+  return new TapestryCategoryRoutingRunner({
+    ...options,
+    caseLoader: (_suite) =>
+      ResultAsync.fromSafePromise(Promise.resolve([...cases])),
+    rubricLoader: (_suite) =>
+      ResultAsync.fromSafePromise(Promise.resolve([...rubrics])),
   });
-
-  const matchPromise = modelResultAsync
-    .andThen((response) => {
-      const expectedTarget =
-        evalCase.expected_outcome.kind === "agent_routing"
-          ? evalCase.expected_outcome.target_agent
-          : "";
-
-      const analysis = analyzeCategoryRouting(
-        response.content,
-        expectedTarget,
-        evalCase.accepted_alternates,
-      );
-
-      const rubric = rubrics.find((r) => r.case_id === evalCase.id);
-      if (rubric === undefined) {
-        return new ResultAsync<CaseResult, { type: string; message: string }>(
-          Promise.resolve(
-            err({
-              type: "RubricNotFound",
-              message: `No rubric for "${evalCase.id}".`,
-            }),
-          ),
-        );
-      }
-
-      const routingScore = scoreRoutingCorrectness(analysis);
-      const passed = rubric.scoring.required
-        ? routingScore.score >= 0.95
-        : routingScore.score >= 0.5;
-
-      const caseResult: CaseResult = {
-        summary: {
-          caseId: evalCase.id,
-          modelId,
-          suite: evalCase.suite,
-          passed,
-          required: rubric.scoring.required,
-          weightedTotal: routingScore.score * rubric.scoring.outcome_weight,
-          dimensionScores: {
-            routingCorrectness: {
-              score: routingScore.score,
-              applicable: routingScore.applicable,
-            },
-            delegationCorrectness: { score: 0, applicable: false },
-            executionCompleteness: { score: 0, applicable: false },
-            rationaleQuality: { score: 0, applicable: false },
-          },
-          scoredAt: new Date().toISOString(),
-          dryRun: false,
-        },
-      };
-
-      return ResultAsync.fromSafePromise(Promise.resolve(caseResult));
-    })
-    .match<CaseResult>(
-      (result) => result,
-      () => ({
-        summary: {
-          caseId: evalCase.id,
-          modelId,
-          suite: evalCase.suite,
-          passed: false,
-          required: true,
-          weightedTotal: 0,
-          dimensionScores: {
-            routingCorrectness: { score: 0, applicable: false },
-            delegationCorrectness: { score: 0, applicable: false },
-            executionCompleteness: { score: 0, applicable: false },
-            rationaleQuality: { score: 0, applicable: false },
-          },
-          scoredAt: new Date().toISOString(),
-          dryRun: false,
-        },
-      }),
-    );
-
-  return new ResultAsync(
-    matchPromise.then((result) => ok<CaseResult, never>(result)),
-  );
 }
 
 // ---------------------------------------------------------------------------
@@ -448,6 +187,89 @@ describe("extractCategoryShuttles", () => {
     const content = "→ shuttle-backend for this API task";
     const result = extractCategoryShuttles(content);
     expect(result).toEqual(["shuttle-backend"]);
+  });
+
+  it("two-pass: routing-line targets appear before non-routing diagnostic mentions", () => {
+    // Line 1: non-routing diagnostic mention of shuttle-backend (no routing phrase)
+    // Line 2: explicit routing to shuttle-client-frontend
+    // Two-pass: pass-1 picks up shuttle-client-frontend (routing line),
+    // pass-2 picks up shuttle-backend (non-routing line) — result[0] is frontend.
+    const content = [
+      "shuttle-backend handles APIs and data persistence",
+      "→ shuttle-client-frontend",
+    ].join("\n");
+    const result = extractCategoryShuttles(content);
+    expect(result[0]).toBe("shuttle-client-frontend");
+  });
+
+  it("two-pass: explicit routing-line target wins over earlier non-routing mention", () => {
+    // Line 1: diagnostic mention of shuttle-backend (no routing phrase)
+    // Line 2: explicit routing to shuttle-client-frontend
+    // Primary target must be shuttle-client-frontend (routing-line pass 1)
+    const content = [
+      "shuttle-backend handles APIs and data persistence",
+      "→ shuttle-client-frontend",
+    ].join("\n");
+    const result = extractCategoryShuttles(content);
+    expect(result[0]).toBe("shuttle-client-frontend");
+    // shuttle-backend appears in pass-2 after the primary target
+    expect(result[1]).toBe("shuttle-backend");
+  });
+
+  it("two-pass: fallback when no routing phrase exists selects from non-routing lines", () => {
+    // No routing line at all → pass 1 finds nothing → pass 2 picks up the mention
+    const content = "shuttle-backend is the right agent for this task";
+    const result = extractCategoryShuttles(content);
+    expect(result).toEqual(["shuttle-backend"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Unit tests — detectGenericShuttleFallback()
+// ---------------------------------------------------------------------------
+
+describe("detectGenericShuttleFallback", () => {
+  it("detects bare shuttle on a routing line", () => {
+    expect(detectGenericShuttleFallback("→ shuttle for this task")).toBe(true);
+  });
+
+  it("does NOT detect shuttle-backend as a generic shuttle fallback", () => {
+    expect(
+      detectGenericShuttleFallback("→ shuttle-backend for this task"),
+    ).toBe(false);
+  });
+
+  it("'do not route to shuttle-backend' alone is not a generic fallback", () => {
+    // Only negated category shuttle; no bare shuttle present
+    expect(
+      detectGenericShuttleFallback("do not route to shuttle-backend"),
+    ).toBe(false);
+  });
+
+  it("'do not route to shuttle-backend; route to shuttle' is a generic fallback", () => {
+    // Negated category shuttle + affirmative bare shuttle on same line
+    expect(
+      detectGenericShuttleFallback(
+        "do not route to shuttle-backend; route to shuttle",
+      ),
+    ).toBe(true);
+  });
+
+  it("'do not route to shuttle' is NOT a generic fallback (bare token negated)", () => {
+    // Bare shuttle is negated — should NOT count
+    expect(detectGenericShuttleFallback("do not route to shuttle")).toBe(false);
+  });
+
+  it("non-routing line with bare shuttle does not trigger fallback", () => {
+    // "shuttle" appears but line has no routing phrase
+    expect(detectGenericShuttleFallback("shuttle is an agent")).toBe(false);
+  });
+
+  it("secondary context line is ignored", () => {
+    // "route to shuttle" but on a line with a secondary indicator
+    expect(
+      detectGenericShuttleFallback("route to shuttle as a follow-up"),
+    ).toBe(false);
   });
 });
 
@@ -680,7 +502,80 @@ describe("scoreRoutingCorrectness", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Integration tests — InMemoryTapestryCategoryRoutingRunner
+// Unit tests — scoreExecutionCompleteness() path evidence
+// ---------------------------------------------------------------------------
+
+describe("scoreExecutionCompleteness path evidence", () => {
+  function makeExactAnalysis() {
+    return analyzeCategoryRouting(
+      "→ shuttle-client-frontend",
+      "shuttle-client-frontend",
+      [],
+    );
+  }
+
+  it("scores 1.0 for Unix forward-slash path (src/components/Button.tsx)", () => {
+    const { score } = scoreExecutionCompleteness(
+      "→ shuttle-client-frontend because src/components/Button.tsx is a React file",
+      makeExactAnalysis(),
+    );
+    expect(score).toBe(1.0);
+  });
+
+  it("scores 1.0 for Windows absolute path (C:\\app\\screen.tsx)", () => {
+    const { score } = scoreExecutionCompleteness(
+      "→ shuttle-client-frontend for C:\\app\\screen.tsx",
+      makeExactAnalysis(),
+    );
+    expect(score).toBe(1.0);
+  });
+
+  it("scores 1.0 for Windows relative backslash path (src\\components\\Button.tsx)", () => {
+    const { score } = scoreExecutionCompleteness(
+      "→ shuttle-client-frontend for src\\components\\Button.tsx",
+      makeExactAnalysis(),
+    );
+    expect(score).toBe(1.0);
+  });
+
+  it("scores 1.0 for ordinary filename with extension (screen.tsx)", () => {
+    const { score } = scoreExecutionCompleteness(
+      "→ shuttle-client-frontend for screen.tsx",
+      makeExactAnalysis(),
+    );
+    expect(score).toBe(1.0);
+  });
+
+  it("scores 0.5 when no path evidence at all", () => {
+    // Use a routing decision with no domain keywords or file paths
+    const noEvidenceAnalysis = analyzeCategoryRouting(
+      "→ shuttle-ui",
+      "shuttle-ui",
+      [],
+    );
+    const { score } = scoreExecutionCompleteness(
+      "→ shuttle-ui",
+      noEvidenceAnalysis,
+    );
+    expect(score).toBe(0.5);
+  });
+
+  it("scores 0.0 for extraction-miss regardless of path content", () => {
+    const missAnalysis = analyzeCategoryRouting(
+      "No routing signal",
+      "shuttle-client-frontend",
+      [],
+    );
+    const { score } = scoreExecutionCompleteness(
+      "No routing signal, but src/api/server.ts mentioned",
+      missAnalysis,
+    );
+    expect(score).toBe(0.0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Integration tests — TapestryCategoryRoutingRunner (real run() with injected loaders)
 // ---------------------------------------------------------------------------
 
 describe("TapestryCategoryRoutingRunner (in-memory)", () => {
@@ -695,7 +590,7 @@ describe("TapestryCategoryRoutingRunner (in-memory)", () => {
         "→ shuttle-client-frontend for this UI task because it handles frontend components",
     });
 
-    const runner = new InMemoryTapestryCategoryRoutingRunner(
+    const runner = makeRunner(
       { modelClient, tapestrySystemPrompt: "You are Tapestry." },
       [evalCase],
       [rubric],
@@ -726,7 +621,7 @@ describe("TapestryCategoryRoutingRunner (in-memory)", () => {
       content: "→ shuttle-backend because this is a backend task",
     });
 
-    const runner = new InMemoryTapestryCategoryRoutingRunner(
+    const runner = makeRunner(
       { modelClient, tapestrySystemPrompt: "You are Tapestry." },
       [evalCase],
       [rubric],
@@ -754,7 +649,7 @@ describe("TapestryCategoryRoutingRunner (in-memory)", () => {
       content: "→ shuttle for this task",
     });
 
-    const runner = new InMemoryTapestryCategoryRoutingRunner(
+    const runner = makeRunner(
       { modelClient, tapestrySystemPrompt: "You are Tapestry." },
       [evalCase],
       [rubric],
@@ -792,7 +687,7 @@ describe("TapestryCategoryRoutingRunner (in-memory)", () => {
       content: "→ shuttle-client-frontend",
     });
 
-    const runnerCorrect = new InMemoryTapestryCategoryRoutingRunner(
+    const runnerCorrect = makeRunner(
       {
         modelClient: modelClientCorrect,
         tapestrySystemPrompt: "You are Tapestry.",
@@ -815,7 +710,7 @@ describe("TapestryCategoryRoutingRunner (in-memory)", () => {
       content: "→ shuttle",
     });
 
-    const runnerGeneric = new InMemoryTapestryCategoryRoutingRunner(
+    const runnerGeneric = makeRunner(
       {
         modelClient: modelClientGeneric,
         tapestrySystemPrompt: "You are Tapestry.",
@@ -850,7 +745,7 @@ describe("TapestryCategoryRoutingRunner (in-memory)", () => {
     const rubric = makeEvalRubric();
     const modelClient = new StubModelClient(); // no responses queued
 
-    const runner = new InMemoryTapestryCategoryRoutingRunner(
+    const runner = makeRunner(
       { modelClient, tapestrySystemPrompt: "You are Tapestry." },
       [evalCase],
       [rubric],
@@ -873,7 +768,7 @@ describe("TapestryCategoryRoutingRunner (in-memory)", () => {
     const rubric = makeEvalRubric();
     const modelClient = new StubModelClient();
 
-    const runner = new InMemoryTapestryCategoryRoutingRunner(
+    const runner = makeRunner(
       { modelClient, tapestrySystemPrompt: "You are Tapestry." },
       [evalCase],
       [rubric],
@@ -894,7 +789,7 @@ describe("TapestryCategoryRoutingRunner (in-memory)", () => {
     const rubric = makeEvalRubric();
     const modelClient = new StubModelClient();
 
-    const runner = new InMemoryTapestryCategoryRoutingRunner(
+    const runner = makeRunner(
       { modelClient, tapestrySystemPrompt: "You are Tapestry." },
       [evalCase],
       [rubric],
@@ -928,7 +823,7 @@ describe("TapestryCategoryRoutingRunner (in-memory)", () => {
         ),
     };
 
-    const runner = new InMemoryTapestryCategoryRoutingRunner(
+    const runner = makeRunner(
       { modelClient, promptProvider: failingProvider },
       [evalCase],
       [rubric],
@@ -952,7 +847,7 @@ describe("TapestryCategoryRoutingRunner (in-memory)", () => {
       content: "→ shuttle-client-frontend SECRET_CONTENT_THAT_SHOULD_NOT_LEAK",
     });
 
-    const runner = new InMemoryTapestryCategoryRoutingRunner(
+    const runner = makeRunner(
       { modelClient, tapestrySystemPrompt: "SECRET_SYSTEM_PROMPT_CONTENT" },
       [evalCase],
       [rubric],
@@ -985,7 +880,7 @@ describe("TapestryCategoryRoutingRunner (in-memory)", () => {
       content: "→ shuttle-client-frontend",
     });
 
-    const runnerPass = new InMemoryTapestryCategoryRoutingRunner(
+    const runnerPass = makeRunner(
       { modelClient, tapestrySystemPrompt: "You are Tapestry." },
       [evalCase],
       [rubric],
@@ -1006,7 +901,7 @@ describe("TapestryCategoryRoutingRunner (in-memory)", () => {
       content: "→ shuttle-backend",
     });
 
-    const runnerFail = new InMemoryTapestryCategoryRoutingRunner(
+    const runnerFail = makeRunner(
       {
         modelClient: modelClientFail,
         tapestrySystemPrompt: "You are Tapestry.",
@@ -1023,5 +918,562 @@ describe("TapestryCategoryRoutingRunner (in-memory)", () => {
     );
 
     expect(resultFail.suiteGreen).toBe(false);
+  });
+
+  // -------------------------------------------------------------------------
+  // Requirement 4: Empty model-filtered work set → NoCasesFound before dry/live
+  // -------------------------------------------------------------------------
+
+  it("dry-run: returns NoCasesFound (not ok) when model filter empties work set — no model calls made", async () => {
+    const evalCase = makeCategoryRoutingCase(); // only allows anthropic/claude-sonnet-4.5
+    const rubric = makeEvalRubric();
+    const modelClient = new StubModelClient(); // would throw if called
+
+    const runner = makeRunner(
+      { modelClient, tapestrySystemPrompt: "You are Tapestry." },
+      [evalCase],
+      [rubric],
+    );
+
+    const result = await runner
+      .run({ dryRun: true, modelFilter: "openai/gpt-999-does-not-exist" })
+      .match(
+        (r) => r,
+        (e) => e,
+      );
+
+    expect(result).toMatchObject({ type: "NoCasesFound" });
+    // No model calls were attempted (StubModelClient throws on empty queue)
+  });
+
+  it("live: returns NoCasesFound before prompt/model when model filter empties work set", async () => {
+    const evalCase = makeCategoryRoutingCase();
+    const rubric = makeEvalRubric();
+    const modelClient = new StubModelClient(); // no responses queued — would throw
+
+    let promptCalled = false;
+    const trackingProvider: PromptProvider = {
+      getPrompt: (_agentName: string) => {
+        promptCalled = true;
+        return ResultAsync.fromSafePromise(
+          Promise.resolve("Test Tapestry system prompt"),
+        );
+      },
+    };
+
+    const runner = makeRunner(
+      { modelClient, promptProvider: trackingProvider },
+      [evalCase],
+      [rubric],
+    );
+
+    const result = await runner
+      .run({ modelFilter: "openai/gpt-999-does-not-exist" })
+      .match(
+        (r) => r,
+        (e) => e,
+      );
+
+    expect(result).toMatchObject({ type: "NoCasesFound" });
+    expect(promptCalled).toBe(false);
+  });
+
+  // -------------------------------------------------------------------------
+  // Requirement 5: Dry-run required derives from rubric scoring.required
+  // -------------------------------------------------------------------------
+
+  it("dry-run: required=true when rubric.scoring.required is true", async () => {
+    const evalCase = makeCategoryRoutingCase();
+    const rubric = makeEvalRubric(); // required: true by default
+    const modelClient = new StubModelClient();
+
+    const runner = makeRunner(
+      { modelClient, tapestrySystemPrompt: "You are Tapestry." },
+      [evalCase],
+      [rubric],
+    );
+
+    const result = await runner.run({ dryRun: true }).match(
+      (r) => r,
+      (e) => {
+        throw new Error(`Unexpected error: ${e.type}`);
+      },
+    );
+
+    expect(result.caseResults[0]?.summary.dryRun).toBe(true);
+    expect(result.caseResults[0]?.summary.required).toBe(true);
+  });
+
+  it("dry-run: required=false when rubric.scoring.required is false", async () => {
+    const evalCase = makeCategoryRoutingCase();
+    const rubric: EvalRubric = {
+      case_id: "route-to-shuttle-client-frontend",
+      suite: "tapestry-category-routing",
+      scoring: {
+        outcome_weight: 0.7,
+        per_expectation_weight: 0.3,
+        required: false, // non-required case
+      },
+    };
+    const modelClient = new StubModelClient();
+
+    const runner = makeRunner(
+      { modelClient, tapestrySystemPrompt: "You are Tapestry." },
+      [evalCase],
+      [rubric],
+    );
+
+    const result = await runner.run({ dryRun: true }).match(
+      (r) => r,
+      (e) => {
+        throw new Error(`Unexpected error: ${e.type}`);
+      },
+    );
+
+    expect(result.caseResults[0]?.summary.dryRun).toBe(true);
+    expect(result.caseResults[0]?.summary.required).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Scorer integration tests
+// ---------------------------------------------------------------------------
+
+/** Build a minimal NormalizedScoreRecord for StubAgentEvalsScorer responses. */
+function makeScorerRecord(
+  caseId: string,
+  overrides: Partial<NormalizedScoreRecord> = {},
+): NormalizedScoreRecord {
+  return {
+    caseId,
+    modelId: "anthropic/claude-sonnet-4.5",
+    suite: "tapestry-category-routing",
+    dimensions: {
+      routingCorrectness: {
+        score: 1.0,
+        rationale: "correct",
+        applicable: true,
+      },
+      delegationCorrectness: {
+        score: 0.9,
+        rationale: "good rationale",
+        applicable: true,
+      },
+      executionCompleteness: {
+        score: 0.8,
+        rationale: "path evidence present",
+        applicable: true,
+      },
+      rationaleQuality: {
+        score: 0.85,
+        rationale: "appropriate choice",
+        applicable: true,
+      },
+    },
+    weightedTotal: 0.9,
+    passed: true,
+    required: true,
+    scoredAt: new Date().toISOString(),
+    ...overrides,
+  };
+}
+
+describe("TapestryCategoryRoutingRunner — scorer integration", () => {
+  it("calls injected scorer with real ModelRunOutput, EvalCase, and rubrics", async () => {
+    const evalCase = makeCategoryRoutingCase();
+    const rubric = makeEvalRubric();
+
+    const modelClient = new StubModelClient();
+    modelClient.enqueueResponse({
+      model: "anthropic/claude-sonnet-4.5",
+      content: "→ shuttle-client-frontend because src/components are frontend",
+    });
+
+    const scorer = new StubAgentEvalsScorer();
+    scorer.enqueueRecord(makeScorerRecord(evalCase.id));
+
+    const runner = makeRunner(
+      { modelClient, scorer, tapestrySystemPrompt: "You are Tapestry." },
+      [evalCase],
+      [rubric],
+    );
+
+    await runner.run().match(
+      (r) => r,
+      (e) => {
+        throw new Error(`Unexpected error: ${e.type}`);
+      },
+    );
+
+    expect(scorer.calls).toHaveLength(1);
+    const call = scorer.calls[0];
+    expect(call?.evalCase.id).toBe(evalCase.id);
+    expect(call?.run.caseId).toBe(evalCase.id);
+    // Rubric array must be passed (scorer does its own lookup)
+    expect(call?.rubrics.length).toBeGreaterThan(0);
+  });
+
+  it("uses scorer's qualitative dimensions (delegationCorrectness, executionCompleteness, rationaleQuality) in final result", async () => {
+    const evalCase = makeCategoryRoutingCase();
+    const rubric = makeEvalRubric();
+
+    const modelClient = new StubModelClient();
+    modelClient.enqueueResponse({
+      model: "anthropic/claude-sonnet-4.5",
+      content: "→ shuttle-client-frontend",
+    });
+
+    const scorer = new StubAgentEvalsScorer();
+    // Scorer returns distinct qualitative scores that differ from heuristic defaults
+    scorer.enqueueRecord(
+      makeScorerRecord(evalCase.id, {
+        dimensions: {
+          routingCorrectness: {
+            score: 0.5,
+            rationale: "scorer routing (ignored)",
+            applicable: true,
+          },
+          delegationCorrectness: {
+            score: 0.77,
+            rationale: "scorer delegation",
+            applicable: true,
+          },
+          executionCompleteness: {
+            score: 0.88,
+            rationale: "scorer execution",
+            applicable: true,
+          },
+          rationaleQuality: {
+            score: 0.66,
+            rationale: "scorer rationale",
+            applicable: true,
+          },
+        },
+      }),
+    );
+
+    const runner = makeRunner(
+      { modelClient, scorer, tapestrySystemPrompt: "You are Tapestry." },
+      [evalCase],
+      [rubric],
+    );
+
+    const result = await runner.run().match(
+      (r) => r,
+      (e) => {
+        throw new Error(`Unexpected error: ${e.type}`);
+      },
+    );
+
+    const summary = result.caseResults[0]?.summary;
+    // Qualitative dimensions come from scorer
+    expect(summary?.dimensionScores.delegationCorrectness.score).toBe(0.77);
+    expect(summary?.dimensionScores.executionCompleteness.score).toBe(0.88);
+    expect(summary?.dimensionScores.rationaleQuality.score).toBe(0.66);
+    // routingCorrectness is locally computed (1.0 for exact match), NOT the scorer's 0.5
+    expect(summary?.dimensionScores.routingCorrectness.score).toBe(1.0);
+  });
+
+  it("locally computed routingCorrectness overrides scorer's routing score", async () => {
+    const evalCase = makeCategoryRoutingCase(); // expected: shuttle-client-frontend
+
+    // Rubric has no transcript_expectations so qualitative gate doesn't apply
+    const rubric = makeEvalRubric();
+
+    const modelClient = new StubModelClient();
+    // Model routes to WRONG category
+    modelClient.enqueueResponse({
+      model: "anthropic/claude-sonnet-4.5",
+      content: "→ shuttle-backend",
+    });
+
+    const scorer = new StubAgentEvalsScorer();
+    // Scorer returns routingCorrectness: 1.0 (wrong — we trust local computation)
+    scorer.enqueueRecord(
+      makeScorerRecord(evalCase.id, {
+        dimensions: {
+          routingCorrectness: {
+            score: 1.0,
+            rationale: "scorer says correct (wrong!)",
+            applicable: true,
+          },
+          delegationCorrectness: {
+            score: 0.9,
+            rationale: "ok",
+            applicable: true,
+          },
+          executionCompleteness: {
+            score: 0.9,
+            rationale: "ok",
+            applicable: true,
+          },
+          rationaleQuality: { score: 0.9, rationale: "ok", applicable: true },
+        },
+        passed: true,
+      }),
+    );
+
+    const runner = makeRunner(
+      { modelClient, scorer, tapestrySystemPrompt: "You are Tapestry." },
+      [evalCase],
+      [rubric],
+    );
+
+    const result = await runner.run().match(
+      (r) => r,
+      (e) => {
+        throw new Error(`Unexpected error: ${e.type}`);
+      },
+    );
+
+    const summary = result.caseResults[0]?.summary;
+    // Local computation: wrong category → 0.0
+    expect(summary?.dimensionScores.routingCorrectness.score).toBe(0.0);
+    // Required case with routingCorrectness 0.0 must fail, even if scorer said passed
+    expect(summary?.passed).toBe(false);
+  });
+
+  it("scorer failure yields a typed ScorerAdapterError zero-score result without throwing; suite continues", async () => {
+    const evalCase = makeCategoryRoutingCase();
+    const rubric = makeEvalRubric();
+
+    const modelClient = new StubModelClient();
+    modelClient.enqueueResponse({
+      model: "anthropic/claude-sonnet-4.5",
+      content: "→ shuttle-client-frontend",
+    });
+
+    const scorer = new StubAgentEvalsScorer();
+    // Scorer errors
+    scorer.enqueueError({
+      type: "ScorerAdapterError",
+      caseId: evalCase.id,
+      dimension: "delegationCorrectness",
+      message: "LangChain judge timed out",
+    });
+
+    const runner = makeRunner(
+      { modelClient, scorer, tapestrySystemPrompt: "You are Tapestry." },
+      [evalCase],
+      [rubric],
+    );
+
+    // Suite must not throw
+    const result = await runner.run().match(
+      (r) => r,
+      (e) => {
+        throw new Error(`Unexpected runner error: ${e.type}`);
+      },
+    );
+
+    // Suite completes — one case result emitted
+    expect(result.caseResults).toHaveLength(1);
+    const summary = result.caseResults[0]?.summary;
+    // Scorer error → zero-score, not passed
+    expect(summary?.passed).toBe(false);
+    expect(summary?.weightedTotal).toBe(0);
+    // All dimension scores are 0 and not applicable (error path)
+    expect(summary?.dimensionScores.routingCorrectness.score).toBe(0);
+    expect(summary?.dimensionScores.delegationCorrectness.score).toBe(0);
+
+    // rawArtifact errorSummary must contain ScorerAdapterError classification
+    // (requires rawArtifacts: true)
+  });
+
+  it("scorer error raw artifact contains ScorerAdapterError and preserves dimension", async () => {
+    const evalCase = makeCategoryRoutingCase();
+    const rubric = makeEvalRubric();
+
+    const modelClient = new StubModelClient();
+    modelClient.enqueueResponse({
+      model: "anthropic/claude-sonnet-4.5",
+      content: "→ shuttle-client-frontend",
+    });
+
+    const scorer = new StubAgentEvalsScorer();
+    scorer.enqueueError({
+      type: "ScorerAdapterError",
+      caseId: evalCase.id,
+      dimension: "delegationCorrectness",
+      message: "LangChain judge timed out",
+    });
+
+    const runner = makeRunner(
+      { modelClient, scorer, tapestrySystemPrompt: "You are Tapestry." },
+      [evalCase],
+      [rubric],
+    );
+
+    const result = await runner.run({ rawArtifacts: true }).match(
+      (r) => r,
+      (e) => {
+        throw new Error(`Unexpected runner error: ${e.type}`);
+      },
+    );
+
+    const caseResult = result.caseResults[0];
+    expect(caseResult?.rawArtifact).toBeDefined();
+    const errorSummary = caseResult?.rawArtifact?.errorSummary;
+    expect(errorSummary).toBeDefined();
+    // errorType must be ScorerAdapterError
+    expect(errorSummary?.errorType).toBe("ScorerAdapterError");
+    // classification must map to scoring-adapter-failure
+    expect(errorSummary?.classification).toBe("scoring-adapter-failure");
+    // dimension must be preserved from the scorer error
+    expect(errorSummary?.dimension).toBe("delegationCorrectness");
+  });
+
+  it("qualitative gate enforced for required case with transcript_expectations when scorer present", async () => {
+    // Case with transcript_expectations — should require qualitative avg >= 0.7
+    const evalCase = makeCategoryRoutingCase({
+      transcript_expectations: [
+        { check: "agent_mentioned", agent_name: "shuttle-client-frontend" },
+      ],
+    });
+    const rubric = makeEvalRubric();
+
+    const modelClient = new StubModelClient();
+    modelClient.enqueueResponse({
+      model: "anthropic/claude-sonnet-4.5",
+      content: "→ shuttle-client-frontend",
+    });
+
+    const scorer = new StubAgentEvalsScorer();
+    // Routing is correct (1.0) but qualitative avg is below 0.7
+    scorer.enqueueRecord(
+      makeScorerRecord(evalCase.id, {
+        dimensions: {
+          routingCorrectness: {
+            score: 1.0,
+            rationale: "correct",
+            applicable: true,
+          },
+          delegationCorrectness: {
+            score: 0.4,
+            rationale: "weak rationale",
+            applicable: true,
+          },
+          executionCompleteness: {
+            score: 0.5,
+            rationale: "missing paths",
+            applicable: true,
+          },
+          rationaleQuality: { score: 0.3, rationale: "poor", applicable: true },
+        },
+      }),
+    );
+
+    const runner = makeRunner(
+      { modelClient, scorer, tapestrySystemPrompt: "You are Tapestry." },
+      [evalCase],
+      [rubric],
+    );
+
+    const result = await runner.run().match(
+      (r) => r,
+      (e) => {
+        throw new Error(`Unexpected error: ${e.type}`);
+      },
+    );
+
+    const summary = result.caseResults[0]?.summary;
+    // routingCorrectness is 1.0 (passes routing gate)
+    expect(summary?.dimensionScores.routingCorrectness.score).toBe(1.0);
+    // avg qualitative: (0.4 + 0.5 + 0.3) / 3 = 0.4 < 0.7 → fails qualitative gate
+    const avgQual = (0.4 + 0.5 + 0.3) / 3;
+    expect(avgQual).toBeLessThan(QUALITATIVE_PASS_THRESHOLD);
+    expect(summary?.passed).toBe(false);
+  });
+
+  it("required case WITHOUT transcript_expectations passes on routing gate alone (no qualitative gate)", async () => {
+    // No transcript_expectations — qualitative gate should NOT apply
+    const evalCase = makeCategoryRoutingCase({
+      transcript_expectations: [], // explicitly empty
+    });
+    const rubric = makeEvalRubric();
+
+    const modelClient = new StubModelClient();
+    modelClient.enqueueResponse({
+      model: "anthropic/claude-sonnet-4.5",
+      content: "→ shuttle-client-frontend",
+    });
+
+    const scorer = new StubAgentEvalsScorer();
+    // Routing correct (1.0) but qualitative is low — should still pass (no gate)
+    scorer.enqueueRecord(
+      makeScorerRecord(evalCase.id, {
+        dimensions: {
+          routingCorrectness: {
+            score: 1.0,
+            rationale: "correct",
+            applicable: true,
+          },
+          delegationCorrectness: {
+            score: 0.2,
+            rationale: "poor",
+            applicable: true,
+          },
+          executionCompleteness: {
+            score: 0.2,
+            rationale: "poor",
+            applicable: true,
+          },
+          rationaleQuality: { score: 0.2, rationale: "poor", applicable: true },
+        },
+      }),
+    );
+
+    const runner = makeRunner(
+      { modelClient, scorer, tapestrySystemPrompt: "You are Tapestry." },
+      [evalCase],
+      [rubric],
+    );
+
+    const result = await runner.run().match(
+      (r) => r,
+      (e) => {
+        throw new Error(`Unexpected error: ${e.type}`);
+      },
+    );
+
+    const summary = result.caseResults[0]?.summary;
+    expect(summary?.dimensionScores.routingCorrectness.score).toBe(1.0);
+    // No transcript_expectations → qualitative gate not applied → passes on routing alone
+    expect(summary?.passed).toBe(true);
+  });
+
+  it("without scorer, required case passes on routing gate alone (heuristic path)", async () => {
+    // Verifies backwards compat: no scorer = heuristic path, no qualitative gate
+    const evalCase = makeCategoryRoutingCase({
+      transcript_expectations: [
+        { check: "agent_mentioned", agent_name: "shuttle-client-frontend" },
+      ],
+    });
+    const rubric = makeEvalRubric();
+
+    const modelClient = new StubModelClient();
+    modelClient.enqueueResponse({
+      model: "anthropic/claude-sonnet-4.5",
+      content: "→ shuttle-client-frontend",
+    });
+
+    // NO scorer injected
+    const runner = makeRunner(
+      { modelClient, tapestrySystemPrompt: "You are Tapestry." },
+      [evalCase],
+      [rubric],
+    );
+
+    const result = await runner.run().match(
+      (r) => r,
+      (e) => {
+        throw new Error(`Unexpected error: ${e.type}`);
+      },
+    );
+
+    const summary = result.caseResults[0]?.summary;
+    expect(summary?.dimensionScores.routingCorrectness.score).toBe(1.0);
+    // Heuristic path: only routing gate, no qualitative threshold
+    expect(summary?.passed).toBe(true);
   });
 });

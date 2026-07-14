@@ -570,6 +570,28 @@ describe("composeAgentSnapshots — integration with builtin config", () => {
     expect(snapshots[0]?.agentName).toBe("loom");
   });
 
+  it("deduplicates explicitly supplied duplicate agent names — one snapshot per agent", async () => {
+    // Callers may build agentNames from registries that repeat the same short
+    // agent alias for multiple suites (e.g. 'tapestry' for both
+    // tapestry-execution and tapestry-category-routing). Passing duplicates
+    // must still produce exactly one snapshot and one raw artifact per agent.
+    const result = await composeAgentSnapshots({
+      agentNames: ["loom", "tapestry", "loom", "tapestry", "loom"],
+      rawArtifacts: true,
+    });
+    expect(result.isOk()).toBe(true);
+
+    const { snapshots, rawArtifacts } = result._unsafeUnwrap();
+    // Only two distinct agents — duplicates are collapsed
+    expect(snapshots).toHaveLength(2);
+    expect(rawArtifacts).toHaveLength(2);
+
+    const snapshotNames = snapshots.map((s) => s.agentName).sort();
+    expect(snapshotNames).toEqual(["loom", "tapestry"]);
+    const artifactNames = rawArtifacts.map((a) => a.agentName).sort();
+    expect(artifactNames).toEqual(["loom", "tapestry"]);
+  });
+
   it("snapshots contain positive byteLength and charLength", async () => {
     const result = await composeAgentSnapshots();
     expect(result.isOk()).toBe(true);

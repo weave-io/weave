@@ -5,6 +5,6 @@
     "outcome_weight": 0.6,
     "per_expectation_weight": 0.4,
     "required": false,
-    "notes": "Fairness/alignment: the file path does not strictly match `src/4.Presentation/DST.Client/**`, but the user has explicitly declared this is frontend work. Credit `shuttle-client-frontend` when the model honours the explicit user hint. Credit `shuttle` if the model explains that the file is outside the category pattern boundary and routes conservatively. Penalise routing without acknowledging the hint-vs-pattern tension. Rationale quality is important here — the model must explain how it weighted the hint against path evidence."
+    "notes": "Optional case (required: false) — uses weighted total >= 0.5 to pass. routingCorrectness: `shuttle-client-frontend` scores 1.0 (exact-category-match); generic `shuttle` scores 0.4 (generic-shuttle-fallback, partial credit). When a scorer is present, qualitative dimensions from the scorer contribute to the weighted total; qualitative threshold does not apply to optional cases. The scorer should assess whether the model explains how it weighted the explicit user hint against path evidence (hint-vs-pattern tension). A response that routes without acknowledging this tension will receive lower qualitative scores."
   }
 }

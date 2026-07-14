@@ -5,6 +5,6 @@
     "outcome_weight": 0.65,
     "per_expectation_weight": 0.35,
     "required": true,
-    "notes": "Fairness/alignment: the file paths are the ground truth for category routing — both files are unambiguously inside `src/4.Presentation/DST.Client/**`. The model should route to `shuttle-client-frontend` and note the discrepancy between the user's prose (\"backend API\") and the actual file locations. Credit `shuttle-client-frontend` as exact-category-match. Credit `shuttle` if the model explains the conflict and takes a conservative route. Penalise routing to a backend agent based on prose alone when path evidence contradicts it."
+    "notes": "Required case. Pass gate: routingCorrectness >= 0.95 (deterministic) AND, because transcript_expectations is non-empty and a scorer is present, average qualitative score (delegationCorrectness + executionCompleteness + rationaleQuality) / 3 >= 0.7. routingCorrectness: `shuttle-client-frontend` scores 1.0 (exact-category-match); generic `shuttle` scores 0.4 (generic-shuttle-fallback, accepted_alternates includes shuttle). routing to a backend agent scores 0.0. The scorer should assess whether the model explains the discrepancy between the user's prose (\"backend API\") and the actual file locations inside `src/4.Presentation/DST.Client/**`, citing path evidence as the ground truth."
   }
 }

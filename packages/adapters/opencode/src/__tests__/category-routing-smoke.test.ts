@@ -7,10 +7,10 @@
  * through the composed prompt, mode, model, temperature, description, and
  * permission fields.
  *
- * The composed prompt in the fixture is hand-crafted and contains example
- * category routing documentation. The translator is expected to carry it
- * through unchanged -- this is a translation-fidelity test, not an
- * enrichment test.
+ * The composed prompt in the fixture is a realistic routing-table-free prompt
+ * that reflects the current engine output (no `## Category Routing Table`
+ * section). The translator is expected to carry it through unchanged — this is
+ * a translation-fidelity test, not an enrichment test.
  *
  * This test is skipped by default. To run it:
  *
@@ -28,19 +28,15 @@ import { translateAgent } from "../translate-agent.js";
 // Fixture: shuttle-client-frontend AgentDescriptor
 // ---------------------------------------------------------------------------
 
-const ROUTING_TABLE_SECTION = `## Category Routing Table
-
-| Category | Description | Patterns |
-|---|---|---|
-| client-frontend | Client-facing UI, components, and styling | src/client/**,**/*.tsx,**/*.css |
-
-Route work to \`shuttle-client-frontend\` when files match the patterns above.`;
-
+/**
+ * A routing-table-free composed prompt that reflects current engine output.
+ * The engine no longer injects a `## Category Routing Table` block; the
+ * prompt contains only the domain-specialist header and the category-specific
+ * append text.
+ */
 const COMPOSED_PROMPT = `# shuttle-client-frontend
 
 You are a domain specialist shuttle agent focused on the **client-frontend** category.
-
-${ROUTING_TABLE_SECTION}
 
 Focus on UI correctness, accessibility, and design-system consistency.`;
 
@@ -85,7 +81,7 @@ const descriptor: AgentDescriptor = {
 // Smoke tests — skipped unless RUN_HARNESS_SMOKE=1
 // ---------------------------------------------------------------------------
 
-describe.skipIf(!process.env.RUN_HARNESS_SMOKE)(
+describe.skipIf(!Bun.env.RUN_HARNESS_SMOKE)(
   "category-routing smoke — translateAgent (shuttle-client-frontend)",
   () => {
     it("translateAgent returns ok for a category shuttle descriptor", () => {
@@ -102,22 +98,22 @@ describe.skipIf(!process.env.RUN_HARNESS_SMOKE)(
       expect(config.prompt).toContain("shuttle-client-frontend");
     });
 
-    it("translated config system prompt contains Category Routing Table", () => {
+    it("translated config system prompt does not contain Category Routing Table", () => {
       const result = translateAgent(descriptor);
       expect(result.isOk()).toBe(true);
 
       const config = result._unsafeUnwrap();
-      expect(config.prompt).toContain("Category Routing Table");
+      // Routing table injection was removed from the engine; the prompt must
+      // not contain the old section header.
+      expect(config.prompt).not.toContain("Category Routing Table");
     });
 
-    it("translated config system prompt contains the category name and patterns", () => {
+    it("translated config system prompt contains the category name", () => {
       const result = translateAgent(descriptor);
       expect(result.isOk()).toBe(true);
 
       const config = result._unsafeUnwrap();
       expect(config.prompt).toContain("client-frontend");
-      expect(config.prompt).toContain("src/client/**");
-      expect(config.prompt).toContain("**/*.tsx");
     });
 
     it("translated config carries mode subagent", () => {
@@ -161,13 +157,21 @@ describe.skipIf(!process.env.RUN_HARNESS_SMOKE)(
       expect(config.description).toBe(descriptor.description);
     });
 
-    it("translated config permission block reflects tool policy (delegate deny → no delegate tool)", () => {
+    it("translated config permission block exactly reflects delegate:deny and network:ask from mapToolPolicy", () => {
       const result = translateAgent(descriptor);
       expect(result.isOk()).toBe(true);
 
       const config = result._unsafeUnwrap();
-      // permission is required on the config
+      // mapToolPolicy translates:
+      //   write:allow   → permission.edit = "allow"
+      //   execute:allow → permission.bash = "allow"
+      //   network:ask   → permission.webfetch = "ask"
+      //   delegate:deny → permission.doom_loop = "deny"
       expect(config.permission).toBeDefined();
+      expect(config.permission?.edit).toBe("allow");
+      expect(config.permission?.bash).toBe("allow");
+      expect(config.permission?.webfetch).toBe("ask");
+      expect(config.permission?.doom_loop).toBe("deny");
     });
 
     it("full translated config shape is a non-null object with required fields", () => {
@@ -190,12 +194,16 @@ describe.skipIf(!process.env.RUN_HARNESS_SMOKE)(
 // ---------------------------------------------------------------------------
 
 describe("category-routing smoke — fixture sanity (always runs)", () => {
-  it("COMPOSED_PROMPT contains Category Routing Table", () => {
-    expect(COMPOSED_PROMPT).toContain("Category Routing Table");
+  it("COMPOSED_PROMPT does not contain Category Routing Table", () => {
+    expect(COMPOSED_PROMPT).not.toContain("Category Routing Table");
   });
 
-  it("descriptor.composedPrompt contains Category Routing Table", () => {
-    expect(descriptor.composedPrompt).toContain("Category Routing Table");
+  it("COMPOSED_PROMPT contains the category name", () => {
+    expect(COMPOSED_PROMPT).toContain("client-frontend");
+  });
+
+  it("descriptor.composedPrompt does not contain Category Routing Table", () => {
+    expect(descriptor.composedPrompt).not.toContain("Category Routing Table");
   });
 
   it("descriptor category metadata is correct", () => {

@@ -22,8 +22,17 @@ evals/
 │   ├── tapestry-execution/             # Tapestry execution/delegation eval cases
 │   │   ├── tapestry-execute-plan-step.json
 │   │   └── tapestry-delegate-to-shuttle.json
-│   ├── tapestry-category-routing/      # Tapestry category-routing eval cases
-│   │   └── tapestry-category-route-frontend.json
+│       ├── tapestry-category-routing/      # Tapestry category-routing eval cases
+│   │   ├── tcr-01-exact-match.json
+│   │   ├── tcr-02-multiple-files.json
+│   │   ├── tcr-03-windows-paths.json
+│   │   ├── tcr-04-no-match.json
+│   │   ├── tcr-05-cross-category.json
+│   │   ├── tcr-06-overlap.json
+│   │   ├── tcr-07-explicit-hint.json
+│   │   ├── tcr-08-misleading-prose.json
+│   │   ├── tcr-09-similar-names.json
+│   │   └── tcr-10-disabled-category.json
 │   ├── shuttle-execution/              # Shuttle delegated-task execution reporting eval cases
 │   │   ├── shuttle-execution-report-structured-evidence.json
 │   │   └── shuttle-execution-report-tests-and-assumptions.json
@@ -48,7 +57,16 @@ evals/
     │   ├── tapestry-execute-plan-step.json
     │   └── tapestry-delegate-to-shuttle.json
     ├── tapestry-category-routing/      # Scoring rubrics for tapestry-category-routing cases
-    │   └── tapestry-category-route-frontend.json
+    │   ├── tcr-01-exact-match.json
+    │   ├── tcr-02-multiple-files.json
+    │   ├── tcr-03-windows-paths.json
+    │   ├── tcr-04-no-match.json
+    │   ├── tcr-05-cross-category.json
+    │   ├── tcr-06-overlap.json
+    │   ├── tcr-07-explicit-hint.json
+    │   ├── tcr-08-misleading-prose.json
+    │   ├── tcr-09-similar-names.json
+    │   └── tcr-10-disabled-category.json
     ├── shuttle-execution/              # Scoring rubrics for shuttle-execution cases
     │   ├── shuttle-execution-report-structured-evidence.json
     │   └── shuttle-execution-report-tests-and-assumptions.json

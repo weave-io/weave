@@ -5,6 +5,6 @@
     "outcome_weight": 0.75,
     "per_expectation_weight": 0.25,
     "required": true,
-    "notes": "Fairness/alignment: `src/4.Presentation/DST.Client/Components/Header.tsx` matches `src/4.Presentation/DST.Client/**` (client-frontend) and does NOT match `src/4.Presentation/DST.Mobile/**` (client-mobile). The model must distinguish `DST.Client` from `DST.Mobile` — these are different path segments. Score `shuttle-client-frontend` as exact-category-match (1.0). Score `shuttle-client-mobile` as wrong-category (0.0). The rationale must cite the path segment `DST.Client` vs `DST.Mobile` as the distinguishing evidence."
+    "notes": "Required case. Pass gate: routingCorrectness >= 0.95 (deterministic) AND, because transcript_expectations is non-empty and a scorer is present, average qualitative score (delegationCorrectness + executionCompleteness + rationaleQuality) / 3 >= 0.7. routingCorrectness: `shuttle-client-frontend` scores 1.0 (exact-category-match); `shuttle-client-mobile` scores 0.0 (wrong-category — DST.Mobile does not match). The scorer should assess whether the model's rationale cites the `DST.Client` vs `DST.Mobile` path segment distinction as the disambiguating evidence."
   }
 }

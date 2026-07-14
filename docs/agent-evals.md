@@ -125,7 +125,7 @@ And in `packages/cli/src/commands/eval.ts`:
 
 ## Eval Suites
 
-Weave currently supports a **eight-suite text-only eval surface**. Every registered suite is synthetic and text-observable by design.
+Weave currently supports an **eight-suite text-only eval surface**. Every registered suite is synthetic and text-observable by design.
 
 | Suite | Runner | What it tests |
 |---|---|---|

@@ -7,9 +7,9 @@ on:
     inputs:
       agent:
         description: |
-          Optional agent name filter. Leave blank to run all seven text-only suite families.
+          Optional agent name filter. Leave blank to run all eight text-only suite families.
           Allowed values are validated against the shared eval suite registry:
-          loom, tapestry, shuttle, spindle, pattern, weft, warp, loom-routing, tapestry-execution, shuttle-execution, spindle-tools, pattern-planning, weft-review, warp-security
+          loom, tapestry, shuttle, spindle, pattern, weft, warp, loom-routing, tapestry-execution, tapestry-category-routing, shuttle-execution, spindle-tools, pattern-planning, weft-review, warp-security
         required: false
         default: ""
         type: string
@@ -30,6 +30,16 @@ on:
             loom-route-ambiguous-direct-shuttle
             tapestry-execute-plan-step
             tapestry-delegate-to-shuttle
+            tcr-01-exact-match
+            tcr-02-multiple-files
+            tcr-03-windows-paths
+            tcr-04-no-match
+            tcr-05-cross-category
+            tcr-06-overlap
+            tcr-07-explicit-hint
+            tcr-08-misleading-prose
+            tcr-09-similar-names
+            tcr-10-disabled-category
             shuttle-execution-report-structured-evidence
             shuttle-execution-report-tests-and-assumptions
             spindle-tools-citations-facts-confidence

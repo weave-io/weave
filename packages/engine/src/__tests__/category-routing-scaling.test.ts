@@ -322,14 +322,26 @@ describe("category shuttle delegation -- composition scaling", () => {
     });
   }
 
-  it("prompt token count stays below 2000 tokens at 25 categories (no routing table overhead)", async () => {
-    // With the routing table removed, the base prompt is not inflated by category count.
-    // Verify total prompt tokens stay compact even at the largest scale.
-    const prompt = await composeTapestry(buildDslFixture(25));
-    const tokens = approxTokens(prompt);
-    // The routing table previously added ~751 tokens at 25 categories.
-    // Without it, the base should remain well below 500 tokens.
-    expect(tokens).toBeLessThan(2000);
-    expect(tokens).toBeGreaterThan(0);
+  it("prompt does not grow with category count — routing table reintroduction would inflate it", async () => {
+    // The tapestry composedPrompt must stay fixed regardless of how many
+    // categories are defined. Routing-table overhead was previously injected
+    // into the prompt string, adding ~30 chars per category.  This test
+    // proves that has been removed: prompt3 and prompt25 must be the same
+    // length (both equal to the bare tapestry prompt text, delegation targets
+    // are surfaced as descriptor metadata, not injected into the prompt string).
+    const prompt3 = await composeTapestry(buildDslFixture(3));
+    const prompt25 = await composeTapestry(buildDslFixture(25));
+
+    expect(prompt3.length).toBeGreaterThan(0);
+    expect(prompt25.length).toBeGreaterThan(0);
+
+    // Core regression guard: prompt length must be identical across category
+    // counts.  Any deviation means something is injecting per-category content
+    // into the prompt string — the routing-table anti-pattern.
+    expect(prompt25.length).toBe(prompt3.length);
+
+    // Secondary guard: neither prompt may contain the routing-table header.
+    expect(prompt25).not.toContain("Category Routing Table");
+    expect(prompt3).not.toContain("Category Routing Table");
   });
 });

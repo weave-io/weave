@@ -331,7 +331,11 @@ export function composeAgentSnapshots(
       }),
     )
     .andThen((config) => {
-      const agentNameArray = Array.from(agentNames);
+      // Deduplicate the supplied agent names so each agent is snapshotted
+      // exactly once, even when the caller passes duplicates (e.g. when
+      // building the list from EVAL_SHORT_AGENT_FILTERS which may repeat
+      // 'tapestry' for multiple suites).
+      const agentNameArray = [...new Set(Array.from(agentNames))];
 
       // Settle all per-agent compositions using .match() to convert each
       // ResultAsync into a discriminated union — this is the canonical pattern
