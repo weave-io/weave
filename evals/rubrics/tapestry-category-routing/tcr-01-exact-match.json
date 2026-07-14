@@ -1,0 +1,10 @@
+{
+  "case_id": "tcr-01-exact-match",
+  "suite": "tapestry-category-routing",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Fairness/alignment: the file path `src/4.Presentation/DST.Client/Components/Settings.tsx` is an unambiguous match for the `client-frontend` category pattern `src/4.Presentation/DST.Client/**`. Score `shuttle-client-frontend` as exact-category-match (1.0). Penalise generic `shuttle` or `loom` routing — these are fallbacks that should not be used when a pattern match is clear. The rationale must cite the file path or pattern as evidence."
+  }
+}

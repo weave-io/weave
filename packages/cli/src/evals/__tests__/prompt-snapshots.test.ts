@@ -386,7 +386,14 @@ describe("composeSnapshot — error paths", () => {
 
 describe("composeAgentSnapshots — integration with builtin config", () => {
   it("default snapshot coverage stays aligned with the shared eval registry", () => {
-    expect(DEFAULT_SNAPSHOT_AGENTS).toEqual(EVAL_SHORT_AGENT_FILTERS);
+    // DEFAULT_SNAPSHOT_AGENTS is the deduplicated set of short-agent filters.
+    // EVAL_SHORT_AGENT_FILTERS may contain duplicates (e.g. 'tapestry' backing
+    // both tapestry-execution and tapestry-category-routing), so we compare
+    // against the unique set.
+    const uniqueFilters = [...new Set(EVAL_SHORT_AGENT_FILTERS)];
+    expect([...DEFAULT_SNAPSHOT_AGENTS]).toEqual(uniqueFilters);
+    // No duplicates
+    expect(DEFAULT_SNAPSHOT_AGENTS.length).toBe(uniqueFilters.length);
   });
 
   it("composes snapshots for default eval agents", async () => {
@@ -395,10 +402,12 @@ describe("composeAgentSnapshots — integration with builtin config", () => {
 
     const { snapshots, errors } = result._unsafeUnwrap();
     expect(errors).toHaveLength(0);
-    expect(snapshots).toHaveLength(EVAL_SHORT_AGENT_FILTERS.length);
+    // DEFAULT_SNAPSHOT_AGENTS deduplicates repeated short-agent filters
+    // (e.g. 'tapestry' maps two suites but one agent snapshot).
+    expect(snapshots).toHaveLength(DEFAULT_SNAPSHOT_AGENTS.length);
 
     const agentNames = snapshots.map((s) => s.agentName).sort();
-    expect(agentNames).toEqual([...EVAL_SHORT_AGENT_FILTERS].sort());
+    expect(agentNames).toEqual([...DEFAULT_SNAPSHOT_AGENTS].sort());
   });
 
   it("all snapshots have valid 64-char hex hashes", async () => {

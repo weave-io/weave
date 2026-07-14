@@ -1,0 +1,24 @@
+{
+  "id": "tcr-04-no-match",
+  "description": "Route this task to the correct category shuttle or fallback agent. The user wants to add structured logging to `src/Infrastructure/Logging/Logger.cs`. The active Weave config declares only one category: `category client-frontend { patterns [\"src/4.Presentation/DST.Client/**\"] }`. This file does not match any category pattern. Which agent should handle this work?",
+  "suite": "tapestry-category-routing",
+  "allowed_agents": ["tapestry", "shuttle", "loom"],
+  "allowed_models": [
+    "anthropic/claude-opus-4.5",
+    "anthropic/claude-sonnet-4.5",
+    "openai/gpt-5.5"
+  ],
+  "expected_outcome": {
+    "kind": "agent_routing",
+    "target_agent": "shuttle",
+    "via": []
+  },
+  "accepted_alternates": ["loom"],
+  "transcript_expectations": [
+    {
+      "check": "agent_mentioned",
+      "agent_name": "shuttle"
+    }
+  ],
+  "tags": ["routing", "category-routing", "no-match", "fallback"]
+}

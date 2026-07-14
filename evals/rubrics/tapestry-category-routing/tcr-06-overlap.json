@@ -1,0 +1,10 @@
+{
+  "case_id": "tcr-06-overlap",
+  "suite": "tapestry-category-routing",
+  "scoring": {
+    "outcome_weight": 0.6,
+    "per_expectation_weight": 0.4,
+    "required": false,
+    "notes": "Fairness/alignment: `src/4.Presentation/DST.Client/**` is a more specific (longer, narrower) pattern than `src/4.Presentation/**`. The model should prefer `shuttle-client-frontend` as the primary match and explain that more-specific patterns take precedence. Credit `shuttle` as an acceptable fallback if the model acknowledges the overlap and explains why it chose not to resolve to a category shuttle. Penalise routing to a shuttle without any rationale about the overlap."
+  }
+}

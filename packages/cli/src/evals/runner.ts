@@ -94,6 +94,10 @@ import {
   SpindleToolsRunner,
 } from "./spindle-tools-runner.js";
 import {
+  TAPESTRY_CATEGORY_ROUTING_SUITE,
+  TapestryCategoryRoutingRunner,
+} from "./tapestry-category-routing-runner.js";
+import {
   TAPESTRY_EXECUTION_SUITE,
   TapestryExecutionRunner,
 } from "./tapestry-execution-runner.js";
@@ -897,6 +901,7 @@ export class EvalOrchestrator {
    * For each model in `modelEntries`:
    *   - Run the Loom suite (if not filtered out by agent filter)
    *   - Run the Tapestry suite (if not filtered out by agent filter)
+   *   - Run the Tapestry category-routing suite (if not filtered out by agent filter)
    *   - Run the Shuttle suite (if not filtered out by agent filter)
    *   - Run the Spindle suite (if not filtered out by agent filter)
    *   - Run the Pattern suite (if not filtered out by agent filter)
@@ -1027,6 +1032,10 @@ export class EvalOrchestrator {
       return this.runWarpSuite(request, modelFilter);
     }
 
+    if (suiteId === TAPESTRY_CATEGORY_ROUTING_SUITE) {
+      return this.runTapestryCategoryRoutingSuite(request, modelFilter);
+    }
+
     return ResultAsync.fromSafePromise(Promise.resolve(undefined)).andThen(() =>
       err({
         type: "UnknownEvalSuite",
@@ -1064,6 +1073,25 @@ export class EvalOrchestrator {
     modelFilter: string | undefined,
   ): ResultAsync<RunnerResult, RunnerError> {
     const runner = new TapestryExecutionRunner({
+      modelClient: this.modelClient,
+      scorer: this.scorer,
+      promptProvider: this.promptProvider,
+      evalsRoot: this.evalsRoot,
+    });
+
+    return runner.run({
+      caseFilter: request.case,
+      modelFilter,
+      dryRun: request.dryRun,
+      rawArtifacts: request.rawArtifacts,
+    });
+  }
+
+  private runTapestryCategoryRoutingSuite(
+    request: EvalRunRequest,
+    modelFilter: string | undefined,
+  ): ResultAsync<RunnerResult, RunnerError> {
+    const runner = new TapestryCategoryRoutingRunner({
       modelClient: this.modelClient,
       scorer: this.scorer,
       promptProvider: this.promptProvider,

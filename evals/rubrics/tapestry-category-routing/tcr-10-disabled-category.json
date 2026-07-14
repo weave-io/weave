@@ -1,0 +1,10 @@
+{
+  "case_id": "tcr-10-disabled-category",
+  "suite": "tapestry-category-routing",
+  "scoring": {
+    "outcome_weight": 0.65,
+    "per_expectation_weight": 0.35,
+    "required": true,
+    "notes": "Fairness/alignment: `shuttle-client-frontend` is disabled via `disable agents [\"shuttle-client-frontend\"]`. The model must not route to a disabled agent. Score generic `shuttle` as the correct fallback (generic-shuttle-fallback at 1.0 for this case since the category shuttle is unavailable). Credit `loom` as an acceptable alternate. Penalise routing to `shuttle-client-frontend` — disabled agents must not receive work. The rationale must mention that the category shuttle is disabled and explain the fallback choice."
+  }
+}

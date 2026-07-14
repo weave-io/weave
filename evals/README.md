@@ -2,7 +2,7 @@
 
 This directory contains the canonical fixture files for `weave eval run`. It is the **allowlist source of truth** for model matrix entries, eval cases, and rubric scoring metadata.
 
-Today that fixture surface covers exactly **seven text-only suite families**: `loom-routing`, `tapestry-execution`, `shuttle-execution`, `spindle-tools`, `pattern-planning`, `weft-review`, and `warp-security`. Runtime-backed eval fixtures are an explicit non-goal of the current contract.
+Today that fixture surface covers exactly **eight text-only suite families**: `loom-routing`, `tapestry-execution`, `tapestry-category-routing`, `shuttle-execution`, `spindle-tools`, `pattern-planning`, `weft-review`, and `warp-security`. Runtime-backed eval fixtures are an explicit non-goal of the current contract.
 
 For the full eval guide — architecture, CI model, sanitization rules, raw-artifact policy, and prompt-hash provenance — see [`docs/agent-evals.md`](../docs/agent-evals.md).
 
@@ -22,6 +22,8 @@ evals/
 │   ├── tapestry-execution/             # Tapestry execution/delegation eval cases
 │   │   ├── tapestry-execute-plan-step.json
 │   │   └── tapestry-delegate-to-shuttle.json
+│   ├── tapestry-category-routing/      # Tapestry category-routing eval cases
+│   │   └── tapestry-category-route-frontend.json
 │   ├── shuttle-execution/              # Shuttle delegated-task execution reporting eval cases
 │   │   ├── shuttle-execution-report-structured-evidence.json
 │   │   └── shuttle-execution-report-tests-and-assumptions.json
@@ -45,6 +47,8 @@ evals/
     ├── tapestry-execution/             # Scoring rubrics for tapestry-execution cases
     │   ├── tapestry-execute-plan-step.json
     │   └── tapestry-delegate-to-shuttle.json
+    ├── tapestry-category-routing/      # Scoring rubrics for tapestry-category-routing cases
+    │   └── tapestry-category-route-frontend.json
     ├── shuttle-execution/              # Scoring rubrics for shuttle-execution cases
     │   ├── shuttle-execution-report-structured-evidence.json
     │   └── shuttle-execution-report-tests-and-assumptions.json
@@ -93,15 +97,16 @@ All current suites are **text-only**. A fixture may assert only what is visible 
 
 ### Suites
 
-| Suite               | Description                                                  |
-| ------------------- | ------------------------------------------------------------ |
-| `loom-routing`      | Verify Loom routes requests to the correct agent/category    |
-| `tapestry-execution`| Verify Tapestry executes steps and delegates to sub-agents   |
-| `shuttle-execution` | Verify Shuttle mirrors delegated task structure and final evidence reporting from text |
-| `spindle-tools`     | Verify Spindle cites sources, separates source facts from interpretation, and reports confidence from text |
-| `pattern-planning`  | Verify Pattern emits structurally strong implementation plans |
-| `weft-review`       | Verify Weft emits structurally valid approve/reject reviews   |
-| `warp-security`     | Verify Warp emits text-only security triage and finding structure |
+| Suite                       | Description                                                  |
+| --------------------------- | ------------------------------------------------------------ |
+| `loom-routing`              | Verify Loom routes requests to the correct agent/category    |
+| `tapestry-execution`        | Verify Tapestry executes steps and delegates to sub-agents   |
+| `tapestry-category-routing` | Verify Tapestry routes to the correct category shuttle agent |
+| `shuttle-execution`         | Verify Shuttle mirrors delegated task structure and final evidence reporting from text |
+| `spindle-tools`             | Verify Spindle cites sources, separates source facts from interpretation, and reports confidence from text |
+| `pattern-planning`          | Verify Pattern emits structurally strong implementation plans |
+| `weft-review`               | Verify Weft emits structurally valid approve/reject reviews   |
+| `warp-security`             | Verify Warp emits text-only security triage and finding structure |
 
 ### Case Schema
 
@@ -128,7 +133,7 @@ All current suites are **text-only**. A fixture may assert only what is visible 
 | `delegation_chain` | `chain` (≥2 agents)                           | Verify an ordered delegation chain   |
 | `tool_call`        | `tool_name`, `payload_contains` (optional)    | Verify a tool was invoked            |
 
-`tool_call` exists in the shared schema for forward compatibility, but it is **forbidden** in the seven currently registered text-only suite families. The suite registry in `packages/cli/src/evals/types.ts` rejects it before dry-run or live execution.
+`tool_call` exists in the shared schema for forward compatibility, but it is **forbidden** in the eight currently registered text-only suite families. The suite registry in `packages/cli/src/evals/types.ts` rejects it before dry-run or live execution.
 
 ### Pattern-planning fixture guidance
 
@@ -226,7 +231,7 @@ Rejected examples include:
 
 Recommended authoring pattern for new cases:
 
-1. choose one of the seven registered suites
+1. choose one of the eight registered suites
 2. encode the full scenario in fixture text and the synthetic runner prompt, with no hidden repo dependency
 3. assert only structural, text-visible signals such as agent names, headings, verdict tags, file references, artifact names, blocker counts, and acceptance confirmations
 4. verify with `weave eval run --case <case-id> --dry-run` before any live run
@@ -244,7 +249,7 @@ assert hidden browser/search/network events.
 | `agent_mentioned`    | `agent_name`          | Agent name appears in at least one assistant msg |
 | `no_tool_called`     | `tool_name`           | Negative assertion: tool must NOT appear         |
 
-The table above describes the shared schema surface, not the current per-suite allowlist. For the seven registered text-only suites, contributors may safely use only text-visible checks. `tool_called`, `no_tool_called`, and `content_contains` with `role: "tool"` are forbidden by the suite registry even though they still exist in the broader schema for future expansion.
+The table above describes the shared schema surface, not the current per-suite allowlist. For the eight registered text-only suites, contributors may safely use only text-visible checks. `tool_called`, `no_tool_called`, and `content_contains` with `role: "tool"` are forbidden by the suite registry even though they still exist in the broader schema for future expansion.
 
 ## Rubric Files (`rubrics/<suite>/<case-id>.json`)
 

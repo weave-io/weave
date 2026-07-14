@@ -1,0 +1,24 @@
+{
+  "id": "tcr-07-explicit-hint",
+  "description": "Route this task to the correct category shuttle using an explicit user hint. The user says: \"This is frontend work — I need to update the user profile widget.\" The file path provided is ambiguous: `src/4.Presentation/Shared/ProfileWidget.tsx`. The active Weave config declares `category client-frontend { patterns [\"src/4.Presentation/DST.Client/**\"] }`. The file is in `src/4.Presentation/Shared/`, which does not match the pattern, but the user has explicitly stated this is frontend work. Which agent should handle this?",
+  "suite": "tapestry-category-routing",
+  "allowed_agents": ["tapestry", "shuttle", "shuttle-client-frontend", "loom"],
+  "allowed_models": [
+    "anthropic/claude-opus-4.5",
+    "anthropic/claude-sonnet-4.5",
+    "openai/gpt-5.5"
+  ],
+  "expected_outcome": {
+    "kind": "agent_routing",
+    "target_agent": "shuttle-client-frontend",
+    "via": []
+  },
+  "accepted_alternates": ["shuttle"],
+  "transcript_expectations": [
+    {
+      "check": "agent_mentioned",
+      "agent_name": "shuttle-client-frontend"
+    }
+  ],
+  "tags": ["routing", "category-routing", "explicit-hint", "user-intent"]
+}

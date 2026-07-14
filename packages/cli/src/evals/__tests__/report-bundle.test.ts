@@ -536,7 +536,7 @@ describe("assemblePublicReportBundle (clean inputs)", () => {
     expect(suites).toContain("tapestry-execution");
   });
 
-  it("assembled bundle preserves seven-suite run summaries", () => {
+  it("assembled bundle preserves eight-suite run summaries", () => {
     const suiteNames = EVAL_SUITE_REGISTRY.map((suite) => suite.suiteId);
     const bundle = makeEvalBundle({
       scoreFiles: suiteNames.map((suite, index) =>

@@ -1,0 +1,10 @@
+{
+  "case_id": "tcr-08-misleading-prose",
+  "suite": "tapestry-category-routing",
+  "scoring": {
+    "outcome_weight": 0.65,
+    "per_expectation_weight": 0.35,
+    "required": true,
+    "notes": "Fairness/alignment: the file paths are the ground truth for category routing — both files are unambiguously inside `src/4.Presentation/DST.Client/**`. The model should route to `shuttle-client-frontend` and note the discrepancy between the user's prose (\"backend API\") and the actual file locations. Credit `shuttle-client-frontend` as exact-category-match. Credit `shuttle` if the model explains the conflict and takes a conservative route. Penalise routing to a backend agent based on prose alone when path evidence contradicts it."
+  }
+}

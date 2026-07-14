@@ -1,0 +1,10 @@
+{
+  "case_id": "tcr-07-explicit-hint",
+  "suite": "tapestry-category-routing",
+  "scoring": {
+    "outcome_weight": 0.6,
+    "per_expectation_weight": 0.4,
+    "required": false,
+    "notes": "Fairness/alignment: the file path does not strictly match `src/4.Presentation/DST.Client/**`, but the user has explicitly declared this is frontend work. Credit `shuttle-client-frontend` when the model honours the explicit user hint. Credit `shuttle` if the model explains that the file is outside the category pattern boundary and routes conservatively. Penalise routing without acknowledging the hint-vs-pattern tension. Rationale quality is important here — the model must explain how it weighted the hint against path evidence."
+  }
+}

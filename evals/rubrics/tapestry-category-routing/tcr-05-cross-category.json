@@ -1,0 +1,10 @@
+{
+  "case_id": "tcr-05-cross-category",
+  "suite": "tapestry-category-routing",
+  "scoring": {
+    "outcome_weight": 0.5,
+    "per_expectation_weight": 0.5,
+    "required": false,
+    "notes": "Fairness/alignment: this is a genuine cross-category scenario. Credit any of the accepted alternates (`shuttle`, `shuttle-client-frontend`, `shuttle-backend-api`, `loom`) equally — all are reasonable responses to ambiguity. The key scoring signal is rationale quality: the model must acknowledge that both categories match and explain its choice (e.g. split delegation, dominant category, or escalation to `loom`). A response that routes without acknowledging the ambiguity scores lower on rationale quality. Do not require a specific routing choice."
+  }
+}
