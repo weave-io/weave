@@ -9,7 +9,10 @@
 import type { WorkflowStep } from "@weaveio/weave-core";
 import type { ResultAsync } from "neverthrow";
 import { err, errAsync, ok, okAsync, type Result } from "neverthrow";
-import type { RunAgentEffect } from "../run-agent-effects.js";
+import type {
+  ReviewFanOutIntent,
+  RunAgentEffect,
+} from "../run-agent-effects.js";
 import type { RuntimeStore } from "../runtime/store.js";
 import {
   ABSTRACT_CAPABILITIES,
@@ -73,12 +76,36 @@ function buildLegacyRunAgentEffect(stepName: string): RunAgentEffect {
  * Uses `step.agent` as the agent name, emits `completionMethod`, `stepType`,
  * `correlationId`, and `promptMetadata`. `composedPrompt` is always `""` —
  * the security invariant is preserved.
+ *
+ * When the step is a `gate` with `review_verdict` completion and the agent
+ * config (if provided) declares `review_models`, the effect includes a
+ * `reviewFanOutIntent` field so adapters can route the step through
+ * `ReviewOrchestrator.fanOut` with the v1 any-reject gate policy.
+ *
+ * @param step - The resolved workflow step.
+ * @param promptMetadata - Sanitized prompt structural metadata.
+ * @param agentConfig - Optional agent config for the step's declared agent.
  */
 export function buildConfiguredRunAgentEffect(
   step: WorkflowStep,
   promptMetadata: { byteLength: number },
+  agentConfig?: { review_models?: readonly string[] },
 ): RunAgentEffect {
   const effectivePolicy = evaluateEffectiveToolPolicy(undefined);
+
+  const isGateReviewVerdict =
+    step.type === "gate" && step.completion.method === "review_verdict";
+
+  const reviewFanOutIntent: ReviewFanOutIntent | undefined =
+    isGateReviewVerdict &&
+    agentConfig?.review_models &&
+    agentConfig.review_models.length > 0
+      ? {
+          agentName: step.agent,
+          reviewModels: agentConfig.review_models,
+        }
+      : undefined;
+
   return {
     kind: "run-agent",
     agentName: step.agent,
@@ -99,6 +126,7 @@ export function buildConfiguredRunAgentEffect(
     stepType: step.type,
     correlationId: crypto.randomUUID(),
     promptMetadata,
+    ...(reviewFanOutIntent !== undefined ? { reviewFanOutIntent } : {}),
   };
 }
 
@@ -311,6 +339,7 @@ export function dispatchStep(
                     runAgent: buildConfiguredRunAgentEffect(
                       step,
                       promptMetadata,
+                      input.context?.agentConfigs?.[step.agent],
                     ),
                   },
                 ],

@@ -1576,3 +1576,47 @@ describe("parseConfig — routing block", () => {
     expect(errors.some((e) => e.type === "ValidationError")).toBe(true);
   });
 });
+
+describe("parseConfig — review_models field", () => {
+  it("agent with review_models parses end-to-end with correct values", () => {
+    const src = `agent weft {
+  prompt "You are a reviewer."
+  models ["claude-sonnet-4-5"]
+  review_models ["claude-opus-4-5", "gpt-4o"]
+}`;
+    const result = parseConfig(src);
+    expect(result.isOk()).toBe(true);
+    const config = result._unsafeUnwrap();
+    expect(config.agents.weft?.review_models).toEqual([
+      "claude-opus-4-5",
+      "gpt-4o",
+    ]);
+  });
+
+  it("agent without review_models has undefined review_models", () => {
+    const src = `agent shuttle {
+  prompt "You are shuttle."
+  models ["claude-sonnet-4-5"]
+}`;
+    const result = parseConfig(src);
+    expect(result.isOk()).toBe(true);
+    expect(
+      result._unsafeUnwrap().agents.shuttle?.review_models,
+    ).toBeUndefined();
+  });
+
+  it("review_models with empty array yields ValidationError", () => {
+    const src = `agent weft {
+  prompt "You are a reviewer."
+  review_models []
+}`;
+    const result = parseConfig(src);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    expect(
+      errors.some(
+        (e) => e.type === "ValidationError" && e.path.includes("review_models"),
+      ),
+    ).toBe(true);
+  });
+});

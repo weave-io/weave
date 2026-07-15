@@ -1601,3 +1601,60 @@ describe("AgentConfigSchema — routing field", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// AgentConfigSchema — review_models field
+// ---------------------------------------------------------------------------
+
+describe("AgentConfigSchema — review_models field", () => {
+  it("accepts agent with review_models containing one or more strings", () => {
+    const r = AgentConfigSchema.safeParse({
+      prompt: "You are a reviewer.",
+      review_models: ["claude-opus-4-5", "gpt-4o"],
+    });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.review_models).toEqual(["claude-opus-4-5", "gpt-4o"]);
+    }
+  });
+
+  it("accepts agent without review_models (optional)", () => {
+    const r = AgentConfigSchema.safeParse({ prompt: "You are an agent." });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.review_models).toBeUndefined();
+    }
+  });
+
+  it("rejects review_models as empty array (min 1)", () => {
+    const r = AgentConfigSchema.safeParse({
+      prompt: "You are an agent.",
+      review_models: [],
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      const paths = r.error.issues.map((i) => i.path.join("."));
+      expect(paths.some((p) => p.includes("review_models"))).toBe(true);
+    }
+  });
+
+  it("rejects review_models with a non-string element", () => {
+    const r = AgentConfigSchema.safeParse({
+      prompt: "You are an agent.",
+      review_models: [42],
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      const paths = r.error.issues.map((i) => i.path.join("."));
+      expect(paths.some((p) => p.includes("review_models"))).toBe(true);
+    }
+  });
+
+  it("rejects review_models as a plain string instead of array", () => {
+    const r = AgentConfigSchema.safeParse({
+      prompt: "You are an agent.",
+      review_models: "claude-opus-4-5",
+    });
+    expect(r.success).toBe(false);
+  });
+});

@@ -1,6 +1,46 @@
 import type { ResultAsync } from "neverthrow";
 import type { AgentDescriptor } from "./compose.js";
+import type { ReviewExecutionResult } from "./review-orchestration.js";
 import type { SkillInfo } from "./skill-resolution.js";
+
+// ---------------------------------------------------------------------------
+// Review fan-out types
+// ---------------------------------------------------------------------------
+
+/**
+ * A single variant descriptor passed to `spawnReviewVariants`.
+ *
+ * Carries the normalized agent name, the full agent descriptor (prompt,
+ * model, tool-policy, etc.), and the review model resolved for this variant.
+ * Adapters use these fields to materialise and execute the variant agent in
+ * the target harness.
+ */
+export type ReviewVariantDescriptor = {
+  /** Logical variant name (e.g. `"weft-review-openai-gpt-5"`). */
+  variantName: string;
+  /** Full normalized agent descriptor produced by the engine. */
+  descriptor: AgentDescriptor;
+  /** The concrete model this variant should use for review. */
+  reviewModel: string;
+};
+
+/**
+ * Typed error returned by `spawnReviewVariants`.
+ *
+ * Adapters must not throw — all failure paths must be captured in the
+ * returned `ResultAsync` using one of these variants.
+ */
+export type ReviewFanOutAdapterError =
+  | {
+      type: "ReviewFanOutSpawnError";
+      variantName: string;
+      message: string;
+      cause?: string;
+    }
+  | {
+      type: "ReviewFanOutUnsupportedError";
+      message: string;
+    };
 
 /**
  * The `HarnessAdapter` interface abstracts harness-specific materialisation
@@ -55,4 +95,30 @@ export interface HarnessAdapter {
    * not support skills.
    */
   loadAvailableSkills(): Promise<SkillInfo[]>;
+
+  /**
+   * Execute a parallel fan-out of review variant agents and return one
+   * `ReviewExecutionResult` per variant.
+   *
+   * This method is **optional**. Adapters that do not support parallel review
+   * execution may omit it; callers should check for its presence before
+   * invoking it and degrade gracefully (e.g. fall back to sequential
+   * execution or skip multi-model review).
+   *
+   * Adapters are responsible for spawning or dispatching each variant agent
+   * in the target harness, collecting its output, and returning a result
+   * record for every variant — including failed ones. A partial-failure
+   * (some variants succeed, some fail) must still return `ok(results)` so
+   * that `ReviewOrchestrator.collate()` can produce per-variant warnings.
+   * Only a fatal infrastructure error that prevents _all_ variants from being
+   * attempted should return `err(ReviewFanOutAdapterError)`.
+   *
+   * Adapters must not throw — all failure paths must be captured in the
+   * returned `ResultAsync`.
+   *
+   * @param variants - One descriptor per review variant to spawn.
+   */
+  spawnReviewVariants?(
+    variants: ReviewVariantDescriptor[],
+  ): ResultAsync<ReviewExecutionResult[], ReviewFanOutAdapterError>;
 }

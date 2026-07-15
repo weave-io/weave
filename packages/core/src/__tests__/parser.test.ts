@@ -564,3 +564,56 @@ agent good {
     expect(errors.length).toBeGreaterThan(0);
   });
 });
+
+describe("Parser — agent review_models field", () => {
+  it("parses review_models as a string array property", () => {
+    const src = `agent weft {
+  review_models ["claude-opus-4-5", "gpt-4o"]
+}`;
+    const result = parseSource(src);
+    expect(result.isOk()).toBe(true);
+    const agent = result._unsafeUnwrap()[0] as AgentBlock;
+    expect(agent.type).toBe("agent");
+    expect(agent.name).toBe("weft");
+    const prop = agent.properties.find((p) => p.key === "review_models");
+    expect(prop).toBeDefined();
+    expect(prop?.value.kind).toBe("array");
+    const arr = prop?.value as ArrayValue;
+    expect(arr.elements).toHaveLength(2);
+    expect(arr.elements[0]).toMatchObject({
+      kind: "string",
+      value: "claude-opus-4-5",
+    });
+    expect(arr.elements[1]).toMatchObject({ kind: "string", value: "gpt-4o" });
+  });
+
+  it("parses agent with both models and review_models", () => {
+    const src = `agent weft {
+  models ["claude-sonnet-4-5"]
+  review_models ["claude-opus-4-5"]
+}`;
+    const result = parseSource(src);
+    expect(result.isOk()).toBe(true);
+    const agent = result._unsafeUnwrap()[0] as AgentBlock;
+    const modelsProp = agent.properties.find((p) => p.key === "models");
+    const reviewProp = agent.properties.find((p) => p.key === "review_models");
+    expect(modelsProp?.value.kind).toBe("array");
+    expect(reviewProp?.value.kind).toBe("array");
+    const reviewArr = reviewProp?.value as ArrayValue;
+    expect(reviewArr.elements[0]).toMatchObject({
+      kind: "string",
+      value: "claude-opus-4-5",
+    });
+  });
+
+  it("parses agent without review_models (field absent from AST)", () => {
+    const src = `agent shuttle {
+  models ["claude-sonnet-4-5"]
+}`;
+    const result = parseSource(src);
+    expect(result.isOk()).toBe(true);
+    const agent = result._unsafeUnwrap()[0] as AgentBlock;
+    const prop = agent.properties.find((p) => p.key === "review_models");
+    expect(prop).toBeUndefined();
+  });
+});
