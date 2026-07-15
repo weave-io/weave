@@ -105,6 +105,7 @@ agent my-helper {
 | `tool_policy` | block | Abstract capability map. See [Tool Policy](#tool-policy). |
 | `triggers` | array | Delegation metadata for router agents. Each entry: `{ domain "…" trigger "…" routing_hint "…" }`. The `routing_hint` field is optional and provides prescriptive "Use when..." guidance for delegation routing. |
 | `skills` | string[] | Skill names to load for this agent. |
+| `review_models` | string[] | Optional. One or more model identifiers used as independent reviewers in `gate` steps with `completion review_verdict`. See [Review Models](#review-models). |
 
 ### Tool Policy
 
@@ -129,6 +130,33 @@ tool_policy {
 | `network` | `allow` \| `deny` \| `ask` | Network/HTTP access |
 
 See [Tool Policy Evaluation](tool-policy-evaluation.md) for the full evaluation semantics and adapter mapping rules.
+
+---
+
+## Review Models
+
+`review_models` is an optional field on any `agent` block. It nominates one or more alternative models that independently review the step prompt in a `gate` workflow step that uses `completion review_verdict`. The engine fans out to each model, collates the verdicts, and resolves a single approve-or-reject outcome.
+
+```weave
+agent warp {
+  description "Warp (Security Reviewer)"
+  prompt_file "warp.md"
+  models ["claude-sonnet-4-5"]
+  mode subagent
+
+  review_models ["openai/gpt-4o", "anthropic/claude-opus-4-5"]
+}
+```
+
+**Key behaviors:**
+
+- One read-only review variant descriptor is generated per entry, named `{agentName}-review-{model-with-slashes-replaced-by-dashes}` (e.g. `warp-review-openai-gpt-4o`).
+- Fan-out occurs only when the step is `type gate` with `completion review_verdict` and the agent has `review_models` set.
+- Collation succeeds with at least one successful reviewer result; partial failures are logged as warnings.
+- All variants failing resolves to `reject`.
+- Builtin agents omit `review_models` by default; users opt in explicitly to avoid unexpected cost.
+
+See [Spec 32: Review Models](specs/32-spec-review-models/32-spec-review-models.md) for the full behavioral contract.
 
 ---
 

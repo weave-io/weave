@@ -63,6 +63,7 @@ export const AgentConfigSchema = z
     prompt_append: z.string().optional(),
     prompt_append_file: z.string().optional(),
     models: z.array(z.string()).optional(),
+    review_models: z.array(z.string()).min(1).optional(),
     temperature: z.number().min(0).max(2).optional(),
     mode: z.enum(["primary", "subagent", "all"]).optional(),
     tool_policy: ToolPolicySchema.optional(),

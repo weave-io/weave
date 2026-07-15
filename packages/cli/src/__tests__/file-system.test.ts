@@ -63,4 +63,28 @@ describe("MemoryFileSystem", () => {
       "/project/~user/.weave/config.weave",
     );
   });
+
+  it("normalizes Windows backslashes in relative paths", () => {
+    const fs = new MemoryFileSystem({}, "/project", "/home/example");
+
+    expect(fs.resolvePath("src\\foo\\bar.ts")).toBe("/project/src/foo/bar.ts");
+  });
+
+  it("normalizes Windows backslashes in tilde paths", () => {
+    const fs = new MemoryFileSystem({}, "/project", "/home/example");
+
+    expect(fs.resolvePath("~\\.weave\\config.weave")).toBe(
+      "/home/example/.weave/config.weave",
+    );
+  });
+
+  it("resolves files written with backslash paths via posix keys", async () => {
+    const fs = new MemoryFileSystem({}, "/project", "/home/example");
+
+    await fs.writeText("src\\config.weave", "content");
+
+    const result = await fs.readText("src/config.weave");
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap()).toBe("content");
+  });
 });

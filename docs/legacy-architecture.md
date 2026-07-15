@@ -17,6 +17,7 @@
 5. [Configuration Model](#5-configuration-model)
 6. [Dependencies and Integrations](#6-dependencies-and-integrations)
 7. [Forward-Looking Context (Refactor Guidance)](#7-forward-looking-context-refactor-guidance)
+- [Appendix D: Migration Guide -- `review_models`](#appendix-d-migration-guide----review_models)
 
 ---
 
@@ -1083,3 +1084,73 @@ Throughout this document:
 - **Recommended**: Suggested for the target architecture — clearly separated in Section 7
 
 All prompt section content, effect types, initialization order, and data flow described in Sections 1–6 are **observed** from the source code. The refactor guidance in Section 7 is **recommended**.
+
+---
+
+## Appendix D: Migration Guide -- `review_models`
+
+This section documents the migration path from the legacy `agents.{weft,warp}.review_models` configuration to the vNext `review_models` DSL field.
+
+### D.1 Legacy Behavior (OpenCode-Weave alpha)
+
+In the OpenCode-Weave alpha, `review_models` was configured as a property on the `agents.weft` and `agents.warp` objects inside `weave.config.json`:
+
+```json
+{
+  "agents": {
+    "weft": {
+      "review_models": ["openai/gpt-5", "anthropic/claude-opus-4-5"]
+    },
+    "warp": {
+      "review_models": ["openai/gpt-5"]
+    }
+  }
+}
+```
+
+Key behaviors in the alpha:
+
+- Review fan-out was triggered unconditionally whenever `review_models` was set, regardless of workflow step type.
+- Each model ran as a separately named agent variant using the naming convention `{agent}-review-{provider}-{model}` (e.g. `weft-review-openai-gpt-5`).
+- Partial failures (one model failing while others succeeded) produced a warning in the session but did not abort the review. The successful verdicts were collated.
+- The collation output was appended to the primary agent's output as a structured section. The primary agent's own verdict was not suppressed.
+- `review_models` was only recognized on `weft` and `warp`. Setting it on other agents had no effect.
+
+### D.2 vNext Equivalent
+
+In vNext, `review_models` is a first-class DSL field on any `agent` block:
+
+```weave
+agent warp {
+  description "Warp (Security Reviewer)"
+  prompt_file "warp.md"
+  models ["claude-sonnet-4-5"]
+  review_models ["openai/gpt-5", "anthropic/claude-opus-4-5"]
+}
+```
+
+The engine normalizes this into a `ReviewFanOutIntent` and emits it as a `RunAgentEffect`. Adapters own the concrete fan-out execution and collation presentation. See [Spec 32](specs/32-spec-review-models/32-spec-review-models.md) and the [DSL Reference](dsl-reference.md#review-models) for the full contract.
+
+### D.3 Intentional Divergences
+
+| Behavior | Legacy | vNext |
+| --- | --- | --- |
+| Scope | Only `weft` and `warp` | Any agent |
+| Fan-out trigger | Unconditional | Only on `gate` steps with `completion review_verdict` |
+| Partial failure | Warning + continue | Partial failures are recorded as warning entries in `CollatedReview.warnings`; collation succeeds if at least one variant succeeded; all-failed returns a typed error |
+| Variant naming | `{agent}-review-{provider}-{model}` | Engine-owned deterministic names via `reviewVariantName` / `generateReviewVariants`; adapters own materialization and execution |
+| Builtin defaults | `weft` and `warp` shipped with default `review_models` values | Builtins omit `review_models` by default to avoid unexpected cost -- operators opt in explicitly |
+| Config format | JSON property under `agents.{name}` | `.weave` DSL field on the `agent` block |
+
+The most significant behavioral change is the **fan-out trigger scope**: the alpha ran reviews outside of workflow context; vNext restricts fan-out to `gate` workflow steps with `completion review_verdict`. Ad-hoc review outside a workflow is not supported in vNext.
+
+The omission of default `review_models` on builtins is intentional cost protection. Users who relied on automatic multi-model review in the alpha must declare `review_models` explicitly in their project `.weave/config.weave`.
+
+### D.4 Migration Steps
+
+1. Remove `review_models` from any `weave.config.json` or legacy JSON config.
+2. Add a `review_models` field to the relevant `agent` block in `.weave/config.weave`.
+3. Ensure the agent is used in a `gate` step with `completion review_verdict` in a workflow. Review fan-out only fires in that context.
+4. Verify your adapter supports the `ReviewFanOutIntent` effect. Adapters that do not yet implement fan-out should degrade gracefully and log a warning, falling back to single-model review for that step.
+
+For full field semantics, validation rules, and the adapter contract, see [Spec 32](specs/32-spec-review-models/32-spec-review-models.md).

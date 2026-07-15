@@ -1,4 +1,8 @@
 import { dirname, resolve } from "node:path";
+import {
+  dirname as posixDirname,
+  resolve as posixResolve,
+} from "node:path/posix";
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
 
 type FileSystemErrorCause =
@@ -147,7 +151,7 @@ export class MemoryFileSystem implements FileSystem {
     for (const [path, content] of Object.entries(initialFiles)) {
       const resolved = this.resolvePath(path);
       this.files.set(resolved, content);
-      this.ensureDirsExist(dirname(resolved));
+      this.ensureDirsExist(posixDirname(resolved));
     }
   }
 
@@ -160,11 +164,14 @@ export class MemoryFileSystem implements FileSystem {
   }
 
   resolvePath(path: string): string {
-    if (path === "~") return this.homeDirectory;
-    if (path.startsWith("~/")) {
-      return resolve(this.homeDirectory, path.slice(2));
+    // Normalize Windows backslashes so callers passing `src\foo` or `C:\...`
+    // paths work correctly on both platforms in the in-memory filesystem.
+    const normalized = path.replace(/\\/g, "/");
+    if (normalized === "~") return this.homeDirectory;
+    if (normalized.startsWith("~/")) {
+      return posixResolve(this.homeDirectory, normalized.slice(2));
     }
-    return resolve(this.currentDirectory, path);
+    return posixResolve(this.currentDirectory, normalized);
   }
 
   exists(path: string): ResultAsync<boolean, FileSystemError> {
@@ -188,7 +195,7 @@ export class MemoryFileSystem implements FileSystem {
 
   writeText(path: string, content: string): ResultAsync<void, FileSystemError> {
     const resolved = this.resolvePath(path);
-    this.ensureDirsExist(dirname(resolved));
+    this.ensureDirsExist(posixDirname(resolved));
     this.files.set(resolved, content);
     return okAsync(undefined);
   }
@@ -209,10 +216,10 @@ export class MemoryFileSystem implements FileSystem {
   }
 
   private ensureDirsExist(path: string): void {
-    let current = resolve(path);
+    let current = posixResolve(path);
     while (!this.dirs.has(current)) {
       this.dirs.add(current);
-      const parent = dirname(current);
+      const parent = posixDirname(current);
       if (parent === current) return;
       current = parent;
     }

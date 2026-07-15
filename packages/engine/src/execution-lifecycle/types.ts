@@ -8,7 +8,11 @@
  * @see docs/adapter-boundary.md — Execution Lifecycle Surface section
  */
 
-import type { ReconciliationReason, WorkflowConfig } from "@weaveio/weave-core";
+import type {
+  AgentConfig,
+  ReconciliationReason,
+  WorkflowConfig,
+} from "@weaveio/weave-core";
 import type { ResultAsync } from "neverthrow";
 import type { PlanStateProvider } from "../plan-state-provider.js";
 import type { RunAgentEffect } from "../run-agent-effects.js";
@@ -203,6 +207,17 @@ export interface WorkflowExecutionContext {
   readonly goal: string;
   readonly slug: string;
   readonly workflows: Record<string, WorkflowConfig>;
+  /**
+   * Optional agent config map from the WeaveConfig.
+   *
+   * When provided, `dispatchStep` uses this to detect gate steps whose named
+   * agent declares `review_models` and populates `RunAgentEffect.reviewFanOutIntent`
+   * accordingly. Adapters then route those steps through `ReviewOrchestrator`.
+   *
+   * When absent, fan-out intent detection is skipped and all gate steps use
+   * single-agent execution.
+   */
+  readonly agentConfigs?: Readonly<Record<string, AgentConfig>>;
 }
 
 // ---------------------------------------------------------------------------

@@ -1,4 +1,8 @@
-export type { HarnessAdapter } from "./adapter.js";
+export type {
+  HarnessAdapter,
+  ReviewFanOutAdapterError,
+  ReviewVariantDescriptor,
+} from "./adapter.js";
 export type {
   AdapterCapabilityContract,
   AdapterHealthReport,
@@ -140,7 +144,33 @@ export type {
   PlanStateError,
   PlanStateProvider,
 } from "./plan-state-provider.js";
-export type { PromptMetadata, RunAgentEffect } from "./run-agent-effects.js";
+export type {
+  CollatedReview,
+  CollatedReviewAllFailedError,
+  PartialFailureWarning,
+  ReviewExecutionResult,
+  ReviewFanOutPlan,
+  ReviewOrchestrationAgentNotFoundError,
+  ReviewOrchestrationError,
+} from "./review-orchestration.js";
+export {
+  collate,
+  fanOut,
+  ReviewOrchestrator,
+} from "./review-orchestration.js";
+export type {
+  GeneratedReviewVariant,
+  ReviewVariantConflictError,
+} from "./review-variants.js";
+export {
+  generateReviewVariants,
+  reviewVariantName,
+} from "./review-variants.js";
+export type {
+  PromptMetadata,
+  ReviewFanOutIntent,
+  RunAgentEffect,
+} from "./run-agent-effects.js";
 export type {
   RuntimeStoreConflictError,
   RuntimeStoreError,

@@ -31,7 +31,11 @@
  * @see packages/engine/src/execution-lifecycle/completion.ts — completeStep
  */
 
-import type { WorkflowConfig, WorkflowStep } from "@weaveio/weave-core";
+import type {
+  AgentConfig,
+  WorkflowConfig,
+  WorkflowStep,
+} from "@weaveio/weave-core";
 import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 import {
   completeStep,
@@ -103,6 +107,16 @@ export interface WorkflowRunnerInput {
    * Required for validating that `workflowName` exists and resolving steps.
    */
   readonly workflows: Record<string, WorkflowConfig>;
+  /**
+   * Optional agent config map from `WeaveConfig.agents`.
+   *
+   * When provided, the runner threads this into `WorkflowExecutionContext` so
+   * that `dispatchStep` can detect gate steps whose named agent declares
+   * `review_models` and populate `RunAgentEffect.reviewFanOutIntent`.
+   *
+   * When absent, fan-out intent detection is skipped for all steps.
+   */
+  readonly agentConfigs?: Readonly<Record<string, AgentConfig>>;
   /**
    * Adapter-supplied effect projection callback.
    *
@@ -377,7 +391,6 @@ export function runWorkflowLifecycle(
     planStateProvider,
     maxSteps = 100,
   } = input;
-
   if (maxSteps < 1) {
     return errAsync({ type: "max_steps_exceeded" as const, maxSteps });
   }
@@ -395,6 +408,9 @@ export function runWorkflowLifecycle(
     goal,
     slug,
     workflows,
+    ...(input.agentConfigs !== undefined
+      ? { agentConfigs: input.agentConfigs }
+      : {}),
   };
 
   log.info(

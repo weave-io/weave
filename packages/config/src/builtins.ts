@@ -61,6 +61,11 @@ export const BUILTIN_PROMPT_CONTENTS: Readonly<Record<string, string>> = {
  * `packages/config/`. They are resolved to absolute paths by
  * `resolvePromptPaths()` before merging, OR replaced with embedded inline
  * content from `BUILTIN_PROMPT_CONTENTS` when running from a bundle.
+ *
+ * Note: `review_models` is intentionally omitted from the weft and warp
+ * builtin agents. Including extra review models would increase cost for all
+ * users by default. Users who want multi-model review can add `review_models`
+ * to their project or global `config.weave` to override these defaults.
  */
 export const BUILTIN_WEAVE_SOURCE = `
 agent loom {

@@ -1,4 +1,5 @@
 import { dirname, join } from "node:path";
+import { dirname as posixDirname, join as posixJoin } from "node:path/posix";
 import { okAsync, type ResultAsync } from "neverthrow";
 import type { FileSystem } from "../fs/file-system.js";
 import type {
@@ -97,7 +98,9 @@ export class OpenCodeInstaller implements HarnessInstaller {
       return okAsync({ harness: this.id, changed, messages });
     }
 
-    const modulePath = join(dirname(request.configPath), "weave-agents.json");
+    const modulePath = request.configPath.includes("/")
+      ? posixJoin(posixDirname(request.configPath), "weave-agents.json")
+      : join(dirname(request.configPath), "weave-agents.json");
     const content = `${JSON.stringify({ source: WEAVE_ENTRY, generatedBy: "@weaveio/weave-cli" }, null, 2)}\n`;
     return this.fs
       .writeText(modulePath, content)
