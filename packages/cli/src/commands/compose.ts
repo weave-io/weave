@@ -5,14 +5,17 @@
  * pushes them through the selected adapter (currently only "claude-code").
  */
 
-import { resolve, join, relative } from "node:path";
 import { homedir } from "node:os";
+import { join, relative, resolve } from "node:path";
+import {
+  BOOTSTRAP_FILES,
+  ClaudeCodeAdapter,
+  getBootstrapDir,
+} from "@weaveio/weave-adapter-claude-code";
 import { loadConfig } from "@weaveio/weave-config";
 import { formatError } from "@weaveio/weave-core";
-import { materializeAgents } from "@weaveio/weave-engine";
-import { logger } from "@weaveio/weave-engine";
-import { ClaudeCodeAdapter, getBootstrapDir, BOOTSTRAP_FILES } from "@weaveio/weave-adapter-claude-code";
-import { ok, err, type Result } from "neverthrow";
+import { logger, materializeAgents } from "@weaveio/weave-engine";
+import { err, ok, type Result } from "neverthrow";
 import type { ParsedArgs } from "../args.js";
 import { type CliError, formatCliError } from "../errors.js";
 import type { TerminalIO } from "../io/terminal.js";
@@ -45,7 +48,9 @@ async function runBootstrapInit(
   const srcDir = getBootstrapDir();
 
   // Check whether destination already exists
-  const existsCheck = await Bun.file(join(destDir, BOOTSTRAP_FILES[0])).exists();
+  const existsCheck = await Bun.file(
+    join(destDir, BOOTSTRAP_FILES[0]),
+  ).exists();
   if (existsCheck) {
     terminal.stdout(
       `  ${theme.boldYellow("Bootstrap already exists:")} ${theme.dim(destDir)} — skipping init.\n`,
@@ -62,7 +67,12 @@ async function runBootstrapInit(
     try {
       text = await Bun.file(src).text();
     } catch (cause) {
-      return err({ type: "FileReadError", path: src, cause, message: `Could not read bootstrap source file: ${src}` });
+      return err({
+        type: "FileReadError",
+        path: src,
+        cause,
+        message: `Could not read bootstrap source file: ${src}`,
+      });
     }
     await Bun.write(dest, text);
   }
@@ -157,10 +167,7 @@ export async function runCompose(
   }
 
   const config = configResult.value;
-  log.info(
-    { agents: Object.keys(config.agents).length },
-    "Config loaded",
-  );
+  log.info({ agents: Object.keys(config.agents).length }, "Config loaded");
 
   // 2. Materialise agents
   const plan = await materializeAgents({ config });
@@ -176,6 +183,8 @@ export async function runCompose(
   if (matErrors.length > 0) {
     for (const e of matErrors) {
       if (e.type === "CategoryShuttleConflict") {
+        terminal.stderr(`Warning: ${e.conflict.message}`);
+      } else if (e.type === "ReviewVariantConflict") {
         terminal.stderr(`Warning: ${e.conflict.message}`);
       } else {
         terminal.stderr(
@@ -229,8 +238,7 @@ export async function runCompose(
 
   // 7. Report success
   const outDir =
-    flags.outDir ??
-    join(projectRoot, ".weave", "plugins", "claude-code");
+    flags.outDir ?? join(projectRoot, ".weave", "plugins", "claude-code");
 
   const successLines = [
     "",

@@ -242,6 +242,7 @@ function mapClientError(e: OpenCodeClientError): ReconcileAgentError {
       type: "CreateAgentError",
       agentName: e.agentName,
       message: e.message,
+      cause: e.cause,
     };
   }
   if (e.type === "UpdateAgentError") {
@@ -249,6 +250,7 @@ function mapClientError(e: OpenCodeClientError): ReconcileAgentError {
       type: "UpdateAgentError",
       agentName: e.agentName,
       message: e.message,
+      cause: e.cause,
     };
   }
   // ListAgentsError should not reach here (handled above), but satisfy TS

@@ -31,11 +31,7 @@
  * @see packages/engine/src/execution-lifecycle/completion.ts — completeStep
  */
 
-import type {
-  AgentConfig,
-  WorkflowConfig,
-  WorkflowStep,
-} from "@weaveio/weave-core";
+import type { WorkflowConfig, WorkflowStep } from "@weaveio/weave-core";
 import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 import {
   completeStep,
@@ -108,16 +104,6 @@ export interface WorkflowRunnerInput {
    */
   readonly workflows: Record<string, WorkflowConfig>;
   /**
-   * Optional agent config map from `WeaveConfig.agents`.
-   *
-   * When provided, the runner threads this into `WorkflowExecutionContext` so
-   * that `dispatchStep` can detect gate steps whose named agent declares
-   * `review_models` and populate `RunAgentEffect.reviewFanOutIntent`.
-   *
-   * When absent, fan-out intent detection is skipped for all steps.
-   */
-  readonly agentConfigs?: Readonly<Record<string, AgentConfig>>;
-  /**
    * Adapter-supplied effect projection callback.
    *
    * Called once per `DispatchAgentEffect` emitted by the lifecycle. The
@@ -126,7 +112,6 @@ export interface WorkflowRunnerInput {
    */
   readonly projectEffect: (
     effect: DispatchAgentEffect,
-    renderedPrompt?: string,
   ) => ResultAsync<void, WorkflowRunnerError>;
   /**
    * Optional plan state provider for `plan_created` / `plan_complete`
@@ -180,8 +165,8 @@ interface LoopState {
   readonly maxSteps: number;
   readonly projectEffect: (
     effect: DispatchAgentEffect,
-    renderedPrompt?: string,
   ) => ResultAsync<void, WorkflowRunnerError>;
+  readonly goal: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -218,15 +203,27 @@ function resolveNextStepName(
  *
  * Recursion terminates when `complete-execution` or `pause-execution` is
  * emitted, or when an error is returned.
+ *
+ * @param stepName - The name of the step to complete.
+ * @param state - The current loop state.
+ * @param dispatchEffect - The dispatch effect for the current step.
  */
 function completeAndAdvance(
   stepName: string,
   state: LoopState,
+  dispatchEffect?: DispatchAgentEffect,
 ): ResultAsync<WorkflowRunnerOutput, WorkflowRunnerError> {
   const stepConfig = state.workflowConfig.steps.find(
     (s) => s.name === stepName,
   );
   const completionMethod = stepConfig?.completion.method ?? "agent_signal";
+
+  // For review_verdict steps, default approved to true (prompt-composed review
+  // routing owns gate decisions; the engine does not execute review fan-out).
+  const isReviewVerdict =
+    dispatchEffect?.runAgent.completionMethod === "review_verdict";
+  const outcome = "success" as const;
+  const approved = isReviewVerdict ? true : undefined;
 
   return completeStep(
     {
@@ -234,8 +231,9 @@ function completeAndAdvance(
       leaseId: state.leaseId,
       stepName,
       completionSignal: {
-        outcome: "success",
+        outcome,
         method: completionMethod,
+        ...(approved !== undefined ? { approved } : {}),
       },
       context: state.context,
       planStateProvider: state.planStateProvider,
@@ -334,14 +332,14 @@ function completeAndAdvance(
         );
 
         return state
-          .projectEffect(nextDispatch, undefined)
-          .andThen(() => completeAndAdvance(nextStepName, state));
+          .projectEffect(nextDispatch)
+          .andThen(() => completeAndAdvance(nextStepName, state, nextDispatch));
       }
 
       // No terminal or auto-advance effect — handle gracefully.
       log.warn(
         { stepName, effectKinds: completionEffects.map((e) => e.kind) },
-        "completeStep returned no terminal or advance effect — treating as completed",
+        "completeStep returned no terminal or advance effect — treated as completed",
       );
       return okAsync<WorkflowRunnerOutput, WorkflowRunnerError>({
         workflowInstanceId: state.workflowInstanceId,
@@ -410,9 +408,6 @@ export function runWorkflowLifecycle(
     goal,
     slug,
     workflows,
-    ...(input.agentConfigs !== undefined
-      ? { agentConfigs: input.agentConfigs }
-      : {}),
   };
 
   log.info(
@@ -448,6 +443,7 @@ export function runWorkflowLifecycle(
         stepsDispatched: 0,
         maxSteps,
         projectEffect,
+        goal,
       };
 
       return dispatchStep(
@@ -461,7 +457,7 @@ export function runWorkflowLifecycle(
         .mapErr(
           (cause): WorkflowRunnerError => ({ type: "lifecycle_error", cause }),
         )
-        .andThen(({ stepName, effects: dispatchEffects, renderedPrompt }) => {
+        .andThen(({ stepName, effects: dispatchEffects }) => {
           state.stepsDispatched += 1;
           log.info(
             { stepName, effectCount: dispatchEffects.length },
@@ -478,12 +474,16 @@ export function runWorkflowLifecycle(
 
           // Apply all dispatch effects sequentially, short-circuiting on error.
           const applyAll = dispatchAgentEffects.reduce(
-            (chain, effect) =>
-              chain.andThen(() => projectEffect(effect, renderedPrompt)),
+            (chain, effect) => chain.andThen(() => projectEffect(effect)),
             okAsync<void, WorkflowRunnerError>(undefined),
           );
 
-          return applyAll.andThen(() => completeAndAdvance(stepName, state));
+          // Pass the first dispatch-agent effect (if any) so the runner can
+          // detect reviewFanOutIntent for engine-owned gate execution.
+          const firstDispatch = dispatchAgentEffects[0];
+          return applyAll.andThen(() =>
+            completeAndAdvance(stepName, state, firstDispatch),
+          );
         });
     });
 }

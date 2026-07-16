@@ -708,132 +708,19 @@ The denylist covers auth/credential fields (`token`, `apiKey`, `api_key`, `passw
 
 ---
 
-## Review Fan-Out: Adapter Responsibilities
+## Review: Multi-Model Routing
 
-When a reviewer agent declares `review_models`, any invocation of that agent triggers multi-model fan-out. There are two distinct paths:
+When a workflow gate step's dispatched agent declares `review_models`, the engine uses prompt-composed routing to select which model handles each review. Review variant generation and materialization are engine-owned concerns; adapters are not responsible for executing or collating multi-model fan-out.
 
-- **Direct invocation path** — entirely adapter-owned. The adapter's `executeDirectReview` ([`packages/adapters/opencode/src/direct-review.ts`](../packages/adapters/opencode/src/direct-review.ts)) is the primary entry point. It calls `ReviewOrchestrator.fanOut` directly (no `ReviewFanOutIntent` is emitted or consumed) and returns a `DirectReviewResult` with a `formattedSummary`.
-- **Workflow gate path** — the engine emits `RunAgentEffect.reviewFanOutIntent` (see [`packages/engine/src/run-agent-effects.ts`](../packages/engine/src/run-agent-effects.ts)) on the dispatched lifecycle effect. Adapters that receive a `dispatch-agent` effect with a non-null `reviewFanOutIntent` are responsible for executing the multi-model fan-out and returning collated results to the execution lifecycle.
-
-Both paths use the same engine helpers: `fanOut`, `collate`, `parseVerdict`, and `evaluateGateDecision`.
-
-### Ownership Matrix: Review Fan-Out
+### Ownership Matrix: Review Routing
 
 | Concern | Owner | Why |
 | --- | --- | --- |
-| Emitting `reviewFanOutIntent` on `RunAgentEffect` | Engine | Intent is derived from Weave-owned DSL config (`review_models`) |
-| `ReviewOrchestrator.fanOut` - deriving variant descriptors | Engine | Pure plan over Weave config; no harness I/O |
-| `ReviewOrchestrator.collate` - assembling collated output and warnings | Engine | Deterministic fold over supplied results; no harness I/O |
-| Parallel execution strategy (concurrency, ordering, timeout) | Adapter | Only adapters know harness process/thread model and resource constraints |
-| Model availability filtering per variant | Adapter | Available-model registries are harness-specific |
-| Spawning or dispatching each variant agent | Adapter | Agent materialisation is harness-specific |
-| Collecting per-variant output | Adapter | Output capture mechanism is harness-specific |
-| Result collection and timeout policy | Adapter | Timeouts depend on harness scheduling and infrastructure |
-| Graceful degradation when `spawnReviewVariants` is absent | Caller/Adapter | The method is optional; callers must check for presence |
+| Deriving review variant descriptors | Engine | Pure plan over Weave config; no harness I/O |
+| Prompt-composed model routing | Engine | Routing logic is DSL/config-driven, not harness-specific |
+| Scheduling delegation to base reviewer and generated variants | Engine | Orchestrator instructs Loom/Tapestry via normal delegation |
+| Materializing a review agent as a subagent | Adapter | Agent materialisation is harness-specific (`spawnSubagent`) |
 
-### `projectEffect` and Prompt Propagation
+Adapters materialise review variant agents the same way they materialise any other subagent — via `spawnSubagent`. There is no separate adapter-level fan-out execution contract, and adapters do not collate results or resolve verdicts.
 
-`projectEffect` is the adapter callback invoked by the workflow runner for each dispatched lifecycle effect. Its signature includes a second argument, `renderedPrompt`, so the adapter receives the fully rendered step prompt without re-rendering it:
-
-```ts
-projectEffect(
-  effect: DispatchAgentEffect,
-  renderedPrompt?: string,
-): ResultAsync<void, ProjectEffectError>;
-```
-
-`renderedPrompt` is populated by the engine's `renderStepPrompt` helper and attached to `DispatchAgentEffect.renderedPrompt` before the runner calls `projectEffect`. The adapter extracts it and passes it directly to `spawnReviewVariants`.
-
-The prompt text lives on `DispatchAgentEffect` (adapter transport layer) and is never stored on `RunAgentEffect` (the serializable engine record).
-
-### Routing to the Review Path
-
-Inside `buildProjectEffect`, the adapter checks for `reviewFanOutIntent` on the dispatched effect:
-
-```ts
-if (effect.runAgent.reviewFanOutIntent != null) {
-  // route to review fan-out path
-}
-```
-
-When `reviewFanOutIntent` is present, `buildProjectEffect` calls `ReviewOrchestrator.fanOut`, then `adapter.spawnReviewVariants(variants, renderedPrompt)`, then `ReviewOrchestrator.collate`. The helper `translateReviewOutcome` converts the `CollatedReview` result into an `ok` (gate passes) or `err` (gate blocks) signal for the caller.
-
-When `reviewFanOutIntent` is absent, `buildProjectEffect` routes to the normal single-agent dispatch path.
-
-### `HarnessAdapter.spawnReviewVariants`: Optional Method
-
-```ts
-spawnReviewVariants?(
-  variants: ReviewVariantDescriptor[],
-  renderedPrompt?: string,
-): ResultAsync<ReviewExecutionResult[], ReviewFanOutAdapterError>;
-```
-
-- The method is **optional**. Adapters that omit it still satisfy `HarnessAdapter`.
-- Callers **must** check for the method's presence (`adapter.spawnReviewVariants != null`) before invoking it.
-- When the method is absent, the caller should degrade gracefully, for example, fall back to sequential single-model execution or skip multi-model review entirely. The degradation strategy is caller-owned.
-- `renderedPrompt` is forwarded from `DispatchStepOutput` and should be passed to each variant session as the review prompt.
-
-See [`packages/engine/src/adapter.ts`](../packages/engine/src/adapter.ts) for the `ReviewVariantDescriptor`, `ReviewFanOutAdapterError`, and the full interface comment.
-
-### Correct Data Flow
-
-```text
-renderStepPrompt → DispatchStepOutput.renderedPrompt
-    ↓
-workflowRunner calls projectEffect(effect, renderedPrompt)
-    ↓
-buildProjectEffect detects reviewFanOutIntent (non-null)
-    ↓
-ReviewOrchestrator.fanOut(agentName)           ← pure engine plan
-    ↓
-adapter.spawnReviewVariants(variants, prompt)  ← adapter executes in parallel (if supported)
-    ↓  (each variant spawned in harness, output collected, per-variant timeout applied)
-ReviewOrchestrator.collate(results)            ← pure engine fold; warnings for partial failures
-    ↓
-translateReviewOutcome(collatedReview)         ← ok (gate passes) or err (gate blocks)
-```
-
-### Partial Failure Semantics
-
-A **partial failure** (some variants succeed, some fail) must still return `ok(results)` from `spawnReviewVariants`, with failed variants carrying `success: false` and an `errorMessage`. `ReviewOrchestrator.collate` will include failed variants as `PartialFailureWarning` entries in `CollatedReview.warnings` while treating the overall review as successful if at least one variant succeeded.
-
-Only a fatal infrastructure error that prevents **all** variants from being attempted should return `err(ReviewFanOutAdapterError)`.
-
-### Degradation Behavior
-
-| Scenario | Expected behavior |
-| --- | --- |
-| Adapter does not implement `spawnReviewVariants` | Caller falls back to single-model review or skips fan-out; logs a warning |
-| Model unavailable for a specific variant | Return `ok(results)` with that variant carrying `success: false` and an `errorMessage`; `collate` will include it as a `PartialFailureWarning` |
-| All variants fail at the harness level (per-variant errors) | Return `ok(results)` with every variant carrying `success: false`; `collate` returns `err(CollatedReviewAllFailedError)` |
-| Fatal infrastructure failure that prevents any variant from being attempted | Return `err({ type: "ReviewFanOutSpawnError", ... })` |
-| Partial variant failure | Return `ok(results)` with failed variants marked `success: false`; engine collates warnings |
-| `reviewFanOutIntent` is `undefined` on `RunAgentEffect` | Adapter dispatches the step as a normal single-agent gate; no fan-out |
-
-### Anti-Patterns
-
-```ts
-// ❌ Wrong: engine decides parallelism strategy
-const results = await Promise.all(variants.map(v => harness.spawn(v)));
-
-// ❌ Wrong: engine queries harness model registry directly
-const available = await harnessClient.models.list();
-
-// ❌ Wrong: engine sets variant timeout
-setTimeout(() => rejectVariant(v), 30_000);
-
-// ✅ Correct: adapter owns concurrency, model filtering, and timeout
-async spawnReviewVariants(variants) {
-  const available = await this.getAvailableModels();
-  const eligible = variants.filter(v => available.includes(v.reviewModel));
-  const results = await Promise.allSettled(
-    eligible.map(v => this.spawnVariantWithTimeout(v, this.config.reviewTimeoutMs))
-  );
-  return ok(results.map(toReviewExecutionResult));
-}
-```
-
-See [`packages/engine/src/review-orchestration.ts`](../packages/engine/src/review-orchestration.ts) for `ReviewOrchestrator`, `ReviewFanOutPlan`, `CollatedReview`, and `ReviewExecutionResult` type definitions. See [`packages/engine/src/run-agent-effects.ts`](../packages/engine/src/run-agent-effects.ts) for `ReviewFanOutIntent` on `RunAgentEffect`.
-
-For the full adapter contract including fail-closed gate semantics, capability reporting levels, and OpenCode session lifecycle details, see [`docs/review-fan-out-adapter.md`](review-fan-out-adapter.md).
+See [`packages/engine/src/review-orchestration.ts`](../packages/engine/src/review-orchestration.ts) for review variant routing support.

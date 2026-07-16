@@ -11,6 +11,11 @@ import {
   type GeneratedCategoryShuttle,
   generateCategoryShuttles,
 } from "./descriptors.js";
+import {
+  type GeneratedReviewVariant,
+  generateReviewVariants,
+  type ReviewVariantConflictError,
+} from "./review-variants.js";
 
 /** Adapter-provided input for public agent materialization. */
 export interface MaterializationInput {
@@ -24,6 +29,20 @@ export interface MaterializedAgent {
   agentName: string;
   /** Adapter-facing descriptor with rendered prompt and normalized metadata. */
   descriptor: AgentDescriptor;
+  /**
+   * Origin discriminator — allows consumers to filter by how this agent was
+   * introduced without relying on name-pattern matching.
+   *
+   * - `"explicit"` — declared directly in the config `agents {}` block.
+   * - `"category-shuttle"` — generated from a `category {}` declaration.
+   * - `"review-variant"` — generated from an agent's `review_models` list.
+   */
+  source: "explicit" | "category-shuttle" | "review-variant";
+  /**
+   * Present only when `source === "review-variant"`. Carries the originating
+   * agent name and the review model for this variant.
+   */
+  reviewMeta?: { sourceAgentName: string; reviewModel: string };
 }
 
 /** Deterministically ordered adapter-facing materialization output. */
@@ -50,6 +69,10 @@ export type MaterializationError =
   | {
       type: "CategoryShuttleConflict";
       conflict: CategoryShuttleConflictError;
+    }
+  | {
+      type: "ReviewVariantConflict";
+      conflict: ReviewVariantConflictError;
     }
   | {
       type: "DescriptorCompositionFailure";
@@ -97,10 +120,40 @@ export function materializeAgents(
       ]
     : [];
 
+  const generatedReviewVariantsResult = generateReviewVariants(config);
+
+  const generatedReviewVariants: Record<string, GeneratedReviewVariant> =
+    generatedReviewVariantsResult.isOk()
+      ? generatedReviewVariantsResult.value
+      : {};
+
+  const reviewVariantErrors: MaterializationError[] =
+    generatedReviewVariantsResult.isErr()
+      ? [
+          {
+            type: "ReviewVariantConflict",
+            conflict: generatedReviewVariantsResult.error,
+          },
+        ]
+      : [];
+
+  type EntrySource =
+    | { source: "explicit" }
+    | { source: "category-shuttle" }
+    | {
+        source: "review-variant";
+        sourceAgentName: string;
+        reviewModel: string;
+      };
+
   const explicitEntries = filterDisabled(
     Object.entries(config.agents),
     disabled,
-  );
+  ).map(([agentName, agentConfig]) => ({
+    agentName,
+    agentConfig,
+    entrySource: { source: "explicit" } as EntrySource,
+  }));
 
   const generatedEntries = filterDisabled(
     Object.entries(generatedShuttles).map(
@@ -108,34 +161,89 @@ export function materializeAgents(
         [agentName, generated.config] as [string, AgentConfig],
     ),
     disabled,
-  );
+  ).map(([agentName, agentConfig]) => ({
+    agentName,
+    agentConfig,
+    entrySource: { source: "category-shuttle" } as EntrySource,
+  }));
 
-  const allEntries: [string, AgentConfig][] = [
+  const reviewVariantEntries = Object.entries(generatedReviewVariants)
+    .filter(([agentName]) => !disabled.includes(agentName))
+    .map(([agentName, generated]) => ({
+      agentName,
+      agentConfig: generated.config,
+      entrySource: {
+        source: "review-variant",
+        sourceAgentName: generated.sourceAgentName,
+        reviewModel: generated.reviewModel,
+      } as EntrySource,
+    }));
+
+  const allTypedEntries = [
     ...explicitEntries,
     ...generatedEntries,
+    ...reviewVariantEntries,
   ];
+
+  const allEntries: [string, AgentConfig][] = allTypedEntries.map(
+    ({ agentName, agentConfig }) => [agentName, agentConfig],
+  );
 
   const allAgents = Object.fromEntries(allEntries);
 
-  const compositionPromises = allEntries.map(([agentName, agentConfig]) => {
-    const category = generatedShuttles[agentName]?.categoryMeta;
-    return composeAgentDescriptor(
-      agentName,
-      agentConfig,
-      config,
-      allAgents,
-      category,
-    ).match<
-      | { ok: true; agentName: string; descriptor: AgentDescriptor }
-      | { ok: false; error: MaterializationError }
-    >(
-      (descriptor) => ({ ok: true, agentName, descriptor }),
-      (cause) => ({
-        ok: false,
-        error: { type: "DescriptorCompositionFailure", agentName, cause },
-      }),
-    );
-  });
+  // Build lightweight MaterializedAgent-shaped objects for review variants so
+  // primary-mode agents can receive reviewRouting context during composition.
+  // These are pre-built before the main composition loop (review variants are
+  // generated before composition) so they are available for all primary agents.
+  const prebuiltReviewVariants: MaterializedAgent[] = reviewVariantEntries.map(
+    ({ agentName: rvName, agentConfig: _rvConfig, entrySource: rvSource }) => {
+      const rv = rvSource as {
+        source: "review-variant";
+        sourceAgentName: string;
+        reviewModel: string;
+      };
+      return {
+        agentName: rvName,
+        // descriptor is a placeholder — only agentName/source/reviewMeta are
+        // used by buildReviewRoutingContext; the real descriptor is composed later.
+        descriptor: null as unknown as import("./compose.js").AgentDescriptor,
+        source: "review-variant" as const,
+        reviewMeta: {
+          sourceAgentName: rv.sourceAgentName,
+          reviewModel: rv.reviewModel,
+        },
+      };
+    },
+  );
+
+  const compositionPromises = allTypedEntries.map(
+    ({ agentName, agentConfig, entrySource }) => {
+      const category = generatedShuttles[agentName]?.categoryMeta;
+      const isPrimary = agentConfig.mode === "primary";
+      return composeAgentDescriptor(
+        agentName,
+        agentConfig,
+        config,
+        allAgents,
+        category,
+        isPrimary ? prebuiltReviewVariants : undefined,
+      ).match<
+        | {
+            ok: true;
+            agentName: string;
+            descriptor: AgentDescriptor;
+            entrySource: EntrySource;
+          }
+        | { ok: false; error: MaterializationError }
+      >(
+        (descriptor) => ({ ok: true, agentName, descriptor, entrySource }),
+        (cause) => ({
+          ok: false,
+          error: { type: "DescriptorCompositionFailure", agentName, cause },
+        }),
+      );
+    },
+  );
 
   return ResultAsync.fromSafePromise(Promise.all(compositionPromises)).andThen(
     (composed) => {
@@ -144,10 +252,18 @@ export function materializeAgents(
 
       for (const result of composed) {
         if (result.ok) {
-          agents.push({
+          const agent: MaterializedAgent = {
             agentName: result.agentName,
             descriptor: result.descriptor,
-          });
+            source: result.entrySource.source,
+          };
+          if (result.entrySource.source === "review-variant") {
+            agent.reviewMeta = {
+              sourceAgentName: result.entrySource.sourceAgentName,
+              reviewModel: result.entrySource.reviewModel,
+            };
+          }
+          agents.push(agent);
         } else {
           compositionErrors.push(result.error);
         }
@@ -155,6 +271,7 @@ export function materializeAgents(
 
       const errors: readonly MaterializationError[] = [
         ...conflictErrors,
+        ...reviewVariantErrors,
         ...compositionErrors,
       ];
 

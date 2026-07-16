@@ -85,6 +85,29 @@ Available specialists:
 {{/delegation.targets}}
 
 Route implementation tasks to `shuttle-{category}` agents when file patterns match. Fall back to `shuttle` when no category matches.
+
+{{#reviewRouting}}
+
+## Adversarial Review Routing
+
+When delegating review tasks from a plan, run the base reviewer AND all listed variants for adversarial coverage.
+
+{{#groups}}
+### {{sourceAgent}}
+
+Run all of the following reviewers:
+- `{{sourceAgent}}` (base reviewer)
+{{#variants}}
+- `{{name}}` (model: {{{model}}})
+{{/variants}}
+{{/groups}}
+
+**Rules:**
+- Always run the base reviewer AND all listed variants. Do not replace the base reviewer with a variant.
+- Run all reviewers in parallel when possible.
+- Collate results strictly: all must approve for the review to pass. Any rejection or block means the review fails.
+- Surface disagreements between reviewers to the user.
+{{/reviewRouting}}
 </Delegation>
 
 <Routing>

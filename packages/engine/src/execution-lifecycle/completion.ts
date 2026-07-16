@@ -190,8 +190,8 @@ function applyGateRejection(
         artifactNames,
       );
       if (promptResult.isErr()) return errAsync(promptResult.error);
-      const { byteLength } = promptResult.value;
-      const runAgent = buildConfiguredRunAgentEffect(step, { byteLength });
+      const promptMetadata = promptResult.value;
+      const runAgent = buildConfiguredRunAgentEffect(step, promptMetadata);
       return okAsync([
         { kind: "dispatch-agent" as const, runAgent },
       ] as readonly LifecycleEffect[]);
@@ -261,9 +261,9 @@ function buildAutoAdvanceEffects(
         artifactNames,
       );
       if (promptResult.isErr()) return errAsync(promptResult.error);
-      const { byteLength } = promptResult.value;
+      const promptMetadata = promptResult.value;
 
-      const runAgent = buildConfiguredRunAgentEffect(nextStep, { byteLength });
+      const runAgent = buildConfiguredRunAgentEffect(nextStep, promptMetadata);
       return okAsync([
         { kind: "dispatch-agent" as const, runAgent },
       ] as readonly LifecycleEffect[]);

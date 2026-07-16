@@ -18,6 +18,7 @@ import {
   type AgentPromptTemplateContext,
   ALLOWED_TEMPLATE_PATHS,
   buildTemplateContext,
+  type ReviewRoutingContext,
   type TemplateContextInput,
 } from "../template-context.js";
 import type { EffectiveToolPolicy } from "../tool-policy.js";
@@ -451,7 +452,7 @@ describe("buildTemplateContext — no raw config exposure", () => {
     expect((ctx as unknown as Record<string, unknown>).config).toBeUndefined();
   });
 
-  it("top-level context keys are only: agent, toolPolicy, delegation (and optional category)", () => {
+  it("top-level context keys are only: agent, toolPolicy, delegation (and optional category, reviewRouting)", () => {
     const ctxNoCategory = build({ category: undefined });
     const keysNoCategory = Object.keys(ctxNoCategory).sort();
     expect(keysNoCategory).toEqual(["agent", "delegation", "toolPolicy"]);
@@ -462,6 +463,81 @@ describe("buildTemplateContext — no raw config exposure", () => {
       "agent",
       "category",
       "delegation",
+      "toolPolicy",
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Review routing context
+// ---------------------------------------------------------------------------
+
+describe("ALLOWED_TEMPLATE_PATHS — reviewRouting", () => {
+  it("contains all reviewRouting paths", () => {
+    expect(ALLOWED_TEMPLATE_PATHS.has("reviewRouting")).toBe(true);
+    expect(ALLOWED_TEMPLATE_PATHS.has("reviewRouting.groups")).toBe(true);
+    expect(ALLOWED_TEMPLATE_PATHS.has("reviewRouting.groups.sourceAgent")).toBe(
+      true,
+    );
+    expect(ALLOWED_TEMPLATE_PATHS.has("reviewRouting.groups.variants")).toBe(
+      true,
+    );
+    expect(
+      ALLOWED_TEMPLATE_PATHS.has("reviewRouting.groups.variants.name"),
+    ).toBe(true);
+    expect(
+      ALLOWED_TEMPLATE_PATHS.has("reviewRouting.groups.variants.model"),
+    ).toBe(true);
+  });
+});
+
+describe("buildTemplateContext — reviewRouting", () => {
+  const sampleRouting: ReviewRoutingContext = {
+    groups: [
+      {
+        sourceAgent: "weft",
+        variants: [
+          { name: "weft-openai-gpt-5", model: "openai/gpt-5" },
+          { name: "weft-anthropic-claude", model: "anthropic/claude-4" },
+        ],
+      },
+    ],
+  };
+
+  it("omits reviewRouting when not provided", () => {
+    const ctx = build();
+    expect(
+      (ctx as unknown as Record<string, unknown>).reviewRouting,
+    ).toBeUndefined();
+  });
+
+  it("passes reviewRouting through when provided", () => {
+    const ctx = build({ reviewRouting: sampleRouting });
+    expect(ctx.reviewRouting).toEqual(sampleRouting);
+  });
+
+  it("projects reviewRouting.groups correctly", () => {
+    const ctx = build({ reviewRouting: sampleRouting });
+    expect(ctx.reviewRouting?.groups).toHaveLength(1);
+    expect(ctx.reviewRouting?.groups[0]?.sourceAgent).toBe("weft");
+  });
+
+  it("projects variants correctly", () => {
+    const ctx = build({ reviewRouting: sampleRouting });
+    const variants = ctx.reviewRouting?.groups[0]?.variants;
+    expect(variants).toHaveLength(2);
+    expect(variants?.[0]).toEqual({
+      name: "weft-openai-gpt-5",
+      model: "openai/gpt-5",
+    });
+  });
+
+  it("includes reviewRouting in top-level keys when provided", () => {
+    const ctx = build({ reviewRouting: sampleRouting });
+    expect(Object.keys(ctx).sort()).toEqual([
+      "agent",
+      "delegation",
+      "reviewRouting",
       "toolPolicy",
     ]);
   });

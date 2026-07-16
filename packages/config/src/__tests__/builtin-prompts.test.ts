@@ -96,6 +96,16 @@ const ALLOWED_MUSTACHE_PLACEHOLDERS = [
   "{{name}}",
   "{{description}}",
   "{{domains}}",
+  // Review routing placeholders
+  "{{#reviewRouting}}",
+  "{{/reviewRouting}}",
+  "{{#groups}}",
+  "{{/groups}}",
+  "{{#variants}}",
+  "{{/variants}}",
+  "{{sourceAgent}}",
+  "{{model}}",
+  "{{{model}}}",
 ] as const;
 
 const PLACEHOLDER_TEXT =

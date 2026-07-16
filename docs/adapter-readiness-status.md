@@ -91,7 +91,7 @@ a pre-constructed SDK client.
 | Translation-only mode (no client)                  | ✅     | Falls back gracefully when no client is injected                                                                             |
 | `BunFilesystemPlanStateProvider`                   | ✅     | Constructed in `init()`; available for `completeStep` calls                                                                  |
 | `config` hook — `opencode debug config` visibility | ✅     | `WeavePlugin` returns `Hooks.config` that injects agents into `cfg.agent` at startup                                         |
-| `event` hook — no-op; agents injected via `config` | ✅     | `WeavePlugin` injects agents (including review variants) via `config` hook; `event` hook is a no-op; `opencode debug config` never blocks on SDK/DB calls |
+| `event` hook — deferred SDK reconciliation         | ✅     | SDK-backed `spawnSubagent()` deferred to first `session.created` event; `opencode debug config` never blocks on SDK/DB calls |
 
 ### Explicit non-goals (first slice)
 
@@ -130,18 +130,20 @@ object **immediately** — without blocking on any SDK or DB calls.
 
 The returned `Hooks` object contains two hooks:
 
-- **`config` hook** — injects the translated agent configs (including generated
-  review variants) into `cfg.agent` so that `opencode debug config` shows all
-  Weave-managed agents. This is pure computation (no SDK calls) and runs
-  synchronously at startup.
-- **`event` hook** — no-op. Registered for API compatibility; no reconciliation
-  runs on `session.created` or any other event. Direct review is handled via
-  the `chat.message` hook, not the event hook.
+- **`config` hook** — injects the translated agent configs into `cfg.agent` so
+  that `opencode debug config` shows all Weave-managed agents. This is pure
+  computation (no SDK calls) and runs synchronously at startup.
+- **`event` hook** — defers SDK-backed reconciliation (`adapter.init()` +
+  `spawnSubagent()`) to the first `session.created` event. This ensures
+  `opencode debug config` never hangs waiting for the OpenCode runtime store.
+  Reconciliation runs exactly once per plugin activation.
 
-> **Design note**: `opencode debug config` calls the plugin function and
-> exercises only the `config` hook. All agent injection — including generated
-> review variants — happens in that hook synchronously, with no SDK or DB calls.
-> The `event` hook is registered but is a no-op, so `debug config` never blocks.
+> **Why deferred?** `opencode debug config` calls the plugin function and
+> exercises only the `config` hook. The previous design called `adapter.init()`
+> and `spawnSubagent()` eagerly before returning `Hooks`, which blocked
+> `debug config` because the runtime SDK path (`client.app.agents()` / DB) is
+> not available in that context. The `event` hook fires only during real
+> OpenCode sessions, never during `debug config`.
 
 **No user-authored wrapper script is required.** The `./plugin` bundle is the
 plugin entry point. The `WeavePlugin` function, a `server` alias (for

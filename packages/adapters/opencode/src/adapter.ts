@@ -10,24 +10,14 @@
  */
 
 import { BunFilesystemPlanStateProvider } from "@weaveio/weave-config";
-import type { WeaveConfig } from "@weaveio/weave-core";
 import type {
   AgentDescriptor,
   HarnessAdapter,
   PlanStateProvider,
-  ReviewExecutionResult,
-  ReviewFanOutAdapterError,
-  ReviewVariantDescriptor,
   SkillInfo,
 } from "@weaveio/weave-engine";
 import { logger } from "@weaveio/weave-engine";
 import { errAsync, okAsync, type ResultAsync } from "neverthrow";
-import {
-  type DirectReviewError,
-  type DirectReviewResult,
-  executeDirectReview as executeDirectReviewFn,
-} from "./direct-review.js";
-import { executeReviewVariants } from "./execute-review-variants.js";
 import {
   type OpenCodeModelContext,
   resolveModelForAgent,
@@ -134,17 +124,6 @@ export interface OpenCodeAdapterOptions {
    * ```
    */
   readonly availableSkills?: SkillInfo[];
-
-  /**
-   * Resolved Weave configuration.
-   *
-   * When provided, enables the `executeDirectReview()` method which fans out a
-   * reviewer agent to one session per `review_models` entry, runs them in
-   * parallel, and collates the results into a `CollatedReview`.
-   *
-   * When omitted, `executeDirectReview()` returns an error immediately.
-   */
-  readonly config?: WeaveConfig;
 }
 
 /**
@@ -224,20 +203,11 @@ export class OpenCodeAdapter implements HarnessAdapter {
    */
   private readonly harnessSkills: SkillInfo[] | undefined;
 
-  /**
-   * Resolved Weave configuration.
-   *
-   * Injected at construction time. Required for `executeDirectReview()`. When
-   * `undefined`, `executeDirectReview()` returns `err(DirectReviewError)`.
-   */
-  private readonly weaveConfig: WeaveConfig | undefined;
-
   constructor(options: OpenCodeAdapterOptions = {}) {
     this.projectRoot = options.projectRoot ?? Bun.env.PWD ?? ".";
     this.openCodeClient = options.client;
     this.modelContext = options.modelContext ?? {};
     this.harnessSkills = options.availableSkills;
-    this.weaveConfig = options.config;
   }
 
   /**
@@ -404,103 +374,5 @@ export class OpenCodeAdapter implements HarnessAdapter {
         );
         return undefined;
       });
-  }
-
-  /**
-   * Execute a parallel fan-out of review variant agents.
-   *
-   * When no OpenCode client is available (translation-only mode), returns an
-   * error immediately — review fan-out requires a live harness connection.
-   *
-   * When a client is available, delegates to `executeReviewVariants()` which
-   * spawns each variant as an OpenCode session in parallel and collects results.
-   *
-   * @param variants - One descriptor per review variant to spawn.
-   * @param reviewPrompt - The rendered review prompt text to send to each variant agent.
-   * @returns `ok(results)` with one result per variant, or `err` on fatal
-   *   infrastructure failure. Partial per-variant failures are captured inside
-   *   the `ok` results array — callers should inspect each entry.
-   */
-  spawnReviewVariants(
-    variants: ReviewVariantDescriptor[],
-    reviewPrompt: string,
-  ): ResultAsync<ReviewExecutionResult[], ReviewFanOutAdapterError> {
-    if (this.openCodeClient === undefined) {
-      log.error(
-        { variantCount: variants.length },
-        "spawnReviewVariants called in translation-only mode — no OpenCode client available",
-      );
-      return errAsync({
-        type: "ReviewFanOutSpawnError",
-        variantName: "(all)",
-        message:
-          "Review fan-out is not supported in translation-only mode: no OpenCodeClientFacade was injected. " +
-          "Provide a client via OpenCodeAdapterOptions.client to enable spawnReviewVariants.",
-      } satisfies ReviewFanOutAdapterError);
-    }
-
-    log.info(
-      { variantCount: variants.length },
-      "Starting review variant fan-out",
-    );
-
-    return executeReviewVariants(
-      variants,
-      this.openCodeClient,
-      reviewPrompt,
-    ).mapErr((error) => {
-      log.error(
-        { variantCount: variants.length, errorType: error.type },
-        "Review variant fan-out failed",
-      );
-      return error;
-    });
-  }
-
-  /**
-   * Execute a direct review for the named agent.
-   *
-   * Fans out to one variant per `review_models` entry on the named agent,
-   * runs them in parallel, collates the results, and returns the combined
-   * `CollatedReview`.
-   *
-   * This is a separate entry point from the workflow gate path (`spawnReviewVariants`).
-   * It is intended for callers that invoke a reviewer agent directly — outside
-   * a workflow step — and need the collated result rather than a gate pass/fail.
-   *
-   * Returns `err(DirectReviewError)` when:
-   * - No `WeaveConfig` was injected at construction time.
-   * - No `OpenCodeClientFacade` was injected at construction time.
-   * - The named agent does not declare `review_models` (fan-out produces no variants).
-   * - All review variants failed during execution.
-   *
-   * @param agentName - Logical name of the reviewer agent (must declare `review_models`).
-   * @param reviewPrompt - The rendered review prompt text sent to each variant.
-   * @returns `ok(DirectReviewResult)` on success, `err(DirectReviewError)` on failure.
-   */
-  executeDirectReview(
-    agentName: string,
-    reviewPrompt: string,
-  ): ResultAsync<DirectReviewResult, DirectReviewError> {
-    if (this.weaveConfig === undefined) {
-      const message = `executeDirectReview called without a WeaveConfig — inject config via OpenCodeAdapterOptions.config`;
-      log.error({ agentName }, message);
-      return errAsync({ type: "FanOutPlanError", message });
-    }
-
-    if (this.openCodeClient === undefined) {
-      const message = `executeDirectReview called without an OpenCodeClientFacade — inject client via OpenCodeAdapterOptions.client`;
-      log.error({ agentName }, message);
-      return errAsync({ type: "ExecutionError", message });
-    }
-
-    log.info({ agentName }, "Executing direct review");
-
-    return executeDirectReviewFn(
-      agentName,
-      this.weaveConfig,
-      this.openCodeClient,
-      reviewPrompt,
-    );
   }
 }

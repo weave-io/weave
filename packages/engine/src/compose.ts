@@ -16,11 +16,13 @@ import {
 } from "neverthrow";
 
 import { logger } from "./logger.js";
+import type { MaterializedAgent } from "./materialization.js";
 import {
   type AgentPromptTemplateContext,
   ALLOWED_TEMPLATE_PATHS,
   buildTemplateContext,
   type CategoryInput,
+  type ReviewRoutingContext,
 } from "./template-context.js";
 import {
   type RendererError,
@@ -680,18 +682,69 @@ export function composeWorkflowStepPrompt(
   );
 }
 
+/**
+ * Build a `ReviewRoutingContext` from materialized review-variant agents,
+ * filtered to only those whose source agent is in `delegationTargetNames`.
+ *
+ * Returns `undefined` when no matching groups exist.
+ */
+export function buildReviewRoutingContext(
+  reviewVariants: MaterializedAgent[],
+  delegationTargetNames: string[],
+): ReviewRoutingContext | undefined {
+  const delegationSet = new Set(delegationTargetNames);
+
+  // Filter to review-variant agents only
+  const variants = reviewVariants.filter((a) => a.source === "review-variant");
+
+  // Group by sourceAgentName
+  const groups = new Map<string, Array<{ name: string; model: string }>>();
+  for (const variant of variants) {
+    const sourceAgentName = variant.reviewMeta?.sourceAgentName;
+    if (sourceAgentName === undefined) continue;
+    if (!delegationSet.has(sourceAgentName)) continue;
+
+    const existing = groups.get(sourceAgentName);
+    const entry = {
+      name: variant.agentName,
+      model: variant.reviewMeta?.reviewModel ?? "",
+    };
+    if (existing !== undefined) {
+      existing.push(entry);
+    } else {
+      groups.set(sourceAgentName, [entry]);
+    }
+  }
+
+  if (groups.size === 0) return undefined;
+
+  return {
+    groups: Array.from(groups.entries()).map(([sourceAgent, variantList]) => ({
+      sourceAgent,
+      variants: variantList,
+    })),
+  };
+}
+
 export function composeAgentDescriptor(
   agentName: string,
   agentConfig: AgentConfig,
   config: WeaveConfig,
   allAgents: Record<string, AgentConfig>,
   category?: CategoryMetadata,
+  materializedReviewVariants?: MaterializedAgent[],
 ): ResultAsync<AgentDescriptor, ComposeError> {
   const delegationTargets = buildDelegationTargets(
     agentName,
     agentConfig,
     config,
     allAgents,
+  );
+
+  const delegationTargetNames = delegationTargets.map((t) => t.name);
+  const reviewRouting = buildReviewRoutingContext(
+    materializedReviewVariants ?? [],
+    delegationTargetNames,
   );
 
   const effectiveToolPolicy = evaluateEffectiveToolPolicy(
@@ -707,6 +760,7 @@ export function composeAgentDescriptor(
     category,
     effectiveToolPolicy,
     delegationTargets,
+    reviewRouting,
   });
 
   if (contextResult.isErr()) {
