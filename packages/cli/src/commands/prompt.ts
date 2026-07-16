@@ -2,12 +2,10 @@ import { type ConfigLoadError, loadConfig } from "@weaveio/weave-config";
 import { formatError, type WeaveConfig } from "@weaveio/weave-core";
 import {
   type AgentDescriptor,
-  type CategoryMetadata,
-  type ComposeError,
-  composeAgentDescriptor,
-  generateCategoryShuttles,
+  type MaterializationPlan,
+  materializeAgents,
 } from "@weaveio/weave-engine";
-import { ok, type Result, type ResultAsync } from "neverthrow";
+import { err, ok, type Result, type ResultAsync } from "neverthrow";
 import type { ParsedArgs } from "../args.js";
 import { type CliError, formatCliError } from "../errors.js";
 import type { TerminalIO } from "../io/terminal.js";
@@ -38,11 +36,6 @@ export interface PromptContext {
 }
 
 type PromptError = CliError;
-
-type PromptAgentEntry = {
-  config: WeaveConfig["agents"][string];
-  category?: CategoryMetadata;
-};
 
 type PromptInspectJson = {
   name: string;
@@ -101,36 +94,26 @@ function loadPromptConfig(
   return configLoader().mapErr((errors) => mapConfigLoadErrors(cwd, errors));
 }
 
-function buildCombinedAgents(
+async function getMaterializationPlan(
   config: WeaveConfig,
-): Record<string, PromptAgentEntry> {
-  const combined: Record<string, PromptAgentEntry> = {};
+): Promise<Result<MaterializationPlan, CliError>> {
+  const plan = (await materializeAgents({ config }))._unsafeUnwrap();
 
-  for (const [agentName, agentConfig] of Object.entries(config.agents)) {
-    if (config.disabled.agents.includes(agentName)) continue;
-    combined[agentName] = { config: agentConfig };
+  // Surface the first conflict error as a CLI error — duplicate agent names are
+  // unrecoverable from a user perspective.
+  const conflictError = plan.errors.find(
+    (e) =>
+      e.type === "ReviewVariantConflict" ||
+      e.type === "CategoryShuttleConflict",
+  );
+  if (conflictError !== undefined) {
+    return err<MaterializationPlan, CliError>({
+      type: "InvalidArgs",
+      message: conflictError.conflict.message,
+    });
   }
 
-  const generated = generateCategoryShuttles(config);
-  if (generated.isErr()) return combined;
-
-  for (const [agentName, shuttle] of Object.entries(generated.value)) {
-    if (config.disabled.agents.includes(agentName)) continue;
-    combined[agentName] = {
-      config: shuttle.config,
-      category: shuttle.categoryMeta,
-    };
-  }
-
-  return combined;
-}
-
-function formatCompositionFailure(error: ComposeError): string {
-  if (error.type === "PromptFileReadError") {
-    return `${error.message}\n\n${error.fileErrorMessage}`;
-  }
-
-  return error.message;
+  return ok(plan);
 }
 
 function toInspectJson(descriptor: AgentDescriptor): PromptInspectJson {
@@ -159,11 +142,17 @@ async function runPromptList(
     return ok(1);
   }
 
-  const agents = Object.entries(buildCombinedAgents(configResult.value))
-    .map(([name, entry]) => ({
-      name,
-      description: entry.config.description,
-      mode: entry.config.mode ?? "subagent",
+  const planResult = await getMaterializationPlan(configResult.value);
+  if (planResult.isErr()) {
+    ctx.terminal.stderr(formatCliError(planResult.error));
+    return ok(1);
+  }
+
+  const agents = planResult.value.agents
+    .map((agent) => ({
+      name: agent.agentName,
+      description: agent.descriptor.description,
+      mode: agent.descriptor.mode,
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
 
@@ -190,9 +179,15 @@ async function runPromptInspect(
     return ok(1);
   }
 
-  const config = configResult.value;
-  const combinedAgents = buildCombinedAgents(config);
-  const requestedAgent = combinedAgents[ctx.flags.agentName];
+  const planResult = await getMaterializationPlan(configResult.value);
+  if (planResult.isErr()) {
+    ctx.terminal.stderr(formatCliError(planResult.error));
+    return ok(1);
+  }
+
+  const requestedAgent = planResult.value.agents.find(
+    (a) => a.agentName === ctx.flags.agentName,
+  );
 
   if (requestedAgent === undefined) {
     ctx.terminal.stderr(
@@ -205,37 +200,14 @@ async function runPromptInspect(
     return ok(1);
   }
 
-  const allAgents = Object.fromEntries(
-    Object.entries(combinedAgents).map(([name, entry]) => [name, entry.config]),
-  );
-
-  const descriptorResult = await composeAgentDescriptor(
-    ctx.flags.agentName,
-    requestedAgent.config,
-    config,
-    allAgents,
-    requestedAgent.category,
-  );
-
-  if (descriptorResult.isErr()) {
-    ctx.terminal.stderr(
-      formatCliError({
-        type: "CompositionFailure",
-        agentName: ctx.flags.agentName,
-        message: formatCompositionFailure(descriptorResult.error),
-      }),
-    );
-    return ok(1);
-  }
-
   if (ctx.flags.json) {
     ctx.terminal.stdout(
-      JSON.stringify(toInspectJson(descriptorResult.value), null, 2),
+      JSON.stringify(toInspectJson(requestedAgent.descriptor), null, 2),
     );
     return ok(0);
   }
 
-  ctx.terminal.stdout(descriptorResult.value.composedPrompt);
+  ctx.terminal.stdout(requestedAgent.descriptor.composedPrompt);
   return ok(0);
 }
 

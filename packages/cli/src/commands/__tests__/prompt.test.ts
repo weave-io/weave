@@ -18,6 +18,7 @@ const testConfig: WeaveConfig = {
       mode: "subagent",
     },
   },
+
   categories: {
     backend: {
       description: "Backend category",
@@ -181,6 +182,352 @@ describe("prompt command", () => {
     expect(result._unsafeUnwrap()).toBe(1);
     expect(terminal.err.join("\n")).toContain("/test/config.weave");
     expect(terminal.err.join("\n")).toContain("could not read config");
+  });
+
+  describe("review variant agents", () => {
+    const reviewConfig: WeaveConfig = {
+      agents: {
+        weft: {
+          prompt: "You are {{agent.name}}.",
+          models: ["model-a"],
+          mode: "primary",
+          review_models: ["openai/gpt-5", "anthropic/claude-4"],
+        },
+      },
+      categories: {},
+      workflows: {},
+      disabled: { agents: [], hooks: [], skills: [] },
+      settings: { log_level: "INFO", runtime: { journal: { strict: false } } },
+      extend_before_plan: { steps: [] },
+    };
+
+    it("Should_include_review_variant_agents_in_prompt_list", async () => {
+      const { terminal, ctx } = context({ promptSubcommand: "list" }, () =>
+        okAsync(reviewConfig),
+      );
+
+      const result = await runPrompt(ctx);
+
+      expect(result._unsafeUnwrap()).toBe(0);
+      const output = terminal.out.join("\n");
+      expect(output).toContain("weft-openai-gpt-5");
+      expect(output).toContain("weft-anthropic-claude-4");
+    });
+
+    it("Should_include_review_variant_agents_in_json_list", async () => {
+      const { terminal, ctx } = context(
+        { promptSubcommand: "list", json: true },
+        () => okAsync(reviewConfig),
+      );
+
+      const result = await runPrompt(ctx);
+
+      expect(result._unsafeUnwrap()).toBe(0);
+      const parsed = JSON.parse(terminal.out.join("\n")) as {
+        agents: Array<{ name: string }>;
+      };
+      const names = parsed.agents.map((a) => a.name);
+      expect(names).toContain("weft-openai-gpt-5");
+      expect(names).toContain("weft-anthropic-claude-4");
+    });
+
+    it("Should_inspect_review_variant_agent_and_output_prompt", async () => {
+      const { terminal, ctx } = context(
+        { promptSubcommand: "inspect", agentName: "weft-openai-gpt-5" },
+        () => okAsync(reviewConfig),
+      );
+
+      const result = await runPrompt(ctx);
+
+      expect(result._unsafeUnwrap()).toBe(0);
+      expect(terminal.out.join("\n")).toContain("You are weft-openai-gpt-5.");
+    });
+
+    it("Should_exclude_disabled_review_variant_agents_from_list", async () => {
+      const configWithDisabled: WeaveConfig = {
+        ...reviewConfig,
+        disabled: {
+          agents: ["weft-openai-gpt-5"],
+          hooks: [],
+          skills: [],
+        },
+      };
+      const { terminal, ctx } = context({ promptSubcommand: "list" }, () =>
+        okAsync(configWithDisabled),
+      );
+
+      const result = await runPrompt(ctx);
+
+      expect(result._unsafeUnwrap()).toBe(0);
+      const output = terminal.out.join("\n");
+      expect(output).not.toContain("weft-openai-gpt-5");
+      expect(output).toContain("weft-anthropic-claude-4");
+    });
+
+    it("Should_exit_1_with_clear_error_when_review_variant_conflicts_with_explicit_agent_on_list", async () => {
+      // "weft-openai-gpt-5" is both an explicit agent and would be generated
+      // as a review variant for "weft" + "openai/gpt-5". buildCombinedAgents must
+      // surface this as an error rather than returning partial/misleading output.
+      const conflictConfig: WeaveConfig = {
+        agents: {
+          weft: {
+            prompt: "You are {{agent.name}}.",
+            models: ["model-a"],
+            mode: "primary",
+            review_models: ["openai/gpt-5"],
+          },
+          "weft-openai-gpt-5": {
+            prompt: "I am an explicit agent that collides.",
+            models: ["model-b"],
+            mode: "subagent",
+          },
+        },
+        categories: {},
+        workflows: {},
+        disabled: { agents: [], hooks: [], skills: [] },
+        settings: {
+          log_level: "INFO",
+          runtime: { journal: { strict: false } },
+        },
+        extend_before_plan: { steps: [] },
+      };
+      const { terminal, ctx } = context({ promptSubcommand: "list" }, () =>
+        okAsync(conflictConfig),
+      );
+
+      const result = await runPrompt(ctx);
+
+      expect(result._unsafeUnwrap()).toBe(1);
+      const errOutput = terminal.err.join("\n");
+      expect(errOutput).toContain("weft-openai-gpt-5");
+      expect(terminal.out).toHaveLength(0);
+    });
+
+    it("Should_exit_1_with_clear_error_when_review_variant_conflicts_with_explicit_agent_on_inspect", async () => {
+      const conflictConfig: WeaveConfig = {
+        agents: {
+          weft: {
+            prompt: "You are {{agent.name}}.",
+            models: ["model-a"],
+            mode: "primary",
+            review_models: ["openai/gpt-5"],
+          },
+          "weft-openai-gpt-5": {
+            prompt: "I am an explicit agent that collides.",
+            models: ["model-b"],
+            mode: "subagent",
+          },
+        },
+        categories: {},
+        workflows: {},
+        disabled: { agents: [], hooks: [], skills: [] },
+        settings: {
+          log_level: "INFO",
+          runtime: { journal: { strict: false } },
+        },
+        extend_before_plan: { steps: [] },
+      };
+      const { terminal, ctx } = context(
+        { promptSubcommand: "inspect", agentName: "weft" },
+        () => okAsync(conflictConfig),
+      );
+
+      const result = await runPrompt(ctx);
+
+      expect(result._unsafeUnwrap()).toBe(1);
+      const errOutput = terminal.err.join("\n");
+      expect(errOutput).toContain("weft-openai-gpt-5");
+      expect(terminal.out).toHaveLength(0);
+    });
+  });
+
+  describe("review routing in composed prompt", () => {
+    // loom-like primary agent with {{#reviewRouting}} in its inline prompt,
+    // weft as a delegation target, weft has review_models.
+    const reviewRoutingPrompt = [
+      "# {{agent.name}}",
+      "{{#reviewRouting}}",
+      "## Adversarial Review Routing",
+      "{{#groups}}",
+      "### {{sourceAgent}}",
+      "Run all of the following reviewers:",
+      "- `{{sourceAgent}}` (base reviewer)",
+      "{{#variants}}",
+      "- `{{name}}` (model: {{{model}}})",
+      "{{/variants}}",
+      "{{/groups}}",
+      "**Rules:**",
+      "- Always run the base reviewer AND all listed variants. Do not replace the base reviewer with a variant.",
+      "{{/reviewRouting}}",
+    ].join("\n");
+
+    const reviewRoutingConfig: WeaveConfig = {
+      agents: {
+        loom: {
+          prompt: reviewRoutingPrompt,
+          models: ["orchestrator-model"],
+          mode: "primary",
+          tool_policy: { delegate: "allow" },
+        },
+        tapestry: {
+          prompt: reviewRoutingPrompt,
+          models: ["orchestrator-model"],
+          mode: "primary",
+          tool_policy: { delegate: "allow" },
+        },
+        weft: {
+          prompt: "You are {{agent.name}}.",
+          models: ["model-a"],
+          mode: "subagent",
+          review_models: ["openai/gpt-5", "anthropic/claude-4"],
+        },
+        warp: {
+          prompt: "You are {{agent.name}}.",
+          models: ["model-b"],
+          mode: "subagent",
+          review_models: ["github-copilot/gpt-5.5"],
+        },
+      },
+      categories: {},
+      workflows: {},
+      disabled: { agents: [], hooks: [], skills: [] },
+      settings: { log_level: "INFO", runtime: { journal: { strict: false } } },
+      extend_before_plan: { steps: [] },
+    };
+
+    it("Should_include_Adversarial_Review_Routing_in_loom_when_review_models_configured", async () => {
+      const { terminal, ctx } = context(
+        { promptSubcommand: "inspect", agentName: "loom" },
+        () => okAsync(reviewRoutingConfig),
+      );
+
+      const result = await runPrompt(ctx);
+
+      expect(result._unsafeUnwrap()).toBe(0);
+      const output = terminal.out.join("\n");
+      expect(output).toContain("Adversarial Review Routing");
+      expect(output).toContain("weft-openai-gpt-5");
+      expect(output).toContain("weft-anthropic-claude-4");
+    });
+
+    it("Should_include_Adversarial_Review_Routing_in_tapestry_when_review_models_configured", async () => {
+      const { terminal, ctx } = context(
+        { promptSubcommand: "inspect", agentName: "tapestry" },
+        () => okAsync(reviewRoutingConfig),
+      );
+
+      const result = await runPrompt(ctx);
+
+      expect(result._unsafeUnwrap()).toBe(0);
+      const output = terminal.out.join("\n");
+      expect(output).toContain("Adversarial Review Routing");
+      expect(output).toContain("weft-openai-gpt-5");
+      expect(output).toContain("weft-anthropic-claude-4");
+    });
+
+    it("Should_not_include_Adversarial_Review_Routing_in_loom_when_no_review_models", async () => {
+      const configNoReview: WeaveConfig = {
+        agents: {
+          loom: {
+            prompt: reviewRoutingPrompt,
+            models: ["orchestrator-model"],
+            mode: "primary",
+          },
+          weft: {
+            prompt: "You are {{agent.name}}.",
+            models: ["model-a"],
+            mode: "subagent",
+            // no review_models
+          },
+        },
+        categories: {},
+        workflows: {},
+        disabled: { agents: [], hooks: [], skills: [] },
+        settings: {
+          log_level: "INFO",
+          runtime: { journal: { strict: false } },
+        },
+        extend_before_plan: { steps: [] },
+      };
+      const { terminal, ctx } = context(
+        { promptSubcommand: "inspect", agentName: "loom" },
+        () => okAsync(configNoReview),
+      );
+
+      const result = await runPrompt(ctx);
+
+      expect(result._unsafeUnwrap()).toBe(0);
+      const output = terminal.out.join("\n");
+      expect(output).not.toContain("Adversarial Review Routing");
+    });
+
+    it("Should_include_correct_variant_names_and_source_agent_names_in_review_routing", async () => {
+      const { terminal, ctx } = context(
+        { promptSubcommand: "inspect", agentName: "loom" },
+        () => okAsync(reviewRoutingConfig),
+      );
+
+      const result = await runPrompt(ctx);
+
+      expect(result._unsafeUnwrap()).toBe(0);
+      const output = terminal.out.join("\n");
+      // Source agent name
+      expect(output).toContain("weft");
+      // Variant names
+      expect(output).toContain("weft-openai-gpt-5");
+      expect(output).toContain("weft-anthropic-claude-4");
+    });
+
+    it("Should_include_base_reviewer_alongside_variants_for_weft", async () => {
+      const { terminal, ctx } = context(
+        { promptSubcommand: "inspect", agentName: "loom" },
+        () => okAsync(reviewRoutingConfig),
+      );
+
+      const result = await runPrompt(ctx);
+
+      expect(result._unsafeUnwrap()).toBe(0);
+      const output = terminal.out.join("\n");
+      // Base reviewer must appear as its own entry
+      expect(output).toContain("`weft` (base reviewer)");
+      // Variants must also appear
+      expect(output).toContain("weft-openai-gpt-5");
+      expect(output).toContain("weft-anthropic-claude-4");
+      // Rules text
+      expect(output).toContain("base reviewer AND all listed variants");
+    });
+
+    it("Should_include_base_reviewer_alongside_variants_for_warp", async () => {
+      const { terminal, ctx } = context(
+        { promptSubcommand: "inspect", agentName: "loom" },
+        () => okAsync(reviewRoutingConfig),
+      );
+
+      const result = await runPrompt(ctx);
+
+      expect(result._unsafeUnwrap()).toBe(0);
+      const output = terminal.out.join("\n");
+      // Base warp reviewer must appear
+      expect(output).toContain("`warp` (base reviewer)");
+      // Variant must also appear (github-copilot/gpt-5.5 → github-copilot-gpt-5-5)
+      expect(output).toContain("warp-github-copilot-gpt-5-5");
+    });
+
+    it("Should_render_model_names_without_HTML_escaping", async () => {
+      const { terminal, ctx } = context(
+        { promptSubcommand: "inspect", agentName: "loom" },
+        () => okAsync(reviewRoutingConfig),
+      );
+
+      const result = await runPrompt(ctx);
+
+      expect(result._unsafeUnwrap()).toBe(0);
+      const output = terminal.out.join("\n");
+      // Model names with slashes must NOT be HTML-escaped
+      expect(output).toContain("github-copilot/gpt-5.5");
+      expect(output).not.toContain("github-copilot&#x2F;gpt-5.5");
+      expect(output).not.toContain("github-copilot&amp;");
+    });
   });
 
   describe("self-modify subcommand", () => {

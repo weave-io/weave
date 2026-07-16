@@ -85,6 +85,14 @@ export const ALLOWED_TEMPLATE_PATHS: Set<string> = new Set([
   "delegation.targets.isCategory.name",
   "delegation.targets.isCategory.description",
 
+  // Review routing
+  "reviewRouting",
+  "reviewRouting.groups",
+  "reviewRouting.groups.sourceAgent",
+  "reviewRouting.groups.variants",
+  "reviewRouting.groups.variants.name",
+  "reviewRouting.groups.variants.model",
+
   // Current-item reference in list contexts
   ".",
 ]);
@@ -136,6 +144,27 @@ export interface DelegationContextEntry {
   targets: DelegationTargetContextEntry[];
 }
 
+// ---------------------------------------------------------------------------
+// Review routing types
+// ---------------------------------------------------------------------------
+
+/** A single review routing variant (one model endpoint). */
+export interface ReviewRoutingVariant {
+  name: string;
+  model: string;
+}
+
+/** A group of review routing variants sharing a source agent. */
+export interface ReviewRoutingGroup {
+  sourceAgent: string;
+  variants: ReviewRoutingVariant[];
+}
+
+/** Review routing context projected into the template context. */
+export interface ReviewRoutingContext {
+  groups: ReviewRoutingGroup[];
+}
+
 /**
  * The bounded template context passed to the Mustache renderer for agent
  * prompt composition.
@@ -149,6 +178,8 @@ export interface AgentPromptTemplateContext {
   category?: CategoryContextEntry;
   toolPolicy: ToolPolicyContextEntry;
   delegation: DelegationContextEntry;
+  /** Present when review routing configuration is provided. */
+  reviewRouting?: ReviewRoutingContext;
 }
 
 // ---------------------------------------------------------------------------
@@ -188,6 +219,8 @@ export interface TemplateContextInput {
   category?: CategoryInput;
   effectiveToolPolicy: EffectiveToolPolicy;
   delegationTargets: DelegationTarget[];
+  /** Present when review routing configuration is provided. */
+  reviewRouting?: ReviewRoutingContext;
 }
 
 // ---------------------------------------------------------------------------
@@ -213,17 +246,20 @@ function projectDelegationTarget(
     }
   }
 
-  const triggers: Array<{ domain: string; trigger: string; routing_hint?: string }> =
-    target.triggers.map((t: DelegationTrigger) => {
-      const entry: { domain: string; trigger: string; routing_hint?: string } = {
-        domain: t.domain,
-        trigger: t.trigger,
-      };
-      if (t.routing_hint !== undefined) {
-        entry.routing_hint = t.routing_hint;
-      }
-      return entry;
-    });
+  const triggers: Array<{
+    domain: string;
+    trigger: string;
+    routing_hint?: string;
+  }> = target.triggers.map((t: DelegationTrigger) => {
+    const entry: { domain: string; trigger: string; routing_hint?: string } = {
+      domain: t.domain,
+      trigger: t.trigger,
+    };
+    if (t.routing_hint !== undefined) {
+      entry.routing_hint = t.routing_hint;
+    }
+    return entry;
+  });
 
   const entry: DelegationTargetContextEntry = {
     name: target.name,
@@ -269,6 +305,7 @@ export function buildTemplateContext(
     category,
     effectiveToolPolicy,
     delegationTargets,
+    reviewRouting,
   } = input;
 
   // Project agent context
@@ -318,6 +355,10 @@ export function buildTemplateContext(
 
   if (categoryEntry !== undefined) {
     context.category = categoryEntry;
+  }
+
+  if (reviewRouting !== undefined) {
+    context.reviewRouting = reviewRouting;
   }
 
   log.debug(

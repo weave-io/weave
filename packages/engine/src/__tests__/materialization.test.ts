@@ -91,6 +91,7 @@ describe("materializeAgents", () => {
       expect(plan.agents[0]?.descriptor.composedPrompt).toBe(
         "Custom agent: custom",
       );
+      expect(plan.agents[0]?.source).toBe("explicit");
     });
 
     it("produces descriptors for multiple declared agents in config order", async () => {
@@ -127,6 +128,9 @@ describe("materializeAgents", () => {
         description: undefined,
         patterns: ["src/**/*.tsx"],
       });
+      expect(plan.agents[0]?.source).toBe("explicit");
+      expect(plan.agents[1]?.source).toBe("explicit");
+      expect(plan.agents[2]?.source).toBe("category-shuttle");
     });
 
     it("multiple categories produce multiple shuttles in stable order", async () => {
@@ -569,6 +573,160 @@ describe("materializeAgents", () => {
     });
   });
 
+  describe("review variants", () => {
+    it("appends review variant agents after category shuttles when config has review_models", async () => {
+      const plan = await materializeConfig(`
+        agent loom { prompt "Loom" models ["model-loom"] mode primary review_models ["review-a", "review-b"] }
+        agent shuttle { prompt "Shuttle" models ["model-shuttle"] mode all }
+        category frontend { patterns ["src/**/*.tsx"] models ["model-frontend"] }
+      `);
+
+      // Order: explicit agents, category shuttles, review variants
+      expect(agentNames(plan)).toEqual([
+        "loom",
+        "shuttle",
+        "shuttle-frontend",
+        "loom-review-a",
+        "loom-review-b",
+      ]);
+    });
+
+    it("review variant descriptor has mode=subagent and single model", async () => {
+      const plan = await materializeConfig(`
+        agent weft { prompt "Weft" models ["model-weft"] review_models ["openai/gpt-5"] }
+      `);
+
+      const variant = plan.agents.find(
+        (a) => a.agentName === "weft-openai-gpt-5",
+      );
+      expect(variant).toBeDefined();
+      expect(variant?.descriptor.mode).toBe("subagent");
+      expect(variant?.descriptor.models).toEqual(["openai/gpt-5"]);
+      expect(variant?.source).toBe("review-variant");
+      expect(variant?.reviewMeta).toEqual({
+        sourceAgentName: "weft",
+        reviewModel: "openai/gpt-5",
+      });
+    });
+
+    it("review variant conflicts are collected into plan.errors as ReviewVariantConflict", async () => {
+      const result = await materializeAgents({
+        config: cfg(`
+          agent weft { prompt "Weft" models ["model-weft"] review_models ["model-r"] }
+          agent weft-model-r { prompt "Explicit" models ["model-explicit"] }
+        `),
+      });
+
+      expect(result.isOk()).toBe(true);
+      if (result.isErr()) return;
+      const plan = result.value;
+      expect(plan.errors).toHaveLength(1);
+      expect(plan.errors[0]?.type).toBe("ReviewVariantConflict");
+      if (plan.errors[0]?.type !== "ReviewVariantConflict") return;
+      expect(plan.errors[0].conflict.variantName).toBe("weft-model-r");
+    });
+
+    it("review variant agents are omitted when no agent has review_models", async () => {
+      const plan = await materializeConfig(`
+        agent alpha { prompt "Alpha" models ["model-alpha"] }
+        agent beta { prompt "Beta" models ["model-beta"] }
+      `);
+
+      expect(agentNames(plan)).toEqual(["alpha", "beta"]);
+      expect(plan.errors).toHaveLength(0);
+    });
+
+    it("disabled review variant names are excluded from the plan", async () => {
+      const plan = await materializeConfig(`
+        agent weft { prompt "Weft" models ["model-weft"] review_models ["rev-a", "rev-b"] }
+        disable agents ["weft-rev-a"]
+      `);
+
+      expect(agentNames(plan)).toContain("weft-rev-b");
+      expect(agentNames(plan)).not.toContain("weft-rev-a");
+    });
+  });
+
+  describe("source discriminator", () => {
+    it("all three source values appear in a plan with explicit, category-shuttle, and review-variant agents", async () => {
+      const plan = await materializeConfig(`
+        agent loom { prompt "Loom" models ["model-loom"] mode primary review_models ["rev-model"] }
+        agent shuttle { prompt "Shuttle" models ["model-shuttle"] mode all }
+        category frontend { patterns ["src/**/*.tsx"] models ["model-frontend"] }
+      `);
+
+      const sources = plan.agents.map((a) => a.source);
+      expect(sources).toContain("explicit");
+      expect(sources).toContain("category-shuttle");
+      expect(sources).toContain("review-variant");
+    });
+
+    it("consumers can filter agents by source === explicit", async () => {
+      const plan = await materializeConfig(`
+        agent loom { prompt "Loom" models ["model-loom"] mode primary review_models ["rev-model"] }
+        agent shuttle { prompt "Shuttle" models ["model-shuttle"] mode all }
+        category frontend { patterns ["src/**/*.tsx"] models ["model-frontend"] }
+      `);
+
+      const explicit = plan.agents.filter((a) => a.source === "explicit");
+      expect(explicit.map((a) => a.agentName)).toEqual(["loom", "shuttle"]);
+    });
+
+    it("consumers can filter agents by source === category-shuttle", async () => {
+      const plan = await materializeConfig(`
+        agent loom { prompt "Loom" models ["model-loom"] mode primary }
+        agent shuttle { prompt "Shuttle" models ["model-shuttle"] mode all }
+        category frontend { patterns ["src/**/*.tsx"] models ["model-frontend"] }
+        category backend { patterns ["src/**/*.ts"] models ["model-backend"] }
+      `);
+
+      const shuttles = plan.agents.filter(
+        (a) => a.source === "category-shuttle",
+      );
+      expect(shuttles.map((a) => a.agentName)).toEqual([
+        "shuttle-frontend",
+        "shuttle-backend",
+      ]);
+    });
+
+    it("consumers can filter agents by source === review-variant", async () => {
+      const plan = await materializeConfig(`
+        agent loom { prompt "Loom" models ["model-loom"] mode primary review_models ["rev-a", "rev-b"] }
+        agent shuttle { prompt "Shuttle" models ["model-shuttle"] mode all }
+      `);
+
+      const variants = plan.agents.filter((a) => a.source === "review-variant");
+      expect(variants.map((a) => a.agentName)).toEqual([
+        "loom-rev-a",
+        "loom-rev-b",
+      ]);
+    });
+
+    it("review-variant agents carry reviewMeta with sourceAgentName and reviewModel", async () => {
+      const plan = await materializeConfig(`
+        agent warp { prompt "Warp" models ["model-warp"] review_models ["reviewer-x"] }
+      `);
+
+      const variant = plan.agents.find((a) => a.source === "review-variant");
+      expect(variant?.reviewMeta).toEqual({
+        sourceAgentName: "warp",
+        reviewModel: "reviewer-x",
+      });
+    });
+
+    it("explicit and category-shuttle agents have no reviewMeta", async () => {
+      const plan = await materializeConfig(`
+        agent loom { prompt "Loom" models ["model-loom"] mode primary }
+        agent shuttle { prompt "Shuttle" models ["model-shuttle"] mode all }
+        category frontend { patterns ["src/**/*.tsx"] models ["model-frontend"] }
+      `);
+
+      for (const agent of plan.agents) {
+        expect(agent.reviewMeta).toBeUndefined();
+      }
+    });
+  });
+
   describe("descriptor compatibility", () => {
     it("materialized descriptor fields match direct composeAgentDescriptor output", async () => {
       const config = cfg(`
@@ -588,9 +746,12 @@ describe("materializeAgents", () => {
       `);
 
       const materialized = await materializeAgents({ config });
+      const representativeConfig = config.agents.representative;
+      if (representativeConfig === undefined)
+        throw new Error("representative agent not found");
       const direct = await composeAgentDescriptor(
         "representative",
-        config.agents.representative!,
+        representativeConfig,
         config,
         config.agents,
       );

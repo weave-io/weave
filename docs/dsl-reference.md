@@ -105,7 +105,7 @@ agent my-helper {
 | `tool_policy` | block | Abstract capability map. See [Tool Policy](#tool-policy). |
 | `triggers` | array | Delegation metadata for router agents. Each entry: `{ domain "…" trigger "…" routing_hint "…" }`. The `routing_hint` field is optional and provides prescriptive "Use when..." guidance for delegation routing. |
 | `skills` | string[] | Skill names to load for this agent. |
-| `review_models` | string[] | Optional. Nominates independent reviewer models for adversarial review. When the reviewer agent is invoked, the adapter runs each review model as a separate variant and collates their findings. See [Review Models](#review-models). |
+| `review_models` | string[] | Optional. One or more model identifiers materialized as independent reviewer variants when config is loaded/composed. Loom/Tapestry prompts route review requests to the base agent plus each generated variant. See [Review Models](#review-models). |
 
 ### Tool Policy
 
@@ -135,7 +135,7 @@ See [Tool Policy Evaluation](tool-policy-evaluation.md) for the full evaluation 
 
 ## Review Models
 
-`review_models` is an optional field on any `agent` block. It nominates independent reviewer models for adversarial review. When the reviewer agent is invoked -- by a direct user request, Loom delegation, or a workflow gate step -- the adapter runs each nominated model as a separate read-only variant and collates their findings into a single approve-or-reject outcome.
+`review_models` is an optional field on any `agent` block. It nominates one or more alternative models as independent reviewer variants. Each nominated model is materialized as a first-class agent descriptor (named `{agent}-{model}`, with `/` replaced by `-`) whenever config is loaded or composed — not deferred to any particular workflow step. Orchestrator prompts (Loom/Tapestry) route review requests to the base agent plus each generated variant through normal prompt-composed delegation.
 
 ```weave
 agent warp {
@@ -150,10 +150,10 @@ agent warp {
 
 **Key behaviors:**
 
-- One read-only review variant descriptor is generated per entry, named `{agentName}-review-{model-with-slashes-replaced-by-dashes}` (e.g. `warp-review-openai-gpt-4o`).
-- Any invocation of the reviewer agent triggers fan-out. Workflow gate steps using `completion review_verdict` are one consumer of the same fan-out and collation machinery.
-- Collation succeeds with at least one successful reviewer result; partial failures are logged as warnings.
-- All variants failing resolves to `reject`.
+- One read-only review variant descriptor is generated per entry, named `{agent}-{model}` with `/` replaced by `-` (e.g. `warp-openai-gpt-4o`, `warp-anthropic-claude-opus-4-5`).
+- Variant routing is available whenever Loom/Tapestry prompts are composed with review variants in delegation targets. The orchestrator materializes generated agent descriptors and instructs Loom/Tapestry to delegate to the base reviewer plus each generated variant via normal subagent delegation; routing is driven by prompt composition, not workflow gate activation.
+- Partial failures (some variants fail) are logged as warnings; the step still completes from the successful variants.
+- All variants failing causes the step to fail and transition to the `on_reject` action.
 - Builtin agents omit `review_models` by default; users opt in explicitly to avoid unexpected cost.
 
 See [Spec 32: Review Models](specs/32-spec-review-models/32-spec-review-models.md) for the full behavioral contract.

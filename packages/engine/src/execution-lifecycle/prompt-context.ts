@@ -83,7 +83,7 @@ export function renderStepPrompt(
   promptTemplate: string,
   context: TemplateContext,
   artifactNames: readonly string[],
-): Result<{ byteLength: number; renderedPrompt: string }, LifecycleError> {
+): Result<{ byteLength: number }, LifecycleError> {
   const allowedPaths = new Set(STEP_PROMPT_ALLOWED_PATHS);
   for (const name of artifactNames) {
     allowedPaths.add(`artifacts.${name}`);
@@ -103,7 +103,7 @@ export function renderStepPrompt(
   }
   const rendered = renderResult.value;
   const byteLength = new TextEncoder().encode(rendered).byteLength;
-  return ok({ byteLength, renderedPrompt: rendered });
+  return ok({ byteLength });
 }
 
 /**

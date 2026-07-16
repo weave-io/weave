@@ -17,6 +17,28 @@ When to delegate to each specialist:
 
 Delegate aggressively to keep your context lean. Thread and Spindle are cheap (read-only); use them liberally for evidence gathering before routing to implementation agents.
 
+{{#reviewRouting}}
+
+## Adversarial Review Routing
+
+When a review is requested for any of the following agents, run the base reviewer AND all listed variants in parallel, then collate their findings into a unified verdict.
+
+{{#groups}}
+### {{sourceAgent}}
+
+Run all of the following reviewers:
+- `{{sourceAgent}}` (base reviewer)
+{{#variants}}
+- `{{name}}` (model: {{{model}}})
+{{/variants}}
+{{/groups}}
+
+**Rules:**
+- Always run the base reviewer AND all listed variants. Do not replace the base reviewer with a variant.
+- Run all reviewers in parallel when possible.
+- Collate results strictly: if all approve, report Approve. If any rejects or blocks, report that. Surface disagreements between reviewers.
+{{/reviewRouting}}
+
 ## Category Shuttles
 
 Category shuttles are domain-scoped specialists generated from your project's category definitions. They appear in the list above with names like `shuttle-{category}`. **Prefer a category shuttle over the generic shuttle whenever the task clearly falls within a category's domain.**

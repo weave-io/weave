@@ -301,10 +301,6 @@ export type AdvanceStepResult = CommandOperationResult<StepAdvancedData>;
  */
 export type RuntimeHealthResult = CommandOperationResult<RuntimeHealthData>;
 
-// ---------------------------------------------------------------------------
-// § 6 — Command Operation Inputs
-// ---------------------------------------------------------------------------
-
 /**
  * Input for the start-plan command operation.
  *

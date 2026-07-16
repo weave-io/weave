@@ -75,7 +75,6 @@ export function runNamedWorkflow(
   input: RunNamedWorkflowInput,
   projectEffect: (
     effect: DispatchAgentEffect,
-    renderedPrompt?: string,
   ) => ResultAsync<void, WorkflowRunnerError>,
 ): ResultAsync<ExecutionStartedData, CommandOperationError> {
   const {

@@ -31,46 +31,38 @@ function cfg(source: string): WeaveConfig {
 
 describe("reviewVariantName", () => {
   it("produces a deterministic name for a simple model identifier", () => {
-    expect(reviewVariantName("weft", "gpt-5")).toBe("weft-review-gpt-5");
+    expect(reviewVariantName("weft", "gpt-5")).toBe("weft-gpt-5");
   });
 
   it("replaces slashes in model identifier with hyphens", () => {
-    expect(reviewVariantName("weft", "openai/gpt-5")).toBe(
-      "weft-review-openai-gpt-5",
-    );
+    expect(reviewVariantName("weft", "openai/gpt-5")).toBe("weft-openai-gpt-5");
   });
 
   it("replaces multiple slashes", () => {
     expect(reviewVariantName("weft", "provider/org/model-v1")).toBe(
-      "weft-review-provider-org-model-v1",
+      "weft-provider-org-model-v1",
     );
   });
 
   it("replaces dots and colons with hyphens", () => {
-    expect(reviewVariantName("weft", "org.model:v2")).toBe(
-      "weft-review-org-model-v2",
-    );
+    expect(reviewVariantName("weft", "org.model:v2")).toBe("weft-org-model-v2");
   });
 
   it("replaces any non-identifier character with a hyphen", () => {
     // Spaces, plus signs, at-signs are not valid identifier chars
-    expect(reviewVariantName("weft", "my model@v1")).toBe(
-      "weft-review-my-model-v1",
-    );
+    expect(reviewVariantName("weft", "my model@v1")).toBe("weft-my-model-v1");
   });
 
   it("preserves valid identifier characters (letters, digits, hyphens, underscores)", () => {
-    expect(reviewVariantName("weft", "my_model-v1")).toBe(
-      "weft-review-my_model-v1",
-    );
+    expect(reviewVariantName("weft", "my_model-v1")).toBe("weft-my_model-v1");
   });
 
   it("works with different source agent names", () => {
     expect(reviewVariantName("shuttle", "anthropic/claude-opus-4")).toBe(
-      "shuttle-review-anthropic-claude-opus-4",
+      "shuttle-anthropic-claude-opus-4",
     );
     expect(reviewVariantName("loom", "openai/gpt-4o")).toBe(
-      "loom-review-openai-gpt-4o",
+      "loom-openai-gpt-4o",
     );
   });
 
@@ -102,8 +94,8 @@ describe("generateReviewVariants — basic generation", () => {
     expect(result.isOk()).toBe(true);
     const variants = result._unsafeUnwrap();
     expect(Object.keys(variants)).toHaveLength(2);
-    expect(variants["weft-review-openai-gpt-5"]).toBeDefined();
-    expect(variants["weft-review-anthropic-claude-opus-4"]).toBeDefined();
+    expect(variants["weft-openai-gpt-5"]).toBeDefined();
+    expect(variants["weft-anthropic-claude-opus-4"]).toBeDefined();
   });
 
   it("variant name matches reviewVariantName output", () => {
@@ -125,18 +117,16 @@ describe("generateReviewVariants — basic generation", () => {
 
   it("variant sourceAgentName is the origin agent", () => {
     const variants = generateReviewVariants(WEFT_TWO_MODELS)._unsafeUnwrap();
-    expect(variants["weft-review-openai-gpt-5"].sourceAgentName).toBe("weft");
-    expect(
-      variants["weft-review-anthropic-claude-opus-4"].sourceAgentName,
-    ).toBe("weft");
+    expect(variants["weft-openai-gpt-5"].sourceAgentName).toBe("weft");
+    expect(variants["weft-anthropic-claude-opus-4"].sourceAgentName).toBe(
+      "weft",
+    );
   });
 
   it("variant reviewModel matches the model it was generated for", () => {
     const variants = generateReviewVariants(WEFT_TWO_MODELS)._unsafeUnwrap();
-    expect(variants["weft-review-openai-gpt-5"].reviewModel).toBe(
-      "openai/gpt-5",
-    );
-    expect(variants["weft-review-anthropic-claude-opus-4"].reviewModel).toBe(
+    expect(variants["weft-openai-gpt-5"].reviewModel).toBe("openai/gpt-5");
+    expect(variants["weft-anthropic-claude-opus-4"].reviewModel).toBe(
       "anthropic/claude-opus-4",
     );
   });
@@ -158,9 +148,7 @@ describe("generateReviewVariants — variant config properties", () => {
   `);
 
   function variant() {
-    return generateReviewVariants(source)._unsafeUnwrap()[
-      "weft-review-openai-gpt-5"
-    ];
+    return generateReviewVariants(source)._unsafeUnwrap()["weft-openai-gpt-5"];
   }
 
   it("mode is coerced to subagent regardless of source agent mode", () => {
@@ -251,14 +239,14 @@ describe("generateReviewVariants — disabled agents", () => {
         models ["claude-sonnet-4-5"]
         review_models ["openai/gpt-5", "anthropic/claude-opus-4"]
       }
-      disable agents ["weft-review-openai-gpt-5"]
+      disable agents ["weft-openai-gpt-5"]
     `);
     const result = generateReviewVariants(config);
     expect(result.isOk()).toBe(true);
     const variants = result._unsafeUnwrap();
     // The disabled variant is skipped; the enabled one is present.
-    expect(variants["weft-review-openai-gpt-5"]).toBeUndefined();
-    expect(variants["weft-review-anthropic-claude-opus-4"]).toBeDefined();
+    expect(variants["weft-openai-gpt-5"]).toBeUndefined();
+    expect(variants["weft-anthropic-claude-opus-4"]).toBeDefined();
   });
 });
 
@@ -274,7 +262,7 @@ describe("generateReviewVariants — conflict detection", () => {
         models ["claude-sonnet-4-5"]
         review_models ["openai/gpt-5"]
       }
-      agent weft-review-openai-gpt-5 {
+      agent weft-openai-gpt-5 {
         prompt "Conflict"
         models ["openai/gpt-5"]
       }
@@ -283,10 +271,10 @@ describe("generateReviewVariants — conflict detection", () => {
     expect(result.isErr()).toBe(true);
     const error = result._unsafeUnwrapErr();
     expect(error.type).toBe("ReviewVariantConflictError");
-    expect(error.variantName).toBe("weft-review-openai-gpt-5");
+    expect(error.variantName).toBe("weft-openai-gpt-5");
     expect(error.agentName).toBe("weft");
     expect(error.reviewModel).toBe("openai/gpt-5");
-    expect(error.message).toContain("weft-review-openai-gpt-5");
+    expect(error.message).toContain("weft-openai-gpt-5");
   });
 
   it("returns ReviewVariantConflictError when a generated variant would collide with a previously generated variant (generated-vs-generated)", () => {
@@ -311,8 +299,8 @@ describe("generateReviewVariants — conflict detection", () => {
     expect(result.isErr()).toBe(true);
     const error = result._unsafeUnwrapErr();
     expect(error.type).toBe("ReviewVariantConflictError");
-    expect(error.variantName).toBe("weft-review-openai-gpt-5");
-    expect(error.message).toContain("weft-review-openai-gpt-5");
+    expect(error.variantName).toBe("weft-openai-gpt-5");
+    expect(error.message).toContain("weft-openai-gpt-5");
   });
 
   it("conflict error message includes remediation guidance", () => {
@@ -322,7 +310,7 @@ describe("generateReviewVariants — conflict detection", () => {
         models ["claude-sonnet-4-5"]
         review_models ["openai/gpt-5"]
       }
-      agent weft-review-openai-gpt-5 {
+      agent weft-openai-gpt-5 {
         prompt "Conflict"
         models ["openai/gpt-5"]
       }
@@ -359,8 +347,8 @@ describe("generateReviewVariants — multiple agents", () => {
     expect(result.isOk()).toBe(true);
     const variants = result._unsafeUnwrap();
     expect(Object.keys(variants)).toHaveLength(2);
-    expect(variants["weft-review-openai-gpt-5"]).toBeDefined();
-    expect(variants["warp-review-anthropic-claude-opus-4"]).toBeDefined();
+    expect(variants["weft-openai-gpt-5"]).toBeDefined();
+    expect(variants["warp-anthropic-claude-opus-4"]).toBeDefined();
   });
 
   it("each variant's sourceAgentName correctly identifies its origin", () => {
@@ -377,7 +365,7 @@ describe("generateReviewVariants — multiple agents", () => {
       }
     `);
     const variants = generateReviewVariants(config)._unsafeUnwrap();
-    expect(variants["weft-review-openai-gpt-5"].sourceAgentName).toBe("weft");
-    expect(variants["warp-review-openai-gpt-5"].sourceAgentName).toBe("warp");
+    expect(variants["weft-openai-gpt-5"].sourceAgentName).toBe("weft");
+    expect(variants["warp-openai-gpt-5"].sourceAgentName).toBe("warp");
   });
 });

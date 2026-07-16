@@ -303,7 +303,7 @@ export function startPlanExecution(
     "Delegating to engine startPlan operation",
   );
 
-  const projectEffect = buildProjectEffect(adapter, config);
+  const projectEffect = buildProjectEffect(adapter);
 
   return startPlan(
     {

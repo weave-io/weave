@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode
 
-> 0 routes | 0 models | 0 components | 133 lib files | 8 env vars | 5 middleware | 0% test coverage
-> **Token savings:** this file is ~12.300 tokens. Without it, AI exploration would cost ~46.000 tokens. **Saves ~33.800 tokens per conversation.**
-> **Last scanned:** 2026-07-16 10:30 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 129 lib files | 8 env vars | 5 middleware | 0% test coverage
+> **Token savings:** this file is ~12.000 tokens. Without it, AI exploration would cost ~45.000 tokens. **Saves ~33.000 tokens per conversation.**
+> **Last scanned:** 2026-07-16 19:59 — re-run after significant changes
 
 ---
 
@@ -24,11 +24,6 @@
   - class OpenCodeAdapterError
   - class OpenCodeAdapter
   - interface OpenCodeAdapterOptions
-- `packages\adapters\opencode\src\direct-review.ts`
-  - function executeDirectReview: (agentName, config, client, reviewPrompt) => ResultAsync<DirectReviewResult, DirectReviewError>
-  - interface DirectReviewResult
-  - type DirectReviewError
-- `packages\adapters\opencode\src\execute-review-variants.ts` — function executeReviewVariants: (variants, client, reviewPrompt) => ResultAsync<ReviewExecutionResult[], ReviewFanOutAdapterError>
 - `packages\adapters\opencode\src\model-resolution.ts`
   - function resolveModelForAgent: (descriptor, context) => Result<string, ModelResolutionError>
   - interface OpenCodeModelContext
@@ -36,18 +31,13 @@
 - `packages\adapters\opencode\src\opencode-client.ts`
   - class SdkOpenCodeClient
   - interface OpenCodeClientFacade
-  - type PromptSessionInfo
   - type OpenCodeClientError
 - `packages\adapters\opencode\src\plugin.ts`
   - function createWeavePlugin: (options) => Plugin
   - interface WeavePluginOptions
   - const WeavePlugin: Plugin
   - const server
-- `packages\adapters\opencode\src\projection-helpers.ts`
-  - function translateReviewOutcome: (collateResult, ReviewOrchestrationError>) => Result<void, WorkflowRunnerError>
-  - function formatReviewSummary: (collated) => string
-  - function buildProjectEffect: (adapter, config?) => (
-  - function deriveRunWorkflowResult: (data) => RunWorkflowResult
+- `packages\adapters\opencode\src\projection-helpers.ts` — function buildProjectEffect: (adapter) => (effect: DispatchAgentEffect) => ResultAsync<void, WorkflowRunnerError>, function deriveRunWorkflowResult: (data) => RunWorkflowResult
 - `packages\adapters\opencode\src\reconcile-agent.ts`
   - function classifyExistingAgent: (agentName, existingAgents) => ReconcileDecision
   - function tagWithOwnership: (config) => OpenCodeAgentConfig
@@ -450,11 +440,11 @@
 - `packages\engine\src\compose.ts`
   - function detectAppendCollisions: (configs) => AppendCollision[]
   - function composeWorkflowStepPrompt: (stepName, step, workflow, templateContext) => ResultAsync<WorkflowStepComposedPrompt, ComposeError>
-  - function composeAgentDescriptor: (agentName, agentConfig, config, allAgents, AgentConfig>, category?) => ResultAsync<AgentDescriptor, ComposeError>
+  - function buildReviewRoutingContext: (reviewVariants, delegationTargetNames) => ReviewRoutingContext | undefined
+  - function composeAgentDescriptor: (agentName, agentConfig, config, allAgents, AgentConfig>, category?, materializedReviewVariants?) => ResultAsync<AgentDescriptor, ComposeError>
   - interface CategoryMetadata
   - interface AgentDescriptor
-  - interface AgentDescriptorCategory
-  - _...6 more_
+  - _...7 more_
 - `packages\engine\src\descriptors.ts`
   - function generateCategoryShuttles: (config) => Result<
   - interface GeneratedCategoryShuttle
@@ -477,7 +467,7 @@
 - `packages\engine\src\execution-lifecycle\before-tool.ts` — function beforeTool: (input) => BeforeToolResult
 - `packages\engine\src\execution-lifecycle\completion.ts` — function completeStep: (input, store) => ResultAsync<CompleteStepOutput, LifecycleError>
 - `packages\engine\src\execution-lifecycle\dispatch.ts`
-  - function buildConfiguredRunAgentEffect: (step, promptMetadata, agentConfig?) => RunAgentEffect
+  - function buildConfiguredRunAgentEffect: (step, promptMetadata) => RunAgentEffect
   - function resolveWorkflowStep: (workflowConfig, stepName) => Result<WorkflowStep, LifecycleError>
   - function dispatchStep: (input, store) => ResultAsync<DispatchStepOutput, LifecycleError>
 - `packages\engine\src\execution-lifecycle\errors.ts`
@@ -518,24 +508,19 @@
   - interface ModelResolutionResult
   - type ResolutionSource
   - const DEFAULT_FALLBACK_MODEL
-- `packages\engine\src\review-gate-policy.ts`
-  - function evaluateGateDecision: (verdicts) => GateDecision
-  - interface VariantVerdictInput
-  - interface GateDecision
 - `packages\engine\src\review-orchestration.ts`
   - function fanOut: (agentName, config) => Result<ReviewFanOutPlan, ReviewOrchestrationError>
   - function collate: (results) => Result<CollatedReview, ReviewOrchestrationError>
   - class ReviewOrchestrator
-  - interface DirectReviewContext
   - type ReviewOrchestrationAgentNotFoundError
   - type ReviewOrchestrationError
-  - _...5 more_
+  - type ReviewExecutionResult
+  - _...4 more_
 - `packages\engine\src\review-variants.ts`
   - function reviewVariantName: (agentName, model) => string
   - function generateReviewVariants: (config) => Result<Record<string, GeneratedReviewVariant>, ReviewVariantConflictError>
   - interface GeneratedReviewVariant
   - type ReviewVariantConflictError
-- `packages\engine\src\review-verdict-parser.ts` — function parseVerdict: (output) => ReviewVerdict, type ReviewVerdict
 - `packages\engine\src\runtime\errors.ts`
   - function initializationError: (message, cause?) => RuntimeStoreInitializationError
   - function migrationVersionError: (foundVersion, supportedVersion, message) => RuntimeStoreMigrationVersionError
@@ -574,8 +559,8 @@
   - _...30 more_
 - `packages\engine\src\runtime-command-operations\control.ts` — function abortExecution: (input) => import("neverthrow").ResultAsync<, function advanceStep: (input) => import("neverthrow").ResultAsync<StepAdvancedData, CommandOperationError>
 - `packages\engine\src\runtime-command-operations\health.ts` — function runtimeHealth: (input) => RuntimeHealthResult
-- `packages\engine\src\runtime-command-operations\run-named-workflow.ts` — function runNamedWorkflow: (input, projectEffect, renderedPrompt?) => void
-- `packages\engine\src\runtime-command-operations\start-plan.ts` — function startPlan: (input, projectEffect, renderedPrompt?) => void
+- `packages\engine\src\runtime-command-operations\run-named-workflow.ts` — function runNamedWorkflow: (input, projectEffect) => void
+- `packages\engine\src\runtime-command-operations\start-plan.ts` — function startPlan: (input, projectEffect) => void
 - `packages\engine\src\runtime-command-operations\status.ts` — function inspectStatus: (input) => import("neverthrow").ResultAsync<
 - `packages\engine\src\runtime-command-operations\workflow-runner.ts`
   - function runWorkflowLifecycle: (input) => ResultAsync<WorkflowRunnerOutput, WorkflowRunnerError>
@@ -599,7 +584,7 @@
   - interface ToolPolicyContextEntry
   - interface DelegationTargetContextEntry
   - interface DelegationContextEntry
-  - _...5 more_
+  - _...8 more_
 - `packages\engine\src\template-renderer.ts`
   - function renderTemplate: (source, context, options) => Result<string, RendererError>
   - function extractTemplatePaths: (source) => Result<string[], RendererError>
@@ -660,21 +645,21 @@
 - `packages\cli\src\io\terminal.ts` — imported by **18** files
 - `packages\cli\src\evals\openrouter-client.ts` — imported by **18** files
 - `packages\cli\src\evals\report-schema.ts` — imported by **17** files
-- `packages\adapters\opencode\src\sdk-types.ts` — imported by **16** files
 - `packages\engine\src\runtime\types.ts` — imported by **16** files
 - `packages\cli\src\args.ts` — imported by **14** files
 - `packages\engine\src\runtime\store.ts` — imported by **13** files
 - `packages\cli\src\fs\file-system.ts` — imported by **12** files
 - `packages\engine\src\logger.ts` — imported by **12** files
-- `packages\adapters\opencode\src\adapter.ts` — imported by **11** files
+- `packages\engine\src\compose.ts` — imported by **11** files
 - `packages\engine\src\execution-lifecycle\metadata.ts` — imported by **11** files
 - `packages\engine\src\runtime\errors.ts` — imported by **11** files
 - `packages\cli\src\errors.ts` — imported by **10** files
 - `packages\engine\src\execution-lifecycle\lease.ts` — imported by **10** files
 - `packages\engine\src\execution-lifecycle\errors.ts` — imported by **10** files
+- `packages\adapters\opencode\src\sdk-types.ts` — imported by **9** files
 - `packages\cli\src\evals\prompt-snapshots.ts` — imported by **9** files
-- `packages\engine\src\compose.ts` — imported by **9** files
 - `packages\core\src\tokens.ts` — imported by **8** files
+- `packages\adapters\opencode\src\adapter.ts` — imported by **7** files
 
 ## Import Map (who imports what)
 
@@ -683,18 +668,18 @@
 - `packages\cli\src\io\terminal.ts` ← `packages\cli\src\cli.ts`, `packages\cli\src\commands\compose.ts`, `packages\cli\src\commands\eval.ts`, `packages\cli\src\commands\init.ts`, `packages\cli\src\commands\migrate.ts` +13 more
 - `packages\cli\src\evals\openrouter-client.ts` ← `packages\cli\src\evals\loom-routing-runner.ts`, `packages\cli\src\evals\pattern-planning-runner.ts`, `packages\cli\src\evals\runner.ts`, `packages\cli\src\evals\shuttle-execution-runner.ts`, `packages\cli\src\evals\spindle-tools-runner.ts` +13 more
 - `packages\cli\src\evals\report-schema.ts` ← `packages\cli\src\evals\__tests__\artifact-bundle.test.ts`, `packages\cli\src\evals\__tests__\artifact-bundle.test.ts`, `packages\cli\src\evals\__tests__\artifact-bundle.test.ts`, `packages\cli\src\evals\__tests__\artifact-bundle.test.ts`, `packages\cli\src\evals\__tests__\artifact-bundle.test.ts` +12 more
-- `packages\adapters\opencode\src\sdk-types.ts` ← `packages\adapters\opencode\src\adapter.ts`, `packages\adapters\opencode\src\plugin.ts`, `packages\adapters\opencode\src\reconcile-agent.ts`, `packages\adapters\opencode\src\tool-policy-mapping.ts`, `packages\adapters\opencode\src\translate-agent.ts` +11 more
 - `packages\engine\src\runtime\types.ts` ← `packages\engine\src\execution-lifecycle\resume.ts`, `packages\engine\src\execution-lifecycle\start.ts`, `packages\engine\src\execution-lifecycle\types.ts`, `packages\engine\src\runtime\journal-writer.ts`, `packages\engine\src\runtime\sanitizer.ts` +11 more
 - `packages\cli\src\args.ts` ← `packages\cli\src\cli.ts`, `packages\cli\src\commands\compose.ts`, `packages\cli\src\commands\eval.ts`, `packages\cli\src\commands\init.ts`, `packages\cli\src\commands\migrate.ts` +9 more
 - `packages\engine\src\runtime\store.ts` ← `packages\engine\src\execution-lifecycle\artifacts.ts`, `packages\engine\src\execution-lifecycle\dispatch.ts`, `packages\engine\src\execution-lifecycle\inspection.ts`, `packages\engine\src\execution-lifecycle\interrupts.ts`, `packages\engine\src\execution-lifecycle\reconciliation.ts` +8 more
 - `packages\cli\src\fs\file-system.ts` ← `packages\cli\src\commands\migrate.ts`, `packages\cli\src\commands\validate.ts`, `packages\cli\src\commands\__tests__\init.test.ts`, `packages\cli\src\commands\__tests__\migrate-conversion.test.ts`, `packages\cli\src\commands\__tests__\migrate.test.ts` +7 more
+- `packages\engine\src\logger.ts` ← `packages\engine\src\compose.ts`, `packages\engine\src\index.ts`, `packages\engine\src\runtime\journal-writer.ts`, `packages\engine\src\runtime\sqlite\store.ts`, `packages\engine\src\runtime-command-operations\control.ts` +7 more
 
 ---
 
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 123 test files found
+> 115 test files found
 
 ---
 

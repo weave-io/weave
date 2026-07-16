@@ -4,7 +4,7 @@ import { err, ok, type Result } from "neverthrow";
 /** Error raised when an explicit agent collides with a generated review variant. */
 export type ReviewVariantConflictError = {
   type: "ReviewVariantConflictError";
-  /** The conflicting agent name, e.g. "weft-review-openai-gpt-5". */
+  /** The conflicting agent name, e.g. "weft-openai-gpt-5". */
   variantName: string;
   /** The source agent name, e.g. "weft". */
   agentName: string;
@@ -31,12 +31,12 @@ export interface GeneratedReviewVariant {
  * may contain (e.g. `openai/gpt-5` → `openai-gpt-5`, `org.model:v2` → `org-model-v2`).
  *
  * @example
- * reviewVariantName("weft", "openai/gpt-5")      // → "weft-review-openai-gpt-5"
- * reviewVariantName("weft", "org.model:v2")       // → "weft-review-org-model-v2"
+ * reviewVariantName("weft", "openai/gpt-5")      // → "weft-openai-gpt-5"
+ * reviewVariantName("weft", "org.model:v2")       // → "weft-org-model-v2"
  */
 export function reviewVariantName(agentName: string, model: string): string {
   const safeModel = model.replace(/[^a-zA-Z0-9_-]/g, "-");
-  return `${agentName}-review-${safeModel}`;
+  return `${agentName}-${safeModel}`;
 }
 
 /**

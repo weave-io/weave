@@ -21,65 +21,6 @@ import type { AgentDescriptor } from "./compose.js";
 import type { EffectiveToolPolicy } from "./tool-policy.js";
 
 // ---------------------------------------------------------------------------
-// ReviewFanOutIntent: engine-level fan-out routing hint
-// ---------------------------------------------------------------------------
-
-/**
- * Engine-level intent record attached to a `RunAgentEffect` when the
- * dispatched step is a `gate` with `review_verdict` completion and the
- * named agent declares `review_models`.
- *
- * > **Direct review path**: when callers invoke `executeDirectReview` outside
- * > of a workflow gate step, this intent is **not** emitted. Adapters call
- * > `ReviewOrchestrator.fanOut` directly and receive a `DirectReviewResult`
- * > with a `formattedSummary`. `ReviewFanOutIntent` is the workflow gate path
- * > only.
- *
- * ## V1 gate policy
- *
- * Weave v1 uses an **"any-reject wins"** collation policy for gate steps.
- * The engine's role is limited to expressing fan-out intent; it does **not**
- * track per-review approve/reject verdicts — those are execution outputs
- * produced by variant agents and owned by the adapter layer.
- *
- * The v1 collation contract is:
- * - The engine emits `reviewFanOutIntent` to signal that fan-out is required.
- * - The adapter spawns each variant via `HarnessAdapter.spawnReviewVariants`
- *   (or equivalent) and collects their execution outputs.
- * - The adapter calls `ReviewOrchestrator.collate(results)` to aggregate
- *   outputs and warnings into a `CollatedReview`.
- * - The adapter translates the `CollatedReview` into a `StepCompletionSignal`
- *   using the v1 policy: a gate passes only when the collated outcome is
- *   successful; any failed or rejected execution causes the gate to block.
- *
- * The engine makes no claim about which specific variants approved or rejected
- * because `ReviewExecutionResult` tracks execution success/failure, not
- * typed approve/reject verdicts. Verdict semantics are adapter-owned.
- *
- * Adapters receive this intent via `RunAgentEffect.reviewFanOutIntent` and
- * are responsible for:
- * 1. Calling `ReviewOrchestrator.fanOut(agentName)` to derive variant descriptors.
- * 2. Spawning each variant via `HarnessAdapter.spawnReviewVariants` (or
- *    equivalent harness-specific mechanism).
- * 3. Calling `ReviewOrchestrator.collate(results)` and translating the
- *    collated outcome into a `StepCompletionSignal` using the v1 policy above.
- *
- * The engine does **not** execute variant spawning. It only expresses intent.
- */
-export interface ReviewFanOutIntent {
-  /**
-   * The logical agent name to fan out (key from `WeaveConfig.agents`).
-   * Adapters use this to call `ReviewOrchestrator.fanOut(agentName)`.
-   */
-  readonly agentName: string;
-  /**
-   * The `review_models` declared on the agent config.
-   * Provided here as a convenience so adapters do not need to re-read the config.
-   */
-  readonly reviewModels: readonly string[];
-}
-
-// ---------------------------------------------------------------------------
 // RunAgentEffect discriminated union
 // ---------------------------------------------------------------------------
 
@@ -161,19 +102,4 @@ export type RunAgentEffect = {
    * Present when a step prompt was rendered.
    */
   readonly promptMetadata?: PromptMetadata;
-  /**
-   * Review fan-out intent for gate steps with `review_verdict` completion.
-   *
-   * Present when ALL of the following are true:
-   * - `stepType === "gate"`
-   * - `completionMethod === "review_verdict"`
-   * - The named agent declares `review_models` in the WeaveConfig
-   *
-   * When present, the adapter MUST route this step through
-   * `ReviewOrchestrator.fanOut` and apply the v1 any-reject gate policy.
-   * When absent, single-agent execution is used for the gate step.
-   *
-   * @see ReviewFanOutIntent: v1 gate policy documentation
-   */
-  readonly reviewFanOutIntent?: ReviewFanOutIntent;
 };

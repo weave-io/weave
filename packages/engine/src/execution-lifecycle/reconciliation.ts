@@ -239,10 +239,11 @@ function dispatchHandlerOrPause(
         artifactNames,
       );
       if (promptResult.isErr()) return errAsync(promptResult.error);
-      const { byteLength } = promptResult.value;
-      const runAgent = buildConfiguredRunAgentEffect(handlerStep, {
-        byteLength,
-      });
+      const promptMetadata = promptResult.value;
+      const runAgent = buildConfiguredRunAgentEffect(
+        handlerStep,
+        promptMetadata,
+      );
       return okAsync<ReconcileExecutionOutput, LifecycleError>({
         handlerStepName: handlerStep.name,
         handlerFound: true,

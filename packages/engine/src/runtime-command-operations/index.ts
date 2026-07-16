@@ -14,7 +14,6 @@
  * | `start-plan.ts`         | `start-plan` command operation (plan-first path)                |
  * | `status.ts`             | `inspect-status` command operation (read-only)                  |
  * | `control.ts`            | `abort-execution` and `advance-step` command operations         |
- * | `health.ts`             | `runtime-health` command operation (pure, adapter-supplied)     |
  *
  * ## Command Operations
  *
@@ -25,7 +24,6 @@
  * | Inspect status       | `inspect-status`      | Read-only inspection of execution state  |
  * | Abort execution      | `abort-execution`     | Cancel or abort an active execution      |
  * | Advance step         | `advance-step`        | Advance or complete a blocked step       |
- * | Runtime health       | `runtime-health`      | Report adapter/runtime readiness         |
  *
  * @see docs/specs/30-spec-minimal-runtime-command-lifecycle/30-spec-minimal-runtime-command-lifecycle.md
  * @see docs/adapter-boundary.md
