@@ -126,6 +126,7 @@ export interface WorkflowRunnerInput {
    */
   readonly projectEffect: (
     effect: DispatchAgentEffect,
+    renderedPrompt?: string,
   ) => ResultAsync<void, WorkflowRunnerError>;
   /**
    * Optional plan state provider for `plan_created` / `plan_complete`
@@ -179,6 +180,7 @@ interface LoopState {
   readonly maxSteps: number;
   readonly projectEffect: (
     effect: DispatchAgentEffect,
+    renderedPrompt?: string,
   ) => ResultAsync<void, WorkflowRunnerError>;
 }
 
@@ -332,7 +334,7 @@ function completeAndAdvance(
         );
 
         return state
-          .projectEffect(nextDispatch)
+          .projectEffect(nextDispatch, undefined)
           .andThen(() => completeAndAdvance(nextStepName, state));
       }
 
@@ -459,7 +461,7 @@ export function runWorkflowLifecycle(
         .mapErr(
           (cause): WorkflowRunnerError => ({ type: "lifecycle_error", cause }),
         )
-        .andThen(({ stepName, effects: dispatchEffects }) => {
+        .andThen(({ stepName, effects: dispatchEffects, renderedPrompt }) => {
           state.stepsDispatched += 1;
           log.info(
             { stepName, effectCount: dispatchEffects.length },
@@ -476,7 +478,8 @@ export function runWorkflowLifecycle(
 
           // Apply all dispatch effects sequentially, short-circuiting on error.
           const applyAll = dispatchAgentEffects.reduce(
-            (chain, effect) => chain.andThen(() => projectEffect(effect)),
+            (chain, effect) =>
+              chain.andThen(() => projectEffect(effect, renderedPrompt)),
             okAsync<void, WorkflowRunnerError>(undefined),
           );
 

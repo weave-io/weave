@@ -117,8 +117,10 @@ export interface HarnessAdapter {
    * returned `ResultAsync`.
    *
    * @param variants - One descriptor per review variant to spawn.
+   * @param reviewPrompt - The rendered review prompt text to send to each variant agent.
    */
   spawnReviewVariants?(
     variants: ReviewVariantDescriptor[],
+    reviewPrompt: string,
   ): ResultAsync<ReviewExecutionResult[], ReviewFanOutAdapterError>;
 }

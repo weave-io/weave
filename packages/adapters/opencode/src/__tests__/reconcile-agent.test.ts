@@ -89,6 +89,33 @@ class MockOpenCodeClient implements OpenCodeClientFacade {
     this.updateAgentCalls.push({ name, config });
     return this._updateAgentResult;
   }
+
+  createReviewSession(
+    _title: string,
+  ): ResultAsync<{ sessionId: string }, OpenCodeClientError> {
+    return okAsync({ sessionId: "mock-session-id" });
+  }
+
+  promptSession(
+    _sessionId: string,
+    _prompt: string,
+    _agentName: string,
+  ): ResultAsync<
+    {
+      output: string;
+      assistantMessage: import("../sdk-types.js").AssistantMessage;
+    },
+    OpenCodeClientError
+  > {
+    return okAsync({
+      output: "",
+      assistantMessage: {} as import("../sdk-types.js").AssistantMessage,
+    });
+  }
+
+  deleteSession(_sessionId: string): ResultAsync<void, OpenCodeClientError> {
+    return okAsync(undefined);
+  }
 }
 
 // ---------------------------------------------------------------------------

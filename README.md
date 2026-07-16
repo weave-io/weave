@@ -37,7 +37,7 @@ Today, the adapter is strongest at **agent/config materialization** and intentio
 - ownership-safe `list → reconcile → create/update` flow for Weave-managed agents
 - harness-injected skill forwarding
 - `config` hook visibility for `opencode debug config`
-- deferred SDK reconciliation on first `session.created`
+- no-op `event` hook (agents are injected via `config` hook; direct review uses `chat.message` hook)
 
 ### Not yet at legacy parity
 

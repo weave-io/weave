@@ -380,6 +380,8 @@ export interface DispatchStepOutput {
   readonly stepName: string;
   readonly effects: readonly LifecycleEffect[];
   readonly artifactInputSummary?: ArtifactInputSummary;
+  /** Rendered step prompt text for adapter use (e.g. review fan-out). Never appears on RunAgentEffect. */
+  readonly renderedPrompt?: string;
 }
 
 // ---------------------------------------------------------------------------

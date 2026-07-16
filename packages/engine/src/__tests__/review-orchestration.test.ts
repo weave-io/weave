@@ -114,7 +114,6 @@ describe("ReviewOrchestrator.fanOut", () => {
 });
 
 describe("ReviewOrchestrator.collate", () => {
-
   function makeResult(
     variantName: string,
     reviewModel: string,
@@ -142,6 +141,9 @@ describe("ReviewOrchestrator.collate", () => {
     expect(collated.warnings).toHaveLength(0);
     expect(collated.collatedOutput).toContain("LGTM");
     expect(collated.collatedOutput).toContain("Looks good");
+    // New fields
+    expect(collated.perVariantVerdicts).toHaveLength(2);
+    expect(collated.gateDecision).toBeDefined();
   });
 
   it("succeeds with warnings when some variants fail (partial failure)", () => {
@@ -165,6 +167,9 @@ describe("ReviewOrchestrator.collate", () => {
     );
     expect(collated.warnings[0].errorMessage).toBe("timeout");
     expect(collated.collatedOutput).toContain("LGTM");
+    // New fields
+    expect(collated.perVariantVerdicts).toHaveLength(2);
+    expect(collated.gateDecision).toBeDefined();
   });
 
   it("fails with CollatedReviewAllFailedError when all variants fail", () => {
@@ -214,6 +219,116 @@ describe("ReviewOrchestrator.collate", () => {
     expect(collated.collatedOutput).toContain("weft-review-openai-gpt-5");
     expect(collated.collatedOutput).toContain("openai/gpt-5");
     expect(collated.collatedOutput).toContain("Review output A");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Verdict-aware collation tests
+  // ---------------------------------------------------------------------------
+
+  it("all approve: gateDecision.passed === true, both verdicts are approve", () => {
+    const results = [
+      makeResult(
+        "weft-review-openai-gpt-5",
+        "openai/gpt-5",
+        true,
+        "Looks great [APPROVE]",
+      ),
+      makeResult(
+        "weft-review-anthropic-claude-opus-4",
+        "anthropic/claude-opus-4",
+        true,
+        "[APPROVE] no issues",
+      ),
+    ];
+    const collated = ReviewOrchestrator.collate(results)._unsafeUnwrap();
+    expect(collated.gateDecision.passed).toBe(true);
+    expect(collated.perVariantVerdicts).toHaveLength(2);
+    expect(collated.perVariantVerdicts[0].verdict).toEqual({
+      verdict: "approve",
+    });
+    expect(collated.perVariantVerdicts[1].verdict).toEqual({
+      verdict: "approve",
+    });
+  });
+
+  it("mixed verdicts: one approve, one reject → gateDecision.passed === false", () => {
+    const results = [
+      makeResult(
+        "weft-review-openai-gpt-5",
+        "openai/gpt-5",
+        true,
+        "[APPROVE] LGTM",
+      ),
+      makeResult(
+        "weft-review-anthropic-claude-opus-4",
+        "anthropic/claude-opus-4",
+        true,
+        "Missing tests. [REJECT]",
+      ),
+    ];
+    const collated = ReviewOrchestrator.collate(results)._unsafeUnwrap();
+    expect(collated.gateDecision.passed).toBe(false);
+    const approveVerdict = collated.perVariantVerdicts.find(
+      (v) => v.variantName === "weft-review-openai-gpt-5",
+    );
+    const rejectVerdict = collated.perVariantVerdicts.find(
+      (v) => v.variantName === "weft-review-anthropic-claude-opus-4",
+    );
+    expect(approveVerdict?.verdict).toEqual({ verdict: "approve" });
+    expect(rejectVerdict?.verdict.verdict).toBe("reject");
+    // The reject variant must appear in blockers
+    expect(
+      collated.gateDecision.blockers.some(
+        (b) => b.variantName === "weft-review-anthropic-claude-opus-4",
+      ),
+    ).toBe(true);
+  });
+
+  it("malformed output (no signal): gateDecision.passed === false, blocker has malformed verdict", () => {
+    const results = [
+      makeResult(
+        "weft-review-openai-gpt-5",
+        "openai/gpt-5",
+        true,
+        "I reviewed the code but forgot to signal",
+      ),
+    ];
+    const collated = ReviewOrchestrator.collate(results)._unsafeUnwrap();
+    expect(collated.gateDecision.passed).toBe(false);
+    expect(collated.perVariantVerdicts[0].verdict.verdict).toBe("malformed");
+    expect(collated.gateDecision.blockers).toHaveLength(1);
+    expect(collated.gateDecision.blockers[0].variantName).toBe(
+      "weft-review-openai-gpt-5",
+    );
+  });
+
+  it("one success (approve) + one execution failure → gateDecision.passed === false (failed variant is malformed)", () => {
+    const results = [
+      makeResult(
+        "weft-review-openai-gpt-5",
+        "openai/gpt-5",
+        true,
+        "[APPROVE] all good",
+      ),
+      makeResult(
+        "weft-review-anthropic-claude-opus-4",
+        "anthropic/claude-opus-4",
+        false,
+        undefined,
+        "execution error",
+      ),
+    ];
+    const collated = ReviewOrchestrator.collate(results)._unsafeUnwrap();
+    expect(collated.gateDecision.passed).toBe(false);
+    const failedVerdict = collated.perVariantVerdicts.find(
+      (v) => v.variantName === "weft-review-anthropic-claude-opus-4",
+    );
+    expect(failedVerdict?.verdict.verdict).toBe("malformed");
+    expect(
+      collated.gateDecision.blockers.some(
+        (b) => b.variantName === "weft-review-anthropic-claude-opus-4",
+      ),
+    ).toBe(true);
   });
 });
 
@@ -297,7 +412,7 @@ describe("HarnessAdapter.spawnReviewVariants — mock adapter contract", () => {
       reviewModel: v.reviewModel,
     }));
 
-    const spawnResult = await adapter.spawnReviewVariants!(descriptors);
+    const spawnResult = await adapter.spawnReviewVariants?.(descriptors);
     expect(spawnResult.isOk()).toBe(true);
     expect(adapter.spawnCalls).toHaveLength(1);
     expect(adapter.spawnCalls[0]).toHaveLength(2);
@@ -331,7 +446,7 @@ describe("HarnessAdapter.spawnReviewVariants — mock adapter contract", () => {
       reviewModel: v.reviewModel,
     }));
 
-    const spawnResult = await adapter.spawnReviewVariants!(descriptors);
+    const spawnResult = await adapter.spawnReviewVariants?.(descriptors);
     const results = spawnResult._unsafeUnwrap();
 
     const collated = ReviewOrchestrator.collate(results)._unsafeUnwrap();
@@ -358,7 +473,7 @@ describe("HarnessAdapter.spawnReviewVariants — mock adapter contract", () => {
     ];
     const adapter = new MockReviewAdapter(partialResults);
 
-    const config = cfg(WEFT_CONFIG_SRC);
+    const _config = cfg(WEFT_CONFIG_SRC);
     const descriptors: ReviewVariantDescriptor[] = [
       {
         variantName: "weft-review-openai-gpt-5",
@@ -372,7 +487,7 @@ describe("HarnessAdapter.spawnReviewVariants — mock adapter contract", () => {
       },
     ];
 
-    const spawnResult = await adapter.spawnReviewVariants!(descriptors);
+    const spawnResult = await adapter.spawnReviewVariants?.(descriptors);
     const results = spawnResult._unsafeUnwrap();
     const collated = ReviewOrchestrator.collate(results)._unsafeUnwrap();
 
@@ -388,7 +503,7 @@ describe("HarnessAdapter.spawnReviewVariants — mock adapter contract", () => {
     };
     const adapter = new MockReviewAdapter(fatalError);
 
-    const spawnResult = await adapter.spawnReviewVariants!([]);
+    const spawnResult = await adapter.spawnReviewVariants?.([]);
     expect(spawnResult.isErr()).toBe(true);
     const error = spawnResult._unsafeUnwrapErr();
     expect(error.type).toBe("ReviewFanOutUnsupportedError");
@@ -425,7 +540,7 @@ describe("HarnessAdapter.spawnReviewVariants — mock adapter contract", () => {
     let wasInvoked = false;
     if (adapter.spawnReviewVariants) {
       wasInvoked = true;
-      await adapter.spawnReviewVariants([]);
+      await adapter.spawnReviewVariants([], "");
     }
     expect(wasInvoked).toBe(false);
   });

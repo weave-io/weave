@@ -48,8 +48,8 @@ export const CapabilityReadinessSchema = z.enum([
 // ---------------------------------------------------------------------------
 
 /**
- * Stable identifiers for all 19 capabilities defined in the Core Readiness
- * Profile (12 required + 7 optional).
+ * Stable identifiers for all 20 capabilities defined in the Core Readiness
+ * Profile (12 required + 8 optional).
  *
  * Required capabilities (12):
  *   config-materialization, agent-materialization, primary-agent-selection,
@@ -57,10 +57,10 @@ export const CapabilityReadinessSchema = z.enum([
  *   workflow-persistence, workflow-step-dispatch, plan-file-compatibility,
  *   command-entrypoints, event-logging, token-usage-reporting
  *
- * Optional capabilities (7):
+ * Optional capabilities (8):
  *   idle-continuation, compaction-recovery, context-window-monitor,
  *   analytics-dashboard, eval-integration, static-artifact-generation,
- *   multiple-active-workflows
+ *   multiple-active-workflows, review-fan-out
  *
  * ## Execution-entry capability model (Spec 22 Unit 4)
  *
@@ -108,7 +108,8 @@ export type CapabilityId =
   | "analytics-dashboard"
   | "eval-integration"
   | "static-artifact-generation"
-  | "multiple-active-workflows";
+  | "multiple-active-workflows"
+  | "review-fan-out";
 
 export const CapabilityIdSchema = z.enum([
   // Required
@@ -132,6 +133,7 @@ export const CapabilityIdSchema = z.enum([
   "eval-integration",
   "static-artifact-generation",
   "multiple-active-workflows",
+  "review-fan-out",
 ]);
 
 // ---------------------------------------------------------------------------
@@ -239,7 +241,7 @@ export const REQUIRED_CAPABILITIES: readonly CapabilityId[] = [
 ] as const;
 
 /**
- * The 7 optional capability IDs for the Core Readiness Profile.
+ * The 8 optional capability IDs for the Core Readiness Profile.
  * Gaps in optional capabilities produce warnings, not failures.
  */
 export const OPTIONAL_CAPABILITIES: readonly CapabilityId[] = [
@@ -250,9 +252,10 @@ export const OPTIONAL_CAPABILITIES: readonly CapabilityId[] = [
   "eval-integration",
   "static-artifact-generation",
   "multiple-active-workflows",
+  "review-fan-out",
 ] as const;
 
-/** All 19 capability IDs in profile order (required then optional). */
+/** All 20 capability IDs in profile order (required then optional). */
 export const ALL_CAPABILITY_IDS: readonly CapabilityId[] = [
   ...REQUIRED_CAPABILITIES,
   ...OPTIONAL_CAPABILITIES,

@@ -8,33 +8,30 @@
  * - The plugin returns an empty `Hooks` object when config load fails.
  * - The plugin returns a `Hooks` object with a `config` hook on success.
  * - The `config` hook injects translated agent configs into `cfg.agent`.
- * - The plugin does NOT call SDK eagerly — SDK reconciliation is deferred.
- * - The `event` hook triggers SDK reconciliation on `session.created`.
- * - The `event` hook ignores non-`session.created` events.
- * - The `event` hook runs reconciliation exactly once (idempotent).
+ * - The plugin does NOT call SDK eagerly — no SDK calls are made at plugin load time.
+ * - The `event` hook is present for interface compliance but is a no-op.
  * - The `debug config` path: `hooks.config` works without any SDK calls.
  * - The plugin continues materializing remaining agents when one fails.
- * - The `event` hook only materializes agents — it never calls `runWorkflow`
- *   or `startPlanExecution` (no execution-start helpers are wired to session events).
+ * - The `event` hook never calls `runWorkflow` or `startPlanExecution`
+ *   (no execution-start helpers are wired to session events).
  *
  * All tests use a mock `PluginInput` and a project-only file reader to avoid
  * picking up the developer's global ~/.weave/config.weave. The full
  * `loadConfig → materializeAgents → spawnSubagent` path is exercised at the
  * package level without depending on the test environment's global config.
  *
- * ## Deferred SDK reconciliation
+ * ## Materialization model
  *
- * The plugin now returns `Hooks` immediately after config loading and agent
- * translation (pure computation). SDK-backed reconciliation (`adapter.init()`
- * + `spawnSubagent()`) is deferred to the `event` hook, which fires on the
- * first `session.created` event. This ensures `opencode debug config` never
+ * The plugin returns `Hooks` immediately after config loading and agent
+ * translation (pure computation). Agent materialization happens exclusively
+ * via the `config` hook, which injects Weave agents into the OpenCode
+ * in-memory config at startup. This ensures `opencode debug config` never
  * blocks on SDK/DB calls.
  *
  * ## Plugin event hook boundary
  *
- * The `event` hook is strictly an agent-materialization hook. It calls
- * `adapter.spawnSubagent()` for each declared agent — nothing more. It does
- * not call `runWorkflow` (explicit named-workflow execution) or
+ * The `event` hook is present for interface compliance only — it is a no-op.
+ * It does not call `runWorkflow` (explicit named-workflow execution) or
  * `startPlanExecution` (the `/weave:start` ordinary-usage path). Execution
  * start helpers are never wired to session events or plugin lifecycle hooks.
  */
@@ -90,6 +87,33 @@ class MockOpenCodeClient implements OpenCodeClientFacade {
   updateAgent(name: string, config: OpenCodeAgentConfig) {
     this.updateAgentCalls.push({ name, config });
     return okAsync<void, OpenCodeClientError>(undefined);
+  }
+
+  createReviewSession(
+    _title: string,
+  ): ResultAsync<{ sessionId: string }, OpenCodeClientError> {
+    return okAsync({ sessionId: "mock-session-id" });
+  }
+
+  promptSession(
+    _sessionId: string,
+    _prompt: string,
+    _agentName: string,
+  ): ResultAsync<
+    {
+      output: string;
+      assistantMessage: import("../sdk-types.js").AssistantMessage;
+    },
+    OpenCodeClientError
+  > {
+    return okAsync({
+      output: "",
+      assistantMessage: {} as import("../sdk-types.js").AssistantMessage,
+    });
+  }
+
+  deleteSession(_sessionId: string): ResultAsync<void, OpenCodeClientError> {
+    return okAsync(undefined);
   }
 }
 
@@ -150,11 +174,7 @@ async function makeTempInvalidProject(): Promise<string> {
   );
   await Bun.write(
     join(root, ".weave", "config.weave"),
-    [
-      "agent broken {",
-      '  prompt "Missing closing brace"',
-      "",
-    ].join("\n"),
+    ["agent broken {", '  prompt "Missing closing brace"', ""].join("\n"),
   );
   return root;
 }
@@ -427,14 +447,19 @@ describe("WeavePlugin — slash command registration", () => {
     const input = makeMockPluginInput(root, client);
     const hooks = await plugin(input);
 
-    const cfg: { agent?: Record<string, unknown>; command?: Record<string, unknown> } = {};
+    const cfg: {
+      agent?: Record<string, unknown>;
+      command?: Record<string, unknown>;
+    } = {};
     await hooks.config!(cfg as never);
 
     expect(cfg.command).toBeDefined();
     expect(cfg.command!["start-work"]).toBeDefined();
     const cmd = cfg.command!["start-work"] as Record<string, unknown>;
     expect(typeof cmd.template).toBe("string");
-    expect(cmd.description).toBe("Start executing a Weave plan created by Pattern");
+    expect(cmd.description).toBe(
+      "Start executing a Weave plan created by Pattern",
+    );
     expect(cmd.agent).toBe("tapestry");
   });
 
@@ -450,14 +475,19 @@ describe("WeavePlugin — slash command registration", () => {
     const input = makeMockPluginInput(root, client);
     const hooks = await plugin(input);
 
-    const cfg: { agent?: Record<string, unknown>; command?: Record<string, unknown> } = {};
+    const cfg: {
+      agent?: Record<string, unknown>;
+      command?: Record<string, unknown>;
+    } = {};
     await hooks.config!(cfg as never);
 
     expect(cfg.command).toBeDefined();
     expect(cfg.command!["weave:start"]).toBeDefined();
     const cmd = cfg.command!["weave:start"] as Record<string, unknown>;
     expect(typeof cmd.template).toBe("string");
-    expect(cmd.description).toBe("Start executing a Weave plan (preferred command)");
+    expect(cmd.description).toBe(
+      "Start executing a Weave plan (preferred command)",
+    );
     expect(cmd.agent).toBe("tapestry");
   });
 
@@ -473,7 +503,10 @@ describe("WeavePlugin — slash command registration", () => {
     const input = makeMockPluginInput(root, client);
     const hooks = await plugin(input);
 
-    const cfg: { agent?: Record<string, unknown>; command?: Record<string, unknown> } = {};
+    const cfg: {
+      agent?: Record<string, unknown>;
+      command?: Record<string, unknown>;
+    } = {};
     await hooks.config!(cfg as never);
 
     const startWork = cfg.command!["start-work"] as { template: string };
@@ -522,7 +555,7 @@ describe("WeavePlugin — slash command registration", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests: deferred SDK reconciliation — no eager SDK calls
+// Tests: no eager SDK calls at plugin load time
 // ---------------------------------------------------------------------------
 
 describe("WeavePlugin — no eager SDK calls (debug config path)", () => {
@@ -589,20 +622,20 @@ describe("WeavePlugin — no eager SDK calls (debug config path)", () => {
 
     expect(typeof hooks).toBe("object");
     expect(typeof hooks.config).toBe("function");
-    // event hook must be present for deferred reconciliation
+    // event hook must be present for interface compliance
     expect(typeof hooks.event).toBe("function");
   });
 });
 
 // ---------------------------------------------------------------------------
-// Tests: SDK reconciliation is disabled (redundant — config hook is sufficient)
+// Tests: config hook is the sole agent materialization path
 // ---------------------------------------------------------------------------
-// SDK reconciliation was removed because it is redundant and harmful.
+// SDK reconciliation via the event hook was removed — it was redundant and harmful.
 // The config hook already injects all Weave agents into OpenCode's in-memory
 // config at startup. The SDK path (config.update per agent) triggered OpenCode
 // to reload all plugins, causing an O(n) plugin restart storm for n agents.
 
-// SDK reconciliation tests removed — reconciliation is disabled.
+// SDK reconciliation tests removed — the event hook is a no-op.
 // The config hook path is the only materialization mechanism.
 
 // ---------------------------------------------------------------------------
@@ -741,8 +774,8 @@ describe("WeavePlugin — config hook injects ownership-tagged agents (no-collis
     await hooks.config!(cfg as never);
 
     const injected = cfg.agent![agentName] as Record<string, unknown>;
-    // The injected config must carry the ownership tag so that deferred
-    // reconciliation classifies it as "update" rather than "collision".
+    // The injected config must carry the ownership tag so the config store can
+    // classify these agents as Weave-managed.
     expect(typeof injected.description).toBe("string");
     expect(injected.description as string).toContain(WEAVE_OWNERSHIP_TAG);
   });
@@ -848,21 +881,13 @@ describe("WeavePlugin — builtin shuttle is subagent-only", () => {
 // materialization path.
 
 // ---------------------------------------------------------------------------
-// Tests: runReconciliation() — adapter.init() failure boundary guard
+// Tests: event hook boundary — no-op, resolves without error
 // ---------------------------------------------------------------------------
 
-describe("WeavePlugin — runReconciliation() init failure boundary", () => {
-  it("event hook does not reject when adapter.init() would fail (boundary guard)", async () => {
-    // This test verifies the boundary guard: if adapter.init() throws, the
-    // event hook must catch the error, log it, and return — not reject the
-    // hook promise. We simulate this by using a real temp project but
-    // providing a clientFacade whose listAgents() would never be reached
-    // (because init() is the first thing called in runReconciliation()).
-    //
-    // Since OpenCodeAdapter.init() only constructs a BunFilesystemPlanStateProvider
-    // (which cannot throw in practice), we verify the guard indirectly:
-    // the event hook must always resolve (not reject) even if init() throws.
-    // We test this by confirming the event hook resolves without error.
+describe("WeavePlugin — event hook no-op boundary", () => {
+  it("event hook resolves without error on session.created (no-op)", async () => {
+    // The event hook is present for interface compliance only. It must always
+    // resolve (not reject) regardless of what clientFacade is provided.
     const root = await makeTempProject("init-guard-agent");
     const client = new MockOpenCodeClient();
     client.setListResult(okAsync([]));

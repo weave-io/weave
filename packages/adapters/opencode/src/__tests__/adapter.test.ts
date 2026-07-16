@@ -17,7 +17,10 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import type { AgentDescriptor, EffectiveToolPolicy } from "@weaveio/weave-engine";
+import type {
+  AgentDescriptor,
+  EffectiveToolPolicy,
+} from "@weaveio/weave-engine";
 import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 import type { OpenCodeClientError, OpenCodeClientFacade } from "../index.js";
 import {
@@ -93,6 +96,33 @@ class MockOpenCodeClient implements OpenCodeClientFacade {
   ): ResultAsync<void, OpenCodeClientError> {
     this.updateAgentCalls.push({ name, config });
     return this._updateAgentResult;
+  }
+
+  createReviewSession(
+    _title: string,
+  ): ResultAsync<{ sessionId: string }, OpenCodeClientError> {
+    return okAsync({ sessionId: "mock-session-id" });
+  }
+
+  promptSession(
+    _sessionId: string,
+    _prompt: string,
+    _agentName: string,
+  ): ResultAsync<
+    {
+      output: string;
+      assistantMessage: import("../sdk-types.js").AssistantMessage;
+    },
+    OpenCodeClientError
+  > {
+    return okAsync({
+      output: "",
+      assistantMessage: {} as import("../sdk-types.js").AssistantMessage,
+    });
+  }
+
+  deleteSession(_sessionId: string): ResultAsync<void, OpenCodeClientError> {
+    return okAsync(undefined);
   }
 }
 

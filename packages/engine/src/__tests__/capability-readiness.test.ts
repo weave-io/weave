@@ -13,7 +13,7 @@
  * - All required native → ready: true
  * - Mixed required+optional failures/warnings
  * - Token-usage-reporting special case (conditionally required)
- * - Coverage guard: all 19 capability IDs are present in the profile
+ * - Coverage guard: all 20 capability IDs are present in the profile
  * - Sanitized JSON fixture with blocking and warning entries
  */
 
@@ -49,7 +49,7 @@ function allRequiredAt(
   };
 }
 
-/** Build a contract with all 19 capabilities at the given readiness. */
+/** Build a contract with all 20 capabilities at the given readiness. */
 function allCapabilitiesAt(
   readiness: CapabilityReadiness,
 ): AdapterCapabilityContract {
@@ -388,7 +388,7 @@ describe("coverage guard: all spec capabilities are in the profile", () => {
     expect(REQUIRED_CAPABILITIES).toHaveLength(12);
   });
 
-  it("OPTIONAL_CAPABILITIES contains exactly the 7 capabilities from the spec", () => {
+  it("OPTIONAL_CAPABILITIES contains exactly the 8 capabilities from the spec", () => {
     const specOptional: CapabilityId[] = [
       "idle-continuation",
       "compaction-recovery",
@@ -397,9 +397,10 @@ describe("coverage guard: all spec capabilities are in the profile", () => {
       "eval-integration",
       "static-artifact-generation",
       "multiple-active-workflows",
+      "review-fan-out",
     ];
     expect(new Set(OPTIONAL_CAPABILITIES)).toEqual(new Set(specOptional));
-    expect(OPTIONAL_CAPABILITIES).toHaveLength(7);
+    expect(OPTIONAL_CAPABILITIES).toHaveLength(8);
   });
 
   it("every capability ID appears in exactly one group (required XOR optional)", () => {
@@ -412,12 +413,12 @@ describe("coverage guard: all spec capabilities are in the profile", () => {
     }
   });
 
-  it("evaluation result accounts for all 19 capabilities when all are declared", () => {
+  it("evaluation result accounts for all 20 capabilities when all are declared", () => {
     const contract = fullPassingContract();
     const result = evaluateCoreReadinessProfile(contract);
     const total =
       result.passes.length + result.failures.length + result.warnings.length;
-    expect(total).toBe(19);
+    expect(total).toBe(ALL_CAPABILITY_IDS.length);
   });
 });
 
