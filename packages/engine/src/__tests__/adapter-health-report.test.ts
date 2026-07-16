@@ -39,7 +39,7 @@ import {
 // Fixtures — all synthetic, no real harness data
 // ---------------------------------------------------------------------------
 
-/** Build a full passing contract (all 19 capabilities native). */
+/** Build a full passing contract (all capabilities native). */
 function syntheticPassingContract(): AdapterCapabilityContract {
   return {
     capabilities: ALL_CAPABILITY_IDS.map((id) => ({
@@ -320,8 +320,8 @@ describe("SafeAdapterInitInput: shape and constraints", () => {
       capabilityContract: syntheticPassingContract(),
       probeResults: syntheticOkProbes(),
     };
-    expect(input.capabilityContract.capabilities).toHaveLength(19);
-    expect(input.probeResults).toHaveLength(19);
+    expect(input.capabilityContract.capabilities).toHaveLength(ALL_CAPABILITY_IDS.length);
+    expect(input.probeResults).toHaveLength(ALL_CAPABILITY_IDS.length);
   });
 
   it("accepts probe results with blocking failures", () => {

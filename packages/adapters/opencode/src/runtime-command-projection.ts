@@ -37,6 +37,7 @@
  * @see docs/specs/30-spec-minimal-runtime-command-lifecycle/30-spec-minimal-runtime-command-lifecycle.md
  */
 
+import type { WeaveConfig } from "@weaveio/weave-core";
 import type {
   AbortExecutionInput,
   AdapterHealthReport,
@@ -190,6 +191,8 @@ export interface StartPlanProjectionInput {
   readonly workflows: Record<string, unknown>;
   /** OpenCode adapter instance — `spawnSubagent` is called for each DispatchAgentEffect. */
   readonly adapter: OpenCodeAdapter;
+  /** Optional WeaveConfig for review fan-out routing. */
+  readonly config?: WeaveConfig;
   /** Optional ISO-8601 timestamp override (for testing). */
   readonly now?: string;
 }
@@ -217,6 +220,8 @@ export interface RunWorkflowProjectionInput {
   readonly adapter: OpenCodeAdapter;
   /** Optional plan state provider for plan_created/plan_complete steps. */
   readonly planStateProvider?: PlanStateProvider;
+  /** Optional WeaveConfig for review fan-out routing. */
+  readonly config?: WeaveConfig;
   /** Optional ISO-8601 timestamp override (for testing). */
   readonly now?: string;
 }
@@ -382,7 +387,7 @@ export class RuntimeCommandProjection {
       "handleStartPlan — delegating to engine startPlan",
     );
 
-    const projectEffect = buildProjectEffect(input.adapter);
+    const projectEffect = buildProjectEffect(input.adapter, input.config);
 
     const result = await startPlan(
       {
@@ -444,7 +449,7 @@ export class RuntimeCommandProjection {
       "handleRunWorkflow — delegating to engine runNamedWorkflow",
     );
 
-    const projectEffect = buildProjectEffect(input.adapter);
+    const projectEffect = buildProjectEffect(input.adapter, input.config);
 
     const result = await runNamedWorkflow(
       {
@@ -738,6 +743,11 @@ export function buildOpenCodeHealthReport(overrides?: {
     | "emulated"
     | "degraded"
     | "unsupported";
+  readonly reviewFanOutReadiness?:
+    | "native"
+    | "emulated"
+    | "degraded"
+    | "unsupported";
   readonly degradedOperations?: readonly string[];
   readonly unsupportedOperations?: readonly string[];
 }): AdapterHealthReport {
@@ -749,7 +759,8 @@ export function buildOpenCodeHealthReport(overrides?: {
           id: "config-materialization",
           description: "Load and materialize .weave/config.weave",
           readiness: "native",
-          notes: "OpenCode adapter reads config via @weaveio/weave-config discovery",
+          notes:
+            "OpenCode adapter reads config via @weaveio/weave-config discovery",
         },
         {
           id: "agent-materialization",
@@ -820,6 +831,15 @@ export function buildOpenCodeHealthReport(overrides?: {
           readiness: "unsupported",
           notes:
             "OpenCode SDK does not expose per-session token usage in this version",
+        },
+        {
+          id: "review-fan-out",
+          description: "Spawn parallel review variants via OpenCode SDK",
+          readiness: overrides?.reviewFanOutReadiness ?? "unsupported",
+          notes:
+            overrides?.reviewFanOutReadiness === "native"
+              ? "OpenCodeClientFacade is available; executeReviewVariants can spawn parallel agents"
+              : "No OpenCodeClientFacade injected; review fan-out requires a live OpenCode client",
         },
       ],
     },

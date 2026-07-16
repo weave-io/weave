@@ -18,44 +18,33 @@
  * 4. It translates each descriptor into an `OpenCodeAgentConfig` via
  *    `translateAgent()` and collects the results into a `translatedMap`.
  * 5. It returns a `Hooks` object **immediately** with two hooks:
- *    a. **`config` hook** — injects the translated agent configs into
- *       `cfg.agent` so that `opencode debug config` reflects all Weave-managed
- *       agents. This runs once at startup before OpenCode finalises its config.
- *    b. **`event` hook** — listens for the first `session.created` event and
- *       then performs SDK-backed reconciliation (`adapter.init()` +
- *       `spawnSubagent()`) exactly once per plugin activation. This defers the
- *       SDK/DB path to real session time, so `opencode debug config` is never
- *       blocked by runtime SDK calls.
+ *    a. **`config` hook** — injects all translated agent configs (including
+ *       generated review variant agents) into `cfg.agent` so that
+ *       `opencode debug config` reflects all Weave-managed agents. This runs
+ *       once at startup before OpenCode finalises its config.
+ *    b. **`chat.message` hook** — inspects each completed assistant message.
+ *       When the responding agent has `review_models` declared, it triggers
+ *       direct adversarial review via `adapter.executeDirectReview()` and
+ *       replaces the output with a review summary (or a fail-closed blocking
+ *       message on error).
  *
- * ## Why deferred SDK reconciliation?
+ * ## Config hook and agent injection
  *
  * `opencode debug config` calls the plugin function and waits for `Hooks` to
- * be returned. In the previous design, `adapter.init()` and `spawnSubagent()`
- * were called eagerly before `Hooks` was returned. Both operations touch the
- * OpenCode SDK / DB path (`client.app.agents()`, `config.update()`), which
- * hangs in the `debug config` context because the runtime store is not
- * available.
+ * be returned. Config loading and agent translation are pure computation (no
+ * SDK calls), so `Hooks` is returned immediately. The `config` hook injects
+ * all Weave-managed agents — base agents plus any generated review variant
+ * agents — into `cfg.agent` at startup time.
  *
- * The fix: config loading and agent translation are pure computation (no SDK
- * calls). `Hooks` is returned immediately after translation. SDK reconciliation
- * is deferred to the `event` hook, which only fires during a real OpenCode
- * session — never during `debug config`.
+ * ## Direct review via chat.message
  *
- * ## Why both paths?
- *
- * The `config` hook and the SDK-backed reconciliation serve different purposes:
- *
- * - The `config` hook makes agents visible to `opencode debug config` and to
- *   any OpenCode subsystem that reads the merged config at startup. It is
- *   purely additive — it does not persist agents across restarts.
- * - The SDK-backed reconciliation (`spawnSubagent`) writes agents into
- *   OpenCode's runtime store via `client.config.update()`. This is the
- *   durable path that survives config reloads and is the source of truth for
- *   what OpenCode actually uses at runtime.
- *
- * Both paths are required for full materialization: the `config` hook for
- * observability and startup-time config visibility, and the SDK path for
- * runtime persistence and ownership-safe upsert.
+ * When a user or delegation invokes a reviewer agent directly (not via a
+ * workflow gate step), the `chat.message` hook intercepts the completed
+ * assistant output and calls `executeDirectReview()`. This bypasses
+ * `ReviewFanOutIntent` entirely — the adapter calls `ReviewOrchestrator.fanOut`
+ * directly rather than routing through the engine effect system. The hook is
+ * fail-closed: if review fan-out fails, the original output is replaced with a
+ * blocking failure message so configured `review_models` never silently degrade.
  *
  * ## Installation
  *
@@ -91,7 +80,9 @@ import type { Hooks, Plugin, PluginInput } from "@opencode-ai/plugin";
 import { type FileReader, loadConfig } from "@weaveio/weave-config";
 import {
   type AgentDescriptor,
+  composeAgentDescriptor,
   env,
+  generateReviewVariants,
   logger,
   materializeAgents,
   redirectLogsToFile,
@@ -108,10 +99,59 @@ import {
   SdkOpenCodeClient,
 } from "./opencode-client.js";
 import { tagWithOwnership } from "./reconcile-agent.js";
-import type { OpenCodeAgentConfig } from "./sdk-types.js";
+import type { OpenCodeAgentConfig, Part } from "./sdk-types.js";
 import { translateAgent } from "./translate-agent.js";
 
 const log = logger.child({ module: "adapter-opencode/plugin" });
+
+// ---------------------------------------------------------------------------
+// chat.message hook helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Extract plain text from an SDK `Part[]` by joining all text parts.
+ */
+function extractTextFromParts(parts: Part[]): string {
+  return parts
+    .filter((p): p is Extract<Part, { type: "text" }> => p.type === "text")
+    .map((p) => p.text)
+    .join("\n")
+    .trim();
+}
+
+/**
+ * Resolve the reviewer agent name to use for direct review.
+ *
+ * Resolution order:
+ * 1. `inputAgent` — the active agent name from the hook input (if truthy).
+ * 2. First `@agent-name` mention found in `text`.
+ *
+ * Returns `undefined` when neither source yields a name.
+ */
+function resolveReviewerAgentName(
+  inputAgent: string | undefined,
+  text: string,
+): string | undefined {
+  if (inputAgent) return inputAgent;
+  const match = /@([a-zA-Z0-9_-]+)/.exec(text);
+  return match?.[1];
+}
+
+/**
+ * Return `true` when `agentName` refers to a generated review variant.
+ * Uses exact membership in a Set built from the generated variant names
+ * to avoid false positives from substring matching.
+ */
+function buildReviewVariantSet(entries: Array<[string, unknown]>): Set<string> {
+  return new Set(entries.map(([name]) => name));
+}
+
+function isGeneratedReviewVariant(
+  agentName: string,
+  reviewVariantNames: Set<string>,
+): boolean {
+  return reviewVariantNames.has(agentName);
+}
 
 /**
  * Default log file path relative to the project directory.
@@ -254,6 +294,31 @@ export function createWeavePlugin(options: WeavePluginOptions = {}): Plugin {
       );
     }
 
+    // Generate review variant agent configs and compose descriptors.
+    // These are produced by agents that declare `review_models` and must be
+    // materialized alongside explicit agents so that direct invocation via
+    // executeReviewVariants can find them by name.
+    const reviewVariantsResult = generateReviewVariants(config);
+    if (reviewVariantsResult.isErr()) {
+      log.warn(
+        {
+          variantName: reviewVariantsResult.error.variantName,
+          agentName: reviewVariantsResult.error.agentName,
+          message: reviewVariantsResult.error.message,
+        },
+        "Review variant conflict detected — generated review variants will not be registered",
+      );
+    }
+
+    const reviewVariantEntries = reviewVariantsResult.isOk()
+      ? Object.entries(reviewVariantsResult.value)
+      : [];
+
+    // Build a Set of generated review variant names for exact-match guarding
+    // in the chat.message hook. This avoids false positives from substring
+    // matching (e.g. an agent legitimately named "pre-review-ops").
+    const reviewVariantNames = buildReviewVariantSet(reviewVariantEntries);
+
     // Translate each descriptor into an OpenCodeAgentConfig and collect into a
     // map. This map is used by the config hook to inject agents into cfg.agent.
     // Translation is performed here (before the config hook is returned) so that
@@ -295,20 +360,81 @@ export function createWeavePlugin(options: WeavePluginOptions = {}): Plugin {
       log.debug({ agent: agentName }, "Agent translated for config hook");
     }
 
+    // Translate generated review variant agents into the config hook map and
+    // the deferred reconciliation descriptor list. Review variants must be
+    // registered so that `executeReviewVariants` can invoke them by name.
+    const reviewVariantDescriptors: Array<{
+      agentName: string;
+      descriptor: AgentDescriptor;
+    }> = [];
+
+    for (const [variantName, generatedVariant] of reviewVariantEntries) {
+      // Compose a proper AgentDescriptor via the engine's compose function.
+      // This ensures prompt rendering, tool policy evaluation, and template
+      // context are all handled consistently with explicit agents.
+      const composeResult = await composeAgentDescriptor(
+        variantName,
+        generatedVariant.config,
+        config,
+        {},
+        undefined,
+      );
+
+      if (composeResult.isErr()) {
+        log.warn(
+          { agent: variantName, cause: composeResult.error.type },
+          "Descriptor composition failed for review variant — skipping registration",
+        );
+        continue;
+      }
+
+      const variantDescriptor = composeResult.value;
+      const variantModelResult = resolveModelForAgent(variantDescriptor, {});
+
+      if (variantModelResult.isErr()) {
+        log.warn(
+          {
+            agent: variantName,
+            errorType: variantModelResult.error.type,
+            message: variantModelResult.error.message,
+          },
+          "Model resolution failed for review variant — skipping config hook injection",
+        );
+        continue;
+      }
+
+      const variantTranslateResult = translateAgent(
+        variantDescriptor,
+        variantModelResult.value,
+      );
+
+      if (variantTranslateResult.isErr()) {
+        log.warn(
+          {
+            agent: variantName,
+            error: variantTranslateResult.error.type,
+            message: variantTranslateResult.error.message,
+          },
+          "Translation failed for review variant — skipping config hook injection",
+        );
+        continue;
+      }
+
+      translatedMap.set(variantName, variantTranslateResult.value);
+      reviewVariantDescriptors.push({
+        agentName: variantName,
+        descriptor: variantDescriptor,
+      });
+      log.debug(
+        { agent: variantName },
+        "Review variant agent translated for config hook",
+      );
+    }
+
     log.info(
       { agentCount: translatedMap.size },
       "Agents translated for config hook injection",
     );
-
-    // Capture the agent descriptors for deferred SDK reconciliation.
-    // These are used by the event hook when a real session starts.
-    const agentDescriptors: Array<{
-      agentName: string;
-      descriptor: AgentDescriptor;
-    }> = plan.agents.map(({ agentName, descriptor }) => ({
-      agentName,
-      descriptor,
-    }));
 
     // Build the client facade once. In production, wrap the raw SDK client in
     // SdkOpenCodeClient. In tests, use the pre-constructed clientFacade directly
@@ -316,69 +442,11 @@ export function createWeavePlugin(options: WeavePluginOptions = {}): Plugin {
     const clientFacade: OpenCodeClientFacade =
       options.clientFacade ?? new SdkOpenCodeClient(sdkClient);
 
-    // Deferred SDK reconciliation state.
-    // `reconciled` is set to true after the first successful reconciliation so
-    // that the event hook does not repeat the work on subsequent events.
-    let reconciled = false;
-
-    /**
-     * Perform SDK-backed reconciliation exactly once.
-     *
-     * Called from the `event` hook on the first `session.created` event.
-     * Constructs the adapter, initialises it, and calls `spawnSubagent()` for
-     * each agent descriptor. Errors are logged but do not throw — a failed
-     * reconciliation for one agent does not block the others.
-     *
-     * If `adapter.init()` throws, the error is caught, logged, and the
-     * function returns early so the event hook does not reject.
-     */
-    async function runReconciliation(): Promise<void> {
-      if (reconciled) return;
-      reconciled = true;
-
-      log.info(
-        { agentCount: agentDescriptors.length },
-        "Running deferred SDK reconciliation (session.created)",
-      );
-
-      const adapter = new OpenCodeAdapter({
-        projectRoot: directory,
-        client: clientFacade,
-      });
-
-      try {
-        await adapter.init();
-      } catch (initErr: unknown) {
-        log.error(
-          { error: initErr },
-          "adapter.init() failed — aborting deferred SDK reconciliation",
-        );
-        return;
-      }
-
-      for (const { agentName, descriptor } of agentDescriptors) {
-        const spawnResult = await adapter.spawnSubagent(descriptor);
-
-        if (spawnResult.isErr()) {
-          log.error(
-            { agent: agentName, error: spawnResult.error },
-            "Failed to materialize agent — continuing with remaining agents",
-          );
-        } else {
-          log.info({ agent: agentName }, "Agent materialized via SDK");
-        }
-      }
-
-      log.info(
-        { agentCount: agentDescriptors.length },
-        "Deferred SDK reconciliation complete",
-      );
-    }
-
     log.info("Weave plugin hooks ready — returning immediately");
 
-    // Return hooks immediately. The config hook is populated now; the event
-    // hook defers SDK reconciliation to the first real session.
+    // Return hooks immediately. The config hook injects all Weave agents into
+    // the OpenCode in-memory config. The event hook is kept for interface
+    // compliance but does no work — agent materialization is config-hook based.
     return {
       config: async (cfg) => {
         // --- Agent injection ---
@@ -388,9 +456,8 @@ export function createWeavePlugin(options: WeavePluginOptions = {}): Plugin {
           }
 
           for (const [agentName, agentConfig] of translatedMap) {
-            // Tag with ownership before injecting so that deferred SDK
-            // reconciliation (session.created) sees the same ownership marker
-            // and classifies these agents as "update" rather than "collision".
+            // Tag with ownership before injecting so the config store can
+            // classify these agents as Weave-managed for future reference.
             cfg.agent[agentName] = tagWithOwnership(agentConfig);
             log.debug({ agent: agentName }, "Agent injected into config hook");
           }
@@ -438,8 +505,114 @@ export function createWeavePlugin(options: WeavePluginOptions = {}): Plugin {
         );
       },
 
-      event: async ({ event }) => {
-        if (event.type !== "session.created") return;
+      // event hook is retained as a no-op placeholder for future lifecycle
+      // needs (e.g. session-scoped setup). It does not perform SDK
+      // reconciliation — agent injection is handled entirely by the config hook.
+      event: async ({ event: _event }) => {
+        // no-op
+      },
+
+      "chat.message": async (input, output) => {
+        // Extract text from the incoming message parts.
+        const text = extractTextFromParts(output.parts);
+
+        // Resolve the candidate reviewer agent name.
+        const agentName = resolveReviewerAgentName(input.agent, text);
+        if (!agentName) return;
+
+        // Guard: skip generated review variant agent names.
+        if (isGeneratedReviewVariant(agentName, reviewVariantNames)) return;
+
+        // Guard: only proceed when the agent has review_models declared.
+        const agentConfig = config.agents[agentName];
+        if (!agentConfig?.review_models?.length) return;
+
+        log.info(
+          { agent: agentName },
+          "Direct review triggered via chat.message hook",
+        );
+
+        const adapter = new OpenCodeAdapter({
+          projectRoot: directory,
+          client: clientFacade,
+          config,
+        });
+
+        const reviewResult = await adapter.executeDirectReview(agentName, text);
+
+        if (reviewResult.isErr()) {
+          const sanitizedReason =
+            reviewResult.error.message ?? reviewResult.error.type;
+          const failureText = `Direct adversarial review failed for ${agentName}; no single-model review was run. ${sanitizedReason}`;
+          log.warn(
+            { agent: agentName, errorType: reviewResult.error.type },
+            "Direct review failed — replacing output with blocking failure message",
+          );
+
+          // Fail-closed: replace ALL text parts with a blocking failure summary
+          // so that configured review_models do not silently degrade. Keep
+          // non-text parts (tool calls, images, etc.) intact.
+          const hasTextParts = output.parts.some((p) => p.type === "text");
+          if (hasTextParts) {
+            // Grab metadata from the first text part for the replacement.
+            const firstText = output.parts.find(
+              (p): p is Extract<Part, { type: "text" }> => p.type === "text",
+            ) as Extract<Part, { type: "text" }>;
+            const replacement: Extract<Part, { type: "text" }> = {
+              ...firstText,
+              text: failureText,
+            };
+            // Remove all text parts, then prepend the single blocking message.
+            output.parts = output.parts.filter((p) => p.type !== "text");
+            output.parts.unshift(replacement);
+          } else {
+            const synthetic: Extract<Part, { type: "text" }> = {
+              id: `weave-direct-review-fail-${Date.now()}`,
+              sessionID: input.sessionID,
+              messageID: input.messageID ?? `weave-msg-${Date.now()}`,
+              type: "text",
+              text: failureText,
+              synthetic: true,
+            };
+            output.parts.push(synthetic);
+          }
+          return;
+        }
+
+        const { formattedSummary } = reviewResult.value;
+        const instruction = `Direct adversarial review completed. Return the following review summary to the user without re-running the review:\n\n${formattedSummary}`;
+
+        // Replace ALL existing text parts with the review instruction, keeping
+        // non-text parts (tool calls, images, etc.) intact. If no text parts
+        // are present, append a synthetic one.
+        const hasTextParts = output.parts.some((p) => p.type === "text");
+        if (hasTextParts) {
+          const firstText = output.parts.find(
+            (p): p is Extract<Part, { type: "text" }> => p.type === "text",
+          ) as Extract<Part, { type: "text" }>;
+          const replacement: Extract<Part, { type: "text" }> = {
+            ...firstText,
+            text: instruction,
+          };
+          output.parts = output.parts.filter((p) => p.type !== "text");
+          output.parts.unshift(replacement);
+        } else {
+          // No text parts — append a synthetic one using the hook's IDs.
+          const synthetic: Extract<Part, { type: "text" }> = {
+            id: `weave-direct-review-${Date.now()}`,
+            sessionID: input.sessionID,
+            messageID: input.messageID ?? `weave-msg-${Date.now()}`,
+            type: "text",
+            text: instruction,
+            synthetic: true,
+          };
+          output.parts.push(synthetic);
+        }
+
+        log.info(
+          { agent: agentName },
+          "Direct review summary surfaced via chat.message hook",
+        );
       },
     };
   };

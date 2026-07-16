@@ -218,7 +218,7 @@ export function runWorkflow(
     "runWorkflow — delegating to engine runNamedWorkflow operation",
   );
 
-  const projectEffect = buildProjectEffect(adapter);
+  const projectEffect = buildProjectEffect(adapter, config);
 
   return runNamedWorkflow(
     {

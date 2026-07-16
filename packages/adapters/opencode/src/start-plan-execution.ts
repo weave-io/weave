@@ -29,7 +29,11 @@ import type {
   PlanStateProvider,
   RuntimeStore,
 } from "@weaveio/weave-engine";
-import { createInMemoryRuntimeStore, logger, startPlan } from "@weaveio/weave-engine";
+import {
+  createInMemoryRuntimeStore,
+  logger,
+  startPlan,
+} from "@weaveio/weave-engine";
 import { errAsync, type ResultAsync } from "neverthrow";
 
 import type { OpenCodeAdapter } from "./adapter.js";
@@ -299,7 +303,7 @@ export function startPlanExecution(
     "Delegating to engine startPlan operation",
   );
 
-  const projectEffect = buildProjectEffect(adapter);
+  const projectEffect = buildProjectEffect(adapter, config);
 
   return startPlan(
     {

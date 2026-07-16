@@ -130,10 +130,10 @@ function buildMixedReport() {
 // ---------------------------------------------------------------------------
 
 describe("buildHumanRows: all pass", () => {
-  it("returns 19 rows when all capabilities are declared", () => {
+  it("returns 20 rows when all capabilities are declared", () => {
     const report = buildPassingReport();
     const rows = buildHumanRows(report);
-    expect(rows).toHaveLength(19);
+    expect(rows).toHaveLength(ALL_CAPABILITY_IDS.length);
   });
 
   it("all rows have PASS status when all capabilities are native", () => {
@@ -199,8 +199,8 @@ describe("buildHumanRows: mixed report", () => {
     const report = buildMixedReport();
     const rows = buildHumanRows(report);
     const passRows = rows.filter((r) => r.status === "PASS");
-    // 19 total - 1 FAIL - 1 WARN = 17 PASS
-    expect(passRows).toHaveLength(17);
+    // total - 1 FAIL - 1 WARN = rest PASS
+    expect(passRows).toHaveLength(ALL_CAPABILITY_IDS.length - 2);
   });
 
   it("FAIL row for workflow-persistence includes blocking impact in notes", () => {
@@ -256,10 +256,10 @@ describe("buildHumanRows: deterministic order", () => {
 // ---------------------------------------------------------------------------
 
 describe("buildToonRows: deterministic", () => {
-  it("returns 19 rows when all capabilities are declared", () => {
+  it("returns 20 rows when all capabilities are declared", () => {
     const report = buildPassingReport();
     const rows = buildToonRows(report);
-    expect(rows).toHaveLength(19);
+    expect(rows).toHaveLength(ALL_CAPABILITY_IDS.length);
   });
 
   it("all rows have P verdict when all capabilities pass", () => {
@@ -309,7 +309,7 @@ describe("buildToonRows: deterministic", () => {
     const humanRows = buildHumanRows(report);
     const toonRows = buildToonRows(report);
 
-    // Both should have 19 rows in the same capability order
+    // Both should have same row count in the same capability order
     expect(toonRows).toHaveLength(humanRows.length);
     for (let i = 0; i < toonRows.length; i++) {
       const toon = toonRows[i];
@@ -361,7 +361,7 @@ describe("toJson: machine-readable interchange", () => {
     const json = toJson(report);
     const parsed = JSON.parse(json) as typeof report;
     expect(Array.isArray(parsed.capabilityContract.capabilities)).toBe(true);
-    expect(parsed.capabilityContract.capabilities).toHaveLength(19);
+    expect(parsed.capabilityContract.capabilities).toHaveLength(ALL_CAPABILITY_IDS.length);
   });
 
   it("parsed JSON contains probe results", () => {

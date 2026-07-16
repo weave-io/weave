@@ -14,10 +14,7 @@ import type {
   RunAgentEffect,
 } from "../run-agent-effects.js";
 import type { RuntimeStore } from "../runtime/store.js";
-import {
-  ABSTRACT_CAPABILITIES,
-  evaluateEffectiveToolPolicy,
-} from "../tool-policy.js";
+import { evaluateEffectiveToolPolicy } from "../tool-policy.js";
 import {
   buildConsumedArtifacts,
   latestAttemptForStep,
@@ -32,7 +29,6 @@ import type {
   DispatchStepInput,
   DispatchStepOutput,
   LifecycleError,
-  WorkflowInstance,
 } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -310,7 +306,8 @@ export function dispatchStep(
             artifactNames,
           );
           if (promptResult.isErr()) return errAsync(promptResult.error);
-          const promptMetadata = promptResult.value;
+          const { byteLength, renderedPrompt } = promptResult.value;
+          const promptMetadata = { byteLength };
 
           const hasInputs = step.inputs && step.inputs.length > 0;
 
@@ -344,6 +341,7 @@ export function dispatchStep(
                   },
                 ],
                 ...(hasInputs ? { artifactInputSummary } : {}),
+                renderedPrompt,
               }),
             );
         }),

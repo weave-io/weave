@@ -1,4 +1,4 @@
-# Weave Documentation
+﻿# Weave Documentation
 
 This is the top-level entry point for Weave's documentation corpus. Start here to navigate guides, architecture decision records (ADRs), and formal specs.
 
@@ -29,22 +29,23 @@ The published docs site is built from the Astro + Starlight package at [`package
 | [Eval Sanitization and Publish Pipeline](eval-sanitization-and-publish-pipeline.md) | Allowlist sanitizer, deterministic bundle writer, raw artifact writer, token-gated publish policy, `schemaVersion` and freshness rules, website data flow, `/evals/` legacy coexistence |
 | [Eval XSS Policy](eval-xss-policy.md) | Markdown and report rendering XSS policy, `explanation` field schema-level blocking, `escapeHtml()` requirements, banned rendering paths, defence-in-depth layers, test coverage |
 | [Category Routing Findings](category-routing-findings.md) | Phase 1 prompt-enrichment eval results, acceptance gate outcomes, token cost, scaling data, and Phase 2 deterministic matcher decision |
+| [Review Fan-Out Adapter](review-fan-out-adapter.md) | Multi-model review fan-out contract, verdict parsing, gate policy, capability reporting, OpenCode specifics |
 | [Legacy Architecture](legacy-architecture.md) | Alpha / OpenCode-era reference (read-only history) |
 
 ---
 
 ## Architecture Decision Records (ADRs)
 
-ADRs record decisions with meaningful trade-offs. They are durable — once accepted, they are not rewritten.
+ADRs record decisions with meaningful trade-offs. They are durable - once accepted, they are not rewritten.
 
 | ADR | Decision |
 | --- | --- |
-| [ADR 0001 — Prompt Composition Templates](adr/0001-prompt-composition-templates.md) | Mustache as the prompt template engine |
-| [ADR 0002 — Runtime Persistence Store](adr/0002-runtime-persistence-store.md) | SQLite-backed Runtime Store under `.weave/runtime/` |
-| [ADR 0003 — OpenCode Adapter Materialization Shape](adr/0003-opencode-adapter-materialization-shape.md) | OpenCode plugin materialization contract |
-| [ADR 0004 — Workflow-First Execution Contract](adr/0004-workflow-first-execution-contract.md) | `startExecution` as the sole authorized execution entry point |
-| [ADR 0005 — Remediation Decisions for Specs 24–28](adr/0005-five-spec-remediation-decisions.md) | Accepted answers to open questions across Specs 24–28 |
-| [ADR 0006 — End-to-End Orchestration Flow](adr/0006-end-to-end-orchestration-flow.md) | Full Loom → Pattern → Tapestry → Weft/Warp flow; legacy vs. current model; where issue #52 fits. **Note:** the "add default_workflow" guidance in the "Where Issue #52 Fits" section is superseded by [Spec 29](specs/29-spec-default-usage-not-workflow-driven/29-spec-default-usage-not-workflow-driven.md) — ordinary usage is Loom-led, not workflow-driven. |
+| [ADR 0001 - Prompt Composition Templates](adr/0001-prompt-composition-templates.md) | Mustache as the prompt template engine |
+| [ADR 0002 - Runtime Persistence Store](adr/0002-runtime-persistence-store.md) | SQLite-backed Runtime Store under `.weave/runtime/` |
+| [ADR 0003 - OpenCode Adapter Materialization Shape](adr/0003-opencode-adapter-materialization-shape.md) | OpenCode plugin materialization contract |
+| [ADR 0004 - Workflow-First Execution Contract](adr/0004-workflow-first-execution-contract.md) | `startExecution` as the sole authorized execution entry point |
+| [ADR 0005 - Remediation Decisions for Specs 24–28](adr/0005-five-spec-remediation-decisions.md) | Accepted answers to open questions across Specs 24–28 |
+| [ADR 0006 - End-to-End Orchestration Flow](adr/0006-end-to-end-orchestration-flow.md) | Full Loom → Pattern → Tapestry → Weft/Warp flow; legacy vs. current model; where issue #52 fits. **Note:** the "add default_workflow" guidance in the "Where Issue #52 Fits" section is superseded by [Spec 29](specs/29-spec-default-usage-not-workflow-driven/29-spec-default-usage-not-workflow-driven.md) - ordinary usage is Loom-led, not workflow-driven. |
 
 ---
 

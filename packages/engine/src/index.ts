@@ -145,8 +145,14 @@ export type {
   PlanStateProvider,
 } from "./plan-state-provider.js";
 export type {
+  GateDecision,
+  VariantVerdictInput,
+} from "./review-gate-policy.js";
+export { evaluateGateDecision } from "./review-gate-policy.js";
+export type {
   CollatedReview,
   CollatedReviewAllFailedError,
+  DirectReviewContext,
   PartialFailureWarning,
   ReviewExecutionResult,
   ReviewFanOutPlan,
@@ -166,6 +172,8 @@ export {
   generateReviewVariants,
   reviewVariantName,
 } from "./review-variants.js";
+export type { ReviewVerdict } from "./review-verdict-parser.js";
+export { parseVerdict } from "./review-verdict-parser.js";
 export type {
   PromptMetadata,
   ReviewFanOutIntent,

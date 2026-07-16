@@ -21,6 +21,13 @@ export type {
    */
   AgentConfig as OpenCodeAgentConfig,
   /**
+   * Assistant message returned by `session.prompt()` — carries completion
+   * status, error details, token usage, cost, and the output `parts` array.
+   * Used in the review fan-out executor to detect success/failure and extract
+   * text output after each sub-session prompt completes.
+   */
+  AssistantMessage,
+  /**
    * Top-level OpenCode config — used when reading or patching the running
    * OpenCode configuration via the SDK client.
    */
@@ -40,6 +47,11 @@ export type {
    */
   OpencodeClientConfig,
   /**
+   * Union of all assistant message part types. Used when iterating
+   * `AssistantMessage.parts` and narrowing to `TextPart` via type guard.
+   */
+  Part,
+  /**
    * OpenCode provider descriptor — used when enumerating available providers
    * and their models.
    */
@@ -48,6 +60,24 @@ export type {
    * OpenCode session descriptor — used when querying active sessions.
    */
   Session as OpenCodeSession,
+  /**
+   * Input shape for `session.create()` — specifies the optional parent session
+   * ID and title when spawning a new sub-session for each review category
+   * during fan-out execution.
+   */
+  SessionCreateData,
+  /**
+   * Input shape for `session.prompt()` — specifies the parts (user text),
+   * agent, and model to use when sending a prompt to a sub-session during
+   * review fan-out execution.
+   */
+  SessionPromptData,
+  /**
+   * Text output part from an assistant response — contains the actual review
+   * text produced by the model. Filtered out of `AssistantMessage.parts` in
+   * the review fan-out executor to assemble the final review body.
+   */
+  TextPart,
 } from "@opencode-ai/sdk";
 
 export {

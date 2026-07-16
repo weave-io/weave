@@ -1136,13 +1136,13 @@ The engine normalizes this into a `ReviewFanOutIntent` and emits it as a `RunAge
 | Behavior | Legacy | vNext |
 | --- | --- | --- |
 | Scope | Only `weft` and `warp` | Any agent |
-| Fan-out trigger | Unconditional | Only on `gate` steps with `completion review_verdict` |
+| Fan-out trigger | Unconditional | Any invocation of the reviewer agent. Workflow gate steps with `completion review_verdict` are one consumer of the same fan-out and collation machinery. |
 | Partial failure | Warning + continue | Partial failures are recorded as warning entries in `CollatedReview.warnings`; collation succeeds if at least one variant succeeded; all-failed returns a typed error |
 | Variant naming | `{agent}-review-{provider}-{model}` | Engine-owned deterministic names via `reviewVariantName` / `generateReviewVariants`; adapters own materialization and execution |
 | Builtin defaults | `weft` and `warp` shipped with default `review_models` values | Builtins omit `review_models` by default to avoid unexpected cost -- operators opt in explicitly |
 | Config format | JSON property under `agents.{name}` | `.weave` DSL field on the `agent` block |
 
-The most significant behavioral change is the **fan-out trigger scope**: the alpha ran reviews outside of workflow context; vNext restricts fan-out to `gate` workflow steps with `completion review_verdict`. Ad-hoc review outside a workflow is not supported in vNext.
+The most significant behavioral change is the **fan-out trigger scope**: the alpha ran reviews outside of workflow context unconditionally. In vNext, fan-out fires on any invocation of a reviewer agent that declares `review_models` -- direct user requests, Loom delegation, and workflow gate steps are all supported. The primary entry point for direct invocations is `executeDirectReview` in [`packages/adapters/opencode/src/direct-review.ts`](../packages/adapters/opencode/src/direct-review.ts), which returns a `DirectReviewResult` with a `formattedSummary`. This matches the spirit of legacy direct `@weft`/`@warp` usage more closely than a gate-only restriction would. Workflow gate steps with `completion review_verdict` reuse the same fan-out and collation machinery as a secondary consumer.
 
 The omission of default `review_models` on builtins is intentional cost protection. Users who relied on automatic multi-model review in the alpha must declare `review_models` explicitly in their project `.weave/config.weave`.
 
@@ -1150,7 +1150,7 @@ The omission of default `review_models` on builtins is intentional cost protecti
 
 1. Remove `review_models` from any `weave.config.json` or legacy JSON config.
 2. Add a `review_models` field to the relevant `agent` block in `.weave/config.weave`.
-3. Ensure the agent is used in a `gate` step with `completion review_verdict` in a workflow. Review fan-out only fires in that context.
-4. Verify your adapter supports the `ReviewFanOutIntent` effect. Adapters that do not yet implement fan-out should degrade gracefully and log a warning, falling back to single-model review for that step.
+3. Verify your adapter supports the `ReviewFanOutIntent` effect. Adapters that do not yet implement fan-out should degrade gracefully and log a warning, falling back to single-model review.
+4. For direct invocations, use `executeDirectReview` from `@weaveio/weave-engine`. For workflow gate steps, ensure the step uses `type gate` with `completion review_verdict`.
 
 For full field semantics, validation rules, and the adapter contract, see [Spec 32](specs/32-spec-review-models/32-spec-review-models.md).

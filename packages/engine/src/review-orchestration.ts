@@ -1,11 +1,16 @@
 import type { AgentConfig, WeaveConfig } from "@weaveio/weave-core";
 import { err, ok, type Result } from "neverthrow";
 import {
+  evaluateGateDecision,
+  type GateDecision,
+  type VariantVerdictInput,
+} from "./review-gate-policy.js";
+import {
   type GeneratedReviewVariant,
   generateReviewVariants,
   type ReviewVariantConflictError,
-  reviewVariantName,
 } from "./review-variants.js";
+import { parseVerdict, type ReviewVerdict } from "./review-verdict-parser.js";
 
 // ---------------------------------------------------------------------------
 // Error types
@@ -58,6 +63,14 @@ export type CollatedReview = {
   collatedOutput: string;
   /** Warnings for any variants that failed. */
   warnings: PartialFailureWarning[];
+  /** Per-variant parsed verdicts (includes failed variants as `malformed`). */
+  perVariantVerdicts: ReadonlyArray<{
+    variantName: string;
+    reviewModel: string;
+    verdict: ReviewVerdict;
+  }>;
+  /** Gate decision derived from all variant verdicts. */
+  gateDecision: GateDecision;
 };
 
 export type CollatedReviewAllFailedError = {
@@ -80,6 +93,20 @@ export type ReviewFanOutPlan = {
   /** The generated review variants keyed by variant name. */
   variants: Record<string, GeneratedReviewVariant>;
 };
+
+/**
+ * Context for a direct (non-workflow) review invocation.
+ *
+ * Adapters construct this by calling `ReviewOrchestrator.fanOut()` when they
+ * detect that an invoked reviewer agent declares `review_models`. The context
+ * carries everything needed to execute variant fan-out and collation without
+ * going through the workflow gate path.
+ */
+export interface DirectReviewContext {
+  readonly agentName: string;
+  readonly reviewModels: readonly string[];
+  readonly plan: ReviewFanOutPlan;
+}
 
 // ---------------------------------------------------------------------------
 // ReviewOrchestrator
@@ -184,10 +211,32 @@ export class ReviewOrchestrator {
 
     const collatedOutput = outputParts.join("\n\n---\n\n");
 
+    const perVariantVerdicts = results.map((r) => ({
+      variantName: r.variantName,
+      reviewModel: r.reviewModel,
+      verdict: r.success
+        ? parseVerdict(r.output ?? "")
+        : ({
+            verdict: "malformed",
+            rawOutput: r.errorMessage ?? "Execution failed",
+          } satisfies ReviewVerdict),
+    }));
+
+    const verdictInputs: VariantVerdictInput[] = perVariantVerdicts.map(
+      (v) => ({
+        variantName: v.variantName,
+        verdict: v.verdict,
+      }),
+    );
+
+    const gateDecision = evaluateGateDecision(verdictInputs);
+
     return ok({
       success: true,
       collatedOutput,
       warnings,
+      perVariantVerdicts,
+      gateDecision,
     });
   }
 }

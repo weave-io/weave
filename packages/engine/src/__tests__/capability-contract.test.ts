@@ -3,7 +3,7 @@
  *
  * Covers:
  * - All 4 readiness levels are valid; no extra values accepted by schema.
- * - All 19 capability IDs are valid.
+ * - All 20 capability IDs are valid.
  * - CapabilityEntry accepts all readiness levels and required/optional fields.
  * - AdapterCapabilityContract structural assertions.
  * - Tool-policy capability references @weaveio/weave-core concepts (no duplication).
@@ -71,19 +71,19 @@ describe("CapabilityReadiness", () => {
 // ---------------------------------------------------------------------------
 
 describe("CapabilityId", () => {
-  it("has exactly 19 capability IDs", () => {
-    expect(ALL_CAPABILITY_IDS).toHaveLength(19);
+  it("has exactly 20 capability IDs", () => {
+    expect(ALL_CAPABILITY_IDS).toHaveLength(20);
   });
 
   it("has exactly 12 required capability IDs", () => {
     expect(REQUIRED_CAPABILITIES).toHaveLength(12);
   });
 
-  it("has exactly 7 optional capability IDs", () => {
-    expect(OPTIONAL_CAPABILITIES).toHaveLength(7);
+  it("has exactly 8 optional capability IDs", () => {
+    expect(OPTIONAL_CAPABILITIES).toHaveLength(8);
   });
 
-  it("accepts all 19 capability IDs via schema", () => {
+  it("accepts all 20 capability IDs via schema", () => {
     for (const id of ALL_CAPABILITY_IDS) {
       const result = CapabilityIdSchema.safeParse(id);
       expect(result.success).toBe(true);
@@ -137,6 +137,7 @@ describe("CapabilityId", () => {
     expect(optional.has("eval-integration")).toBe(true);
     expect(optional.has("static-artifact-generation")).toBe(true);
     expect(optional.has("multiple-active-workflows")).toBe(true);
+    expect(optional.has("review-fan-out")).toBe(true);
   });
 });
 
@@ -293,12 +294,12 @@ describe("engine barrel re-exports", () => {
   });
 
   it("exports OPTIONAL_CAPABILITIES from @weaveio/weave-engine", () => {
-    expect(BARREL_OPTIONAL).toHaveLength(7);
+    expect(BARREL_OPTIONAL).toHaveLength(8);
     expect(BARREL_OPTIONAL).toEqual(OPTIONAL_CAPABILITIES);
   });
 
   it("exports ALL_CAPABILITY_IDS from @weaveio/weave-engine", () => {
-    expect(BARREL_ALL).toHaveLength(19);
+    expect(BARREL_ALL).toHaveLength(20);
   });
 
   it("exports evaluateCoreReadinessProfile from @weaveio/weave-engine", () => {

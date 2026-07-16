@@ -21,13 +21,27 @@
  *   `reconcile-agent.ts` (task 3). The facade only wraps the raw SDK calls.
  */
 
-import { err, ok, ResultAsync } from "neverthrow";
+import { ResultAsync } from "neverthrow";
 
 import type {
   OpenCodeAgent,
   OpenCodeAgentConfig,
   OpencodeClient,
+  Part,
 } from "./sdk-types.js";
+
+/**
+ * Minimal shape of the assistant message info returned by `session.prompt()`.
+ *
+ * The full SDK `AssistantMessage` has many required fields (id, sessionID, time, etc.)
+ * that are not relevant to the adapter's review fan-out logic. Using this local
+ * type keeps the facade and its mocks decoupled from SDK version churn while
+ * preserving the structural contract that matters: the info object has an
+ * optional `error` field and is otherwise opaque to the facade callers.
+ */
+export type PromptSessionInfo = Record<string, unknown> & {
+  error?: unknown;
+};
 
 // ---------------------------------------------------------------------------
 // Error types
@@ -40,19 +54,30 @@ export type OpenCodeClientError =
   | {
       type: "ListAgentsError";
       message: string;
-      cause?: unknown;
     }
   | {
       type: "CreateAgentError";
       agentName: string;
       message: string;
-      cause?: unknown;
     }
   | {
       type: "UpdateAgentError";
       agentName: string;
       message: string;
-      cause?: unknown;
+    }
+  | {
+      type: "CreateSessionError";
+      message: string;
+    }
+  | {
+      type: "PromptSessionError";
+      sessionId: string;
+      message: string;
+    }
+  | {
+      type: "DeleteSessionError";
+      sessionId: string;
+      message: string;
     };
 
 // ---------------------------------------------------------------------------
@@ -104,6 +129,77 @@ export interface OpenCodeClientFacade {
     name: string,
     config: OpenCodeAgentConfig,
   ): ResultAsync<void, OpenCodeClientError>;
+
+  /**
+   * Creates a new session in the running OpenCode instance for use as a
+   * review sub-session during fan-out execution.
+   *
+   * Corresponds to `client.session.create({ body: { title } })`.
+   *
+   * @param title - Human-readable title for the session (e.g. the review variant name).
+   */
+  createReviewSession(
+    title: string,
+  ): ResultAsync<{ sessionId: string }, OpenCodeClientError>;
+
+  /**
+   * Sends a text prompt to an existing session using the specified agent and
+   * waits for the assistant to complete its response.
+   *
+   * Corresponds to `client.session.prompt()`.
+   *
+   * @param sessionId - The session to prompt.
+   * @param prompt - The user text to send.
+   * @param agentName - The agent to use for this prompt.
+   */
+  promptSession(
+    sessionId: string,
+    prompt: string,
+    agentName: string,
+  ): ResultAsync<
+    { output: string; assistantMessage: PromptSessionInfo },
+    OpenCodeClientError
+  >;
+
+  /**
+   * Deletes a session after review fan-out is complete.
+   *
+   * Corresponds to `client.session.delete()`.
+   *
+   * @param sessionId - The session to delete.
+   */
+  deleteSession(sessionId: string): ResultAsync<void, OpenCodeClientError>;
+}
+
+// ---------------------------------------------------------------------------
+// Error serialization helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Builds a safe, non-sensitive description of an SDK error for embedding in
+ * thrown Error messages.
+ *
+ * Never includes `message`, stack, cause, response body, or any field that
+ * may contain request payloads, prompts, or model output. Only structural
+ * fields (`name`, `statusCode`, `status`, `code`) are included when present.
+ *
+ * Examples:
+ *   `SDK error (name=BadRequest, status=400)`
+ *   `SDK error`
+ */
+function sanitizeSdkError(error: unknown): string {
+  if (error === null || error === undefined) return "SDK error";
+  if (typeof error !== "object") return "SDK error";
+  const e = error as Record<string, unknown>;
+  const parts: string[] = [];
+  if (typeof e.name === "string") parts.push(`name=${e.name}`);
+  if (typeof e.statusCode === "number" || typeof e.statusCode === "string")
+    parts.push(`statusCode=${e.statusCode}`);
+  if (typeof e.status === "number" || typeof e.status === "string")
+    parts.push(`status=${e.status}`);
+  if (typeof e.code === "string" || typeof e.code === "number")
+    parts.push(`code=${e.code}`);
+  return parts.length > 0 ? `SDK error (${parts.join(", ")})` : "SDK error";
 }
 
 // ---------------------------------------------------------------------------
@@ -124,15 +220,14 @@ export class SdkOpenCodeClient implements OpenCodeClientFacade {
       this.client.app.agents().then((res) => {
         if (res.error !== undefined) {
           throw new Error(
-            `app.agents() returned error: ${JSON.stringify(res.error)}`,
+            `app.agents() returned error: ${sanitizeSdkError(res.error)}`,
           );
         }
         return res.data ?? [];
       }),
       (cause) => ({
         type: "ListAgentsError" as const,
-        message: cause instanceof Error ? cause.message : String(cause),
-        cause,
+        message: sanitizeSdkError(cause),
       }),
     );
   }
@@ -147,15 +242,14 @@ export class SdkOpenCodeClient implements OpenCodeClientFacade {
         .then((res) => {
           if (res.error !== undefined) {
             throw new Error(
-              `config.update() returned error: ${JSON.stringify(res.error)}`,
+              `config.update() returned error: ${sanitizeSdkError(res.error)}`,
             );
           }
         }),
       (cause) => ({
         type: "CreateAgentError" as const,
         agentName: name,
-        message: cause instanceof Error ? cause.message : String(cause),
-        cause,
+        message: sanitizeSdkError(cause),
       }),
     );
   }
@@ -170,15 +264,102 @@ export class SdkOpenCodeClient implements OpenCodeClientFacade {
         .then((res) => {
           if (res.error !== undefined) {
             throw new Error(
-              `config.update() returned error: ${JSON.stringify(res.error)}`,
+              `config.update() returned error: ${sanitizeSdkError(res.error)}`,
             );
           }
         }),
       (cause) => ({
         type: "UpdateAgentError" as const,
         agentName: name,
-        message: cause instanceof Error ? cause.message : String(cause),
-        cause,
+        message: sanitizeSdkError(cause),
+      }),
+    );
+  }
+
+  createReviewSession(
+    title: string,
+  ): ResultAsync<{ sessionId: string }, OpenCodeClientError> {
+    return ResultAsync.fromPromise(
+      this.client.session.create({ body: { title } }).then((res) => {
+        if (res.error !== undefined) {
+          throw new Error(
+            `session.create() returned error: ${sanitizeSdkError(res.error)}`,
+          );
+        }
+        if (res.data === undefined) {
+          throw new Error("session.create() returned no data");
+        }
+        return { sessionId: res.data.id };
+      }),
+      (cause) => ({
+        type: "CreateSessionError" as const,
+        message: sanitizeSdkError(cause),
+      }),
+    );
+  }
+
+  promptSession(
+    sessionId: string,
+    prompt: string,
+    agentName: string,
+  ): ResultAsync<
+    { output: string; assistantMessage: PromptSessionInfo },
+    OpenCodeClientError
+  > {
+    return ResultAsync.fromPromise(
+      this.client.session
+        .prompt({
+          path: { id: sessionId },
+          body: {
+            parts: [{ type: "text", text: prompt }],
+            agent: agentName,
+          },
+        })
+        .then((res) => {
+          if (res.error !== undefined) {
+            throw new Error(
+              `session.prompt() returned error: ${sanitizeSdkError(res.error)}`,
+            );
+          }
+          if (res.data === undefined) {
+            throw new Error("session.prompt() returned no data");
+          }
+          const { info, parts } = res.data;
+          if (info.error !== undefined) {
+            throw new Error(
+              `Assistant returned error: ${sanitizeSdkError(info.error)}`,
+            );
+          }
+          const output = (parts as Part[])
+            .filter(
+              (p): p is Part & { type: "text"; text: string } =>
+                p.type === "text",
+            )
+            .map((p) => (p as { text: string }).text)
+            .join("");
+          return { output, assistantMessage: info };
+        }),
+      (cause) => ({
+        type: "PromptSessionError" as const,
+        sessionId,
+        message: sanitizeSdkError(cause),
+      }),
+    );
+  }
+
+  deleteSession(sessionId: string): ResultAsync<void, OpenCodeClientError> {
+    return ResultAsync.fromPromise(
+      this.client.session.delete({ path: { id: sessionId } }).then((res) => {
+        if (res.error !== undefined) {
+          throw new Error(
+            `session.delete() returned error: ${sanitizeSdkError(res.error)}`,
+          );
+        }
+      }),
+      (cause) => ({
+        type: "DeleteSessionError" as const,
+        sessionId,
+        message: sanitizeSdkError(cause),
       }),
     );
   }

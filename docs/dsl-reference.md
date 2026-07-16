@@ -105,7 +105,7 @@ agent my-helper {
 | `tool_policy` | block | Abstract capability map. See [Tool Policy](#tool-policy). |
 | `triggers` | array | Delegation metadata for router agents. Each entry: `{ domain "…" trigger "…" routing_hint "…" }`. The `routing_hint` field is optional and provides prescriptive "Use when..." guidance for delegation routing. |
 | `skills` | string[] | Skill names to load for this agent. |
-| `review_models` | string[] | Optional. One or more model identifiers used as independent reviewers in `gate` steps with `completion review_verdict`. See [Review Models](#review-models). |
+| `review_models` | string[] | Optional. Nominates independent reviewer models for adversarial review. When the reviewer agent is invoked, the adapter runs each review model as a separate variant and collates their findings. See [Review Models](#review-models). |
 
 ### Tool Policy
 
@@ -135,7 +135,7 @@ See [Tool Policy Evaluation](tool-policy-evaluation.md) for the full evaluation 
 
 ## Review Models
 
-`review_models` is an optional field on any `agent` block. It nominates one or more alternative models that independently review the step prompt in a `gate` workflow step that uses `completion review_verdict`. The engine fans out to each model, collates the verdicts, and resolves a single approve-or-reject outcome.
+`review_models` is an optional field on any `agent` block. It nominates independent reviewer models for adversarial review. When the reviewer agent is invoked -- by a direct user request, Loom delegation, or a workflow gate step -- the adapter runs each nominated model as a separate read-only variant and collates their findings into a single approve-or-reject outcome.
 
 ```weave
 agent warp {
@@ -151,7 +151,7 @@ agent warp {
 **Key behaviors:**
 
 - One read-only review variant descriptor is generated per entry, named `{agentName}-review-{model-with-slashes-replaced-by-dashes}` (e.g. `warp-review-openai-gpt-4o`).
-- Fan-out occurs only when the step is `type gate` with `completion review_verdict` and the agent has `review_models` set.
+- Any invocation of the reviewer agent triggers fan-out. Workflow gate steps using `completion review_verdict` are one consumer of the same fan-out and collation machinery.
 - Collation succeeds with at least one successful reviewer result; partial failures are logged as warnings.
 - All variants failing resolves to `reject`.
 - Builtin agents omit `review_models` by default; users opt in explicitly to avoid unexpected cost.

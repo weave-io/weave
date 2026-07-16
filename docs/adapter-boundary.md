@@ -710,7 +710,12 @@ The denylist covers auth/credential fields (`token`, `apiKey`, `api_key`, `passw
 
 ## Review Fan-Out: Adapter Responsibilities
 
-When a workflow gate step's dispatched agent declares `review_models`, the engine populates `RunAgentEffect.reviewFanOutIntent` (see [`packages/engine/src/run-agent-effects.ts`](../packages/engine/src/run-agent-effects.ts)). Adapters that receive a `dispatch-agent` lifecycle effect with a non-null `reviewFanOutIntent` are responsible for executing the multi-model fan-out and returning collated results to the execution lifecycle.
+When a reviewer agent declares `review_models`, any invocation of that agent triggers multi-model fan-out. There are two distinct paths:
+
+- **Direct invocation path** — entirely adapter-owned. The adapter's `executeDirectReview` ([`packages/adapters/opencode/src/direct-review.ts`](../packages/adapters/opencode/src/direct-review.ts)) is the primary entry point. It calls `ReviewOrchestrator.fanOut` directly (no `ReviewFanOutIntent` is emitted or consumed) and returns a `DirectReviewResult` with a `formattedSummary`.
+- **Workflow gate path** — the engine emits `RunAgentEffect.reviewFanOutIntent` (see [`packages/engine/src/run-agent-effects.ts`](../packages/engine/src/run-agent-effects.ts)) on the dispatched lifecycle effect. Adapters that receive a `dispatch-agent` effect with a non-null `reviewFanOutIntent` are responsible for executing the multi-model fan-out and returning collated results to the execution lifecycle.
+
+Both paths use the same engine helpers: `fanOut`, `collate`, `parseVerdict`, and `evaluateGateDecision`.
 
 ### Ownership Matrix: Review Fan-Out
 
@@ -726,34 +731,67 @@ When a workflow gate step's dispatched agent declares `review_models`, the engin
 | Result collection and timeout policy | Adapter | Timeouts depend on harness scheduling and infrastructure |
 | Graceful degradation when `spawnReviewVariants` is absent | Caller/Adapter | The method is optional; callers must check for presence |
 
+### `projectEffect` and Prompt Propagation
+
+`projectEffect` is the adapter callback invoked by the workflow runner for each dispatched lifecycle effect. Its signature includes a second argument, `renderedPrompt`, so the adapter receives the fully rendered step prompt without re-rendering it:
+
+```ts
+projectEffect(
+  effect: DispatchAgentEffect,
+  renderedPrompt?: string,
+): ResultAsync<void, ProjectEffectError>;
+```
+
+`renderedPrompt` is populated by the engine's `renderStepPrompt` helper and attached to `DispatchAgentEffect.renderedPrompt` before the runner calls `projectEffect`. The adapter extracts it and passes it directly to `spawnReviewVariants`.
+
+The prompt text lives on `DispatchAgentEffect` (adapter transport layer) and is never stored on `RunAgentEffect` (the serializable engine record).
+
+### Routing to the Review Path
+
+Inside `buildProjectEffect`, the adapter checks for `reviewFanOutIntent` on the dispatched effect:
+
+```ts
+if (effect.runAgent.reviewFanOutIntent != null) {
+  // route to review fan-out path
+}
+```
+
+When `reviewFanOutIntent` is present, `buildProjectEffect` calls `ReviewOrchestrator.fanOut`, then `adapter.spawnReviewVariants(variants, renderedPrompt)`, then `ReviewOrchestrator.collate`. The helper `translateReviewOutcome` converts the `CollatedReview` result into an `ok` (gate passes) or `err` (gate blocks) signal for the caller.
+
+When `reviewFanOutIntent` is absent, `buildProjectEffect` routes to the normal single-agent dispatch path.
+
 ### `HarnessAdapter.spawnReviewVariants`: Optional Method
 
 ```ts
 spawnReviewVariants?(
   variants: ReviewVariantDescriptor[],
+  renderedPrompt?: string,
 ): ResultAsync<ReviewExecutionResult[], ReviewFanOutAdapterError>;
 ```
 
 - The method is **optional**. Adapters that omit it still satisfy `HarnessAdapter`.
 - Callers **must** check for the method's presence (`adapter.spawnReviewVariants != null`) before invoking it.
 - When the method is absent, the caller should degrade gracefully, for example, fall back to sequential single-model execution or skip multi-model review entirely. The degradation strategy is caller-owned.
+- `renderedPrompt` is forwarded from `DispatchStepOutput` and should be passed to each variant session as the review prompt.
 
 See [`packages/engine/src/adapter.ts`](../packages/engine/src/adapter.ts) for the `ReviewVariantDescriptor`, `ReviewFanOutAdapterError`, and the full interface comment.
 
 ### Correct Data Flow
 
 ```text
-dispatchStep → LifecycleEffect { kind: "dispatch-agent", runAgent: { reviewFanOutIntent, ... } }
+renderStepPrompt → DispatchStepOutput.renderedPrompt
     ↓
-Adapter detects reviewFanOutIntent (non-null)
+workflowRunner calls projectEffect(effect, renderedPrompt)
     ↓
-ReviewOrchestrator.fanOut(agentName)  ← pure engine plan
+buildProjectEffect detects reviewFanOutIntent (non-null)
     ↓
-adapter.spawnReviewVariants(variants) ← adapter executes in parallel (if supported)
+ReviewOrchestrator.fanOut(agentName)           ← pure engine plan
+    ↓
+adapter.spawnReviewVariants(variants, prompt)  ← adapter executes in parallel (if supported)
     ↓  (each variant spawned in harness, output collected, per-variant timeout applied)
-ReviewOrchestrator.collate(results)   ← pure engine fold; warnings for partial failures
+ReviewOrchestrator.collate(results)            ← pure engine fold; warnings for partial failures
     ↓
-Adapter translates CollatedReview → completeStep completion signal
+translateReviewOutcome(collatedReview)         ← ok (gate passes) or err (gate blocks)
 ```
 
 ### Partial Failure Semantics
@@ -797,3 +835,5 @@ async spawnReviewVariants(variants) {
 ```
 
 See [`packages/engine/src/review-orchestration.ts`](../packages/engine/src/review-orchestration.ts) for `ReviewOrchestrator`, `ReviewFanOutPlan`, `CollatedReview`, and `ReviewExecutionResult` type definitions. See [`packages/engine/src/run-agent-effects.ts`](../packages/engine/src/run-agent-effects.ts) for `ReviewFanOutIntent` on `RunAgentEffect`.
+
+For the full adapter contract including fail-closed gate semantics, capability reporting levels, and OpenCode session lifecycle details, see [`docs/review-fan-out-adapter.md`](review-fan-out-adapter.md).

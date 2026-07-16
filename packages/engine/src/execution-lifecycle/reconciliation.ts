@@ -33,12 +33,10 @@ import {
   renderStepPrompt,
 } from "./prompt-context.js";
 import type {
-  LifecycleEffect,
   LifecycleError,
   ReconcileExecutionInput,
   ReconcileExecutionOutput,
   ReconcileExecutionResult,
-  ReconciliationAuthorizationSource,
   WorkflowInstance,
   WorkflowInstanceId,
 } from "./types.js";
@@ -241,11 +239,10 @@ function dispatchHandlerOrPause(
         artifactNames,
       );
       if (promptResult.isErr()) return errAsync(promptResult.error);
-      const promptMetadata = promptResult.value;
-      const runAgent = buildConfiguredRunAgentEffect(
-        handlerStep,
-        promptMetadata,
-      );
+      const { byteLength } = promptResult.value;
+      const runAgent = buildConfiguredRunAgentEffect(handlerStep, {
+        byteLength,
+      });
       return okAsync<ReconcileExecutionOutput, LifecycleError>({
         handlerStepName: handlerStep.name,
         handlerFound: true,

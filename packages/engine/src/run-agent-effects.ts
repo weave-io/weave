@@ -29,6 +29,12 @@ import type { EffectiveToolPolicy } from "./tool-policy.js";
  * dispatched step is a `gate` with `review_verdict` completion and the
  * named agent declares `review_models`.
  *
+ * > **Direct review path**: when callers invoke `executeDirectReview` outside
+ * > of a workflow gate step, this intent is **not** emitted. Adapters call
+ * > `ReviewOrchestrator.fanOut` directly and receive a `DirectReviewResult`
+ * > with a `formattedSummary`. `ReviewFanOutIntent` is the workflow gate path
+ * > only.
+ *
  * ## V1 gate policy
  *
  * Weave v1 uses an **"any-reject wins"** collation policy for gate steps.

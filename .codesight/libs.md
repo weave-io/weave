@@ -13,6 +13,11 @@
   - class OpenCodeAdapterError
   - class OpenCodeAdapter
   - interface OpenCodeAdapterOptions
+- `packages\adapters\opencode\src\direct-review.ts`
+  - function executeDirectReview: (agentName, config, client, reviewPrompt) => ResultAsync<DirectReviewResult, DirectReviewError>
+  - interface DirectReviewResult
+  - type DirectReviewError
+- `packages\adapters\opencode\src\execute-review-variants.ts` — function executeReviewVariants: (variants, client, reviewPrompt) => ResultAsync<ReviewExecutionResult[], ReviewFanOutAdapterError>
 - `packages\adapters\opencode\src\model-resolution.ts`
   - function resolveModelForAgent: (descriptor, context) => Result<string, ModelResolutionError>
   - interface OpenCodeModelContext
@@ -20,13 +25,18 @@
 - `packages\adapters\opencode\src\opencode-client.ts`
   - class SdkOpenCodeClient
   - interface OpenCodeClientFacade
+  - type PromptSessionInfo
   - type OpenCodeClientError
 - `packages\adapters\opencode\src\plugin.ts`
   - function createWeavePlugin: (options) => Plugin
   - interface WeavePluginOptions
   - const WeavePlugin: Plugin
   - const server
-- `packages\adapters\opencode\src\projection-helpers.ts` — function buildProjectEffect: (adapter) => (effect: DispatchAgentEffect) => ResultAsync<void, WorkflowRunnerError>, function deriveRunWorkflowResult: (data) => RunWorkflowResult
+- `packages\adapters\opencode\src\projection-helpers.ts`
+  - function translateReviewOutcome: (collateResult, ReviewOrchestrationError>) => Result<void, WorkflowRunnerError>
+  - function formatReviewSummary: (collated) => string
+  - function buildProjectEffect: (adapter, config?) => (
+  - function deriveRunWorkflowResult: (data) => RunWorkflowResult
 - `packages\adapters\opencode\src\reconcile-agent.ts`
   - function classifyExistingAgent: (agentName, existingAgents) => ReconcileDecision
   - function tagWithOwnership: (config) => OpenCodeAgentConfig
@@ -497,19 +507,24 @@
   - interface ModelResolutionResult
   - type ResolutionSource
   - const DEFAULT_FALLBACK_MODEL
+- `packages\engine\src\review-gate-policy.ts`
+  - function evaluateGateDecision: (verdicts) => GateDecision
+  - interface VariantVerdictInput
+  - interface GateDecision
 - `packages\engine\src\review-orchestration.ts`
   - function fanOut: (agentName, config) => Result<ReviewFanOutPlan, ReviewOrchestrationError>
   - function collate: (results) => Result<CollatedReview, ReviewOrchestrationError>
   - class ReviewOrchestrator
+  - interface DirectReviewContext
   - type ReviewOrchestrationAgentNotFoundError
   - type ReviewOrchestrationError
-  - type ReviewExecutionResult
-  - _...4 more_
+  - _...5 more_
 - `packages\engine\src\review-variants.ts`
   - function reviewVariantName: (agentName, model) => string
   - function generateReviewVariants: (config) => Result<Record<string, GeneratedReviewVariant>, ReviewVariantConflictError>
   - interface GeneratedReviewVariant
   - type ReviewVariantConflictError
+- `packages\engine\src\review-verdict-parser.ts` — function parseVerdict: (output) => ReviewVerdict, type ReviewVerdict
 - `packages\engine\src\runtime\errors.ts`
   - function initializationError: (message, cause?) => RuntimeStoreInitializationError
   - function migrationVersionError: (foundVersion, supportedVersion, message) => RuntimeStoreMigrationVersionError
@@ -548,8 +563,8 @@
   - _...30 more_
 - `packages\engine\src\runtime-command-operations\control.ts` — function abortExecution: (input) => import("neverthrow").ResultAsync<, function advanceStep: (input) => import("neverthrow").ResultAsync<StepAdvancedData, CommandOperationError>
 - `packages\engine\src\runtime-command-operations\health.ts` — function runtimeHealth: (input) => RuntimeHealthResult
-- `packages\engine\src\runtime-command-operations\run-named-workflow.ts` — function runNamedWorkflow: (input, projectEffect) => void
-- `packages\engine\src\runtime-command-operations\start-plan.ts` — function startPlan: (input, projectEffect) => void
+- `packages\engine\src\runtime-command-operations\run-named-workflow.ts` — function runNamedWorkflow: (input, projectEffect, renderedPrompt?) => void
+- `packages\engine\src\runtime-command-operations\start-plan.ts` — function startPlan: (input, projectEffect, renderedPrompt?) => void
 - `packages\engine\src\runtime-command-operations\status.ts` — function inspectStatus: (input) => import("neverthrow").ResultAsync<
 - `packages\engine\src\runtime-command-operations\workflow-runner.ts`
   - function runWorkflowLifecycle: (input) => ResultAsync<WorkflowRunnerOutput, WorkflowRunnerError>
