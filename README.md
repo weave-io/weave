@@ -2,265 +2,126 @@
 
 > Harness-agnostic prompt and agent-configuration API
 
-Weave is a TypeScript-first framework for describing multi-agent systems that can be materialized inside different coding-agent harnesses (OpenCode, Pi, Claude Code, Hermes, Codex, and more). A declarative `.weave` DSL describes agents, prompts, delegation intent, categories, model preferences, skill references, and policies. Adapters translate that normalized Weave intent into harness-specific plugins, configs, commands, tools, and runtime behavior.
+Weave is a TypeScript framework for describing multi-agent systems and materializing them inside different coding-agent harnesses. You declare agents, prompts, delegation intent, categories, model preferences, skills, and tool policy in a `.weave` DSL. Adapters translate that normalized intent into harness-specific plugins, configs, and agent files.
 
-Think of Weave like Neovim's API layer: Weave provides primitives, normalized configuration, and pure composition APIs; adapters supply harness-owned context (available skills, models, lifecycle events) and materialize the result inside a concrete harness.
+The engine is pure and harness-agnostic. Adapters own everything harness-specific: available models, tool vocabulary, skill discovery, lifecycle hooks, and file/plugin generation.
 
-For a high-level flow diagram of configuration → engine → adapter → harness, see [System Architecture](./docs/system-architecture.md).
+For the product story and conceptual docs, see the website: <https://tryweave.io>. This README is the developer and contributor reference. For a configuration → engine → adapter → harness flow diagram, see [System Architecture](./docs/system-architecture.md).
 
 ## Packages
 
-| Package                                                         | Description                                                                                |
-| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| [`@weaveio/weave-core`](./packages/core)                                | DSL lexer, parser, AST, Zod schemas, and validated config types                            |
-| [`@weaveio/weave-config`](./packages/config)                            | Builtin DSL defaults, config discovery, merge semantics, and prompt path resolution        |
-| [`@weaveio/weave-engine`](./packages/engine)                            | Pure composition APIs for descriptors, model intent, skill resolution, prompts, and policy |
-| [`@weaveio/weave-cli`](./packages/cli)                                  | `weave` executable for config scaffolding, validation, and harness installation            |
-| [`@weaveio/weave-docs`](./packages/docs)                                | Public Astro + Starlight documentation site and marketing landing page                     |
-| [`@weaveio/weave-adapter-opencode`](./packages/adapters/opencode)       | OpenCode plugin adapter                                                                    |
-| [`@weaveio/weave-adapter-claude-code`](./packages/adapters/claude-code) | Claude Code adapter                                                                        |
-| [`@weaveio/weave-adapter-pi`](./packages/adapters/pi)                   | Pi adapter                                                                                 |
+| Package | Description |
+| --- | --- |
+| [`@weaveio/weave-core`](./packages/core) | DSL lexer, parser, AST, Zod schemas, and validated config types |
+| [`@weaveio/weave-config`](./packages/config) | Builtin DSL defaults, config discovery, merge semantics, and prompt path resolution |
+| [`@weaveio/weave-engine`](./packages/engine) | Pure composition APIs for descriptors, model intent, skill resolution, prompts, and policy |
+| [`@weaveio/weave-cli`](./packages/cli) | `weave` executable for scaffolding, validation, and adapter materialization |
+| [`@weaveio/weave-docs`](./packages/docs) | In-repo Astro + Starlight documentation site |
+| [`@weaveio/weave-adapter-opencode`](./packages/adapters/opencode) | OpenCode plugin adapter (runtime) |
+| [`@weaveio/weave-adapter-claude-code`](./packages/adapters/claude-code) | Claude Code adapter (file materialization) |
 
-## OpenCode Adapter Status
+## Requirements
 
-`@weaveio/weave-adapter-opencode` is implemented as a **real first-slice OpenCode plugin adapter**. It can load Weave config, materialize builtin and custom agents, map Weave tool policy into OpenCode permissions, reconcile owned agents safely, and expose Weave-managed agents through the plugin bootstrap path.
-
-Today, the adapter is strongest at **agent/config materialization** and intentionally does **not** yet provide full parity with the legacy `opencode-weave` project.
-
-### Implemented now
-
-- OpenCode plugin entrypoint via `@weaveio/weave-adapter-opencode/plugin`
-- builtin + custom agent materialization
-- category-generated shuttle agents through normal config materialization
-- model resolution and fail-fast validation for explicit subagent model intent
-- tool-policy mapping into OpenCode permissions
-- ownership-safe `list → reconcile → create/update` flow for Weave-managed agents
-- harness-injected skill forwarding
-- `config` hook visibility for `opencode debug config`
-- deferred SDK reconciliation on first `session.created`
-
-### Not yet at legacy parity
-
-The following legacy OpenCode-specific capabilities are still separate work:
-
-- full in-harness command lifecycle (`/start-work`, `/run-workflow`, status/pause/abort flows)
-- broader workflow runtime/lifecycle integration
-- skill MCP mounting/management
-- richer OpenCode runtime effects such as agent/session restoration flows
-- health, metrics, and token-reporting surfaces comparable to the legacy project
-
-For the normative status and current non-goals, see:
-
-- [Adapter Readiness Status](./docs/adapter-readiness-status.md)
-- [Spec 20 — OpenCode Adapter Materialization](./docs/specs/20-spec-opencode-adapter-materialization/20-spec-opencode-adapter-materialization.md)
-- [@weaveio/weave-adapter-opencode README](./packages/adapters/opencode/README.md)
-
-### Legacy parity snapshot
-
-| Feature area | Legacy `opencode-weave` | Current Weave core | Current OpenCode adapter |
-| --- | --- | --- | --- |
-| Builtin agents | Yes | Yes | Yes |
-| Custom agents | Yes | Yes | Yes |
-| Prompt composition | Yes | Yes | Yes |
-| Category-generated shuttle agents | Yes | Yes | Yes via normal materialization |
-| Model resolution | Yes | Yes | Partial/strong |
-| Tool policy mapping | Yes | Yes | Yes |
-| OpenCode plugin entrypoint | Yes | N/A | Yes |
-| Agent reconcile create/update | Yes | N/A | Yes |
-| Ownership/collision protection | Yes | N/A | Yes |
-| Skill forwarding/discovery | Yes | Yes | Partial |
-| Skill MCP mounting | Yes | N/A | No |
-| `/start-work` / `/run-workflow` | Yes | Workflow concepts exist | No |
-| Workflow runtime lifecycle | Yes | Partial | No |
-| Pause/resume/abort/status | Yes | Partial | No |
-| Session restore / agent switch effects | Yes | N/A | No |
-| Health / metrics / token reports | Yes | Partial | No |
-| Full legacy OpenCode parity | Yes | Not the target itself | No |
-
-In practice, the current OpenCode adapter covers the **materialization foundation** well, while the main parity gaps are still the **runtime command lifecycle**, **workflow execution UX**, **skill MCP integration**, and **health/metrics/token-reporting surfaces**.
-
-## Other Adapter Status
-
-### Claude Code adapter
-
-`@weaveio/weave-adapter-claude-code` currently exists as a package placeholder in the workspace. The harness-agnostic engine/config surfaces it depends on are present, but this adapter does not yet have an equivalent status story to the OpenCode first slice.
-
-- current role: placeholder package / future adapter target
-- intended scope: materialize Weave agents into Claude Code using the same engine-owned descriptors and policy surfaces
-- current status: not yet documented as a real materialized adapter slice
-
-### Pi adapter
-
-`@weaveio/adapter-pi` currently exists as a package placeholder in the workspace. Like Claude Code, it sits behind the current engine/config work and does not yet have a comparable materialization/readiness story documented in the repo README.
-
-- current role: placeholder package / future adapter target
-- intended scope: materialize Weave agents into Pi using the same adapter boundary and engine-owned descriptors
-- current status: not yet documented as a real materialized adapter slice
-
-## Workspace Structure
-
-```
-weave/
-├── packages/
-│   ├── core/                  # DSL lexer, parser, AST, schemas
-│   ├── config/                # Builtins, config discovery, merge, prompt path resolution
-│   ├── engine/                # Harness-agnostic composition APIs and adapter boundary
-│   ├── docs/                  # Astro + Starlight docs site and landing page
-│   └── adapters/
-│       ├── opencode/          # OpenCode plugin adapter
-│       ├── pi/                # Pi adapter
-│       └── claude-code/       # Claude Code adapter
-├── package.json               # Root workspace manifest
-├── tsconfig.json              # Root TypeScript config (composite)
-└── bunfig.toml                # Bun configuration
-```
-
-## Installation
-
-Weave requires [Bun](https://bun.sh) ≥ 1.1. Node.js is not supported.
+Weave requires [Bun](https://bun.sh) ≥ 1.1. Node.js is not supported for development.
 
 ```bash
-# 1. Clone the repository
 git clone https://github.com/weave-io/weave.git
 cd weave
-
-# 2. Install all workspace dependencies
 bun install
-
-# 3. Build all packages (core → config → engine → adapters → cli)
-bun run build
+bun run build   # core → config → engine → adapters → cli
 ```
 
-The build emits compiled output into each package's `dist/` folder:
-
-| Package | Dist entry |
-| --- | --- |
-| `@weaveio/weave-adapter-opencode` | `packages/adapters/opencode/dist/index.js` |
-| `@weaveio/weave-cli` | `packages/cli/dist/main.js` |
-
-## Getting Started (development)
+For local development, link the CLI onto your `PATH`:
 
 ```bash
-# Run type checking across all packages
-bun run typecheck
-
-# Run the docs site locally
-bun run docs:dev
-
-# Build the documentation site for GitHub Pages
-bun run docs:build
-
-# Run all tests
-bun test
-
-# Validate the project's own .weave config through the CLI
-bun run validate-config
-
-# Clean all dist/ folders
-bun run clean
+bun link ./packages/cli
+weave --help
 ```
+
+If you would rather not link it, run the CLI from source: `bun packages/cli/src/main.ts <command>`.
 
 ## CLI
 
-The `@weaveio/weave-cli` package exposes the `weave` executable. After building, link it into your `PATH` for local development:
+The `@weaveio/weave-cli` package exposes the `weave` executable.
 
-```bash
-bun run build
-bun link ./packages/cli
-weave --help
-weave --version
-```
-
-Once published, the same command surface is available through package runners:
-
-```bash
-bunx @weaveio/weave-cli --help
-npx @weaveio/weave-cli --help
-```
-
-### `weave init` — scaffold a `.weave` config
-
-```bash
-# Interactive setup (prompts for scope, harness, and modules)
-weave init
-
-# Non-interactive local setup
-weave init --scope local --yes
-
-# Non-interactive global setup
-weave init --scope global --yes
-```
-
-### `weave init migrate` — migrate a legacy OpenCode config
-
-If you have an existing `weave-opencode.jsonc` config from the legacy `opencode-weave` project, migrate it to the current `.weave` DSL:
-
-```bash
-# Explicit migrate mode — prompts for confirmation, then continues into harness setup
-weave init migrate --scope local
-weave init migrate --scope global
-
-# Non-interactive — migrates and exits without prompts
-weave init migrate --scope local --yes
-weave init migrate --scope global --yes
-```
-
-Legacy source paths (read-only, never modified):
-
-| Scope | Legacy source |
+| Command | Purpose |
 | --- | --- |
-| `local` | `.opencode/weave-opencode.jsonc` |
-| `global` | `~/.config/opencode/weave-opencode.jsonc` |
+| `weave init` | Scaffold a `.weave/config.weave` (interactive; supports `--scope local\|global`, `--yes`) |
+| `weave init migrate` | Migrate a legacy `weave-opencode.jsonc` config to the `.weave` DSL |
+| `weave validate` | Validate a `.weave` config (`--project`, `--path <file>`, `--json`) |
+| `weave compose --adapter claude-code` | Materialize agents into a Claude Code plugin (see below) |
+| `weave prompt inspect <agent>` | Render an agent's fully composed prompt (`--json`, or `list`) |
+| `weave eval run` | Run the routing/planning eval suites |
 
-Migration writes only to the canonical destinations `~/.weave/config.weave` (global) and `.weave/config.weave` (local). The `--install-dir` flag is ignored in migrate mode.
-
-### `weave validate` — validate a `.weave` config
-
-```bash
-# Validate the project config (auto-discovers .weave/config.weave)
-weave validate --project
-
-# Validate a specific file
-weave validate --path .weave/config.weave
-
-# Machine-readable JSON output
-weave validate --path .weave/config.weave --json
-```
-
-## Documentation Site
-
-Weave ships an Astro + Starlight site in [`packages/docs`](./packages/docs). It hosts the public landing page together with the public documentation site.
-
-- local dev: `bun run docs:dev`
-- production build: `bun run docs:build`
-- GitHub Pages deployment: `.github/workflows/deploy-docs.yml`
-
-See [docs/cli.md](./docs/cli.md) for the full command contract, init safety rules, migration behavior, validation output, and installer boundaries.
+`weave` does not launch harness runtimes. Start each harness with its own command (`opencode`, `claude`, `pi`). See [docs/cli.md](./docs/cli.md) for the full command contract, init safety rules, and migration behavior.
 
 ## Using with OpenCode
 
-After building, point your OpenCode config at the local adapter dist file to use your development build as the active plugin.
+`@weaveio/weave-adapter-opencode` is an OpenCode plugin. Install it by adding the package to the `plugin` array in your OpenCode config, or point at a local `dist/plugin.js` build for development.
 
-**`~/.config/opencode/opencode.jsonc`**:
+The adapter README is the authoritative install and validation guide, including the exact plugin entry point, isolated-config testing, and logging behavior:
 
-```jsonc
-{
-  "plugin": [
-    // Use the local development build of the Weave OpenCode adapter
-    "file:///absolute/path/to/weave/packages/adapters/opencode/dist/index.js"
-  ]
-}
+- [`@weaveio/weave-adapter-opencode` README](./packages/adapters/opencode/README.md)
+
+> Use the `dist/plugin.js` bundle (or the published package's `/plugin` entry). The bare package entry (`dist/index.js`) exports non-function values and will fail OpenCode's plugin loader.
+
+## Using with Claude Code
+
+Claude Code support is **file materialization**: `weave compose` reads your `.weave/config.weave` and writes a Claude Code plugin directory. There is no runtime integration and no changes to Weave are required to try it.
+
+From a project that has a `.weave/config.weave`:
+
+```bash
+# Generate the plugin, and (with --init) a small bootstrap plugin
+# that re-runs compose on session start.
+weave compose --adapter claude-code --init
 ```
 
-Replace `/absolute/path/to/weave` with the actual path where you cloned the repo (e.g. `/Users/you/projects/weave`).
+This writes:
 
-To switch back to the published package, replace the `file://` entry with `@opencode_weave/weave` (or whichever published package name applies).
+```
+.weave/plugins/claude-code/     # the generated plugin
+  .claude-plugin/plugin.json
+  agents/*.md                   # one Claude Code subagent per Weave agent
+  settings.json                 # sets loom as the default agent
+weave-bootstrap-plugin/         # optional: SessionStart hook that re-runs compose
+```
 
-> **Tip**: run `bun run build` after any source change to update the dist files before restarting OpenCode.
+Launch Claude Code pointing at the generated plugin (add the bootstrap plugin for auto-regeneration):
 
-## Scope
+```bash
+claude --plugin-dir ./weave-bootstrap-plugin --plugin-dir ./.weave/plugins/claude-code
+```
 
-All packages are published under the `@weave` scope.
+Run `/reload-plugins` on the first session if the agents do not appear immediately. Add `.weave/plugins/` to your `.gitignore`.
+
+**What you get:** agent prompts, model selection, tool lists, category shuttles, and delegation via Claude Code's `Task` tool. **What is out of scope:** durable workflows, plan execution, command entrypoints, idle continuation, and analytics. Those require a Claude Code runtime API that does not exist today. See [Claude Code Adapter](./docs/claude-code-adapter.md) for the full scope and rationale.
+
+> The bootstrap plugin's `SessionStart` hook runs `weave compose`, which assumes `weave` is resolvable in the project. If it is not linked, skip the bootstrap plugin and re-run `weave compose --adapter claude-code` manually after config changes.
+
+## Adapter status
+
+| Adapter | Status |
+| --- | --- |
+| OpenCode | Runtime plugin, first slice. Materializes builtin and custom agents, maps tool policy into OpenCode permissions, reconciles Weave-owned agents safely (`list → reconcile → create/update` with ownership/collision protection), resolves models with fail-fast validation, and exposes agents via the plugin `config` hook. Not yet at full legacy `opencode-weave` parity: the in-harness command lifecycle, broader workflow runtime, skill MCP mounting, and health/metrics surfaces are still separate work. |
+| Claude Code | File materialization. Generates a Claude Code plugin via `weave compose` (agents, model aliasing, tool classification, skill discovery, settings). No runtime workflow or lifecycle features. |
+| Pi and others | Planned. The engine/adapter boundary supports additional harnesses; no adapter package exists yet. |
+
+For normative status and non-goals, see [Adapter Readiness Status](./docs/adapter-readiness-status.md).
+
+## Development
+
+```bash
+bun run typecheck        # type-check all packages
+bun test                 # run all tests
+bun run validate-config  # validate this repo's own .weave config
+bun run docs:dev         # run the in-repo docs site locally
+bun run clean            # remove all dist/ folders
+```
+
+## Publishing
+
+All packages are published under the `@weaveio` scope.
 
 ## License
 
