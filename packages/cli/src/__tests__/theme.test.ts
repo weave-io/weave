@@ -144,6 +144,13 @@ describe("banner and help rendering", () => {
     expect(text).toContain("prompt self-modify");
   });
 
+  it("renderHelp includes compose in commands", () => {
+    const theme = themeManager.getTheme(false);
+    const help = themeRenderer.renderHelp(theme);
+    const text = help.join("\n");
+    expect(text).toContain("compose");
+  });
+
   it("renderHelp --scope help text mentions both init and prompt self-modify", () => {
     const theme = themeManager.getTheme(false);
     const help = themeRenderer.renderHelp(theme);

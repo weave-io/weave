@@ -35,6 +35,7 @@ export class ThemeRenderer {
       `    ${theme.cyan("prompt list")}                  ${theme.dim("List all available agent names")}`,
       `    ${theme.cyan("prompt self-modify")}           ${theme.dim("Print the Weave self-modification guide")}`,
       `    ${theme.cyan("validate")}                    ${theme.dim("Validate .weave configuration files")}`,
+      `    ${theme.cyan("compose --adapter <name>")}    ${theme.dim("Materialize agents into a harness plugin (claude-code)")}`,
       `    ${theme.cyan("runtime status")}              ${theme.dim("Show runtime store status")}`,
       `    ${theme.cyan("runtime journal")}             ${theme.dim("Show recent journal entries (--limit <n>)")}`,
       `    ${theme.cyan("eval run")}                    ${theme.dim("Run configured evals (--agent --model --case --dry-run)")}`,
