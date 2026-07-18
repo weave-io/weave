@@ -1,6 +1,6 @@
 # Claude Code Adapter
 
-> **Status**: Initial implementation — materialization adapter (`@weaveio/weave-adapter-claude-code` exists with agent translation, tool classification, model resolution, and skill discovery).
+> **Status**: Initial implementation — materialization adapter with native command entrypoints (`@weaveio/weave-adapter-claude-code` exists with agent translation, tool classification, model resolution, skill discovery, and plugin slash command emission).
 > **Purpose**: Define what is required to create `@weaveio/weave-adapter-claude-code` using the legacy OpenCode feature set as a comparison baseline.
 
 **Related:** [Product Vision](product-vision.md) · [Adapter Boundary](adapter-boundary.md) · [Legacy Architecture](legacy-architecture.md) · [Model Resolution](model-resolution.md) · [Tool Policy Evaluation](tool-policy-evaluation.md) · [Harness Agent Surface Patterns](harness-agent-surface-patterns.md) · [Spec 07 — Adapter Capability Contract](specs/07-spec-adapter-capability-contract/07-spec-adapter-capability-contract.md) · [Spec 09 — Adapter-Provided Skill Resolution](specs/09-spec-adapter-provided-skill-resolution/09-spec-adapter-provided-skill-resolution.md)
@@ -9,7 +9,7 @@
 
 ## Summary
 
-A Claude Code adapter is feasible with Weave's current engine surfaces, but the first version should be treated as a **materialization adapter**, not a full legacy-OpenCode-equivalent runtime adapter.
+A Claude Code adapter is feasible with Weave's current engine surfaces. The first version is a **materialization adapter with native command entrypoints** that achieves parity with the OpenCode adapter's explicit execution-entry model.
 
 Weave can already normalize or resolve:
 
@@ -20,13 +20,26 @@ Weave can already normalize or resolve:
 - adapter capability declarations
 - adapter-provided skills
 
-The Claude Code adapter would translate those normalized descriptors into Claude Code's filesystem conventions:
+The Claude Code adapter translates those normalized descriptors into Claude Code's plugin conventions:
 
 - `.claude/agents/*.md` for subagents
-- `.claude/commands/*.md` and `~/.claude/commands/*.md` for command-like skills
+- `.claude/commands/*.md` for plugin slash commands (including execution entrypoints)
+- `~/.claude/commands/*.md` for global command-like skills
 - `~/.claude/settings.json` and project `.claude/settings.json` where safe for settings-level integration
 
-The main gap versus the legacy OpenCode baseline is runtime lifecycle control. Legacy OpenCode-Weave was a plugin inside OpenCode's lifecycle and could observe session events, route commands, inject prompts, pause execution, track analytics, and coordinate workflows. Claude Code's public file-based integration surface is strong for agents and commands, but it is not sufficient for this runtime class of features.
+### Execution Trigger: Native Plugin Slash Commands
+
+The Claude Code adapter achieves parity with the OpenCode adapter's explicit execution-entry model by emitting command files during `flush()`. These command files register native plugin slash commands that the user invokes directly:
+
+- **`/weave:start`** - General execution entry point. Starts the default workflow execution path (typically `plan-and-execute`). Calls the engine's `startExecution()` lifecycle method to create a `WorkflowInstance`, acquire an `ExecutionLease`, and dispatch the first step (usually Tapestry for plan execution).
+
+- **`/weave:start-work`** - Legacy-compatible execution entry point. Equivalent to `/weave:start` but uses the older naming convention for backward compatibility with OpenCode workflows.
+
+Both commands are materialized as `.claude/commands/weave-start.md` and `.claude/commands/weave-start-work.md` during the adapter's `flush()` call. The command files contain the prompt instructions and metadata that register them as native Claude Code plugin slash commands. When the user invokes either command, Claude Code executes the command file, which activates Tapestry through the engine's workflow execution contract.
+
+This delivery mechanism provides `command-entrypoints: native` readiness - the same explicit user-authorized trigger model as the OpenCode adapter's `/run-workflow` command, but using Claude Code's native plugin slash command surface instead of OpenCode's command API.
+
+The main gap versus the legacy OpenCode baseline is runtime lifecycle control beyond execution entry. Legacy OpenCode-Weave was a plugin inside OpenCode's lifecycle and could observe session events, route commands, inject prompts, pause execution, track analytics, and coordinate workflows. Claude Code's plugin slash command surface is sufficient for explicit execution entry (solving the `command-entrypoints` capability), but it is not sufficient for the full runtime class of features.
 
 The legacy runtime features listed as initially unsupported below **must be supported through a Claude Code lifecycle/plugin API**. Weave should not claim support for workflow persistence, workflow step dispatch, idle continuation, compaction recovery, context-window monitoring, analytics, eval execution, or multiple active workflows unless the Claude Code adapter has a real lifecycle/plugin integration point that can observe and control the relevant runtime events.
 
@@ -189,7 +202,7 @@ The first Claude Code adapter should declare partial support explicitly. Unsuppo
 | Prompt composition | `native` | Agent markdown bodies are prompt material. |
 | Tool-policy mapping | `emulated` | Abstract policy can be translated to Claude Code tool names, but semantics may be coarser than Weave's internal policy model. |
 | Plan-file compatibility | `emulated` | `.weave/plans/*.md` remains ordinary project files readable by Claude Code agents. |
-| Command entrypoints | `emulated` | `.claude/commands/*.md` can represent command-like entrypoints. |
+| Command entrypoints | `native` | Plugin slash commands (`/weave:start`, `/weave:start-work`) emitted during `flush()` provide explicit user-authorized execution triggers. |
 | Static artifact generation | `emulated` | The adapter can write generated files. |
 | Event logging | `native` or `degraded` | Claude Code may expose logs, but not necessarily all events Weave needs for legacy analytics/workflows. |
 | Workflow persistence | `unsupported` | See below. |

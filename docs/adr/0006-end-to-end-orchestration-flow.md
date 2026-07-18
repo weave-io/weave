@@ -91,7 +91,7 @@ After planning (or after plan review, if the user has configured a `user_confirm
 | Harness | Delivery form |
 | --- | --- |
 | OpenCode | `/run-workflow` command or `runWorkflow()` helper (`packages/adapters/opencode/src/run-workflow.ts`) |
-| Claude Code | Skill invocation or script call |
+| Claude Code | Native plugin slash command (`/weave:start`) |
 | Pi | Equivalent explicit user action |
 | Any harness | `command-entrypoints` readiness: `native`, `emulated`, `degraded`, or `unsupported` |
 

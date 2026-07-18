@@ -8,17 +8,28 @@
  */
 
 import { join } from "node:path";
-import { okAsync, errAsync, ResultAsync } from "neverthrow";
-import type { HarnessAdapter, AgentDescriptor, SkillInfo } from "@weaveio/weave-engine";
-import { resolveToolDecisions, resolveAdapterModelIntent } from "@weaveio/weave-engine";
-import { logger } from "@weaveio/weave-engine";
+import type {
+  AgentDescriptor,
+  HarnessAdapter,
+  SkillInfo,
+} from "@weaveio/weave-engine";
+import {
+  logger,
+  resolveAdapterModelIntent,
+  resolveToolDecisions,
+} from "@weaveio/weave-engine";
+import { errAsync, okAsync, ResultAsync } from "neverthrow";
 import { translateAgentToMarkdown } from "./agent-translation.js";
 import {
-  getClaudeCodeToolClassifications,
-  CLAUDE_CODE_TOOL_IDS,
-} from "./tool-classification.js";
+  CC_START_WORK_COMMAND,
+  CC_WEAVE_START_COMMAND,
+} from "./command-templates.js";
 import { buildClaudeCodeModelInput } from "./model-resolution.js";
 import { discoverClaudeCodeSkills } from "./skill-discovery.js";
+import {
+  CLAUDE_CODE_TOOL_IDS,
+  getClaudeCodeToolClassifications,
+} from "./tool-classification.js";
 
 const log = logger.child({ module: "adapter-claude-code" });
 
@@ -69,7 +80,8 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
     this.projectRoot = options.projectRoot;
     this.homeDir = options.homeDir;
     this.outDir =
-      options.outDir ?? join(options.projectRoot, ".weave", "plugins", "claude-code");
+      options.outDir ??
+      join(options.projectRoot, ".weave", "plugins", "claude-code");
     this.readDir = options.readDir ?? defaultReadDir;
     this.readFile = options.readFile ?? defaultReadFile;
     this.writeFile = options.writeFile ?? defaultWriteFile;
@@ -104,7 +116,10 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
         return skills;
       },
       (error) => {
-        log.warn({ err: error }, "Skill discovery failed — returning empty list");
+        log.warn(
+          { err: error },
+          "Skill discovery failed — returning empty list",
+        );
         return [];
       },
     );
@@ -162,7 +177,11 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
       .filter((d) => d.kind === "mapped" && d.permission !== "deny")
       .map((d) => d.toolId);
 
-    return translateAgentToMarkdown({ descriptor, resolvedModel, allowedTools });
+    return translateAgentToMarkdown({
+      descriptor,
+      resolvedModel,
+      allowedTools,
+    });
   }
 
   private async doFlush(): Promise<void> {
@@ -185,8 +204,12 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
     } else {
       // Clean up any .md files not in the current pending set so renamed/deleted
       // agents don't leave ghost files behind.
-      const pendingNames = new Set(this.pendingAgents.map((a) => `${a.name}.md`));
-      const existing = await this.readDir(agentsDir).catch(() => [] as string[]);
+      const pendingNames = new Set(
+        this.pendingAgents.map((a) => `${a.name}.md`),
+      );
+      const existing = await this.readDir(agentsDir).catch(
+        () => [] as string[],
+      );
       for (const file of existing) {
         if (file.endsWith(".md") && !pendingNames.has(file)) {
           await this.removeFile(join(agentsDir, file));
@@ -197,7 +220,10 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
     for (const agent of this.pendingAgents) {
       const filePath = join(agentsDir, `${agent.name}.md`);
       await this.writeFile(filePath, agent.markdown);
-      log.info({ agent: agent.name, file: filePath }, "Flushed Claude Code agent");
+      log.info(
+        { agent: agent.name, file: filePath },
+        "Flushed Claude Code agent",
+      );
     }
 
     // settings.json — only when a "loom" agent was accumulated
@@ -207,7 +233,63 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
         join(this.outDir, "settings.json"),
         JSON.stringify({ agent: "loom" }, null, 2),
       );
-      log.info({ outDir: this.outDir }, "Wrote settings.json (loom agent present)");
+      log.info(
+        { outDir: this.outDir },
+        "Wrote settings.json (loom agent present)",
+      );
+    }
+
+    // commands/<name>.md — only when a "tapestry" agent was accumulated
+    const hasTapestry = this.pendingAgents.some((a) => a.name === "tapestry");
+    if (hasTapestry) {
+      const commandsDir = join(this.outDir, "commands");
+      const commandsDirExists = await this.exists(commandsDir);
+      if (!commandsDirExists) {
+        await this.mkdir(commandsDir);
+      } else {
+        // Clean up any .md files not in the current command set so stale
+        // commands don't remain after tapestry is removed.
+        const commandNames = new Set(["start.md", "start-work.md"]);
+        const existing = await this.readDir(commandsDir).catch(
+          () => [] as string[],
+        );
+        for (const file of existing) {
+          if (file.endsWith(".md") && !commandNames.has(file)) {
+            await this.removeFile(join(commandsDir, file));
+            log.info({ file }, "Removed stale Claude Code command file");
+          }
+        }
+      }
+      await this.writeFile(
+        join(commandsDir, "start.md"),
+        CC_WEAVE_START_COMMAND,
+      );
+      await this.writeFile(
+        join(commandsDir, "start-work.md"),
+        CC_START_WORK_COMMAND,
+      );
+      log.info(
+        { outDir: this.outDir },
+        "Wrote command files (tapestry agent present)",
+      );
+    } else {
+      // If tapestry is not present, clean up the entire commands directory
+      const commandsDir = join(this.outDir, "commands");
+      const commandsDirExists = await this.exists(commandsDir);
+      if (commandsDirExists) {
+        const existing = await this.readDir(commandsDir).catch(
+          () => [] as string[],
+        );
+        for (const file of existing) {
+          if (file.endsWith(".md")) {
+            await this.removeFile(join(commandsDir, file));
+            log.info(
+              { file },
+              "Removed command file (tapestry agent not present)",
+            );
+          }
+        }
+      }
     }
 
     log.info(
