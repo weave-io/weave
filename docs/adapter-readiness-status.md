@@ -252,6 +252,22 @@ and [ADR 0004 — Workflow-First Execution Contract](adr/0004-workflow-first-exe
 
 ---
 
+## Claude Code Adapter
+
+`@weaveio/weave-adapter-claude-code` is a Claude Code plugin that materializes Weave agents and exposes execution commands through native plugin slash commands.
+
+### Command entrypoints
+
+| Capability | Status | Notes |
+| --- | --- | --- |
+| `command-entrypoints` | `native` | Plugin emits `/weave:start` and `/weave:start-work` slash commands into the composed plugin directory during `flush()` |
+
+The Claude Code adapter achieves parity with the OpenCode adapter's explicit execution-entry model by emitting command files that register native plugin slash commands. When the user invokes `/weave:start` or `/weave:start-work`, the command file activates Tapestry through the engine's `startExecution` lifecycle surface. The commands are materialized during the adapter's `flush()` call, which writes all composed plugin artifacts (agents, commands, settings) to the Claude Code plugin directory.
+
+See [Claude Code Adapter](claude-code-adapter.md) for the full execution trigger documentation and command-file materialization details.
+
+---
+
 ## OpenCode Adapter Delivery Evidence (Task 6.3)
 
 `@weaveio/weave-adapter-opencode` provides the canonical example of an adapter-owned projection of the engine-owned execution contract. The delivery path is `packages/adapters/opencode/src/run-workflow.ts` — an explicit user-driven helper that calls `startExecution` only when invoked deliberately by a user-authorized trigger.

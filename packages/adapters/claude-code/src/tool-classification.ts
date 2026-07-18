@@ -23,6 +23,7 @@ export const CLAUDE_CODE_TOOL_CLASSIFICATIONS: readonly ConcreteToolClassificati
     { toolId: "MultiEdit", capability: "write" },
     { toolId: "Bash", capability: "execute" },
     { toolId: "Task", capability: "delegate" },
+    { toolId: "Agent", capability: "delegate" },
     { toolId: "WebFetch", capability: "network" },
     { toolId: "WebSearch", capability: "network" },
   ] as const;
