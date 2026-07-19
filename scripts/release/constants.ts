@@ -31,6 +31,79 @@ export const PUBLIC_PACKAGES = {
 
 export type PublicPackageName = keyof typeof PUBLIC_PACKAGES;
 
+/** Third-party packages that are intentionally resolved by a packed artifact. */
+export const PUBLIC_RUNTIME_EXTERNALS = [
+  "@clack/prompts",
+  "@langchain/core",
+  "@langchain/openai",
+  "@opencode-ai/plugin",
+  "@opencode-ai/sdk",
+  "agentevals",
+  "figlet",
+  "mustache",
+  "neverthrow",
+  "openevals",
+  "zod",
+] as const;
+
+export interface PublicBuildEntry {
+  source: string;
+  output: string;
+  executable?: boolean;
+}
+
+export interface PublicPackageBuild {
+  entries: readonly PublicBuildEntry[];
+  bootstrap?: readonly string[];
+}
+
+/** Entry points and assets that define each self-contained public runtime. */
+export const PUBLIC_PACKAGE_BUILDS = {
+  "@weaveio/weave-cli": {
+    entries: [
+      {
+        source: "packages/cli/src/index.ts",
+        output: "packages/cli/dist/index.js",
+      },
+      {
+        source: "packages/cli/src/main.ts",
+        output: "packages/cli/dist/main.js",
+        executable: true,
+      },
+    ],
+    bootstrap: [
+      ".claude-plugin/plugin.json",
+      "hooks/hooks.json",
+      "skills/compose/SKILL.md",
+    ],
+  },
+  "@weaveio/weave-adapter-opencode": {
+    entries: [
+      {
+        source: "packages/adapters/opencode/src/index.ts",
+        output: "packages/adapters/opencode/dist/index.js",
+      },
+      {
+        source: "packages/adapters/opencode/src/plugin.ts",
+        output: "packages/adapters/opencode/dist/plugin.js",
+      },
+    ],
+  },
+  "@weaveio/weave-adapter-claude-code": {
+    entries: [
+      {
+        source: "packages/adapters/claude-code/src/index.ts",
+        output: "packages/adapters/claude-code/dist/index.js",
+      },
+    ],
+    bootstrap: [
+      ".claude-plugin/plugin.json",
+      "hooks/hooks.json",
+      "skills/compose/SKILL.md",
+    ],
+  },
+} as const satisfies Record<PublicPackageName, PublicPackageBuild>;
+
 /** Fields that may cross from a source workspace manifest into an npm artifact. */
 export const PUBLIC_MANIFEST_FIELDS = [
   "name",
