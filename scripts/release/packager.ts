@@ -361,17 +361,18 @@ if (import.meta.main) {
   }
 }
 
-function stablePackageVersions(
+export function stablePackageVersions(
   versions: Readonly<Record<string, string>> | undefined,
 ): Readonly<Record<string, string>> | undefined {
   if (versions === undefined) return undefined;
-  const cli = versions["@weaveio/weave-cli"];
-  const opencode = versions["@weaveio/weave-adapter-opencode"];
-  if (cli === undefined || opencode === undefined) return undefined;
-  return {
-    "@weaveio/weave-cli": cli,
-    "@weaveio/weave-adapter-opencode": opencode,
-  };
+  const stable = Object.fromEntries(
+    Object.entries(versions).filter(
+      ([name]) =>
+        name === "@weaveio/weave-cli" ||
+        name === "@weaveio/weave-adapter-opencode",
+    ),
+  );
+  return Object.keys(stable).length === 0 ? undefined : stable;
 }
 
 function parsePlannedVersions(

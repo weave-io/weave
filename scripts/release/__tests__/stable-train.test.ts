@@ -3,6 +3,7 @@ import { okAsync } from "neverthrow";
 import { STABLE_TRAIN_STATES, STABLE_TRAIN_TRANSITIONS } from "../constants.js";
 import {
   assertCurrentArtifactIdentity,
+  bindStableTrain,
   guardTrainExpiry,
   partialPublishRecoveryMetadata,
   planStableCut,
@@ -179,6 +180,23 @@ describe("stable train records", () => {
         [17],
       ).isErr(),
     ).toBe(true);
+  });
+  it("progresses cut through built and bound once, preserving immutable train intent", () => {
+    const bound = bindStableTrain(
+      record as never,
+      `sha256:${"d".repeat(64)}`,
+      [17, 18],
+    );
+    expect(bound.isOk()).toBe(true);
+    if (bound.isErr()) return;
+    expect(bound.value.state).toBe("bound");
+    expect(bound.value.artifactIds).toEqual([17, 18]);
+    const { recordDigest: _digest, ...boundContent } = bound.value;
+    expect(bound.value.recordDigest).toBe(trainRecordDigest(boundContent));
+    expect(
+      bindStableTrain(bound.value, `sha256:${"e".repeat(64)}`, [19]).isErr(),
+    ).toBe(true);
+    expect(transitionStableTrain(bound.value, "prepared").isErr()).toBe(true);
   });
   it("skips partial-publish reserved versions on a fresh main cut", () => {
     const partial = { ...content, state: "partial" as const };

@@ -99,7 +99,9 @@ export class FixtureGitHub implements GitHubClient {
   constructor(
     private readonly fixture: ReturnType<typeof nightlyFixture>,
     private readonly overrides: Partial<WorkflowRunMetadata> = {},
-    private readonly downloadedBytes = FIXTURE_BYTES,
+    private readonly downloadedBytes:
+      | Uint8Array
+      | Readonly<Record<number, Uint8Array>> = FIXTURE_BYTES,
     private readonly jobConclusion: "success" | "failure" | null = "success",
   ) {}
   getWorkflowRun() {
@@ -133,8 +135,12 @@ export class FixtureGitHub implements GitHubClient {
         })
       : okAsync(artifact);
   }
-  downloadArtifact() {
-    return okAsync(this.downloadedBytes);
+  downloadArtifact(id: number) {
+    return okAsync(
+      this.downloadedBytes instanceof Uint8Array
+        ? this.downloadedBytes
+        : (this.downloadedBytes[id] ?? FIXTURE_BYTES),
+    );
   }
   createRelease() {
     return okAsync(undefined);

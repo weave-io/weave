@@ -39,6 +39,10 @@ if (parsedTrain.isErr()) {
   log.error("invalid stable train record");
   process.exit(2);
 }
+if (parsedTrain.value.state !== "awaiting-promotion") {
+  log.error("stable finalize requires an awaiting-promotion train record");
+  process.exit(2);
+}
 
 const files: FileSystem = {
   exists: () => okAsync(false),
