@@ -31,6 +31,7 @@ The published docs site is built from the Astro + Starlight package at [`package
 | [Category Routing Findings](category-routing-findings.md) | Phase 1 prompt-enrichment eval results, acceptance gate outcomes, token cost, scaling data, and Phase 2 deterministic matcher decision |
 | [Legacy Architecture](legacy-architecture.md) | Alpha / OpenCode-era reference (read-only history) |
 | [Stable Release Trains](stable-release-trains.md) | Stable cut, CAS fix, immutable checkout, and expiry policy |
+| [Release Automation](release-automation.md) | Artifact identity, OIDC publishing, channels, and manual MFA `latest` promotion |
 
 ---
 

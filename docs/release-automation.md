@@ -1,0 +1,45 @@
+# Release automation architecture
+
+Weave uses an artifact-first release pipeline: protected control code builds
+public tarballs, records an artifact manifest, binds that manifest to immutable
+GitHub Actions artifact metadata, and only then publishes. See the stable-train
+operator procedure in [RELEASING.md](../RELEASING.md) and the source boundary in
+[`scripts/release/`](../scripts/release/).
+
+## Identity and artifacts
+
+The release-control binary runs in an isolated clean room. A binding record
+links the release subject SHA, protected workflow SHA, workflow run, server
+artifact IDs/digests, manifest, package versions, and file SHA-256s. The
+registry verification then fetches the public tarball without credentials and
+checks its SHA-256 against the bound artifact. This avoids trusting a workspace
+checkout or an artifact name alone.
+
+## OIDC trust chain and channels
+
+GitHub's release environment approves the OIDC identity used for npm trusted
+publishing. The workflow denies credential sources and has no npm token. Nightly
+versions publish to `nightly`; stable-train CLI and OpenCode versions first
+publish to `next`. A successful stable publish emits an authorization record
+with the exact subject, versions, and digests.
+
+`latest` is intentionally different. npm trusted publishing currently cannot
+run `npm dist-tag add` ([npm/cli#8547](https://github.com/npm/cli/issues/8547)).
+Fully automatic tokenless promotion is therefore impossible today. The workflow
+never contains a dist-tag mutation and the command runner only permits
+read-only `npm dist-tag ls`; a second maintainer uses MFA interactively after
+the authorization and both `next` tarballs are reverified. A read-only
+`stable-finalize` job proves both `latest` tags and tarball digests before later
+App release work may run.
+
+If policy removes the interactive exception, stable promotion must be disabled
+until npm adds supported trusted-publisher dist-tag mutation and Weave retests
+the complete flow. An automation token is not an acceptable substitute.
+
+## Immutability and attestations
+
+Published versions and their tarballs are immutable. Dist-tags are mutable
+pointers and never substitute for a version/digest proof. We accept the
+platform's GitHub Actions artifact identity and npm provenance path; Weave does
+not invent a custom attestation or SBOM format. Registry tarball SHA-256
+verification is the release-specific integrity check.

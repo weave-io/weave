@@ -92,6 +92,13 @@ if (result.isErr()) {
   log.error({ error: result.error }, "release failed");
   process.exit(1);
 }
+if (
+  result.value.state === "published" &&
+  result.value.promotionAuthorization !== undefined
+)
+  process.stdout.write(
+    `${JSON.stringify({ promotionAuthorization: result.value.promotionAuthorization })}\n`,
+  );
 if (dryRun)
   process.stdout.write(
     `${JSON.stringify({
@@ -147,6 +154,7 @@ function registryClient(): NpmRegistryClient {
     viewVersion: () => okAsync(""),
     listVersions: () => okAsync([]),
     viewDistTags: () => okAsync({}),
+    distTagLs: () => okAsync({}),
     verifyPublished: () => okAsync(undefined),
   };
 }

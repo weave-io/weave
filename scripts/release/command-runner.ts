@@ -78,5 +78,12 @@ function validate(argv: readonly string[]): string | undefined {
       (argv.length === 5 && argv[3] === "versions" && argv[4] === "--json"))
   )
     return undefined;
+  if (
+    argv[1] === "dist-tag" &&
+    argv[2] === "ls" &&
+    argv.length === 5 &&
+    argv[4] === "--json"
+  )
+    return undefined;
   return "npm subcommand or arguments are not allowlisted";
 }
