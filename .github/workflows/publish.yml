@@ -337,3 +337,4 @@ jobs:
           RELEASE_PROMOTION_AUTHORIZATION: ${{ inputs.promotion-authorization }}
           RELEASE_PAYLOAD_ARTIFACT_ID: ${{ needs.build.outputs.payload-artifact-id }}
           RELEASE_PAYLOAD_DIRECTORY: .release-payload
+          RELEASE_RELEASE_NOTES: Automated release
