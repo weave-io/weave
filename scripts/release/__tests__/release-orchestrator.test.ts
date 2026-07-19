@@ -27,6 +27,19 @@ describe("release command allowlist", () => {
     expect(result.isErr()).toBe(true);
     if (result.isErr()) expect(result.error.type).toBe("CommandRejected");
   });
+  test("rejects a leading-dash tarball before spawning", async () => {
+    const result = await new BunCommandRunner().run([
+      "npm",
+      "publish",
+      "-x.tgz",
+      "--access",
+      "public",
+      "--tag",
+      "nightly",
+    ]);
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) expect(result.error.type).toBe("CommandRejected");
+  });
   test("rejects unexpected npm commands and extra flags", async () => {
     expect(
       (await new BunCommandRunner().run(["npm", "install", "x"])).isErr(),
@@ -532,6 +545,8 @@ function bindingVerification(): {
     record: record.value,
     context: {
       expectedWorkflowSha: "b".repeat(40),
+      expectedRunId: 1,
+      expectedRunAttempt: 1,
       expectedOperation: "nightly",
       expectedHeadRef: "refs/heads/main",
       expectedHeadSha: "a".repeat(40),

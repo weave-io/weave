@@ -335,10 +335,10 @@ export class GitHubRestClient
 
   private requestJson(path: string): ResultAsync<unknown, GitHubError> {
     return this.request(path).andThen((response) =>
-      ResultAsync.fromPromise(
-        Promise.resolve(JSON.parse(new TextDecoder().decode(response))),
+      ResultAsync.fromThrowable(
+        () => Promise.resolve(JSON.parse(new TextDecoder().decode(response))),
         () => invalidResponse(path),
-      ),
+      )(),
     );
   }
 
@@ -347,10 +347,10 @@ export class GitHubRestClient
     init: RequestInit,
   ): ResultAsync<unknown, GitHubError> {
     return this.request(path, init).andThen((response) =>
-      ResultAsync.fromPromise(
-        Promise.resolve(JSON.parse(new TextDecoder().decode(response))),
+      ResultAsync.fromThrowable(
+        () => Promise.resolve(JSON.parse(new TextDecoder().decode(response))),
         () => invalidResponse(path),
-      ),
+      )(),
     );
   }
   private requestAbsoluteJson(
@@ -370,7 +370,10 @@ export class GitHubRestClient
       }),
     ).andThen((response) =>
       response.ok
-        ? ResultAsync.fromPromise(response.json(), () => invalidResponse(url))
+        ? ResultAsync.fromThrowable(
+            () => response.json(),
+            () => invalidResponse(url),
+          )()
         : errAsync({
             type: "GitHubError" as const,
             operation: url,

@@ -31,6 +31,9 @@ versions publish to `nightly`; stable-train CLI and OpenCode versions first
 publish to `next`. A successful stable publish emits an authorization record
 with the exact subject, versions, and digests.
 
+The publish job's npm CLI is the sole sanctioned exception to Weave's Bun-only
+runtime rule because npm >=11.5.1 is required for OIDC trusted publishing.
+
 `latest` is intentionally different. npm trusted publishing currently cannot
 run `npm dist-tag add` ([npm/cli#8547](https://github.com/npm/cli/issues/8547)).
 Fully automatic tokenless promotion is therefore impossible today. The workflow

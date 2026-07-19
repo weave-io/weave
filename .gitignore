@@ -44,3 +44,4 @@ eval-bundles/
 tmp/
 temp/
 dist-release-control/
+.release/

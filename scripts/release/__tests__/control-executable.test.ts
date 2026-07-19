@@ -181,6 +181,8 @@ test("compiled control dry-runs publication from a clean directory", async () =>
         RELEASE_WORKFLOW_SHA: "b".repeat(40),
         RELEASE_HEAD_REF: "refs/heads/main",
         RELEASE_HEAD_SHA: "a".repeat(40),
+        RELEASE_RUN_ID: "1",
+        RELEASE_RUN_ATTEMPT: "1",
         RELEASE_GITHUB_API_URL: server.url.toString().replace(/\/$/, ""),
       },
       stdout: "pipe",

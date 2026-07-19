@@ -19,6 +19,7 @@ import {
 } from "./model.js";
 
 const PositiveIntegerSchema = z.coerce.number().int().positive();
+const EnvironmentPositiveIntegerSchema = z.coerce.number().int().positive();
 const ArtifactUploadInputSchema = z
   .object({
     serverArtifactId: PositiveIntegerSchema,
@@ -48,6 +49,20 @@ export const ArtifactBindingCliInputSchema = z
   .strict();
 export type ArtifactBindingCliInput = z.infer<
   typeof ArtifactBindingCliInputSchema
+>;
+
+/** Required, identity-bearing environment supplied by the publish workflow. */
+export const ReleaseControlEnvironmentSchema = z
+  .object({
+    workflowSha: FullShaSchema,
+    headRef: CanonicalRefSchema,
+    headSha: FullShaSchema,
+    runId: EnvironmentPositiveIntegerSchema,
+    runAttempt: EnvironmentPositiveIntegerSchema.max(1000),
+  })
+  .strict();
+export type ReleaseControlEnvironment = z.infer<
+  typeof ReleaseControlEnvironmentSchema
 >;
 
 const DispatchSchema = ReleaseIdentitySchema.extend({
@@ -132,4 +147,24 @@ export function validateReleaseInvocation(
       issues: parsed.error.issues,
     });
   return ok(parsed.data);
+}
+
+export function validateReleaseControlEnvironment(
+  input: unknown,
+): Result<ReleaseControlEnvironment, InputValidationError> {
+  const parsed = ReleaseControlEnvironmentSchema.safeParse(input);
+  if (!parsed.success)
+    return err({
+      type: "InvalidReleaseInvocation",
+      issues: parsed.error.issues,
+    });
+  return ok(parsed.data);
+}
+
+/** API overrides are an isolated dry-run seam and never receive production tokens. */
+export function releaseGitHubApiUrl(
+  dryRun: boolean,
+  configuredUrl: string | undefined,
+): string | undefined {
+  return dryRun ? configuredUrl : undefined;
 }

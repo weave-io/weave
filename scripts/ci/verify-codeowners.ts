@@ -19,6 +19,7 @@ export const REQUIRED_RELEASE_OWNER_PATHS = [
   "scripts/ci/verify-codeowners.ts",
   "scripts/ci/__tests__/verify-action-pins.test.ts",
   "scripts/ci/__tests__/verify-codeowners.test.ts",
+  "scripts/validate-api-extractor-configs.ts",
   ".changeset/example.md",
   "package.json",
   "packages/core/package.json",
@@ -48,6 +49,9 @@ export const REQUIRED_RELEASE_OWNER_PATHS = [
   "scripts/build-public-packages.ts",
   "scripts/build-release-control.ts",
   "packages/cli/src/main.ts",
+  "packages/core/src/index.ts",
+  "packages/config/src/index.ts",
+  "packages/engine/src/index.ts",
   "packages/adapters/opencode/src/index.ts",
   "packages/adapters/claude-code/src/index.ts",
 ] as const;
