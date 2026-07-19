@@ -84,7 +84,7 @@ describe("ClaudeCodeAdapter", () => {
 
     const skills = await adapter.loadAvailableSkills();
     expect(skills.length).toBeGreaterThanOrEqual(1);
-    expect(skills[0]!.name).toBe("my-skill");
+    expect(skills[0]?.name).toBe("my-skill");
   });
 
   it("loadAvailableSkills returns empty on discovery failure", async () => {
@@ -129,7 +129,9 @@ describe("ClaudeCodeAdapter", () => {
       k.endsWith("plugin.json"),
     );
     expect(pluginJsonPath).toBeDefined();
-    const parsed = JSON.parse(written[pluginJsonPath!]!);
+    const pluginJson = pluginJsonPath ? written[pluginJsonPath] : undefined;
+    expect(pluginJson).toBeDefined();
+    const parsed = JSON.parse(pluginJson ?? "");
     expect(parsed).toMatchObject({ name: "weave", version: "1.0.0" });
   });
 
@@ -144,8 +146,10 @@ describe("ClaudeCodeAdapter", () => {
       (k) => k.includes("agents") && k.endsWith("loom.md"),
     );
     expect(agentPath).toBeDefined();
-    expect(written[agentPath!]).toContain("name: loom");
-    expect(written[agentPath!]).toContain("You are a test agent.");
+    const agent = agentPath ? written[agentPath] : undefined;
+    expect(agent).toBeDefined();
+    expect(agent).toContain("name: loom");
+    expect(agent).toContain("You are a test agent.");
   });
 
   it("flush writes settings.json when loom agent is present", async () => {

@@ -170,7 +170,6 @@ describe("ClaudeCodeAdapter — integration (full pipeline)", () => {
   it("writes .claude-plugin/plugin.json with correct metadata", () => {
     const key = Object.keys(written).find((k) => k.endsWith("plugin.json"));
     expect(key).toBeDefined();
-    // biome-ignore lint/style/noNonNullAssertion: the assertion immediately above requires this fixture output.
     const parsed = JSON.parse(written[key!]!);
     expect(parsed).toMatchObject({ name: "weave", version: "1.0.0" });
   });
@@ -184,7 +183,6 @@ describe("ClaudeCodeAdapter — integration (full pipeline)", () => {
       (k) => k.includes("agents") && k.endsWith("loom.md"),
     );
     expect(key).toBeDefined();
-    // biome-ignore lint/style/noNonNullAssertion: the assertion immediately above requires this fixture output.
     const fm = parseFrontmatter(written[key!]!);
     expect(fm.name).toBe("loom");
     expect(typeof fm.model).toBe("string");
@@ -196,7 +194,6 @@ describe("ClaudeCodeAdapter — integration (full pipeline)", () => {
       (k) => k.includes("agents") && k.endsWith("loom.md"),
     );
     expect(key).toBeDefined();
-    // biome-ignore lint/style/noNonNullAssertion: the assertion immediately above requires this fixture output.
     const fm = parseFrontmatter(written[key!]!);
     const tools = fm.tools as string[];
     expect(Array.isArray(tools)).toBe(true);
@@ -209,7 +206,6 @@ describe("ClaudeCodeAdapter — integration (full pipeline)", () => {
       (k) => k.includes("agents") && k.endsWith("loom.md"),
     );
     expect(key).toBeDefined();
-    // biome-ignore lint/style/noNonNullAssertion: the assertion immediately above requires this fixture output.
     expect(written[key!]).toContain("You are Loom");
   });
 
@@ -222,7 +218,6 @@ describe("ClaudeCodeAdapter — integration (full pipeline)", () => {
       (k) => k.includes("agents") && k.endsWith("shuttle.md"),
     );
     expect(key).toBeDefined();
-    // biome-ignore lint/style/noNonNullAssertion: the assertion immediately above requires this fixture output.
     const content = written[key!]!;
     // Task is absent because delegate is denied
     expect(content).not.toContain("- Task");
