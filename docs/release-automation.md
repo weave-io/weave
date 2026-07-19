@@ -43,3 +43,49 @@ pointers and never substitute for a version/digest proof. We accept the
 platform's GitHub Actions artifact identity and npm provenance path; Weave does
 not invent a custom attestation or SBOM format. Registry tarball SHA-256
 verification is the release-specific integrity check.
+
+## Stable-train state machine
+
+`scripts/release/stable-train.ts` is the executable source of truth. Every state
+record is content-addressed; a transition creates a new digest.
+
+```mermaid
+stateDiagram-v2
+  prepared --> built --> bound --> published-next --> awaiting-promotion --> promoted
+  published-next --> partial
+  awaiting-promotion --> partial
+  promoted --> release-draft --> finalized --> metadata-pending
+  metadata-pending --> finalized
+  prepared --> abandoned
+  built --> abandoned
+  bound --> abandoned
+  release-draft --> abandoned
+  partial --> abandoned
+  expired --> abandoned
+```
+
+| State | Legal next states |
+| --- | --- |
+| prepared | built, blocked, abandoned, expired |
+| built | bound, blocked, abandoned, expired |
+| bound | published-next, blocked, abandoned, expired |
+| published-next | awaiting-promotion, partial, blocked, expired |
+| awaiting-promotion | promoted, partial, blocked, expired |
+| promoted | release-draft, finalized, metadata-pending, blocked |
+| release-draft | finalized, metadata-pending, blocked, abandoned |
+| finalized | metadata-pending |
+| metadata-pending | finalized, blocked |
+| blocked | abandoned, expired |
+| expired | abandoned |
+| abandoned | none |
+| partial | blocked, abandoned |
+
+Expiry forbids publish, finalize, and fix. Before publication, abandonment is
+clean. A partial publish is terminal for promotion: recovery metadata records its
+used versions and mandates a fresh-main cut, whose version derivation skips those
+reservations. Rebuilds, reruns, and fixes discard old artifact IDs/digests. A
+metadata collision transitions to `blocked` and trains remain serialized until
+the metadata replay PR merges; only then may its `release/*` branch be cleaned.
+After stable promotion, fix forward on `main` and cut anew. Emergency rollback
+can restore npm dist-tags interactively, but never changes npm versions, GitHub
+tags/releases, or attestations.

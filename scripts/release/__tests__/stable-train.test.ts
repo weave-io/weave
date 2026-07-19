@@ -1,7 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import { okAsync } from "neverthrow";
+import { STABLE_TRAIN_STATES, STABLE_TRAIN_TRANSITIONS } from "../constants.js";
 import {
+  assertCurrentArtifactIdentity,
   guardTrainExpiry,
+  partialPublishRecoveryMetadata,
   planStableCut,
   planStableFix,
   trainRecordDigest,
@@ -48,12 +51,21 @@ describe("stable train records", () => {
   ])("rejects %s", (_name, value) =>
     expect(validateStableTrain(value).isErr()).toBe(true));
 
-  it("permits only declared state transitions and redigests the record", () => {
-    const result = transitionStableTrain(record as never, "built");
-    expect(result.isOk()).toBe(true);
-    if (result.isErr()) return;
-    expect(result.value.recordDigest).not.toBe(record.recordDigest);
-    expect(transitionStableTrain(result.value, "finalized").isErr()).toBe(true);
+  it("formalizes the complete state × state transition matrix", () => {
+    for (const from of STABLE_TRAIN_STATES)
+      for (const to of STABLE_TRAIN_STATES) {
+        const stateful = { ...content, state: from };
+        const statefulRecord = {
+          ...stateful,
+          recordDigest: trainRecordDigest(stateful),
+        } as never;
+        const result = transitionStableTrain(statefulRecord, to);
+        const legal = (
+          STABLE_TRAIN_TRANSITIONS[from] as readonly string[]
+        ).includes(to);
+        expect(result.isOk(), `${from} -> ${to}`).toBe(legal);
+        if (result.isErr()) expect(result.error.type).toBe("InvalidTransition");
+      }
   });
   it("creates an exact seven-day server cut and consumes stable files only", () => {
     const plan = planStableCut({
@@ -128,5 +140,78 @@ describe("stable train records", () => {
         sleep: () => okAsync(undefined),
       }).isErr(),
     ).toBe(true);
+  });
+  it("rejects stale artifact identities from rebuilds and rerun attempts", () => {
+    const bound = {
+      ...record,
+      artifactIds: [17],
+      artifactManifestDigest: `sha256:${"c".repeat(64)}`,
+    } as never;
+    expect(
+      assertCurrentArtifactIdentity(
+        bound,
+        `sha256:${"c".repeat(64)}`,
+        [17],
+      ).isOk(),
+    ).toBe(true);
+    expect(
+      assertCurrentArtifactIdentity(
+        bound,
+        `sha256:${"d".repeat(64)}`,
+        [18],
+      ).isErr(),
+    ).toBe(true);
+    const rebuilt = planStableFix({
+      record: bound,
+      commits: [{ sha: "b".repeat(40), green: true, mergedToMain: true }],
+      expectedHeadSha: "d".repeat(40),
+      clock: {
+        now: () => new Date("2026-07-20T00:00:00.000Z"),
+        sleep: () => okAsync(undefined),
+      },
+    });
+    expect(rebuilt.isOk()).toBe(true);
+    if (rebuilt.isErr()) return;
+    expect(
+      assertCurrentArtifactIdentity(
+        rebuilt.value.record,
+        `sha256:${"c".repeat(64)}`,
+        [17],
+      ).isErr(),
+    ).toBe(true);
+  });
+  it("skips partial-publish reserved versions on a fresh main cut", () => {
+    const partial = { ...content, state: "partial" as const };
+    const partialRecord = {
+      ...partial,
+      recordDigest: trainRecordDigest(partial),
+    } as never;
+    const recovery = partialPublishRecoveryMetadata(partialRecord);
+    expect(recovery.metadataDigest).toMatch(/^sha256:/);
+    expect(recovery.recovery).toBe("fresh-main-cut");
+    const plan = planStableCut({
+      mainHeadSha: "b".repeat(40),
+      serverCutAt: new Date("2026-07-20T00:00:00.000Z"),
+      partition: {
+        stableFiles: [".changeset/stable.md"],
+        remainOnMainFiles: [],
+      },
+      changesets: [
+        {
+          path: ".changeset/stable.md",
+          releases: new Map([["@weaveio/weave-cli", "patch"]]),
+        },
+      ],
+      changesetContents: { ".changeset/stable.md": "stable bytes" },
+      packageVersions: {
+        "@weaveio/weave-cli": "1.2.2",
+        "@weaveio/weave-adapter-opencode": "1.0.0",
+        "@weaveio/weave-adapter-claude-code": "1.0.0",
+      },
+      reservedVersions: { "@weaveio/weave-cli": ["1.2.3"] },
+    });
+    expect(plan.isOk()).toBe(true);
+    if (plan.isOk())
+      expect(plan.value.record.versions["@weaveio/weave-cli"]).toBe("1.2.4");
   });
 });

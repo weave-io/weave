@@ -23,7 +23,8 @@ export type StableTrainError =
   | { type: "ExpiredTrain"; expiresAt: string; now: string }
   | { type: "InvalidCut"; reason: string }
   | { type: "UnmergedCommit"; sha: string }
-  | { type: "NonGreenCommit"; sha: string };
+  | { type: "NonGreenCommit"; sha: string }
+  | { type: "ReservedVersion"; packageName: string; version: string };
 
 export interface StableTrainContent {
   schemaVersion: 1;
@@ -51,6 +52,8 @@ export interface StableCutInput {
   changesets: readonly ParsedChangeset[];
   packageVersions: Readonly<Record<PublicPackageName, string>>;
   changesetContents: Readonly<Record<string, string>>;
+  /** Versions consumed by a partial publish; a fresh cut must never reuse one. */
+  reservedVersions?: Readonly<Record<string, readonly string[]>>;
 }
 export interface StableFixInput {
   record: StableTrainRecord;
@@ -78,12 +81,56 @@ export interface StableFixPlan {
   commits: readonly string[];
 }
 
-export function canonicalTrainJson(record: StableTrainContent): string {
+/** Content-addressed evidence written after a partial npm publish. */
+export interface PartialPublishRecoveryMetadata {
+  schemaVersion: 1;
+  trainDigest: string;
+  subjectSha: string;
+  usedVersions: Readonly<Record<string, string>>;
+  recovery: "fresh-main-cut";
+  metadataDigest: string;
+}
+
+export function canonicalTrainJson(record: object): string {
   return JSON.stringify(sortObject(record));
 }
 
 export function trainRecordDigest(record: StableTrainContent): string {
   return `sha256:${Bun.CryptoHasher.hash("sha256", canonicalTrainJson(record), "hex")}`;
+}
+
+export function partialPublishRecoveryMetadata(
+  record: StableTrainRecord,
+): PartialPublishRecoveryMetadata {
+  const content = {
+    schemaVersion: 1 as const,
+    trainDigest: record.recordDigest,
+    subjectSha: record.subjectSha,
+    usedVersions: record.versions,
+    recovery: "fresh-main-cut" as const,
+  };
+  return {
+    ...content,
+    metadataDigest: `sha256:${Bun.CryptoHasher.hash("sha256", canonicalTrainJson(content), "hex")}`,
+  };
+}
+
+/** Rejects stale artifact identity after a rebuild, rerun, or fix. */
+export function assertCurrentArtifactIdentity(
+  record: StableTrainRecord,
+  artifactManifestDigest: string,
+  artifactIds: readonly number[],
+): Result<void, StableTrainError> {
+  if (
+    record.artifactManifestDigest !== artifactManifestDigest ||
+    JSON.stringify(record.artifactIds ?? []) !== JSON.stringify(artifactIds)
+  )
+    return err({
+      type: "InvalidCut",
+      reason:
+        "artifact identity is stale; rebuild and bind the current attempt",
+    });
+  return ok(undefined);
 }
 
 export function validateStableTrain(
@@ -150,7 +197,11 @@ export function planStableCut(
       type: "InvalidCut",
       reason: "partition paths must resolve to changesets",
     });
-  const versions = deriveVersions(selected, input.packageVersions);
+  const versions = deriveVersions(
+    selected,
+    input.packageVersions,
+    input.reservedVersions ?? {},
+  );
   if (Object.keys(versions).length === 0)
     return err({ type: "InvalidCut", reason: "no stable changesets" });
   const cutAt = input.serverCutAt.toISOString();
@@ -197,6 +248,12 @@ export function planStableFix(
 ): Result<StableFixPlan, StableTrainError> {
   const expiry = guardTrainExpiry(input.record, input.clock);
   if (expiry.isErr()) return err(expiry.error);
+  if (!["prepared", "built", "bound"].includes(input.record.state))
+    return err({
+      type: "InvalidTransition",
+      from: input.record.state,
+      to: "built",
+    });
   if (input.commits.length === 0)
     return err({
       type: "InvalidCut",
@@ -233,6 +290,7 @@ export function invalidateArtifacts(
 function deriveVersions(
   changesets: readonly ParsedChangeset[],
   base: Readonly<Record<PublicPackageName, string>>,
+  reserved: Readonly<Record<string, readonly string[]>>,
 ): Record<string, string> {
   const bumps = new Map<string, ChangesetBump>();
   const weight = { patch: 1, minor: 2, major: 3 } as const;
@@ -243,10 +301,12 @@ function deriveVersions(
         bumps.set(name, bump);
     }
   return Object.fromEntries(
-    [...bumps].map(([name, bump]) => [
-      name,
-      bumpVersion(base[name as PublicPackageName], bump),
-    ]),
+    [...bumps].map(([name, bump]) => {
+      let version = bumpVersion(base[name as PublicPackageName], bump);
+      while (reserved[name]?.includes(version))
+        version = bumpVersion(version, "patch");
+      return [name, version];
+    }),
   );
 }
 function bumpVersion(version: string, bump: ChangesetBump): string {
