@@ -29,7 +29,11 @@ It does **not**:
 
 Skill and model declarations are **intent**. Adapters provide harness-owned context to `@weaveio/weave-engine` composition APIs, which resolve that intent for a specific harness.
 
-## Usage
+## Internal workspace layer
+
+This package is bundled into supported public artifacts and is **not** a supported npm installation target. Consumers install `@weaveio/weave-cli` or an adapter; repository contributors may import this workspace package while developing Weave.
+
+## Contributor example
 
 ```ts
 import { parseConfig } from "@weaveio/weave-core";

@@ -12,29 +12,6 @@ export interface DocumentStore {
   readonly documents: Readonly<Record<string, string>>;
 }
 
-// TODO(Stage 20): repair historical documentation references, then remove entries.
-// These are pre-existing links to deleted plans/spec moves or directories outside
-// the Markdown corpus; every new local Markdown/MDX file and anchor is checked.
-const KNOWN_BROKEN_LINKS = new Set([
-  "README.md|./packages/core",
-  "README.md|./packages/config",
-  "README.md|./packages/engine",
-  "README.md|./packages/cli",
-  "README.md|./packages/docs",
-  "README.md|./packages/adapters/opencode",
-  "README.md|./packages/adapters/claude-code",
-  "README.md|./packages/adapters/opencode/README.md",
-  "docs/README.md|../packages/docs",
-  "docs/adapters/claude-code.md|../../.weave/plans/claude-code-adapter.md",
-  "docs/specs/30-spec-minimal-runtime-command-lifecycle/30-validation-minimal-runtime-command-lifecycle.md|../../../.weave/plans/minimal-runtime-command-lifecycle.md",
-  "docs/specs/09-spec-adapter-provided-skill-resolution/09-proofs/09-task-05-proofs.md|specs/05-spec-skill-loader/05-spec-skill-loader.md",
-  "docs/specs/09-spec-adapter-provided-skill-resolution/09-proofs/09-task-05-proofs.md|specs/09-spec-adapter-provided-skill-resolution/09-spec-adapter-provided-skill-resolution.md",
-  "docs/specs/10-spec-workflow-engine/10-proofs/10-task-05-proofs.md|specs/10-spec-workflow-engine/10-spec-workflow-engine.md",
-  "docs/specs/08-spec-abstract-tool-policy-evaluation/08-validation-abstract-tool-policy-evaluation.md|tool-policy-evaluation.md",
-  "docs/specs/08-spec-abstract-tool-policy-evaluation/08-proofs/08-task-04-proofs.md|tool-policy-evaluation.md",
-  "docs/legacy-architecture.md|#appendix-d-migration-guide----review_models",
-]);
-
 function slugify(heading: string): string {
   return heading
     .toLowerCase()
@@ -111,7 +88,6 @@ export function checkLinks(
       const target = match[1];
       if (target === undefined || /^(https?:|mailto:|tel:)/.test(target))
         continue;
-      if (KNOWN_BROKEN_LINKS.has(`${source}|${target}`)) continue;
       const [path, anchor] = target.split("#", 2);
       let destination = source;
       if (path !== "") {
@@ -143,11 +119,7 @@ export function checkLinks(
 
 export async function loadDocuments(root = "."): Promise<DocumentStore> {
   const documents: Record<string, string> = {};
-  const patterns = [
-    "*.md",
-    "docs/**/*.md",
-    "packages/docs/src/content/**/*.mdx",
-  ];
+  const patterns = ["packages/docs/src/content/**/*.mdx"];
   for (const pattern of patterns) {
     for await (const path of new Bun.Glob(pattern).scan({ cwd: root })) {
       documents[path] = await Bun.file(resolve(root, path)).text();

@@ -5,6 +5,16 @@ This is the operator runbook for public Weave releases. The durable design is in
 
 ## Non-negotiable rules
 
+Every release PR must link its related issue. The clean room creates sanitized
+public packs only: CLI and OpenCode publish on stable/nightly trains; standalone
+Claude is nightly-only and Claude is bundled in the CLI. Core, config, and engine
+are private bundled layers and must never be recommended as npm installs.
+
+Before first publication configure npm trusted publishing for `weave-io/weave`
+`publish.yml`, protect `main` and release environments, and record GitHub App
+release-ref authority. `preview` is retired; historical versions remain under the
+no-unpublish policy.
+
 - Public artifacts are immutable. Never republish a version or replace a tarball.
 - GitHub Actions publishes `nightly` and stable-train `next` artifacts with npm
   trusted publishing (OIDC). It never receives an npm automation token.

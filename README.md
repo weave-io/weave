@@ -8,17 +8,16 @@ The engine is pure and harness-agnostic. Adapters own everything harness-specifi
 
 For the product story and conceptual docs, see the website: <https://tryweave.io>. This README is the developer and contributor reference. For a configuration → engine → adapter → harness flow diagram, see [System Architecture](./docs/system-architecture.md).
 
-## Packages
+## Published packages
 
 | Package | Description |
 | --- | --- |
-| [`@weaveio/weave-core`](./packages/core) | DSL lexer, parser, AST, Zod schemas, and validated config types |
-| [`@weaveio/weave-config`](./packages/config) | Builtin DSL defaults, config discovery, merge semantics, and prompt path resolution |
-| [`@weaveio/weave-engine`](./packages/engine) | Pure composition APIs for descriptors, model intent, skill resolution, prompts, and policy |
 | [`@weaveio/weave-cli`](./packages/cli) | `weave` executable for scaffolding, validation, and adapter materialization |
 | [`@weaveio/weave-docs`](./packages/docs) | In-repo Astro + Starlight documentation site |
 | [`@weaveio/weave-adapter-opencode`](./packages/adapters/opencode) | OpenCode plugin adapter (runtime) |
 | [`@weaveio/weave-adapter-claude-code`](./packages/adapters/claude-code) | Claude Code adapter (file materialization) |
+
+`core`, `config`, and `engine` are internal workspace layers bundled into the public packages. They are not supported npm installation targets.
 
 ## Requirements
 
@@ -57,7 +56,7 @@ The `@weaveio/weave-cli` package exposes the `weave` executable.
 
 ## Using with OpenCode
 
-`@weaveio/weave-adapter-opencode` is an OpenCode plugin. Install it by adding the package to the `plugin` array in your OpenCode config, or point at a local `dist/plugin.js` build for development.
+`@weaveio/weave-adapter-opencode` is an OpenCode plugin, released on stable and nightly channels. Pin an exact version in the `plugin` array, or point at a local `dist/plugin.js` build for development.
 
 The adapter README is the authoritative install and validation guide, including the exact plugin entry point, isolated-config testing, and logging behavior:
 
@@ -121,7 +120,7 @@ bun run clean            # remove all dist/ folders
 
 ## Publishing
 
-All packages are published under the `@weaveio` scope.
+The supported public packages are the CLI and OpenCode adapter on `latest`/`next`/`nightly`, plus the nightly standalone Claude Code adapter. Claude Code also ships bundled in the CLI. `preview` is retired; published versions are never unpublished. See [RELEASING.md](./RELEASING.md) for provenance, checksums, and operator policy.
 
 ## License
 

@@ -137,6 +137,7 @@ export default defineConfig({
             'docs/reference/dsl',
             'docs/reference/adapters',
             'docs/reference/packages',
+            'docs/reference/releases',
           ],
         },
       ],

@@ -1,6 +1,6 @@
 # Claude Code Adapter Guide
 
-**Related:** [Adapter Boundary](../adapter-boundary.md) · [Adapter Bootstrap Guide](../adapter-bootstrap.md) · [Claude Code Adapter Design](../claude-code-adapter.md) · [Tool Policy Evaluation](../tool-policy-evaluation.md) · [Model Resolution](../model-resolution.md) · [Plan: Claude Code Adapter](../../.weave/plans/claude-code-adapter.md)
+**Related:** [Adapter Boundary](../adapter-boundary.md) · [Adapter Bootstrap Guide](../adapter-bootstrap.md) · [Claude Code Adapter Design](../claude-code-adapter.md) · [Tool Policy Evaluation](../tool-policy-evaluation.md) · [Model Resolution](../model-resolution.md) · [Release Automation](../release-automation.md)
 
 ---
 
@@ -65,10 +65,10 @@ Install the Weave CLI (which includes the Claude Code adapter):
 bun add -D @weaveio/weave-cli
 ```
 
-Or for preview versions:
+The standalone adapter is nightly-only; normally use the CLI-bundled adapter:
 
 ```bash
-bun add -D @weaveio/weave-cli@preview
+bun add -D @weaveio/weave-cli@nightly
 ```
 
 ### 1. Initialize the project

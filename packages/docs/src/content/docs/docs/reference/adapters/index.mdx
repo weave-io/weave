@@ -14,8 +14,8 @@ Adapters translate normalized Weave intent into concrete harness configuration a
 
 | Adapter target | Status | Notes |
 | --- | --- | --- |
-| OpenCode | Implemented | Use `@weave/adapter-opencode/plugin`. |
-| Claude Code | Future/placeholder | Do not document as implemented. |
+| OpenCode | Stable | Use `@weaveio/weave-adapter-opencode@<exact-version>/plugin`. |
+| Claude Code | File materialization | Bundled with the CLI; standalone adapter is nightly-only. |
 | Pi | Future/placeholder | Do not document as implemented. |
 
 ## Boundary Ownership
@@ -35,7 +35,7 @@ The plugin entry is:
 
 ```json
 {
-  "plugin": ["@weave/adapter-opencode/plugin"]
+  "plugin": ["@weaveio/weave-adapter-opencode@<exact-version>/plugin"]
 }
 ```
 
