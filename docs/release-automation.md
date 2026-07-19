@@ -110,3 +110,20 @@ the metadata replay PR merges; only then may its `release/*` branch be cleaned.
 After stable promotion, fix forward on `main` and cut anew. Emergency rollback
 can restore npm dist-tags interactively, but never changes npm versions, GitHub
 tags/releases, or attestations.
+
+### Manual promotion and cross-run finalization
+
+`stable-publish` emits an identity-bound promotion authorization. It contains the
+authorized package/version set, the originating Actions run ID, and the exact
+`awaiting-promotion` train (including its bound artifact IDs and manifest digest).
+The workflow generates version-pinned `npm dist-tag add` commands only from that
+package set; it records the per-package `dist-tag ls` commands first so a human
+can retain prior `latest` values for rollback.
+
+`stable-finalize` is deliberately a later dispatch and does not rebuild. The
+`release-refs` job downloads the numeric payload artifact ID from the originating
+run using the authorization-bound run ID. It validates the payload manifest, but
+validates the `awaiting-promotion → promoted` lineage against the dispatch train
+that is cryptographically tied to the authorization—not the payload's pre-bind
+train. This preserves the original artifact retrieval identity without allowing a
+free-form run ID or a substituted train to advance release refs.

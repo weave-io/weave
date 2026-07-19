@@ -15,7 +15,7 @@ on:
         required: false
         type: string
       stable-train:
-        description: "Exact JSON train: bound for stable-publish; awaiting-promotion for stable-finalize"
+        description: "Exact JSON train: fresh for stable-publish; awaiting-promotion for stable-finalize"
         required: false
         type: string
       stable-plan-input:
@@ -121,7 +121,7 @@ jobs:
           retention-days: 30
 
   bind:
-    needs: preflight
+    needs: [preflight, build]
     if: needs.preflight.outputs.skipped != 'true' && (needs.preflight.outputs.operation == 'nightly' || needs.preflight.outputs.operation == 'stable-publish')
     runs-on: ubuntu-latest
     permissions:
@@ -256,19 +256,19 @@ jobs:
       - name: Record manual promotion authorization
         if: needs.preflight.outputs.operation == 'stable-publish'
         run: |
-          authorization="$(jq -c 'select(.promotionAuthorization != null) | .promotionAuthorization' control-output.jsonl)"
+          authorization="$(jq -c ".promotionAuthorization // empty" control-output.jsonl)"
           test -n "$authorization"
-          echo '## Manual MFA promotion required' >> "$GITHUB_STEP_SUMMARY"
-          echo 'Save this authorization record, record both prior `latest` values, then run the generated version-pinned commands as a second maintainer with MFA.' >> "$GITHUB_STEP_SUMMARY"
-          echo '```json' >> "$GITHUB_STEP_SUMMARY"
-          echo "$authorization" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          echo 'Capture prior values first, then the second maintainer runs:' >> "$GITHUB_STEP_SUMMARY"
-          echo '```bash' >> "$GITHUB_STEP_SUMMARY"
-          echo 'npm dist-tag ls @weaveio/weave-cli --json' >> "$GITHUB_STEP_SUMMARY"
-          echo 'npm dist-tag ls @weaveio/weave-adapter-opencode --json' >> "$GITHUB_STEP_SUMMARY"
-          jq -r '"npm dist-tag add @weaveio/weave-cli@\(.versions["@weaveio/weave-cli"]) latest", "npm dist-tag add @weaveio/weave-adapter-opencode@\(.versions["@weaveio/weave-adapter-opencode"]) latest"' control-output.jsonl >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo '## Manual MFA promotion required'
+            echo "Save this identity-bound authorization record. Record each displayed prior latest value before promotion; use those recorded values to form rollback commands."
+            echo '```json'
+            echo "$authorization"
+            echo '```'
+            echo 'Capture prior values first, then the second maintainer runs:'
+            echo '```bash'
+            RELEASE_PROMOTION_AUTHORIZATION="$authorization" bun scripts/release/promotion-commands-main.ts
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # Stable operations are fail-closed behind the manually administered release
   # environment. This job produces only plans; it has no contents:write grant.
@@ -319,7 +319,7 @@ jobs:
   # Read-only final verification after a second maintainer performed MFA tag moves.
   # No id-token, token, or npm mutation capability is granted here.
   stable-finalize:
-    needs: [preflight, build]
+    needs: preflight
     if: needs.preflight.outputs.skipped != 'true' && needs.preflight.outputs.operation == 'stable-finalize'
     runs-on: ubuntu-latest
     environment: release
@@ -328,6 +328,7 @@ jobs:
     outputs:
       stable-train: ${{ steps.finalize.outputs.stable_train }}
       payload-artifact-id: ${{ steps.finalize.outputs.payload_artifact_id }}
+      origin-run-id: ${{ steps.finalize.outputs.origin_run_id }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -341,9 +342,11 @@ jobs:
         name: Verify both promoted latest tags and tarball digests
         run: |
           bun scripts/release/stable-finalize.ts
-          train='${{ needs.preflight.outputs.stable-train }}'
+          train="$RELEASE_STABLE_TRAIN"
           payload_artifact_id="$(printf '%s' "$train" | jq -er '.artifactIds[0]')"
           echo "payload_artifact_id=$payload_artifact_id" >> "$GITHUB_OUTPUT"
+          origin_run_id="$(printf '%s' "$RELEASE_PROMOTION_AUTHORIZATION" | jq -er '.originRunId')"
+          echo "origin_run_id=$origin_run_id" >> "$GITHUB_OUTPUT"
         env:
           RELEASE_PROMOTION_AUTHORIZATION: ${{ inputs.promotion-authorization }}
           RELEASE_STABLE_TRAIN: ${{ needs.preflight.outputs.stable-train }}
@@ -356,6 +359,7 @@ jobs:
     environment: release-refs
     permissions:
       contents: read
+      actions: read
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -368,6 +372,8 @@ jobs:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           artifact-ids: ${{ needs.stable-finalize.outputs.payload-artifact-id }}
+          run-id: ${{ needs.stable-finalize.outputs.origin-run-id }}
+          github-token: ${{ github.token }}
           path: .release-payload
       - run: bun scripts/release/release-refs-main.ts
         env:
@@ -376,3 +382,4 @@ jobs:
           RELEASE_PAYLOAD_DIRECTORY: .release-payload
           RELEASE_RELEASE_NOTES: Automated release
           RELEASE_PROGRESSED_STABLE_TRAIN: ${{ needs.stable-finalize.outputs.stable-train }}
+          RELEASE_AWAITING_STABLE_TRAIN: ${{ needs.preflight.outputs.stable-train }}

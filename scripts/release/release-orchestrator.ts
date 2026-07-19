@@ -33,6 +33,7 @@ import {
   PackageNameSchema,
   packageArtifactFilename,
   SemVerSchema,
+  StableTrainRecordSchema,
 } from "./model.js";
 import {
   type NightlyPlan,
@@ -74,7 +75,7 @@ interface ExpectedReleaseAsset {
 function digestBytes(bytes: Uint8Array): string {
   return `sha256:${new Bun.CryptoHasher("sha256").update(bytes).digest("hex")}`;
 }
-const PromotionAuthorizationSchema = z
+export const PromotionAuthorizationSchema = z
   .object({
     schemaVersion: z.literal(1),
     operation: z.literal("stable-publish"),
@@ -83,6 +84,8 @@ const PromotionAuthorizationSchema = z
     packages: z.array(PackageNameSchema).min(1),
     versions: z.record(z.string(), SemVerSchema),
     artifactDigests: z.record(z.string(), DigestSchema),
+    originRunId: z.number().int().positive(),
+    awaitingPromotionTrain: StableTrainRecordSchema,
   })
   .strict()
   .superRefine((value, context) => {
@@ -112,6 +115,20 @@ const PromotionAuthorizationSchema = z
         path: ["versions"],
         message: "promotion maps must contain exactly the authorized packages",
       });
+    const train = value.awaitingPromotionTrain;
+    if (
+      train.state !== "awaiting-promotion" ||
+      train.subjectSha !== value.subjectSha ||
+      JSON.stringify(train.packages) !== JSON.stringify(value.packages) ||
+      JSON.stringify(train.versions) !== JSON.stringify(value.versions) ||
+      train.artifactManifestDigest === undefined ||
+      train.artifactIds === undefined
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["awaitingPromotionTrain"],
+        message: "authorization must embed its bound awaiting-promotion train",
+      });
   });
 
 export interface PublishRequest {
@@ -136,6 +153,8 @@ export interface PromotionAuthorization {
   packages: readonly string[];
   versions: Readonly<Record<string, string>>;
   artifactDigests: Readonly<Record<string, string>>;
+  originRunId: number;
+  awaitingPromotionTrain: StableTrainRecord;
 }
 export interface PromotionCommandRequest {
   authorization: unknown;
@@ -253,7 +272,10 @@ export class ReleaseOrchestrator {
     return this.validatePromotionAuthorization(request.authorization).andThen(
       (authorization) =>
         this.verifyTagAndDigests(authorization, "next").andThen(() => {
-          const prior = this.validatePriorLatest(request.priorLatestVersions);
+          const prior = this.validatePriorLatest(
+            request.priorLatestVersions,
+            authorization.packages,
+          );
           if (prior.isErr()) return errAsync(prior.error);
           return okAsync({
             state: "awaiting-human-promotion" as const,
@@ -362,26 +384,33 @@ export class ReleaseOrchestrator {
     authorization: unknown,
     priorLatestVersions: Readonly<Record<string, string>>,
   ): ResultAsync<{ state: "rolled-back" }, ReleaseError> {
-    return this.validatePromotionAuthorization(authorization).andThen(() => {
-      const prior = this.validatePriorLatest(priorLatestVersions);
-      if (prior.isErr()) return errAsync(prior.error);
-      return STABLE_PROMOTION_PACKAGES.reduce<ResultAsync<void, ReleaseError>>(
-        (chain, packageName) =>
-          chain.andThen(() =>
-            this.npm.distTagLs(packageName).andThen((tags) => {
-              if (tags.latest === prior.value[packageName])
-                return okAsync(undefined);
-              return errAsync({
-                type: "RollbackVerificationFailed" as const,
-                packageName,
-                expected: prior.value[packageName],
-                actual: tags.latest,
-              });
-            }),
-          ),
-        okAsync(undefined),
-      ).map(() => ({ state: "rolled-back" as const }));
-    });
+    return this.validatePromotionAuthorization(authorization).andThen(
+      (record) => {
+        const prior = this.validatePriorLatest(
+          priorLatestVersions,
+          record.packages,
+        );
+        if (prior.isErr()) return errAsync(prior.error);
+        return record.packages
+          .reduce<ResultAsync<void, ReleaseError>>(
+            (chain, packageName) =>
+              chain.andThen(() =>
+                this.npm.distTagLs(packageName).andThen((tags) => {
+                  if (tags.latest === prior.value[packageName])
+                    return okAsync(undefined);
+                  return errAsync({
+                    type: "RollbackVerificationFailed" as const,
+                    packageName,
+                    expected: prior.value[packageName],
+                    actual: tags.latest,
+                  });
+                }),
+              ),
+            okAsync(undefined),
+          )
+          .map(() => ({ state: "rolled-back" as const }));
+      },
+    );
   }
 
   /** Task 20 may map post-publish stable failures to `partial` without authorization. */
@@ -496,6 +525,8 @@ export class ReleaseOrchestrator {
                 )?.sha256 ?? `sha256:${"0".repeat(64)}`,
               ]),
             ),
+            originRunId: request.bindingVerification.context.expectedRunId,
+            awaitingPromotionTrain: awaiting.value,
           },
         });
       });
@@ -910,6 +941,13 @@ export class ReleaseOrchestrator {
         reason: "authorization subject differs from train",
       });
     if (
+      authorization.awaitingPromotionTrain.recordDigest !== train.recordDigest
+    )
+      return err({
+        type: "StableTrainStateInvalid",
+        reason: "authorization train differs from finalize input",
+      });
+    if (
       JSON.stringify(authorization.packages) !== JSON.stringify(train.packages)
     )
       return err({
@@ -936,9 +974,10 @@ export class ReleaseOrchestrator {
 
   private validatePriorLatest(
     versions: Readonly<Record<string, string>>,
+    packages: readonly string[],
   ): Result<Record<string, string>, ReleaseError> {
     const result: Record<string, string> = {};
-    for (const packageName of STABLE_PROMOTION_PACKAGES) {
+    for (const packageName of packages) {
       const version = versions[packageName];
       if (version === undefined || !SemVerSchema.safeParse(version).success)
         return err({
@@ -1000,25 +1039,25 @@ export class ReleaseOrchestrator {
   private promotionState(
     authorization: PromotionAuthorization,
   ): ResultAsync<{ promoted: string[]; unpromoted: string[] }, ReleaseError> {
-    return STABLE_PROMOTION_PACKAGES.reduce<
-      ResultAsync<string[], ReleaseError>
-    >(
-      (chain, packageName) =>
-        chain.andThen((promoted) =>
-          this.npm
-            .distTagLs(packageName)
-            .map((tags) =>
-              tags.latest === authorization.versions[packageName]
-                ? [...promoted, packageName]
-                : promoted,
-            ),
+    return authorization.packages
+      .reduce<ResultAsync<string[], ReleaseError>>(
+        (chain, packageName) =>
+          chain.andThen((promoted) =>
+            this.npm
+              .distTagLs(packageName)
+              .map((tags) =>
+                tags.latest === authorization.versions[packageName]
+                  ? [...promoted, packageName]
+                  : promoted,
+              ),
+          ),
+        okAsync([]),
+      )
+      .map((promoted) => ({
+        promoted,
+        unpromoted: authorization.packages.filter(
+          (packageName) => !promoted.includes(packageName),
         ),
-      okAsync([]),
-    ).map((promoted) => ({
-      promoted,
-      unpromoted: authorization.packages.filter(
-        (packageName) => !promoted.includes(packageName),
-      ),
-    }));
+      }));
   }
 }

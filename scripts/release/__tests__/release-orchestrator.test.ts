@@ -342,6 +342,8 @@ describe("manual stable promotion", () => {
       "@weaveio/weave-cli": `sha256:${"1".repeat(64)}`,
       "@weaveio/weave-adapter-opencode": `sha256:${"2".repeat(64)}`,
     },
+    originRunId: 123,
+    awaitingPromotionTrain: stableTrain(),
   };
   const priorLatestVersions = {
     "@weaveio/weave-cli": "1.2.2",
@@ -448,7 +450,7 @@ describe("manual stable promotion", () => {
       {
         name: "subject SHA",
         authorization: { ...authorization, subjectSha: "b".repeat(40) },
-        reason: "authorization subject differs from train",
+        type: "InvalidPromotionAuthorization",
       },
       {
         name: "versions",
@@ -459,7 +461,7 @@ describe("manual stable promotion", () => {
             "@weaveio/weave-cli": "1.2.4",
           },
         },
-        reason: "authorization versions differ from train",
+        type: "InvalidPromotionAuthorization",
       },
       {
         name: "package set",
@@ -468,10 +470,12 @@ describe("manual stable promotion", () => {
           packages: ["@weaveio/weave-cli"],
           versions: { "@weaveio/weave-cli": "1.2.3" },
           artifactDigests: { "@weaveio/weave-cli": `sha256:${"1".repeat(64)}` },
+          awaitingPromotionTrain: stableTrain(["@weaveio/weave-cli"]),
         },
-        reason: "authorization packages differ from train",
+        reason: "authorization train differs from finalize input",
+        type: "StableTrainStateInvalid",
       },
-    ];
+    ] as const;
     for (const fixture of cases) {
       const result = await promotionOrchestrator({}).stableFinalize(
         fixture.authorization,
@@ -479,9 +483,17 @@ describe("manual stable promotion", () => {
       );
       expect(result.isErr(), fixture.name).toBe(true);
       if (result.isErr()) {
-        expect(result.error.type, fixture.name).toBe("StableTrainStateInvalid");
-        if (result.error.type === "StableTrainStateInvalid")
-          expect(result.error.reason, fixture.name).toBe(fixture.reason);
+        if (fixture.type === "InvalidPromotionAuthorization")
+          expect(result.error.type, fixture.name).toBe(
+            "InvalidPromotionAuthorization",
+          );
+        else {
+          expect(result.error.type, fixture.name).toBe(
+            "StableTrainStateInvalid",
+          );
+          if (result.error.type === "StableTrainStateInvalid")
+            expect(result.error.reason, fixture.name).toBe(fixture.reason);
+        }
       }
     }
   });
@@ -496,6 +508,7 @@ describe("manual stable promotion", () => {
           packages: ["@weaveio/weave-cli"],
           versions: { "@weaveio/weave-cli": "1.2.3" },
           artifactDigests: { "@weaveio/weave-cli": `sha256:${"1".repeat(64)}` },
+          awaitingPromotionTrain: stableTrain(["@weaveio/weave-cli"]),
         },
         train: stableTrain(["@weaveio/weave-cli"]),
       },
@@ -522,6 +535,7 @@ describe("manual stable promotion", () => {
       packages: ["@weaveio/weave-cli"],
       versions: { "@weaveio/weave-cli": "1.2.3" },
       artifactDigests: { "@weaveio/weave-cli": `sha256:${"1".repeat(64)}` },
+      awaitingPromotionTrain: stableTrain(["@weaveio/weave-cli"]),
     };
     const cases = [
       {
@@ -545,7 +559,7 @@ describe("manual stable promotion", () => {
         expect(result.error.type, fixture.name).toBe("StableTrainStateInvalid");
         if (result.error.type === "StableTrainStateInvalid")
           expect(result.error.reason, fixture.name).toBe(
-            "authorization packages differ from train",
+            "authorization train differs from finalize input",
           );
       }
     }
