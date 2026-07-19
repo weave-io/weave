@@ -29,6 +29,9 @@
     "version": "changeset version",
     "release:dry": "bun run build && bun run release:control:build",
     "release:control:build": "bun scripts/build-release-control.ts",
+    "release:control:clean-room": "bun scripts/release/clean-room.ts",
+    "release:dry:nightly": "bun scripts/release/dry-run-nightly.ts",
+    "release:dry:stable": "bun scripts/release/dry-run-stable.ts",
     "release:validate": "bun run build && bun scripts/release/packager.ts",
     "prepare": "husky"
   },
