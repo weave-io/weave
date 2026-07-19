@@ -1,0 +1,34 @@
+import { ResultAsync } from "neverthrow";
+import type { FileSystemError } from "./errors.js";
+
+export interface FileSystem {
+  readBytes(path: string): ResultAsync<Uint8Array, FileSystemError>;
+  readText(path: string): ResultAsync<string, FileSystemError>;
+  writeText(path: string, contents: string): ResultAsync<void, FileSystemError>;
+}
+
+export class BunFileSystem implements FileSystem {
+  readBytes(path: string): ResultAsync<Uint8Array, FileSystemError> {
+    return ResultAsync.fromPromise(Bun.file(path).bytes(), (cause) => ({
+      type: "FileSystemError",
+      path,
+      message: String(cause),
+    }));
+  }
+  readText(path: string): ResultAsync<string, FileSystemError> {
+    return ResultAsync.fromPromise(Bun.file(path).text(), (cause) => ({
+      type: "FileSystemError",
+      path,
+      message: String(cause),
+    }));
+  }
+  writeText(
+    path: string,
+    contents: string,
+  ): ResultAsync<void, FileSystemError> {
+    return ResultAsync.fromPromise(
+      Bun.write(path, contents).then(() => undefined),
+      (cause) => ({ type: "FileSystemError", path, message: String(cause) }),
+    );
+  }
+}
