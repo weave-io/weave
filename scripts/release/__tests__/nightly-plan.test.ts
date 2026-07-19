@@ -8,7 +8,10 @@ import { NightlyPlanner } from "../nightly-plan.js";
 import type { NpmRegistryClient } from "../npm-registry-client.js";
 
 const sha = "abcdef123456".padEnd(40, "a");
-const clock: Clock = { now: () => new Date("2026-07-19T12:00:00.000Z") };
+const clock: Clock = {
+  now: () => new Date("2026-07-19T12:00:00.000Z"),
+  sleep: () => okAsync(undefined),
+};
 const invocation = validateReleaseInvocation({
   repository: "weave-io/weave",
   workflowPath: ".github/workflows/publish.yml",

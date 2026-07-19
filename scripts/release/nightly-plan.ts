@@ -277,7 +277,7 @@ async function runPreflight(
   }
   const plan = await new NightlyPlanner(
     new NpmCliRegistryClient(new BunCommandRunner()),
-    { now: () => serverDate },
+    { now: () => serverDate, sleep: () => okAsync(undefined) },
   ).plan({
     invocation: invocation.value,
     changesets: changesets.value,

@@ -58,6 +58,8 @@ const STABLE_PROMOTION_PACKAGES = [
   "@weaveio/weave-cli",
   "@weaveio/weave-adapter-opencode",
 ] as const;
+const IMMUTABLE_POLL_ATTEMPTS = 5;
+const IMMUTABLE_POLL_DELAY_MS = 1_000;
 interface ExpectedReleaseAsset {
   name: string;
   bytes: Uint8Array;
@@ -284,7 +286,8 @@ export class ReleaseOrchestrator {
             tag: "train",
             reason: "manifest subject differs from promotion record",
           });
-        const attempts = request.immutablePollAttempts ?? 5;
+        const attempts =
+          request.immutablePollAttempts ?? IMMUTABLE_POLL_ATTEMPTS;
         if (!Number.isSafeInteger(attempts) || attempts < 1)
           return errAsync({
             type: "ReleaseMismatch" as const,
@@ -736,7 +739,11 @@ export class ReleaseOrchestrator {
             tag,
             attempts,
           });
-        return this.pollImmutable(tag, github, attempts, current + 1);
+        return this.clock
+          .sleep(IMMUTABLE_POLL_DELAY_MS)
+          .andThen(() =>
+            this.pollImmutable(tag, github, attempts, current + 1),
+          );
       }
       return github.hasReleaseAttestation(release.id).andThen((present) =>
         present

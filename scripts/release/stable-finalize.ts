@@ -33,7 +33,7 @@ const files: FileSystem = {
 const result = await new ReleaseOrchestrator(
   files,
   new NpmCliRegistryClient(new BunCommandRunner()),
-  { now: () => new Date() },
+  { now: () => new Date(), sleep: () => okAsync(undefined) },
 ).stableFinalize(parsedAuthorization.value);
 if (result.isErr()) {
   log.error({ error: result.error }, "stable finalize verification failed");

@@ -33,7 +33,10 @@ class MemoryFiles implements FileSystem {
   }
 }
 
-const clock: Clock = { now: () => new Date("2026-07-20T00:00:00.000Z") };
+const clock: Clock = {
+  now: () => new Date("2026-07-20T00:00:00.000Z"),
+  sleep: () => okAsync(undefined),
+};
 const branch = "release-metadata/20260720-aaaaaaaaaaaa";
 
 function replay(files: MemoryFiles) {
