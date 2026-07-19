@@ -604,6 +604,13 @@
   - interface ParsedChangeset
   - interface ChangesetPartition
   - _...4 more_
+- `scripts/release/clock.ts` — class SystemClock, interface Clock
+- `scripts/release/command-runner.ts`
+  - class BunCommandRunner
+  - interface CommandResult
+  - interface CommandRunner
+- `scripts/release/filesystem.ts` — class BunFileSystem, interface FileSystem
+- `scripts/release/github-client.ts` — class GitHubRestClient, interface GitHubClient
 - `scripts/release/input-validation.ts`
   - function validateReleaseInvocation: (input) => Result<ReleaseInvocation, InputValidationError>
   - type ReleaseInvocation
@@ -617,6 +624,7 @@
   - const ShortShaSchema
   - const SemVerSchema
   - _...16 more_
+- `scripts/release/npm-registry-client.ts` — class NpmCliRegistryClient, interface NpmRegistryClient
 - `scripts/release/package-policy.ts` — class PackagePolicyValidator, type PackagePolicyError
 - `scripts/release/packager.ts`
   - class BunPackageCommandRunner
@@ -629,6 +637,7 @@
   - interface PublicManifestFileSystem
   - interface StagedPublicManifest
   - type PublicManifestError
+- `scripts/release/release-orchestrator.ts` — class ReleaseOrchestrator, interface PublishRequest
 - `scripts/release/stable-train.ts`
   - function canonicalTrainJson: (record) => string
   - function trainRecordDigest: (record) => string

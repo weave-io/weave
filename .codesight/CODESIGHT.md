@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode
 
-> 0 routes | 0 models | 0 components | 140 lib files | 9 env vars | 6 middleware | 0% test coverage
-> **Token savings:** this file is ~13,000 tokens. Without it, AI exploration would cost ~48,200 tokens. **Saves ~35,300 tokens per conversation.**
-> **Last scanned:** 2026-07-19 06:52 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 146 lib files | 9 env vars | 6 middleware | 0% test coverage
+> **Token savings:** this file is ~13,100 tokens. Without it, AI exploration would cost ~49,800 tokens. **Saves ~36,700 tokens per conversation.**
+> **Last scanned:** 2026-07-19 06:59 — re-run after significant changes
 
 ---
 
@@ -615,6 +615,13 @@
   - interface ParsedChangeset
   - interface ChangesetPartition
   - _...4 more_
+- `scripts/release/clock.ts` — class SystemClock, interface Clock
+- `scripts/release/command-runner.ts`
+  - class BunCommandRunner
+  - interface CommandResult
+  - interface CommandRunner
+- `scripts/release/filesystem.ts` — class BunFileSystem, interface FileSystem
+- `scripts/release/github-client.ts` — class GitHubRestClient, interface GitHubClient
 - `scripts/release/input-validation.ts`
   - function validateReleaseInvocation: (input) => Result<ReleaseInvocation, InputValidationError>
   - type ReleaseInvocation
@@ -628,6 +635,7 @@
   - const ShortShaSchema
   - const SemVerSchema
   - _...16 more_
+- `scripts/release/npm-registry-client.ts` — class NpmCliRegistryClient, interface NpmRegistryClient
 - `scripts/release/package-policy.ts` — class PackagePolicyValidator, type PackagePolicyError
 - `scripts/release/packager.ts`
   - class BunPackageCommandRunner
@@ -640,6 +648,7 @@
   - interface PublicManifestFileSystem
   - interface StagedPublicManifest
   - type PublicManifestError
+- `scripts/release/release-orchestrator.ts` — class ReleaseOrchestrator, interface PublishRequest
 - `scripts/release/stable-train.ts`
   - function canonicalTrainJson: (record) => string
   - function trainRecordDigest: (record) => string
@@ -734,7 +743,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 128 test files found
+> 130 test files found
 
 ---
 

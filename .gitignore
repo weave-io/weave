@@ -43,3 +43,4 @@ eval-bundles/
 # Temporary files
 tmp/
 temp/
+dist-release-control/
