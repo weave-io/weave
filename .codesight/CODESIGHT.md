@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode
 
-> 0 routes | 0 models | 0 components | 146 lib files | 9 env vars | 6 middleware | 0% test coverage
-> **Token savings:** this file is ~13,100 tokens. Without it, AI exploration would cost ~49,800 tokens. **Saves ~36,700 tokens per conversation.**
-> **Last scanned:** 2026-07-19 06:59 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 149 lib files | 9 env vars | 6 middleware | 0% test coverage
+> **Token savings:** this file is ~13,400 tokens. Without it, AI exploration would cost ~50,600 tokens. **Saves ~37,200 tokens per conversation.**
+> **Last scanned:** 2026-07-19 07:20 — re-run after significant changes
 
 ---
 
@@ -606,7 +606,27 @@
   - class PublicPackageBuilder
   - interface PublicPackageFileSystem
   - type PublicPackageBuildError
-- `scripts/release/artifact-manifest.ts` — function validateArtifactManifest: (input) => Result<ArtifactManifest, ArtifactManifestError>, type ArtifactManifestError
+- `scripts/ci/verify-action-pins.ts`
+  - function verifyActionPins: (files, string>>) => Result<void, ActionPinError[]>
+  - function loadActionFiles: (root) => Promise<Record<string, string>>
+  - type ActionPinError
+  - const ALLOWED_ACTION_OWNERS
+- `scripts/docs/check-links.ts`
+  - function checkLinks: (store) => Result<void, LinkCheckError[]>
+  - function loadDocuments: (root) => Promise<DocumentStore>
+  - interface DocumentStore
+  - type LinkCheckError
+- `scripts/release/artifact-binding.ts`
+  - function createBindingRecord: (input) => Result<ArtifactBindingRecord, BindingError>
+  - function verifyBindingRecord: (record, context, github) => ResultAsync<ArtifactBindingRecord, BindingError>
+  - interface UploadedArtifact
+  - interface BindingRecordInput
+  - interface BindingVerificationContext
+  - type BindingError
+- `scripts/release/artifact-manifest.ts`
+  - function validateArtifactManifest: (input) => Result<ArtifactManifest, ArtifactManifestError>
+  - function validateArtifactBindingRecord: (input) => Result<ArtifactBindingRecord, ArtifactManifestError>
+  - type ArtifactManifestError
 - `scripts/release/changeset-policy.ts`
   - function partitionChangesets: (changesets) => ChangesetPartition
   - class BunChangesetFileSystem
@@ -621,7 +641,12 @@
   - interface CommandResult
   - interface CommandRunner
 - `scripts/release/filesystem.ts` — class BunFileSystem, interface FileSystem
-- `scripts/release/github-client.ts` — class GitHubRestClient, interface GitHubClient
+- `scripts/release/github-client.ts`
+  - class GitHubRestClient
+  - interface WorkflowRunMetadata
+  - interface ActionsArtifactMetadata
+  - interface GitHubClient
+  - type GitHubFetch
 - `scripts/release/input-validation.ts`
   - function validateReleaseInvocation: (input) => Result<ReleaseInvocation, InputValidationError>
   - type ReleaseInvocation
@@ -630,11 +655,11 @@
 - `scripts/release/model.ts`
   - function packageArtifactFilename: (packageName, version) => string
   - type ArtifactManifest
+  - type ArtifactBindingRecord
   - type StableTrainRecord
   - const FullShaSchema
   - const ShortShaSchema
-  - const SemVerSchema
-  - _...16 more_
+  - _...20 more_
 - `scripts/release/npm-registry-client.ts` — class NpmCliRegistryClient, interface NpmRegistryClient
 - `scripts/release/package-policy.ts` — class PackagePolicyValidator, type PackagePolicyError
 - `scripts/release/packager.ts`
@@ -743,21 +768,20 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 130 test files found
+> 133 test files found
 
 ---
 
 # CI/CD Pipelines
 
-## GitHub Actions (5 workflows)
+## GitHub Actions (4 workflows)
 
 | Workflow | Triggers | Jobs | Deploy | Environments |
 |---|---|---|---|---|
 | Agent Evals | workflow_dispatch | 2 | — | — |
 | CI | push, pull_request | 1 | — | — |
 | Deploy Docs | push, workflow_dispatch | 2 | — | github-pages |
-| Release | release | 2 | — | — |
-| Snapshot | push | 2 | — | — |
+| Publish control plane | workflow_dispatch | 2 | — | — |
 
 ### Agent Evals
 
@@ -776,47 +800,34 @@
 > Concurrency: `github-pages`
 
 - **build** on `ubuntu-latest` — 6 steps
-  - `actions/checkout@v4`
-  - `actions/configure-pages@v5`
-  - `oven-sh/setup-bun@v2`
-  - `actions/upload-pages-artifact@v3`
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+  - `actions/upload-pages-artifact@b8130d9ab958b325bbde9786d62f2c97a9885a0e`
 - **deploy** on `ubuntu-latest` — 1 steps (needs: build)
-  - `actions/deploy-pages@v4`
+  - `actions/deploy-pages@1f0c5cde4bc74cd7e1254d0cb4de8d49e9068c7d`
 
-### Release
+### Publish control plane
 
-> `.github/workflows/release.yml`
+> `.github/workflows/publish.yml`
 
-> Concurrency: `release`
-
-- **build-and-test** on `ubuntu-latest` — 6 steps
+- **build** on `ubuntu-latest` — 8 steps
   - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
-- **publish** on `ubuntu-latest` — 6 steps (needs: build-and-test)
+  - `actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce`
+  - `actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce`
+- **bind** on `ubuntu-latest` — 4 steps (needs: build)
   - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
-
-### Snapshot
-
-> `.github/workflows/snapshot.yml`
-
-> Concurrency: `snapshot`
-
-- **build-and-test** on `ubuntu-latest` — 6 steps
-  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
-  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
-- **publish** on `ubuntu-latest` — 8 steps (needs: build-and-test)
-  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
-  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+  - `actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce`
 
 ### Secrets
 
 - `EVAL_RESULTS_REPO_TOKEN`
 - `OPENROUTER_API_KEY`
-- `WEAVEIO_NPM_TOKEN`
 
 ---
-_Source: .github/workflows/agent-evals.yml, .github/workflows/ci.yml, .github/workflows/deploy-docs.yml, .github/workflows/release.yml, .github/workflows/snapshot.yml_
+_Source: .github/workflows/agent-evals.yml, .github/workflows/ci.yml, .github/workflows/deploy-docs.yml, .github/workflows/publish.yml_
 _Generated by codesight-cicd-plugin_
 
 ---

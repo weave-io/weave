@@ -595,7 +595,27 @@
   - class PublicPackageBuilder
   - interface PublicPackageFileSystem
   - type PublicPackageBuildError
-- `scripts/release/artifact-manifest.ts` — function validateArtifactManifest: (input) => Result<ArtifactManifest, ArtifactManifestError>, type ArtifactManifestError
+- `scripts/ci/verify-action-pins.ts`
+  - function verifyActionPins: (files, string>>) => Result<void, ActionPinError[]>
+  - function loadActionFiles: (root) => Promise<Record<string, string>>
+  - type ActionPinError
+  - const ALLOWED_ACTION_OWNERS
+- `scripts/docs/check-links.ts`
+  - function checkLinks: (store) => Result<void, LinkCheckError[]>
+  - function loadDocuments: (root) => Promise<DocumentStore>
+  - interface DocumentStore
+  - type LinkCheckError
+- `scripts/release/artifact-binding.ts`
+  - function createBindingRecord: (input) => Result<ArtifactBindingRecord, BindingError>
+  - function verifyBindingRecord: (record, context, github) => ResultAsync<ArtifactBindingRecord, BindingError>
+  - interface UploadedArtifact
+  - interface BindingRecordInput
+  - interface BindingVerificationContext
+  - type BindingError
+- `scripts/release/artifact-manifest.ts`
+  - function validateArtifactManifest: (input) => Result<ArtifactManifest, ArtifactManifestError>
+  - function validateArtifactBindingRecord: (input) => Result<ArtifactBindingRecord, ArtifactManifestError>
+  - type ArtifactManifestError
 - `scripts/release/changeset-policy.ts`
   - function partitionChangesets: (changesets) => ChangesetPartition
   - class BunChangesetFileSystem
@@ -610,7 +630,12 @@
   - interface CommandResult
   - interface CommandRunner
 - `scripts/release/filesystem.ts` — class BunFileSystem, interface FileSystem
-- `scripts/release/github-client.ts` — class GitHubRestClient, interface GitHubClient
+- `scripts/release/github-client.ts`
+  - class GitHubRestClient
+  - interface WorkflowRunMetadata
+  - interface ActionsArtifactMetadata
+  - interface GitHubClient
+  - type GitHubFetch
 - `scripts/release/input-validation.ts`
   - function validateReleaseInvocation: (input) => Result<ReleaseInvocation, InputValidationError>
   - type ReleaseInvocation
@@ -619,11 +644,11 @@
 - `scripts/release/model.ts`
   - function packageArtifactFilename: (packageName, version) => string
   - type ArtifactManifest
+  - type ArtifactBindingRecord
   - type StableTrainRecord
   - const FullShaSchema
   - const ShortShaSchema
-  - const SemVerSchema
-  - _...16 more_
+  - _...20 more_
 - `scripts/release/npm-registry-client.ts` — class NpmCliRegistryClient, interface NpmRegistryClient
 - `scripts/release/package-policy.ts` — class PackagePolicyValidator, type PackagePolicyError
 - `scripts/release/packager.ts`
