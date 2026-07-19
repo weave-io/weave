@@ -19,7 +19,8 @@
     "build": "bun scripts/build-public-packages.ts && bun run --filter '@weaveio/weave-docs' build",
     "test": "bun run --filter '*' test",
     "typecheck": "tsc --noEmit -p tsconfig.json && bun run --filter '*' typecheck",
-    "lint": "biome lint packages/",
+    "lint": "biome lint packages/ scripts/ && bun run validate:declarations",
+    "validate:declarations": "bun scripts/validate-api-extractor-configs.ts",
     "clean": "find . -type d -name dist -not -path '*/node_modules/*' | xargs rm -rf",
     "version": "changeset version",
     "release:dry": "bun run build && bun scripts/publish.ts --dry-run",
@@ -28,6 +29,7 @@
   "devDependencies": {
     "@biomejs/biome": "^2.4.14",
     "@changesets/cli": "^2.31.0",
+    "@microsoft/api-extractor": "^7.55.1",
     "bun-types": "latest",
     "husky": "^9.1.7",
     "lint-staged": "^17.0.2",

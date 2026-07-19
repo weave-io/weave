@@ -54,7 +54,13 @@ export interface PublicBuildEntry {
 
 export interface PublicPackageBuild {
   entries: readonly PublicBuildEntry[];
+  declarations: readonly PublicDeclarationBuild[];
   bootstrap?: readonly string[];
+}
+
+export interface PublicDeclarationBuild {
+  config: string;
+  output: string;
 }
 
 /** Entry points and assets that define each self-contained public runtime. */
@@ -69,6 +75,12 @@ export const PUBLIC_PACKAGE_BUILDS = {
         source: "packages/cli/src/main.ts",
         output: "packages/cli/dist/main.js",
         executable: true,
+      },
+    ],
+    declarations: [
+      {
+        config: "packages/cli/api-extractor.json",
+        output: "packages/cli/dist/index.d.ts",
       },
     ],
     bootstrap: [
@@ -88,12 +100,28 @@ export const PUBLIC_PACKAGE_BUILDS = {
         output: "packages/adapters/opencode/dist/plugin.js",
       },
     ],
+    declarations: [
+      {
+        config: "packages/adapters/opencode/api-extractor.index.json",
+        output: "packages/adapters/opencode/dist/index.d.ts",
+      },
+      {
+        config: "packages/adapters/opencode/api-extractor.plugin.json",
+        output: "packages/adapters/opencode/dist/plugin.d.ts",
+      },
+    ],
   },
   "@weaveio/weave-adapter-claude-code": {
     entries: [
       {
         source: "packages/adapters/claude-code/src/index.ts",
         output: "packages/adapters/claude-code/dist/index.js",
+      },
+    ],
+    declarations: [
+      {
+        config: "packages/adapters/claude-code/api-extractor.json",
+        output: "packages/adapters/claude-code/dist/index.d.ts",
       },
     ],
     bootstrap: [

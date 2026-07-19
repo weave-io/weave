@@ -37,7 +37,8 @@
       "packages/**/*.ts",
       "packages/**/*.tsx",
       "scripts/**/*.ts",
-      "!packages/**/dist"
+      "!packages/**/dist",
+      "!packages/**/dist-types"
     ]
   },
   "overrides": [

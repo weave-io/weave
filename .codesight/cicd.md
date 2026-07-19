@@ -4,11 +4,21 @@
 
 | Workflow | Triggers | Jobs | Deploy | Environments |
 |---|---|---|---|---|
-| Agent Evals | — | 0 | — | — |
+| Agent Evals | workflow_dispatch | 2 | — | — |
 | CI | push, pull_request | 1 | — | — |
 | Deploy Docs | push, workflow_dispatch | 2 | — | github-pages |
 | Release | release | 2 | — | — |
 | Snapshot | push | 2 | — | — |
+
+### Agent Evals
+
+> `.github/workflows/agent-evals.yml`
+
+- **validate-inputs** on `ubuntu-latest` — 1 steps
+- **run-evals** on `ubuntu-latest` — 7 steps (needs: validate-inputs)
+  - `actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+  - `actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02`
 
 ### Deploy Docs
 
