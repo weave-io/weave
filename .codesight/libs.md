@@ -624,6 +624,11 @@
   - function validateArtifactManifest: (input) => Result<ArtifactManifest, ArtifactManifestError>
   - function validateArtifactBindingRecord: (input) => Result<ArtifactBindingRecord, ArtifactManifestError>
   - type ArtifactManifestError
+- `scripts/release/bind-artifacts.ts`
+  - function parseBindingCliInput: (env, string | undefined>) => Result<ArtifactBindingCliInput, BindingCliError>
+  - function bindArtifacts: (input, dependencies) => ResultAsync<void, BindingCliError>
+  - interface BindingCliDependencies
+  - type BindingCliError
 - `scripts/release/changeset-policy.ts`
   - function partitionChangesets: (changesets) => ChangesetPartition
   - class BunChangesetFileSystem
@@ -643,20 +648,31 @@
   - interface WorkflowRunMetadata
   - interface ActionsArtifactMetadata
   - interface GitHubClient
+  - interface GitHubRefClient
   - type GitHubFetch
 - `scripts/release/input-validation.ts`
   - function validateReleaseInvocation: (input) => Result<ReleaseInvocation, InputValidationError>
+  - type ArtifactBindingCliInput
   - type ReleaseInvocation
   - type InputValidationError
+  - const ArtifactBindingCliInputSchema
   - const ReleaseInvocationSchema
+- `scripts/release/metadata-replay.ts`
+  - function metadataReplayDigest: (record, "recordDigest">) => string
+  - function validateReplay: (record, branch) => Result<MetadataReplayRecord, MetadataReplayError>
+  - function validatePullRequestHead: (head) => Result<void, MetadataReplayError>
+  - class MetadataReplay
+  - interface ReplayPlan
+  - interface ReleaseBranchDeletion
+  - _...2 more_
 - `scripts/release/model.ts`
   - function packageArtifactFilename: (packageName, version) => string
   - type ArtifactManifest
   - type ArtifactBindingRecord
   - type StableTrainRecord
+  - type MetadataReplayRecord
   - const FullShaSchema
-  - const ShortShaSchema
-  - _...20 more_
+  - _...22 more_
 - `scripts/release/nightly-plan.ts`
   - class NightlyPlanner
   - interface NightlyPlanInput
@@ -665,10 +681,13 @@
 - `scripts/release/npm-registry-client.ts` — class NpmCliRegistryClient, interface NpmRegistryClient
 - `scripts/release/package-policy.ts` — class PackagePolicyValidator, type PackagePolicyError
 - `scripts/release/packager.ts`
+  - class BunReleaseCheckout
   - class BunPackageCommandRunner
   - class PublicPackagePackager
+  - interface ReleaseCheckout
   - interface PackageCommandRunner
   - type PackagerError
+  - _...1 more_
 - `scripts/release/public-manifest.ts`
   - class BunPublicManifestFileSystem
   - class PublicManifestBuilder
@@ -681,10 +700,12 @@
   - function trainRecordDigest: (record) => string
   - function validateStableTrain: (record) => Result<StableTrainRecord, StableTrainError>
   - function transitionStableTrain: (record, state) => Result<StableTrainRecord, StableTrainError>
-  - interface StableTrainContent
-  - type StableTrainError
+  - function guardTrainExpiry: (record, clock) => Result<void, StableTrainError>
+  - function planStableCut: (input) => Result<StableCutPlan, StableTrainError>
+  - _...9 more_
 - `scripts/release/tar-inspector.ts`
   - class TarInspector
   - interface TarEntry
   - type TarInspectionError
+- `scripts/release/write-artifact-manifest.ts` — function writeArtifactManifest: (operation, subjectSha) => ResultAsync<void, ManifestWriteError>
 - `scripts/validate-api-extractor-configs.ts` — function validateApiExtractorConfig: (path) => Result<void, ApiExtractorConfigError>, function validateApiExtractorConfigs: () => Result<

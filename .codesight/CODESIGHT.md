@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode
 
-> 0 routes | 0 models | 0 components | 151 lib files | 9 env vars | 6 middleware | 0% test coverage
-> **Token savings:** this file is ~13,600 tokens. Without it, AI exploration would cost ~51,100 tokens. **Saves ~37,500 tokens per conversation.**
-> **Last scanned:** 2026-07-19 07:40 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 154 lib files | 12 env vars | 6 middleware | 0% test coverage
+> **Token savings:** this file is ~14,200 tokens. Without it, AI exploration would cost ~52,300 tokens. **Saves ~38,100 tokens per conversation.**
+> **Last scanned:** 2026-07-19 08:08 — re-run after significant changes
 
 ---
 
@@ -635,6 +635,11 @@
   - function validateArtifactManifest: (input) => Result<ArtifactManifest, ArtifactManifestError>
   - function validateArtifactBindingRecord: (input) => Result<ArtifactBindingRecord, ArtifactManifestError>
   - type ArtifactManifestError
+- `scripts/release/bind-artifacts.ts`
+  - function parseBindingCliInput: (env, string | undefined>) => Result<ArtifactBindingCliInput, BindingCliError>
+  - function bindArtifacts: (input, dependencies) => ResultAsync<void, BindingCliError>
+  - interface BindingCliDependencies
+  - type BindingCliError
 - `scripts/release/changeset-policy.ts`
   - function partitionChangesets: (changesets) => ChangesetPartition
   - class BunChangesetFileSystem
@@ -654,20 +659,31 @@
   - interface WorkflowRunMetadata
   - interface ActionsArtifactMetadata
   - interface GitHubClient
+  - interface GitHubRefClient
   - type GitHubFetch
 - `scripts/release/input-validation.ts`
   - function validateReleaseInvocation: (input) => Result<ReleaseInvocation, InputValidationError>
+  - type ArtifactBindingCliInput
   - type ReleaseInvocation
   - type InputValidationError
+  - const ArtifactBindingCliInputSchema
   - const ReleaseInvocationSchema
+- `scripts/release/metadata-replay.ts`
+  - function metadataReplayDigest: (record, "recordDigest">) => string
+  - function validateReplay: (record, branch) => Result<MetadataReplayRecord, MetadataReplayError>
+  - function validatePullRequestHead: (head) => Result<void, MetadataReplayError>
+  - class MetadataReplay
+  - interface ReplayPlan
+  - interface ReleaseBranchDeletion
+  - _...2 more_
 - `scripts/release/model.ts`
   - function packageArtifactFilename: (packageName, version) => string
   - type ArtifactManifest
   - type ArtifactBindingRecord
   - type StableTrainRecord
+  - type MetadataReplayRecord
   - const FullShaSchema
-  - const ShortShaSchema
-  - _...20 more_
+  - _...22 more_
 - `scripts/release/nightly-plan.ts`
   - class NightlyPlanner
   - interface NightlyPlanInput
@@ -676,10 +692,13 @@
 - `scripts/release/npm-registry-client.ts` — class NpmCliRegistryClient, interface NpmRegistryClient
 - `scripts/release/package-policy.ts` — class PackagePolicyValidator, type PackagePolicyError
 - `scripts/release/packager.ts`
+  - class BunReleaseCheckout
   - class BunPackageCommandRunner
   - class PublicPackagePackager
+  - interface ReleaseCheckout
   - interface PackageCommandRunner
   - type PackagerError
+  - _...1 more_
 - `scripts/release/public-manifest.ts`
   - class BunPublicManifestFileSystem
   - class PublicManifestBuilder
@@ -692,12 +711,14 @@
   - function trainRecordDigest: (record) => string
   - function validateStableTrain: (record) => Result<StableTrainRecord, StableTrainError>
   - function transitionStableTrain: (record, state) => Result<StableTrainRecord, StableTrainError>
-  - interface StableTrainContent
-  - type StableTrainError
+  - function guardTrainExpiry: (record, clock) => Result<void, StableTrainError>
+  - function planStableCut: (input) => Result<StableCutPlan, StableTrainError>
+  - _...9 more_
 - `scripts/release/tar-inspector.ts`
   - class TarInspector
   - interface TarEntry
   - type TarInspectionError
+- `scripts/release/write-artifact-manifest.ts` — function writeArtifactManifest: (operation, subjectSha) => ResultAsync<void, ManifestWriteError>
 - `scripts/validate-api-extractor-configs.ts` — function validateApiExtractorConfig: (path) => Result<void, ApiExtractorConfigError>, function validateApiExtractorConfigs: () => Result<
 
 ---
@@ -708,9 +729,12 @@
 
 - `BASE_PATH` **required** — packages/docs/astro.config.mjs
 - `BASE_URL` **required** — packages/docs/src/data/docs-search.ts
+- `GITHUB_TOKEN` **required** — scripts/release/bind-artifacts.ts
 - `HOME` **required** — packages/cli/src/detect/probes.ts
 - `LOG_LEVEL` **required** — packages/config/src/logger.ts
 - `PWD` **required** — packages/adapters/opencode/dist-types/adapter.d.ts
+- `RELEASE_OPERATION` **required** — scripts/release/write-artifact-manifest.ts
+- `RELEASE_SUBJECT_SHA` **required** — scripts/release/write-artifact-manifest.ts
 - `RUN_HARNESS_SMOKE` **required** — packages/adapters/opencode/src/__tests__/category-routing-smoke.test.ts
 - `SITE_URL` **required** — packages/docs/astro.config.mjs
 - `WEAVE_CLI_VERSION` **required** — packages/cli/src/theme/render.ts
@@ -761,7 +785,7 @@
 - `packages/adapters/opencode/src/sdk-types.ts` — imported by **9** files
 - `packages/cli/src/evals/prompt-snapshots.ts` — imported by **9** files
 - `packages/core/src/tokens.ts` — imported by **8** files
-- `packages/adapters/opencode/src/adapter.ts` — imported by **7** files
+- `scripts/release/filesystem.ts` — imported by **8** files
 
 ## Import Map (who imports what)
 
@@ -781,7 +805,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 135 test files found
+> 137 test files found
 
 ---
 
@@ -794,7 +818,7 @@
 | Agent Evals | workflow_dispatch | 2 | — | — |
 | CI | push, pull_request | 1 | — | — |
 | Deploy Docs | push, workflow_dispatch | 2 | — | github-pages |
-| Publish control plane | schedule, workflow_dispatch | 3 | — | — |
+| Publish control plane | schedule, workflow_dispatch | 6 | — | release, release-refs |
 
 ### Agent Evals
 
@@ -829,20 +853,31 @@
 - **preflight** on `ubuntu-latest` — 4 steps
   - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
-- **build** on `ubuntu-latest` — 8 steps (needs: preflight)
+- **build** on `ubuntu-latest` — 9 steps (needs: preflight)
   - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
   - `actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce`
   - `actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce`
-- **bind** on `ubuntu-latest` — 5 steps (needs: preflight, build)
+- **bind** on `ubuntu-latest` — 6 steps (needs: preflight, build)
   - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
   - `actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce`
+- **stable-plan** on `ubuntu-latest` — 4 steps (needs: preflight)
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+- **metadata-replay-plan** on `ubuntu-latest` — 5 steps (needs: preflight)
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+- **release-refs** on `ubuntu-latest` — 4 steps (needs: stable-plan)
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
 
 ### Secrets
 
 - `EVAL_RESULTS_REPO_TOKEN`
 - `OPENROUTER_API_KEY`
+- `RELEASE_REFS_TOKEN`
 
 ---
 _Source: .github/workflows/agent-evals.yml, .github/workflows/ci.yml, .github/workflows/deploy-docs.yml, .github/workflows/publish.yml_

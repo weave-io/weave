@@ -21,7 +21,7 @@
 - `packages/adapters/opencode/src/sdk-types.ts` — imported by **9** files
 - `packages/cli/src/evals/prompt-snapshots.ts` — imported by **9** files
 - `packages/core/src/tokens.ts` — imported by **8** files
-- `packages/adapters/opencode/src/adapter.ts` — imported by **7** files
+- `scripts/release/filesystem.ts` — imported by **8** files
 
 ## Import Map (who imports what)
 

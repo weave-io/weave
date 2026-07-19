@@ -5,6 +5,12 @@ import type { ReleaseError } from "./errors.js";
 import type { FileSystem } from "./filesystem.js";
 import type { ReleaseInvocation } from "./input-validation.js";
 import {
+  MetadataReplay,
+  type MetadataReplayError,
+  type ReplayPlan,
+} from "./metadata-replay.js";
+import type { MetadataReplayRecord } from "./model.js";
+import {
   type NightlyPlan,
   type NightlyPlanError,
   type NightlyPlanInput,
@@ -52,6 +58,16 @@ export class ReleaseOrchestrator {
   ): ResultAsync<StableFixPlan, import("./stable-train.js").StableTrainError> {
     const plan = planStableFix(input);
     return plan.isOk() ? okAsync(plan.value) : errAsync(plan.error);
+  }
+  /** Plans a replay onto a maintainer-created metadata branch; it never mutates refs. */
+  planMetadataReplay(
+    record: MetadataReplayRecord,
+    branch: string,
+  ): ResultAsync<ReplayPlan, MetadataReplayError> {
+    return new MetadataReplay(this.files, this.clock).applyReplay(
+      record,
+      branch,
+    );
   }
   publish(request: PublishRequest): ResultAsync<void, ReleaseError> {
     if (request.invocation.eventName === "schedule")

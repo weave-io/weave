@@ -38,6 +38,7 @@ export interface GitHubClient {
 export interface GitHubRefClient {
   getRef(ref: string): ResultAsync<string, GitHubError>;
   createRef(ref: string, sha: string): ResultAsync<void, GitHubError>;
+  deleteRef(ref: string): ResultAsync<void, GitHubError>;
   /** CAS is implemented by reading the ref then using GitHub's ordinary non-force update. */
   updateRef(
     ref: string,
@@ -131,6 +132,11 @@ export class GitHubRestClient implements GitHubClient, GitHubRefClient {
     return this.request("/git/refs", {
       method: "POST",
       body: JSON.stringify({ ref: `refs/${ref.replace(/^refs\//, "")}`, sha }),
+    }).map(() => undefined);
+  }
+  deleteRef(ref: string): ResultAsync<void, GitHubError> {
+    return this.request(`/git/refs/${ref.replace(/^refs\//, "")}`, {
+      method: "DELETE",
     }).map(() => undefined);
   }
 

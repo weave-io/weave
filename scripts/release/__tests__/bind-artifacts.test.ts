@@ -52,6 +52,9 @@ const env = {
 
 class MemoryFiles implements FileSystem {
   readonly writes = new Map<string, string>();
+  exists(): ResultAsync<boolean, FileSystemError> {
+    return okAsync(true);
+  }
   readBytes(): ResultAsync<Uint8Array, FileSystemError> {
     return okAsync(new Uint8Array());
   }
@@ -63,6 +66,9 @@ class MemoryFiles implements FileSystem {
     contents: string,
   ): ResultAsync<void, FileSystemError> {
     this.writes.set(path, contents);
+    return okAsync(undefined);
+  }
+  delete(): ResultAsync<void, FileSystemError> {
     return okAsync(undefined);
   }
 }

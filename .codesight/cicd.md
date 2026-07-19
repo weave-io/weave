@@ -7,7 +7,7 @@
 | Agent Evals | workflow_dispatch | 2 | — | — |
 | CI | push, pull_request | 1 | — | — |
 | Deploy Docs | push, workflow_dispatch | 2 | — | github-pages |
-| Publish control plane | schedule, workflow_dispatch | 3 | — | — |
+| Publish control plane | schedule, workflow_dispatch | 6 | — | release, release-refs |
 
 ### Agent Evals
 
@@ -42,20 +42,31 @@
 - **preflight** on `ubuntu-latest` — 4 steps
   - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
-- **build** on `ubuntu-latest` — 8 steps (needs: preflight)
+- **build** on `ubuntu-latest` — 9 steps (needs: preflight)
   - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
   - `actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce`
   - `actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce`
-- **bind** on `ubuntu-latest` — 5 steps (needs: preflight, build)
+- **bind** on `ubuntu-latest` — 6 steps (needs: preflight, build)
   - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
   - `actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce`
+- **stable-plan** on `ubuntu-latest` — 4 steps (needs: preflight)
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+- **metadata-replay-plan** on `ubuntu-latest` — 5 steps (needs: preflight)
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+- **release-refs** on `ubuntu-latest` — 4 steps (needs: stable-plan)
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
 
 ### Secrets
 
 - `EVAL_RESULTS_REPO_TOKEN`
 - `OPENROUTER_API_KEY`
+- `RELEASE_REFS_TOKEN`
 
 ---
 _Source: .github/workflows/agent-evals.yml, .github/workflows/ci.yml, .github/workflows/deploy-docs.yml, .github/workflows/publish.yml_
