@@ -1,5 +1,10 @@
 import { describe, expect, it } from "bun:test";
-import { validateReleaseInvocation } from "../input-validation.js";
+
+import {
+  releaseGitHubApiUrl,
+  validateReleaseControlEnvironment,
+  validateReleaseInvocation,
+} from "../input-validation.js";
 import {
   CanonicalRefSchema,
   DigestSchema,
@@ -112,4 +117,41 @@ describe("validateReleaseInvocation", () => {
     ["bare digest", DigestSchema, "a".repeat(64)],
   ])("rejects ambiguous %s", (_name, schema, value) =>
     expect(schema.safeParse(value).success).toBe(false));
+});
+
+describe("validateReleaseControlEnvironment", () => {
+  const environment = {
+    workflowSha: sha,
+    headRef: "refs/heads/main",
+    headSha: sha,
+    runId: "1",
+    runAttempt: "1",
+  };
+
+  it("requires the current run identity", () => {
+    expect(validateReleaseControlEnvironment(environment).isOk()).toBe(true);
+    expect(
+      validateReleaseControlEnvironment({
+        ...environment,
+        runId: undefined,
+      }).isErr(),
+    ).toBe(true);
+    expect(
+      validateReleaseControlEnvironment({
+        ...environment,
+        runAttempt: "0",
+      }).isErr(),
+    ).toBe(true);
+  });
+});
+
+describe("releaseGitHubApiUrl", () => {
+  it("ignores an override outside the dry-run harness", () => {
+    expect(
+      releaseGitHubApiUrl(false, "https://attacker.invalid"),
+    ).toBeUndefined();
+    expect(releaseGitHubApiUrl(true, "https://fixture.invalid")).toBe(
+      "https://fixture.invalid",
+    );
+  });
 });

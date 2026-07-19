@@ -15,10 +15,10 @@
 - `packages/cli/src/fs/file-system.ts` — imported by **12** files
 - `packages/engine/src/logger.ts` — imported by **12** files
 - `scripts/release/clock.ts` — imported by **12** files
+- `scripts/release/npm-registry-client.ts` — imported by **12** files
 - `packages/engine/src/compose.ts` — imported by **11** files
 - `packages/engine/src/runtime/errors.ts` — imported by **11** files
 - `packages/engine/src/execution-lifecycle/metadata.ts` — imported by **11** files
-- `scripts/release/npm-registry-client.ts` — imported by **11** files
 - `packages/cli/src/errors.ts` — imported by **10** files
 - `packages/engine/src/execution-lifecycle/lease.ts` — imported by **10** files
 - `packages/engine/src/execution-lifecycle/errors.ts` — imported by **10** files

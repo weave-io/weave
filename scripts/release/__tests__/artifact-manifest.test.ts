@@ -37,6 +37,13 @@ describe("artifact manifest", () => {
       },
     ],
     [
+      "leading-dash filename",
+      {
+        ...manifest,
+        artifacts: [{ ...manifest.artifacts[0], filename: "-x.tgz" }],
+      },
+    ],
+    [
       "bad checksum name",
       {
         ...manifest,

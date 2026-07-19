@@ -1,10 +1,15 @@
 import { logger } from "@weaveio/weave-engine";
 import { okAsync } from "neverthrow";
+
 import { SystemClock } from "./clock.js";
 import { BunCommandRunner } from "./command-runner.js";
 import { BunFileSystem } from "./filesystem.js";
 import { GitHubRestClient } from "./github-client.js";
-import { validateReleaseInvocation } from "./input-validation.js";
+import {
+  releaseGitHubApiUrl,
+  validateReleaseControlEnvironment,
+  validateReleaseInvocation,
+} from "./input-validation.js";
 import { StableTrainRecordSchema } from "./model.js";
 import type { NpmRegistryClient } from "./npm-registry-client.js";
 import { NpmCliRegistryClient } from "./npm-registry-client.js";
@@ -39,6 +44,20 @@ const manifestJson = JSON.parse(manifestText.value) as unknown;
 const invocation = validateReleaseInvocation(invocationJson);
 if (invocation.isErr()) {
   log.error({ issues: invocation.error.issues }, "invalid release invocation");
+  process.exit(2);
+}
+const environment = validateReleaseControlEnvironment({
+  workflowSha: Bun.env.RELEASE_WORKFLOW_SHA,
+  headRef: Bun.env.RELEASE_HEAD_REF,
+  headSha: Bun.env.RELEASE_HEAD_SHA,
+  runId: Bun.env.RELEASE_RUN_ID,
+  runAttempt: Bun.env.RELEASE_RUN_ATTEMPT,
+});
+if (environment.isErr()) {
+  log.error(
+    { issues: environment.error.issues },
+    "invalid release environment",
+  );
   process.exit(2);
 }
 if (invocation.value.eventName !== "workflow_dispatch") {
@@ -78,10 +97,12 @@ const result = await new ReleaseOrchestrator(
   bindingVerification: {
     record: JSON.parse(bindingText.value) as unknown,
     context: {
-      expectedWorkflowSha: Bun.env.RELEASE_WORKFLOW_SHA ?? "",
+      expectedWorkflowSha: environment.value.workflowSha,
+      expectedRunId: environment.value.runId,
+      expectedRunAttempt: environment.value.runAttempt,
       expectedOperation: invocation.value.operation,
-      expectedHeadRef: Bun.env.RELEASE_HEAD_REF ?? "",
-      expectedHeadSha: Bun.env.RELEASE_HEAD_SHA ?? "",
+      expectedHeadRef: environment.value.headRef,
+      expectedHeadSha: environment.value.headSha,
       expectedManifest: manifestJson as never,
       expectedManifestDigest: manifestDigest,
       expectedFiles: [
@@ -93,7 +114,7 @@ const result = await new ReleaseOrchestrator(
       invocation.value.repository,
       Bun.env.GITHUB_TOKEN,
       fetch,
-      Bun.env.RELEASE_GITHUB_API_URL,
+      releaseGitHubApiUrl(dryRun, Bun.env.RELEASE_GITHUB_API_URL),
     ),
   },
   credentialScan: { environment: Bun.env },

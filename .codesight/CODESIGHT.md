@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode
 
-> 0 routes | 0 models | 0 components | 156 lib files | 28 env vars | 6 middleware | 0% test coverage
-> **Token savings:** this file is ~15,100 tokens. Without it, AI exploration would cost ~54,900 tokens. **Saves ~39,800 tokens per conversation.**
-> **Last scanned:** 2026-07-19 10:35 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 156 lib files | 30 env vars | 6 middleware | 0% test coverage
+> **Token savings:** this file is ~15,100 tokens. Without it, AI exploration would cost ~55,100 tokens. **Saves ~40,000 tokens per conversation.**
+> **Last scanned:** 2026-07-19 10:45 — re-run after significant changes
 
 ---
 
@@ -664,11 +664,12 @@
   - _...4 more_
 - `scripts/release/input-validation.ts`
   - function validateReleaseInvocation: (input) => Result<ReleaseInvocation, InputValidationError>
+  - function validateReleaseControlEnvironment: (input) => Result<ReleaseControlEnvironment, InputValidationError>
+  - function releaseGitHubApiUrl: (dryRun, configuredUrl) => string | undefined
   - type ArtifactBindingCliInput
+  - type ReleaseControlEnvironment
   - type ReleaseInvocation
-  - type InputValidationError
-  - const ArtifactBindingCliInputSchema
-  - const ReleaseInvocationSchema
+  - _...4 more_
 - `scripts/release/metadata-replay.ts`
   - function metadataReplayDigest: (record, "recordDigest">) => string
   - function validateReplay: (record, branch) => Result<MetadataReplayRecord, MetadataReplayError>
@@ -772,6 +773,8 @@
 - `RELEASE_PROMOTION_AUTHORIZATION` **required** — scripts/release/release-refs-main.ts
 - `RELEASE_PUBLISH_ENABLED` **required** — scripts/release/dry-run-nightly.ts
 - `RELEASE_RELEASE_NOTES` **required** — scripts/release/release-refs-main.ts
+- `RELEASE_RUN_ATTEMPT` **required** — scripts/release/control-main.ts
+- `RELEASE_RUN_ID` **required** — scripts/release/control-main.ts
 - `RELEASE_STABLE_PLAN_INPUT` **required** — scripts/release/stable-plan-main.ts
 - `RELEASE_STABLE_TRAIN` **required** — scripts/release/stable-finalize.ts
 - `RELEASE_SUBJECT_SHA` **required** — scripts/release/write-artifact-manifest.ts
@@ -821,10 +824,10 @@
 - `packages/cli/src/fs/file-system.ts` — imported by **12** files
 - `packages/engine/src/logger.ts` — imported by **12** files
 - `scripts/release/clock.ts` — imported by **12** files
+- `scripts/release/npm-registry-client.ts` — imported by **12** files
 - `packages/engine/src/compose.ts` — imported by **11** files
 - `packages/engine/src/runtime/errors.ts` — imported by **11** files
 - `packages/engine/src/execution-lifecycle/metadata.ts` — imported by **11** files
-- `scripts/release/npm-registry-client.ts` — imported by **11** files
 - `packages/cli/src/errors.ts` — imported by **10** files
 - `packages/engine/src/execution-lifecycle/lease.ts` — imported by **10** files
 - `packages/engine/src/execution-lifecycle/errors.ts` — imported by **10** files
@@ -847,7 +850,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 140 test files found
+> 142 test files found
 
 ---
 

@@ -11,6 +11,14 @@ describe("PackagePolicyValidator", () => {
     expect(result.isErr()).toBe(true);
   });
 
+  it("returns a typed error for a null package manifest", () => {
+    const result = new PackagePolicyValidator(nullManifestInspector()).validate(
+      new Uint8Array(),
+    );
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) expect(result.error.type).toBe("InvalidManifest");
+  });
+
   it.each([
     ["rejects an undeclared allowlisted external", {}, true],
     [
@@ -49,6 +57,11 @@ function fakeInspector(dependencies: Record<string, string>): TarInspector {
     entry("package/dist/plugin.d.ts", "export {};"),
     entry("package/README.md", "# Test package"),
   ];
+  return { inspect: () => ok(entries) } as unknown as TarInspector;
+}
+
+function nullManifestInspector(): TarInspector {
+  const entries: TarEntry[] = [entry("package/package.json", "null")];
   return { inspect: () => ok(entries) } as unknown as TarInspector;
 }
 

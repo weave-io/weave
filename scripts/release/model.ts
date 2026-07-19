@@ -83,11 +83,13 @@ export const ArtifactFileSchema = z
       .string()
       .max(RELEASE_INPUT_LIMITS.identifierLength)
       .regex(ASCII)
+      .regex(/^(?!-)/)
       .regex(/^[A-Za-z0-9@._-]+\.tgz$/),
     checksumFilename: z
       .string()
       .max(RELEASE_INPUT_LIMITS.identifierLength)
       .regex(ASCII)
+      .regex(/^(?!-)/)
       .regex(/^[A-Za-z0-9@._-]+\.tgz\.sha256$/),
     sizeBytes: z
       .number()
@@ -158,7 +160,8 @@ export const ArtifactBindingArtifactSchema = z
       .string()
       .min(1)
       .max(RELEASE_INPUT_LIMITS.identifierLength)
-      .regex(ASCII),
+      .regex(ASCII)
+      .regex(/^(?!-)/),
     serverArtifactId: z.number().int().positive(),
     uploadDigest: DigestSchema,
     sizeInBytes: z

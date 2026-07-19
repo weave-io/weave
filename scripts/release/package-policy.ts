@@ -109,19 +109,21 @@ export class PackagePolicyValidator {
         >,
       () => ({ type: "InvalidManifest" as const }),
     )();
+    if (manifest.isErr()) return err(manifest.error);
     if (
-      manifest.isErr() ||
+      typeof manifest.value !== "object" ||
+      manifest.value === null ||
+      Array.isArray(manifest.value)
+    )
+      return err({ type: "InvalidManifest" });
+    if (
       typeof manifest.value.name !== "string" ||
       !(manifest.value.name in PUBLIC_PACKAGES)
     )
-      return err(
-        manifest.isErr()
-          ? manifest.error
-          : {
-              type: "UnexpectedPackage",
-              packageName: String(manifest.value.name),
-            },
-      );
+      return err({
+        type: "UnexpectedPackage",
+        packageName: String(manifest.value.name),
+      });
     const packageName = manifest.value.name as PublicPackageName;
     const declaredDependencies = this.validateManifest(manifest.value);
     if (declaredDependencies.isErr()) return err(declaredDependencies.error);

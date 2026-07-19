@@ -57,6 +57,8 @@ export type BindingError =
 
 export interface BindingVerificationContext {
   expectedWorkflowSha: string;
+  expectedRunId: number;
+  expectedRunAttempt: number;
   expectedOperation: ArtifactBindingRecord["operation"];
   expectedHeadRef: ArtifactBindingRecord["headRef"];
   expectedHeadSha: string;
@@ -136,6 +138,8 @@ function verifyRun(
     ["workflowPath", record.workflowPath, run.workflowPath],
     ["workflowSha", record.workflowSha, run.workflowSha],
     ["protectedWorkflowSha", context.expectedWorkflowSha, run.workflowSha],
+    ["expectedRunId", context.expectedRunId, run.id],
+    ["expectedRunAttempt", context.expectedRunAttempt, run.runAttempt],
     ["operation", record.operation, context.expectedOperation],
     ["headRef", record.headRef, run.headRef],
     ["expectedHeadRef", context.expectedHeadRef, run.headRef],

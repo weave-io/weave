@@ -56,14 +56,14 @@ export class NpmCliRegistryClient implements NpmRegistryClient {
     return this.commands
       .run(["npm", "view", packageName, "versions", "--json"])
       .andThen((result) =>
-        ResultAsync.fromPromise(
-          Promise.resolve(JSON.parse(result.stdout) as unknown),
+        ResultAsync.fromThrowable(
+          () => Promise.resolve(JSON.parse(result.stdout) as unknown),
           () => ({
             type: "RegistryError" as const,
             operation: "listVersions",
             message: "invalid npm versions response",
           }),
-        ),
+        )(),
       )
       .andThen((value) =>
         Array.isArray(value) &&
@@ -90,7 +90,28 @@ export class NpmCliRegistryClient implements NpmRegistryClient {
   ): ResultAsync<Record<string, string>, RegistryError> {
     return this.commands
       .run(["npm", "view", packageName, "dist-tags"])
-      .map((result) => JSON.parse(result.stdout) as Record<string, string>)
+      .andThen((result) =>
+        ResultAsync.fromThrowable(
+          () => Promise.resolve(JSON.parse(result.stdout) as unknown),
+          () => ({
+            type: "RegistryError" as const,
+            operation: "viewDistTags",
+            message: "invalid npm dist-tags response",
+          }),
+        )(),
+      )
+      .andThen((value) =>
+        typeof value === "object" &&
+        value !== null &&
+        !Array.isArray(value) &&
+        Object.values(value).every((version) => typeof version === "string")
+          ? okAsync(value as Record<string, string>)
+          : errAsync({
+              type: "RegistryError" as const,
+              operation: "viewDistTags",
+              message: "invalid npm dist-tags response",
+            }),
+      )
       .mapErr((error) => ({
         type: "RegistryError",
         operation: "viewDistTags",
@@ -103,14 +124,14 @@ export class NpmCliRegistryClient implements NpmRegistryClient {
     return this.commands
       .run(["npm", "dist-tag", "ls", packageName, "--json"])
       .andThen((result) =>
-        ResultAsync.fromPromise(
-          Promise.resolve(JSON.parse(result.stdout) as unknown),
+        ResultAsync.fromThrowable(
+          () => Promise.resolve(JSON.parse(result.stdout) as unknown),
           () => ({
             type: "RegistryError" as const,
             operation: "distTagLs",
             message: "invalid npm dist-tag response",
           }),
-        ),
+        )(),
       )
       .andThen((value) => {
         if (

@@ -61,6 +61,7 @@ function validate(argv: readonly string[]): string | undefined {
   if (argv[1] === "publish") {
     if (
       argv.length !== 7 ||
+      argv[2]?.startsWith("-") ||
       !argv[2]?.endsWith(".tgz") ||
       argv[3] !== "--access" ||
       argv[4] !== "public" ||

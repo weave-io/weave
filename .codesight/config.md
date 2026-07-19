@@ -21,6 +21,8 @@
 - `RELEASE_PROMOTION_AUTHORIZATION` **required** — scripts/release/release-refs-main.ts
 - `RELEASE_PUBLISH_ENABLED` **required** — scripts/release/dry-run-nightly.ts
 - `RELEASE_RELEASE_NOTES` **required** — scripts/release/release-refs-main.ts
+- `RELEASE_RUN_ATTEMPT` **required** — scripts/release/control-main.ts
+- `RELEASE_RUN_ID` **required** — scripts/release/control-main.ts
 - `RELEASE_STABLE_PLAN_INPUT` **required** — scripts/release/stable-plan-main.ts
 - `RELEASE_STABLE_TRAIN` **required** — scripts/release/stable-finalize.ts
 - `RELEASE_SUBJECT_SHA` **required** — scripts/release/write-artifact-manifest.ts

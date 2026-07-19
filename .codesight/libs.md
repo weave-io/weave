@@ -653,11 +653,12 @@
   - _...4 more_
 - `scripts/release/input-validation.ts`
   - function validateReleaseInvocation: (input) => Result<ReleaseInvocation, InputValidationError>
+  - function validateReleaseControlEnvironment: (input) => Result<ReleaseControlEnvironment, InputValidationError>
+  - function releaseGitHubApiUrl: (dryRun, configuredUrl) => string | undefined
   - type ArtifactBindingCliInput
+  - type ReleaseControlEnvironment
   - type ReleaseInvocation
-  - type InputValidationError
-  - const ArtifactBindingCliInputSchema
-  - const ReleaseInvocationSchema
+  - _...4 more_
 - `scripts/release/metadata-replay.ts`
   - function metadataReplayDigest: (record, "recordDigest">) => string
   - function validateReplay: (record, branch) => Result<MetadataReplayRecord, MetadataReplayError>

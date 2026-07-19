@@ -83,6 +83,8 @@ export function nightlyFixture() {
     throw new Error(`fixture binding invalid: ${record.error.type}`);
   const context: BindingVerificationContext = {
     expectedWorkflowSha: input.workflowSha,
+    expectedRunId: input.runId,
+    expectedRunAttempt: input.runAttempt,
     expectedOperation: input.operation,
     expectedHeadRef: input.headRef,
     expectedHeadSha: input.headSha,

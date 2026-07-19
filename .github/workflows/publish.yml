@@ -171,6 +171,7 @@ jobs:
       contents: read
       actions: read
     steps:
+      # This is the sole Bun-only exception: npm >=11.5.1 is required for OIDC trusted publishing.
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '22.14.0'
@@ -222,6 +223,8 @@ jobs:
           RELEASE_WORKFLOW_SHA: ${{ github.workflow_sha }}
           RELEASE_HEAD_REF: ${{ github.ref }}
           RELEASE_HEAD_SHA: ${{ github.sha }}
+          RELEASE_RUN_ID: ${{ github.run_id }}
+          RELEASE_RUN_ATTEMPT: ${{ github.run_attempt }}
       # npm trusted publishing cannot run `npm dist-tag add` (npm/cli#8547).
       # This exposes only human-run instructions; no workflow command mutates tags.
       - name: Record manual promotion authorization

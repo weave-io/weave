@@ -3,6 +3,7 @@
 /.github/CODEOWNERS @weave-io/release-maintainers
 /.github/dependabot.yml @weave-io/release-maintainers
 /scripts/ci/ @weave-io/release-maintainers
+/scripts/validate-api-extractor-configs.ts @weave-io/release-maintainers
 /.changeset/ @weave-io/release-maintainers
 /package.json @weave-io/release-maintainers
 /packages/*/package.json @weave-io/release-maintainers
@@ -18,5 +19,8 @@
 /scripts/build-public-packages.ts @weave-io/release-maintainers
 /scripts/build-release-control.ts @weave-io/release-maintainers
 /packages/cli/ @weave-io/release-maintainers
+/packages/core/ @weave-io/release-maintainers
+/packages/config/ @weave-io/release-maintainers
+/packages/engine/ @weave-io/release-maintainers
 /packages/adapters/opencode/ @weave-io/release-maintainers
 /packages/adapters/claude-code/ @weave-io/release-maintainers

@@ -104,6 +104,8 @@ class MockGitHub implements GitHubClient {
 function context(): BindingVerificationContext {
   return {
     expectedWorkflowSha: input.workflowSha,
+    expectedRunId: input.runId,
+    expectedRunAttempt: input.runAttempt,
     expectedOperation: input.operation,
     expectedHeadRef: input.headRef,
     expectedHeadSha: input.headSha,
@@ -171,6 +173,16 @@ describe("artifact binding", () => {
       name: "rerun attempt",
       client: () => github({ runAttempt: 2 }),
       override: {},
+    },
+    {
+      name: "expected run ID",
+      client: () => github(),
+      override: { expectedRunId: 78 },
+    },
+    {
+      name: "expected run attempt",
+      client: () => github(),
+      override: { expectedRunAttempt: 2 },
     },
     {
       name: "event",
