@@ -31,6 +31,7 @@ jobs:
     outputs:
       operation: ${{ steps.plan.outputs.operation }}
       skipped: ${{ steps.plan.outputs.skipped }}
+      versions: ${{ steps.plan.outputs.versions }}
     steps:
       # Always execute control code from the protected branch, not the dispatch ref.
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -55,7 +56,7 @@ jobs:
           RELEASE_WORKFLOW_REF: ${{ github.workflow_ref }}
 
   build:
-    needs: [preflight, build]
+    needs: preflight
     if: needs.preflight.outputs.skipped != 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -76,6 +77,8 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run build
       - run: bun run release:validate
+        env:
+          RELEASE_PLANNED_VERSIONS: ${{ needs.preflight.outputs.versions }}
       - run: bun scripts/release/write-artifact-manifest.ts
         env:
           RELEASE_OPERATION: ${{ needs.preflight.outputs.operation }}
