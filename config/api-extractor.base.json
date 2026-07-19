@@ -13,7 +13,8 @@
     "enabled": false
   },
   "dtsRollup": {
-    "enabled": true
+    "enabled": true,
+    "untrimmedFilePath": "<projectFolder>/dist-types/untrimmed.d.ts"
   },
   "messages": {
     "compilerMessageReporting": {

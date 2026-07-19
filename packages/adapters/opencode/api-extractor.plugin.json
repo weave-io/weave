@@ -5,7 +5,8 @@
     "tsconfigFilePath": "<projectFolder>/tsconfig.build.json"
   },
   "dtsRollup": {
-    "publicTrimmedFilePath": "<projectFolder>/dist/plugin.d.ts"
+    "publicTrimmedFilePath": "<projectFolder>/dist/plugin.d.ts",
+    "untrimmedFilePath": "<projectFolder>/dist-types/untrimmed-plugin.d.ts"
   },
   "bundledPackages": [
     "@weaveio/weave-core",
