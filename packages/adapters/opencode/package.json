@@ -28,7 +28,7 @@
     }
   },
   "scripts": {
-    "build": "bun run --filter @weaveio/weave-core build && bun run --filter @weaveio/weave-engine --filter @weaveio/weave-config build && bun build ./src/index.ts --outdir ./dist --target bun && bun build ./src/plugin.ts --outfile ./dist/plugin.js --target bun && tsc -p tsconfig.build.json --emitDeclarationOnly",
+    "build": "bun ../../../scripts/build-public-packages.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "clean": "rm -rf dist"
   },
