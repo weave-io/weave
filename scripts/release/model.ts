@@ -151,6 +151,41 @@ export const ArtifactManifestSchema = z
         path: ["packages"],
         message: "stable excludes Claude Code",
       });
+    if (manifest.channel === "stable" && manifest.stableTrain !== undefined) {
+      const train = StableTrainRecordSchema.safeParse(manifest.stableTrain);
+      if (!train.success)
+        context.addIssue({
+          code: "custom",
+          path: ["stableTrain"],
+          message: "stable manifests require a valid stable train",
+        });
+      else {
+        if (train.data.subjectSha !== manifest.releaseSubjectSha)
+          context.addIssue({
+            code: "custom",
+            path: ["stableTrain", "subjectSha"],
+            message: "stable train subject must match manifest",
+          });
+        if (
+          JSON.stringify(train.data.packages) !==
+          JSON.stringify(manifest.packages)
+        )
+          context.addIssue({
+            code: "custom",
+            path: ["stableTrain", "packages"],
+            message: "stable train packages must exactly match manifest",
+          });
+        if (
+          JSON.stringify(train.data.versions) !==
+          JSON.stringify(manifest.versions)
+        )
+          context.addIssue({
+            code: "custom",
+            path: ["stableTrain", "versions"],
+            message: "stable train versions must exactly match manifest",
+          });
+      }
+    }
   });
 
 /** Server-bound release artifact identity. Task 9's extension to ArtifactManifest. */
@@ -207,6 +242,8 @@ export const ArtifactBindingRecordSchema = z
     versions: z.record(z.string(), SemVerSchema),
     releaseSubjectSha: FullShaSchema,
     manifestDigest: DigestSchema,
+    /** Stable train advanced after Actions assigned immutable artifact identity. */
+    stableTrain: z.unknown().optional(),
     files: z
       .array(ArtifactBindingFileSchema)
       .min(1)
@@ -233,6 +270,15 @@ export const ArtifactBindingRecordSchema = z
         path: ["files"],
         message: "file names must be unique",
       });
+    if (record.operation === "stable-publish") {
+      const train = StableTrainRecordSchema.safeParse(record.stableTrain);
+      if (!train.success || train.data.state !== "bound")
+        context.addIssue({
+          code: "custom",
+          path: ["stableTrain"],
+          message: "stable bindings require a bound stable train",
+        });
+    }
   });
 
 export const StableTrainRecordSchema = z

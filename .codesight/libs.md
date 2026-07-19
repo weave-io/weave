@@ -676,6 +676,7 @@
   - const FullShaSchema
   - _...22 more_
 - `scripts/release/nightly-plan.ts`
+  - function runPreflight: (environment, string | undefined>) => Promise<number>
   - class NightlyPlanner
   - interface NightlyPlanInput
   - type NightlyPlan
@@ -687,13 +688,13 @@
   - interface CredentialScanInput
   - type PackagePolicyError
 - `scripts/release/packager.ts`
+  - function stablePackageVersions: (versions, string>> | undefined) => Readonly<Record<string, string>> | undefined
   - class BunReleaseCheckout
   - class BunPackageCommandRunner
   - class PublicPackagePackager
   - interface ReleaseCheckout
   - interface PackageCommandRunner
-  - type PackagerError
-  - _...1 more_
+  - _...2 more_
 - `scripts/release/public-manifest.ts`
   - class BunPublicManifestFileSystem
   - class PublicManifestBuilder
@@ -716,6 +717,7 @@
   - interface PromotionCommands
   - interface StableFinalizeResult
   - _...3 more_
+- `scripts/release/stable-lineage.ts` — function hasProgressedLineage: (original, progressed) => boolean
 - `scripts/release/stable-train.ts`
   - function canonicalTrainJson: (record) => string
   - function trainRecordDigest: (record) => string
@@ -723,7 +725,7 @@
   - function assertCurrentArtifactIdentity: (record, artifactManifestDigest, artifactIds) => Result<void, StableTrainError>
   - function validateStableTrain: (record) => Result<StableTrainRecord, StableTrainError>
   - function transitionStableTrain: (record, state) => Result<StableTrainRecord, StableTrainError>
-  - _...12 more_
+  - _...13 more_
 - `scripts/release/tar-inspector.ts`
   - class TarInspector
   - interface TarEntry
@@ -734,5 +736,5 @@
   - interface ScenarioResult
   - const FIXTURE_CLOCK
   - const FIXTURE_VERSIONS
-- `scripts/release/write-artifact-manifest.ts` — function writeArtifactManifest: (operation, subjectSha) => ResultAsync<void, ManifestWriteError>
+- `scripts/release/write-artifact-manifest.ts` — function writeArtifactManifest: (operation, subjectSha, stableTrainText) => ResultAsync<void, ManifestWriteError>
 - `scripts/validate-api-extractor-configs.ts` — function validateApiExtractorConfig: (path) => Result<void, ApiExtractorConfigError>, function validateApiExtractorConfigs: () => Result<

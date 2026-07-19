@@ -167,6 +167,47 @@ export function transitionStableTrain(
   return ok({ ...next, recordDigest: trainRecordDigest(next) });
 }
 
+/**
+ * Advances a cut record through the build and binding gates. Artifact identity
+ * is introduced exactly once, on the bound record, after Actions assigned its
+ * immutable artifact IDs.
+ */
+export function bindStableTrain(
+  record: StableTrainRecord,
+  artifactManifestDigest: string,
+  artifactIds: readonly number[],
+): Result<StableTrainRecord, StableTrainError> {
+  const validated = validateStableTrain(record);
+  if (validated.isErr()) return err(validated.error);
+  if (record.state !== "prepared" && record.state !== "built")
+    return err({ type: "InvalidTransition", from: record.state, to: "bound" });
+  if (
+    record.artifactManifestDigest !== undefined ||
+    record.artifactIds !== undefined
+  )
+    return err({
+      type: "InvalidCut",
+      reason: "artifact identity may only be set while binding a fresh train",
+    });
+  const built =
+    record.state === "prepared"
+      ? transitionStableTrain(record, "built")
+      : ok(record);
+  if (built.isErr()) return err(built.error);
+  const bound = transitionStableTrain(built.value, "bound");
+  if (bound.isErr()) return err(bound.error);
+  const { recordDigest: _recordDigest, ...content } = bound.value;
+  const next = {
+    ...content,
+    artifactManifestDigest,
+    artifactIds: [...artifactIds],
+  };
+  return validateStableTrain({
+    ...next,
+    recordDigest: trainRecordDigest(next),
+  });
+}
+
 /** Expiry is exclusive: a train is unusable at precisely expiresAt. */
 export function guardTrainExpiry(
   record: StableTrainRecord,

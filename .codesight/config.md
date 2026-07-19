@@ -4,6 +4,7 @@
 
 - `BASE_PATH` **required** — packages/docs/astro.config.mjs
 - `BASE_URL` **required** — packages/docs/src/data/docs-search.ts
+- `GITHUB_OUTPUT` **required** — scripts/release/stable-finalize.ts
 - `GITHUB_TOKEN` **required** — scripts/release/bind-artifacts.ts
 - `HOME` **required** — packages/cli/src/detect/probes.ts
 - `LOG_LEVEL` **required** — packages/config/src/logger.ts
@@ -15,9 +16,10 @@
 - `RELEASE_HEAD_REF` **required** — scripts/release/control-main.ts
 - `RELEASE_HEAD_SHA` **required** — scripts/release/control-main.ts
 - `RELEASE_METADATA_REPLAY_INPUT` **required** — scripts/release/metadata-replay-main.ts
-- `RELEASE_OPERATION` **required** — scripts/release/write-artifact-manifest.ts
+- `RELEASE_OPERATION` **required** — scripts/release/packager.ts
 - `RELEASE_PAYLOAD_DIRECTORY` **required** — scripts/release/release-refs-main.ts
 - `RELEASE_PLANNED_VERSIONS` **required** — scripts/release/packager.ts
+- `RELEASE_PROGRESSED_STABLE_TRAIN` **required** — scripts/release/release-refs-main.ts
 - `RELEASE_PROMOTION_AUTHORIZATION` **required** — scripts/release/release-refs-main.ts
 - `RELEASE_PUBLISH_ENABLED` **required** — scripts/release/dry-run-nightly.ts
 - `RELEASE_RELEASE_NOTES` **required** — scripts/release/release-refs-main.ts

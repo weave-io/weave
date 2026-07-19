@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode
 
-> 0 routes | 0 models | 0 components | 156 lib files | 30 env vars | 6 middleware | 0% test coverage
-> **Token savings:** this file is ~15,100 tokens. Without it, AI exploration would cost ~55,100 tokens. **Saves ~40,000 tokens per conversation.**
-> **Last scanned:** 2026-07-19 10:45 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 157 lib files | 32 env vars | 6 middleware | 0% test coverage
+> **Token savings:** this file is ~15,200 tokens. Without it, AI exploration would cost ~55,600 tokens. **Saves ~40,400 tokens per conversation.**
+> **Last scanned:** 2026-07-19 11:50 — re-run after significant changes
 
 ---
 
@@ -687,6 +687,7 @@
   - const FullShaSchema
   - _...22 more_
 - `scripts/release/nightly-plan.ts`
+  - function runPreflight: (environment, string | undefined>) => Promise<number>
   - class NightlyPlanner
   - interface NightlyPlanInput
   - type NightlyPlan
@@ -698,13 +699,13 @@
   - interface CredentialScanInput
   - type PackagePolicyError
 - `scripts/release/packager.ts`
+  - function stablePackageVersions: (versions, string>> | undefined) => Readonly<Record<string, string>> | undefined
   - class BunReleaseCheckout
   - class BunPackageCommandRunner
   - class PublicPackagePackager
   - interface ReleaseCheckout
   - interface PackageCommandRunner
-  - type PackagerError
-  - _...1 more_
+  - _...2 more_
 - `scripts/release/public-manifest.ts`
   - class BunPublicManifestFileSystem
   - class PublicManifestBuilder
@@ -727,6 +728,7 @@
   - interface PromotionCommands
   - interface StableFinalizeResult
   - _...3 more_
+- `scripts/release/stable-lineage.ts` — function hasProgressedLineage: (original, progressed) => boolean
 - `scripts/release/stable-train.ts`
   - function canonicalTrainJson: (record) => string
   - function trainRecordDigest: (record) => string
@@ -734,7 +736,7 @@
   - function assertCurrentArtifactIdentity: (record, artifactManifestDigest, artifactIds) => Result<void, StableTrainError>
   - function validateStableTrain: (record) => Result<StableTrainRecord, StableTrainError>
   - function transitionStableTrain: (record, state) => Result<StableTrainRecord, StableTrainError>
-  - _...12 more_
+  - _...13 more_
 - `scripts/release/tar-inspector.ts`
   - class TarInspector
   - interface TarEntry
@@ -745,7 +747,7 @@
   - interface ScenarioResult
   - const FIXTURE_CLOCK
   - const FIXTURE_VERSIONS
-- `scripts/release/write-artifact-manifest.ts` — function writeArtifactManifest: (operation, subjectSha) => ResultAsync<void, ManifestWriteError>
+- `scripts/release/write-artifact-manifest.ts` — function writeArtifactManifest: (operation, subjectSha, stableTrainText) => ResultAsync<void, ManifestWriteError>
 - `scripts/validate-api-extractor-configs.ts` — function validateApiExtractorConfig: (path) => Result<void, ApiExtractorConfigError>, function validateApiExtractorConfigs: () => Result<
 
 ---
@@ -756,6 +758,7 @@
 
 - `BASE_PATH` **required** — packages/docs/astro.config.mjs
 - `BASE_URL` **required** — packages/docs/src/data/docs-search.ts
+- `GITHUB_OUTPUT` **required** — scripts/release/stable-finalize.ts
 - `GITHUB_TOKEN` **required** — scripts/release/bind-artifacts.ts
 - `HOME` **required** — packages/cli/src/detect/probes.ts
 - `LOG_LEVEL` **required** — packages/config/src/logger.ts
@@ -767,9 +770,10 @@
 - `RELEASE_HEAD_REF` **required** — scripts/release/control-main.ts
 - `RELEASE_HEAD_SHA` **required** — scripts/release/control-main.ts
 - `RELEASE_METADATA_REPLAY_INPUT` **required** — scripts/release/metadata-replay-main.ts
-- `RELEASE_OPERATION` **required** — scripts/release/write-artifact-manifest.ts
+- `RELEASE_OPERATION` **required** — scripts/release/packager.ts
 - `RELEASE_PAYLOAD_DIRECTORY` **required** — scripts/release/release-refs-main.ts
 - `RELEASE_PLANNED_VERSIONS` **required** — scripts/release/packager.ts
+- `RELEASE_PROGRESSED_STABLE_TRAIN` **required** — scripts/release/release-refs-main.ts
 - `RELEASE_PROMOTION_AUTHORIZATION` **required** — scripts/release/release-refs-main.ts
 - `RELEASE_PUBLISH_ENABLED` **required** — scripts/release/dry-run-nightly.ts
 - `RELEASE_RELEASE_NOTES` **required** — scripts/release/release-refs-main.ts
@@ -817,20 +821,20 @@
 - `packages/cli/src/evals/openrouter-client.ts` — imported by **18** files
 - `packages/cli/src/evals/report-schema.ts` — imported by **17** files
 - `packages/engine/src/runtime/types.ts` — imported by **16** files
+- `scripts/release/model.ts` — imported by **15** files
 - `packages/cli/src/args.ts` — imported by **14** files
-- `scripts/release/model.ts` — imported by **14** files
 - `packages/engine/src/runtime/store.ts` — imported by **13** files
 - `scripts/release/filesystem.ts` — imported by **13** files
+- `scripts/release/clock.ts` — imported by **13** files
+- `scripts/release/npm-registry-client.ts` — imported by **13** files
 - `packages/cli/src/fs/file-system.ts` — imported by **12** files
 - `packages/engine/src/logger.ts` — imported by **12** files
-- `scripts/release/clock.ts` — imported by **12** files
-- `scripts/release/npm-registry-client.ts` — imported by **12** files
 - `packages/engine/src/compose.ts` — imported by **11** files
 - `packages/engine/src/runtime/errors.ts` — imported by **11** files
 - `packages/engine/src/execution-lifecycle/metadata.ts` — imported by **11** files
+- `scripts/release/stable-train.ts` — imported by **11** files
 - `packages/cli/src/errors.ts` — imported by **10** files
 - `packages/engine/src/execution-lifecycle/lease.ts` — imported by **10** files
-- `packages/engine/src/execution-lifecycle/errors.ts` — imported by **10** files
 
 ## Import Map (who imports what)
 
@@ -840,8 +844,8 @@
 - `packages/cli/src/evals/openrouter-client.ts` ← `packages/cli/src/evals/__tests__/loom-routing-runner.test.ts`, `packages/cli/src/evals/__tests__/pattern-planning-runner.test.ts`, `packages/cli/src/evals/__tests__/runner.test.ts`, `packages/cli/src/evals/__tests__/shuttle-execution-runner.test.ts`, `packages/cli/src/evals/__tests__/spindle-tools-runner.test.ts` +13 more
 - `packages/cli/src/evals/report-schema.ts` ← `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts` +12 more
 - `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts` +11 more
+- `scripts/release/model.ts` ← `scripts/release/__tests__/artifact-binding.test.ts`, `scripts/release/__tests__/control-executable.test.ts`, `scripts/release/__tests__/payload-layout.e2e.test.ts`, `scripts/release/__tests__/release-orchestrator.test.ts`, `scripts/release/bind-artifacts.ts` +10 more
 - `packages/cli/src/args.ts` ← `packages/cli/src/__tests__/args.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/prompt.test.ts` +9 more
-- `scripts/release/model.ts` ← `scripts/release/__tests__/artifact-binding.test.ts`, `scripts/release/__tests__/control-executable.test.ts`, `scripts/release/__tests__/payload-layout.e2e.test.ts`, `scripts/release/__tests__/release-orchestrator.test.ts`, `scripts/release/bind-artifacts.ts` +9 more
 - `packages/engine/src/runtime/store.ts` ← `packages/engine/src/__tests__/runtime-journal.test.ts`, `packages/engine/src/execution-lifecycle/artifacts.ts`, `packages/engine/src/execution-lifecycle/dispatch.ts`, `packages/engine/src/execution-lifecycle/inspection.ts`, `packages/engine/src/execution-lifecycle/interrupts.ts` +8 more
 - `scripts/release/filesystem.ts` ← `scripts/release/__tests__/bind-artifacts.test.ts`, `scripts/release/__tests__/github-client.test.ts`, `scripts/release/__tests__/metadata-replay.test.ts`, `scripts/release/__tests__/release-orchestrator.test.ts`, `scripts/release/bind-artifacts.ts` +8 more
 
@@ -850,7 +854,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 142 test files found
+> 144 test files found
 
 ---
 

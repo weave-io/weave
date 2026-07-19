@@ -15,7 +15,7 @@ on:
         required: false
         type: string
       stable-train:
-        description: Exact JSON stable train record (stable publish/finalize)
+        description: Exact JSON awaiting-promotion train emitted by stable-publish (stable publish/finalize)
         required: false
         type: string
       stable-plan-input:
@@ -190,6 +190,8 @@ jobs:
       id-token: write
       contents: read
       actions: read
+    outputs:
+      stable-train: ${{ steps.execute.outputs.stable_train }}
     steps:
       # This is the sole Bun-only exception: npm >=11.5.1 is required for OIDC trusted publishing.
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -238,6 +240,10 @@ jobs:
         run: |
           chmod 700 control/release-control
           ./control/release-control invocation.json payload/manifest.json payload binding/binding.json | tee control-output.jsonl
+          stable_train="$(jq -ce 'select(.stableTrain != null) | .stableTrain' control-output.jsonl || true)"
+          if [ -n "$stable_train" ]; then
+            echo "stable_train=$stable_train" >> "$GITHUB_OUTPUT"
+          fi
         env:
           GITHUB_TOKEN: ${{ github.token }}
           RELEASE_WORKFLOW_SHA: ${{ github.workflow_sha }}
@@ -336,9 +342,10 @@ jobs:
           path: payload
       - id: finalize
         name: Verify both promoted latest tags and tarball digests
-        run: RELEASE_STABLE_TRAIN="$(jq -ec '.stableTrain' payload/manifest.json)" bun scripts/release/stable-finalize.ts
+        run: bun scripts/release/stable-finalize.ts
         env:
           RELEASE_PROMOTION_AUTHORIZATION: ${{ inputs.promotion-authorization }}
+          RELEASE_STABLE_TRAIN: ${{ needs.preflight.outputs.stable-train }}
 
   # The App token is environment-scoped. GITHUB_TOKEN remains read-only.
   release-refs:

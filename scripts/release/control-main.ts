@@ -1,5 +1,5 @@
 import { logger } from "@weaveio/weave-engine";
-import { okAsync } from "neverthrow";
+import { okAsync, Result } from "neverthrow";
 
 import { SystemClock } from "./clock.js";
 import { BunCommandRunner } from "./command-runner.js";
@@ -14,6 +14,7 @@ import { StableTrainRecordSchema } from "./model.js";
 import type { NpmRegistryClient } from "./npm-registry-client.js";
 import { NpmCliRegistryClient } from "./npm-registry-client.js";
 import { ReleaseOrchestrator } from "./release-orchestrator.js";
+import { validateStableTrain } from "./stable-train.js";
 
 const log = logger.child({ module: "release-control" });
 const args = Bun.argv.slice(2);
@@ -39,9 +40,14 @@ if (invocationText.isErr() || manifestText.isErr() || bindingText.isErr()) {
   log.error("unable to read release inputs");
   process.exit(1);
 }
-const invocationJson = JSON.parse(invocationText.value) as unknown;
-const manifestJson = JSON.parse(manifestText.value) as unknown;
-const invocation = validateReleaseInvocation(invocationJson);
+const invocationJson = parseJson(invocationText.value);
+const manifestJson = parseJson(manifestText.value);
+const bindingJson = parseJson(bindingText.value);
+if (invocationJson.isErr() || manifestJson.isErr() || bindingJson.isErr()) {
+  log.error("release inputs contain invalid JSON");
+  process.exit(2);
+}
+const invocation = validateReleaseInvocation(invocationJson.value);
 if (invocation.isErr()) {
   log.error({ issues: invocation.error.issues }, "invalid release invocation");
   process.exit(2);
@@ -65,16 +71,19 @@ if (invocation.value.eventName !== "workflow_dispatch") {
   process.exit(2);
 }
 const stableTrain = StableTrainRecordSchema.safeParse(
-  typeof manifestJson === "object" && manifestJson !== null
-    ? (manifestJson as { stableTrain?: unknown }).stableTrain
+  typeof manifestJson.value === "object" && manifestJson.value !== null
+    ? (manifestJson.value as { stableTrain?: unknown }).stableTrain
     : undefined,
 );
-if (invocation.value.channel === "stable" && !stableTrain.success) {
+const boundStableTrain = stableTrain.success
+  ? stableTrainFromBinding(bindingJson.value, stableTrain.data)
+  : undefined;
+if (invocation.value.channel === "stable" && boundStableTrain === undefined) {
   log.error("stable control requires a validated stable train record");
   process.exit(2);
 }
 const manifestDigest = digest(manifestText.value);
-const manifestFiles = artifactFiles(manifestJson);
+const manifestFiles = artifactFiles(manifestJson.value);
 if (manifestFiles === undefined) {
   log.error("manifest has no verifiable files");
   process.exit(2);
@@ -92,10 +101,10 @@ const result = await new ReleaseOrchestrator(
   new SystemClock(),
 ).publish({
   invocation: invocation.value,
-  manifest: manifestJson,
+  manifest: manifestJson.value,
   artifactDirectory,
   bindingVerification: {
-    record: JSON.parse(bindingText.value) as unknown,
+    record: bindingJson.value,
     context: {
       expectedWorkflowSha: environment.value.workflowSha,
       expectedRunId: environment.value.runId,
@@ -103,7 +112,7 @@ const result = await new ReleaseOrchestrator(
       expectedOperation: invocation.value.operation,
       expectedHeadRef: environment.value.headRef,
       expectedHeadSha: environment.value.headSha,
-      expectedManifest: manifestJson as never,
+      expectedManifest: manifestJson.value as never,
       expectedManifestDigest: manifestDigest,
       expectedFiles: [
         ...manifestFiles,
@@ -118,7 +127,7 @@ const result = await new ReleaseOrchestrator(
     ),
   },
   credentialScan: { environment: Bun.env },
-  stableTrain: stableTrain.success ? stableTrain.data : undefined,
+  stableTrain: boundStableTrain,
 });
 if (result.isErr()) {
   log.error({ error: result.error }, "release failed");
@@ -129,7 +138,7 @@ if (
   result.value.promotionAuthorization !== undefined
 )
   process.stdout.write(
-    `${JSON.stringify({ promotionAuthorization: result.value.promotionAuthorization })}\n`,
+    `${JSON.stringify({ promotionAuthorization: result.value.promotionAuthorization, stableTrain: result.value.stableTrain })}\n`,
   );
 if (dryRun)
   process.stdout.write(
@@ -164,6 +173,32 @@ function artifactFiles(
 
 function digest(value: string | Uint8Array): string {
   return `sha256:${new Bun.CryptoHasher("sha256").update(value).digest("hex")}`;
+}
+
+function parseJson(value: string) {
+  return Result.fromThrowable(
+    () => JSON.parse(value) as unknown,
+    () => ({ type: "InvalidJson" as const }),
+  )();
+}
+
+function stableTrainFromBinding(
+  binding: unknown,
+  manifestTrain: import("./model.js").StableTrainRecord,
+) {
+  if (typeof binding !== "object" || binding === null) return undefined;
+  const candidate = (binding as { stableTrain?: unknown }).stableTrain;
+  const parsed = validateStableTrain(candidate);
+  if (parsed.isErr() || parsed.value.state !== "bound") return undefined;
+  if (
+    parsed.value.subjectSha !== manifestTrain.subjectSha ||
+    JSON.stringify(parsed.value.packages) !==
+      JSON.stringify(manifestTrain.packages) ||
+    JSON.stringify(parsed.value.versions) !==
+      JSON.stringify(manifestTrain.versions)
+  )
+    return undefined;
+  return parsed.value;
 }
 
 /** Dry runs validate the full local and server-bound proof without registry mutation. */

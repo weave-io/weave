@@ -169,7 +169,11 @@ export interface StableReleaseRefsResult {
   tags: Readonly<Record<string, "verified" | "unsigned">>;
 }
 export type PublishResult =
-  | { state: "published"; promotionAuthorization?: PromotionAuthorization }
+  | {
+      state: "published";
+      promotionAuthorization?: PromotionAuthorization;
+      stableTrain?: StableTrainRecord;
+    }
   | { state: "partial"; reason: string };
 /** Composition root for npm publishing. GitHub/train workflows are added in Tasks 9/13/19/20. */
 export class ReleaseOrchestrator {
@@ -380,12 +384,14 @@ export class ReleaseOrchestrator {
     if (request.invocation.eventName !== "workflow_dispatch")
       return errAsync({ type: "UnsupportedOperation", operation: "schedule" });
     const stablePublication = request.invocation.operation === "stable-publish";
+    let publishedTrain: StableTrainRecord | undefined;
     if (stablePublication) {
       const transition = this.assertStableTransition(
         request.stableTrain,
         "published-next",
       );
       if (transition.isErr()) return errAsync(transition.error);
+      publishedTrain = transition.value;
     }
     if (
       request.invocation.operation !== "nightly" &&
@@ -458,10 +464,16 @@ export class ReleaseOrchestrator {
           }),
         okAsync(undefined),
       )
-      .map(() => {
-        if (!stablePublication) return { state: "published" };
-        return {
-          state: "published",
+      .andThen(() => {
+        if (!stablePublication) return okAsync({ state: "published" as const });
+        const awaiting = this.assertStableTransition(
+          publishedTrain,
+          "awaiting-promotion",
+        );
+        if (awaiting.isErr()) return errAsync(awaiting.error);
+        return okAsync({
+          state: "published" as const,
+          stableTrain: awaiting.value,
           promotionAuthorization: {
             schemaVersion: 1,
             operation: "stable-publish",
@@ -478,7 +490,7 @@ export class ReleaseOrchestrator {
               ]),
             ),
           },
-        };
+        });
       });
   }
 

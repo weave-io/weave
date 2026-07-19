@@ -66,12 +66,14 @@ await runScenarios("release-control-clean-room", [
         await verifyBindingRecord(
           binding.value,
           context,
-          new FixtureGitHub(fixture, {}, new Uint8Array([...bytes, 0])),
+          new FixtureGitHub(fixture, {}, { 2: new Uint8Array([...bytes, 0]) }),
         )
       ).match(
         () => false,
         (error) =>
-          error.type === "BindingMismatch" && error.field === "downloadDigest",
+          error.type === "BindingMismatch" &&
+          error.field === "downloadDigest" &&
+          error.expected === fixture.artifacts[1]?.uploadDigest,
       ),
   },
   {
@@ -96,12 +98,14 @@ await runScenarios("release-control-clean-room", [
         await verifyBindingRecord(
           binding.value,
           context,
-          new FixtureGitHub(fixture, {}, new Uint8Array([...bytes, 1])),
+          new FixtureGitHub(fixture, {}, { 1: new Uint8Array([...bytes, 1]) }),
         )
       ).match(
         () => false,
         (error) =>
-          error.type === "BindingMismatch" && error.field === "downloadDigest",
+          error.type === "BindingMismatch" &&
+          error.field === "downloadDigest" &&
+          error.expected === fixture.artifacts[0]?.uploadDigest,
       ),
   },
 ]);
