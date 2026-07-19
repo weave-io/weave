@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode
 
-> 0 routes | 0 models | 0 components | 135 lib files | 9 env vars | 6 middleware | 0% test coverage
-> **Token savings:** this file is ~12,600 tokens. Without it, AI exploration would cost ~46,900 tokens. **Saves ~34,300 tokens per conversation.**
-> **Last scanned:** 2026-07-19 06:33 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 140 lib files | 9 env vars | 6 middleware | 0% test coverage
+> **Token savings:** this file is ~13,000 tokens. Without it, AI exploration would cost ~48,200 tokens. **Saves ~35,300 tokens per conversation.**
+> **Last scanned:** 2026-07-19 06:52 — re-run after significant changes
 
 ---
 
@@ -606,6 +606,28 @@
   - class PublicPackageBuilder
   - interface PublicPackageFileSystem
   - type PublicPackageBuildError
+- `scripts/release/artifact-manifest.ts` — function validateArtifactManifest: (input) => Result<ArtifactManifest, ArtifactManifestError>, type ArtifactManifestError
+- `scripts/release/changeset-policy.ts`
+  - function partitionChangesets: (changesets) => ChangesetPartition
+  - class BunChangesetFileSystem
+  - class ChangesetPolicyValidator
+  - interface ChangesetFileSystem
+  - interface ParsedChangeset
+  - interface ChangesetPartition
+  - _...4 more_
+- `scripts/release/input-validation.ts`
+  - function validateReleaseInvocation: (input) => Result<ReleaseInvocation, InputValidationError>
+  - type ReleaseInvocation
+  - type InputValidationError
+  - const ReleaseInvocationSchema
+- `scripts/release/model.ts`
+  - function packageArtifactFilename: (packageName, version) => string
+  - type ArtifactManifest
+  - type StableTrainRecord
+  - const FullShaSchema
+  - const ShortShaSchema
+  - const SemVerSchema
+  - _...16 more_
 - `scripts/release/package-policy.ts` — class PackagePolicyValidator, type PackagePolicyError
 - `scripts/release/packager.ts`
   - class BunPackageCommandRunner
@@ -618,6 +640,13 @@
   - interface PublicManifestFileSystem
   - interface StagedPublicManifest
   - type PublicManifestError
+- `scripts/release/stable-train.ts`
+  - function canonicalTrainJson: (record) => string
+  - function trainRecordDigest: (record) => string
+  - function validateStableTrain: (record) => Result<StableTrainRecord, StableTrainError>
+  - function transitionStableTrain: (record, state) => Result<StableTrainRecord, StableTrainError>
+  - interface StableTrainContent
+  - type StableTrainError
 - `scripts/release/tar-inspector.ts`
   - class TarInspector
   - interface TarEntry
@@ -705,7 +734,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 124 test files found
+> 128 test files found
 
 ---
 

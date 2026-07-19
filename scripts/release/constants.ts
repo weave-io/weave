@@ -3,6 +3,74 @@ export const RELEASE_CHANNELS = ["stable", "nightly"] as const;
 
 export type ReleaseChannel = (typeof RELEASE_CHANNELS)[number];
 
+/** Immutable GitHub identity for every release-control invocation. */
+export const RELEASE_REPOSITORY = "weave-io/weave" as const;
+export const RELEASE_WORKFLOW_PATH = ".github/workflows/publish.yml" as const;
+
+export const RELEASE_EVENTS = ["schedule", "workflow_dispatch"] as const;
+export const RELEASE_OPERATIONS = [
+  "nightly",
+  "stable-cut",
+  "stable-fix",
+  "stable-publish",
+  "stable-finalize",
+  "metadata-replay",
+] as const;
+
+export const RELEASE_CONTROL_REF = "refs/heads/main" as const;
+export const NPM_DIGEST_PREFIX = "sha256:" as const;
+export const TRAIN_SCHEMA_VERSION = 1 as const;
+export const TRAIN_VALIDITY_DAYS = 7 as const;
+export const ACTIONS_ARTIFACT_RETENTION_DAYS = 30 as const;
+
+/** Limits untrusted workflow values before they reach a command or API. */
+export const RELEASE_INPUT_LIMITS = {
+  packageCount: 3,
+  artifactCount: 3,
+  artifactBytes: 5 * 1024 * 1024,
+  manifestBytes: 64 * 1024,
+  identifierLength: 128,
+} as const;
+
+export const STABLE_TRAIN_STATES = [
+  "prepared",
+  "built",
+  "bound",
+  "published-next",
+  "awaiting-promotion",
+  "promoted",
+  "release-draft",
+  "finalized",
+  "metadata-pending",
+  "blocked",
+  "expired",
+  "abandoned",
+  "partial",
+] as const;
+
+/** Explicitly allowlisted next states; Task 20 may tighten this policy. */
+export const STABLE_TRAIN_TRANSITIONS = {
+  prepared: ["built", "blocked", "abandoned", "expired"],
+  built: ["bound", "blocked", "abandoned", "expired"],
+  bound: ["published-next", "blocked", "abandoned", "expired"],
+  "published-next": ["awaiting-promotion", "partial", "blocked", "expired"],
+  "awaiting-promotion": [
+    "promoted",
+    "release-draft",
+    "partial",
+    "blocked",
+    "expired",
+  ],
+  promoted: ["release-draft", "finalized", "metadata-pending", "blocked"],
+  "release-draft": ["finalized", "metadata-pending", "blocked"],
+  finalized: ["metadata-pending"],
+  "metadata-pending": ["finalized", "blocked"],
+  blocked: ["abandoned", "expired"],
+  expired: [],
+  abandoned: [],
+  partial: ["awaiting-promotion", "blocked", "abandoned", "expired"],
+} as const;
+
 export const PRIVATE_PACKAGE_NAMES = [
   "@weaveio/weave-core",
   "@weaveio/weave-config",

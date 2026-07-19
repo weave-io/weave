@@ -595,6 +595,28 @@
   - class PublicPackageBuilder
   - interface PublicPackageFileSystem
   - type PublicPackageBuildError
+- `scripts/release/artifact-manifest.ts` — function validateArtifactManifest: (input) => Result<ArtifactManifest, ArtifactManifestError>, type ArtifactManifestError
+- `scripts/release/changeset-policy.ts`
+  - function partitionChangesets: (changesets) => ChangesetPartition
+  - class BunChangesetFileSystem
+  - class ChangesetPolicyValidator
+  - interface ChangesetFileSystem
+  - interface ParsedChangeset
+  - interface ChangesetPartition
+  - _...4 more_
+- `scripts/release/input-validation.ts`
+  - function validateReleaseInvocation: (input) => Result<ReleaseInvocation, InputValidationError>
+  - type ReleaseInvocation
+  - type InputValidationError
+  - const ReleaseInvocationSchema
+- `scripts/release/model.ts`
+  - function packageArtifactFilename: (packageName, version) => string
+  - type ArtifactManifest
+  - type StableTrainRecord
+  - const FullShaSchema
+  - const ShortShaSchema
+  - const SemVerSchema
+  - _...16 more_
 - `scripts/release/package-policy.ts` — class PackagePolicyValidator, type PackagePolicyError
 - `scripts/release/packager.ts`
   - class BunPackageCommandRunner
@@ -607,6 +629,13 @@
   - interface PublicManifestFileSystem
   - interface StagedPublicManifest
   - type PublicManifestError
+- `scripts/release/stable-train.ts`
+  - function canonicalTrainJson: (record) => string
+  - function trainRecordDigest: (record) => string
+  - function validateStableTrain: (record) => Result<StableTrainRecord, StableTrainError>
+  - function transitionStableTrain: (record, state) => Result<StableTrainRecord, StableTrainError>
+  - interface StableTrainContent
+  - type StableTrainError
 - `scripts/release/tar-inspector.ts`
   - class TarInspector
   - interface TarEntry
