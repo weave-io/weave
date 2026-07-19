@@ -74,6 +74,9 @@ class MemoryFiles implements FileSystem {
   }
 }
 class MockGitHub implements GitHubClient {
+  listWorkflowRunJobs() {
+    return okAsync([{ id: 1, name: "build", conclusion: "success" }]);
+  }
   getWorkflowRun(): ResultAsync<WorkflowRunMetadata, GitHubError> {
     return okAsync({
       repositoryId: 42,

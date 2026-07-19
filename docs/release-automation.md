@@ -8,6 +8,14 @@ operator procedure in [RELEASING.md](../RELEASING.md) and the source boundary in
 
 ## Identity and artifacts
 
+GitHub reports a workflow run's `conclusion` as `null` until all of its jobs
+finish. Downstream release jobs therefore prove the completed origin `build`
+job via `GET /actions/runs/{run_id}/jobs`. A binding records the numeric job ID
+and literal `build` name, then requires that exact job's conclusion to be
+`success`. This preserves live-run verification without weakening the existing
+repository, run/attempt, event, workflow path/SHA, subject SHA, artifact ID,
+and digest checks.
+
 The release-control binary runs in an isolated clean room. A binding record
 links the release subject SHA, protected workflow SHA, workflow run, server
 artifact IDs/digests, manifest, package versions, and file SHA-256s. The

@@ -74,6 +74,9 @@ class MockGitHub implements GitHubClient {
   getWorkflowRun() {
     return okAsync(this.run);
   }
+  listWorkflowRunJobs() {
+    return okAsync([{ id: 1, name: "build", conclusion: "success" }]);
+  }
   listRunArtifacts() {
     return okAsync(this.artifacts);
   }
@@ -187,11 +190,6 @@ describe("artifact binding", () => {
     {
       name: "head SHA",
       client: () => github({ headSha: "d".repeat(40) }),
-      override: {},
-    },
-    {
-      name: "job conclusion",
-      client: () => github({ conclusion: "failure" }),
       override: {},
     },
     {

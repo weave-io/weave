@@ -192,6 +192,8 @@ export const ArtifactBindingRecordSchema = z
     headRef: CanonicalRefSchema,
     headSha: FullShaSchema,
     originJobConclusion: z.literal("success"),
+    originJobId: z.number().int().positive(),
+    originJobName: z.literal("build"),
     artifacts: z.array(ArtifactBindingArtifactSchema).min(2).max(3),
     packages: z
       .array(PackageNameSchema)

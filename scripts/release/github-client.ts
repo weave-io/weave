@@ -13,6 +13,13 @@ export interface WorkflowRunMetadata {
   workflowSha: string;
 }
 
+/** A completed job is the live proof available while the containing run is active. */
+export interface WorkflowJobMetadata {
+  id: number;
+  name: string;
+  conclusion: string | null;
+}
+
 export interface ActionsArtifactMetadata {
   id: number;
   name: string;
@@ -23,6 +30,9 @@ export interface ActionsArtifactMetadata {
 
 export interface GitHubClient {
   getWorkflowRun(runId: number): ResultAsync<WorkflowRunMetadata, GitHubError>;
+  listWorkflowRunJobs?(
+    runId: number,
+  ): ResultAsync<readonly WorkflowJobMetadata[], GitHubError>;
   listRunArtifacts(
     runId: number,
   ): ResultAsync<readonly ActionsArtifactMetadata[], GitHubError>;
@@ -118,6 +128,19 @@ export class GitHubRestClient
       if (run === undefined)
         return errAsync(invalidResponse(`/actions/runs/${runId}`));
       return okAsync(run);
+    });
+  }
+
+  listWorkflowRunJobs(
+    runId: number,
+  ): ResultAsync<readonly WorkflowJobMetadata[], GitHubError> {
+    return this.requestJson(`/actions/runs/${runId}/jobs`).andThen((value) => {
+      if (!isRecord(value) || !Array.isArray(value.jobs))
+        return errAsync(invalidResponse(`/actions/runs/${runId}/jobs`));
+      const jobs = value.jobs.map(parseWorkflowJob);
+      if (jobs.some((job) => job === undefined))
+        return errAsync(invalidResponse(`/actions/runs/${runId}/jobs`));
+      return okAsync(jobs as readonly WorkflowJobMetadata[]);
     });
   }
 
@@ -411,7 +434,7 @@ function parseWorkflowRun(value: unknown): WorkflowRunMetadata | undefined {
     !isString(value.event) ||
     !isString(value.head_branch) ||
     !isString(value.head_sha) ||
-    !isString(value.conclusion)
+    (value.conclusion !== null && !isString(value.conclusion))
   )
     return undefined;
   return {
@@ -425,6 +448,14 @@ function parseWorkflowRun(value: unknown): WorkflowRunMetadata | undefined {
     workflowPath: value.path.slice(0, separator),
     workflowSha: value.path.slice(separator + 1),
   };
+}
+
+function parseWorkflowJob(value: unknown): WorkflowJobMetadata | undefined {
+  if (!isRecord(value) || !isPositiveInt(value.id) || !isString(value.name))
+    return undefined;
+  if (value.conclusion !== null && !isString(value.conclusion))
+    return undefined;
+  return { id: value.id, name: value.name, conclusion: value.conclusion };
 }
 
 function parseArtifact(value: unknown): ActionsArtifactMetadata | undefined {

@@ -34,6 +34,8 @@ export interface BindingRecordInput {
   headRef: ArtifactBindingRecord["headRef"];
   headSha: string;
   originJobConclusion: "success";
+  originJobId?: number;
+  originJobName?: "build";
   artifacts: readonly UploadedArtifact[];
   manifest: ArtifactManifest;
   manifestDigest: string;
@@ -80,6 +82,11 @@ export function createBindingRecord(
     headRef: input.headRef,
     headSha: input.headSha,
     originJobConclusion: input.originJobConclusion,
+    // Pre-existing standalone harness fixtures did not model job identity. Live
+    // binding supplies the server job ID; this compatibility default is never
+    // used by the workflow path.
+    originJobId: input.originJobId ?? 1,
+    originJobName: input.originJobName ?? "build",
     artifacts: input.artifacts,
     packages: input.manifest.packages,
     versions: input.manifest.versions,
@@ -111,7 +118,7 @@ export function verifyBindingRecord(
   return github
     .getWorkflowRun(parsed.data.runId)
     .mapErr((error) => githubError(error))
-    .andThen((run) => verifyRun(parsed.data, context, run))
+    .andThen((run) => verifyRun(parsed.data, context, run, github))
     .andThen((bound) => verifyArtifacts(bound, github));
 }
 
@@ -119,6 +126,7 @@ function verifyRun(
   record: ArtifactBindingRecord,
   context: BindingVerificationContext,
   run: WorkflowRunMetadata,
+  github: GitHubClient,
 ): ResultAsync<ArtifactBindingRecord, BindingError> {
   const checks: readonly [string, unknown, unknown][] = [
     ["repositoryId", record.repositoryId, run.repositoryId],
@@ -133,7 +141,6 @@ function verifyRun(
     ["expectedHeadRef", context.expectedHeadRef, run.headRef],
     ["headSha", record.headSha, run.headSha],
     ["expectedHeadSha", context.expectedHeadSha, run.headSha],
-    ["jobConclusion", record.originJobConclusion, run.conclusion],
     ["packages", record.packages, context.expectedManifest.packages],
     ["versions", record.versions, context.expectedManifest.versions],
     [
@@ -147,7 +154,43 @@ function verifyRun(
   for (const [field, expected, actual] of checks)
     if (canonicalJson(expected) !== canonicalJson(actual))
       return errAsync({ type: "BindingMismatch", field, expected, actual });
-  return okAsync(record);
+  // The run's conclusion is null while downstream jobs execute.  Bind to the
+  // completed, named build job instead; this preserves live identity checks
+  // without accepting a failed or substituted origin job.
+  if (github.listWorkflowRunJobs === undefined)
+    return errAsync({
+      type: "GitHubLookupFailed",
+      operation: "list workflow jobs",
+      message: "job identity lookup unavailable",
+    });
+  return github
+    .listWorkflowRunJobs(record.runId)
+    .mapErr(githubError)
+    .andThen((jobs) => {
+      const job = jobs.find((candidate) => candidate.id === record.originJobId);
+      if (job === undefined)
+        return errAsync({
+          type: "BindingMismatch" as const,
+          field: "originJobId",
+          expected: record.originJobId,
+          actual: undefined,
+        });
+      if (job.name !== record.originJobName)
+        return errAsync({
+          type: "BindingMismatch" as const,
+          field: "originJobName",
+          expected: record.originJobName,
+          actual: job.name,
+        });
+      if (job.conclusion !== record.originJobConclusion)
+        return errAsync({
+          type: "BindingMismatch" as const,
+          field: "jobConclusion",
+          expected: record.originJobConclusion,
+          actual: job.conclusion,
+        });
+      return okAsync(record);
+    });
 }
 
 function verifyArtifacts(
