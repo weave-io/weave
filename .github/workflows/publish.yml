@@ -303,14 +303,14 @@ jobs:
         env:
           RELEASE_PROMOTION_AUTHORIZATION: ${{ inputs.promotion-authorization }}
 
-  # The GitHub App token is injected by the release-refs environment (Task 12).
-  # Only this job may create/update release refs, through non-force CAS.
+  # The App token is environment-scoped. GITHUB_TOKEN remains read-only.
   release-refs:
-    needs: stable-plan
+    needs: [stable-finalize, build]
+    if: needs.preflight.outputs.skipped != 'true' && needs.preflight.outputs.operation == 'stable-finalize'
     runs-on: ubuntu-latest
     environment: release-refs
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -320,6 +320,12 @@ jobs:
         with:
           bun-version: "1.3.10"
       - run: bun install --frozen-lockfile
-      - run: bun scripts/release/release-orchestrator.ts
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ needs.build.outputs.payload-artifact-id }}
+          path: .release-payload
+      - run: bun scripts/release/release-orchestrator.ts stable-release-refs
         env:
-          RELEASE_REFS_TOKEN: ${{ secrets.RELEASE_REFS_TOKEN }}
+          RELEASE_APP_TOKEN: ${{ secrets.RELEASE_APP_TOKEN }}
+          RELEASE_PROMOTION_AUTHORIZATION: ${{ inputs.promotion-authorization }}
+          RELEASE_PAYLOAD_ARTIFACT_ID: ${{ needs.build.outputs.payload-artifact-id }}

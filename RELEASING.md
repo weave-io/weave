@@ -39,8 +39,13 @@ has been retested. Never introduce an automation token.
 7. **Finalize:** dispatch `stable-finalize` with the exact saved authorization
    JSON. Its read-only job verifies both `latest` versions and unauthenticated
    registry tarball SHA-256s. It finalizes nothing on a mismatch.
-8. **Post-finalize:** Task 19 will create App tags/releases. Then create the
-   metadata replay PR and clean up the train branch only through its approved
+8. **Post-finalize:** the isolated `release-refs` environment downloads the
+   verified payload by numeric artifact ID and uses its GitHub App token (not
+   `GITHUB_TOKEN`) to create create-once tags and immutable releases. A
+   lightweight App tag is recorded as `unsigned` when GitHub exposes no
+   signature verification; this accepted fallback is not a failure. GitHub's
+   platform-generated immutable-release attestation must be present. Then create
+   the metadata replay PR and clean up the train branch only through its approved
    workflow.
 
 ## Manual promotion and rollback
