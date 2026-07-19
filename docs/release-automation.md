@@ -113,12 +113,12 @@ tags/releases, or attestations.
 
 ### Manual promotion and cross-run finalization
 
-`stable-publish` emits an identity-bound promotion authorization. It contains the
-authorized package/version set, the originating Actions run ID, and the exact
-`awaiting-promotion` train (including its bound artifact IDs and manifest digest).
-The workflow generates version-pinned `npm dist-tag add` commands only from that
-package set; it records the per-package `dist-tag ls` commands first so a human
-can retain prior `latest` values for rollback.
+`stable-publish` emits an identity-bound promotion authorization plus exact
+version-pinned promotion and rollback commands. The standalone, checksum-verified
+control binary reads each prior `latest` value after `next` publication and embeds
+the command text in its JSON output. The clean-room workflow only extracts and
+displays this trusted output; it neither installs Bun nor executes workspace code
+or a dist-tag command.
 
 `stable-finalize` is deliberately a later dispatch and does not rebuild. The
 `release-refs` job downloads the numeric payload artifact ID from the originating

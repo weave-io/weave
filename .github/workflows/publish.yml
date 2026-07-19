@@ -257,16 +257,18 @@ jobs:
         if: needs.preflight.outputs.operation == 'stable-publish'
         run: |
           authorization="$(jq -c ".promotionAuthorization // empty" control-output.jsonl)"
+          commands="$(jq -c ".promotionCommands // empty" control-output.jsonl)"
           test -n "$authorization"
+          test -n "$commands"
           {
             echo '## Manual MFA promotion required'
-            echo "Save this identity-bound authorization record. Record each displayed prior latest value before promotion; use those recorded values to form rollback commands."
+            echo "Save this identity-bound authorization and the verified control-generated commands. These instructions are for a human maintainer's interactive MFA session; this workflow never executes them."
             echo '```json'
             echo "$authorization"
             echo '```'
-            echo 'Capture prior values first, then the second maintainer runs:'
+            echo 'Promotion and rollback commands:'
             echo '```bash'
-            RELEASE_PROMOTION_AUTHORIZATION="$authorization" bun scripts/release/promotion-commands-main.ts
+            echo "$commands" | jq -r '.promoteCommands[], .rollbackCommands[]'
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 

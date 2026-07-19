@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { promotionCommands } from "../promotion-commands.js";
+import { okAsync } from "neverthrow";
+import type { NpmRegistryClient } from "../npm-registry-client.js";
+import {
+  promotionCommands,
+  promotionCommandsFromRegistry,
+} from "../promotion-commands.js";
 import { trainRecordDigest } from "../stable-train.js";
 
 function authorization(packages: readonly string[]) {
@@ -75,5 +80,27 @@ describe("promotionCommands", () => {
       expect(result.value.promoteCommands).toEqual(promote);
       expect(result.value.rollbackCommands).toEqual(rollback);
     }
+  });
+
+  test("reads prior latest values before emitting embedded rollback commands", async () => {
+    const registry: NpmRegistryClient = {
+      publish: () => okAsync(undefined),
+      viewVersion: () => okAsync(""),
+      listVersions: () => okAsync([]),
+      viewDistTags: () => okAsync({}),
+      distTagLs: (packageName) =>
+        okAsync({ latest: packageName.endsWith("cli") ? "1.2.2" : "1.2.3" }),
+      verifyPublished: () => okAsync(undefined),
+    };
+    const result = await promotionCommandsFromRegistry(
+      authorization(["@weaveio/weave-cli", "@weaveio/weave-adapter-opencode"]),
+      registry,
+    );
+    expect(result.isOk()).toBe(true);
+    if (result.isOk())
+      expect(result.value.rollbackCommands).toEqual([
+        "npm dist-tag add @weaveio/weave-cli@1.2.2 latest",
+        "npm dist-tag add @weaveio/weave-adapter-opencode@1.2.3 latest",
+      ]);
   });
 });
