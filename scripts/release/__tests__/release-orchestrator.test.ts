@@ -391,16 +391,27 @@ describe("manual stable promotion", () => {
   });
 
   test("finalize requires both exact latest tags and reports partial promotion", async () => {
+    const train = {
+      schemaVersion: 1 as const,
+      recordDigest: `sha256:${"a".repeat(64)}`,
+      trainRef: "refs/heads/release/20300101-aaaaaaaaaaaa",
+      subjectSha: "a".repeat(40),
+      cutAt: "2030-01-01T00:00:00.000Z",
+      expiresAt: "2030-01-08T00:00:00.000Z",
+      state: "awaiting-promotion" as const,
+      packages: ["@weaveio/weave-cli", "@weaveio/weave-adapter-opencode"] as const,
+      versions: { "@weaveio/weave-cli": "1.2.3", "@weaveio/weave-adapter-opencode": "4.5.6" },
+    };
     const partial = await promotionOrchestrator({
       "@weaveio/weave-cli": { latest: "1.2.3" },
       "@weaveio/weave-adapter-opencode": { latest: "4.5.5" },
-    }).stableFinalize(authorization);
+    }).stableFinalize(authorization, train as never);
     expect(partial.isErr()).toBe(true);
     if (partial.isErr()) expect(partial.error.type).toBe("PartialPromotion");
     const finalized = await promotionOrchestrator({
       "@weaveio/weave-cli": { latest: "1.2.3" },
       "@weaveio/weave-adapter-opencode": { latest: "4.5.6" },
-    }).stableFinalize(authorization);
+    }).stableFinalize(authorization, train as never);
     expect(finalized.isOk()).toBe(true);
   });
 

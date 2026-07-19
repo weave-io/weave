@@ -5,6 +5,7 @@ import { BunCommandRunner } from "./command-runner.js";
 import { BunFileSystem } from "./filesystem.js";
 import { GitHubRestClient } from "./github-client.js";
 import { validateReleaseInvocation } from "./input-validation.js";
+import { StableTrainRecordSchema } from "./model.js";
 import type { NpmRegistryClient } from "./npm-registry-client.js";
 import { NpmCliRegistryClient } from "./npm-registry-client.js";
 import { ReleaseOrchestrator } from "./release-orchestrator.js";
@@ -42,6 +43,15 @@ if (invocation.isErr()) {
 }
 if (invocation.value.eventName !== "workflow_dispatch") {
   log.error("control only permits workflow dispatch publication");
+  process.exit(2);
+}
+const stableTrain = StableTrainRecordSchema.safeParse(
+  typeof manifestJson === "object" && manifestJson !== null
+    ? (manifestJson as { stableTrain?: unknown }).stableTrain
+    : undefined,
+);
+if (invocation.value.channel === "stable" && !stableTrain.success) {
+  log.error("stable control requires a validated stable train record");
   process.exit(2);
 }
 const manifestDigest = digest(manifestText.value);
@@ -87,6 +97,7 @@ const result = await new ReleaseOrchestrator(
     ),
   },
   credentialScan: { environment: Bun.env },
+  stableTrain: stableTrain.success ? stableTrain.data : undefined,
 });
 if (result.isErr()) {
   log.error({ error: result.error }, "release failed");

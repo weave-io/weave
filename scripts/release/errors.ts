@@ -33,7 +33,8 @@ export type ReleaseError =
   | { type: "DigestMismatch"; expected: string; actual: string }
   | { type: "TarPreflightFailed"; reason: string }
   | { type: "CredentialSourceDetected"; source: string }
-  | { type: "BindingVerificationFailed"; reason: string }
+    | { type: "BindingVerificationFailed"; reason: string }
+    | { type: "StableTrainRequired"; operation: string }
   | { type: "RegistryDigestConflict"; packageName: string; version: string }
   | { type: "InvalidPromotionAuthorization"; issues: readonly string[] }
   | { type: "PromotionRegistryMismatch"; packageName: string; reason: string }

@@ -83,8 +83,9 @@ async function discoverPackages(channel: "nightly" | "stable") {
         packageJson.name === "@weaveio/weave-adapter-claude-code"
       )
         return undefined;
+      const packageStem = packageJson.name.replace("@", "").replaceAll("/", "-");
       const tarball = tarballs.find((path) =>
-        path.endsWith(`-${packageJson.version}.tgz`),
+        path.endsWith(`${packageStem}-${packageJson.version}.tgz`),
       );
       if (tarball === undefined)
         throw new Error(`missing tarball for ${packageJson.name}`);
@@ -96,6 +97,10 @@ async function discoverPackages(channel: "nightly" | "stable") {
         packageJson.version,
       );
       const sha256 = `sha256:${new Bun.CryptoHasher("sha256").update(bytes).digest("hex")}`;
+      // Control consumes a flat payload; preserve npm's emitted bytes under the
+      // canonical packageArtifactFilename instead of relying on npm's filename.
+      await Bun.write(`.release/${filename}`, bytes);
+      await Bun.write(`.release/${filename}.sha256`, `${sha256}\n`);
       return {
         name: packageJson.name,
         version: packageJson.version,
