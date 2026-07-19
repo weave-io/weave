@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode
 
-> 0 routes | 0 models | 0 components | 155 lib files | 20 env vars | 6 middleware | 0% test coverage
-> **Token savings:** this file is ~14,800 tokens. Without it, AI exploration would cost ~53,600 tokens. **Saves ~38,800 tokens per conversation.**
-> **Last scanned:** 2026-07-19 09:25 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 156 lib files | 28 env vars | 6 middleware | 0% test coverage
+> **Token savings:** this file is ~15,100 tokens. Without it, AI exploration would cost ~54,900 tokens. **Saves ~39,800 tokens per conversation.**
+> **Last scanned:** 2026-07-19 10:35 — re-run after significant changes
 
 ---
 
@@ -657,11 +657,11 @@
 - `scripts/release/github-client.ts`
   - class GitHubRestClient
   - interface WorkflowRunMetadata
+  - interface WorkflowJobMetadata
   - interface ActionsArtifactMetadata
   - interface GitHubClient
   - interface GitHubRefClient
-  - interface GitHubReleaseAsset
-  - _...3 more_
+  - _...4 more_
 - `scripts/release/input-validation.ts`
   - function validateReleaseInvocation: (input) => Result<ReleaseInvocation, InputValidationError>
   - type ArtifactBindingCliInput
@@ -710,6 +710,14 @@
   - interface PublicManifestFileSystem
   - interface StagedPublicManifest
   - type PublicManifestError
+- `scripts/release/release-fixtures.ts`
+  - function archive: () => Uint8Array
+  - function nightlyFixture: () => void
+  - function digest
+  - class FixtureGitHub
+  - const FIXTURE_SHA
+  - const FIXTURE_WORKFLOW_SHA
+  - _...1 more_
 - `scripts/release/release-orchestrator.ts`
   - class ReleaseOrchestrator
   - interface PublishRequest
@@ -734,7 +742,6 @@
   - function runScenarios: (runner, scenarios) => void
   - class FixtureRegistry
   - interface ScenarioResult
-  - const FIXTURE_SHA
   - const FIXTURE_CLOCK
   - const FIXTURE_VERSIONS
 - `scripts/release/write-artifact-manifest.ts` — function writeArtifactManifest: (operation, subjectSha) => ResultAsync<void, ManifestWriteError>
@@ -751,14 +758,22 @@
 - `GITHUB_TOKEN` **required** — scripts/release/bind-artifacts.ts
 - `HOME` **required** — packages/cli/src/detect/probes.ts
 - `LOG_LEVEL` **required** — packages/config/src/logger.ts
+- `PATH` **required** — scripts/release/__tests__/verification-harness.test.ts
 - `PWD` **required** — packages/adapters/opencode/dist-types/adapter.d.ts
+- `RELEASE_APP_TOKEN` **required** — scripts/release/release-refs-main.ts
 - `RELEASE_CONTROL_DRY_RUN` **required** — scripts/release/control-main.ts
 - `RELEASE_GITHUB_API_URL` **required** — scripts/release/control-main.ts
 - `RELEASE_HEAD_REF` **required** — scripts/release/control-main.ts
 - `RELEASE_HEAD_SHA` **required** — scripts/release/control-main.ts
+- `RELEASE_METADATA_REPLAY_INPUT` **required** — scripts/release/metadata-replay-main.ts
 - `RELEASE_OPERATION` **required** — scripts/release/write-artifact-manifest.ts
-- `RELEASE_PROMOTION_AUTHORIZATION` **required** — scripts/release/stable-finalize.ts
+- `RELEASE_PAYLOAD_DIRECTORY` **required** — scripts/release/release-refs-main.ts
+- `RELEASE_PLANNED_VERSIONS` **required** — scripts/release/packager.ts
+- `RELEASE_PROMOTION_AUTHORIZATION` **required** — scripts/release/release-refs-main.ts
 - `RELEASE_PUBLISH_ENABLED` **required** — scripts/release/dry-run-nightly.ts
+- `RELEASE_RELEASE_NOTES` **required** — scripts/release/release-refs-main.ts
+- `RELEASE_STABLE_PLAN_INPUT` **required** — scripts/release/stable-plan-main.ts
+- `RELEASE_STABLE_TRAIN` **required** — scripts/release/stable-finalize.ts
 - `RELEASE_SUBJECT_SHA` **required** — scripts/release/write-artifact-manifest.ts
 - `RELEASE_WORKFLOW_SHA` **required** — scripts/release/control-main.ts
 - `RUN_HARNESS_SMOKE` **required** — packages/adapters/opencode/src/__tests__/category-routing-smoke.test.ts
@@ -800,19 +815,19 @@
 - `packages/cli/src/evals/report-schema.ts` — imported by **17** files
 - `packages/engine/src/runtime/types.ts` — imported by **16** files
 - `packages/cli/src/args.ts` — imported by **14** files
+- `scripts/release/model.ts` — imported by **14** files
 - `packages/engine/src/runtime/store.ts` — imported by **13** files
+- `scripts/release/filesystem.ts` — imported by **13** files
 - `packages/cli/src/fs/file-system.ts` — imported by **12** files
 - `packages/engine/src/logger.ts` — imported by **12** files
+- `scripts/release/clock.ts` — imported by **12** files
 - `packages/engine/src/compose.ts` — imported by **11** files
 - `packages/engine/src/runtime/errors.ts` — imported by **11** files
 - `packages/engine/src/execution-lifecycle/metadata.ts` — imported by **11** files
-- `scripts/release/model.ts` — imported by **11** files
+- `scripts/release/npm-registry-client.ts` — imported by **11** files
 - `packages/cli/src/errors.ts` — imported by **10** files
 - `packages/engine/src/execution-lifecycle/lease.ts` — imported by **10** files
 - `packages/engine/src/execution-lifecycle/errors.ts` — imported by **10** files
-- `scripts/release/filesystem.ts` — imported by **10** files
-- `packages/adapters/opencode/src/sdk-types.ts` — imported by **9** files
-- `packages/cli/src/evals/prompt-snapshots.ts` — imported by **9** files
 
 ## Import Map (who imports what)
 
@@ -823,16 +838,16 @@
 - `packages/cli/src/evals/report-schema.ts` ← `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts` +12 more
 - `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts` +11 more
 - `packages/cli/src/args.ts` ← `packages/cli/src/__tests__/args.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/prompt.test.ts` +9 more
+- `scripts/release/model.ts` ← `scripts/release/__tests__/artifact-binding.test.ts`, `scripts/release/__tests__/control-executable.test.ts`, `scripts/release/__tests__/payload-layout.e2e.test.ts`, `scripts/release/__tests__/release-orchestrator.test.ts`, `scripts/release/bind-artifacts.ts` +9 more
 - `packages/engine/src/runtime/store.ts` ← `packages/engine/src/__tests__/runtime-journal.test.ts`, `packages/engine/src/execution-lifecycle/artifacts.ts`, `packages/engine/src/execution-lifecycle/dispatch.ts`, `packages/engine/src/execution-lifecycle/inspection.ts`, `packages/engine/src/execution-lifecycle/interrupts.ts` +8 more
-- `packages/cli/src/fs/file-system.ts` ← `packages/cli/src/__tests__/file-system.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`, `packages/cli/src/commands/__tests__/migrate.test.ts`, `packages/cli/src/commands/__tests__/validate.test.ts` +7 more
-- `packages/engine/src/logger.ts` ← `packages/engine/src/compose.ts`, `packages/engine/src/index.ts`, `packages/engine/src/runtime/journal-writer.ts`, `packages/engine/src/runtime/sqlite/store.ts`, `packages/engine/src/runtime-command-operations/control.ts` +7 more
+- `scripts/release/filesystem.ts` ← `scripts/release/__tests__/bind-artifacts.test.ts`, `scripts/release/__tests__/github-client.test.ts`, `scripts/release/__tests__/metadata-replay.test.ts`, `scripts/release/__tests__/release-orchestrator.test.ts`, `scripts/release/bind-artifacts.ts` +8 more
 
 ---
 
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 138 test files found
+> 140 test files found
 
 ---
 
@@ -903,10 +918,11 @@
 - **metadata-replay-plan** on `ubuntu-latest` — 5 steps (needs: preflight)
   - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
-- **stable-finalize** on `ubuntu-latest` — 4 steps (needs: preflight)
+- **stable-finalize** on `ubuntu-latest` — 5 steps (needs: preflight, build)
   - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
-- **release-refs** on `ubuntu-latest` — 5 steps (needs: stable-finalize, build)
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
+- **release-refs** on `ubuntu-latest` — 5 steps (needs: preflight, stable-finalize, build)
   - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
   - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`

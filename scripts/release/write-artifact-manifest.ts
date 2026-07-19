@@ -61,8 +61,10 @@ export function writeArtifactManifest(
 async function discoverPackages(channel: "nightly" | "stable") {
   const stageGlob = new Bun.Glob(".release/validate-*/staging/*/package.json");
   const tarballGlob = new Bun.Glob(".release/validate-*/tarballs/*.tgz");
-  const stages = await Array.fromAsync(stageGlob.scan());
-  const tarballs = await Array.fromAsync(tarballGlob.scan());
+  // `.release` is intentionally hidden; opt into dot-directory traversal so
+  // the control-plane layout can be consumed in a fresh checkout.
+  const stages = await Array.fromAsync(stageGlob.scan({ dot: true }));
+  const tarballs = await Array.fromAsync(tarballGlob.scan({ dot: true }));
   if (stages.length === 0 || tarballs.length === 0)
     throw new Error(
       "release validation did not produce staged packages and tarballs",
@@ -83,7 +85,9 @@ async function discoverPackages(channel: "nightly" | "stable") {
         packageJson.name === "@weaveio/weave-adapter-claude-code"
       )
         return undefined;
-      const packageStem = packageJson.name.replace("@", "").replaceAll("/", "-");
+      const packageStem = packageJson.name
+        .replace("@", "")
+        .replaceAll("/", "-");
       const tarball = tarballs.find((path) =>
         path.endsWith(`${packageStem}-${packageJson.version}.tgz`),
       );

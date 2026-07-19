@@ -3,6 +3,8 @@ import { okAsync, type ResultAsync } from "neverthrow";
 import type { RegistryError } from "./errors.js";
 import type { NpmRegistryClient } from "./npm-registry-client.js";
 
+export { FIXTURE_SHA } from "./release-fixtures.js";
+
 export interface ScenarioResult {
   name: string;
   outcome: "pass" | "fail";
@@ -60,7 +62,6 @@ export async function runScenarios(
   if (results.some((result) => result.outcome === "fail")) process.exitCode = 1;
 }
 
-export const FIXTURE_SHA = "abcdef123456".padEnd(40, "a");
 export const FIXTURE_CLOCK = {
   now: () => new Date("2026-07-19T12:00:00.000Z"),
   sleep: () => okAsync(undefined),

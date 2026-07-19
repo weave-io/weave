@@ -646,11 +646,11 @@
 - `scripts/release/github-client.ts`
   - class GitHubRestClient
   - interface WorkflowRunMetadata
+  - interface WorkflowJobMetadata
   - interface ActionsArtifactMetadata
   - interface GitHubClient
   - interface GitHubRefClient
-  - interface GitHubReleaseAsset
-  - _...3 more_
+  - _...4 more_
 - `scripts/release/input-validation.ts`
   - function validateReleaseInvocation: (input) => Result<ReleaseInvocation, InputValidationError>
   - type ArtifactBindingCliInput
@@ -699,6 +699,14 @@
   - interface PublicManifestFileSystem
   - interface StagedPublicManifest
   - type PublicManifestError
+- `scripts/release/release-fixtures.ts`
+  - function archive: () => Uint8Array
+  - function nightlyFixture: () => void
+  - function digest
+  - class FixtureGitHub
+  - const FIXTURE_SHA
+  - const FIXTURE_WORKFLOW_SHA
+  - _...1 more_
 - `scripts/release/release-orchestrator.ts`
   - class ReleaseOrchestrator
   - interface PublishRequest
@@ -723,7 +731,6 @@
   - function runScenarios: (runner, scenarios) => void
   - class FixtureRegistry
   - interface ScenarioResult
-  - const FIXTURE_SHA
   - const FIXTURE_CLOCK
   - const FIXTURE_VERSIONS
 - `scripts/release/write-artifact-manifest.ts` — function writeArtifactManifest: (operation, subjectSha) => ResultAsync<void, ManifestWriteError>

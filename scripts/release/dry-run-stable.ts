@@ -7,6 +7,8 @@ import {
   planStableCut,
   planStableFix,
   trainRecordDigest,
+  transitionStableTrain,
+  validateStableTrain,
 } from "./stable-train.js";
 import { FIXTURE_VERSIONS, runScenarios } from "./verification-harness.js";
 
@@ -91,7 +93,64 @@ await runScenarios("release-dry-stable", [
         environment: { NODE_AUTH_TOKEN: "fixture" },
       }).isErr(),
   },
-  { name: "manual-promotion-rollback", verify: () => true },
-  { name: "release-draft-resume", verify: () => true },
-  { name: "immutable-release-idempotence", verify: () => true },
+  {
+    name: "manual-promotion-rollback",
+    verify: () => {
+      const published = transitionStableTrain(record, "built").andThen(
+        (built) =>
+          transitionStableTrain(built, "bound").andThen((bound) =>
+            transitionStableTrain(bound, "published-next").andThen((next) =>
+              transitionStableTrain(next, "awaiting-promotion"),
+            ),
+          ),
+      );
+      return (
+        published.isOk() &&
+        transitionStableTrain(published.value, "partial").isOk()
+      );
+    },
+  },
+  {
+    name: "release-draft-resume",
+    verify: () => {
+      const promoted = transitionStableTrain(record, "built").andThen((built) =>
+        transitionStableTrain(built, "bound").andThen((bound) =>
+          transitionStableTrain(bound, "published-next").andThen((next) =>
+            transitionStableTrain(next, "awaiting-promotion").andThen(
+              (waiting) => transitionStableTrain(waiting, "promoted"),
+            ),
+          ),
+        ),
+      );
+      if (promoted.isErr()) return false;
+      const draft = transitionStableTrain(promoted.value, "release-draft");
+      return draft.isOk() && validateStableTrain(draft.value).isOk();
+    },
+  },
+  {
+    name: "immutable-release-idempotence",
+    verify: () => {
+      const finalized = transitionStableTrain(record, "built").andThen(
+        (built) =>
+          transitionStableTrain(built, "bound").andThen((bound) =>
+            transitionStableTrain(bound, "published-next").andThen((next) =>
+              transitionStableTrain(next, "awaiting-promotion").andThen(
+                (waiting) =>
+                  transitionStableTrain(waiting, "promoted").andThen(
+                    (promoted) => transitionStableTrain(promoted, "finalized"),
+                  ),
+              ),
+            ),
+          ),
+      );
+      return (
+        finalized.isOk() &&
+        transitionStableTrain(finalized.value, "finalized").match(
+          () => false,
+          (error) =>
+            error.type === "InvalidTransition" && error.from === "finalized",
+        )
+      );
+    },
+  },
 ]);
