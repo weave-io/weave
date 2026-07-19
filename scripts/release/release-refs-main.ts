@@ -5,7 +5,7 @@ import { SystemClock } from "./clock.js";
 import { BunCommandRunner } from "./command-runner.js";
 import { BunFileSystem } from "./filesystem.js";
 import { GitHubRestClient } from "./github-client.js";
-import { ArtifactManifestSchema, StableTrainRecordSchema } from "./model.js";
+import { ArtifactManifestSchema } from "./model.js";
 import { NpmCliRegistryClient } from "./npm-registry-client.js";
 import { ReleaseOrchestrator } from "./release-orchestrator.js";
 import { hasProgressedLineage } from "./stable-lineage.js";
@@ -18,6 +18,7 @@ const Input = z
     appToken: z.string().min(1),
     payloadDirectory: z.string().min(1),
     notes: z.string().min(1),
+    awaitingTrain: z.string().min(1),
     progressedTrain: z.string().min(1),
   })
   .strict();
@@ -26,6 +27,7 @@ const input = Input.safeParse({
   appToken: Bun.env.RELEASE_APP_TOKEN,
   payloadDirectory: Bun.env.RELEASE_PAYLOAD_DIRECTORY,
   notes: Bun.env.RELEASE_RELEASE_NOTES,
+  awaitingTrain: Bun.env.RELEASE_AWAITING_STABLE_TRAIN,
   progressedTrain: Bun.env.RELEASE_PROGRESSED_STABLE_TRAIN,
 });
 if (!input.success) {
@@ -38,14 +40,22 @@ if (!input.success) {
     process.exitCode = 2;
   } else {
     const authorization = parseJson(input.data.authorization);
+    const awaitingTrain = parseJson(input.data.awaitingTrain).andThen(
+      validateStableTrain,
+    );
     const progressedTrain = parseJson(input.data.progressedTrain)
       .andThen(validateStableTrain)
-      .andThen((train) =>
-        hasProgressedLineage(payload.value.train, train)
+      .andThen((train) => {
+        if (awaitingTrain.isErr()) return err(awaitingTrain.error);
+        return hasProgressedLineage(awaitingTrain.value, train)
           ? ok(train)
-          : err({ type: "InvalidStableTrainLineage" as const }),
-      );
-    if (authorization.isErr() || progressedTrain.isErr()) {
+          : err({ type: "InvalidStableTrainLineage" as const });
+      });
+    if (
+      authorization.isErr() ||
+      awaitingTrain.isErr() ||
+      progressedTrain.isErr()
+    ) {
       log.error("invalid promotion authorization or progressed train JSON");
       process.exitCode = 2;
     } else {
@@ -95,7 +105,5 @@ async function loadPayload(directory: string) {
   if (parsed.isErr()) return err({ type: "InvalidManifestJson" as const });
   const manifest = ArtifactManifestSchema.safeParse(parsed.value);
   if (!manifest.success) return err({ type: "InvalidManifest" as const });
-  const train = StableTrainRecordSchema.safeParse(manifest.data.stableTrain);
-  if (!train.success) return err({ type: "InvalidStableTrain" as const });
-  return ok({ manifest: manifest.data, train: train.data });
+  return ok({ manifest: manifest.data });
 }

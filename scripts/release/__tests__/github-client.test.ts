@@ -11,6 +11,7 @@ import type {
 } from "../github-client.js";
 import type { NpmRegistryClient } from "../npm-registry-client.js";
 import { ReleaseOrchestrator } from "../release-orchestrator.js";
+import { trainRecordDigest } from "../stable-train.js";
 
 const SHA = "a".repeat(40);
 const VERSIONS = {
@@ -170,6 +171,18 @@ function request(github: MockReleaseClient, attempts?: number) {
       sha256: digest(bytes),
     };
   });
+  const awaitingTrainContent = {
+    schemaVersion: 1 as const,
+    trainRef: "release/20260101-aaaaaaaaaaaa",
+    subjectSha: SHA,
+    cutAt: "2030-01-01T00:00:00.000Z",
+    expiresAt: "2030-01-08T00:00:00.000Z",
+    state: "awaiting-promotion" as const,
+    packages: Object.keys(VERSIONS),
+    versions: VERSIONS,
+    artifactManifestDigest: digest(bytes),
+    artifactIds: [1, 2],
+  };
   return {
     authorization: {
       schemaVersion: 1,
@@ -181,6 +194,11 @@ function request(github: MockReleaseClient, attempts?: number) {
       artifactDigests: Object.fromEntries(
         Object.keys(VERSIONS).map((name) => [name, digest(bytes)]),
       ),
+      originRunId: 123,
+      awaitingPromotionTrain: {
+        ...awaitingTrainContent,
+        recordDigest: trainRecordDigest(awaitingTrainContent),
+      },
     },
     manifest: {
       schemaVersion: 1,
