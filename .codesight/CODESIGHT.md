@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode
 
-> 0 routes | 0 models | 0 components | 149 lib files | 9 env vars | 6 middleware | 0% test coverage
-> **Token savings:** this file is ~13,400 tokens. Without it, AI exploration would cost ~50,600 tokens. **Saves ~37,200 tokens per conversation.**
-> **Last scanned:** 2026-07-19 07:20 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 151 lib files | 9 env vars | 6 middleware | 0% test coverage
+> **Token savings:** this file is ~13,600 tokens. Without it, AI exploration would cost ~51,100 tokens. **Saves ~37,500 tokens per conversation.**
+> **Last scanned:** 2026-07-19 07:40 — re-run after significant changes
 
 ---
 
@@ -611,6 +611,14 @@
   - function loadActionFiles: (root) => Promise<Record<string, string>>
   - type ActionPinError
   - const ALLOWED_ACTION_OWNERS
+- `scripts/ci/verify-codeowners.ts`
+  - function parseCodeowners: (source) => Result<readonly CodeownersRule[], CodeownersError[]>
+  - function matchesCodeownersPattern: (pattern, path) => boolean
+  - function resolveCodeowners: (rules, path) => readonly string[] | undefined
+  - function verifyCodeowners: (source) => Result<void, CodeownersError[]>
+  - function loadCodeowners: (root) => Promise<string>
+  - type CodeownersRule
+  - _...3 more_
 - `scripts/docs/check-links.ts`
   - function checkLinks: (store) => Result<void, LinkCheckError[]>
   - function loadDocuments: (root) => Promise<DocumentStore>
@@ -660,6 +668,11 @@
   - const FullShaSchema
   - const ShortShaSchema
   - _...20 more_
+- `scripts/release/nightly-plan.ts`
+  - class NightlyPlanner
+  - interface NightlyPlanInput
+  - type NightlyPlan
+  - type NightlyPlanError
 - `scripts/release/npm-registry-client.ts` — class NpmCliRegistryClient, interface NpmRegistryClient
 - `scripts/release/package-policy.ts` — class PackagePolicyValidator, type PackagePolicyError
 - `scripts/release/packager.ts`
@@ -768,7 +781,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 133 test files found
+> 135 test files found
 
 ---
 
@@ -781,7 +794,7 @@
 | Agent Evals | workflow_dispatch | 2 | — | — |
 | CI | push, pull_request | 1 | — | — |
 | Deploy Docs | push, workflow_dispatch | 2 | — | github-pages |
-| Publish control plane | workflow_dispatch | 2 | — | — |
+| Publish control plane | schedule, workflow_dispatch | 3 | — | — |
 
 ### Agent Evals
 
@@ -811,12 +824,17 @@
 
 > `.github/workflows/publish.yml`
 
-- **build** on `ubuntu-latest` — 8 steps
+> Concurrency: `publish`
+
+- **preflight** on `ubuntu-latest` — 4 steps
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+- **build** on `ubuntu-latest` — 8 steps (needs: preflight)
   - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
   - `actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce`
   - `actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce`
-- **bind** on `ubuntu-latest` — 4 steps (needs: build)
+- **bind** on `ubuntu-latest` — 5 steps (needs: preflight, build)
   - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
   - `actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce`

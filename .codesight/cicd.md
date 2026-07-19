@@ -7,7 +7,7 @@
 | Agent Evals | workflow_dispatch | 2 | — | — |
 | CI | push, pull_request | 1 | — | — |
 | Deploy Docs | push, workflow_dispatch | 2 | — | github-pages |
-| Publish control plane | workflow_dispatch | 2 | — | — |
+| Publish control plane | schedule, workflow_dispatch | 3 | — | — |
 
 ### Agent Evals
 
@@ -37,12 +37,17 @@
 
 > `.github/workflows/publish.yml`
 
-- **build** on `ubuntu-latest` — 8 steps
+> Concurrency: `publish`
+
+- **preflight** on `ubuntu-latest` — 4 steps
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+- **build** on `ubuntu-latest` — 8 steps (needs: preflight)
   - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
   - `actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce`
   - `actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce`
-- **bind** on `ubuntu-latest` — 4 steps (needs: build)
+- **bind** on `ubuntu-latest` — 5 steps (needs: preflight, build)
   - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
   - `actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce`

@@ -600,6 +600,14 @@
   - function loadActionFiles: (root) => Promise<Record<string, string>>
   - type ActionPinError
   - const ALLOWED_ACTION_OWNERS
+- `scripts/ci/verify-codeowners.ts`
+  - function parseCodeowners: (source) => Result<readonly CodeownersRule[], CodeownersError[]>
+  - function matchesCodeownersPattern: (pattern, path) => boolean
+  - function resolveCodeowners: (rules, path) => readonly string[] | undefined
+  - function verifyCodeowners: (source) => Result<void, CodeownersError[]>
+  - function loadCodeowners: (root) => Promise<string>
+  - type CodeownersRule
+  - _...3 more_
 - `scripts/docs/check-links.ts`
   - function checkLinks: (store) => Result<void, LinkCheckError[]>
   - function loadDocuments: (root) => Promise<DocumentStore>
@@ -649,6 +657,11 @@
   - const FullShaSchema
   - const ShortShaSchema
   - _...20 more_
+- `scripts/release/nightly-plan.ts`
+  - class NightlyPlanner
+  - interface NightlyPlanInput
+  - type NightlyPlan
+  - type NightlyPlanError
 - `scripts/release/npm-registry-client.ts` — class NpmCliRegistryClient, interface NpmRegistryClient
 - `scripts/release/package-policy.ts` — class PackagePolicyValidator, type PackagePolicyError
 - `scripts/release/packager.ts`
