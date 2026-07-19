@@ -22,7 +22,6 @@
     "lint": "biome lint packages/",
     "clean": "find . -type d -name dist -not -path '*/node_modules/*' | xargs rm -rf",
     "version": "changeset version",
-    "release": "bun run build && bun scripts/publish.ts",
     "release:dry": "bun run build && bun scripts/publish.ts --dry-run",
     "prepare": "husky"
   },
@@ -32,6 +31,7 @@
     "bun-types": "latest",
     "husky": "^9.1.7",
     "lint-staged": "^17.0.2",
+    "neverthrow": "^8.2.0",
     "typescript": "^5.4.5"
   },
   "lint-staged": {
