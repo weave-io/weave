@@ -36,7 +36,8 @@
     "husky": "^9.1.7",
     "lint-staged": "^17.0.2",
     "neverthrow": "^8.2.0",
-    "typescript": "^5.4.5"
+    "typescript": "^5.4.5",
+    "zod": "^4.4.3"
   },
   "lint-staged": {
     "**/*.{ts,tsx,js,jsx,json,jsonc}": "biome check --write --no-errors-on-unmatched"
