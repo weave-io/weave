@@ -719,5 +719,12 @@
   - class TarInspector
   - interface TarEntry
   - type TarInspectionError
+- `scripts/release/verification-harness.ts`
+  - function runScenarios: (runner, scenarios) => void
+  - class FixtureRegistry
+  - interface ScenarioResult
+  - const FIXTURE_SHA
+  - const FIXTURE_CLOCK
+  - const FIXTURE_VERSIONS
 - `scripts/release/write-artifact-manifest.ts` — function writeArtifactManifest: (operation, subjectSha) => ResultAsync<void, ManifestWriteError>
 - `scripts/validate-api-extractor-configs.ts` — function validateApiExtractorConfig: (path) => Result<void, ApiExtractorConfigError>, function validateApiExtractorConfigs: () => Result<

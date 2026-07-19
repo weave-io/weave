@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode
 
-> 0 routes | 0 models | 0 components | 154 lib files | 18 env vars | 6 middleware | 0% test coverage
-> **Token savings:** this file is ~14,700 tokens. Without it, AI exploration would cost ~53,000 tokens. **Saves ~38,400 tokens per conversation.**
-> **Last scanned:** 2026-07-19 09:17 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 155 lib files | 20 env vars | 6 middleware | 0% test coverage
+> **Token savings:** this file is ~14,800 tokens. Without it, AI exploration would cost ~53,600 tokens. **Saves ~38,800 tokens per conversation.**
+> **Last scanned:** 2026-07-19 09:25 — re-run after significant changes
 
 ---
 
@@ -730,6 +730,13 @@
   - class TarInspector
   - interface TarEntry
   - type TarInspectionError
+- `scripts/release/verification-harness.ts`
+  - function runScenarios: (runner, scenarios) => void
+  - class FixtureRegistry
+  - interface ScenarioResult
+  - const FIXTURE_SHA
+  - const FIXTURE_CLOCK
+  - const FIXTURE_VERSIONS
 - `scripts/release/write-artifact-manifest.ts` — function writeArtifactManifest: (operation, subjectSha) => ResultAsync<void, ManifestWriteError>
 - `scripts/validate-api-extractor-configs.ts` — function validateApiExtractorConfig: (path) => Result<void, ApiExtractorConfigError>, function validateApiExtractorConfigs: () => Result<
 
@@ -751,12 +758,14 @@
 - `RELEASE_HEAD_SHA` **required** — scripts/release/control-main.ts
 - `RELEASE_OPERATION` **required** — scripts/release/write-artifact-manifest.ts
 - `RELEASE_PROMOTION_AUTHORIZATION` **required** — scripts/release/stable-finalize.ts
+- `RELEASE_PUBLISH_ENABLED` **required** — scripts/release/dry-run-nightly.ts
 - `RELEASE_SUBJECT_SHA` **required** — scripts/release/write-artifact-manifest.ts
 - `RELEASE_WORKFLOW_SHA` **required** — scripts/release/control-main.ts
 - `RUN_HARNESS_SMOKE` **required** — packages/adapters/opencode/src/__tests__/category-routing-smoke.test.ts
 - `SITE_URL` **required** — packages/docs/astro.config.mjs
 - `WEAVE_CLI_VERSION` **required** — packages/cli/src/theme/render.ts
 - `WEAVE_LOG_FILE` **required** — packages/engine/src/env.ts
+- `WEAVE_RELEASE_FORCE_SCENARIO_FAILURE` **required** — scripts/release/verification-harness.ts
 
 ## Config Files
 
@@ -797,13 +806,13 @@
 - `packages/engine/src/compose.ts` — imported by **11** files
 - `packages/engine/src/runtime/errors.ts` — imported by **11** files
 - `packages/engine/src/execution-lifecycle/metadata.ts` — imported by **11** files
+- `scripts/release/model.ts` — imported by **11** files
 - `packages/cli/src/errors.ts` — imported by **10** files
 - `packages/engine/src/execution-lifecycle/lease.ts` — imported by **10** files
 - `packages/engine/src/execution-lifecycle/errors.ts` — imported by **10** files
 - `scripts/release/filesystem.ts` — imported by **10** files
 - `packages/adapters/opencode/src/sdk-types.ts` — imported by **9** files
 - `packages/cli/src/evals/prompt-snapshots.ts` — imported by **9** files
-- `scripts/release/model.ts` — imported by **9** files
 
 ## Import Map (who imports what)
 

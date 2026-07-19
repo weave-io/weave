@@ -15,13 +15,13 @@
 - `packages/engine/src/compose.ts` — imported by **11** files
 - `packages/engine/src/runtime/errors.ts` — imported by **11** files
 - `packages/engine/src/execution-lifecycle/metadata.ts` — imported by **11** files
+- `scripts/release/model.ts` — imported by **11** files
 - `packages/cli/src/errors.ts` — imported by **10** files
 - `packages/engine/src/execution-lifecycle/lease.ts` — imported by **10** files
 - `packages/engine/src/execution-lifecycle/errors.ts` — imported by **10** files
 - `scripts/release/filesystem.ts` — imported by **10** files
 - `packages/adapters/opencode/src/sdk-types.ts` — imported by **9** files
 - `packages/cli/src/evals/prompt-snapshots.ts` — imported by **9** files
-- `scripts/release/model.ts` — imported by **9** files
 
 ## Import Map (who imports what)
 

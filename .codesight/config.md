@@ -14,12 +14,14 @@
 - `RELEASE_HEAD_SHA` **required** — scripts/release/control-main.ts
 - `RELEASE_OPERATION` **required** — scripts/release/write-artifact-manifest.ts
 - `RELEASE_PROMOTION_AUTHORIZATION` **required** — scripts/release/stable-finalize.ts
+- `RELEASE_PUBLISH_ENABLED` **required** — scripts/release/dry-run-nightly.ts
 - `RELEASE_SUBJECT_SHA` **required** — scripts/release/write-artifact-manifest.ts
 - `RELEASE_WORKFLOW_SHA` **required** — scripts/release/control-main.ts
 - `RUN_HARNESS_SMOKE` **required** — packages/adapters/opencode/src/__tests__/category-routing-smoke.test.ts
 - `SITE_URL` **required** — packages/docs/astro.config.mjs
 - `WEAVE_CLI_VERSION` **required** — packages/cli/src/theme/render.ts
 - `WEAVE_LOG_FILE` **required** — packages/engine/src/env.ts
+- `WEAVE_RELEASE_FORCE_SCENARIO_FAILURE` **required** — scripts/release/verification-harness.ts
 
 ## Config Files
 
