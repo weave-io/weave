@@ -2,7 +2,6 @@
  * Banner and help rendering helpers for the Weave CLI.
  */
 
-import packageJson from "../../package.json";
 import { renderLogo } from "./ascii-logo.js";
 import type { ThemeColors } from "./colors.js";
 
@@ -10,8 +9,13 @@ export interface VersionSource {
   version?: string;
 }
 
+/** Replaced by the public-package builder so bundles contain only the CLI version. */
+const cliVersion: VersionSource = {
+  version: process.env.WEAVE_CLI_VERSION ?? "0.0.1",
+};
+
 export class ThemeRenderer {
-  constructor(private readonly versionSource: VersionSource = packageJson) {}
+  constructor(private readonly versionSource: VersionSource = cliVersion) {}
 
   renderBanner(theme: ThemeColors): string[] {
     const logo = this.renderLogo(theme);
