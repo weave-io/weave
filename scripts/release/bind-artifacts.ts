@@ -109,103 +109,129 @@ export function bindArtifacts(
                 expected,
                 actual,
               });
+          if (dependencies.github.listWorkflowRunJobs === undefined)
+            return errAsync({
+              type: "GitHubLookupFailed" as const,
+              operation: "list workflow jobs",
+              message: "job identity lookup unavailable",
+            });
           return dependencies.github
-            .getArtifact(input.payload.serverArtifactId)
+            .listWorkflowRunJobs(input.runId)
             .mapErr(toGitHubError)
-            .andThen((payload) =>
-              dependencies.github
-                .getArtifact(input.control.serverArtifactId)
+            .andThen((jobs) => {
+              const originBuildJob = jobs.find(
+                (job) => job.name === "build" && job.conclusion === "success",
+              );
+              if (originBuildJob === undefined)
+                return errAsync({
+                  type: "BindingMismatch" as const,
+                  field: "originBuildJob",
+                  expected: "completed build job",
+                  actual: jobs,
+                });
+              return dependencies.github
+                .getArtifact(input.payload.serverArtifactId)
                 .mapErr(toGitHubError)
-                .andThen((control) => {
-                  const artifacts = [
-                    {
-                      name: "release-payload",
-                      expected: input.payload,
-                      actual: payload,
-                    },
-                    {
-                      name: "release-control",
-                      expected: input.control,
-                      actual: control,
-                    },
-                  ];
-                  for (const artifact of artifacts) {
-                    if (artifact.actual.expired)
-                      return errAsync({
-                        type: "ArtifactExpired" as const,
-                        artifactId: artifact.actual.id,
-                      });
-                    if (artifact.actual.digest === undefined)
-                      return errAsync({
-                        type: "ArtifactDigestMissing" as const,
-                        artifactId: artifact.actual.id,
-                      });
-                    if (artifact.actual.name !== artifact.name)
-                      return errAsync({
-                        type: "BindingMismatch" as const,
-                        field: "artifactName",
-                        expected: artifact.name,
-                        actual: artifact.actual.name,
-                      });
-                    if (
-                      artifact.actual.digest !== artifact.expected.uploadDigest
-                    )
-                      return errAsync({
-                        type: "BindingMismatch" as const,
-                        field: "artifactDigest",
-                        expected: artifact.expected.uploadDigest,
-                        actual: artifact.actual.digest,
-                      });
-                  }
-                  return dependencies.files
-                    .readBytes(input.controlPath)
-                    .mapErr(() => ({
-                      type: "ManifestReadFailed" as const,
-                      path: input.controlPath,
-                    }))
-                    .andThen((controlBytes) => {
-                      const record = createBindingRecord({
-                        repositoryId: input.repositoryId,
-                        workflowSha: input.workflowSha,
-                        runId: input.runId,
-                        runAttempt: input.runAttempt,
-                        event: input.event,
-                        operation: input.operation,
-                        headRef: input.headRef,
-                        headSha: input.headSha,
-                        originJobConclusion: "success",
-                        artifacts: artifacts.map(({ name, actual }) => ({
-                          name,
-                          serverArtifactId: actual.id,
-                          uploadDigest: actual.digest as string,
-                          sizeInBytes: actual.sizeInBytes,
-                        })),
-                        manifest,
-                        manifestDigest: digest(text),
-                        files: [
-                          ...manifest.artifacts.map(({ filename, sha256 }) => ({
-                            filename,
-                            sha256,
-                          })),
-                          {
-                            filename: "release-control",
-                            sha256: digest(controlBytes),
-                          },
-                        ],
-                      });
-                      if (record.isErr()) return errAsync(record.error);
-                      return dependencies.files
-                        .writeText(
-                          ".release/binding.json",
-                          `${JSON.stringify(record.value)}\n`,
+                .andThen((payload) =>
+                  dependencies.github
+                    .getArtifact(input.control.serverArtifactId)
+                    .mapErr(toGitHubError)
+                    .andThen((control) => {
+                      const artifacts = [
+                        {
+                          name: "release-payload",
+                          expected: input.payload,
+                          actual: payload,
+                        },
+                        {
+                          name: "release-control",
+                          expected: input.control,
+                          actual: control,
+                        },
+                      ];
+                      for (const artifact of artifacts) {
+                        if (artifact.actual.expired)
+                          return errAsync({
+                            type: "ArtifactExpired" as const,
+                            artifactId: artifact.actual.id,
+                          });
+                        if (artifact.actual.digest === undefined)
+                          return errAsync({
+                            type: "ArtifactDigestMissing" as const,
+                            artifactId: artifact.actual.id,
+                          });
+                        if (artifact.actual.name !== artifact.name)
+                          return errAsync({
+                            type: "BindingMismatch" as const,
+                            field: "artifactName",
+                            expected: artifact.name,
+                            actual: artifact.actual.name,
+                          });
+                        if (
+                          artifact.actual.digest !==
+                          artifact.expected.uploadDigest
                         )
+                          return errAsync({
+                            type: "BindingMismatch" as const,
+                            field: "artifactDigest",
+                            expected: artifact.expected.uploadDigest,
+                            actual: artifact.actual.digest,
+                          });
+                      }
+                      return dependencies.files
+                        .readBytes(input.controlPath)
                         .mapErr(() => ({
-                          type: "BindingWriteFailed" as const,
-                          path: ".release/binding.json",
-                        }));
-                    });
-                }),
-            );
+                          type: "ManifestReadFailed" as const,
+                          path: input.controlPath,
+                        }))
+                        .andThen((controlBytes) => {
+                          const record = createBindingRecord({
+                            repositoryId: input.repositoryId,
+                            workflowSha: input.workflowSha,
+                            runId: input.runId,
+                            runAttempt: input.runAttempt,
+                            event: input.event,
+                            operation: input.operation,
+                            headRef: input.headRef,
+                            headSha: input.headSha,
+                            originJobConclusion: "success",
+                            originJobId: originBuildJob.id,
+                            originJobName: "build",
+                            artifacts: artifacts.map(({ name, actual }) => ({
+                              name,
+                              serverArtifactId: actual.id,
+                              uploadDigest: actual.digest as string,
+                              sizeInBytes: actual.sizeInBytes,
+                            })),
+                            manifest,
+                            manifestDigest: digest(text),
+                            files: [
+                              ...manifest.artifacts.map(
+                                ({ filename, sha256 }) => ({
+                                  filename,
+                                  sha256,
+                                }),
+                              ),
+                              {
+                                filename: "release-control",
+                                sha256: digest(controlBytes),
+                              },
+                            ],
+                          });
+                          if (record.isErr()) return errAsync(record.error);
+                          return dependencies.files
+                            .writeText(
+                              ".release/binding.json",
+                              `${JSON.stringify(record.value)}\n`,
+                            )
+                            .mapErr(() => ({
+                              type: "BindingWriteFailed" as const,
+                              path: ".release/binding.json",
+                            }));
+                        });
+                    }),
+                );
+            });
         });
     });
 }

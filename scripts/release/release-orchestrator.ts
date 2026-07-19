@@ -838,7 +838,6 @@ export class ReleaseOrchestrator {
     });
   }
 
-  /** Optional only for legacy callers; stable workflow callers must supply it. */
   private assertStableTransition(
     record: StableTrainRecord | undefined,
     target: StableTrainRecord["state"],

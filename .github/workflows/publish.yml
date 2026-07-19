@@ -305,7 +305,7 @@ jobs:
 
   # The App token is environment-scoped. GITHUB_TOKEN remains read-only.
   release-refs:
-    needs: [stable-finalize, build]
+    needs: [preflight, stable-finalize, build]
     if: needs.preflight.outputs.skipped != 'true' && needs.preflight.outputs.operation == 'stable-finalize'
     runs-on: ubuntu-latest
     environment: release-refs
