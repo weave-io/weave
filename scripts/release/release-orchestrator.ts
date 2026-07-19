@@ -17,6 +17,10 @@ import {
   NightlyPlanner,
 } from "./nightly-plan.js";
 import type { NpmRegistryClient } from "./npm-registry-client.js";
+import {
+  type CredentialScanInput,
+  scanCredentialSources,
+} from "./package-policy.js";
 import type {
   StableCutInput,
   StableCutPlan,
@@ -30,7 +34,22 @@ export interface PublishRequest {
   invocation: ReleaseInvocation;
   manifest: unknown;
   artifactDirectory: string;
+  /** A control caller must prove the server-bound record before publication. */
+  bindingVerified?: boolean;
+  credentialScan?: CredentialScanInput;
 }
+export interface PromotionAuthorization {
+  schemaVersion: 1;
+  operation: "stable-publish";
+  state: "awaiting-promotion";
+  subjectSha: string;
+  packages: readonly string[];
+  versions: Readonly<Record<string, string>>;
+  artifactDigests: Readonly<Record<string, string>>;
+}
+export type PublishResult =
+  | { state: "published"; promotionAuthorization?: PromotionAuthorization }
+  | { state: "partial"; reason: string };
 /** Composition root for npm publishing. GitHub/train workflows are added in Tasks 9/13/19/20. */
 export class ReleaseOrchestrator {
   constructor(
@@ -69,9 +88,23 @@ export class ReleaseOrchestrator {
       branch,
     );
   }
-  publish(request: PublishRequest): ResultAsync<void, ReleaseError> {
-    if (request.invocation.eventName === "schedule")
+  publish(request: PublishRequest): ResultAsync<PublishResult, ReleaseError> {
+    if (request.credentialScan !== undefined) {
+      const credentials = scanCredentialSources(request.credentialScan);
+      if (credentials.isErr())
+        return errAsync({
+          type: "CredentialSourceDetected",
+          source: credentials.error,
+        });
+    }
+    if (request.bindingVerified !== true)
+      return errAsync({
+        type: "BindingVerificationFailed",
+        reason: "binding record was not verified",
+      });
+    if (request.invocation.eventName !== "workflow_dispatch")
       return errAsync({ type: "UnsupportedOperation", operation: "schedule" });
+    const stablePublication = request.invocation.operation === "stable-publish";
     if (
       request.invocation.operation !== "nightly" &&
       request.invocation.operation !== "stable-publish"
@@ -90,25 +123,25 @@ export class ReleaseOrchestrator {
       request.invocation.operation === "nightly"
         ? "nightly"
         : ("next" as const);
-    return manifest.value.artifacts.reduce<ResultAsync<void, ReleaseError>>(
-      (chain, artifact) =>
-        chain.andThen(() => {
-          const path = `${request.artifactDirectory}/${artifact.filename}`;
-          return this.files.readBytes(path).andThen((bytes) => {
-            const digest = `sha256:${new Bun.CryptoHasher("sha256").update(bytes).digest("hex")}`;
-            if (digest !== artifact.sha256)
-              return errAsync({
-                type: "DigestMismatch" as const,
-                expected: artifact.sha256,
-                actual: digest,
-              });
-            const inspected = this.tarInspector.inspect(bytes);
-            if (inspected.isErr())
-              return errAsync({
-                type: "TarPreflightFailed" as const,
-                reason: inspected.error.type,
-              });
-            return this.npm.publish(path, tag).andThen(() => {
+    return manifest.value.artifacts
+      .reduce<ResultAsync<void, ReleaseError>>(
+        (chain, artifact) =>
+          chain.andThen(() => {
+            const path = `${request.artifactDirectory}/${artifact.filename}`;
+            return this.files.readBytes(path).andThen((bytes) => {
+              const digest = `sha256:${new Bun.CryptoHasher("sha256").update(bytes).digest("hex")}`;
+              if (digest !== artifact.sha256)
+                return errAsync({
+                  type: "DigestMismatch" as const,
+                  expected: artifact.sha256,
+                  actual: digest,
+                });
+              const inspected = this.tarInspector.inspect(bytes);
+              if (inspected.isErr())
+                return errAsync({
+                  type: "TarPreflightFailed" as const,
+                  reason: inspected.error.type,
+                });
               const packageName = manifest.value.packages.find((name) =>
                 artifact.filename.includes(name.replace("/", "-")),
               );
@@ -117,15 +150,51 @@ export class ReleaseOrchestrator {
                   type: "InvalidManifest" as const,
                   issues: ["artifact has no package"],
                 });
-              return this.npm.verifyPublished(
-                packageName,
-                manifest.value.versions[packageName],
-                artifact.sha256,
-              );
+              const version = manifest.value.versions[packageName];
+              return this.npm.listVersions(packageName).andThen((versions) => {
+                if (versions.includes(version))
+                  return this.npm
+                    .verifyPublished(packageName, version, artifact.sha256)
+                    .mapErr((error) =>
+                      error.message === "tarball digest mismatch"
+                        ? {
+                            type: "RegistryDigestConflict" as const,
+                            packageName,
+                            version,
+                          }
+                        : error,
+                    );
+                return this.npm.publish(path, tag).andThen(() => {
+                  return this.npm.verifyPublished(
+                    packageName,
+                    version,
+                    artifact.sha256,
+                  );
+                });
+              });
             });
-          });
-        }),
-      okAsync(undefined),
-    );
+          }),
+        okAsync(undefined),
+      )
+      .map(() => {
+        if (!stablePublication) return { state: "published" };
+        return {
+          state: "published",
+          promotionAuthorization: {
+            schemaVersion: 1,
+            operation: "stable-publish",
+            state: "awaiting-promotion",
+            subjectSha: manifest.value.releaseSubjectSha,
+            packages: manifest.value.packages,
+            versions: manifest.value.versions,
+            artifactDigests: Object.fromEntries(
+              manifest.value.artifacts.map((artifact) => [
+                artifact.filename,
+                artifact.sha256,
+              ]),
+            ),
+          },
+        };
+      });
   }
 }

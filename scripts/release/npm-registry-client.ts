@@ -28,16 +28,7 @@ export class NpmCliRegistryClient implements NpmRegistryClient {
     tag: "nightly" | "next",
   ): ResultAsync<void, RegistryError> {
     return this.commands
-      .run([
-        "npm",
-        "publish",
-        tarballPath,
-        "--access",
-        "public",
-        "--tag",
-        tag,
-        "--ignore-scripts",
-      ])
+      .run(["npm", "publish", tarballPath, "--access", "public", "--tag", tag])
       .map(() => undefined)
       .mapErr((error) => ({
         type: "RegistryError",

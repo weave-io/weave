@@ -11,6 +11,52 @@ import {
 } from "./constants.js";
 import { type TarInspectionError, TarInspector } from "./tar-inspector.js";
 
+export interface CredentialScanInput {
+  environment: Readonly<Record<string, string | undefined>>;
+  npmConfigOutput?: string;
+  configFiles?: readonly { path: string; contents: string }[];
+}
+
+/**
+ * Finds every credential source which could cause npm to bypass trusted OIDC.
+ * This is deliberately pure so the standalone binary can scan injected runner
+ * state before it reads a binding record or contacts either service.
+ */
+export function scanCredentialSources(
+  input: CredentialScanInput,
+): Result<void, string> {
+  for (const [name, value] of Object.entries(input.environment)) {
+    if (value === undefined || value.length === 0) continue;
+    if (
+      name === "NODE_AUTH_TOKEN" ||
+      name === "NPM_TOKEN" ||
+      /^npm_config_(?:_auth|_authtoken|auth|\/\/.*:_auth(?:token)?)/i.test(
+        name,
+      ) ||
+      /^NPM_CONFIG_(?:_AUTH|_AUTHTOKEN|AUTH|\/\/.*:_AUTH(?:TOKEN)?)/.test(
+        name,
+      ) ||
+      name === "NPM_CONFIG_USERCONFIG" ||
+      /(?:CREDENTIAL_HELPER|KEYCHAIN)/i.test(name)
+    )
+      return err(name);
+  }
+  if (
+    input.npmConfigOutput !== undefined &&
+    hasNpmCredential(input.npmConfigOutput)
+  )
+    return err("npm config");
+  for (const file of input.configFiles ?? [])
+    if (hasNpmCredential(file.contents)) return err(file.path);
+  return ok(undefined);
+}
+
+function hasNpmCredential(contents: string): boolean {
+  return /(?:^|\n)\s*(?:_auth|_authToken|authToken|\/\/[^\s=]+:\s*_auth(?:Token)?)\s*=/i.test(
+    contents,
+  );
+}
+
 export type PackagePolicyError =
   | { type: "Tar"; error: TarInspectionError }
   | { type: "MissingManifest" }
