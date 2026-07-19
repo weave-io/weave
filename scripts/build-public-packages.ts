@@ -1,6 +1,9 @@
 import { join } from "node:path";
-import { errAsync, okAsync, ResultAsync } from "neverthrow";
+import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
+
 import {
+  PRIVATE_PACKAGE_NAMES,
+  type PrivatePackageName,
   PUBLIC_PACKAGE_BUILDS,
   PUBLIC_RUNTIME_EXTERNALS,
   type PublicPackageBuild,
@@ -14,7 +17,16 @@ export type PublicPackageBuildError =
       diagnostics: string;
     }
   | { type: "Filesystem"; path: string; operation: "copy" | "mkdir" | "chmod" }
-  | { type: "TypeDeclarations"; packageName: PublicPackageName };
+  | { type: "TypeDeclarations"; packageName: PublicPackageName }
+  | { type: "CliManifest"; path: string }
+  | {
+      type: "PrivateDependencyReference";
+      packageName: PublicPackageName;
+      output: string;
+      privatePackageName:
+        | PrivatePackageName
+        | "@weaveio/weave-adapter-claude-code";
+    };
 
 export interface PublicPackageFileSystem {
   copyFile(
@@ -23,6 +35,26 @@ export interface PublicPackageFileSystem {
   ): ResultAsync<void, PublicPackageBuildError>;
   ensureDirectory(path: string): ResultAsync<void, PublicPackageBuildError>;
   makeExecutable(path: string): ResultAsync<void, PublicPackageBuildError>;
+  readText(path: string): ResultAsync<string, PublicPackageBuildError>;
+}
+
+/**
+ * Matches only dependency-map entries and module specifiers, not prose mentions.
+ * This permits bundled builtin guidance to name a package without adding a runtime
+ * dependency to the packed artifact.
+ */
+export function hasPrivateDependencyReference(
+  contents: string,
+  packageName: string,
+): boolean {
+  const escaped = packageName.replaceAll("/", "\\/");
+  const dependencyMap = new RegExp(
+    `["']${escaped}["']\\s*:\\s*["'](?:workspace:|[~^<>=*]|\\d)`,
+  );
+  const moduleSpecifier = new RegExp(
+    `(?:import|export)\\s+(?:[^"']*?\\s+from\\s+)?["']${escaped}["']|require\\(\\s*["']${escaped}["']\\s*\\)`,
+  );
+  return dependencyMap.test(contents) || moduleSpecifier.test(contents);
 }
 
 /** Bun-only filesystem operations required to assemble public package outputs. */
@@ -50,6 +82,14 @@ export class BunPublicPackageFileSystem implements PublicPackageFileSystem {
 
   makeExecutable(path: string): ResultAsync<void, PublicPackageBuildError> {
     return this.run(["chmod", "755", path], path, "chmod");
+  }
+
+  readText(path: string): ResultAsync<string, PublicPackageBuildError> {
+    return ResultAsync.fromPromise(Bun.file(path).text(), () => ({
+      type: "Filesystem" as const,
+      path,
+      operation: "copy" as const,
+    }));
   }
 
   private run(
@@ -86,9 +126,9 @@ export class PublicPackageBuilder {
     packageName: PublicPackageName,
   ): ResultAsync<void, PublicPackageBuildError> {
     const build: PublicPackageBuild = PUBLIC_PACKAGE_BUILDS[packageName];
-    return this.buildEntries(packageName, build.entries).andThen(() =>
-      this.copyBootstrap(build.bootstrap),
-    );
+    return this.buildEntries(packageName, build.entries)
+      .andThen(() => this.copyBootstrap(build.bootstrap))
+      .andThen(() => this.verifyEntries(packageName, build.entries));
   }
 
   private buildEntries(
@@ -99,9 +139,9 @@ export class PublicPackageBuilder {
       executable?: boolean;
     }[],
   ): ResultAsync<void, PublicPackageBuildError> {
-    let result = okAsync<void, PublicPackageBuildError>(undefined);
+    let result = this.getBuildDefines(packageName);
     for (const entry of entries) {
-      result = result.andThen(() =>
+      result = result.andThen((define) =>
         ResultAsync.fromPromise(
           Bun.build({
             entrypoints: [entry.source],
@@ -109,6 +149,7 @@ export class PublicPackageBuilder {
             target: "bun",
             format: "esm",
             external: [...PUBLIC_RUNTIME_EXTERNALS],
+            define,
           }),
           () => ({
             type: "BuildDiagnostics" as const,
@@ -116,7 +157,7 @@ export class PublicPackageBuilder {
             diagnostics: "Bun.build rejected",
           }),
         ).andThen((result) => {
-          if (result.success) return okAsync(undefined);
+          if (result.success) return okAsync(define);
           return errAsync({
             type: "BuildDiagnostics" as const,
             packageName,
@@ -125,12 +166,82 @@ export class PublicPackageBuilder {
         }),
       );
       if (entry.executable) {
-        result = result.andThen(() =>
-          this.fileSystem.makeExecutable(entry.output),
+        result = result.andThen((define) =>
+          this.fileSystem.makeExecutable(entry.output).map(() => define),
         );
       }
     }
+    return result.map(() => undefined);
+  }
+
+  private getBuildDefines(
+    packageName: PublicPackageName,
+  ): ResultAsync<Record<string, string>, PublicPackageBuildError> {
+    if (packageName !== "@weaveio/weave-cli") return okAsync({});
+    const manifestPath = "packages/cli/package.json";
+    return this.fileSystem.readText(manifestPath).andThen((contents) => {
+      const manifest = this.parseCliManifest(contents, manifestPath);
+      if (manifest.isErr()) return errAsync(manifest.error);
+      return okAsync({
+        "process.env.WEAVE_CLI_VERSION": JSON.stringify(manifest.value.version),
+      });
+    });
+  }
+
+  private parseCliManifest(
+    contents: string,
+    path: string,
+  ): Result<{ version: string }, PublicPackageBuildError> {
+    const parsed = Result.fromThrowable(
+      () => JSON.parse(contents) as unknown,
+      () => ({ type: "CliManifest" as const, path }),
+    )();
+    if (parsed.isErr()) return err(parsed.error);
+    if (typeof parsed.value !== "object" || parsed.value === null) {
+      return err({ type: "CliManifest", path });
+    }
+    const version = (parsed.value as { version?: unknown }).version;
+    if (typeof version !== "string" || version.length === 0) {
+      return err({ type: "CliManifest", path });
+    }
+    return ok({ version });
+  }
+
+  private verifyEntries(
+    packageName: PublicPackageName,
+    entries: readonly { output: string }[],
+  ): ResultAsync<void, PublicPackageBuildError> {
+    let result = okAsync<void, PublicPackageBuildError>(undefined);
+    for (const entry of entries) {
+      result = result.andThen(() =>
+        this.fileSystem.readText(entry.output).andThen((contents) => {
+          const privatePackageName = this.findPrivateReference(
+            packageName,
+            contents,
+          );
+          if (privatePackageName === undefined) return okAsync(undefined);
+          return errAsync({
+            type: "PrivateDependencyReference" as const,
+            packageName,
+            output: entry.output,
+            privatePackageName,
+          });
+        }),
+      );
+    }
     return result;
+  }
+
+  private findPrivateReference(
+    packageName: PublicPackageName,
+    contents: string,
+  ): PrivatePackageName | "@weaveio/weave-adapter-claude-code" | undefined {
+    const names: (PrivatePackageName | "@weaveio/weave-adapter-claude-code")[] =
+      [...PRIVATE_PACKAGE_NAMES];
+    if (packageName === "@weaveio/weave-cli") {
+      names.push("@weaveio/weave-adapter-claude-code");
+    }
+    return names.find((name) => hasPrivateDependencyReference(contents, name));
   }
 
   private copyBootstrap(
@@ -157,6 +268,8 @@ export class PublicPackageBuilder {
   }
 }
 
-const builder = new PublicPackageBuilder(new BunPublicPackageFileSystem());
-const result = await builder.buildAll();
-if (result.isErr()) process.exitCode = 1;
+if (import.meta.main) {
+  const builder = new PublicPackageBuilder(new BunPublicPackageFileSystem());
+  const result = await builder.buildAll();
+  if (result.isErr()) process.exitCode = 1;
+}
