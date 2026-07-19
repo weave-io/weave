@@ -4,6 +4,12 @@ import type { Clock } from "./clock.js";
 import type { ReleaseError } from "./errors.js";
 import type { FileSystem } from "./filesystem.js";
 import type { ReleaseInvocation } from "./input-validation.js";
+import {
+  type NightlyPlan,
+  type NightlyPlanError,
+  type NightlyPlanInput,
+  NightlyPlanner,
+} from "./nightly-plan.js";
 import type { NpmRegistryClient } from "./npm-registry-client.js";
 import { TarInspector } from "./tar-inspector.js";
 
@@ -20,6 +26,12 @@ export class ReleaseOrchestrator {
     private readonly clock: Clock,
     private readonly tarInspector = new TarInspector(),
   ) {}
+  /** Plan-only nightly path; publication remains intentionally unavailable until Task 17. */
+  planNightly(
+    input: NightlyPlanInput,
+  ): ResultAsync<NightlyPlan, NightlyPlanError> {
+    return new NightlyPlanner(this.npm, this.clock).plan(input);
+  }
   publish(request: PublishRequest): ResultAsync<void, ReleaseError> {
     if (request.invocation.eventName === "schedule")
       return errAsync({ type: "UnsupportedOperation", operation: "schedule" });

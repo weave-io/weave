@@ -74,7 +74,9 @@ function validate(argv: readonly string[]): string | undefined {
   if (argv[1] === "ping" && argv.length === 2) return undefined;
   if (
     argv[1] === "view" &&
-    (argv.length === 3 || (argv.length === 4 && argv[3] === "dist-tags"))
+    (argv.length === 3 ||
+      (argv.length === 4 && argv[3] === "dist-tags") ||
+      (argv.length === 5 && argv[3] === "versions" && argv[4] === "--json"))
   )
     return undefined;
   return "npm subcommand or arguments are not allowlisted";

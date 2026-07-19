@@ -1,18 +1,58 @@
 name: Publish control plane
 
 on:
+  schedule:
+    - cron: "17 0 * * *"
   workflow_dispatch:
     inputs:
       operation:
-        description: Validated release operation (this skeleton only builds artifacts)
+        description: Release operation (publication is intentionally unavailable)
         required: true
         type: choice
         options: [nightly, stable-cut, stable-fix, stable-publish, stable-finalize, metadata-replay]
 
 permissions: {}
 
+# Publication runs must serialize; completed runs are never cancelled mid-proof.
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
 jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: read
+    outputs:
+      operation: ${{ steps.plan.outputs.operation }}
+      skipped: ${{ steps.plan.outputs.skipped }}
+    steps:
+      # Always execute control code from the protected branch, not the dispatch ref.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: refs/heads/main
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.10"
+      - run: bun install --frozen-lockfile
+      # This trusted control script validates enablement, source identity, and the
+      # named main check before emitting the only allowed plan operation.
+      - id: plan
+        run: bun scripts/release/nightly-plan.ts
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_PUBLISH_ENABLED: ${{ vars.RELEASE_PUBLISH_ENABLED }}
+          RELEASE_EVENT_NAME: ${{ github.event_name }}
+          RELEASE_OPERATION: ${{ inputs.operation }}
+          RELEASE_REF: ${{ github.ref }}
+          RELEASE_SHA: ${{ github.sha }}
+          RELEASE_WORKFLOW_REF: ${{ github.workflow_ref }}
+
   build:
+    needs: preflight
+    if: needs.preflight.outputs.skipped != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -24,6 +64,7 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
+          ref: refs/heads/main
           persist-credentials: false
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
@@ -31,6 +72,7 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run build
       - run: bun run release:validate
+      # The standalone control binary is compiled independently of payload build.
       - run: bun run release:control:build
       - id: payload
         uses: actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce # v4
@@ -38,33 +80,46 @@ jobs:
           name: release-payload
           path: .release
           if-no-files-found: error
+          retention-days: 30
       - id: control
         uses: actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce # v4
         with:
           name: release-control
           path: dist-release-control
           if-no-files-found: error
+          retention-days: 30
 
   bind:
-    needs: build
+    needs: [preflight, build]
+    if: needs.preflight.outputs.skipped != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      actions: read
     outputs:
       binding-artifact-id: ${{ steps.binding.outputs.artifact-id }}
       binding-artifact-digest: ${{ steps.binding.outputs.artifact-digest }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
+          ref: refs/heads/main
           persist-credentials: false
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: "1.3.10"
-      # Task 13 supplies the validated invocation and manifest used by this script.
+      - run: bun install --frozen-lockfile
       - run: bun scripts/release/artifact-binding.ts
+        env:
+          RELEASE_OPERATION: ${{ needs.preflight.outputs.operation }}
+          RELEASE_RUN_ID: ${{ github.run_id }}
+          RELEASE_RUN_ATTEMPT: ${{ github.run_attempt }}
+          RELEASE_HEAD_REF: ${{ github.ref_name }}
+          RELEASE_HEAD_SHA: ${{ github.sha }}
+          RELEASE_WORKFLOW_SHA: ${{ github.workflow_sha }}
       - id: binding
         uses: actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce # v4
         with:
           name: release-binding
           path: .release/binding.json
           if-no-files-found: error
+          retention-days: 30

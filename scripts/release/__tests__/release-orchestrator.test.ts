@@ -64,6 +64,7 @@ test("orchestrates publication with injected filesystem and registry", async () 
       return okAsync(undefined);
     },
     viewVersion: () => okAsync(""),
+    listVersions: () => okAsync([]),
     viewDistTags: () => okAsync({}),
     verifyPublished: () => {
       calls.push("verify");
@@ -121,6 +122,7 @@ test("propagates registry publication failure without retrying", async () => {
         message: "denied",
       }),
     viewVersion: () => okAsync(""),
+    listVersions: () => okAsync([]),
     viewDistTags: () => okAsync({}),
     verifyPublished: () => okAsync(undefined),
   };

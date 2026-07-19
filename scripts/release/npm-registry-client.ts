@@ -8,6 +8,9 @@ export interface NpmRegistryClient {
     tag: "nightly" | "next",
   ): ResultAsync<void, RegistryError>;
   viewVersion(packageName: string): ResultAsync<string, RegistryError>;
+  listVersions(
+    packageName: string,
+  ): ResultAsync<readonly string[], RegistryError>;
   viewDistTags(
     packageName: string,
   ): ResultAsync<Record<string, string>, RegistryError>;
@@ -51,6 +54,41 @@ export class NpmCliRegistryClient implements NpmRegistryClient {
         operation: "viewVersion",
         message: error.type,
       }));
+  }
+  listVersions(
+    packageName: string,
+  ): ResultAsync<readonly string[], RegistryError> {
+    return this.commands
+      .run(["npm", "view", packageName, "versions", "--json"])
+      .andThen((result) =>
+        ResultAsync.fromPromise(
+          Promise.resolve(JSON.parse(result.stdout) as unknown),
+          () => ({
+            type: "RegistryError" as const,
+            operation: "listVersions",
+            message: "invalid npm versions response",
+          }),
+        ),
+      )
+      .andThen((value) =>
+        Array.isArray(value) &&
+        value.every((version) => typeof version === "string")
+          ? okAsync(value)
+          : errAsync({
+              type: "RegistryError" as const,
+              operation: "listVersions",
+              message: "invalid npm versions response",
+            }),
+      )
+      .mapErr((error) =>
+        error.type === "RegistryError"
+          ? error
+          : {
+              type: "RegistryError" as const,
+              operation: "listVersions",
+              message: error.type,
+            },
+      );
   }
   viewDistTags(
     packageName: string,
