@@ -341,6 +341,7 @@ export class PublicPackageBuilder {
   ): ResultAsync<void, PublicPackageBuildError> {
     return this.fileSystem.readText(declaration.output).andThen((contents) => {
       const sanitized = contents
+        .replaceAll("@weaveio/weave-adapter-opencode", "the OpenCode adapter")
         .replaceAll("@weaveio/weave-adapter-claude-code", "the Claude adapter")
         .replaceAll("@weaveio/weave-config", "the configuration package")
         .replaceAll("@weaveio/weave-engine", "the engine package")

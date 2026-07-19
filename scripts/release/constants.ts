@@ -164,3 +164,12 @@ export const ALL_DEPENDENCY_FIELDS = [
   ...RUNTIME_DEPENDENCY_FIELDS,
   "devDependencies",
 ] as const;
+
+/** Hard upper bounds for a public artifact before it is ever extracted. */
+export const PACKAGE_ARCHIVE_LIMITS = {
+  compressedBytes: 5 * 1024 * 1024,
+  unpackedBytes: 25 * 1024 * 1024,
+  entries: 128,
+  compressionRatio: 100,
+  manifestBytes: 64 * 1024,
+} as const;

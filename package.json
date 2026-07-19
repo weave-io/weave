@@ -24,6 +24,7 @@
     "clean": "find . -type d -name dist -not -path '*/node_modules/*' | xargs rm -rf",
     "version": "changeset version",
     "release:dry": "bun run build && bun scripts/publish.ts --dry-run",
+    "release:validate": "bun run build && bun scripts/release/packager.ts",
     "prepare": "husky"
   },
   "devDependencies": {
