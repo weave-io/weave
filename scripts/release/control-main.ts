@@ -13,6 +13,7 @@ import {
 import { StableTrainRecordSchema } from "./model.js";
 import type { NpmRegistryClient } from "./npm-registry-client.js";
 import { NpmCliRegistryClient } from "./npm-registry-client.js";
+import { promotionCommandsFromRegistry } from "./promotion-commands.js";
 import { ReleaseOrchestrator } from "./release-orchestrator.js";
 import { validateStableTrain } from "./stable-train.js";
 
@@ -95,9 +96,10 @@ if (controlBytes.isErr()) {
   log.error("unable to read control binary");
   process.exit(1);
 }
+const registry = registryClient();
 const result = await new ReleaseOrchestrator(
   files,
-  registryClient(),
+  registry,
   new SystemClock(),
 ).publish({
   invocation: invocation.value,
@@ -136,10 +138,22 @@ if (result.isErr()) {
 if (
   result.value.state === "published" &&
   result.value.promotionAuthorization !== undefined
-)
-  process.stdout.write(
-    `${JSON.stringify({ promotionAuthorization: result.value.promotionAuthorization, stableTrain: result.value.stableTrain })}\n`,
+) {
+  const commands = await promotionCommandsFromRegistry(
+    result.value.promotionAuthorization,
+    registry,
   );
+  if (commands.isErr()) {
+    log.error(
+      { error: commands.error },
+      "unable to generate promotion commands",
+    );
+    process.exit(1);
+  }
+  process.stdout.write(
+    `${JSON.stringify({ promotionAuthorization: result.value.promotionAuthorization, promotionCommands: commands.value, stableTrain: result.value.stableTrain })}\n`,
+  );
+}
 if (dryRun)
   process.stdout.write(
     `${JSON.stringify({
@@ -221,7 +235,8 @@ function registryClient(): NpmRegistryClient {
     viewVersion: () => okAsync(""),
     listVersions: () => okAsync([]),
     viewDistTags: () => okAsync({}),
-    distTagLs: () => okAsync({}),
+    distTagLs: (packageName) =>
+      okAsync({ latest: `0.0.0-${packageName.length}` }),
     verifyPublished: () => okAsync(undefined),
   };
 }

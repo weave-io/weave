@@ -45,7 +45,9 @@ has been retested. Never introduce an automation token.
    binds subject SHA, package names, versions, and artifact digests. Do not
    proceed if either `next` tag or tarball digest disagrees.
 6. **Second-maintainer MFA promotion:** a different maintainer signs in to npm
-   interactively with MFA, records prior `latest`, then moves both tags.
+   interactively with MFA and runs the control-emitted, version-pinned promotion
+   commands. The control already recorded the prior `latest` values in its
+   rollback commands.
 7. **Finalize:** dispatch `stable-finalize` with the exact saved authorization
    JSON. Its read-only job verifies both `latest` versions and unauthenticated
    registry tarball SHA-256s. It finalizes nothing on a mismatch.
@@ -60,7 +62,9 @@ has been retested. Never introduce an automation token.
 
 ## Manual promotion and rollback
 
-The second maintainer must first record both outputs in the release evidence:
+The standalone release control records the prior `latest` values and emits the
+exact promotion and rollback commands in the release summary. A second maintainer
+must preserve that summary as release evidence; the commands remain human-only:
 
 ```bash
 npm dist-tag ls @weaveio/weave-cli --json

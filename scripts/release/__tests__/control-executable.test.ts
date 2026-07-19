@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { join } from "node:path";
 import { createBindingRecord } from "../artifact-binding.js";
 import type { ArtifactManifest } from "../model.js";
+import { trainRecordDigest } from "../stable-train.js";
 
 test("compiled control is self-contained and digest recorded", async () => {
   const root = join(import.meta.dir, "..", "..", "..");
@@ -49,16 +50,31 @@ test("compiled control dry-runs publication from a clean directory", async () =>
   expect(await chmod.exited).toBe(0);
 
   const artifact = archive();
-  const artifactFilename =
-    "@weaveio-weave-cli-1.0.0-nightly.20260101.aaaaaaaaaaaa.tgz";
+  const artifactFilename = "@weaveio-weave-cli-1.0.0.tgz";
   const artifactDigest = digest(artifact);
+  const trainContent = {
+    schemaVersion: 1 as const,
+    trainRef: "release/20260719-aaaaaaaaaaaa",
+    subjectSha: "a".repeat(40),
+    cutAt: "2026-07-19T00:00:00.000Z",
+    expiresAt: "2026-07-26T00:00:00.000Z",
+    state: "bound" as const,
+    packages: ["@weaveio/weave-cli"] as "@weaveio/weave-cli"[],
+    versions: { "@weaveio/weave-cli": "1.0.0" },
+    artifactManifestDigest: `sha256:${"c".repeat(64)}`,
+    artifactIds: [1],
+  };
+  const stableTrain = {
+    ...trainContent,
+    recordDigest: trainRecordDigest(trainContent),
+  };
   const manifest: ArtifactManifest = {
     schemaVersion: 1,
     releaseSubjectSha: "a".repeat(40),
-    channel: "nightly",
+    channel: "stable",
     packages: ["@weaveio/weave-cli"],
     versions: {
-      "@weaveio/weave-cli": "1.0.0-nightly.20260101.aaaaaaaaaaaa",
+      "@weaveio/weave-cli": "1.0.0",
     },
     artifacts: [
       {
@@ -68,6 +84,7 @@ test("compiled control dry-runs publication from a clean directory", async () =>
         sha256: artifactDigest,
       },
     ],
+    stableTrain,
   };
   const manifestText = JSON.stringify(manifest);
   const uploadedBytes = new Uint8Array([1]);
@@ -80,7 +97,7 @@ test("compiled control dry-runs publication from a clean directory", async () =>
     runId: 1,
     runAttempt: 1,
     event: "workflow_dispatch",
-    operation: "nightly",
+    operation: "stable-publish",
     headRef: "refs/heads/main",
     headSha: "a".repeat(40),
     originJobConclusion: "success",
@@ -102,6 +119,7 @@ test("compiled control dry-runs publication from a clean directory", async () =>
     ],
     manifest,
     manifestDigest: digest(manifestText),
+    stableTrain,
     files: [
       { filename: artifactFilename, sha256: artifactDigest },
       { filename: "release-control", sha256: binaryDigest },
@@ -158,8 +176,8 @@ test("compiled control dry-runs publication from a clean directory", async () =>
     workflowPath: ".github/workflows/publish.yml",
     eventName: "workflow_dispatch",
     ref: "refs/heads/main",
-    operation: "nightly",
-    channel: "nightly",
+    operation: "stable-publish",
+    channel: "stable",
     subjectSha: "a".repeat(40),
     packages: ["@weaveio/weave-cli"],
     versions: manifest.versions,
@@ -198,7 +216,13 @@ test("compiled control dry-runs publication from a clean directory", async () =>
 
   expect(exitCode).toBe(0);
   expect(`${stdout}${stderr}`).toContain(
-    `npm publish artifacts/${artifactFilename} --access public --tag nightly`,
+    `npm publish artifacts/${artifactFilename} --access public --tag next`,
+  );
+  expect(`${stdout}${stderr}`).toContain(
+    "npm dist-tag add @weaveio/weave-cli@1.0.0 latest",
+  );
+  expect(`${stdout}${stderr}`).toContain(
+    "npm dist-tag add @weaveio/weave-cli@0.0.0-18 latest",
   );
   expect(await Bun.file(join(temp, "node_modules")).exists()).toBe(false);
   expect(digest(await Bun.file(binary).bytes())).toBe(binaryDigest);

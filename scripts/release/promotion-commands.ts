@@ -1,4 +1,13 @@
-import { err, ok, type Result } from "neverthrow";
+import {
+  err,
+  errAsync,
+  ok,
+  okAsync,
+  type Result,
+  ResultAsync,
+} from "neverthrow";
+import type { RegistryError } from "./errors.js";
+import type { NpmRegistryClient } from "./npm-registry-client.js";
 import {
   type PromotionAuthorization,
   PromotionAuthorizationSchema,
@@ -9,6 +18,11 @@ export interface PromotionCommandSummary {
   promoteCommands: readonly string[];
   rollbackCommands: readonly string[];
 }
+
+export type PromotionCommandError =
+  | { type: "InvalidPromotionAuthorization" }
+  | { type: "MissingPriorLatest"; packageName: string }
+  | RegistryError;
 
 /** Builds manual, version-pinned promotion commands from an authorized package set. */
 export function promotionCommands(
@@ -28,6 +42,32 @@ export function promotionCommands(
         `npm dist-tag add ${packageName}@${parsed.data.versions[packageName]} latest`,
     ),
     rollbackCommands: rollback.value,
+  });
+}
+
+/** Reads prior tags in the verified control binary and returns human-only text. */
+export function promotionCommandsFromRegistry(
+  authorization: unknown,
+  registry: NpmRegistryClient,
+): ResultAsync<PromotionCommandSummary, PromotionCommandError> {
+  const parsed = PromotionAuthorizationSchema.safeParse(authorization);
+  if (!parsed.success)
+    return errAsync({ type: "InvalidPromotionAuthorization" });
+  return ResultAsync.combine(
+    parsed.data.packages.map((packageName) =>
+      registry.distTagLs(packageName).andThen((tags) => {
+        const latest = tags.latest;
+        if (typeof latest !== "string")
+          return errAsync({ type: "MissingPriorLatest" as const, packageName });
+        return okAsync([packageName, latest] as const);
+      }),
+    ),
+  ).andThen((entries) => {
+    const commands = promotionCommands(
+      parsed.data,
+      Object.fromEntries(entries),
+    );
+    return commands.isOk() ? okAsync(commands.value) : errAsync(commands.error);
   });
 }
 
