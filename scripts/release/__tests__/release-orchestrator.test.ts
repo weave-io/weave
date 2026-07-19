@@ -46,11 +46,11 @@ describe("release command allowlist", () => {
       ).isErr(),
     ).toBe(true);
   });
-  test("accepts the exact publish command", async () => {
+  test("rejects an allowlisted command with unexpected arguments", async () => {
     const runner = new BunCommandRunner();
-    // npm is intentionally invoked only after validation; this deliberately uses ping's read-only shape.
-    const result = await runner.run(["npm", "ping"]);
-    expect(result.isOk() || result.isErr()).toBe(true);
+    const result = await runner.run(["npm", "ping", "--verbose"]);
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) expect(result.error.type).toBe("CommandRejected");
   });
 });
 
@@ -399,8 +399,14 @@ describe("manual stable promotion", () => {
       cutAt: "2030-01-01T00:00:00.000Z",
       expiresAt: "2030-01-08T00:00:00.000Z",
       state: "awaiting-promotion" as const,
-      packages: ["@weaveio/weave-cli", "@weaveio/weave-adapter-opencode"] as const,
-      versions: { "@weaveio/weave-cli": "1.2.3", "@weaveio/weave-adapter-opencode": "4.5.6" },
+      packages: [
+        "@weaveio/weave-cli",
+        "@weaveio/weave-adapter-opencode",
+      ] as const,
+      versions: {
+        "@weaveio/weave-cli": "1.2.3",
+        "@weaveio/weave-adapter-opencode": "4.5.6",
+      },
     };
     const partial = await promotionOrchestrator({
       "@weaveio/weave-cli": { latest: "1.2.3" },
