@@ -1,8 +1,13 @@
 import { errAsync, okAsync, type ResultAsync } from "neverthrow";
+import {
+  type BindingVerificationContext,
+  verifyBindingRecord,
+} from "./artifact-binding.js";
 import { validateArtifactManifest } from "./artifact-manifest.js";
 import type { Clock } from "./clock.js";
 import type { ReleaseError } from "./errors.js";
 import type { FileSystem } from "./filesystem.js";
+import type { GitHubClient } from "./github-client.js";
 import type { ReleaseInvocation } from "./input-validation.js";
 import {
   MetadataReplay,
@@ -34,8 +39,12 @@ export interface PublishRequest {
   invocation: ReleaseInvocation;
   manifest: unknown;
   artifactDirectory: string;
-  /** A control caller must prove the server-bound record before publication. */
-  bindingVerified?: boolean;
+  /** Live Actions proof is mandatory before any registry command. */
+  bindingVerification: {
+    record: unknown;
+    context: BindingVerificationContext;
+    github: GitHubClient;
+  };
   credentialScan?: CredentialScanInput;
 }
 export interface PromotionAuthorization {
@@ -97,11 +106,22 @@ export class ReleaseOrchestrator {
           source: credentials.error,
         });
     }
-    if (request.bindingVerified !== true)
-      return errAsync({
-        type: "BindingVerificationFailed",
-        reason: "binding record was not verified",
-      });
+    return verifyBindingRecord(
+      request.bindingVerification.record,
+      request.bindingVerification.context,
+      request.bindingVerification.github,
+    )
+      .mapErr((error) => ({
+        type: "BindingVerificationFailed" as const,
+        reason: error.type === "BindingMismatch" ? error.field : error.type,
+      }))
+      .andThen(() => this.publishVerified(request));
+  }
+
+  /** Task 20 may map post-publish stable failures to `partial` without authorization. */
+  private publishVerified(
+    request: PublishRequest,
+  ): ResultAsync<PublishResult, ReleaseError> {
     if (request.invocation.eventName !== "workflow_dispatch")
       return errAsync({ type: "UnsupportedOperation", operation: "schedule" });
     const stablePublication = request.invocation.operation === "stable-publish";

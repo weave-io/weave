@@ -1,8 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { errAsync, okAsync } from "neverthrow";
+import {
+  type BindingVerificationContext,
+  createBindingRecord,
+} from "../artifact-binding.js";
 import type { Clock } from "../clock.js";
 import { BunCommandRunner } from "../command-runner.js";
 import type { FileSystem } from "../filesystem.js";
+import type { GitHubClient } from "../github-client.js";
+import type { ArtifactManifest } from "../model.js";
 import type { NpmRegistryClient } from "../npm-registry-client.js";
 import { scanCredentialSources } from "../package-policy.js";
 import { ReleaseOrchestrator } from "../release-orchestrator.js";
@@ -104,7 +110,7 @@ test("orchestrates publication with injected filesystem and registry", async () 
       ],
     },
     artifactDirectory: "/artifacts",
-    bindingVerified: true,
+    bindingVerification: bindingVerification(),
   });
   expect(result.isOk()).toBe(true);
   expect(calls).toEqual(["publish:nightly", "verify"]);
@@ -170,6 +176,56 @@ test("credential sources are rejected before any registry use", () => {
     );
 });
 
+test("binding mismatches block publication before npm", async () => {
+  const verification = bindingVerification();
+  for (const field of ["runAttempt", "packages", "manifestDigest"] as const) {
+    const record = { ...(verification.record as Record<string, unknown>) };
+    if (field === "runAttempt") record[field] = 2;
+    else if (field === "packages") record[field] = [];
+    else record[field] = `sha256:${"0".repeat(64)}`;
+    let published = false;
+    const npm: NpmRegistryClient = {
+      publish: () => {
+        published = true;
+        return okAsync(undefined);
+      },
+      viewVersion: () => okAsync(""),
+      listVersions: () => okAsync([]),
+      viewDistTags: () => okAsync({}),
+      verifyPublished: () => okAsync(undefined),
+    };
+    const files: FileSystem = {
+      exists: () => okAsync(false),
+      readBytes: () => okAsync(archive()),
+      readText: () => okAsync(""),
+      writeText: () => okAsync(undefined),
+      delete: () => okAsync(undefined),
+    };
+    const result = await new ReleaseOrchestrator(files, npm, {
+      now: () => new Date(),
+    }).publish({
+      invocation: {
+        repository: "weave-io/weave",
+        workflowPath: ".github/workflows/publish.yml",
+        eventName: "workflow_dispatch",
+        ref: "refs/heads/main",
+        operation: "nightly",
+        channel: "nightly",
+        subjectSha: "a".repeat(40),
+        packages: ["@weaveio/weave-cli"],
+        versions: {
+          "@weaveio/weave-cli": "1.0.0-nightly.20260101.aaaaaaaaaaaa",
+        },
+      },
+      manifest: verification.context.expectedManifest,
+      artifactDirectory: "/artifacts",
+      bindingVerification: { ...verification, record },
+    });
+    expect(result.isErr(), field).toBe(true);
+    expect(published, field).toBe(false);
+  }
+});
+
 test("propagates registry publication failure without retrying", async () => {
   const files: FileSystem = {
     exists: () => okAsync(false),
@@ -201,7 +257,7 @@ test("propagates registry publication failure without retrying", async () => {
     },
     manifest: {},
     artifactDirectory: "/x",
-    bindingVerified: true,
+    bindingVerification: bindingVerification(),
   });
   expect(result.isErr()).toBe(true);
 });
@@ -256,4 +312,113 @@ function archive(): Uint8Array {
   tar[156] = 48;
   tar.set(new TextEncoder().encode("{}"), 512);
   return Bun.gzipSync(tar);
+}
+
+function bindingVerification(): {
+  record: unknown;
+  context: BindingVerificationContext;
+  github: GitHubClient;
+} {
+  const bytes = archive();
+  const digest = `sha256:${new Bun.CryptoHasher("sha256").update(bytes).digest("hex")}`;
+  const manifest: ArtifactManifest = {
+    schemaVersion: 1 as const,
+    releaseSubjectSha: "a".repeat(40),
+    channel: "nightly" as const,
+    packages: ["@weaveio/weave-cli"],
+    versions: { "@weaveio/weave-cli": "1.0.0-nightly.20260101.aaaaaaaaaaaa" },
+    artifacts: [
+      {
+        filename: "@weaveio-weave-cli-1.0.0-nightly.20260101.aaaaaaaaaaaa.tgz",
+        checksumFilename:
+          "@weaveio-weave-cli-1.0.0-nightly.20260101.aaaaaaaaaaaa.tgz.sha256",
+        sizeBytes: bytes.byteLength,
+        sha256: digest,
+      },
+    ],
+  };
+  const artifactBytes = new Uint8Array([1]);
+  const uploadDigest = `sha256:${new Bun.CryptoHasher("sha256").update(artifactBytes).digest("hex")}`;
+  const record = createBindingRecord({
+    repositoryId: 1,
+    workflowSha: "b".repeat(40),
+    runId: 1,
+    runAttempt: 1,
+    event: "workflow_dispatch",
+    operation: "nightly",
+    headRef: "refs/heads/main",
+    headSha: "a".repeat(40),
+    originJobConclusion: "success",
+    artifacts: [
+      {
+        name: "release-payload",
+        serverArtifactId: 1,
+        uploadDigest,
+        sizeInBytes: 1,
+      },
+      {
+        name: "release-control",
+        serverArtifactId: 2,
+        uploadDigest,
+        sizeInBytes: 1,
+      },
+    ],
+    manifest,
+    manifestDigest: digest,
+    files: [
+      ...manifest.artifacts.map(({ filename, sha256 }) => ({
+        filename,
+        sha256,
+      })),
+      { filename: "release-control", sha256: uploadDigest },
+    ],
+  });
+  if (record.isErr()) throw new Error("fixture binding invalid");
+  const metadata = (id: number, name: string) => ({
+    id,
+    name,
+    digest: uploadDigest,
+    expired: false,
+    sizeInBytes: 1,
+  });
+  const github: GitHubClient = {
+    getWorkflowRun: () =>
+      okAsync({
+        repositoryId: 1,
+        id: 1,
+        runAttempt: 1,
+        event: "workflow_dispatch",
+        headRef: "refs/heads/main",
+        headSha: "a".repeat(40),
+        conclusion: "success",
+        workflowPath: ".github/workflows/publish.yml",
+        workflowSha: "b".repeat(40),
+      }),
+    listRunArtifacts: () =>
+      okAsync([metadata(1, "release-payload"), metadata(2, "release-control")]),
+    getArtifact: (id) =>
+      okAsync(metadata(id, id === 1 ? "release-payload" : "release-control")),
+    downloadArtifact: () => okAsync(artifactBytes),
+    createRelease: () => okAsync(undefined),
+    createTag: () => okAsync(undefined),
+  };
+  return {
+    record: record.value,
+    context: {
+      expectedWorkflowSha: "b".repeat(40),
+      expectedOperation: "nightly",
+      expectedHeadRef: "refs/heads/main",
+      expectedHeadSha: "a".repeat(40),
+      expectedManifest: manifest,
+      expectedManifestDigest: digest,
+      expectedFiles: [
+        ...manifest.artifacts.map(({ filename, sha256 }) => ({
+          filename,
+          sha256,
+        })),
+        { filename: "release-control", sha256: uploadDigest },
+      ],
+    },
+    github,
+  };
 }

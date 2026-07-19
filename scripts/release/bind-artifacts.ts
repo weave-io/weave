@@ -57,6 +57,7 @@ export function parseBindingCliInput(
       serverArtifactId: env.RELEASE_CONTROL_ARTIFACT_ID,
       uploadDigest: env.RELEASE_CONTROL_ARTIFACT_DIGEST,
     },
+    controlPath: env.RELEASE_CONTROL_PATH,
     manifestPath: env.RELEASE_MANIFEST_PATH,
   });
   if (!parsed.success)
@@ -156,39 +157,53 @@ export function bindArtifacts(
                         actual: artifact.actual.digest,
                       });
                   }
-                  const record = createBindingRecord({
-                    repositoryId: input.repositoryId,
-                    workflowSha: input.workflowSha,
-                    runId: input.runId,
-                    runAttempt: input.runAttempt,
-                    event: input.event,
-                    operation: input.operation,
-                    headRef: input.headRef,
-                    headSha: input.headSha,
-                    originJobConclusion: "success",
-                    artifacts: artifacts.map(({ name, actual }) => ({
-                      name,
-                      serverArtifactId: actual.id,
-                      uploadDigest: actual.digest as string,
-                      sizeInBytes: actual.sizeInBytes,
-                    })),
-                    manifest,
-                    manifestDigest: digest(text),
-                    files: manifest.artifacts.map(({ filename, sha256 }) => ({
-                      filename,
-                      sha256,
-                    })),
-                  });
-                  if (record.isErr()) return errAsync(record.error);
                   return dependencies.files
-                    .writeText(
-                      ".release/binding.json",
-                      `${JSON.stringify(record.value)}\n`,
-                    )
+                    .readBytes(input.controlPath)
                     .mapErr(() => ({
-                      type: "BindingWriteFailed" as const,
-                      path: ".release/binding.json",
-                    }));
+                      type: "ManifestReadFailed" as const,
+                      path: input.controlPath,
+                    }))
+                    .andThen((controlBytes) => {
+                      const record = createBindingRecord({
+                        repositoryId: input.repositoryId,
+                        workflowSha: input.workflowSha,
+                        runId: input.runId,
+                        runAttempt: input.runAttempt,
+                        event: input.event,
+                        operation: input.operation,
+                        headRef: input.headRef,
+                        headSha: input.headSha,
+                        originJobConclusion: "success",
+                        artifacts: artifacts.map(({ name, actual }) => ({
+                          name,
+                          serverArtifactId: actual.id,
+                          uploadDigest: actual.digest as string,
+                          sizeInBytes: actual.sizeInBytes,
+                        })),
+                        manifest,
+                        manifestDigest: digest(text),
+                        files: [
+                          ...manifest.artifacts.map(({ filename, sha256 }) => ({
+                            filename,
+                            sha256,
+                          })),
+                          {
+                            filename: "release-control",
+                            sha256: digest(controlBytes),
+                          },
+                        ],
+                      });
+                      if (record.isErr()) return errAsync(record.error);
+                      return dependencies.files
+                        .writeText(
+                          ".release/binding.json",
+                          `${JSON.stringify(record.value)}\n`,
+                        )
+                        .mapErr(() => ({
+                          type: "BindingWriteFailed" as const,
+                          path: ".release/binding.json",
+                        }));
+                    });
                 }),
             );
         });
@@ -219,7 +234,7 @@ function toGitHubError(error: {
     message: error.message,
   };
 }
-function digest(value: string): string {
+function digest(value: string | Uint8Array): string {
   return `sha256:${new Bun.CryptoHasher("sha256").update(value).digest("hex")}`;
 }
 

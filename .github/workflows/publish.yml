@@ -117,6 +117,10 @@ jobs:
         with:
           artifact-ids: ${{ needs.build.outputs.payload-artifact-id }}
           path: payload-metadata
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ needs.build.outputs.control-artifact-id }}
+          path: control-metadata
       # actions: read is the least privilege needed to verify the live run and
       # immutable Actions artifact metadata before emitting the binding record.
       - run: bun scripts/release/bind-artifacts.ts
@@ -137,6 +141,7 @@ jobs:
           RELEASE_PAYLOAD_ARTIFACT_DIGEST: ${{ needs.build.outputs.payload-artifact-digest }}
           RELEASE_CONTROL_ARTIFACT_ID: ${{ needs.build.outputs.control-artifact-id }}
           RELEASE_CONTROL_ARTIFACT_DIGEST: ${{ needs.build.outputs.control-artifact-digest }}
+          RELEASE_CONTROL_PATH: control-metadata/release-control
           RELEASE_MANIFEST_PATH: payload-metadata/manifest.json
       - id: binding
         uses: actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce # v4
@@ -189,7 +194,9 @@ jobs:
       - id: subject
         name: Verify artifact checksums and construct control invocation
         run: |
-          sha256sum -c control/release-control.sha256
+          expected_control_sha="$(jq -er '.files[] | select(.filename == "release-control") | .sha256' binding/binding.json)"
+          actual_control_sha="sha256:$(sha256sum control/release-control | awk '{print $1}')"
+          test "$actual_control_sha" = "$expected_control_sha"
           subject_sha="$(jq -er '.releaseSubjectSha' binding/binding.json)"
           echo "sha=$subject_sha" >> "$GITHUB_OUTPUT"
           jq --arg operation '${{ needs.preflight.outputs.operation }}' --arg subjectSha "$subject_sha" '. as $manifest | {repository:"weave-io/weave",workflowPath:".github/workflows/publish.yml",eventName:"workflow_dispatch",ref:"refs/heads/main",operation:$operation,channel:($operation == "nightly" ? "nightly" : "stable"),subjectSha:$subjectSha,packages:$manifest.packages,versions:$manifest.versions}' payload/manifest.json > invocation.json
@@ -202,6 +209,11 @@ jobs:
         run: |
           chmod 700 control/release-control
           ./control/release-control invocation.json payload/manifest.json payload binding/binding.json
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          RELEASE_HEAD_REF: ${{ github.ref }}
+          RELEASE_HEAD_SHA: ${{ github.sha }}
 
   # Stable operations are fail-closed behind the manually administered release
   # environment. This job produces only plans; it has no contents:write grant.

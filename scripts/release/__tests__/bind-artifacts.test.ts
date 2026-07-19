@@ -47,6 +47,7 @@ const env = {
   RELEASE_PAYLOAD_ARTIFACT_DIGEST: digest,
   RELEASE_CONTROL_ARTIFACT_ID: "102",
   RELEASE_CONTROL_ARTIFACT_DIGEST: digest,
+  RELEASE_CONTROL_PATH: "control-metadata/release-control",
   RELEASE_MANIFEST_PATH: "payload-metadata/manifest.json",
 };
 
