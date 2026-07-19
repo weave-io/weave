@@ -146,4 +146,11 @@ export const docsSearchData: DocsSearchEntry[] = [
     href: "docs/reference/packages/",
     icon: "spec",
   },
+  {
+    group: "Reference",
+    title: "Releases",
+    subtitle: "channels, integrity, provenance, and operator policy",
+    href: "docs/reference/releases/",
+    icon: "spec",
+  },
 ];

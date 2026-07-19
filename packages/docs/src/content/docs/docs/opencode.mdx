@@ -24,7 +24,7 @@ For manual configuration, add the plugin subpath to OpenCode config:
 
 ```json
 {
-  "plugin": ["@weave/adapter-opencode/plugin"]
+  "plugin": ["@weaveio/weave-adapter-opencode@<exact-version>/plugin"]
 }
 ```
 
@@ -38,7 +38,7 @@ Run:
 opencode debug config
 ```
 
-Expected result: the resolved OpenCode config includes `@weave/adapter-opencode/plugin` in the plugin array. If it does not, check whether you initialized global vs project config and whether OpenCode is reading the expected config file.
+Expected result: the resolved OpenCode config includes the pinned `@weaveio/weave-adapter-opencode` plugin entry. If it does not, check whether you initialized global vs project config and whether OpenCode is reading the expected config file.
 
 ## What The Plugin Registers
 
@@ -81,7 +81,7 @@ The adapter uses Weave's runtime journal writer for structured entries. Journal 
 
 | Problem | Check |
 | --- | --- |
-| Commands are missing | Confirm `@weave/adapter-opencode/plugin` appears in `opencode debug config`. |
+| Commands are missing | Confirm the pinned `@weaveio/weave-adapter-opencode` plugin entry appears in `opencode debug config`. |
 | Prompt behavior is surprising | Run `prompt inspect <agent> --json` and review composed prompt plus delegation targets. |
 | A category shuttle is missing | Run `prompt list` and look for `shuttle-{category}`. |
 | Execution starts from the wrong place | Use `/weave:start` or `/start-work` inside OpenCode; do not use `weave run`. |

@@ -16,10 +16,8 @@ The analogy is closer to Neovim's API than to a single editor distribution. Weav
 
 | Layer | Package | Responsibility |
 | --- | --- | --- |
-| Core | `@weave/core` | Tokenize `.weave`, parse AST, validate Zod schemas, and expose typed config. |
-| Config | `@weave/config` | Provide builtin DSL defaults, discover global/project config, resolve prompt paths, and merge layers. |
-| Engine | `@weave/engine` | Compose prompts, generate descriptors, resolve skills from adapter context, model abstract policy, and manage runtime operations. |
-| Adapters | `@weave/adapter-*` | Translate normalized intent into a harness-specific plugin, config, command, or tool-policy surface. |
+| Internal layers | Core, config, engine | Parse, load, and compose Weave intent; bundled into public artifacts, not npm APIs. |
+| Public packages | `@weaveio/weave-cli`, `@weaveio/weave-adapter-*` | Deliver CLI or harness integration surfaces. |
 
 The boundary is one-way. Core and engine code must not scan harness-owned directories or call harness APIs. Adapters provide explicit context to engine APIs and receive normalized results back.
 
@@ -43,7 +41,7 @@ Weave reads config from three places:
 
 | Layer | Location | Purpose |
 | --- | --- | --- |
-| Builtins | packaged DSL in `@weave/config` | Default agents and baseline behavior. |
+| Builtins | bundled internal config layer | Default agents and baseline behavior. |
 | Global | `~/.weave/config.weave` | User-level preferences shared across projects. |
 | Project | `.weave/config.weave` | Project-specific overrides and custom roles. |
 
@@ -104,8 +102,8 @@ By default, journal failures are best-effort so the surrounding operation can co
 
 | Boundary | Current state |
 | --- | --- |
-| Implemented adapter | OpenCode only. |
-| OpenCode plugin package | `@weave/adapter-opencode/plugin`. |
+| Implemented adapters | Stable OpenCode; CLI-bundled Claude Code materialization (standalone adapter is nightly-only). |
+| OpenCode plugin package | `@weaveio/weave-adapter-opencode@<exact-version>/plugin`. |
 | Registered OpenCode commands | `/weave:start` and `/start-work`. |
 | CLI launcher | No launcher; `weave run` refuses execution. |
 | Future adapters | Claude Code and Pi are product targets, not current implementation guarantees. |

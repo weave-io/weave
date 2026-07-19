@@ -6,20 +6,17 @@ tableOfContents:
   maxHeadingLevel: 3
 ---
 
-## Workspace Shape
+## Public package surface
 
-Weave is a Bun workspace. Runtime, package management, testing, and builds use Bun. The package split mirrors the architecture boundary: core parsing and validation, config loading, engine composition, adapters, CLI, and docs.
+Weave is a Bun workspace. Consumers install only public packages; core, config, and engine are bundled internal layers and are not npm APIs.
 
 ## Package Responsibilities
 
 | Package | Responsibility |
 | --- | --- |
-| `@weave/core` | Lexer, parser, AST, Zod schemas, validation, config types, and parse errors. |
-| `@weave/config` | Builtin DSL defaults, config discovery, prompt path resolution, merge semantics, and plan state provider integration. |
-| `@weave/engine` | Prompt composition, descriptor generation, model intent helpers, skill resolution from adapter context, tool policy, lifecycle semantics, runtime store, command operations, and logging. |
-| `@weave/cli` | Argument routing, init, migrate, validate, prompt inspection, runtime inspection, and refusal boundary for `weave run`. |
-| `@weave/adapter-opencode` | Implemented OpenCode adapter, plugin entry, descriptor translation, command registration/projection helpers, skill discovery, model resolution, and tool-policy mapping. |
-| `@weave/docs` | Public Astro/Starlight documentation site and prototype-derived UI shell. |
+| `@weaveio/weave-cli` | Stable and nightly CLI; bundles Claude Code materialization. |
+| `@weaveio/weave-adapter-opencode` | Stable and nightly OpenCode plugin adapter. |
+| `@weaveio/weave-adapter-claude-code` | Nightly-only standalone Claude Code adapter. |
 
 ## Ownership Rules
 
@@ -40,7 +37,7 @@ bun run build
 bun run typecheck
 bun test
 bun run docs:build
-bun run --filter '@weave/docs' typecheck
+bun run --filter '@weaveio/weave-docs' typecheck
 ```
 
 ## Boundary Examples
@@ -51,7 +48,7 @@ Incorrect engine API shape: engine code scans OpenCode directories, calls OpenCo
 
 ## Current Adapter Implementation
 
-Only `@weave/adapter-opencode` is implemented today. Other adapter packages or product targets should not be described as implemented unless source code and tests prove the integration exists.
+OpenCode is the stable runtime adapter. Claude Code is supported through CLI-bundled file materialization and a nightly standalone adapter. See [Releases](../releases/) for channels, checksums, provenance, and no-unpublish policy.
 
 ## Related Guides
 

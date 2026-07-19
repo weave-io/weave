@@ -14,12 +14,12 @@ Add the adapter as a plugin in your `opencode.json` (or `opencode.jsonc`). Use t
 }
 ```
 
-For preview/snapshot versions:
+For nightly versions:
 
 ```json
 {
   "plugin": [
-    "@weaveio/weave-adapter-opencode@0.0.0-preview-20260708134505"
+    "@weaveio/weave-adapter-opencode@nightly"
   ]
 }
 ```

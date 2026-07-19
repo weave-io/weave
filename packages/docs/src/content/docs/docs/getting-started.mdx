@@ -37,7 +37,7 @@ You can verify the workspace can build the docs and TypeScript later with:
 
 ```bash
 bun run docs:build
-bun run --filter '@weave/docs' typecheck
+bun run --filter '@weaveio/weave-docs' typecheck
 ```
 
 ## Create A Project Config
@@ -138,7 +138,7 @@ If you configure OpenCode manually, the plugin entry is:
 
 ```json
 {
-  "plugin": ["@weave/adapter-opencode/plugin"]
+  "plugin": ["@weaveio/weave-adapter-opencode@<exact-version>/plugin"]
 }
 ```
 
@@ -158,7 +158,7 @@ Use this checklist before handing the setup to another user:
 | Dependencies installed | `bun install` | Workspace dependencies resolve. |
 | Config parses | `bun packages/cli/src/main.ts validate --project` | Exit code `0`, validity summary printed. |
 | Prompt composes | `bun packages/cli/src/main.ts prompt inspect reviewer` | Rendered prompt and metadata are shown. |
-| OpenCode plugin configured | `opencode debug config` | Config includes `@weave/adapter-opencode/plugin`. |
+| OpenCode plugin configured | `opencode debug config` | Config includes the pinned `@weaveio/weave-adapter-opencode` plugin entry. |
 | Execution boundary understood | `bun packages/cli/src/main.ts run` | Command refuses execution with guidance. |
 
 ## Troubleshooting
@@ -167,7 +167,7 @@ Use this checklist before handing the setup to another user:
 | --- | --- | --- |
 | `validate --project` says a file is missing | `.weave/config.weave` was not created in the current project | Run `init --scope local --yes` from the project root or pass `--path`. |
 | Prompt inspection cannot find an agent | The agent is disabled, misspelled, or only generated from a category with another name | Run `prompt list` and inspect the exact generated name. |
-| OpenCode does not show Weave commands | The plugin entry is missing or points at the wrong package path | Use `@weave/adapter-opencode/plugin` and re-check with `opencode debug config`. |
+| OpenCode does not show Weave commands | The plugin entry is missing or points at the wrong package path | Use the pinned `@weaveio/weave-adapter-opencode@<version>/plugin` entry and re-check with `opencode debug config`. |
 | A workflow does not start from the CLI | This is expected | Start work inside OpenCode with `/weave:start` or `/start-work`. |
 
 ## Next Steps

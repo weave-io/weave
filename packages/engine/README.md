@@ -37,7 +37,11 @@ const skills = await scanOpenCodeSkillDirectories(projectRoot);
 
 See [../../docs/adapter-boundary.md](../../docs/adapter-boundary.md) for the full ownership matrix.
 
-## Usage
+## Internal workspace layer
+
+This package is bundled into supported public artifacts and is **not** a supported npm installation target. Consumers install `@weaveio/weave-cli` or an adapter; the examples below are for repository contributors building adapters.
+
+## Contributor example
 
 ```ts
 import { loadConfig } from "@weaveio/weave-config";

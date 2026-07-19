@@ -1,0 +1,39 @@
+---
+title: Releases
+description: Public package channels, integrity records, and release policy.
+---
+
+## Public packages
+
+Weave publishes only these packages:
+
+| Package | Channels | Purpose |
+| --- | --- | --- |
+| `@weaveio/weave-cli` | `latest`, `next`, `nightly` | Stable CLI; includes the Claude Code adapter. |
+| `@weaveio/weave-adapter-opencode` | `latest`, `next`, `nightly` | OpenCode plugin adapter. |
+| `@weaveio/weave-adapter-claude-code` | `nightly` | Standalone experimental Claude Code adapter. |
+
+Core, config, and engine are bundled implementation layers. They are not npm APIs and must not be installed directly.
+
+## Channels and installs
+
+Use `latest` for stable CLI/OpenCode installs, `nightly` for scheduled builds, and `next` only for stable-train verification. `preview` is retired: historical preview versions remain available under the no-unpublish policy, but new users should not select that tag.
+
+```bash
+bunx @weaveio/weave-cli@latest --help
+# OpenCode plugin: @weaveio/weave-adapter-opencode@<exact-version>/plugin
+```
+
+Claude Code users normally use the CLI-bundled adapter via `weave compose --adapter claude-code`. The standalone Claude adapter is nightly-only.
+
+## Integrity and provenance
+
+OIDC trusted publishing runs only from `weave-io/weave`'s `publish.yml`; release jobs use no npm publishing token. GitHub immutable Releases contain the exact `.tgz` files and their SHA-256 files. Verify the version and checksum, not only a mutable dist-tag.
+
+We accept GitHub's platform immutable-release attestation. We do not create custom attestations or SBOMs.
+
+## Release policy
+
+Published versions, tarballs, tags, releases, and accepted attestations are immutable. Never unpublish or replace them. `latest` is promoted manually with MFA by a second maintainer after OIDC publication and checksum verification. Release PRs must link their related issue.
+
+For operators, recovery, and external setup evidence, read the repository [release runbook](https://github.com/weave-io/weave/blob/main/RELEASING.md).

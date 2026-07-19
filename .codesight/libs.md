@@ -710,11 +710,11 @@
 - `scripts/release/stable-train.ts`
   - function canonicalTrainJson: (record) => string
   - function trainRecordDigest: (record) => string
+  - function partialPublishRecoveryMetadata: (record) => PartialPublishRecoveryMetadata
+  - function assertCurrentArtifactIdentity: (record, artifactManifestDigest, artifactIds) => Result<void, StableTrainError>
   - function validateStableTrain: (record) => Result<StableTrainRecord, StableTrainError>
   - function transitionStableTrain: (record, state) => Result<StableTrainRecord, StableTrainError>
-  - function guardTrainExpiry: (record, clock) => Result<void, StableTrainError>
-  - function planStableCut: (input) => Result<StableCutPlan, StableTrainError>
-  - _...9 more_
+  - _...12 more_
 - `scripts/release/tar-inspector.ts`
   - class TarInspector
   - interface TarEntry

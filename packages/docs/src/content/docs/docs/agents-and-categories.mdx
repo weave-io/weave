@@ -90,7 +90,7 @@ Current builtin agents shipped by Weave:
 | `weft` | Reviewer | `subagent` |
 | `warp` | Security auditor | `subagent` |
 
-The prompt content for these builtins ships with `@weave/config` as prompt files, then gets resolved or inlined during config loading depending on whether Weave is running from source or from a bundle.
+Builtin prompt content ships in Weave's bundled internal config layer, then gets resolved or inlined during config loading.
 
 If you want the exact current builtin DSL, inspect the source directly:
 

@@ -40,9 +40,19 @@ the complete flow. An automation token is not an acceptable substitute.
 
 Published versions and their tarballs are immutable. Dist-tags are mutable
 pointers and never substitute for a version/digest proof. We accept the
-platform's GitHub Actions artifact identity and npm provenance path; Weave does
-not invent a custom attestation or SBOM format. Registry tarball SHA-256
+platform's immutable-release attestation, GitHub Actions artifact identity, and
+npm provenance path; Weave does not invent a custom attestation or SBOM format.
+Registry tarball SHA-256
 verification is the release-specific integrity check.
+
+## Public boundary and external setup
+
+Sanitized public packs are CLI and OpenCode for stable/nightly trains plus the
+nightly standalone Claude adapter. Core, config, and engine are bundled private
+layers. Configure trusted publishing for `weave-io/weave` `publish.yml`, protect
+`main` and release environments, and use no npm automation token. Release PRs
+must link their related issue. `preview` is retired; historical versions remain
+published under the no-unpublish policy.
 
 ## Stable-train state machine
 

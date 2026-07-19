@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 154 lib files | 18 env vars | 6 middleware | 0% test coverage
 > **Token savings:** this file is ~14,700 tokens. Without it, AI exploration would cost ~53,000 tokens. **Saves ~38,400 tokens per conversation.**
-> **Last scanned:** 2026-07-19 08:58 — re-run after significant changes
+> **Last scanned:** 2026-07-19 09:17 — re-run after significant changes
 
 ---
 
@@ -721,11 +721,11 @@
 - `scripts/release/stable-train.ts`
   - function canonicalTrainJson: (record) => string
   - function trainRecordDigest: (record) => string
+  - function partialPublishRecoveryMetadata: (record) => PartialPublishRecoveryMetadata
+  - function assertCurrentArtifactIdentity: (record, artifactManifestDigest, artifactIds) => Result<void, StableTrainError>
   - function validateStableTrain: (record) => Result<StableTrainRecord, StableTrainError>
   - function transitionStableTrain: (record, state) => Result<StableTrainRecord, StableTrainError>
-  - function guardTrainExpiry: (record, clock) => Result<void, StableTrainError>
-  - function planStableCut: (input) => Result<StableCutPlan, StableTrainError>
-  - _...9 more_
+  - _...12 more_
 - `scripts/release/tar-inspector.ts`
   - class TarInspector
   - interface TarEntry
