@@ -11,6 +11,7 @@ import { ReleaseOrchestrator } from "./release-orchestrator.js";
 
 const log = logger.child({ module: "release-control" });
 const args = Bun.argv.slice(2);
+const dryRun = Bun.env.RELEASE_CONTROL_DRY_RUN === "true";
 if (args[0] === "--help") {
   log.info(
     "usage: release-control <invocation.json> <manifest.json> <artifact-directory> <binding.json>",
@@ -49,7 +50,9 @@ if (manifestFiles === undefined) {
   log.error("manifest has no verifiable files");
   process.exit(2);
 }
-const controlBytes = await files.readBytes(Bun.argv[0]);
+// Bun.argv[0] remains Bun's launcher in compiled executables; execPath is the
+// standalone control binary that the binding record authenticates.
+const controlBytes = await files.readBytes(process.execPath);
 if (controlBytes.isErr()) {
   log.error("unable to read control binary");
   process.exit(1);
@@ -89,6 +92,17 @@ if (result.isErr()) {
   log.error({ error: result.error }, "release failed");
   process.exit(1);
 }
+if (dryRun)
+  process.stdout.write(
+    `${JSON.stringify({
+      dryRun: true,
+      plannedCommands: plannedCommands(
+        invocation.value.operation,
+        artifactDirectory,
+        manifestFiles,
+      ),
+    })}\n`,
+  );
 log.info("release completed");
 
 function artifactFiles(
@@ -113,9 +127,21 @@ function digest(value: string | Uint8Array): string {
   return `sha256:${new Bun.CryptoHasher("sha256").update(value).digest("hex")}`;
 }
 
+/** Dry runs validate the full local and server-bound proof without registry mutation. */
+function plannedCommands(
+  operation: string,
+  artifactDirectory: string,
+  files: readonly { filename: string; sha256: string }[],
+): readonly string[] {
+  const tag = operation === "nightly" ? "nightly" : "next";
+  return files.map(
+    (file) =>
+      `npm publish ${artifactDirectory}/${file.filename} --access public --tag ${tag}`,
+  );
+}
+
 function registryClient(): NpmRegistryClient {
-  if (Bun.env.RELEASE_CONTROL_DRY_RUN !== "true")
-    return new NpmCliRegistryClient(new BunCommandRunner());
+  if (!dryRun) return new NpmCliRegistryClient(new BunCommandRunner());
   return {
     publish: () => okAsync(undefined),
     viewVersion: () => okAsync(""),
