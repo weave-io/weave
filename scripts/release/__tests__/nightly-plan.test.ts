@@ -30,6 +30,9 @@ class Registry implements NpmRegistryClient {
   viewDistTags(): ResultAsync<Record<string, string>, RegistryError> {
     return okAsync({});
   }
+  distTagLs(): ResultAsync<Record<string, string>, RegistryError> {
+    return okAsync({});
+  }
   verifyPublished(): ResultAsync<void, RegistryError> {
     return okAsync(undefined);
   }

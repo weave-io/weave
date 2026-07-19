@@ -34,4 +34,17 @@ export type ReleaseError =
   | { type: "CredentialSourceDetected"; source: string }
   | { type: "BindingVerificationFailed"; reason: string }
   | { type: "RegistryDigestConflict"; packageName: string; version: string }
+  | { type: "InvalidPromotionAuthorization"; issues: readonly string[] }
+  | { type: "PromotionRegistryMismatch"; packageName: string; reason: string }
+  | {
+      type: "PartialPromotion";
+      promotedPackages: readonly string[];
+      unpromotedPackages: readonly string[];
+    }
+  | {
+      type: "RollbackVerificationFailed";
+      packageName: string;
+      expected: string;
+      actual?: string;
+    }
   | { type: "UnsupportedOperation"; operation: string };

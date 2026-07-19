@@ -73,6 +73,7 @@ test("orchestrates publication with injected filesystem and registry", async () 
     viewVersion: () => okAsync(""),
     listVersions: () => okAsync([]),
     viewDistTags: () => okAsync({}),
+    distTagLs: () => okAsync({}),
     verifyPublished: () => {
       calls.push("verify");
       return okAsync(undefined);
@@ -192,6 +193,7 @@ test("binding mismatches block publication before npm", async () => {
       viewVersion: () => okAsync(""),
       listVersions: () => okAsync([]),
       viewDistTags: () => okAsync({}),
+      distTagLs: () => okAsync({}),
       verifyPublished: () => okAsync(undefined),
     };
     const files: FileSystem = {
@@ -244,6 +246,7 @@ test("propagates registry publication failure without retrying", async () => {
     viewVersion: () => okAsync(""),
     listVersions: () => okAsync([]),
     viewDistTags: () => okAsync({}),
+    distTagLs: () => okAsync({}),
     verifyPublished: () => okAsync(undefined),
   };
   const result = await new ReleaseOrchestrator(files, npm, {
@@ -275,6 +278,7 @@ test("routes stable cut planning without performing a ref mutation", async () =>
     viewVersion: () => okAsync(""),
     listVersions: () => okAsync([]),
     viewDistTags: () => okAsync({}),
+    distTagLs: () => okAsync({}),
     verifyPublished: () => okAsync(undefined),
   };
   const orchestrator = new ReleaseOrchestrator(files, npm, {
@@ -302,6 +306,104 @@ test("routes stable cut planning without performing a ref mutation", async () =>
   });
   expect(result.isOk()).toBe(true);
   if (result.isOk()) expect(result.value.expectedHeadSha).toBe("a".repeat(40));
+});
+
+describe("manual stable promotion", () => {
+  const authorization = {
+    schemaVersion: 1 as const,
+    operation: "stable-publish" as const,
+    state: "awaiting-promotion" as const,
+    subjectSha: "a".repeat(40),
+    packages: ["@weaveio/weave-cli", "@weaveio/weave-adapter-opencode"],
+    versions: {
+      "@weaveio/weave-cli": "1.2.3",
+      "@weaveio/weave-adapter-opencode": "4.5.6",
+    },
+    artifactDigests: {
+      "@weaveio/weave-cli": `sha256:${"1".repeat(64)}`,
+      "@weaveio/weave-adapter-opencode": `sha256:${"2".repeat(64)}`,
+    },
+  };
+  const priorLatestVersions = {
+    "@weaveio/weave-cli": "1.2.2",
+    "@weaveio/weave-adapter-opencode": "4.5.5",
+  };
+
+  function promotionOrchestrator(tags: Record<string, Record<string, string>>) {
+    const npm: NpmRegistryClient = {
+      publish: () => okAsync(undefined),
+      viewVersion: () => okAsync(""),
+      listVersions: () => okAsync([]),
+      viewDistTags: () => okAsync({}),
+      distTagLs: (packageName) => okAsync(tags[packageName] ?? {}),
+      verifyPublished: () => okAsync(undefined),
+    };
+    const files: FileSystem = {
+      exists: () => okAsync(false),
+      readBytes: () => okAsync(new Uint8Array()),
+      readText: () => okAsync(""),
+      writeText: () => okAsync(undefined),
+      delete: () => okAsync(undefined),
+    };
+    return new ReleaseOrchestrator(files, npm, { now: () => new Date() });
+  }
+
+  test("gates exact human-only commands on dual next tags and tarball proofs", async () => {
+    const result = await promotionOrchestrator({
+      "@weaveio/weave-cli": { next: "1.2.3" },
+      "@weaveio/weave-adapter-opencode": { next: "4.5.6" },
+    }).generatePromotionCommands({ authorization, priorLatestVersions });
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.priorLatestCaptureCommands).toEqual([
+        "npm dist-tag ls @weaveio/weave-cli --json",
+        "npm dist-tag ls @weaveio/weave-adapter-opencode --json",
+      ]);
+      expect(result.value.promoteCommands).toEqual([
+        "npm dist-tag add @weaveio/weave-cli@1.2.3 latest",
+        "npm dist-tag add @weaveio/weave-adapter-opencode@4.5.6 latest",
+      ]);
+      expect(result.value.rollbackCommands).toEqual([
+        "npm dist-tag add @weaveio/weave-cli@1.2.2 latest",
+        "npm dist-tag add @weaveio/weave-adapter-opencode@4.5.5 latest",
+      ]);
+    }
+  });
+
+  test("does not emit commands for malformed authorization or a single next match", async () => {
+    const missing = await promotionOrchestrator({
+      "@weaveio/weave-cli": { next: "1.2.3" },
+      "@weaveio/weave-adapter-opencode": { next: "4.5.6" },
+    }).generatePromotionCommands({ authorization: {}, priorLatestVersions });
+    expect(missing.isErr()).toBe(true);
+    const mismatch = await promotionOrchestrator({
+      "@weaveio/weave-cli": { next: "1.2.3" },
+      "@weaveio/weave-adapter-opencode": { next: "4.5.5" },
+    }).generatePromotionCommands({ authorization, priorLatestVersions });
+    expect(mismatch.isErr()).toBe(true);
+  });
+
+  test("finalize requires both exact latest tags and reports partial promotion", async () => {
+    const partial = await promotionOrchestrator({
+      "@weaveio/weave-cli": { latest: "1.2.3" },
+      "@weaveio/weave-adapter-opencode": { latest: "4.5.5" },
+    }).stableFinalize(authorization);
+    expect(partial.isErr()).toBe(true);
+    if (partial.isErr()) expect(partial.error.type).toBe("PartialPromotion");
+    const finalized = await promotionOrchestrator({
+      "@weaveio/weave-cli": { latest: "1.2.3" },
+      "@weaveio/weave-adapter-opencode": { latest: "4.5.6" },
+    }).stableFinalize(authorization);
+    expect(finalized.isOk()).toBe(true);
+  });
+
+  test("verifies the human-executed rollback against recorded prior versions", async () => {
+    const result = await promotionOrchestrator({
+      "@weaveio/weave-cli": { latest: "1.2.2" },
+      "@weaveio/weave-adapter-opencode": { latest: "4.5.5" },
+    }).verifyPromotionRollback(authorization, priorLatestVersions);
+    expect(result.isOk()).toBe(true);
+  });
 });
 
 function archive(): Uint8Array {

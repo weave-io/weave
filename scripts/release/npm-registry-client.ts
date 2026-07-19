@@ -14,6 +14,10 @@ export interface NpmRegistryClient {
   viewDistTags(
     packageName: string,
   ): ResultAsync<Record<string, string>, RegistryError>;
+  /** Read-only equivalent of `npm dist-tag ls`; promotion mutation is human-only. */
+  distTagLs(
+    packageName: string,
+  ): ResultAsync<Record<string, string>, RegistryError>;
   verifyPublished(
     packageName: string,
     version: string,
@@ -92,6 +96,45 @@ export class NpmCliRegistryClient implements NpmRegistryClient {
         operation: "viewDistTags",
         message: error.type,
       }));
+  }
+  distTagLs(
+    packageName: string,
+  ): ResultAsync<Record<string, string>, RegistryError> {
+    return this.commands
+      .run(["npm", "dist-tag", "ls", packageName, "--json"])
+      .andThen((result) =>
+        ResultAsync.fromPromise(
+          Promise.resolve(JSON.parse(result.stdout) as unknown),
+          () => ({
+            type: "RegistryError" as const,
+            operation: "distTagLs",
+            message: "invalid npm dist-tag response",
+          }),
+        ),
+      )
+      .andThen((value) => {
+        if (
+          typeof value !== "object" ||
+          value === null ||
+          Array.isArray(value) ||
+          Object.values(value).some((version) => typeof version !== "string")
+        )
+          return errAsync({
+            type: "RegistryError" as const,
+            operation: "distTagLs",
+            message: "invalid npm dist-tag response",
+          });
+        return okAsync(value as Record<string, string>);
+      })
+      .mapErr((error) =>
+        error.type === "RegistryError"
+          ? error
+          : {
+              type: "RegistryError" as const,
+              operation: "distTagLs",
+              message: error.type,
+            },
+      );
   }
   verifyPublished(
     packageName: string,

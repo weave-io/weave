@@ -13,6 +13,7 @@
 - `RELEASE_HEAD_REF` **required** — scripts/release/control-main.ts
 - `RELEASE_HEAD_SHA` **required** — scripts/release/control-main.ts
 - `RELEASE_OPERATION` **required** — scripts/release/write-artifact-manifest.ts
+- `RELEASE_PROMOTION_AUTHORIZATION` **required** — scripts/release/stable-finalize.ts
 - `RELEASE_SUBJECT_SHA` **required** — scripts/release/write-artifact-manifest.ts
 - `RELEASE_WORKFLOW_SHA` **required** — scripts/release/control-main.ts
 - `RUN_HARNESS_SMOKE` **required** — packages/adapters/opencode/src/__tests__/category-routing-smoke.test.ts

@@ -702,7 +702,10 @@
   - class ReleaseOrchestrator
   - interface PublishRequest
   - interface PromotionAuthorization
-  - type PublishResult
+  - interface PromotionCommandRequest
+  - interface PromotionCommands
+  - interface StableFinalizeResult
+  - _...1 more_
 - `scripts/release/stable-train.ts`
   - function canonicalTrainJson: (record) => string
   - function trainRecordDigest: (record) => string

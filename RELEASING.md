@@ -1,198 +1,88 @@
-# Releasing
+# Releasing Weave
 
-This document describes how to publish new versions of `@weaveio/*` packages to npm.
+This is the operator runbook for public Weave releases. The durable design is in
+[release automation](docs/release-automation.md).
 
-## Overview
+## Non-negotiable rules
 
-Weave uses [Changesets](https://github.com/changesets/changesets) for version management and GitHub Actions for automated publishing. The flow is:
+- Public artifacts are immutable. Never republish a version or replace a tarball.
+- GitHub Actions publishes `nightly` and stable-train `next` artifacts with npm
+  trusted publishing (OIDC). It never receives an npm automation token.
+- **Fully automatic tokenless `latest` promotion is impossible today.** npm
+  trusted publishing cannot execute `npm dist-tag add`; see
+  [npm/cli#8547](https://github.com/npm/cli/issues/8547). Do not work around
+  this with a token.
+- The interactive MFA exception requires two maintainers to approve the
+  exception/block state. If either declines, mark the train blocked and do not
+  promote. Task 22 records the live evidence.
 
-1. **Add changesets** as you work — each PR that changes publishable code includes a changeset file
-2. **When ready to release** — run `bun run version` locally to consume changesets, bump versions, and update changelogs
-3. **Commit and merge** the version bump to `main`
-4. **Create a GitHub Release** — triggers the publish workflow that pushes to npm
+If policy later forbids this exception, hard-disable stable promotion until npm
+officially supports trusted-publisher dist-tag mutation and the entire behavior
+has been retested. Never introduce an automation token.
 
-## Authorization
+## Normal lifecycle
 
-Publishing is gated by `main` branch merge permissions. Every step in the release flow requires the ability to merge to `main`:
+1. **Nightly:** dispatch or wait for `nightly`; install and test the immutable
+   nightly packages as needed.
+2. **Cut:** dispatch `stable-cut`, review its plan, and create the protected
+   stable train reference using the approved release-ref procedure.
+3. **Fix:** apply any train fix through `stable-fix`; rebind/rebuild after every
+   fix because old artifact identity is invalid.
+4. **Publish next:** approve the `release` environment for `stable-publish`.
+   The OIDC job publishes CLI and OpenCode only under `next` and proves both
+   registry tarball SHA-256 values.
+5. **Dual verification:** save the emitted promotion-authorization JSON. It
+   binds subject SHA, package names, versions, and artifact digests. Do not
+   proceed if either `next` tag or tarball digest disagrees.
+6. **Second-maintainer MFA promotion:** a different maintainer signs in to npm
+   interactively with MFA, records prior `latest`, then moves both tags.
+7. **Finalize:** dispatch `stable-finalize` with the exact saved authorization
+   JSON. Its read-only job verifies both `latest` versions and unauthenticated
+   registry tarball SHA-256s. It finalizes nothing on a mismatch.
+8. **Post-finalize:** Task 19 will create App tags/releases. Then create the
+   metadata replay PR and clean up the train branch only through its approved
+   workflow.
 
-- Adding a changeset requires merging a PR to `main`
-- Committing version bumps requires merging to `main`
-- Creating a GitHub Release requires Write access to the repository
+## Manual promotion and rollback
 
-No additional approval gates are needed — if you can merge to `main`, you're authorized to release.
-
-## Step-by-step
-
-### 1. Add a changeset
-
-After making changes, add a changeset describing the bump:
-
-```bash
-bun run changeset
-```
-
-This interactive prompt asks which packages changed and whether the bump is `patch`, `minor`, or `major`. It creates a markdown file in `.changeset/` — commit it with your PR.
-
-**Manual alternative:** create a file like `.changeset/my-change.md`:
-
-```md
----
-"@weaveio/weave-core": patch
-"@weaveio/weave-engine": minor
----
-
-Brief description of what changed
-```
-
-### 2. Apply version bumps locally
-
-When you're ready to cut a release, run:
-
-```bash
-bun run version
-```
-
-This consumes all pending changeset files, bumps `package.json` versions, and updates `CHANGELOG.md` in each affected package. Review the changes, commit them, and merge to `main`.
-
-### 3. Create a GitHub Release
-
-Go to **Releases → Draft a new release** on GitHub (or use the CLI):
+The second maintainer must first record both outputs in the release evidence:
 
 ```bash
-gh release create v<version> --title "v<version>" --generate-notes
+npm dist-tag ls @weaveio/weave-cli --json
+npm dist-tag ls @weaveio/weave-adapter-opencode --json
 ```
 
-Use a tag like `v0.1.0` matching the primary package version. The release event is what triggers publishing, not the tag name.
-
-### 4. Publish happens automatically
-
-The **Release** workflow (`release.yml`) triggers on the `published` event and:
-
-1. Builds and tests the code (separate job)
-2. Runs `bunx changeset publish` to publish all packages with bumped versions to npm
-3. Uses npm provenance (OIDC) for supply-chain integrity
-
-## Preview / Snapshot Packages
-
-Weave also publishes preview packages from `main` so you can try unreleased changes before a full release.
-
-Every push to `main` runs the snapshot workflow. The workflow checks for pending changesets and only publishes if unreleased changes exist. If there are no pending changesets (e.g. after committing a version bump), the workflow exits without publishing.
-
-Preview packages use the `preview` dist-tag. Install them with:
+After the authorization record has been reverified, run its exact pinned output:
 
 ```bash
-bun add @weaveio/weave-core@preview
+npm dist-tag add @weaveio/weave-cli@X.Y.Z latest
+npm dist-tag add @weaveio/weave-adapter-opencode@A.B.C latest
 ```
 
-Equivalent commands work for the other public packages:
-
-- `bun add @weaveio/weave-engine@preview`
-- `bun add @weaveio/weave-config@preview`
-- `bun add @weaveio/weave-cli@preview`
-- `bun add @weaveio/weave-adapter-opencode@preview`
-- `bun add @weaveio/weave-adapter-claude-code@preview`
-
-Snapshot versions include a timestamp suffix. For example:
-
-```text
-0.1.0-preview-20260708145500
-```
-
-Two details matter:
-
-- Preview publishing requires a pending changeset. A push to `main` without a changeset produces no snapshot packages.
-- Each new snapshot overwrites the `preview` dist-tag, so `@preview` always points to the latest snapshot only.
-
-## Quick reference
-
-| Action | Command |
-|--------|---------|
-| Add changeset | `bun run changeset` |
-| Check pending bumps | `bunx changeset status` |
-| Apply version bumps locally | `bun run version` |
-| Dry-run publish | `bunx changeset publish --dry-run` |
-
-## Troubleshooting
-
-### "No packages to bump"
-
-Run `bunx changeset status`. If it reports no packages, you haven't added a changeset file yet. Add one with `bun run changeset`.
-
-### Publish failed
-
-Check the Release workflow logs. Common issues:
-- `WEAVEIO_NPM_TOKEN` secret is missing or expired
-- A package version already exists on npm (versions are immutable)
-- Build or test failure in the `build-and-test` job
-
-### Publishing a single package
-
-Changesets handles multi-package publishing automatically. If only one package has a changeset, only that package (and its dependents, if `updateInternalDependencies` is set) will be bumped and published.
-
----
-
-## Adapter-specific shipping
-
-### `@weaveio/weave-adapter-opencode`
-
-Ships as an npm package loaded directly by OpenCode's plugin system. Users do **not** run `npm install` — they pin the versioned package in their `opencode.json` and OpenCode fetches it from npm at startup:
-
-```json
-{
-  "plugin": [
-    "@weaveio/weave-adapter-opencode@<version>"
-  ]
-}
-```
-
-For preview versions:
-
-```json
-{
-  "plugin": [
-    "@weaveio/weave-adapter-opencode@0.0.0-preview-20260708134505"
-  ]
-}
-```
-
-### `@weaveio/weave-adapter-claude-code`
-
-Ships in **two channels**:
-
-| Channel | What | How |
-|---------|------|-----|
-| **npm** | `@weaveio/weave-adapter-claude-code` — the composition engine used by `weave compose` | Published via Changesets alongside other packages |
-| **Claude Code marketplace** | `weave-bootstrap` — a static plugin that triggers recomposition on session start | Submitted to `anthropics/claude-plugins-community` via their review process |
-
-#### npm publishing
-
-The adapter package follows the standard Changesets flow — add a changeset, bump, release. It's a build-time dependency of `@weaveio/weave-cli`.
-
-#### Claude Code marketplace plugin
-
-The bootstrap plugin lives at `packages/adapters/claude-code/src/bootstrap/` and is a static directory (no build step). To submit or update it:
-
-1. Ensure the bootstrap files are current (`plugin.json`, `hooks/hooks.json`, `skills/compose/SKILL.md`)
-2. Run `claude plugin validate ./packages/adapters/claude-code/src/bootstrap` to verify structure
-3. Submit via [console.anthropic.com/plugins/submit](https://platform.claude.com/plugins/submit)
-4. The marketplace pins to a commit SHA; pushing new commits auto-bumps the pin after CI passes
-
-The bootstrap plugin version (`plugin.json` → `version`) should be bumped manually when its behavior changes (new hooks, changed compose command, etc.). It is independent of the npm package version.
-
-#### User setup flow
+Replace neither version with `latest`, `next`, or a range. If the second move
+fails, do not dispatch finalize. Restore the first tag to the **recorded** prior
+value, mark the train `partial`, and preserve evidence:
 
 ```bash
-# Install CLI (provides weave compose command)
-bun add -D @weaveio/weave-cli
-
-# First-time project setup
-weave compose --adapter claude-code --init
-
-# Inside Claude Code (one-time, if marketplace plugin is published)
-/plugin install weave-bootstrap
-
-# Or without marketplace — use --plugin-dir flags
-claude --plugin-dir ./weave-bootstrap-plugin --plugin-dir .weave/plugins/claude-code
+npm dist-tag add @weaveio/weave-cli@RECORDED_PRIOR_X.Y.Z latest
+# Or, if OpenCode was the first move:
+npm dist-tag add @weaveio/weave-adapter-opencode@RECORDED_PRIOR_A.B.C latest
 ```
 
-After marketplace install, daily use is just `claude` — the SessionStart hook handles everything.
+Use the promotion-rollback verifier only after this interactive restore; it
+proves the registry is back at both recorded prior versions.
+
+## STOP evidence checklist
+
+Stop and block the train if any item is absent or mismatched:
+
+- Task 1: protected-control identity and approved release environment evidence.
+- Task 12: approved release-ref/App authority evidence (manual until recorded).
+- Task 16: approved npm trusted-publisher/OIDC environment evidence (manual
+  until recorded).
+- Stable-publish authorization, both `next` tags, and both tarball SHA-256s.
+- Two maintainer approvals plus prior-`latest` capture and interactive MFA
+  proof.
+
+Task 20 extends the break-glass and blocked/partial state procedure; follow that
+record once available.

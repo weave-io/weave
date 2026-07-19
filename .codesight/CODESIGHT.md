@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode
 
-> 0 routes | 0 models | 0 components | 154 lib files | 17 env vars | 6 middleware | 0% test coverage
-> **Token savings:** this file is ~14,500 tokens. Without it, AI exploration would cost ~52,900 tokens. **Saves ~38,400 tokens per conversation.**
-> **Last scanned:** 2026-07-19 08:23 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 154 lib files | 18 env vars | 6 middleware | 0% test coverage
+> **Token savings:** this file is ~14,600 tokens. Without it, AI exploration would cost ~53,000 tokens. **Saves ~38,400 tokens per conversation.**
+> **Last scanned:** 2026-07-19 08:40 — re-run after significant changes
 
 ---
 
@@ -713,7 +713,10 @@
   - class ReleaseOrchestrator
   - interface PublishRequest
   - interface PromotionAuthorization
-  - type PublishResult
+  - interface PromotionCommandRequest
+  - interface PromotionCommands
+  - interface StableFinalizeResult
+  - _...1 more_
 - `scripts/release/stable-train.ts`
   - function canonicalTrainJson: (record) => string
   - function trainRecordDigest: (record) => string
@@ -746,6 +749,7 @@
 - `RELEASE_HEAD_REF` **required** — scripts/release/control-main.ts
 - `RELEASE_HEAD_SHA` **required** — scripts/release/control-main.ts
 - `RELEASE_OPERATION` **required** — scripts/release/write-artifact-manifest.ts
+- `RELEASE_PROMOTION_AUTHORIZATION` **required** — scripts/release/stable-finalize.ts
 - `RELEASE_SUBJECT_SHA` **required** — scripts/release/write-artifact-manifest.ts
 - `RELEASE_WORKFLOW_SHA` **required** — scripts/release/control-main.ts
 - `RUN_HARNESS_SMOKE` **required** — packages/adapters/opencode/src/__tests__/category-routing-smoke.test.ts
@@ -797,8 +801,8 @@
 - `packages/engine/src/execution-lifecycle/errors.ts` — imported by **10** files
 - `packages/adapters/opencode/src/sdk-types.ts` — imported by **9** files
 - `packages/cli/src/evals/prompt-snapshots.ts` — imported by **9** files
+- `scripts/release/filesystem.ts` — imported by **9** files
 - `packages/core/src/tokens.ts` — imported by **8** files
-- `scripts/release/filesystem.ts` — imported by **8** files
 
 ## Import Map (who imports what)
 
@@ -831,7 +835,7 @@
 | Agent Evals | workflow_dispatch | 2 | — | — |
 | CI | push, pull_request | 1 | — | — |
 | Deploy Docs | push, workflow_dispatch | 2 | — | github-pages |
-| Publish control plane | schedule, workflow_dispatch | 7 | — | ${{ needs.preflight.outputs.operation == 'stable-publish' && 'release' \|\| '' }}, release, release-refs |
+| Publish control plane | schedule, workflow_dispatch | 8 | — | ${{ needs.preflight.outputs.operation == 'stable-publish' && 'release' \|\| '' }}, release, release-refs |
 
 ### Agent Evals
 
@@ -877,7 +881,7 @@
   - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
   - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
   - `actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce`
-- **publish** on `ubuntu-latest` — 9 steps (needs: preflight, build, bind)
+- **publish** on `ubuntu-latest` — 10 steps (needs: preflight, build, bind)
   - `actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020`
   - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
   - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
@@ -887,6 +891,9 @@
   - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
 - **metadata-replay-plan** on `ubuntu-latest` — 5 steps (needs: preflight)
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
+  - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+- **stable-finalize** on `ubuntu-latest` — 4 steps (needs: preflight)
   - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
 - **release-refs** on `ubuntu-latest` — 4 steps (needs: stable-plan)
