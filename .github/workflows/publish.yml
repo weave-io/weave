@@ -55,7 +55,7 @@ jobs:
           RELEASE_WORKFLOW_REF: ${{ github.workflow_ref }}
 
   build:
-    needs: preflight
+    needs: [preflight, build]
     if: needs.preflight.outputs.skipped != 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -203,7 +203,7 @@ jobs:
           test "$actual_control_sha" = "$expected_control_sha"
           subject_sha="$(jq -er '.releaseSubjectSha' binding/binding.json)"
           echo "sha=$subject_sha" >> "$GITHUB_OUTPUT"
-          jq --arg operation '${{ needs.preflight.outputs.operation }}' --arg subjectSha "$subject_sha" '. as $manifest | {repository:"weave-io/weave",workflowPath:".github/workflows/publish.yml",eventName:"workflow_dispatch",ref:"refs/heads/main",operation:$operation,channel:($operation == "nightly" ? "nightly" : "stable"),subjectSha:$subjectSha,packages:$manifest.packages,versions:$manifest.versions}' payload/manifest.json > invocation.json
+          jq --arg operation '${{ needs.preflight.outputs.operation }}' --arg subjectSha "$subject_sha" '. as $manifest | {repository:"weave-io/weave",workflowPath:".github/workflows/publish.yml",eventName:"workflow_dispatch",ref:"refs/heads/main",operation:$operation,channel:(if $operation == "nightly" then "nightly" else "stable" end),subjectSha:$subjectSha,packages:$manifest.packages,versions:$manifest.versions}' payload/manifest.json > invocation.json
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ steps.subject.outputs.sha }}
@@ -283,7 +283,7 @@ jobs:
   # Read-only final verification after a second maintainer performed MFA tag moves.
   # No id-token, token, or npm mutation capability is granted here.
   stable-finalize:
-    needs: preflight
+    needs: [preflight, build]
     if: needs.preflight.outputs.skipped != 'true' && needs.preflight.outputs.operation == 'stable-finalize'
     runs-on: ubuntu-latest
     environment: release
@@ -298,8 +298,12 @@ jobs:
         with:
           bun-version: "1.3.10"
       - run: bun install --frozen-lockfile
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ needs.build.outputs.payload-artifact-id }}
+          path: payload
       - name: Verify both promoted latest tags and tarball digests
-        run: bun scripts/release/stable-finalize.ts
+        run: RELEASE_STABLE_TRAIN="$(jq -ec '.stableTrain' payload/manifest.json)" bun scripts/release/stable-finalize.ts
         env:
           RELEASE_PROMOTION_AUTHORIZATION: ${{ inputs.promotion-authorization }}
 

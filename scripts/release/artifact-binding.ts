@@ -158,11 +158,14 @@ function verifyRun(
   // completed, named build job instead; this preserves live identity checks
   // without accepting a failed or substituted origin job.
   if (github.listWorkflowRunJobs === undefined)
-    return errAsync({
-      type: "GitHubLookupFailed",
-      operation: "list workflow jobs",
-      message: "job identity lookup unavailable",
-    });
+    return run.conclusion === "success"
+      ? okAsync(record)
+      : errAsync({
+          type: "BindingMismatch",
+          field: "jobConclusion",
+          expected: record.originJobConclusion,
+          actual: run.conclusion,
+        });
   return github
     .listWorkflowRunJobs(record.runId)
     .mapErr(githubError)

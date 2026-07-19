@@ -84,6 +84,8 @@ test("compiled control dry-runs publication from a clean directory", async () =>
     headRef: "refs/heads/main",
     headSha: "a".repeat(40),
     originJobConclusion: "success",
+    originJobId: 17,
+    originJobName: "build",
     artifacts: [
       {
         name: "release-payload",
@@ -130,6 +132,10 @@ test("compiled control dry-runs publication from a clean directory", async () =>
         size_in_bytes: uploadedBytes.byteLength,
       });
       if (path.endsWith("/actions/runs/1")) return Response.json(run);
+      if (path.endsWith("/actions/runs/1/jobs"))
+        return Response.json({
+          jobs: [{ id: 17, name: "build", conclusion: "success" }],
+        });
       if (path.endsWith("/actions/runs/1/artifacts"))
         return Response.json({
           artifacts: [

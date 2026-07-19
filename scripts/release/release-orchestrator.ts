@@ -209,6 +209,15 @@ export class ReleaseOrchestrator {
     );
   }
   publish(request: PublishRequest): ResultAsync<PublishResult, ReleaseError> {
+    if (
+      request.invocation.eventName === "workflow_dispatch" &&
+      request.invocation.channel === "stable" &&
+      request.stableTrain === undefined
+    )
+      return errAsync({
+        type: "StableTrainRequired",
+        operation: request.invocation.operation,
+      });
     if (request.credentialScan !== undefined) {
       const credentials = scanCredentialSources(request.credentialScan);
       if (credentials.isErr())
@@ -842,7 +851,8 @@ export class ReleaseOrchestrator {
     record: StableTrainRecord | undefined,
     target: StableTrainRecord["state"],
   ): Result<void, ReleaseError> {
-    if (record === undefined) return ok(undefined);
+    if (record === undefined)
+      return err({ type: "StableTrainRequired", operation: "stable release operation" });
     const expiry = guardTrainExpiry(record, this.clock);
     if (expiry.isErr())
       return err({

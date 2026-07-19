@@ -120,6 +120,8 @@ export const ArtifactManifestSchema = z
       .array(ArtifactFileSchema)
       .min(1)
       .max(RELEASE_INPUT_LIMITS.artifactCount),
+    /** Stable payloads embed the train record advanced by control-plane gates. */
+    stableTrain: z.unknown().optional(),
   })
   .strict()
   .superRefine((manifest, context) => {

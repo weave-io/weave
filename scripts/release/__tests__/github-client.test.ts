@@ -194,6 +194,17 @@ function request(github: MockReleaseClient, attempts?: number) {
     github,
     notes: "release notes",
     immutablePollAttempts: attempts,
+    stableTrain: {
+      schemaVersion: 1,
+      recordDigest: digest(bytes),
+      trainRef: "refs/heads/release/20260101-aaaaaaaaaaaa",
+      subjectSha: SHA,
+      cutAt: "2030-01-01T00:00:00.000Z",
+      expiresAt: "2030-01-08T00:00:00.000Z",
+      state: "promoted",
+      packages: Object.keys(VERSIONS),
+      versions: VERSIONS,
+    } as never,
   };
 }
 

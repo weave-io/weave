@@ -25,7 +25,9 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "neverthrow": "^8.2.0"
+    "neverthrow": "^8.2.0",
+    "mustache": "^4.2.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@weaveio/weave-core": "workspace:*",
