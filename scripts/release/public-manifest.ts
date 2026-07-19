@@ -128,11 +128,12 @@ export class PublicManifestBuilder {
   stage(
     sourceManifestPath: string,
     stagingDirectory: string,
+    version?: string,
   ): ResultAsync<StagedPublicManifest, PublicManifestError> {
     return this.fileSystem
       .readText(sourceManifestPath)
       .andThen((contents) =>
-        this.stageContents(contents, sourceManifestPath, stagingDirectory),
+        this.stageContents(contents, sourceManifestPath, stagingDirectory, version),
       );
   }
 
@@ -140,6 +141,7 @@ export class PublicManifestBuilder {
     contents: string,
     sourceManifestPath: string,
     stagingDirectory: string,
+    version?: string,
   ): ResultAsync<StagedPublicManifest, PublicManifestError> {
     const parsed: Result<unknown, PublicManifestError> = Result.fromThrowable(
       () => JSON.parse(contents) as unknown,
@@ -153,6 +155,7 @@ export class PublicManifestBuilder {
 
     const manifest = this.build(parsed.value, sourceManifestPath);
     if (manifest.isErr()) return errAsync(manifest.error);
+    if (version !== undefined) manifest.value.version = version;
     const packageName = manifest.value.name;
     if (typeof packageName !== "string" || !isPublicPackageName(packageName)) {
       return errAsync({

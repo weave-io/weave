@@ -292,7 +292,7 @@ async function runPreflight(
   if (output !== undefined)
     await Bun.write(
       output,
-      `operation=nightly\nskipped=${plan.value.skip === undefined ? "false" : "true"}\n`,
+      `operation=nightly\nskipped=${plan.value.skip === undefined ? "false" : "true"}\nversions=${JSON.stringify(plan.value.skip === undefined ? Object.fromEntries(plan.value.packages.map((entry) => [entry.name, entry.version])) : {})}\n`,
     );
   log.info(
     { plan: plan.value },

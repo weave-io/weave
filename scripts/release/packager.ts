@@ -1,6 +1,7 @@
 import { join, resolve } from "node:path";
 import { logger } from "@weaveio/weave-engine";
 import { err, errAsync, okAsync, Result, ResultAsync } from "neverthrow";
+import { z } from "zod";
 import {
   PUBLIC_PACKAGE_BUILDS,
   PUBLIC_PACKAGES,
@@ -125,14 +126,17 @@ export class PublicPackagePackager {
     ),
   ) {}
 
-  packAll(root: string): ResultAsync<readonly string[], PackagerError> {
+  packAll(
+    root: string,
+    plannedVersions?: Readonly<Record<string, string>>,
+  ): ResultAsync<readonly string[], PackagerError> {
     const destination = join(root, "tarballs");
     let result = okAsync<readonly string[], PackagerError>([]);
     for (const packageName of Object.keys(
       PUBLIC_PACKAGES,
     ) as PublicPackageName[]) {
       result = result.andThen((tarballs) =>
-        this.pack(packageName, root, destination).map((tarball) => [
+        this.pack(packageName, root, destination, plannedVersions?.[packageName]).map((tarball) => [
           ...tarballs,
           tarball,
         ]),
@@ -183,11 +187,12 @@ export class PublicPackagePackager {
     packageName: PublicPackageName,
     root: string,
     destination: string,
+    plannedVersion?: string,
   ): ResultAsync<string, PackagerError> {
     const source = PUBLIC_PACKAGES[packageName].directory;
     const stage = join(root, "staging", packageName.replace("@weaveio/", ""));
     return this.ensureDirectory(destination)
-      .andThen(() => this.stageManifest(source, root))
+      .andThen(() => this.stageManifest(source, root, plannedVersion))
       .andThen(() => this.copyApprovedFiles(packageName, source, stage))
       .andThen(() =>
         this.commandRunner.run(
@@ -243,9 +248,10 @@ export class PublicPackagePackager {
   private stageManifest(
     source: string,
     root: string,
+    plannedVersion?: string,
   ): ResultAsync<unknown, PackagerError> {
     return this.manifestBuilder
-      .stage(join(source, "package.json"), join(root, "staging"))
+      .stage(join(source, "package.json"), join(root, "staging"), plannedVersion)
       .mapErr((error) => ({ type: "Manifest" as const, error }));
   }
 
@@ -331,9 +337,19 @@ if (import.meta.main) {
   const result = await new PublicPackagePackager(
     new BunPackageCommandRunner(),
     new PackagePolicyValidator(),
-  ).packAll(root);
+  ).packAll(root, parsePlannedVersions(Bun.env.RELEASE_PLANNED_VERSIONS));
   if (result.isErr()) {
     logger.error(result.error, "Public package validation failed");
     process.exitCode = 1;
   }
+}
+
+function parsePlannedVersions(
+  value: string | undefined,
+): Readonly<Record<string, string>> | undefined {
+  if (value === undefined || value === "") return undefined;
+  const parsed = Result.fromThrowable(() => JSON.parse(value), () => undefined)();
+  if (parsed.isErr()) return undefined;
+  const versions = z.record(z.string(), z.string()).safeParse(parsed.value);
+  return versions.success ? versions.data : undefined;
 }
