@@ -1,0 +1,5 @@
+{
+  "name": "weave-public-consumer",
+  "private": true,
+  "type": "module"
+}

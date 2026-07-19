@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode
 
-> 0 routes | 0 models | 0 components | 132 lib files | 9 env vars | 6 middleware | 0% test coverage
-> **Token savings:** this file is ~12,500 tokens. Without it, AI exploration would cost ~46,200 tokens. **Saves ~33,700 tokens per conversation.**
-> **Last scanned:** 2026-07-19 06:11 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 135 lib files | 9 env vars | 6 middleware | 0% test coverage
+> **Token savings:** this file is ~12,600 tokens. Without it, AI exploration would cost ~46,900 tokens. **Saves ~34,300 tokens per conversation.**
+> **Last scanned:** 2026-07-19 06:26 — re-run after significant changes
 
 ---
 
@@ -606,13 +606,23 @@
   - class PublicPackageBuilder
   - interface PublicPackageFileSystem
   - type PublicPackageBuildError
+- `scripts/release/package-policy.ts` — class PackagePolicyValidator, type PackagePolicyError
+- `scripts/release/packager.ts`
+  - class BunPackageCommandRunner
+  - class PublicPackagePackager
+  - interface PackageCommandRunner
+  - type PackagerError
 - `scripts/release/public-manifest.ts`
   - class BunPublicManifestFileSystem
   - class PublicManifestBuilder
   - interface PublicManifestFileSystem
   - interface StagedPublicManifest
   - type PublicManifestError
-- `scripts/validate-api-extractor-configs.ts` — function validateApiExtractorConfig: (path) => Result<void, ApiExtractorConfigError>, function validateApiExtractorConfigs: () => Result<void, ApiExtractorConfigError>
+- `scripts/release/tar-inspector.ts`
+  - class TarInspector
+  - interface TarEntry
+  - type TarInspectionError
+- `scripts/validate-api-extractor-configs.ts` — function validateApiExtractorConfig: (path) => Result<void, ApiExtractorConfigError>, function validateApiExtractorConfigs: () => Result<
 
 ---
 
@@ -695,7 +705,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 121 test files found
+> 124 test files found
 
 ---
 

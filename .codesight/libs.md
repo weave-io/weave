@@ -595,10 +595,20 @@
   - class PublicPackageBuilder
   - interface PublicPackageFileSystem
   - type PublicPackageBuildError
+- `scripts/release/package-policy.ts` — class PackagePolicyValidator, type PackagePolicyError
+- `scripts/release/packager.ts`
+  - class BunPackageCommandRunner
+  - class PublicPackagePackager
+  - interface PackageCommandRunner
+  - type PackagerError
 - `scripts/release/public-manifest.ts`
   - class BunPublicManifestFileSystem
   - class PublicManifestBuilder
   - interface PublicManifestFileSystem
   - interface StagedPublicManifest
   - type PublicManifestError
-- `scripts/validate-api-extractor-configs.ts` — function validateApiExtractorConfig: (path) => Result<void, ApiExtractorConfigError>, function validateApiExtractorConfigs: () => Result<void, ApiExtractorConfigError>
+- `scripts/release/tar-inspector.ts`
+  - class TarInspector
+  - interface TarEntry
+  - type TarInspectionError
+- `scripts/validate-api-extractor-configs.ts` — function validateApiExtractorConfig: (path) => Result<void, ApiExtractorConfigError>, function validateApiExtractorConfigs: () => Result<
