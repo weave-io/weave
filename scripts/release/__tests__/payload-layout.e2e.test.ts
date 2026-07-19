@@ -157,6 +157,96 @@ test("nightly payload layout executes plan, subset pack, and control manifest va
   }
 }, 120_000);
 
+test("stable CLI-only payload layout packs the train-authoritative set", async () => {
+  const root = process.cwd();
+  const run = `validate-stable-cli-${crypto.randomUUID()}`;
+  const version = "1.2.3";
+  const trainContent = {
+    schemaVersion: 1 as const,
+    trainRef: "release/20260719-aaaaaaaaaaaa",
+    subjectSha: sha,
+    cutAt: "2026-07-19T00:00:00.000Z",
+    expiresAt: "2026-07-26T00:00:00.000Z",
+    state: "awaiting-promotion" as const,
+    packages: ["@weaveio/weave-cli"] as const,
+    versions: { "@weaveio/weave-cli": version },
+    artifactManifestDigest: `sha256:${"b".repeat(64)}`,
+    artifactIds: [1],
+  };
+  const train = {
+    ...trainContent,
+    recordDigest: trainRecordDigest(trainContent),
+  };
+  const reset = Bun.spawn(["rm", "-rf", join(root, ".release")]);
+  expect(await reset.exited).toBe(0);
+  try {
+    const build = Bun.spawn(["bun", "scripts/build-public-packages.ts"]);
+    expect(await build.exited).toBe(0);
+
+    const tarballs = await new PublicPackagePackager(
+      new BunPackageCommandRunner(),
+      new PackagePolicyValidator(),
+    ).packAll(join(root, ".release", run), train.versions);
+    expect(tarballs.isOk()).toBe(true);
+    if (tarballs.isErr()) throw new Error(JSON.stringify(tarballs.error));
+    expect(tarballs.value).toHaveLength(1);
+    const tarballPath = tarballs.value[0];
+    if (tarballPath === undefined)
+      throw new Error("CLI tarball was not packed");
+
+    const result = await writeArtifactManifest(
+      "stable-cut",
+      sha,
+      JSON.stringify(train),
+    );
+    expect(result.isOk()).toBe(true);
+    if (result.isErr()) throw new Error(JSON.stringify(result.error));
+    const manifest = await Bun.file(
+      join(root, ".release", "manifest.json"),
+    ).json();
+    const validated = validateArtifactManifest(manifest);
+    expect(validated.isOk()).toBe(true);
+    if (validated.isErr()) throw new Error(JSON.stringify(validated.error));
+
+    const filename = packageArtifactFilename("@weaveio/weave-cli", version);
+    const tarball = await Bun.file(tarballPath).bytes();
+    const expectedDigest = digest(tarball);
+    expect(validated.value.releaseSubjectSha).toBe(train.subjectSha);
+    expect(validated.value.packages).toEqual([...train.packages]);
+    expect(validated.value.versions).toEqual(train.versions);
+    expect(validated.value.stableTrain).toEqual(train);
+    expect(validated.value.artifacts).toEqual([
+      {
+        filename,
+        checksumFilename: `${filename}.sha256`,
+        sizeBytes: tarball.byteLength,
+        sha256: expectedDigest,
+      },
+    ]);
+    expect(await Bun.file(join(root, ".release", filename)).bytes()).toEqual(
+      tarball,
+    );
+    expect(
+      await Bun.file(join(root, ".release", `${filename}.sha256`)).text(),
+    ).toBe(`${expectedDigest}\n`);
+
+    const packedManifest = new TarInspector()
+      .inspect(tarball)
+      .map((entries) =>
+        entries.find((entry) => entry.path === "package/package.json"),
+      );
+    expect(packedManifest.isOk()).toBe(true);
+    if (packedManifest.isErr() || packedManifest.value === undefined)
+      throw new Error("packed CLI manifest is missing");
+    expect(
+      JSON.parse(new TextDecoder().decode(packedManifest.value.contents)),
+    ).toMatchObject({ name: "@weaveio/weave-cli", version });
+  } finally {
+    const cleanup = Bun.spawn(["rm", "-rf", join(root, ".release")]);
+    expect(await cleanup.exited).toBe(0);
+  }
+}, 120_000);
+
 test("stable manifests embed a validated train and nightly manifests omit it", async () => {
   const root = process.cwd();
   const run = `validate-train-${crypto.randomUUID()}`;

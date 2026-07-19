@@ -6,12 +6,14 @@ import {
 } from "../artifact-binding.js";
 import type { Clock } from "../clock.js";
 import { BunCommandRunner } from "../command-runner.js";
+import type { PublicPackageName } from "../constants.js";
 import type { FileSystem } from "../filesystem.js";
 import type { GitHubClient } from "../github-client.js";
-import type { ArtifactManifest } from "../model.js";
+import type { ArtifactManifest, StableTrainRecord } from "../model.js";
 import type { NpmRegistryClient } from "../npm-registry-client.js";
 import { scanCredentialSources } from "../package-policy.js";
 import { ReleaseOrchestrator } from "../release-orchestrator.js";
+import { trainRecordDigest, validateStableTrain } from "../stable-train.js";
 
 describe("release command allowlist", () => {
   test("rejects shell injection before spawning", async () => {
@@ -404,36 +406,149 @@ describe("manual stable promotion", () => {
   });
 
   test("finalize requires both exact latest tags and reports partial promotion", async () => {
-    const train = {
-      schemaVersion: 1 as const,
-      recordDigest: `sha256:${"a".repeat(64)}`,
-      trainRef: "refs/heads/release/20300101-aaaaaaaaaaaa",
-      subjectSha: "a".repeat(40),
-      cutAt: "2030-01-01T00:00:00.000Z",
-      expiresAt: "2030-01-08T00:00:00.000Z",
-      state: "awaiting-promotion" as const,
-      packages: [
-        "@weaveio/weave-cli",
-        "@weaveio/weave-adapter-opencode",
-      ] as const,
-      versions: {
-        "@weaveio/weave-cli": "1.2.3",
-        "@weaveio/weave-adapter-opencode": "4.5.6",
-      },
-      artifactManifestDigest: `sha256:${"b".repeat(64)}`,
-      artifactIds: [1, 2],
-    };
+    const train = stableTrain();
     const partial = await promotionOrchestrator({
       "@weaveio/weave-cli": { latest: "1.2.3" },
       "@weaveio/weave-adapter-opencode": { latest: "4.5.5" },
-    }).stableFinalize(authorization, train as never);
+    }).stableFinalize(authorization, train);
     expect(partial.isErr()).toBe(true);
     if (partial.isErr()) expect(partial.error.type).toBe("PartialPromotion");
     const finalized = await promotionOrchestrator({
       "@weaveio/weave-cli": { latest: "1.2.3" },
       "@weaveio/weave-adapter-opencode": { latest: "4.5.6" },
-    }).stableFinalize(authorization, train as never);
+    }).stableFinalize(authorization, train);
     expect(finalized.isOk()).toBe(true);
+  });
+
+  test("stable-finalize rejects a laundered awaiting-promotion train digest", async () => {
+    const train = {
+      ...stableTrain(),
+      recordDigest: `sha256:${"0".repeat(64)}`,
+    };
+    const valid = validateStableTrain(train);
+    expect(valid.isErr()).toBe(true);
+    if (valid.isErr()) expect(valid.error.type).toBe("DigestMismatch");
+    const command = Bun.spawn({
+      cmd: ["bun", "scripts/release/stable-finalize.ts"],
+      cwd: process.cwd(),
+      env: {
+        PATH: Bun.env.PATH,
+        RELEASE_PROMOTION_AUTHORIZATION: JSON.stringify(authorization),
+        RELEASE_STABLE_TRAIN: JSON.stringify(train),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await command.exited).toBe(2);
+  });
+
+  test("rejects authorization lineage mismatches before a stable transition", async () => {
+    const train = stableTrain();
+    const cases = [
+      {
+        name: "subject SHA",
+        authorization: { ...authorization, subjectSha: "b".repeat(40) },
+        reason: "authorization subject differs from train",
+      },
+      {
+        name: "versions",
+        authorization: {
+          ...authorization,
+          versions: {
+            ...authorization.versions,
+            "@weaveio/weave-cli": "1.2.4",
+          },
+        },
+        reason: "authorization versions differ from train",
+      },
+      {
+        name: "package set",
+        authorization: {
+          ...authorization,
+          packages: ["@weaveio/weave-cli"],
+          versions: { "@weaveio/weave-cli": "1.2.3" },
+          artifactDigests: { "@weaveio/weave-cli": `sha256:${"1".repeat(64)}` },
+        },
+        reason: "authorization packages differ from train",
+      },
+    ];
+    for (const fixture of cases) {
+      const result = await promotionOrchestrator({}).stableFinalize(
+        fixture.authorization,
+        train,
+      );
+      expect(result.isErr(), fixture.name).toBe(true);
+      if (result.isErr()) {
+        expect(result.error.type, fixture.name).toBe("StableTrainStateInvalid");
+        if (result.error.type === "StableTrainStateInvalid")
+          expect(result.error.reason, fixture.name).toBe(fixture.reason);
+      }
+    }
+  });
+
+  test("promotes matching full and partial package authorization lineage", async () => {
+    const cases = [
+      { name: "full", authorization, train: stableTrain() },
+      {
+        name: "CLI only",
+        authorization: {
+          ...authorization,
+          packages: ["@weaveio/weave-cli"],
+          versions: { "@weaveio/weave-cli": "1.2.3" },
+          artifactDigests: { "@weaveio/weave-cli": `sha256:${"1".repeat(64)}` },
+        },
+        train: stableTrain(["@weaveio/weave-cli"]),
+      },
+    ];
+    for (const fixture of cases) {
+      const versions: Record<string, string> = fixture.authorization.versions;
+      const result = await promotionOrchestrator(
+        Object.fromEntries(
+          fixture.authorization.packages.map((packageName) => [
+            packageName,
+            { latest: versions[packageName] },
+          ]),
+        ),
+      ).stableFinalize(fixture.authorization, fixture.train);
+      expect(result.isOk(), fixture.name).toBe(true);
+      if (result.isOk())
+        expect(result.value.stableTrain.state).toBe("promoted");
+    }
+  });
+
+  test("rejects partial and full package authorization crossovers", async () => {
+    const cliOnlyAuthorization = {
+      ...authorization,
+      packages: ["@weaveio/weave-cli"],
+      versions: { "@weaveio/weave-cli": "1.2.3" },
+      artifactDigests: { "@weaveio/weave-cli": `sha256:${"1".repeat(64)}` },
+    };
+    const cases = [
+      {
+        name: "one-package train and two-package authorization",
+        train: stableTrain(["@weaveio/weave-cli"]),
+        authorization,
+      },
+      {
+        name: "two-package train and one-package authorization",
+        train: stableTrain(),
+        authorization: cliOnlyAuthorization,
+      },
+    ];
+    for (const fixture of cases) {
+      const result = await promotionOrchestrator({}).stableFinalize(
+        fixture.authorization,
+        fixture.train,
+      );
+      expect(result.isErr(), fixture.name).toBe(true);
+      if (result.isErr()) {
+        expect(result.error.type, fixture.name).toBe("StableTrainStateInvalid");
+        if (result.error.type === "StableTrainStateInvalid")
+          expect(result.error.reason, fixture.name).toBe(
+            "authorization packages differ from train",
+          );
+      }
+    }
   });
 
   test("verifies the human-executed rollback against recorded prior versions", async () => {
@@ -444,6 +559,36 @@ describe("manual stable promotion", () => {
     expect(result.isOk()).toBe(true);
   });
 });
+
+function stableTrain(
+  packages: readonly PublicPackageName[] = [
+    "@weaveio/weave-cli",
+    "@weaveio/weave-adapter-opencode",
+  ],
+): StableTrainRecord {
+  const versions: Record<string, string> = Object.fromEntries(
+    packages.map((packageName) => [
+      packageName,
+      packageName === "@weaveio/weave-cli" ? "1.2.3" : "4.5.6",
+    ]),
+  );
+  const content = {
+    schemaVersion: 1 as const,
+    trainRef: "release/20300101-aaaaaaaaaaaa",
+    subjectSha: "a".repeat(40),
+    cutAt: "2030-01-01T00:00:00.000Z",
+    expiresAt: "2030-01-08T00:00:00.000Z",
+    state: "awaiting-promotion" as const,
+    packages: [...packages],
+    versions,
+    artifactManifestDigest: `sha256:${"b".repeat(64)}`,
+    artifactIds: packages.map((_, index) => index + 1),
+  };
+  return {
+    ...content,
+    recordDigest: trainRecordDigest(content),
+  } as StableTrainRecord;
+}
 
 function archive(): Uint8Array {
   const tar = new Uint8Array(1536);
