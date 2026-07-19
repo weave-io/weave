@@ -12,6 +12,7 @@
   ],
   "scripts": {
     "changeset": "changeset",
+    "changeset:check": "bun scripts/release/changeset-policy.ts",
     "docs:dev": "bun run --filter '@weaveio/weave-docs' dev",
     "docs:build": "bun run --filter '@weaveio/weave-docs' build",
     "docs:preview": "bun run --filter '@weaveio/weave-docs' preview",

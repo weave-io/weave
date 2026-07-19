@@ -1,6 +1,5 @@
 ---
-"@weaveio/weave-cli": patch
-"@weaveio/weave-adapter-opencode": patch
+"@weaveio/weave-adapter-claude-code": patch
 ---
 
 Rename npm scope from `@weave` to `@weaveio` and add publish pipeline

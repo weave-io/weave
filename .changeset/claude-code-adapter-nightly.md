@@ -1,5 +1,5 @@
 ---
-"@weaveio/weave-cli": minor
+"@weaveio/weave-adapter-claude-code": minor
 ---
 
 Add Claude Code adapter with compose CLI command
