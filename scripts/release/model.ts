@@ -240,6 +240,28 @@ export const StableTrainRecordSchema = z
     packages: z.array(PackageNameSchema).min(1).max(2),
     versions: z.record(z.string(), SemVerSchema),
     artifactManifestDigest: DigestSchema.optional(),
+    /** Replay input: exact stable changesets removed on the release branch. */
+    consumedChangesets: z
+      .array(
+        z
+          .object({ path: z.string().min(1), preimageDigest: DigestSchema })
+          .strict(),
+      )
+      .optional(),
+    /** Replay input: deterministic package/changelog writes made at the cut. */
+    metadataWrites: z
+      .array(
+        z
+          .object({
+            path: z.string().min(1),
+            contentsDigest: DigestSchema,
+            contents: z.string(),
+          })
+          .strict(),
+      )
+      .optional(),
+    /** Actions artifact IDs are deliberately discarded after a stable fix. */
+    artifactIds: z.array(z.number().int().positive()).optional(),
   })
   .strict()
   .superRefine((record, context) => {

@@ -141,6 +141,46 @@ test("propagates registry publication failure without retrying", async () => {
   expect(result.isErr()).toBe(true);
 });
 
+test("routes stable cut planning without performing a ref mutation", async () => {
+  const files: FileSystem = {
+    readBytes: () => okAsync(new Uint8Array()),
+    readText: () => okAsync(""),
+    writeText: () => okAsync(undefined),
+  };
+  const npm: NpmRegistryClient = {
+    publish: () => okAsync(undefined),
+    viewVersion: () => okAsync(""),
+    listVersions: () => okAsync([]),
+    viewDistTags: () => okAsync({}),
+    verifyPublished: () => okAsync(undefined),
+  };
+  const orchestrator = new ReleaseOrchestrator(files, npm, {
+    now: () => new Date("2026-07-19T00:00:00.000Z"),
+  });
+  const result = await orchestrator.planStableCut({
+    mainHeadSha: "a".repeat(40),
+    serverCutAt: new Date("2026-07-19T00:00:00.000Z"),
+    partition: {
+      stableFiles: [".changeset/a.md"],
+      remainOnMainFiles: [".changeset/claude.md"],
+    },
+    changesets: [
+      {
+        path: ".changeset/a.md",
+        releases: new Map([["@weaveio/weave-cli", "patch"]]),
+      },
+    ],
+    changesetContents: { ".changeset/a.md": "bytes" },
+    packageVersions: {
+      "@weaveio/weave-cli": "1.0.0",
+      "@weaveio/weave-adapter-opencode": "1.0.0",
+      "@weaveio/weave-adapter-claude-code": "1.0.0",
+    },
+  });
+  expect(result.isOk()).toBe(true);
+  if (result.isOk()) expect(result.value.expectedHeadSha).toBe("a".repeat(40));
+});
+
 function archive(): Uint8Array {
   const tar = new Uint8Array(1536);
   tar.set(new TextEncoder().encode("package/package.json"));

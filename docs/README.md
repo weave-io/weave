@@ -30,6 +30,7 @@ The published docs site is built from the Astro + Starlight package at [`package
 | [Eval XSS Policy](eval-xss-policy.md) | Markdown and report rendering XSS policy, `explanation` field schema-level blocking, `escapeHtml()` requirements, banned rendering paths, defence-in-depth layers, test coverage |
 | [Category Routing Findings](category-routing-findings.md) | Phase 1 prompt-enrichment eval results, acceptance gate outcomes, token cost, scaling data, and Phase 2 deterministic matcher decision |
 | [Legacy Architecture](legacy-architecture.md) | Alpha / OpenCode-era reference (read-only history) |
+| [Stable Release Trains](stable-release-trains.md) | Stable cut, CAS fix, immutable checkout, and expiry policy |
 
 ---
 

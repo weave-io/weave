@@ -24,6 +24,53 @@ export type PackagerError =
   | { type: "Manifest"; error: PublicManifestError }
   | { type: "Policy"; error: PackagePolicyError };
 
+export type ReleaseCheckoutError =
+  | PackagerError
+  | { type: "DirtyReleaseCheckout"; phase: "before" | "after"; status: string };
+
+export interface ReleaseCheckout {
+  status(root: string): ResultAsync<string, PackagerError>;
+}
+
+export class BunReleaseCheckout implements ReleaseCheckout {
+  status(root: string): ResultAsync<string, PackagerError> {
+    const spawned = Result.fromThrowable(
+      () =>
+        Bun.spawn({
+          cmd: ["git", "status", "--porcelain"],
+          cwd: root,
+          stdout: "pipe",
+          stderr: "pipe",
+        }),
+      () => ({
+        type: "Filesystem" as const,
+        path: root,
+        operation: "read" as const,
+      }),
+    )();
+    if (spawned.isErr()) return errAsync(spawned.error);
+    return ResultAsync.fromPromise(
+      Promise.all([
+        spawned.value.exited,
+        new Response(spawned.value.stdout).text(),
+      ]),
+      () => ({
+        type: "Filesystem" as const,
+        path: root,
+        operation: "read" as const,
+      }),
+    ).andThen(([code, stdout]) =>
+      code === 0
+        ? okAsync(stdout)
+        : errAsync({
+            type: "Filesystem" as const,
+            path: root,
+            operation: "read" as const,
+          }),
+    );
+  }
+}
+
 export interface PackageCommandRunner {
   run(
     command: readonly string[],
@@ -92,6 +139,44 @@ export class PublicPackagePackager {
       );
     }
     return result;
+  }
+
+  /** Stable payloads are limited to CLI and OpenCode; the checkout itself is immutable input. */
+  packStableRelease(
+    root: string,
+    checkout: ReleaseCheckout,
+  ): ResultAsync<readonly string[], ReleaseCheckoutError> {
+    return checkout.status(root).andThen((before) => {
+      if (before !== "")
+        return errAsync({
+          type: "DirtyReleaseCheckout" as const,
+          phase: "before" as const,
+          status: before,
+        });
+      const destination = join(root, "tarballs");
+      let packed = okAsync<readonly string[], PackagerError>([]);
+      for (const packageName of [
+        "@weaveio/weave-cli",
+        "@weaveio/weave-adapter-opencode",
+      ] as const)
+        packed = packed.andThen((tarballs) =>
+          this.pack(packageName, root, destination).map((tarball) => [
+            ...tarballs,
+            tarball,
+          ]),
+        );
+      return packed.andThen((tarballs) =>
+        checkout.status(root).andThen((after) =>
+          after === ""
+            ? okAsync(tarballs)
+            : errAsync({
+                type: "DirtyReleaseCheckout" as const,
+                phase: "after" as const,
+                status: after,
+              }),
+        ),
+      );
+    });
   }
 
   pack(
