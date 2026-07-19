@@ -1,10 +1,10 @@
 import { logger } from "@weaveio/weave-engine";
-import { err, ok, okAsync, Result } from "neverthrow";
+import { okAsync, Result } from "neverthrow";
 import { BunCommandRunner } from "./command-runner.js";
 import type { FileSystem } from "./filesystem.js";
-import { StableTrainRecordSchema } from "./model.js";
 import { NpmCliRegistryClient } from "./npm-registry-client.js";
 import { ReleaseOrchestrator } from "./release-orchestrator.js";
+import { validateStableTrain } from "./stable-train.js";
 
 const log = logger.child({ module: "stable-finalize" });
 const authorizationText = Bun.env.RELEASE_PROMOTION_AUTHORIZATION;
@@ -31,10 +31,7 @@ if (trainText === undefined) {
 const parsedTrain = Result.fromThrowable(
   () => JSON.parse(trainText),
   () => undefined,
-)().andThen((value) => {
-  const parsed = StableTrainRecordSchema.safeParse(value);
-  return parsed.success ? ok(parsed.data) : err(undefined);
-});
+)().andThen(validateStableTrain);
 if (parsedTrain.isErr()) {
   log.error("invalid stable train record");
   process.exit(2);

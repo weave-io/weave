@@ -15,7 +15,7 @@ on:
         required: false
         type: string
       stable-train:
-        description: Exact JSON awaiting-promotion train emitted by stable-publish (stable publish/finalize)
+        description: "Exact JSON train: bound for stable-publish; awaiting-promotion for stable-finalize"
         required: false
         type: string
       stable-plan-input:
@@ -75,7 +75,7 @@ jobs:
 
   build:
     needs: preflight
-    if: needs.preflight.outputs.skipped != 'true' && (needs.preflight.outputs.operation == 'nightly' || needs.preflight.outputs.operation == 'stable-publish' || needs.preflight.outputs.operation == 'stable-finalize')
+    if: needs.preflight.outputs.skipped != 'true' && (needs.preflight.outputs.operation == 'nightly' || needs.preflight.outputs.operation == 'stable-publish')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -121,8 +121,8 @@ jobs:
           retention-days: 30
 
   bind:
-    needs: [preflight, build]
-    if: needs.preflight.outputs.skipped != 'true'
+    needs: preflight
+    if: needs.preflight.outputs.skipped != 'true' && (needs.preflight.outputs.operation == 'nightly' || needs.preflight.outputs.operation == 'stable-publish')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -327,6 +327,7 @@ jobs:
       contents: read
     outputs:
       stable-train: ${{ steps.finalize.outputs.stable_train }}
+      payload-artifact-id: ${{ steps.finalize.outputs.payload_artifact_id }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -336,20 +337,20 @@ jobs:
         with:
           bun-version: "1.3.10"
       - run: bun install --frozen-lockfile
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          artifact-ids: ${{ needs.build.outputs.payload-artifact-id }}
-          path: payload
       - id: finalize
         name: Verify both promoted latest tags and tarball digests
-        run: bun scripts/release/stable-finalize.ts
+        run: |
+          bun scripts/release/stable-finalize.ts
+          train='${{ needs.preflight.outputs.stable-train }}'
+          payload_artifact_id="$(printf '%s' "$train" | jq -er '.artifactIds[0]')"
+          echo "payload_artifact_id=$payload_artifact_id" >> "$GITHUB_OUTPUT"
         env:
           RELEASE_PROMOTION_AUTHORIZATION: ${{ inputs.promotion-authorization }}
           RELEASE_STABLE_TRAIN: ${{ needs.preflight.outputs.stable-train }}
 
   # The App token is environment-scoped. GITHUB_TOKEN remains read-only.
   release-refs:
-    needs: [preflight, stable-finalize, build]
+    needs: [preflight, stable-finalize]
     if: needs.preflight.outputs.skipped != 'true' && needs.preflight.outputs.operation == 'stable-finalize'
     runs-on: ubuntu-latest
     environment: release-refs
@@ -366,13 +367,12 @@ jobs:
       - run: bun install --frozen-lockfile
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          artifact-ids: ${{ needs.build.outputs.payload-artifact-id }}
+          artifact-ids: ${{ needs.stable-finalize.outputs.payload-artifact-id }}
           path: .release-payload
       - run: bun scripts/release/release-refs-main.ts
         env:
           RELEASE_APP_TOKEN: ${{ secrets.RELEASE_APP_TOKEN }}
           RELEASE_PROMOTION_AUTHORIZATION: ${{ inputs.promotion-authorization }}
-          RELEASE_PAYLOAD_ARTIFACT_ID: ${{ needs.build.outputs.payload-artifact-id }}
           RELEASE_PAYLOAD_DIRECTORY: .release-payload
           RELEASE_RELEASE_NOTES: Automated release
           RELEASE_PROGRESSED_STABLE_TRAIN: ${{ needs.stable-finalize.outputs.stable-train }}
