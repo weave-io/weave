@@ -5,7 +5,6 @@ import {
   PRIVATE_PACKAGE_NAMES,
   PUBLIC_PACKAGE_BUILDS,
   PUBLIC_PACKAGES,
-  PUBLIC_RUNTIME_EXTERNALS,
   type PublicPackageBuild,
   type PublicPackageName,
 } from "./constants.js";
@@ -67,7 +66,12 @@ export type PackagePolicyError =
   | { type: "LifecycleScript" }
   | { type: "UnexpectedFile"; path: string }
   | { type: "WrongMode"; path: string; mode: number }
-  | { type: "UndeclaredImport"; path: string; specifier: string }
+  | {
+      type: "UndeclaredImport";
+      packageName: PublicPackageName;
+      path: string;
+      specifier: string;
+    }
   | { type: "MissingFile"; path: string }
   | { type: "HashMismatch"; expected: string; actual: string };
 
@@ -119,11 +123,15 @@ export class PackagePolicyValidator {
             },
       );
     const packageName = manifest.value.name as PublicPackageName;
-    const dependencies = this.validateManifest(manifest.value);
-    if (dependencies.isErr()) return err(dependencies.error);
+    const declaredDependencies = this.validateManifest(manifest.value);
+    if (declaredDependencies.isErr()) return err(declaredDependencies.error);
     const inventory = this.validateInventory(packageName, inspected.value);
     if (inventory.isErr()) return err(inventory.error);
-    const imports = this.validateImports(inspected.value, dependencies.value);
+    const imports = this.validateImports(
+      inspected.value,
+      declaredDependencies.value,
+      packageName,
+    );
     if (imports.isErr()) return err(imports.error);
     return ok({ packageName, sha256 });
   }
@@ -132,7 +140,7 @@ export class PackagePolicyValidator {
     manifest: Record<string, unknown>,
   ): Result<Set<string>, PackagePolicyError> {
     if (manifest.scripts !== undefined) return err({ type: "LifecycleScript" });
-    const declared = new Set<string>(PUBLIC_RUNTIME_EXTERNALS);
+    const declared = new Set<string>();
     for (const field of ALL_DEPENDENCY_FIELDS) {
       const value = manifest[field];
       if (value === undefined) continue;
@@ -181,6 +189,7 @@ export class PackagePolicyValidator {
   private validateImports(
     entries: readonly { path: string; contents: Uint8Array }[],
     declared: Set<string>,
+    packageName: PublicPackageName,
   ): Result<void, PackagePolicyError> {
     const decoder = new TextDecoder();
     for (const entry of entries) {
@@ -205,7 +214,12 @@ export class PackagePolicyValidator {
           ? specifier.split("/").slice(0, 2).join("/")
           : specifier.split("/")[0];
         if (!declared.has(dependency))
-          return err({ type: "UndeclaredImport", path: entry.path, specifier });
+          return err({
+            type: "UndeclaredImport",
+            packageName,
+            path: entry.path,
+            specifier,
+          });
       }
     }
     return ok(undefined);
