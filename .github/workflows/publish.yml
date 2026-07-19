@@ -146,6 +146,63 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  # This is an identity-bound clean room: it executes only the independently
+  # compiled control artifact. The subject checkout is data-only and is never
+  # placed on PATH or used for module resolution.
+  publish:
+    needs: [preflight, build, bind]
+    if: needs.preflight.outputs.skipped != 'true' && vars.RELEASE_PUBLISH_ENABLED == 'true' && (needs.preflight.outputs.operation == 'nightly' || needs.preflight.outputs.operation == 'stable-publish')
+    runs-on: ubuntu-latest
+    environment: ${{ needs.preflight.outputs.operation == 'stable-publish' && 'release' || '' }}
+    permissions:
+      id-token: write
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22.14.0'
+      - name: Require runner npm
+        run: |
+          node -e 'const [major, minor] = process.versions.node.split(".").map(Number); if (major < 22 || (major === 22 && minor < 14)) process.exit(1)'
+          npm --version | awk -F. '$1 > 11 || ($1 == 11 && $2 >= 5) { exit 0 } { exit 1 }'
+      - name: Reject credential sources before OIDC or npm
+        run: |
+          test -z "${NODE_AUTH_TOKEN:-}" && test -z "${NPM_TOKEN:-}"
+          env | grep -Eiq '^(npm_config_(_auth|_authtoken|auth|//.*:_auth)|NPM_CONFIG_(_AUTH|_AUTHTOKEN|AUTH|//.*:_AUTH)|NPM_CONFIG_USERCONFIG|.*(CREDENTIAL_HELPER|KEYCHAIN))=' && exit 1 || true
+          for file in "$GITHUB_WORKSPACE/.npmrc" "$HOME/.npmrc" "$(npm config get globalconfig)" "${NPM_CONFIG_USERCONFIG:-}"; do
+            test -z "$file" || test ! -f "$file" || ! grep -Eiq '^[[:space:]]*(_auth|_authToken|authToken|//[^=]+:[[:space:]]*_auth(Token)?)[[:space:]]*=' "$file" || exit 1
+          done
+          ! npm config list -l | grep -Eiq '(_auth|_authToken|authToken|//[^=]+:[[:space:]]*_auth(Token)?)'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ needs.bind.outputs.binding-artifact-id }}
+          path: binding
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ needs.build.outputs.control-artifact-id }}
+          path: control
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ needs.build.outputs.payload-artifact-id }}
+          path: payload
+      - id: subject
+        name: Verify artifact checksums and construct control invocation
+        run: |
+          sha256sum -c control/release-control.sha256
+          subject_sha="$(jq -er '.releaseSubjectSha' binding/binding.json)"
+          echo "sha=$subject_sha" >> "$GITHUB_OUTPUT"
+          jq --arg operation '${{ needs.preflight.outputs.operation }}' --arg subjectSha "$subject_sha" '. as $manifest | {repository:"weave-io/weave",workflowPath:".github/workflows/publish.yml",eventName:"workflow_dispatch",ref:"refs/heads/main",operation:$operation,channel:($operation == "nightly" ? "nightly" : "stable"),subjectSha:$subjectSha,packages:$manifest.packages,versions:$manifest.versions}' payload/manifest.json > invocation.json
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ steps.subject.outputs.sha }}
+          path: subject-data
+          persist-credentials: false
+      - name: Execute verified standalone control only
+        run: |
+          chmod 700 control/release-control
+          ./control/release-control invocation.json payload/manifest.json payload binding/binding.json
+
   # Stable operations are fail-closed behind the manually administered release
   # environment. This job produces only plans; it has no contents:write grant.
   stable-plan:

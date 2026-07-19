@@ -4,6 +4,7 @@ import type { Clock } from "../clock.js";
 import { BunCommandRunner } from "../command-runner.js";
 import type { FileSystem } from "../filesystem.js";
 import type { NpmRegistryClient } from "../npm-registry-client.js";
+import { scanCredentialSources } from "../package-policy.js";
 import { ReleaseOrchestrator } from "../release-orchestrator.js";
 
 describe("release command allowlist", () => {
@@ -16,7 +17,6 @@ describe("release command allowlist", () => {
       "public",
       "--tag",
       "nightly",
-      "--ignore-scripts",
     ]);
     expect(result.isErr()).toBe(true);
     if (result.isErr()) expect(result.error.type).toBe("CommandRejected");
@@ -35,7 +35,6 @@ describe("release command allowlist", () => {
           "public",
           "--tag",
           "nightly",
-          "--ignore-scripts",
           "--force",
         ])
       ).isErr(),
@@ -105,9 +104,70 @@ test("orchestrates publication with injected filesystem and registry", async () 
       ],
     },
     artifactDirectory: "/artifacts",
+    bindingVerified: true,
   });
   expect(result.isOk()).toBe(true);
   expect(calls).toEqual(["publish:nightly", "verify"]);
+});
+
+test("credential sources are rejected before any registry use", () => {
+  const fixtures = [
+    {
+      name: "NODE_AUTH_TOKEN",
+      input: { environment: { NODE_AUTH_TOKEN: "x" } },
+    },
+    { name: "NPM_TOKEN", input: { environment: { NPM_TOKEN: "x" } } },
+    {
+      name: "npm auth config",
+      input: { environment: { npm_config__auth: "x" } },
+    },
+    {
+      name: "registry auth config",
+      input: {
+        environment: { "npm_config_//registry.npmjs.org/:_authToken": "x" },
+      },
+    },
+    {
+      name: "userconfig",
+      input: { environment: { NPM_CONFIG_USERCONFIG: "/tmp/auth.npmrc" } },
+    },
+    {
+      name: "project npmrc",
+      input: {
+        environment: {},
+        configFiles: [{ path: ".npmrc", contents: "_authToken=x" }],
+      },
+    },
+    {
+      name: "user npmrc",
+      input: {
+        environment: {},
+        configFiles: [{ path: "~/.npmrc", contents: "authToken=x" }],
+      },
+    },
+    {
+      name: "global npmrc",
+      input: {
+        environment: {},
+        configFiles: [{ path: "/etc/npmrc", contents: "_auth=x" }],
+      },
+    },
+    {
+      name: "npm config output",
+      input: {
+        environment: {},
+        npmConfigOutput: "//registry.npmjs.org/:_authToken=x",
+      },
+    },
+    {
+      name: "credential helper",
+      input: { environment: { NPM_CREDENTIAL_HELPER: "keychain" } },
+    },
+  ] as const;
+  for (const fixture of fixtures)
+    expect(scanCredentialSources(fixture.input).isErr(), fixture.name).toBe(
+      true,
+    );
 });
 
 test("propagates registry publication failure without retrying", async () => {
@@ -141,6 +201,7 @@ test("propagates registry publication failure without retrying", async () => {
     },
     manifest: {},
     artifactDirectory: "/x",
+    bindingVerified: true,
   });
   expect(result.isErr()).toBe(true);
 });

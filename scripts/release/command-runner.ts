@@ -60,15 +60,14 @@ function validate(argv: readonly string[]): string | undefined {
     return "only safe npm argv values are permitted";
   if (argv[1] === "publish") {
     if (
-      argv.length !== 8 ||
+      argv.length !== 7 ||
       !argv[2]?.endsWith(".tgz") ||
       argv[3] !== "--access" ||
       argv[4] !== "public" ||
       argv[5] !== "--tag" ||
-      !TAGS.has(argv[6] ?? "") ||
-      argv[7] !== "--ignore-scripts"
+      !TAGS.has(argv[6] ?? "")
     )
-      return "publish must be npm publish <tarball.tgz> --access public --tag <nightly|next> --ignore-scripts";
+      return "publish must be npm publish <tarball.tgz> --access public --tag <nightly|next>";
     return undefined;
   }
   if (argv[1] === "ping" && argv.length === 2) return undefined;

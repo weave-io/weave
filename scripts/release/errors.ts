@@ -31,4 +31,7 @@ export type ReleaseError =
   | { type: "InvalidManifest"; issues: readonly string[] }
   | { type: "DigestMismatch"; expected: string; actual: string }
   | { type: "TarPreflightFailed"; reason: string }
+  | { type: "CredentialSourceDetected"; source: string }
+  | { type: "BindingVerificationFailed"; reason: string }
+  | { type: "RegistryDigestConflict"; packageName: string; version: string }
   | { type: "UnsupportedOperation"; operation: string };
