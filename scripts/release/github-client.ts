@@ -48,13 +48,63 @@ export interface GitHubRefClient {
   isMergedToMain(sha: string): ResultAsync<boolean, GitHubError>;
 }
 
+export interface GitHubReleaseAsset {
+  id: number;
+  name: string;
+  size: number;
+  digest?: string;
+}
+export interface GitHubRelease {
+  id: number;
+  tag: string;
+  targetSha: string;
+  notes: string;
+  draft: boolean;
+  immutable: boolean;
+  assets: readonly GitHubReleaseAsset[];
+}
+/**
+ * App-only release surface. It deliberately has no ref update/delete or release
+ * update method: stable release references are create-once and published releases
+ * are immutable inputs to verification, never mutation targets.
+ */
+export interface GitHubReleaseClient {
+  getRef(ref: string): ResultAsync<string, GitHubError>;
+  createRef(ref: string, sha: string): ResultAsync<void, GitHubError>;
+  getRelease(tag: string): ResultAsync<GitHubRelease, GitHubError>;
+  createDraftRelease(input: {
+    tag: string;
+    targetSha: string;
+    name: string;
+    notes: string;
+  }): ResultAsync<GitHubRelease, GitHubError>;
+  uploadReleaseAsset(
+    releaseId: number,
+    name: string,
+    bytes: Uint8Array,
+  ): ResultAsync<GitHubReleaseAsset, GitHubError>;
+  deleteReleaseAsset(
+    releaseId: number,
+    assetId: number,
+  ): ResultAsync<void, GitHubError>;
+  publishRelease(releaseId: number): ResultAsync<GitHubRelease, GitHubError>;
+  /** GitHub endpoint assumption: GET /releases/{id}/attestations returns attestations. */
+  hasReleaseAttestation(releaseId: number): ResultAsync<boolean, GitHubError>;
+  /** App-created lightweight refs are expected to be unsigned unless GitHub reports otherwise. */
+  getTagVerification(
+    tag: string,
+  ): ResultAsync<"verified" | "unsigned", GitHubError>;
+}
+
 export type GitHubFetch = (
   input: string,
   init?: RequestInit,
 ) => Promise<Response>;
 
 /** Minimal REST client; callers inject fetch in tests so no live GitHub is needed. */
-export class GitHubRestClient implements GitHubClient, GitHubRefClient {
+export class GitHubRestClient
+  implements GitHubClient, GitHubRefClient, GitHubReleaseClient
+{
   constructor(
     private readonly repository: string,
     private readonly token?: string,
@@ -171,12 +221,139 @@ export class GitHubRestClient implements GitHubClient, GitHubRefClient {
     });
   }
 
+  getRelease(tag: string): ResultAsync<GitHubRelease, GitHubError> {
+    const path = `/releases/tags/${encodeURIComponent(tag)}`;
+    return this.requestJson(path).andThen((value) => {
+      const release = parseRelease(value);
+      return release === undefined
+        ? errAsync(invalidResponse(path))
+        : okAsync(release);
+    });
+  }
+
+  createDraftRelease(input: {
+    tag: string;
+    targetSha: string;
+    name: string;
+    notes: string;
+  }): ResultAsync<GitHubRelease, GitHubError> {
+    return this.requestJsonWithInit("/releases", {
+      method: "POST",
+      body: JSON.stringify({
+        tag_name: input.tag,
+        target_commitish: input.targetSha,
+        name: input.name,
+        body: input.notes,
+        draft: true,
+      }),
+    }).andThen((value) => {
+      const release = parseRelease(value);
+      return release === undefined
+        ? errAsync(invalidResponse("/releases"))
+        : okAsync(release);
+    });
+  }
+
+  uploadReleaseAsset(
+    releaseId: number,
+    name: string,
+    bytes: Uint8Array,
+  ): ResultAsync<GitHubReleaseAsset, GitHubError> {
+    const url = `${this.apiUrl}/repos/${this.repository}/releases/${releaseId}/assets?name=${encodeURIComponent(name)}`;
+    return this.requestAbsoluteJson(url, {
+      method: "POST",
+      headers: { "content-type": "application/octet-stream" },
+      body: bytes as unknown as BodyInit,
+    }).andThen((value) => {
+      const asset = parseReleaseAsset(value);
+      return asset === undefined
+        ? errAsync(invalidResponse(`/releases/${releaseId}/assets`))
+        : okAsync(asset);
+    });
+  }
+
+  deleteReleaseAsset(
+    releaseId: number,
+    assetId: number,
+  ): ResultAsync<void, GitHubError> {
+    return this.request(`/releases/${releaseId}/assets/${assetId}`, {
+      method: "DELETE",
+    }).map(() => undefined);
+  }
+
+  publishRelease(releaseId: number): ResultAsync<GitHubRelease, GitHubError> {
+    const path = `/releases/${releaseId}`;
+    return this.requestJsonWithInit(path, {
+      method: "PATCH",
+      body: JSON.stringify({ draft: false }),
+    }).andThen((value) => {
+      const release = parseRelease(value);
+      return release === undefined
+        ? errAsync(invalidResponse(path))
+        : okAsync(release);
+    });
+  }
+
+  hasReleaseAttestation(releaseId: number): ResultAsync<boolean, GitHubError> {
+    const path = `/releases/${releaseId}/attestations`;
+    return this.requestJson(path).andThen((value) => {
+      if (!isRecord(value) || !Array.isArray(value.attestations))
+        return errAsync(invalidResponse(path));
+      return okAsync(value.attestations.length > 0);
+    });
+  }
+
+  getTagVerification(
+    _tag: string,
+  ): ResultAsync<"verified" | "unsigned", GitHubError> {
+    // The refs API creates lightweight tags and does not expose a verification object.
+    return okAsync("unsigned");
+  }
+
   private requestJson(path: string): ResultAsync<unknown, GitHubError> {
     return this.request(path).andThen((response) =>
       ResultAsync.fromPromise(
         Promise.resolve(JSON.parse(new TextDecoder().decode(response))),
         () => invalidResponse(path),
       ),
+    );
+  }
+
+  private requestJsonWithInit(
+    path: string,
+    init: RequestInit,
+  ): ResultAsync<unknown, GitHubError> {
+    return this.request(path, init).andThen((response) =>
+      ResultAsync.fromPromise(
+        Promise.resolve(JSON.parse(new TextDecoder().decode(response))),
+        () => invalidResponse(path),
+      ),
+    );
+  }
+  private requestAbsoluteJson(
+    url: string,
+    init: RequestInit,
+  ): ResultAsync<unknown, GitHubError> {
+    const headers = new Headers(init.headers);
+    headers.set("accept", "application/vnd.github+json");
+    if (this.token !== undefined)
+      headers.set("authorization", `Bearer ${this.token}`);
+    return ResultAsync.fromPromise(
+      this.requestFetch(url, { ...init, headers }),
+      (cause) => ({
+        type: "GitHubError" as const,
+        operation: url,
+        message: String(cause),
+      }),
+    ).andThen((response) =>
+      response.ok
+        ? ResultAsync.fromPromise(response.json(), () => invalidResponse(url))
+        : errAsync({
+            type: "GitHubError" as const,
+            operation: url,
+            status: response.status,
+            message: response.statusText,
+          }),
     );
   }
 
@@ -266,6 +443,46 @@ function parseArtifact(value: unknown): ActionsArtifactMetadata | undefined {
     digest: value.digest,
     expired: value.expired,
     sizeInBytes: value.size_in_bytes,
+  };
+}
+function parseRelease(value: unknown): GitHubRelease | undefined {
+  if (
+    !isRecord(value) ||
+    !isPositiveInt(value.id) ||
+    !isString(value.tag_name) ||
+    !isString(value.target_commitish) ||
+    !isString(value.body) ||
+    typeof value.draft !== "boolean" ||
+    typeof value.immutable !== "boolean" ||
+    !Array.isArray(value.assets)
+  )
+    return undefined;
+  const assets = value.assets.map(parseReleaseAsset);
+  if (assets.some((asset) => asset === undefined)) return undefined;
+  return {
+    id: value.id,
+    tag: value.tag_name,
+    targetSha: value.target_commitish,
+    notes: value.body,
+    draft: value.draft,
+    immutable: value.immutable,
+    assets: assets as GitHubReleaseAsset[],
+  };
+}
+function parseReleaseAsset(value: unknown): GitHubReleaseAsset | undefined {
+  if (
+    !isRecord(value) ||
+    !isPositiveInt(value.id) ||
+    !isString(value.name) ||
+    !isPositiveInt(value.size)
+  )
+    return undefined;
+  if (value.digest !== undefined && !isString(value.digest)) return undefined;
+  return {
+    id: value.id,
+    name: value.name,
+    size: value.size,
+    digest: value.digest,
   };
 }
 

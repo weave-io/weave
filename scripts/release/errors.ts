@@ -28,6 +28,7 @@ export type ReleaseError =
   | CommandError
   | FileSystemError
   | RegistryError
+  | GitHubError
   | { type: "InvalidManifest"; issues: readonly string[] }
   | { type: "DigestMismatch"; expected: string; actual: string }
   | { type: "TarPreflightFailed"; reason: string }
@@ -47,4 +48,13 @@ export type ReleaseError =
       expected: string;
       actual?: string;
     }
-  | { type: "UnsupportedOperation"; operation: string };
+  | { type: "UnsupportedOperation"; operation: string }
+  | {
+      type: "ReleaseRefMismatch";
+      tag: string;
+      expectedSha: string;
+      actualSha: string;
+    }
+  | { type: "ReleaseMismatch"; tag: string; reason: string }
+  | { type: "ReleaseImmutableTimeout"; tag: string; attempts: number }
+  | { type: "ReleaseAttestationNotVerifiable"; tag: string; reason: string };

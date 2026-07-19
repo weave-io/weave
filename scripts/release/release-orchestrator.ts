@@ -15,7 +15,11 @@ import { validateArtifactManifest } from "./artifact-manifest.js";
 import type { Clock } from "./clock.js";
 import type { ReleaseError } from "./errors.js";
 import type { FileSystem } from "./filesystem.js";
-import type { GitHubClient } from "./github-client.js";
+import type {
+  GitHubClient,
+  GitHubRelease,
+  GitHubReleaseClient,
+} from "./github-client.js";
 import type { ReleaseInvocation } from "./input-validation.js";
 import {
   MetadataReplay,
@@ -27,6 +31,7 @@ import {
   DigestSchema,
   FullShaSchema,
   PackageNameSchema,
+  packageArtifactFilename,
   SemVerSchema,
 } from "./model.js";
 import {
@@ -53,6 +58,15 @@ const STABLE_PROMOTION_PACKAGES = [
   "@weaveio/weave-cli",
   "@weaveio/weave-adapter-opencode",
 ] as const;
+interface ExpectedReleaseAsset {
+  name: string;
+  bytes: Uint8Array;
+  size: number;
+  digest: string;
+}
+function digestBytes(bytes: Uint8Array): string {
+  return `sha256:${new Bun.CryptoHasher("sha256").update(bytes).digest("hex")}`;
+}
 const PromotionAuthorizationSchema = z
   .object({
     schemaVersion: z.literal(1),
@@ -129,6 +143,19 @@ export interface PromotionCommands {
 export interface StableFinalizeResult {
   state: "promoted";
   authorization: PromotionAuthorization;
+}
+export interface StableReleaseRefsRequest {
+  authorization: unknown;
+  manifest: unknown;
+  artifactDirectory: string;
+  github: GitHubReleaseClient;
+  /** Recorded changelog text. Its digest is compared exactly for idempotence. */
+  notes: string;
+  immutablePollAttempts?: number;
+}
+export interface StableReleaseRefsResult {
+  state: "released" | "already-immutable";
+  tags: Readonly<Record<string, "verified" | "unsigned">>;
 }
 export type PublishResult =
   | { state: "published"; promotionAuthorization?: PromotionAuthorization }
@@ -233,6 +260,59 @@ export class ReleaseOrchestrator {
           state: "promoted" as const,
           authorization: record,
         })),
+    );
+  }
+
+  /**
+   * App-only post-finalize release operation. Drafts can be reconciled, but a
+   * published release is never updated: only exact immutable state is success.
+   */
+  stableReleaseRefs(
+    request: StableReleaseRefsRequest,
+  ): ResultAsync<StableReleaseRefsResult, ReleaseError> {
+    return this.validatePromotionAuthorization(request.authorization).andThen(
+      (authorization) => {
+        const manifest = validateArtifactManifest(request.manifest);
+        if (manifest.isErr())
+          return errAsync({
+            type: "InvalidManifest" as const,
+            issues: manifest.error.issues,
+          });
+        if (manifest.value.releaseSubjectSha !== authorization.subjectSha)
+          return errAsync({
+            type: "ReleaseMismatch" as const,
+            tag: "train",
+            reason: "manifest subject differs from promotion record",
+          });
+        const attempts = request.immutablePollAttempts ?? 5;
+        if (!Number.isSafeInteger(attempts) || attempts < 1)
+          return errAsync({
+            type: "ReleaseMismatch" as const,
+            tag: "train",
+            reason: "immutable poll attempts must be positive",
+          });
+        return this.ensureTags(authorization, request.github).andThen((tags) =>
+          STABLE_PROMOTION_PACKAGES.reduce<
+            ResultAsync<"released" | "already-immutable", ReleaseError>
+          >(
+            (chain, packageName) =>
+              chain.andThen((state) =>
+                this.releasePackage(
+                  packageName,
+                  authorization,
+                  manifest.value,
+                  request,
+                  attempts,
+                ).map((next) =>
+                  state === "released" || next === "released"
+                    ? "released"
+                    : "already-immutable",
+                ),
+              ),
+            okAsync("already-immutable"),
+          ).map((state) => ({ state, tags })),
+        );
+      },
     );
   }
 
@@ -363,6 +443,356 @@ export class ReleaseOrchestrator {
           },
         };
       });
+  }
+
+  private ensureTags(
+    authorization: PromotionAuthorization,
+    github: GitHubReleaseClient,
+  ): ResultAsync<Record<string, "verified" | "unsigned">, ReleaseError> {
+    return STABLE_PROMOTION_PACKAGES.reduce<
+      ResultAsync<Record<string, "verified" | "unsigned">, ReleaseError>
+    >(
+      (chain, packageName) =>
+        chain.andThen((result) => {
+          const tag = this.releaseTag(
+            packageName,
+            authorization.versions[packageName],
+          );
+          return github
+            .getRef(`refs/tags/${tag}`)
+            .andThen((sha) =>
+              this.verifyExistingTag(
+                tag,
+                authorization.subjectSha,
+                sha,
+                github,
+              ),
+            )
+            .orElse((error) => {
+              if (error.type !== "GitHubError" || error.status !== 404)
+                return errAsync(error);
+              return github
+                .createRef(`refs/tags/${tag}`, authorization.subjectSha)
+                .andThen(() => github.getTagVerification(tag));
+            })
+            .map((verification) => ({ ...result, [tag]: verification }));
+        }),
+      okAsync<Record<string, "verified" | "unsigned">, ReleaseError>({}),
+    );
+  }
+
+  private verifyExistingTag(
+    tag: string,
+    expectedSha: string,
+    actualSha: string,
+    github: GitHubReleaseClient,
+  ): ResultAsync<"verified" | "unsigned", ReleaseError> {
+    if (actualSha !== expectedSha)
+      return errAsync({
+        type: "ReleaseRefMismatch",
+        tag,
+        expectedSha,
+        actualSha,
+      });
+    return github.getTagVerification(tag);
+  }
+
+  private releasePackage(
+    packageName: string,
+    authorization: PromotionAuthorization,
+    manifest: import("./model.js").ArtifactManifest,
+    request: StableReleaseRefsRequest,
+    attempts: number,
+  ): ResultAsync<"released" | "already-immutable", ReleaseError> {
+    const version = authorization.versions[packageName];
+    const tag = this.releaseTag(packageName, version);
+    return this.expectedAssets(
+      packageName,
+      version,
+      manifest,
+      request.artifactDirectory,
+    ).andThen((assets) =>
+      request.github
+        .getRelease(tag)
+        .andThen((release) =>
+          this.handleExistingRelease(
+            release,
+            tag,
+            authorization.subjectSha,
+            request.notes,
+            assets,
+            request,
+            attempts,
+          ),
+        )
+        .orElse((error) => {
+          if (error.type !== "GitHubError" || error.status !== 404)
+            return errAsync(error);
+          return request.github
+            .createDraftRelease({
+              tag,
+              targetSha: authorization.subjectSha,
+              name: tag,
+              notes: request.notes,
+            })
+            .andThen((release) =>
+              this.reconcileDraft(
+                release,
+                tag,
+                authorization.subjectSha,
+                request.notes,
+                assets,
+                request.github,
+              ).andThen((draft) =>
+                this.publishAndVerify(draft, tag, request.github, attempts),
+              ),
+            );
+        }),
+    );
+  }
+
+  private handleExistingRelease(
+    release: GitHubRelease,
+    tag: string,
+    targetSha: string,
+    notes: string,
+    assets: readonly ExpectedReleaseAsset[],
+    request: StableReleaseRefsRequest,
+    attempts: number,
+  ): ResultAsync<"released" | "already-immutable", ReleaseError> {
+    const checked = this.verifyRelease(release, tag, targetSha, notes, assets);
+    if (release.immutable)
+      return checked.andThen(() =>
+        request.github.hasReleaseAttestation(release.id).andThen((present) =>
+          present
+            ? okAsync("already-immutable" as const)
+            : errAsync({
+                type: "ReleaseAttestationNotVerifiable" as const,
+                tag,
+                reason: "GitHub returned no platform attestation",
+              }),
+        ),
+      );
+    if (!release.draft)
+      return errAsync({
+        type: "ReleaseMismatch",
+        tag,
+        reason: "published release is not immutable and cannot be edited",
+      });
+    // Draft-only reconciliation is the sole mutation path for an existing release.
+    return this.reconcileDraft(
+      release,
+      tag,
+      targetSha,
+      notes,
+      assets,
+      request.github,
+    ).andThen((draft) =>
+      this.publishAndVerify(draft, tag, request.github, attempts),
+    );
+  }
+
+  private expectedAssets(
+    packageName: string,
+    version: string,
+    manifest: import("./model.js").ArtifactManifest,
+    directory: string,
+  ): ResultAsync<readonly ExpectedReleaseAsset[], ReleaseError> {
+    const filename = packageArtifactFilename(packageName, version);
+    const artifact = manifest.artifacts.find(
+      (entry) => entry.filename === filename,
+    );
+    if (artifact === undefined)
+      return errAsync({
+        type: "ReleaseMismatch" as const,
+        tag: packageName,
+        reason: "manifest artifact missing",
+      });
+    return this.files
+      .readBytes(`${directory}/${filename}`)
+      .andThen((tarball) => {
+        const digest = digestBytes(tarball);
+        if (digest !== artifact.sha256)
+          return errAsync({
+            type: "DigestMismatch" as const,
+            expected: artifact.sha256,
+            actual: digest,
+          });
+        if (tarball.byteLength !== artifact.sizeBytes)
+          return errAsync({
+            type: "ReleaseMismatch" as const,
+            tag: packageName,
+            reason: "tarball size differs from manifest",
+          });
+        return this.files
+          .readBytes(`${directory}/${artifact.checksumFilename}`)
+          .map((checksum) => [
+            {
+              name: filename,
+              bytes: tarball,
+              size: artifact.sizeBytes,
+              digest: artifact.sha256,
+            },
+            {
+              name: artifact.checksumFilename,
+              bytes: checksum,
+              size: checksum.byteLength,
+              digest: digestBytes(checksum),
+            },
+          ]);
+      });
+  }
+
+  private reconcileDraft(
+    release: GitHubRelease,
+    tag: string,
+    targetSha: string,
+    notes: string,
+    assets: readonly ExpectedReleaseAsset[],
+    github: GitHubReleaseClient,
+  ): ResultAsync<GitHubRelease, ReleaseError> {
+    if (!release.draft)
+      return errAsync({
+        type: "ReleaseMismatch",
+        tag,
+        reason: "published releases are never edited",
+      });
+    if (
+      release.tag !== tag ||
+      release.targetSha !== targetSha ||
+      release.notes !== notes
+    )
+      return errAsync({
+        type: "ReleaseMismatch",
+        tag,
+        reason: "draft identity differs from train record",
+      });
+    return assets
+      .reduce<ResultAsync<void, ReleaseError>>(
+        (chain, expected) =>
+          chain.andThen(() => {
+            const current = release.assets.find(
+              (asset) => asset.name === expected.name,
+            );
+            if (current === undefined)
+              return github
+                .uploadReleaseAsset(release.id, expected.name, expected.bytes)
+                .map(() => undefined);
+            if (
+              current.size === expected.size &&
+              current.digest === expected.digest
+            )
+              return okAsync(undefined);
+            // Strict policy: delete and replace only while the release remains a draft.
+            return github
+              .deleteReleaseAsset(release.id, current.id)
+              .andThen(() =>
+                github.uploadReleaseAsset(
+                  release.id,
+                  expected.name,
+                  expected.bytes,
+                ),
+              )
+              .map(() => undefined);
+          }),
+        okAsync<void, ReleaseError>(undefined),
+      )
+      .andThen(() => github.getRelease(tag))
+      .andThen((draft) =>
+        this.verifyRelease(draft, tag, targetSha, notes, assets).map(
+          () => draft,
+        ),
+      );
+  }
+
+  private publishAndVerify(
+    draft: GitHubRelease,
+    tag: string,
+    github: GitHubReleaseClient,
+    attempts: number,
+  ): ResultAsync<"released", ReleaseError> {
+    if (!draft.draft)
+      return errAsync({
+        type: "ReleaseMismatch",
+        tag,
+        reason: "release became published before controlled publish",
+      });
+    return github
+      .publishRelease(draft.id)
+      .andThen(() => this.pollImmutable(tag, github, attempts, 1));
+  }
+
+  private pollImmutable(
+    tag: string,
+    github: GitHubReleaseClient,
+    attempts: number,
+    current: number,
+  ): ResultAsync<"released", ReleaseError> {
+    return github.getRelease(tag).andThen((release) => {
+      if (!release.immutable) {
+        if (current >= attempts)
+          return errAsync({
+            type: "ReleaseImmutableTimeout" as const,
+            tag,
+            attempts,
+          });
+        return this.pollImmutable(tag, github, attempts, current + 1);
+      }
+      return github.hasReleaseAttestation(release.id).andThen((present) =>
+        present
+          ? okAsync("released" as const)
+          : errAsync({
+              type: "ReleaseAttestationNotVerifiable" as const,
+              tag,
+              reason: "GitHub returned no platform attestation",
+            }),
+      );
+    });
+  }
+
+  private verifyRelease(
+    release: GitHubRelease,
+    tag: string,
+    targetSha: string,
+    notes: string,
+    assets: readonly ExpectedReleaseAsset[],
+  ): ResultAsync<void, ReleaseError> {
+    if (
+      release.tag !== tag ||
+      release.targetSha !== targetSha ||
+      release.notes !== notes
+    )
+      return errAsync({
+        type: "ReleaseMismatch",
+        tag,
+        reason: "tag, target, or notes identity differs",
+      });
+    if (release.assets.length !== assets.length)
+      return errAsync({
+        type: "ReleaseMismatch",
+        tag,
+        reason: "asset set is incomplete or contains extras",
+      });
+    for (const expected of assets) {
+      const actual = release.assets.find(
+        (asset) => asset.name === expected.name,
+      );
+      if (
+        actual === undefined ||
+        actual.size !== expected.size ||
+        actual.digest !== expected.digest
+      )
+        return errAsync({
+          type: "ReleaseMismatch",
+          tag,
+          reason: `asset ${expected.name} differs`,
+        });
+    }
+    return okAsync(undefined);
+  }
+
+  private releaseTag(packageName: string, version: string): string {
+    return `weave-${packageName === "@weaveio/weave-cli" ? "cli" : "adapter-opencode"}-v${version}`;
   }
 
   private validatePromotionAuthorization(

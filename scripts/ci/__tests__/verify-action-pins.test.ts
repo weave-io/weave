@@ -24,4 +24,11 @@ describe("verifyActionPins", () => {
   it("accepts every repository workflow and composite action", async () => {
     expect(verifyActionPins(await loadActionFiles()).isOk()).toBe(true);
   });
+
+  it("does not introduce custom attestation or SBOM actions", async () => {
+    const workflows = await loadActionFiles();
+    expect(Object.values(workflows).join("\n")).not.toMatch(
+      /uses:\s*[^\n]*(attest|sbom)/i,
+    );
+  });
 });
