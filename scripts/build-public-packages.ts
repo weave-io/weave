@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { logger } from "@weaveio/weave-engine";
 import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
 
 import {
@@ -6,6 +7,7 @@ import {
   type PrivatePackageName,
   PUBLIC_PACKAGE_BUILDS,
   PUBLIC_RUNTIME_EXTERNALS,
+  type PublicDeclarationBuild,
   type PublicPackageBuild,
   type PublicPackageName,
 } from "./release/constants.js";
@@ -16,8 +18,17 @@ export type PublicPackageBuildError =
       packageName: PublicPackageName;
       diagnostics: string;
     }
-  | { type: "Filesystem"; path: string; operation: "copy" | "mkdir" | "chmod" }
-  | { type: "TypeDeclarations"; packageName: PublicPackageName }
+  | {
+      type: "Filesystem";
+      path: string;
+      operation: "copy" | "mkdir" | "chmod" | "write";
+    }
+  | {
+      type: "TypeDeclarations";
+      packageName: PublicPackageName;
+      config?: string;
+      diagnostics?: string;
+    }
   | { type: "CliManifest"; path: string }
   | {
       type: "PrivateDependencyReference";
@@ -36,6 +47,10 @@ export interface PublicPackageFileSystem {
   ensureDirectory(path: string): ResultAsync<void, PublicPackageBuildError>;
   makeExecutable(path: string): ResultAsync<void, PublicPackageBuildError>;
   readText(path: string): ResultAsync<string, PublicPackageBuildError>;
+  writeText(
+    path: string,
+    contents: string,
+  ): ResultAsync<void, PublicPackageBuildError>;
 }
 
 /**
@@ -55,6 +70,20 @@ export function hasPrivateDependencyReference(
     `(?:import|export)\\s+(?:[^"']*?\\s+from\\s+)?["']${escaped}["']|require\\(\\s*["']${escaped}["']\\s*\\)`,
   );
   return dependencyMap.test(contents) || moduleSpecifier.test(contents);
+}
+
+/** Matches private workspace imports and paths that escape into private packages. */
+export function hasPrivateDeclarationReference(
+  contents: string,
+  packageName: string,
+): boolean {
+  return contents.includes(packageName);
+}
+
+function hasPrivateDeclarationPathReference(contents: string): boolean {
+  return /(?:from|import\()\s*["'][^"']*(?:packages\/(?:core|config|engine)|\.\.\/(?:core|config|engine))(?:\/|["'])/.test(
+    contents,
+  );
 }
 
 /** Bun-only filesystem operations required to assemble public package outputs. */
@@ -92,6 +121,17 @@ export class BunPublicPackageFileSystem implements PublicPackageFileSystem {
     }));
   }
 
+  writeText(
+    path: string,
+    contents: string,
+  ): ResultAsync<void, PublicPackageBuildError> {
+    return ResultAsync.fromPromise(Bun.write(path, contents), () => ({
+      type: "Filesystem" as const,
+      path,
+      operation: "write" as const,
+    })).map(() => undefined);
+  }
+
   private run(
     command: string[],
     path: string,
@@ -113,7 +153,16 @@ export class PublicPackageBuilder {
   constructor(private readonly fileSystem: PublicPackageFileSystem) {}
 
   buildAll(): ResultAsync<void, PublicPackageBuildError> {
-    let result = okAsync<void, PublicPackageBuildError>(undefined);
+    let result = this.emitPrivateDeclarations()
+      .andThen(() => {
+        const build =
+          PUBLIC_PACKAGE_BUILDS["@weaveio/weave-adapter-claude-code"];
+        return this.rollupDeclarations(
+          "@weaveio/weave-adapter-claude-code",
+          build.declarations,
+        );
+      })
+      .andThen(() => this.emitPublicDeclarations());
     for (const packageName of Object.keys(
       PUBLIC_PACKAGE_BUILDS,
     ) as PublicPackageName[]) {
@@ -127,8 +176,113 @@ export class PublicPackageBuilder {
   ): ResultAsync<void, PublicPackageBuildError> {
     const build: PublicPackageBuild = PUBLIC_PACKAGE_BUILDS[packageName];
     return this.buildEntries(packageName, build.entries)
+      .andThen(() => this.rollupDeclarations(packageName, build.declarations))
       .andThen(() => this.copyBootstrap(build.bootstrap))
       .andThen(() => this.verifyEntries(packageName, build.entries));
+  }
+
+  private emitPrivateDeclarations(): ResultAsync<
+    void,
+    PublicPackageBuildError
+  > {
+    return this.runTypeScriptProjects([
+      "packages/core/tsconfig.build.json",
+      "packages/engine/tsconfig.build.json",
+      "packages/config/tsconfig.build.json",
+      "packages/adapters/claude-code/tsconfig.build.json",
+    ]);
+  }
+
+  private emitPublicDeclarations(): ResultAsync<void, PublicPackageBuildError> {
+    return this.runTypeScriptProjects([
+      "packages/cli/tsconfig.build.json",
+      "packages/adapters/opencode/tsconfig.build.json",
+    ]);
+  }
+
+  private runTypeScriptProjects(
+    projects: readonly string[],
+  ): ResultAsync<void, PublicPackageBuildError> {
+    let result = okAsync<void, PublicPackageBuildError>(undefined);
+    for (const project of projects) {
+      result = result.andThen(() =>
+        this.runTool(["bun", "x", "tsc", "-p", project], {
+          type: "TypeDeclarations",
+          packageName: "@weaveio/weave-cli",
+          config: project,
+        }),
+      );
+    }
+    return result;
+  }
+
+  private rollupDeclarations(
+    packageName: PublicPackageName,
+    declarations: readonly PublicDeclarationBuild[],
+  ): ResultAsync<void, PublicPackageBuildError> {
+    let result = okAsync<void, PublicPackageBuildError>(undefined);
+    for (const declaration of declarations) {
+      result = result
+        .andThen(() =>
+          this.runTool(
+            [
+              "bun",
+              "x",
+              "api-extractor",
+              "run",
+              "--local",
+              "--config",
+              declaration.config,
+            ],
+            {
+              type: "TypeDeclarations",
+              packageName,
+              config: declaration.config,
+            },
+          ),
+        )
+        .andThen(() => this.sanitizeDeclaration(declaration))
+        .andThen(() => this.verifyDeclaration(packageName, declaration));
+    }
+    return result;
+  }
+
+  private verifyDeclaration(
+    packageName: PublicPackageName,
+    declaration: PublicDeclarationBuild,
+  ): ResultAsync<void, PublicPackageBuildError> {
+    return this.fileSystem.readText(declaration.output).andThen((contents) => {
+      const privatePackageName = this.findPrivateDeclarationReference(
+        packageName,
+        contents,
+      );
+      if (
+        privatePackageName === undefined &&
+        !hasPrivateDeclarationPathReference(contents)
+      ) {
+        return okAsync(undefined);
+      }
+      return errAsync({
+        type: "PrivateDependencyReference" as const,
+        packageName,
+        output: declaration.output,
+        privatePackageName: privatePackageName ?? "@weaveio/weave-core",
+      });
+    });
+  }
+
+  private sanitizeDeclaration(
+    declaration: PublicDeclarationBuild,
+  ): ResultAsync<void, PublicPackageBuildError> {
+    return this.fileSystem.readText(declaration.output).andThen((contents) => {
+      const sanitized = contents
+        .replaceAll("@weaveio/weave-adapter-claude-code", "the Claude adapter")
+        .replaceAll("@weaveio/weave-config", "the configuration package")
+        .replaceAll("@weaveio/weave-engine", "the engine package")
+        .replaceAll("@weaveio/weave-core", "the core package");
+      if (sanitized === contents) return okAsync(undefined);
+      return this.fileSystem.writeText(declaration.output, sanitized);
+    });
   }
 
   private buildEntries(
@@ -244,6 +398,39 @@ export class PublicPackageBuilder {
     return names.find((name) => hasPrivateDependencyReference(contents, name));
   }
 
+  private findPrivateDeclarationReference(
+    packageName: PublicPackageName,
+    contents: string,
+  ): PrivatePackageName | "@weaveio/weave-adapter-claude-code" | undefined {
+    const names: (PrivatePackageName | "@weaveio/weave-adapter-claude-code")[] =
+      [...PRIVATE_PACKAGE_NAMES];
+    if (packageName === "@weaveio/weave-cli") {
+      names.push("@weaveio/weave-adapter-claude-code");
+    }
+    return names.find((name) => hasPrivateDeclarationReference(contents, name));
+  }
+
+  private runTool(
+    command: string[],
+    error: Extract<PublicPackageBuildError, { type: "TypeDeclarations" }>,
+  ): ResultAsync<void, PublicPackageBuildError> {
+    const process = Result.fromThrowable(
+      () => Bun.spawn({ cmd: command, stdout: "pipe", stderr: "pipe" }),
+      () => error,
+    )();
+    if (process.isErr()) return errAsync(process.error);
+    return ResultAsync.fromPromise(
+      Promise.all([
+        process.value.exited,
+        new Response(process.value.stderr).text(),
+      ]),
+      () => error,
+    ).andThen(([exitCode, diagnostics]) => {
+      if (exitCode === 0) return okAsync(undefined);
+      return errAsync({ ...error, diagnostics });
+    });
+  }
+
   private copyBootstrap(
     files?: readonly string[],
   ): ResultAsync<void, PublicPackageBuildError> {
@@ -271,5 +458,8 @@ export class PublicPackageBuilder {
 if (import.meta.main) {
   const builder = new PublicPackageBuilder(new BunPublicPackageFileSystem());
   const result = await builder.buildAll();
-  if (result.isErr()) process.exitCode = 1;
+  if (result.isErr()) {
+    logger.error(result.error, "Public package build failed");
+    process.exitCode = 1;
+  }
 }

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "bun:test";
-import { hasPrivateDependencyReference } from "../../build-public-packages.js";
+import {
+  hasPrivateDeclarationReference,
+  hasPrivateDependencyReference,
+} from "../../build-public-packages.js";
 
 describe("public package build guard", () => {
   it("rejects bundled private workspace dependency maps", () => {
@@ -27,5 +30,14 @@ describe("public package build guard", () => {
         "@weaveio/weave-engine",
       ),
     ).toBe(false);
+  });
+
+  it("rejects private workspace references in declaration rollups", () => {
+    expect(
+      hasPrivateDeclarationReference(
+        'import type { WeaveConfig } from "@weaveio/weave-core";',
+        "@weaveio/weave-core",
+      ),
+    ).toBe(true);
   });
 });
