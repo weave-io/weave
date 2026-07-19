@@ -48,27 +48,24 @@ export const STABLE_TRAIN_STATES = [
   "partial",
 ] as const;
 
-/** Explicitly allowlisted next states; Task 20 may tighten this policy. */
+/**
+ * The complete stable-train lifecycle.  Terminal outcomes deliberately have no
+ * escape hatch: recovery always starts from a fresh `main` cut.
+ */
 export const STABLE_TRAIN_TRANSITIONS = {
   prepared: ["built", "blocked", "abandoned", "expired"],
   built: ["bound", "blocked", "abandoned", "expired"],
   bound: ["published-next", "blocked", "abandoned", "expired"],
   "published-next": ["awaiting-promotion", "partial", "blocked", "expired"],
-  "awaiting-promotion": [
-    "promoted",
-    "release-draft",
-    "partial",
-    "blocked",
-    "expired",
-  ],
+  "awaiting-promotion": ["promoted", "partial", "blocked", "expired"],
   promoted: ["release-draft", "finalized", "metadata-pending", "blocked"],
-  "release-draft": ["finalized", "metadata-pending", "blocked"],
+  "release-draft": ["finalized", "metadata-pending", "blocked", "abandoned"],
   finalized: ["metadata-pending"],
   "metadata-pending": ["finalized", "blocked"],
   blocked: ["abandoned", "expired"],
-  expired: [],
+  expired: ["abandoned"],
   abandoned: [],
-  partial: ["awaiting-promotion", "blocked", "abandoned", "expired"],
+  partial: ["blocked", "abandoned"],
 } as const;
 
 export const PRIVATE_PACKAGE_NAMES = [

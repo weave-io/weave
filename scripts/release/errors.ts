@@ -57,4 +57,5 @@ export type ReleaseError =
     }
   | { type: "ReleaseMismatch"; tag: string; reason: string }
   | { type: "ReleaseImmutableTimeout"; tag: string; attempts: number }
-  | { type: "ReleaseAttestationNotVerifiable"; tag: string; reason: string };
+  | { type: "ReleaseAttestationNotVerifiable"; tag: string; reason: string }
+  | { type: "StableTrainStateInvalid"; reason: string };

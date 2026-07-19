@@ -26,7 +26,7 @@ import {
   type MetadataReplayError,
   type ReplayPlan,
 } from "./metadata-replay.js";
-import type { MetadataReplayRecord } from "./model.js";
+import type { MetadataReplayRecord, StableTrainRecord } from "./model.js";
 import {
   DigestSchema,
   FullShaSchema,
@@ -51,7 +51,12 @@ import type {
   StableFixInput,
   StableFixPlan,
 } from "./stable-train.js";
-import { planStableCut, planStableFix } from "./stable-train.js";
+import {
+  guardTrainExpiry,
+  planStableCut,
+  planStableFix,
+  transitionStableTrain,
+} from "./stable-train.js";
 import { TarInspector } from "./tar-inspector.js";
 
 const STABLE_PROMOTION_PACKAGES = [
@@ -121,6 +126,8 @@ export interface PublishRequest {
     github: GitHubClient;
   };
   credentialScan?: CredentialScanInput;
+  /** Stable operations carry the content-addressed train they are advancing. */
+  stableTrain?: StableTrainRecord;
 }
 export interface PromotionAuthorization {
   schemaVersion: 1;
@@ -154,6 +161,7 @@ export interface StableReleaseRefsRequest {
   /** Recorded changelog text. Its digest is compared exactly for idempotence. */
   notes: string;
   immutablePollAttempts?: number;
+  stableTrain?: StableTrainRecord;
 }
 export interface StableReleaseRefsResult {
   state: "released" | "already-immutable";
@@ -255,7 +263,10 @@ export class ReleaseOrchestrator {
   /** Read-only final gate; Task 19 may attach App tag/release actions after this proof. */
   stableFinalize(
     authorization: unknown,
+    stableTrain?: StableTrainRecord,
   ): ResultAsync<StableFinalizeResult, ReleaseError> {
+    const transition = this.assertStableTransition(stableTrain, "promoted");
+    if (transition.isErr()) return errAsync(transition.error);
     return this.validatePromotionAuthorization(authorization).andThen(
       (record) =>
         this.verifyTagAndDigests(record, "latest").map(() => ({
@@ -272,6 +283,11 @@ export class ReleaseOrchestrator {
   stableReleaseRefs(
     request: StableReleaseRefsRequest,
   ): ResultAsync<StableReleaseRefsResult, ReleaseError> {
+    const transition = this.assertStableTransition(
+      request.stableTrain,
+      "release-draft",
+    );
+    if (transition.isErr()) return errAsync(transition.error);
     return this.validatePromotionAuthorization(request.authorization).andThen(
       (authorization) => {
         const manifest = validateArtifactManifest(request.manifest);
@@ -353,6 +369,13 @@ export class ReleaseOrchestrator {
     if (request.invocation.eventName !== "workflow_dispatch")
       return errAsync({ type: "UnsupportedOperation", operation: "schedule" });
     const stablePublication = request.invocation.operation === "stable-publish";
+    if (stablePublication) {
+      const transition = this.assertStableTransition(
+        request.stableTrain,
+        "published-next",
+      );
+      if (transition.isErr()) return errAsync(transition.error);
+    }
     if (
       request.invocation.operation !== "nightly" &&
       request.invocation.operation !== "stable-publish"
@@ -813,6 +836,33 @@ export class ReleaseOrchestrator {
         (issue) => `${issue.path.join(".")}: ${issue.message}`,
       ),
     });
+  }
+
+  /** Optional only for legacy callers; stable workflow callers must supply it. */
+  private assertStableTransition(
+    record: StableTrainRecord | undefined,
+    target: StableTrainRecord["state"],
+  ): Result<void, ReleaseError> {
+    if (record === undefined) return ok(undefined);
+    const expiry = guardTrainExpiry(record, this.clock);
+    if (expiry.isErr())
+      return err({
+        type: "StableTrainStateInvalid",
+        reason: expiry.error.type,
+      });
+    const transition = transitionStableTrain(record, target);
+    if (transition.isErr()) {
+      if (transition.error.type !== "InvalidTransition")
+        return err({
+          type: "StableTrainStateInvalid",
+          reason: transition.error.type,
+        });
+      return err({
+        type: "StableTrainStateInvalid",
+        reason: `${transition.error.from}->${transition.error.to}`,
+      });
+    }
+    return ok(undefined);
   }
 
   private validatePriorLatest(

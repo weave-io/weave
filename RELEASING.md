@@ -89,5 +89,37 @@ Stop and block the train if any item is absent or mismatched:
 - Two maintainer approvals plus prior-`latest` capture and interactive MFA
   proof.
 
-Task 20 extends the break-glass and blocked/partial state procedure; follow that
-record once available.
+## Failure, recovery, and cleanup
+
+- A train may be cleanly abandoned only before publication (`prepared`, `built`,
+  or `bound`). An expired train may only be abandoned; cut a new train from
+  current `main`. Do not publish, finalize, or apply a train fix after expiry.
+- Every rebuild, rerun (including a new Actions attempt), and approved fix
+  invalidates the prior artifact IDs and manifest digest. Bind the new identity
+  before publication.
+- If npm publication or promotion is partial, mark the train `partial`: never
+  promote or finalize it. Write the content-addressed recovery metadata with all
+  consumed versions, restore only the affected `latest` dist-tag interactively,
+  fix on `main`, and cut fresh. The planner skips reserved versions; npm versions
+  are never reused.
+- A blocked metadata collision serializes trains. Resolve it through the metadata
+  replay path; delete `release/*` only after the metadata PR is merged. A draft
+  release may be reconciled or abandoned while still a draft; published releases
+  are immutable.
+- After promotion/finalization, all fixes are main-first patches and a new cut.
+  Never mutate a train, npm version, GitHub tag/release, or attestation in place.
+
+## Two-person break-glass
+
+Break-glass is an incident response, never a standing bypass. Create and link an
+incident, then name four distinct accountable roles: **approver**, **executor**,
+**recorder**, and **restorer**. Two maintainers must approve the specific,
+time-bounded change before execution. The recorder logs the expected Git head,
+artifact checksums, commands, start/end time, and both approvals.
+
+Immediately after the narrowly scoped change, the restorer returns normal
+controls, rotates any used key, revokes temporary access, and records proof.
+Publish a postmortem with the incident timeline and follow-up actions. Never use
+break-glass to force-update an immutable ref or mutate npm versions, GitHub tags,
+releases, or attestations. An emergency interactive rollback moves **only npm
+dist-tags**; those immutable records remain unchanged.
