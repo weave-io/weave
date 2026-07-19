@@ -262,7 +262,7 @@ jobs:
       - run: bun install --frozen-lockfile
       # Task 15 replays the recorded worktree metadata; this control step never
       # writes the protected checkout and does not receive an App credential.
-      - run: bun scripts/release/release-orchestrator.ts
+      - run: bun scripts/release/stable-plan-main.ts
 
   metadata-replay-plan:
     needs: preflight
@@ -280,7 +280,7 @@ jobs:
         with:
           bun-version: "1.3.10"
       - run: bun install --frozen-lockfile
-      - run: bun scripts/release/release-orchestrator.ts
+      - run: bun scripts/release/metadata-replay-main.ts
       - run: echo 'Metadata replay is plan-only; maintainer creates release-metadata branch from protected main and opens the normal PR.' >> "$GITHUB_STEP_SUMMARY"
 
   # Read-only final verification after a second maintainer performed MFA tag moves.
@@ -331,8 +331,9 @@ jobs:
         with:
           artifact-ids: ${{ needs.build.outputs.payload-artifact-id }}
           path: .release-payload
-      - run: bun scripts/release/release-orchestrator.ts stable-release-refs
+      - run: bun scripts/release/release-refs-main.ts
         env:
           RELEASE_APP_TOKEN: ${{ secrets.RELEASE_APP_TOKEN }}
           RELEASE_PROMOTION_AUTHORIZATION: ${{ inputs.promotion-authorization }}
           RELEASE_PAYLOAD_ARTIFACT_ID: ${{ needs.build.outputs.payload-artifact-id }}
+          RELEASE_PAYLOAD_DIRECTORY: .release-payload
