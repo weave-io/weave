@@ -2,9 +2,9 @@ import { logger } from "@weaveio/weave-engine";
 import { err, ok, okAsync, Result } from "neverthrow";
 import { BunCommandRunner } from "./command-runner.js";
 import type { FileSystem } from "./filesystem.js";
+import { StableTrainRecordSchema } from "./model.js";
 import { NpmCliRegistryClient } from "./npm-registry-client.js";
 import { ReleaseOrchestrator } from "./release-orchestrator.js";
-import { StableTrainRecordSchema } from "./model.js";
 
 const log = logger.child({ module: "stable-finalize" });
 const authorizationText = Bun.env.RELEASE_PROMOTION_AUTHORIZATION;
@@ -60,3 +60,8 @@ log.info(
   { subjectSha: result.value.authorization.subjectSha },
   "stable promotion verified",
 );
+if (Bun.env.GITHUB_OUTPUT !== undefined)
+  await Bun.write(
+    Bun.env.GITHUB_OUTPUT,
+    `stable_train=${JSON.stringify(result.value.stableTrain)}\n`,
+  );

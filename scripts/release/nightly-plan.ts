@@ -1,5 +1,5 @@
 import { logger } from "@weaveio/weave-engine";
-import { errAsync, okAsync, ResultAsync } from "neverthrow";
+import { errAsync, okAsync, Result, ResultAsync } from "neverthrow";
 import {
   BUNDLED_SOURCE_IMPACTS,
   BunChangesetFileSystem,
@@ -14,7 +14,11 @@ import {
   type ReleaseInvocation,
   validateReleaseInvocation,
 } from "./input-validation.js";
-import { NightlyVersionSchema } from "./model.js";
+import {
+  NightlyVersionSchema,
+  ReleaseOperationSchema,
+  StableTrainRecordSchema,
+} from "./model.js";
 import {
   NpmCliRegistryClient,
   type NpmRegistryClient,
@@ -207,8 +211,8 @@ async function runPreflight(
     log.error({ eventName }, "invalid release event");
     return 1;
   }
-  if (operation !== "nightly") {
-    log.error({ operation }, "only nightly planning is enabled");
+  if (!ReleaseOperationSchema.safeParse(operation).success) {
+    log.error({ operation }, "invalid release operation");
     return 1;
   }
   if (
@@ -243,6 +247,24 @@ async function runPreflight(
       "main required check is not green",
     );
     return 1;
+  }
+  if (operation !== "nightly") {
+    const stableTrain = parseStableTrain(environment.RELEASE_STABLE_TRAIN);
+    if (
+      (operation === "stable-publish" || operation === "stable-finalize") &&
+      stableTrain === undefined
+    ) {
+      log.error("stable publish/finalize requires a valid stable train input");
+      return 1;
+    }
+    const output = environment.GITHUB_OUTPUT;
+    if (output !== undefined)
+      await Bun.write(
+        output,
+        `operation=${operation}\nskipped=false\nversions=${JSON.stringify(stableTrain?.versions ?? {})}\nstable_plan_input=${environment.RELEASE_STABLE_PLAN_INPUT ?? ""}\nmetadata_replay_input=${environment.RELEASE_METADATA_REPLAY_INPUT ?? ""}\nstable_train=${environment.RELEASE_STABLE_TRAIN ?? ""}\n`,
+      );
+    log.info({ operation }, "non-nightly release preflight passed");
+    return 0;
   }
   const invocation = validateReleaseInvocation({
     repository: "weave-io/weave",
@@ -299,6 +321,17 @@ async function runPreflight(
     plan.value.skip === undefined ? "nightly plan created" : "nightly skipped",
   );
   return 0;
+}
+
+function parseStableTrain(value: string | undefined) {
+  if (value === undefined) return undefined;
+  const decoded = Result.fromThrowable(
+    () => JSON.parse(value) as unknown,
+    () => undefined,
+  )();
+  if (decoded.isErr()) return undefined;
+  const record = StableTrainRecordSchema.safeParse(decoded.value);
+  return record.success ? record.data : undefined;
 }
 
 type PreflightResponseError = { type: "GitHubResponse" };
