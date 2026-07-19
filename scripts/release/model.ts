@@ -5,6 +5,7 @@ import {
   PUBLIC_PACKAGES,
   RELEASE_CHANNELS,
   RELEASE_CONTROL_REF,
+  RELEASE_EVENTS,
   RELEASE_INPUT_LIMITS,
   RELEASE_OPERATIONS,
   RELEASE_REPOSITORY,
@@ -148,6 +149,85 @@ export const ArtifactManifestSchema = z
       });
   });
 
+/** Server-bound release artifact identity. Task 9's extension to ArtifactManifest. */
+export const ArtifactBindingArtifactSchema = z
+  .object({
+    name: z
+      .string()
+      .min(1)
+      .max(RELEASE_INPUT_LIMITS.identifierLength)
+      .regex(ASCII),
+    serverArtifactId: z.number().int().positive(),
+    uploadDigest: DigestSchema,
+    sizeInBytes: z
+      .number()
+      .int()
+      .positive()
+      .max(RELEASE_INPUT_LIMITS.artifactBytes),
+  })
+  .strict();
+export const ArtifactBindingFileSchema = z
+  .object({
+    filename: z
+      .string()
+      .min(1)
+      .max(RELEASE_INPUT_LIMITS.identifierLength)
+      .regex(ASCII),
+    sha256: DigestSchema,
+  })
+  .strict();
+/** Content-addressed linkage between build outputs and Actions server identity. */
+export const ArtifactBindingRecordSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    recordDigest: DigestSchema,
+    repositoryId: z.number().int().positive(),
+    repository: z.literal(RELEASE_REPOSITORY),
+    workflowPath: z.literal(RELEASE_WORKFLOW_PATH),
+    workflowSha: FullShaSchema,
+    runId: z.number().int().positive(),
+    runAttempt: z.number().int().positive().max(1000),
+    event: z.enum(RELEASE_EVENTS),
+    operation: ReleaseOperationSchema,
+    headRef: CanonicalRefSchema,
+    headSha: FullShaSchema,
+    originJobConclusion: z.literal("success"),
+    artifacts: z.array(ArtifactBindingArtifactSchema).min(2).max(3),
+    packages: z
+      .array(PackageNameSchema)
+      .min(1)
+      .max(RELEASE_INPUT_LIMITS.artifactCount),
+    versions: z.record(z.string(), SemVerSchema),
+    releaseSubjectSha: FullShaSchema,
+    manifestDigest: DigestSchema,
+    files: z
+      .array(ArtifactBindingFileSchema)
+      .min(1)
+      .max(RELEASE_INPUT_LIMITS.artifactCount * 2),
+  })
+  .strict()
+  .superRefine((record, context) => {
+    validatePackageSet(record, context);
+    if (
+      new Set(record.artifacts.map((artifact) => artifact.name)).size !==
+      record.artifacts.length
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["artifacts"],
+        message: "artifact names must be unique",
+      });
+    if (
+      new Set(record.files.map((file) => file.filename)).size !==
+      record.files.length
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["files"],
+        message: "file names must be unique",
+      });
+  });
+
 export const StableTrainRecordSchema = z
   .object({
     schemaVersion: z.literal(TRAIN_SCHEMA_VERSION),
@@ -244,4 +324,5 @@ export function packageArtifactFilename(
 }
 
 export type ArtifactManifest = z.infer<typeof ArtifactManifestSchema>;
+export type ArtifactBindingRecord = z.infer<typeof ArtifactBindingRecordSchema>;
 export type StableTrainRecord = z.infer<typeof StableTrainRecordSchema>;

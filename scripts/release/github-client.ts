@@ -1,33 +1,115 @@
-import { errAsync, ResultAsync } from "neverthrow";
+import { errAsync, okAsync, ResultAsync } from "neverthrow";
 import type { GitHubError } from "./errors.js";
 
+export interface WorkflowRunMetadata {
+  repositoryId: number;
+  id: number;
+  runAttempt: number;
+  event: string;
+  headRef: string;
+  headSha: string;
+  conclusion: string | null;
+  workflowPath: string;
+  workflowSha: string;
+}
+
+export interface ActionsArtifactMetadata {
+  id: number;
+  name: string;
+  digest?: string;
+  expired: boolean;
+  sizeInBytes: number;
+}
+
 export interface GitHubClient {
+  getWorkflowRun(runId: number): ResultAsync<WorkflowRunMetadata, GitHubError>;
+  listRunArtifacts(
+    runId: number,
+  ): ResultAsync<readonly ActionsArtifactMetadata[], GitHubError>;
+  getArtifact(
+    artifactId: number,
+  ): ResultAsync<ActionsArtifactMetadata, GitHubError>;
   downloadArtifact(artifactId: number): ResultAsync<Uint8Array, GitHubError>;
   createRelease(tag: string, name: string): ResultAsync<void, GitHubError>;
   createTag(tag: string, sha: string): ResultAsync<void, GitHubError>;
 }
+
+export type GitHubFetch = (
+  input: string,
+  init?: RequestInit,
+) => Promise<Response>;
+
+/** Minimal REST client; callers inject fetch in tests so no live GitHub is needed. */
 export class GitHubRestClient implements GitHubClient {
   constructor(
     private readonly repository: string,
     private readonly token?: string,
+    private readonly requestFetch: GitHubFetch = fetch,
   ) {}
+
+  getWorkflowRun(runId: number): ResultAsync<WorkflowRunMetadata, GitHubError> {
+    return this.requestJson(`/actions/runs/${runId}`).andThen((value) => {
+      const run = parseWorkflowRun(value);
+      if (run === undefined)
+        return errAsync(invalidResponse(`/actions/runs/${runId}`));
+      return okAsync(run);
+    });
+  }
+
+  listRunArtifacts(
+    runId: number,
+  ): ResultAsync<readonly ActionsArtifactMetadata[], GitHubError> {
+    const path = `/actions/runs/${runId}/artifacts`;
+    return this.requestJson(path).andThen((value) => {
+      if (!isRecord(value) || !Array.isArray(value.artifacts))
+        return errAsync(invalidResponse(path));
+      const artifacts = value.artifacts.map(parseArtifact);
+      if (artifacts.some((artifact) => artifact === undefined))
+        return errAsync(invalidResponse(path));
+      return okAsync(artifacts as ActionsArtifactMetadata[]);
+    });
+  }
+
+  getArtifact(
+    artifactId: number,
+  ): ResultAsync<ActionsArtifactMetadata, GitHubError> {
+    const path = `/actions/artifacts/${artifactId}`;
+    return this.requestJson(path).andThen((value) => {
+      const artifact = parseArtifact(value);
+      if (artifact === undefined) return errAsync(invalidResponse(path));
+      return okAsync(artifact);
+    });
+  }
+
   downloadArtifact(artifactId: number): ResultAsync<Uint8Array, GitHubError> {
     return this.request(`/actions/artifacts/${artifactId}/zip`).map(
       (response) => new Uint8Array(response),
     );
   }
+
   createRelease(tag: string, name: string): ResultAsync<void, GitHubError> {
     return this.request("/releases", {
       method: "POST",
       body: JSON.stringify({ tag_name: tag, name }),
     }).map(() => undefined);
   }
+
   createTag(tag: string, sha: string): ResultAsync<void, GitHubError> {
     return this.request("/git/refs", {
       method: "POST",
       body: JSON.stringify({ ref: `refs/tags/${tag}`, sha }),
     }).map(() => undefined);
   }
+
+  private requestJson(path: string): ResultAsync<unknown, GitHubError> {
+    return this.request(path).andThen((response) =>
+      ResultAsync.fromPromise(
+        Promise.resolve(JSON.parse(new TextDecoder().decode(response))),
+        () => invalidResponse(path),
+      ),
+    );
+  }
+
   private request(
     path: string,
     init?: RequestInit,
@@ -37,10 +119,10 @@ export class GitHubRestClient implements GitHubClient {
     if (this.token !== undefined)
       headers.set("authorization", `Bearer ${this.token}`);
     return ResultAsync.fromPromise(
-      fetch(`https://api.github.com/repos/${this.repository}${path}`, {
-        ...init,
-        headers,
-      }),
+      this.requestFetch(
+        `https://api.github.com/repos/${this.repository}${path}`,
+        { ...init, headers },
+      ),
       (cause) => ({
         type: "GitHubError" as const,
         operation: path,
@@ -61,4 +143,75 @@ export class GitHubRestClient implements GitHubClient {
           }),
     );
   }
+}
+
+function parseWorkflowRun(value: unknown): WorkflowRunMetadata | undefined {
+  if (
+    !isRecord(value) ||
+    !isRecord(value.repository) ||
+    typeof value.path !== "string"
+  )
+    return undefined;
+  const separator = value.path.lastIndexOf("@");
+  if (separator <= 0) return undefined;
+  if (
+    !isPositiveInt(value.repository.id) ||
+    !isPositiveInt(value.id) ||
+    !isPositiveInt(value.run_attempt)
+  )
+    return undefined;
+  if (
+    !isString(value.event) ||
+    !isString(value.head_branch) ||
+    !isString(value.head_sha) ||
+    !isString(value.conclusion)
+  )
+    return undefined;
+  return {
+    repositoryId: value.repository.id,
+    id: value.id,
+    runAttempt: value.run_attempt,
+    event: value.event,
+    headRef: value.head_branch,
+    headSha: value.head_sha,
+    conclusion: value.conclusion,
+    workflowPath: value.path.slice(0, separator),
+    workflowSha: value.path.slice(separator + 1),
+  };
+}
+
+function parseArtifact(value: unknown): ActionsArtifactMetadata | undefined {
+  if (
+    !isRecord(value) ||
+    !isPositiveInt(value.id) ||
+    !isString(value.name) ||
+    typeof value.expired !== "boolean" ||
+    !isPositiveInt(value.size_in_bytes)
+  )
+    return undefined;
+  if (value.digest !== undefined && !isString(value.digest)) return undefined;
+  return {
+    id: value.id,
+    name: value.name,
+    digest: value.digest,
+    expired: value.expired,
+    sizeInBytes: value.size_in_bytes,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+function isString(value: unknown): value is string {
+  return typeof value === "string";
+}
+function isPositiveInt(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+function invalidResponse(operation: string): GitHubError {
+  return {
+    type: "GitHubError",
+    operation,
+    message: "invalid GitHub API response",
+  };
 }
