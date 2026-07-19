@@ -1,10 +1,7 @@
 {
   "name": "@weaveio/weave-core",
-  "version": "0.1.0",
-  "publishConfig": {
-    "access": "public",
-    "registry": "https://registry.npmjs.org/"
-  },
+  "version": "0.0.1",
+  "private": true,
   "description": "DSL types, schema, and config parser for Weave",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

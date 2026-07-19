@@ -1,0 +1,7 @@
+{
+  "name": "@weaveio/weave-cli",
+  "version": "0.0.1",
+  "devDependencies": {
+    "@weaveio/weave-private-dev": "workspace:*"
+  }
+}
