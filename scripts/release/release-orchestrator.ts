@@ -152,6 +152,7 @@ export interface PromotionCommands {
 export interface StableFinalizeResult {
   state: "promoted";
   authorization: PromotionAuthorization;
+  stableTrain: StableTrainRecord;
 }
 export interface StableReleaseRefsRequest {
   authorization: unknown;
@@ -281,6 +282,7 @@ export class ReleaseOrchestrator {
         this.verifyTagAndDigests(record, "latest").map(() => ({
           state: "promoted" as const,
           authorization: record,
+          stableTrain: transition.value,
         })),
     );
   }
@@ -850,9 +852,12 @@ export class ReleaseOrchestrator {
   private assertStableTransition(
     record: StableTrainRecord | undefined,
     target: StableTrainRecord["state"],
-  ): Result<void, ReleaseError> {
+  ): Result<StableTrainRecord, ReleaseError> {
     if (record === undefined)
-      return err({ type: "StableTrainRequired", operation: "stable release operation" });
+      return err({
+        type: "StableTrainRequired",
+        operation: "stable release operation",
+      });
     const expiry = guardTrainExpiry(record, this.clock);
     if (expiry.isErr())
       return err({
@@ -871,7 +876,7 @@ export class ReleaseOrchestrator {
         reason: `${transition.error.from}->${transition.error.to}`,
       });
     }
-    return ok(undefined);
+    return ok(transition.value);
   }
 
   private validatePriorLatest(

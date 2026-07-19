@@ -1,11 +1,12 @@
 import { logger } from "@weaveio/weave-engine";
-import { errAsync, ResultAsync } from "neverthrow";
+import { errAsync, Result, ResultAsync } from "neverthrow";
 import { RELEASE_INPUT_LIMITS } from "./constants.js";
 import {
   ArtifactManifestSchema,
   FullShaSchema,
   packageArtifactFilename,
   ReleaseOperationSchema,
+  StableTrainRecordSchema,
 } from "./model.js";
 
 const log = logger.child({ module: "release-artifact-manifest" });
@@ -19,12 +20,17 @@ type ManifestWriteError =
 export function writeArtifactManifest(
   operation: string | undefined,
   subjectSha: string | undefined,
+  stableTrainText = Bun.env.RELEASE_STABLE_TRAIN,
 ): ResultAsync<void, ManifestWriteError> {
   const parsedOperation = ReleaseOperationSchema.safeParse(operation);
   const parsedSubject = FullShaSchema.safeParse(subjectSha);
   if (!parsedOperation.success || !parsedSubject.success)
     return errAsync({ type: "InvalidInput" });
   const channel = parsedOperation.data === "nightly" ? "nightly" : "stable";
+  const stableTrain =
+    channel === "stable" ? parseStableTrain(stableTrainText) : undefined;
+  if (channel === "stable" && stableTrain === undefined)
+    return errAsync({ type: "InvalidInput" });
   return ResultAsync.fromPromise(discoverPackages(channel), (cause) => ({
     type: "ArtifactDiscovery" as const,
     message: String(cause),
@@ -38,6 +44,7 @@ export function writeArtifactManifest(
         packages.map((entry) => [entry.name, entry.version]),
       ),
       artifacts: packages.map((entry) => entry.artifact),
+      ...(stableTrain === undefined ? {} : { stableTrain }),
     };
     const validated = ArtifactManifestSchema.safeParse(manifest);
     if (!validated.success)
@@ -56,6 +63,17 @@ export function writeArtifactManifest(
       }),
     );
   });
+}
+
+function parseStableTrain(value: string | undefined): unknown | undefined {
+  if (value === undefined) return undefined;
+  const candidate = Result.fromThrowable(
+    () => JSON.parse(value) as unknown,
+    () => undefined,
+  )();
+  if (candidate.isErr()) return undefined;
+  const result = StableTrainRecordSchema.safeParse(candidate.value);
+  return result.success ? result.data : undefined;
 }
 
 async function discoverPackages(channel: "nightly" | "stable") {

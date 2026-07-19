@@ -14,6 +14,18 @@ on:
         description: Exact JSON authorization record emitted by stable-publish (stable-finalize only)
         required: false
         type: string
+      stable-train:
+        description: Exact JSON stable train record (stable publish/finalize)
+        required: false
+        type: string
+      stable-plan-input:
+        description: Exact JSON input for stable cut/fix planning
+        required: false
+        type: string
+      metadata-replay-input:
+        description: Exact JSON input for metadata replay planning
+        required: false
+        type: string
 
 permissions: {}
 
@@ -32,6 +44,9 @@ jobs:
       operation: ${{ steps.plan.outputs.operation }}
       skipped: ${{ steps.plan.outputs.skipped }}
       versions: ${{ steps.plan.outputs.versions }}
+      stable-plan-input: ${{ steps.plan.outputs.stable_plan_input }}
+      metadata-replay-input: ${{ steps.plan.outputs.metadata_replay_input }}
+      stable-train: ${{ steps.plan.outputs.stable_train }}
     steps:
       # Always execute control code from the protected branch, not the dispatch ref.
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -54,10 +69,13 @@ jobs:
           RELEASE_REF: ${{ github.ref }}
           RELEASE_SHA: ${{ github.sha }}
           RELEASE_WORKFLOW_REF: ${{ github.workflow_ref }}
+          RELEASE_STABLE_TRAIN: ${{ inputs.stable-train }}
+          RELEASE_STABLE_PLAN_INPUT: ${{ inputs.stable-plan-input }}
+          RELEASE_METADATA_REPLAY_INPUT: ${{ inputs.metadata-replay-input }}
 
   build:
     needs: preflight
-    if: needs.preflight.outputs.skipped != 'true'
+    if: needs.preflight.outputs.skipped != 'true' && (needs.preflight.outputs.operation == 'nightly' || needs.preflight.outputs.operation == 'stable-publish' || needs.preflight.outputs.operation == 'stable-finalize')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -79,10 +97,12 @@ jobs:
       - run: bun run release:validate
         env:
           RELEASE_PLANNED_VERSIONS: ${{ needs.preflight.outputs.versions }}
+          RELEASE_OPERATION: ${{ needs.preflight.outputs.operation }}
       - run: bun scripts/release/write-artifact-manifest.ts
         env:
           RELEASE_OPERATION: ${{ needs.preflight.outputs.operation }}
           RELEASE_SUBJECT_SHA: ${{ github.sha }}
+          RELEASE_STABLE_TRAIN: ${{ needs.preflight.outputs.stable-train }}
       # The standalone control binary is compiled independently of payload build.
       - run: bun run release:control:build
       - id: payload
@@ -266,6 +286,8 @@ jobs:
       # Task 15 replays the recorded worktree metadata; this control step never
       # writes the protected checkout and does not receive an App credential.
       - run: bun scripts/release/stable-plan-main.ts
+        env:
+          RELEASE_STABLE_PLAN_INPUT: ${{ needs.preflight.outputs.stable-plan-input }}
 
   metadata-replay-plan:
     needs: preflight
@@ -284,6 +306,8 @@ jobs:
           bun-version: "1.3.10"
       - run: bun install --frozen-lockfile
       - run: bun scripts/release/metadata-replay-main.ts
+        env:
+          RELEASE_METADATA_REPLAY_INPUT: ${{ needs.preflight.outputs.metadata-replay-input }}
       - run: echo 'Metadata replay is plan-only; maintainer creates release-metadata branch from protected main and opens the normal PR.' >> "$GITHUB_STEP_SUMMARY"
 
   # Read-only final verification after a second maintainer performed MFA tag moves.
@@ -295,6 +319,8 @@ jobs:
     environment: release
     permissions:
       contents: read
+    outputs:
+      stable-train: ${{ steps.finalize.outputs.stable_train }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -308,7 +334,8 @@ jobs:
         with:
           artifact-ids: ${{ needs.build.outputs.payload-artifact-id }}
           path: payload
-      - name: Verify both promoted latest tags and tarball digests
+      - id: finalize
+        name: Verify both promoted latest tags and tarball digests
         run: RELEASE_STABLE_TRAIN="$(jq -ec '.stableTrain' payload/manifest.json)" bun scripts/release/stable-finalize.ts
         env:
           RELEASE_PROMOTION_AUTHORIZATION: ${{ inputs.promotion-authorization }}
@@ -341,3 +368,4 @@ jobs:
           RELEASE_PAYLOAD_ARTIFACT_ID: ${{ needs.build.outputs.payload-artifact-id }}
           RELEASE_PAYLOAD_DIRECTORY: .release-payload
           RELEASE_RELEASE_NOTES: Automated release
+          RELEASE_PROGRESSED_STABLE_TRAIN: ${{ needs.stable-finalize.outputs.stable-train }}

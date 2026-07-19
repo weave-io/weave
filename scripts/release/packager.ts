@@ -132,14 +132,20 @@ export class PublicPackagePackager {
   ): ResultAsync<readonly string[], PackagerError> {
     const destination = join(root, "tarballs");
     let result = okAsync<readonly string[], PackagerError>([]);
-    for (const packageName of Object.keys(
-      PUBLIC_PACKAGES,
-    ) as PublicPackageName[]) {
+    const packageNames =
+      plannedVersions === undefined
+        ? (Object.keys(PUBLIC_PACKAGES) as PublicPackageName[])
+        : Object.keys(plannedVersions).filter(
+            (name): name is PublicPackageName => name in PUBLIC_PACKAGES,
+          );
+    for (const packageName of packageNames) {
       result = result.andThen((tarballs) =>
-        this.pack(packageName, root, destination, plannedVersions?.[packageName]).map((tarball) => [
-          ...tarballs,
-          tarball,
-        ]),
+        this.pack(
+          packageName,
+          root,
+          destination,
+          plannedVersions?.[packageName],
+        ).map((tarball) => [...tarballs, tarball]),
       );
     }
     return result;
@@ -251,7 +257,11 @@ export class PublicPackagePackager {
     plannedVersion?: string,
   ): ResultAsync<unknown, PackagerError> {
     return this.manifestBuilder
-      .stage(join(source, "package.json"), join(root, "staging"), plannedVersion)
+      .stage(
+        join(source, "package.json"),
+        join(root, "staging"),
+        plannedVersion,
+      )
       .mapErr((error) => ({ type: "Manifest" as const, error }));
   }
 
@@ -334,21 +344,44 @@ export class PublicPackagePackager {
 
 if (import.meta.main) {
   const root = join(".release", `validate-${crypto.randomUUID()}`);
+  const plannedVersions = parsePlannedVersions(
+    Bun.env.RELEASE_PLANNED_VERSIONS,
+  );
+  const versions =
+    Bun.env.RELEASE_OPERATION === "nightly"
+      ? plannedVersions
+      : stablePackageVersions(plannedVersions);
   const result = await new PublicPackagePackager(
     new BunPackageCommandRunner(),
     new PackagePolicyValidator(),
-  ).packAll(root, parsePlannedVersions(Bun.env.RELEASE_PLANNED_VERSIONS));
+  ).packAll(root, versions);
   if (result.isErr()) {
     logger.error(result.error, "Public package validation failed");
     process.exitCode = 1;
   }
 }
 
+function stablePackageVersions(
+  versions: Readonly<Record<string, string>> | undefined,
+): Readonly<Record<string, string>> | undefined {
+  if (versions === undefined) return undefined;
+  const cli = versions["@weaveio/weave-cli"];
+  const opencode = versions["@weaveio/weave-adapter-opencode"];
+  if (cli === undefined || opencode === undefined) return undefined;
+  return {
+    "@weaveio/weave-cli": cli,
+    "@weaveio/weave-adapter-opencode": opencode,
+  };
+}
+
 function parsePlannedVersions(
   value: string | undefined,
 ): Readonly<Record<string, string>> | undefined {
   if (value === undefined || value === "") return undefined;
-  const parsed = Result.fromThrowable(() => JSON.parse(value), () => undefined)();
+  const parsed = Result.fromThrowable(
+    () => JSON.parse(value),
+    () => undefined,
+  )();
   if (parsed.isErr()) return undefined;
   const versions = z.record(z.string(), z.string()).safeParse(parsed.value);
   return versions.success ? versions.data : undefined;
