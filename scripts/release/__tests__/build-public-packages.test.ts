@@ -40,4 +40,13 @@ describe("public package build guard", () => {
       ),
     ).toBe(true);
   });
+
+  it("rejects private package names in declaration prose", () => {
+    expect(
+      hasPrivateDeclarationReference(
+        "/** Use @weaveio/weave-core to define this config. */",
+        "@weaveio/weave-core",
+      ),
+    ).toBe(true);
+  });
 });

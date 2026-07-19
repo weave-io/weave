@@ -6,6 +6,7 @@ import {
   PRIVATE_PACKAGE_NAMES,
   type PrivatePackageName,
   PUBLIC_PACKAGE_BUILDS,
+  PUBLIC_PACKAGES,
   PUBLIC_RUNTIME_EXTERNALS,
   type PublicDeclarationBuild,
   type PublicPackageBuild,
@@ -21,7 +22,7 @@ export type PublicPackageBuildError =
   | {
       type: "Filesystem";
       path: string;
-      operation: "copy" | "mkdir" | "chmod" | "write";
+      operation: "copy" | "delete" | "list" | "mkdir" | "chmod" | "write";
     }
   | {
       type: "TypeDeclarations";
@@ -46,7 +47,11 @@ export interface PublicPackageFileSystem {
   ): ResultAsync<void, PublicPackageBuildError>;
   ensureDirectory(path: string): ResultAsync<void, PublicPackageBuildError>;
   makeExecutable(path: string): ResultAsync<void, PublicPackageBuildError>;
+  listDeclarationFiles(
+    directory: string,
+  ): ResultAsync<readonly string[], PublicPackageBuildError>;
   readText(path: string): ResultAsync<string, PublicPackageBuildError>;
+  removeFile(path: string): ResultAsync<void, PublicPackageBuildError>;
   writeText(
     path: string,
     contents: string,
@@ -72,7 +77,11 @@ export function hasPrivateDependencyReference(
   return dependencyMap.test(contents) || moduleSpecifier.test(contents);
 }
 
-/** Matches private workspace imports and paths that escape into private packages. */
+/**
+ * Matches any private workspace name in a shipped declaration, including prose.
+ * Unlike runtime JavaScript, declaration files expose their complete text to
+ * consumers and are therefore held to a stricter no-private-name policy.
+ */
 export function hasPrivateDeclarationReference(
   contents: string,
   packageName: string,
@@ -113,11 +122,32 @@ export class BunPublicPackageFileSystem implements PublicPackageFileSystem {
     return this.run(["chmod", "755", path], path, "chmod");
   }
 
+  listDeclarationFiles(
+    directory: string,
+  ): ResultAsync<readonly string[], PublicPackageBuildError> {
+    return ResultAsync.fromPromise(
+      this.scanDeclarationFiles(directory),
+      () => ({
+        type: "Filesystem" as const,
+        path: directory,
+        operation: "list" as const,
+      }),
+    );
+  }
+
   readText(path: string): ResultAsync<string, PublicPackageBuildError> {
     return ResultAsync.fromPromise(Bun.file(path).text(), () => ({
       type: "Filesystem" as const,
       path,
       operation: "copy" as const,
+    }));
+  }
+
+  removeFile(path: string): ResultAsync<void, PublicPackageBuildError> {
+    return ResultAsync.fromPromise(Bun.file(path).delete(), () => ({
+      type: "Filesystem" as const,
+      path,
+      operation: "delete" as const,
     }));
   }
 
@@ -145,6 +175,16 @@ export class BunPublicPackageFileSystem implements PublicPackageFileSystem {
       if (exitCode === 0) return okAsync(undefined);
       return errAsync({ type: "Filesystem" as const, path, operation });
     });
+  }
+
+  private async scanDeclarationFiles(directory: string): Promise<string[]> {
+    const files: string[] = [];
+    for await (const path of new Bun.Glob("**/*.d.ts").scan({
+      cwd: directory,
+    })) {
+      files.push(join(directory, path));
+    }
+    return files;
   }
 }
 
@@ -241,33 +281,58 @@ export class PublicPackageBuilder {
             },
           ),
         )
-        .andThen(() => this.sanitizeDeclaration(declaration))
-        .andThen(() => this.verifyDeclaration(packageName, declaration));
+        .andThen(() => this.sanitizeDeclaration(declaration));
     }
-    return result;
+    return result
+      .andThen(() => this.removeStaleDeclarations(packageName, declarations))
+      .andThen(() => this.verifyDeclarations(packageName));
   }
 
-  private verifyDeclaration(
+  private verifyDeclarations(
     packageName: PublicPackageName,
-    declaration: PublicDeclarationBuild,
   ): ResultAsync<void, PublicPackageBuildError> {
-    return this.fileSystem.readText(declaration.output).andThen((contents) => {
-      const privatePackageName = this.findPrivateDeclarationReference(
-        packageName,
-        contents,
-      );
-      if (
-        privatePackageName === undefined &&
-        !hasPrivateDeclarationPathReference(contents)
-      ) {
-        return okAsync(undefined);
+    const directory = join(PUBLIC_PACKAGES[packageName].directory, "dist");
+    return this.fileSystem.listDeclarationFiles(directory).andThen((files) => {
+      let result = okAsync<void, PublicPackageBuildError>(undefined);
+      for (const output of files) {
+        result = result.andThen(() =>
+          this.fileSystem.readText(output).andThen((contents) => {
+            const privatePackageName = this.findPrivateDeclarationReference(
+              packageName,
+              contents,
+            );
+            if (
+              privatePackageName === undefined &&
+              !hasPrivateDeclarationPathReference(contents)
+            ) {
+              return okAsync(undefined);
+            }
+            return errAsync({
+              type: "PrivateDependencyReference" as const,
+              packageName,
+              output,
+              privatePackageName: privatePackageName ?? "@weaveio/weave-core",
+            });
+          }),
+        );
       }
-      return errAsync({
-        type: "PrivateDependencyReference" as const,
-        packageName,
-        output: declaration.output,
-        privatePackageName: privatePackageName ?? "@weaveio/weave-core",
-      });
+      return result;
+    });
+  }
+
+  private removeStaleDeclarations(
+    packageName: PublicPackageName,
+    declarations: readonly PublicDeclarationBuild[],
+  ): ResultAsync<void, PublicPackageBuildError> {
+    const expected = new Set(declarations.map(({ output }) => output));
+    const directory = join(PUBLIC_PACKAGES[packageName].directory, "dist");
+    return this.fileSystem.listDeclarationFiles(directory).andThen((files) => {
+      let result = okAsync<void, PublicPackageBuildError>(undefined);
+      for (const file of files) {
+        if (expected.has(file)) continue;
+        result = result.andThen(() => this.fileSystem.removeFile(file));
+      }
+      return result;
     });
   }
 
