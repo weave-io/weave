@@ -4,7 +4,7 @@ import type { ParsedChangeset } from "../changeset-policy.js";
 import type { Clock } from "../clock.js";
 import type { RegistryError } from "../errors.js";
 import { validateReleaseInvocation } from "../input-validation.js";
-import { NightlyPlanner } from "../nightly-plan.js";
+import { NightlyPlanner, runPreflight } from "../nightly-plan.js";
 import type { NpmRegistryClient } from "../npm-registry-client.js";
 
 const sha = "abcdef123456".padEnd(40, "a");
@@ -151,5 +151,48 @@ describe("NightlyPlanner", () => {
       packageVersions,
     });
     expect(result._unsafeUnwrapErr().type).toBe("InvalidNightlyInvocation");
+  });
+});
+
+describe("release preflight operation routing", () => {
+  const originalFetch = globalThis.fetch;
+  const environment = (operation: string): Record<string, string> => ({
+    RELEASE_PUBLISH_ENABLED: "true",
+    RELEASE_EVENT_NAME: "workflow_dispatch",
+    RELEASE_OPERATION: operation,
+    RELEASE_REF: "refs/heads/main",
+    RELEASE_WORKFLOW_REF:
+      "weave-io/weave/.github/workflows/publish.yml@refs/heads/main",
+    RELEASE_SHA: sha,
+    GITHUB_TOKEN: "test-token",
+  });
+
+  test.each([
+    ["nightly", 1],
+    ["stable-cut", 0],
+    ["stable-fix", 0],
+    ["metadata-replay", 0],
+  ] as const)("%s passes shared gates and routes to its planner path", async (operation, exitCode) => {
+    globalThis.fetch = (async (url: string) => {
+      if (url.endsWith("/git/ref/heads/main"))
+        return new Response(JSON.stringify({ object: { sha } }), {
+          headers: { date: "Sun, 19 Jul 2026 00:00:00 GMT" },
+        });
+      return new Response(
+        JSON.stringify({
+          check_runs: [
+            { name: "Lint, Typecheck, Build & Test", conclusion: "success" },
+          ],
+        }),
+      );
+    }) as typeof fetch;
+    // Nightly deliberately proceeds into the real changeset/registry planner;
+    // stable operations return after their planner hand-off is serialized.
+    expect(await runPreflight(environment(operation))).toBe(exitCode);
+  });
+
+  test("rejects an unknown operation before planner routing", async () => {
+    expect(await runPreflight(environment("unknown"))).toBe(1);
+    globalThis.fetch = originalFetch;
   });
 });

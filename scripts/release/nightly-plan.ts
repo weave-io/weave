@@ -197,7 +197,8 @@ const REQUIRED_MAIN_CHECK = "Lint, Typecheck, Build & Test";
 const log = logger.child({ module: "nightly-plan" });
 
 /** Workflow boundary: proves protected-main state before any build or bind job. */
-async function runPreflight(
+/** Exported for the release harness: all operation routing remains behind the same shared gates. */
+export async function runPreflight(
   environment: Record<string, string | undefined>,
 ): Promise<number> {
   if (environment.RELEASE_PUBLISH_ENABLED !== "true") {
