@@ -23,6 +23,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p scripts/tsconfig.json && bun run --filter '*' typecheck",
     "lint": "biome lint packages/ scripts/ config/ biome.json package.json tsconfig.json scripts/tsconfig.json && bun run validate:declarations",
     "verify:action-pins": "bun scripts/ci/verify-action-pins.ts",
+    "verify:codeowners": "bun scripts/ci/verify-codeowners.ts",
     "validate:declarations": "bun scripts/validate-api-extractor-configs.ts",
     "clean": "find . -type d -name dist -not -path '*/node_modules/*' | xargs rm -rf",
     "version": "changeset version",
