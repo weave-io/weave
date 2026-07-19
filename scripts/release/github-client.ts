@@ -34,13 +34,26 @@ export interface GitHubClient {
   createTag(tag: string, sha: string): ResultAsync<void, GitHubError>;
 }
 
+/** Privileged release-refs surface. It is intentionally separate from artifact readers. */
+export interface GitHubRefClient {
+  getRef(ref: string): ResultAsync<string, GitHubError>;
+  createRef(ref: string, sha: string): ResultAsync<void, GitHubError>;
+  /** CAS is implemented by reading the ref then using GitHub's ordinary non-force update. */
+  updateRef(
+    ref: string,
+    sha: string,
+    expectedHeadSha: string,
+  ): ResultAsync<void, GitHubError>;
+  isMergedToMain(sha: string): ResultAsync<boolean, GitHubError>;
+}
+
 export type GitHubFetch = (
   input: string,
   init?: RequestInit,
 ) => Promise<Response>;
 
 /** Minimal REST client; callers inject fetch in tests so no live GitHub is needed. */
-export class GitHubRestClient implements GitHubClient {
+export class GitHubRestClient implements GitHubClient, GitHubRefClient {
   constructor(
     private readonly repository: string,
     private readonly token?: string,
@@ -99,6 +112,56 @@ export class GitHubRestClient implements GitHubClient {
       method: "POST",
       body: JSON.stringify({ ref: `refs/tags/${tag}`, sha }),
     }).map(() => undefined);
+  }
+
+  getRef(ref: string): ResultAsync<string, GitHubError> {
+    const path = `/git/ref/${ref.replace(/^refs\//, "")}`;
+    return this.requestJson(path).andThen((value) => {
+      if (
+        !isRecord(value) ||
+        !isRecord(value.object) ||
+        !isString(value.object.sha)
+      )
+        return errAsync(invalidResponse(path));
+      return okAsync(value.object.sha);
+    });
+  }
+
+  createRef(ref: string, sha: string): ResultAsync<void, GitHubError> {
+    return this.request("/git/refs", {
+      method: "POST",
+      body: JSON.stringify({ ref: `refs/${ref.replace(/^refs\//, "")}`, sha }),
+    }).map(() => undefined);
+  }
+
+  updateRef(
+    ref: string,
+    sha: string,
+    expectedHeadSha: string,
+  ): ResultAsync<void, GitHubError> {
+    return this.getRef(ref).andThen((current) => {
+      if (current !== expectedHeadSha)
+        return errAsync({
+          type: "GitHubError" as const,
+          operation: `CAS ${ref}`,
+          message: `stale head: expected ${expectedHeadSha}, found ${current}`,
+        });
+      const path = `/git/refs/${ref.replace(/^refs\//, "")}`;
+      // Deliberately omit `force`: GitHub defaults it to false, rejecting non-FF updates.
+      return this.request(path, {
+        method: "PATCH",
+        body: JSON.stringify({ sha }),
+      }).map(() => undefined);
+    });
+  }
+
+  isMergedToMain(sha: string): ResultAsync<boolean, GitHubError> {
+    const path = `/compare/${sha}...main`;
+    return this.requestJson(path).andThen((value) => {
+      if (!isRecord(value) || !isString(value.status))
+        return errAsync(invalidResponse(path));
+      return okAsync(value.status === "identical" || value.status === "behind");
+    });
   }
 
   private requestJson(path: string): ResultAsync<unknown, GitHubError> {

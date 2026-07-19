@@ -11,6 +11,13 @@ import {
   NightlyPlanner,
 } from "./nightly-plan.js";
 import type { NpmRegistryClient } from "./npm-registry-client.js";
+import type {
+  StableCutInput,
+  StableCutPlan,
+  StableFixInput,
+  StableFixPlan,
+} from "./stable-train.js";
+import { planStableCut, planStableFix } from "./stable-train.js";
 import { TarInspector } from "./tar-inspector.js";
 
 export interface PublishRequest {
@@ -31,6 +38,20 @@ export class ReleaseOrchestrator {
     input: NightlyPlanInput,
   ): ResultAsync<NightlyPlan, NightlyPlanError> {
     return new NightlyPlanner(this.npm, this.clock).plan(input);
+  }
+  /** Pure cut planning; the release-refs job alone performs the corresponding ref mutation. */
+  planStableCut(
+    input: StableCutInput,
+  ): ResultAsync<StableCutPlan, import("./stable-train.js").StableTrainError> {
+    const plan = planStableCut(input);
+    return plan.isOk() ? okAsync(plan.value) : errAsync(plan.error);
+  }
+  /** Pure fix planning; callers must execute only the listed CAS cherry-pick result. */
+  planStableFix(
+    input: StableFixInput,
+  ): ResultAsync<StableFixPlan, import("./stable-train.js").StableTrainError> {
+    const plan = planStableFix(input);
+    return plan.isOk() ? okAsync(plan.value) : errAsync(plan.error);
   }
   publish(request: PublishRequest): ResultAsync<void, ReleaseError> {
     if (request.invocation.eventName === "schedule")
