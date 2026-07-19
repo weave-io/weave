@@ -420,6 +420,8 @@ describe("manual stable promotion", () => {
         "@weaveio/weave-cli": "1.2.3",
         "@weaveio/weave-adapter-opencode": "4.5.6",
       },
+      artifactManifestDigest: `sha256:${"b".repeat(64)}`,
+      artifactIds: [1, 2],
     };
     const partial = await promotionOrchestrator({
       "@weaveio/weave-cli": { latest: "1.2.3" },

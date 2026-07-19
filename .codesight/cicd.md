@@ -47,7 +47,7 @@
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
   - `actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce`
   - `actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce`
-- **bind** on `ubuntu-latest` — 7 steps (needs: preflight, build)
+- **bind** on `ubuntu-latest` — 7 steps (needs: preflight)
   - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
   - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
@@ -65,11 +65,10 @@
 - **metadata-replay-plan** on `ubuntu-latest` — 5 steps (needs: preflight)
   - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
-- **stable-finalize** on `ubuntu-latest` — 5 steps (needs: preflight, build)
+- **stable-finalize** on `ubuntu-latest` — 4 steps (needs: preflight, build)
   - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
-  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
-- **release-refs** on `ubuntu-latest` — 5 steps (needs: preflight, stable-finalize, build)
+- **release-refs** on `ubuntu-latest` — 5 steps (needs: preflight, stable-finalize)
   - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
   - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`

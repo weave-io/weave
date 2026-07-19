@@ -80,29 +80,28 @@ const PromotionAuthorizationSchema = z
     operation: z.literal("stable-publish"),
     state: z.literal("awaiting-promotion"),
     subjectSha: FullShaSchema,
-    packages: z.array(PackageNameSchema).length(2),
+    packages: z.array(PackageNameSchema).min(1),
     versions: z.record(z.string(), SemVerSchema),
     artifactDigests: z.record(z.string(), DigestSchema),
   })
   .strict()
   .superRefine((value, context) => {
-    const expected = new Set<string>(STABLE_PROMOTION_PACKAGES);
-    if (value.packages.some((packageName) => !expected.has(packageName)))
+    const expected = new Set<string>(value.packages);
+    if (expected.size !== value.packages.length)
       context.addIssue({
         code: "custom",
         path: ["packages"],
-        message: "stable promotion requires CLI and OpenCode",
+        message: "promotion packages must be unique",
       });
-    for (const packageName of STABLE_PROMOTION_PACKAGES)
+    for (const packageName of value.packages)
       if (
-        !value.packages.includes(packageName) ||
         value.versions[packageName] === undefined ||
         value.artifactDigests[packageName] === undefined
       )
         context.addIssue({
           code: "custom",
           path: ["packages"],
-          message: "promotion record must bind both stable packages",
+          message: "promotion record must bind every train package",
         });
     if (
       Object.keys(value.versions).some((name) => !expected.has(name)) ||
@@ -111,7 +110,7 @@ const PromotionAuthorizationSchema = z
       context.addIssue({
         code: "custom",
         path: ["versions"],
-        message: "promotion maps must contain only stable packages",
+        message: "promotion maps must contain exactly the authorized packages",
       });
   });
 
@@ -258,14 +257,14 @@ export class ReleaseOrchestrator {
           if (prior.isErr()) return errAsync(prior.error);
           return okAsync({
             state: "awaiting-human-promotion" as const,
-            priorLatestCaptureCommands: STABLE_PROMOTION_PACKAGES.map(
+            priorLatestCaptureCommands: authorization.packages.map(
               (packageName) => `npm dist-tag ls ${packageName} --json`,
             ),
-            promoteCommands: STABLE_PROMOTION_PACKAGES.map(
+            promoteCommands: authorization.packages.map(
               (packageName) =>
                 `npm dist-tag add ${packageName}@${authorization.versions[packageName]} latest`,
             ),
-            rollbackCommands: STABLE_PROMOTION_PACKAGES.map(
+            rollbackCommands: authorization.packages.map(
               (packageName) =>
                 `npm dist-tag add ${packageName}@${prior.value[packageName]} latest`,
             ),
@@ -279,15 +278,21 @@ export class ReleaseOrchestrator {
     authorization: unknown,
     stableTrain?: StableTrainRecord,
   ): ResultAsync<StableFinalizeResult, ReleaseError> {
-    const transition = this.assertStableTransition(stableTrain, "promoted");
-    if (transition.isErr()) return errAsync(transition.error);
     return this.validatePromotionAuthorization(authorization).andThen(
-      (record) =>
-        this.verifyTagAndDigests(record, "latest").map(() => ({
+      (record) => {
+        const lineage = this.assertPromotionAuthorizationLineage(
+          record,
+          stableTrain,
+        );
+        if (lineage.isErr()) return errAsync(lineage.error);
+        const transition = this.assertStableTransition(stableTrain, "promoted");
+        if (transition.isErr()) return errAsync(transition.error);
+        return this.verifyTagAndDigests(record, "latest").map(() => ({
           state: "promoted" as const,
           authorization: record,
           stableTrain: transition.value,
-        })),
+        }));
+      },
     );
   }
 
@@ -326,25 +331,27 @@ export class ReleaseOrchestrator {
             reason: "immutable poll attempts must be positive",
           });
         return this.ensureTags(authorization, request.github).andThen((tags) =>
-          STABLE_PROMOTION_PACKAGES.reduce<
-            ResultAsync<"released" | "already-immutable", ReleaseError>
-          >(
-            (chain, packageName) =>
-              chain.andThen((state) =>
-                this.releasePackage(
-                  packageName,
-                  authorization,
-                  manifest.value,
-                  request,
-                  attempts,
-                ).map((next) =>
-                  state === "released" || next === "released"
-                    ? "released"
-                    : "already-immutable",
+          authorization.packages
+            .reduce<
+              ResultAsync<"released" | "already-immutable", ReleaseError>
+            >(
+              (chain, packageName) =>
+                chain.andThen((state) =>
+                  this.releasePackage(
+                    packageName,
+                    authorization,
+                    manifest.value,
+                    request,
+                    attempts,
+                  ).map((next) =>
+                    state === "released" || next === "released"
+                      ? "released"
+                      : "already-immutable",
+                  ),
                 ),
-              ),
-            okAsync("already-immutable"),
-          ).map((state) => ({ state, tags })),
+              okAsync("already-immutable"),
+            )
+            .map((state) => ({ state, tags })),
         );
       },
     );
@@ -498,7 +505,7 @@ export class ReleaseOrchestrator {
     authorization: PromotionAuthorization,
     github: GitHubReleaseClient,
   ): ResultAsync<Record<string, "verified" | "unsigned">, ReleaseError> {
-    return STABLE_PROMOTION_PACKAGES.reduce<
+    return authorization.packages.reduce<
       ResultAsync<Record<string, "verified" | "unsigned">, ReleaseError>
     >(
       (chain, packageName) =>
@@ -891,6 +898,42 @@ export class ReleaseOrchestrator {
     return ok(transition.value);
   }
 
+  private assertPromotionAuthorizationLineage(
+    authorization: PromotionAuthorization,
+    train: StableTrainRecord | undefined,
+  ): Result<void, ReleaseError> {
+    if (train === undefined)
+      return err({ type: "StableTrainRequired", operation: "stable finalize" });
+    if (authorization.subjectSha !== train.subjectSha)
+      return err({
+        type: "StableTrainStateInvalid",
+        reason: "authorization subject differs from train",
+      });
+    if (
+      JSON.stringify(authorization.packages) !== JSON.stringify(train.packages)
+    )
+      return err({
+        type: "StableTrainStateInvalid",
+        reason: "authorization packages differ from train",
+      });
+    if (
+      JSON.stringify(authorization.versions) !== JSON.stringify(train.versions)
+    )
+      return err({
+        type: "StableTrainStateInvalid",
+        reason: "authorization versions differ from train",
+      });
+    if (
+      train.artifactManifestDigest === undefined ||
+      train.artifactIds === undefined
+    )
+      return err({
+        type: "StableTrainStateInvalid",
+        reason: "train lacks bound artifact identity",
+      });
+    return ok(undefined);
+  }
+
   private validatePriorLatest(
     versions: Readonly<Record<string, string>>,
   ): Result<Record<string, string>, ReleaseError> {
@@ -911,32 +954,33 @@ export class ReleaseOrchestrator {
     authorization: PromotionAuthorization,
     tag: "next" | "latest",
   ): ResultAsync<void, ReleaseError> {
-    return STABLE_PROMOTION_PACKAGES.reduce<ResultAsync<void, ReleaseError>>(
-      (chain, packageName) =>
-        chain.andThen(() =>
-          this.npm.distTagLs(packageName).andThen((tags) => {
-            const expectedVersion = authorization.versions[packageName];
-            if (tags[tag] !== expectedVersion)
-              return errAsync({
-                type: "PromotionRegistryMismatch" as const,
-                packageName,
-                reason: `${tag} is ${tags[tag] ?? "absent"}, expected ${expectedVersion}`,
-              });
-            return this.npm
-              .verifyPublished(
-                packageName,
-                expectedVersion,
-                authorization.artifactDigests[packageName],
-              )
-              .mapErr((error) => ({
-                type: "PromotionRegistryMismatch" as const,
-                packageName,
-                reason: error.message,
-              }));
-          }),
-        ),
-      okAsync(undefined),
-    )
+    return authorization.packages
+      .reduce<ResultAsync<void, ReleaseError>>(
+        (chain, packageName) =>
+          chain.andThen(() =>
+            this.npm.distTagLs(packageName).andThen((tags) => {
+              const expectedVersion = authorization.versions[packageName];
+              if (tags[tag] !== expectedVersion)
+                return errAsync({
+                  type: "PromotionRegistryMismatch" as const,
+                  packageName,
+                  reason: `${tag} is ${tags[tag] ?? "absent"}, expected ${expectedVersion}`,
+                });
+              return this.npm
+                .verifyPublished(
+                  packageName,
+                  expectedVersion,
+                  authorization.artifactDigests[packageName],
+                )
+                .mapErr((error) => ({
+                  type: "PromotionRegistryMismatch" as const,
+                  packageName,
+                  reason: error.message,
+                }));
+            }),
+          ),
+        okAsync(undefined),
+      )
       .andThen(() => okAsync(undefined))
       .orElse((error) => {
         if (error.type !== "PromotionRegistryMismatch" || tag !== "latest")
@@ -972,7 +1016,7 @@ export class ReleaseOrchestrator {
       okAsync([]),
     ).map((promoted) => ({
       promoted,
-      unpromoted: STABLE_PROMOTION_PACKAGES.filter(
+      unpromoted: authorization.packages.filter(
         (packageName) => !promoted.includes(packageName),
       ),
     }));
