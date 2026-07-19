@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { okAsync } from "neverthrow";
 import {
   guardTrainExpiry,
   planStableCut,
@@ -88,7 +89,10 @@ describe("stable train records", () => {
     );
   });
   it("rejects expired, non-main, and non-green stable fixes and invalidates artifacts", () => {
-    const clock = { now: () => new Date("2026-07-20T00:00:00.000Z") };
+    const clock = {
+      now: () => new Date("2026-07-20T00:00:00.000Z"),
+      sleep: () => okAsync(undefined),
+    };
     const withArtifacts = {
       ...record,
       artifactIds: [10],
@@ -121,6 +125,7 @@ describe("stable train records", () => {
     expect(
       guardTrainExpiry(record as never, {
         now: () => new Date("2026-07-26T00:00:00.000Z"),
+        sleep: () => okAsync(undefined),
       }).isErr(),
     ).toBe(true);
   });

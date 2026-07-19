@@ -649,7 +649,8 @@
   - interface ActionsArtifactMetadata
   - interface GitHubClient
   - interface GitHubRefClient
-  - type GitHubFetch
+  - interface GitHubReleaseAsset
+  - _...3 more_
 - `scripts/release/input-validation.ts`
   - function validateReleaseInvocation: (input) => Result<ReleaseInvocation, InputValidationError>
   - type ArtifactBindingCliInput
@@ -705,7 +706,7 @@
   - interface PromotionCommandRequest
   - interface PromotionCommands
   - interface StableFinalizeResult
-  - _...1 more_
+  - _...3 more_
 - `scripts/release/stable-train.ts`
   - function canonicalTrainJson: (record) => string
   - function trainRecordDigest: (record) => string

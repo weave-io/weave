@@ -68,15 +68,16 @@
 - **stable-finalize** on `ubuntu-latest` — 4 steps (needs: preflight)
   - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
-- **release-refs** on `ubuntu-latest` — 4 steps (needs: stable-plan)
+- **release-refs** on `ubuntu-latest` — 5 steps (needs: stable-finalize, build)
   - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
 
 ### Secrets
 
 - `EVAL_RESULTS_REPO_TOKEN`
 - `OPENROUTER_API_KEY`
-- `RELEASE_REFS_TOKEN`
+- `RELEASE_APP_TOKEN`
 
 ---
 _Source: .github/workflows/agent-evals.yml, .github/workflows/ci.yml, .github/workflows/deploy-docs.yml, .github/workflows/publish.yml_

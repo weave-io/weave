@@ -81,6 +81,7 @@ test("orchestrates publication with injected filesystem and registry", async () 
   };
   const result = await new ReleaseOrchestrator(files, npm, {
     now: () => new Date(),
+    sleep: () => okAsync(undefined),
   } satisfies Clock).publish({
     invocation: {
       repository: "weave-io/weave",
@@ -205,6 +206,7 @@ test("binding mismatches block publication before npm", async () => {
     };
     const result = await new ReleaseOrchestrator(files, npm, {
       now: () => new Date(),
+      sleep: () => okAsync(undefined),
     }).publish({
       invocation: {
         repository: "weave-io/weave",
@@ -251,6 +253,7 @@ test("propagates registry publication failure without retrying", async () => {
   };
   const result = await new ReleaseOrchestrator(files, npm, {
     now: () => new Date(),
+    sleep: () => okAsync(undefined),
   }).publish({
     invocation: {
       repository: "weave-io/weave",
@@ -283,6 +286,7 @@ test("routes stable cut planning without performing a ref mutation", async () =>
   };
   const orchestrator = new ReleaseOrchestrator(files, npm, {
     now: () => new Date("2026-07-19T00:00:00.000Z"),
+    sleep: () => okAsync(undefined),
   });
   const result = await orchestrator.planStableCut({
     mainHeadSha: "a".repeat(40),
@@ -345,7 +349,10 @@ describe("manual stable promotion", () => {
       writeText: () => okAsync(undefined),
       delete: () => okAsync(undefined),
     };
-    return new ReleaseOrchestrator(files, npm, { now: () => new Date() });
+    return new ReleaseOrchestrator(files, npm, {
+      now: () => new Date(),
+      sleep: () => okAsync(undefined),
+    });
   }
 
   test("gates exact human-only commands on dual next tags and tarball proofs", async () => {

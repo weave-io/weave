@@ -4,8 +4,8 @@
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode
 
 > 0 routes | 0 models | 0 components | 154 lib files | 18 env vars | 6 middleware | 0% test coverage
-> **Token savings:** this file is ~14,600 tokens. Without it, AI exploration would cost ~53,000 tokens. **Saves ~38,400 tokens per conversation.**
-> **Last scanned:** 2026-07-19 08:40 — re-run after significant changes
+> **Token savings:** this file is ~14,700 tokens. Without it, AI exploration would cost ~53,000 tokens. **Saves ~38,400 tokens per conversation.**
+> **Last scanned:** 2026-07-19 08:58 — re-run after significant changes
 
 ---
 
@@ -660,7 +660,8 @@
   - interface ActionsArtifactMetadata
   - interface GitHubClient
   - interface GitHubRefClient
-  - type GitHubFetch
+  - interface GitHubReleaseAsset
+  - _...3 more_
 - `scripts/release/input-validation.ts`
   - function validateReleaseInvocation: (input) => Result<ReleaseInvocation, InputValidationError>
   - type ArtifactBindingCliInput
@@ -716,7 +717,7 @@
   - interface PromotionCommandRequest
   - interface PromotionCommands
   - interface StableFinalizeResult
-  - _...1 more_
+  - _...3 more_
 - `scripts/release/stable-train.ts`
   - function canonicalTrainJson: (record) => string
   - function trainRecordDigest: (record) => string
@@ -799,10 +800,10 @@
 - `packages/cli/src/errors.ts` — imported by **10** files
 - `packages/engine/src/execution-lifecycle/lease.ts` — imported by **10** files
 - `packages/engine/src/execution-lifecycle/errors.ts` — imported by **10** files
+- `scripts/release/filesystem.ts` — imported by **10** files
 - `packages/adapters/opencode/src/sdk-types.ts` — imported by **9** files
 - `packages/cli/src/evals/prompt-snapshots.ts` — imported by **9** files
-- `scripts/release/filesystem.ts` — imported by **9** files
-- `packages/core/src/tokens.ts` — imported by **8** files
+- `scripts/release/model.ts` — imported by **9** files
 
 ## Import Map (who imports what)
 
@@ -822,7 +823,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 137 test files found
+> 138 test files found
 
 ---
 
@@ -896,15 +897,16 @@
 - **stable-finalize** on `ubuntu-latest` — 4 steps (needs: preflight)
   - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
-- **release-refs** on `ubuntu-latest` — 4 steps (needs: stable-plan)
+- **release-refs** on `ubuntu-latest` — 5 steps (needs: stable-finalize, build)
   - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
 
 ### Secrets
 
 - `EVAL_RESULTS_REPO_TOKEN`
 - `OPENROUTER_API_KEY`
-- `RELEASE_REFS_TOKEN`
+- `RELEASE_APP_TOKEN`
 
 ---
 _Source: .github/workflows/agent-evals.yml, .github/workflows/ci.yml, .github/workflows/deploy-docs.yml, .github/workflows/publish.yml_
