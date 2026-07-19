@@ -679,7 +679,11 @@
   - type NightlyPlan
   - type NightlyPlanError
 - `scripts/release/npm-registry-client.ts` — class NpmCliRegistryClient, interface NpmRegistryClient
-- `scripts/release/package-policy.ts` — class PackagePolicyValidator, type PackagePolicyError
+- `scripts/release/package-policy.ts`
+  - function scanCredentialSources: (input) => Result<void, string>
+  - class PackagePolicyValidator
+  - interface CredentialScanInput
+  - type PackagePolicyError
 - `scripts/release/packager.ts`
   - class BunReleaseCheckout
   - class BunPackageCommandRunner
@@ -694,7 +698,11 @@
   - interface PublicManifestFileSystem
   - interface StagedPublicManifest
   - type PublicManifestError
-- `scripts/release/release-orchestrator.ts` — class ReleaseOrchestrator, interface PublishRequest
+- `scripts/release/release-orchestrator.ts`
+  - class ReleaseOrchestrator
+  - interface PublishRequest
+  - interface PromotionAuthorization
+  - type PublishResult
 - `scripts/release/stable-train.ts`
   - function canonicalTrainJson: (record) => string
   - function trainRecordDigest: (record) => string

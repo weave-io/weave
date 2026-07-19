@@ -7,7 +7,7 @@
 | Agent Evals | workflow_dispatch | 2 | — | — |
 | CI | push, pull_request | 1 | — | — |
 | Deploy Docs | push, workflow_dispatch | 2 | — | github-pages |
-| Publish control plane | schedule, workflow_dispatch | 6 | — | release, release-refs |
+| Publish control plane | schedule, workflow_dispatch | 7 | — | ${{ needs.preflight.outputs.operation == 'stable-publish' && 'release' \|\| '' }}, release, release-refs |
 
 ### Agent Evals
 
@@ -47,11 +47,18 @@
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
   - `actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce`
   - `actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce`
-- **bind** on `ubuntu-latest` — 6 steps (needs: preflight, build)
+- **bind** on `ubuntu-latest` — 7 steps (needs: preflight, build)
   - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
   - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
   - `actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce`
+- **publish** on `ubuntu-latest` — 9 steps (needs: preflight, build, bind)
+  - `actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020`
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
+  - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
+  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
 - **stable-plan** on `ubuntu-latest` — 4 steps (needs: preflight)
   - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`

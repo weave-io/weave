@@ -59,6 +59,7 @@ export class GitHubRestClient implements GitHubClient, GitHubRefClient {
     private readonly repository: string,
     private readonly token?: string,
     private readonly requestFetch: GitHubFetch = fetch,
+    private readonly apiUrl = "https://api.github.com",
   ) {}
 
   getWorkflowRun(runId: number): ResultAsync<WorkflowRunMetadata, GitHubError> {
@@ -188,10 +189,10 @@ export class GitHubRestClient implements GitHubClient, GitHubRefClient {
     if (this.token !== undefined)
       headers.set("authorization", `Bearer ${this.token}`);
     return ResultAsync.fromPromise(
-      this.requestFetch(
-        `https://api.github.com/repos/${this.repository}${path}`,
-        { ...init, headers },
-      ),
+      this.requestFetch(`${this.apiUrl}/repos/${this.repository}${path}`, {
+        ...init,
+        headers,
+      }),
       (cause) => ({
         type: "GitHubError" as const,
         operation: path,

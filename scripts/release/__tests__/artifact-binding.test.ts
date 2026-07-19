@@ -56,7 +56,10 @@ const input: BindingRecordInput = {
   ],
   manifest,
   manifestDigest: digest,
-  files: [{ filename: "@weaveio-weave-cli-1.2.3.tgz", sha256: digest }],
+  files: [
+    { filename: "@weaveio-weave-cli-1.2.3.tgz", sha256: digest },
+    { filename: "release-control", sha256: digest },
+  ],
 };
 function record(overrides: Partial<BindingRecordInput> = {}) {
   const created = createBindingRecord({ ...input, ...overrides });

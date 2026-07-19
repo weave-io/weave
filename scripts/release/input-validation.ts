@@ -42,6 +42,7 @@ export const ArtifactBindingCliInputSchema = z
     subjectSha: FullShaSchema,
     payload: ArtifactUploadInputSchema,
     control: ArtifactUploadInputSchema,
+    controlPath: z.string().min(1).max(RELEASE_INPUT_LIMITS.identifierLength),
     manifestPath: z.string().min(1).max(RELEASE_INPUT_LIMITS.identifierLength),
   })
   .strict();

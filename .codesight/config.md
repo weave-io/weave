@@ -8,8 +8,13 @@
 - `HOME` **required** — packages/cli/src/detect/probes.ts
 - `LOG_LEVEL` **required** — packages/config/src/logger.ts
 - `PWD` **required** — packages/adapters/opencode/dist-types/adapter.d.ts
+- `RELEASE_CONTROL_DRY_RUN` **required** — scripts/release/control-main.ts
+- `RELEASE_GITHUB_API_URL` **required** — scripts/release/control-main.ts
+- `RELEASE_HEAD_REF` **required** — scripts/release/control-main.ts
+- `RELEASE_HEAD_SHA` **required** — scripts/release/control-main.ts
 - `RELEASE_OPERATION` **required** — scripts/release/write-artifact-manifest.ts
 - `RELEASE_SUBJECT_SHA` **required** — scripts/release/write-artifact-manifest.ts
+- `RELEASE_WORKFLOW_SHA` **required** — scripts/release/control-main.ts
 - `RUN_HARNESS_SMOKE` **required** — packages/adapters/opencode/src/__tests__/category-routing-smoke.test.ts
 - `SITE_URL` **required** — packages/docs/astro.config.mjs
 - `WEAVE_CLI_VERSION` **required** — packages/cli/src/theme/render.ts

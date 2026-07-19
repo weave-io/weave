@@ -1,9 +1,11 @@
 import { logger } from "@weaveio/weave-engine";
-import { validateArtifactBindingRecord } from "./artifact-manifest.js";
+import { okAsync } from "neverthrow";
 import { SystemClock } from "./clock.js";
 import { BunCommandRunner } from "./command-runner.js";
 import { BunFileSystem } from "./filesystem.js";
+import { GitHubRestClient } from "./github-client.js";
 import { validateReleaseInvocation } from "./input-validation.js";
+import type { NpmRegistryClient } from "./npm-registry-client.js";
 import { NpmCliRegistryClient } from "./npm-registry-client.js";
 import { ReleaseOrchestrator } from "./release-orchestrator.js";
 
@@ -32,31 +34,55 @@ if (invocationText.isErr() || manifestText.isErr() || bindingText.isErr()) {
 }
 const invocationJson = JSON.parse(invocationText.value) as unknown;
 const manifestJson = JSON.parse(manifestText.value) as unknown;
-const binding = validateArtifactBindingRecord(
-  JSON.parse(bindingText.value) as unknown,
-);
 const invocation = validateReleaseInvocation(invocationJson);
 if (invocation.isErr()) {
   log.error({ issues: invocation.error.issues }, "invalid release invocation");
   process.exit(2);
 }
-if (
-  invocation.value.eventName !== "workflow_dispatch" ||
-  binding.isErr() ||
-  binding.value.releaseSubjectSha !== invocation.value.subjectSha
-) {
-  log.error("invalid or mismatched binding record");
+if (invocation.value.eventName !== "workflow_dispatch") {
+  log.error("control only permits workflow dispatch publication");
   process.exit(2);
+}
+const manifestDigest = digest(manifestText.value);
+const manifestFiles = artifactFiles(manifestJson);
+if (manifestFiles === undefined) {
+  log.error("manifest has no verifiable files");
+  process.exit(2);
+}
+const controlBytes = await files.readBytes(Bun.argv[0]);
+if (controlBytes.isErr()) {
+  log.error("unable to read control binary");
+  process.exit(1);
 }
 const result = await new ReleaseOrchestrator(
   files,
-  new NpmCliRegistryClient(new BunCommandRunner()),
+  registryClient(),
   new SystemClock(),
 ).publish({
   invocation: invocation.value,
   manifest: manifestJson,
   artifactDirectory,
-  bindingVerified: true,
+  bindingVerification: {
+    record: JSON.parse(bindingText.value) as unknown,
+    context: {
+      expectedWorkflowSha: Bun.env.RELEASE_WORKFLOW_SHA ?? "",
+      expectedOperation: invocation.value.operation,
+      expectedHeadRef: Bun.env.RELEASE_HEAD_REF ?? "",
+      expectedHeadSha: Bun.env.RELEASE_HEAD_SHA ?? "",
+      expectedManifest: manifestJson as never,
+      expectedManifestDigest: manifestDigest,
+      expectedFiles: [
+        ...manifestFiles,
+        { filename: "release-control", sha256: digest(controlBytes.value) },
+      ],
+    },
+    github: new GitHubRestClient(
+      invocation.value.repository,
+      Bun.env.GITHUB_TOKEN,
+      fetch,
+      Bun.env.RELEASE_GITHUB_API_URL,
+    ),
+  },
   credentialScan: { environment: Bun.env },
 });
 if (result.isErr()) {
@@ -64,3 +90,37 @@ if (result.isErr()) {
   process.exit(1);
 }
 log.info("release completed");
+
+function artifactFiles(
+  value: unknown,
+): readonly { filename: string; sha256: string }[] | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const artifacts = (value as { artifacts?: unknown }).artifacts;
+  if (!Array.isArray(artifacts)) return undefined;
+  const files = artifacts.map((artifact) => {
+    if (typeof artifact !== "object" || artifact === null) return undefined;
+    const { filename, sha256 } = artifact as Record<string, unknown>;
+    return typeof filename === "string" && typeof sha256 === "string"
+      ? { filename, sha256 }
+      : undefined;
+  });
+  return files.some((file) => file === undefined)
+    ? undefined
+    : (files as { filename: string; sha256: string }[]);
+}
+
+function digest(value: string | Uint8Array): string {
+  return `sha256:${new Bun.CryptoHasher("sha256").update(value).digest("hex")}`;
+}
+
+function registryClient(): NpmRegistryClient {
+  if (Bun.env.RELEASE_CONTROL_DRY_RUN !== "true")
+    return new NpmCliRegistryClient(new BunCommandRunner());
+  return {
+    publish: () => okAsync(undefined),
+    viewVersion: () => okAsync(""),
+    listVersions: () => okAsync([]),
+    viewDistTags: () => okAsync({}),
+    verifyPublished: () => okAsync(undefined),
+  };
+}
