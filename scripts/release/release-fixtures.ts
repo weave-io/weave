@@ -99,6 +99,8 @@ export class FixtureGitHub implements GitHubClient {
   constructor(
     private readonly fixture: ReturnType<typeof nightlyFixture>,
     private readonly overrides: Partial<WorkflowRunMetadata> = {},
+    private readonly downloadedBytes = FIXTURE_BYTES,
+    private readonly jobConclusion: "success" | "failure" | null = "success",
   ) {}
   getWorkflowRun() {
     return okAsync({
@@ -115,7 +117,7 @@ export class FixtureGitHub implements GitHubClient {
     });
   }
   listWorkflowRunJobs() {
-    return okAsync([{ id: 17, name: "build", conclusion: "success" as const }]);
+    return okAsync([{ id: 17, name: "build", conclusion: this.jobConclusion }]);
   }
   listRunArtifacts() {
     return okAsync(this.artifacts());
@@ -132,7 +134,7 @@ export class FixtureGitHub implements GitHubClient {
       : okAsync(artifact);
   }
   downloadArtifact() {
-    return okAsync(FIXTURE_BYTES);
+    return okAsync(this.downloadedBytes);
   }
   createRelease() {
     return okAsync(undefined);

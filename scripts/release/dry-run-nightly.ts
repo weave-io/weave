@@ -1,4 +1,4 @@
-import { verifyBindingRecord } from "./artifact-binding.js";
+import { createBindingRecord, verifyBindingRecord } from "./artifact-binding.js";
 import type { ParsedChangeset } from "./changeset-policy.js";
 import { validateReleaseInvocation } from "./input-validation.js";
 import { NightlyPlanner } from "./nightly-plan.js";
@@ -74,9 +74,13 @@ await runScenarios("release-dry-nightly", [
   {
     name: "stale-non-green-main",
     verify: async () =>
-      (await plan({}, { changesets, subjectSha: "not-a-sha" })).match(
+      (await verifyBindingRecord(
+        fixture.record,
+        fixture.context,
+        new FixtureGitHub(fixture, {}, undefined, "failure"),
+      )).match(
         () => false,
-        (error) => error.type === "InvalidSubjectSha",
+        (error) => error.type === "BindingMismatch" && error.field === "jobConclusion",
       ),
   },
   {
@@ -88,14 +92,14 @@ await runScenarios("release-dry-nightly", [
     verify: async () =>
       (
         await verifyBindingRecord(
-          { ...fixture.record, headSha: "c".repeat(40) },
+          createBindingRecord({ ...fixture, headSha: "c".repeat(40) })._unsafeUnwrap(),
           fixture.context,
           new FixtureGitHub(fixture),
         )
       ).match(
         () => false,
         (error) =>
-          error.type === "BindingMismatch" && error.field === "recordDigest",
+          error.type === "BindingMismatch" && error.field === "headSha",
       ),
   },
   {

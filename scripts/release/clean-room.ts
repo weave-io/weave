@@ -64,23 +64,14 @@ await runScenarios("release-control-clean-room", [
     verify: async () =>
       (
         await verifyBindingRecord(
-          {
-            ...binding.value,
-            files: [
-              ...binding.value.files.slice(0, 1),
-              {
-                filename: "release-control",
-                sha256: digest(new Uint8Array([...bytes, 0])),
-              },
-            ],
-          },
+          binding.value,
           context,
-          new FixtureGitHub(fixture),
+          new FixtureGitHub(fixture, {}, new Uint8Array([...bytes, 0])),
         )
       ).match(
         () => false,
         (error) =>
-          error.type === "BindingMismatch" && error.field === "recordDigest",
+          error.type === "BindingMismatch" && error.field === "downloadDigest",
       ),
   },
   {
@@ -103,20 +94,14 @@ await runScenarios("release-control-clean-room", [
     verify: async () =>
       (
         await verifyBindingRecord(
-          {
-            ...binding.value,
-            files: [
-              { filename: fixture.filename, sha256: digest("tampered") },
-              binding.value.files[1],
-            ],
-          },
+          binding.value,
           context,
-          new FixtureGitHub(fixture),
+          new FixtureGitHub(fixture, {}, new Uint8Array([...bytes, 1])),
         )
       ).match(
         () => false,
         (error) =>
-          error.type === "BindingMismatch" && error.field === "recordDigest",
+          error.type === "BindingMismatch" && error.field === "downloadDigest",
       ),
   },
 ]);
