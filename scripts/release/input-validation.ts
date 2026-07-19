@@ -6,6 +6,8 @@ import {
   RELEASE_INPUT_LIMITS,
 } from "./constants.js";
 import {
+  CanonicalRefSchema,
+  DigestSchema,
   FullShaSchema,
   NightlyVersionSchema,
   PackageNameSchema,
@@ -15,6 +17,37 @@ import {
   SemVerSchema,
   StableVersionSchema,
 } from "./model.js";
+
+const PositiveIntegerSchema = z.coerce.number().int().positive();
+const ArtifactUploadInputSchema = z
+  .object({
+    serverArtifactId: PositiveIntegerSchema,
+    uploadDigest: DigestSchema,
+  })
+  .strict();
+
+/** Strict, workflow-only inputs for the artifact-binding CLI. */
+export const ArtifactBindingCliInputSchema = z
+  .object({
+    repository: z.literal("weave-io/weave"),
+    repositoryId: PositiveIntegerSchema,
+    workflowPath: z.literal(".github/workflows/publish.yml"),
+    workflowSha: FullShaSchema,
+    runId: PositiveIntegerSchema,
+    runAttempt: PositiveIntegerSchema.max(1000),
+    event: z.enum(RELEASE_EVENTS),
+    operation: ReleaseOperationSchema,
+    headRef: CanonicalRefSchema,
+    headSha: FullShaSchema,
+    subjectSha: FullShaSchema,
+    payload: ArtifactUploadInputSchema,
+    control: ArtifactUploadInputSchema,
+    manifestPath: z.string().min(1).max(RELEASE_INPUT_LIMITS.identifierLength),
+  })
+  .strict();
+export type ArtifactBindingCliInput = z.infer<
+  typeof ArtifactBindingCliInputSchema
+>;
 
 const DispatchSchema = ReleaseIdentitySchema.extend({
   eventName: z.literal(RELEASE_EVENTS[1]),
