@@ -53,9 +53,11 @@ test("orchestrates publication with injected filesystem and registry", async () 
   const bytes = archive();
   const digest = `sha256:${new Bun.CryptoHasher("sha256").update(bytes).digest("hex")}`;
   const files: FileSystem = {
+    exists: () => okAsync(false),
     readBytes: () => okAsync(bytes),
     readText: () => okAsync(""),
     writeText: () => okAsync(undefined),
+    delete: () => okAsync(undefined),
   };
   const calls: string[] = [];
   const npm: NpmRegistryClient = {
@@ -110,9 +112,11 @@ test("orchestrates publication with injected filesystem and registry", async () 
 
 test("propagates registry publication failure without retrying", async () => {
   const files: FileSystem = {
+    exists: () => okAsync(false),
     readBytes: () => okAsync(archive()),
     readText: () => okAsync(""),
     writeText: () => okAsync(undefined),
+    delete: () => okAsync(undefined),
   };
   const npm: NpmRegistryClient = {
     publish: () =>
@@ -143,9 +147,11 @@ test("propagates registry publication failure without retrying", async () => {
 
 test("routes stable cut planning without performing a ref mutation", async () => {
   const files: FileSystem = {
+    exists: () => okAsync(false),
     readBytes: () => okAsync(new Uint8Array()),
     readText: () => okAsync(""),
     writeText: () => okAsync(undefined),
+    delete: () => okAsync(undefined),
   };
   const npm: NpmRegistryClient = {
     publish: () => okAsync(undefined),

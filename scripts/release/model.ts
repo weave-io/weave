@@ -293,6 +293,33 @@ export const StableTrainRecordSchema = z
       });
   });
 
+/** Immutable replay payload copied from a finalized stable train. */
+export const MetadataReplayRecordSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    recordDigest: DigestSchema,
+    sourceTrainRef: ReleaseBranchSchema,
+    sourceTrainDigest: DigestSchema,
+    subjectSha: FullShaSchema,
+    generatedAt: UtcTimestampSchema,
+    versions: z.record(z.string(), StableVersionSchema),
+    consumedChangesets: z.array(
+      z
+        .object({ path: z.string().min(1), preimageDigest: DigestSchema })
+        .strict(),
+    ),
+    metadataWrites: z.array(
+      z
+        .object({
+          path: z.string().min(1),
+          contentsDigest: DigestSchema,
+          contents: z.string(),
+        })
+        .strict(),
+    ),
+  })
+  .strict();
+
 function validatePackageSet(
   value: { packages: readonly string[]; versions: Record<string, string> },
   context: z.RefinementCtx,
@@ -348,3 +375,4 @@ export function packageArtifactFilename(
 export type ArtifactManifest = z.infer<typeof ArtifactManifestSchema>;
 export type ArtifactBindingRecord = z.infer<typeof ArtifactBindingRecordSchema>;
 export type StableTrainRecord = z.infer<typeof StableTrainRecordSchema>;
+export type MetadataReplayRecord = z.infer<typeof MetadataReplayRecordSchema>;
