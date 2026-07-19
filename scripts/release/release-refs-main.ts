@@ -8,6 +8,7 @@ import { GitHubRestClient } from "./github-client.js";
 import { ArtifactManifestSchema, StableTrainRecordSchema } from "./model.js";
 import { NpmCliRegistryClient } from "./npm-registry-client.js";
 import { ReleaseOrchestrator } from "./release-orchestrator.js";
+import { hasProgressedLineage } from "./stable-lineage.js";
 import { validateStableTrain } from "./stable-train.js";
 
 const log = logger.child({ module: "release-refs-main" });
@@ -75,26 +76,6 @@ if (!input.success) {
         );
     }
   }
-}
-
-function hasProgressedLineage(
-  original: z.infer<typeof StableTrainRecordSchema>,
-  progressed: z.infer<typeof StableTrainRecordSchema>,
-): boolean {
-  if (original.trainRef !== progressed.trainRef) return false;
-  if (original.subjectSha !== progressed.subjectSha) return false;
-  if (
-    original.cutAt !== progressed.cutAt ||
-    original.expiresAt !== progressed.expiresAt
-  )
-    return false;
-  if (JSON.stringify(original.packages) !== JSON.stringify(progressed.packages))
-    return false;
-  if (JSON.stringify(original.versions) !== JSON.stringify(progressed.versions))
-    return false;
-  return (
-    original.state === "awaiting-promotion" && progressed.state === "promoted"
-  );
 }
 
 function parseJson(text: string) {
