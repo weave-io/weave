@@ -1,5 +1,6 @@
 import { logger } from "@weaveio/weave-engine";
 import { z } from "zod";
+import { Result } from "neverthrow";
 import { ReleaseOrchestrator } from "./release-orchestrator.js";
 import { BunFileSystem } from "./filesystem.js";
 import { NpmCliRegistryClient } from "./npm-registry-client.js";
@@ -13,7 +14,10 @@ if (raw === undefined) {
   log.error("missing stable plan input");
   process.exitCode = 2;
 } else {
-  const json = z.object({}).passthrough().safeParse(JSON.parse(raw));
+  const decoded = Result.fromThrowable(() => JSON.parse(raw) as unknown, () => undefined)();
+  const json = decoded.isOk()
+    ? z.object({}).passthrough().safeParse(decoded.value)
+    : z.object({}).passthrough().safeParse(undefined);
   const input = Input.safeParse(json.success ? json.data : undefined);
   if (!input.success) {
     log.error({ issues: input.error.issues }, "invalid stable plan input");
