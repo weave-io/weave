@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode
 
-> 0 routes | 0 models | 0 components | 129 lib files | 8 env vars | 5 middleware | 0% test coverage
-> **Token savings:** this file is ~12.000 tokens. Without it, AI exploration would cost ~45.000 tokens. **Saves ~33.000 tokens per conversation.**
-> **Last scanned:** 2026-07-16 19:59 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 129 lib files | 9 env vars | 5 middleware | 0% test coverage
+> **Token savings:** this file is ~12.000 tokens. Without it, AI exploration would cost ~45.100 tokens. **Saves ~33.100 tokens per conversation.**
+> **Last scanned:** 2026-07-21 19:08 — re-run after significant changes
 
 ---
 
@@ -613,6 +613,7 @@
 - `PWD` **required** — packages\adapters\opencode\src\adapter.ts
 - `RUN_HARNESS_SMOKE` **required** — packages\adapters\opencode\src\__tests__\category-routing-smoke.test.ts
 - `SITE_URL` **required** — packages\docs\astro.config.mjs
+- `USERPROFILE` **required** — packages\cli\src\detect\probes.ts
 - `WEAVE_LOG_FILE` **required** — packages\engine\src\env.ts
 
 ## Config Files

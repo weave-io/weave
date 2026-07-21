@@ -1231,7 +1231,7 @@ describe("ArtifactBundleWriter.writeBundle", () => {
     expect(r1._unsafeUnwrap().bundleDir).not.toBe(r2._unsafeUnwrap().bundleDir);
 
     // Both must be under the same runs/ parent
-    const runsDir = `${bundleRoot}/${RUNS_SUBDIR}`;
+    const runsDir = resolve(bundleRoot, RUNS_SUBDIR);
     expect(r1._unsafeUnwrap().bundleDir).toContain(runsDir);
     expect(r2._unsafeUnwrap().bundleDir).toContain(runsDir);
 
@@ -1372,7 +1372,7 @@ describe("ArtifactBundleWriter — immutable runs/ layout", () => {
 
     expect(result.isOk()).toBe(true);
     const { bundleDir } = result._unsafeUnwrap();
-    expect(bundleDir).toContain(`${RUNS_SUBDIR}/`);
+    expect(bundleDir).toContain(resolve(bundleRoot, RUNS_SUBDIR));
     expect(bundleDir).toContain(bundleRoot);
   });
 

@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import {
   dirname as posixDirname,
@@ -89,7 +90,7 @@ export class BunFileSystem implements FileSystem {
   }
 
   home(): string {
-    return Bun.env.HOME ?? "/tmp";
+    return Bun.env.HOME ?? Bun.env.USERPROFILE ?? homedir();
   }
 
   resolvePath(path: string): string {
@@ -166,7 +167,8 @@ export class MemoryFileSystem implements FileSystem {
   resolvePath(path: string): string {
     // Normalize Windows backslashes so callers passing `src\foo` or `C:\...`
     // paths work correctly on both platforms in the in-memory filesystem.
-    const normalized = path.replace(/\\/g, "/");
+    let normalized = path.replace(/\\/g, "/");
+    normalized = normalized.replace(/^[A-Za-z]:/, "");
     if (normalized === "~") return this.homeDirectory;
     if (normalized.startsWith("~/")) {
       return posixResolve(this.homeDirectory, normalized.slice(2));

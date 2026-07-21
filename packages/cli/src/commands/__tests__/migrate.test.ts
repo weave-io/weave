@@ -77,7 +77,9 @@ describe("migration preflight summary", () => {
     });
     await runInit(ctx);
     const out = terminal.out.join("\n");
-    expect(out).toContain("/project/.opencode/weave-opencode.jsonc");
+    expect(out.replace(/\\/g, "/")).toContain(
+      "/project/.opencode/weave-opencode.jsonc",
+    );
   });
 
   it("shows destination path in preflight output", async () => {
@@ -96,7 +98,7 @@ describe("migration preflight summary", () => {
     });
     await runInit(ctx);
     const out = terminal.out.join("\n");
-    expect(out).toContain("/project/.weave/config.weave");
+    expect(out.replace(/\\/g, "/")).toContain("/project/.weave/config.weave");
   });
 
   it("shows destination-exists status (no overwrite) in preflight", async () => {

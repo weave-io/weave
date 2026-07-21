@@ -1,8 +1,29 @@
 import { afterEach, describe, expect, it } from "bun:test";
+import { homedir } from "node:os";
 import { BunFileSystem, MemoryFileSystem } from "../fs/file-system.js";
 
 describe("BunFileSystem", () => {
   const originalFile = Bun.file;
+
+  function withEnv<T>(
+    values: { HOME?: string; USERPROFILE?: string },
+    callback: () => T,
+  ): T {
+    const originalHome = Bun.env.HOME;
+    const originalUserProfile = Bun.env.USERPROFILE;
+    try {
+      if (values.HOME === undefined) delete Bun.env.HOME;
+      else Bun.env.HOME = values.HOME;
+      if (values.USERPROFILE === undefined) delete Bun.env.USERPROFILE;
+      else Bun.env.USERPROFILE = values.USERPROFILE;
+      return callback();
+    } finally {
+      if (originalHome === undefined) delete Bun.env.HOME;
+      else Bun.env.HOME = originalHome;
+      if (originalUserProfile === undefined) delete Bun.env.USERPROFILE;
+      else Bun.env.USERPROFILE = originalUserProfile;
+    }
+  }
 
   afterEach(() => {
     Bun.file = originalFile;
@@ -24,6 +45,22 @@ describe("BunFileSystem", () => {
 
     expect(result.isErr()).toBe(true);
     expect(result._unsafeUnwrapErr().cause.kind).toBe("MissingFile");
+  });
+
+  it("falls back to the OS home directory when HOME is unavailable", () => {
+    withEnv({ HOME: undefined, USERPROFILE: undefined }, () => {
+      const fileSystem = new BunFileSystem();
+
+      expect(fileSystem.home()).toBe(homedir());
+    });
+  });
+
+  it("uses USERPROFILE when HOME is unavailable", () => {
+    withEnv({ HOME: undefined, USERPROFILE: "C:\\Users\\weave-test" }, () => {
+      const fileSystem = new BunFileSystem();
+
+      expect(fileSystem.home()).toBe("C:\\Users\\weave-test");
+    });
   });
 });
 
