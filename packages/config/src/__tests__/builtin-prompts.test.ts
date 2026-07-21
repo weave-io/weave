@@ -40,6 +40,9 @@ const BANNED_TOKENS = [
 /**
  * Tokens that indicate raw config, model, path, or harness data leaking into
  * a prompt source file. These must not appear in any builtin prompt file.
+ *
+ * Note: `.weave/` is an intentional product path for config, plans, and
+ * runtime state, so it is allowed in shipped prompts.
  */
 const BANNED_LEAKAGE_TOKENS = [
   // Raw model identifiers
@@ -51,7 +54,6 @@ const BANNED_LEAKAGE_TOKENS = [
   "packages/config",
   "packages/engine",
   "prompts/",
-  ".weave/",
   // Harness-specific tool names
   "opencode",
   "OpenCode",
@@ -201,6 +203,27 @@ describe("builtin prompt files", () => {
     it("encodes BLOCK verdict", async () => {
       const content = await Bun.file(join(PROMPTS_DIR, "warp.md")).text();
       expect(content).toContain("BLOCK");
+    });
+  });
+
+  describe("pattern.md — plan artifact paths", () => {
+    it("writes plans only under .weave/plans", async () => {
+      const content = await Bun.file(join(PROMPTS_DIR, "pattern.md")).text();
+      expect(content).toContain(".weave/plans/{slug}.md");
+      expect(content).toContain(
+        "Never create or use a top-level `plans/` directory",
+      );
+    });
+  });
+
+  describe("tapestry.md — execution artifact paths", () => {
+    it("reads plans and learnings only under .weave", async () => {
+      const content = await Bun.file(join(PROMPTS_DIR, "tapestry.md")).text();
+      expect(content).toContain(".weave/plans/{plan_name}.md");
+      expect(content).toContain(".weave/learnings/{plan_name}.md");
+      expect(content).toContain(
+        "never create top-level `plans/`, `learnings/`, or state directories",
+      );
     });
   });
 

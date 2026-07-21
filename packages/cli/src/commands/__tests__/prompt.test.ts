@@ -650,7 +650,7 @@ describe("prompt command", () => {
       const result = await runPrompt(ctx);
 
       expect(result._unsafeUnwrap()).toBe(0);
-      const output = terminal.out.join("\n");
+      const output = terminal.out.join("\n").replace(/\\/g, "/");
       expect(output).toContain("/injected/project/root");
     });
 

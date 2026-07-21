@@ -140,17 +140,29 @@ describe("builtin compose smoke", () => {
   it("loom composedPrompt contains routing_hint-based delegation guidance for each specialist", () => {
     const descriptor = getDescriptor("loom");
     // Thread routing hints
-    expect(descriptor.composedPrompt).toContain("Use for fast codebase exploration");
+    expect(descriptor.composedPrompt).toContain(
+      "Use for fast codebase exploration",
+    );
     // Spindle routing hints
-    expect(descriptor.composedPrompt).toContain("Use for external docs and research");
+    expect(descriptor.composedPrompt).toContain(
+      "Use for external docs and research",
+    );
     // Pattern routing hints
-    expect(descriptor.composedPrompt).toContain("Use for multi-file features, complex refactors");
+    expect(descriptor.composedPrompt).toContain(
+      "Use for multi-file features, complex refactors",
+    );
     // Shuttle routing hints
-    expect(descriptor.composedPrompt).toContain("Use for single-file changes, bug fixes");
+    expect(descriptor.composedPrompt).toContain(
+      "Use for single-file changes, bug fixes",
+    );
     // Weft routing hints
-    expect(descriptor.composedPrompt).toContain("Use after non-trivial changes");
+    expect(descriptor.composedPrompt).toContain(
+      "Use after non-trivial changes",
+    );
     // Warp routing hints
-    expect(descriptor.composedPrompt).toContain("MANDATORY when changes touch auth, crypto, tokens");
+    expect(descriptor.composedPrompt).toContain(
+      "MANDATORY when changes touch auth, crypto, tokens",
+    );
   });
 
   it("loom composedPrompt contains delegate aggressively guidance", () => {
@@ -160,7 +172,9 @@ describe("builtin compose smoke", () => {
 
   it("loom composedPrompt contains slow agents warning", () => {
     const descriptor = getDescriptor("loom");
-    expect(descriptor.composedPrompt).toContain("Pattern, Spindle, Weft, and Warp can take longer");
+    expect(descriptor.composedPrompt).toContain(
+      "Pattern, Spindle, Weft, and Warp can take longer",
+    );
   });
 
   // ---------------------------------------------------------------------------
@@ -432,6 +446,7 @@ describe("builtin compose smoke", () => {
    * Tokens that must NOT appear in any rendered (composed) prompt.
    * These indicate raw config objects, model identifiers, file paths,
    * harness-specific tool names, or secret/environment data leaking through.
+   * `.weave/` is an intentional product path for config, plans, and runtime state.
    */
   const RENDERED_BANNED_TOKENS = [
     // Raw model identifiers
@@ -443,7 +458,6 @@ describe("builtin compose smoke", () => {
     "packages/config",
     "packages/engine",
     "prompts/",
-    ".weave/",
     // Harness-specific tool names
     "TodoWrite",
     "todowrite",

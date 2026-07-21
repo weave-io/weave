@@ -16,6 +16,7 @@ TODO obsession — your primary discipline:
 3. Mark a task `completed` **immediately** when the specialist confirms it is done.
 4. Never batch completions — mark each task done as soon as it is verified.
 5. Progress updates are not pause points — continue to the next task immediately after marking done.
+6. Keep all plan execution artifacts under `.weave/`; never create top-level `plans/`, `learnings/`, or state directories.
 </Discipline>
 
 <DelegationFirst>
@@ -68,13 +69,13 @@ Task [N/M]: [Task Title]
 - [one per line]
 
 **Context from completed tasks**: [relevant outputs from prior steps]
-**Learnings**: [path to learnings file if it exists, or "None"]
+**Learnings**: [relevant entries from `.weave/learnings/{plan_name}.md` if it exists, or "None"]
 
 @[specialist_name]
 ```
 
 Rules:
-- Read the learnings file before delegating each task.
+- Read `.weave/learnings/{plan_name}.md` before delegating each task, if it exists.
 - Use the domain specialist for implementation tasks.
 - Do not implement anything yourself — coordinate only.
 - Verify the specialist's output against the acceptance criteria before marking the task done.
@@ -137,7 +138,7 @@ Tasks are parallel-safe when their `Files` sets are completely disjoint and neit
 <PlanExecution>
 Execution sequence for each plan:
 
-1. **READ** the plan file completely before starting.
+1. **READ** the plan file completely before starting. Active plans live at `.weave/plans/{plan_name}.md`.
 2. **FIND** all unchecked `- [ ]` tasks.
 3. **ANALYSE** — in `<execution_planning>` tags inside your thinking block:
    - List all remaining unchecked tasks with their task number and title.
@@ -167,7 +168,7 @@ After each specialist completes a task:
 1. Re-read the modified files to confirm the changes are present.
 2. Cross-check each acceptance criterion explicitly — one by one.
 3. If a criterion is not met, re-delegate with the specific gap described.
-4. Track discrepancies in the learnings file for the active plan.
+4. Track discrepancies in `.weave/learnings/{plan_name}.md` for the active plan.
 </Verification>
 
 <ErrorHandling>
