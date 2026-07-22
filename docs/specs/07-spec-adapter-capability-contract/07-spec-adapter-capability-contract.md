@@ -143,8 +143,22 @@ No specific UI design requirements identified. Human-readable CLI output should 
 4. **CLI readiness**: Renderer-ready outputs can support human, JSON, and TOON formats without changing the core evaluation model.
 5. **Documentation discoverability**: Existing architecture docs link to the completed capability contract spec.
 
+## Effective probe-lowered readiness extension
+
+[Spec 33](../33-spec-pi-adapter/33-spec-pi-adapter.md) and [ADR 0011](../../adr/0011-effective-adapter-readiness-and-runtime-observability.md) make the following extension normative for all full-readiness adapters:
+
+- A static declaration is a ceiling, not current proof.
+- One adapter-supplied sanitized probe is required for every capability in each controller generation.
+- Probe `ok` preserves the declaration, `degraded` lowers it to `degraded`, and `unavailable` lowers it to `unsupported`.
+- Missing, failed, duplicate, or contradictory probes are `unavailable` and never raise readiness.
+- Any required effective `degraded` or `unsupported` capability enters health-only mode before work starts.
+- Optional gaps remain warnings.
+- Safe initialization remains read-only and must complete before concrete harness materialization or Runtime Store mutation. It may call pure descriptor composition and build candidate registration/command plans in memory so probes can validate the exact activation plan.
+
+Token usage is required when the target contract declares it required, as Pi does. The adapter must report unavailable rather than inventing a not-applicable state when the host cannot provide the required observation.
+
+Renderer placement remains an implementation concern: engine data stays normalized and harness-specific presentation stays outside engine policy.
+
 ## Open Questions
 
-1. Should `token usage reporting when harness exposes usage` be represented as a conditional required capability with a `not-applicable` style status, or as a required capability whose readiness can be `emulated` only when equivalent usage data is available?
-2. Should the first implementation expose a standalone `SafeAdapterInit` interface, or should safe readiness checks be modeled as an optional method on adapter capability declarations?
-3. Should renderer implementations live in `@weaveio/weave-engine` as normalized format helpers or in `@weaveio/weave-cli` as presentation-specific code that consumes engine evaluation results?
+No open questions remain for effective readiness. Earlier questions above are resolved by this extension and Spec 33.

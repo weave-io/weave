@@ -11,13 +11,13 @@ Specs are numbered sequentially. Numbers 01–06 were retired or superseded; the
 | # | Spec | Summary |
 | --- | --- | --- |
 | 07 | [Adapter Capability Contract](07-spec-adapter-capability-contract/07-spec-adapter-capability-contract.md) | Structured readiness vocabulary (`native`/`emulated`/`degraded`/`unsupported`) and Core Readiness Profile evaluation |
-| 08 | [Abstract Tool Policy Evaluation](08-spec-abstract-tool-policy-evaluation/08-spec-abstract-tool-policy-evaluation.md) | Engine-owned `evaluateEffectiveToolPolicy`; adapter-owned concrete tool-name mapping |
+| 08 | [Abstract Tool Policy Evaluation](08-spec-abstract-tool-policy-evaluation/08-spec-abstract-tool-policy-evaluation.md) | Static effective-policy composition and classification; Spec 34 owns full call authorization |
 | 09 | [Adapter-Provided Skill Resolution](09-spec-adapter-provided-skill-resolution/09-spec-adapter-provided-skill-resolution.md) | `loadAvailableSkills()` adapter surface; `resolveSkillsForConfig()` pure engine helper |
 | 10a | [Builtin Prompt Defaults](10-spec-builtin-prompt-defaults/10-spec-builtin-prompt-defaults.md) | Builtin agent prompt embedding and bundle-safe resolution |
 | 10b | [Workflow Engine](10-spec-workflow-engine/10-spec-workflow-engine.md) | Workflow execution engine design (superseded by Spec 22 for execution contract) |
 | 11 | [Prompt Composition Templates](11-spec-prompt-composition-templates/11-spec-prompt-composition-templates.md) | Mustache template rendering, delegation section injection, template context fields |
 | 12 | [Runtime Persistence](12-spec-runtime-persistence/12-spec-runtime-persistence.md) | SQLite-backed Runtime Store schema and ownership rules |
-| 13 | [Minimal Execution Lifecycle Surface](13-spec-minimal-execution-lifecycle-surface/13-spec-minimal-execution-lifecycle-surface.md) | The 8 typed lifecycle methods; replaces `registerHook()` designs |
+| 13 | [Minimal Execution Lifecycle Surface](13-spec-minimal-execution-lifecycle-surface/13-spec-minimal-execution-lifecycle-surface.md) | Original lifecycle baseline, extended by Spec 33 to ten typed operations; replaces `registerHook()` designs |
 | 14 | [Preserve Category Metadata](14-spec-preserve-category-metadata/14-spec-preserve-category-metadata.md) | `CategoryMetadata` on generated shuttle descriptors |
 | 15 | [Adapter-Facing Materialization API](15-spec-adapter-facing-materialization-api/15-spec-adapter-facing-materialization-api.md) | `materializeAgents()` pure API; `MaterializationPlan` contract |
 | 16 | [Stable Adapter Descriptor Contract](16-spec-stable-adapter-descriptor-contract/16-spec-stable-adapter-descriptor-contract.md) | `AgentDescriptor` stable field table; disabled-entry rules |
@@ -38,6 +38,8 @@ Specs are numbered sequentially. Numbers 01–06 were retired or superseded; the
 | 30 | [Minimal Runtime Command Lifecycle](30-spec-minimal-runtime-command-lifecycle/30-spec-minimal-runtime-command-lifecycle.md) | Harness-agnostic command-operation semantics for OpenCode dogfood: start, named workflow, status, abort/cancel, blocked-step advancement, health, and runtime evidence |
 | 31 | [Weave Agent Evals Reporting](31-spec-weave-agent-evals-reporting/31-spec-weave-agent-evals-reporting.md) | Versioned public report bundle schemas, sanitization envelope, bounded explanation fields, score buckets, and forbidden-pattern guards for all publishable eval dashboard artifacts |
 | 32 | [Review Models](32-spec-review-models/32-spec-review-models.md) | `review_models` field syntax, review variant naming and descriptor generation, fan-out intent emission, collation semantics, and partial-failure policy |
+| 33 | [Full-readiness Pi Adapter](33-spec-pi-adapter/33-spec-pi-adapter.md) | Normative Pi package, activation, projection, delegation, workflow, persistence, diagnostics, readiness, packaging, and acceptance contract |
+| 34 | [Harness-neutral Permission Subsystem](34-spec-harness-neutral-permissions/34-spec-harness-neutral-permissions.md) | Input-aware registered-tool authorization, approval grants, challenges, and single-use execution permits |
 
 ---
 
@@ -60,4 +62,4 @@ Specs 01–06 were produced during the alpha phase and are no longer maintained 
 
 - **10a / 10b**: Two specs share the `10-` prefix due to a historical naming collision. Both directories are preserved; `10-spec-workflow-engine` is the earlier design document and `10-spec-builtin-prompt-defaults` is the implementation spec.
 - **21a / 21b**: Two specs share the `21-` prefix. `21-spec-cli-legacy-config-migration` is the active CLI migration spec; `21-spec-workflow-first-execution` is an earlier draft superseded by Spec 22.
-- New specs should use the next available integer after 32.
+- New specs should use the next available integer after 34.

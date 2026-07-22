@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://weave.io/schemas/pi-adapter-acceptance-manifest-v1.json",
+  "title": "Weave Pi adapter acceptance manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "adapter", "host", "artifactBinding", "requirements"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "adapter": { "const": "@weaveio/weave-adapter-pi" },
+    "host": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["package", "supportedRange", "floorVersion", "exactTestedVersion"],
+      "properties": {
+        "package": { "const": "@earendil-works/pi-coding-agent" },
+        "supportedRange": { "const": ">=0.81.1 <0.82.0" },
+        "floorVersion": { "const": "0.81.1" },
+        "exactTestedVersion": { "type": "string", "pattern": "^0\\.81\\.[1-9][0-9]*$" }
+      }
+    },
+    "artifactBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["packageVersion", "payloadArtifactId", "sha256", "subjectSha", "runAttempt", "checklistVersion"],
+      "properties": {
+        "packageVersion": { "type": "string", "minLength": 1 },
+        "payloadArtifactId": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "subjectSha": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+        "runAttempt": { "type": "integer", "minimum": 1 },
+        "checklistVersion": { "type": "string", "minLength": 1 }
+      }
+    },
+    "requirements": {
+      "type": "array",
+      "minItems": 20,
+      "maxItems": 20,
+      "items": { "$ref": "#/$defs/requirement" },
+      "allOf": [
+        { "contains": { "type": "object", "required": ["id"], "properties": { "id": { "const": "PI-ACT" } } } },
+        { "contains": { "type": "object", "required": ["id"], "properties": { "id": { "const": "PI-MAT" } } } },
+        { "contains": { "type": "object", "required": ["id"], "properties": { "id": { "const": "PI-PRM" } } } },
+        { "contains": { "type": "object", "required": ["id"], "properties": { "id": { "const": "PI-SKL" } } } },
+        { "contains": { "type": "object", "required": ["id"], "properties": { "id": { "const": "PI-MDL" } } } },
+        { "contains": { "type": "object", "required": ["id"], "properties": { "id": { "const": "PI-POL" } } } },
+        { "contains": { "type": "object", "required": ["id"], "properties": { "id": { "const": "PI-DEL" } } } },
+        { "contains": { "type": "object", "required": ["id"], "properties": { "id": { "const": "PI-CMD" } } } },
+        { "contains": { "type": "object", "required": ["id"], "properties": { "id": { "const": "PI-LIF" } } } },
+        { "contains": { "type": "object", "required": ["id"], "properties": { "id": { "const": "PI-CMP" } } } },
+        { "contains": { "type": "object", "required": ["id"], "properties": { "id": { "const": "PI-REC" } } } },
+        { "contains": { "type": "object", "required": ["id"], "properties": { "id": { "const": "PI-PLN" } } } },
+        { "contains": { "type": "object", "required": ["id"], "properties": { "id": { "const": "PI-ART" } } } },
+        { "contains": { "type": "object", "required": ["id"], "properties": { "id": { "const": "PI-PER" } } } },
+        { "contains": { "type": "object", "required": ["id"], "properties": { "id": { "const": "PI-DIA" } } } },
+        { "contains": { "type": "object", "required": ["id"], "properties": { "id": { "const": "PI-USG" } } } },
+        { "contains": { "type": "object", "required": ["id"], "properties": { "id": { "const": "PI-CAP" } } } },
+        { "contains": { "type": "object", "required": ["id"], "properties": { "id": { "const": "PI-ERR" } } } },
+        { "contains": { "type": "object", "required": ["id"], "properties": { "id": { "const": "PI-PKG" } } } },
+        { "contains": { "type": "object", "required": ["id"], "properties": { "id": { "const": "PI-MODE" } } } }
+      ]
+    }
+  },
+  "$defs": {
+    "requirementId": {
+      "enum": ["PI-ACT", "PI-MAT", "PI-PRM", "PI-SKL", "PI-MDL", "PI-POL", "PI-DEL", "PI-CMD", "PI-LIF", "PI-CMP", "PI-REC", "PI-PLN", "PI-ART", "PI-PER", "PI-DIA", "PI-USG", "PI-CAP", "PI-ERR", "PI-PKG", "PI-MODE"]
+    },
+    "requirement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "normativeSections", "tests", "packedProof", "liveSmoke", "result"],
+      "properties": {
+        "id": { "$ref": "#/$defs/requirementId" },
+        "normativeSections": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^33§[0-9]+(\\.[0-9]+)?$" }
+        },
+        "tests": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "pattern": "^T[0-9]{3}$" },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["file", "name"],
+            "properties": {
+              "file": { "type": "string", "pattern": "^(packages|scripts)/.+\\.(test|spec)\\.ts$" },
+              "name": { "type": "string", "minLength": 1, "maxLength": 200 }
+            }
+          }
+        },
+        "packedProof": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["required", "evidenceIds"],
+          "properties": {
+            "required": { "const": true },
+            "evidenceIds": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": { "type": "string", "pattern": "^P[0-9]{3}$" }
+            }
+          }
+        },
+        "liveSmoke": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["required", "checklistIds"],
+          "properties": {
+            "required": { "const": true },
+            "checklistIds": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": { "type": "string", "pattern": "^S[0-9]{3}$" }
+            }
+          }
+        },
+        "result": { "enum": ["pending", "pass", "fail"] },
+        "notes": { "type": "string", "maxLength": 500 }
+      }
+    }
+  }
+}

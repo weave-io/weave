@@ -1,5 +1,7 @@
 # 13-spec-minimal-execution-lifecycle-surface.md
 
+> **Normative extension:** [Spec 33 §14](../33-spec-pi-adapter/33-spec-pi-adapter.md#14-ten-lifecycle-projections) extends the original minimal surface to ten operations. [Spec 34](../34-spec-harness-neutral-permissions/34-spec-harness-neutral-permissions.md) supersedes the original pure one-capability `beforeTool` evaluator as the general authorization path; `beforeTool` remains a workflow compatibility projection.
+
 ## Introduction/Overview
 
 Weave will add a minimal, engine-owned execution lifecycle surface for dogfood workflow execution. The feature replaces the idea of porting the full legacy lifecycle hook system with a small set of harness-neutral lifecycle entry points that adapters can call after mapping concrete harness events into Weave concepts.
@@ -149,12 +151,31 @@ Any user-visible output produced as a proof artifact should be deterministic, re
 1. **MVP surface completeness**: all issue #44 lifecycle points are represented by documented public engine APIs or intentionally equivalent names.
 2. **Boundary compliance**: lifecycle tests and code review show the engine does not register concrete harness hooks or inspect harness-owned runtime state.
 3. **Runtime integration**: start, resume, pause, dispatch, and completion behavior use the existing Runtime Store and lease model.
-4. **Policy enforcement**: `beforeTool` returns deterministic abstract policy decisions for allow, deny, and ask cases.
+4. **Policy enforcement**: the original allow/deny/ask baseline remains covered, and full-readiness `beforeTool` delegates registered calls to the Spec 34 permission session.
 5. **Dogfood readiness**: a mock adapter can drive the minimal lifecycle flow end-to-end without a real harness process.
 6. **Safety**: tests or review artifacts prove lifecycle effects and records exclude raw prompts, credentials, tokens, and harness-private payloads.
 
+## Full lifecycle and permission compatibility extension
+
+[Spec 33](../33-spec-pi-adapter/33-spec-pi-adapter.md) extends the lifecycle surface to ten operations by adding `inspectExecution`, `approveArtifact`, and `reconcileExecution` to the original execution methods while retaining `beforeTool` as a compatibility projection.
+
+The ten operation names are:
+
+1. `observeSession`;
+2. `startExecution`;
+3. `resumeExecution`;
+4. `handleUserInterrupt`;
+5. `dispatchStep`;
+6. `completeStep`;
+7. `beforeTool`;
+8. `inspectExecution`;
+9. `approveArtifact`;
+10. `reconcileExecution`.
+
+`beforeTool` no longer defines the general permission system. It MUST call the [Spec 34 permission session](../34-spec-harness-neutral-permissions/34-spec-harness-neutral-permissions.md), or a behaviorally identical compatibility wrapper, for workflow-governed registered calls. Ordinary registered calls use the same permission session without requiring workflow or lease identity. Unregistered tools return `unmanaged`, not `allow`.
+
+Structured completion is a recorded candidate followed by harness settlement. Free-form prose or process exit is not completion. Adapters call `completeStep` only after one valid candidate and settlement; missing, duplicate, malformed, rejected, or late candidates fail without advancing state.
+
 ## Open Questions
 
-1. Should `dispatchStep` reuse the existing `RunAgentEffect` type directly, or should it introduce a broader lifecycle effect union that contains `RunAgentEffect` as one variant?
-2. Should `registerHook()` be removed in the same implementation slice, or retained as deprecated until all adapters have migrated to the lifecycle surface?
-3. What exact minimal structured completion signal should adapters provide to `completeStep` before issue #10 defines the full workflow engine semantics?
+No open questions remain for the full-readiness lifecycle. The original minimal-surface questions are resolved by Specs 22, 33, and 34.

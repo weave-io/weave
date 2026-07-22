@@ -4,7 +4,7 @@ This document summarises the current adapter-readiness state of the Weave engine
 API — what user capabilities are available, which specs deliver them, and what
 every adapter must implement to be considered ready.
 
-**Related:** [Adapter Boundary](adapter-boundary.md) · [Adapter Bootstrap Guide](adapter-bootstrap.md) · [Harness Agent Surface Patterns](harness-agent-surface-patterns.md) · [ADR 0003 — OpenCode Adapter Materialization Shape](adr/0003-opencode-adapter-materialization-shape.md) · [ADR 0004 — Workflow-First Execution Contract](adr/0004-workflow-first-execution-contract.md) · [Spec 15 — Adapter-Facing Materialization API](specs/15-spec-adapter-facing-materialization-api/15-spec-adapter-facing-materialization-api.md) · [Spec 17 — Workflow Extension DSL](specs/17-spec-workflow-extension/17-spec-workflow-extension.md) · [Spec 18 — Delegation Exclusion](specs/18-spec-delegation-exclusion/18-spec-delegation-exclusion.md) · [Spec 19 — Plan State Provider](specs/19-spec-plan-state-provider/19-spec-plan-state-provider.md) · [Spec 20 — OpenCode Adapter Materialization](specs/20-spec-opencode-adapter-materialization/20-spec-opencode-adapter-materialization.md) · [Spec 22 — Workflow-First Execution](specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md)
+**Related:** [Adapter Boundary](adapter-boundary.md) · [Adapter Bootstrap Guide](adapter-bootstrap.md) · [Harness Agent Surface Patterns](harness-agent-surface-patterns.md) · [ADR 0003 — OpenCode Adapter Materialization Shape](adr/0003-opencode-adapter-materialization-shape.md) · [ADR 0004 — Workflow-First Execution Contract](adr/0004-workflow-first-execution-contract.md) · [Spec 15 — Adapter-Facing Materialization API](specs/15-spec-adapter-facing-materialization-api/15-spec-adapter-facing-materialization-api.md) · [Spec 17 — Workflow Extension DSL](specs/17-spec-workflow-extension/17-spec-workflow-extension.md) · [Spec 18 — Delegation Exclusion](specs/18-spec-delegation-exclusion/18-spec-delegation-exclusion.md) · [Spec 19 — Plan State Provider](specs/19-spec-plan-state-provider/19-spec-plan-state-provider.md) · [Spec 20 — OpenCode Adapter Materialization](specs/20-spec-opencode-adapter-materialization/20-spec-opencode-adapter-materialization.md) · [Spec 22 — Workflow-First Execution](specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md) · [Spec 33 — Full-readiness Pi Adapter](specs/33-spec-pi-adapter/33-spec-pi-adapter.md) · [Spec 34 — Harness-neutral Permissions](specs/34-spec-harness-neutral-permissions/34-spec-harness-neutral-permissions.md)
 
 ---
 
@@ -66,6 +66,24 @@ mapping, plugin/config generation, and feature-gap emulation.
 See [Adapter Bootstrap Guide](adapter-bootstrap.md) for the canonical
 `loadConfig → materializeAgents → adapter loop` pattern with a runnable
 `MockAdapter` example.
+
+---
+
+## Pi Adapter — Contract Accepted, Implementation Pending
+
+[Spec 33](specs/33-spec-pi-adapter/33-spec-pi-adapter.md) defines full readiness for `@weaveio/weave-adapter-pi` on interactive Earendil Works Pi TUI sessions. The contract is accepted, but no readiness capability is implemented or verified merely because the spec exists.
+
+| Area | Current effective status | Gate |
+| --- | --- | --- |
+| Contract and requirement IDs | ✅ Accepted | Spec 33 plus ADRs 0008–0011 |
+| Harness-neutral prerequisites | ⏳ Pending | Delegation, permissions, revisioned plans/artifacts, usage/retention, effective probes, rotating logs |
+| Pi package/runtime projection | ⏳ Pending | Fake-host and isolated adapter tests |
+| Packed package and exact-host consumer | ⏳ Pending | `PI-PKG` manifest evidence |
+| Stable interactive TUI readiness | ⏳ Pending | Digest-bound live smoke for all mandatory `PI-*` rows |
+
+Pi must report static declarations as ceilings and lower them through one activation probe per capability. Any required effective degraded or unsupported capability enters health-only mode. The adapter must not claim ready until the final acceptance manifest maps all 20 requirement IDs to existing automated proof, required packed evidence, and bound live-smoke evidence.
+
+See [Pi Adapter Architecture](pi-adapter.md) and the [Pi Adapter Guide](adapters/pi.md).
 
 ---
 
@@ -179,6 +197,8 @@ The OpenCode adapter (`@weaveio/weave-adapter-opencode`) pins `@opencode-ai/sdk`
 | [Spec 18](specs/18-spec-delegation-exclusion/18-spec-delegation-exclusion.md)                             | Delegation Exclusion               | `routing.delegation_exclude` filtered inside `buildDelegationTargets()`; adapters receive pre-filtered `delegationTargets` on `AgentDescriptor` |
 | [Spec 19](specs/19-spec-plan-state-provider/19-spec-plan-state-provider.md)                               | Plan State Provider                | Adapters supply a `PlanStateProvider` to `completeStep`; use `BunFilesystemPlanStateProvider` from `@weaveio/weave-config` for production               |
 | [Spec 22](specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md)                     | Workflow-First Execution           | Commands, hooks, skills, scripts, and UI are adapter-owned projections of the engine-owned execution contract; adapters declare delivery via `command-entrypoints` readiness |
+| [Spec 33](specs/33-spec-pi-adapter/33-spec-pi-adapter.md)                                                 | Full-readiness Pi Adapter           | Defines Pi's TUI-only package, lifecycle, projection, proof, and release contract; acceptance is pending implementation evidence |
+| [Spec 34](specs/34-spec-harness-neutral-permissions/34-spec-harness-neutral-permissions.md)               | Harness-neutral Permissions         | Defines registered-tool normalized requests, grants, challenges, permits, and `beforeTool` compatibility |
 
 ---
 

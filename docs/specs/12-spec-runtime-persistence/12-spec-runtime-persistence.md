@@ -1,5 +1,7 @@
 # 12-spec-runtime-persistence.md
 
+> **Normative extension:** [Spec 33 §19](../33-spec-pi-adapter/33-spec-pi-adapter.md#19-diagnostics-retention-and-usage) adds journal/usage retention, pruning, idempotent observations, and durable rollups. Statements below that deferred retention applied only to the original issue #50 slice.
+
 ## Introduction/Overview
 
 Weave will add a default, engine-owned **Runtime Store** for durable workflow execution state. The Runtime Store makes workflow execution resumable, inspectable, and debuggable across session interruptions without making adapters own Weave product state.
@@ -113,7 +115,7 @@ The default implementation stores Runtime Store data in `.weave/runtime/weave.db
 - `RuntimeJournalWriter` shall be the enforcement point for adapter journal validation: it validates envelope fields, enforces payload size limits, sanitizes or rejects sensitive fields, and applies fingerprinting before persistence.
 - Runtime Journal payloads shall have a concrete maximum serialized size in implementation; the initial recommended maximum is 64 KiB per entry unless a later spec changes it.
 - Runtime Journal sanitization shall strip or reject bearer/auth tokens, API keys, passwords, cookies, authorization headers, raw prompts, raw completions, raw transcripts, and known secret-like fields before persistence.
-- Runtime Journal retention/pruning shall be deferred; the schema shall include timestamp indexes for future cleanup.
+- The original issue #50 implementation deferred Runtime Journal retention/pruning; Spec 33 now requires the bounded retention extension defined below.
 
 **Proof Artifacts:**
 
@@ -157,7 +159,7 @@ The default implementation stores Runtime Store data in `.weave/runtime/weave.db
 1. **Full lifecycle orchestration**: `startExecution`, `resumeExecution`, `dispatchStep`, `completeStep`, and policy/tool lifecycle handling remain issue #44/follow-up work.
 2. **Multiple concurrent active executions**: Issue #50 enforces one active project lease.
 3. **Runtime DB path configuration**: `.weave/runtime/weave.db` is fixed for this slice.
-4. **Runtime Journal retention and cleanup**: No automatic pruning or cleanup CLI is included.
+4. **User-driven retention CLI**: Spec 33 adds automatic bounded pruning, but an export/cleanup command remains out of scope.
 5. **Raw prompt/completion/session storage**: The Runtime Store is not a transcript archive.
 6. **Event sourcing**: The Runtime Journal is not replayable state.
 7. **SQLite alternatives**: JSONL, Drizzle, Prisma, direct-only SQL, and external migration CLIs are not part of the accepted design.
@@ -207,6 +209,24 @@ CLI output should be readable by humans and stable enough for TOON-style LLM con
 3. **Inspection**: users can run `weave runtime status` and `weave runtime journal --limit <n>` against a SQLite store.
 4. **Privacy**: tests prove raw prompt/completion content is not stored in journal entries.
 5. **Layered coverage**: core settings, engine stores, CLI commands, migration behavior, and failure modes are covered by tests.
+
+## Retention and usage extension
+
+[Spec 33](../33-spec-pi-adapter/33-spec-pi-adapter.md) and [ADR 0011](../../adr/0011-effective-adapter-readiness-and-runtime-observability.md) extend the Runtime Store with portable bounded retention and usage contracts.
+
+### Retention
+
+The settings contract adds journal age/count bounds, usage-detail age/count bounds, and rotating-log size/count bounds. Values are finite positive integers in the ranges defined by Spec 33 §19.3.
+
+Pruning runs after activation and after either 256 relevant writes or 15 minutes. One serialized single-flight task removes entries by age first, then oldest entries above count. Failure degrades and retries only at the next safe boundary. `journal.strict=true` affects only its correlated transaction.
+
+### Usage observations and rollups
+
+The Runtime Store records one detailed observation for each settled assistant message. An observation has a stable ID, timestamp, source, optional workflow/step/agent/model dimensions, optional non-negative token counters, and optional non-negative finite cost. Missing counters stay absent.
+
+Insertion and rollup update are atomic. Replaying the same ID with identical normalized values is a no-op. Reusing an ID with different values is an invariant breach. Rollups group by available dimensions and sum each known field independently. Pruning detailed observations never subtracts durable rollups.
+
+Adapters submit normalized observations through an engine-owned repository. They do not write rollup tables directly. Raw message text, provider payloads, prompts, completions, and tool results are forbidden.
 
 ## Open Questions
 

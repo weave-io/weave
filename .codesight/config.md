@@ -8,9 +8,10 @@
 - `GITHUB_TOKEN` **required** — scripts/release/bind-artifacts.ts
 - `HOME` **required** — packages/cli/src/detect/probes.ts
 - `LOG_LEVEL` **required** — packages/config/src/logger.ts
-- `PATH` **required** — scripts/release/__tests__/verification-harness.test.ts
+- `PATH` **required** — scripts/release/__tests__/release-orchestrator.test.ts
 - `PWD` **required** — packages/adapters/opencode/dist-types/adapter.d.ts
 - `RELEASE_APP_TOKEN` **required** — scripts/release/release-refs-main.ts
+- `RELEASE_AWAITING_STABLE_TRAIN` **required** — scripts/release/release-refs-main.ts
 - `RELEASE_CONTROL_DRY_RUN` **required** — scripts/release/control-main.ts
 - `RELEASE_GITHUB_API_URL` **required** — scripts/release/control-main.ts
 - `RELEASE_HEAD_REF` **required** — scripts/release/control-main.ts

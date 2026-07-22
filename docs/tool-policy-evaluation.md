@@ -5,7 +5,7 @@ Weave evaluates abstract tool policy in the engine layer, producing a fully-reso
 This document describes the vocabulary, evaluation rules, and the observable
 effects channel through which callers receive the computed policy.
 
-**Related:** [Adapter Boundary](adapter-boundary.md) · [Product Vision](product-vision.md) · [Spec 08 — Abstract Tool Policy Evaluation](specs/08-spec-abstract-tool-policy-evaluation/08-spec-abstract-tool-policy-evaluation.md) · [Spec 07 — Adapter Capability Contract](specs/07-spec-adapter-capability-contract/07-spec-adapter-capability-contract.md)
+**Related:** [Adapter Boundary](adapter-boundary.md) · [Product Vision](product-vision.md) · [Spec 08 — Abstract Tool Policy Evaluation](specs/08-spec-abstract-tool-policy-evaluation/08-spec-abstract-tool-policy-evaluation.md) · [Spec 07 — Adapter Capability Contract](specs/07-spec-adapter-capability-contract/07-spec-adapter-capability-contract.md) · [Spec 34 — Harness-neutral Permissions](specs/34-spec-harness-neutral-permissions/34-spec-harness-neutral-permissions.md) · [ADR 0009](adr/0009-input-aware-tool-permission-authorization.md)
 
 ---
 
@@ -194,6 +194,20 @@ The adapter contract for tool policy is:
 4. **Category shuttle agents.** Generated `shuttle-{category}` agents inherit
    their category's `tool_policy`. The runner evaluates and emits effective policy
    for them the same way as regular agents.
+
+### Static policy is not call authorization
+
+`evaluateEffectiveToolPolicy`, `ConcreteToolClassification`, and `resolveToolDecisions` compose policy intent. They do not authorize an intercepted call. Full-readiness adapters MUST use the [Spec 34 permission subsystem](specs/34-spec-harness-neutral-permissions/34-spec-harness-neutral-permissions.md):
+
+1. register every native and Weave-owned capability-bearing tool with one pure input-aware resolver;
+2. seal an immutable registry generation and bind each active agent to its effective policy;
+3. resolve every intercepted call into one or more normalized requests;
+4. obtain `authorized` with a short-lived single-use permit, or block on `denied`, `approval_required`, or typed failure;
+5. consume the exact permit immediately before execution.
+
+Only unrelated third-party tools may remain `unmanaged`. `unmanaged` means Weave makes no enforcement claim and issues no permit; it never means `allow`. A readiness probe must fail when a native or Weave-owned governed tool is missing registration or can bypass interception.
+
+The workflow `beforeTool` operation is a compatibility projection over the same permission session. It is not a separate one-capability authorization path.
 
 ---
 

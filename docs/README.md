@@ -23,6 +23,8 @@ The published docs site is built from the Astro + Starlight package at [`package
 | [System Architecture](system-architecture.md) | Package structure, layer responsibilities |
 | [Claude Code Adapter](claude-code-adapter.md) | Claude Code adapter materialization |
 | [Claude Code Adapter Guide](adapters/claude-code.md) | Two-plugin model, installation, tool policy mapping, model aliases, edge cases |
+| [Pi Adapter Architecture](pi-adapter.md) | Pi extension activation, ownership, commands, private children, readiness, and proof model |
+| [Pi Adapter Guide](adapters/pi.md) | Compatibility, installation, trust, commands, approvals, health, and recovery |
 | [Adapter Readiness Status](adapter-readiness-status.md) | Per-adapter capability readiness declarations |
 | [Harness Agent Surface Patterns](harness-agent-surface-patterns.md) | Patterns for adapter-side agent surface materialization |
 | [Agent Evals](agent-evals.md) | Eval architecture, the shared eight-suite text-only registry surface, fixture layout, CLI usage, dry-run validation behavior, filter semantics, forbidden text-only assertion shapes, prompt snapshot coverage, registry-driven sync tests, recommended case-authoring pattern, prompt-hash provenance, immutable run bundle schema, `schemaVersion` mandate, dashboard index derivation, sanitization rules, raw-artifact policy, CI model, and the 2026-06-30 phase-1 fairness-gate plus phase-2 prompt-quality-gate decisions |
@@ -49,6 +51,10 @@ ADRs record decisions with meaningful trade-offs. They are durable — once acce
 | [ADR 0005 — Remediation Decisions for Specs 24–28](adr/0005-five-spec-remediation-decisions.md) | Accepted answers to open questions across Specs 24–28 |
 | [ADR 0006 — End-to-End Orchestration Flow](adr/0006-end-to-end-orchestration-flow.md) | Full Loom → Pattern → Tapestry → Weft/Warp flow; legacy vs. current model; where issue #52 fits. **Note:** the "add default_workflow" guidance in the "Where Issue #52 Fits" section is superseded by [Spec 29](specs/29-spec-default-usage-not-workflow-driven/29-spec-default-usage-not-workflow-driven.md) — ordinary usage is Loom-led, not workflow-driven. |
 | [ADR 0007 — Artifact-First OIDC Releases](adr/0007-artifact-first-oidc-releases.md) | Bundled public packs, OIDC channels, immutable release records, and no-unpublish policy |
+| [ADR 0008 — Portable Delegation Budgets](adr/0008-portable-delegation-budgets.md) | Harness-neutral delegation limits with adapter-owned live accounting and enforcement |
+| [ADR 0009 — Input-aware Tool Permission Authorization](adr/0009-input-aware-tool-permission-authorization.md) | Engine-owned normalized authorization with adapter-owned concrete interception and UI |
+| [ADR 0010 — Plan State and Artifact Approval Authority](adr/0010-plan-state-and-artifact-approval-authority.md) | Revisioned plan transitions and revision-bound approval actors |
+| [ADR 0011 — Effective Adapter Readiness and Runtime Observability](adr/0011-effective-adapter-readiness-and-runtime-observability.md) | Capability ceilings, activation probes, health-only mode, bounded retention, and usage rollups |
 
 ---
 

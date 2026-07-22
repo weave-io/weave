@@ -165,6 +165,22 @@ No specific visual design requirements identified. The main UX consideration is 
 2. **Explicit workflow inputs**: planning and execution requirements rely on declared artifacts, approvals, and revisions rather than incidental chat context.
 3. **Spec usability**: a junior developer can derive schema, validation, runtime, and adapter follow-up tasks from the demoable units without needing hidden design context.
 
+## Generalized artifact approval actors
+
+[Spec 33](../33-spec-pi-adapter/33-spec-pi-adapter.md) and [ADR 0010](../../adr/0010-plan-state-and-artifact-approval-authority.md) replace an agent-name-only approver with:
+
+```ts
+type ArtifactApprovalActor =
+  | { kind: "user"; provenance: SafeMetadata }
+  | { kind: "agent"; agentName: string; gate: "review" | "security" };
+```
+
+The engine validates actor authority against the active workflow, gate role, producer identity, and exact artifact revision. A producer cannot approve its own revision. User approval originates only from an explicit user artifact action. Agent approval originates only from the authorized structured review or security gate.
+
+Approval binds the workflow instance, artifact identity, revision, integrity digest, actor, and decision. A new revision invalidates prior approval. Before dispatch, adapters recompute required artifact digests and pass pinned revisions. A mismatch fails closed and calls `reconcileExecution` with `execution-mismatch`; it never silently rebinds.
+
+The four reconciliation sources remain `execution-mismatch`, `user-revision-request`, `review-rejection`, and `security-rejection`, each accepted only from its authorized source.
+
 ## Open Questions
 
 No open questions at this time.

@@ -4,6 +4,8 @@
 **Date**: 2026-06-02  
 **Related**: [Spec 22 — Workflow-First Execution](../specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md) · [Adapter Boundary](../adapter-boundary.md) · [Context Glossary](../../CONTEXT.md) · [Product Vision](../product-vision.md) · [Spec 13 — Minimal Execution Lifecycle Surface](../specs/13-spec-minimal-execution-lifecycle-surface/13-spec-minimal-execution-lifecycle-surface.md) · [ADR 0002 — Runtime Persistence Store](0002-runtime-persistence-store.md) · [Legacy Architecture](../legacy-architecture.md)
 
+> **Extension note:** This ADR's references to the original seven lifecycle methods describe the accepted baseline at the time of decision. [Spec 33 §14](../specs/33-spec-pi-adapter/33-spec-pi-adapter.md#14-ten-lifecycle-projections) extends that surface to ten operations without changing this ADR's explicit user-authorization boundary.
+
 ---
 
 ## Context

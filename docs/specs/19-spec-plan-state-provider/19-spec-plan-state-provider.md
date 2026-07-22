@@ -1,5 +1,7 @@
 # 19-spec-plan-state-provider.md
 
+> **Normative extension:** [Spec 33 §16](../33-spec-pi-adapter/33-spec-pi-adapter.md#16-revisioned-plan-state) supersedes this spec's original read-only and checkbox-only limits. The original query contract remains as compatibility projections over revisioned snapshots.
+
 ## Introduction/Overview
 
 Extract the plan-file I/O currently embedded in `packages/engine/src/execution-lifecycle.ts` into a `PlanStateProvider` interface owned by `@weaveio/weave-engine`. Provide a default Bun-backed implementation (`BunFilesystemPlanStateProvider`) in `@weaveio/weave-config`. Wire the provider into `CompleteStepInput` as an optional field so that adapters and tests can supply any implementation without the engine performing direct filesystem I/O.
@@ -284,8 +286,8 @@ The `Bun.file()` calls in those functions are the only direct filesystem I/O in 
 ## Non-Goals (Out of Scope)
 
 1. **Changing the `.weave/plans/` path convention**: The path `.weave/plans/<name>.md` remains the canonical location. `BunFilesystemPlanStateProvider` hard-codes this path. Future specs may make the base path configurable.
-2. **Plan file creation**: `PlanStateProvider` is read-only. Writing plan files remains outside this spec.
-3. **Plan file content parsing beyond checkbox detection**: `isPlanComplete` checks only for `- [ ]` patterns. Richer plan parsing is out of scope.
+2. **Arbitrary plan file creation**: Spec 33 adds controlled revisioned transitions, not an unrestricted create/write API.
+3. **Parsing beyond the canonical two-level task grammar**: Spec 33 replaces checkbox-only detection with a bounded parent/leaf parser; arbitrary Markdown task grammars remain out of scope.
 4. **Adapter-specific plan storage**: This spec does not define how adapters that store plans in non-filesystem locations (e.g. databases) should implement the interface. That is adapter-owned.
 5. **Making `planStateProvider` required**: The field is optional to preserve backward compatibility with existing callers that do not use `plan_created`/`plan_complete` completion methods.
 
@@ -322,8 +324,8 @@ The engine must validate plan names before constructing paths or calling provide
 
 ## Security Considerations
 
-- `validatePlanName` in the engine is the primary path traversal defence. It must run before any provider call.
-- `BunFilesystemPlanStateProvider` applies the same regex as a secondary defence. It must not construct filesystem paths from unvalidated names.
+- `validatePlanName` in the engine is the first lexical traversal defence. It must run before any provider call, but it is not sufficient for filesystem containment.
+- `BunFilesystemPlanStateProvider` applies the same regex, resolves from a canonical trusted project root, rejects symlinks in every path component, and performs compare-and-swap plus replacement against the same no-follow target identity. If the provider cannot prove those properties, mutation is unavailable and fails closed.
 - `PlanStateProvider` implementations must not expose plan file content in error messages beyond what is needed for diagnosis.
 - The `PlanStateError` union must not carry raw file content, credentials, or sensitive metadata.
 
@@ -336,8 +338,27 @@ The engine must validate plan names before constructing paths or calling provide
 5. **Test coverage**: All plan-completion paths are tested with mock providers; no test touches the real filesystem for plan checks.
 6. **Boundary documented**: `docs/adapter-boundary.md` records plan file state as adapter-owned with a `PlanStateProvider` subsection.
 
+## Revisioned snapshot and transition extension
+
+[Spec 33](../33-spec-pi-adapter/33-spec-pi-adapter.md) and [ADR 0010](../../adr/0010-plan-state-and-artifact-approval-authority.md) extend the provider:
+
+```ts
+interface PlanStateProvider {
+  readSnapshot(planName: string): ResultAsync<PlanTaskSnapshot, PlanStateError>;
+  applyTransition(input: PlanTaskTransition): ResultAsync<PlanTaskSnapshot, PlanStateError>;
+  planExists(planName: string): ResultAsync<boolean, PlanStateError>;
+  isPlanComplete(planName: string): ResultAsync<boolean, PlanStateError>;
+}
+```
+
+`planExists` and `isPlanComplete` are projections of parsed snapshot state. A snapshot contains plan name, content revision, `canonical` or `legacy` format, ordered parent/child tasks, visible IDs, titles, leaf state, total parent count, and derived completion.
+
+Canonical plans allow two checkbox levels. Leaf markers are pending (`[ ]`), in-progress (`[-]`), and completed (`[x]`). Parent state derives from child state. Allowed leaf transitions are pending→in-progress→completed and explicit coordinator retry in-progress→pending. Completed leaves are terminal.
+
+`applyTransition` requires a safe name, authorized coordinator identity, task ID, requested transition, and expected content revision. The provider uses compare-and-swap and atomic Bun replacement. A stale revision fails closed. Reads never rewrite. Unambiguous legacy plans remain readable but lower health; malformed or ambiguous trees return typed parse errors.
+
+Only the authorized plan coordinator receives transition authority. Delegated workers return evidence and cannot mutate or self-certify plan tasks.
+
 ## Open Questions
 
-1. Should `BunFilesystemPlanStateProvider` accept a configurable base path (e.g. `new BunFilesystemPlanStateProvider({ plansDir: ".weave/plans" })`) to support non-standard project layouts, or should the path be hard-coded for now?
-2. Should `PlanStateProvider` be extended in a future spec to support plan file creation (`createPlan`) so that the Pattern agent can write plan files through the same abstraction?
-3. Should the engine emit a debug-level log when `planStateProvider` is absent and the step uses a plan completion method, before returning the error, to aid diagnosis?
+No open questions remain for the full-readiness provider. Base-path configuration remains outside Spec 33.

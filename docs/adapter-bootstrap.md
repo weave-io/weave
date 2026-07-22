@@ -326,9 +326,12 @@ async function bootstrapWorkflow(projectRoot: string): Promise<void> {
 | `resumeExecution` | A paused or blocked execution resumes | `ResumeExecutionOutput` with new `leaseId`, `effects` |
 | `handleUserInterrupt` | The user explicitly cancels or pauses | `HandleUserInterruptOutput` with `effects` |
 | `dispatchStep` | The next workflow step should be dispatched | `DispatchStepOutput` with `effects` containing a `dispatch-agent` entry |
-| `completeStep` | A workflow step has finished | `CompleteStepOutput` with `effects` (next dispatch, pause, or complete) |
-| `beforeTool` | A tool call is about to execute | `BeforeToolOutput` with `decision`: `allow` / `deny` / `ask` |
+| `completeStep` | One valid structured completion candidate has settled | `CompleteStepOutput` with `effects` (next dispatch, pause, or complete) |
+| `beforeTool` | A workflow-governed registered call is intercepted | Compatibility result from the Spec 34 permission session |
 | `observeSession` | A harness session observation is available | `ObserveSessionOutput` |
+| `inspectExecution` | An adapter needs a read-only snapshot | Execution and lease inspection output |
+| `approveArtifact` | An authorized user or gate decides an exact revision | Revision-bound approval output |
+| `reconcileExecution` | A typed mismatch or rejection needs correction | Reconciliation effects for the authorized source |
 
 All methods return `ResultAsync<Output, LifecycleError>` — errors are never
 thrown. See [Adapter Boundary — Execution Lifecycle Surface](adapter-boundary.md#execution-lifecycle-surface)
@@ -342,9 +345,7 @@ uses `plan_created` or `plan_complete` completion methods — it reads and write
 plan files under `.weave/plans/`.
 
 `BunFilesystemPlanStateProvider` (from `@weaveio/weave-config`) is the production
-implementation backed by Bun's filesystem APIs. It will be available once
-[Spec 19](specs/) is implemented (task 18). Until then, pass `undefined` for
-steps that do not use plan-based completion methods.
+implementation backed by Bun's filesystem APIs. Spec 33 extends it with revisioned snapshots and coordinator-authorized compare-and-swap transitions. Pass `undefined` only for steps that do not use plan-based completion methods.
 
 ---
 
@@ -451,7 +452,7 @@ actions, or scripts.
 | --- | --- | --- |
 | OpenCode | Plugin custom tools | Tools registered via the `tool` hook in the plugin's `Hooks` return |
 | Claude Code | Command markdown files | `.claude/commands/*.md` with execution via MCP or prompt injection |
-| Pi | TBD | Pi adapter is a stub; delivery mechanism not yet determined |
+| Pi | Native commands and action palette | Spec 33 defines `/weave` plus exact direct commands; implementation proof is pending |
 
 ### OpenCode: Plugin custom tools
 
@@ -644,9 +645,12 @@ All types and functions used in this guide are public exports:
 | `resumeExecution` | `@weaveio/weave-engine` | Resume a paused execution |
 | `handleUserInterrupt` | `@weaveio/weave-engine` | Handle a user-initiated interrupt |
 | `dispatchStep` | `@weaveio/weave-engine` | Dispatch the next workflow step |
-| `completeStep` | `@weaveio/weave-engine` | Record step completion and advance the workflow |
-| `beforeTool` | `@weaveio/weave-engine` | Evaluate abstract tool policy before a tool executes |
+| `completeStep` | `@weaveio/weave-engine` | Record settled structured completion and advance the workflow |
+| `beforeTool` | `@weaveio/weave-engine` | Workflow compatibility projection over the Spec 34 permission session |
 | `observeSession` | `@weaveio/weave-engine` | Record a normalized session observation |
+| `inspectExecution` | `@weaveio/weave-engine` | Read execution and lease state without mutation |
+| `approveArtifact` | `@weaveio/weave-engine` | Validate actor authority and decide an exact artifact revision |
+| `reconcileExecution` | `@weaveio/weave-engine` | Route a closed reconciliation source to its handler |
 | `LifecycleEffect` | `@weaveio/weave-engine` | `dispatch-agent` / `pause-execution` / `complete-execution` |
 | `LifecycleError` | `@weaveio/weave-engine` | Discriminated union: `validation`, `not_found`, `lease_conflict`, `persistence`, `policy_decision` |
 | `createInMemoryRuntimeStore` | `@weaveio/weave-engine` | In-memory `RuntimeStore` for tests and ephemeral runs |
@@ -742,15 +746,13 @@ Once `materializeAgents` returns `plan.agents`, the adapter owns:
 
 - **Concrete model selection** — check harness model availability, apply
   selected-model state, format the model field for the harness.
-- **Tool-name mapping** — translate abstract capabilities (`read`, `write`,
-  `execute`, `delegate`, `network`) from `descriptor.effectiveToolPolicy` into
-  concrete harness tool names and permission settings.
+- **Registered-tool projection** — discover every native and Weave-owned capability-bearing tool, register one pure input-aware resolver per concrete identity, intercept each call, and consume the Spec 34 permit immediately before execution.
 - **Plugin/config generation** — write harness-specific config files, register
   plugins, or update runtime state.
 - **Feature-gap emulation** — implement sub-agent behavior, routing, or other
   capabilities the harness lacks natively.
 - **Lifecycle event mapping** — detect harness-specific events (session idle,
-  user interrupt, tool invocation) and map them into the 7 lifecycle methods.
+  user interrupt, tool invocation) and map them into the 10 lifecycle operations.
 - **Effect application** — spawn agents, pause sessions, update UI state in
   response to `LifecycleEffect` values returned by the engine.
 

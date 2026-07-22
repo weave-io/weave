@@ -5,7 +5,7 @@ Weave is a harness-agnostic orchestration framework with two cooperating halves:
 1. **Core Weave API** (`@weaveio/weave-core`, `@weaveio/weave-config`, `@weaveio/weave-engine`) parses DSL config, normalizes agent intent, resolves/composes prompt and policy data, and exposes pure helper APIs.
 2. **Adapters** (`@weaveio/weave-adapter-opencode`, `@weaveio/weave-adapter-pi`, etc.) enable Weave inside a concrete harness by discovering harness-owned resources, translating normalized intent, and filling feature gaps when the harness lacks native support.
 
-**Related:** [Product Vision](product-vision.md) · [Adapter Bootstrap Guide](adapter-bootstrap.md) · [Claude Code Adapter](claude-code-adapter.md) · [Model Resolution](model-resolution.md) · [Config Loading](config-loading.md) · [Prompt Composition](prompt-composition.md) · [Tool Policy Evaluation](tool-policy-evaluation.md) · [Adapter Readiness Status](adapter-readiness-status.md) · [ADR 0003 — OpenCode Adapter Materialization Shape](adr/0003-opencode-adapter-materialization-shape.md) · [Runtime Persistence Spec](specs/12-spec-runtime-persistence/12-spec-runtime-persistence.md) · [ADR 0002 — Runtime Persistence Store](adr/0002-runtime-persistence-store.md) · [Spec 09 — Adapter-Provided Skill Resolution](specs/09-spec-adapter-provided-skill-resolution/09-spec-adapter-provided-skill-resolution.md) · [Spec 07 — Adapter Capability Contract](specs/07-spec-adapter-capability-contract/07-spec-adapter-capability-contract.md) · [Spec 08 — Abstract Tool Policy Evaluation](specs/08-spec-abstract-tool-policy-evaluation/08-spec-abstract-tool-policy-evaluation.md) · [Spec 15 — Adapter-Facing Materialization API](specs/15-spec-adapter-facing-materialization-api/15-spec-adapter-facing-materialization-api.md) · [Spec 16 — Stable Adapter Descriptor Contract](specs/16-spec-stable-adapter-descriptor-contract/16-spec-stable-adapter-descriptor-contract.md) · [Spec 17 — Workflow Extension DSL](specs/17-spec-workflow-extension/17-spec-workflow-extension.md) · [Spec 18 — Delegation Exclusion](specs/18-spec-delegation-exclusion/18-spec-delegation-exclusion.md) · [Spec 19 — Plan State Provider](specs/19-spec-plan-state-provider/19-spec-plan-state-provider.md) · [Spec 20 — OpenCode Adapter Materialization](specs/20-spec-opencode-adapter-materialization/20-spec-opencode-adapter-materialization.md) · [Spec 22 — Workflow-First Execution](specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md) · [ADR 0004 — Workflow-First Execution Contract](adr/0004-workflow-first-execution-contract.md) · [Execution Lifecycle Surface](#execution-lifecycle-surface) · [Legacy Architecture](legacy-architecture.md)
+**Related:** [Product Vision](product-vision.md) · [Adapter Bootstrap Guide](adapter-bootstrap.md) · [Claude Code Adapter](claude-code-adapter.md) · [Model Resolution](model-resolution.md) · [Config Loading](config-loading.md) · [Prompt Composition](prompt-composition.md) · [Tool Policy Evaluation](tool-policy-evaluation.md) · [Adapter Readiness Status](adapter-readiness-status.md) · [ADR 0003 — OpenCode Adapter Materialization Shape](adr/0003-opencode-adapter-materialization-shape.md) · [Runtime Persistence Spec](specs/12-spec-runtime-persistence/12-spec-runtime-persistence.md) · [ADR 0002 — Runtime Persistence Store](adr/0002-runtime-persistence-store.md) · [Spec 09 — Adapter-Provided Skill Resolution](specs/09-spec-adapter-provided-skill-resolution/09-spec-adapter-provided-skill-resolution.md) · [Spec 07 — Adapter Capability Contract](specs/07-spec-adapter-capability-contract/07-spec-adapter-capability-contract.md) · [Spec 08 — Abstract Tool Policy Evaluation](specs/08-spec-abstract-tool-policy-evaluation/08-spec-abstract-tool-policy-evaluation.md) · [Spec 15 — Adapter-Facing Materialization API](specs/15-spec-adapter-facing-materialization-api/15-spec-adapter-facing-materialization-api.md) · [Spec 16 — Stable Adapter Descriptor Contract](specs/16-spec-stable-adapter-descriptor-contract/16-spec-stable-adapter-descriptor-contract.md) · [Spec 17 — Workflow Extension DSL](specs/17-spec-workflow-extension/17-spec-workflow-extension.md) · [Spec 18 — Delegation Exclusion](specs/18-spec-delegation-exclusion/18-spec-delegation-exclusion.md) · [Spec 19 — Plan State Provider](specs/19-spec-plan-state-provider/19-spec-plan-state-provider.md) · [Spec 20 — OpenCode Adapter Materialization](specs/20-spec-opencode-adapter-materialization/20-spec-opencode-adapter-materialization.md) · [Spec 22 — Workflow-First Execution](specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md) · [ADR 0004 — Workflow-First Execution Contract](adr/0004-workflow-first-execution-contract.md) · [Spec 33 — Full-readiness Pi Adapter](specs/33-spec-pi-adapter/33-spec-pi-adapter.md) · [Spec 34 — Harness-neutral Permissions](specs/34-spec-harness-neutral-permissions/34-spec-harness-neutral-permissions.md) · [Execution Lifecycle Surface](#execution-lifecycle-surface) · [Legacy Architecture](legacy-architecture.md)
 
 ---
 
@@ -48,8 +48,13 @@ When adding a new type that spans both layers (e.g. a concept declared in DSL co
 | Artifact integrity metadata (`ArtifactIntegrityMetadata`) | Engine (`@weaveio/weave-engine`) | Stored in `ArtifactRef` inside the Runtime Store; engine owns the type, comparison logic, and fail-closed policy |
 | Artifact digest computation (reading file, hashing) | Adapter                 | Adapters read artifact files and compute SHA-256 digests before calling `dispatchStep`; the engine never reads artifact file contents |
 | Harness plugin/config generation                   | Adapter                  | Output format is harness-specific                                       |
-| Concrete tool names and permissions                | Adapter                  | Tool identifiers differ by harness                                      |
+| Concrete tool discovery, identities, resolvers, interception, and approval UI | Adapter | Tool identifiers, inputs, hooks, and presentation differ by harness |
+| Normalized permission requests, grants, challenges, and permits | Engine (`@weaveio/weave-engine`) | Authorization and approval semantics must remain portable |
+| Delegation limits and authorization decisions | Core/config/engine | Limits are portable product intent evaluated from adapter-supplied counts |
+| Delegation queues, process/task counts, spawn, and cancellation | Adapter | Live execution resources are harness-specific |
 | Runtime lifecycle event mapping                    | Adapter                  | Event names and payloads differ by harness                              |
+| Usage observations, rollups, retention policy, and Runtime Store pruning | Engine (`@weaveio/weave-engine`) | These are portable Weave runtime records and policies |
+| Harness usage extraction and adapter log transport | Adapter | Message identities, token fields, and concrete sink wiring are harness-specific |
 | Abstract policy/lifecycle decisions                | Engine (`@weaveio/weave-engine`) | Policy composition should be harness-neutral                            |
 | Feature-gap emulation (subagents, hooks, commands) | Adapter                  | Missing capability must be implemented in the harness integration layer |
 
@@ -115,7 +120,7 @@ This is a narrow boundary exception: the engine may perform Bun filesystem/datab
 
 > **Spec:** [Spec 22 — Workflow-First Execution](specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md) (Unit 3)
 
-**`ArtifactIntegrityMetadata`** is the engine-owned type that stores a salted SHA-256 digest for tamper detection on a persisted artifact revision. It lives inside `ArtifactRef` in the Runtime Store — never in adapter-owned storage, harness session state, or raw artifact file contents.
+**`ArtifactIntegrityMetadata`** is the engine-owned type that stores a plain SHA-256 content digest for tamper detection on a persisted artifact revision. It lives inside `ArtifactRef` in the Runtime Store — never in adapter-owned storage, harness session state, or raw artifact file contents.
 
 **What it contains:**
 
@@ -137,28 +142,32 @@ This is a narrow boundary exception: the engine may perform Bun filesystem/datab
 - Adapters own artifact file I/O: reading the artifact file and computing the SHA-256 digest before calling `dispatchStep`. The engine never reads artifact file contents.
 - Adapters pass the computed digest via `DispatchStepInput.artifactDigests` — a `Record<string, string>` map of artifact name → current digest.
 - The engine compares the supplied digest against the stored `ArtifactRef.integrity.digest`. A mismatch returns a `policy_decision` error; the engine fails closed.
-- Integrity verification is **opt-in**: if `artifactDigests` is omitted or does not include a key for a given artifact, no check is performed for that artifact. Artifacts without a stored `integrity` field are never checked even if a digest is supplied.
+- **Spec 33 full-readiness extension:** every declared artifact consumed by a workflow step must have stored integrity metadata and a current adapter-supplied digest. Omission fails closed. The earlier opt-in behavior remains only for legacy callers outside a full-readiness adapter.
 - Digest computation uses SHA-256 only. MD5, SHA-1, and non-cryptographic hashes are forbidden by construction.
 
 **Correct data flow:**
 
 ```ts
-// ✅ Correct: adapter reads file and computes digest; engine compares against stored metadata
-const fileContent = await Bun.file(artifactPath).text();
-const digest = await computeSha256Hex(fileContent); // adapter-owned
+// ✅ Correct: adapter provider proves containment and hashes the same no-follow handle
+const verified = await artifactProvider.readAndDigest({
+  projectRoot,
+  relativePath: artifact.path,
+});
+if (verified.isErr()) return err(verified.error);
+
 const result = await dispatchStep(
   {
     workflowInstanceId,
     leaseId,
     stepName,
     context,
-    artifactDigests: { plan_path: digest }, // adapter supplies; engine compares
+    artifactDigests: { plan_path: verified.value.sha256 },
   },
   store,
 );
 
-// ❌ Wrong: engine reads artifact file contents directly
-const content = await Bun.file(artifact.path).text(); // boundary violation
+// ❌ Wrong: lexical check followed by a raceable path reopen
+const content = await Bun.file(artifact.path).text();
 ```
 
 **Relationship to `ArtifactRef`:**
@@ -270,7 +279,7 @@ See [Spec 16 — Stable Adapter Descriptor Contract](specs/16-spec-stable-adapte
 Earlier drafts and proof artifacts referenced placeholder methods such as `loadSkill()` and `registerHook()` on `HarnessAdapter`. Those methods are **not part of the current interface**. Treat them as historical migration context only, not architecture precedent.
 
 - `loadSkill()` was replaced by `loadAvailableSkills()` (see Spec 09 above). Adapters provide the full available-skill list upfront; the engine resolves references against it.
-- `registerHook()` was replaced by the Execution Lifecycle Surface (Spec 13). Adapters map harness events into the 7 typed lifecycle functions instead of exposing hook registration through the engine boundary.
+- `registerHook()` was replaced by the Execution Lifecycle Surface (Specs 13 and 33). Adapters map harness events into the 10 typed lifecycle operations instead of exposing hook registration through the engine boundary.
 
 Future specs should move toward this boundary:
 
@@ -307,7 +316,7 @@ Readiness Profile without performing harness I/O.
 `SafeAdapterInitInput` (static declarations + probe results) before passing it
 to `buildAdapterHealthReport`. Safe Adapter Init:
 
-- MUST NOT materialize agents.
+- MUST NOT concretely materialize or activate agents in the harness. Pure descriptor composition and in-memory candidate planning are allowed for exact probe input.
 - MUST NOT register lifecycle hooks.
 - MUST NOT launch workflows or workflow steps.
 - MUST NOT mutate harness configuration or state.
@@ -356,18 +365,20 @@ The **Execution Lifecycle Surface** is the engine-owned abstract API that adapte
 
 All types are exported from `@weaveio/weave-engine`. The implementation lives in `packages/engine/src/execution-lifecycle/` (decomposed into focused modules by [Spec 24](specs/24-spec-execution-lifecycle-decomposition/24-spec-execution-lifecycle-decomposition.md)); `packages/engine/src/execution-lifecycle.ts` is a compatibility barrel that re-exports all public symbols.
 
-### The 8 Lifecycle Methods
+### The 10 Lifecycle Operations
 
 | Method | Adapter calls this when… | Engine responsibility |
 | --- | --- | --- |
-| `observeSession` | A harness session observation is available | Record a `SessionSnapshot` in the Runtime Store |
-| `startExecution` | A new workflow execution begins | Acquire an execution lease; transition instance to `running` |
-| `resumeExecution` | A paused or blocked execution resumes | Acquire a new lease (replacing expired); transition to `running` |
-| `handleUserInterrupt` | The user explicitly cancels or pauses | Evaluate interrupt policy; return pause/complete effects |
-| `dispatchStep` | The next workflow step should be dispatched | Resolve step agent and policy; return a `DispatchAgentEffect` |
-| `completeStep` | A workflow step has finished | Record completion; determine next effects (dispatch/pause/complete) |
-| `beforeTool` | A tool call is about to execute | Evaluate abstract tool policy; return `allow`/`deny`/`ask` decision |
-| `inspectExecution` | Adapter needs to query execution state without side effects | Return a read-only snapshot of the `WorkflowInstance` and lease status |
+| `observeSession` | A harness session observation is available | Record a sanitized `SessionSnapshot` in the Runtime Store |
+| `startExecution` | A user explicitly starts a workflow | Acquire a lease and transition the instance to `running` |
+| `resumeExecution` | A user explicitly resumes paused/recoverable state | Acquire a new lease and transition to `running` |
+| `handleUserInterrupt` | The user explicitly cancels or pauses | Evaluate interrupt policy and return effects |
+| `dispatchStep` | The next workflow step should be dispatched | Resolve step intent, pinned inputs, and abstract dispatch effects |
+| `completeStep` | One valid structured completion candidate has settled | Validate completion, persist state, and return next effects |
+| `beforeTool` | A workflow-governed registered call is intercepted | Use the Spec 34 permission compatibility path |
+| `inspectExecution` | An adapter needs state without side effects | Return a read-only execution snapshot |
+| `approveArtifact` | An authorized user or gate decides a bound artifact revision | Validate actor and revision, then persist approval state |
+| `reconcileExecution` | A typed mismatch or rejection requires correction | Route the closed reconciliation source to an authorized handler |
 
 **Adapter responsibility**: map concrete harness events (session events, user signals, tool invocations) into these abstract inputs. The engine does not know about harness-specific event names, payloads, or callback registration.
 
@@ -379,7 +390,7 @@ The lifecycle surface distinguishes two categories of operations:
 
 **Explicit execution operations** (`ExecutionOperationKind`): `start`, `resume`, `pause`, `inspect`, `advance`. These map to `startExecution`, `resumeExecution`, `handleUserInterrupt` (pause signal), `inspectExecution`, and `dispatchStep`/`completeStep` respectively. Only `startExecution` may create a `WorkflowInstance` or acquire an `ExecutionLease`.
 
-**Observation operations**: `observeSession` and `beforeTool`. These are passive — they never create instances, acquire leases, or emit `LifecycleEffect` values. Adapters may call `observeSession` from idle hooks, continuation hooks, or session events without risking implicit execution start.
+**Observation operations**: `observeSession` and `inspectExecution` do not authorize execution. `beforeTool` is a compatibility projection over the general permission session and may read or write approval state; it still never creates a workflow instance or acquires an execution lease. Adapters may call observation operations from harness events without risking implicit execution start.
 
 **Execution boundary invariant** (ADR 0004): `startExecution` is the sole authorized entry point for durable execution. Ordinary Loom conversation, session idle events, continuation hooks, and lifecycle observations are explicitly forbidden from implicitly starting durable execution. Adapters must call `startExecution` only in response to an explicit, user-authorized trigger.
 
@@ -394,39 +405,17 @@ The lifecycle surface distinguishes two categories of operations:
 
 **OpenCode adapter evidence** (task 6.3): `packages/adapters/opencode/src/run-workflow.ts` is the OpenCode adapter's explicit named-workflow helper — an adapter-owned projection of the engine's `startExecution` lifecycle method for invoking a specific named workflow. It is not the general execution entry point; adapters may expose a general entry command (e.g. `/weave:start`) that selects the default workflow and then calls `startExecution`. Tests in `packages/adapters/opencode/src/__tests__/run-workflow.test.ts` prove that execution enters only through explicit `runWorkflow` calls, that idle hooks and session events do not start durable execution, and that `PlanStateProvider` is supplied at plan-oriented completion boundaries. See [Adapter Readiness Status](adapter-readiness-status.md#opencode-adapter-delivery-evidence-task-63) for the full evidence summary.
 
-### `beforeTool` — Adapter/Engine Boundary
+### Registered-tool Permission Boundary
 
-`beforeTool` is the lifecycle point called immediately before a tool executes. The boundary is strict:
+[Spec 34](specs/34-spec-harness-neutral-permissions/34-spec-harness-neutral-permissions.md) supersedes one-capability `beforeTool` evaluation as the general contract. `beforeTool` remains a workflow compatibility projection over the same permission session.
 
-**Adapters own concrete tool-name mapping:**
-- The adapter knows which harness tools exist and what abstract capability each maps to.
-- The adapter maps the concrete harness tool name (e.g. `"edit_file"`, `"bash"`, `"read_file"`) to an abstract capability (`"read"`, `"write"`, `"execute"`, `"delegate"`, `"network"`) and passes it as `toolCapability` in `BeforeToolInput`.
-- The engine never inspects, hard-codes, or branches on `toolName` for policy decisions.
+Adapters own concrete tool discovery, opaque runtime identities, pure input-aware resolvers, call interception, approval UI/relay, and final permit consumption. The engine owns immutable registry generations, normalized requests, effective-policy binding, approval grants/challenges, and short-lived single-use permits.
 
-**The engine owns abstract policy decisions:**
-- The engine reads `effectiveToolPolicy[toolCapability]` from the adapter-supplied `EffectiveToolPolicy` and returns the corresponding `allow` / `deny` / `ask` decision.
-- The engine does not re-derive or re-evaluate the policy — it trusts the adapter-supplied `effectiveToolPolicy`.
-- `toolName` in `BeforeToolInput` is for audit/logging only — it is opaque to the engine.
+For each registered call, the engine evaluates all normalized requests. `deny` wins, `allow` needs no grant, and `ask` needs an exact matching grant or explicit approval. Every request must pass. Resolver or repository failure blocks with a typed error. Unregistered tools are `unmanaged`; Weave issues no permit and makes no allow claim.
 
-```ts
-// ✅ Correct: adapter maps concrete tool → abstract capability; engine reads policy
-const result = await beforeTool({
-  workflowInstanceId: event.workflowInstanceId,
-  leaseId: event.leaseId,
-  agentName: event.agentName,
-  toolCapability: adapterToolMap.get(event.toolName) ?? "execute", // adapter-owned mapping
-  toolName: event.toolName,                                         // audit only
-  effectiveToolPolicy: agentDescriptor.effectiveToolPolicy,         // adapter-supplied
-});
+A permit binds project, session, agent, registry generation, policy fingerprint, exact call/request identity, expiry, and consumed state. The adapter consumes it immediately before execution. Input changes, stale generation, wrong identity, expiry, or replay block.
 
-// ❌ Wrong: engine inspects concrete tool name for policy
-if (input.toolName === "bash") { /* harness-specific logic */ }
-```
-
-**Security invariants for `beforeTool`:**
-- `BeforeToolInput` structurally excludes credentials, tokens, raw tool arguments, and harness-private state. Only `workflowInstanceId`, `leaseId`, `agentName`, `toolCapability`, `toolName` (audit), `effectiveToolPolicy`, and optional `SafeMetadata` are accepted.
-- `BeforeToolOutput` contains only `decision` (`"allow"` | `"deny"` | `"ask"`) and an optional `reason` string. No raw payloads, credentials, or harness state appear in the output.
-- `beforeTool` does NOT access the Runtime Store — it is a pure policy evaluation wrapped in `ResultAsync` for interface consistency.
+Raw tool input may exist transiently inside an adapter resolver and engine authorization call. It must not enter lifecycle metadata, Runtime Store audit data, journals, logs, or public errors. Durable grants store digests and bounded display metadata only.
 
 ### Earlier `registerHook()` Designs Are Superseded
 
@@ -496,7 +485,7 @@ See [`packages/engine/src/execution-lifecycle/`](../packages/engine/src/executio
 
 > **Spec:** [Spec 10 — Workflow Engine](specs/10-spec-workflow-engine/10-spec-workflow-engine.md) · **Spec:** [Spec 22 — Workflow-First Execution](specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md) · **ADR:** [ADR 0004 — Workflow-First Execution Contract](adr/0004-workflow-first-execution-contract.md)
 
-The workflow engine is the engine-owned subsystem that drives multi-step workflow execution. It is implemented inside the Execution Lifecycle Surface (`execution-lifecycle.ts`) and operates exclusively through the 8 lifecycle methods described above.
+The workflow engine is the engine-owned subsystem that drives multi-step workflow execution. It is implemented inside the Execution Lifecycle Surface (`execution-lifecycle.ts`) and operates through the 10 lifecycle operations described above.
 
 **Execution boundary**: `startExecution` is the sole authorized entry point for durable execution. Ordinary Loom conversation, session idle events, continuation hooks, and lifecycle observations (`observeSession`) are explicitly forbidden from implicitly starting durable execution. Commands, hooks, skills, scripts, and UI affordances are all adapter-owned projections of the same engine-owned execution contract — adapters choose the delivery form; the engine owns the semantics. Adapters call `startExecution` only after an explicit user-authorized trigger. See [ADR 0004](adr/0004-workflow-first-execution-contract.md) for the full rationale and ownership matrix.
 
@@ -600,7 +589,7 @@ The engine must not write harness config files, spawn harness agents, discover h
 
 > **Spec:** [Spec 19 — Plan State Provider](specs/19-spec-plan-state-provider/19-spec-plan-state-provider.md)
 
-The **Plan State Provider** is the engine-owned abstract interface that `completeStep` uses to query plan file state when a workflow step's completion method is `"plan_created"` or `"plan_complete"`. It replaces the previous direct `Bun.file()` calls inside the execution lifecycle, which were a boundary violation.
+The **Plan State Provider** is the engine-owned abstract interface for revisioned plan snapshots and coordinator-authorized transitions. `completeStep` uses its compatibility projections for `"plan_created"` and `"plan_complete"`. It replaces the previous direct `Bun.file()` calls inside the execution lifecycle, which were a boundary violation.
 
 All types are exported from `@weaveio/weave-engine` under `packages/engine/src/plan-state-provider.ts`.
 
@@ -608,6 +597,8 @@ All types are exported from `@weaveio/weave-engine` under `packages/engine/src/p
 
 ```ts
 interface PlanStateProvider {
+  readSnapshot(planName: string): ResultAsync<PlanTaskSnapshot, PlanStateError>;
+  applyTransition(input: PlanTaskTransition): ResultAsync<PlanTaskSnapshot, PlanStateError>;
   planExists(planName: string): ResultAsync<boolean, PlanStateError>;
   isPlanComplete(planName: string): ResultAsync<boolean, PlanStateError>;
 }
@@ -629,12 +620,13 @@ type PlanStateError =
 ### Engine Behaviour
 
 - When `step.completion.method` is `"plan_created"` or `"plan_complete"` and `CompleteStepInput.planStateProvider` is **absent**, `completeStep` returns `err(lifecyclePolicyDecisionError("plan completion method requires a planStateProvider", "plan_state_provider"))` — never silently passes.
-- When the provider is present, the engine calls `planStateProvider.planExists(planName)` or `planStateProvider.isPlanComplete(planName)` and maps the result to the appropriate `LifecycleError` variant.
-- `validatePlanName` runs in the engine before any provider call as a path traversal defence.
+- When the provider is present, the engine uses `readSnapshot` as the authoritative parsed state; `planExists` and `isPlanComplete` remain compatibility projections.
+- Only an authorized coordinator may request `applyTransition`, which uses expected-revision compare-and-swap and atomic same-target replacement.
+- `validatePlanName` runs in the engine before any provider call as the first lexical traversal defence. Concrete providers must also prove canonical-root containment, reject symlink components, and use no-follow stable file identity; otherwise they fail closed.
 
 ### Adapter Responsibility
 
-Adapters supply a `PlanStateProvider` implementation via `CompleteStepInput.planStateProvider`. For production use, adapters should use `BunFilesystemPlanStateProvider` from `@weaveio/weave-config`. For tests, adapters should use an in-memory mock that returns controlled results without filesystem I/O.
+Adapters supply a `PlanStateProvider` implementation via `CompleteStepInput.planStateProvider`. For production use, adapters should use `BunFilesystemPlanStateProvider` from `@weaveio/weave-config`; it must enforce canonical-root containment, symlink rejection, no-follow stable identity, expected-revision compare-and-swap, and atomic same-directory replacement. For tests, adapters should use an in-memory mock that returns controlled results without filesystem I/O.
 
 ```ts
 // ✅ Correct: adapter supplies provider; engine calls interface

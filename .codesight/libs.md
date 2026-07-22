@@ -695,6 +695,11 @@
   - interface ReleaseCheckout
   - interface PackageCommandRunner
   - _...2 more_
+- `scripts/release/promotion-commands.ts`
+  - function promotionCommands: (authorization, priorLatestVersions?, string>>) => Result<PromotionCommandSummary,
+  - function promotionCommandsFromRegistry: (authorization, registry) => ResultAsync<PromotionCommandSummary, PromotionCommandError>
+  - interface PromotionCommandSummary
+  - type PromotionCommandError
 - `scripts/release/public-manifest.ts`
   - class BunPublicManifestFileSystem
   - class PublicManifestBuilder
@@ -716,7 +721,7 @@
   - interface PromotionCommandRequest
   - interface PromotionCommands
   - interface StableFinalizeResult
-  - _...3 more_
+  - _...4 more_
 - `scripts/release/stable-lineage.ts` — function hasProgressedLineage: (original, progressed) => boolean
 - `scripts/release/stable-train.ts`
   - function canonicalTrainJson: (record) => string

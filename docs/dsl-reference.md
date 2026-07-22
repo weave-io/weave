@@ -106,6 +106,7 @@ agent my-helper {
 | `triggers` | array | Delegation metadata for router agents. Each entry: `{ domain "…" trigger "…" routing_hint "…" }`. The `routing_hint` field is optional and provides prescriptive "Use when..." guidance for delegation routing. |
 | `skills` | string[] | Skill names to load for this agent. |
 | `review_models` | string[] | Optional. One or more model identifiers materialized as independent reviewer variants when config is loaded/composed. Loom/Tapestry prompts route review requests to the base agent plus each generated variant. See [Review Models](#review-models). |
+| `delegation` | block | Optional per-agent narrowing of `max_children` and `max_concurrency`. Values may not exceed project settings. |
 
 ### Tool Policy
 
@@ -334,6 +335,29 @@ disable skills ["tdd"]
 
 settings {
   log_level INFO
+
+  delegation {
+    max_children 9
+    max_concurrency 3
+    max_depth 3
+    max_processes 9
+  }
+
+  runtime {
+    journal {
+      strict false
+      retention_days 30
+      max_entries 10000
+    }
+    usage {
+      detail_retention_days 30
+      max_observations 100000
+    }
+    log {
+      max_segment_bytes 5242880
+      max_segments 3
+    }
+  }
 }
 
 continuation {
@@ -366,6 +390,21 @@ analytics {
 | Field | Values | Description |
 | --- | --- | --- |
 | `log_level` | `DEBUG` \| `INFO` \| `WARN` \| `ERROR` | Runtime log level |
+| `delegation.max_children` | integer `1..9` | Maximum direct children per parent. Default `9`. |
+| `delegation.max_concurrency` | integer `1..max_children` | Maximum concurrent children per parent. Default `3`. |
+| `delegation.max_depth` | positive integer | Maximum delegation depth below root. Default `3`. |
+| `delegation.max_processes` | positive integer | Maximum live delegated work units across the adapter. Default `9`. |
+| `runtime.journal.strict` | boolean | Make a correlated transaction fail when its journal write fails. Default `false`. |
+| `runtime.journal.retention_days` | integer `1..3650` | Maximum age of detailed journal entries. Default `30`. |
+| `runtime.journal.max_entries` | integer `1..10000000` | Maximum retained detailed journal entries. Default `10000`. |
+| `runtime.usage.detail_retention_days` | integer `1..3650` | Maximum age of detailed usage observations. Default `30`. |
+| `runtime.usage.max_observations` | integer `1..10000000` | Maximum retained detailed usage observations. Default `100000`. |
+| `runtime.log.max_segment_bytes` | integer `65536..1073741824` | Rotating runtime log segment size. Default `5242880`. |
+| `runtime.log.max_segments` | integer `1..100` | Number of runtime log segments to keep. Default `3`. |
+
+An agent `delegation` block may set only `max_children` and `max_concurrency`; each value may narrow but never raise the project setting. `max_concurrency` must not exceed that agent's effective `max_children`. See [ADR 0008](adr/0008-portable-delegation-budgets.md) and [Spec 33 §10](specs/33-spec-pi-adapter/33-spec-pi-adapter.md#10-portable-delegation-limits).
+
+Runtime retention values are finite; zero and unbounded modes are invalid. See [ADR 0011](adr/0011-effective-adapter-readiness-and-runtime-observability.md).
 
 ### `continuation` Block
 

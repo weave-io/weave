@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode
 
-> 0 routes | 0 models | 0 components | 157 lib files | 32 env vars | 6 middleware | 0% test coverage
-> **Token savings:** this file is ~15,200 tokens. Without it, AI exploration would cost ~55,600 tokens. **Saves ~40,400 tokens per conversation.**
-> **Last scanned:** 2026-07-19 12:12 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 158 lib files | 33 env vars | 6 middleware | 0% test coverage
+> **Token savings:** this file is ~15,400 tokens. Without it, AI exploration would cost ~56,000 tokens. **Saves ~40,700 tokens per conversation.**
+> **Last scanned:** 2026-07-22 23:48 — re-run after significant changes
 
 ---
 
@@ -706,6 +706,11 @@
   - interface ReleaseCheckout
   - interface PackageCommandRunner
   - _...2 more_
+- `scripts/release/promotion-commands.ts`
+  - function promotionCommands: (authorization, priorLatestVersions?, string>>) => Result<PromotionCommandSummary,
+  - function promotionCommandsFromRegistry: (authorization, registry) => ResultAsync<PromotionCommandSummary, PromotionCommandError>
+  - interface PromotionCommandSummary
+  - type PromotionCommandError
 - `scripts/release/public-manifest.ts`
   - class BunPublicManifestFileSystem
   - class PublicManifestBuilder
@@ -727,7 +732,7 @@
   - interface PromotionCommandRequest
   - interface PromotionCommands
   - interface StableFinalizeResult
-  - _...3 more_
+  - _...4 more_
 - `scripts/release/stable-lineage.ts` — function hasProgressedLineage: (original, progressed) => boolean
 - `scripts/release/stable-train.ts`
   - function canonicalTrainJson: (record) => string
@@ -762,9 +767,10 @@
 - `GITHUB_TOKEN` **required** — scripts/release/bind-artifacts.ts
 - `HOME` **required** — packages/cli/src/detect/probes.ts
 - `LOG_LEVEL` **required** — packages/config/src/logger.ts
-- `PATH` **required** — scripts/release/__tests__/verification-harness.test.ts
+- `PATH` **required** — scripts/release/__tests__/release-orchestrator.test.ts
 - `PWD` **required** — packages/adapters/opencode/dist-types/adapter.d.ts
 - `RELEASE_APP_TOKEN` **required** — scripts/release/release-refs-main.ts
+- `RELEASE_AWAITING_STABLE_TRAIN` **required** — scripts/release/release-refs-main.ts
 - `RELEASE_CONTROL_DRY_RUN` **required** — scripts/release/control-main.ts
 - `RELEASE_GITHUB_API_URL` **required** — scripts/release/control-main.ts
 - `RELEASE_HEAD_REF` **required** — scripts/release/control-main.ts
@@ -821,20 +827,20 @@
 - `packages/cli/src/evals/openrouter-client.ts` — imported by **18** files
 - `packages/cli/src/evals/report-schema.ts` — imported by **17** files
 - `packages/engine/src/runtime/types.ts` — imported by **16** files
+- `scripts/release/stable-train.ts` — imported by **16** files
+- `scripts/release/npm-registry-client.ts` — imported by **15** files
 - `packages/cli/src/args.ts` — imported by **14** files
 - `scripts/release/model.ts` — imported by **14** files
 - `packages/engine/src/runtime/store.ts` — imported by **13** files
 - `scripts/release/filesystem.ts` — imported by **13** files
 - `scripts/release/clock.ts` — imported by **13** files
-- `scripts/release/npm-registry-client.ts` — imported by **13** files
 - `packages/cli/src/fs/file-system.ts` — imported by **12** files
 - `packages/engine/src/logger.ts` — imported by **12** files
-- `scripts/release/stable-train.ts` — imported by **12** files
 - `packages/engine/src/compose.ts` — imported by **11** files
 - `packages/engine/src/runtime/errors.ts` — imported by **11** files
 - `packages/engine/src/execution-lifecycle/metadata.ts` — imported by **11** files
+- `scripts/release/errors.ts` — imported by **11** files
 - `packages/cli/src/errors.ts` — imported by **10** files
-- `packages/engine/src/execution-lifecycle/lease.ts` — imported by **10** files
 
 ## Import Map (who imports what)
 
@@ -844,17 +850,17 @@
 - `packages/cli/src/evals/openrouter-client.ts` ← `packages/cli/src/evals/__tests__/loom-routing-runner.test.ts`, `packages/cli/src/evals/__tests__/pattern-planning-runner.test.ts`, `packages/cli/src/evals/__tests__/runner.test.ts`, `packages/cli/src/evals/__tests__/shuttle-execution-runner.test.ts`, `packages/cli/src/evals/__tests__/spindle-tools-runner.test.ts` +13 more
 - `packages/cli/src/evals/report-schema.ts` ← `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts` +12 more
 - `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts` +11 more
+- `scripts/release/stable-train.ts` ← `scripts/release/__tests__/artifact-manifest.test.ts`, `scripts/release/__tests__/control-executable.test.ts`, `scripts/release/__tests__/github-client.test.ts`, `scripts/release/__tests__/metadata-replay.test.ts`, `scripts/release/__tests__/payload-layout.e2e.test.ts` +11 more
+- `scripts/release/npm-registry-client.ts` ← `scripts/release/__tests__/github-client.test.ts`, `scripts/release/__tests__/nightly-plan.test.ts`, `scripts/release/__tests__/npm-registry-client.test.ts`, `scripts/release/__tests__/payload-layout.e2e.test.ts`, `scripts/release/__tests__/promotion-commands.test.ts` +10 more
 - `packages/cli/src/args.ts` ← `packages/cli/src/__tests__/args.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/prompt.test.ts` +9 more
 - `scripts/release/model.ts` ← `scripts/release/__tests__/artifact-binding.test.ts`, `scripts/release/__tests__/control-executable.test.ts`, `scripts/release/__tests__/payload-layout.e2e.test.ts`, `scripts/release/__tests__/release-orchestrator.test.ts`, `scripts/release/bind-artifacts.ts` +9 more
-- `packages/engine/src/runtime/store.ts` ← `packages/engine/src/__tests__/runtime-journal.test.ts`, `packages/engine/src/execution-lifecycle/artifacts.ts`, `packages/engine/src/execution-lifecycle/dispatch.ts`, `packages/engine/src/execution-lifecycle/inspection.ts`, `packages/engine/src/execution-lifecycle/interrupts.ts` +8 more
-- `scripts/release/filesystem.ts` ← `scripts/release/__tests__/bind-artifacts.test.ts`, `scripts/release/__tests__/github-client.test.ts`, `scripts/release/__tests__/metadata-replay.test.ts`, `scripts/release/__tests__/release-orchestrator.test.ts`, `scripts/release/bind-artifacts.ts` +8 more
 
 ---
 
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 144 test files found
+> 145 test files found
 
 ---
 
@@ -907,7 +913,7 @@
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
   - `actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce`
   - `actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce`
-- **bind** on `ubuntu-latest` — 7 steps (needs: preflight)
+- **bind** on `ubuntu-latest` — 7 steps (needs: preflight, build)
   - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
   - `actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093`
@@ -925,7 +931,7 @@
 - **metadata-replay-plan** on `ubuntu-latest` — 5 steps (needs: preflight)
   - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
-- **stable-finalize** on `ubuntu-latest` — 4 steps (needs: preflight, build)
+- **stable-finalize** on `ubuntu-latest` — 4 steps (needs: preflight)
   - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5`
   - `oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6`
 - **release-refs** on `ubuntu-latest` — 5 steps (needs: preflight, stable-finalize)

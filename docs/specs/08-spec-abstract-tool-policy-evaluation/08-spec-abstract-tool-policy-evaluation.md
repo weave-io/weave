@@ -1,5 +1,7 @@
 # 08-spec-abstract-tool-policy-evaluation.md
 
+> **Normative extension:** This spec defines static effective-policy composition and concrete classification only. [Spec 34 — Harness-neutral Permission Subsystem](../34-spec-harness-neutral-permissions/34-spec-harness-neutral-permissions.md) supersedes any reading that treats those helpers as sufficient call authorization. Full-readiness adapters must use input-aware registrations, normalized requests, grants, challenges, and single-use permits; workflow `beforeTool` is a compatibility projection.
+
 ## Introduction/Overview
 
 Implement **Abstract Tool Policy Evaluation** in `@weaveio/weave-engine` so Weave can turn an agent's normalized `tool_policy` into explicit, harness-neutral permission decisions before an adapter maps those decisions to concrete harness tools. The primary goal is to keep policy semantics in the engine while preserving adapter ownership of concrete tool names, permission mechanisms, and harness-specific enforcement.
