@@ -18,13 +18,10 @@
 import { describe, expect, it } from "bun:test";
 import type { RunAgentEffect } from "@weaveio/weave-engine";
 import {
+  ARTIFACT_INPUT_ROLES,
   type ArtifactInputDecl,
   type ArtifactInputRole,
   type ArtifactInputSummary,
-  ARTIFACT_INPUT_ROLES,
-  type BeforeToolInput,
-  type BeforeToolOutput,
-  beforeTool,
   type CompleteStepInput,
   type CompleteStepOutput,
   completeStep,
@@ -61,19 +58,22 @@ import {
   type PlanStateError,
   type PlanStateProvider,
   type PromptMetadata,
+  previewToolPolicy,
   queryError,
+  RECONCILIATION_AUTHORIZATION_SOURCES,
+  RECONCILIATION_REASONS,
   type ReconcileExecutionInput,
   type ReconcileExecutionOutput,
   type ReconciliationAuthorizationSource,
-  reconcileExecution,
-  RECONCILIATION_AUTHORIZATION_SOURCES,
-  RECONCILIATION_REASONS,
   type ResumeExecutionInput,
   type ResumeExecutionOutput,
+  reconcileExecution,
   resumeExecution,
   type SafeMetadata,
   type StartExecutionInput,
   type StartExecutionOutput,
+  type StaticToolPolicyPreviewInput,
+  type StaticToolPolicyPreviewOutput,
   type StepCompletionSignal,
   sanitizeMetadata,
   startExecution,
@@ -602,10 +602,10 @@ describe("CompleteStepInput / CompleteStepOutput", () => {
 });
 
 // ---------------------------------------------------------------------------
-// BeforeTool input/output shapes
+// Static tool-policy preview input/output shapes
 // ---------------------------------------------------------------------------
 
-describe("BeforeToolInput / BeforeToolOutput", () => {
+describe("StaticToolPolicyPreviewInput / StaticToolPolicyPreviewOutput", () => {
   const allAllowPolicy = evaluateEffectiveToolPolicy({
     read: "allow",
     write: "allow",
@@ -615,7 +615,7 @@ describe("BeforeToolInput / BeforeToolOutput", () => {
   });
 
   it("accepts all abstract capability categories", () => {
-    const capabilities: BeforeToolInput["toolCapability"][] = [
+    const capabilities: StaticToolPolicyPreviewInput["toolCapability"][] = [
       "read",
       "write",
       "execute",
@@ -623,7 +623,7 @@ describe("BeforeToolInput / BeforeToolOutput", () => {
       "network",
     ];
     for (const toolCapability of capabilities) {
-      const input: BeforeToolInput = {
+      const input: StaticToolPolicyPreviewInput = {
         workflowInstanceId: wfId,
         leaseId,
         agentName: "shuttle",
@@ -635,8 +635,8 @@ describe("BeforeToolInput / BeforeToolOutput", () => {
     }
   });
 
-  it("accepts BeforeToolInput with optional metadata", () => {
-    const input: BeforeToolInput = {
+  it("accepts StaticToolPolicyPreviewInput with optional metadata", () => {
+    const input: StaticToolPolicyPreviewInput = {
       workflowInstanceId: wfId,
       leaseId,
       agentName: "loom",
@@ -648,13 +648,13 @@ describe("BeforeToolInput / BeforeToolOutput", () => {
     expect(input.metadata?.filePath).toBe("src/index.ts");
   });
 
-  it("BeforeToolOutput decision: 'allow'", () => {
-    const output: BeforeToolOutput = { decision: "allow" };
+  it("StaticToolPolicyPreviewOutput decision: 'allow'", () => {
+    const output: StaticToolPolicyPreviewOutput = { decision: "allow" };
     expect(output.decision).toBe("allow");
   });
 
-  it("BeforeToolOutput decision: 'deny' with reason", () => {
-    const output: BeforeToolOutput = {
+  it("StaticToolPolicyPreviewOutput decision: 'deny' with reason", () => {
+    const output: StaticToolPolicyPreviewOutput = {
       decision: "deny",
       reason: "Network access is denied by policy",
     };
@@ -662,8 +662,8 @@ describe("BeforeToolInput / BeforeToolOutput", () => {
     expect(output.reason).toBe("Network access is denied by policy");
   });
 
-  it("BeforeToolOutput decision: 'ask'", () => {
-    const output: BeforeToolOutput = { decision: "ask" };
+  it("StaticToolPolicyPreviewOutput decision: 'ask'", () => {
+    const output: StaticToolPolicyPreviewOutput = { decision: "ask" };
     expect(output.decision).toBe("ask");
   });
 });
@@ -2092,14 +2092,14 @@ describe("completeStep (Runtime Store)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// beforeTool — policy evaluation
+// previewToolPolicy — policy evaluation
 // ---------------------------------------------------------------------------
 
-describe("beforeTool", () => {
-  // Helper: build a minimal valid BeforeToolInput
+describe("previewToolPolicy", () => {
+  // Helper: build a minimal valid StaticToolPolicyPreviewInput
   function makeInput(
-    overrides: Partial<BeforeToolInput> = {},
-  ): BeforeToolInput {
+    overrides: Partial<StaticToolPolicyPreviewInput> = {},
+  ): StaticToolPolicyPreviewInput {
     return {
       workflowInstanceId: wfId,
       leaseId,
@@ -2118,7 +2118,7 @@ describe("beforeTool", () => {
   }
 
   it("allow decision: effectiveToolPolicy.read = 'allow', toolCapability = 'read'", async () => {
-    const result = await beforeTool(
+    const result = await previewToolPolicy(
       makeInput({
         toolCapability: "read",
         effectiveToolPolicy: evaluateEffectiveToolPolicy({ read: "allow" }),
@@ -2131,7 +2131,7 @@ describe("beforeTool", () => {
   });
 
   it("deny decision: effectiveToolPolicy.write = 'deny', toolCapability = 'write'", async () => {
-    const result = await beforeTool(
+    const result = await previewToolPolicy(
       makeInput({
         toolCapability: "write",
         toolName: "write_file",
@@ -2145,7 +2145,7 @@ describe("beforeTool", () => {
   });
 
   it("ask decision: effectiveToolPolicy.network = 'ask', toolCapability = 'network'", async () => {
-    const result = await beforeTool(
+    const result = await previewToolPolicy(
       makeInput({
         toolCapability: "network",
         toolName: "fetch_url",
@@ -2159,7 +2159,7 @@ describe("beforeTool", () => {
   });
 
   it("allow decision for execute capability", async () => {
-    const result = await beforeTool(
+    const result = await previewToolPolicy(
       makeInput({
         toolCapability: "execute",
         toolName: "run_command",
@@ -2173,7 +2173,7 @@ describe("beforeTool", () => {
   });
 
   it("deny decision for delegate capability", async () => {
-    const result = await beforeTool(
+    const result = await previewToolPolicy(
       makeInput({
         toolCapability: "delegate",
         toolName: "spawn_subagent",
@@ -2187,9 +2187,10 @@ describe("beforeTool", () => {
   });
 
   it("unknown capability: returns LifecycleValidationError", async () => {
-    const result = await beforeTool(
+    const result = await previewToolPolicy(
       makeInput({
-        toolCapability: "unknown" as BeforeToolInput["toolCapability"],
+        toolCapability:
+          "unknown" as StaticToolPolicyPreviewInput["toolCapability"],
       }),
     );
 
@@ -2206,9 +2207,9 @@ describe("beforeTool", () => {
     // Simulate missing toolCapability at runtime
     const inputWithoutCapability = {
       ...input,
-      toolCapability: "" as BeforeToolInput["toolCapability"],
+      toolCapability: "" as StaticToolPolicyPreviewInput["toolCapability"],
     };
-    const result = await beforeTool(inputWithoutCapability);
+    const result = await previewToolPolicy(inputWithoutCapability);
 
     expect(result.isErr()).toBe(true);
     if (!result.isErr()) return;
@@ -2219,7 +2220,7 @@ describe("beforeTool", () => {
   });
 
   it("missing workflowInstanceId: returns LifecycleValidationError", async () => {
-    const result = await beforeTool(
+    const result = await previewToolPolicy(
       makeInput({
         workflowInstanceId: "" as typeof wfId,
       }),
@@ -2234,7 +2235,7 @@ describe("beforeTool", () => {
   });
 
   it("missing leaseId: returns LifecycleValidationError", async () => {
-    const result = await beforeTool(
+    const result = await previewToolPolicy(
       makeInput({
         leaseId: "" as typeof leaseId,
       }),
@@ -2249,11 +2250,11 @@ describe("beforeTool", () => {
   });
 
   it("output contains only decision and optional reason — no raw tool payload fields", () => {
-    // TypeScript structural test: BeforeToolOutput must only have decision and reason.
+    // TypeScript structural test: StaticToolPolicyPreviewOutput must only have decision and reason.
     // This verifies the type does not accidentally include credential or payload fields.
-    const output: BeforeToolOutput = { decision: "allow" };
+    const output: StaticToolPolicyPreviewOutput = { decision: "allow" };
 
-    // These fields must NOT exist on BeforeToolOutput (compile-time + runtime check)
+    // These fields must NOT exist on StaticToolPolicyPreviewOutput (compile-time + runtime check)
     expect("token" in output).toBe(false);
     expect("apiKey" in output).toBe(false);
     expect("password" in output).toBe(false);
@@ -2270,11 +2271,11 @@ describe("beforeTool", () => {
     }
   });
 
-  it("BeforeToolInput does not accept credential fields (structural security test)", () => {
-    // Verify that a valid BeforeToolInput object has no credential-named fields.
+  it("StaticToolPolicyPreviewInput does not accept credential fields (structural security test)", () => {
+    // Verify that a valid StaticToolPolicyPreviewInput object has no credential-named fields.
     // This is a runtime structural check — TypeScript prevents adding extra fields,
     // but we also verify at runtime that no credential keys leak into the input.
-    const input: BeforeToolInput = makeInput();
+    const input: StaticToolPolicyPreviewInput = makeInput();
 
     expect("token" in input).toBe(false);
     expect("apiKey" in input).toBe(false);
@@ -2290,14 +2291,14 @@ describe("beforeTool", () => {
     // must produce the same decision — proving toolName is audit-only.
     const policy = evaluateEffectiveToolPolicy({ read: "allow" });
 
-    const result1 = await beforeTool(
+    const result1 = await previewToolPolicy(
       makeInput({
         toolCapability: "read",
         toolName: "read_file",
         effectiveToolPolicy: policy,
       }),
     );
-    const result2 = await beforeTool(
+    const result2 = await previewToolPolicy(
       makeInput({
         toolCapability: "read",
         toolName: "some_other_harness_read_tool",
@@ -2524,13 +2525,13 @@ describe("observeSession: metadata sanitization", () => {
 });
 
 // ---------------------------------------------------------------------------
-// beforeTool — metadata sanitization integration
+// previewToolPolicy — metadata sanitization integration
 // ---------------------------------------------------------------------------
 
-describe("beforeTool: metadata sanitization", () => {
-  function makeBeforeToolInput(
-    overrides: Partial<BeforeToolInput> = {},
-  ): BeforeToolInput {
+describe("previewToolPolicy: metadata sanitization", () => {
+  function makeStaticToolPolicyPreviewInput(
+    overrides: Partial<StaticToolPolicyPreviewInput> = {},
+  ): StaticToolPolicyPreviewInput {
     return {
       workflowInstanceId: wfId,
       leaseId,
@@ -2548,9 +2549,9 @@ describe("beforeTool: metadata sanitization", () => {
     };
   }
 
-  it("beforeTool: returns validation error when metadata contains password key", async () => {
-    const result = await beforeTool(
-      makeBeforeToolInput({
+  it("previewToolPolicy: returns validation error when metadata contains password key", async () => {
+    const result = await previewToolPolicy(
+      makeStaticToolPolicyPreviewInput({
         metadata: { password: "hunter2" } as SafeMetadata,
       }),
     );
@@ -2564,9 +2565,9 @@ describe("beforeTool: metadata sanitization", () => {
     }
   });
 
-  it("beforeTool: returns validation error when metadata contains apiToken key", async () => {
-    const result = await beforeTool(
-      makeBeforeToolInput({
+  it("previewToolPolicy: returns validation error when metadata contains apiToken key", async () => {
+    const result = await previewToolPolicy(
+      makeStaticToolPolicyPreviewInput({
         metadata: { apiToken: "sk-abc" } as SafeMetadata,
       }),
     );
@@ -2576,9 +2577,9 @@ describe("beforeTool: metadata sanitization", () => {
     expect(result.error.type).toBe("validation");
   });
 
-  it("beforeTool: proceeds normally with safe metadata", async () => {
-    const result = await beforeTool(
-      makeBeforeToolInput({
+  it("previewToolPolicy: proceeds normally with safe metadata", async () => {
+    const result = await previewToolPolicy(
+      makeStaticToolPolicyPreviewInput({
         metadata: { filePath: "src/index.ts", attempt: 1 },
       }),
     );
@@ -6201,8 +6202,8 @@ describe("ExecutionOperationKind (Spec 22 Unit 1)", () => {
     expect(EXECUTION_OPERATION_KINDS).not.toContain("observeSession");
   });
 
-  it("beforeTool is NOT in EXECUTION_OPERATION_KINDS (it is a policy evaluation, not an execution op)", () => {
-    expect(EXECUTION_OPERATION_KINDS).not.toContain("beforeTool");
+  it("previewToolPolicy is NOT in EXECUTION_OPERATION_KINDS (it is a policy evaluation, not an execution op)", () => {
+    expect(EXECUTION_OPERATION_KINDS).not.toContain("previewToolPolicy");
     expect(EXECUTION_OPERATION_KINDS).not.toContain("tool");
   });
 });
@@ -7329,13 +7330,13 @@ describe("No implicit execution: ordinary conversation-adjacent paths (ADR 0004)
 });
 
 // ---------------------------------------------------------------------------
-// beforeTool — side-effect-free boundary (Task 1.3 / ADR 0004)
+// previewToolPolicy — side-effect-free boundary (Task 1.3 / ADR 0004)
 // ---------------------------------------------------------------------------
 
-describe("beforeTool: side-effect-free boundary (ADR 0004)", () => {
-  it("beforeTool does not accept authorizationSource — it is not an execution operation", () => {
-    // BeforeToolInput must NOT have an authorizationSource field.
-    const input: BeforeToolInput = {
+describe("previewToolPolicy: side-effect-free boundary (ADR 0004)", () => {
+  it("previewToolPolicy does not accept authorizationSource — it is not an execution operation", () => {
+    // StaticToolPolicyPreviewInput must NOT have an authorizationSource field.
+    const input: StaticToolPolicyPreviewInput = {
       workflowInstanceId: createWorkflowInstanceId("bt-boundary-001"),
       leaseId: createExecutionLeaseId("lease-bt-001"),
       agentName: "shuttle",
@@ -7347,10 +7348,10 @@ describe("beforeTool: side-effect-free boundary (ADR 0004)", () => {
     expect("authorizationSource" in input).toBe(false);
   });
 
-  it("beforeTool does not create WorkflowInstances or acquire leases", async () => {
-    // beforeTool is a pure policy evaluation — it must not touch the store.
+  it("previewToolPolicy does not create WorkflowInstances or acquire leases", async () => {
+    // previewToolPolicy is a pure policy evaluation — it must not touch the store.
     // We verify this by calling it without a store and confirming it succeeds.
-    const input: BeforeToolInput = {
+    const input: StaticToolPolicyPreviewInput = {
       workflowInstanceId: createWorkflowInstanceId("bt-no-store-001"),
       leaseId: createExecutionLeaseId("lease-bt-no-store-001"),
       agentName: "shuttle",
@@ -7359,17 +7360,17 @@ describe("beforeTool: side-effect-free boundary (ADR 0004)", () => {
       effectiveToolPolicy: evaluateEffectiveToolPolicy({ write: "allow" }),
     };
 
-    // beforeTool takes no store argument — it is a pure policy evaluation
-    const result = await beforeTool(input);
+    // previewToolPolicy takes no store argument — it is a pure policy evaluation
+    const result = await previewToolPolicy(input);
     expect(result.isOk()).toBe(true);
     if (!result.isOk()) return;
     expect(result.value.decision).toBe("allow");
   });
 
-  it("beforeTool called repeatedly does not accumulate state", async () => {
-    // Calling beforeTool multiple times must produce the same result each time.
+  it("previewToolPolicy called repeatedly does not accumulate state", async () => {
+    // Calling previewToolPolicy multiple times must produce the same result each time.
     const policy = evaluateEffectiveToolPolicy({ execute: "ask" });
-    const input: BeforeToolInput = {
+    const input: StaticToolPolicyPreviewInput = {
       workflowInstanceId: createWorkflowInstanceId("bt-idempotent-001"),
       leaseId: createExecutionLeaseId("lease-bt-idempotent-001"),
       agentName: "shuttle",
@@ -7379,9 +7380,9 @@ describe("beforeTool: side-effect-free boundary (ADR 0004)", () => {
     };
 
     const results = await Promise.all([
-      beforeTool(input),
-      beforeTool(input),
-      beforeTool(input),
+      previewToolPolicy(input),
+      previewToolPolicy(input),
+      previewToolPolicy(input),
     ]);
 
     for (const result of results) {

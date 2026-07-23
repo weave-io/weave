@@ -154,6 +154,7 @@ No specific UI design requirements identified. Human-readable CLI output should 
 - Any required effective `degraded` or `unsupported` capability enters health-only mode before work starts.
 - Optional gaps remain warnings.
 - Safe initialization remains read-only and must complete before concrete harness materialization or Runtime Store mutation. It may call pure descriptor composition and build candidate registration/command plans in memory so probes can validate the exact activation plan.
+- For required `tool-policy-mapping`, full-readiness adapters MUST supply an explicit inventory/interception context to the engine helper `verifyPermissionCoverage` (Spec 34). The engine owns the harness-neutral proof; adapters own discovery and later concrete interception wiring. `invalid_coverage` or `incomplete_coverage` MUST lower tool-policy readiness to unavailable/degraded as a required-capability failure for that controller generation. The proof primitive and fake-adapter tests ship with the engine; concrete adapter enforcement remains a separate adapter task.
 
 Token usage is required when the target contract declares it required, as Pi does. The adapter must report unavailable rather than inventing a not-applicable state when the host cannot provide the required observation.
 

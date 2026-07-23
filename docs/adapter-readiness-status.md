@@ -198,7 +198,7 @@ The OpenCode adapter (`@weaveio/weave-adapter-opencode`) pins `@opencode-ai/sdk`
 | [Spec 19](specs/19-spec-plan-state-provider/19-spec-plan-state-provider.md)                               | Plan State Provider                | Adapters supply a `PlanStateProvider` to `completeStep`; use `BunFilesystemPlanStateProvider` from `@weaveio/weave-config` for production               |
 | [Spec 22](specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md)                     | Workflow-First Execution           | Commands, hooks, skills, scripts, and UI are adapter-owned projections of the engine-owned execution contract; adapters declare delivery via `command-entrypoints` readiness |
 | [Spec 33](specs/33-spec-pi-adapter/33-spec-pi-adapter.md)                                                 | Full-readiness Pi Adapter           | Defines Pi's TUI-only package, lifecycle, projection, proof, and release contract; acceptance is pending implementation evidence |
-| [Spec 34](specs/34-spec-harness-neutral-permissions/34-spec-harness-neutral-permissions.md)               | Harness-neutral Permissions         | Defines registered-tool normalized requests, grants, challenges, permits, and `beforeTool` compatibility |
+| [Spec 34](specs/34-spec-harness-neutral-permissions/34-spec-harness-neutral-permissions.md)               | Harness-neutral Permissions         | Defines registered-tool normalized requests, grants, challenges, permits, `verifyPermissionCoverage` inventory/interception proof, and `beforeTool` compatibility |
 
 ---
 

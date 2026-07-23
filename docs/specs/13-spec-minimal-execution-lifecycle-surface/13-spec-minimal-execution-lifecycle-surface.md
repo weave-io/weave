@@ -1,6 +1,6 @@
 # 13-spec-minimal-execution-lifecycle-surface.md
 
-> **Normative extension:** [Spec 33 §14](../33-spec-pi-adapter/33-spec-pi-adapter.md#14-ten-lifecycle-projections) extends the original minimal surface to ten operations. [Spec 34](../34-spec-harness-neutral-permissions/34-spec-harness-neutral-permissions.md) supersedes the original pure one-capability `beforeTool` evaluator as the general authorization path; `beforeTool` remains a workflow compatibility projection.
+> **Normative extension:** [Spec 33 §14](../33-spec-pi-adapter/33-spec-pi-adapter.md#14-ten-lifecycle-projections) extends the original minimal surface to ten operations. [Spec 34](../34-spec-harness-neutral-permissions/34-spec-harness-neutral-permissions.md) supersedes the original pure one-capability `beforeTool` evaluator as the general authorization path; `beforeTool` remains a workflow compatibility projection. Adapter-facing overview: [Permissions](../../permissions.md).
 
 ## Introduction/Overview
 
@@ -80,20 +80,23 @@ The primary goal is to let adapters observe sessions, start or resume executions
 - Test: `completeStep` records a structured completion signal and advances or finalizes state according to the minimal lifecycle contract.
 - Code review artifact: emitted effects do not include raw prompts, credentials, tokens, harness-private paths, or raw provider payloads.
 
-### Unit 4: `beforeTool` policy lifecycle point and adapter integration contract
+### Unit 4: tool-policy preview and `beforeTool` compatibility contract
 
-**Purpose:** Enforce abstract tool policy at the lifecycle boundary after adapters map concrete tools to Weave capabilities.
+**Purpose:** Keep static abstract policy evaluation separate from authoritative tool-call authorization.
 
 **Functional Requirements:**
-- The system shall implement `beforeTool` as the lifecycle point called after an adapter maps a concrete harness tool to an abstract capability.
-- `beforeTool` shall use the existing abstract tool policy evaluation behavior from [Spec 08](../08-spec-abstract-tool-policy-evaluation/08-spec-abstract-tool-policy-evaluation.md) rather than creating a second policy model.
-- `beforeTool` shall return a normalized allow/deny/ask decision or typed error that adapters can translate into harness-specific enforcement.
-- The system shall update the adapter boundary documentation to clarify that adapters own concrete tool names and event mapping, while the engine owns abstract policy decisions.
-- The system shall update mock adapter tests to prove lifecycle methods are called with normalized inputs and no real harness process is started.
+- The system shall expose `previewToolPolicy` for the existing abstract capability evaluation from [Spec 08](../08-spec-abstract-tool-policy-evaluation/08-spec-abstract-tool-policy-evaluation.md).
+- `previewToolPolicy` shall return allow/deny/ask policy intent only. It shall not authorize execution, issue a permit, or establish adapter readiness.
+- The system shall implement `beforeTool` as the Spec 34 compatibility lifecycle point for registered/intercepted calls.
+- `beforeTool` shall accept only `RegisteredBeforeToolInput`, snapshot its exact plain own enumerable shape, and authorize through the module-private non-virtual session entry (`authorizePermissionSessionCall` / captured original `authorizeCall`), never through dynamic own or prototype `authorizeCall` lookup. It shall reject legacy policy fields, aliases that reintroduce one-capability authorization, accessors, proxies, and extras with a lifecycle validation error.
+- Registered identities (`agentName` and `toolName`) shall be sent to the permission session; unregistered calls shall remain `unmanaged`, never `allow`.
+- The adapter boundary documentation shall clarify that adapters own concrete tool names and event mapping, while the engine owns abstract policy preview and permission-session compatibility.
+- Mock adapter tests shall prove lifecycle methods are called with normalized inputs and no real harness process is started.
 
 **Proof Artifacts:**
-- Test: `beforeTool` returns the expected decision for allowed, denied, and ask policy cases using normalized capability inputs.
-- Test: mock adapter lifecycle tests record call order for session observation, execution start/resume, dispatch, completion, and tool policy decisions.
+- Test: `previewToolPolicy` returns the expected decision for allowed, denied, and ask policy cases.
+- Test: registered `beforeTool` calls cover authorization outcomes, session errors, unmanaged calls, and adversarial input shapes.
+- Test: mock adapter lifecycle tests record call order for session observation, execution start/resume, dispatch, completion, and tool authorization.
 - Documentation: `docs/adapter-boundary.md` describes the lifecycle surface as the replacement path for transitional `registerHook()`.
 - Security review artifact: Warp reviews `beforeTool`, sanitized lifecycle inputs, and effect payload boundaries before implementation is accepted.
 
@@ -119,7 +122,7 @@ Any user-visible output produced as a proof artifact should be deterministic, re
 - Follow [`docs/product-vision.md`](../../product-vision.md): Weave provides harness-agnostic primitives and adapters translate those primitives into concrete harness behavior.
 - Use the Runtime Store from [Spec 12](../12-spec-runtime-persistence/12-spec-runtime-persistence.md) for execution state, leases, session snapshots, and journal observations.
 - Use the Adapter Capability Contract from [Spec 07](../07-spec-adapter-capability-contract/07-spec-adapter-capability-contract.md), especially the required `workflow-step-dispatch` and `workflow-persistence` capability expectations.
-- Use the Abstract Tool Policy Evaluation model from [Spec 08](../08-spec-abstract-tool-policy-evaluation/08-spec-abstract-tool-policy-evaluation.md) for `beforeTool` decisions.
+- Use `previewToolPolicy` and the Abstract Tool Policy Evaluation model from [Spec 08](../08-spec-abstract-tool-policy-evaluation/08-spec-abstract-tool-policy-evaluation.md) for static policy decisions; use `beforeTool` only for registered Spec 34 permission compatibility.
 - Use Bun exclusively for runtime, tests, package scripts, and build commands.
 - Use `neverthrow` result types for fallible lifecycle, persistence, and policy operations.
 - Add isolated engine tests with mocks or in-memory stores; do not start real harnesses or rely on real harness runtime state.
@@ -133,7 +136,7 @@ Any user-visible output produced as a proof artifact should be deterministic, re
 - Lifecycle operations should follow the established pure-helper pattern: accept explicit adapter-provided context and return normalized outputs, typed errors, or abstract effects.
 - `RunAgentEffect` already establishes an effect-dispatch pattern. `dispatchStep` should reuse or extend that pattern rather than introducing harness-specific dispatch callbacks.
 - `observeSession`, `startExecution`, `resumeExecution`, `handleUserInterrupt`, `dispatchStep`, and `completeStep` should coordinate with `WorkflowInstance`, `ExecutionLease`, `SessionSnapshot`, and Runtime Journal concepts from Spec 12.
-- `beforeTool` should receive already-normalized tool/capability context. The adapter owns concrete tool-name mapping; the engine owns abstract policy evaluation.
+- `beforeTool` receives an adapter-provided registered call snapshot, including the real `PermissionSession`; the adapter owns concrete tool-name mapping and registration, while the engine owns the compatibility delegation. Static capability context belongs to `previewToolPolicy`.
 - Latest-standards research summary: no external technology-specific standards research was needed because this feature defines internal Weave engine architecture over already-selected repository technologies. The material standards are repository-local: adapter-owned harness mapping, harness-neutral engine APIs, Bun-only runtime, `neverthrow` error modeling, pino logging, Runtime Store persistence, and mock-based testing.
 - No tension with current external guidance was identified. The main design tension is internal: MVP lifecycle should supersede `registerHook()` without accidentally reintroducing the full legacy hook system.
 
@@ -141,7 +144,7 @@ Any user-visible output produced as a proof artifact should be deterministic, re
 
 - Lifecycle inputs, outputs, Runtime Store records, journal entries, and proof artifacts must not include API keys, tokens, credentials, cookies, authorization headers, raw prompts, raw completions, raw transcripts, raw provider payloads, or harness-private state.
 - `observeSession` must store sanitized Weave-visible session metadata only.
-- `beforeTool` is security-sensitive because incorrect concrete-tool-to-capability mapping or policy evaluation can grant broader permissions than intended.
+- `beforeTool` is security-sensitive: it must not accept static policy fields or dispatch on attacker-controlled shape. Exact-shape validation must reject accessors, proxies, and extras before the session is called. `previewToolPolicy` is informational and cannot grant execution.
 - Emitted effects must contain only normalized agent, workflow, step, and decision metadata needed by adapters; they must not expose harness-private paths or secret-bearing adapter state.
 - Runtime Store writes must preserve Spec 12 lease conflict behavior so two sessions do not actively drive the same execution without an explicit resume/rebind path.
 - Implementation requires Warp security review because the feature touches tool policy, lifecycle event inputs, runtime state, and adapter trust boundaries.
@@ -151,7 +154,7 @@ Any user-visible output produced as a proof artifact should be deterministic, re
 1. **MVP surface completeness**: all issue #44 lifecycle points are represented by documented public engine APIs or intentionally equivalent names.
 2. **Boundary compliance**: lifecycle tests and code review show the engine does not register concrete harness hooks or inspect harness-owned runtime state.
 3. **Runtime integration**: start, resume, pause, dispatch, and completion behavior use the existing Runtime Store and lease model.
-4. **Policy enforcement**: the original allow/deny/ask baseline remains covered, and full-readiness `beforeTool` delegates registered calls to the Spec 34 permission session.
+4. **Policy and authorization**: the original allow/deny/ask baseline remains covered by non-authoritative `previewToolPolicy`, while full-readiness `beforeTool` delegates registered calls to the Spec 34 permission session.
 5. **Dogfood readiness**: a mock adapter can drive the minimal lifecycle flow end-to-end without a real harness process.
 6. **Safety**: tests or review artifacts prove lifecycle effects and records exclude raw prompts, credentials, tokens, and harness-private payloads.
 
@@ -172,7 +175,7 @@ The ten operation names are:
 9. `approveArtifact`;
 10. `reconcileExecution`.
 
-`beforeTool` no longer defines the general permission system. It MUST call the [Spec 34 permission session](../34-spec-harness-neutral-permissions/34-spec-harness-neutral-permissions.md), or a behaviorally identical compatibility wrapper, for workflow-governed registered calls. Ordinary registered calls use the same permission session without requiring workflow or lease identity. Unregistered tools return `unmanaged`, not `allow`.
+`beforeTool` no longer defines the general permission system. It MUST accept only the registered compatibility input and authorize through the [Spec 34](../34-spec-harness-neutral-permissions/34-spec-harness-neutral-permissions.md) non-virtual session entry (or a behaviorally identical wrapper) for registered calls. Its exact plain own enumerable top-level and nested permission fields are snapshotted once; accessors, proxies, legacy policy-shaped inputs, legacy one-capability aliases, and extras fail with a lifecycle validation error. Ordinary registered calls use the same permission session. Unregistered tools return `unmanaged`, not `allow`. Static one-capability evaluation is available only through `previewToolPolicy`, which cannot authorize execution or establish adapter readiness. See the [Permissions guide](../../permissions.md) for the adapter-facing overview.
 
 Structured completion is a recorded candidate followed by harness settlement. Free-form prose or process exit is not completion. Adapters call `completeStep` only after one valid candidate and settlement; missing, duplicate, malformed, rejected, or late candidates fail without advancing state.
 

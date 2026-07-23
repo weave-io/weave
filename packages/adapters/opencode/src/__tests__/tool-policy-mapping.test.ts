@@ -19,11 +19,11 @@
  *    abstract capabilities.
  * 7. `mapToolPolicy` produces the correct `tools` patch when `read` is denied.
  *
- * ### Engine boundary: beforeTool receives abstract capabilities only
- * 8. `beforeTool` accepts abstract capability names ("read", "write", etc.)
+ * ### Engine boundary: previewToolPolicy receives abstract capabilities only
+ * 8. `previewToolPolicy` accepts abstract capability names ("read", "write", etc.)
  *    and never receives OpenCode tool names ("glob", "grep", etc.) directly.
  * 9. The adapter maps concrete tool names to abstract capabilities before
- *    calling `beforeTool` — the engine policy decision is capability-based.
+ *    calling `previewToolPolicy` — the engine policy decision is capability-based.
  *
  * All tests are pure — no filesystem access, no SDK calls, no harness startup.
  */
@@ -31,10 +31,10 @@
 import { describe, expect, it } from "bun:test";
 import type { EffectiveToolPolicy } from "@weaveio/weave-engine";
 import {
-  beforeTool,
   createExecutionLeaseId,
   createWorkflowInstanceId,
   evaluateEffectiveToolPolicy,
+  previewToolPolicy,
 } from "@weaveio/weave-engine";
 import {
   buildReadToolsEntry,
@@ -272,11 +272,11 @@ describe("adapter/engine boundary — engine receives abstract capabilities only
   const wfId = createWorkflowInstanceId("boundary-test-001");
   const leaseId = createExecutionLeaseId("boundary-lease-001");
 
-  it("beforeTool accepts abstract capability 'read' — not OpenCode tool name 'glob'", async () => {
-    // The adapter maps "glob" → "read" before calling beforeTool.
+  it("previewToolPolicy accepts abstract capability 'read' — not OpenCode tool name 'glob'", async () => {
+    // The adapter maps "glob" → "read" before calling previewToolPolicy.
     // The engine only sees the abstract capability "read".
     const policy = evaluateEffectiveToolPolicy({ read: "allow" });
-    const result = await beforeTool({
+    const result = await previewToolPolicy({
       workflowInstanceId: wfId,
       leaseId,
       agentName: "shuttle",
@@ -289,9 +289,9 @@ describe("adapter/engine boundary — engine receives abstract capabilities only
     expect(result.value.decision).toBe("allow");
   });
 
-  it("beforeTool accepts abstract capability 'read' — not OpenCode tool name 'grep'", async () => {
+  it("previewToolPolicy accepts abstract capability 'read' — not OpenCode tool name 'grep'", async () => {
     const policy = evaluateEffectiveToolPolicy({ read: "deny" });
-    const result = await beforeTool({
+    const result = await previewToolPolicy({
       workflowInstanceId: wfId,
       leaseId,
       agentName: "shuttle",
@@ -304,9 +304,9 @@ describe("adapter/engine boundary — engine receives abstract capabilities only
     expect(result.value.decision).toBe("deny");
   });
 
-  it("beforeTool accepts abstract capability 'write' — not OpenCode tool name 'edit'", async () => {
+  it("previewToolPolicy accepts abstract capability 'write' — not OpenCode tool name 'edit'", async () => {
     const policy = evaluateEffectiveToolPolicy({ write: "ask" });
-    const result = await beforeTool({
+    const result = await previewToolPolicy({
       workflowInstanceId: wfId,
       leaseId,
       agentName: "shuttle",
@@ -319,9 +319,9 @@ describe("adapter/engine boundary — engine receives abstract capabilities only
     expect(result.value.decision).toBe("ask");
   });
 
-  it("beforeTool accepts abstract capability 'execute' — not OpenCode tool name 'bash'", async () => {
+  it("previewToolPolicy accepts abstract capability 'execute' — not OpenCode tool name 'bash'", async () => {
     const policy = evaluateEffectiveToolPolicy({ execute: "deny" });
-    const result = await beforeTool({
+    const result = await previewToolPolicy({
       workflowInstanceId: wfId,
       leaseId,
       agentName: "shuttle",
@@ -334,9 +334,9 @@ describe("adapter/engine boundary — engine receives abstract capabilities only
     expect(result.value.decision).toBe("deny");
   });
 
-  it("beforeTool accepts abstract capability 'network' — not OpenCode tool name 'webfetch'", async () => {
+  it("previewToolPolicy accepts abstract capability 'network' — not OpenCode tool name 'webfetch'", async () => {
     const policy = evaluateEffectiveToolPolicy({ network: "allow" });
-    const result = await beforeTool({
+    const result = await previewToolPolicy({
       workflowInstanceId: wfId,
       leaseId,
       agentName: "shuttle",
@@ -349,11 +349,11 @@ describe("adapter/engine boundary — engine receives abstract capabilities only
     expect(result.value.decision).toBe("allow");
   });
 
-  it("beforeTool rejects an OpenCode tool name passed as toolCapability", async () => {
+  it("previewToolPolicy rejects an OpenCode tool name passed as toolCapability", async () => {
     // This proves the engine does NOT branch on OpenCode tool names.
     // Passing "glob" as toolCapability (instead of "read") is rejected.
     const policy = evaluateEffectiveToolPolicy({ read: "allow" });
-    const result = await beforeTool({
+    const result = await previewToolPolicy({
       workflowInstanceId: wfId,
       leaseId,
       agentName: "shuttle",
@@ -369,9 +369,9 @@ describe("adapter/engine boundary — engine receives abstract capabilities only
     }
   });
 
-  it("beforeTool rejects 'bash' passed as toolCapability (not an abstract capability)", async () => {
+  it("previewToolPolicy rejects 'bash' passed as toolCapability (not an abstract capability)", async () => {
     const policy = evaluateEffectiveToolPolicy({ execute: "allow" });
-    const result = await beforeTool({
+    const result = await previewToolPolicy({
       workflowInstanceId: wfId,
       leaseId,
       agentName: "shuttle",
@@ -384,9 +384,9 @@ describe("adapter/engine boundary — engine receives abstract capabilities only
     expect(result.error.type).toBe("validation");
   });
 
-  it("beforeTool rejects 'edit' passed as toolCapability (not an abstract capability)", async () => {
+  it("previewToolPolicy rejects 'edit' passed as toolCapability (not an abstract capability)", async () => {
     const policy = evaluateEffectiveToolPolicy({ write: "allow" });
-    const result = await beforeTool({
+    const result = await previewToolPolicy({
       workflowInstanceId: wfId,
       leaseId,
       agentName: "shuttle",
@@ -399,9 +399,9 @@ describe("adapter/engine boundary — engine receives abstract capabilities only
     expect(result.error.type).toBe("validation");
   });
 
-  it("beforeTool rejects 'webfetch' passed as toolCapability (not an abstract capability)", async () => {
+  it("previewToolPolicy rejects 'webfetch' passed as toolCapability (not an abstract capability)", async () => {
     const policy = evaluateEffectiveToolPolicy({ network: "allow" });
-    const result = await beforeTool({
+    const result = await previewToolPolicy({
       workflowInstanceId: wfId,
       leaseId,
       agentName: "shuttle",
@@ -416,16 +416,16 @@ describe("adapter/engine boundary — engine receives abstract capabilities only
 });
 
 // ---------------------------------------------------------------------------
-// § 7 — beforeTool metadata sanitization — no secret-bearing metadata
+// § 7 — previewToolPolicy metadata sanitization — no secret-bearing metadata
 // ---------------------------------------------------------------------------
 
-describe("beforeTool — rejects secret-bearing metadata", () => {
+describe("previewToolPolicy — rejects secret-bearing metadata", () => {
   const wfId = createWorkflowInstanceId("metadata-test-001");
   const leaseId = createExecutionLeaseId("metadata-lease-001");
   const policy = evaluateEffectiveToolPolicy({ read: "allow" });
 
   it("rejects metadata with 'token' key", async () => {
-    const result = await beforeTool({
+    const result = await previewToolPolicy({
       workflowInstanceId: wfId,
       leaseId,
       agentName: "shuttle",
@@ -443,7 +443,7 @@ describe("beforeTool — rejects secret-bearing metadata", () => {
   });
 
   it("rejects metadata with 'password' key", async () => {
-    const result = await beforeTool({
+    const result = await previewToolPolicy({
       workflowInstanceId: wfId,
       leaseId,
       agentName: "shuttle",
@@ -461,7 +461,7 @@ describe("beforeTool — rejects secret-bearing metadata", () => {
   });
 
   it("rejects metadata with 'apiKey' key", async () => {
-    const result = await beforeTool({
+    const result = await previewToolPolicy({
       workflowInstanceId: wfId,
       leaseId,
       agentName: "shuttle",
@@ -479,7 +479,7 @@ describe("beforeTool — rejects secret-bearing metadata", () => {
   });
 
   it("rejects metadata with 'secret' key", async () => {
-    const result = await beforeTool({
+    const result = await previewToolPolicy({
       workflowInstanceId: wfId,
       leaseId,
       agentName: "shuttle",
@@ -497,7 +497,7 @@ describe("beforeTool — rejects secret-bearing metadata", () => {
   });
 
   it("accepts safe metadata with non-denied keys", async () => {
-    const result = await beforeTool({
+    const result = await previewToolPolicy({
       workflowInstanceId: wfId,
       leaseId,
       agentName: "shuttle",
@@ -512,7 +512,7 @@ describe("beforeTool — rejects secret-bearing metadata", () => {
   });
 
   it("accepts undefined metadata (no metadata field)", async () => {
-    const result = await beforeTool({
+    const result = await previewToolPolicy({
       workflowInstanceId: wfId,
       leaseId,
       agentName: "shuttle",

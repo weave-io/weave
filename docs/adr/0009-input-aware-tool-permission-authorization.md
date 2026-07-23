@@ -2,7 +2,7 @@
 
 **Status:** Accepted
 
-**Related:** [Spec 34 — Harness-neutral permission subsystem](../specs/34-spec-harness-neutral-permissions/34-spec-harness-neutral-permissions.md) · [Spec 33 — Full-readiness Pi adapter](../specs/33-spec-pi-adapter/33-spec-pi-adapter.md) · [Tool Policy Evaluation](../tool-policy-evaluation.md) · [Adapter Boundary](../adapter-boundary.md)
+**Related:** [Permissions guide](../permissions.md) · [Spec 34 — Harness-neutral permission subsystem](../specs/34-spec-harness-neutral-permissions/34-spec-harness-neutral-permissions.md) · [Spec 12 — Runtime Persistence](../specs/12-spec-runtime-persistence/12-spec-runtime-persistence.md) · [Spec 13 — Minimal Execution Lifecycle Surface](../specs/13-spec-minimal-execution-lifecycle-surface/13-spec-minimal-execution-lifecycle-surface.md) · [Spec 33 — Full-readiness Pi adapter](../specs/33-spec-pi-adapter/33-spec-pi-adapter.md) · [Tool Policy Evaluation](../tool-policy-evaluation.md) · [Adapter Boundary](../adapter-boundary.md)
 
 ## Context
 
@@ -12,22 +12,27 @@ Concrete tool names, input shapes, interception hooks, and approval UI differ by
 
 ## Decision
 
-Weave will add an engine-owned, harness-neutral permission subsystem with four public roles:
+Weave will add an engine-owned, harness-neutral permission subsystem with these public roles:
 
 - `PermissionRegistryBuilder`;
 - immutable `PermissionRegistryGeneration`;
-- `PermissionSession`;
-- `PermissionApprovalRepository` on the Runtime Store.
+- `PermissionService`, which creates branded `PermissionSession` handles;
+- sanitized permission request, outcome, and administration contracts;
+- `verifyPermissionCoverage`, a pure inventory/interception proof helper that accepts adapter-supplied native, Weave-owned, intercepted, bypassable, and unmanaged third-party identities against a sealed generation.
+
+The Runtime Store exposes workflow, lease, snapshot, and journal repositories only. Memory and SQLite stores associate their private durable permission repository with the store through an engine-internal `WeakMap`; adapters cannot receive or mutate that repository.
 
 Adapters register trusted concrete tools with opaque runtime identity, owner identity, semantic revision, bounded display metadata, and a pure synchronous input resolver. The resolver returns one or more normalized permission requests or an explicit non-grantable `unresolved` request.
 
-The engine validates and canonicalizes requests, binds them to the session's effective agent policy, evaluates every request conjunctively, manages approval challenges and reusable grants, and issues short-lived single-use permits. Authorization fields determine identity; display text never does.
+The engine validates and canonicalizes requests, binds them to the session's effective agent policy, evaluates every request conjunctively, manages approval challenges and reusable grants, and issues short-lived single-use permits. Authorization fields determine identity; display text never does. Sealed registry generations receive fresh non-replayable opaque ids distinct from metadata identity. Genuine session/generation instances and prototypes are frozen; authoritative authorization and coverage paths use module-private non-virtual accessors.
 
 Policy `deny` always wins. Policy `allow` needs no grant. Policy `ask` requires an exact matching grant or explicit approval. Every request must pass before a call can execute.
 
-Adapters discover and intercept tools, supply resolvers, render or relay approval UI, and consume the permit immediately before execution. Unregistered tools are `unmanaged`: Weave makes no allow claim and issues no permit.
+Adapters discover and intercept tools, supply resolvers, render or relay approval UI, and consume the permit immediately before execution. Unregistered tools are `unmanaged`: Weave makes no allow claim and issues no permit. Before claiming required tool-policy readiness, adapters call `verifyPermissionCoverage` with explicit inventories; the engine never discovers harness tools. Coverage failure (`invalid_coverage` / `incomplete_coverage`) maps to required capability readiness failure. Concrete registered-tool enforcement wiring remains an adapter task.
 
-The workflow `beforeTool` operation becomes a compatibility path over this general permission session rather than a second policy system.
+Durable grants persist only through Runtime Store migration v3 `permission_grants` with live schema re-verification on open; raw calls, constraints, prompts, secrets, and tokens are data-banned. There is no public repository or `store.permissions` surface.
+
+The workflow `beforeTool` operation becomes a compatibility path over this general permission session rather than a second policy system. Legacy one-capability `beforeTool` aliases are not part of the public contract; static intent stays on non-authoritative `previewToolPolicy`.
 
 ## Security properties
 
@@ -40,8 +45,9 @@ Resolver throw, error, empty output, invalid output, unsafe input, stale state, 
 - Policy can distinguish read targets, commands, network destinations, and other security-relevant input.
 - Approval memory remains portable while concrete resolution and UI remain adapter-owned.
 - Multi-request calls fail closed if any request fails.
-- Registry replacement must be idle-only and atomic; it invalidates outstanding challenges and permits.
+- Registry replacement must be idle-only and atomic; it invalidates outstanding challenges and permits and rejects observed-generation replay.
 - Existing static policy helpers remain useful but no longer prove full call authorization.
+- Adapter authors should start from the [Permissions guide](../permissions.md); Spec 34 remains normative.
 
 ## Rejected alternatives
 

@@ -11,6 +11,7 @@
  */
 
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
+import { InMemoryPermissionApprovalRepository } from "../permissions/repository.js";
 import {
   conflictError,
   notFoundError,
@@ -18,6 +19,7 @@ import {
   type RuntimeStoreError,
 } from "./errors.js";
 import { RuntimeJournalWriter } from "./journal-writer.js";
+import { registerPermissionApprovalRepository } from "./permission-repository.js";
 import { sanitizeSnapshotMetadata } from "./sanitizer.js";
 import type {
   AcquireLeaseInput,
@@ -822,6 +824,7 @@ export class InMemoryRuntimeStore implements RuntimeStore {
   readonly leases: InMemoryExecutionLeaseRepository;
   readonly snapshots: InMemorySessionSnapshotRepository;
   readonly journal: InMemoryRuntimeJournalRepository;
+  #permissions: InMemoryPermissionApprovalRepository;
 
   private readonly clock: () => Date;
   private readonly strictJournal: boolean;
@@ -845,6 +848,12 @@ export class InMemoryRuntimeStore implements RuntimeStore {
     );
     this.snapshots = new InMemorySessionSnapshotRepository(this.failureConfig);
     this.journal = new InMemoryRuntimeJournalRepository(this.failureConfig);
+    // Construct after the injected Date clock is assigned so revoke/list/match
+    // timestamps share the store clock (parity with SqliteRuntimeStore).
+    this.#permissions = new InMemoryPermissionApprovalRepository({}, () =>
+      this.clock().getTime(),
+    );
+    registerPermissionApprovalRepository(this, this.#permissions);
   }
 
   /**

@@ -17,6 +17,7 @@ The published docs site is built from the Astro + Starlight package at [`package
 | [Model Resolution](model-resolution.md) | Model intent, adapter responsibility, category shuttle model preferences |
 | [Prompt Composition](prompt-composition.md) | Mustache templates, delegation section, template context fields |
 | [Tool Policy Evaluation](tool-policy-evaluation.md) | Abstract capabilities, `EffectiveToolPolicy`, adapter mapping |
+| [Permissions](permissions.md) | Harness-neutral authorization: registry, grants, challenges, permits, coverage proof, `beforeTool` vs `previewToolPolicy` |
 | [Delegation Limits](delegation-limits.md) | Portable caps, merge behavior, effective limits, and authorization decisions |
 | [Workflow Schema](workflow-schema.md) | Workflow fields, step types, completion methods, artifact passing |
 | [CLI](cli.md) | `weave validate`, `weave init`, `weave init migrate`, `weave eval run`, harness detection |

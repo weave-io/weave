@@ -165,6 +165,24 @@ interface RuntimeMetadataRow {
   readonly value: string;
 }
 
+export interface PermissionGrantRow {
+  readonly grant_id: string;
+  readonly project_identity: string;
+  readonly agent_name: string;
+  readonly registration_owner: string;
+  readonly tool_identity: string;
+  readonly registration_revision: string;
+  readonly policy_fingerprint: string;
+  readonly request_schema_version: string;
+  readonly request_digest: string;
+  readonly display_summary: string;
+  readonly display_details: string | null;
+  readonly created_at: number;
+  readonly expires_at: number | null;
+  readonly revoked_at: number | null;
+  readonly state: string;
+}
+
 // ---------------------------------------------------------------------------
 // WeaveDatabase — Kysely schema type
 // ---------------------------------------------------------------------------
@@ -181,4 +199,5 @@ export interface WeaveDatabase {
   readonly runtime_journal_entries: RuntimeJournalEntryRow;
   readonly schema_migrations: SchemaMigrationRow;
   readonly runtime_metadata: RuntimeMetadataRow;
+  readonly permission_grants: PermissionGrantRow;
 }

@@ -10,7 +10,9 @@ Harness-agnostic composition APIs and adapter-boundary helpers for Weave.
 - **Model resolution helper** — `resolveAdapterModelIntent()` resolves model preferences using adapter-supplied harness context
 - **Skill resolution API** — implemented by [Spec 09](../../docs/specs/09-spec-adapter-provided-skill-resolution/09-spec-adapter-provided-skill-resolution.md); adapters provide available skills via `loadAvailableSkills()`, engine matches/filters them via `resolveSkillsForAgent()` and `resolveSkillsForConfig()`
 - **Prompt composition APIs** — future APIs that combine prompt files, prompt appendices, delegation metadata, and resolved skills
-- **Execution Lifecycle Surface** — abstract lifecycle API (`execution-lifecycle.ts`); adapters map harness events into 7 typed lifecycle methods (`observeSession`, `startExecution`, `resumeExecution`, `handleUserInterrupt`, `dispatchStep`, `completeStep`, `beforeTool`)
+- **Execution Lifecycle Surface** — abstract lifecycle API (`execution-lifecycle.ts`); adapters map harness events into typed lifecycle methods. `beforeTool` is the registered Spec 34 permission-session compatibility path; `previewToolPolicy` is the non-authoritative static policy helper.
+- **Permission ownership** — `createPermissionService(store)` activates branded permission sessions while keeping durable grant repositories, clocks, opaque ID sources, and grant internals inside the engine. Conceptual guide: [`docs/permissions.md`](../../docs/permissions.md); normative: [Spec 34](../../docs/specs/34-spec-harness-neutral-permissions/34-spec-harness-neutral-permissions.md).
+- **Permission coverage proof** — `verifyPermissionCoverage(context)` validates adapter-supplied native/Weave/intercepted/unmanaged inventories against a sealed registry generation without harness discovery
 - **`WeaveRunner`** — current transitional orchestration entry point that passes normalized intent through a `HarnessAdapter`
 
 ## Boundary Rule
@@ -36,6 +38,43 @@ const skills = await scanOpenCodeSkillDirectories(projectRoot);
 ```
 
 See [../../docs/adapter-boundary.md](../../docs/adapter-boundary.md) for the full ownership matrix.
+
+### Permission Service and Runtime Store Boundary
+
+See [`docs/permissions.md`](../../docs/permissions.md) for the adapter-facing overview (activation, grants, permits, coverage, public/internal boundary). Adapters activate permissions through the engine-owned service:
+
+```ts
+const permissions = createPermissionService(store);
+const session = await permissions.activate({
+  project,
+  controllerSession: harnessSessionId,
+  registry: registryGeneration,
+  policies: effectivePoliciesByAgent,
+  requestSchemaVersion: "1",
+});
+```
+
+The activation input contains identity and stable engine policy intent only. The adapter cannot provide a repository, clock, ID source, durable grant record, identity envelope, or per-call policy. `PermissionSession` is an opaque branded handle; forged objects, proxies, copied methods, and prototype mutation fail with typed results. `PermissionRegistryGeneration` has no public construction-token/`fromToken` surface; its constructor and prototype are frozen, and authorization/coverage paths use module-private non-virtual accessors rather than attacker-replaceable instance methods.
+
+Successful permit consumption returns a deep-frozen `PermissionExecutionSnapshot`. Adapters must execute only that snapshot. Challenge/permit deadlines use an engine monotonic clock; audit and durable expiry use a wall clock with private high-water clamping so clock rollback cannot extend or resurrect authority.
+
+Adapters prove tool-policy inventory coverage with the pure helper:
+
+```ts
+const coverage = verifyPermissionCoverage({
+  registry: registryGeneration,
+  nativeToolIdentities,
+  weaveOwnedToolIdentities,
+  interceptedToolIdentities,
+  bypassableToolIdentities,
+  unmanagedThirdPartyToolIdentities,
+  diagnostics: { includeToolIdentities: false },
+});
+```
+
+The engine snapshots plain bounded identities once, rejects getters/proxies/extras/duplicates/overlap, and returns an immutable proof or a closed `invalid_coverage` / `incomplete_coverage` error. Adapters map either failure to required `tool-policy-mapping` readiness failure. Concrete registered-tool interception remains adapter-owned.
+
+`RuntimeStore` exposes workflow, lease, snapshot, and journal repositories. Memory and SQLite stores keep their permission repository in private fields and associate it with the store through an engine-internal `WeakMap`. The association accessor and repository implementations are not root exports, so OpenCode and workflow adapters cannot mutate durable grants through `store.permissions`. Durable grants remain available to a later service-created session through the engine-owned repository.
 
 ## Internal workspace layer
 
@@ -110,12 +149,13 @@ Paused execution resumes           →   resumeExecution(input, store)
 User presses Ctrl+C / stop         →   handleUserInterrupt(input, store)
 Adapter ready to run next step     →   dispatchStep(input, store)
 Step agent finishes                →   completeStep(input, store)
-Tool call about to execute         →   beforeTool(input)
+Registered tool call intercepted   →   beforeTool(registeredInput)
+Static capability policy inspection  →   previewToolPolicy(staticInput)
 ```
 
 **Adapter-owned**: detecting harness events, mapping them to lifecycle inputs, providing `RuntimeStore`, acting on returned `LifecycleEffect` values (e.g. spawning agents, pausing sessions).
 
-**Engine-owned**: policy decisions, state transitions, effect generation, `RuntimeStore` writes.
+**Engine-owned**: static policy previews, permission-session compatibility delegation, state transitions, effect generation, and `RuntimeStore` writes. `previewToolPolicy` cannot authorize execution or establish adapter readiness. `beforeTool` rejects legacy policy fields and accepts only an exact registered call snapshot.
 
 All lifecycle functions return `ResultAsync<Output, LifecycleError>` — no exceptions, no concrete hook registration, no harness-specific callbacks.
 

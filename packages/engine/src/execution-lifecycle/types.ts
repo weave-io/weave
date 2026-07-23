@@ -10,6 +10,11 @@
 
 import type { ReconciliationReason, WorkflowConfig } from "@weaveio/weave-core";
 import type { ResultAsync } from "neverthrow";
+import type {
+  PermissionError,
+  PermissionOutcome,
+  PermissionSession,
+} from "../permissions/index.js";
 import type { PlanStateProvider } from "../plan-state-provider.js";
 import type { RunAgentEffect } from "../run-agent-effects.js";
 import type {
@@ -389,7 +394,14 @@ export interface CompleteStepOutput {
 // 7. beforeTool — Input / Output
 // ---------------------------------------------------------------------------
 
-export interface BeforeToolInput {
+/**
+ * Non-authoritative static policy preview input.
+ *
+ * This describes adapter-resolved policy intent only. It does not prove that
+ * a tool call is authorized to execute, establish adapter readiness, or issue
+ * a permission permit.
+ */
+export interface StaticToolPolicyPreviewInput {
   readonly workflowInstanceId: WorkflowInstanceId;
   readonly leaseId: ExecutionLeaseId;
   readonly agentName: string;
@@ -404,10 +416,36 @@ export interface BeforeToolInput {
   readonly metadata?: SafeMetadata;
 }
 
-export interface BeforeToolOutput {
+export interface StaticToolPolicyPreviewOutput {
   readonly decision: "allow" | "deny" | "ask";
   readonly reason?: string;
 }
+
+export type StaticToolPolicyPreviewResult = ResultAsync<
+  StaticToolPolicyPreviewOutput,
+  LifecycleError
+>;
+
+/** Inputs for the authoritative, registered permission-session path. */
+export interface RegisteredBeforeToolInput {
+  readonly workflowInstanceId: WorkflowInstanceId;
+  readonly leaseId: ExecutionLeaseId;
+  readonly agentName: string;
+  readonly toolName: string;
+  readonly permission: {
+    readonly session: PermissionSession;
+    readonly project: string;
+    readonly controllerSession: string;
+    readonly registryGeneration: string;
+    readonly call: unknown;
+    readonly approvalUiAvailable: boolean;
+  };
+}
+
+export type RegisteredBeforeToolResult = ResultAsync<
+  PermissionOutcome,
+  LifecycleError | PermissionError
+>;
 
 // ---------------------------------------------------------------------------
 // 8. inspectExecution — Input / Output
@@ -500,7 +538,6 @@ export type CompleteStepResult = ResultAsync<
   CompleteStepOutput,
   LifecycleError
 >;
-export type BeforeToolResult = ResultAsync<BeforeToolOutput, LifecycleError>;
 export type InspectExecutionResult = ResultAsync<
   InspectExecutionOutput,
   LifecycleError

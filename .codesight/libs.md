@@ -470,7 +470,7 @@
   - function validateStepInputs: (step, instance, artifactDigests?, string>>, pinnedNames?) => Result<ArtifactInputSummary, LifecycleError>
   - _...3 more_
 - `packages/engine/src/execution-lifecycle/authorization.ts` — function validateAuthorizationSource: (source, operation) => Result<undefined, LifecyclePolicyDecisionError>, function validateReconciliationSource: (reason, source) => Result<undefined, LifecyclePolicyDecisionError>
-- `packages/engine/src/execution-lifecycle/before-tool.ts` — function beforeTool: (input) => BeforeToolResult
+- `packages/engine/src/execution-lifecycle/before-tool.ts` — function previewToolPolicy: (input) => StaticToolPolicyPreviewResult, function beforeTool: (input) => RegisteredBeforeToolResult
 - `packages/engine/src/execution-lifecycle/completion.ts` — function completeStep: (input, store) => ResultAsync<CompleteStepOutput, LifecycleError>
 - `packages/engine/src/execution-lifecycle/dispatch.ts`
   - function buildConfiguredRunAgentEffect: (step, promptMetadata) => RunAgentEffect
@@ -514,6 +514,50 @@
   - interface ModelResolutionResult
   - type ResolutionSource
   - const DEFAULT_FALLBACK_MODEL
+- `packages/engine/src/permissions/array-snapshot.ts` — function snapshotArrayOnce: (value) => Result<readonly unknown[], ArraySnapshotError>, type ArraySnapshotError
+- `packages/engine/src/permissions/canonical.ts`
+  - function cloneAndFreezeJson: (value) => Result<JsonValue, PermissionError>
+  - function utf8Bytes: (value, max) => Result<Uint8Array, PermissionError>
+  - function canonicalizeJson: (value) => Result<string, PermissionError>
+  - function permissionDigest: (value) => Result<string, PermissionError>
+  - function sanitizePermissionDisplay: (value) => Result<PermissionDisplay, PermissionError>
+  - function normalizePermissionRequests: (input) => Result<readonly PermissionRequest[], PermissionError>
+  - _...10 more_
+- `packages/engine/src/permissions/coverage.ts`
+  - function verifyPermissionCoverage: (context) => Result<PermissionCoverageProof, PermissionCoverageError>
+  - interface PermissionCoverageDiagnosticsPolicy
+  - interface PermissionCoverageContext
+  - interface PermissionCoverageProof
+  - type PermissionCoverageIncompleteReason
+  - type PermissionCoverageError
+- `packages/engine/src/permissions/registry.ts`
+  - function createPermissionRegistryBuilderForTesting: (deps) => PermissionRegistryBuilder
+  - function lookupRegistryRegistration: (generation, toolIdentity) => Result<PermissionRegistration | undefined, PermissionError>
+  - function readRegistryInventory: (generation) => Result<readonly PermissionRegistrationMetadata[], PermissionError>
+  - function readRegistryGenerationMeta: (generation) => Result<
+  - function validatePermissionRegistryGeneration: (value) => Result<PermissionRegistryGeneration, PermissionError>
+  - function invokePermissionResolver: (resolver, call, context) => Result<readonly PermissionRequest[], PermissionError>
+  - _...4 more_
+- `packages/engine/src/permissions/repository.ts`
+  - function validateGrantIdentityResult: (value) => Result<GrantIdentityEnvelope, PermissionError>
+  - function validateGrantIdentity: (value) => value is GrantIdentityEnvelope
+  - function validateDurableGrantRecordResult: (value) => Result<DurablePermissionGrantRecord, PermissionError>
+  - function validateDurableGrantRecord: (value) => value is DurablePermissionGrantRecord
+  - function hydrateDurableGrant: (row) => Result<DurablePermissionGrantRecord, PermissionError>
+  - function grantIdentityKey: (identity) => Result<string, PermissionError>
+  - _...5 more_
+- `packages/engine/src/permissions/service.ts`
+  - function createPermissionService: (store) => PermissionService
+  - class PermissionService
+  - interface PermissionServiceActivationInput
+- `packages/engine/src/permissions/session.ts`
+  - function validatePermissionSession: (value) => Result<PermissionSession, PermissionError>
+  - function authorizePermissionSessionCall: (session, input) => ResultAsync<PermissionOutcome, PermissionError>
+  - function consumePermissionSessionPermit: (session, input) => ResultAsync<PermissionExecutionSnapshot, PermissionError>
+  - function activatePermissionSessionInternal: (input) => ResultAsync<PermissionSession, PermissionError>
+  - function activatePermissionSessionForTesting: (input) => ResultAsync<PermissionSession, PermissionError>
+  - class PermissionSession
+  - _...2 more_
 - `packages/engine/src/review-orchestration.ts`
   - function fanOut: (agentName, config) => Result<ReviewFanOutPlan, ReviewOrchestrationError>
   - function collate: (results) => Result<CollatedReview, ReviewOrchestrationError>
@@ -542,6 +586,7 @@
   - class InMemoryRuntimeStore
   - interface InMemoryRuntimeStoreFailureConfig
   - interface InMemoryRuntimeStoreOptions
+- `packages/engine/src/runtime/permission-repository.ts` — function registerPermissionApprovalRepository: (store, repository) => void, function getPermissionApprovalRepository: (store) => Result<PermissionApprovalRepository, PermissionError>
 - `packages/engine/src/runtime/sanitizer.ts`
   - function isDeniedKey: (key) => boolean
   - function sanitizeJournalData: (data) => Result<JsonObject, RuntimeStoreError>
@@ -553,6 +598,7 @@
   - const CURRENT_SCHEMA_VERSION
 - `packages/engine/src/runtime/sqlite/store.ts`
   - function createSqliteRuntimeStore: (options) => SqliteRuntimeStore
+  - class SqlitePermissionApprovalRepository
   - class SqliteRuntimeStore
   - interface SqliteRuntimeStoreOptions
 - `packages/engine/src/runtime/types.ts`

@@ -1549,3 +1549,11 @@ describe("RuntimeCommandProjection.handleAdvanceStep — unsupported automatic s
     }
   });
 });
+
+describe("OpenCode RuntimeStore boundary", () => {
+  it("receives no durable permission mutation surface", () => {
+    const store = createInMemoryRuntimeStore();
+    expect("permissions" in store).toBe(false);
+    expect(Object.keys(store)).not.toContain("permissions");
+  });
+});

@@ -26,7 +26,6 @@ import type {
   RuntimeJournalEntryId,
   SessionSnapshot,
   SessionSnapshotId,
-  StepAttemptRecord,
   WorkflowInstance,
   WorkflowInstanceId,
   WorkflowInstanceStatus,
@@ -415,7 +414,6 @@ export interface RuntimeStore {
   readonly snapshots: SessionSnapshotRepository;
   /** RuntimeJournal repository. */
   readonly journal: RuntimeJournalRepository;
-
   /**
    * Execute a unit-of-work transaction.
    *

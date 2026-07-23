@@ -94,7 +94,7 @@
 
 #### 4.0 Proof Artifact(s)
 
-- Test: `beforeTool` returns deterministic allow, deny, and ask decisions for normalized capability inputs.
+- Test: `previewToolPolicy` returns deterministic allow, deny, and ask decisions for normalized capability inputs; registered `beforeTool` authorization is covered by the Spec 34 permission-session tests.
 - Test: policy lifecycle tests demonstrate concrete tool names are adapter input context only and engine decisions use abstract capabilities.
 - Security review artifact: Warp review notes cover `beforeTool`, sanitized lifecycle inputs, and effect payload boundaries.
 

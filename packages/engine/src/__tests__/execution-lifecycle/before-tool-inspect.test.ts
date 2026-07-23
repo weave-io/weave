@@ -2,18 +2,17 @@
  * Tests for before-tool.ts and inspection.ts lifecycle modules.
  *
  * Verifies:
- * - beforeTool: policy evaluation, capability validation, metadata sanitization
+ * - previewToolPolicy: policy evaluation, capability validation, metadata sanitization
  * - inspectExecution: read-only state query, no side effects
  */
 
 import { describe, expect, it } from "bun:test";
 import {
-  beforeTool,
-  createExecutionLeaseId,
   createInMemoryRuntimeStore,
   createWorkflowInstanceId,
   evaluateEffectiveToolPolicy,
   inspectExecution,
+  previewToolPolicy,
   startExecution,
 } from "@weaveio/weave-engine";
 import { leaseId, wfId } from "./fixtures.js";
@@ -35,12 +34,12 @@ const mixedPolicy = evaluateEffectiveToolPolicy({
 });
 
 // ---------------------------------------------------------------------------
-// beforeTool
+// previewToolPolicy
 // ---------------------------------------------------------------------------
 
-describe("beforeTool", () => {
+describe("previewToolPolicy", () => {
   it("returns 'allow' for allowed capability", async () => {
-    const result = await beforeTool({
+    const result = await previewToolPolicy({
       workflowInstanceId: wfId,
       leaseId,
       agentName: "shuttle",
@@ -55,7 +54,7 @@ describe("beforeTool", () => {
   });
 
   it("returns 'deny' for denied capability", async () => {
-    const result = await beforeTool({
+    const result = await previewToolPolicy({
       workflowInstanceId: wfId,
       leaseId,
       agentName: "shuttle",
@@ -70,7 +69,7 @@ describe("beforeTool", () => {
   });
 
   it("returns 'ask' for ask capability", async () => {
-    const result = await beforeTool({
+    const result = await previewToolPolicy({
       workflowInstanceId: wfId,
       leaseId,
       agentName: "shuttle",
@@ -85,7 +84,7 @@ describe("beforeTool", () => {
   });
 
   it("returns validation error for missing workflowInstanceId", async () => {
-    const result = await beforeTool({
+    const result = await previewToolPolicy({
       workflowInstanceId: "" as typeof wfId,
       leaseId,
       agentName: "shuttle",
@@ -103,7 +102,7 @@ describe("beforeTool", () => {
   });
 
   it("returns validation error for unrecognized toolCapability", async () => {
-    const result = await beforeTool({
+    const result = await previewToolPolicy({
       workflowInstanceId: wfId,
       leaseId,
       agentName: "shuttle",
@@ -121,7 +120,7 @@ describe("beforeTool", () => {
   });
 
   it("rejects metadata with denied key", async () => {
-    const result = await beforeTool({
+    const result = await previewToolPolicy({
       workflowInstanceId: wfId,
       leaseId,
       agentName: "shuttle",
@@ -144,7 +143,7 @@ describe("beforeTool", () => {
       "read" | "write" | "execute" | "delegate" | "network"
     > = ["read", "write", "execute", "delegate", "network"];
     for (const toolCapability of capabilities) {
-      const result = await beforeTool({
+      const result = await previewToolPolicy({
         workflowInstanceId: wfId,
         leaseId,
         agentName: "shuttle",

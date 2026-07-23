@@ -13,6 +13,8 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { errAsync, okAsync } from "neverthrow";
+import type { PermissionApprovalRepository } from "../permissions/types.js";
+import { getPermissionApprovalRepository } from "../runtime/permission-repository.js";
 import {
   CURRENT_SCHEMA_VERSION,
   readSchemaVersion,
@@ -33,6 +35,9 @@ import {
 // ---------------------------------------------------------------------------
 
 let testDir: string;
+function permissionRepository(store: object): PermissionApprovalRepository {
+  return getPermissionApprovalRepository(store)._unsafeUnwrap();
+}
 
 function makeTempDir(): string {
   const dir = join(tmpdir(), `weave-test-${crypto.randomUUID()}`);
@@ -55,6 +60,200 @@ function makeStore(dir: string, opts: Partial<SqliteRuntimeStoreOptions> = {}) {
     dbPath: makeDbPath(dir),
     ...opts,
   });
+}
+
+const CANONICAL_BOOTSTRAP_DDL = `
+  CREATE TABLE runtime_metadata (
+    key TEXT NOT NULL PRIMARY KEY,
+    value TEXT NOT NULL
+  );
+  CREATE TABLE schema_migrations (
+    version INTEGER NOT NULL PRIMARY KEY,
+    applied_at TEXT NOT NULL,
+    name TEXT NOT NULL
+  );
+`;
+
+const VALID_PERMISSION_GRANTS_DDL = `
+  CREATE TABLE permission_grants (
+    grant_id TEXT NOT NULL PRIMARY KEY,
+    project_identity TEXT NOT NULL,
+    agent_name TEXT NOT NULL,
+    registration_owner TEXT NOT NULL,
+    tool_identity TEXT NOT NULL,
+    registration_revision TEXT NOT NULL,
+    policy_fingerprint TEXT NOT NULL,
+    request_schema_version TEXT NOT NULL,
+    request_digest TEXT NOT NULL,
+    display_summary TEXT NOT NULL,
+    display_details TEXT,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER,
+    revoked_at INTEGER,
+    state TEXT NOT NULL CHECK (state IN ('active', 'revoked')),
+    CHECK (expires_at IS NULL OR expires_at > created_at),
+    CHECK (
+      (state = 'active' AND revoked_at IS NULL)
+      OR (
+        state = 'revoked'
+        AND revoked_at IS NOT NULL
+        AND revoked_at >= created_at
+      )
+    ),
+    UNIQUE (
+      project_identity,
+      agent_name,
+      registration_owner,
+      tool_identity,
+      registration_revision,
+      policy_fingerprint,
+      request_schema_version,
+      request_digest
+    )
+  );
+  CREATE INDEX idx_permission_grants_project_state_expiry
+    ON permission_grants (project_identity, state, expires_at);
+`;
+
+function assertInitializationError(
+  result: ReturnType<typeof runMigrations>,
+  message: string,
+): void {
+  expect(result.isErr()).toBe(true);
+  const error = result._unsafeUnwrapErr();
+  expect(error.type).toBe("initialization");
+  if (error.type === "initialization") {
+    expect(error.message).toBe(message);
+  }
+}
+
+function assertNoPermissionGrantsTable(db: Database): void {
+  expect(
+    db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE name = 'permission_grants'",
+      )
+      .get(),
+  ).toBeNull();
+}
+
+function assertMigrationStayedAtV2(db: Database): void {
+  expect(readSchemaVersion(db)).toBe(2);
+  expect(
+    db
+      .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
+      .all(),
+  ).toEqual([
+    { version: 1, name: "initial_schema" },
+    { version: 2, name: "add_step_attempts_json" },
+  ]);
+}
+
+function createLegacyV2Database(db: Database): void {
+  db.exec(`
+    CREATE TABLE runtime_metadata (
+      key TEXT NOT NULL PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+    CREATE TABLE schema_migrations (
+      version INTEGER NOT NULL PRIMARY KEY,
+      applied_at TEXT NOT NULL,
+      name TEXT NOT NULL
+    );
+    CREATE TABLE workflow_instances (
+      id TEXT NOT NULL PRIMARY KEY,
+      workflow_name TEXT NOT NULL,
+      goal TEXT NOT NULL,
+      slug TEXT NOT NULL,
+      status TEXT NOT NULL,
+      current_step_name TEXT,
+      artifacts_json TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      completed_at TEXT,
+      error_message TEXT
+    );
+    CREATE INDEX idx_workflow_instances_status
+      ON workflow_instances (status);
+    CREATE INDEX idx_workflow_instances_created_at
+      ON workflow_instances (created_at);
+    CREATE TABLE execution_leases (
+      id TEXT NOT NULL PRIMARY KEY,
+      workflow_instance_id TEXT NOT NULL,
+      owner_id TEXT NOT NULL,
+      acquired_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      last_heartbeat_at TEXT,
+      FOREIGN KEY (workflow_instance_id) REFERENCES workflow_instances (id)
+    );
+    CREATE INDEX idx_execution_leases_expires_at
+      ON execution_leases (expires_at);
+    CREATE INDEX idx_execution_leases_workflow_instance_id
+      ON execution_leases (workflow_instance_id);
+    CREATE TABLE session_snapshots (
+      id TEXT NOT NULL PRIMARY KEY,
+      workflow_instance_id TEXT NOT NULL,
+      lease_id TEXT NOT NULL,
+      harness_name TEXT NOT NULL,
+      harness_version TEXT,
+      agent_name TEXT NOT NULL,
+      model_id TEXT,
+      step_name TEXT,
+      session_status TEXT NOT NULL,
+      recorded_at TEXT NOT NULL,
+      metadata_json TEXT NOT NULL DEFAULT '{}',
+      FOREIGN KEY (workflow_instance_id) REFERENCES workflow_instances (id),
+      FOREIGN KEY (lease_id) REFERENCES execution_leases (id)
+    );
+    CREATE INDEX idx_session_snapshots_workflow_instance_id
+      ON session_snapshots (workflow_instance_id);
+    CREATE INDEX idx_session_snapshots_recorded_at
+      ON session_snapshots (recorded_at);
+    CREATE TABLE runtime_journal_entries (
+      id TEXT NOT NULL PRIMARY KEY,
+      timestamp TEXT NOT NULL,
+      source_kind TEXT NOT NULL,
+      source_name TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      execution_id TEXT,
+      workflow_instance_id TEXT,
+      step_id TEXT,
+      severity TEXT NOT NULL,
+      data_json TEXT NOT NULL DEFAULT '{}'
+    );
+    CREATE INDEX idx_journal_entries_timestamp
+      ON runtime_journal_entries (timestamp);
+    CREATE INDEX idx_journal_entries_workflow_instance_id
+      ON runtime_journal_entries (workflow_instance_id);
+    CREATE INDEX idx_journal_entries_execution_id
+      ON runtime_journal_entries (execution_id);
+    CREATE INDEX idx_journal_entries_source_kind
+      ON runtime_journal_entries (source_kind);
+    CREATE INDEX idx_journal_entries_source_name
+      ON runtime_journal_entries (source_name);
+    CREATE INDEX idx_journal_entries_event_type
+      ON runtime_journal_entries (event_type);
+    CREATE INDEX idx_journal_entries_severity
+      ON runtime_journal_entries (severity);
+    ALTER TABLE workflow_instances
+      ADD COLUMN step_attempts_json TEXT NOT NULL DEFAULT '[]';
+    INSERT INTO runtime_metadata (key, value)
+      VALUES ('schema_version', '2');
+    INSERT INTO schema_migrations (version, applied_at, name)
+      VALUES (1, '2025-01-01T00:00:00.000Z', 'initial_schema');
+    INSERT INTO schema_migrations (version, applied_at, name)
+      VALUES (2, '2025-01-01T00:00:01.000Z', 'add_step_attempts_json');
+    INSERT INTO workflow_instances (
+      id, workflow_name, goal, slug, status, current_step_name,
+      artifacts_json, created_at, updated_at, completed_at, error_message,
+      step_attempts_json
+    ) VALUES (
+      'legacy-instance', 'legacy-workflow', 'legacy goal', 'legacy-goal',
+      'created', NULL, '[]', '2025-01-01T00:00:00.000Z',
+      '2025-01-01T00:00:00.000Z', NULL, NULL,
+      '[{"stepName":"plan","attemptNumber":1,"dispatchedAt":"2025-01-01T00:00:00.000Z","consumedArtifacts":[]}]'
+    );
+  `);
 }
 
 beforeEach(() => {
@@ -134,6 +333,188 @@ describe("lazy initialization", () => {
     const result = await store.close();
     expect(result.isOk()).toBe(true);
   });
+
+  it("lazy permission repository retries ensureInitialized after a recoverable failure", async () => {
+    const blockedParent = join(testDir, "blocked-parent");
+    await Bun.write(blockedParent, "not-a-directory");
+    const store = createSqliteRuntimeStore({
+      dbPath: join(blockedParent, "runtime", "weave.db"),
+    });
+    const repo = permissionRepository(store);
+
+    const failing = await Promise.allSettled([
+      repo.list("project"),
+      repo.list("project"),
+    ]);
+    for (const settled of failing) {
+      expect(settled.status).toBe("fulfilled");
+      if (settled.status !== "fulfilled") continue;
+      expect(settled.value.isErr()).toBe(true);
+      expect(settled.value._unsafeUnwrapErr().type).toBe("repository_failure");
+    }
+
+    Bun.spawnSync(["rm", "-f", blockedParent]);
+
+    // Ordinary store repo path recovers without reconstructing the store.
+    const instances = await store.instances.list();
+    expect(instances.isOk()).toBe(true);
+
+    const recovered = await Promise.allSettled([repo.list("project")]);
+    expect(recovered[0]?.status).toBe("fulfilled");
+    if (recovered[0]?.status === "fulfilled") {
+      expect(recovered[0].value.isOk()).toBe(true);
+      expect(recovered[0].value._unsafeUnwrap()).toEqual([]);
+    }
+
+    await store.close();
+    const closed = await repo.list("project");
+    expect(closed.isErr()).toBe(true);
+    expect(closed._unsafeUnwrapErr().type).toBe("repository_failure");
+  });
+
+  it("close during in-flight init fails waiters typed and never publishes", async () => {
+    let releaseGate!: () => void;
+    let signalEntered!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      signalEntered = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+
+    const store = createSqliteRuntimeStore({
+      dbPath: makeDbPath(testDir),
+      beforeInitPublish: async () => {
+        signalEntered();
+        await gate;
+      },
+    });
+    const repo = permissionRepository(store);
+
+    const permissionOp = repo.list("project");
+    const instanceOp = store.instances.list();
+
+    // Wait until init is parked at the publish gate, then close before release.
+    await entered;
+    const closeResult = store.close();
+    releaseGate();
+
+    const [permissionSettled, instanceSettled, closeSettled] =
+      await Promise.allSettled([permissionOp, instanceOp, closeResult]);
+
+    expect(closeSettled.status).toBe("fulfilled");
+    if (closeSettled.status === "fulfilled") {
+      expect(closeSettled.value.isOk()).toBe(true);
+    }
+
+    expect(permissionSettled.status).toBe("fulfilled");
+    if (permissionSettled.status === "fulfilled") {
+      expect(permissionSettled.value.isErr()).toBe(true);
+      expect(permissionSettled.value._unsafeUnwrapErr().type).toBe(
+        "repository_failure",
+      );
+    }
+
+    expect(instanceSettled.status).toBe("fulfilled");
+    if (instanceSettled.status === "fulfilled") {
+      expect(instanceSettled.value.isErr()).toBe(true);
+      const error = instanceSettled.value._unsafeUnwrapErr();
+      expect(error.type).toBe("initialization");
+      if (error.type === "initialization") {
+        expect(error.message).toBe("Runtime store is closed");
+      }
+    }
+
+    // Closed store never operates again.
+    const afterClose = await store.instances.list();
+    expect(afterClose.isErr()).toBe(true);
+    expect(afterClose._unsafeUnwrapErr().type).toBe("initialization");
+    const afterPerm = await repo.list("project");
+    expect(afterPerm.isErr()).toBe(true);
+    expect(afterPerm._unsafeUnwrapErr().type).toBe("repository_failure");
+  });
+
+  it("close/init race is deterministic across 30 stress rounds", async () => {
+    for (let round = 0; round < 30; round += 1) {
+      const roundDir = join(testDir, `close-init-${round}`);
+      Bun.spawnSync(["mkdir", "-p", roundDir]);
+
+      let releaseGate!: () => void;
+      let signalEntered!: () => void;
+      const entered = new Promise<void>((resolve) => {
+        signalEntered = resolve;
+      });
+      const gate = new Promise<void>((resolve) => {
+        releaseGate = resolve;
+      });
+
+      const store = createSqliteRuntimeStore({
+        dbPath: makeDbPath(roundDir),
+        beforeInitPublish: async () => {
+          signalEntered();
+          await gate;
+        },
+      });
+      const repo = permissionRepository(store);
+
+      const op = repo.list("project");
+      await entered;
+      const closing = store.close();
+      releaseGate();
+
+      const [opSettled, closeSettled] = await Promise.allSettled([op, closing]);
+      expect(closeSettled.status).toBe("fulfilled");
+      if (closeSettled.status === "fulfilled") {
+        expect(closeSettled.value.isOk()).toBe(true);
+      }
+      expect(opSettled.status).toBe("fulfilled");
+      if (opSettled.status === "fulfilled") {
+        expect(opSettled.value.isErr()).toBe(true);
+        expect(opSettled.value._unsafeUnwrapErr().type).toBe(
+          "repository_failure",
+        );
+      }
+
+      const later = await repo.list("project");
+      expect(later.isErr()).toBe(true);
+      expect(later._unsafeUnwrapErr().type).toBe("repository_failure");
+    }
+  });
+
+  it("concurrent close calls are idempotent and destroy once", async () => {
+    const store = makeStore(testDir);
+    const init = await store.ensureInitialized();
+    expect(init.isOk()).toBe(true);
+
+    const [c1, c2, c3] = await Promise.all([
+      store.close(),
+      store.close(),
+      store.close(),
+    ]);
+    expect(c1.isOk()).toBe(true);
+    expect(c2.isOk()).toBe(true);
+    expect(c3.isOk()).toBe(true);
+
+    const after = await store.instances.list();
+    expect(after.isErr()).toBe(true);
+    expect(after._unsafeUnwrapErr().type).toBe("initialization");
+  });
+
+  it("normal close after init clears state and fails later ops", async () => {
+    const store = makeStore(testDir);
+    expect((await store.instances.list()).isOk()).toBe(true);
+    expect((await store.close()).isOk()).toBe(true);
+    expect((await store.close()).isOk()).toBe(true);
+
+    const listed = await store.instances.list();
+    expect(listed.isErr()).toBe(true);
+    expect(listed._unsafeUnwrapErr().type).toBe("initialization");
+
+    const repo = permissionRepository(store);
+    const perm = await repo.list("project");
+    expect(perm.isErr()).toBe(true);
+    expect(perm._unsafeUnwrapErr().type).toBe("repository_failure");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -175,6 +556,39 @@ describe("migrations", () => {
     }
   });
 
+  it("applies fresh migrations through version 3", () => {
+    const dbPath = join(testDir, "fresh.db");
+    const db = new Database(dbPath);
+
+    const result = runMigrations(db);
+    expect(result.isOk()).toBe(true);
+    expect(readSchemaVersion(db)).toBe(3);
+
+    const migrations = db
+      .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
+      .all() as Array<{ version: number; name: string }>;
+    expect(migrations).toEqual([
+      { version: 1, name: "initial_schema" },
+      { version: 2, name: "add_step_attempts_json" },
+      { version: 3, name: "permission_grants" },
+    ]);
+    expect(
+      db
+        .prepare(
+          "SELECT type FROM sqlite_master WHERE name = 'permission_grants'",
+        )
+        .get(),
+    ).toEqual({ type: "table" });
+    expect(
+      db
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_permission_grants_project_state_expiry'",
+        )
+        .get(),
+    ).toEqual({ name: "idx_permission_grants_project_state_expiry" });
+    db.close();
+  });
+
   it("runMigrations is idempotent on an already-migrated DB", () => {
     const dbPath = join(testDir, "test.db");
     const db = new Database(dbPath);
@@ -185,41 +599,101 @@ describe("migrations", () => {
     const second = runMigrations(db);
     expect(second.isOk()).toBe(true);
 
+    const rows = db
+      .prepare("SELECT version FROM schema_migrations ORDER BY version")
+      .all() as Array<{ version: number }>;
+    expect(rows).toEqual([{ version: 1 }, { version: 2 }, { version: 3 }]);
+    expect(readSchemaVersion(db)).toBe(3);
     db.close();
   });
 
-  it("returns migration_version error when DB version > supported version", () => {
+  it("upgrades a genuine version-two database without losing attempts", async () => {
+    const runtimeDir = join(testDir, "runtime");
+    Bun.spawnSync(["mkdir", "-p", runtimeDir]);
+    const dbPath = join(runtimeDir, "weave.db");
+    const legacyDb = new Database(dbPath);
+    createLegacyV2Database(legacyDb);
+    legacyDb.close();
+
+    const store = createSqliteRuntimeStore({ dbPath });
+    const instanceResult = await store.instances.findById(
+      createWorkflowInstanceId("legacy-instance"),
+    );
+    expect(instanceResult.isOk()).toBe(true);
+    const instance = instanceResult._unsafeUnwrap();
+    expect(instance?.stepAttempts).toHaveLength(1);
+    expect(instance?.stepAttempts[0].stepName).toBe("plan");
+
+    const grantResult = await permissionRepository(store).saveMany([
+      {
+        grantId: "legacy-grant",
+        identity: {
+          projectIdentity: "project",
+          agentName: "agent",
+          registrationOwner: "owner",
+          toolIdentity: "tool",
+          registrationRevision: "1",
+          policyFingerprint: "policy",
+          requestSchemaVersion: "1",
+          requestDigest: "digest",
+        },
+        scope: "durable",
+        display: { summary: "Allow tool" },
+        createdAt: 1,
+        state: "active",
+      },
+    ]);
+    expect(grantResult.isOk()).toBe(true);
+    expect(
+      (await permissionRepository(store).list("project"))._unsafeUnwrap(),
+    ).toHaveLength(1);
+    await store.close();
+
+    const db = new Database(dbPath);
+    expect(readSchemaVersion(db)).toBe(3);
+    expect(
+      db
+        .prepare(
+          "SELECT type FROM sqlite_master WHERE name = 'permission_grants'",
+        )
+        .get(),
+    ).toEqual({ type: "table" });
+    db.close();
+  });
+
+  it("rejects future version 4 without mutating the DB", () => {
     const dbPath = join(testDir, "future.db");
     const db = new Database(dbPath);
 
-    // Bootstrap tables and set a future version
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS runtime_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL, name TEXT NOT NULL);
-      INSERT OR REPLACE INTO runtime_metadata (key, value) VALUES ('schema_version', '999');
-    `);
+    db.exec(CANONICAL_BOOTSTRAP_DDL);
+    db.exec(
+      "INSERT INTO runtime_metadata (key, value) VALUES ('schema_version', '4')",
+    );
 
     const result = runMigrations(db);
-    db.close();
-
     expect(result.isErr()).toBe(true);
     const error = result._unsafeUnwrapErr();
     expect(error.type).toBe("migration_version");
     if (error.type === "migration_version") {
-      expect(error.foundVersion).toBe(999);
+      expect(error.foundVersion).toBe(4);
       expect(error.supportedVersion).toBe(CURRENT_SCHEMA_VERSION);
     }
+    expect(readSchemaVersion(db)).toBe(4);
+    assertNoPermissionGrantsTable(db);
+    expect(
+      db.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get(),
+    ).toEqual({ count: 0 });
+    db.close();
   });
 
   it("runMigrations returns initialization error when schema_version is non-integer", () => {
     const dbPath = join(testDir, "corrupt-nan.db");
     const db = new Database(dbPath);
 
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS runtime_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL, name TEXT NOT NULL);
-      INSERT OR REPLACE INTO runtime_metadata (key, value) VALUES ('schema_version', 'not-a-number');
-    `);
+    db.exec(CANONICAL_BOOTSTRAP_DDL);
+    db.exec(
+      "INSERT INTO runtime_metadata (key, value) VALUES ('schema_version', 'not-a-number')",
+    );
 
     const result = runMigrations(db);
     db.close();
@@ -229,7 +703,7 @@ describe("migrations", () => {
     expect(error.type).toBe("initialization");
     if (error.type === "initialization") {
       expect(error.message).toContain("Invalid schema_version");
-      expect(error.message).toContain("not-a-number");
+      expect(error.message).not.toContain("not-a-number");
     }
   });
 
@@ -237,11 +711,10 @@ describe("migrations", () => {
     const dbPath = join(testDir, "corrupt-negative.db");
     const db = new Database(dbPath);
 
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS runtime_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL, name TEXT NOT NULL);
-      INSERT OR REPLACE INTO runtime_metadata (key, value) VALUES ('schema_version', '-1');
-    `);
+    db.exec(CANONICAL_BOOTSTRAP_DDL);
+    db.exec(
+      "INSERT INTO runtime_metadata (key, value) VALUES ('schema_version', '-1')",
+    );
 
     const result = runMigrations(db);
     db.close();
@@ -251,7 +724,1705 @@ describe("migrations", () => {
     expect(error.type).toBe("initialization");
     if (error.type === "initialization") {
       expect(error.message).toContain("Invalid schema_version");
-      expect(error.message).toContain("-1");
+      expect(error.message).not.toContain("-1");
+    }
+  });
+
+  it("rejects noncanonical and unsafe schema_version text", () => {
+    const invalidValues = [
+      "2junk",
+      "2.0",
+      "+2",
+      " 2",
+      "2 ",
+      "2e0",
+      "-2",
+      "00",
+      "9007199254740992",
+    ];
+
+    for (const [index, value] of invalidValues.entries()) {
+      const db = new Database(join(testDir, `corrupt-${index}.db`));
+      db.exec(CANONICAL_BOOTSTRAP_DDL);
+      db.prepare(
+        "INSERT INTO runtime_metadata (key, value) VALUES ('schema_version', ?)",
+      ).run(value);
+
+      const result = runMigrations(db);
+      expect(result.isErr()).toBe(true);
+      const error = result._unsafeUnwrapErr();
+      expect(error.type).toBe("initialization");
+      if (error.type === "initialization") {
+        expect(error.message).toBe(
+          "Invalid schema_version in runtime_metadata",
+        );
+        expect(error.message).not.toContain(value);
+      }
+      db.close();
+    }
+  });
+
+  it("rejects empty-name schema_migrations ledger rows without mutating the DB", () => {
+    const db = new Database(join(testDir, "malformed-migrations.db"));
+    db.exec(CANONICAL_BOOTSTRAP_DDL);
+    db.exec(`
+      INSERT INTO runtime_metadata (key, value) VALUES ('schema_version', '2');
+      INSERT INTO schema_migrations (version, applied_at, name)
+        VALUES (1, '2025-01-01', 'initial_schema');
+      INSERT INTO schema_migrations (version, applied_at, name)
+        VALUES (2, '2025-01-02', '');
+    `);
+
+    const before = db
+      .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
+      .all();
+    const result = runMigrations(db);
+    assertInitializationError(result, "Invalid schema_migrations ledger");
+    expect(readSchemaVersion(db)).toBe(2);
+    assertNoPermissionGrantsTable(db);
+    expect(
+      db
+        .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
+        .all(),
+    ).toEqual(before);
+    db.close();
+  });
+
+  it("does not bump the version when a migration transaction fails", () => {
+    const db = new Database(join(testDir, "failed-migration.db"));
+    createLegacyV2Database(db);
+    db.exec("CREATE VIEW permission_grants AS SELECT 1 AS invalid_schema");
+
+    const result = runMigrations(db);
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().type).toBe("initialization");
+    assertMigrationStayedAtV2(db);
+    db.close();
+  });
+
+  it("rejects renamed schema_migrations ledger rows without mutating the DB", () => {
+    const db = new Database(join(testDir, "renamed-ledger.db"));
+    createLegacyV2Database(db);
+    db.exec(`
+      UPDATE schema_migrations
+        SET name = 'renamed_step_attempts'
+        WHERE version = 2;
+    `);
+
+    const result = runMigrations(db);
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().type).toBe("initialization");
+    expect(readSchemaVersion(db)).toBe(2);
+    expect(
+      db
+        .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
+        .all(),
+    ).toEqual([
+      { version: 1, name: "initial_schema" },
+      { version: 2, name: "renamed_step_attempts" },
+    ]);
+    expect(
+      db
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE name = 'permission_grants'",
+        )
+        .get(),
+    ).toBeNull();
+    db.close();
+  });
+
+  it("rejects missing and extra schema_migrations ledger rows", () => {
+    const missing = new Database(join(testDir, "missing-ledger.db"));
+    createLegacyV2Database(missing);
+    missing.prepare("DELETE FROM schema_migrations WHERE version = ?").run(2);
+
+    expect(runMigrations(missing).isErr()).toBe(true);
+    expect(readSchemaVersion(missing)).toBe(2);
+    expect(
+      missing
+        .prepare("SELECT version FROM schema_migrations ORDER BY version")
+        .all(),
+    ).toEqual([{ version: 1 }]);
+    missing.close();
+
+    const extra = new Database(join(testDir, "extra-ledger.db"));
+    createLegacyV2Database(extra);
+    extra.exec(`
+      INSERT INTO schema_migrations (version, applied_at, name)
+        VALUES (3, '2025-01-01T00:00:02.000Z', 'permission_grants');
+    `);
+
+    expect(runMigrations(extra).isErr()).toBe(true);
+    expect(readSchemaVersion(extra)).toBe(2);
+    expect(
+      extra
+        .prepare("SELECT version FROM schema_migrations ORDER BY version")
+        .all(),
+    ).toEqual([{ version: 1 }, { version: 2 }, { version: 3 }]);
+    extra.close();
+  });
+
+  it("adopts a compatible pre-existing permission_grants table left at v2", () => {
+    const db = new Database(join(testDir, "adopt-valid-buggy-v2.db"));
+    createLegacyV2Database(db);
+    // Simulates the previously buggy path that created the table without
+    // recording migration 3 / bumping schema_version.
+    db.exec(VALID_PERMISSION_GRANTS_DDL);
+
+    const result = runMigrations(db);
+    expect(result.isOk()).toBe(true);
+    expect(readSchemaVersion(db)).toBe(3);
+    expect(
+      db
+        .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
+        .all(),
+    ).toEqual([
+      { version: 1, name: "initial_schema" },
+      { version: 2, name: "add_step_attempts_json" },
+      { version: 3, name: "permission_grants" },
+    ]);
+    expect(
+      db
+        .prepare(
+          "SELECT type FROM sqlite_master WHERE name = 'permission_grants'",
+        )
+        .get(),
+    ).toEqual({ type: "table" });
+    db.close();
+  });
+
+  it("rejects a pre-existing permission_grants table missing a required column", () => {
+    const db = new Database(join(testDir, "missing-column.db"));
+    createLegacyV2Database(db);
+    db.exec(`
+      CREATE TABLE permission_grants (
+        grant_id TEXT NOT NULL PRIMARY KEY,
+        project_identity TEXT NOT NULL,
+        agent_name TEXT NOT NULL,
+        registration_owner TEXT NOT NULL,
+        tool_identity TEXT NOT NULL,
+        registration_revision TEXT NOT NULL,
+        policy_fingerprint TEXT NOT NULL,
+        request_schema_version TEXT NOT NULL,
+        request_digest TEXT NOT NULL,
+        display_summary TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER,
+        revoked_at INTEGER,
+        state TEXT NOT NULL CHECK (state IN ('active', 'revoked')),
+        CHECK (expires_at IS NULL OR expires_at > created_at),
+        CHECK (
+          (state = 'active' AND revoked_at IS NULL)
+          OR (state = 'revoked' AND revoked_at IS NOT NULL AND revoked_at >= created_at)
+        ),
+        UNIQUE (
+          project_identity, agent_name, registration_owner, tool_identity,
+          registration_revision, policy_fingerprint, request_schema_version,
+          request_digest
+        )
+      );
+      CREATE INDEX idx_permission_grants_project_state_expiry
+        ON permission_grants (project_identity, state, expires_at);
+    `);
+
+    const result = runMigrations(db);
+    expect(result.isErr()).toBe(true);
+    assertMigrationStayedAtV2(db);
+    db.close();
+  });
+
+  it("rejects a pre-existing permission_grants table with an extra column", () => {
+    const db = new Database(join(testDir, "extra-column.db"));
+    createLegacyV2Database(db);
+    db.exec(`
+      CREATE TABLE permission_grants (
+        grant_id TEXT NOT NULL PRIMARY KEY,
+        project_identity TEXT NOT NULL,
+        agent_name TEXT NOT NULL,
+        registration_owner TEXT NOT NULL,
+        tool_identity TEXT NOT NULL,
+        registration_revision TEXT NOT NULL,
+        policy_fingerprint TEXT NOT NULL,
+        request_schema_version TEXT NOT NULL,
+        request_digest TEXT NOT NULL,
+        display_summary TEXT NOT NULL,
+        display_details TEXT,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER,
+        revoked_at INTEGER,
+        state TEXT NOT NULL CHECK (state IN ('active', 'revoked')),
+        secret_token TEXT,
+        CHECK (expires_at IS NULL OR expires_at > created_at),
+        CHECK (
+          (state = 'active' AND revoked_at IS NULL)
+          OR (state = 'revoked' AND revoked_at IS NOT NULL AND revoked_at >= created_at)
+        ),
+        UNIQUE (
+          project_identity, agent_name, registration_owner, tool_identity,
+          registration_revision, policy_fingerprint, request_schema_version,
+          request_digest
+        )
+      );
+      CREATE INDEX idx_permission_grants_project_state_expiry
+        ON permission_grants (project_identity, state, expires_at);
+    `);
+
+    const result = runMigrations(db);
+    expect(result.isErr()).toBe(true);
+    assertMigrationStayedAtV2(db);
+    db.close();
+  });
+
+  it("rejects a pre-existing permission_grants table with weak state/check constraints", () => {
+    const db = new Database(join(testDir, "weak-checks.db"));
+    createLegacyV2Database(db);
+    db.exec(`
+      CREATE TABLE permission_grants (
+        grant_id TEXT NOT NULL PRIMARY KEY,
+        project_identity TEXT NOT NULL,
+        agent_name TEXT NOT NULL,
+        registration_owner TEXT NOT NULL,
+        tool_identity TEXT NOT NULL,
+        registration_revision TEXT NOT NULL,
+        policy_fingerprint TEXT NOT NULL,
+        request_schema_version TEXT NOT NULL,
+        request_digest TEXT NOT NULL,
+        display_summary TEXT NOT NULL,
+        display_details TEXT,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER,
+        revoked_at INTEGER,
+        state TEXT NOT NULL CHECK (state IN ('active', 'revoked')),
+        CHECK (expires_at IS NULL OR expires_at > created_at),
+        CHECK ((state = 'active' AND revoked_at IS NULL) OR state = 'revoked'),
+        UNIQUE (
+          project_identity, agent_name, registration_owner, tool_identity,
+          registration_revision, policy_fingerprint, request_schema_version,
+          request_digest
+        )
+      );
+      CREATE INDEX idx_permission_grants_project_state_expiry
+        ON permission_grants (project_identity, state, expires_at);
+    `);
+
+    const result = runMigrations(db);
+    expect(result.isErr()).toBe(true);
+    assertMigrationStayedAtV2(db);
+
+    // CREATE IF NOT EXISTS must not paper over the weak pre-existing table.
+    db.prepare(`
+      INSERT INTO permission_grants (
+        grant_id, project_identity, agent_name, registration_owner,
+        tool_identity, registration_revision, policy_fingerprint,
+        request_schema_version, request_digest, display_summary,
+        display_details, created_at, expires_at, revoked_at, state
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, NULL, ?)
+    `).run(
+      "weak",
+      "p",
+      "a",
+      "o",
+      "t",
+      "r",
+      "f",
+      "s",
+      "d",
+      "summary",
+      10,
+      "revoked",
+    );
+    expect(
+      db
+        .prepare(
+          "SELECT state, revoked_at FROM permission_grants WHERE grant_id = ?",
+        )
+        .get("weak"),
+    ).toEqual({ state: "revoked", revoked_at: null });
+    db.close();
+  });
+
+  it("rejects a pre-existing permission_grants table missing the unique envelope or lookup index", () => {
+    const missingUnique = new Database(join(testDir, "missing-unique.db"));
+    createLegacyV2Database(missingUnique);
+    missingUnique.exec(`
+      CREATE TABLE permission_grants (
+        grant_id TEXT NOT NULL PRIMARY KEY,
+        project_identity TEXT NOT NULL,
+        agent_name TEXT NOT NULL,
+        registration_owner TEXT NOT NULL,
+        tool_identity TEXT NOT NULL,
+        registration_revision TEXT NOT NULL,
+        policy_fingerprint TEXT NOT NULL,
+        request_schema_version TEXT NOT NULL,
+        request_digest TEXT NOT NULL,
+        display_summary TEXT NOT NULL,
+        display_details TEXT,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER,
+        revoked_at INTEGER,
+        state TEXT NOT NULL CHECK (state IN ('active', 'revoked')),
+        CHECK (expires_at IS NULL OR expires_at > created_at),
+        CHECK (
+          (state = 'active' AND revoked_at IS NULL)
+          OR (state = 'revoked' AND revoked_at IS NOT NULL AND revoked_at >= created_at)
+        )
+      );
+      CREATE INDEX idx_permission_grants_project_state_expiry
+        ON permission_grants (project_identity, state, expires_at);
+    `);
+
+    expect(runMigrations(missingUnique).isErr()).toBe(true);
+    assertMigrationStayedAtV2(missingUnique);
+    missingUnique.close();
+
+    const missingIndex = new Database(join(testDir, "missing-index.db"));
+    createLegacyV2Database(missingIndex);
+    missingIndex.exec(`
+      CREATE TABLE permission_grants (
+        grant_id TEXT NOT NULL PRIMARY KEY,
+        project_identity TEXT NOT NULL,
+        agent_name TEXT NOT NULL,
+        registration_owner TEXT NOT NULL,
+        tool_identity TEXT NOT NULL,
+        registration_revision TEXT NOT NULL,
+        policy_fingerprint TEXT NOT NULL,
+        request_schema_version TEXT NOT NULL,
+        request_digest TEXT NOT NULL,
+        display_summary TEXT NOT NULL,
+        display_details TEXT,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER,
+        revoked_at INTEGER,
+        state TEXT NOT NULL CHECK (state IN ('active', 'revoked')),
+        CHECK (expires_at IS NULL OR expires_at > created_at),
+        CHECK (
+          (state = 'active' AND revoked_at IS NULL)
+          OR (state = 'revoked' AND revoked_at IS NOT NULL AND revoked_at >= created_at)
+        ),
+        UNIQUE (
+          project_identity, agent_name, registration_owner, tool_identity,
+          registration_revision, policy_fingerprint, request_schema_version,
+          request_digest
+        )
+      );
+    `);
+    // Intentionally omit idx_permission_grants_project_state_expiry, then
+    // replace the name with a wrong-column index so IF NOT EXISTS cannot fix it.
+    missingIndex.exec(`
+      CREATE INDEX idx_permission_grants_project_state_expiry
+        ON permission_grants (project_identity);
+    `);
+
+    expect(runMigrations(missingIndex).isErr()).toBe(true);
+    assertMigrationStayedAtV2(missingIndex);
+    missingIndex.close();
+  });
+
+  it("failed migration leaves version 2 and no v3 ledger row", () => {
+    const db = new Database(join(testDir, "failed-leaves-v2.db"));
+    createLegacyV2Database(db);
+    db.exec(`
+      CREATE TABLE permission_grants (
+        grant_id TEXT NOT NULL PRIMARY KEY,
+        project_identity TEXT NOT NULL
+      );
+    `);
+
+    const result = runMigrations(db);
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().type).toBe("initialization");
+    assertMigrationStayedAtV2(db);
+    expect(
+      db
+        .prepare(
+          "SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 3",
+        )
+        .get(),
+    ).toEqual({ count: 0 });
+    db.close();
+  });
+
+  it("no-pending healthy v3 reopen re-verifies live permission_grants schema", () => {
+    const db = new Database(join(testDir, "healthy-reopen.db"));
+    expect(runMigrations(db).isOk()).toBe(true);
+    expect(readSchemaVersion(db)).toBe(3);
+
+    const second = runMigrations(db);
+    expect(second.isOk()).toBe(true);
+    expect(readSchemaVersion(db)).toBe(3);
+    expect(
+      db
+        .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
+        .all(),
+    ).toEqual([
+      { version: 1, name: "initial_schema" },
+      { version: 2, name: "add_step_attempts_json" },
+      { version: 3, name: "permission_grants" },
+    ]);
+    db.close();
+  });
+
+  it("initialized v3 then dropped permission_grants fails reopen without repair", () => {
+    const db = new Database(join(testDir, "drop-table-reopen.db"));
+    expect(runMigrations(db).isOk()).toBe(true);
+    const ledgerBefore = db
+      .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
+      .all();
+    db.exec("DROP TABLE permission_grants");
+
+    const result = runMigrations(db);
+    assertInitializationError(result, "Invalid permission_grants schema");
+    expect(readSchemaVersion(db)).toBe(3);
+    expect(
+      db
+        .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
+        .all(),
+    ).toEqual(ledgerBefore);
+    assertNoPermissionGrantsTable(db);
+    db.close();
+  });
+
+  it("initialized v3 then dropped lookup index fails reopen without repair", () => {
+    const db = new Database(join(testDir, "drop-index-reopen.db"));
+    expect(runMigrations(db).isOk()).toBe(true);
+    const ledgerBefore = db
+      .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
+      .all();
+    db.exec("DROP INDEX idx_permission_grants_project_state_expiry");
+
+    const result = runMigrations(db);
+    assertInitializationError(result, "Invalid permission_grants schema");
+    expect(readSchemaVersion(db)).toBe(3);
+    expect(
+      db
+        .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
+        .all(),
+    ).toEqual(ledgerBefore);
+    expect(
+      db
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_permission_grants_project_state_expiry'",
+        )
+        .get(),
+    ).toBeNull();
+    // Must not recreate the index on failure.
+    expect(
+      db
+        .prepare(
+          "SELECT type FROM sqlite_master WHERE name = 'permission_grants'",
+        )
+        .get(),
+    ).toEqual({ type: "table" });
+    db.close();
+  });
+
+  it("initialized v3 then replaced with weak permission_grants fails reopen without repair", () => {
+    const db = new Database(join(testDir, "weak-table-reopen.db"));
+    expect(runMigrations(db).isOk()).toBe(true);
+    const ledgerBefore = db
+      .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
+      .all();
+    db.exec("DROP TABLE permission_grants");
+    db.exec(`
+      CREATE TABLE permission_grants (
+        grant_id TEXT NOT NULL PRIMARY KEY,
+        project_identity TEXT NOT NULL,
+        agent_name TEXT NOT NULL,
+        registration_owner TEXT NOT NULL,
+        tool_identity TEXT NOT NULL,
+        registration_revision TEXT NOT NULL,
+        policy_fingerprint TEXT NOT NULL,
+        request_schema_version TEXT NOT NULL,
+        request_digest TEXT NOT NULL,
+        display_summary TEXT NOT NULL,
+        display_details TEXT,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER,
+        revoked_at INTEGER,
+        state TEXT NOT NULL,
+        UNIQUE (
+          project_identity, agent_name, registration_owner, tool_identity,
+          registration_revision, policy_fingerprint, request_schema_version,
+          request_digest
+        )
+      );
+      CREATE INDEX idx_permission_grants_project_state_expiry
+        ON permission_grants (project_identity, state, expires_at);
+    `);
+
+    const result = runMigrations(db);
+    assertInitializationError(result, "Invalid permission_grants schema");
+    expect(readSchemaVersion(db)).toBe(3);
+    expect(
+      db
+        .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
+        .all(),
+    ).toEqual(ledgerBefore);
+
+    // Weak table remains and still accepts invalid state — not repaired.
+    db.prepare(`
+      INSERT INTO permission_grants (
+        grant_id, project_identity, agent_name, registration_owner,
+        tool_identity, registration_revision, policy_fingerprint,
+        request_schema_version, request_digest, display_summary,
+        display_details, created_at, expires_at, revoked_at, state
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, NULL, ?)
+    `).run(
+      "weak",
+      "p",
+      "a",
+      "o",
+      "t",
+      "r",
+      "f",
+      "s",
+      "d",
+      "summary",
+      10,
+      "future",
+    );
+    expect(
+      db
+        .prepare("SELECT state FROM permission_grants WHERE grant_id = ?")
+        .get("weak"),
+    ).toEqual({ state: "future" });
+    db.close();
+  });
+
+  it("rejects v2 adoption when permission_grants carries AFTER/BEFORE triggers", () => {
+    const afterDb = new Database(join(testDir, "v2-after-trigger.db"));
+    createLegacyV2Database(afterDb);
+    afterDb.exec(VALID_PERMISSION_GRANTS_DDL);
+    // Hostile trigger that deliberately avoids fixed probe ID prefixes and
+    // mutates/exfiltrates real grant rows on write.
+    afterDb.exec(`
+      CREATE TABLE stolen_grants (grant_id TEXT);
+      CREATE TRIGGER permission_grants_after_insert
+      AFTER INSERT ON permission_grants
+      WHEN NEW.grant_id NOT LIKE '__wpg_%' AND NEW.grant_id NOT LIKE '__weave_probe_%'
+      BEGIN
+        INSERT INTO stolen_grants(grant_id) VALUES (NEW.grant_id);
+        DELETE FROM permission_grants WHERE grant_id = NEW.grant_id;
+      END;
+    `);
+
+    // v2→v3 apply wraps in-transaction verify failure as migration rollback.
+    const afterResult = runMigrations(afterDb);
+    expect(afterResult.isErr()).toBe(true);
+    expect(afterResult._unsafeUnwrapErr().type).toBe("initialization");
+    assertMigrationStayedAtV2(afterDb);
+    expect(
+      afterDb
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'permission_grants'",
+        )
+        .all(),
+    ).toEqual([{ name: "permission_grants_after_insert" }]);
+    afterDb.close();
+
+    const beforeDb = new Database(join(testDir, "v2-before-trigger.db"));
+    createLegacyV2Database(beforeDb);
+    beforeDb.exec(VALID_PERMISSION_GRANTS_DDL);
+    beforeDb.exec(`
+      CREATE TRIGGER permission_grants_before_update
+      BEFORE UPDATE ON permission_grants
+      BEGIN
+        SELECT RAISE(ABORT, 'hostile before update');
+      END;
+      CREATE TRIGGER permission_grants_before_delete
+      BEFORE DELETE ON permission_grants
+      BEGIN
+        SELECT RAISE(ABORT, 'hostile before delete');
+      END;
+    `);
+
+    const beforeResult = runMigrations(beforeDb);
+    expect(beforeResult.isErr()).toBe(true);
+    expect(beforeResult._unsafeUnwrapErr().type).toBe("initialization");
+    assertMigrationStayedAtV2(beforeDb);
+    expect(
+      beforeDb
+        .prepare(
+          "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'permission_grants'",
+        )
+        .get(),
+    ).toEqual({ count: 2 });
+    beforeDb.close();
+  });
+
+  it("rejects v2 adoption when permission_grants has extra unique/partial/expression indexes", () => {
+    const cases: Array<{ file: string; ddl: string; indexName: string }> = [
+      {
+        file: "v2-extra-unique-index.db",
+        indexName: "idx_permission_grants_extra_unique",
+        ddl: `CREATE UNIQUE INDEX idx_permission_grants_extra_unique
+              ON permission_grants (grant_id);`,
+      },
+      {
+        file: "v2-extra-partial-index.db",
+        indexName: "idx_permission_grants_extra_partial",
+        ddl: `CREATE INDEX idx_permission_grants_extra_partial
+              ON permission_grants (project_identity)
+              WHERE state = 'active';`,
+      },
+      {
+        file: "v2-extra-expression-index.db",
+        indexName: "idx_permission_grants_extra_expr",
+        ddl: `CREATE INDEX idx_permission_grants_extra_expr
+              ON permission_grants ((lower(tool_identity)));`,
+      },
+    ];
+
+    for (const fixture of cases) {
+      const db = new Database(join(testDir, fixture.file));
+      createLegacyV2Database(db);
+      db.exec(VALID_PERMISSION_GRANTS_DDL);
+      db.exec(fixture.ddl);
+
+      const result = runMigrations(db);
+      expect(result.isErr()).toBe(true);
+      expect(result._unsafeUnwrapErr().type).toBe("initialization");
+      assertMigrationStayedAtV2(db);
+      expect(
+        db
+          .prepare(
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?",
+          )
+          .get(fixture.indexName),
+      ).toEqual({ name: fixture.indexName });
+      db.close();
+    }
+  });
+
+  it("rejects v3 reopen when hostile AFTER/BEFORE triggers are attached", () => {
+    const db = new Database(join(testDir, "v3-reopen-triggers.db"));
+    expect(runMigrations(db).isOk()).toBe(true);
+    const ledgerBefore = db
+      .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
+      .all();
+    const versionBefore = readSchemaVersion(db);
+
+    db.exec(`
+      CREATE TABLE stolen_grants (payload TEXT);
+      CREATE TRIGGER permission_grants_after_insert
+      AFTER INSERT ON permission_grants
+      WHEN NEW.grant_id NOT LIKE '__wpg_%'
+      BEGIN
+        INSERT INTO stolen_grants(payload) VALUES (NEW.grant_id || ':' || NEW.request_digest);
+        UPDATE permission_grants SET state = 'revoked', revoked_at = NEW.created_at
+          WHERE grant_id = NEW.grant_id;
+      END;
+      CREATE TRIGGER permission_grants_before_write
+      BEFORE INSERT ON permission_grants
+      WHEN NEW.grant_id NOT LIKE '__wpg_%'
+      BEGIN
+        SELECT RAISE(ABORT, 'hostile before insert');
+      END;
+    `);
+
+    assertInitializationError(
+      runMigrations(db),
+      "Invalid runtime store schema",
+    );
+    expect(readSchemaVersion(db)).toBe(versionBefore);
+    expect(
+      db
+        .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
+        .all(),
+    ).toEqual(ledgerBefore);
+    expect(
+      db
+        .prepare(
+          "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'permission_grants'",
+        )
+        .get(),
+    ).toEqual({ count: 2 });
+    db.close();
+  });
+
+  it("rejects v2 adoption when cross-table triggers can mutate high-water or grants", () => {
+    const cases: Array<{ file: string; ddl: string }> = [
+      {
+        file: "v2-cross-table-after-hw.db",
+        ddl: `
+          CREATE TRIGGER workflow_instances_after_insert_hw
+          AFTER INSERT ON workflow_instances
+          BEGIN
+            INSERT OR REPLACE INTO runtime_metadata (key, value)
+              VALUES ('permission_wall_clock_high_water', '0');
+          END;
+        `,
+      },
+      {
+        file: "v2-cross-table-before-grants.db",
+        ddl: `
+          CREATE TRIGGER workflow_instances_before_update_grants
+          BEFORE UPDATE ON workflow_instances
+          BEGIN
+            UPDATE permission_grants SET state = 'active', revoked_at = NULL;
+          END;
+        `,
+      },
+      {
+        file: "v2-cross-table-after-journal.db",
+        ddl: `
+          CREATE TRIGGER journal_after_insert_hw
+          AFTER INSERT ON runtime_journal_entries
+          BEGIN
+            UPDATE runtime_metadata SET value = '0'
+              WHERE key = 'permission_wall_clock_high_water';
+          END;
+        `,
+      },
+    ];
+
+    for (const fixture of cases) {
+      const db = new Database(join(testDir, fixture.file));
+      createLegacyV2Database(db);
+      db.exec(fixture.ddl);
+
+      const result = runMigrations(db);
+      expect(result.isErr()).toBe(true);
+      expect(result._unsafeUnwrapErr().type).toBe("initialization");
+      assertInitializationError(result, "Invalid runtime store schema");
+      assertMigrationStayedAtV2(db);
+      expect(
+        db
+          .prepare(
+            "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'trigger'",
+          )
+          .get(),
+      ).toEqual({ count: 1 });
+      assertNoPermissionGrantsTable(db);
+      db.close();
+    }
+  });
+
+  it("rejects v3 reopen when cross-table BEFORE/AFTER triggers are attached", () => {
+    const cases: Array<{ file: string; ddl: string }> = [
+      {
+        file: "v3-cross-table-after-hw.db",
+        ddl: `
+          CREATE TRIGGER workflow_instances_after_insert_hw
+          AFTER INSERT ON workflow_instances
+          BEGIN
+            INSERT OR REPLACE INTO runtime_metadata (key, value)
+              VALUES ('permission_wall_clock_high_water', '0');
+          END;
+        `,
+      },
+      {
+        file: "v3-cross-table-before-hw.db",
+        ddl: `
+          CREATE TRIGGER workflow_instances_before_delete_hw
+          BEFORE DELETE ON workflow_instances
+          BEGIN
+            UPDATE runtime_metadata SET value = '0'
+              WHERE key = 'permission_wall_clock_high_water';
+          END;
+        `,
+      },
+      {
+        file: "v3-cross-table-after-grants.db",
+        ddl: `
+          CREATE TRIGGER execution_leases_after_insert_grants
+          AFTER INSERT ON execution_leases
+          BEGIN
+            UPDATE permission_grants
+              SET state = 'active', revoked_at = NULL
+              WHERE state = 'revoked';
+          END;
+        `,
+      },
+    ];
+
+    for (const fixture of cases) {
+      const db = new Database(join(testDir, fixture.file));
+      expect(runMigrations(db).isOk()).toBe(true);
+      const ledgerBefore = db
+        .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
+        .all();
+      const versionBefore = readSchemaVersion(db);
+      db.exec(
+        "INSERT OR REPLACE INTO runtime_metadata (key, value) VALUES ('permission_wall_clock_high_water', '100')",
+      );
+      const hwBefore = db
+        .prepare(
+          "SELECT value FROM runtime_metadata WHERE key = 'permission_wall_clock_high_water'",
+        )
+        .get();
+
+      db.exec(fixture.ddl);
+
+      assertInitializationError(
+        runMigrations(db),
+        "Invalid runtime store schema",
+      );
+      expect(readSchemaVersion(db)).toBe(versionBefore);
+      expect(
+        db
+          .prepare(
+            "SELECT version, name FROM schema_migrations ORDER BY version",
+          )
+          .all(),
+      ).toEqual(ledgerBefore);
+      expect(
+        db
+          .prepare(
+            "SELECT value FROM runtime_metadata WHERE key = 'permission_wall_clock_high_water'",
+          )
+          .get(),
+      ).toEqual(hwBefore);
+      expect(
+        db
+          .prepare(
+            "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'trigger'",
+          )
+          .get(),
+      ).toEqual({ count: 1 });
+      db.close();
+    }
+  });
+
+  it("rejects v2 adoption when permission identity columns use non-BINARY collations", () => {
+    const cases: Array<{ file: string; ddl: string; coll: string }> = [
+      {
+        file: "v2-collate-nocase.db",
+        coll: "NOCASE",
+        ddl: `
+          CREATE TABLE permission_grants (
+            grant_id TEXT NOT NULL PRIMARY KEY,
+            project_identity TEXT NOT NULL,
+            agent_name TEXT NOT NULL,
+            registration_owner TEXT NOT NULL,
+            tool_identity TEXT COLLATE NOCASE NOT NULL,
+            registration_revision TEXT NOT NULL,
+            policy_fingerprint TEXT NOT NULL,
+            request_schema_version TEXT NOT NULL,
+            request_digest TEXT NOT NULL,
+            display_summary TEXT NOT NULL,
+            display_details TEXT,
+            created_at INTEGER NOT NULL,
+            expires_at INTEGER,
+            revoked_at INTEGER,
+            state TEXT NOT NULL CHECK (state IN ('active', 'revoked')),
+            CHECK (expires_at IS NULL OR expires_at > created_at),
+            CHECK (
+              (state = 'active' AND revoked_at IS NULL)
+              OR (
+                state = 'revoked'
+                AND revoked_at IS NOT NULL
+                AND revoked_at >= created_at
+              )
+            ),
+            UNIQUE (
+              project_identity, agent_name, registration_owner, tool_identity,
+              registration_revision, policy_fingerprint,
+              request_schema_version, request_digest
+            )
+          );
+          CREATE INDEX idx_permission_grants_project_state_expiry
+            ON permission_grants (project_identity, state, expires_at);
+        `,
+      },
+      {
+        file: "v2-collate-rtrim.db",
+        coll: "RTRIM",
+        ddl: `
+          CREATE TABLE permission_grants (
+            grant_id TEXT NOT NULL PRIMARY KEY,
+            project_identity TEXT COLLATE RTRIM NOT NULL,
+            agent_name TEXT NOT NULL,
+            registration_owner TEXT NOT NULL,
+            tool_identity TEXT NOT NULL,
+            registration_revision TEXT NOT NULL,
+            policy_fingerprint TEXT NOT NULL,
+            request_schema_version TEXT NOT NULL,
+            request_digest TEXT NOT NULL,
+            display_summary TEXT NOT NULL,
+            display_details TEXT,
+            created_at INTEGER NOT NULL,
+            expires_at INTEGER,
+            revoked_at INTEGER,
+            state TEXT NOT NULL CHECK (state IN ('active', 'revoked')),
+            CHECK (expires_at IS NULL OR expires_at > created_at),
+            CHECK (
+              (state = 'active' AND revoked_at IS NULL)
+              OR (
+                state = 'revoked'
+                AND revoked_at IS NOT NULL
+                AND revoked_at >= created_at
+              )
+            ),
+            UNIQUE (
+              project_identity, agent_name, registration_owner, tool_identity,
+              registration_revision, policy_fingerprint,
+              request_schema_version, request_digest
+            )
+          );
+          CREATE INDEX idx_permission_grants_project_state_expiry
+            ON permission_grants (project_identity, state, expires_at);
+        `,
+      },
+      {
+        file: "v2-collate-custom-unique.db",
+        coll: "NOCASE",
+        ddl: `
+          CREATE TABLE permission_grants (
+            grant_id TEXT NOT NULL PRIMARY KEY,
+            project_identity TEXT NOT NULL,
+            agent_name TEXT NOT NULL,
+            registration_owner TEXT NOT NULL,
+            tool_identity TEXT NOT NULL,
+            registration_revision TEXT NOT NULL,
+            policy_fingerprint TEXT NOT NULL,
+            request_schema_version TEXT NOT NULL,
+            request_digest TEXT NOT NULL,
+            display_summary TEXT NOT NULL,
+            display_details TEXT,
+            created_at INTEGER NOT NULL,
+            expires_at INTEGER,
+            revoked_at INTEGER,
+            state TEXT NOT NULL CHECK (state IN ('active', 'revoked')),
+            CHECK (expires_at IS NULL OR expires_at > created_at),
+            CHECK (
+              (state = 'active' AND revoked_at IS NULL)
+              OR (
+                state = 'revoked'
+                AND revoked_at IS NOT NULL
+                AND revoked_at >= created_at
+              )
+            ),
+            UNIQUE (
+              project_identity,
+              agent_name,
+              registration_owner,
+              tool_identity COLLATE NOCASE,
+              registration_revision,
+              policy_fingerprint,
+              request_schema_version,
+              request_digest
+            )
+          );
+          CREATE INDEX idx_permission_grants_project_state_expiry
+            ON permission_grants (project_identity, state, expires_at);
+        `,
+      },
+    ];
+
+    for (const fixture of cases) {
+      const db = new Database(join(testDir, fixture.file));
+      createLegacyV2Database(db);
+      db.exec(fixture.ddl);
+
+      // Prove the hostile collation is live before migration rejects it.
+      const envelopeIndex = db
+        .prepare(
+          "SELECT name FROM pragma_index_list('permission_grants') WHERE origin = 'u'",
+        )
+        .get() as { name: string };
+      const collRows = db
+        .prepare(`PRAGMA index_xinfo(${JSON.stringify(envelopeIndex.name)})`)
+        .all() as Array<{ coll: string; key: number; name: string | null }>;
+      expect(
+        collRows.some((row) => row.key === 1 && row.coll === fixture.coll),
+      ).toBe(true);
+
+      const result = runMigrations(db);
+      expect(result.isErr()).toBe(true);
+      expect(result._unsafeUnwrapErr().type).toBe("initialization");
+      assertMigrationStayedAtV2(db);
+      db.close();
+    }
+  });
+
+  it("rejects v3 reopen when permission identity/index keys use non-BINARY collations", () => {
+    const cases: Array<{ file: string; rebuild: string; coll: string }> = [
+      {
+        file: "v3-reopen-collate-nocase.db",
+        coll: "NOCASE",
+        rebuild: `
+          DROP TABLE permission_grants;
+          CREATE TABLE permission_grants (
+            grant_id TEXT NOT NULL PRIMARY KEY,
+            project_identity TEXT NOT NULL,
+            agent_name TEXT NOT NULL,
+            registration_owner TEXT NOT NULL,
+            tool_identity TEXT COLLATE NOCASE NOT NULL,
+            registration_revision TEXT NOT NULL,
+            policy_fingerprint TEXT NOT NULL,
+            request_schema_version TEXT NOT NULL,
+            request_digest TEXT NOT NULL,
+            display_summary TEXT NOT NULL,
+            display_details TEXT,
+            created_at INTEGER NOT NULL,
+            expires_at INTEGER,
+            revoked_at INTEGER,
+            state TEXT NOT NULL CHECK (state IN ('active', 'revoked')),
+            CHECK (expires_at IS NULL OR expires_at > created_at),
+            CHECK (
+              (state = 'active' AND revoked_at IS NULL)
+              OR (
+                state = 'revoked'
+                AND revoked_at IS NOT NULL
+                AND revoked_at >= created_at
+              )
+            ),
+            UNIQUE (
+              project_identity, agent_name, registration_owner, tool_identity,
+              registration_revision, policy_fingerprint,
+              request_schema_version, request_digest
+            )
+          );
+          CREATE INDEX idx_permission_grants_project_state_expiry
+            ON permission_grants (project_identity, state, expires_at);
+        `,
+      },
+      {
+        file: "v3-reopen-collate-rtrim.db",
+        coll: "RTRIM",
+        rebuild: `
+          DROP TABLE permission_grants;
+          CREATE TABLE permission_grants (
+            grant_id TEXT NOT NULL PRIMARY KEY,
+            project_identity TEXT COLLATE RTRIM NOT NULL,
+            agent_name TEXT NOT NULL,
+            registration_owner TEXT NOT NULL,
+            tool_identity TEXT NOT NULL,
+            registration_revision TEXT NOT NULL,
+            policy_fingerprint TEXT NOT NULL,
+            request_schema_version TEXT NOT NULL,
+            request_digest TEXT NOT NULL,
+            display_summary TEXT NOT NULL,
+            display_details TEXT,
+            created_at INTEGER NOT NULL,
+            expires_at INTEGER,
+            revoked_at INTEGER,
+            state TEXT NOT NULL CHECK (state IN ('active', 'revoked')),
+            CHECK (expires_at IS NULL OR expires_at > created_at),
+            CHECK (
+              (state = 'active' AND revoked_at IS NULL)
+              OR (
+                state = 'revoked'
+                AND revoked_at IS NOT NULL
+                AND revoked_at >= created_at
+              )
+            ),
+            UNIQUE (
+              project_identity, agent_name, registration_owner, tool_identity,
+              registration_revision, policy_fingerprint,
+              request_schema_version, request_digest
+            )
+          );
+          CREATE INDEX idx_permission_grants_project_state_expiry
+            ON permission_grants (project_identity, state, expires_at);
+        `,
+      },
+      {
+        file: "v3-reopen-collate-custom-index.db",
+        coll: "NOCASE",
+        rebuild: `
+          DROP INDEX idx_permission_grants_project_state_expiry;
+          CREATE INDEX idx_permission_grants_project_state_expiry
+            ON permission_grants (
+              project_identity COLLATE NOCASE,
+              state,
+              expires_at
+            );
+        `,
+      },
+    ];
+
+    for (const fixture of cases) {
+      const db = new Database(join(testDir, fixture.file));
+      expect(runMigrations(db).isOk()).toBe(true);
+      const ledgerBefore = db
+        .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
+        .all();
+      const versionBefore = readSchemaVersion(db);
+
+      db.exec(fixture.rebuild);
+
+      assertInitializationError(
+        runMigrations(db),
+        "Invalid permission_grants schema",
+      );
+      expect(readSchemaVersion(db)).toBe(versionBefore);
+      expect(
+        db
+          .prepare(
+            "SELECT version, name FROM schema_migrations ORDER BY version",
+          )
+          .all(),
+      ).toEqual(ledgerBefore);
+
+      // Hostile collation remains in place (no silent repair).
+      const collFound = db
+        .prepare(
+          `SELECT 1 AS ok
+           FROM pragma_index_list('permission_grants') AS idx,
+                pragma_index_xinfo(idx.name) AS x
+           WHERE x.key = 1 AND x.coll = ?
+           LIMIT 1`,
+        )
+        .get(fixture.coll);
+      expect(collFound).toEqual({ ok: 1 });
+      db.close();
+    }
+  });
+
+  it("rejects v3 reopen when extra unique/partial/expression indexes exist", () => {
+    const cases: Array<{ file: string; ddl: string; indexName: string }> = [
+      {
+        file: "v3-reopen-extra-unique.db",
+        indexName: "idx_permission_grants_extra_unique",
+        ddl: `CREATE UNIQUE INDEX idx_permission_grants_extra_unique
+              ON permission_grants (request_digest);`,
+      },
+      {
+        file: "v3-reopen-extra-partial.db",
+        indexName: "idx_permission_grants_extra_partial",
+        ddl: `CREATE INDEX idx_permission_grants_extra_partial
+              ON permission_grants (agent_name)
+              WHERE revoked_at IS NULL;`,
+      },
+      {
+        file: "v3-reopen-extra-expr.db",
+        indexName: "idx_permission_grants_extra_expr",
+        ddl: `CREATE INDEX idx_permission_grants_extra_expr
+              ON permission_grants ((project_identity || ':' || tool_identity));`,
+      },
+    ];
+
+    for (const fixture of cases) {
+      const db = new Database(join(testDir, fixture.file));
+      expect(runMigrations(db).isOk()).toBe(true);
+      const ledgerBefore = db
+        .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
+        .all();
+      const versionBefore = readSchemaVersion(db);
+      db.exec(fixture.ddl);
+
+      assertInitializationError(
+        runMigrations(db),
+        "Invalid permission_grants schema",
+      );
+      expect(readSchemaVersion(db)).toBe(versionBefore);
+      expect(
+        db
+          .prepare(
+            "SELECT version, name FROM schema_migrations ORDER BY version",
+          )
+          .all(),
+      ).toEqual(ledgerBefore);
+      expect(
+        db
+          .prepare(
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?",
+          )
+          .get(fixture.indexName),
+      ).toEqual({ name: fixture.indexName });
+      db.close();
+    }
+  });
+
+  it("rejects malformed nullable runtime_metadata without mutation", () => {
+    const db = new Database(join(testDir, "nullable-metadata.db"));
+    db.exec(`
+      CREATE TABLE runtime_metadata (
+        key TEXT PRIMARY KEY,
+        value TEXT
+      );
+      CREATE TABLE schema_migrations (
+        version INTEGER NOT NULL PRIMARY KEY,
+        applied_at TEXT NOT NULL,
+        name TEXT NOT NULL
+      );
+      INSERT INTO runtime_metadata (key, value) VALUES ('schema_version', '2');
+      INSERT INTO schema_migrations (version, applied_at, name)
+        VALUES (1, '2025-01-01', 'initial_schema');
+      INSERT INTO schema_migrations (version, applied_at, name)
+        VALUES (2, '2025-01-02', 'add_step_attempts_json');
+    `);
+
+    const metaSqlBefore = db
+      .prepare(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'runtime_metadata'",
+      )
+      .get();
+    const ledgerBefore = db
+      .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
+      .all();
+
+    const result = runMigrations(db);
+    assertInitializationError(result, "Invalid migration bootstrap schema");
+    expect(readSchemaVersion(db)).toBe(2);
+    assertNoPermissionGrantsTable(db);
+    expect(
+      db
+        .prepare(
+          "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'runtime_metadata'",
+        )
+        .get(),
+    ).toEqual(metaSqlBefore);
+    expect(
+      db
+        .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
+        .all(),
+    ).toEqual(ledgerBefore);
+    db.close();
+  });
+
+  it("rejects malformed no-PK runtime_metadata without mutation", () => {
+    const db = new Database(join(testDir, "no-pk-metadata.db"));
+    db.exec(`
+      CREATE TABLE runtime_metadata (
+        key TEXT NOT NULL,
+        value TEXT NOT NULL
+      );
+      CREATE TABLE schema_migrations (
+        version INTEGER NOT NULL PRIMARY KEY,
+        applied_at TEXT NOT NULL,
+        name TEXT NOT NULL
+      );
+      INSERT INTO runtime_metadata (key, value) VALUES ('schema_version', '1');
+    `);
+
+    const metaSqlBefore = db
+      .prepare(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'runtime_metadata'",
+      )
+      .get();
+
+    const result = runMigrations(db);
+    assertInitializationError(result, "Invalid migration bootstrap schema");
+    expect(readSchemaVersion(db)).toBe(1);
+    assertNoPermissionGrantsTable(db);
+    expect(
+      db
+        .prepare(
+          "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'runtime_metadata'",
+        )
+        .get(),
+    ).toEqual(metaSqlBefore);
+    expect(
+      db.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get(),
+    ).toEqual({ count: 0 });
+    db.close();
+  });
+
+  it("rejects malformed schema_migrations physical schemas without mutation", () => {
+    const cases: Array<{ name: string; migrationsDdl: string }> = [
+      {
+        name: "null-applied-at",
+        migrationsDdl: `
+          CREATE TABLE schema_migrations (
+            version INTEGER NOT NULL PRIMARY KEY,
+            applied_at TEXT,
+            name TEXT NOT NULL
+          );
+        `,
+      },
+      {
+        name: "no-pk",
+        migrationsDdl: `
+          CREATE TABLE schema_migrations (
+            version INTEGER NOT NULL,
+            applied_at TEXT NOT NULL,
+            name TEXT NOT NULL
+          );
+        `,
+      },
+      {
+        name: "wrong-type",
+        migrationsDdl: `
+          CREATE TABLE schema_migrations (
+            version TEXT NOT NULL PRIMARY KEY,
+            applied_at TEXT NOT NULL,
+            name TEXT NOT NULL
+          );
+        `,
+      },
+    ];
+
+    for (const fixture of cases) {
+      const db = new Database(
+        join(testDir, `bad-migrations-${fixture.name}.db`),
+      );
+      db.exec(`
+        CREATE TABLE runtime_metadata (
+          key TEXT NOT NULL PRIMARY KEY,
+          value TEXT NOT NULL
+        );
+        ${fixture.migrationsDdl}
+        INSERT INTO runtime_metadata (key, value) VALUES ('schema_version', '2');
+      `);
+      // version column may be TEXT in the wrong-type case.
+      db.exec(`
+        INSERT INTO schema_migrations (version, applied_at, name)
+          VALUES (1, '2025-01-01', 'initial_schema');
+        INSERT INTO schema_migrations (version, applied_at, name)
+          VALUES (2, '2025-01-02', 'add_step_attempts_json');
+      `);
+
+      const migrationsSqlBefore = db
+        .prepare(
+          "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'",
+        )
+        .get();
+      const rowsBefore = db
+        .prepare("SELECT version, name FROM schema_migrations ORDER BY rowid")
+        .all();
+
+      const result = runMigrations(db);
+      assertInitializationError(result, "Invalid migration bootstrap schema");
+      expect(readSchemaVersion(db)).toBe(2);
+      assertNoPermissionGrantsTable(db);
+      expect(
+        db
+          .prepare(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'",
+          )
+          .get(),
+      ).toEqual(migrationsSqlBefore);
+      expect(
+        db
+          .prepare("SELECT version, name FROM schema_migrations ORDER BY rowid")
+          .all(),
+      ).toEqual(rowsBefore);
+      db.close();
+    }
+  });
+
+  it("rejects partial bootstrap (only one table) without creating the sibling", () => {
+    const onlyMetadata = new Database(join(testDir, "only-metadata.db"));
+    onlyMetadata.exec(`
+      CREATE TABLE runtime_metadata (
+        key TEXT NOT NULL PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+      INSERT INTO runtime_metadata (key, value) VALUES ('schema_version', '0');
+    `);
+
+    assertInitializationError(
+      runMigrations(onlyMetadata),
+      "Invalid migration bootstrap schema",
+    );
+    expect(
+      onlyMetadata
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE name = 'schema_migrations'",
+        )
+        .get(),
+    ).toBeNull();
+    assertNoPermissionGrantsTable(onlyMetadata);
+    onlyMetadata.close();
+
+    const onlyMigrations = new Database(join(testDir, "only-migrations.db"));
+    onlyMigrations.exec(`
+      CREATE TABLE schema_migrations (
+        version INTEGER NOT NULL PRIMARY KEY,
+        applied_at TEXT NOT NULL,
+        name TEXT NOT NULL
+      );
+    `);
+
+    assertInitializationError(
+      runMigrations(onlyMigrations),
+      "Invalid migration bootstrap schema",
+    );
+    expect(
+      onlyMigrations
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE name = 'runtime_metadata'",
+        )
+        .get(),
+    ).toBeNull();
+    assertNoPermissionGrantsTable(onlyMigrations);
+    onlyMigrations.close();
+  });
+
+  it("rejects fresh precreated bootstrap hostile BEFORE/AFTER triggers and extra indexes", () => {
+    const cases: Array<{ file: string; ddl: string; triggerOrIndex: string }> =
+      [
+        {
+          file: "fresh-metadata-after-trigger.db",
+          triggerOrIndex: "runtime_metadata_after_update",
+          ddl: `
+            ${CANONICAL_BOOTSTRAP_DDL}
+            INSERT INTO runtime_metadata (key, value)
+              VALUES ('schema_version', '0');
+            INSERT INTO runtime_metadata (key, value)
+              VALUES ('permission_wall_clock_high_water', '100');
+            CREATE TRIGGER runtime_metadata_after_update
+            AFTER UPDATE ON runtime_metadata
+            WHEN NEW.key = 'permission_wall_clock_high_water'
+            BEGIN
+              UPDATE runtime_metadata
+                SET value = '0'
+                WHERE key = 'permission_wall_clock_high_water';
+            END;
+          `,
+        },
+        {
+          file: "fresh-metadata-before-trigger.db",
+          triggerOrIndex: "runtime_metadata_before_insert",
+          ddl: `
+            ${CANONICAL_BOOTSTRAP_DDL}
+            CREATE TRIGGER runtime_metadata_before_insert
+            BEFORE INSERT ON runtime_metadata
+            BEGIN
+              SELECT RAISE(ABORT, 'hostile metadata before insert');
+            END;
+          `,
+        },
+        {
+          file: "fresh-migrations-after-trigger.db",
+          triggerOrIndex: "schema_migrations_after_insert",
+          ddl: `
+            ${CANONICAL_BOOTSTRAP_DDL}
+            CREATE TRIGGER schema_migrations_after_insert
+            AFTER INSERT ON schema_migrations
+            BEGIN
+              DELETE FROM schema_migrations WHERE version = NEW.version;
+            END;
+          `,
+        },
+        {
+          file: "fresh-migrations-before-trigger.db",
+          triggerOrIndex: "schema_migrations_before_delete",
+          ddl: `
+            ${CANONICAL_BOOTSTRAP_DDL}
+            CREATE TRIGGER schema_migrations_before_delete
+            BEFORE DELETE ON schema_migrations
+            BEGIN
+              SELECT RAISE(ABORT, 'hostile ledger before delete');
+            END;
+          `,
+        },
+        {
+          file: "fresh-metadata-extra-index.db",
+          triggerOrIndex: "idx_runtime_metadata_extra",
+          ddl: `
+            ${CANONICAL_BOOTSTRAP_DDL}
+            CREATE INDEX idx_runtime_metadata_extra
+              ON runtime_metadata (value);
+          `,
+        },
+        {
+          file: "fresh-migrations-extra-index.db",
+          triggerOrIndex: "idx_schema_migrations_extra",
+          ddl: `
+            ${CANONICAL_BOOTSTRAP_DDL}
+            CREATE INDEX idx_schema_migrations_extra
+              ON schema_migrations (name);
+          `,
+        },
+      ];
+
+    for (const fixture of cases) {
+      const db = new Database(join(testDir, fixture.file));
+      db.exec(fixture.ddl);
+      const objectsBefore = db
+        .prepare(
+          "SELECT type, name FROM sqlite_master WHERE name = ? OR tbl_name IN ('runtime_metadata', 'schema_migrations') ORDER BY type, name",
+        )
+        .all(fixture.triggerOrIndex);
+
+      assertInitializationError(
+        runMigrations(db),
+        "Invalid migration bootstrap schema",
+      );
+      assertNoPermissionGrantsTable(db);
+      expect(
+        db
+          .prepare(
+            "SELECT type, name FROM sqlite_master WHERE name = ? OR tbl_name IN ('runtime_metadata', 'schema_migrations') ORDER BY type, name",
+          )
+          .all(fixture.triggerOrIndex),
+      ).toEqual(objectsBefore);
+      db.close();
+    }
+  });
+
+  it("rejects v2 upgrade when bootstrap tables have hostile triggers or extra indexes", () => {
+    const cases: Array<{ file: string; ddl: string }> = [
+      {
+        file: "v2-metadata-hw-reset-trigger.db",
+        ddl: `
+          CREATE TRIGGER runtime_metadata_hw_reset
+          AFTER UPDATE ON runtime_metadata
+          WHEN NEW.key = 'permission_wall_clock_high_water'
+          BEGIN
+            UPDATE runtime_metadata SET value = '1'
+              WHERE key = 'permission_wall_clock_high_water';
+          END;
+        `,
+      },
+      {
+        file: "v2-metadata-before-trigger.db",
+        ddl: `
+          CREATE TRIGGER runtime_metadata_before_update
+          BEFORE UPDATE ON runtime_metadata
+          BEGIN
+            SELECT RAISE(ABORT, 'hostile metadata before update');
+          END;
+        `,
+      },
+      {
+        file: "v2-migrations-after-trigger.db",
+        ddl: `
+          CREATE TRIGGER schema_migrations_tamper
+          AFTER INSERT ON schema_migrations
+          BEGIN
+            UPDATE schema_migrations SET name = 'tampered' WHERE version = NEW.version;
+          END;
+        `,
+      },
+      {
+        file: "v2-migrations-before-trigger.db",
+        ddl: `
+          CREATE TRIGGER schema_migrations_before_insert
+          BEFORE INSERT ON schema_migrations
+          BEGIN
+            SELECT RAISE(ABORT, 'hostile ledger before insert');
+          END;
+        `,
+      },
+      {
+        file: "v2-metadata-extra-index.db",
+        ddl: `CREATE UNIQUE INDEX idx_runtime_metadata_extra_unique ON runtime_metadata (value);`,
+      },
+      {
+        file: "v2-migrations-extra-index.db",
+        ddl: `CREATE INDEX idx_schema_migrations_name ON schema_migrations (name);`,
+      },
+    ];
+
+    for (const fixture of cases) {
+      const db = new Database(join(testDir, fixture.file));
+      createLegacyV2Database(db);
+      db.exec(
+        "INSERT OR REPLACE INTO runtime_metadata (key, value) VALUES ('permission_wall_clock_high_water', '99')",
+      );
+      db.exec(fixture.ddl);
+
+      const versionBefore = readSchemaVersion(db);
+      const ledgerBefore = db
+        .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
+        .all();
+      const hwBefore = db
+        .prepare(
+          "SELECT value FROM runtime_metadata WHERE key = 'permission_wall_clock_high_water'",
+        )
+        .get();
+
+      assertInitializationError(
+        runMigrations(db),
+        "Invalid migration bootstrap schema",
+      );
+      expect(readSchemaVersion(db)).toBe(versionBefore);
+      expect(
+        db
+          .prepare(
+            "SELECT version, name FROM schema_migrations ORDER BY version",
+          )
+          .all(),
+      ).toEqual(ledgerBefore);
+      expect(
+        db
+          .prepare(
+            "SELECT value FROM runtime_metadata WHERE key = 'permission_wall_clock_high_water'",
+          )
+          .get(),
+      ).toEqual(hwBefore);
+      assertNoPermissionGrantsTable(db);
+      db.close();
+    }
+  });
+
+  it("rejects v3 reopen when bootstrap hostile triggers or extra indexes are attached", () => {
+    const cases: Array<{ file: string; ddl: string }> = [
+      {
+        file: "v3-metadata-hw-reset-trigger.db",
+        ddl: `
+          CREATE TRIGGER runtime_metadata_hw_reset
+          AFTER UPDATE ON runtime_metadata
+          WHEN NEW.key = 'permission_wall_clock_high_water'
+          BEGIN
+            UPDATE runtime_metadata SET value = '0'
+              WHERE key = 'permission_wall_clock_high_water';
+          END;
+          CREATE TRIGGER runtime_metadata_before_delete
+          BEFORE DELETE ON runtime_metadata
+          BEGIN
+            SELECT RAISE(ABORT, 'hostile metadata before delete');
+          END;
+        `,
+      },
+      {
+        file: "v3-migrations-ledger-triggers.db",
+        ddl: `
+          CREATE TRIGGER schema_migrations_after_insert
+          AFTER INSERT ON schema_migrations
+          BEGIN
+            DELETE FROM schema_migrations WHERE version = NEW.version;
+          END;
+          CREATE TRIGGER schema_migrations_before_update
+          BEFORE UPDATE ON schema_migrations
+          BEGIN
+            SELECT RAISE(ABORT, 'hostile ledger before update');
+          END;
+        `,
+      },
+      {
+        file: "v3-bootstrap-extra-indexes.db",
+        ddl: `
+          CREATE INDEX idx_runtime_metadata_value ON runtime_metadata (value);
+          CREATE INDEX idx_schema_migrations_applied_at
+            ON schema_migrations (applied_at);
+        `,
+      },
+    ];
+
+    for (const fixture of cases) {
+      const db = new Database(join(testDir, fixture.file));
+      expect(runMigrations(db).isOk()).toBe(true);
+      db.exec(
+        "INSERT OR REPLACE INTO runtime_metadata (key, value) VALUES ('permission_wall_clock_high_water', '77')",
+      );
+      const versionBefore = readSchemaVersion(db);
+      const ledgerBefore = db
+        .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
+        .all();
+      const hwBefore = db
+        .prepare(
+          "SELECT value FROM runtime_metadata WHERE key = 'permission_wall_clock_high_water'",
+        )
+        .get();
+
+      db.exec(fixture.ddl);
+
+      assertInitializationError(
+        runMigrations(db),
+        "Invalid migration bootstrap schema",
+      );
+      expect(readSchemaVersion(db)).toBe(versionBefore);
+      expect(
+        db
+          .prepare(
+            "SELECT version, name FROM schema_migrations ORDER BY version",
+          )
+          .all(),
+      ).toEqual(ledgerBefore);
+      expect(
+        db
+          .prepare(
+            "SELECT value FROM runtime_metadata WHERE key = 'permission_wall_clock_high_water'",
+          )
+          .get(),
+      ).toEqual(hwBefore);
+      db.close();
     }
   });
 
@@ -291,11 +2462,10 @@ describe("migrations", () => {
     Bun.spawnSync(["mkdir", "-p", runtimeDir]);
     const dbPath = join(runtimeDir, "weave.db");
     const db = new Database(dbPath);
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS runtime_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL, name TEXT NOT NULL);
-      INSERT OR REPLACE INTO runtime_metadata (key, value) VALUES ('schema_version', '999');
-    `);
+    db.exec(CANONICAL_BOOTSTRAP_DDL);
+    db.exec(
+      "INSERT INTO runtime_metadata (key, value) VALUES ('schema_version', '999')",
+    );
     db.close();
 
     const store = createSqliteRuntimeStore({ dbPath });

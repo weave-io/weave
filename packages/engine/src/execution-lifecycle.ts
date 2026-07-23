@@ -22,7 +22,7 @@
  * | `artifacts.ts`      | Artifact validation, integrity, and persistence         |
  * | `dispatch.ts`       | `dispatchStep` implementation                           |
  * | `completion.ts`     | `completeStep` implementation                           |
- * | `before-tool.ts`    | `beforeTool` implementation                             |
+ * | `before-tool.ts`    | `beforeTool` compatibility and `previewToolPolicy`        |
  * | `inspection.ts`     | `inspectExecution` implementation                       |
  * | `terminal-outcomes.ts` | `approveArtifact` implementation                     |
  * | `reconciliation.ts` | `reconcileExecution` implementation                     |
@@ -35,7 +35,7 @@
  * 4. `handleUserInterrupt` — adapter signals a user-initiated interrupt
  * 5. `dispatchStep`      — adapter requests dispatch of the next workflow step
  * 6. `completeStep`      — adapter signals that a step has finished
- * 7. `beforeTool`        — adapter signals that a tool call is about to execute
+ * 7. `beforeTool`        — adapter submits a registered intercepted call for permission authorization
  * 8. `inspectExecution`  — adapter queries execution state without side effects
  * 9. `approveArtifact`   — adapter approves or rejects an artifact
  * 10. `reconcileExecution` — adapter triggers reconciliation routing
@@ -48,9 +48,6 @@ export type {
   ApproveArtifactInput,
   ApproveArtifactOutput,
   ApproveArtifactResult,
-  BeforeToolInput,
-  BeforeToolOutput,
-  BeforeToolResult,
   CompleteExecutionEffect,
   CompleteStepInput,
   CompleteStepOutput,
@@ -82,6 +79,8 @@ export type {
   ReconcileExecutionOutput,
   ReconcileExecutionResult,
   ReconciliationAuthorizationSource,
+  RegisteredBeforeToolInput,
+  RegisteredBeforeToolResult,
   ResumeExecutionInput,
   ResumeExecutionOutput,
   ResumeExecutionResult,
@@ -89,6 +88,9 @@ export type {
   StartExecutionInput,
   StartExecutionOutput,
   StartExecutionResult,
+  StaticToolPolicyPreviewInput,
+  StaticToolPolicyPreviewOutput,
+  StaticToolPolicyPreviewResult,
   StepCompletionSignal,
   WorkflowExecutionContext,
 } from "./execution-lifecycle/index.js";
@@ -107,6 +109,7 @@ export {
   lifecyclePolicyDecisionError,
   lifecycleValidationError,
   observeSession,
+  previewToolPolicy,
   RECONCILIATION_AUTHORIZATION_SOURCES,
   RECONCILIATION_REASONS,
   reconcileExecution,

@@ -1,85 +1,35 @@
-# Task 04 Proofs - `beforeTool` policy lifecycle point
+# Task 04 Proofs — static policy preview and `beforeTool` compatibility
 
-## Task Summary
+> **Superseded:** This proof originally described the legacy pure `beforeTool` evaluator. The evaluator now lives at `previewToolPolicy`; `beforeTool` is authoritative only for registered Spec 34 permission-session calls.
 
-This task proves that `beforeTool` is implemented as a pure policy evaluation function that reuses the existing abstract tool policy model from `tool-policy.ts`. Adapters own concrete tool-name mapping; the engine owns abstract policy decisions. The function returns deterministic allow/deny/ask decisions without accessing the Runtime Store.
+## Historical task summary
 
-## What This Task Proves
+The original task proved static abstract policy evaluation from `tool-policy.ts`. That behavior remains at `previewToolPolicy`, which reuses `ABSTRACT_CAPABILITIES` and `EffectiveToolPolicy` and cannot authorize execution, issue a permit, or establish adapter readiness. Adapters still own concrete tool-name mapping.
 
-- `beforeTool` reuses `ABSTRACT_CAPABILITIES` and `EffectiveToolPolicy` from `tool-policy.ts` — no second policy model created.
-- `beforeTool` returns `allow`, `deny`, or `ask` for all 5 abstract capabilities.
-- Unknown capabilities return a typed `LifecycleValidationError` (not thrown).
-- `BeforeToolInput` and `BeforeToolOutput` contain no credential, token, or raw payload fields.
-- `docs/adapter-boundary.md` documents the adapter/engine boundary for tool-name mapping vs. policy decisions.
-- 13 new tests pass alongside 824 pre-existing tests (837 total).
+The current `beforeTool` contract is separate:
 
-## Evidence Summary
+- It accepts an exact registered call snapshot, not static policy fields.
+- It snapshots plain own enumerable top-level and nested permission fields once.
+- It rejects accessors, proxies, omitted fields, legacy-shaped inputs, and extras with `LifecycleValidationError`.
+- It delegates registered calls to `PermissionSession`; unmanaged calls return `unmanaged` and never authorize.
 
-- Typecheck exits 0 — `beforeTool` implementation compiles correctly.
-- 837/837 tests pass — 13 new `beforeTool` tests included.
-- Security tests confirm no credential fields in input/output types.
+## Historical evidence
 
-## Artifact: Typecheck pass
+The test and typecheck captures below document the original implementation and remain audit history. They are not evidence for the current API. Current tests call `previewToolPolicy` for static decisions and use the registered permission compatibility tests for `beforeTool` authorization and adversarial input validation.
 
-**What it proves:** `beforeTool` implementation compiles with correct types, reusing `EffectiveToolPolicy` from `tool-policy.ts`.
+## Current references
 
-**Command:**
-```bash
-bun run --filter '@weaveio/weave-engine' typecheck
-```
+- [Spec 13](../13-spec-minimal-execution-lifecycle-surface.md)
+- [Spec 34](../../34-spec-harness-neutral-permissions/34-spec-harness-neutral-permissions.md)
+- [Tool policy evaluation guide](../../../tool-policy-evaluation.md)
+- [Adapter boundary](../../../adapter-boundary.md)
 
-**Result summary:** Exit code 0.
+## Historical test coverage
 
-```
-@weaveio/weave-engine typecheck: Exited with code 0
-```
+The original cases covered allow, deny, and ask decisions for all five abstract capabilities, unknown capabilities, missing identifiers, metadata sanitization, and credential-field exclusions. Those cases now belong to `previewToolPolicy` and `StaticToolPolicyPreviewInput` / `StaticToolPolicyPreviewOutput`.
 
-## Artifact: Test suite pass
+The registered compatibility tests additionally cover allow, deny, ask, unmanaged calls, resolver and repository errors, identity propagation, exact-shape validation, and proxy-hidden permission.
 
-**What it proves:** 13 new `beforeTool` tests cover all acceptance criteria.
+## Reviewer conclusion
 
-**Command:**
-```bash
-bun run --filter '@weaveio/weave-engine' test
-```
-
-**Result summary:** 837 pass, 0 fail across 18 files.
-
-```
- 837 pass
- 0 fail
- Ran 837 tests across 18 files. [692.00ms]
-```
-
-## Artifact: Test coverage breakdown
-
-| Test | Behavior verified |
-|---|---|
-| `allow` decision (read) | `effectiveToolPolicy.read = "allow"` → `decision: "allow"` |
-| `deny` decision (write) | `effectiveToolPolicy.write = "deny"` → `decision: "deny"` |
-| `ask` decision (network) | `effectiveToolPolicy.network = "ask"` → `decision: "ask"` |
-| `allow` for execute | `effectiveToolPolicy.execute = "allow"` → `decision: "allow"` |
-| `deny` for delegate | `effectiveToolPolicy.delegate = "deny"` → `decision: "deny"` |
-| Unknown capability | `toolCapability = "unknown"` → `LifecycleValidationError` |
-| Missing `toolCapability` | → `LifecycleValidationError` |
-| Missing `workflowInstanceId` | → `LifecycleValidationError` |
-| Missing `leaseId` | → `LifecycleValidationError` |
-| Security: output has no credential fields | `BeforeToolOutput` only has `decision` + optional `reason` |
-| Security: input has no credential fields | `BeforeToolInput` has no `token`, `apiKey`, `password`, `secret`, `authorization` |
-| `toolName` is audit-only | Same capability+policy → same decision regardless of `toolName` |
-
-## Artifact: Documentation update
-
-**What it proves:** `docs/adapter-boundary.md` documents the adapter/engine boundary for `beforeTool`.
-
-**Why it matters:** Future adapter authors need to know they own tool-name mapping; the engine owns policy decisions.
-
-**Added section:** `### beforeTool — Adapter/Engine Boundary` under `## Execution Lifecycle Surface` in `docs/adapter-boundary.md`, covering:
-- Adapters own concrete tool-name → abstract capability mapping
-- Engine reads `effectiveToolPolicy[toolCapability]` for the decision
-- `toolName` is for audit/logging only
-- Security invariants for input/output
-
-## Reviewer Conclusion
-
-`beforeTool` is implemented as a pure policy evaluation function with no Runtime Store access. It reuses the existing `EffectiveToolPolicy` model. All 13 tests pass. Security boundaries are documented and tested. 837/837 total tests pass.
+The original pure-policy claims are superseded. `previewToolPolicy` remains side-effect free and non-authoritative; registered `beforeTool` is the Spec 34 permission-session compatibility path. No Runtime Store or PermissionSession internals are changed by this migration.

@@ -1,11 +1,11 @@
 # @weaveio/weave — AI Context Map
 
 > **Stack:** raw-http | none | unknown | typescript
-> **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode
+> **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 159 lib files | 33 env vars | 6 middleware | 0% test coverage
-> **Token savings:** this file is ~15,500 tokens. Without it, AI exploration would cost ~56,300 tokens. **Saves ~40,800 tokens per conversation.**
-> **Last scanned:** 2026-07-23 03:47 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 167 lib files | 33 env vars | 6 middleware | 0% test coverage
+> **Token savings:** this file is ~16,600 tokens. Without it, AI exploration would cost ~58,400 tokens. **Saves ~41,800 tokens per conversation.**
+> **Last scanned:** 2026-07-23 21:12 — re-run after significant changes
 
 ---
 
@@ -481,7 +481,7 @@
   - function validateStepInputs: (step, instance, artifactDigests?, string>>, pinnedNames?) => Result<ArtifactInputSummary, LifecycleError>
   - _...3 more_
 - `packages/engine/src/execution-lifecycle/authorization.ts` — function validateAuthorizationSource: (source, operation) => Result<undefined, LifecyclePolicyDecisionError>, function validateReconciliationSource: (reason, source) => Result<undefined, LifecyclePolicyDecisionError>
-- `packages/engine/src/execution-lifecycle/before-tool.ts` — function beforeTool: (input) => BeforeToolResult
+- `packages/engine/src/execution-lifecycle/before-tool.ts` — function previewToolPolicy: (input) => StaticToolPolicyPreviewResult, function beforeTool: (input) => RegisteredBeforeToolResult
 - `packages/engine/src/execution-lifecycle/completion.ts` — function completeStep: (input, store) => ResultAsync<CompleteStepOutput, LifecycleError>
 - `packages/engine/src/execution-lifecycle/dispatch.ts`
   - function buildConfiguredRunAgentEffect: (step, promptMetadata) => RunAgentEffect
@@ -525,6 +525,50 @@
   - interface ModelResolutionResult
   - type ResolutionSource
   - const DEFAULT_FALLBACK_MODEL
+- `packages/engine/src/permissions/array-snapshot.ts` — function snapshotArrayOnce: (value) => Result<readonly unknown[], ArraySnapshotError>, type ArraySnapshotError
+- `packages/engine/src/permissions/canonical.ts`
+  - function cloneAndFreezeJson: (value) => Result<JsonValue, PermissionError>
+  - function utf8Bytes: (value, max) => Result<Uint8Array, PermissionError>
+  - function canonicalizeJson: (value) => Result<string, PermissionError>
+  - function permissionDigest: (value) => Result<string, PermissionError>
+  - function sanitizePermissionDisplay: (value) => Result<PermissionDisplay, PermissionError>
+  - function normalizePermissionRequests: (input) => Result<readonly PermissionRequest[], PermissionError>
+  - _...10 more_
+- `packages/engine/src/permissions/coverage.ts`
+  - function verifyPermissionCoverage: (context) => Result<PermissionCoverageProof, PermissionCoverageError>
+  - interface PermissionCoverageDiagnosticsPolicy
+  - interface PermissionCoverageContext
+  - interface PermissionCoverageProof
+  - type PermissionCoverageIncompleteReason
+  - type PermissionCoverageError
+- `packages/engine/src/permissions/registry.ts`
+  - function createPermissionRegistryBuilderForTesting: (deps) => PermissionRegistryBuilder
+  - function lookupRegistryRegistration: (generation, toolIdentity) => Result<PermissionRegistration | undefined, PermissionError>
+  - function readRegistryInventory: (generation) => Result<readonly PermissionRegistrationMetadata[], PermissionError>
+  - function readRegistryGenerationMeta: (generation) => Result<
+  - function validatePermissionRegistryGeneration: (value) => Result<PermissionRegistryGeneration, PermissionError>
+  - function invokePermissionResolver: (resolver, call, context) => Result<readonly PermissionRequest[], PermissionError>
+  - _...4 more_
+- `packages/engine/src/permissions/repository.ts`
+  - function validateGrantIdentityResult: (value) => Result<GrantIdentityEnvelope, PermissionError>
+  - function validateGrantIdentity: (value) => value is GrantIdentityEnvelope
+  - function validateDurableGrantRecordResult: (value) => Result<DurablePermissionGrantRecord, PermissionError>
+  - function validateDurableGrantRecord: (value) => value is DurablePermissionGrantRecord
+  - function hydrateDurableGrant: (row) => Result<DurablePermissionGrantRecord, PermissionError>
+  - function grantIdentityKey: (identity) => Result<string, PermissionError>
+  - _...5 more_
+- `packages/engine/src/permissions/service.ts`
+  - function createPermissionService: (store) => PermissionService
+  - class PermissionService
+  - interface PermissionServiceActivationInput
+- `packages/engine/src/permissions/session.ts`
+  - function validatePermissionSession: (value) => Result<PermissionSession, PermissionError>
+  - function authorizePermissionSessionCall: (session, input) => ResultAsync<PermissionOutcome, PermissionError>
+  - function consumePermissionSessionPermit: (session, input) => ResultAsync<PermissionExecutionSnapshot, PermissionError>
+  - function activatePermissionSessionInternal: (input) => ResultAsync<PermissionSession, PermissionError>
+  - function activatePermissionSessionForTesting: (input) => ResultAsync<PermissionSession, PermissionError>
+  - class PermissionSession
+  - _...2 more_
 - `packages/engine/src/review-orchestration.ts`
   - function fanOut: (agentName, config) => Result<ReviewFanOutPlan, ReviewOrchestrationError>
   - function collate: (results) => Result<CollatedReview, ReviewOrchestrationError>
@@ -553,6 +597,7 @@
   - class InMemoryRuntimeStore
   - interface InMemoryRuntimeStoreFailureConfig
   - interface InMemoryRuntimeStoreOptions
+- `packages/engine/src/runtime/permission-repository.ts` — function registerPermissionApprovalRepository: (store, repository) => void, function getPermissionApprovalRepository: (store) => Result<PermissionApprovalRepository, PermissionError>
 - `packages/engine/src/runtime/sanitizer.ts`
   - function isDeniedKey: (key) => boolean
   - function sanitizeJournalData: (data) => Result<JsonObject, RuntimeStoreError>
@@ -564,6 +609,7 @@
   - const CURRENT_SCHEMA_VERSION
 - `packages/engine/src/runtime/sqlite/store.ts`
   - function createSqliteRuntimeStore: (options) => SqliteRuntimeStore
+  - class SqlitePermissionApprovalRepository
   - class SqliteRuntimeStore
   - interface SqliteRuntimeStoreOptions
 - `packages/engine/src/runtime/types.ts`
@@ -845,10 +891,11 @@
 - `packages/cli/src/evals/report-schema.ts` — imported by **17** files
 - `packages/engine/src/runtime/types.ts` — imported by **16** files
 - `scripts/release/stable-train.ts` — imported by **16** files
+- `packages/engine/src/runtime/store.ts` — imported by **15** files
 - `scripts/release/npm-registry-client.ts` — imported by **15** files
 - `packages/cli/src/args.ts` — imported by **14** files
+- `packages/engine/src/tool-policy.ts` — imported by **14** files
 - `scripts/release/model.ts` — imported by **14** files
-- `packages/engine/src/runtime/store.ts` — imported by **13** files
 - `scripts/release/filesystem.ts` — imported by **13** files
 - `scripts/release/clock.ts` — imported by **13** files
 - `packages/cli/src/fs/file-system.ts` — imported by **12** files
@@ -857,7 +904,6 @@
 - `packages/engine/src/runtime/errors.ts` — imported by **11** files
 - `packages/engine/src/execution-lifecycle/metadata.ts` — imported by **11** files
 - `scripts/release/errors.ts` — imported by **11** files
-- `packages/cli/src/errors.ts` — imported by **10** files
 
 ## Import Map (who imports what)
 
@@ -868,16 +914,16 @@
 - `packages/cli/src/evals/report-schema.ts` ← `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts` +12 more
 - `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts` +11 more
 - `scripts/release/stable-train.ts` ← `scripts/release/__tests__/artifact-manifest.test.ts`, `scripts/release/__tests__/control-executable.test.ts`, `scripts/release/__tests__/github-client.test.ts`, `scripts/release/__tests__/metadata-replay.test.ts`, `scripts/release/__tests__/payload-layout.e2e.test.ts` +11 more
+- `packages/engine/src/runtime/store.ts` ← `packages/engine/src/__tests__/permission-service.test.ts`, `packages/engine/src/__tests__/runtime-journal.test.ts`, `packages/engine/src/execution-lifecycle/artifacts.ts`, `packages/engine/src/execution-lifecycle/dispatch.ts`, `packages/engine/src/execution-lifecycle/inspection.ts` +10 more
 - `scripts/release/npm-registry-client.ts` ← `scripts/release/__tests__/github-client.test.ts`, `scripts/release/__tests__/nightly-plan.test.ts`, `scripts/release/__tests__/npm-registry-client.test.ts`, `scripts/release/__tests__/payload-layout.e2e.test.ts`, `scripts/release/__tests__/promotion-commands.test.ts` +10 more
 - `packages/cli/src/args.ts` ← `packages/cli/src/__tests__/args.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/prompt.test.ts` +9 more
-- `scripts/release/model.ts` ← `scripts/release/__tests__/artifact-binding.test.ts`, `scripts/release/__tests__/control-executable.test.ts`, `scripts/release/__tests__/payload-layout.e2e.test.ts`, `scripts/release/__tests__/release-orchestrator.test.ts`, `scripts/release/bind-artifacts.ts` +9 more
 
 ---
 
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 147 test files found
+> 157 test files found
 
 ---
 

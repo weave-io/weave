@@ -12,17 +12,27 @@
 
 import * as fs from "node:fs/promises";
 import { dirname } from "node:path";
-import { Kysely } from "kysely";
-import {
-  err,
-  errAsync,
-  ok,
-  okAsync,
-  type Result,
-  ResultAsync,
-} from "neverthrow";
+import { Kysely, sql } from "kysely";
+import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
 
 import { logger } from "../../logger.js";
+import {
+  grantIdentitiesEqual,
+  grantIdentityKey,
+  hydrateDurableGrant,
+  summarizeDurableGrant,
+  validateDurableGrantRecordResult,
+  validateGrantIdentityResult,
+} from "../../permissions/repository.js";
+import type {
+  Clock,
+  DurablePermissionGrantRecord,
+  GrantIdentityEnvelope,
+  PermissionApprovalRepository,
+  PermissionError,
+  PermissionGrantSummary,
+} from "../../permissions/types.js";
+import { registerPermissionApprovalRepository } from "../permission-repository.js";
 
 // ---------------------------------------------------------------------------
 // Internal sentinel error classes for async error discrimination
@@ -53,6 +63,20 @@ class TxCallbackErrSentinel extends Error {
   readonly kind = "tx_callback_err" as const;
   constructor(readonly storeError: RuntimeStoreError) {
     super("tx_callback_err");
+  }
+}
+
+class PermissionConflictSentinel extends Error {
+  readonly kind = "permission_conflict" as const;
+  constructor() {
+    super("permission_conflict");
+  }
+}
+
+class PermissionHydrationSentinel extends Error {
+  readonly kind = "permission_hydration" as const;
+  constructor() {
+    super("permission_hydration");
   }
 }
 
@@ -1121,6 +1145,572 @@ class JournalWriterRepository implements RuntimeJournalRepository {
   }
 }
 
+const validPermissionString = (value: unknown): value is string =>
+  typeof value === "string" &&
+  value.length > 0 &&
+  new TextEncoder().encode(value).byteLength <= 256 &&
+  !/[\uD800-\uDFFF]/u.test(value);
+const validPermissionTimestamp = (value: unknown): value is number =>
+  typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+
+/**
+ * Bound concurrent-writer retries when SQLite reports a transient lock.
+ * Shared by grant `saveMany` and wall high-water `BEGIN IMMEDIATE` updates.
+ * Same-instance writers serialize on the mutation queue; this bound covers
+ * distinct repository/store instances sharing one DB file. Exhaustion maps to
+ * `repository_failure` only after the full retry budget.
+ */
+const PERMISSION_SQLITE_BUSY_RETRIES = 32;
+
+/**
+ * Engine-internal runtime_metadata key for the durable permission wall-clock
+ * high-water mark. Not a public API surface; key rows are allowed metadata.
+ */
+const PERMISSION_WALL_CLOCK_HIGH_WATER_KEY = "permission_wall_clock_high_water";
+
+type PermissionGrantRow = import("./schema.js").PermissionGrantRow;
+
+function rowToGrant(
+  row: PermissionGrantRow,
+): Result<DurablePermissionGrantRecord, PermissionError> {
+  return hydrateDurableGrant(row);
+}
+
+function hydrateGrantRows(
+  rows: readonly PermissionGrantRow[],
+): Result<readonly DurablePermissionGrantRecord[], PermissionError> {
+  const records: DurablePermissionGrantRecord[] = [];
+  for (const row of rows) {
+    const hydrated = rowToGrant(row);
+    if (hydrated.isErr()) return err(hydrated.error);
+    records.push(hydrated.value);
+  }
+  return ok(records);
+}
+
+/**
+ * Read a SQLite driver error code without string-matching messages or leaking
+ * raw driver text into permission errors.
+ */
+function readSqliteErrorCode(error: unknown): string | undefined {
+  const read = Result.fromThrowable(
+    () => {
+      if (!error || typeof error !== "object") return undefined;
+      const code = Reflect.get(error, "code");
+      return typeof code === "string" ? code : undefined;
+    },
+    () => undefined,
+  )();
+  return read.isOk() ? read.value : undefined;
+}
+
+function isSqliteConstraintConflict(error: unknown): boolean {
+  const code = readSqliteErrorCode(error);
+  if (!code) return false;
+  return (
+    code === "SQLITE_CONSTRAINT" ||
+    code === "SQLITE_CONSTRAINT_PRIMARYKEY" ||
+    code === "SQLITE_CONSTRAINT_UNIQUE"
+  );
+}
+
+function isSqliteBusy(error: unknown): boolean {
+  const code = readSqliteErrorCode(error);
+  if (!code) return false;
+  return (
+    code === "SQLITE_BUSY" ||
+    code === "SQLITE_BUSY_RECOVERY" ||
+    code === "SQLITE_BUSY_SNAPSHOT" ||
+    code === "SQLITE_LOCKED" ||
+    code === "SQLITE_LOCKED_SHAREDCACHE"
+  );
+}
+
+export class SqlitePermissionApprovalRepository
+  implements PermissionApprovalRepository
+{
+  /**
+   * Serializes same-connection writers. One Kysely/bun:sqlite handle must not
+   * overlap `BEGIN IMMEDIATE` transactions; the tail recovers after every
+   * Ok/Err/throw/rejection so a failed mutation cannot poison later work.
+   * High-water observe/list/match also enqueue so maxima cannot be lost.
+   */
+  private mutationTail: Promise<void> = Promise.resolve();
+  /** Process-local cache of the persisted wall high-water (engine-internal). */
+  #wallHighWater = 0;
+
+  constructor(
+    private readonly db: Kysely<WeaveDatabase>,
+    private readonly clock: Clock,
+  ) {}
+  private failure(): PermissionError {
+    return { type: "repository_failure" };
+  }
+  /**
+   * Queue a mutation on this repository instance. Always returns ResultAsync
+   * (never a rejected promise) and always advances the tail.
+   */
+  private enqueueMutation<T>(
+    work: () => ResultAsync<T, PermissionError>,
+  ): ResultAsync<T, PermissionError> {
+    const run: Promise<Result<T, PermissionError>> = this.mutationTail.then(
+      async () => {
+        const started = Result.fromThrowable(
+          work,
+          (): PermissionError => this.failure(),
+        )();
+        if (started.isErr()) return err(started.error);
+        // ResultAsync is thenable and resolves to Result; await keeps throws in-band.
+        return await started.value;
+      },
+      async () => {
+        // Prior tail rejection is defensive only — recover and still run work.
+        const started = Result.fromThrowable(
+          work,
+          (): PermissionError => this.failure(),
+        )();
+        if (started.isErr()) return err(started.error);
+        return await started.value;
+      },
+    );
+    this.mutationTail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return ResultAsync.fromPromise(
+      run,
+      (): PermissionError => this.failure(),
+    ).andThen((result) => result);
+  }
+  /**
+   * Invoke the injected clock inside a Result boundary. Throwing clocks and
+   * non-timestamp return values become `repository_failure` (never throws).
+   */
+  private readClock(): Result<number, PermissionError> {
+    return Result.fromThrowable(
+      () => this.clock(),
+      () => this.failure(),
+    )().andThen((now) => {
+      if (!validPermissionTimestamp(now)) return err(this.failure());
+      return ok(now);
+    });
+  }
+  private resolveNow(
+    now: number | undefined,
+    invalid: PermissionError,
+  ): Result<number, PermissionError> {
+    if (now === undefined) return this.readClock();
+    if (!validPermissionTimestamp(now)) return err(invalid);
+    return ok(now);
+  }
+  /**
+   * Parse a persisted high-water metadata value. Malformed rows fail closed.
+   */
+  private parseHighWaterValue(value: unknown): Result<number, PermissionError> {
+    if (typeof value !== "string" || value.length === 0 || value.length > 32)
+      return err(this.failure());
+    if (!/^[0-9]+$/.test(value)) return err(this.failure());
+    const parsed = Number(value);
+    if (!validPermissionTimestamp(parsed)) return err(this.failure());
+    // Reject non-canonical leading zeros (except "0").
+    if (String(parsed) !== value) return err(this.failure());
+    return ok(parsed);
+  }
+  /**
+   * Retry a writer body when SQLite reports a transient busy/locked error.
+   * Used by multi-store `BEGIN IMMEDIATE` paths; the per-instance mutation
+   * queue alone cannot coordinate distinct connections.
+   */
+  private async withSqliteBusyRetry<T>(work: () => Promise<T>): Promise<T> {
+    let lastBusy: unknown;
+    for (
+      let attempt = 0;
+      attempt <= PERMISSION_SQLITE_BUSY_RETRIES;
+      attempt += 1
+    ) {
+      try {
+        return await work();
+      } catch (error) {
+        if (isSqliteBusy(error) && attempt < PERMISSION_SQLITE_BUSY_RETRIES) {
+          lastBusy = error;
+          // Backoff so the holding writer can commit before re-preflight.
+          // attempt 0 yields; later attempts sleep up to 16ms.
+          if (attempt === 0) await Promise.resolve();
+          else await Bun.sleep(Math.min(2 ** (attempt - 1), 16));
+          continue;
+        }
+        throw error;
+      }
+    }
+    throw lastBusy ?? new Error("permission sqlite busy retries exhausted");
+  }
+  /**
+   * Atomically observe a wall timestamp against the persisted high-water mark.
+   * Must run inside the mutation queue (and may nest inside an open IMMEDIATE
+   * transaction via `inTransaction: true`). Standalone updates open their own
+   * `BEGIN IMMEDIATE` with bounded busy retry so concurrent multi-store
+   * observations never lose the global max to last-writer/lower timestamps.
+   */
+  private advanceHighWaterUnlocked(
+    supplied: number,
+    options: { readonly inTransaction: boolean } = { inTransaction: false },
+  ): ResultAsync<number, PermissionError> {
+    if (!validPermissionTimestamp(supplied)) return errAsync(this.failure());
+    const runOnce = async (): Promise<number> => {
+      if (!options.inTransaction) {
+        await sql`BEGIN IMMEDIATE`.execute(this.db);
+      }
+      try {
+        const rows = await sql<{ value: string }>`
+          SELECT value AS value
+          FROM runtime_metadata
+          WHERE key = ${PERMISSION_WALL_CLOCK_HIGH_WATER_KEY}
+        `.execute(this.db);
+        let previous = this.#wallHighWater;
+        const row = rows.rows[0];
+        if (row) {
+          const parsed = this.parseHighWaterValue(row.value);
+          if (parsed.isErr()) throw new PermissionHydrationSentinel();
+          previous = Math.max(previous, parsed.value);
+        }
+        const effective = Math.max(previous, supplied);
+        // Max-preserving UPSERT: never let a lower timestamp overwrite a
+        // higher committed mark even if a writer raced past preflight.
+        if (effective > previous || row === undefined) {
+          await sql`
+            INSERT INTO runtime_metadata (key, value)
+            VALUES (
+              ${PERMISSION_WALL_CLOCK_HIGH_WATER_KEY},
+              ${String(effective)}
+            )
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            WHERE CAST(excluded.value AS INTEGER) >
+              CAST(runtime_metadata.value AS INTEGER)
+          `.execute(this.db);
+        }
+        if (!options.inTransaction) {
+          await sql`COMMIT`.execute(this.db);
+        }
+        this.#wallHighWater = effective;
+        return effective;
+      } catch (error) {
+        if (!options.inTransaction) {
+          await sql`ROLLBACK`.execute(this.db).catch(() => undefined);
+        }
+        throw error;
+      }
+    };
+    return ResultAsync.fromPromise(
+      options.inTransaction ? runOnce() : this.withSqliteBusyRetry(runOnce),
+      (error) => {
+        if (error instanceof PermissionHydrationSentinel) return this.failure();
+        return this.failure();
+      },
+    );
+  }
+  private observeWallNow(
+    now: number | undefined,
+    invalid: PermissionError,
+    options: { readonly inTransaction: boolean } = { inTransaction: false },
+  ): ResultAsync<number, PermissionError> {
+    const resolved = this.resolveNow(now, invalid);
+    if (resolved.isErr()) return errAsync(resolved.error);
+    return this.advanceHighWaterUnlocked(resolved.value, options);
+  }
+  private async insertGrantBatch(
+    copies: readonly DurablePermissionGrantRecord[],
+    ids: ReadonlySet<string>,
+    identities: ReadonlySet<string>,
+  ): Promise<readonly DurablePermissionGrantRecord[]> {
+    // BEGIN IMMEDIATE serializes writers so concurrent stores either observe
+    // each other's preflight result or hit a deterministic constraint/busy path.
+    await sql`BEGIN IMMEDIATE`.execute(this.db);
+    try {
+      const existing = await this.db
+        .selectFrom("permission_grants")
+        .selectAll()
+        .where((eb) =>
+          eb.or([
+            eb("grant_id", "in", [...ids]),
+            ...copies.map((record) =>
+              eb.and([
+                eb("project_identity", "=", record.identity.projectIdentity),
+                eb("agent_name", "=", record.identity.agentName),
+                eb(
+                  "registration_owner",
+                  "=",
+                  record.identity.registrationOwner,
+                ),
+                eb("tool_identity", "=", record.identity.toolIdentity),
+                eb(
+                  "registration_revision",
+                  "=",
+                  record.identity.registrationRevision,
+                ),
+                eb(
+                  "policy_fingerprint",
+                  "=",
+                  record.identity.policyFingerprint,
+                ),
+                eb(
+                  "request_schema_version",
+                  "=",
+                  record.identity.requestSchemaVersion,
+                ),
+                eb("request_digest", "=", record.identity.requestDigest),
+              ]),
+            ),
+          ]),
+        )
+        .execute();
+      for (const row of existing) {
+        const hydrated = rowToGrant(row);
+        if (hydrated.isErr()) throw new PermissionHydrationSentinel();
+        const existingKey = grantIdentityKey(hydrated.value.identity);
+        if (existingKey.isErr()) throw new PermissionHydrationSentinel();
+        if (
+          ids.has(hydrated.value.grantId) ||
+          identities.has(existingKey.value)
+        )
+          throw new PermissionConflictSentinel();
+      }
+      for (const record of copies)
+        await this.db
+          .insertInto("permission_grants")
+          .values({
+            grant_id: record.grantId,
+            project_identity: record.identity.projectIdentity,
+            agent_name: record.identity.agentName,
+            registration_owner: record.identity.registrationOwner,
+            tool_identity: record.identity.toolIdentity,
+            registration_revision: record.identity.registrationRevision,
+            policy_fingerprint: record.identity.policyFingerprint,
+            request_schema_version: record.identity.requestSchemaVersion,
+            request_digest: record.identity.requestDigest,
+            display_summary: record.display.summary,
+            display_details: record.display.details ?? null,
+            created_at: record.createdAt,
+            expires_at: record.expiresAt ?? null,
+            revoked_at: record.revokedAt ?? null,
+            state: record.state,
+          })
+          .execute();
+      await sql`COMMIT`.execute(this.db);
+      return Object.freeze(copies);
+    } catch (error) {
+      await sql`ROLLBACK`.execute(this.db).catch(() => undefined);
+      throw error;
+    }
+  }
+  private saveManyUnlocked(
+    records: readonly DurablePermissionGrantRecord[],
+  ): ResultAsync<readonly DurablePermissionGrantRecord[], PermissionError> {
+    if (!Array.isArray(records) || records.length === 0)
+      return errAsync({
+        type: "invalid_output",
+        message: "saveMany requires at least one record",
+      });
+
+    const copies: DurablePermissionGrantRecord[] = [];
+    for (const record of records) {
+      const checked = validateDurableGrantRecordResult(record);
+      if (checked.isErr()) return errAsync(checked.error);
+      copies.push(checked.value);
+    }
+    const ids = new Set(copies.map((record) => record.grantId));
+    const identityKeys: string[] = [];
+    for (const record of copies) {
+      const identity = grantIdentityKey(record.identity);
+      if (identity.isErr()) return errAsync(identity.error);
+      identityKeys.push(identity.value);
+    }
+    const identities = new Set(identityKeys);
+    if (ids.size !== copies.length || identities.size !== copies.length)
+      return errAsync({
+        type: "invalid_output",
+        message: "duplicate grant identity",
+      });
+
+    // Observe wall high-water before the grant write so a rolled-back conflict
+    // cannot undo an already-observed expiry boundary.
+    return this.observeWallNow(undefined, this.failure()).andThen(() =>
+      ResultAsync.fromPromise(
+        this.withSqliteBusyRetry(() =>
+          this.insertGrantBatch(copies, ids, identities),
+        ),
+        (error): PermissionError => {
+          if (
+            error instanceof PermissionConflictSentinel ||
+            isSqliteConstraintConflict(error)
+          ) {
+            return {
+              type: "invalid_output" as const,
+              message: "permission grant conflict",
+            };
+          }
+          // Hydration/busy-exhaustion/unrelated driver failures fail closed.
+          return this.failure();
+        },
+      ),
+    );
+  }
+  saveMany(
+    records: readonly DurablePermissionGrantRecord[],
+  ): ResultAsync<readonly DurablePermissionGrantRecord[], PermissionError> {
+    return this.enqueueMutation(() => this.saveManyUnlocked(records));
+  }
+  list(
+    project: string,
+    now?: number,
+  ): ResultAsync<readonly PermissionGrantSummary[], PermissionError> {
+    if (!validPermissionString(project))
+      return errAsync({
+        type: "invalid_output",
+        message: "invalid repository list input",
+      });
+    return this.enqueueMutation(() =>
+      this.observeWallNow(now, {
+        type: "invalid_output",
+        message: "invalid repository list input",
+      }).andThen((effectiveNow) => {
+        // Listing is not expiry-filtered; high-water still advances.
+        void effectiveNow;
+        return ResultAsync.fromPromise(
+          this.db
+            .selectFrom("permission_grants")
+            .selectAll()
+            .where("project_identity", "=", project)
+            .orderBy("grant_id", "asc")
+            .execute(),
+          () => this.failure(),
+        )
+          .andThen(hydrateGrantRows)
+          .andThen((records) => {
+            const summaries: PermissionGrantSummary[] = [];
+            for (const record of records) {
+              const summary = summarizeDurableGrant(record);
+              if (summary.isErr()) return err(summary.error);
+              summaries.push(summary.value);
+            }
+            return ok(Object.freeze(summaries));
+          })
+          .mapErr(() => this.failure());
+      }),
+    );
+  }
+  match(
+    identity: GrantIdentityEnvelope,
+    now?: number,
+  ): ResultAsync<PermissionGrantSummary | undefined, PermissionError> {
+    const checked = validateGrantIdentityResult(identity);
+    if (checked.isErr())
+      return errAsync({
+        type: "invalid_output",
+        message: "invalid grant identity envelope",
+      });
+    const value = checked.value;
+    return this.enqueueMutation(() =>
+      this.observeWallNow(now, {
+        type: "invalid_output",
+        message: "invalid grant identity envelope",
+      }).andThen((effectiveNow) =>
+        ResultAsync.fromPromise(
+          this.db
+            .selectFrom("permission_grants")
+            .selectAll()
+            .where("project_identity", "=", value.projectIdentity)
+            .where("agent_name", "=", value.agentName)
+            .where("registration_owner", "=", value.registrationOwner)
+            .where("tool_identity", "=", value.toolIdentity)
+            .where("registration_revision", "=", value.registrationRevision)
+            .where("policy_fingerprint", "=", value.policyFingerprint)
+            .where("request_schema_version", "=", value.requestSchemaVersion)
+            .where("request_digest", "=", value.requestDigest)
+            .orderBy("grant_id", "asc")
+            .execute(),
+          () => this.failure(),
+        )
+          .andThen(hydrateGrantRows)
+          .andThen((records) => {
+            // Defense in depth: even if a hostile collation made SQLite return
+            // a case/encoding-mismatched row, exact JS identity equality must
+            // hold on all eight envelope fields before authorizing.
+            for (const candidate of records) {
+              if (candidate.state !== "active") continue;
+              if (
+                candidate.expiresAt !== undefined &&
+                candidate.expiresAt <= effectiveNow
+              ) {
+                continue;
+              }
+              const equal = grantIdentitiesEqual(candidate.identity, value);
+              if (equal.isErr()) return err(equal.error);
+              if (!equal.value) continue;
+              return summarizeDurableGrant(candidate);
+            }
+            return ok(undefined);
+          })
+          .mapErr(() => this.failure()),
+      ),
+    );
+  }
+  private revokeUnlocked(
+    project: string,
+    grantId: string,
+  ): ResultAsync<void, PermissionError> {
+    if (!validPermissionString(project) || !validPermissionString(grantId))
+      return errAsync({
+        type: "invalid_output",
+        message: "invalid revoke input",
+      } satisfies PermissionError);
+    return ResultAsync.fromPromise(
+      this.db
+        .selectFrom("permission_grants")
+        .selectAll()
+        .where("project_identity", "=", project)
+        .where("grant_id", "=", grantId)
+        .executeTakeFirst(),
+      () => this.failure(),
+    ).andThen((row) => {
+      // Unknown/wrong-project never observes wall high-water — random revoke
+      // attempts must not let callers poison the mark.
+      if (!row)
+        return errAsync({
+          type: "unknown_grant",
+          message: "grant not found",
+        } satisfies PermissionError);
+      const hydrated = rowToGrant(row);
+      if (hydrated.isErr()) return errAsync(this.failure());
+      // Observe BEFORE the already-revoked early return so idempotent revokes
+      // still advance high-water and cannot resurrect later expiries after
+      // wall rollback / reopen under a lower clock.
+      return this.observeWallNow(undefined, this.failure(), {
+        inTransaction: false,
+      }).andThen((revokedAt) => {
+        if (hydrated.value.state === "revoked") return okAsync(undefined);
+        if (revokedAt < hydrated.value.createdAt)
+          return errAsync({
+            type: "invalid_output",
+            message: "invalid revoke timestamp",
+          } satisfies PermissionError);
+        return ResultAsync.fromPromise(
+          this.db
+            .updateTable("permission_grants")
+            .set({ state: "revoked", revoked_at: revokedAt })
+            .where("project_identity", "=", project)
+            .where("grant_id", "=", grantId)
+            .where("state", "=", "active")
+            .execute(),
+          () => this.failure(),
+        ).map(() => undefined);
+      });
+    });
+  }
+  revoke(project: string, grantId: string): ResultAsync<void, PermissionError> {
+    return this.enqueueMutation(() => this.revokeUnlocked(project, grantId));
+  }
+}
+
 // ---------------------------------------------------------------------------
 // SqliteRuntimeStoreTransaction
 // ---------------------------------------------------------------------------
@@ -1134,7 +1724,6 @@ class SqliteRuntimeStoreTransaction implements RuntimeStoreTransaction {
   readonly leases: ExecutionLeaseRepository;
   readonly snapshots: SessionSnapshotRepository;
   readonly journal: RuntimeJournalRepository;
-
   constructor(
     txDb: Kysely<WeaveDatabase>,
     clock: () => Date,
@@ -1162,6 +1751,13 @@ export interface SqliteRuntimeStoreOptions {
   readonly strictJournal?: boolean;
   /** Clock source for lease expiry checks. Default: `() => new Date()`. */
   readonly clock?: () => Date;
+  /**
+   * Test-only seam awaited after DB open/migrations/salt preparation but
+   * before the store publishes initialized state. Lets tests deterministically
+   * race `close()` against lazy initialization.
+   * @internal
+   */
+  readonly beforeInitPublish?: () => Promise<void>;
 }
 
 /**
@@ -1174,8 +1770,10 @@ export interface SqliteRuntimeStoreOptions {
 export class SqliteRuntimeStore implements RuntimeStore {
   private db: Kysely<WeaveDatabase> | null = null;
   private initialized = false;
+  private closed = false;
   private initializingPromise: Promise<Result<void, RuntimeStoreError>> | null =
     null;
+  private closingResult: ResultAsync<void, RuntimeStoreError> | null = null;
   private readonly clock: () => Date;
   private _projectSalt: string | null = null;
 
@@ -1183,6 +1781,7 @@ export class SqliteRuntimeStore implements RuntimeStore {
   readonly leases: ExecutionLeaseRepository;
   readonly snapshots: SessionSnapshotRepository;
   readonly journal: RuntimeJournalRepository;
+  #permissions: PermissionApprovalRepository;
 
   /** The per-project CSPRNG salt stored in `runtime_metadata`. */
   get projectSalt(): string {
@@ -1202,14 +1801,31 @@ export class SqliteRuntimeStore implements RuntimeStore {
     this.leases = new LazyExecutionLeaseRepository(this);
     this.snapshots = new LazySessionSnapshotRepository(this);
     this.journal = new LazyRuntimeJournalRepository(this);
+    this.#permissions = new LazyPermissionApprovalRepository(this, () =>
+      this.clock().getTime(),
+    );
+    registerPermissionApprovalRepository(this, this.#permissions);
+  }
+
+  /**
+   * Whether `close()` has been requested. Lazy repositories consult this so
+   * they never cache or reuse a handle after teardown.
+   * @internal
+   */
+  isStoreClosed(): boolean {
+    return this.closed;
   }
 
   /**
    * Ensure the runtime directory and DB are created and migrations applied.
    * Idempotent — safe to call multiple times. Concurrent callers share the
    * same in-flight initialization promise so initialization only runs once.
+   * Closed stores never reopen; in-flight init that loses a close race returns
+   * a typed closed/initialization failure and does not publish state.
    */
   ensureInitialized(): ResultAsync<Kysely<WeaveDatabase>, RuntimeStoreError> {
+    if (this.closed)
+      return errAsync(initializationError("Runtime store is closed"));
     if (this.initialized && this.db) {
       return okAsync(this.db);
     }
@@ -1222,18 +1838,50 @@ export class SqliteRuntimeStore implements RuntimeStore {
       this.initializingPromise.then(
         (result): Result<Kysely<WeaveDatabase>, RuntimeStoreError> => {
           if (result.isErr()) return err(result.error);
-          // After successful initialization, db is guaranteed to be set
-          return ok(this.db as Kysely<WeaveDatabase>);
+          // Close may have won after init published; never hand out a torn-down handle.
+          if (this.closed || !this.db) {
+            return err(initializationError("Runtime store is closed"));
+          }
+          return ok(this.db);
         },
       ),
     );
   }
 
   /**
-   * Internal initialization logic. On any failure, closes the DB handle
-   * (if open) and resets all state fields before returning the error.
+   * Tear down a local (unpublished or published) Kysely handle and clear store
+   * publication state. Always clears `initializingPromise` so recoverable
+   * failures can retry when the store was not closed.
+   */
+  private async abandonInitialize(
+    db: Kysely<WeaveDatabase> | null,
+    error: RuntimeStoreError,
+  ): Promise<Result<void, RuntimeStoreError>> {
+    if (db !== null) {
+      await ResultAsync.fromPromise(db.destroy(), () => undefined).match(
+        () => undefined,
+        () => undefined,
+      );
+      if (this.db === db) this.db = null;
+    }
+    this.initialized = false;
+    this._projectSalt = null;
+    this.initializingPromise = null;
+    return err(error);
+  }
+
+  /**
+   * Internal initialization logic. Keeps the opened Kysely handle local until
+   * the final synchronous publish. If `closed` becomes true at any await
+   * boundary, opened resources are destroyed and waiters receive a typed
+   * closed failure — `db` / `initialized` / salt are never published.
    */
   private async _doInitialize(): Promise<Result<void, RuntimeStoreError>> {
+    if (this.closed) {
+      this.initializingPromise = null;
+      return err(initializationError("Runtime store is closed"));
+    }
+
     const dir = dirname(this.options.dbPath);
 
     // Create runtime directory using node:fs/promises
@@ -1249,6 +1897,10 @@ export class SqliteRuntimeStore implements RuntimeStore {
       this.initializingPromise = null;
       return err(mkdirResult.error);
     }
+    if (this.closed) {
+      this.initializingPromise = null;
+      return err(initializationError("Runtime store is closed"));
+    }
 
     // Apply restrictive permissions to the directory (best-effort)
     await fs.chmod(dir, 0o700).catch((cause) => {
@@ -1257,53 +1909,54 @@ export class SqliteRuntimeStore implements RuntimeStore {
         "Failed to tighten runtime directory permissions",
       );
     });
+    if (this.closed) {
+      this.initializingPromise = null;
+      return err(initializationError("Runtime store is closed"));
+    }
 
-    // Create Kysely instance with BunSqliteDialect
+    // Keep the handle local until publish so close() cannot observe a half-init.
     const dialect = new BunSqliteDialect(this.options.dbPath);
     const db = new Kysely<WeaveDatabase>({ dialect });
-    this.db = db;
 
     // Run migrations using the raw bun:sqlite Database
     const rawDb = dialect.getDatabase();
     const migrationResult = runMigrations(rawDb);
     if (migrationResult.isErr()) {
-      await db.destroy().catch(() => undefined);
-      this.db = null;
-      this.initialized = false;
-      this._projectSalt = null;
-      this.initializingPromise = null;
-      return err(migrationResult.error);
+      return this.abandonInitialize(db, migrationResult.error);
+    }
+    if (this.closed) {
+      return this.abandonInitialize(
+        db,
+        initializationError("Runtime store is closed"),
+      );
     }
 
-    // Initialize or read the project salt from runtime_metadata
-    try {
-      const saltRow = rawDb
-        .prepare(
-          "SELECT value FROM runtime_metadata WHERE key = 'project_salt'",
-        )
-        .get() as { value: string } | null;
+    // Initialize or read the project salt from runtime_metadata (local until publish)
+    const saltResult = Result.fromThrowable(
+      () => {
+        const saltRow = rawDb
+          .prepare(
+            "SELECT value FROM runtime_metadata WHERE key = 'project_salt'",
+          )
+          .get() as { value: string } | null;
 
-      if (saltRow) {
-        this._projectSalt = saltRow.value;
-      } else {
+        if (saltRow) return saltRow.value;
+
         const newSalt = createProjectSalt();
         rawDb
           .prepare(
             "INSERT INTO runtime_metadata (key, value) VALUES ('project_salt', ?)",
           )
           .run(newSalt);
-        this._projectSalt = newSalt;
-      }
-    } catch (cause) {
-      await db.destroy().catch(() => undefined);
-      this.db = null;
-      this.initialized = false;
-      this._projectSalt = null;
-      this.initializingPromise = null;
-      return err(
+        return newSalt;
+      },
+      (cause) =>
         initializationError("Failed to initialize project salt", cause),
-      );
+    )();
+    if (saltResult.isErr()) {
+      return this.abandonInitialize(db, saltResult.error);
     }
+    const projectSalt = saltResult.value;
 
     // Apply restrictive permissions to the DB file (best-effort)
     await fs.chmod(this.options.dbPath, 0o600).catch((cause) => {
@@ -1325,6 +1978,27 @@ export class SqliteRuntimeStore implements RuntimeStore {
       );
     });
 
+    // Deterministic test seam: close() can win before publication.
+    if (this.options.beforeInitPublish !== undefined) {
+      const gate = await ResultAsync.fromPromise(
+        Promise.resolve(this.options.beforeInitPublish()),
+        (cause) => initializationError("Initialization interrupted", cause),
+      );
+      if (gate.isErr()) {
+        return this.abandonInitialize(db, gate.error);
+      }
+    }
+
+    // Final closed check + publish are synchronous so close cannot interleave.
+    if (this.closed) {
+      return this.abandonInitialize(
+        db,
+        initializationError("Runtime store is closed"),
+      );
+    }
+
+    this.db = db;
+    this._projectSalt = projectSalt;
     this.initialized = true;
     this.initializingPromise = null;
     log.info(
@@ -1365,17 +2039,44 @@ export class SqliteRuntimeStore implements RuntimeStore {
     });
   }
 
+  /**
+   * Close the store and release resources.
+   *
+   * Sets `closed` first, awaits any in-flight lazy initialization, then
+   * destroys the published DB exactly once and clears all state. Concurrent
+   * and repeated close calls share one settlement. After close, repository
+   * operations return typed failure and initialization does not resume.
+   */
   close(): ResultAsync<void, RuntimeStoreError> {
-    if (!this.db) {
-      return okAsync(undefined);
-    }
-    return ResultAsync.fromPromise(this.db.destroy(), (cause) =>
-      queryError("Failed to close Runtime Store", cause),
-    ).map(() => {
+    this.closed = true;
+    if (this.closingResult) return this.closingResult;
+
+    const waitInit =
+      this.initializingPromise === null
+        ? okAsync(undefined)
+        : ResultAsync.fromPromise(
+            this.initializingPromise.then(
+              () => undefined,
+              () => undefined,
+            ),
+            (cause) => queryError("Failed to close Runtime Store", cause),
+          );
+
+    this.closingResult = waitInit.andThen(() => {
+      const db = this.db;
       this.db = null;
       this.initialized = false;
-      return undefined;
+      this._projectSalt = null;
+      this.initializingPromise = null;
+
+      if (!db) return okAsync(undefined);
+
+      return ResultAsync.fromPromise(db.destroy(), (cause) =>
+        queryError("Failed to close Runtime Store", cause),
+      ).map(() => undefined);
     });
+
+    return this.closingResult;
   }
 }
 
@@ -1604,6 +2305,123 @@ class LazyRuntimeJournalRepository implements RuntimeJournalRepository {
     filter?: JournalQueryFilter,
   ): ResultAsync<readonly RuntimeJournalEntry[], RuntimeStoreError> {
     return this.repo().andThen((r) => r.query(filter));
+  }
+}
+
+class LazyPermissionApprovalRepository implements PermissionApprovalRepository {
+  /** One cached repo so the per-instance mutation queue is shared across calls. */
+  private cached: SqlitePermissionApprovalRepository | null = null;
+  /**
+   * Shared in-flight initialization. Cleared when the attempt settles so a
+   * failed init does not stick; only a successful repository is cached.
+   * Identity-checked on clear so an older failure cannot drop a newer attempt.
+   */
+  private resolving: Promise<
+    Result<SqlitePermissionApprovalRepository, PermissionError>
+  > | null = null;
+
+  constructor(
+    private readonly store: SqliteRuntimeStore,
+    private readonly clock: Clock,
+  ) {}
+  private repo(): ResultAsync<
+    SqlitePermissionApprovalRepository,
+    PermissionError
+  > {
+    // Never reuse a handle after close — drop any cache immediately.
+    if (this.store.isStoreClosed()) {
+      this.cached = null;
+      this.resolving = null;
+      return errAsync({ type: "repository_failure" as const });
+    }
+
+    if (this.cached) return okAsync(this.cached);
+
+    if (!this.resolving) {
+      let attempt!: Promise<
+        Result<SqlitePermissionApprovalRepository, PermissionError>
+      >;
+      attempt = (async (): Promise<
+        Result<SqlitePermissionApprovalRepository, PermissionError>
+      > => {
+        try {
+          const init = await this.store.ensureInitialized();
+          if (init.isErr()) {
+            return err({ type: "repository_failure" as const });
+          }
+          // Close may win between init settlement and cache publication.
+          if (this.store.isStoreClosed()) {
+            this.cached = null;
+            return err({ type: "repository_failure" as const });
+          }
+          return Result.fromThrowable(
+            () => {
+              if (this.store.isStoreClosed()) {
+                this.cached = null;
+                throw new Error("closed");
+              }
+              this.cached ??= new SqlitePermissionApprovalRepository(
+                init.value,
+                this.clock,
+              );
+              return this.cached;
+            },
+            (): PermissionError => ({ type: "repository_failure" }),
+          )();
+        } catch {
+          return err({ type: "repository_failure" as const });
+        } finally {
+          // Clear before waiters observe settlement so the next call can retry
+          // after failure. Only this attempt may clear its own slot.
+          if (this.resolving === attempt) this.resolving = null;
+        }
+      })();
+      this.resolving = attempt;
+    }
+
+    return ResultAsync.fromPromise(
+      this.resolving,
+      (): PermissionError => ({ type: "repository_failure" }),
+    ).andThen((result) => {
+      if (this.store.isStoreClosed()) {
+        this.cached = null;
+        return err({ type: "repository_failure" as const });
+      }
+      return result;
+    });
+  }
+  /**
+   * Final rejection-safe boundary: sync throws from clock/Date conversion or
+   * unexpected repository rejections become typed `repository_failure` and the
+   * returned ResultAsync never rejects.
+   */
+  private invoke<T>(
+    run: () => ResultAsync<T, PermissionError>,
+  ): ResultAsync<T, PermissionError> {
+    return ResultAsync.fromPromise(
+      (async (): Promise<Result<T, PermissionError>> => {
+        const started = Result.fromThrowable(
+          run,
+          (): PermissionError => ({ type: "repository_failure" }),
+        )();
+        if (started.isErr()) return err(started.error);
+        // await ResultAsync → Result; keeps this boundary rejection-safe.
+        return await started.value;
+      })(),
+      (): PermissionError => ({ type: "repository_failure" }),
+    ).andThen((result) => result);
+  }
+  saveMany(r: readonly DurablePermissionGrantRecord[]) {
+    return this.invoke(() => this.repo().andThen((x) => x.saveMany(r)));
+  }
+  list(p: string, n?: number) {
+    return this.invoke(() => this.repo().andThen((x) => x.list(p, n)));
+  }
+  match(i: GrantIdentityEnvelope, n?: number) {
+    return this.invoke(() => this.repo().andThen((x) => x.match(i, n)));
+  }
+  revoke(p: string, id: string) {
+    return this.invoke(() => this.repo().andThen((x) => x.revoke(p, id)));
   }
 }
 

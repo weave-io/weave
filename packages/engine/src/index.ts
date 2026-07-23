@@ -62,9 +62,6 @@ export type {
   ApproveArtifactInput,
   ApproveArtifactOutput,
   ApproveArtifactResult,
-  BeforeToolInput,
-  BeforeToolOutput,
-  BeforeToolResult,
   CompleteExecutionEffect,
   CompleteStepInput,
   CompleteStepOutput,
@@ -96,6 +93,8 @@ export type {
   ReconcileExecutionOutput,
   ReconcileExecutionResult,
   ReconciliationAuthorizationSource,
+  RegisteredBeforeToolInput,
+  RegisteredBeforeToolResult,
   ResumeExecutionInput,
   ResumeExecutionOutput,
   ResumeExecutionResult,
@@ -103,6 +102,9 @@ export type {
   StartExecutionInput,
   StartExecutionOutput,
   StartExecutionResult,
+  StaticToolPolicyPreviewInput,
+  StaticToolPolicyPreviewOutput,
+  StaticToolPolicyPreviewResult,
   StepCompletionSignal,
   WorkflowExecutionContext,
 } from "./execution-lifecycle.js";
@@ -121,6 +123,7 @@ export {
   lifecyclePolicyDecisionError,
   lifecycleValidationError,
   observeSession,
+  previewToolPolicy,
   RECONCILIATION_AUTHORIZATION_SOURCES,
   RECONCILIATION_REASONS,
   reconcileExecution,
@@ -147,6 +150,64 @@ export {
   DEFAULT_FALLBACK_MODEL,
   resolveAdapterModelIntent,
 } from "./model-resolution.js";
+export type {
+  PermissionCoverageContext,
+  PermissionCoverageDiagnosticsPolicy,
+  PermissionCoverageError,
+  PermissionCoverageIncompleteReason,
+  PermissionCoverageProof,
+} from "./permissions/coverage.js";
+export { verifyPermissionCoverage } from "./permissions/coverage.js";
+export {
+  PermissionRegistryBuilder,
+  PermissionRegistryGeneration,
+} from "./permissions/registry.js";
+export type { PermissionServiceActivationInput } from "./permissions/service.js";
+export {
+  createPermissionService,
+  PermissionService,
+} from "./permissions/service.js";
+export type { PermissionRegistryReplacement } from "./permissions/session.js";
+export { PermissionSession } from "./permissions/session.js";
+export type {
+  ApprovalResponse,
+  DeniedGrantablePermissionRequestView,
+  DeniedPermissionRequestView,
+  DeniedUnresolvedPermissionRequestView,
+  GrantablePermissionRequest,
+  GrantablePermissionRequestView,
+  GrantScope,
+  OpaqueId,
+  PendingPermissionDecision,
+  PendingPermissionEvaluation,
+  PendingPermissionReason,
+  PendingPermissionRequestView,
+  PendingPermissionSource,
+  PermissionApprovalChoice,
+  PermissionApprovalResponse,
+  PermissionAuditEvent,
+  PermissionCallInput,
+  PermissionCapability,
+  PermissionChallengeConsumeInput,
+  PermissionDecision,
+  PermissionDisplay,
+  PermissionError,
+  PermissionExecutionSnapshot,
+  PermissionGrantSummary,
+  PermissionOutcome,
+  PermissionPermitConsumeInput,
+  PermissionPolicy,
+  PermissionRegistration,
+  PermissionRegistrationContext,
+  PermissionRegistrationMetadata,
+  PermissionRegistryGenerationMetadata,
+  PermissionRegistryInventory,
+  PermissionRequest,
+  PermissionResolver,
+  PermissionTarget,
+  UnresolvedPermissionRequest,
+  UnresolvedPermissionRequestView,
+} from "./permissions/types.js";
 export type {
   PlanStateError,
   PlanStateProvider,

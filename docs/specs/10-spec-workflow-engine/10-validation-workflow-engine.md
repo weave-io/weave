@@ -172,7 +172,7 @@ All 5 proof files read successfully. Each contains: task summary, evidence summa
 | `neverthrow` for all expected failure paths | All lifecycle functions return `ResultAsync<T, LifecycleError>`; `errAsync()` used throughout; no `throw` for expected failures | ✅ PASS |
 | Bun-only tooling | No `node:fs`, `child_process`, `@types/node`, `ts-node`; `node:path`/`node:os` not used in changed files | ✅ PASS |
 | No `console.*` | Zero `console.*` calls in `execution-lifecycle.ts`, `run-agent-effects.ts`, or test files | ✅ PASS |
-| Harness-neutral engine code | No OpenCode/Pi/Claude Code session mutations; `toolName` in `BeforeToolInput` is audit-only (engine never uses it for policy); no harness-owned filesystem scans | ✅ PASS |
+| Harness-neutral engine code | No OpenCode/Pi/Claude Code session mutations; `previewToolPolicy` owns static capability evaluation and registered `beforeTool` delegates exact calls to the Spec 34 session; no harness-owned filesystem scans | ✅ PASS |
 | Mocked adapters in tests | `createInMemoryRuntimeStore()` used in all unit and integration tests; `MockAdapter` used in integration test; no real harness started | ✅ PASS |
 | Early-return style | Guard clauses at top of all lifecycle functions; happy path unindented | ✅ PASS |
 | No nested ternaries / nested try/catch | No `try/catch` in `execution-lifecycle.ts`; no nested ternaries found | ✅ PASS |
@@ -264,7 +264,7 @@ bun run build
 
 3. **Legacy path preservation:** `dispatchStep` and `completeStep` both preserve a legacy path when `context` is omitted. This is intentional backward compatibility. The legacy path is tested ("legacy path preserved when no context provided"). No concern.
 
-4. **`toolName` in `BeforeToolInput`:** The field `toolName` appears in `BeforeToolInput` for audit/logging purposes. The implementation explicitly documents that the engine does NOT use this field for policy decisions — it is opaque. This is correct boundary behavior (adapters own concrete tool names; the engine uses abstract `toolCapability`).
+4. **Tool policy split:** `StaticToolPolicyPreviewInput` carries `toolCapability` and `effectiveToolPolicy` for non-authoritative `previewToolPolicy` evaluation. Registered `beforeTool` carries no static policy fields; it sends top-level `agentName` and `toolName` to the Spec 34 permission session after exact-shape validation.
 
 ### No blocking issues found.
 
