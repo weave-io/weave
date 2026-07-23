@@ -249,6 +249,8 @@ Insertion and rollup update are atomic. Replaying the same ID with identical nor
 
 Adapters submit normalized observations through an engine-owned repository. They do not write rollup tables directly. Raw message text, provider payloads, prompts, completions, and tool results are forbidden.
 
+The portable implementation lives in [`packages/engine/src/runtime/usage.ts`](../../../packages/engine/src/runtime/usage.ts) and the Runtime Store repositories. Memory and SQLite stores apply observation insertion and rollup updates in one transaction. [`RuntimeRetentionService`](../../../packages/engine/src/runtime/retention.ts) serializes age-first/count-second pruning at activation and safe write/time boundaries. [`RotatingRuntimeLogSink`](../../../packages/engine/src/runtime/log-sink.ts) provides the bounded engine-scoped NDJSON sink through Bun-only, no-follow filesystem operations.
+
 ## Open Questions
 
 No open questions at this time.

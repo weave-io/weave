@@ -578,6 +578,53 @@ describe("validate — settings block", () => {
     const config = result._unsafeUnwrap();
     expect(config.settings.log_level).toBe("INFO");
     expect(config.settings.runtime.journal.strict).toBe(false);
+    expect(config.settings.runtime.journal.retention_days).toBe(30);
+    expect(config.settings.runtime.journal.max_entries).toBe(10_000);
+    expect(config.settings.runtime.usage.detail_retention_days).toBe(30);
+    expect(config.settings.runtime.usage.max_observations).toBe(100_000);
+    expect(config.settings.runtime.log.max_segment_bytes).toBe(5_242_880);
+    expect(config.settings.runtime.log.max_segments).toBe(3);
+  });
+
+  it("settings runtime retention values are accepted", () => {
+    const src = `settings {
+  runtime {
+    journal {
+      strict false
+      retention_days 14
+      max_entries 500
+    }
+    usage {
+      detail_retention_days 7
+      max_observations 1000
+    }
+    log {
+      max_segment_bytes 65536
+      max_segments 2
+    }
+  }
+}`;
+    const result = validateSource(src);
+    expect(result.isOk()).toBe(true);
+    const runtime = result._unsafeUnwrap().settings.runtime;
+    expect(runtime.journal.retention_days).toBe(14);
+    expect(runtime.journal.max_entries).toBe(500);
+    expect(runtime.usage.detail_retention_days).toBe(7);
+    expect(runtime.usage.max_observations).toBe(1000);
+    expect(runtime.log.max_segment_bytes).toBe(65_536);
+    expect(runtime.log.max_segments).toBe(2);
+  });
+
+  it("settings runtime retention out of range → err", () => {
+    const src = `settings {
+  runtime {
+    journal {
+      retention_days 0
+    }
+  }
+}`;
+    const result = validateSource(src);
+    expect(result.isErr()).toBe(true);
   });
 
   it("invalid log_level inside settings block → err", () => {

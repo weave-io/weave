@@ -23,10 +23,17 @@ import type {
   ExecutionLeaseId,
   JournalQueryFilter,
   OwnerId,
+  RetentionPruneStats,
   RuntimeJournalEntry,
   RuntimeJournalEntryId,
   SessionSnapshot,
   SessionSnapshotId,
+  UsageObservation,
+  UsageObservationId,
+  UsageObservationQueryFilter,
+  UsageObservationRecordResult,
+  UsageRollup,
+  UsageRollupQueryFilter,
   WorkflowInstance,
   WorkflowInstanceId,
   WorkflowInstanceStatus,
@@ -365,6 +372,62 @@ export interface RuntimeJournalRepository {
   query(
     filter?: JournalQueryFilter,
   ): ResultAsync<readonly RuntimeJournalEntry[], RuntimeStoreError>;
+
+  /**
+   * Prune journal entries by age first, then oldest above count.
+   *
+   * `olderThan` is an exclusive ISO 8601 upper bound for age deletion.
+   * `maxCount` retains the newest N entries after age pruning.
+   */
+  prune(options: {
+    readonly olderThan?: string;
+    readonly maxCount?: number;
+  }): ResultAsync<RetentionPruneStats, RuntimeStoreError>;
+}
+
+// ---------------------------------------------------------------------------
+// Usage repository
+// ---------------------------------------------------------------------------
+
+/**
+ * Repository for idempotent usage observations and durable rollups.
+ *
+ * Adapters submit normalized observations; they never write rollup tables
+ * directly. Insert + rollup update are atomic. Detail pruning never subtracts
+ * durable rollups.
+ */
+export interface UsageRepository {
+  /**
+   * Record one detailed observation and update durable rollups atomically.
+   *
+   * - Same ID + same normalized values → `{ kind: "noop" }`
+   * - Same ID + different values → `invariant_violation`
+   * - New ID → insert observation and add present fields to the matching rollup
+   */
+  recordObservation(
+    observation: UsageObservation,
+  ): ResultAsync<UsageObservationRecordResult, RuntimeStoreError>;
+
+  findObservationById(
+    id: UsageObservationId,
+  ): ResultAsync<UsageObservation | null, RuntimeStoreError>;
+
+  listObservations(
+    filter?: UsageObservationQueryFilter,
+  ): ResultAsync<readonly UsageObservation[], RuntimeStoreError>;
+
+  listRollups(
+    filter?: UsageRollupQueryFilter,
+  ): ResultAsync<readonly UsageRollup[], RuntimeStoreError>;
+
+  /**
+   * Prune detailed observations by age first, then oldest above count.
+   * Never mutates durable rollups.
+   */
+  pruneDetails(options: {
+    readonly olderThan?: string;
+    readonly maxCount?: number;
+  }): ResultAsync<RetentionPruneStats, RuntimeStoreError>;
 }
 
 // ---------------------------------------------------------------------------
@@ -391,6 +454,8 @@ export interface RuntimeStoreTransaction {
   readonly snapshots: SessionSnapshotRepository;
   /** RuntimeJournal repository within this transaction. */
   readonly journal: RuntimeJournalRepository;
+  /** Usage repository within this transaction. */
+  readonly usage: UsageRepository;
 }
 
 /**
@@ -423,6 +488,8 @@ export interface RuntimeStore {
   readonly snapshots: SessionSnapshotRepository;
   /** RuntimeJournal repository. */
   readonly journal: RuntimeJournalRepository;
+  /** Usage observation/rollup repository. */
+  readonly usage: UsageRepository;
   /**
    * Execute a unit-of-work transaction.
    *

@@ -41,6 +41,7 @@ import type {
   SessionSnapshotRepository,
   TransactionCallback,
   UpdateWorkflowInstanceInput,
+  UsageRepository,
   WorkflowInstanceRepository,
 } from "../runtime/store.js";
 import type {
@@ -595,16 +596,63 @@ class StubRuntimeJournalRepository implements RuntimeJournalRepository {
   injectFailure(): void {
     this.failNextAppend = true;
   }
+
+  prune(_options: {
+    readonly olderThan?: string;
+    readonly maxCount?: number;
+  }): ResultAsync<
+    { removedByAge: number; removedByCount: number },
+    RuntimeStoreError
+  > {
+    return okAsync({ removedByAge: 0, removedByCount: 0 });
+  }
 }
 
 /**
  * Minimal in-memory RuntimeStore stub for contract testing.
  */
+
+class StubUsageRepository implements UsageRepository {
+  recordObservation(
+    observation: import("../runtime/types.js").UsageObservation,
+  ): ResultAsync<
+    import("../runtime/types.js").UsageObservationRecordResult,
+    RuntimeStoreError
+  > {
+    return okAsync({ kind: "inserted", observation });
+  }
+  findObservationById(): ResultAsync<
+    import("../runtime/types.js").UsageObservation | null,
+    RuntimeStoreError
+  > {
+    return okAsync(null);
+  }
+  listObservations(): ResultAsync<
+    readonly import("../runtime/types.js").UsageObservation[],
+    RuntimeStoreError
+  > {
+    return okAsync([]);
+  }
+  listRollups(): ResultAsync<
+    readonly import("../runtime/types.js").UsageRollup[],
+    RuntimeStoreError
+  > {
+    return okAsync([]);
+  }
+  pruneDetails(): ResultAsync<
+    import("../runtime/types.js").RetentionPruneStats,
+    RuntimeStoreError
+  > {
+    return okAsync({ removedByAge: 0, removedByCount: 0 });
+  }
+}
+
 class StubRuntimeStore implements RuntimeStore {
   readonly instances = new StubWorkflowInstanceRepository();
   readonly leases = new StubExecutionLeaseRepository();
   readonly snapshots = new StubSessionSnapshotRepository();
   readonly journal = new StubRuntimeJournalRepository();
+  readonly usage = new StubUsageRepository();
 
   transaction<T>(
     callback: TransactionCallback<T>,
@@ -614,6 +662,7 @@ class StubRuntimeStore implements RuntimeStore {
       leases: this.leases,
       snapshots: this.snapshots,
       journal: this.journal,
+      usage: this.usage,
     };
     return callback(tx);
   }
@@ -1265,6 +1314,7 @@ describe("RuntimeStore transaction API", () => {
       expect(tx.leases).toBeDefined();
       expect(tx.snapshots).toBeDefined();
       expect(tx.journal).toBeDefined();
+      expect(tx.usage).toBeDefined();
       return okAsync("ok" as const);
     });
     expect(result.isOk()).toBe(true);
@@ -1745,9 +1795,11 @@ describe("ArtifactRef monotonic revision", () => {
       })
     )._unsafeUnwrap();
 
-    const planArt = updated.artifacts.find((a) => a.name === "plan")!;
-    const outputArt = updated.artifacts.find((a) => a.name === "output")!;
-    expect(planArt.id as string).not.toBe(outputArt.id as string);
+    const planArt = updated.artifacts.find((a) => a.name === "plan");
+    const outputArt = updated.artifacts.find((a) => a.name === "output");
+    expect(planArt).toBeDefined();
+    expect(outputArt).toBeDefined();
+    expect(planArt?.id as string).not.toBe(outputArt?.id as string);
   });
 });
 

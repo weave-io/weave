@@ -107,11 +107,18 @@ function syntheticMixedContract(): AdapterCapabilityContract {
   };
 }
 
+function okProbesForAll() {
+  return ALL_CAPABILITY_IDS.map((id) => ({
+    capabilityId: id,
+    probeStatus: "ok" as const,
+  }));
+}
+
 function buildPassingReport() {
   const input: SafeAdapterInitInput = {
     harness: "synthetic-adapter",
     capabilityContract: syntheticPassingContract(),
-    probeResults: [],
+    probeResults: okProbesForAll(),
   };
   return buildAdapterHealthReport(input);
 }
@@ -120,7 +127,7 @@ function buildMixedReport() {
   const input: SafeAdapterInitInput = {
     harness: "synthetic-adapter",
     capabilityContract: syntheticMixedContract(),
-    probeResults: [],
+    probeResults: okProbesForAll(),
   };
   return buildAdapterHealthReport(input);
 }
@@ -493,7 +500,7 @@ describe("token-usage-reporting applicability in renderer output", () => {
     const input: SafeAdapterInitInput = {
       harness: "synthetic-adapter",
       capabilityContract: contract,
-      probeResults: [],
+      probeResults: okProbesForAll(),
     };
 
     const report = buildAdapterHealthReport(input);

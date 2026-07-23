@@ -6,6 +6,9 @@ export type {
   CapabilityId,
   CapabilityProbeResult,
   CapabilityReadiness,
+  EffectiveCapabilityEntry,
+  EffectiveCapabilityEvaluation,
+  EffectiveProbeResolution,
   HumanReadinessRow,
   ProfileEvaluationResult,
   ReadinessOutcome,
@@ -23,6 +26,8 @@ export {
   CapabilityIdSchema,
   CapabilityReadinessSchema,
   evaluateCoreReadinessProfile,
+  evaluateEffectiveCapabilities,
+  lowerReadinessByProbe,
   OPTIONAL_CAPABILITIES,
   REQUIRED_CAPABILITIES,
   toJson,
@@ -257,20 +262,24 @@ export type {
   RuntimeStoreConflictError,
   RuntimeStoreError,
   RuntimeStoreInitializationError,
+  RuntimeStoreInvariantViolationError,
   RuntimeStoreJournalWriteError,
   RuntimeStoreMigrationVersionError,
   RuntimeStoreNotFoundError,
   RuntimeStoreQueryError,
+  RuntimeStoreRetentionError,
   RuntimeStoreSerializationError,
   RuntimeStoreValidationError,
 } from "./runtime/errors.js";
 export {
   conflictError,
   initializationError,
+  invariantViolationError,
   journalWriteError,
   migrationVersionError,
   notFoundError,
   queryError,
+  retentionError,
   serializationError,
   validationError,
 } from "./runtime/errors.js";
@@ -281,6 +290,24 @@ export {
 export type { WriteJournalEntryInput } from "./runtime/journal-writer.js";
 export { RuntimeJournalWriter } from "./runtime/journal-writer.js";
 export type {
+  FileIdentity,
+  RuntimeLogDirectoryHandle,
+  RuntimeLogFileHandle,
+  RuntimeLogFileSystem,
+  RuntimeLogSinkError,
+  RuntimeLogSinkOptions,
+} from "./runtime/log-sink.js";
+export {
+  asPinoDestination,
+  BunRuntimeLogFileSystem,
+  createRotatingRuntimeLogSink,
+  identitiesMatch,
+  MemoryRuntimeLogFileSystem,
+  RotatingRuntimeLogSink,
+  validateLogSettings,
+  wouldRotate,
+} from "./runtime/log-sink.js";
+export type {
   InMemoryRuntimeStoreFailureConfig,
   InMemoryRuntimeStoreOptions,
 } from "./runtime/memory-store.js";
@@ -288,6 +315,16 @@ export {
   createInMemoryRuntimeStore,
   InMemoryRuntimeStore,
 } from "./runtime/memory-store.js";
+export type {
+  RetentionRunResult,
+  RetentionScheduler,
+  RuntimeRetentionServiceOptions,
+} from "./runtime/retention.js";
+export {
+  DEFAULT_RETENTION_INTERVAL_MS,
+  DEFAULT_RETENTION_WRITE_THRESHOLD,
+  RuntimeRetentionService,
+} from "./runtime/retention.js";
 export {
   isDeniedKey,
   sanitizeJournalData,
@@ -314,6 +351,7 @@ export type {
   SessionSnapshotRepository,
   TransactionCallback,
   UpdateWorkflowInstanceInput,
+  UsageRepository,
   WorkflowInstanceRepository,
 } from "./runtime/store.js";
 // Note: ArtifactApprovalState, ArtifactId, ArtifactIntegrityMetadata are
@@ -338,11 +376,20 @@ export type {
   JsonPrimitive,
   JsonValue,
   OwnerId,
+  RetentionPruneStats,
   RuntimeJournalEntry,
   RuntimeJournalEntryId,
   SessionSnapshot,
   SessionSnapshotId,
   StepAttemptRecord,
+  UsageObservation,
+  UsageObservationId,
+  UsageObservationInput,
+  UsageObservationQueryFilter,
+  UsageObservationRecordResult,
+  UsageRollup,
+  UsageRollupQueryFilter,
+  UsageTokenCounters,
   WorkflowInstance,
   WorkflowInstanceId,
   WorkflowInstanceStatus,
@@ -355,10 +402,22 @@ export {
   createOwnerId,
   createRuntimeJournalEntryId,
   createSessionSnapshotId,
+  createUsageObservationId,
   createWorkflowInstanceId,
   JOURNAL_SEVERITIES,
   WORKFLOW_INSTANCE_STATUSES,
 } from "./runtime/types.js";
+export type { NormalizedUsageObservation } from "./runtime/usage.js";
+export {
+  applyObservationToRollup,
+  denormalizeUsageObservation,
+  emptyUsageRollup,
+  normalizedUsageEqual,
+  normalizeUsageObservation,
+  reconcileUsageReplay,
+  TOKEN_FIELDS,
+  usageRollupKey,
+} from "./runtime/usage.js";
 export type {
   AbortExecutionInput,
   AbortExecutionResult,

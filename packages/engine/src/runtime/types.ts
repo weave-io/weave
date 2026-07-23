@@ -72,6 +72,14 @@ export type RuntimeJournalEntryId = string & {
 };
 
 /**
+ * Branded string type for UsageObservation identifiers.
+ * Use `createUsageObservationId()` to create values.
+ */
+export type UsageObservationId = string & {
+  readonly __brand: "UsageObservationId";
+};
+
+/**
  * Branded string type for execution owner identifiers (Weave-generated).
  * Use `createOwnerId()` to create values.
  */
@@ -109,6 +117,11 @@ export function createRuntimeJournalEntryId(
   raw: string,
 ): RuntimeJournalEntryId {
   return raw as RuntimeJournalEntryId;
+}
+
+/** Cast a raw string to UsageObservationId. */
+export function createUsageObservationId(raw: string): UsageObservationId {
+  return raw as UsageObservationId;
 }
 
 /** Cast a raw string to OwnerId. */
@@ -657,4 +670,92 @@ export interface JournalQueryFilter {
   readonly before?: string;
   /** Maximum number of entries to return. */
   readonly limit?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Usage observations and rollups (Spec 12 retention/usage extension)
+// ---------------------------------------------------------------------------
+
+/**
+ * Optional non-negative token counters on a usage observation.
+ * Missing counters stay absent — they are never coerced to zero.
+ */
+export interface UsageTokenCounters {
+  readonly inputTokens?: number;
+  readonly outputTokens?: number;
+  readonly cacheReadTokens?: number;
+  readonly cacheWriteTokens?: number;
+  readonly totalTokens?: number;
+}
+
+/**
+ * One detailed usage observation for a settled assistant message.
+ *
+ * Identity is adapter-supplied and stable across retries. Same ID with the
+ * same normalized values is a no-op; same ID with different values is an
+ * invariant breach. Detail pruning never subtracts durable rollups.
+ */
+export interface UsageObservation extends UsageTokenCounters {
+  readonly id: UsageObservationId;
+  /** ISO 8601 timestamp. */
+  readonly timestamp: string;
+  readonly source: JournalEntrySource;
+  readonly workflowInstanceId?: WorkflowInstanceId;
+  readonly stepId?: string;
+  readonly agentName?: string;
+  readonly model?: string;
+  /** Optional non-negative finite cost. Absent when unknown. */
+  readonly cost?: number;
+}
+
+/**
+ * Input for recording a usage observation. Callers supply the stable ID.
+ */
+export type UsageObservationInput = UsageObservation;
+
+/**
+ * Durable aggregated usage rollup grouped by available dimensions.
+ * Each known numeric field is summed independently across observations that
+ * contributed that field. `observationCount` counts inserted observations only.
+ */
+export interface UsageRollup extends UsageTokenCounters {
+  readonly workflowInstanceId?: WorkflowInstanceId;
+  readonly stepId?: string;
+  readonly agentName?: string;
+  readonly model?: string;
+  readonly source: JournalEntrySource;
+  readonly cost?: number;
+  readonly observationCount: number;
+}
+
+/** Result of recording a usage observation. */
+export type UsageObservationRecordResult =
+  | { readonly kind: "inserted"; readonly observation: UsageObservation }
+  | { readonly kind: "noop"; readonly observation: UsageObservation };
+
+/** Stats returned by age-then-count pruning operations. */
+export interface RetentionPruneStats {
+  readonly removedByAge: number;
+  readonly removedByCount: number;
+}
+
+/** Filter for listing usage observations. */
+export interface UsageObservationQueryFilter {
+  readonly workflowInstanceId?: WorkflowInstanceId;
+  readonly sourceKind?: "engine" | "adapter";
+  readonly sourceName?: string;
+  readonly agentName?: string;
+  readonly model?: string;
+  readonly after?: string;
+  readonly before?: string;
+  readonly limit?: number;
+}
+
+/** Filter for listing usage rollups. */
+export interface UsageRollupQueryFilter {
+  readonly workflowInstanceId?: WorkflowInstanceId;
+  readonly sourceKind?: "engine" | "adapter";
+  readonly sourceName?: string;
+  readonly agentName?: string;
+  readonly model?: string;
 }

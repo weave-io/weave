@@ -532,16 +532,80 @@ export const LogLevelSchema = z.enum([
   "FATAL",
 ]);
 
+/** Defaults for `settings.runtime` (Spec 33 §19.3 / Spec 12 retention extension). */
+export const DEFAULT_RUNTIME_JOURNAL_SETTINGS = {
+  strict: false,
+  retention_days: 30,
+  max_entries: 10_000,
+} as const;
+
+export const DEFAULT_RUNTIME_USAGE_SETTINGS = {
+  detail_retention_days: 30,
+  max_observations: 100_000,
+} as const;
+
+export const DEFAULT_RUNTIME_LOG_SETTINGS = {
+  max_segment_bytes: 5_242_880,
+  max_segments: 3,
+} as const;
+
+export const DEFAULT_RUNTIME_SETTINGS = {
+  journal: { ...DEFAULT_RUNTIME_JOURNAL_SETTINGS },
+  usage: { ...DEFAULT_RUNTIME_USAGE_SETTINGS },
+  log: { ...DEFAULT_RUNTIME_LOG_SETTINGS },
+} as const;
+
+/** Runtime journal retention + strictness. Bounds: days 1..3650, entries 1..10_000_000. */
+export const RuntimeJournalSettingsSchema = z
+  .object({
+    strict: z.boolean().default(DEFAULT_RUNTIME_JOURNAL_SETTINGS.strict),
+    retention_days: PositiveSafeIntegerSchema.max(3650).default(
+      DEFAULT_RUNTIME_JOURNAL_SETTINGS.retention_days,
+    ),
+    max_entries: PositiveSafeIntegerSchema.max(10_000_000).default(
+      DEFAULT_RUNTIME_JOURNAL_SETTINGS.max_entries,
+    ),
+  })
+  .default({ ...DEFAULT_RUNTIME_JOURNAL_SETTINGS });
+
+/** Usage-detail retention. Bounds: days 1..3650, observations 1..10_000_000. */
+export const RuntimeUsageSettingsSchema = z
+  .object({
+    detail_retention_days: PositiveSafeIntegerSchema.max(3650).default(
+      DEFAULT_RUNTIME_USAGE_SETTINGS.detail_retention_days,
+    ),
+    max_observations: PositiveSafeIntegerSchema.max(10_000_000).default(
+      DEFAULT_RUNTIME_USAGE_SETTINGS.max_observations,
+    ),
+  })
+  .default({ ...DEFAULT_RUNTIME_USAGE_SETTINGS });
+
+/**
+ * Rotating log segment bounds.
+ * `max_segment_bytes` 65_536..1_073_741_824; `max_segments` 1..100.
+ */
+export const RuntimeLogSettingsSchema = z
+  .object({
+    max_segment_bytes: z
+      .number()
+      .int()
+      .min(65_536)
+      .max(1_073_741_824)
+      .default(DEFAULT_RUNTIME_LOG_SETTINGS.max_segment_bytes),
+    max_segments: PositiveSafeIntegerSchema.max(100).default(
+      DEFAULT_RUNTIME_LOG_SETTINGS.max_segments,
+    ),
+  })
+  .default({ ...DEFAULT_RUNTIME_LOG_SETTINGS });
+
 /** Runtime-specific settings nested inside `settings { runtime { ... } }`. */
 export const RuntimeSettingsSchema = z
   .object({
-    journal: z
-      .object({
-        strict: z.boolean().default(false),
-      })
-      .default({ strict: false }),
+    journal: RuntimeJournalSettingsSchema,
+    usage: RuntimeUsageSettingsSchema,
+    log: RuntimeLogSettingsSchema,
   })
-  .default({ journal: { strict: false } });
+  .default({ ...DEFAULT_RUNTIME_SETTINGS });
 
 /**
  * The `settings { ... }` block — canonical home for log level and runtime
@@ -553,7 +617,10 @@ export const SettingsConfigSchema = z
     delegation: DelegationSettingsSchema.optional(),
     runtime: RuntimeSettingsSchema,
   })
-  .default({ log_level: "INFO", runtime: { journal: { strict: false } } });
+  .default({
+    log_level: "INFO",
+    runtime: { ...DEFAULT_RUNTIME_SETTINGS },
+  });
 
 // ---------------------------------------------------------------------------
 // Top-level WeaveConfig
@@ -688,7 +755,15 @@ export type ExtendBeforePlan = z.infer<typeof ExtendBeforePlanSchema>;
 export type WorkflowConfig = z.infer<typeof WorkflowConfigSchema>;
 /** Valid log level string. */
 export type LogLevel = z.infer<typeof LogLevelSchema>;
-/** Runtime-specific settings (journal.strict, etc.). */
+/** Runtime journal retention/strict settings. */
+export type RuntimeJournalSettings = z.infer<
+  typeof RuntimeJournalSettingsSchema
+>;
+/** Runtime usage-detail retention settings. */
+export type RuntimeUsageSettings = z.infer<typeof RuntimeUsageSettingsSchema>;
+/** Runtime rotating-log segment settings. */
+export type RuntimeLogSettings = z.infer<typeof RuntimeLogSettingsSchema>;
+/** Runtime-specific settings (journal, usage, log retention). */
 export type RuntimeSettings = z.infer<typeof RuntimeSettingsSchema>;
 /** The `settings { ... }` block config shape. */
 export type SettingsConfig = z.infer<typeof SettingsConfigSchema>;

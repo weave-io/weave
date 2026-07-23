@@ -103,6 +103,7 @@ import type {
   SessionSnapshotRepository,
   TransactionCallback,
   UpdateWorkflowInstanceInput,
+  UsageRepository,
   WorkflowInstanceRepository,
 } from "../store.js";
 import type {
@@ -116,11 +117,18 @@ import type {
   JournalQueryFilter,
   JsonObject,
   OwnerId,
+  RetentionPruneStats,
   RuntimeJournalEntry,
   RuntimeJournalEntryId,
   SessionSnapshot,
   SessionSnapshotId,
   StepAttemptRecord,
+  UsageObservation,
+  UsageObservationId,
+  UsageObservationQueryFilter,
+  UsageObservationRecordResult,
+  UsageRollup,
+  UsageRollupQueryFilter,
   WorkflowInstance,
   WorkflowInstanceId,
   WorkflowInstanceStatus,
@@ -132,6 +140,15 @@ import {
   createSessionSnapshotId,
   createWorkflowInstanceId,
 } from "../types.js";
+import {
+  applyObservationToRollup,
+  denormalizeUsageObservation,
+  emptyUsageRollup,
+  type NormalizedUsageObservation,
+  normalizeUsageObservation,
+  reconcileUsageReplay,
+  usageRollupKey,
+} from "../usage.js";
 import { BunSqliteDialect } from "./kysely-bun-sqlite.js";
 import { CURRENT_SCHEMA_VERSION, runMigrations } from "./migrations.js";
 import type {
@@ -1104,6 +1121,403 @@ class SqliteRuntimeJournalRepository implements RuntimeJournalRepository {
       (cause) => queryError("Failed to query RuntimeJournalEntries", cause),
     );
   }
+
+  prune(options: {
+    readonly olderThan?: string;
+    readonly maxCount?: number;
+  }): ResultAsync<RetentionPruneStats, RuntimeStoreError> {
+    return ResultAsync.fromPromise(
+      (async () => {
+        let removedByAge = 0;
+        let removedByCount = 0;
+
+        if (options.olderThan !== undefined) {
+          const ageResult = await this.db
+            .deleteFrom("runtime_journal_entries")
+            .where("timestamp", "<", options.olderThan)
+            .executeTakeFirst();
+          removedByAge = Number(ageResult.numDeletedRows ?? 0n);
+        }
+
+        if (options.maxCount !== undefined) {
+          const countRow = await this.db
+            .selectFrom("runtime_journal_entries")
+            .select(this.db.fn.countAll<number>().as("count"))
+            .executeTakeFirstOrThrow();
+          const total = Number(countRow.count);
+          if (total > options.maxCount) {
+            const overflow = total - options.maxCount;
+            const oldest = await this.db
+              .selectFrom("runtime_journal_entries")
+              .select("id")
+              .orderBy("timestamp", "asc")
+              .limit(overflow)
+              .execute();
+            if (oldest.length > 0) {
+              const ids = oldest.map((row) => row.id);
+              const countResult = await this.db
+                .deleteFrom("runtime_journal_entries")
+                .where("id", "in", ids)
+                .executeTakeFirst();
+              removedByCount = Number(countResult.numDeletedRows ?? 0n);
+            }
+          }
+        }
+
+        return { removedByAge, removedByCount };
+      })(),
+      (cause) => queryError("Failed to prune RuntimeJournalEntries", cause),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// SqliteUsageRepository
+// ---------------------------------------------------------------------------
+
+function rowToNormalizedUsage(
+  row: import("./schema.js").UsageObservationRow,
+): Result<NormalizedUsageObservation, RuntimeStoreError> {
+  return Result.fromThrowable(
+    () => JSON.parse(row.normalized_json) as NormalizedUsageObservation,
+    (cause) =>
+      serializationError(
+        "Failed to parse usage observation normalized_json",
+        cause,
+      ),
+  )().andThen((parsed) => {
+    if (typeof parsed !== "object" || parsed === null) {
+      return err(
+        serializationError(
+          "usage observation normalized_json is not an object",
+        ),
+      );
+    }
+    return ok(parsed);
+  });
+}
+
+function rowToUsageRollup(
+  row: import("./schema.js").UsageRollupRow,
+): UsageRollup {
+  return {
+    source: {
+      kind: row.source_kind as "engine" | "adapter",
+      name: row.source_name,
+    },
+    observationCount: row.observation_count,
+    ...(row.workflow_instance_id
+      ? {
+          workflowInstanceId:
+            row.workflow_instance_id as UsageRollup["workflowInstanceId"],
+        }
+      : {}),
+    ...(row.step_id ? { stepId: row.step_id } : {}),
+    ...(row.agent_name ? { agentName: row.agent_name } : {}),
+    ...(row.model ? { model: row.model } : {}),
+    ...(row.input_tokens !== null ? { inputTokens: row.input_tokens } : {}),
+    ...(row.output_tokens !== null ? { outputTokens: row.output_tokens } : {}),
+    ...(row.cache_read_tokens !== null
+      ? { cacheReadTokens: row.cache_read_tokens }
+      : {}),
+    ...(row.cache_write_tokens !== null
+      ? { cacheWriteTokens: row.cache_write_tokens }
+      : {}),
+    ...(row.total_tokens !== null ? { totalTokens: row.total_tokens } : {}),
+    ...(row.cost !== null ? { cost: row.cost } : {}),
+  };
+}
+
+class SqliteUsageRepository implements UsageRepository {
+  constructor(private readonly db: Kysely<WeaveDatabase>) {}
+
+  recordObservation(
+    observation: UsageObservation,
+  ): ResultAsync<UsageObservationRecordResult, RuntimeStoreError> {
+    const normalizedResult = normalizeUsageObservation(observation);
+    if (normalizedResult.isErr()) return errAsync(normalizedResult.error);
+    const normalized = normalizedResult.value;
+
+    let normalizedJson: string;
+    try {
+      normalizedJson = JSON.stringify(normalized);
+    } catch (cause) {
+      return errAsync(
+        serializationError("Failed to serialize usage observation", cause),
+      );
+    }
+
+    return ResultAsync.fromPromise(
+      this.db.transaction().execute(async (trx) => {
+        const existing = await trx
+          .selectFrom("usage_observations")
+          .selectAll()
+          .where("id", "=", normalized.id)
+          .executeTakeFirst();
+
+        if (existing) {
+          const existingNormalized = rowToNormalizedUsage(existing);
+          if (existingNormalized.isErr()) throw existingNormalized.error;
+          const replay = reconcileUsageReplay(
+            existingNormalized.value,
+            normalized,
+          );
+          if (replay.isErr()) throw replay.error;
+          return {
+            kind: "noop" as const,
+            observation: denormalizeUsageObservation(existingNormalized.value),
+          };
+        }
+
+        await trx
+          .insertInto("usage_observations")
+          .values({
+            id: normalized.id,
+            timestamp: normalized.timestamp,
+            source_kind: normalized.sourceKind,
+            source_name: normalized.sourceName,
+            workflow_instance_id: normalized.workflowInstanceId ?? null,
+            step_id: normalized.stepId ?? null,
+            agent_name: normalized.agentName ?? null,
+            model: normalized.model ?? null,
+            input_tokens: normalized.inputTokens ?? null,
+            output_tokens: normalized.outputTokens ?? null,
+            cache_read_tokens: normalized.cacheReadTokens ?? null,
+            cache_write_tokens: normalized.cacheWriteTokens ?? null,
+            total_tokens: normalized.totalTokens ?? null,
+            cost: normalized.cost ?? null,
+            normalized_json: normalizedJson,
+          })
+          .execute();
+
+        const key = usageRollupKey(normalized);
+        const existingRollup = await trx
+          .selectFrom("usage_rollups")
+          .selectAll()
+          .where("rollup_key", "=", key)
+          .executeTakeFirst();
+
+        const prior = existingRollup
+          ? rowToUsageRollup(existingRollup)
+          : emptyUsageRollup(normalized);
+        const next = applyObservationToRollup(prior, normalized);
+
+        if (existingRollup) {
+          await trx
+            .updateTable("usage_rollups")
+            .set({
+              input_tokens: next.inputTokens ?? null,
+              output_tokens: next.outputTokens ?? null,
+              cache_read_tokens: next.cacheReadTokens ?? null,
+              cache_write_tokens: next.cacheWriteTokens ?? null,
+              total_tokens: next.totalTokens ?? null,
+              cost: next.cost ?? null,
+              observation_count: next.observationCount,
+            })
+            .where("rollup_key", "=", key)
+            .execute();
+        } else {
+          await trx
+            .insertInto("usage_rollups")
+            .values({
+              rollup_key: key,
+              source_kind: normalized.sourceKind,
+              source_name: normalized.sourceName,
+              workflow_instance_id: normalized.workflowInstanceId ?? null,
+              step_id: normalized.stepId ?? null,
+              agent_name: normalized.agentName ?? null,
+              model: normalized.model ?? null,
+              input_tokens: next.inputTokens ?? null,
+              output_tokens: next.outputTokens ?? null,
+              cache_read_tokens: next.cacheReadTokens ?? null,
+              cache_write_tokens: next.cacheWriteTokens ?? null,
+              total_tokens: next.totalTokens ?? null,
+              cost: next.cost ?? null,
+              observation_count: next.observationCount,
+            })
+            .execute();
+        }
+
+        return {
+          kind: "inserted" as const,
+          observation: denormalizeUsageObservation(normalized),
+        };
+      }),
+      (cause) => {
+        if (
+          typeof cause === "object" &&
+          cause !== null &&
+          "type" in cause &&
+          (cause as RuntimeStoreError).type !== undefined
+        ) {
+          return cause as RuntimeStoreError;
+        }
+        return queryError("Failed to record usage observation", cause);
+      },
+    );
+  }
+
+  findObservationById(
+    id: UsageObservationId,
+  ): ResultAsync<UsageObservation | null, RuntimeStoreError> {
+    return ResultAsync.fromPromise(
+      this.db
+        .selectFrom("usage_observations")
+        .selectAll()
+        .where("id", "=", id as string)
+        .executeTakeFirst(),
+      (cause) => queryError("Failed to find usage observation", cause),
+    ).andThen((row) => {
+      if (!row) return okAsync(null);
+      const normalized = rowToNormalizedUsage(row);
+      if (normalized.isErr()) return errAsync(normalized.error);
+      return okAsync(denormalizeUsageObservation(normalized.value));
+    });
+  }
+
+  listObservations(
+    filter?: UsageObservationQueryFilter,
+  ): ResultAsync<readonly UsageObservation[], RuntimeStoreError> {
+    return ResultAsync.fromPromise(
+      (async () => {
+        let query = this.db
+          .selectFrom("usage_observations")
+          .selectAll()
+          .orderBy("timestamp", "asc");
+
+        if (filter?.workflowInstanceId) {
+          query = query.where(
+            "workflow_instance_id",
+            "=",
+            filter.workflowInstanceId as string,
+          );
+        }
+        if (filter?.sourceKind) {
+          query = query.where("source_kind", "=", filter.sourceKind);
+        }
+        if (filter?.sourceName) {
+          query = query.where("source_name", "=", filter.sourceName);
+        }
+        if (filter?.agentName) {
+          query = query.where("agent_name", "=", filter.agentName);
+        }
+        if (filter?.model) {
+          query = query.where("model", "=", filter.model);
+        }
+        if (filter?.after) {
+          query = query.where("timestamp", ">", filter.after);
+        }
+        if (filter?.before) {
+          query = query.where("timestamp", "<", filter.before);
+        }
+        if (filter?.limit) {
+          query = query.limit(filter.limit);
+        }
+
+        const rows = await query.execute();
+        const observations: UsageObservation[] = [];
+        for (const row of rows) {
+          const normalized = rowToNormalizedUsage(row);
+          if (normalized.isErr()) throw normalized.error;
+          observations.push(denormalizeUsageObservation(normalized.value));
+        }
+        return observations;
+      })(),
+      (cause) => {
+        if (
+          typeof cause === "object" &&
+          cause !== null &&
+          "type" in cause &&
+          (cause as RuntimeStoreError).type !== undefined
+        ) {
+          return cause as RuntimeStoreError;
+        }
+        return queryError("Failed to list usage observations", cause);
+      },
+    );
+  }
+
+  listRollups(
+    filter?: UsageRollupQueryFilter,
+  ): ResultAsync<readonly UsageRollup[], RuntimeStoreError> {
+    return ResultAsync.fromPromise(
+      (async () => {
+        let query = this.db.selectFrom("usage_rollups").selectAll();
+
+        if (filter?.workflowInstanceId) {
+          query = query.where(
+            "workflow_instance_id",
+            "=",
+            filter.workflowInstanceId as string,
+          );
+        }
+        if (filter?.sourceKind) {
+          query = query.where("source_kind", "=", filter.sourceKind);
+        }
+        if (filter?.sourceName) {
+          query = query.where("source_name", "=", filter.sourceName);
+        }
+        if (filter?.agentName) {
+          query = query.where("agent_name", "=", filter.agentName);
+        }
+        if (filter?.model) {
+          query = query.where("model", "=", filter.model);
+        }
+
+        const rows = await query.execute();
+        return rows.map(rowToUsageRollup);
+      })(),
+      (cause) => queryError("Failed to list usage rollups", cause),
+    );
+  }
+
+  pruneDetails(options: {
+    readonly olderThan?: string;
+    readonly maxCount?: number;
+  }): ResultAsync<RetentionPruneStats, RuntimeStoreError> {
+    return ResultAsync.fromPromise(
+      (async () => {
+        let removedByAge = 0;
+        let removedByCount = 0;
+
+        if (options.olderThan !== undefined) {
+          const ageResult = await this.db
+            .deleteFrom("usage_observations")
+            .where("timestamp", "<", options.olderThan)
+            .executeTakeFirst();
+          removedByAge = Number(ageResult.numDeletedRows ?? 0n);
+        }
+
+        if (options.maxCount !== undefined) {
+          const countRow = await this.db
+            .selectFrom("usage_observations")
+            .select(this.db.fn.countAll<number>().as("count"))
+            .executeTakeFirstOrThrow();
+          const total = Number(countRow.count);
+          if (total > options.maxCount) {
+            const overflow = total - options.maxCount;
+            const oldest = await this.db
+              .selectFrom("usage_observations")
+              .select("id")
+              .orderBy("timestamp", "asc")
+              .limit(overflow)
+              .execute();
+            if (oldest.length > 0) {
+              const ids = oldest.map((row) => row.id);
+              const countResult = await this.db
+                .deleteFrom("usage_observations")
+                .where("id", "in", ids)
+                .executeTakeFirst();
+              removedByCount = Number(countResult.numDeletedRows ?? 0n);
+            }
+          }
+        }
+
+        return { removedByAge, removedByCount };
+      })(),
+      (cause) => queryError("Failed to prune usage observations", cause),
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1179,6 +1593,13 @@ class JournalWriterRepository implements RuntimeJournalRepository {
     filter?: JournalQueryFilter,
   ): ResultAsync<readonly RuntimeJournalEntry[], RuntimeStoreError> {
     return this.inner.query(filter);
+  }
+
+  prune(options: {
+    readonly olderThan?: string;
+    readonly maxCount?: number;
+  }): ResultAsync<RetentionPruneStats, RuntimeStoreError> {
+    return this.inner.prune(options);
   }
 }
 
@@ -1761,6 +2182,7 @@ class SqliteRuntimeStoreTransaction implements RuntimeStoreTransaction {
   readonly leases: ExecutionLeaseRepository;
   readonly snapshots: SessionSnapshotRepository;
   readonly journal: RuntimeJournalRepository;
+  readonly usage: UsageRepository;
   constructor(
     txDb: Kysely<WeaveDatabase>,
     clock: () => Date,
@@ -1771,6 +2193,7 @@ class SqliteRuntimeStoreTransaction implements RuntimeStoreTransaction {
     this.snapshots = new SqliteSessionSnapshotRepository(txDb);
     const rawJournal = new SqliteRuntimeJournalRepository(txDb);
     this.journal = new JournalWriterRepository(rawJournal, strictJournal);
+    this.usage = new SqliteUsageRepository(txDb);
   }
 }
 
@@ -1818,6 +2241,7 @@ export class SqliteRuntimeStore implements RuntimeStore {
   readonly leases: ExecutionLeaseRepository;
   readonly snapshots: SessionSnapshotRepository;
   readonly journal: RuntimeJournalRepository;
+  readonly usage: UsageRepository;
   #permissions: PermissionApprovalRepository;
 
   /** The per-project CSPRNG salt stored in `runtime_metadata`. */
@@ -1838,6 +2262,7 @@ export class SqliteRuntimeStore implements RuntimeStore {
     this.leases = new LazyExecutionLeaseRepository(this);
     this.snapshots = new LazySessionSnapshotRepository(this);
     this.journal = new LazyRuntimeJournalRepository(this);
+    this.usage = new LazyUsageRepository(this);
     this.#permissions = new LazyPermissionApprovalRepository(this, () =>
       this.clock().getTime(),
     );
@@ -2348,6 +2773,54 @@ class LazyRuntimeJournalRepository implements RuntimeJournalRepository {
     filter?: JournalQueryFilter,
   ): ResultAsync<readonly RuntimeJournalEntry[], RuntimeStoreError> {
     return this.repo().andThen((r) => r.query(filter));
+  }
+
+  prune(options: {
+    readonly olderThan?: string;
+    readonly maxCount?: number;
+  }): ResultAsync<RetentionPruneStats, RuntimeStoreError> {
+    return this.repo().andThen((r) => r.prune(options));
+  }
+}
+
+class LazyUsageRepository implements UsageRepository {
+  constructor(private readonly store: SqliteRuntimeStore) {}
+
+  private repo(): ResultAsync<SqliteUsageRepository, RuntimeStoreError> {
+    return this.store
+      .ensureInitialized()
+      .map((db) => new SqliteUsageRepository(db));
+  }
+
+  recordObservation(
+    observation: UsageObservation,
+  ): ResultAsync<UsageObservationRecordResult, RuntimeStoreError> {
+    return this.repo().andThen((r) => r.recordObservation(observation));
+  }
+
+  findObservationById(
+    id: UsageObservationId,
+  ): ResultAsync<UsageObservation | null, RuntimeStoreError> {
+    return this.repo().andThen((r) => r.findObservationById(id));
+  }
+
+  listObservations(
+    filter?: UsageObservationQueryFilter,
+  ): ResultAsync<readonly UsageObservation[], RuntimeStoreError> {
+    return this.repo().andThen((r) => r.listObservations(filter));
+  }
+
+  listRollups(
+    filter?: UsageRollupQueryFilter,
+  ): ResultAsync<readonly UsageRollup[], RuntimeStoreError> {
+    return this.repo().andThen((r) => r.listRollups(filter));
+  }
+
+  pruneDetails(options: {
+    readonly olderThan?: string;
+    readonly maxCount?: number;
+  }): ResultAsync<RetentionPruneStats, RuntimeStoreError> {
+    return this.repo().andThen((r) => r.pruneDetails(options));
   }
 }
 

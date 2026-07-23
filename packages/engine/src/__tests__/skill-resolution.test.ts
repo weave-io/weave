@@ -638,7 +638,11 @@ function makeConfig(overrides: Partial<WeaveConfig> = {}): WeaveConfig {
     disabled: { agents: [], hooks: [], skills: [] },
     settings: {
       log_level: "INFO",
-      runtime: { journal: { strict: false } },
+      runtime: {
+        journal: { strict: false, retention_days: 30, max_entries: 10_000 },
+        usage: { detail_retention_days: 30, max_observations: 100_000 },
+        log: { max_segment_bytes: 5_242_880, max_segments: 3 },
+      },
     },
     workflows: {},
     extend_before_plan: { steps: [] },

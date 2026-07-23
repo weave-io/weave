@@ -25,10 +25,12 @@
 
 import type { WorkflowConfig } from "@weaveio/weave-core";
 import { errAsync, okAsync, type ResultAsync } from "neverthrow";
-import type {
-  AdapterCapabilityContract,
-  CapabilityEntry,
-  SafeAdapterInitInput,
+import {
+  type AdapterCapabilityContract,
+  ALL_CAPABILITY_IDS,
+  type CapabilityEntry,
+  type CapabilityProbeResult,
+  type SafeAdapterInitInput,
 } from "../../capability-contract.js";
 import type { DispatchAgentEffect } from "../../execution-lifecycle.js";
 import type {
@@ -244,7 +246,7 @@ export class MockSecondAdapter {
     return {
       harness: this.harness,
       capabilityContract: makeContractWithCommandEntrypoints("emulated"),
-      probeResults: [],
+      probeResults: okProbesForAll(),
     };
   }
 }
@@ -392,6 +394,20 @@ export const noopProjectEffect = (
 // ---------------------------------------------------------------------------
 // § 8 — Capability contract fixture helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Build an `ok` probe result for every one of the 19 capability IDs.
+ *
+ * `ok` probes never lower effective readiness below the static declaration
+ * (Spec 07 / Spec 33 §21), so fixtures using this helper preserve the exact
+ * pre-probe declared readiness for every capability.
+ */
+export function okProbesForAll(): CapabilityProbeResult[] {
+  return ALL_CAPABILITY_IDS.map((capabilityId) => ({
+    capabilityId,
+    probeStatus: "ok" as const,
+  }));
+}
 
 /**
  * Build a minimal `CapabilityEntry` for a given capability ID and readiness.

@@ -429,6 +429,66 @@ describe("Parser — settings block", () => {
       value: { kind: "boolean", value: true },
     });
   });
+
+  it("parses full runtime retention settings as nested blocks", () => {
+    const src = `settings {
+  runtime {
+    journal {
+      strict false
+      retention_days 30
+      max_entries 10000
+    }
+    usage {
+      detail_retention_days 30
+      max_observations 100000
+    }
+    log {
+      max_segment_bytes 5242880
+      max_segments 3
+    }
+  }
+}`;
+    const result = parseSource(src);
+    expect(result.isOk()).toBe(true);
+    const node = result._unsafeUnwrap()[0] as SettingAssignment;
+    const outer = node.value as BlockValue;
+    const runtimeBlock = outer.properties.find((p) => p.key === "runtime")
+      ?.value as BlockValue;
+    expect(runtimeBlock.properties.map((p) => p.key).sort()).toEqual([
+      "journal",
+      "log",
+      "usage",
+    ]);
+
+    const journalBlock = runtimeBlock.properties.find(
+      (p) => p.key === "journal",
+    )?.value as BlockValue;
+    expect(
+      journalBlock.properties.find((p) => p.key === "retention_days")?.value,
+    ).toMatchObject({ kind: "number", value: 30 });
+    expect(
+      journalBlock.properties.find((p) => p.key === "max_entries")?.value,
+    ).toMatchObject({ kind: "number", value: 10000 });
+
+    const usageBlock = runtimeBlock.properties.find((p) => p.key === "usage")
+      ?.value as BlockValue;
+    expect(
+      usageBlock.properties.find((p) => p.key === "detail_retention_days")
+        ?.value,
+    ).toMatchObject({ kind: "number", value: 30 });
+    expect(
+      usageBlock.properties.find((p) => p.key === "max_observations")?.value,
+    ).toMatchObject({ kind: "number", value: 100000 });
+
+    const logBlock = runtimeBlock.properties.find((p) => p.key === "log")
+      ?.value as BlockValue;
+    expect(
+      logBlock.properties.find((p) => p.key === "max_segment_bytes")?.value,
+    ).toMatchObject({ kind: "number", value: 5242880 });
+    expect(
+      logBlock.properties.find((p) => p.key === "max_segments")?.value,
+    ).toMatchObject({ kind: "number", value: 3 });
+  });
 });
 
 describe("Parser — routing block inside agent", () => {

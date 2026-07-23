@@ -609,6 +609,55 @@ describe("parseConfig — settings block", () => {
     const config = result._unsafeUnwrap();
     expect(config.settings.log_level).toBe("INFO");
     expect(config.settings.runtime.journal.strict).toBe(false);
+    expect(config.settings.runtime.journal.retention_days).toBe(30);
+    expect(config.settings.runtime.journal.max_entries).toBe(10_000);
+    expect(config.settings.runtime.usage.detail_retention_days).toBe(30);
+    expect(config.settings.runtime.usage.max_observations).toBe(100_000);
+    expect(config.settings.runtime.log.max_segment_bytes).toBe(5_242_880);
+    expect(config.settings.runtime.log.max_segments).toBe(3);
+  });
+
+  it("settings runtime retention pipeline parses end-to-end", () => {
+    const src = `settings {
+  log_level INFO
+  runtime {
+    journal {
+      strict true
+      retention_days 45
+      max_entries 2000
+    }
+    usage {
+      detail_retention_days 10
+      max_observations 5000
+    }
+    log {
+      max_segment_bytes 131072
+      max_segments 5
+    }
+  }
+}`;
+    const result = parseConfig(src);
+    expect(result.isOk()).toBe(true);
+    const runtime = result._unsafeUnwrap().settings.runtime;
+    expect(runtime.journal.strict).toBe(true);
+    expect(runtime.journal.retention_days).toBe(45);
+    expect(runtime.journal.max_entries).toBe(2000);
+    expect(runtime.usage.detail_retention_days).toBe(10);
+    expect(runtime.usage.max_observations).toBe(5000);
+    expect(runtime.log.max_segment_bytes).toBe(131_072);
+    expect(runtime.log.max_segments).toBe(5);
+  });
+
+  it("settings runtime retention out of range fails parseConfig", () => {
+    const src = `settings {
+  runtime {
+    log {
+      max_segments 101
+    }
+  }
+}`;
+    const result = parseConfig(src);
+    expect(result.isErr()).toBe(true);
   });
 
   it("top-level log_level → err with ValidationError", () => {

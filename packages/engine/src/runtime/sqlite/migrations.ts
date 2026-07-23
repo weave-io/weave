@@ -30,7 +30,7 @@ import {
  * The highest schema version this Weave build supports.
  * Increment this when adding a new migration.
  */
-export const CURRENT_SCHEMA_VERSION = 3;
+export const CURRENT_SCHEMA_VERSION = 4;
 
 // ---------------------------------------------------------------------------
 // Migration definition
@@ -419,6 +419,61 @@ const MIGRATIONS: readonly Migration[] = [
     version: 3,
     name: "permission_grants",
     sql: PERMISSION_GRANTS_MIGRATION_SQL,
+  },
+  {
+    version: 4,
+    name: "usage_observations_and_rollups",
+    sql: `
+      CREATE TABLE IF NOT EXISTS usage_observations (
+        id TEXT PRIMARY KEY NOT NULL,
+        timestamp TEXT NOT NULL,
+        source_kind TEXT NOT NULL,
+        source_name TEXT NOT NULL,
+        workflow_instance_id TEXT,
+        step_id TEXT,
+        agent_name TEXT,
+        model TEXT,
+        input_tokens INTEGER,
+        output_tokens INTEGER,
+        cache_read_tokens INTEGER,
+        cache_write_tokens INTEGER,
+        total_tokens INTEGER,
+        cost REAL,
+        normalized_json TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_usage_observations_timestamp
+        ON usage_observations (timestamp);
+
+      CREATE INDEX IF NOT EXISTS idx_usage_observations_workflow_instance_id
+        ON usage_observations (workflow_instance_id);
+
+      CREATE INDEX IF NOT EXISTS idx_usage_observations_source
+        ON usage_observations (source_kind, source_name);
+
+      CREATE TABLE IF NOT EXISTS usage_rollups (
+        rollup_key TEXT PRIMARY KEY NOT NULL,
+        source_kind TEXT NOT NULL,
+        source_name TEXT NOT NULL,
+        workflow_instance_id TEXT,
+        step_id TEXT,
+        agent_name TEXT,
+        model TEXT,
+        input_tokens INTEGER,
+        output_tokens INTEGER,
+        cache_read_tokens INTEGER,
+        cache_write_tokens INTEGER,
+        total_tokens INTEGER,
+        cost REAL,
+        observation_count INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_usage_rollups_workflow_instance_id
+        ON usage_rollups (workflow_instance_id);
+
+      CREATE INDEX IF NOT EXISTS idx_usage_rollups_source
+        ON usage_rollups (source_kind, source_name);
+    `,
   },
 ];
 

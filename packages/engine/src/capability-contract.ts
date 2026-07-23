@@ -477,20 +477,201 @@ export interface AdapterHealthReport {
   harness: string;
   /** ISO 8601 timestamp when the report was built. */
   timestamp: string;
-  /** Static capability contract as declared by the adapter. */
+  /** Static capability contract as declared by the adapter (ceiling). */
   capabilityContract: AdapterCapabilityContract;
   /** Runtime probe results supplied by the adapter. */
   probeResults: CapabilityProbeResult[];
-  /** Core Readiness Profile evaluation result. */
+  /** Core Readiness Profile evaluation against probe-lowered effective readiness. */
   profileResult: ProfileEvaluationResult;
+  /** Exactly one effective entry per capability ID after probe lowering. */
+  effectiveCapabilities: EffectiveCapabilityEntry[];
+  /** True when required effective gaps force health-only mode. */
+  healthOnlyMode: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// § 3.1 — Probe-lowered effective readiness (Spec 07 extension / Spec 33 §21)
+// ---------------------------------------------------------------------------
+
+/**
+ * How a probe was resolved for one capability ID during a generation.
+ *
+ * - `ok` / `degraded` / `unavailable` — single valid adapter probe status
+ * - `missing` — no probe supplied for the ID
+ * - `failed` — probe payload was unusable
+ * - `duplicate` — more than one probe for the same ID
+ * - `contradictory` — multiple probes disagreed on status
+ */
+export type EffectiveProbeResolution =
+  | "ok"
+  | "degraded"
+  | "unavailable"
+  | "missing"
+  | "failed"
+  | "duplicate"
+  | "contradictory";
+
+/**
+ * One capability after probe lowering. Static declaration fields are preserved;
+ * `effectiveReadiness` is the readiness used for profile evaluation.
+ */
+export interface EffectiveCapabilityEntry extends CapabilityEntry {
+  /** Unchanged adapter-declared readiness (ceiling). */
+  readonly declaredReadiness: CapabilityReadiness;
+  /** Readiness after applying the generation probe. */
+  readonly effectiveReadiness: CapabilityReadiness;
+  /** How the probe for this ID was resolved. */
+  readonly probeResolution: EffectiveProbeResolution;
+  /** Sanitized probe detail, if any. */
+  readonly probeDetails?: string;
+}
+
+/** Aggregate effective evaluation for one controller generation. */
+export interface EffectiveCapabilityEvaluation {
+  /** Static declarations preserved unchanged. */
+  readonly declarations: AdapterCapabilityContract;
+  /** Exactly one effective entry per known capability ID (19). */
+  readonly effectiveCapabilities: EffectiveCapabilityEntry[];
+  /** Profile evaluation against effective readiness. */
+  readonly profileResult: ProfileEvaluationResult;
+  /**
+   * True when any required effective capability is `degraded` or `unsupported`
+   * (health-only mode). Equivalent to `!profileResult.ready` for the core
+   * profile after probe lowering.
+   */
+  readonly healthOnlyMode: boolean;
+}
+
+/**
+ * Lower a declared readiness ceiling by one sanitized probe outcome.
+ * Probes never raise readiness.
+ */
+export function lowerReadinessByProbe(
+  declared: CapabilityReadiness,
+  resolution: EffectiveProbeResolution,
+): CapabilityReadiness {
+  if (resolution === "ok") return declared;
+  if (resolution === "degraded") {
+    if (declared === "unsupported") return "unsupported";
+    return "degraded";
+  }
+  // unavailable | missing | failed | duplicate | contradictory
+  return "unsupported";
+}
+
+function resolveProbeForId(
+  id: CapabilityId,
+  probes: readonly CapabilityProbeResult[],
+): {
+  resolution: EffectiveProbeResolution;
+  details?: string;
+} {
+  const matches = probes.filter((probe) => probe.capabilityId === id);
+  if (matches.length === 0) return { resolution: "missing" };
+  if (matches.length > 1) {
+    const statuses = new Set(matches.map((probe) => probe.probeStatus));
+    if (statuses.size > 1) {
+      return {
+        resolution: "contradictory",
+        details: "multiple probes disagreed on status",
+      };
+    }
+    return {
+      resolution: "duplicate",
+      details: "multiple probes supplied for the same capability",
+    };
+  }
+
+  const probe = matches[0];
+  if (probe === undefined) return { resolution: "missing" };
+
+  if (
+    probe.probeStatus !== "ok" &&
+    probe.probeStatus !== "degraded" &&
+    probe.probeStatus !== "unavailable"
+  ) {
+    return { resolution: "failed", details: probe.details };
+  }
+
+  return { resolution: probe.probeStatus, details: probe.details };
+}
+
+/**
+ * Evaluate static declarations through exactly one probe per capability ID.
+ *
+ * Rules (Spec 33 §21 / Spec 07 effective extension):
+ * - Static declaration is a ceiling
+ * - `ok` preserves declaration
+ * - `degraded` lowers to degraded (without raising unsupported)
+ * - `unavailable` / missing / failed / duplicate / contradictory → unsupported
+ * - Required effective degraded/unsupported → health-only mode
+ * - Optional gaps remain warnings
+ * - Static declarations are preserved on the result
+ *
+ * This function is pure and performs no harness I/O.
+ */
+export function evaluateEffectiveCapabilities(
+  contract: AdapterCapabilityContract,
+  probeResults: readonly CapabilityProbeResult[],
+): EffectiveCapabilityEvaluation {
+  const byId = new Map<CapabilityId, CapabilityEntry>(
+    contract.capabilities.map((entry) => [entry.id, entry]),
+  );
+
+  const effectiveCapabilities: EffectiveCapabilityEntry[] = [];
+
+  for (const id of ALL_CAPABILITY_IDS) {
+    const declaredEntry = byId.get(id);
+    const declaredReadiness: CapabilityReadiness =
+      declaredEntry?.readiness ?? "unsupported";
+    const resolved = resolveProbeForId(id, probeResults);
+    const effectiveReadiness = lowerReadinessByProbe(
+      declaredReadiness,
+      resolved.resolution,
+    );
+
+    const base: CapabilityEntry = declaredEntry ?? {
+      id,
+      description: id,
+      readiness: "unsupported",
+    };
+
+    effectiveCapabilities.push({
+      ...base,
+      // Profile evaluation consumes `readiness` as the effective level.
+      readiness: effectiveReadiness,
+      declaredReadiness,
+      effectiveReadiness,
+      probeResolution: resolved.resolution,
+      ...(resolved.details !== undefined
+        ? { probeDetails: resolved.details }
+        : {}),
+      ...(resolved.details !== undefined
+        ? { runtimeStatus: resolved.details }
+        : {}),
+    });
+  }
+
+  const effectiveContract: AdapterCapabilityContract = {
+    capabilities: effectiveCapabilities,
+  };
+  const profileResult = evaluateCoreReadinessProfile(effectiveContract);
+
+  return {
+    declarations: contract,
+    effectiveCapabilities,
+    profileResult,
+    healthOnlyMode: !profileResult.ready,
+  };
 }
 
 /**
  * Build an `AdapterHealthReport` from adapter-supplied inputs.
  *
- * This function is pure: it calls `evaluateCoreReadinessProfile` internally
- * and stamps the current timestamp. It does not perform harness I/O, scan
- * directories, register hooks, or mutate harness state.
+ * This function is pure: it applies probe-lowered effective readiness, then
+ * evaluates the Core Readiness Profile against effective levels while
+ * preserving static declarations on the report. It does not perform harness
+ * I/O, scan directories, register hooks, or mutate harness state.
  *
  * @param input - Read-only adapter-supplied declarations and probe results.
  * @returns A complete health report ready for CLI rendering or JSON output.
@@ -498,13 +679,18 @@ export interface AdapterHealthReport {
 export function buildAdapterHealthReport(
   input: SafeAdapterInitInput,
 ): AdapterHealthReport {
-  const profileResult = evaluateCoreReadinessProfile(input.capabilityContract);
+  const effective = evaluateEffectiveCapabilities(
+    input.capabilityContract,
+    input.probeResults,
+  );
   return {
     harness: input.harness,
     timestamp: new Date().toISOString(),
     capabilityContract: input.capabilityContract,
     probeResults: input.probeResults,
-    profileResult,
+    profileResult: effective.profileResult,
+    effectiveCapabilities: effective.effectiveCapabilities,
+    healthOnlyMode: effective.healthOnlyMode,
   };
 }
 

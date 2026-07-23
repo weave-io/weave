@@ -184,6 +184,54 @@ export interface PermissionGrantRow {
 }
 
 // ---------------------------------------------------------------------------
+// usage_observations / usage_rollups
+// ---------------------------------------------------------------------------
+
+/**
+ * Row shape for the `usage_observations` detail table.
+ * Optional counters are nullable; absent counters stay NULL (never zero-filled).
+ */
+export interface UsageObservationRow {
+  readonly id: string;
+  readonly timestamp: string;
+  readonly source_kind: string;
+  readonly source_name: string;
+  readonly workflow_instance_id: string | null;
+  readonly step_id: string | null;
+  readonly agent_name: string | null;
+  readonly model: string | null;
+  readonly input_tokens: number | null;
+  readonly output_tokens: number | null;
+  readonly cache_read_tokens: number | null;
+  readonly cache_write_tokens: number | null;
+  readonly total_tokens: number | null;
+  readonly cost: number | null;
+  /** Canonical JSON for equality checks on replay. */
+  readonly normalized_json: string;
+}
+
+/**
+ * Row shape for the durable `usage_rollups` table.
+ * Rollups are never decremented when detail observations are pruned.
+ */
+export interface UsageRollupRow {
+  readonly rollup_key: string;
+  readonly source_kind: string;
+  readonly source_name: string;
+  readonly workflow_instance_id: string | null;
+  readonly step_id: string | null;
+  readonly agent_name: string | null;
+  readonly model: string | null;
+  readonly input_tokens: number | null;
+  readonly output_tokens: number | null;
+  readonly cache_read_tokens: number | null;
+  readonly cache_write_tokens: number | null;
+  readonly total_tokens: number | null;
+  readonly cost: number | null;
+  readonly observation_count: number;
+}
+
+// ---------------------------------------------------------------------------
 // WeaveDatabase — Kysely schema type
 // ---------------------------------------------------------------------------
 
@@ -200,4 +248,6 @@ export interface WeaveDatabase {
   readonly schema_migrations: SchemaMigrationRow;
   readonly runtime_metadata: RuntimeMetadataRow;
   readonly permission_grants: PermissionGrantRow;
+  readonly usage_observations: UsageObservationRow;
+  readonly usage_rollups: UsageRollupRow;
 }

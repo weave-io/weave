@@ -716,7 +716,97 @@ describe("RuntimeSettingsSchema", () => {
     expect(r.success).toBe(true);
     if (r.success) {
       expect(r.data.journal.strict).toBe(false);
+      expect(r.data.journal.retention_days).toBe(30);
+      expect(r.data.journal.max_entries).toBe(10_000);
+      expect(r.data.usage.detail_retention_days).toBe(30);
+      expect(r.data.usage.max_observations).toBe(100_000);
+      expect(r.data.log.max_segment_bytes).toBe(5_242_880);
+      expect(r.data.log.max_segments).toBe(3);
     }
+  });
+
+  it("accepts full retention settings at defaults", () => {
+    const r = RuntimeSettingsSchema.safeParse({
+      journal: { strict: false, retention_days: 30, max_entries: 10_000 },
+      usage: { detail_retention_days: 30, max_observations: 100_000 },
+      log: { max_segment_bytes: 5_242_880, max_segments: 3 },
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it("accepts boundary values for all retention fields", () => {
+    const r = RuntimeSettingsSchema.safeParse({
+      journal: { retention_days: 1, max_entries: 1 },
+      usage: { detail_retention_days: 3650, max_observations: 10_000_000 },
+      log: { max_segment_bytes: 65_536, max_segments: 100 },
+    });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.journal.retention_days).toBe(1);
+      expect(r.data.journal.max_entries).toBe(1);
+      expect(r.data.usage.detail_retention_days).toBe(3650);
+      expect(r.data.usage.max_observations).toBe(10_000_000);
+      expect(r.data.log.max_segment_bytes).toBe(65_536);
+      expect(r.data.log.max_segments).toBe(100);
+    }
+  });
+
+  it("rejects zero and out-of-range retention values", () => {
+    expect(
+      RuntimeSettingsSchema.safeParse({ journal: { retention_days: 0 } })
+        .success,
+    ).toBe(false);
+    expect(
+      RuntimeSettingsSchema.safeParse({ journal: { retention_days: 3651 } })
+        .success,
+    ).toBe(false);
+    expect(
+      RuntimeSettingsSchema.safeParse({ journal: { max_entries: 0 } }).success,
+    ).toBe(false);
+    expect(
+      RuntimeSettingsSchema.safeParse({
+        journal: { max_entries: 10_000_001 },
+      }).success,
+    ).toBe(false);
+    expect(
+      RuntimeSettingsSchema.safeParse({
+        usage: { detail_retention_days: 0 },
+      }).success,
+    ).toBe(false);
+    expect(
+      RuntimeSettingsSchema.safeParse({
+        usage: { max_observations: 10_000_001 },
+      }).success,
+    ).toBe(false);
+    expect(
+      RuntimeSettingsSchema.safeParse({
+        log: { max_segment_bytes: 65_535 },
+      }).success,
+    ).toBe(false);
+    expect(
+      RuntimeSettingsSchema.safeParse({
+        log: { max_segment_bytes: 1_073_741_825 },
+      }).success,
+    ).toBe(false);
+    expect(
+      RuntimeSettingsSchema.safeParse({ log: { max_segments: 0 } }).success,
+    ).toBe(false);
+    expect(
+      RuntimeSettingsSchema.safeParse({ log: { max_segments: 101 } }).success,
+    ).toBe(false);
+  });
+
+  it("rejects non-integer retention values", () => {
+    expect(
+      RuntimeSettingsSchema.safeParse({
+        journal: { retention_days: 1.5 },
+      }).success,
+    ).toBe(false);
+    expect(
+      RuntimeSettingsSchema.safeParse({
+        log: { max_segment_bytes: 65_536.5 },
+      }).success,
+    ).toBe(false);
   });
 });
 

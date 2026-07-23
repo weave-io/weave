@@ -226,7 +226,11 @@ const TAPESTRY_EXECUTION_CONFIG: StartPlanExecutionInput["config"] = {
   disabled: { agents: [], hooks: [], skills: [] },
   settings: {
     log_level: "INFO",
-    runtime: { journal: { strict: false } },
+    runtime: {
+      journal: { strict: false, retention_days: 30, max_entries: 10_000 },
+      usage: { detail_retention_days: 30, max_observations: 100_000 },
+      log: { max_segment_bytes: 5_242_880, max_segments: 3 },
+    },
   },
   extend_before_plan: { steps: [] },
   workflows: {
@@ -302,7 +306,11 @@ const SIMPLE_EXECUTION_CONFIG: StartPlanExecutionInput["config"] = {
   disabled: { agents: [], hooks: [], skills: [] },
   settings: {
     log_level: "INFO",
-    runtime: { journal: { strict: false } },
+    runtime: {
+      journal: { strict: false, retention_days: 30, max_entries: 10_000 },
+      usage: { detail_retention_days: 30, max_observations: 100_000 },
+      log: { max_segment_bytes: 5_242_880, max_segments: 3 },
+    },
   },
   extend_before_plan: { steps: [] },
   workflows: {
@@ -713,7 +721,7 @@ describe("startPlanExecution — present plan delegates to shared startPlan oper
 
     // Use TAPESTRY_EXECUTION_CONFIG which has the tapestry-execution workflow.
     // The first step uses plan_complete — provider must report plan is complete.
-    const result = await startPlanExecution({
+    await startPlanExecution({
       planName: "my-plan",
       config: TAPESTRY_EXECUTION_CONFIG,
       planStateProvider,

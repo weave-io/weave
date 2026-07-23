@@ -160,6 +160,8 @@ Token usage is required when the target contract declares it required, as Pi doe
 
 Renderer placement remains an implementation concern: engine data stays normalized and harness-specific presentation stays outside engine policy.
 
+The engine implementation in [`packages/engine/src/capability-contract.ts`](../../../packages/engine/src/capability-contract.ts) preserves each adapter's static declaration as the ceiling, derives one effective entry for every capability ID, and evaluates readiness against those effective entries. Missing, duplicate, contradictory, failed, or unavailable probes lower the affected capability to `unsupported`; required gaps set `healthOnlyMode` without moving harness discovery into the engine.
+
 ## Open Questions
 
 No open questions remain for effective readiness. Earlier questions above are resolved by this extension and Spec 33.

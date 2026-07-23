@@ -556,13 +556,13 @@ describe("migrations", () => {
     }
   });
 
-  it("applies fresh migrations through version 3", () => {
+  it("applies fresh migrations through version 4", () => {
     const dbPath = join(testDir, "fresh.db");
     const db = new Database(dbPath);
 
     const result = runMigrations(db);
     expect(result.isOk()).toBe(true);
-    expect(readSchemaVersion(db)).toBe(3);
+    expect(readSchemaVersion(db)).toBe(4);
 
     const migrations = db
       .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
@@ -571,6 +571,7 @@ describe("migrations", () => {
       { version: 1, name: "initial_schema" },
       { version: 2, name: "add_step_attempts_json" },
       { version: 3, name: "permission_grants" },
+      { version: 4, name: "usage_observations_and_rollups" },
     ]);
     expect(
       db
@@ -602,8 +603,13 @@ describe("migrations", () => {
     const rows = db
       .prepare("SELECT version FROM schema_migrations ORDER BY version")
       .all() as Array<{ version: number }>;
-    expect(rows).toEqual([{ version: 1 }, { version: 2 }, { version: 3 }]);
-    expect(readSchemaVersion(db)).toBe(3);
+    expect(rows).toEqual([
+      { version: 1 },
+      { version: 2 },
+      { version: 3 },
+      { version: 4 },
+    ]);
+    expect(readSchemaVersion(db)).toBe(4);
     db.close();
   });
 
@@ -650,7 +656,7 @@ describe("migrations", () => {
     await store.close();
 
     const db = new Database(dbPath);
-    expect(readSchemaVersion(db)).toBe(3);
+    expect(readSchemaVersion(db)).toBe(4);
     expect(
       db
         .prepare(
@@ -658,16 +664,23 @@ describe("migrations", () => {
         )
         .get(),
     ).toEqual({ type: "table" });
+    expect(
+      db
+        .prepare(
+          "SELECT type FROM sqlite_master WHERE name = 'usage_observations'",
+        )
+        .get(),
+    ).toEqual({ type: "table" });
     db.close();
   });
 
-  it("rejects future version 4 without mutating the DB", () => {
+  it("rejects future version 5 without mutating the DB", () => {
     const dbPath = join(testDir, "future.db");
     const db = new Database(dbPath);
 
     db.exec(CANONICAL_BOOTSTRAP_DDL);
     db.exec(
-      "INSERT INTO runtime_metadata (key, value) VALUES ('schema_version', '4')",
+      "INSERT INTO runtime_metadata (key, value) VALUES ('schema_version', '5')",
     );
 
     const result = runMigrations(db);
@@ -675,10 +688,10 @@ describe("migrations", () => {
     const error = result._unsafeUnwrapErr();
     expect(error.type).toBe("migration_version");
     if (error.type === "migration_version") {
-      expect(error.foundVersion).toBe(4);
+      expect(error.foundVersion).toBe(5);
       expect(error.supportedVersion).toBe(CURRENT_SCHEMA_VERSION);
     }
-    expect(readSchemaVersion(db)).toBe(4);
+    expect(readSchemaVersion(db)).toBe(5);
     assertNoPermissionGrantsTable(db);
     expect(
       db.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get(),
@@ -871,7 +884,7 @@ describe("migrations", () => {
 
     const result = runMigrations(db);
     expect(result.isOk()).toBe(true);
-    expect(readSchemaVersion(db)).toBe(3);
+    expect(readSchemaVersion(db)).toBe(4);
     expect(
       db
         .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
@@ -880,6 +893,7 @@ describe("migrations", () => {
       { version: 1, name: "initial_schema" },
       { version: 2, name: "add_step_attempts_json" },
       { version: 3, name: "permission_grants" },
+      { version: 4, name: "usage_observations_and_rollups" },
     ]);
     expect(
       db
@@ -1142,14 +1156,14 @@ describe("migrations", () => {
     db.close();
   });
 
-  it("no-pending healthy v3 reopen re-verifies live permission_grants schema", () => {
+  it("no-pending healthy current reopen re-verifies live permission_grants schema", () => {
     const db = new Database(join(testDir, "healthy-reopen.db"));
     expect(runMigrations(db).isOk()).toBe(true);
-    expect(readSchemaVersion(db)).toBe(3);
+    expect(readSchemaVersion(db)).toBe(4);
 
     const second = runMigrations(db);
     expect(second.isOk()).toBe(true);
-    expect(readSchemaVersion(db)).toBe(3);
+    expect(readSchemaVersion(db)).toBe(4);
     expect(
       db
         .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
@@ -1158,11 +1172,12 @@ describe("migrations", () => {
       { version: 1, name: "initial_schema" },
       { version: 2, name: "add_step_attempts_json" },
       { version: 3, name: "permission_grants" },
+      { version: 4, name: "usage_observations_and_rollups" },
     ]);
     db.close();
   });
 
-  it("initialized v3 then dropped permission_grants fails reopen without repair", () => {
+  it("initialized current then dropped permission_grants fails reopen without repair", () => {
     const db = new Database(join(testDir, "drop-table-reopen.db"));
     expect(runMigrations(db).isOk()).toBe(true);
     const ledgerBefore = db
@@ -1172,7 +1187,7 @@ describe("migrations", () => {
 
     const result = runMigrations(db);
     assertInitializationError(result, "Invalid permission_grants schema");
-    expect(readSchemaVersion(db)).toBe(3);
+    expect(readSchemaVersion(db)).toBe(4);
     expect(
       db
         .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
@@ -1182,7 +1197,7 @@ describe("migrations", () => {
     db.close();
   });
 
-  it("initialized v3 then dropped lookup index fails reopen without repair", () => {
+  it("initialized current then dropped lookup index fails reopen without repair", () => {
     const db = new Database(join(testDir, "drop-index-reopen.db"));
     expect(runMigrations(db).isOk()).toBe(true);
     const ledgerBefore = db
@@ -1192,7 +1207,7 @@ describe("migrations", () => {
 
     const result = runMigrations(db);
     assertInitializationError(result, "Invalid permission_grants schema");
-    expect(readSchemaVersion(db)).toBe(3);
+    expect(readSchemaVersion(db)).toBe(4);
     expect(
       db
         .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
@@ -1216,7 +1231,7 @@ describe("migrations", () => {
     db.close();
   });
 
-  it("initialized v3 then replaced with weak permission_grants fails reopen without repair", () => {
+  it("initialized current then replaced with weak permission_grants fails reopen without repair", () => {
     const db = new Database(join(testDir, "weak-table-reopen.db"));
     expect(runMigrations(db).isOk()).toBe(true);
     const ledgerBefore = db
@@ -1252,7 +1267,7 @@ describe("migrations", () => {
 
     const result = runMigrations(db);
     assertInitializationError(result, "Invalid permission_grants schema");
-    expect(readSchemaVersion(db)).toBe(3);
+    expect(readSchemaVersion(db)).toBe(4);
     expect(
       db
         .prepare("SELECT version, name FROM schema_migrations ORDER BY version")

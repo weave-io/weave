@@ -82,6 +82,16 @@ class StubJournalRepository implements RuntimeJournalRepository {
   injectFailure(): void {
     this.failNext = true;
   }
+
+  prune(_options: {
+    readonly olderThan?: string;
+    readonly maxCount?: number;
+  }): ResultAsync<
+    { removedByAge: number; removedByCount: number },
+    RuntimeStoreError
+  > {
+    return okAsync({ removedByAge: 0, removedByCount: 0 });
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -155,6 +155,35 @@ export interface RuntimeStoreJournalWriteError {
 }
 
 /**
+ * Invariant breach — e.g. reusing a usage observation ID with different values.
+ *
+ * Spec 33 §23 / §28: a conflicting usage duplicate is an invariant violation
+ * and must not double-count rollups.
+ */
+export interface RuntimeStoreInvariantViolationError {
+  readonly type: "invariant_violation";
+  /** The entity type involved (e.g. "UsageObservation"). */
+  readonly entity: string;
+  /** Human-readable description. */
+  readonly message: string;
+  /** The conflicting identity, if known. */
+  readonly id?: string;
+}
+
+/**
+ * Failure during retention/pruning work.
+ *
+ * Retention failures degrade and retry only at the next safe boundary.
+ */
+export interface RuntimeStoreRetentionError {
+  readonly type: "retention";
+  /** Human-readable description of the failure. */
+  readonly message: string;
+  /** Underlying cause, if available. */
+  readonly cause?: RuntimeStoreErrorCause;
+}
+
+/**
  * Discriminated union of all Runtime Store error variants.
  *
  * All fallible repository operations return `ResultAsync<T, RuntimeStoreError>`.
@@ -167,7 +196,9 @@ export type RuntimeStoreError =
   | RuntimeStoreNotFoundError
   | RuntimeStoreConflictError
   | RuntimeStoreValidationError
-  | RuntimeStoreJournalWriteError;
+  | RuntimeStoreJournalWriteError
+  | RuntimeStoreInvariantViolationError
+  | RuntimeStoreRetentionError;
 
 // ---------------------------------------------------------------------------
 // Error factory helpers
@@ -243,4 +274,21 @@ export function journalWriteError(
   cause?: unknown,
 ): RuntimeStoreJournalWriteError {
   return { type: "journal_write", message, cause: normalizeCause(cause) };
+}
+
+/** Create a RuntimeStoreInvariantViolationError. */
+export function invariantViolationError(
+  entity: string,
+  message: string,
+  id?: string,
+): RuntimeStoreInvariantViolationError {
+  return { type: "invariant_violation", entity, message, id };
+}
+
+/** Create a RuntimeStoreRetentionError. */
+export function retentionError(
+  message: string,
+  cause?: unknown,
+): RuntimeStoreRetentionError {
+  return { type: "retention", message, cause: normalizeCause(cause) };
 }
