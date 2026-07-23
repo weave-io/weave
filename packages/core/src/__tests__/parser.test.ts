@@ -617,3 +617,51 @@ describe("Parser — agent review_models field", () => {
     expect(prop).toBeUndefined();
   });
 });
+
+describe("Parser — delegation limits", () => {
+  it("parses project and agent delegation blocks", () => {
+    const source = `settings {
+  delegation {
+    max_children 9
+    max_concurrency 9
+    max_depth 3
+    max_processes 9
+  }
+}
+
+agent tapestry {
+  delegation {
+    max_children 3
+    max_concurrency 2
+  }
+}`;
+    const result = parseSource(source);
+    expect(result.isOk()).toBe(true);
+    const nodes = result._unsafeUnwrap();
+    const settings = nodes[0] as SettingAssignment;
+    const settingsBlock = settings.value as BlockValue;
+    const delegation = settingsBlock.properties.find(
+      (property) => property.key === "delegation",
+    )?.value as BlockValue;
+    expect(delegation.properties.map((property) => property.key)).toEqual([
+      "max_children",
+      "max_concurrency",
+      "max_depth",
+      "max_processes",
+    ]);
+    expect(
+      delegation.properties.find(
+        (property) => property.key === "max_concurrency",
+      )?.value,
+    ).toMatchObject({ kind: "number", value: 9 });
+
+    const agent = nodes[1] as AgentBlock;
+    const agentDelegation = agent.properties.find(
+      (property) => property.key === "delegation",
+    )?.value as BlockValue;
+    expect(agentDelegation.properties[0]?.value).toMatchObject({
+      kind: "number",
+      value: 3,
+    });
+  });
+});

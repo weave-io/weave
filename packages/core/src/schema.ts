@@ -34,6 +34,55 @@ export const ToolPolicySchema = z
   })
   .strict();
 
+export const DEFAULT_DELEGATION_LIMITS = {
+  max_children: 9,
+  max_concurrency: 3,
+  max_depth: 3,
+  max_processes: 9,
+} as const;
+
+const PositiveSafeIntegerSchema = z
+  .number()
+  .int()
+  .positive()
+  .max(Number.MAX_SAFE_INTEGER);
+
+export const DelegationSettingsSchema = z
+  .object({
+    max_children: PositiveSafeIntegerSchema.max(9).optional(),
+    max_concurrency: PositiveSafeIntegerSchema.max(9).optional(),
+    max_depth: PositiveSafeIntegerSchema.optional(),
+    max_processes: PositiveSafeIntegerSchema.optional(),
+  })
+  .strict()
+  .refine(
+    (limits) =>
+      limits.max_children === undefined ||
+      limits.max_concurrency === undefined ||
+      limits.max_concurrency <= limits.max_children,
+    {
+      message: "max_concurrency must be less than or equal to max_children",
+      path: ["max_concurrency"],
+    },
+  );
+
+export const AgentDelegationConfigSchema = z
+  .object({
+    max_children: PositiveSafeIntegerSchema.max(9).optional(),
+    max_concurrency: PositiveSafeIntegerSchema.max(9).optional(),
+  })
+  .strict()
+  .refine(
+    (limits) =>
+      limits.max_children === undefined ||
+      limits.max_concurrency === undefined ||
+      limits.max_concurrency <= limits.max_children,
+    {
+      message: "max_concurrency must be less than or equal to max_children",
+      path: ["max_concurrency"],
+    },
+  );
+
 // ---------------------------------------------------------------------------
 // Routing
 // ---------------------------------------------------------------------------
@@ -67,6 +116,7 @@ export const AgentConfigSchema = z
     temperature: z.number().min(0).max(2).optional(),
     mode: z.enum(["primary", "subagent", "all"]).optional(),
     tool_policy: ToolPolicySchema.optional(),
+    delegation: AgentDelegationConfigSchema.optional(),
     routing: RoutingConfigSchema.optional(),
     skills: z.array(z.string()).optional(),
     triggers: z.array(DelegationTriggerSchema).optional(),
@@ -500,6 +550,7 @@ export const RuntimeSettingsSchema = z
 export const SettingsConfigSchema = z
   .object({
     log_level: LogLevelSchema.default("INFO"),
+    delegation: DelegationSettingsSchema.optional(),
     runtime: RuntimeSettingsSchema,
   })
   .default({ log_level: "INFO", runtime: { journal: { strict: false } } });
@@ -520,27 +571,82 @@ export const SettingsConfigSchema = z
  * per-workflow targeting in v1. The config layer inserts these steps into every
  * workflow that publishes `extension_points { before-plan }`.
  */
-export const WeaveConfigSchema = z.object({
-  agents: z.record(z.string(), AgentConfigSchema).default({}),
-  categories: z.record(z.string(), CategoryConfigSchema).default({}),
-  disabled: DisabledConfigSchema.default({
-    agents: [],
-    hooks: [],
-    skills: [],
-  }),
-  settings: SettingsConfigSchema,
-  workflows: z.record(z.string(), WorkflowConfigSchema).default({}),
-  /**
-   * Merged `extend before-plan [...]` directives.
-   *
-   * v1 contract: a single global bucket — no per-workflow targeting.
-   * The config layer applies this step list to every workflow that publishes
-   * `extension_points { before-plan }`.
-   *
-   * Defaults to `{ steps: [] }` when no `extend before-plan` directive is present.
-   */
-  extend_before_plan: ExtendBeforePlanSchema.default({ steps: [] }),
-});
+export const WeaveConfigSchema = z
+  .object({
+    agents: z.record(z.string(), AgentConfigSchema).default({}),
+    categories: z.record(z.string(), CategoryConfigSchema).default({}),
+    disabled: DisabledConfigSchema.default({
+      agents: [],
+      hooks: [],
+      skills: [],
+    }),
+    settings: SettingsConfigSchema,
+    workflows: z.record(z.string(), WorkflowConfigSchema).default({}),
+    /**
+     * Merged `extend before-plan [...]` directives.
+     *
+     * v1 contract: a single global bucket — no per-workflow targeting.
+     * The config layer applies this step list to every workflow that publishes
+     * `extension_points { before-plan }`.
+     *
+     * Defaults to `{ steps: [] }` when no `extend before-plan` directive is present.
+     */
+    extend_before_plan: ExtendBeforePlanSchema.default({ steps: [] }),
+  })
+  .superRefine((config, ctx) => {
+    const project = config.settings.delegation;
+    const projectMaxChildren = project?.max_children;
+    const projectMaxConcurrency = project?.max_concurrency;
+
+    for (const [agentName, agent] of Object.entries(config.agents)) {
+      const agentLimits = agent.delegation;
+      if (agentLimits === undefined) continue;
+
+      if (
+        projectMaxChildren !== undefined &&
+        agentLimits.max_children !== undefined &&
+        agentLimits.max_children > projectMaxChildren
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["agents", agentName, "delegation", "max_children"],
+          message: "agent max_children may not exceed the project cap",
+        });
+      }
+
+      // AgentDelegationConfigSchema reports this local contradiction. Do not
+      // also report it as a project-scope concurrency violation.
+      const hasLocalConcurrencyContradiction =
+        agentLimits.max_children !== undefined &&
+        agentLimits.max_concurrency !== undefined &&
+        agentLimits.max_concurrency > agentLimits.max_children;
+      if (hasLocalConcurrencyContradiction) continue;
+
+      if (
+        projectMaxConcurrency !== undefined &&
+        agentLimits.max_concurrency !== undefined &&
+        agentLimits.max_concurrency > projectMaxConcurrency
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["agents", agentName, "delegation", "max_concurrency"],
+          message: "agent max_concurrency may not exceed the project cap",
+        });
+      } else if (
+        agentLimits.max_children === undefined &&
+        projectMaxChildren !== undefined &&
+        agentLimits.max_concurrency !== undefined &&
+        agentLimits.max_concurrency > projectMaxChildren
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["agents", agentName, "delegation", "max_concurrency"],
+          message:
+            "agent max_concurrency must be less than or equal to effective max_children",
+        });
+      }
+    }
+  });
 
 // ---------------------------------------------------------------------------
 // Inferred types
@@ -549,6 +655,8 @@ export const WeaveConfigSchema = z.object({
 export type ToolPermission = z.infer<typeof ToolPermissionSchema>;
 export type DelegationTrigger = z.infer<typeof DelegationTriggerSchema>;
 export type ToolPolicy = z.infer<typeof ToolPolicySchema>;
+export type DelegationSettings = z.infer<typeof DelegationSettingsSchema>;
+export type AgentDelegationConfig = z.infer<typeof AgentDelegationConfigSchema>;
 /** Per-agent routing configuration (delegation_exclude, etc.). */
 export type RoutingConfig = z.infer<typeof RoutingConfigSchema>;
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;

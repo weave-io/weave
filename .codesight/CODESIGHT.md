@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode
 
-> 0 routes | 0 models | 0 components | 158 lib files | 33 env vars | 6 middleware | 0% test coverage
-> **Token savings:** this file is ~15,400 tokens. Without it, AI exploration would cost ~56,000 tokens. **Saves ~40,700 tokens per conversation.**
-> **Last scanned:** 2026-07-22 23:48 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 159 lib files | 33 env vars | 6 middleware | 0% test coverage
+> **Token savings:** this file is ~15,500 tokens. Without it, AI exploration would cost ~56,300 tokens. **Saves ~40,800 tokens per conversation.**
+> **Last scanned:** 2026-07-23 03:47 — re-run after significant changes
 
 ---
 
@@ -83,7 +83,10 @@
   - type Command
   - type ArgParseError
 - `packages/cli/src/cli.ts` — function run: (deps?) => Promise<Result<number, CliError>>, interface CliDeps
-- `packages/cli/src/commands/compose.ts` — function runCompose: (ctx) => Promise<Result<number, CliError>>, interface ComposeContext
+- `packages/cli/src/commands/compose.ts`
+  - function mapConfigLoadErrors: (path, errors) => CliError
+  - function runCompose: (ctx) => Promise<Result<number, CliError>>
+  - interface ComposeContext
 - `packages/cli/src/commands/eval.ts`
   - function readPublishMode: (env, string | undefined>) => BundleWriteMode
   - function buildLangChainScorer: (evalEnv, langchainModuleLoader?) => void
@@ -102,9 +105,15 @@
   - interface MigrateContext
   - type InitScope
   - type InitPlan
-- `packages/cli/src/commands/prompt.ts` — function runPrompt: (ctx) => Promise<Result<number, CliError>>, interface PromptContext
+- `packages/cli/src/commands/prompt.ts`
+  - function mapConfigLoadErrors: (cwd, errors) => PromptError
+  - function runPrompt: (ctx) => Promise<Result<number, CliError>>
+  - interface PromptContext
 - `packages/cli/src/commands/runtime.ts` — function runRuntime: (ctx) => Promise<Result<number, CliError>>, interface RuntimeCommandContext
-- `packages/cli/src/commands/validate.ts` — function runValidate: (ctx) => Promise<Result<number, CliError>>, interface ValidateContext
+- `packages/cli/src/commands/validate.ts`
+  - function mapConfigLoadErrors: (cwd, errors) => ValidateError
+  - function runValidate: (ctx) => Promise<Result<number, CliError>>
+  - interface ValidateContext
 - `packages/cli/src/config/starter-config.ts` — function starterConfig: (scope) => string
 - `packages/cli/src/detect/index.ts`
   - function isHarnessId: (value) => value is SupportedHarnessId
@@ -445,6 +454,14 @@
   - interface CategoryMetadata
   - interface AgentDescriptor
   - _...7 more_
+- `packages/engine/src/delegation-limits.ts`
+  - function resolveEffectiveDelegationLimits: (config, agentName?) => Result<EffectiveDelegationLimits, DelegationLimitsError>
+  - function authorizeDelegation: (input) => Result<
+  - interface EffectiveDelegationLimits
+  - interface DelegationAuthorizationInput
+  - type DelegationLimitsError
+  - type DelegationAuthorizationDecision
+  - _...1 more_
 - `packages/engine/src/descriptors.ts`
   - function generateCategoryShuttles: (config) => Result<
   - interface GeneratedCategoryShuttle
@@ -860,7 +877,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 145 test files found
+> 147 test files found
 
 ---
 

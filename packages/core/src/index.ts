@@ -52,9 +52,11 @@ export { parse } from "./parser.js";
 // ---------------------------------------------------------------------------
 export type {
   AgentConfig,
+  AgentDelegationConfig,
   ArtifactDecl,
   CategoryConfig,
   CompletionMethod,
+  DelegationSettings,
   DelegationTrigger,
   ExtendBeforePlan,
   ExtensionPoints,
@@ -78,9 +80,12 @@ export type {
 // ---------------------------------------------------------------------------
 export {
   AgentConfigSchema,
+  AgentDelegationConfigSchema,
   ArtifactDeclSchema,
   CategoryConfigSchema,
   CompletionMethodSchema,
+  DEFAULT_DELEGATION_LIMITS,
+  DelegationSettingsSchema,
   DelegationTriggerSchema,
   ExtendBeforePlanSchema,
   ExtensionPointsSchema,

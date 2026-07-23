@@ -43,6 +43,17 @@ export {
   composeWorkflowStepPrompt,
   detectAppendCollisions,
 } from "./compose.js";
+export type {
+  DelegationAuthorizationDecision,
+  DelegationAuthorizationError,
+  DelegationAuthorizationInput,
+  DelegationLimitsError,
+  EffectiveDelegationLimits,
+} from "./delegation-limits.js";
+export {
+  authorizeDelegation,
+  resolveEffectiveDelegationLimits,
+} from "./delegation-limits.js";
 export type { CategoryShuttleConflictError } from "./descriptors.js";
 export { generateCategoryShuttles } from "./descriptors.js";
 export type { Env, EnvValidationError } from "./env.js";

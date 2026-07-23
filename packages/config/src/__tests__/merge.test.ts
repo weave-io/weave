@@ -768,7 +768,27 @@ describe("mergeConfigsResult", () => {
     );
     const result = mergeConfigsResult(a);
     expect(result.isOk()).toBe(true);
-    expect(result._unsafeUnwrap().agents.loom).toBeDefined();
+    expect(result._unsafeUnwrap()).toEqual(a);
+  });
+
+  it("validates effective delegation limits for a single config", () => {
+    const a = cfg(`
+      settings { delegation { max_children 4 } }
+      agent loom { delegation { max_children 4 max_concurrency 4 } }
+    `);
+    const result = mergeConfigsResult(a);
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toEqual([
+      {
+        type: "ConfigValidationError",
+        errors: [
+          {
+            path: "agents.loom.delegation.max_concurrency",
+            message: "agent max_concurrency may not exceed the project cap",
+          },
+        ],
+      },
+    ]);
   });
 
   it("insert_before via mergeConfigsResult: spec step before plan in plan-and-execute", () => {
@@ -1540,5 +1560,119 @@ describe("mergeConfigsResult — before-plan extension surface ownership", () =>
     // spec step inserted before plan
     const stepNames = wf?.steps.map((s) => s.name) ?? [];
     expect(stepNames.indexOf("spec")).toBe(stepNames.indexOf("plan") - 1);
+  });
+});
+
+describe("mergeConfigsResult — delegation limits", () => {
+  it("deep-merges only authored project delegation fields", () => {
+    const global = cfg(`settings {
+  delegation {
+    max_children 6
+    max_concurrency 3
+    max_depth 4
+    max_processes 12
+  }
+}`);
+    const project = cfg(`settings {
+  delegation { max_concurrency 2 }
+}`);
+
+    const result = mergeConfigsResult(global, project);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().settings.delegation).toEqual({
+      max_children: 6,
+      max_concurrency: 2,
+      max_depth: 4,
+      max_processes: 12,
+    });
+  });
+
+  it("preserves lower-layer delegation caps when an upper layer omits them", () => {
+    const global = cfg(`settings {
+  delegation { max_children 4 max_concurrency 2 }
+}`);
+    const result = mergeConfigsResult(global, cfg(""));
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().settings.delegation?.max_children).toBe(4);
+    expect(result._unsafeUnwrap().settings.delegation?.max_concurrency).toBe(2);
+  });
+
+  it("deep-merges per-agent delegation overrides", () => {
+    const base = cfg(`agent loom {
+  delegation { max_children 4 }
+}`);
+    const override = cfg(`agent loom {
+  delegation { max_concurrency 2 }
+}`);
+    const result = mergeConfigsResult(base, override);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().agents.loom?.delegation).toEqual({
+      max_children: 4,
+      max_concurrency: 2,
+    });
+  });
+
+  it("validates delegation caps after the full left-fold merge", () => {
+    const builtin = cfg(`agent loom {
+  delegation { max_children 5 }
+}`);
+    const global = cfg(`settings {
+  delegation { max_children 4 max_concurrency 2 }
+}`);
+    const project = cfg(`agent loom {
+  delegation { max_children 3 }
+}`);
+    const result = mergeConfigsResult(builtin, global, project);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().agents.loom?.delegation?.max_children).toBe(
+      3,
+    );
+  });
+
+  it("preserves an omitted project concurrency limit when children are narrowed", () => {
+    const result = mergeConfigsResult(
+      emptyConfig,
+      cfg(`settings { delegation { max_children 2 } }`),
+    );
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().settings.delegation).toEqual({
+      max_children: 2,
+    });
+  });
+
+  it("allows a temporarily contradictory layer when the final layer repairs it", () => {
+    const builtin = cfg(
+      `settings { delegation { max_children 2 max_concurrency 2 } }`,
+    );
+    const global = cfg(`settings { delegation { max_concurrency 3 } }`);
+    const project = cfg(`settings { delegation { max_children 3 } }`);
+    const result = mergeConfigsResult(builtin, global, project);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().settings.delegation).toMatchObject({
+      max_children: 3,
+      max_concurrency: 3,
+    });
+  });
+
+  it("fails when merged agent limits exceed a lower-layer project cap", () => {
+    const global = cfg(`settings {
+  delegation { max_children 3 max_concurrency 2 }
+}`);
+    const project = cfg(`agent loom {
+  delegation { max_children 4 }
+}`);
+    const result = mergeConfigsResult(global, project);
+    expect(result.isErr()).toBe(true);
+    const validation = result
+      ._unsafeUnwrapErr()
+      .find((error) => error.type === "ConfigValidationError");
+    expect(validation?.type).toBe("ConfigValidationError");
+    if (validation?.type === "ConfigValidationError") {
+      expect(
+        validation.errors.some(
+          (error) => error.path === "agents.loom.delegation.max_children",
+        ),
+      ).toBe(true);
+    }
   });
 });

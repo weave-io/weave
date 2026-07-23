@@ -402,7 +402,7 @@ analytics {
 | `runtime.log.max_segment_bytes` | integer `65536..1073741824` | Rotating runtime log segment size. Default `5242880`. |
 | `runtime.log.max_segments` | integer `1..100` | Number of runtime log segments to keep. Default `3`. |
 
-An agent `delegation` block may set only `max_children` and `max_concurrency`; each value may narrow but never raise the project setting. `max_concurrency` must not exceed that agent's effective `max_children`. See [ADR 0008](adr/0008-portable-delegation-budgets.md) and [Spec 33 §10](specs/33-spec-pi-adapter/33-spec-pi-adapter.md#10-portable-delegation-limits).
+An agent `delegation` block may set only `max_children` and `max_concurrency`; each value may narrow but never raise the merged project setting. If the project omits `max_concurrency`, effective project concurrency is clamped to `max_children`; likewise, if an agent narrows `max_children` without setting concurrency, its effective concurrency is clamped to that child cap. Omitted project fields remain absent through per-scope parsing so higher layers do not overwrite lower-layer values with defaults; unresolved values receive defaults only during engine resolution. See [Delegation Limits](delegation-limits.md), [ADR 0008](adr/0008-portable-delegation-budgets.md), and [Spec 33 §10](specs/33-spec-pi-adapter/33-spec-pi-adapter.md#10-portable-delegation-limits).
 
 Runtime retention values are finite; zero and unbounded modes are invalid. See [ADR 0011](adr/0011-effective-adapter-readiness-and-runtime-observability.md).
 

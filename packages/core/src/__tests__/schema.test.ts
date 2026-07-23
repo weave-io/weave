@@ -2,8 +2,10 @@ import { describe, expect, it } from "bun:test";
 import { ToolPermissionSchema, ToolPolicySchema } from "@weaveio/weave-core";
 import {
   AgentConfigSchema,
+  AgentDelegationConfigSchema,
   CategoryConfigSchema,
   CompletionMethodSchema,
+  DelegationSettingsSchema,
   ExtendBeforePlanSchema,
   ExtensionPointsSchema,
   LogLevelSchema,
@@ -1656,5 +1658,153 @@ describe("AgentConfigSchema — review_models field", () => {
       review_models: "claude-opus-4-5",
     });
     expect(r.success).toBe(false);
+  });
+});
+
+describe("delegation limit schemas", () => {
+  it("accepts portable project and agent delegation limits", () => {
+    expect(
+      DelegationSettingsSchema.safeParse({
+        max_children: 9,
+        max_concurrency: 3,
+        max_depth: 3,
+        max_processes: 9,
+      }).success,
+    ).toBe(true);
+    expect(
+      AgentDelegationConfigSchema.safeParse({
+        max_children: 2,
+        max_concurrency: 1,
+      }).success,
+    ).toBe(true);
+  });
+
+  it("accepts max_concurrency 9 and rejects 10", () => {
+    expect(
+      DelegationSettingsSchema.safeParse({ max_concurrency: 9 }).success,
+    ).toBe(true);
+    expect(
+      DelegationSettingsSchema.safeParse({ max_concurrency: 10 }).success,
+    ).toBe(false);
+    expect(
+      AgentConfigSchema.safeParse({ delegation: { max_concurrency: 9 } })
+        .success,
+    ).toBe(true);
+    expect(
+      AgentConfigSchema.safeParse({ delegation: { max_concurrency: 10 } })
+        .success,
+    ).toBe(false);
+  });
+
+  it("rejects non-positive, fractional, and oversized child limits", () => {
+    expect(
+      DelegationSettingsSchema.safeParse({ max_children: 0 }).success,
+    ).toBe(false);
+    expect(DelegationSettingsSchema.safeParse({ max_depth: 1.5 }).success).toBe(
+      false,
+    );
+    expect(
+      DelegationSettingsSchema.safeParse({ max_children: 10 }).success,
+    ).toBe(false);
+  });
+
+  it("accepts project max_children without max_concurrency and preserves omission", () => {
+    const result = WeaveConfigSchema.safeParse({
+      settings: { delegation: { max_children: 2 } },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.settings.delegation).toEqual({ max_children: 2 });
+    }
+  });
+
+  it("rejects max_concurrency above max_children at the precise path", () => {
+    const result = WeaveConfigSchema.safeParse({
+      settings: {
+        delegation: { max_children: 2, max_concurrency: 3 },
+      },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toHaveLength(1);
+      expect(result.error.issues[0]?.path.join(".")).toBe(
+        "settings.delegation.max_concurrency",
+      );
+    }
+  });
+
+  it("reports one local agent concurrency issue without a duplicate project issue", () => {
+    const result = WeaveConfigSchema.safeParse({
+      settings: { delegation: { max_children: 4, max_concurrency: 2 } },
+      agents: { loom: { delegation: { max_children: 1, max_concurrency: 3 } } },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toHaveLength(1);
+      expect(result.error.issues[0]).toMatchObject({
+        path: ["agents", "loom", "delegation", "max_concurrency"],
+        message: "max_concurrency must be less than or equal to max_children",
+      });
+    }
+  });
+
+  it("reports the project child cap alongside one local concurrency issue", () => {
+    const result = WeaveConfigSchema.safeParse({
+      settings: {
+        delegation: { max_children: 2, max_concurrency: 2 },
+      },
+      agents: {
+        loom: {
+          delegation: { max_children: 3, max_concurrency: 4 },
+        },
+      },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toHaveLength(2);
+      expect(result.error.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            path: ["agents", "loom", "delegation", "max_children"],
+            message: "agent max_children may not exceed the project cap",
+          }),
+          expect.objectContaining({
+            path: ["agents", "loom", "delegation", "max_concurrency"],
+            message:
+              "max_concurrency must be less than or equal to max_children",
+          }),
+        ]),
+      );
+      expect(
+        result.error.issues.filter(
+          (issue) =>
+            issue.path.join(".") === "agents.loom.delegation.max_concurrency",
+        ),
+      ).toHaveLength(1);
+    }
+  });
+
+  it("rejects agent overrides that exceed project caps", () => {
+    const result = WeaveConfigSchema.safeParse({
+      settings: {
+        delegation: { max_children: 4, max_concurrency: 2 },
+      },
+      agents: {
+        loom: {
+          delegation: { max_children: 5, max_concurrency: 3 },
+        },
+      },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const paths = result.error.issues.map((issue) => issue.path.join("."));
+      expect(paths).toContain("agents.loom.delegation.max_children");
+      expect(paths).toContain("agents.loom.delegation.max_concurrency");
+    }
+  });
+
+  it("rejects project-only fields in an agent override", () => {
+    const result = AgentDelegationConfigSchema.safeParse({ max_depth: 2 });
+    expect(result.success).toBe(false);
   });
 });

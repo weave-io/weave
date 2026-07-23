@@ -72,7 +72,10 @@
   - type Command
   - type ArgParseError
 - `packages/cli/src/cli.ts` — function run: (deps?) => Promise<Result<number, CliError>>, interface CliDeps
-- `packages/cli/src/commands/compose.ts` — function runCompose: (ctx) => Promise<Result<number, CliError>>, interface ComposeContext
+- `packages/cli/src/commands/compose.ts`
+  - function mapConfigLoadErrors: (path, errors) => CliError
+  - function runCompose: (ctx) => Promise<Result<number, CliError>>
+  - interface ComposeContext
 - `packages/cli/src/commands/eval.ts`
   - function readPublishMode: (env, string | undefined>) => BundleWriteMode
   - function buildLangChainScorer: (evalEnv, langchainModuleLoader?) => void
@@ -91,9 +94,15 @@
   - interface MigrateContext
   - type InitScope
   - type InitPlan
-- `packages/cli/src/commands/prompt.ts` — function runPrompt: (ctx) => Promise<Result<number, CliError>>, interface PromptContext
+- `packages/cli/src/commands/prompt.ts`
+  - function mapConfigLoadErrors: (cwd, errors) => PromptError
+  - function runPrompt: (ctx) => Promise<Result<number, CliError>>
+  - interface PromptContext
 - `packages/cli/src/commands/runtime.ts` — function runRuntime: (ctx) => Promise<Result<number, CliError>>, interface RuntimeCommandContext
-- `packages/cli/src/commands/validate.ts` — function runValidate: (ctx) => Promise<Result<number, CliError>>, interface ValidateContext
+- `packages/cli/src/commands/validate.ts`
+  - function mapConfigLoadErrors: (cwd, errors) => ValidateError
+  - function runValidate: (ctx) => Promise<Result<number, CliError>>
+  - interface ValidateContext
 - `packages/cli/src/config/starter-config.ts` — function starterConfig: (scope) => string
 - `packages/cli/src/detect/index.ts`
   - function isHarnessId: (value) => value is SupportedHarnessId
@@ -434,6 +443,14 @@
   - interface CategoryMetadata
   - interface AgentDescriptor
   - _...7 more_
+- `packages/engine/src/delegation-limits.ts`
+  - function resolveEffectiveDelegationLimits: (config, agentName?) => Result<EffectiveDelegationLimits, DelegationLimitsError>
+  - function authorizeDelegation: (input) => Result<
+  - interface EffectiveDelegationLimits
+  - interface DelegationAuthorizationInput
+  - type DelegationLimitsError
+  - type DelegationAuthorizationDecision
+  - _...1 more_
 - `packages/engine/src/descriptors.ts`
   - function generateCategoryShuttles: (config) => Result<
   - interface GeneratedCategoryShuttle

@@ -87,8 +87,11 @@ workflow plan-and-execute {
 | `UnknownInsertionAnchor`  | `insert_before` / `insert_after` names a step that does not exist in the base steps   |
 | `BothInsertBeforeAndAfter`| A step declares both `insert_before` and `insert_after` (mutually exclusive)          |
 | `ExtendsCycle`            | The `extends` chain contains a cycle (A extends B, B extends A)                       |
+| `ConfigValidationError`   | The merged config violates a cross-layer rule, such as an agent delegation cap       |
 
-These are wrapped in `MergeError` and returned from `mergeConfigsResult`. The `loadConfig` pipeline surfaces them as `ConfigLoadError` with `type: "MergeError"`.
+Workflow errors are wrapped as `WorkflowExtensionError`; all merge errors are wrapped in
+`MergeError` and returned from `mergeConfigsResult`. See
+[Delegation limits](delegation-limits.md) for the delegation validation rules. The `loadConfig` pipeline surfaces them as `ConfigLoadError` with `type: "MergeError"`.
 
 ### `mergeConfigsResult` vs `mergeConfigs`
 
@@ -102,8 +105,13 @@ result.match(
   (config) => startRunner(config),
   (errors) => {
     for (const e of errors) {
-      if (e.type === "WorkflowExtensionError") {
-        console.error(`Workflow merge error: ${e.error.type}`);
+      switch (e.type) {
+        case "WorkflowExtensionError":
+          reportWorkflowError(e.error);
+          break;
+        case "ConfigValidationError":
+          reportConfigValidationErrors(e.errors);
+          break;
       }
     }
   },

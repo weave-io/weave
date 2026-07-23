@@ -1395,3 +1395,104 @@ describe("validate — review_models field", () => {
     expect(errors.some((e) => e.path.includes("review_models"))).toBe(true);
   });
 });
+
+describe("validate — delegation limits", () => {
+  it("normalizes valid project caps and narrower agent overrides", () => {
+    const result = validateSource(`settings {
+  delegation {
+    max_children 6
+    max_concurrency 3
+    max_depth 4
+    max_processes 12
+  }
+}
+agent tapestry {
+  delegation {
+    max_children 2
+    max_concurrency 1
+  }
+}`);
+    expect(result.isOk()).toBe(true);
+    const config = result._unsafeUnwrap();
+    expect(config.settings.delegation).toEqual({
+      max_children: 6,
+      max_concurrency: 3,
+      max_depth: 4,
+      max_processes: 12,
+    });
+    expect(config.agents.tapestry?.delegation).toEqual({
+      max_children: 2,
+      max_concurrency: 1,
+    });
+  });
+
+  it("accepts max_concurrency 9 for project and agent settings", () => {
+    const result = validateSource(`settings {
+  delegation { max_concurrency 9 }
+}
+agent tapestry {
+  delegation { max_concurrency 9 }
+}`);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().settings.delegation?.max_concurrency).toBe(9);
+    expect(
+      result._unsafeUnwrap().agents.tapestry?.delegation?.max_concurrency,
+    ).toBe(9);
+  });
+
+  it("rejects max_concurrency 10 with precise project and agent paths", () => {
+    const project = validateSource(
+      `settings { delegation { max_concurrency 10 } }`,
+    );
+    expect(project.isErr()).toBe(true);
+    expect(project._unsafeUnwrapErr()).toContainEqual(
+      expect.objectContaining({ path: "settings.delegation.max_concurrency" }),
+    );
+
+    const agent = validateSource(
+      `agent tapestry { delegation { max_concurrency 10 } }`,
+    );
+    expect(agent.isErr()).toBe(true);
+    expect(agent._unsafeUnwrapErr()).toContainEqual(
+      expect.objectContaining({
+        path: "agents.tapestry.delegation.max_concurrency",
+      }),
+    );
+  });
+
+  it("accepts project max_children without max_concurrency and preserves omission", () => {
+    const result = validateSource(`settings { delegation { max_children 2 } }`);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().settings.delegation).toEqual({
+      max_children: 2,
+    });
+  });
+
+  it("rejects an agent child cap above the project cap with a precise path", () => {
+    const result = validateSource(`settings {
+  delegation { max_children 3 max_concurrency 2 }
+}
+agent tapestry {
+  delegation { max_children 4 }
+}`);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    expect(
+      errors.some(
+        (error) => error.path === "agents.tapestry.delegation.max_children",
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects unsupported agent delegation fields", () => {
+    const result = validateSource(`agent tapestry {
+  delegation { max_depth 2 }
+}`);
+    expect(result.isErr()).toBe(true);
+    expect(
+      result
+        ._unsafeUnwrapErr()
+        .some((error) => error.path.includes("delegation")),
+    ).toBe(true);
+  });
+});

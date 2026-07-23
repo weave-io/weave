@@ -1620,3 +1620,108 @@ describe("parseConfig — review_models field", () => {
     ).toBe(true);
   });
 });
+
+describe("parseConfig — delegation limits", () => {
+  it("parses project caps and agent overrides end to end", () => {
+    const result = parseConfig(`settings {
+  delegation {
+    max_children 7
+    max_concurrency 3
+    max_depth 4
+    max_processes 10
+  }
+}
+agent loom {
+  delegation { max_children 4 max_concurrency 2 }
+}`);
+    expect(result.isOk()).toBe(true);
+    const config = result._unsafeUnwrap();
+    expect(config.settings.delegation?.max_depth).toBe(4);
+    expect(config.agents.loom?.delegation?.max_children).toBe(4);
+  });
+
+  it("accepts max_concurrency 9 for project and agent settings", () => {
+    const result = parseConfig(`settings {
+  delegation { max_concurrency 9 }
+}
+agent loom {
+  delegation { max_concurrency 9 }
+}`);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().settings.delegation?.max_concurrency).toBe(9);
+    expect(
+      result._unsafeUnwrap().agents.loom?.delegation?.max_concurrency,
+    ).toBe(9);
+  });
+
+  it("rejects max_concurrency 10 with precise project and agent paths", () => {
+    const project = parseConfig(
+      `settings { delegation { max_concurrency 10 } }`,
+    );
+    expect(project.isErr()).toBe(true);
+    expect(project._unsafeUnwrapErr()).toContainEqual(
+      expect.objectContaining({
+        type: "ValidationError",
+        path: "settings.delegation.max_concurrency",
+      }),
+    );
+
+    const agent = parseConfig(
+      `agent loom { delegation { max_concurrency 10 } }`,
+    );
+    expect(agent.isErr()).toBe(true);
+    expect(agent._unsafeUnwrapErr()).toContainEqual(
+      expect.objectContaining({
+        type: "ValidationError",
+        path: "agents.loom.delegation.max_concurrency",
+      }),
+    );
+  });
+
+  it("accepts project max_children without max_concurrency and preserves omission", () => {
+    const result = parseConfig(`settings {
+  delegation { max_children 2 }
+}`);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().settings.delegation).toEqual({
+      max_children: 2,
+    });
+  });
+
+  it("reports one local agent concurrency issue without a duplicate project issue", () => {
+    const result = parseConfig(`settings {
+  delegation { max_children 4 max_concurrency 2 }
+}
+agent loom {
+  delegation { max_children 1 max_concurrency 3 }
+}`);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatchObject({
+      type: "ValidationError",
+      path: "agents.loom.delegation.max_concurrency",
+      message: "max_concurrency must be less than or equal to max_children",
+    });
+  });
+
+  it("keeps delegation settings absent so merge can preserve lower layers", () => {
+    const result = parseConfig("");
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().settings.delegation).toBeUndefined();
+  });
+
+  it("returns a precise validation path for max_concurrency above the cap", () => {
+    const result = parseConfig(`settings {
+  delegation { max_children 2 max_concurrency 3 }
+}`);
+    expect(result.isErr()).toBe(true);
+    const errors = result._unsafeUnwrapErr();
+    expect(errors).toHaveLength(1);
+    const firstError = errors[0];
+    expect(firstError?.type).toBe("ValidationError");
+    if (firstError?.type === "ValidationError") {
+      expect(firstError.path).toBe("settings.delegation.max_concurrency");
+    }
+  });
+});
