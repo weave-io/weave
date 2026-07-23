@@ -170,14 +170,33 @@ export function startPlan(
         } satisfies CommandValidationError;
       }
 
-      // ProviderUnavailable
+      if (providerError.type === "ProviderUnavailable") {
+        const causeMessage =
+          providerError.cause instanceof Error
+            ? providerError.cause.message
+            : providerError.cause.message;
+        log.warn(
+          { planName, cause: providerError.cause },
+          "start-plan: PlanStateProvider unavailable",
+        );
+        return {
+          type: "command_validation",
+          message: `PlanStateProvider is unavailable: ${causeMessage}`,
+          field: "planStateProvider",
+        } satisfies CommandValidationError;
+      }
+
+      const detail =
+        "reason" in providerError && typeof providerError.reason === "string"
+          ? providerError.reason
+          : providerError.type;
       log.warn(
-        { planName, cause: providerError.cause },
-        "start-plan: PlanStateProvider unavailable",
+        { planName, errorType: providerError.type, detail },
+        "start-plan: PlanStateProvider error",
       );
       return {
         type: "command_validation",
-        message: `PlanStateProvider is unavailable: ${providerError.cause.message}`,
+        message: `PlanStateProvider error: ${detail}`,
         field: "planStateProvider",
       } satisfies CommandValidationError;
     })

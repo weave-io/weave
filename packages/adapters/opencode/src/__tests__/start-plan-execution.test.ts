@@ -88,6 +88,16 @@ class MockPlanStateProvider implements PlanStateProvider {
     private readonly planExistsResult: boolean = true,
     private readonly isPlanCompleteResult: boolean = true,
   ) {}
+  readSnapshot(planName: string) {
+    return errAsync({ type: "PlanMissing" as const, planName });
+  }
+
+  applyTransition() {
+    return errAsync({
+      type: "ProviderUnavailable" as const,
+      cause: { message: "applyTransition not configured in mock" },
+    });
+  }
 
   planExists(planName: string): ResultAsync<boolean, PlanStateError> {
     this.planExistsCalls.push(planName);
@@ -104,6 +114,20 @@ class MockPlanStateProvider implements PlanStateProvider {
  * Mock `PlanStateProvider` that always returns a `ProviderUnavailable` error.
  */
 class FailingPlanStateProvider implements PlanStateProvider {
+  readSnapshot(_planName: string) {
+    return errAsync({
+      type: "ProviderUnavailable" as const,
+      cause: { message: "test provider unavailable" },
+    });
+  }
+
+  applyTransition() {
+    return errAsync({
+      type: "ProviderUnavailable" as const,
+      cause: { message: "test provider unavailable" },
+    });
+  }
+
   planExists(_planName: string): ResultAsync<boolean, PlanStateError> {
     return errAsync({
       type: "ProviderUnavailable" as const,
@@ -126,6 +150,17 @@ class FailingPlanStateProvider implements PlanStateProvider {
  * (e.g. the name contains `/`, `..`, `\0`, or other unsafe characters).
  */
 class InvalidNamePlanStateProvider implements PlanStateProvider {
+  readSnapshot(planName: string) {
+    return errAsync({ type: "InvalidPlanName" as const, planName });
+  }
+
+  applyTransition(input: { planName: string }) {
+    return errAsync({
+      type: "InvalidPlanName" as const,
+      planName: input.planName,
+    });
+  }
+
   planExists(planName: string): ResultAsync<boolean, PlanStateError> {
     return errAsync({
       type: "InvalidPlanName" as const,

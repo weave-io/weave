@@ -11,7 +11,6 @@
  */
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
-import { rmdir, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunFilesystemPlanStateProvider } from "@weaveio/weave-config";
@@ -33,7 +32,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   // Clean up the entire temp tree after all tests finish.
-  await rmdir(TEST_ROOT, { recursive: true }).catch(() => undefined);
+  await Bun.spawn(["rm", "-rf", TEST_ROOT]).exited;
 });
 
 async function writePlan(slug: string, content: string): Promise<string> {
@@ -44,7 +43,9 @@ async function writePlan(slug: string, content: string): Promise<string> {
 
 async function removePlan(slug: string): Promise<void> {
   const path = join(TEST_PLAN_DIR, `${slug}.md`);
-  await unlink(path).catch(() => undefined);
+  await Bun.file(path)
+    .unlink()
+    .catch(() => undefined);
 }
 
 // ---------------------------------------------------------------------------
@@ -210,14 +211,210 @@ describe("BunFilesystemPlanStateProvider: isPlanComplete", () => {
     expect(result.value).toBe(false);
   });
 
-  it("returns err(ProviderUnavailable) when plan file does not exist", async () => {
+  it("returns err(PlanMissing) when plan file does not exist", async () => {
     const provider = new BunFilesystemPlanStateProvider(TEST_ROOT);
     const result = await provider.isPlanComplete(
       `nonexistent-plan-${Date.now()}`,
     );
     expect(result.isErr()).toBe(true);
     if (!result.isErr()) return;
-    expect(result.error.type).toBe("ProviderUnavailable");
+    expect(result.error.type).toBe("PlanMissing");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Revisioned snapshots and transitions (Spec 33 §16)
+// ---------------------------------------------------------------------------
+
+describe("BunFilesystemPlanStateProvider: revisioned plan state", () => {
+  const provider = () => new BunFilesystemPlanStateProvider(TEST_ROOT);
+  const slugs = new Set<string>();
+  const slug = (label: string): string => {
+    const value = `${label}-${Date.now()}-${slugs.size}`;
+    slugs.add(value);
+    return value;
+  };
+
+  afterEach(async () => {
+    for (const name of slugs) await removePlan(name);
+    slugs.clear();
+  });
+
+  it("reads a canonical two-level snapshot with visible IDs and derived state", async () => {
+    const name = slug("canonical");
+    await writePlan(
+      name,
+      "- [ ] 1. First parent\n  - [ ] a. First leaf\n  - [-] b. Active leaf\n- [x] 2. Completed parent\n",
+    );
+
+    const result = await provider().readSnapshot(name);
+    expect(result.isOk()).toBe(true);
+    if (result.isErr()) return;
+    expect(result.value).toMatchObject({
+      planName: name,
+      format: "canonical",
+      totalParentCount: 2,
+      complete: false,
+    });
+    expect(result.value.contentRevision).toMatch(/^[a-f0-9]{64}$/);
+    expect(result.value.parents).toEqual([
+      {
+        id: "1",
+        title: "First parent",
+        state: "in_progress",
+        children: [
+          {
+            id: "1.a",
+            title: "First leaf",
+            state: "pending",
+            children: [],
+          },
+          {
+            id: "1.b",
+            title: "Active leaf",
+            state: "in_progress",
+            children: [],
+          },
+        ],
+      },
+      {
+        id: "2",
+        title: "Completed parent",
+        state: "completed",
+        children: [],
+      },
+    ]);
+  });
+
+  it("applies an authorized leaf transition with revision CAS and atomic replacement", async () => {
+    const name = slug("transition");
+    await writePlan(
+      name,
+      "- [ ] 1. Parent\n  - [ ] a. Leaf\n  - [x] b. Done\n",
+    );
+    const before = (await provider().readSnapshot(name))._unsafeUnwrap();
+
+    const transitioned = await provider().applyTransition({
+      planName: name,
+      taskId: "1.a",
+      expectedRevision: before.contentRevision,
+      toState: "in_progress",
+      coordinatorAgent: "tapestry",
+    });
+
+    expect(transitioned.isOk()).toBe(true);
+    if (transitioned.isErr()) return;
+    expect(transitioned.value.contentRevision).not.toBe(before.contentRevision);
+    expect(transitioned.value.parents[0]?.state).toBe("in_progress");
+    expect(transitioned.value.parents[0]?.children[0]?.state).toBe(
+      "in_progress",
+    );
+    expect(await Bun.file(join(TEST_PLAN_DIR, `${name}.md`)).text()).toContain(
+      "  - [-] a. Leaf",
+    );
+  });
+
+  it("rejects stale revisions, unauthorized coordinators, and terminal transitions", async () => {
+    const name = slug("closed-transitions");
+    await writePlan(name, "- [ ] 1. Pending\n- [x] 2. Terminal\n");
+    const snapshot = (await provider().readSnapshot(name))._unsafeUnwrap();
+
+    const unauthorized = await provider().applyTransition({
+      planName: name,
+      taskId: "1",
+      expectedRevision: snapshot.contentRevision,
+      toState: "in_progress",
+      coordinatorAgent: "shuttle",
+    });
+    expect(unauthorized._unsafeUnwrapErr().type).toBe(
+      "UnauthorizedCoordinator",
+    );
+
+    const terminal = await provider().applyTransition({
+      planName: name,
+      taskId: "2",
+      expectedRevision: snapshot.contentRevision,
+      toState: "in_progress",
+      coordinatorAgent: "tapestry",
+    });
+    expect(terminal._unsafeUnwrapErr().type).toBe("InvalidTransition");
+
+    const first = await provider().applyTransition({
+      planName: name,
+      taskId: "1",
+      expectedRevision: snapshot.contentRevision,
+      toState: "in_progress",
+      coordinatorAgent: "tapestry",
+    });
+    expect(first.isOk()).toBe(true);
+
+    const stale = await provider().applyTransition({
+      planName: name,
+      taskId: "1",
+      expectedRevision: snapshot.contentRevision,
+      toState: "in_progress",
+      coordinatorAgent: "tapestry",
+    });
+    expect(stale._unsafeUnwrapErr().type).toBe("PlanRevisionStale");
+  });
+
+  it("reads unambiguous legacy plans and rejects ambiguous deep trees", async () => {
+    const legacyName = slug("legacy");
+    await writePlan(legacyName, "- [ ] First parent\n  - [x] First child\n");
+    const legacy = await provider().readSnapshot(legacyName);
+    expect(legacy.isOk()).toBe(true);
+    if (legacy.isOk()) {
+      expect(legacy.value.format).toBe("legacy");
+      expect(legacy.value.parents[0]?.id).toBe("1");
+      expect(legacy.value.parents[0]?.children[0]?.id).toBe("1.a");
+    }
+
+    const malformedName = slug("malformed");
+    await writePlan(
+      malformedName,
+      "- [ ] Parent\n  - [ ] Child\n    - [ ] Too deep\n",
+    );
+    const malformed = await provider().readSnapshot(malformedName);
+    expect(malformed._unsafeUnwrapErr().type).toBe("PlanTreeMalformed");
+  });
+
+  it("fails closed when the plans directory is a symlink", async () => {
+    const root = join(TEST_ROOT, `symlink-root-${Date.now()}`);
+    const outside = join(TEST_ROOT, `symlink-target-${Date.now()}`);
+    const weave = join(root, ".weave");
+    expect(await Bun.spawn(["mkdir", "-p", weave, outside]).exited).toBe(0);
+    expect(
+      await Bun.spawn(["ln", "-s", outside, join(weave, "plans")]).exited,
+    ).toBe(0);
+    await Bun.write(join(outside, "feature.md"), "- [ ] 1. Target\n");
+
+    const result = await new BunFilesystemPlanStateProvider(root).readSnapshot(
+      "feature",
+    );
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) expect(result.error.type).toBe("ProviderUnavailable");
+
+    await Bun.spawn(["rm", "-rf", root, outside]).exited;
+  });
+
+  it("fails closed when the plan file is a symlink", async () => {
+    const name = slug("symlink");
+    const target = join(TEST_PLAN_DIR, `${name}-target.md`);
+    const link = join(TEST_PLAN_DIR, `${name}.md`);
+    await Bun.write(target, "- [ ] 1. Target\n");
+    const linked = Bun.spawn(["ln", "-s", target, link]);
+    expect(await linked.exited).toBe(0);
+
+    const result = await provider().readSnapshot(name);
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) expect(result.error.type).toBe("ProviderUnavailable");
+
+    await Bun.file(link)
+      .unlink()
+      .catch(() => undefined);
+    await Bun.file(target)
+      .unlink()
+      .catch(() => undefined);
   });
 });
 

@@ -78,6 +78,16 @@ class MockPlanStateProvider implements PlanStateProvider {
     private readonly planExistsResult: boolean = true,
     private readonly isPlanCompleteResult: boolean = true,
   ) {}
+  readSnapshot(planName: string) {
+    return errAsync({ type: "PlanMissing" as const, planName });
+  }
+
+  applyTransition() {
+    return errAsync({
+      type: "ProviderUnavailable" as const,
+      cause: { message: "applyTransition not configured in mock" },
+    });
+  }
 
   planExists(planName: string): ResultAsync<boolean, PlanStateError> {
     this.planExistsCalls.push(planName);
@@ -96,6 +106,20 @@ class MockPlanStateProvider implements PlanStateProvider {
  * Used to prove the engine propagates provider errors as `LifecycleError`.
  */
 class FailingPlanStateProvider implements PlanStateProvider {
+  readSnapshot(_planName: string) {
+    return errAsync({
+      type: "ProviderUnavailable" as const,
+      cause: { message: "test provider unavailable" },
+    });
+  }
+
+  applyTransition() {
+    return errAsync({
+      type: "ProviderUnavailable" as const,
+      cause: { message: "test provider unavailable" },
+    });
+  }
+
   planExists(_planName: string): ResultAsync<boolean, PlanStateError> {
     return errAsync({
       type: "ProviderUnavailable" as const,

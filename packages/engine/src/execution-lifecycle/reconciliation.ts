@@ -155,9 +155,29 @@ function checkCompletedPlanImmutability(
           "plan_name",
         );
       }
+      if (providerErr.type === "PlanMissing") {
+        return lifecycleValidationError(
+          `plan "${planName}" does not exist`,
+          "plan_name",
+        );
+      }
+      if (providerErr.type === "ProviderUnavailable") {
+        const causeMessage =
+          providerErr.cause instanceof Error
+            ? providerErr.cause.message
+            : providerErr.cause.message;
+        return lifecyclePersistenceError(
+          `PlanStateProvider unavailable for plan "${planName}"`,
+          { type: "query", message: causeMessage },
+        );
+      }
+      const detail =
+        "reason" in providerErr && typeof providerErr.reason === "string"
+          ? providerErr.reason
+          : providerErr.type;
       return lifecyclePersistenceError(
-        `PlanStateProvider unavailable for plan "${planName}"`,
-        { type: "query", message: String(providerErr.cause) },
+        `PlanStateProvider error for plan "${planName}": ${detail}`,
+        { type: "query", message: String(detail) },
       );
     })
     .andThen((complete) => {

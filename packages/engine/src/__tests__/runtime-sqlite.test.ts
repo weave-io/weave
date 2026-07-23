@@ -3538,6 +3538,43 @@ describe("artifact provenance: approval lifecycle", () => {
     await store.close();
   });
 
+  it("atomically rejects approval bound to a stale artifact revision", async () => {
+    const store = makeStore(testDir);
+    const created = (
+      await store.instances.create({ workflowName: "wf", goal: "g", slug: "g" })
+    )._unsafeUnwrap();
+    const first = (
+      await store.instances.addArtifact(created.id, {
+        name: "plan",
+        path: ".weave/plans/v1.md",
+      })
+    )._unsafeUnwrap();
+    const latest = (
+      await store.instances.addArtifact(created.id, {
+        name: "plan",
+        path: ".weave/plans/v2.md",
+      })
+    )._unsafeUnwrap();
+
+    const result = await store.instances.updateArtifactApproval(
+      created.id,
+      first.artifacts[0].id,
+      "approved",
+      {
+        actor: { kind: "user", provenance: { source: "test" } },
+        decidedAt: new Date().toISOString(),
+        expectedRevision: 1,
+      },
+    );
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toMatchObject({
+      type: "conflict",
+      entity: "ArtifactRevision",
+    });
+    expect(latest.artifacts.at(-1)?.approvalState).toBe("pending");
+    await store.close();
+  });
+
   it("updateArtifactApproval returns not_found for missing instance", async () => {
     const store = makeStore(testDir);
     const result = await store.instances.updateArtifactApproval(
@@ -3621,13 +3658,25 @@ describe("artifact provenance: approval lifecycle", () => {
       created.id,
       artifactId,
       "approved",
+      {
+        actor: { kind: "user", provenance: { source: "test" } },
+        decidedAt: "2026-07-23T00:00:00.000Z",
+        expectedRevision: 1,
+      },
     );
     await store1.close();
 
-    // Reopen and verify approval state persisted
+    // Reopen and verify approval state, actor, and timestamp persisted.
     const store2 = makeStore(testDir);
     const found = (await store2.instances.findById(created.id))._unsafeUnwrap();
     expect(found?.artifacts[0].approvalState).toBe("approved");
+    expect(found?.artifacts[0].approvalActor).toEqual({
+      kind: "user",
+      provenance: { source: "test" },
+    });
+    expect(found?.artifacts[0].approvalDecidedAt).toBe(
+      "2026-07-23T00:00:00.000Z",
+    );
     await store2.close();
   });
 

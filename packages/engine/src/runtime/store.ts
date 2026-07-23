@@ -14,6 +14,7 @@
 import type { ResultAsync } from "neverthrow";
 import type { RuntimeStoreError } from "./errors.js";
 import type {
+  ArtifactApprovalActor,
   ArtifactApprovalState,
   ArtifactId,
   ArtifactIntegrityMetadata,
@@ -146,6 +147,14 @@ export interface WorkflowInstanceRepository {
     id: WorkflowInstanceId,
     artifactId: ArtifactId,
     approvalState: ArtifactApprovalState,
+    approval?: {
+      readonly actor: ArtifactApprovalActor;
+      readonly decidedAt: string;
+      /** Compare-and-swap binding for the exact reviewed revision. */
+      readonly expectedRevision: number;
+      /** Required when the stored revision carries integrity metadata. */
+      readonly expectedDigest?: string;
+    },
   ): ResultAsync<WorkflowInstance, RuntimeStoreError>;
 
   /**

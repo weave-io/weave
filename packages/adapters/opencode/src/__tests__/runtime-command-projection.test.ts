@@ -111,6 +111,16 @@ class MockPlanStateProvider implements PlanStateProvider {
     private readonly planExistsResult: boolean = true,
     private readonly isPlanCompleteResult: boolean = true,
   ) {}
+  readSnapshot(planName: string) {
+    return errAsync({ type: "PlanMissing" as const, planName });
+  }
+
+  applyTransition() {
+    return errAsync({
+      type: "ProviderUnavailable" as const,
+      cause: { message: "applyTransition not configured in mock" },
+    });
+  }
 
   planExists(planName: string): ResultAsync<boolean, PlanStateError> {
     this.planExistsCalls.push(planName);

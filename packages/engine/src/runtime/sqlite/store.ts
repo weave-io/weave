@@ -472,54 +472,91 @@ class SqliteWorkflowInstanceRepository implements WorkflowInstanceRepository {
     id: WorkflowInstanceId,
     artifactId: ArtifactId,
     approvalState: ArtifactApprovalState,
+    approval?: {
+      readonly actor: import("../types.js").ArtifactApprovalActor;
+      readonly decidedAt: string;
+      readonly expectedRevision: number;
+      readonly expectedDigest?: string;
+    },
   ): ResultAsync<WorkflowInstance, RuntimeStoreError> {
     return ResultAsync.fromPromise(
-      this.db
-        .selectFrom("workflow_instances")
-        .selectAll()
-        .where("id", "=", id as string)
-        .executeTakeFirst()
-        .then((existing) => {
-          if (!existing) {
-            throw new NotFoundSentinel("WorkflowInstance", id as string);
+      this.db.transaction().execute(async (transaction) => {
+        const existing = await transaction
+          .selectFrom("workflow_instances")
+          .selectAll()
+          .where("id", "=", id as string)
+          .executeTakeFirst();
+        if (!existing) {
+          throw new NotFoundSentinel("WorkflowInstance", id as string);
+        }
+        const artifacts = JSON.parse(existing.artifacts_json) as ArtifactRef[];
+        let artifactIndex = -1;
+        for (let i = artifacts.length - 1; i >= 0; i--) {
+          if (artifacts[i].id === artifactId) {
+            artifactIndex = i;
+            break;
           }
-          const artifacts = JSON.parse(
-            existing.artifacts_json,
-          ) as ArtifactRef[];
-          // Find the last index of the artifact with the given id
-          let artifactIndex = -1;
-          for (let i = artifacts.length - 1; i >= 0; i--) {
-            if (artifacts[i].id === artifactId) {
-              artifactIndex = i;
-              break;
-            }
-          }
-          if (artifactIndex === -1) {
-            throw new NotFoundSentinel("ArtifactRef", artifactId as string);
-          }
-          const updatedArtifacts = artifacts.map((a, i) =>
-            i === artifactIndex ? { ...a, approvalState } : a,
+        }
+        if (artifactIndex === -1) {
+          throw new NotFoundSentinel("ArtifactRef", artifactId as string);
+        }
+        const currentArtifact = artifacts[artifactIndex];
+        if (
+          approval !== undefined &&
+          currentArtifact.revision !== approval.expectedRevision
+        ) {
+          throw new ConflictSentinel(
+            "ArtifactRevision",
+            "Artifact revision changed before approval commit",
+            artifactId as string,
           );
-          return this.db
-            .updateTable("workflow_instances")
-            .set({
-              artifacts_json: JSON.stringify(updatedArtifacts),
-              updated_at: new Date().toISOString(),
-            })
-            .where("id", "=", id as string)
-            .execute();
-        })
-        .then(() =>
-          this.db
-            .selectFrom("workflow_instances")
-            .selectAll()
-            .where("id", "=", id as string)
-            .executeTakeFirstOrThrow(),
-        )
-        .then(rowToWorkflowInstance),
+        }
+        if (
+          approval !== undefined &&
+          currentArtifact.integrity !== undefined &&
+          currentArtifact.integrity.digest !== approval.expectedDigest
+        ) {
+          throw new ConflictSentinel(
+            "ArtifactDigest",
+            "Artifact digest changed before approval commit",
+            artifactId as string,
+          );
+        }
+        const updatedArtifacts = artifacts.map((artifact, index) => {
+          if (index !== artifactIndex) return artifact;
+          if (approval === undefined) return { ...artifact, approvalState };
+          return {
+            ...artifact,
+            approvalState,
+            approvalActor: approval.actor,
+            approvalDecidedAt: approval.decidedAt,
+          };
+        });
+        await transaction
+          .updateTable("workflow_instances")
+          .set({
+            artifacts_json: JSON.stringify(updatedArtifacts),
+            updated_at: new Date().toISOString(),
+          })
+          .where("id", "=", id as string)
+          .execute();
+        const updated = await transaction
+          .selectFrom("workflow_instances")
+          .selectAll()
+          .where("id", "=", id as string)
+          .executeTakeFirstOrThrow();
+        return rowToWorkflowInstance(updated);
+      }),
       (cause) => {
         if (cause instanceof NotFoundSentinel) {
           return notFoundError(cause.entity, cause.entityId);
+        }
+        if (cause instanceof ConflictSentinel) {
+          return conflictError(
+            cause.entity,
+            cause.conflictMessage,
+            cause.conflictingId,
+          );
         }
         return queryError(
           "Failed to update artifact approval on WorkflowInstance",
@@ -2147,9 +2184,15 @@ class LazyWorkflowInstanceRepository implements WorkflowInstanceRepository {
     id: WorkflowInstanceId,
     artifactId: ArtifactId,
     approvalState: ArtifactApprovalState,
+    approval?: {
+      readonly actor: import("../types.js").ArtifactApprovalActor;
+      readonly decidedAt: string;
+      readonly expectedRevision: number;
+      readonly expectedDigest?: string;
+    },
   ): ResultAsync<WorkflowInstance, RuntimeStoreError> {
     return this.repo().andThen((r) =>
-      r.updateArtifactApproval(id, artifactId, approvalState),
+      r.updateArtifactApproval(id, artifactId, approvalState, approval),
     );
   }
 

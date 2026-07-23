@@ -18,6 +18,7 @@ import type {
 import type { PlanStateProvider } from "../plan-state-provider.js";
 import type { RunAgentEffect } from "../run-agent-effects.js";
 import type {
+  ArtifactApprovalActor,
   ArtifactId,
   ArtifactInputDecl,
   ArtifactInputRole,
@@ -36,6 +37,7 @@ import type { EffectiveToolPolicy } from "../tool-policy.js";
 
 // Re-export types needed by consumers of this module
 export type {
+  ArtifactApprovalActor,
   ArtifactId,
   ArtifactInputDecl,
   ArtifactInputRole,
@@ -480,7 +482,26 @@ export interface ApproveArtifactInput {
   readonly leaseId: ExecutionLeaseId;
   readonly artifactId: ArtifactId;
   readonly approvalState: "approved" | "rejected";
-  readonly approverAgent: string;
+  /**
+   * Structured approval actor (user provenance or gate agent).
+   * Replaces the bare `approverAgent` string.
+   */
+  readonly actor: ArtifactApprovalActor;
+  /**
+   * Expected artifact revision. Must match the stored revision or the
+   * approval fails closed as a policy decision (`stale_revision`).
+   */
+  readonly expectedRevision: number;
+  /**
+   * When the artifact carries integrity metadata, callers must bind the
+   * expected digest. Mismatch fails closed (`digest_mismatch`).
+   */
+  readonly expectedDigest?: string;
+  /**
+   * Required for agent actors so the engine can verify the agent is an
+   * authorized gate on the active workflow definition.
+   */
+  readonly context?: WorkflowExecutionContext;
   readonly metadata?: SafeMetadata;
 }
 

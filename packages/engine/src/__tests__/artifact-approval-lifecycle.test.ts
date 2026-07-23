@@ -13,8 +13,8 @@
  *    approval prohibition, delegates to store.
  * 6. Lease enforcement: approveArtifact validates leaseId against the active
  *    lease — fabricated or stale lease IDs are rejected (fail-closed).
- * 7. approverAgent required: omitting approverAgent returns a validation error
- *    rather than silently skipping the self-approval prohibition.
+ * 7. actor + expectedRevision required: omitting structured approval actor
+ *    returns a validation error rather than silently skipping authority checks.
  *
  * All tests use createInMemoryRuntimeStore — no SQLite, no filesystem.
  */
@@ -36,6 +36,21 @@ import {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+function userActor(command = "/weave:artifact") {
+  return {
+    kind: "user" as const,
+    provenance: { command },
+  };
+}
+
+function agentActor(agentName: string, gate: "review" | "security" = "review") {
+  return {
+    kind: "agent" as const,
+    agentName,
+    gate,
+  };
+}
 
 /** Parse a .weave source string and unwrap — throws on invalid input. */
 function cfg(source: string) {
@@ -187,7 +202,8 @@ describe("approveArtifact — input validation", () => {
         leaseId: createExecutionLeaseId("lease-001"),
         artifactId: createArtifactId("art-001"),
         approvalState: "approved",
-        approverAgent: "warp",
+        actor: userActor(),
+        expectedRevision: 1,
       },
       store,
     );
@@ -203,7 +219,8 @@ describe("approveArtifact — input validation", () => {
         leaseId: "" as ReturnType<typeof createExecutionLeaseId>,
         artifactId: createArtifactId("art-001"),
         approvalState: "approved",
-        approverAgent: "warp",
+        actor: userActor(),
+        expectedRevision: 1,
       },
       store,
     );
@@ -219,7 +236,8 @@ describe("approveArtifact — input validation", () => {
         leaseId: createExecutionLeaseId("lease-001"),
         artifactId: "" as ReturnType<typeof createArtifactId>,
         approvalState: "approved",
-        approverAgent: "warp",
+        actor: userActor(),
+        expectedRevision: 1,
       },
       store,
     );
@@ -227,8 +245,8 @@ describe("approveArtifact — input validation", () => {
     expect(result._unsafeUnwrapErr().type).toBe("validation");
   });
 
-  it("returns validation error when approverAgent is missing", async () => {
-    // approverAgent is required — omitting it returns a validation error
+  it("returns validation error when actor is missing", async () => {
+    // actor is required — omitting it returns a validation error
     // (fail-closed: cannot bypass self-approval prohibition by omission).
     const store = createInMemoryRuntimeStore();
     const result = await approveArtifact(
@@ -237,7 +255,8 @@ describe("approveArtifact — input validation", () => {
         leaseId: createExecutionLeaseId("lease-001"),
         artifactId: createArtifactId("art-001"),
         approvalState: "approved",
-        approverAgent: "" as string,
+        actor: undefined as never,
+        expectedRevision: 1,
       },
       store,
     );
@@ -245,7 +264,7 @@ describe("approveArtifact — input validation", () => {
     const error = result._unsafeUnwrapErr();
     expect(error.type).toBe("validation");
     if (error.type === "validation") {
-      expect(error.field).toBe("approverAgent");
+      expect(error.field).toBe("actor");
     }
   });
 
@@ -261,7 +280,8 @@ describe("approveArtifact — input validation", () => {
         leaseId,
         artifactId: createArtifactId("art-001"),
         approvalState: "approved",
-        approverAgent: "warp",
+        actor: userActor(),
+        expectedRevision: 1,
       },
       store,
     );
@@ -279,7 +299,8 @@ describe("approveArtifact — input validation", () => {
         leaseId,
         artifactId: createArtifactId("nonexistent-art"),
         approvalState: "approved",
-        approverAgent: "warp",
+        actor: userActor(),
+        expectedRevision: 1,
       },
       store,
     );
@@ -293,7 +314,7 @@ describe("approveArtifact — input validation", () => {
 // ---------------------------------------------------------------------------
 
 describe("approveArtifact — self-approval prohibition", () => {
-  it("rejects approval when approverAgent matches producerAgent", async () => {
+  it("rejects approval when actor matches producerAgent", async () => {
     const { store, instanceId, leaseId } =
       await setupApprovalInstance("self-approve");
 
@@ -308,14 +329,37 @@ describe("approveArtifact — self-approval prohibition", () => {
 
     const artifactId = withArtifact.artifacts[0].id;
 
-    // Attempt self-approval: approverAgent === producerAgent
+    // Attempt self-approval: actor === producerAgent
     const result = await approveArtifact(
       {
         workflowInstanceId: instanceId,
         leaseId,
         artifactId,
         approvalState: "approved",
-        approverAgent: "shuttle",
+        actor: agentActor("shuttle"),
+        expectedRevision: 1,
+        context: {
+          workflowName: "approval-test",
+          goal: "test goal",
+          slug: "test-goal",
+          workflows: {
+            "approval-test": {
+              name: "approval-test",
+              description: "Minimal workflow for approval tests",
+              version: 1,
+              steps: [
+                {
+                  id: "work",
+                  name: "Do work",
+                  type: "gate",
+                  agent: "shuttle",
+                  prompt: "Do the work",
+                  completion: { method: "review_verdict" },
+                },
+              ],
+            } as never,
+          },
+        },
       },
       store,
     );
@@ -327,7 +371,7 @@ describe("approveArtifact — self-approval prohibition", () => {
     expect(error.message.toLowerCase()).toContain("self-approval");
   });
 
-  it("allows approval when approverAgent differs from producerAgent", async () => {
+  it("allows approval when actor differs from producerAgent", async () => {
     const { store, instanceId, leaseId } =
       await setupApprovalInstance("cross-approve");
 
@@ -348,7 +392,8 @@ describe("approveArtifact — self-approval prohibition", () => {
         leaseId,
         artifactId,
         approvalState: "approved",
-        approverAgent: "warp",
+        actor: userActor(),
+        expectedRevision: 1,
       },
       store,
     );
@@ -359,8 +404,8 @@ describe("approveArtifact — self-approval prohibition", () => {
     expect(artifact?.approvalState).toBe("approved");
   });
 
-  it("rejects approval when approverAgent is absent — fail closed", async () => {
-    // approverAgent is required. Omitting it returns a validation error
+  it("rejects approval when actor is absent — fail closed", async () => {
+    // actor is required. Omitting it returns a validation error
     // rather than silently skipping the self-approval prohibition.
     // This is the fail-closed behavior: unknown approver identity → reject.
     const { store, instanceId, leaseId } =
@@ -376,14 +421,15 @@ describe("approveArtifact — self-approval prohibition", () => {
 
     const artifactId = withArtifact.artifacts[0].id;
 
-    // Empty approverAgent — must be rejected
+    // Empty actor — must be rejected
     const result = await approveArtifact(
       {
         workflowInstanceId: instanceId,
         leaseId,
         artifactId,
         approvalState: "approved",
-        approverAgent: "" as string,
+        actor: undefined as never,
+        expectedRevision: 1,
       },
       store,
     );
@@ -392,13 +438,13 @@ describe("approveArtifact — self-approval prohibition", () => {
     const error = result._unsafeUnwrapErr();
     expect(error.type).toBe("validation");
     if (error.type === "validation") {
-      expect(error.field).toBe("approverAgent");
+      expect(error.field).toBe("actor");
     }
   });
 
   it("allows approval when producerAgent is absent on artifact (unknown producer)", async () => {
     // When the artifact has no producerAgent, the identity comparison is
-    // skipped — unknown producer cannot be compared. approverAgent is still
+    // skipped — unknown producer cannot be compared. actor is still
     // required (fail-closed), but the self-approval check is not triggered.
     const { store, instanceId, leaseId } =
       await setupApprovalInstance("no-producer");
@@ -413,14 +459,37 @@ describe("approveArtifact — self-approval prohibition", () => {
 
     const artifactId = withArtifact.artifacts[0].id;
 
-    // approverAgent is set but producerAgent is absent — check is skipped
+    // actor is set but producerAgent is absent — check is skipped
     const result = await approveArtifact(
       {
         workflowInstanceId: instanceId,
         leaseId,
         artifactId,
         approvalState: "approved",
-        approverAgent: "shuttle",
+        actor: agentActor("shuttle"),
+        expectedRevision: 1,
+        context: {
+          workflowName: "approval-test",
+          goal: "test goal",
+          slug: "test-goal",
+          workflows: {
+            "approval-test": {
+              name: "approval-test",
+              description: "Minimal workflow for approval tests",
+              version: 1,
+              steps: [
+                {
+                  id: "work",
+                  name: "Do work",
+                  type: "gate",
+                  agent: "shuttle",
+                  prompt: "Do the work",
+                  completion: { method: "review_verdict" },
+                },
+              ],
+            } as never,
+          },
+        },
       },
       store,
     );
@@ -448,7 +517,8 @@ describe("approveArtifact — self-approval prohibition", () => {
         leaseId,
         artifactId,
         approvalState: "rejected",
-        approverAgent: "warp",
+        actor: userActor(),
+        expectedRevision: 1,
       },
       store,
     );
@@ -490,7 +560,8 @@ describe("approveArtifact — lease enforcement", () => {
         leaseId: createExecutionLeaseId("fabricated-lease"),
         artifactId,
         approvalState: "approved",
-        approverAgent: "warp",
+        actor: userActor(),
+        expectedRevision: 1,
       },
       store,
     );
@@ -518,7 +589,8 @@ describe("approveArtifact — lease enforcement", () => {
         leaseId: createExecutionLeaseId("fabricated-lease-id"),
         artifactId,
         approvalState: "approved",
-        approverAgent: "warp",
+        actor: userActor(),
+        expectedRevision: 1,
       },
       store,
     );
@@ -547,7 +619,8 @@ describe("approveArtifact — lease enforcement", () => {
         leaseId,
         artifactId,
         approvalState: "approved",
-        approverAgent: "warp",
+        actor: userActor(),
+        expectedRevision: 1,
       },
       store,
     );
@@ -578,7 +651,8 @@ describe("approveArtifact — lease enforcement", () => {
         leaseId: createExecutionLeaseId("totally-made-up-lease-xyz"),
         artifactId,
         approvalState: "approved",
-        approverAgent: "warp",
+        actor: userActor(),
+        expectedRevision: 1,
       },
       store,
     );
@@ -1085,7 +1159,8 @@ describe("approveArtifact — metadata sanitization", () => {
         leaseId: createExecutionLeaseId("lease-001"),
         artifactId,
         approvalState: "approved",
-        approverAgent: "warp",
+        actor: userActor(),
+        expectedRevision: 1,
         metadata: { token: "secret-value" } as Record<string, string>,
       },
       store,

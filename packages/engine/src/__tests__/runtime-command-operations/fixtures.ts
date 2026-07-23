@@ -34,6 +34,7 @@ import type { DispatchAgentEffect } from "../../execution-lifecycle.js";
 import type {
   PlanStateError,
   PlanStateProvider,
+  PlanTaskSnapshot,
 } from "../../plan-state-provider.js";
 import type { WorkflowRunnerError } from "../../runtime-command-operations/workflow-runner.js";
 
@@ -50,11 +51,43 @@ import type { WorkflowRunnerError } from "../../runtime-command-operations/workf
 export class MockPlanStateProvider implements PlanStateProvider {
   readonly planExistsCalls: string[] = [];
   readonly isPlanCompleteCalls: string[] = [];
+  readonly readSnapshotCalls: string[] = [];
 
   constructor(
     private readonly planExistsResult: boolean = true,
     private readonly isPlanCompleteResult: boolean = true,
   ) {}
+
+  readSnapshot(
+    planName: string,
+  ): ResultAsync<PlanTaskSnapshot, PlanStateError> {
+    this.readSnapshotCalls.push(planName);
+    if (!this.planExistsResult) {
+      return errAsync({ type: "PlanMissing" as const, planName });
+    }
+    return okAsync({
+      planName,
+      contentRevision: "mock-rev-1",
+      format: "canonical",
+      parents: [
+        {
+          id: "1",
+          title: "task",
+          state: this.isPlanCompleteResult ? "completed" : "pending",
+          children: [],
+        },
+      ],
+      totalParentCount: 1,
+      complete: this.isPlanCompleteResult,
+    });
+  }
+
+  applyTransition() {
+    return errAsync({
+      type: "ProviderUnavailable" as const,
+      cause: { message: "applyTransition not configured in mock" },
+    });
+  }
 
   planExists(planName: string): ResultAsync<boolean, PlanStateError> {
     this.planExistsCalls.push(planName);
@@ -77,6 +110,20 @@ export class MockPlanStateProvider implements PlanStateProvider {
  * Used to test the error path when the provider cannot answer the query.
  */
 export class FailingPlanStateProvider implements PlanStateProvider {
+  readSnapshot(_planName: string) {
+    return errAsync({
+      type: "ProviderUnavailable" as const,
+      cause: { message: "test provider unavailable" },
+    });
+  }
+
+  applyTransition() {
+    return errAsync({
+      type: "ProviderUnavailable" as const,
+      cause: { message: "test provider unavailable" },
+    });
+  }
+
   planExists(_planName: string): ResultAsync<boolean, PlanStateError> {
     return errAsync({
       type: "ProviderUnavailable" as const,
@@ -103,6 +150,20 @@ export class FailingPlanStateProvider implements PlanStateProvider {
  * (e.g. the name contains `/`, `..`, `\0`, or other unsafe characters).
  */
 export class InvalidNamePlanStateProvider implements PlanStateProvider {
+  readSnapshot(planName: string) {
+    return errAsync({
+      type: "InvalidPlanName" as const,
+      planName,
+    });
+  }
+
+  applyTransition(input: { planName: string }) {
+    return errAsync({
+      type: "InvalidPlanName" as const,
+      planName: input.planName,
+    });
+  }
+
   planExists(planName: string): ResultAsync<boolean, PlanStateError> {
     return errAsync({
       type: "InvalidPlanName" as const,

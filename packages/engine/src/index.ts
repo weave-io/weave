@@ -209,8 +209,23 @@ export type {
   UnresolvedPermissionRequestView,
 } from "./permissions/types.js";
 export type {
+  PlanFormat,
   PlanStateError,
   PlanStateProvider,
+  PlanTaskNode,
+  PlanTaskSnapshot,
+  PlanTaskState,
+  PlanTaskTransition,
+} from "./plan-state-provider.js";
+export {
+  applyAuthorizedPlanTransition,
+  authorizePlanCoordinator,
+  DEFAULT_PLAN_COORDINATOR,
+  derivePlanParentState,
+  findPlanLeaf,
+  isAllowedPlanLeafTransition,
+  isPlanSnapshotComplete,
+  validatePlanTransition,
 } from "./plan-state-provider.js";
 export type {
   CollatedReview,
@@ -304,6 +319,7 @@ export type {
 // Note: ArtifactApprovalState, ArtifactId, ArtifactIntegrityMetadata are
 // exported from ./runtime/types.js above.
 export type {
+  ArtifactApprovalActor,
   ArtifactApprovalState,
   ArtifactId,
   ArtifactInputDecl,

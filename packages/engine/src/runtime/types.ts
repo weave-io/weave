@@ -325,6 +325,29 @@ export interface ArtifactRefInput {
  * - Credentials, tokens, cookies, authorization headers
  * - Private filesystem paths outside the project root
  */
+/**
+ * Who decided an artifact approval/rejection.
+ *
+ * - `user` — interactive operator approval (`/weave:artifact`), with provenance
+ * - `agent` — structured gate/reviewer agent with an explicit gate kind
+ *
+ * Replaces the bare `approverAgent` string so self-approval, gate authority,
+ * and user provenance are enforceable without harness-specific types.
+ *
+ * @see docs/specs/33-spec-pi-adapter/33-spec-pi-adapter.md §17
+ * @see docs/adr/0010-plan-state-and-artifact-approval-authority.md
+ */
+export type ArtifactApprovalActor =
+  | {
+      readonly kind: "user";
+      readonly provenance: Readonly<Record<string, string | number | boolean>>;
+    }
+  | {
+      readonly kind: "agent";
+      readonly agentName: string;
+      readonly gate: "review" | "security";
+    };
+
 export interface ArtifactRef {
   /**
    * Stable logical identity for this artifact across revisions.
@@ -355,6 +378,17 @@ export interface ArtifactRef {
    * an artifact it produced. When absent, self-approval checks are skipped.
    */
   readonly producerAgent?: string;
+  /**
+   * Actor that last decided approval for this revision.
+   * Set by `approveArtifact` together with `approvalDecidedAt`.
+   * Cleared when a new revision resets approval to `pending`.
+   */
+  readonly approvalActor?: ArtifactApprovalActor;
+  /**
+   * ISO-8601 timestamp of the last approval decision for this revision.
+   * Cleared when a new revision resets approval to `pending`.
+   */
+  readonly approvalDecidedAt?: string;
   /** Optional MIME type hint. */
   readonly mimeType?: string;
   /** Optional human-readable description. */

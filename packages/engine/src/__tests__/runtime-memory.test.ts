@@ -1325,6 +1325,72 @@ describe("InMemoryRuntimeStore — artifact provenance: approval lifecycle", () 
     expect(rejected.artifacts[0].approvalState).toBe("rejected");
   });
 
+  it("atomically rejects approval bound to a stale artifact revision", async () => {
+    const store = makeStore();
+    const created = (
+      await store.instances.create({ workflowName: "wf", goal: "g", slug: "g" })
+    )._unsafeUnwrap();
+    const first = (
+      await store.instances.addArtifact(created.id, {
+        name: "plan",
+        path: ".weave/plans/v1.md",
+      })
+    )._unsafeUnwrap();
+    const latest = (
+      await store.instances.addArtifact(created.id, {
+        name: "plan",
+        path: ".weave/plans/v2.md",
+      })
+    )._unsafeUnwrap();
+
+    const result = await store.instances.updateArtifactApproval(
+      created.id,
+      first.artifacts[0].id,
+      "approved",
+      {
+        actor: { kind: "user", provenance: { source: "test" } },
+        decidedAt: new Date().toISOString(),
+        expectedRevision: 1,
+      },
+    );
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toMatchObject({
+      type: "conflict",
+      entity: "ArtifactRevision",
+    });
+    expect(latest.artifacts.at(-1)?.approvalState).toBe("pending");
+  });
+
+  it("atomically rejects approval bound to a mismatched artifact digest", async () => {
+    const store = makeStore();
+    const created = (
+      await store.instances.create({ workflowName: "wf", goal: "g", slug: "g" })
+    )._unsafeUnwrap();
+    const withArtifact = (
+      await store.instances.addArtifact(created.id, {
+        name: "plan",
+        path: ".weave/plans/v1.md",
+        integrity: { algorithm: "sha256", digest: "a".repeat(64) },
+      })
+    )._unsafeUnwrap();
+
+    const result = await store.instances.updateArtifactApproval(
+      created.id,
+      withArtifact.artifacts[0].id,
+      "approved",
+      {
+        actor: { kind: "user", provenance: { source: "test" } },
+        decidedAt: new Date().toISOString(),
+        expectedRevision: 1,
+        expectedDigest: "b".repeat(64),
+      },
+    );
+    expect(result._unsafeUnwrapErr()).toMatchObject({
+      type: "conflict",
+      entity: "ArtifactDigest",
+    });
+  });
+
   it("updateArtifactApproval returns not_found for missing instance", async () => {
     const store = makeStore();
     const result = await store.instances.updateArtifactApproval(

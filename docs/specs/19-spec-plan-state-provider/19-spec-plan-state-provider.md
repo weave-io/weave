@@ -357,6 +357,8 @@ Canonical plans allow two checkbox levels. Leaf markers are pending (`[ ]`), in-
 
 `applyTransition` requires a safe name, authorized coordinator identity, task ID, requested transition, and expected content revision. The provider uses compare-and-swap and atomic Bun replacement. A stale revision fails closed. Reads never rewrite. Unambiguous legacy plans remain readable but lower health; malformed or ambiguous trees return typed parse errors.
 
+The default config-layer implementation uses Bun APIs only. It opens plan files with `O_NOFOLLOW` through `bun:ffi`, derives bytes and identity from the same descriptor, reopens and compares identity/content before mutation, writes a restrictive temporary file in the verified plans directory, and atomically replaces through a Bun-spawned same-directory `mv`. Platforms without the required no-follow primitive return a typed provider failure instead of weakening containment.
+
 Only the authorized plan coordinator receives transition authority. Delegated workers return evidence and cannot mutate or self-certify plan tasks.
 
 ## Open Questions

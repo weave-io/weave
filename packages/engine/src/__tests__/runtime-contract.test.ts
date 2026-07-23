@@ -266,6 +266,10 @@ class StubWorkflowInstanceRepository implements WorkflowInstanceRepository {
     id: WorkflowInstanceId,
     artifactId: ArtifactId,
     approvalState: ArtifactApprovalState,
+    approval?: {
+      readonly actor: import("../runtime/types.js").ArtifactApprovalActor;
+      readonly decidedAt: string;
+    },
   ): ResultAsync<WorkflowInstance, RuntimeStoreError> {
     const existing = this.store.get(id);
     if (!existing) {
@@ -282,9 +286,16 @@ class StubWorkflowInstanceRepository implements WorkflowInstanceRepository {
     if (artifactIndex === -1) {
       return errAsync(notFoundError("ArtifactRef", artifactId as string));
     }
-    const updatedArtifacts = existing.artifacts.map((a, i) =>
-      i === artifactIndex ? { ...a, approvalState } : a,
-    );
+    const updatedArtifacts = existing.artifacts.map((a, i) => {
+      if (i !== artifactIndex) return a;
+      if (approval === undefined) return { ...a, approvalState };
+      return {
+        ...a,
+        approvalState,
+        approvalActor: approval.actor,
+        approvalDecidedAt: approval.decidedAt,
+      };
+    });
     const updated: WorkflowInstance = {
       ...existing,
       artifacts: updatedArtifacts,

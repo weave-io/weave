@@ -177,7 +177,7 @@ type ArtifactApprovalActor =
 
 The engine validates actor authority against the active workflow, gate role, producer identity, and exact artifact revision. A producer cannot approve its own revision. User approval originates only from an explicit user artifact action. Agent approval originates only from the authorized structured review or security gate.
 
-Approval binds the workflow instance, artifact identity, revision, integrity digest, actor, and decision. A new revision invalidates prior approval. Before dispatch, adapters recompute required artifact digests and pass pinned revisions. A mismatch fails closed and calls `reconcileExecution` with `execution-mismatch`; it never silently rebinds.
+Approval binds the workflow instance, artifact identity, revision, integrity digest, actor, and decision. The Runtime Store update repeats the revision/digest comparison in the same mutation that records the decision, so a revision created after lifecycle validation cannot inherit approval. Stored actor and provenance records are validated, bounded, copied, and frozen rather than retaining caller-owned objects. A new revision invalidates prior approval. Before dispatch, adapters recompute required artifact digests and pass pinned revisions. A mismatch fails closed and calls `reconcileExecution` with `execution-mismatch`; it never silently rebinds.
 
 The four reconciliation sources remain `execution-mismatch`, `user-revision-request`, `review-rejection`, and `security-rejection`, each accepted only from its authorized source.
 

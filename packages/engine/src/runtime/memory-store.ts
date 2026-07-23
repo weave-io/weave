@@ -325,6 +325,12 @@ class InMemoryWorkflowInstanceRepository implements WorkflowInstanceRepository {
     id: WorkflowInstanceId,
     artifactId: ArtifactId,
     approvalState: ArtifactApprovalState,
+    approval?: {
+      readonly actor: import("./types.js").ArtifactApprovalActor;
+      readonly decidedAt: string;
+      readonly expectedRevision: number;
+      readonly expectedDigest?: string;
+    },
   ): ResultAsync<WorkflowInstance, RuntimeStoreError> {
     if (this.failures.workflowUpdateArtifactApproval) {
       return errAsync(this.failures.workflowUpdateArtifactApproval);
@@ -344,9 +350,42 @@ class InMemoryWorkflowInstanceRepository implements WorkflowInstanceRepository {
     if (artifactIndex === -1) {
       return errAsync(notFoundError("ArtifactRef", artifactId as string));
     }
-    const updatedArtifacts = existing.artifacts.map((a, i) =>
-      i === artifactIndex ? { ...a, approvalState } : a,
-    );
+    const currentArtifact = existing.artifacts[artifactIndex];
+    if (
+      approval !== undefined &&
+      currentArtifact.revision !== approval.expectedRevision
+    ) {
+      return errAsync(
+        conflictError(
+          "ArtifactRevision",
+          `Artifact revision changed before approval commit`,
+          artifactId as string,
+        ),
+      );
+    }
+    if (
+      approval !== undefined &&
+      currentArtifact.integrity !== undefined &&
+      currentArtifact.integrity.digest !== approval.expectedDigest
+    ) {
+      return errAsync(
+        conflictError(
+          "ArtifactDigest",
+          `Artifact digest changed before approval commit`,
+          artifactId as string,
+        ),
+      );
+    }
+    const updatedArtifacts = existing.artifacts.map((a, i) => {
+      if (i !== artifactIndex) return a;
+      if (approval === undefined) return { ...a, approvalState };
+      return {
+        ...a,
+        approvalState,
+        approvalActor: approval.actor,
+        approvalDecidedAt: approval.decidedAt,
+      };
+    });
     const updated: WorkflowInstance = {
       ...existing,
       artifacts: updatedArtifacts,
