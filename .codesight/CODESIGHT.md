@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 201 lib files | 33 env vars | 6 middleware | 0% test coverage
-> **Token savings:** this file is ~19,600 tokens. Without it, AI exploration would cost ~67,200 tokens. **Saves ~47,600 tokens per conversation.**
-> **Last scanned:** 2026-07-24 08:07 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 215 lib files | 33 env vars | 7 middleware | 0% test coverage
+> **Token savings:** this file is ~20,900 tokens. Without it, AI exploration would cost ~71,100 tokens. **Saves ~50,200 tokens per conversation.**
+> **Last scanned:** 2026-07-24 16:09 — re-run after significant changes
 
 ---
 
@@ -77,6 +77,12 @@
   - type OpenCodeToolPermissions
   - const READ_TOOL_NAMES: readonly string[]
 - `packages/adapters/opencode/src/translate-agent.ts` — function translateAgent: (descriptor, resolvedModel?) => Result<OpenCodeAgentConfig, TranslateAgentError>, type TranslateAgentError
+- `packages/adapters/pi/src/artifact-provider.ts`
+  - class BunPiArtifactProvider
+  - class FakePiArtifactProvider
+  - interface PiArtifactReadInput
+  - interface PiArtifactDigest
+  - interface PiArtifactProvider
 - `packages/adapters/pi/src/capability-prober.ts`
   - function buildBlockedProbeSet: (reason) => CapabilityProbeResult[]
   - function sanitizeCapabilityProbeResults: (raw) => CapabilityProbeResult[]
@@ -88,11 +94,11 @@
 - `packages/adapters/pi/src/child-control-bodies.ts`
   - function parseControlBody: (kind, body) => void
   - type PiBootstrapBody
+  - type PiOrdinaryBootstrapBody
+  - type PiDirectStepBootstrapBody
   - type PiBootstrapAckBody
   - type PiModelIdentityBody
-  - type PiTaskContextBody
-  - type PiCancelBody
-  - _...11 more_
+  - _...13 more_
 - `packages/adapters/pi/src/child-crypto.ts`
   - function bytesToHex: (bytes) => string
   - function hexToBytes: (hex) => Uint8Array | undefined
@@ -190,6 +196,19 @@
   - const WEAVE_DELEGATION_TOOL_NAME
   - const WEAVE_DELEGATION_TOOL_OWNER
   - _...1 more_
+- `packages/adapters/pi/src/direct-dispatch-transport.ts`
+  - function createDirectDispatchTransport: (deps, generationId) => DirectDispatchTransport
+  - class PiDirectStepChildRegistry
+  - interface PiDirectDispatchTransportDeps
+  - interface PiDirectStepBootstrap
+- `packages/adapters/pi/src/direct-dispatch.ts`
+  - class TransportDirectDispatchPort
+  - class FakeDirectDispatchPort
+  - interface PiDirectDispatchInput
+  - interface PiDirectDispatchCandidate
+  - interface PiDirectDispatchPort
+  - interface DirectDispatchSettlement
+  - _...1 more_
 - `packages/adapters/pi/src/errors.ts`
   - function makeHostIdentityUnknownFailure: (reason) => PiAdapterFailure
   - function makeHostVersionUnsupportedFailure: (version, reason) => PiAdapterFailure
@@ -197,7 +216,7 @@
   - function makeActivationFailedFailure: (reason) => PiAdapterFailure
   - function makeCommandCollisionFailure: (commandName) => PiAdapterFailure
   - function makeRequiredCapabilityUnavailableFailure: (capabilityId, reason) => PiAdapterFailure
-  - _...26 more_
+  - _...53 more_
 - `packages/adapters/pi/src/extension.ts`
   - function createDefaultPiExtensionDeps: () => PiExtensionDeps
   - function classifyApprovalRelayFailureCause: (cause) => "thrown-error" | "rejected-non-error"
@@ -220,6 +239,14 @@
   - type PiModelResolutionSource
   - type PiModelResolution
   - type PiModelActivationOutcome
+- `packages/adapters/pi/src/path-containment.ts`
+  - function isLexicallyContained: (relativePath) => boolean
+  - function isDirectoryContainmentSafeWith: (port, projectRoot, relativeDir) => ResultAsync<boolean, never>
+  - class BunPathContainmentPort
+  - class NullPathContainmentPort
+  - class FakePathContainmentPort
+  - class BunSecureRelativeFileProvider
+  - _...7 more_
 - `packages/adapters/pi/src/permission-bridge.ts`
   - function createChildRelayApprovalPort: (relay, childId) => PiApprovalUiPort
   - class PiPermissionBridge
@@ -228,6 +255,12 @@
   - interface PiApprovalUiPort
   - interface PiChildApprovalRelayPort
   - _...7 more_
+- `packages/adapters/pi/src/plan-catalog.ts`
+  - class BunPiPlanCatalogPort
+  - class FakePiPlanCatalogPort
+  - interface PiPlanCatalogPort
+- `packages/adapters/pi/src/plan-provider.ts` — function createPiPlanStateProvider: (projectRoot) => PlanStateProvider, const PI_PLAN_COORDINATOR_AGENT
+- `packages/adapters/pi/src/plan-render.ts` — function renderPlanWidgetLines: (snapshot) => string[]
 - `packages/adapters/pi/src/port-safety.ts`
   - function safelyAwaitPortResult: (call) => void
   - function safelyListAvailableModels: (modelRegistry, "getAvailable">) => Result<readonly PiModelInfo[], string>
@@ -240,11 +273,24 @@
   - interface PiActivePrimary
   - interface PiPrimaryActivationContext
   - _...3 more_
+- `packages/adapters/pi/src/recovery-pointer.ts`
+  - function parseRecoveryPointer: (raw) => Result<PiWeaveRecoveryPointerV1, RecoveryPointerValidationFailure>
+  - function isPointerForCurrentGeneration: (pointer, currentGenerationId) => boolean
+  - class InMemoryRecoveryPointerStore
+  - class BunJsonlRecoveryPointerStore
+  - interface PiRecoveryPointerStore
+  - type PiWeaveRecoveryPointerV1
+  - _...3 more_
 - `packages/adapters/pi/src/rpc-child.ts`
   - class PiRpcChild
   - interface PiRpcChildDeps
   - interface PiRpcChildSpawnInput
   - type PiChildSettlement
+- `packages/adapters/pi/src/runtime-store-port.ts`
+  - class SqliteRuntimeStoreFactory
+  - class InMemoryRuntimeStoreFactory
+  - class FailingRuntimeStoreFactory
+  - interface PiRuntimeStoreFactory
 - `packages/adapters/pi/src/safe-initializer.ts`
   - class PiSafeInitializer
   - interface PiPreflightResult
@@ -257,11 +303,35 @@
   - type JsonValue
   - type StrictJsonParseError
   - type CanonicalizeError
+- `packages/adapters/pi/src/structured-completion.ts`
+  - function parseStructuredCompletionCandidate: (raw, stepName) => Result<StepCompletionSignal, PiAdapterFailure>
+  - function serializeCompletionCandidate: (candidate, unknown>) => string
+  - function tryParseCompletionCandidateJson: (raw) => unknown
+  - function buildWeaveCompleteStepParameters: () => void
+  - function recordCompletionAttempt: (recorder, windowOpen, raw, stepName) => CompletionRecordAttempt
+  - function buildWeaveCompleteStepToolRegistration: (deps) => void
+  - _...6 more_
 - `packages/adapters/pi/src/tool-governance.ts`
   - function classifyDiscoveredTools: (allTools, weaveOwnedNames) => PiToolClassification
   - function buildNativeToolResolver: (toolName, capability) => PermissionResolver
   - function deriveActiveToolNames: (policy, delegationToolName) => readonly string[]
   - interface PiToolClassification
+- `packages/adapters/pi/src/workflow-commands.ts`
+  - function handleWeaveStart: (rawArgs, ui, controller, tracker) => Promise<void>
+  - function handleWeaveRun: (rawArgs, ui, controller, tracker) => Promise<void>
+  - function handleWeaveStatus: (ui, controller, tracker) => Promise<void>
+  - function handleWeaveAbort: (ui, controller, tracker) => Promise<void>
+  - function handleWeaveAdvance: (ui, controller, tracker) => Promise<void>
+  - function handleWeaveResume: (ui, controller, tracker) => Promise<void>
+  - _...8 more_
+- `packages/adapters/pi/src/workflow-controller.ts`
+  - function authorizeByExplicitUser: (confirmed) => Result<AuthorizedByUser, PiAdapterFailure>
+  - class PiWorkflowController
+  - interface AuthorizedByUser
+  - interface PiWorkflowControllerDeps
+  - interface PiStartWorkflowInput
+  - interface PiResumeWorkflowInput
+  - _...2 more_
 - `packages/cli/src/args.ts`
   - function parseArgs: (argv) => Result<ParsedArgs, ArgParseError>
   - interface ParsedArgs
@@ -798,6 +868,14 @@
   - class InMemoryRuntimeStore
   - interface InMemoryRuntimeStoreFailureConfig
   - interface InMemoryRuntimeStoreOptions
+- `packages/engine/src/runtime/nofollow-ffi.ts`
+  - function platformFlags: () => PlatformFlags | undefined
+  - function libcPath: () => string | undefined
+  - function cstr: (value) => Uint8Array
+  - function toResultAsync: (result, E>) => ResultAsync<T, E>
+  - function sanitizeCause: (cause) => string
+  - function withRestrictiveCreateMask: (symbols, fn) => void
+  - _...15 more_
 - `packages/engine/src/runtime/permission-repository.ts` — function registerPermissionApprovalRepository: (store, repository) => void, function getPermissionApprovalRepository: (store) => Result<PermissionApprovalRepository, PermissionError>
 - `packages/engine/src/runtime/retention.ts`
   - class RuntimeRetentionService
@@ -810,11 +888,22 @@
   - function isDeniedKey: (key) => boolean
   - function sanitizeJournalData: (data) => Result<JsonObject, RuntimeStoreError>
   - function sanitizeSnapshotMetadata: (metadata, string | number | boolean>) => Result<Record<string, string | number | boolean>, RuntimeStoreError>
-- `packages/engine/src/runtime/sqlite/kysely-bun-sqlite.ts` — class BunSqliteDialect
+- `packages/engine/src/runtime/sqlite/kysely-bun-sqlite.ts`
+  - class BunSqliteDialect
+  - class BunSqliteMemoryDialect
+  - interface MemoryStoreCoordinator
 - `packages/engine/src/runtime/sqlite/migrations.ts`
   - function runMigrations: (db) => Result<void, RuntimeStoreError>
   - function readSchemaVersion: (db) => number
   - const CURRENT_SCHEMA_VERSION
+- `packages/engine/src/runtime/sqlite/runtime-directory-guard.ts`
+  - function runtimeLeafName: (dbPath) => string
+  - function directoryIdentitiesMatch: (a, b) => boolean
+  - class BunRuntimeDirectoryGuard
+  - class MemoryRuntimeDirectoryGuard
+  - interface VerifyLeafOptions
+  - interface RuntimeDirectoryHandle
+  - _...3 more_
 - `packages/engine/src/runtime/sqlite/store.ts`
   - function createSqliteRuntimeStore: (options) => SqliteRuntimeStore
   - class SqlitePermissionApprovalRepository
@@ -1089,6 +1178,7 @@
 ## custom
 - migrate-conversion.test — `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`
 - migrate.test — `packages/cli/src/commands/__tests__/migrate.test.ts`
+- runtime-directory-guard — `packages/engine/src/runtime/sqlite/runtime-directory-guard.ts`
 
 ## auth
 - authorization.test — `packages/engine/src/__tests__/execution-lifecycle/authorization.test.ts`
@@ -1102,7 +1192,7 @@
 
 - `packages/cli/src/evals/types.ts` — imported by **39** files
 - `packages/engine/src/runtime/types.ts` — imported by **29** files
-- `packages/adapters/pi/src/types.ts` — imported by **22** files
+- `packages/adapters/pi/src/types.ts` — imported by **25** files
 - `packages/cli/src/theme/colors.ts` — imported by **20** files
 - `packages/cli/src/io/terminal.ts` — imported by **18** files
 - `packages/cli/src/evals/openrouter-client.ts` — imported by **18** files
@@ -1118,14 +1208,14 @@
 - `scripts/release/clock.ts` — imported by **13** files
 - `packages/cli/src/fs/file-system.ts` — imported by **12** files
 - `packages/engine/src/runtime/errors.ts` — imported by **12** files
+- `packages/adapters/pi/src/strict-json.ts` — imported by **11** files
 - `packages/engine/src/compose.ts` — imported by **11** files
-- `packages/engine/src/execution-lifecycle/metadata.ts` — imported by **11** files
 
 ## Import Map (who imports what)
 
 - `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/dashboard-indexes.test.ts`, `packages/cli/src/evals/__tests__/github-contents-publisher.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts` +34 more
 - `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts` +24 more
-- `packages/adapters/pi/src/types.ts` ← `packages/adapters/pi/src/__tests__/capability-prober.test.ts`, `packages/adapters/pi/src/__tests__/child-runtime.test.ts`, `packages/adapters/pi/src/__tests__/controller.test.ts`, `packages/adapters/pi/src/__tests__/delegation-tool.test.ts`, `packages/adapters/pi/src/__tests__/extension-tool-governance.test.ts` +17 more
+- `packages/adapters/pi/src/types.ts` ← `packages/adapters/pi/src/__tests__/capability-prober.test.ts`, `packages/adapters/pi/src/__tests__/child-runtime.test.ts`, `packages/adapters/pi/src/__tests__/controller.test.ts`, `packages/adapters/pi/src/__tests__/delegation-tool.test.ts`, `packages/adapters/pi/src/__tests__/extension-tool-governance.test.ts` +20 more
 - `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts` +15 more
 - `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts` +13 more
 - `packages/cli/src/evals/openrouter-client.ts` ← `packages/cli/src/evals/__tests__/loom-routing-runner.test.ts`, `packages/cli/src/evals/__tests__/pattern-planning-runner.test.ts`, `packages/cli/src/evals/__tests__/runner.test.ts`, `packages/cli/src/evals/__tests__/shuttle-execution-runner.test.ts`, `packages/cli/src/evals/__tests__/spindle-tools-runner.test.ts` +13 more
@@ -1139,7 +1229,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 195 test files found
+> 208 test files found
 
 ---
 

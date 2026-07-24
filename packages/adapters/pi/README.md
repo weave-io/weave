@@ -16,7 +16,8 @@ repository for the full normative contract this package implements.
 ## Status
 
 This package currently ships the activation, normalized-configuration,
-registered-tool-policy, and delegation-transport slices: exact host checks,
+registered-tool-policy, delegation-transport, and workflow-lifecycle slices:
+exact host checks,
 trust-aware safe initialization, effective capability health reporting, ordered
 agent materialization, Loom primary activation, exact composed-prompt append,
 Pi-owned skill/model context, and deterministic model intent. It also provides
@@ -38,9 +39,16 @@ placeholder. See
 repository for the full delegation contract, including a documented
 limitation of Pi's `agent_settled` event (no payload).
 
-Durable approvals, concrete Weave-owned workflow-dispatch tools, workflow
-lifecycle projection, persistence, and plan/artifact projection land in later
-releases.
+The native `/weave` palette and nine direct commands project all ten engine
+lifecycle operations. Explicit starts and resumes require fresh confirmation.
+Workflow steps run in distinct authenticated direct-step children, and only the
+root step child receives the governed `weave_complete_step` tool. The adapter
+also projects revisioned plans, digest-bound artifacts and approvals, recovery,
+reconciliation, parent-chat pause handling, and trusted no-follow Runtime Store
+persistence.
+
+Packed-consumer checks, release diagnostics, the acceptance manifest, and
+stable interactive TUI smoke evidence remain pending release gates.
 
 ### Peer dependencies
 

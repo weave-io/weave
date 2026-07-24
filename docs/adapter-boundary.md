@@ -119,6 +119,8 @@ The engine owns durable Weave runtime state under `.weave/runtime/**`, including
 
 This is a narrow boundary exception: the engine may perform Bun filesystem/database I/O only for Weave-owned runtime records. It must not inspect harness-owned storage, harness session internals, harness model registries, or concrete harness plugin state. Adapters may emit sanitized observations through an engine-provided Runtime Journal writer, but adapters do not receive direct database ownership.
 
+The default SQLite store holds the project/runtime directory chain through descriptor-relative `openat(O_NOFOLLOW)` operations. It loads the latest serialized image into in-memory `bun:sqlite` while holding a bounded OS lock, then commits through a restrictive temporary leaf, file sync, atomic descriptor-relative rename, and directory sync. It does not reopen `weave.db` by path after validation and does not create WAL/SHM sidecars. This implementation detail stays engine-owned; adapters supply only the trusted project root and use the `RuntimeStore` interface.
+
 ### Artifact Integrity Metadata
 
 > **Spec:** [Spec 22 — Workflow-First Execution](specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md) (Unit 3)
@@ -393,7 +395,7 @@ The lifecycle surface distinguishes two categories of operations:
 
 **Explicit execution operations** (`ExecutionOperationKind`): `start`, `resume`, `pause`, `inspect`, `advance`. These map to `startExecution`, `resumeExecution`, `handleUserInterrupt` (pause signal), `inspectExecution`, and `dispatchStep`/`completeStep` respectively. Only `startExecution` may create a `WorkflowInstance` or acquire an `ExecutionLease`.
 
-**Observation operations**: `observeSession` and `inspectExecution` do not authorize execution. `beforeTool` is a registered-call compatibility projection over the general permission session and may read or write approval state; it still never creates a workflow instance or acquires an execution lease. It accepts no static policy fields and rejects non-exact registered snapshots. Use `previewToolPolicy` for informational static policy evaluation; it cannot authorize execution or establish adapter readiness. Adapters may call observation operations from harness events without risking implicit execution start.
+**Observation operations**: `observeSession` and `inspectExecution` do not authorize execution. `inspectExecution` includes persisted `stepAttempts` in dispatch order so adapters can reuse the prior attempt's exact consumed artifact revisions when forming retry pins; reading them grants no authority. `beforeTool` is a registered-call compatibility projection over the general permission session and may read or write approval state; it still never creates a workflow instance or acquires an execution lease. It accepts no static policy fields and rejects non-exact registered snapshots. Use `previewToolPolicy` for informational static policy evaluation; it cannot authorize execution or establish adapter readiness. Adapters may call observation operations from harness events without risking implicit execution start.
 
 **Execution boundary invariant** (ADR 0004): `startExecution` is the sole authorized entry point for durable execution. Ordinary Loom conversation, session idle events, continuation hooks, and lifecycle observations are explicitly forbidden from implicitly starting durable execution. Adapters must call `startExecution` only in response to an explicit, user-authorized trigger.
 

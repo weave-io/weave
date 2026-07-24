@@ -1,0 +1,205 @@
+/**
+ * Production `DirectDispatchTransport` (Spec 33 §11.1, §11.2). Spawns a
+ * fresh, ephemeral, single-use `PiRpcChild` for exactly one workflow step -
+ * this deliberately bypasses `PiDelegationController`'s ordinary-delegation
+ * budget/queue entirely, since direct workflow-step dispatch is a distinct
+ * engine effect, not ordinary delegation. It reuses the same low-level
+ * private child transport class (`PiRpcChild`) rather than a second
+ * protocol implementation.
+ */
+import type { DelegationTarget } from "@weaveio/weave-engine";
+import type { ResultAsync } from "neverthrow";
+import type { HmacPort, RandomPort } from "./child-crypto.js";
+import type { PiChildProcessPort } from "./child-process-port.js";
+import { WEAVE_DELEGATION_TOOL_NAME } from "./delegation-tool.js";
+import type {
+  DirectDispatchSettlement,
+  DirectDispatchTransport,
+  PiDirectDispatchInput,
+} from "./direct-dispatch.js";
+import type { PiAdapterFailure } from "./errors.js";
+import { type PiModelInfo, PiModelResolver } from "./model-resolution.js";
+import { PiRpcChild } from "./rpc-child.js";
+import type { JsonValue } from "./strict-json.js";
+import { WEAVE_COMPLETE_STEP_TOOL_NAME } from "./structured-completion.js";
+import { deriveActiveToolNames } from "./tool-governance.js";
+import type { IdGenerator, PiAdapterLogger } from "./types.js";
+
+const DIRECT_DISPATCH_PARENT_ID = "workflow-controller";
+const DIRECT_DISPATCH_DEPTH = 0;
+
+export interface PiDirectDispatchTransportDeps {
+  readonly processPort: PiChildProcessPort;
+  readonly randomPort: RandomPort;
+  readonly hmacPort: HmacPort;
+  readonly logger: PiAdapterLogger;
+  readonly idGenerator: IdGenerator;
+  readonly baseEnv?: Readonly<Record<string, string>>;
+  readonly command?: readonly string[];
+  /**
+   * Optional shared registry (Spec 33 §11.5, §14) letting the extension's
+   * `/weave:abort` command and its Esc-at-root editor binding reach the one
+   * live direct-step child - which is never part of
+   * `PiDelegationController`'s own tracked tree - to pause or cancel it.
+   */
+  readonly registry?: PiDirectStepChildRegistry;
+  /**
+   * The authenticated model catalog captured once at session start (Spec
+   * 33 §9.2), used to resolve the direct-step descriptor's own `models`
+   * intent into a concrete identity exactly as root-level ordinary
+   * delegation does. Absent/empty means every entry is skipped and the
+   * child resolves against its own catalog instead (graceful degradation,
+   * never a hard failure).
+   */
+  readonly availableModels?: readonly PiModelInfo[];
+}
+
+/**
+ * Tracks the single in-flight direct-step child (Spec 33 §11.1 forbids more
+ * than one active workflow, so at most one direct-step child is ever live
+ * at a time) so the extension can terminate or pause it from `/weave:abort`
+ * or an Esc keypress at the root of the child tree - neither of which goes
+ * through `PiDelegationController`, since direct dispatch is deliberately
+ * exempt from its ordinary-delegation budget/tree.
+ */
+export class PiDirectStepChildRegistry {
+  private active: PiRpcChild | undefined;
+
+  setActive(child: PiRpcChild | undefined): void {
+    this.active = child;
+  }
+
+  isActive(): boolean {
+    return this.active !== undefined && !this.active.isSettled();
+  }
+
+  cancel(): ResultAsync<void, PiAdapterFailure> | undefined {
+    const child = this.active;
+    if (child === undefined) return undefined;
+    return child.cancel();
+  }
+}
+
+/**
+ * Bootstrap payload shape delivered to a direct-step child. The `mode`
+ * field is what tells the child-side extension instance
+ * (`activateChildModeIfApplicable`) to register the governed
+ * `weave_complete_step` tool and to report its recorded structured
+ * candidate as the settlement summary, instead of the ordinary-delegation
+ * free-text summary path.
+ */
+export interface PiDirectStepBootstrap {
+  readonly mode: "direct-step";
+  readonly agentName: string;
+  readonly composedPrompt: string;
+  readonly models: readonly string[];
+  readonly effectiveToolPolicy: Record<string, unknown> | undefined;
+  readonly delegationTargets: readonly DelegationTarget[];
+  readonly workflowInstanceId: string;
+  readonly leaseId: string;
+  readonly stepName: string;
+  readonly correlationId: string;
+  readonly context: {
+    readonly parentAgentName: string;
+    readonly parentDepth: number;
+    readonly cwd: string;
+  };
+  readonly activeTools: readonly string[];
+  readonly resolvedModel:
+    | { readonly provider: string; readonly id: string; readonly name?: string }
+    | undefined;
+  readonly completionTool: typeof WEAVE_COMPLETE_STEP_TOOL_NAME;
+}
+
+export function createDirectDispatchTransport(
+  deps: PiDirectDispatchTransportDeps,
+  generationId: string,
+): DirectDispatchTransport {
+  return (
+    input: PiDirectDispatchInput,
+  ): ResultAsync<DirectDispatchSettlement, PiAdapterFailure> => {
+    const childId = `direct-${input.workflowInstanceId}-${input.stepName}-${deps.idGenerator.next()}`;
+    const child = new PiRpcChild(
+      childId,
+      DIRECT_DISPATCH_PARENT_ID,
+      generationId,
+      input.agentName,
+      DIRECT_DISPATCH_DEPTH,
+      {
+        processPort: deps.processPort,
+        randomPort: deps.randomPort,
+        hmacPort: deps.hmacPort,
+        logger: deps.logger,
+        command: deps.command,
+        baseEnv: deps.baseEnv,
+      },
+    );
+
+    const spawnInput = {
+      childId,
+      parentId: DIRECT_DISPATCH_PARENT_ID,
+      generationId,
+      agentName: input.agentName,
+      depth: DIRECT_DISPATCH_DEPTH,
+      cwd: input.cwd,
+      env: {},
+      task: input.composedPrompt,
+    };
+
+    // Derive the direct-step child's own governed active-tool set exactly
+    // as ordinary root-level delegation does (Spec 33 §12), plus the
+    // always-present completion tool - never registered for any other
+    // bootstrap mode (Spec 33 §15).
+    const hasDelegationTool = input.delegationTargets.length > 0;
+    const activeTools = [
+      ...deriveActiveToolNames(
+        input.effectiveToolPolicy,
+        hasDelegationTool ? WEAVE_DELEGATION_TOOL_NAME : undefined,
+      ),
+      WEAVE_COMPLETE_STEP_TOOL_NAME,
+    ];
+    const resolution = new PiModelResolver().resolve(
+      input.models,
+      deps.availableModels ?? [],
+    );
+    const resolvedModel = resolution.resolved ? resolution.model : undefined;
+
+    const bootstrap: PiDirectStepBootstrap = {
+      mode: "direct-step",
+      agentName: input.agentName,
+      composedPrompt: input.composedPrompt,
+      models: input.models,
+      effectiveToolPolicy: input.effectiveToolPolicy as
+        | Record<string, unknown>
+        | undefined,
+      delegationTargets: input.delegationTargets,
+      workflowInstanceId: input.workflowInstanceId,
+      leaseId: input.leaseId,
+      stepName: input.stepName,
+      correlationId: input.correlationId,
+      context: {
+        parentAgentName: DIRECT_DISPATCH_PARENT_ID,
+        parentDepth: DIRECT_DISPATCH_DEPTH,
+        cwd: input.cwd,
+      },
+      activeTools,
+      resolvedModel,
+      completionTool: WEAVE_COMPLETE_STEP_TOOL_NAME,
+    };
+
+    deps.registry?.setActive(child);
+    return child
+      .spawnAndHandshake(spawnInput)
+      .andThen(() =>
+        child.runTask(spawnInput, bootstrap as unknown as JsonValue),
+      )
+      .map((settlement) => {
+        deps.registry?.setActive(undefined);
+        return settlement;
+      })
+      .mapErr((failure) => {
+        deps.registry?.setActive(undefined);
+        return failure;
+      });
+  };
+}

@@ -57,6 +57,7 @@ function request(
     cwd: "/project",
     env: {},
     bootstrap: {
+      mode: "ordinary",
       agentName: "shuttle",
       composedPrompt: "You are Shuttle.",
       models: [],
@@ -735,6 +736,7 @@ describe("PiDelegationController", () => {
             ? { name: "shuttle", triggers: [], isCategory: false }
             : undefined,
         buildBootstrap: (target, childId) => ({
+          mode: "ordinary" as const,
           agentName: target.name,
           composedPrompt: `You are ${target.name}.`,
           models: [],
@@ -813,6 +815,7 @@ describe("PiDelegationController", () => {
     const controller = makeController(config(GENEROUS), port, {
       resolveDelegationTarget: () => undefined,
       buildBootstrap: (target, childId) => ({
+        mode: "ordinary" as const,
         agentName: target.name,
         composedPrompt: `You are ${target.name}.`,
         models: [],

@@ -15,6 +15,7 @@ import {
 } from "./child-envelope.js";
 import { MAX_TASK_INPUT_CHARS } from "./delegation-limits.js";
 import type { JsonValue } from "./strict-json.js";
+import { WEAVE_COMPLETE_STEP_TOOL_NAME } from "./structured-completion.js";
 
 export const MAX_NAME_LENGTH = 256;
 const MAX_SUMMARY_LENGTH = 8_192;
@@ -105,25 +106,69 @@ const TaskContextBodySchema = z
   })
   .strict();
 
-const BootstrapBodySchema = z
+/**
+ * Fields shared by every bootstrap variant (Spec 33 §11.2 Task 9 and §13/§15
+ * direct-step dispatch). `mode` is the required discriminant: `"ordinary"`
+ * for delegation-spawned children (weave_delegate / relayed nested
+ * delegation), `"direct-step"` for a workflow-step child spawned directly
+ * by `PiWorkflowController` (never through the ordinary delegation budget
+ * or queue). The two variants are validated as a strict discriminated
+ * union so a direct-step bootstrap sent to a schema expecting the ordinary
+ * shape (or vice versa) fails closed at parse time rather than silently
+ * dropping unrecognised fields.
+ */
+const BootstrapCommonShape = {
+  agentName: NameSchema,
+  composedPrompt: z.string().max(MAX_COMPOSED_PROMPT_LENGTH),
+  models: z.array(z.string().max(MAX_NAME_LENGTH)).max(MAX_MODELS),
+  effectiveToolPolicy: OpaqueBoundedObjectSchema.optional(),
+  delegationTargets: z
+    .array(DelegationTargetBodySchema)
+    .max(MAX_DELEGATION_TARGETS)
+    .optional(),
+  /** The task/child correlation id (Spec 33 §11.2 Task 9) - the child must reject bootstrap whose `correlationId` does not match its own env-derived child id. */
+  correlationId: NameSchema,
+  context: TaskContextBodySchema,
+  /** The exact, parent-derived active tool name list the child MUST apply via `setActiveTools()` (Spec 33 §11.2 Task 9). */
+  activeTools: z.array(NameSchema).max(MAX_ACTIVE_TOOLS),
+  /** Present only when the parent itself resolved a concrete model identity (Spec 33 §9.2, §11.2 Task 9); absent means the child must resolve against its own authenticated catalog. */
+  resolvedModel: ModelIdentityBodySchema.optional(),
+} as const;
+
+const OrdinaryBootstrapBodySchema = z
   .object({
-    agentName: NameSchema,
-    composedPrompt: z.string().max(MAX_COMPOSED_PROMPT_LENGTH),
-    models: z.array(z.string().max(MAX_NAME_LENGTH)).max(MAX_MODELS),
-    effectiveToolPolicy: OpaqueBoundedObjectSchema.optional(),
-    delegationTargets: z
-      .array(DelegationTargetBodySchema)
-      .max(MAX_DELEGATION_TARGETS)
-      .optional(),
-    /** The task/child correlation id (Spec 33 §11.2 Task 9) - the child must reject bootstrap whose `correlationId` does not match its own env-derived child id. */
-    correlationId: NameSchema,
-    context: TaskContextBodySchema,
-    /** The exact, parent-derived active tool name list the child MUST apply via `setActiveTools()` (Spec 33 §11.2 Task 9). */
-    activeTools: z.array(NameSchema).max(MAX_ACTIVE_TOOLS),
-    /** Present only when the parent itself resolved a concrete model identity (Spec 33 §9.2, §11.2 Task 9); absent means the child must resolve against its own authenticated catalog. */
-    resolvedModel: ModelIdentityBodySchema.optional(),
+    mode: z.literal("ordinary"),
+    ...BootstrapCommonShape,
   })
   .strict();
+
+/**
+ * Direct-step bootstrap (Spec 33 §13-§15): additionally carries the
+ * workflow instance/lease/step correlation the child needs to call the
+ * `weave_complete_step` tool the parent registers ONLY for this mode, and
+ * `completionTool` as a literal so the child can verify the parent's own
+ * declared completion-tool name matches the tool it actually receives.
+ * Nested helpers spawned BY a direct-step child never receive this shape -
+ * they always go through `buildChildBootstrapBody`'s ordinary path, so
+ * completion authority never propagates below the root direct-step child
+ * (Spec 33 §15 "Nested helper children do NOT receive workflow completion
+ * authority").
+ */
+const DirectStepBootstrapBodySchema = z
+  .object({
+    mode: z.literal("direct-step"),
+    ...BootstrapCommonShape,
+    workflowInstanceId: NameSchema,
+    leaseId: NameSchema,
+    stepName: NameSchema,
+    completionTool: z.literal(WEAVE_COMPLETE_STEP_TOOL_NAME),
+  })
+  .strict();
+
+const BootstrapBodySchema = z.discriminatedUnion("mode", [
+  OrdinaryBootstrapBodySchema,
+  DirectStepBootstrapBodySchema,
+]);
 
 /**
  * The child's authenticated proof that bootstrap actually applied (Spec 33
@@ -252,6 +297,12 @@ const CONTROL_BODY_SCHEMAS = {
 } as const satisfies Record<PiControlKind, z.ZodType>;
 
 export type PiBootstrapBody = z.infer<typeof BootstrapBodySchema>;
+export type PiOrdinaryBootstrapBody = z.infer<
+  typeof OrdinaryBootstrapBodySchema
+>;
+export type PiDirectStepBootstrapBody = z.infer<
+  typeof DirectStepBootstrapBodySchema
+>;
 export type PiBootstrapAckBody = z.infer<typeof BootstrapAckBodySchema>;
 export type PiModelIdentityBody = z.infer<typeof ModelIdentityBodySchema>;
 export type PiTaskContextBody = z.infer<typeof TaskContextBodySchema>;

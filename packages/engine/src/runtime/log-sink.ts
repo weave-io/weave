@@ -11,12 +11,25 @@
  * - Injectable filesystem seams for isolated tests
  */
 
-import { dlopen, type Pointer, ptr } from "bun:ffi";
+import type { dlopen } from "bun:ffi";
+import { ptr } from "bun:ffi";
 import { join } from "node:path";
 import type { RuntimeLogSettings } from "@weaveio/weave-core";
 import { DEFAULT_RUNTIME_LOG_SETTINGS } from "@weaveio/weave-core";
 import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
 import type { DestinationStream } from "pino";
+import {
+  cstr,
+  type LibcSymbols,
+  libcPath,
+  type NoFollowFfiError,
+  type PlatformFlags,
+  platformFlags,
+  ensureDirectoryTree as sharedEnsureDirectoryTree,
+  identityFromFd as sharedIdentityFromFd,
+  loadLibc as sharedLoadLibc,
+  withRestrictiveCreateMask,
+} from "./nofollow-ffi.js";
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -123,95 +136,13 @@ const DEFAULT_FILE_MODE = 0o600;
 
 // ---------------------------------------------------------------------------
 // Platform flags / FFI helpers (production Bun path)
+//
+// The low-level libc symbol loading, platform flag constants, and fd-identity
+// primitives live in `./nofollow-ffi.ts` and are shared with the Runtime
+// Store's SQLite open path (Spec 33 §18, `./sqlite/runtime-directory-guard.ts`).
+// This module adapts the shared, generic `NoFollowFfiError` onto its own
+// public `RuntimeLogSinkError` union.
 // ---------------------------------------------------------------------------
-
-interface LibcSymbols {
-  readonly open: (
-    path: Pointer | TypedArray | string | null,
-    flags: number,
-    mode?: number,
-  ) => number;
-  readonly openat: (
-    dirfd: number,
-    path: Pointer | TypedArray | string | null,
-    flags: number,
-    mode?: number,
-  ) => number;
-  readonly close: (fd: number) => number;
-  readonly write: (
-    fd: number,
-    buf: Pointer | TypedArray | string | null,
-    count: number,
-  ) => number;
-  readonly fchmod: (fd: number, mode: number) => number;
-  readonly renameat: (
-    olddirfd: number,
-    oldpath: Pointer | TypedArray | string | null,
-    newdirfd: number,
-    newpath: Pointer | TypedArray | string | null,
-  ) => number;
-  readonly unlinkat: (
-    dirfd: number,
-    path: Pointer | TypedArray | string | null,
-    flags: number,
-  ) => number;
-}
-
-type TypedArray =
-  | Uint8Array
-  | Int8Array
-  | Uint16Array
-  | Int16Array
-  | Uint32Array
-  | Int32Array
-  | Float32Array
-  | Float64Array;
-
-interface PlatformFlags {
-  readonly O_RDONLY: number;
-  readonly O_RDWR: number;
-  readonly O_CREAT: number;
-  readonly O_APPEND: number;
-  readonly O_DIRECTORY: number;
-  readonly O_NOFOLLOW: number;
-  readonly O_CLOEXEC: number;
-}
-
-function platformFlags(): PlatformFlags | undefined {
-  if (process.platform === "darwin") {
-    return {
-      O_RDONLY: 0x0000,
-      O_RDWR: 0x0002,
-      O_CREAT: 0x0200,
-      O_APPEND: 0x0008,
-      O_DIRECTORY: 0x0010_0000,
-      O_NOFOLLOW: 0x0100,
-      O_CLOEXEC: 0x0100_0000,
-    };
-  }
-  if (process.platform === "linux") {
-    return {
-      O_RDONLY: 0,
-      O_RDWR: 0x2,
-      O_CREAT: 0x40,
-      O_APPEND: 0x400,
-      O_DIRECTORY: 0x1_0000,
-      O_NOFOLLOW: 0x2_0000,
-      O_CLOEXEC: 0x8_0000,
-    };
-  }
-  return undefined;
-}
-
-function libcPath(): string | undefined {
-  if (process.platform === "darwin") return "/usr/lib/libSystem.B.dylib";
-  if (process.platform === "linux") return "libc.so.6";
-  return undefined;
-}
-
-function cstr(value: string): Uint8Array {
-  return new TextEncoder().encode(`${value}\0`);
-}
 
 /** Lift a synchronous `Result` into `ResultAsync` for use in async chains. */
 function toResultAsync<T, E>(result: Result<T, E>): ResultAsync<T, E> {
@@ -221,119 +152,58 @@ function toResultAsync<T, E>(result: Result<T, E>): ResultAsync<T, E> {
   );
 }
 
-function loadLibc(): Result<
-  { library: ReturnType<typeof dlopen>; symbols: LibcSymbols },
-  RuntimeLogSinkError
-> {
-  const libraryPath = libcPath();
-  if (libraryPath === undefined) {
+function mapInitError(cause: NoFollowFfiError): RuntimeLogSinkError {
+  return { type: "initialization", message: cause.message, cause: cause.cause };
+}
+
+interface LoadedLibc {
+  readonly library: ReturnType<typeof dlopen>;
+  readonly symbols: LibcSymbols;
+}
+
+function loadLibc(): Result<LoadedLibc, RuntimeLogSinkError> {
+  if (libcPath() === undefined) {
     return err({
       type: "initialization",
       message: "no-follow log I/O is unavailable on this platform",
     });
   }
-
-  return Result.fromThrowable(
-    () => {
-      const library = dlopen(libraryPath, {
-        open: {
-          args: ["ptr", "i32", "i32"],
-          returns: "i32",
-        },
-        openat: {
-          args: ["i32", "ptr", "i32", "i32"],
-          returns: "i32",
-        },
-        close: { args: ["i32"], returns: "i32" },
-        write: { args: ["i32", "ptr", "u64"], returns: "i64" },
-        fchmod: { args: ["i32", "i32"], returns: "i32" },
-        renameat: {
-          args: ["i32", "ptr", "i32", "ptr"],
-          returns: "i32",
-        },
-        unlinkat: { args: ["i32", "ptr", "i32"], returns: "i32" },
-      });
-      return {
-        library,
-        symbols: library.symbols as unknown as LibcSymbols,
-      };
-    },
-    (cause) =>
-      ({
-        type: "initialization",
-        message: "failed to load libc for no-follow log I/O",
-        cause: String(cause),
-      }) as const,
-  )();
+  return sharedLoadLibc().mapErr(mapInitError);
 }
 
-/**
- * Read identity from an open FD via Bun.file(fd).stat().
- * Same descriptor — no path reopen.
- */
-/**
- * Single fstat-equivalent read of an open descriptor's identity via
- * `Bun.file(fd).stat()`. Enforces the expected kind (file or directory) in
- * the same call so no second stat/reopen is needed.
- */
+/** Rename a not-a-file/not-a-directory identity mismatch onto log wording. */
+function describeIdentityMismatch(cause: NoFollowFfiError): string {
+  if (cause.message === "resolved target is not a regular file") {
+    return "log segment is not a regular file";
+  }
+  if (cause.message === "resolved target is not a directory") {
+    return "log directory is not a directory";
+  }
+  return cause.message;
+}
+
 function identityFromFd(
   fd: number,
   expectedKind: "file" | "directory",
 ): ResultAsync<FileIdentity, RuntimeLogSinkError> {
-  return ResultAsync.fromPromise(
-    Bun.file(fd).stat(),
-    (cause) =>
-      ({
-        type: "identity",
-        message: "failed to fstat log descriptor",
-        cause: String(cause),
-      }) as const,
-  ).andThen((stat) => {
-    const matchesKind =
-      expectedKind === "file" ? stat.isFile() : stat.isDirectory();
-    if (!matchesKind) {
-      return errAsync({
-        type: "identity" as const,
-        message:
-          expectedKind === "file"
-            ? "log segment is not a regular file"
-            : "log directory is not a directory",
-      });
-    }
-    return okAsync({
-      dev: stat.dev,
-      ino: stat.ino,
-      size: stat.size,
-      mtimeMs: stat.mtimeMs,
-    });
-  });
+  return sharedIdentityFromFd(fd, expectedKind).mapErr(
+    (cause): RuntimeLogSinkError => ({
+      type: "identity",
+      message: describeIdentityMismatch(cause),
+    }),
+  );
 }
 
 function ensureDirectoryTree(
   path: string,
   mode: number,
 ): ResultAsync<void, RuntimeLogSinkError> {
-  const modeOctal = (mode & 0o777).toString(8).padStart(3, "0");
-  return ResultAsync.fromPromise(
-    (async () => {
-      const proc = Bun.spawn(["mkdir", "-p", "-m", modeOctal, path], {
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [exitCode, stderr] = await Promise.all([
-        proc.exited,
-        new Response(proc.stderr).text(),
-      ]);
-      if (exitCode !== 0) {
-        throw new Error(stderr || "mkdir failed");
-      }
-    })(),
-    (cause) =>
-      ({
-        type: "initialization",
-        message: "failed to create log directory",
-        cause: String(cause),
-      }) as const,
+  return sharedEnsureDirectoryTree(path, mode).mapErr(
+    (cause): RuntimeLogSinkError => ({
+      type: "initialization",
+      message: "failed to create log directory",
+      cause: cause.cause ?? cause.message,
+    }),
   );
 }
 
@@ -451,11 +321,19 @@ class BunNoFollowDirectoryHandle implements RuntimeLogDirectoryHandle {
               this.flags.O_APPEND |
               this.flags.O_NOFOLLOW |
               this.flags.O_CLOEXEC;
-            const fd = this.symbols.openat(
-              this.dirFd,
-              ptr(cstr(fileName)),
-              openFlags,
-              mode & 0o777,
+            // See `withRestrictiveCreateMask` in `./nofollow-ffi.ts`: the
+            // trailing `mode` argument to `open`/`openat` only exists when
+            // `O_CREAT` is set, making it a C variadic parameter that
+            // `bun:ffi`'s fixed-arity call declaration cannot pass reliably.
+            // The `fchmod` immediately below (fixed-arity, therefore
+            // reliable) is what actually establishes the real mode.
+            const fd = withRestrictiveCreateMask(this.symbols, () =>
+              this.symbols.openat(
+                this.dirFd,
+                ptr(cstr(fileName)),
+                openFlags,
+                mode & 0o777,
+              ),
             );
             if (fd < 0) {
               throw new Error(

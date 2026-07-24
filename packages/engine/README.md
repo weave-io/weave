@@ -76,6 +76,8 @@ The engine snapshots plain bounded identities once, rejects getters/proxies/extr
 
 `RuntimeStore` exposes workflow, lease, snapshot, and journal repositories. Memory and SQLite stores keep their permission repository in private fields and associate it with the store through an engine-internal `WeakMap`. The association accessor and repository implementations are not root exports, so OpenCode and workflow adapters cannot mutate durable grants through `store.permissions`. Durable grants remain available to a later service-created session through the engine-owned repository.
 
+The SQLite store holds the project/runtime directory chain through descriptor-relative `openat(O_NOFOLLOW)` operations for its lifetime. It loads a serialized database image into in-memory `bun:sqlite`, takes a bounded OS lock before reading or mutating a shared store, and commits through a restrictive temporary leaf plus atomic rename and directory sync. It never reopens the database by path and creates no WAL/SHM sidecars.
+
 ## Internal workspace layer
 
 This package is bundled into supported public artifacts and is **not** a supported npm installation target. Consumers install `@weaveio/weave-cli` or an adapter; the examples below are for repository contributors building adapters.
@@ -196,6 +198,8 @@ interface WorkflowExecutionContext {
 ```
 
 Adapters pass `WorkflowExecutionContext` to `startExecution`, `dispatchStep`, and `completeStep`. The engine validates `workflowName` against the `workflows` map and reads step definitions from `WorkflowConfig.steps`. The engine never reads `WeaveConfig` directly — adapters supply the narrow slice it needs.
+
+`inspectExecution()` returns the persisted `stepAttempts` in dispatch order. Adapters use those read-only records to pass the prior attempt's exact `consumedArtifacts` back as `pinnedArtifactRevisions` on retry. This preserves Spec 22's no-automatic-rebinding rule when newer artifact revisions appear after the first attempt.
 
 **Security invariants**: `promptMetadata` in `RunAgentEffect` carries only `byteLength` — no raw prompt text appears in emitted effects or the Runtime Store. `StepCompletionSignal` structurally excludes raw prompts, completions, transcripts, credentials, and tokens.
 

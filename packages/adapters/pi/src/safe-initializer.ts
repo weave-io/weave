@@ -29,6 +29,11 @@ import {
   type HostPackageReader,
 } from "./host-compatibility.js";
 import { PiModelResolver } from "./model-resolution.js";
+import {
+  isDirectoryContainmentSafeWith,
+  NullPathContainmentPort,
+  type PathContainmentPort,
+} from "./path-containment.js";
 import type {
   PiToolPolicyPlan,
   PiWeaveToolRegistration,
@@ -137,6 +142,17 @@ export interface PiSafeInitializerDeps {
     primary: AgentDescriptor,
     activation: PiConfigActivationResult,
   ) => readonly PiWeaveToolRegistration[];
+  /**
+   * Real, no-follow-safe containment proof for `.weave/runtime`/`.weave/plans`
+   * (Spec 33 §18, §21, §28) - gates `workflow-persistence`/
+   * `workflow-step-dispatch`/`plan-file-compatibility` on more than
+   * `configLoaded`. Defaults to `NullPathContainmentPort` (always
+   * fail-closed, never spawns a process) so omitting this dependency never
+   * silently promotes those capabilities to `ok` and no test accidentally
+   * spawns a real process (Spec 33 §24 layer D) - production wiring in
+   * `extension.ts` MUST supply `BunPathContainmentPort` explicitly.
+   */
+  readonly pathContainmentPort?: PathContainmentPort;
 }
 
 interface HostOutcome {
@@ -163,11 +179,14 @@ function coverageFailureReason(
 export class PiSafeInitializer {
   private readonly contract: AdapterCapabilityContract;
   private readonly permissionBridge: PiPermissionBridge;
+  private readonly pathContainmentPort: PathContainmentPort;
 
   constructor(private readonly deps: PiSafeInitializerDeps) {
     this.contract = deps.capabilityContract ?? PI_ADAPTER_CAPABILITY_CONTRACT;
     this.permissionBridge =
       deps.permissionBridge ?? new PiPermissionBridge({ logger: noopLogger });
+    this.pathContainmentPort =
+      deps.pathContainmentPort ?? new NullPathContainmentPort();
   }
 
   preflight(
@@ -281,84 +300,115 @@ export class PiSafeInitializer {
     // value, since Spec 33's closed-failure contract bans private paths,
     // environment values, and secrets from public failures.
     return ResultAsync.fromSafePromise(
-      safelyAwaitPortResult(
-        () => this.deps.configActivator.activate({ projectRoot, trust }),
-        (): PiAdapterFailure =>
-          makeActivationFailedFailure("config-activation-threw"),
-      ).match(
-        (activation): CandidatePlanOutcome => {
-          const primary = activation.descriptors.byName.get(
-            DEFAULT_PRIMARY_AGENT_NAME,
-          );
-          const primaryEligible =
-            primary !== undefined && primary.mode !== "subagent";
-          const weaveOwnedRegistrations =
-            primaryEligible && primary !== undefined
-              ? (this.deps.buildDelegationToolRegistrations?.(
-                  primary as NonNullable<typeof primary>,
-                  activation,
-                ) ?? [])
-              : [];
-          // `modelRegistry` is an injected port; a throwing
-          // `getAvailable()` must not crash preflight - Spec 33 §9.2's own
-          // fail-closed behavior for model resolution is to degrade rather
-          // than fail, so an unreadable catalog is treated as an empty one.
-          const availableModels = safelyListAvailableModels(
-            modelRegistry,
-          ).unwrapOr([]);
-          const modelResolution = primaryEligible
-            ? new PiModelResolver().resolve(
-                (primary as NonNullable<typeof primary>).models,
-                availableModels,
-              )
-            : { resolved: false as const };
+      (async (): Promise<CandidatePlanOutcome> => {
+        return await safelyAwaitPortResult(
+          () => this.deps.configActivator.activate({ projectRoot, trust }),
+          (): PiAdapterFailure =>
+            makeActivationFailedFailure("config-activation-threw"),
+        ).match(
+          async (activation): Promise<CandidatePlanOutcome> => {
+            const primary = activation.descriptors.byName.get(
+              DEFAULT_PRIMARY_AGENT_NAME,
+            );
+            const primaryEligible =
+              primary !== undefined && primary.mode !== "subagent";
+            const weaveOwnedRegistrations =
+              primaryEligible && primary !== undefined
+                ? (this.deps.buildDelegationToolRegistrations?.(
+                    primary as NonNullable<typeof primary>,
+                    activation,
+                  ) ?? [])
+                : [];
+            // `modelRegistry` is an injected port; a throwing
+            // `getAvailable()` must not crash preflight - Spec 33 §9.2's own
+            // fail-closed behavior for model resolution is to degrade rather
+            // than fail, so an unreadable catalog is treated as an empty one.
+            const availableModels = safelyListAvailableModels(
+              modelRegistry,
+            ).unwrapOr([]);
+            const modelResolution = primaryEligible
+              ? new PiModelResolver().resolve(
+                  (primary as NonNullable<typeof primary>).models,
+                  availableModels,
+                )
+              : { resolved: false as const };
 
-          const policies = Object.fromEntries(
-            [...activation.descriptors.byName].map(([name, descriptor]) => [
-              name,
-              descriptor.effectiveToolPolicy,
-            ]),
-          );
-          // `permissionBridge.planToolPolicy` is pure/read-only and already
-          // returns a `Result`, but it is an injected port - `Result.fromThrowable`
-          // catches a misbehaving implementation throwing synchronously
-          // instead of letting that escape as an unhandled exception
-          // (neverthrow-wrap-exceptions).
-          const planned = Result.fromThrowable(
-            () =>
-              this.permissionBridge.planToolPolicy({
-                allTools: tools,
-                weaveOwnedRegistrations,
-                policies,
-              }),
-            () => makeInvariantViolationFailure("tool-policy-plan-threw"),
-          )().andThen((result) => result);
+            const policies = Object.fromEntries(
+              [...activation.descriptors.byName].map(([name, descriptor]) => [
+                name,
+                descriptor.effectiveToolPolicy,
+              ]),
+            );
+            // `permissionBridge.planToolPolicy` is pure/read-only and already
+            // returns a `Result`, but it is an injected port - `Result.fromThrowable`
+            // catches a misbehaving implementation throwing synchronously
+            // instead of letting that escape as an unhandled exception
+            // (neverthrow-wrap-exceptions).
+            const planned = Result.fromThrowable(
+              () =>
+                this.permissionBridge.planToolPolicy({
+                  allTools: tools,
+                  weaveOwnedRegistrations,
+                  policies,
+                }),
+              () => makeInvariantViolationFailure("tool-policy-plan-threw"),
+            )().andThen((result) => result);
 
-          return {
-            activation,
-            toolPolicy: planned.isOk() ? planned.value : undefined,
-            weaveOwnedRegistrations,
-            probeContext: {
-              configLoaded: true,
-              materializationErrorCount: activation.descriptors.errors.length,
-              primaryDescriptorFound: primaryEligible,
-              primaryModelDryResolved: modelResolution.resolved,
-              toolPolicyCoverage: toolPolicyCoverageFromPlan(planned),
-            },
-          };
-        },
-        (failure): CandidatePlanOutcome => ({
-          failure,
-          weaveOwnedRegistrations: [],
-          probeContext: {
-            configLoaded: false,
-            materializationErrorCount: 0,
-            primaryDescriptorFound: false,
-            primaryModelDryResolved: false,
-            toolPolicyCoverage: { reason: "config-not-loaded" },
+            // Project-path containment (Spec 33 §18, §21, §28) is only ever
+            // computed under confirmed project trust - probing `.weave/runtime`/
+            // `.weave/plans` is itself project-path access, which withheld
+            // trust must never perform even though config can still load in a
+            // narrow builtin/global-only way under withheld trust.
+            const containment =
+              trust === "trusted"
+                ? await Promise.all([
+                    isDirectoryContainmentSafeWith(
+                      this.pathContainmentPort,
+                      projectRoot,
+                      ".weave/runtime",
+                    ),
+                    isDirectoryContainmentSafeWith(
+                      this.pathContainmentPort,
+                      projectRoot,
+                      ".weave/plans",
+                    ),
+                  ])
+                : undefined;
+            const runtimeDirectoryContained = containment
+              ? containment[0].unwrapOr(false)
+              : undefined;
+            const plansDirectoryContained = containment
+              ? containment[1].unwrapOr(false)
+              : undefined;
+
+            return {
+              activation,
+              toolPolicy: planned.isOk() ? planned.value : undefined,
+              weaveOwnedRegistrations,
+              probeContext: {
+                configLoaded: true,
+                materializationErrorCount: activation.descriptors.errors.length,
+                primaryDescriptorFound: primaryEligible,
+                primaryModelDryResolved: modelResolution.resolved,
+                toolPolicyCoverage: toolPolicyCoverageFromPlan(planned),
+                runtimeDirectoryContained,
+                plansDirectoryContained,
+              },
+            };
           },
-        }),
-      ),
+          (failure): CandidatePlanOutcome => ({
+            failure,
+            weaveOwnedRegistrations: [],
+            probeContext: {
+              configLoaded: false,
+              materializationErrorCount: 0,
+              primaryDescriptorFound: false,
+              primaryModelDryResolved: false,
+              toolPolicyCoverage: { reason: "config-not-loaded" },
+            },
+          }),
+        );
+      })(),
     );
   }
 

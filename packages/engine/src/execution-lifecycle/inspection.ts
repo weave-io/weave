@@ -81,6 +81,7 @@ export function inspectExecution(
             createdAt: instance.createdAt,
             updatedAt: instance.updatedAt,
             artifacts: instance.artifacts,
+            stepAttempts: instance.stepAttempts,
             hasActiveLease,
             ...(instance.currentStepName !== undefined
               ? { currentStepName: instance.currentStepName }

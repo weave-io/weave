@@ -4,8 +4,11 @@ import type {
   EffectiveToolPolicy,
   MaterializationPlan,
 } from "@weaveio/weave-engine";
-import { ALL_CAPABILITY_IDS } from "@weaveio/weave-engine";
-import { errAsync, okAsync } from "neverthrow";
+import {
+  ALL_CAPABILITY_IDS,
+  createInMemoryRuntimeStore,
+} from "@weaveio/weave-engine";
+import { errAsync, ok, okAsync } from "neverthrow";
 import {
   DefaultPiCapabilityProber,
   type PiCapabilityProbeSource,
@@ -15,7 +18,9 @@ import { PiConfigActivator } from "../config-activator.js";
 import { makeRequiredCapabilityUnavailableFailure } from "../errors.js";
 import { createPiExtension, type PiExtensionDeps } from "../extension.js";
 import { HOST_PACKAGE_NAME } from "../host-compatibility.js";
+import { FakePathContainmentPort } from "../path-containment.js";
 import { PiPermissionBridge } from "../permission-bridge.js";
+import { InMemoryRuntimeStoreFactory } from "../runtime-store-port.js";
 import type { PiToolCallEvent } from "../types.js";
 
 /**
@@ -97,6 +102,22 @@ function install(
     logger: new RecordingLogger(),
     configActivator: fakeConfigActivator(plan),
     permissionBridge: new PiPermissionBridge({ logger: new RecordingLogger() }),
+    // This suite exercises tool_call governance only - it must never touch
+    // a real SQLite file (this fake host's `cwd` is a nonexistent, unwritable
+    // path); the workflow controller/Runtime Store are out of scope here.
+    runtimeStoreFactory: new InMemoryRuntimeStoreFactory(
+      createInMemoryRuntimeStore(),
+    ),
+    // Real `BunPathContainmentPort` spawns a genuine subprocess (Spec 33
+    // §24 layer D forbids this in tests); this fake host's `cwd` is a
+    // nonexistent path anyway, so any real spawn would fail closed and
+    // wrongly flip workflow-persistence/etc. to unavailable, pushing this
+    // generation into health-only for reasons unrelated to what this suite
+    // tests. Reports every containment check as safe instead.
+    pathContainmentPort: new FakePathContainmentPort(
+      new Map(),
+      ok("/fake/project"),
+    ),
     ...overrides,
   });
   factory(host.api);
@@ -277,9 +298,14 @@ describe("tool_call governance (layer C: compiled extension against a fake host)
   });
 
   it("blocks on a stale controller generation discovered after an in-flight approval prompt", async () => {
+    // As with the ask-policy approval tests above, an all-required-probes-ok
+    // fixture is required so the approval UI is genuinely permitted to open
+    // for the first (soon-to-be-stale) generation - otherwise overall
+    // health-only mode (Spec 33 §21) would block before the generation-
+    // staleness path under test is ever reached.
     const host = new RecordingFakePiHost();
     host.injectTool({ name: "bash", sourceInfo: piBuiltinSourceInfo("bash") });
-    install(host, askPolicy);
+    install(host, askPolicy, { capabilityProber: new AllOkCapabilityProber() });
     await host.triggerSessionStart();
 
     const deferred = host.deferNextSelect();

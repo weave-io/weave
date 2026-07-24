@@ -4,12 +4,13 @@ import type {
   AgentDescriptor,
   MaterializationPlan,
 } from "@weaveio/weave-engine";
-import { okAsync } from "neverthrow";
+import { ok, okAsync } from "neverthrow";
 import { DefaultPiCapabilityProber } from "../capability-prober.js";
 import { WEAVE_COMMAND_NAMES } from "../commands.js";
 import { PiConfigActivator } from "../config-activator.js";
 import { createPiExtension, type PiExtensionDeps } from "../extension.js";
 import { HOST_PACKAGE_NAME } from "../host-compatibility.js";
+import { FakePathContainmentPort } from "../path-containment.js";
 import { MODEL_REGISTRY_THREW_REASON } from "../port-safety.js";
 import { FakeHostPackageReader } from "./fakes/fake-host-package-reader.js";
 import {
@@ -54,6 +55,16 @@ function installExtension(
     clock: new FakeClock(),
     logger: new RecordingLogger(),
     configActivator: fakeConfigActivator(),
+    // Real `BunPathContainmentPort` spawns a genuine subprocess (Spec 33
+    // §24 layer D forbids this in tests); this fake host's `cwd` is a
+    // nonexistent path anyway, so any real spawn would fail closed and
+    // wrongly flip workflow-persistence/etc. to unavailable for reasons
+    // unrelated to what any given test actually exercises. Reports every
+    // containment check as safe instead.
+    pathContainmentPort: new FakePathContainmentPort(
+      new Map(),
+      ok("/fake/project"),
+    ),
     ...overrides,
   });
   factory(host.api);
@@ -61,14 +72,15 @@ function installExtension(
 }
 
 describe("createPiExtension factory (layer C: compiled extension against a fake host)", () => {
-  it("registers exactly the nine /weave:* command shells and four lifecycle delegates, nothing else", () => {
+  it("registers exactly the nine /weave:* command shells, the bare native palette command, and four lifecycle delegates, nothing else", () => {
     const host = new RecordingFakePiHost();
     installExtension(host);
     expect(host.registerCommandCalls.map((call) => call.name).sort()).toEqual(
-      [...WEAVE_COMMAND_NAMES].sort(),
+      [...WEAVE_COMMAND_NAMES, "weave"].sort(),
     );
     expect(host.onCalls.map((call) => call.event).sort()).toEqual([
       "before_agent_start",
+      "input",
       "session_shutdown",
       "session_start",
       "tool_call",
@@ -164,6 +176,10 @@ describe("createPiExtension factory (layer C: compiled extension against a fake 
         ],
         errors: [],
       }),
+      pathContainmentPort: new FakePathContainmentPort(
+        new Map(),
+        ok("/fake/project"),
+      ),
     });
     factory(host.api);
     await host.triggerSessionStart();
@@ -276,6 +292,18 @@ describe("createPiExtension factory (layer C: compiled extension against a fake 
     const ctxA = await host.triggerSessionStart();
     const ctxB = await host.triggerSessionStart();
     expect(ctxA).not.toBe(ctxB);
+  });
+
+  it("clears the compact plan widget on session_shutdown (Spec 33 §16) alongside the child-tree widget", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    installExtension(host);
+    await host.triggerSessionStart();
+    await host.triggerSessionShutdown();
+    const planWidgetCalls = host.widgetCalls.filter(
+      (call) => call.key === "weave-plan",
+    );
+    expect(planWidgetCalls.length).toBeGreaterThan(0);
+    expect(planWidgetCalls.at(-1)?.value).toBeUndefined();
   });
 });
 

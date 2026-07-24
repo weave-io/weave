@@ -14,6 +14,7 @@ const MAX_COMPOSED_PROMPT_LENGTH = MAX_CONTROL_BODY_BYTES / 2;
 // size - shared here so these composedPrompt-focused bound tests don't
 // have to restate them.
 const REQUIRED_BOOTSTRAP_FIELDS = {
+  mode: "ordinary" as const,
   correlationId: "child-1",
   context: { parentAgentName: "loom", parentDepth: 0, cwd: "/project" },
   activeTools: [],

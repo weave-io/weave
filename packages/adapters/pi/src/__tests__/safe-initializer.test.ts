@@ -207,6 +207,9 @@ describe("PiSafeInitializer.preflight", () => {
       "agent-materialization",
       "primary-agent-selection",
       "prompt-composition",
+      "workflow-persistence",
+      "workflow-step-dispatch",
+      "plan-file-compatibility",
     ] as const;
     const otherProjectPathDependentIds =
       PROJECT_PATH_DEPENDENT_CAPABILITIES.filter(
@@ -235,6 +238,31 @@ describe("PiSafeInitializer.preflight", () => {
       (probe) => probe.capabilityId === "prompt-composition",
     );
     expect(promptComposition?.probeStatus).toBe("unavailable");
+    // Config loaded (even under withheld trust, builtin/global-only) is a
+    // real, provable structural fact for config/agent-materialization, but
+    // it is NOT sufficient proof for the workflow-surface wiring: proving
+    // `.weave/runtime`/`.weave/plans` containment is itself project-path
+    // access, which withheld trust must never perform - so
+    // `buildCandidatePlan` never computes those facts under withheld trust,
+    // and these three capabilities correctly stay "unavailable" rather than
+    // being promoted to "ok" merely because config loaded.
+    for (const id of [
+      "workflow-persistence",
+      "workflow-step-dispatch",
+    ] as const) {
+      const entry = preflight.healthReport.probeResults.find(
+        (probe) => probe.capabilityId === id,
+      );
+      expect(entry?.probeStatus).toBe("unavailable");
+      expect(entry?.details).toBe("runtime-directory-containment-unproven");
+    }
+    const planFileCompatibility = preflight.healthReport.probeResults.find(
+      (probe) => probe.capabilityId === "plan-file-compatibility",
+    );
+    expect(planFileCompatibility?.probeStatus).toBe("unavailable");
+    expect(planFileCompatibility?.details).toBe(
+      "plans-directory-containment-unproven",
+    );
     // Even though config/agent materialization report "ok" under withheld
     // trust, the adapter is still fail-closed to health-only overall.
     expect(preflight.healthOnlyMode).toBe(true);

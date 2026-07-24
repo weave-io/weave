@@ -6240,6 +6240,7 @@ describe("inspectExecution (Spec 22 Unit 1)", () => {
       createdAt: "2026-06-02T00:00:00.000Z",
       updatedAt: "2026-06-02T00:01:00.000Z",
       artifacts: [],
+      stepAttempts: [],
       hasActiveLease: true,
     };
     expect(output.status).toBe("running");

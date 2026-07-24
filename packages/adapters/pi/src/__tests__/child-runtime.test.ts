@@ -174,6 +174,7 @@ describe("PiChildRuntime.admitControlLine", () => {
         correlationId: "child-1",
         kind: "bootstrap",
         body: {
+          mode: "ordinary",
           agentName: "shuttle",
           composedPrompt: "You are Shuttle.",
           models: [],
@@ -194,6 +195,7 @@ describe("PiChildRuntime.admitControlLine", () => {
     });
     await flush();
     expect(received).toEqual({
+      mode: "ordinary",
       agentName: "shuttle",
       composedPrompt: "You are Shuttle.",
       models: [],
@@ -329,6 +331,7 @@ describe("PiChildRuntime.admitControlLine", () => {
       onCancel: () => {},
     };
     const body = {
+      mode: "ordinary",
       agentName: "shuttle",
       composedPrompt: "You are Shuttle.",
       models: [],

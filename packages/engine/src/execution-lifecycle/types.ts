@@ -471,6 +471,24 @@ export interface InspectExecutionOutput {
   readonly errorMessage?: string;
   readonly artifacts: readonly ArtifactRef[];
   readonly hasActiveLease: boolean;
+  /**
+   * All recorded step attempts for this instance, in dispatch order.
+   *
+   * Exposes `WorkflowInstance.stepAttempts` (Spec 22 Unit 3: "record
+   * consumed revisions for all explicit artifact inputs on each step
+   * attempt") through the read-only `inspectExecution` projection so
+   * adapters can determine, before calling `dispatchStep`, whether the
+   * current step already has a prior attempt and — if so — which exact
+   * artifact revisions it consumed. This is what lets an adapter compute
+   * `pinnedArtifactRevisions` that reuse the prior attempt's revisions on
+   * retry (the engine's own default when `pinnedArtifactRevisions` is
+   * omitted; see `latestAttemptForStep` in
+   * `execution-lifecycle/artifacts.ts`) instead of re-deriving "latest
+   * revision" from scratch, which silently rebinds to newer artifact
+   * revisions and violates the "no automatic latest-artifact rebinding on
+   * retry" invariant (Spec 22 Non-Goal 5).
+   */
+  readonly stepAttempts: readonly StepAttemptRecord[];
 }
 
 // ---------------------------------------------------------------------------

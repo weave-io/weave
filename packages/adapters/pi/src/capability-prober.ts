@@ -17,9 +17,6 @@ export const PROJECT_PATH_DEPENDENT_CAPABILITIES: readonly CapabilityId[] = [
   "agent-materialization",
   "primary-agent-selection",
   "delegated-specialist-execution",
-  "workflow-persistence",
-  "workflow-step-dispatch",
-  "plan-file-compatibility",
 ];
 
 /**
@@ -43,6 +40,16 @@ export interface PiCandidatePlanContext {
    * `undefined` only when the plan never ran (mode/host blocked).
    */
   readonly toolPolicyCoverage?: "ok" | { readonly reason: string };
+  /**
+   * Real, read-only no-follow containment proof for `.weave/runtime` under
+   * the project root (Spec 33 §21, §28): `true` only when that path either
+   * resolves safely inside the project root or does not exist yet - never
+   * merely because config loaded. Missing/undefined is treated the same as
+   * `false` (unproven) by every caller.
+   */
+  readonly runtimeDirectoryContained?: boolean;
+  /** Same proof as {@link runtimeDirectoryContained}, for `.weave/plans`. */
+  readonly plansDirectoryContained?: boolean;
 }
 
 /** Input a capability prober needs; assembled after mode/host/trust are known. */
@@ -58,6 +65,9 @@ const CANDIDATE_PLAN_CAPABILITIES: ReadonlySet<CapabilityId> = new Set([
   "agent-materialization",
   "primary-agent-selection",
   "prompt-composition",
+  "workflow-persistence",
+  "workflow-step-dispatch",
+  "plan-file-compatibility",
 ]);
 
 /**
@@ -159,18 +169,76 @@ function evaluateCandidatePlanCapability(
         : "primary-selectable-model-fallback",
     };
   }
-  // prompt-composition
-  if (!plan.configLoaded || !plan.primaryDescriptorFound) {
+  if (id === "prompt-composition") {
+    if (!plan.configLoaded || !plan.primaryDescriptorFound) {
+      return {
+        capabilityId: id,
+        probeStatus: "unavailable",
+        details: "no-composed-prompt-available",
+      };
+    }
+    return {
+      capabilityId: id,
+      probeStatus: "ok",
+      details: "composed-prompt-available",
+    };
+  }
+  // `workflow-persistence`/`workflow-step-dispatch`: `configLoaded` alone
+  // only proves config parsed - it says nothing about whether the Runtime
+  // Store's own directory is actually reachable. This capability is `ok`
+  // only when config loaded *and* a real, read-only no-follow containment
+  // proof of `.weave/runtime` succeeded (Spec 33 §21, §28). It still never
+  // opens the store itself - a real open/migration failure at
+  // `session_start` degrades the *session's* workflow surface separately
+  // (see `renderHealthMessage`'s runtime-store line) - but it no longer
+  // claims readiness from `configLoaded` alone, and under withheld trust
+  // (where `plan` is never constructed) this capability now correctly
+  // falls through to the default `unavailable` branch instead of claiming
+  // a narrow project-trust-withheld `ok`.
+  if (id === "workflow-persistence" || id === "workflow-step-dispatch") {
+    if (!plan.configLoaded) {
+      return {
+        capabilityId: id,
+        probeStatus: "unavailable",
+        details: "config-not-loaded",
+      };
+    }
+    if (plan.runtimeDirectoryContained !== true) {
+      return {
+        capabilityId: id,
+        probeStatus: "unavailable",
+        details: "runtime-directory-containment-unproven",
+      };
+    }
+    return {
+      capabilityId: id,
+      probeStatus: "ok",
+      details: "runtime-store-and-dispatch-wiring-available",
+    };
+  }
+  // plan-file-compatibility: `createPiPlanStateProvider` binds the
+  // concrete `BunFilesystemPlanStateProvider` (Spec 33 §16), but that is
+  // only a real, provable structural fact once `.weave/plans` itself has
+  // also passed the same real containment proof - `configLoaded` alone is
+  // not concrete evidence (Spec 33 §21, §28).
+  if (!plan.configLoaded) {
     return {
       capabilityId: id,
       probeStatus: "unavailable",
-      details: "no-composed-prompt-available",
+      details: "config-not-loaded",
+    };
+  }
+  if (plan.plansDirectoryContained !== true) {
+    return {
+      capabilityId: id,
+      probeStatus: "unavailable",
+      details: "plans-directory-containment-unproven",
     };
   }
   return {
     capabilityId: id,
     probeStatus: "ok",
-    details: "composed-prompt-available",
+    details: "plan-state-provider-available",
   };
 }
 

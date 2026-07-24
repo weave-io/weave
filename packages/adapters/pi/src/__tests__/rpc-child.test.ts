@@ -49,6 +49,7 @@ function baseSpawnInput(
  */
 function validBootstrap(overrides: Record<string, unknown> = {}): JsonValue {
   return {
+    mode: "ordinary",
     agentName: "shuttle",
     composedPrompt: "You are Shuttle.",
     models: [],

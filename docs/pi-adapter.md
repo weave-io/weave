@@ -1,6 +1,6 @@
 # Pi Adapter Architecture
 
-**Status:** Activation, normalized configuration, registered-tool policy, and delegation transport implemented; workflow lifecycle projection and release proof pending
+**Status:** Activation, normalized configuration, registered-tool policy, delegation transport, and workflow lifecycle projection implemented; packaging and live release proof pending
 
 **Related:** [Spec 33 — Full-readiness Pi adapter](specs/33-spec-pi-adapter/33-spec-pi-adapter.md) · [Spec 34 — Harness-neutral permissions](specs/34-spec-harness-neutral-permissions/34-spec-harness-neutral-permissions.md) · [Adapter Boundary](adapter-boundary.md) · [Pi operator guide](adapters/pi.md) · [Adapter Readiness](adapter-readiness-status.md)
 
@@ -18,7 +18,9 @@ The adapter now also seals an input-aware permission registry for discovered Pi-
 
 The adapter now also ships the private delegation transport and the `weave_delegate` tool: an engine-resolved per-agent budget (direct-child, concurrency, depth, and global live-process limits) authorizes, queues (FIFO per parent), or denies each request; an authorized request spawns an independent authenticated `pi --mode rpc --no-session` child, bootstraps its exact composed prompt, active-tool set, and resolved model in one signed envelope, and relays that child's own governed tool-call approvals to the sole parent TUI. A live child may itself request nested delegation, restricted to its own declared delegation targets. `weave_delegate` never creates or advances workflow state; it only runs one bounded task and returns the child's own structured settlement.
 
-Workflow lifecycle projection, packed-consumer proof, and live TUI evidence remain pending. Weave-owned tool registration is implemented as a guarded mechanism; `weave_delegate` is its first concrete Weave-owned tool. Durable project approvals remain unavailable until the trusted Runtime Store is activated by the persistence slice. These implemented slices are not a full-readiness claim.
+The adapter now also projects all ten lifecycle operations through the `/weave` palette and nine direct commands. Explicit starts and resumes mint one-use authorization only after fresh user confirmation. Workflow steps use a distinct direct-step child transport; only the root step child receives `weave_complete_step`, and completion requires one bounded structured candidate. The projection includes `user_confirm` withholding, retry-stable artifact revision pins, digest checks, artifact approval and self-approval guards, revisioned plan rendering, recovery pointers, parent-chat pause handling, and reconciliation.
+
+Trusted activation opens the engine Runtime Store under `.weave/runtime`. The engine holds the project/runtime directory chain with no-follow descriptors, serializes cross-store access with a bounded OS lock, runs `bun:sqlite` in memory, and atomically persists serialized snapshots through descriptor-relative temporary leaves. This avoids path reopens and WAL/SHM sidecars while retaining restrictive local permissions. Packed-consumer proof and live TUI evidence remain pending, so these implemented slices are not yet a full-readiness claim.
 
 ## Activation model
 
@@ -55,6 +57,14 @@ The first release projects these commands:
 - `/weave:abort`, `/weave:advance`, `/weave:resume` — explicit lifecycle actions.
 
 Only an explicit user start or resume authorizes work. Session start, idle, settlement, recovery discovery, and ordinary chat never start or resume durable execution.
+
+## Workflow projection
+
+The adapter maps Pi commands and events into the engine-owned lifecycle surface; it does not reimplement workflow state transitions. One generation-scoped `PiWorkflowController` applies returned effects, records session observations, and rechecks generation authority at asynchronous boundaries. `inspectExecution` supplies persisted attempts so retries reuse the exact artifact revisions consumed by the prior attempt instead of rebinding to newer revisions.
+
+Direct-step children remain private `pi --mode rpc --no-session` processes but are not ordinary delegation. Their bootstrap carries workflow instance, lease, and step correlation. Nested delegation remains available only through the child's ordinary bounded delegation targets and never inherits step-completion authority. A direct step succeeds only through the governed structured completion tool; prose and process exit are not success signals.
+
+The adapter owns no-follow plan/artifact providers and TUI projection. The engine owns lifecycle state, revisioned artifacts, approvals, leases, and Runtime Store writes. Recovery pointers and widgets are read-only projections of authoritative engine state.
 
 ## Health-only mode
 

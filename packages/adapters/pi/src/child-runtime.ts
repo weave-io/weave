@@ -81,9 +81,16 @@ export interface PiChildRuntimeDeps {
 }
 
 export interface PiChildBootstrapHandlers {
-  /** Applies the parent's bootstrap payload. Caller-supplied so this module never invents descriptor/model/tool activation. */
-  onBootstrap(body: JsonValue): void;
-  onCancel(): void;
+  /**
+   * Applies the parent's bootstrap payload. Caller-supplied so this module
+   * never invents descriptor/model/tool activation. May return a promise -
+   * {@link PiChildRuntime.admitControlLine} awaits it before its own
+   * returned promise settles, so callers (and tests) that await
+   * `admitControlLine(...)` observe every bootstrap side effect actually
+   * applied, never just "dispatched".
+   */
+  onBootstrap(body: JsonValue): void | Promise<void>;
+  onCancel(): void | Promise<void>;
 }
 
 export type PiChildStartOutcome =
@@ -199,14 +206,29 @@ export class PiChildRuntime {
       });
   }
 
-  /** Verifies and admits one control-line JSON value. Fails closed (disposes) on anything that isn't a legitimately-authenticated, well-formed, single-delivery control message. */
-  admitControlLine(json: JsonValue, handlers: PiChildBootstrapHandlers): void {
+  /**
+   * Verifies and admits one control-line JSON value. Fails closed
+   * (disposes) on anything that isn't a legitimately-authenticated,
+   * well-formed, single-delivery control message.
+   *
+   * Returns a promise that settles only once verification *and* (for
+   * `bootstrap`/`cancel`) the caller-supplied handler's own async work
+   * have both completed - never merely once the handler was invoked.
+   * Callers that need a deterministic completion signal (e.g. a hidden
+   * command handler that must not resolve until bootstrap is actually
+   * applied) must await this returned promise rather than reacting to a
+   * side channel or an arbitrary timer.
+   */
+  async admitControlLine(
+    json: JsonValue,
+    handlers: PiChildBootstrapHandlers,
+  ): Promise<void> {
     if (this.disposed) return;
     const secretBytes = this.secretBytes;
     const authState = this.authState;
     if (secretBytes === undefined || authState === undefined) return;
     if (!looksLikeControlEnvelope(json)) return;
-    void verifyEnvelope(json, secretBytes, this.deps.hmacPort).match(
+    await verifyEnvelope(json, secretBytes, this.deps.hmacPort).match(
       (envelope) => this.admitVerifiedEnvelope(envelope, authState, handlers),
       (envelopeError) => {
         this.deps.logger.warn(
@@ -218,11 +240,11 @@ export class PiChildRuntime {
     );
   }
 
-  private admitVerifiedEnvelope(
+  private async admitVerifiedEnvelope(
     envelope: PiControlEnvelope,
     authState: PiChildAuthState,
     handlers: PiChildBootstrapHandlers,
-  ): void {
+  ): Promise<void> {
     const admitted = authState.admitIncoming(envelope);
     if (admitted.isErr()) {
       this.deps.logger.warn(
@@ -233,11 +255,11 @@ export class PiChildRuntime {
       return;
     }
     if (envelope.kind === "bootstrap") {
-      this.admitBootstrap(envelope.body, handlers);
+      await this.admitBootstrap(envelope.body, handlers);
       return;
     }
     if (envelope.kind === "cancel") {
-      this.admitCancel(envelope.body, handlers);
+      await this.admitCancel(envelope.body, handlers);
       return;
     }
     if (
@@ -262,10 +284,10 @@ export class PiChildRuntime {
     this.dispose();
   }
 
-  private admitBootstrap(
+  private async admitBootstrap(
     body: JsonValue,
     handlers: PiChildBootstrapHandlers,
-  ): void {
+  ): Promise<void> {
     if (this.bootstrapAdmitted) {
       this.deps.logger.warn(
         { childId: this.childId },
@@ -284,13 +306,13 @@ export class PiChildRuntime {
       return;
     }
     this.bootstrapAdmitted = true;
-    handlers.onBootstrap(body);
+    await handlers.onBootstrap(body);
   }
 
-  private admitCancel(
+  private async admitCancel(
     body: JsonValue,
     handlers: PiChildBootstrapHandlers,
-  ): void {
+  ): Promise<void> {
     if (this.cancelAdmitted) {
       this.deps.logger.warn(
         { childId: this.childId },
@@ -309,7 +331,7 @@ export class PiChildRuntime {
       return;
     }
     this.cancelAdmitted = true;
-    handlers.onCancel();
+    await handlers.onCancel();
   }
 
   private admitCorrelatedReply(

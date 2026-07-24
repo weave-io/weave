@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { CustomEditor } from "@earendil-works/pi-coding-agent";
 import type {
   AgentDescriptor,
@@ -6,7 +7,8 @@ import type {
   PermissionSession,
 } from "@weaveio/weave-engine";
 import { isDeniedKey, logger } from "@weaveio/weave-engine";
-import { Result, ResultAsync } from "neverthrow";
+import { okAsync, Result, ResultAsync } from "neverthrow";
+import { BunPiArtifactProvider } from "./artifact-provider.js";
 import {
   DefaultPiCapabilityProber,
   type PiCapabilityProbeSource,
@@ -64,6 +66,11 @@ import {
   buildRelayedDelegationToolRegistration,
   WEAVE_DELEGATION_TOOL_NAME,
 } from "./delegation-tool.js";
+import { TransportDirectDispatchPort } from "./direct-dispatch.js";
+import {
+  createDirectDispatchTransport,
+  PiDirectStepChildRegistry,
+} from "./direct-dispatch-transport.js";
 import { makeRequiredCapabilityUnavailableFailure } from "./errors.js";
 import {
   BunHostPackageReader,
@@ -76,6 +83,10 @@ import {
   PiModelResolver,
 } from "./model-resolution.js";
 import {
+  BunPathContainmentPort,
+  type PathContainmentPort,
+} from "./path-containment.js";
+import {
   APPROVAL_UI_TIMEOUT_MS,
   createChildRelayApprovalPort,
   type PiApprovalChoiceInput,
@@ -86,15 +97,33 @@ import {
   PiPermissionBridge,
   type PiToolPolicyPlan,
 } from "./permission-bridge.js";
+import {
+  BunPiPlanCatalogPort,
+  type PiPlanCatalogPort,
+} from "./plan-catalog.js";
+import { createPiPlanStateProvider } from "./plan-provider.js";
+import { renderPlanWidgetLines } from "./plan-render.js";
 import { safelyListAvailableModels } from "./port-safety.js";
 import {
   DEFAULT_PRIMARY_AGENT_NAME,
   type PiPrimaryActivationError,
   PiPrimarySession,
 } from "./primary-session.js";
+import { BunJsonlRecoveryPointerStore } from "./recovery-pointer.js";
+import {
+  type PiRuntimeStoreFactory,
+  SqliteRuntimeStoreFactory,
+} from "./runtime-store-port.js";
 import { PiSafeInitializer } from "./safe-initializer.js";
 import { PiSkillCatalog } from "./skill-catalog.js";
 import { type JsonValue, parseStrictJson } from "./strict-json.js";
+import {
+  buildWeaveCompleteStepToolRegistration,
+  type CompletionRecordAttempt,
+  SingleCompletionCandidateRecorder,
+  serializeCompletionCandidate,
+  type WEAVE_COMPLETE_STEP_TOOL_NAME,
+} from "./structured-completion.js";
 import {
   deriveActiveToolNames,
   PI_NATIVE_TOOL_CAPABILITY,
@@ -110,6 +139,20 @@ import type {
   PiSkillInfo,
   PiToolCallEvent,
 } from "./types.js";
+import {
+  buildPaletteActions,
+  handleWeaveAbort,
+  handleWeaveAdvance,
+  handleWeaveArtifact,
+  handleWeavePlan,
+  handleWeaveResume,
+  handleWeaveRun,
+  handleWeaveStart,
+  handleWeaveStatus,
+  type PiActiveWorkflowTracker,
+  type PiPaletteAction,
+} from "./workflow-commands.js";
+import { PiWorkflowController } from "./workflow-controller.js";
 
 /** Every dependency this extension needs beyond what Pi hands it directly. Fully injectable for tests. */
 export interface PiExtensionDeps {
@@ -125,6 +168,32 @@ export interface PiExtensionDeps {
   readonly hmacPort: HmacPort;
   readonly processPort: PiChildProcessPort;
   readonly childOutputPort: PiChildOutputPort;
+  /**
+   * Opens the engine's Runtime Store (Spec 33 §18) - injected so no test
+   * ever performs a real SQLite open/migration against a real (or
+   * nonexistent, unwritable) path. Production wiring MUST use
+   * `SqliteRuntimeStoreFactory`; tests MUST override with
+   * `InMemoryRuntimeStoreFactory`/`FailingRuntimeStoreFactory`.
+   */
+  readonly runtimeStoreFactory: PiRuntimeStoreFactory;
+  /**
+   * Real, no-follow-safe containment proof for `.weave/runtime`/
+   * `.weave/plans` (Spec 33 §17, §18, §21) - injected into
+   * `PiSafeInitializer` so capability probing never merely trusts
+   * `configLoaded`. Production wiring MUST use `BunPathContainmentPort`;
+   * tests MUST override with `FakePathContainmentPort`/
+   * `NullPathContainmentPort` (Spec 33 §24 layer D: no real process spawn
+   * in a test).
+   */
+  readonly pathContainmentPort: PathContainmentPort;
+  /**
+   * Production, no-follow-safe `.weave/plans` directory listing (Spec 33
+   * §16) - backs `/weave:start`'s plan-selection prompt and `/weave:plan`'s
+   * catalog. Production wiring MUST use `BunPiPlanCatalogPort`; tests MUST
+   * override with `FakePiPlanCatalogPort` (Spec 33 §24 layer D: no real
+   * filesystem scan in a test).
+   */
+  readonly planCatalogPort: PiPlanCatalogPort;
 }
 
 /** Production child-side stdout writer: writes directly to this process's own real stdout, interleaved with Pi's own event/response lines. */
@@ -174,6 +243,9 @@ export function createDefaultPiExtensionDeps(): PiExtensionDeps {
     hmacPort: new WebCryptoHmacPort(),
     processPort: new BunPiChildProcessPort(),
     childOutputPort: new StdoutChildOutputPort(),
+    runtimeStoreFactory: new SqliteRuntimeStoreFactory(),
+    pathContainmentPort: new BunPathContainmentPort(),
+    planCatalogPort: new BunPiPlanCatalogPort(),
   };
 }
 
@@ -290,7 +362,7 @@ const APPROVAL_REJECT_LABEL = "Reject";
  */
 const HIDDEN_CONTROL_COMMAND_NAME = "weave:__control__";
 
-interface PiChildBootstrapBody {
+interface PiChildBootstrapCommon {
   readonly agentName: string;
   readonly composedPrompt: string;
   readonly models: readonly string[];
@@ -304,6 +376,26 @@ interface PiChildBootstrapBody {
   /** Present only when the parent itself resolved a concrete model identity (root-level delegation, live `ctx.modelRegistry`); absent means this child must resolve against its own authenticated catalog (Spec 33 §9.2, §11.2 Task 9). */
   readonly resolvedModel: PiModelInfo | undefined;
 }
+
+/**
+ * Strict, mode-discriminated bootstrap union (Spec 33 §13-§15): `mode:
+ * "ordinary"` for a delegation-spawned child (`weave_delegate` or relayed
+ * nested delegation), `mode: "direct-step"` for a workflow-step child
+ * spawned directly by `PiWorkflowController`. Only the direct-step variant
+ * carries workflow instance/lease/step correlation and receives the
+ * governed `weave_complete_step` tool - nested helpers spawned BY a
+ * direct-step child are always bootstrapped through the ordinary path, so
+ * completion authority never propagates below the root direct-step child.
+ */
+type PiChildBootstrapBody =
+  | (PiChildBootstrapCommon & { readonly mode: "ordinary" })
+  | (PiChildBootstrapCommon & {
+      readonly mode: "direct-step";
+      readonly workflowInstanceId: string;
+      readonly leaseId: string;
+      readonly stepName: string;
+      readonly completionTool: typeof WEAVE_COMPLETE_STEP_TOOL_NAME;
+    });
 
 /**
  * Builds one delegated child's bootstrap payload from its own resolved
@@ -340,6 +432,7 @@ function buildChildBootstrapBody(
     return resolution.resolved ? resolution.model : undefined;
   })();
   const bootstrap: PiChildBootstrapBody = {
+    mode: "ordinary",
     agentName: target.name,
     composedPrompt: full?.composedPrompt ?? "",
     models: full?.models ?? [],
@@ -366,7 +459,7 @@ function parseChildBootstrapBody(
 ): PiChildBootstrapBody | undefined {
   const parsed = parseControlBody("bootstrap", body);
   if (!parsed.ok) return undefined;
-  return {
+  const common = {
     agentName: parsed.value.agentName,
     composedPrompt: parsed.value.composedPrompt,
     models: parsed.value.models,
@@ -379,6 +472,17 @@ function parseChildBootstrapBody(
     activeTools: parsed.value.activeTools,
     resolvedModel: parsed.value.resolvedModel,
   };
+  if (parsed.value.mode === "direct-step") {
+    return {
+      ...common,
+      mode: "direct-step",
+      workflowInstanceId: parsed.value.workflowInstanceId,
+      leaseId: parsed.value.leaseId,
+      stepName: parsed.value.stepName,
+      completionTool: parsed.value.completionTool,
+    };
+  }
+  return { ...common, mode: "ordinary" };
 }
 
 /**
@@ -414,6 +518,22 @@ interface PiChildModeState {
    * the only observable signal available to derive a failed outcome.
    */
   lastAssistantStopReason: string | undefined;
+  /**
+   * Present only for a direct-step child (Spec 33 §13-§15) - `undefined`
+   * for every ordinary-delegation child. Drives `weave_complete_step`
+   * registration and structured (not free-text) settlement reporting.
+   */
+  directStep: PiDirectStepChildState | undefined;
+}
+
+/** Per-turn direct-step completion state (Spec 33 §15). */
+interface PiDirectStepChildState {
+  readonly stepName: string;
+  readonly recorder: SingleCompletionCandidateRecorder;
+  /** Flips to `false` the instant `agent_settled` fires, closing the completion window for any late tool call. */
+  windowOpen: boolean;
+  /** The last recorded attempt outcome, consulted only when no candidate was ever recorded (missing/duplicate/late/malformed). */
+  lastAttempt: CompletionRecordAttempt | undefined;
 }
 
 function createChildModeState(): PiChildModeState {
@@ -427,6 +547,7 @@ function createChildModeState(): PiChildModeState {
     toolPolicy: undefined,
     permissionSession: undefined,
     runtime: undefined,
+    directStep: undefined,
     latestAssistantOutput: "",
     lastAssistantStopReason: undefined,
   };
@@ -476,19 +597,47 @@ async function applyChildBootstrap(
     parsed.effectiveToolPolicy !== undefined
       ? { [parsed.agentName]: parsed.effectiveToolPolicy }
       : {};
+  // Constructed unconditionally (cheap, no side effects) so the
+  // `weaveOwnedRegistrations` closure below can capture it regardless of
+  // `parsed.mode`; only ever consulted when `parsed.mode === "direct-step"`.
+  // `isWindowOpen` reads `state.directStep.windowOpen` (set at the final
+  // commit point below, and flipped to `false` by the `agent_settled`
+  // handler) as the single source of truth - never a second, independently
+  // mutable flag that could drift from it.
+  const directStepRecorder = new SingleCompletionCandidateRecorder();
   // A bootstrapped child with its own declared delegation targets gets its
   // own weave_delegate tool, relayed through this exact child's own
   // authenticated runtime rather than an independent budget (Spec 33
   // §10-11 nested/descendant delegation).
-  const weaveOwnedRegistrations =
-    parsed.delegationTargets.length === 0
+  const weaveOwnedRegistrations = [
+    ...(parsed.delegationTargets.length === 0
       ? []
       : [
           buildRelayedDelegationToolRegistration({
             targets: parsed.delegationTargets,
             getRuntime: () => state.runtime,
           }),
-        ];
+        ]),
+    // Only a direct-step child (Spec 33 §13-§15) ever receives
+    // `weave_complete_step`; nested helpers it may itself spawn always use
+    // the ordinary path above and never get this registration, so
+    // completion authority never propagates below the root direct-step
+    // child.
+    ...(parsed.mode === "direct-step"
+      ? [
+          buildWeaveCompleteStepToolRegistration({
+            stepName: parsed.stepName,
+            recorder: directStepRecorder,
+            isWindowOpen: () => state.directStep?.windowOpen ?? false,
+            onAttempt: (attempt) => {
+              if (state.directStep !== undefined) {
+                state.directStep.lastAttempt = attempt;
+              }
+            },
+          }),
+        ]
+      : []),
+  ];
   const planned = deps.permissionBridge.planToolPolicy({
     allTools: pi.getAllTools(),
     weaveOwnedRegistrations,
@@ -660,12 +809,21 @@ async function applyChildBootstrap(
   state.toolPolicy = planned.value;
   state.permissionSession = activated.value;
   state.bootstrapApplied = true;
+  state.directStep =
+    parsed.mode === "direct-step"
+      ? {
+          stepName: parsed.stepName,
+          recorder: directStepRecorder,
+          windowOpen: true,
+          lastAttempt: undefined,
+        }
+      : undefined;
   // `resolvedModel` is genuinely optional in `PiBootstrapAckBody` (Spec 33
   // §11.2 Task 9) - the key must be entirely absent, not present with an
   // `undefined` value, since `undefined` is not a valid `JsonValue` and
   // would make the ack envelope fail canonical (JCS) signing, silently
   // discarded by this `void` call and leaving the parent waiting forever.
-  void runtime.reportBootstrapAck(
+  await runtime.reportBootstrapAck(
     appliedModel !== undefined
       ? { activeTools: appliedActiveTools, resolvedModel: appliedModel }
       : { activeTools: appliedActiveTools },
@@ -823,20 +981,23 @@ async function activateChildModeIfApplicable(
   state.childId = outcome.value.childId;
 
   pi.registerCommand(HIDDEN_CONTROL_COMMAND_NAME, {
-    handler: (rawArgs: string) => {
+    handler: async (rawArgs: string) => {
       const parsed = parseStrictJson(rawArgs);
       if (parsed.isErr()) return;
       // `admitControlLine` verifies asynchronously (real HMAC signing/
-      // verification); the caller-supplied handlers below are the only
-      // reliable place to react once verification actually completes -
-      // never a synchronous flag read immediately after calling it.
-      runtime.admitControlLine(parsed.value, {
-        onBootstrap: (body) => {
-          void applyChildBootstrap(pi, ctx, deps, state, runtime, body);
-        },
-        onCancel: () => {
-          void runtime.reportCancelled();
-        },
+      // verification) and, for `bootstrap`/`cancel`, awaits the
+      // caller-supplied handler's own async work too - awaiting it here
+      // (rather than firing it and returning) is what lets every caller of
+      // this command handler observe bootstrap/cancel side effects as
+      // actually applied, never merely dispatched.
+      await runtime.admitControlLine(parsed.value, {
+        onBootstrap: (body) =>
+          applyChildBootstrap(pi, ctx, deps, state, runtime, body),
+        onCancel: () =>
+          runtime.reportCancelled().match(
+            () => undefined,
+            () => undefined,
+          ),
       });
     },
   });
@@ -955,23 +1116,55 @@ async function activateChildModeIfApplicable(
     return undefined;
   });
 
-  pi.on("agent_settled", () => {
+  pi.on("agent_settled", async () => {
     // A cancellation already in flight (or already reported) owns the
     // terminal outcome - never race a stray `"completed"` report past a
     // `"cancelled"` one that already went out, and never report completed
     // more than once (Task 9 finding 2).
     if (runtime.isCancelled()) return;
+    // Direct-step completion window closes the instant this event fires
+    // (Spec 33 §15) - a tool call that races in afterward must observe
+    // `windowOpen === false` and be rejected as late, never recorded.
+    if (state.directStep !== undefined) state.directStep.windowOpen = false;
     if (
       state.lastAssistantStopReason === "error" ||
       state.lastAssistantStopReason === "aborted"
     ) {
-      void runtime.reportSettled("failed", {
+      await runtime.reportSettled("failed", {
         reason: `assistant stop reason: ${state.lastAssistantStopReason}`,
       });
       return;
     }
+    if (state.directStep !== undefined) {
+      // A direct-step child's settlement is NEVER free-form prose (Spec 33
+      // §15): report the one recorded structured completion candidate as
+      // JSON, or a specific typed failure reason - `missing`/`duplicate`/
+      // `late`/`malformed:<msg>` - that `direct-dispatch.ts`'s
+      // `interpretSettlement` parses on the parent side. Process exit or
+      // prose is never success.
+      const candidate = state.directStep.recorder.take();
+      if (candidate !== undefined) {
+        await runtime.reportSettled("completed", {
+          summary: serializeCompletionCandidate(candidate),
+        });
+        return;
+      }
+      const attempt = state.directStep.lastAttempt;
+      if (attempt === undefined) {
+        await runtime.reportSettled("failed", { reason: "missing" });
+        return;
+      }
+      if (attempt.outcome === "malformed") {
+        await runtime.reportSettled("failed", {
+          reason: `malformed:${attempt.malformedReason ?? "unknown"}`,
+        });
+        return;
+      }
+      await runtime.reportSettled("failed", { reason: attempt.outcome });
+      return;
+    }
     const summary = truncateLatestOutput(state.latestAssistantOutput);
-    void runtime.reportSettled("completed", {
+    await runtime.reportSettled("completed", {
       summary: summary.length > 0 ? summary : EMPTY_CHILD_SUMMARY_FALLBACK,
     });
   });
@@ -1126,6 +1319,43 @@ function renderStatusMessage(
 }
 
 const WEAVE_CHILD_TREE_WIDGET_KEY = "weave-children";
+const WEAVE_PLAN_WIDGET_KEY = "weave-plan";
+
+/**
+ * Renders the bounded compact plan widget (Spec 33 §16) via the real,
+ * always-available `ctx.ui.setWidget` surface. Read-only: resolves the
+ * active workflow instance's plan name via `inspect()`/`InspectExecutionOutput.slug`
+ * (never assumes a name), then reads that plan's snapshot via
+ * `readPlanSnapshot()` - a thin passthrough to `PlanStateProvider.readSnapshot`.
+ * Hides the widget entirely (`undefined`) whenever there is no controller,
+ * no tracked workflow instance, or the lookup fails for any reason (a
+ * missing/unreadable plan is never surfaced as an error here - `/weave:plan`
+ * is the place for that).
+ */
+async function refreshPlanWidget(
+  ctx: PiSessionContext,
+  controller: PiWorkflowController | undefined,
+  workflowInstanceId: string | undefined,
+): Promise<void> {
+  if (controller === undefined || workflowInstanceId === undefined) {
+    ctx.ui.setWidget(WEAVE_PLAN_WIDGET_KEY, undefined);
+    return;
+  }
+  const inspected = await controller.inspect(workflowInstanceId);
+  if (inspected.isErr()) {
+    ctx.ui.setWidget(WEAVE_PLAN_WIDGET_KEY, undefined);
+    return;
+  }
+  const snapshot = await controller.readPlanSnapshot(inspected.value.slug);
+  const lines = renderPlanWidgetLines(
+    snapshot.isOk() ? snapshot.value : undefined,
+  );
+  ctx.ui.setWidget(
+    WEAVE_PLAN_WIDGET_KEY,
+    lines.length === 0 ? undefined : lines,
+    { placement: "belowEditor" },
+  );
+}
 
 /** Renders the bounded child-tree widget (Spec 33 §11.5) via the real, always-available `ctx.ui.setWidget` surface. Hides the widget entirely (empty array) once there are no children left. */
 function renderChildTreeWidget(
@@ -1207,8 +1437,12 @@ class WeaveChildTreeEditor extends CustomEditor {
       this.weaveDeps.cancelSubtree(outcome.nodeId);
       return;
     }
-    // `host-default` (root-level Backspace/Esc) or `no-target`: preserve
-    // Pi's own default editor behavior exactly (Spec 33 §11.5).
+    // `host-default` (root-level Backspace/Esc - Spec 33 §11.5 requires
+    // preserving normal host behavior here with no exception, including
+    // for a live direct-step child; pausing a running workflow is only
+    // ever done through the explicit, confirmed parent-chat interrupt path
+    // in the `input` handler below, per Spec 33 §14) or `no-target`:
+    // preserve Pi's own default editor behavior exactly.
     super.handleInput(data);
   }
 }
@@ -1244,12 +1478,29 @@ export function createPiExtension(
   const treeSelectionCell: { selectedId: string } = {
     selectedId: ROOT_NODE_ID,
   };
+  // Per-generation workflow controller (Spec 33 §10/§14) - projects all ten
+  // engine lifecycle operations. Constructed only when trusted and not
+  // health-only, mirroring `delegationControllerCell`'s gating.
+  const directStepChildRegistry = new PiDirectStepChildRegistry();
+  const workflowControllerCell: {
+    controller: PiWorkflowController | undefined;
+  } = {
+    controller: undefined,
+  };
+  const activeWorkflowInstanceCell: {
+    value: { workflowInstanceId: string; leaseId?: string } | undefined;
+  } = { value: undefined };
+  let currentWorkflows: Record<
+    string,
+    import("@weaveio/weave-engine").WorkflowExecutionContext["workflows"][string]
+  > = {};
   const controllerDeps: PiExtensionControllerDeps = {
     safeInitializer: new PiSafeInitializer({
       hostPackageReader: deps.hostPackageReader,
       capabilityProber: deps.capabilityProber,
       configActivator: deps.configActivator,
       permissionBridge: deps.permissionBridge,
+      pathContainmentPort: deps.pathContainmentPort,
       buildDelegationToolRegistrations: (primary, activation) =>
         primary.delegationTargets.length === 0
           ? []
@@ -1285,78 +1536,338 @@ export function createPiExtension(
   let activeSession: PiActiveSession | undefined;
   const childModeState = createChildModeState();
 
+  function buildWorkflowTracker(projectRoot: string): PiActiveWorkflowTracker {
+    return {
+      getActiveInstance: () => activeWorkflowInstanceCell.value,
+      setActiveInstance: (instance) => {
+        activeWorkflowInstanceCell.value = instance;
+      },
+      listPlanNames: () => deps.planCatalogPort.listPlanNames(projectRoot),
+      listWorkflowNames: () => Object.keys(currentWorkflows),
+      buildContext: (workflowName) => {
+        const workflow = currentWorkflows[workflowName];
+        if (workflow === undefined) return undefined;
+        return {
+          workflowName,
+          goal: workflowName,
+          slug: workflowName,
+          workflows: currentWorkflows,
+        };
+      },
+      currentAgentName: () =>
+        activeSession?.primarySession.getCurrent()?.descriptor.name,
+    };
+  }
+
+  // Spec 33 §14: `observeSession` must fire for primary/direct-step
+  // activation and for termination, not only for start/resume and
+  // direct-step settlement - but only "while a lease is active" (i.e. a
+  // workflow instance/lease is presently tracked). Best-effort and never a
+  // gate on real lifecycle progress, mirroring `PiWorkflowController`'s own
+  // internal `observeBestEffort` (this cannot call that private method
+  // directly, so it goes through the same public `observe()` projection and
+  // applies the identical warn-and-continue degradation on failure).
+  async function observeActiveLeaseBestEffort(
+    agentName: string,
+    sessionStatus: "active" | "terminated",
+    stepName?: string,
+  ): Promise<void> {
+    const instance = activeWorkflowInstanceCell.value;
+    const workflowController = workflowControllerCell.controller;
+    if (
+      instance === undefined ||
+      instance.leaseId === undefined ||
+      workflowController === undefined
+    ) {
+      return;
+    }
+    const result = await workflowController.observe({
+      workflowInstanceId: instance.workflowInstanceId,
+      leaseId: instance.leaseId,
+      harnessName: "pi",
+      agentName,
+      sessionStatus,
+      ...(stepName !== undefined ? { stepName } : {}),
+    });
+    if (result.isErr()) {
+      deps.logger.warn(
+        { failure: result.error },
+        "observeSession failed; degrading",
+      );
+    }
+  }
+
+  // Shared dispatch used by both the colon-prefixed direct commands and the
+  // bare `/weave` native palette (Spec 33 §13): every action, regardless of
+  // how it was invoked, goes through this exact one gate/generation/health
+  // check and the exact same handleWeaveXxx() handler - the palette never
+  // gets a second, looser code path.
+  async function dispatchWeaveCommand(
+    name: WeaveCommandName,
+    _rawArgs: string,
+    ctx: PiSessionContext,
+  ): Promise<void> {
+    // A private delegated child never exposes the parent's public
+    // /weave:* commands, even though registerCommand runs once at
+    // factory time before child mode can be detected (Spec 33 §7.1,
+    // §11.2 - public adapter surface stays TUI-only).
+    if (childModeState.active) return;
+    const gate = controller.evaluateCommandGate(name);
+    if (gate.isErr()) {
+      ctx.ui.notify(gate.error.safeMessage, "error");
+      return;
+    }
+    // A post-preflight permission activation/registration failure
+    // (Spec 33 §21) must also block mutating commands, even when the
+    // static generation's `healthOnlyMode` (computed from the
+    // read-only probe alone) reports `false`.
+    const generation = controller.getCurrentGeneration();
+    const blockedByPermissionFailure =
+      gate.value.classification === "mutating" &&
+      generation !== undefined &&
+      effectiveHealthOnly(generation, activeSession);
+    if (!gate.value.allowed || blockedByPermissionFailure) {
+      ctx.ui.notify(renderHealthOnlyBlockedMessage(name), "warning");
+      return;
+    }
+    if (name === "weave:health") {
+      ctx.ui.notify(renderHealthMessage(controller, activeSession), "info");
+      return;
+    }
+    if (name === "weave:status") {
+      ctx.ui.notify(
+        renderStatusMessage(
+          controller,
+          activeSession,
+          delegationControllerCell.controller,
+        ),
+        "info",
+      );
+      const trackedInstance = activeWorkflowInstanceCell.value;
+      const statusWorkflowController = workflowControllerCell.controller;
+      if (
+        trackedInstance !== undefined &&
+        statusWorkflowController !== undefined
+      ) {
+        await handleWeaveStatus(
+          ctx.ui,
+          statusWorkflowController,
+          buildWorkflowTracker(ctx.cwd),
+        );
+      }
+      return;
+    }
+    const workflowController = workflowControllerCell.controller;
+    if (workflowController === undefined) {
+      if (name === "weave:abort") {
+        const delegationController = delegationControllerCell.controller;
+        if (
+          delegationController === undefined ||
+          delegationController.snapshotTree().length === 0
+        ) {
+          ctx.ui.notify("No active Weave execution to abort.", "info");
+          return;
+        }
+        const confirmedFallbackAbort = await ctx.ui.confirm(
+          "Abort execution",
+          "Cancel the active Weave child tree? This cannot be undone.",
+        );
+        if (!confirmedFallbackAbort) {
+          ctx.ui.notify("Abort cancelled.", "info");
+          return;
+        }
+        const cancelled =
+          await delegationController.cancelSubtree(ROOT_NODE_ID);
+        ctx.ui.notify(
+          cancelled.isOk()
+            ? "Cancelled the active Weave child tree."
+            : "Cancel requested; some children may still be shutting down.",
+          cancelled.isOk() ? "info" : "warning",
+        );
+        return;
+      }
+      ctx.ui.notify(renderHealthOnlyBlockedMessage(name), "warning");
+      return;
+    }
+    const tracker: PiActiveWorkflowTracker = buildWorkflowTracker(ctx.cwd);
+    if (name === "weave:start") {
+      await handleWeaveStart(_rawArgs, ctx.ui, workflowController, tracker);
+      return;
+    }
+    if (name === "weave:run") {
+      await handleWeaveRun(_rawArgs, ctx.ui, workflowController, tracker);
+      return;
+    }
+    if (name === "weave:abort") {
+      await handleWeaveAbort(ctx.ui, workflowController, tracker);
+      const delegationController = delegationControllerCell.controller;
+      if (
+        delegationController !== undefined &&
+        delegationController.snapshotTree().length > 0
+      ) {
+        await delegationController.cancelSubtree(ROOT_NODE_ID);
+      }
+      return;
+    }
+    if (name === "weave:advance") {
+      await handleWeaveAdvance(ctx.ui, workflowController, tracker);
+      return;
+    }
+    if (name === "weave:resume") {
+      // Fresh confirm alone is not enough (Spec 33 §18): a stale
+      // recovery pointer (wrong controller generation, or a
+      // pointer already marked "terminal") must refuse resume
+      // before the engine is ever asked, rather than let a paused
+      // execution be reacquired against state that no longer
+      // matches this session.
+      const pointer = await workflowController.readRecoveryPointer();
+      if (pointer.isErr()) {
+        ctx.ui.notify(
+          `Could not resume: ${pointer.error.safeMessage}`,
+          "error",
+        );
+        return;
+      }
+      if (pointer.value !== undefined) {
+        const currentGenerationId = controller.getCurrentGeneration()?.id;
+        const stale =
+          pointer.value.status === "terminal" ||
+          (currentGenerationId !== undefined &&
+            pointer.value.controllerGeneration !== currentGenerationId);
+        if (stale) {
+          ctx.ui.notify(
+            "Resume refused: the last recovery pointer is stale or terminal for this session. Nothing was resumed.",
+            "warning",
+          );
+          return;
+        }
+      }
+      await handleWeaveResume(ctx.ui, workflowController, tracker);
+      return;
+    }
+    if (name === "weave:plan") {
+      await handleWeavePlan(_rawArgs, ctx.ui, workflowController, tracker);
+      return;
+    }
+    if (name === "weave:artifact") {
+      await handleWeaveArtifact(_rawArgs, ctx.ui, workflowController, tracker);
+      return;
+    }
+  }
+
   return function piAdapterExtension(pi: PiExtensionApi): void {
     for (const name of WEAVE_COMMAND_NAMES) {
       pi.registerCommand(name, {
         description: commandDescription(name),
         handler: async (_rawArgs: string, ctx: PiSessionContext) => {
-          // A private delegated child never exposes the parent's public
-          // /weave:* commands, even though registerCommand runs once at
-          // factory time before child mode can be detected (Spec 33 §7.1,
-          // §11.2 - public adapter surface stays TUI-only).
-          if (childModeState.active) return;
-          const gate = controller.evaluateCommandGate(name);
-          if (gate.isErr()) {
-            ctx.ui.notify(gate.error.safeMessage, "error");
-            return;
-          }
-          // A post-preflight permission activation/registration failure
-          // (Spec 33 §21) must also block mutating commands, even when the
-          // static generation's `healthOnlyMode` (computed from the
-          // read-only probe alone) reports `false`.
-          const generation = controller.getCurrentGeneration();
-          const blockedByPermissionFailure =
-            gate.value.classification === "mutating" &&
-            generation !== undefined &&
-            effectiveHealthOnly(generation, activeSession);
-          if (!gate.value.allowed || blockedByPermissionFailure) {
-            ctx.ui.notify(renderHealthOnlyBlockedMessage(name), "warning");
-            return;
-          }
-          if (name === "weave:health") {
-            ctx.ui.notify(
-              renderHealthMessage(controller, activeSession),
-              "info",
-            );
-            return;
-          }
-          if (name === "weave:status") {
-            ctx.ui.notify(
-              renderStatusMessage(
-                controller,
-                activeSession,
-                delegationControllerCell.controller,
-              ),
-              "info",
-            );
-            return;
-          }
-          if (name === "weave:abort") {
-            const delegationController = delegationControllerCell.controller;
-            if (
-              delegationController === undefined ||
-              delegationController.snapshotTree().length === 0
-            ) {
-              ctx.ui.notify("No active Weave execution to abort.", "info");
-              return;
-            }
-            const cancelled =
-              await delegationController.cancelSubtree(ROOT_NODE_ID);
-            ctx.ui.notify(
-              cancelled.isOk()
-                ? "Cancelled the active Weave child tree."
-                : "Cancel requested; some children may still be shutting down.",
-              cancelled.isOk() ? "info" : "warning",
-            );
-            return;
-          }
-          ctx.ui.notify(
-            `${name} is not yet implemented in this Weave adapter build.`,
-            "info",
-          );
+          await dispatchWeaveCommand(name, _rawArgs, ctx);
         },
       });
     }
+
+    // Native `/weave` palette (Spec 33 §13): the same nine actions as the
+    // colon commands, derived from `inspect()`/current state, with invalid
+    // actions hidden/disabled with a reason - dispatched through the exact
+    // same `dispatchWeaveCommand` gate/generation/health check, never a
+    // second looser path.
+    pi.registerCommand("weave", {
+      description: "Weave: choose an action from the current state",
+      handler: async (_rawArgs: string, ctx: PiSessionContext) => {
+        if (childModeState.active) return;
+        const generation = controller.getCurrentGeneration();
+        const healthOnly =
+          generation === undefined
+            ? true
+            : effectiveHealthOnly(generation, activeSession);
+        const tracker = buildWorkflowTracker(ctx.cwd);
+        const active = tracker.getActiveInstance();
+        const workflowController = workflowControllerCell.controller;
+        const inspected =
+          workflowController !== undefined && active !== undefined
+            ? await workflowController.inspect(active.workflowInstanceId)
+            : undefined;
+        const hasPendingArtifact =
+          inspected?.isOk() === true &&
+          inspected.value.artifacts.some(
+            (artifact) => artifact.approvalState === "pending",
+          );
+        const actions = buildPaletteActions({
+          healthOnly,
+          hasActiveInstance: active !== undefined,
+          hasPendingArtifact,
+        });
+        const visible = actions.filter((action) => action.visible);
+        if (visible.length === 0) {
+          ctx.ui.notify("No Weave actions are available right now.", "info");
+          return;
+        }
+        const labelFor = (action: PiPaletteAction): string =>
+          action.disabledReason !== undefined
+            ? `${action.label} (${action.disabledReason})`
+            : action.label;
+        const chosen = await ctx.ui.select("Weave", visible.map(labelFor));
+        if (chosen === undefined) return;
+        const match = visible.find((action) => labelFor(action) === chosen);
+        if (match === undefined) return;
+        if (match.disabledReason !== undefined) {
+          ctx.ui.notify(match.disabledReason, "warning");
+          return;
+        }
+        const commandName = match.id.replace(
+          "weave.",
+          "weave:",
+        ) as WeaveCommandName;
+        await dispatchWeaveCommand(commandName, "", ctx);
+      },
+    });
+
+    // Parent-chat/workflow concurrency (Spec 33 §14): an ordinary prompt
+    // arriving while a direct-step child is active must never be silently
+    // interleaved with the workflow's own mutation. Ask first; only a
+    // confirmed pause cancels the direct-step subtree and lets the prompt
+    // continue to Loom - a reject leaves the workflow running untouched and
+    // never submits the prompt.
+    pi.on("input", async (_event, ctx: PiSessionContext) => {
+      if (childModeState.active) return { action: "continue" };
+      if (!directStepChildRegistry.isActive()) return { action: "continue" };
+      const confirmed = await ctx.ui.confirm(
+        "Weave workflow active",
+        "A workflow step is currently running. Pause it and interrupt with this message?",
+      );
+      if (!confirmed) return { action: "handled" };
+      const active = activeWorkflowInstanceCell.value;
+      const workflowController = workflowControllerCell.controller;
+      // No fabricated empty-string lease id: a direct-step child reported
+      // active but no lease is tracked is an invariant we cannot safely
+      // pause against, so this fails open (lets the prompt through) rather
+      // than send an interrupt scoped to a lease that was never granted.
+      if (active?.leaseId === undefined || workflowController === undefined) {
+        deps.logger.warn(
+          {
+            hasActiveInstance: active !== undefined,
+            hasLeaseId: active?.leaseId !== undefined,
+          },
+          "cannot pause the active direct-step child: no tracked lease id; letting the prompt through unpaused",
+        );
+        return { action: "continue" };
+      }
+      const interrupted = await workflowController.handleUserInterrupt({
+        workflowInstanceId: active.workflowInstanceId,
+        leaseId: active.leaseId,
+        signal: "pause",
+      });
+      if (interrupted.isErr()) {
+        deps.logger.warn(
+          { failure: interrupted.error },
+          "pause-before-prompt handleUserInterrupt failed",
+        );
+        ctx.ui.notify(
+          "Could not pause the workflow; it may still be running.",
+          "warning",
+        );
+      }
+      return { action: "continue" };
+    });
 
     pi.on("session_start", async (_event, ctx: PiSessionContext) => {
       const isChild = await activateChildModeIfApplicable(
@@ -1468,6 +1979,7 @@ export function createPiExtension(
         }
       }
 
+      currentWorkflows = configActivation.config.workflows ?? {};
       activeSession = {
         generationId: generation.id,
         primarySession: new PiPrimarySession({
@@ -1551,6 +2063,99 @@ export function createPiExtension(
             );
           },
         });
+        // Workflow lifecycle projection (Spec 33 §10/§14): opens the Runtime
+        // Store only now that trust/health are confirmed, then constructs
+        // the coordinator that projects all ten engine lifecycle ops.
+        const storeResult = await deps.runtimeStoreFactory.open(ctx.cwd);
+        if (storeResult.isErr()) {
+          deps.logger.warn(
+            { failure: storeResult.error },
+            "Runtime Store open/migration failed; workflow lifecycle commands unavailable this generation",
+          );
+        } else {
+          workflowControllerCell.controller = new PiWorkflowController({
+            store: storeResult.value,
+            planStateProvider: createPiPlanStateProvider(ctx.cwd),
+            artifactProvider: new BunPiArtifactProvider(),
+            directDispatch: new TransportDirectDispatchPort(
+              createDirectDispatchTransport(
+                {
+                  processPort: deps.processPort,
+                  randomPort: deps.randomPort,
+                  hmacPort: deps.hmacPort,
+                  logger: deps.logger,
+                  idGenerator: deps.idGenerator,
+                  baseEnv: sanitizedBaseEnv(isDeniedKey),
+                  registry: directStepChildRegistry,
+                  availableModels: safelyListAvailableModels(
+                    ctx.modelRegistry,
+                  ).unwrapOr([]),
+                },
+                generation.id,
+              ),
+            ),
+            // Resolves a direct-step agent's own REAL descriptor (composed
+            // prompt, models, tool policy, delegation targets) from this
+            // generation's own activated catalog by name (Spec 33 §6,
+            // §13-§15) - never the engine effect's own always-empty
+            // `agentDescriptor` fields.
+            resolveAgentDescriptor: (agentName) =>
+              configActivation.descriptors.byName.get(agentName),
+            recoveryPointerStore: new BunJsonlRecoveryPointerStore(
+              join(ctx.cwd, ".weave", "runtime", "pi-recovery-pointer.ndjson"),
+            ),
+            clock: deps.clock,
+            idGenerator: deps.idGenerator,
+            logger: deps.logger,
+            controllerGenerationId: generation.id,
+            assertGenerationCurrent: () =>
+              controller.beginOperation().map(() => undefined),
+            ownerId: generation.id,
+            projectRoot: ctx.cwd,
+            cancelActiveDirectStepChild: () =>
+              directStepChildRegistry.cancel() ?? okAsync(undefined),
+            // Spec 33 §16: refreshes the bounded compact plan widget after
+            // every dispatch/completion/resume/interrupt/reconcile outcome.
+            // Best-effort and fire-and-forget - this class never reads plan
+            // state itself, and a rendering failure must never affect the
+            // lifecycle result it is reacting to.
+            onPlanSnapshotChanged: (workflowInstanceId) => {
+              void refreshPlanWidget(
+                ctx,
+                workflowControllerCell.controller,
+                workflowInstanceId,
+              );
+            },
+          });
+          // Recovery banner (Spec 33 §18): read-only on every session start.
+          // Never resumes anything itself - only `/weave:resume` (with its
+          // own fresh confirm and generation/lease recheck, above) may ever
+          // reacquire a paused execution.
+          const recoveryPointer =
+            await workflowControllerCell.controller.readRecoveryPointer();
+          if (recoveryPointer.isOk() && recoveryPointer.value !== undefined) {
+            const pointer = recoveryPointer.value;
+            ctx.ui.notify(
+              `Weave recovery: workflow ${pointer.workflowId ?? "(unknown)"} is ${pointer.status}${
+                pointer.planName !== undefined
+                  ? ` (plan ${pointer.planName} rev ${pointer.planRevision})`
+                  : ""
+              } as of ${pointer.observedAt}. Use /weave:resume to continue it.`,
+              "info",
+            );
+          }
+          // Spec 33 §16: initial compact plan widget render at session
+          // start/recovery - shows the recovered pending workflow's plan
+          // immediately, or hides the widget when nothing is recoverable.
+          // Never auto-resumes anything itself.
+          await refreshPlanWidget(
+            ctx,
+            workflowControllerCell.controller,
+            recoveryPointer.isOk()
+              ? recoveryPointer.value?.workflowId
+              : undefined,
+          );
+        }
         treeSelectionCell.selectedId = ROOT_NODE_ID;
         renderChildTreeWidget(
           ctx,
@@ -1850,20 +2455,41 @@ export function createPiExtension(
         return undefined;
       }
 
+      // Spec 33 §14: a primary activation that actually took authority this
+      // generation (Loom/Tapestry becoming the active primary) is one of
+      // the required `observeSession` trigger points, when a workflow lease
+      // is presently active (e.g. Loom re-activating while a workflow is
+      // paused). A no-op when no lease is tracked.
+      await observeActiveLeaseBestEffort(descriptor.name, "active");
+
       return {
         systemPrompt: session.primarySession.appendToSystemPrompt(systemPrompt),
       };
     });
 
-    pi.on("session_shutdown", (_event, ctx?: PiSessionContext) => {
+    pi.on("session_shutdown", async (_event, ctx?: PiSessionContext) => {
+      // Spec 33 §14/§18: termination while a lease is active is a required
+      // `observeSession` trigger point - observe *before* clearing the
+      // tracked instance/controller below (a no-op when no lease is
+      // tracked). Best-effort only: shutdown must still proceed even if
+      // this fails.
+      await observeActiveLeaseBestEffort(
+        activeSession?.primarySession.getCurrent()?.descriptor.name ??
+          "workflow-controller",
+        "terminated",
+      );
       activeSession = undefined;
       delegationControllerCell.controller?.disposeAll();
       delegationControllerCell.controller = undefined;
+      workflowControllerCell.controller = undefined;
+      activeWorkflowInstanceCell.value = undefined;
+      currentWorkflows = {};
       treeSelectionCell.selectedId = ROOT_NODE_ID;
       // Bounded child-tree widget/editor state must never survive past this
       // generation (Spec 33 §11.5/§23 cleanup-idempotence) - clear it even
       // though `disposeAll()` above already terminated every child.
       ctx?.ui.setWidget(WEAVE_CHILD_TREE_WIDGET_KEY, undefined);
+      ctx?.ui.setWidget(WEAVE_PLAN_WIDGET_KEY, undefined);
       ctx?.ui.setEditorComponent?.(undefined);
       controller.shutdown();
       // Idempotent regardless of role: a no-op for an ordinary parent

@@ -8,6 +8,7 @@
 
 import { describe, expect, it } from "bun:test";
 import {
+  createArtifactId,
   createInMemoryRuntimeStore,
   createWorkflowInstanceId,
   evaluateEffectiveToolPolicy,
@@ -264,5 +265,95 @@ describe("inspectExecution", () => {
     expect(leaseResult.isOk()).toBe(true);
     if (!leaseResult.isOk()) return;
     expect(leaseResult.value).toBeNull();
+  });
+
+  it("returns an empty stepAttempts list when no step has been dispatched yet", async () => {
+    const store = createInMemoryRuntimeStore();
+    const instanceId = createWorkflowInstanceId("inspect-step-attempts-empty");
+
+    const startResult = await startExecution(
+      { workflowInstanceId: instanceId, ownerId: "owner-inspect" },
+      store,
+    );
+    expect(startResult.isOk()).toBe(true);
+
+    const result = await inspectExecution(
+      { workflowInstanceId: instanceId },
+      store,
+    );
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    expect(result.value.stepAttempts).toEqual([]);
+  });
+
+  it("exposes recorded step attempts and their consumed artifact revisions so adapters can compute retry-safe pins (Spec 22 Unit 3 default retry reuse)", async () => {
+    const store = createInMemoryRuntimeStore();
+    const instanceId = createWorkflowInstanceId("inspect-step-attempts-001");
+
+    const startResult = await startExecution(
+      { workflowInstanceId: instanceId, ownerId: "owner-inspect" },
+      store,
+    );
+    expect(startResult.isOk()).toBe(true);
+
+    const artifactId = createArtifactId("artifact-1");
+    const firstAttempt = await store.instances.recordStepAttempt(
+      instanceId,
+      "implement",
+      [{ artifactId, name: "spec", revision: 1 }],
+    );
+    expect(firstAttempt.isOk()).toBe(true);
+
+    const secondAttempt = await store.instances.recordStepAttempt(
+      instanceId,
+      "implement",
+      [{ artifactId, name: "spec", revision: 1 }],
+    );
+    expect(secondAttempt.isOk()).toBe(true);
+
+    const result = await inspectExecution(
+      { workflowInstanceId: instanceId },
+      store,
+    );
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+
+    expect(result.value.stepAttempts).toHaveLength(2);
+    expect(result.value.stepAttempts[0]?.attemptNumber).toBe(1);
+    expect(result.value.stepAttempts[1]?.attemptNumber).toBe(2);
+    for (const attempt of result.value.stepAttempts) {
+      expect(attempt.stepName).toBe("implement");
+      expect(attempt.consumedArtifacts).toEqual([
+        { artifactId, name: "spec", revision: 1 },
+      ]);
+    }
+  });
+
+  it("does not mutate stepAttempts (read-only boundary)", async () => {
+    const store = createInMemoryRuntimeStore();
+    const instanceId = createWorkflowInstanceId(
+      "inspect-step-attempts-readonly",
+    );
+
+    const startResult = await startExecution(
+      { workflowInstanceId: instanceId, ownerId: "owner-inspect" },
+      store,
+    );
+    expect(startResult.isOk()).toBe(true);
+
+    const recorded = await store.instances.recordStepAttempt(
+      instanceId,
+      "plan",
+      [],
+    );
+    expect(recorded.isOk()).toBe(true);
+
+    await inspectExecution({ workflowInstanceId: instanceId }, store);
+    await inspectExecution({ workflowInstanceId: instanceId }, store);
+
+    const findResult = await store.instances.findById(instanceId);
+    expect(findResult.isOk()).toBe(true);
+    if (!findResult.isOk()) return;
+    expect(findResult.value?.stepAttempts).toHaveLength(1);
   });
 });

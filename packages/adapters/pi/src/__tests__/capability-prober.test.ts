@@ -228,6 +228,55 @@ describe("DefaultPiCapabilityProber", () => {
     expect(promptComposition?.probeStatus).toBe("unavailable");
     expect(promptComposition?.details).toBe("not-yet-implemented");
   });
+
+  it("reports workflow-persistence, workflow-step-dispatch, and plan-file-compatibility as ok once config has loaded", () => {
+    const probes = prober.probe({
+      mode: "tui",
+      trust: "trusted",
+      commands: ALL_OWNED_COMMANDS,
+      candidatePlan: {
+        configLoaded: true,
+        materializationErrorCount: 0,
+        primaryDescriptorFound: true,
+        primaryModelDryResolved: true,
+        toolPolicyCoverage: "ok",
+        runtimeDirectoryContained: true,
+        plansDirectoryContained: true,
+      },
+    });
+    for (const id of [
+      "workflow-persistence",
+      "workflow-step-dispatch",
+      "plan-file-compatibility",
+    ] as const) {
+      const entry = probes.find((probe) => probe.capabilityId === id);
+      expect(entry?.probeStatus).toBe("ok");
+    }
+  });
+
+  it("never raises workflow-persistence, workflow-step-dispatch, or plan-file-compatibility above unavailable when config failed to load", () => {
+    const probes = prober.probe({
+      mode: "tui",
+      trust: "trusted",
+      commands: ALL_OWNED_COMMANDS,
+      candidatePlan: {
+        configLoaded: false,
+        materializationErrorCount: 0,
+        primaryDescriptorFound: false,
+        primaryModelDryResolved: false,
+        toolPolicyCoverage: { reason: "config-not-loaded" },
+      },
+    });
+    for (const id of [
+      "workflow-persistence",
+      "workflow-step-dispatch",
+      "plan-file-compatibility",
+    ] as const) {
+      const entry = probes.find((probe) => probe.capabilityId === id);
+      expect(entry?.probeStatus).toBe("unavailable");
+      expect(entry?.details).toBe("config-not-loaded");
+    }
+  });
 });
 
 describe("sanitizeCapabilityProbeResults", () => {

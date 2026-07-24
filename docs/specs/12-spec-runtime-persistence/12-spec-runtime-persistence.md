@@ -82,8 +82,9 @@ The default implementation stores Runtime Store data in `.weave/runtime/weave.db
 - The system shall add Kysely to the appropriate package dependencies.
 - The system shall implement a small internal Kysely dialect/driver over Bun's built-in `bun:sqlite`; it shall not add `better-sqlite3` or Node-only SQLite dependencies.
 - The default store shall lazily create `.weave/runtime/` and `.weave/runtime/weave.db` on first repository operation.
+- The default store shall hold the trusted project root and runtime-directory chain with descriptor-relative no-follow opens. It shall not validate a path and then reopen the database independently by path.
 - The default store shall run code-owned, versioned, idempotent migrations on first repository operation and track applied migration versions in SQLite.
-- Runtime directory and database creation shall use restrictive local permissions where the platform supports them: runtime directory equivalent to `0700`, database/WAL/SHM files equivalent to `0600`.
+- Runtime directory and database creation shall use restrictive local permissions where the platform supports them: runtime directory equivalent to `0700`; database, temporary snapshot, and lock leaves equivalent to `0600`. The current serialized-image implementation shall not create WAL/SHM sidecars.
 - Migrations shall run inside a transaction when SQLite supports the involved statements transactionally; a failed migration shall not advance `runtime_metadata.schema_version` or leave a tracking row behind.
 - Migration definitions shall have unique, strictly increasing versions. Pending migrations shall run in deterministic version order, and `schema_migrations` shall contain exactly one validated row for each applied version.
 - Before trusting `runtime_metadata` or `schema_migrations` contents, `runMigrations` shall verify each bootstrap table's exact canonical physical schema (column names, declared types, NOT NULL, defaults, primary key, and required uniqueness) **and** an exact `sqlite_schema` / `sqlite_master` inventory for that relation: exactly one table row, **zero triggers** (AFTER or BEFORE, including triggers that reset `permission_wall_clock_high_water`, rewrite ledger rows, or `RAISE(ABORT, …)`), **zero views**, and only the expected PK/index semantics — `runtime_metadata` requires exactly the SQLite PK autoindex on `key` (`origin = pk`, unique, non-partial; autoindex name accepted only as `sqlite_autoindex_runtime_metadata_<n>` without pinning a specific suffix); `schema_migrations` uses INTEGER PRIMARY KEY (rowid alias) and therefore **zero** indexes. Any extra unique, partial, expression, or otherwise unexpected index fails closed. A fresh empty database may create both bootstrap tables; a malformed or partial pre-existing bootstrap relation shall fail initialization generically and remain unmodified. Valid historical v1/v2 bootstrap shapes created by Weave migrations shall pass. Hostile bootstrap triggers or extra indexes on fresh-precreated, v2-upgrade, and v3-reopen paths must fail on every open before metadata/ledger contents are trusted so high-water cannot reset or resurrect under those triggers.
@@ -219,7 +220,7 @@ CLI output should be readable by humans and stable enough for TOON-style LLM con
 - Journal payloads must be size-bounded and sanitized before persistence; the RuntimeJournalWriter is the enforcement point for adapter-provided data.
 - Session snapshots must not store raw harness-private state, transcripts, credentials, cookies, authorization headers, tokens, or raw provider payloads.
 - Adapter journal writer APIs must prevent adapters from bypassing sanitization or mutating authoritative state.
-- Runtime Store files and SQLite sidecars should be created with restrictive local permissions where supported.
+- Runtime Store directories and database, temporary snapshot, and lock leaves must use restrictive local permissions where supported. The current serialized-image implementation creates no SQLite sidecars.
 - Runtime migrations must avoid partial schema updates and must fail cleanly on unsupported future schema versions.
 - Because the design touches prompt fingerprints, input validation, local persistence, and adapter event boundaries, implementation requires Warp security review.
 
@@ -250,6 +251,15 @@ Insertion and rollup update are atomic. Replaying the same ID with identical nor
 Adapters submit normalized observations through an engine-owned repository. They do not write rollup tables directly. Raw message text, provider payloads, prompts, completions, and tool results are forbidden.
 
 The portable implementation lives in [`packages/engine/src/runtime/usage.ts`](../../../packages/engine/src/runtime/usage.ts) and the Runtime Store repositories. Memory and SQLite stores apply observation insertion and rollup updates in one transaction. [`RuntimeRetentionService`](../../../packages/engine/src/runtime/retention.ts) serializes age-first/count-second pruning at activation and safe write/time boundaries. [`RotatingRuntimeLogSink`](../../../packages/engine/src/runtime/log-sink.ts) provides the bounded engine-scoped NDJSON sink through Bun-only, no-follow filesystem operations.
+
+## No-follow persistence hardening extension
+
+The full-readiness Pi persistence slice strengthens the default SQLite store without changing the public `RuntimeStore` interface:
+
+- [`RuntimeDirectoryGuard`](../../../packages/engine/src/runtime/sqlite/runtime-directory-guard.ts) holds the canonical root/runtime chain and performs descendant creation, reads, locks, temporary writes, and renames relative to those descriptors with no-follow flags.
+- The Kysely dialect deserializes the latest database image into in-memory `bun:sqlite`. Each operation reloads after taking the bounded OS lock; a transaction holds that lock until commit or rollback.
+- Commit serializes the database, writes and syncs a restrictive temporary leaf, renames it atomically over `weave.db`, and syncs the directory before releasing the lock. A failed operation releases the lock and never publishes a partial image.
+- Distinct store instances and processes coordinate through the same lock leaf, preventing stale-snapshot last-writer-wins loss. Tests cover concurrent duplicate and distinct writes, high-water preservation, path repair, close/init races, symlink rejection, permissions, and absence of WAL/SHM sidecars.
 
 ## Open Questions
 

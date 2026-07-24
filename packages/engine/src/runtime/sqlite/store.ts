@@ -10,8 +10,7 @@
  * @internal
  */
 
-import * as fs from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, relative, sep } from "node:path";
 import { Kysely, sql } from "kysely";
 import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
 
@@ -33,6 +32,15 @@ import type {
   PermissionGrantSummary,
 } from "../../permissions/types.js";
 import { registerPermissionApprovalRepository } from "../permission-repository.js";
+import {
+  BunRuntimeDirectoryGuard,
+  directoryIdentitiesMatch,
+  type RuntimeDirectoryGuard,
+  type RuntimeDirectoryGuardError,
+  type RuntimeDirectoryHandle,
+  type RuntimeFileIdentity,
+  runtimeLeafName,
+} from "./runtime-directory-guard.js";
 
 // ---------------------------------------------------------------------------
 // Internal sentinel error classes for async error discrimination
@@ -149,7 +157,10 @@ import {
   reconcileUsageReplay,
   usageRollupKey,
 } from "../usage.js";
-import { BunSqliteDialect } from "./kysely-bun-sqlite.js";
+import {
+  BunSqliteMemoryDialect,
+  type MemoryStoreCoordinator,
+} from "./kysely-bun-sqlite.js";
 import { CURRENT_SCHEMA_VERSION, runMigrations } from "./migrations.js";
 import type {
   ExecutionLeaseRow,
@@ -2201,12 +2212,118 @@ class SqliteRuntimeStoreTransaction implements RuntimeStoreTransaction {
 // SqliteRuntimeStore
 // ---------------------------------------------------------------------------
 
+/** Maps a `RuntimeDirectoryGuardError` onto the store's own closed error type. */
+function mapDirectoryGuardError(
+  cause: RuntimeDirectoryGuardError,
+): RuntimeStoreError {
+  return initializationError(
+    cause.message,
+    "cause" in cause ? cause.cause : undefined,
+  );
+}
+
+/**
+ * Thrown by `DirHandleMemoryStoreCoordinator` when a lock/read/write step
+ * against the held `RuntimeDirectoryHandle` fails, carrying the original
+ * typed `RuntimeDirectoryGuardError` so the caller (`_doInitialize`, or a
+ * repository operation's `ResultAsync.fromPromise` mapper) can recover a
+ * proper `RuntimeStoreError` instead of collapsing to a bare string.
+ */
+class CoordinatorFailureSentinel extends Error {
+  constructor(readonly guardError: RuntimeDirectoryGuardError) {
+    super(guardError.message);
+  }
+}
+
+/**
+ * `MemoryStoreCoordinator` implemented on top of a held `RuntimeDirectoryHandle`
+ * (Spec 33 §18 concurrency hardening). Every `acquire()` takes the leaf's
+ * exclusive advisory lock (`lockLeaf`, itself bounded-retry with backoff)
+ * and reloads its latest on-disk bytes (`readLeafBytes`) so a concurrent
+ * store's already-committed writes are never silently overwritten.
+ * `commit()` persists atomically (`writeLeafAtomic`) and *always* releases
+ * the lock afterward — even when the write itself throws — so a flush
+ * failure never wedges the lock for every other store sharing this leaf.
+ * `discard()` releases the lock without writing anything back, used for
+ * bare reads and after a statement failure.
+ *
+ * Any lock/read/write failure is reported through `onFailure`, which the
+ * owning `SqliteRuntimeStore` uses to poison itself for anything other than
+ * transient lock contention (`type: "locked"` — the underlying `lockLeaf`
+ * already retried with backoff and simply timed out; that is not evidence
+ * of corruption and a later attempt is allowed to retry). Every other
+ * failure type (`io`, `symlink-rejected`, `identity-changed`,
+ * `unavailable`) indicates the held descriptor's assumptions may no longer
+ * hold, so the store poisons and fails closed for good.
+ */
+class DirHandleMemoryStoreCoordinator implements MemoryStoreCoordinator {
+  constructor(
+    private readonly dirHandle: RuntimeDirectoryHandle,
+    private readonly leafName: string,
+    private readonly onCommitIdentity: (identity: RuntimeFileIdentity) => void,
+    private readonly onFailure: (cause: RuntimeDirectoryGuardError) => void,
+  ) {}
+
+  private reportAndThrow(cause: RuntimeDirectoryGuardError): never {
+    this.onFailure(cause);
+    throw new CoordinatorFailureSentinel(cause);
+  }
+
+  async acquire(): Promise<Uint8Array> {
+    const lockResult = await this.dirHandle.lockLeaf(this.leafName);
+    if (lockResult.isErr()) this.reportAndThrow(lockResult.error);
+
+    const bytesResult = await this.dirHandle.readLeafBytes(this.leafName);
+    if (bytesResult.isErr()) {
+      // The lock was acquired above; `acquire()` must leave nothing held
+      // when it throws, so release it before surfacing the read failure.
+      await this.dirHandle.unlockLeaf(this.leafName);
+      this.reportAndThrow(bytesResult.error);
+    }
+    return bytesResult.value;
+  }
+
+  async commit(bytes: Uint8Array): Promise<void> {
+    try {
+      const writeResult = await this.dirHandle.writeLeafAtomic(
+        this.leafName,
+        bytes,
+        0o600,
+      );
+      if (writeResult.isErr()) this.reportAndThrow(writeResult.error);
+      this.onCommitIdentity(writeResult.value);
+    } finally {
+      await this.dirHandle.unlockLeaf(this.leafName);
+    }
+  }
+
+  async discard(): Promise<void> {
+    await this.dirHandle.unlockLeaf(this.leafName);
+  }
+}
+
 /**
  * Options for creating a SqliteRuntimeStore.
  */
 export interface SqliteRuntimeStoreOptions {
-  /** Absolute path to the `weave.db` file. */
+  /** Absolute path to the `weave.db` file. Must be located at or under `projectRoot`. */
   readonly dbPath: string;
+  /**
+   * Absolute path to the harness-established, already-trusted project root
+   * (Spec 33 §7.2/§18). The no-follow directory guard opens this directly
+   * (it is assumed to already exist) and walks every path component between
+   * it and `dbPath`'s directory, holding both the root and the runtime
+   * directory descriptors for the store's entire lifetime.
+   *
+   * Defaults to the nearest expected existing ancestor above the canonical
+   * `<scope>/runtime/weave.db` layout when omitted. This keeps the anchor
+   * outside lazily-created scope/runtime directories, so the held-descriptor
+   * `mkdirat` walk can create them without path-based pre-creation. Callers
+   * that hold a real project root (e.g. the Pi adapter, passing the harness
+   * session's trusted `cwd`) must provide it explicitly so the full
+   * project-relative ancestor chain is proven.
+   */
+  readonly projectRoot?: string;
   /** Whether journal write failures roll back the unit of work. Default: false. */
   readonly strictJournal?: boolean;
   /** Clock source for lease expiry checks. Default: `() => new Date()`. */
@@ -2218,6 +2335,14 @@ export interface SqliteRuntimeStoreOptions {
    * @internal
    */
   readonly beforeInitPublish?: () => Promise<void>;
+  /**
+   * No-follow directory verification for the runtime directory and the
+   * `weave.db` leaf (Spec 33 §18). Defaults to `BunRuntimeDirectoryGuard`.
+   * Tests inject `MemoryRuntimeDirectoryGuard` to exercise symlink-rejection
+   * and identity-change paths without touching a real filesystem.
+   * @internal
+   */
+  readonly directoryGuard?: RuntimeDirectoryGuard;
 }
 
 /**
@@ -2235,7 +2360,16 @@ export class SqliteRuntimeStore implements RuntimeStore {
     null;
   private closingResult: ResultAsync<void, RuntimeStoreError> | null = null;
   private readonly clock: () => Date;
+  private readonly directoryGuard: RuntimeDirectoryGuard;
   private _projectSalt: string | null = null;
+  /** Held for the store's lifetime (Spec 33 §18); closed only in `close()` or on init failure. */
+  private dirHandle: RuntimeDirectoryHandle | null = null;
+  /** The `weave.db` leaf name, captured once at init for per-commit revalidation. */
+  private leafName: string | null = null;
+  /** Identity the leaf was last proven to have, via the held directory descriptor. */
+  private boundLeafIdentity: RuntimeFileIdentity | null = null;
+  /** Set once identity revalidation ever fails after publication; poisons all further operations. */
+  private poisoned = false;
 
   readonly instances: WorkflowInstanceRepository;
   readonly leases: ExecutionLeaseRepository;
@@ -2256,6 +2390,8 @@ export class SqliteRuntimeStore implements RuntimeStore {
 
   constructor(private readonly options: SqliteRuntimeStoreOptions) {
     this.clock = options.clock ?? (() => new Date());
+    this.directoryGuard =
+      options.directoryGuard ?? new BunRuntimeDirectoryGuard();
 
     // Repositories are lazy — they call ensureInitialized() on first use
     this.instances = new LazyWorkflowInstanceRepository(this);
@@ -2288,6 +2424,12 @@ export class SqliteRuntimeStore implements RuntimeStore {
   ensureInitialized(): ResultAsync<Kysely<WeaveDatabase>, RuntimeStoreError> {
     if (this.closed)
       return errAsync(initializationError("Runtime store is closed"));
+    if (this.poisoned)
+      return errAsync(
+        initializationError(
+          "Runtime store identity was compromised and is now closed to further operations",
+        ),
+      );
     if (this.initialized && this.db) {
       return okAsync(this.db);
     }
@@ -2318,6 +2460,7 @@ export class SqliteRuntimeStore implements RuntimeStore {
   private async abandonInitialize(
     db: Kysely<WeaveDatabase> | null,
     error: RuntimeStoreError,
+    dirHandle?: RuntimeDirectoryHandle,
   ): Promise<Result<void, RuntimeStoreError>> {
     if (db !== null) {
       await ResultAsync.fromPromise(db.destroy(), () => undefined).match(
@@ -2326,8 +2469,14 @@ export class SqliteRuntimeStore implements RuntimeStore {
       );
       if (this.db === db) this.db = null;
     }
+    if (dirHandle !== undefined) {
+      dirHandle.close();
+    }
     this.initialized = false;
     this._projectSalt = null;
+    this.dirHandle = null;
+    this.leafName = null;
+    this.boundLeafIdentity = null;
     this.initializingPromise = null;
     return err(error);
   }
@@ -2344,52 +2493,117 @@ export class SqliteRuntimeStore implements RuntimeStore {
       return err(initializationError("Runtime store is closed"));
     }
 
-    const dir = dirname(this.options.dbPath);
-
-    // Create runtime directory using node:fs/promises
-    const mkdirResult = await ResultAsync.fromPromise(
-      fs.mkdir(dir, { recursive: true }),
-      (cause) =>
-        initializationError(
-          `Failed to create runtime directory: ${dir}`,
-          cause,
-        ),
-    );
-    if (mkdirResult.isErr()) {
+    const runtimeDir = dirname(this.options.dbPath);
+    const leafName = runtimeLeafName(this.options.dbPath);
+    // With no explicit `projectRoot`, anchor one level above the scope that
+    // owns `runtime`. This preserves lazy recovery when both the scope and
+    // runtime directories are absent: the held-descriptor walk creates both
+    // safely. The anchor's own ancestors remain the caller's trust boundary.
+    const projectRoot =
+      this.options.projectRoot ?? dirname(dirname(runtimeDir));
+    const relativeDir = relative(projectRoot, runtimeDir);
+    const segments = relativeDir
+      .split(sep)
+      .filter((segment) => segment.length > 0);
+    if (relativeDir.startsWith(`..${sep}`) || relativeDir === "..") {
       this.initializingPromise = null;
-      return err(mkdirResult.error);
-    }
-    if (this.closed) {
-      this.initializingPromise = null;
-      return err(initializationError("Runtime store is closed"));
-    }
-
-    // Apply restrictive permissions to the directory (best-effort)
-    await fs.chmod(dir, 0o700).catch((cause) => {
-      log.warn(
-        { path: dir, mode: 0o700, cause },
-        "Failed to tighten runtime directory permissions",
+      return err(
+        initializationError("dbPath must be located at or under projectRoot"),
       );
-    });
+    }
+
+    // Acquire held, no-follow handles for both the canonical project root
+    // and the runtime directory (Spec 33 §18), walking every intermediate
+    // path component with a no-follow `openat` (never a single absolute-path
+    // open, which only proves the final component). Every subsequent
+    // operation on the `weave.db` leaf and its WAL/SHM sidecars happens
+    // relative to this same held descriptor - never a bare path re-open.
+    const dirHandleResult = await this.directoryGuard.ensureRuntimeDirectory(
+      projectRoot,
+      segments,
+      0o700,
+    );
+    if (dirHandleResult.isErr()) {
+      this.initializingPromise = null;
+      return err(mapDirectoryGuardError(dirHandleResult.error));
+    }
+    const dirHandle = dirHandleResult.value;
     if (this.closed) {
       this.initializingPromise = null;
+      dirHandle.close();
       return err(initializationError("Runtime store is closed"));
+    }
+
+    // Cross-store coordinator over the held directory descriptor (Spec 33
+    // §18 concurrency hardening): every `acquire()` takes the leaf's
+    // exclusive advisory lock and reloads its latest on-disk bytes, and
+    // `commit()` persists atomically and always releases the lock
+    // afterward. The entire bootstrap sequence below - reading the
+    // leaf's current bytes, running migrations, initializing the project
+    // salt, and the initial flush - runs under one single held lock so a
+    // concurrent store's own init/commit can never interleave with it.
+    const coordinator = new DirHandleMemoryStoreCoordinator(
+      dirHandle,
+      leafName,
+      (identity) => {
+        this.boundLeafIdentity = identity;
+      },
+      (cause) => {
+        // Transient lock contention (the underlying `lockLeaf` already
+        // retried with backoff and simply timed out) is not evidence of
+        // corruption; every other failure indicates the held descriptor's
+        // assumptions may no longer hold, so the store poisons for good.
+        if (cause.type !== "locked") this.poisoned = true;
+        log.error(
+          { err: cause, poisoned: this.poisoned },
+          "Runtime store coordinator operation failed",
+        );
+      },
+    );
+
+    // Acquires the exclusive lock and reads the leaf's full current bytes
+    // through the held directory descriptor (a no-follow `openat`, never a
+    // path). `bun:sqlite`'s `Database` constructor never touches a path for
+    // this DB at all: it deserializes these exact bytes in-memory, so there
+    // is no "reopen" - related or otherwise - to reason about. An
+    // empty/fresh file becomes a brand-new in-memory database (bun:sqlite
+    // rejects an empty byte buffer).
+    let initialBytes: Uint8Array;
+    try {
+      initialBytes = await coordinator.acquire();
+    } catch (cause) {
+      return this.abandonInitialize(
+        null,
+        cause instanceof CoordinatorFailureSentinel
+          ? mapDirectoryGuardError(cause.guardError)
+          : initializationError(
+              "Failed to acquire the runtime store lock",
+              cause,
+            ),
+        dirHandle,
+      );
     }
 
     // Keep the handle local until publish so close() cannot observe a half-init.
-    const dialect = new BunSqliteDialect(this.options.dbPath);
+    const dialect = new BunSqliteMemoryDialect(initialBytes, coordinator);
     const db = new Kysely<WeaveDatabase>({ dialect });
 
-    // Run migrations using the raw bun:sqlite Database
+    // Run migrations directly against the in-memory raw bun:sqlite Database.
+    // Migrations bypass the Kysely driver (and therefore its automatic
+    // flush-on-autocommit), so a single explicit commit below persists
+    // their combined effect and establishes the first bound leaf identity.
     const rawDb = dialect.getDatabase();
     const migrationResult = runMigrations(rawDb);
     if (migrationResult.isErr()) {
-      return this.abandonInitialize(db, migrationResult.error);
+      await coordinator.discard();
+      return this.abandonInitialize(db, migrationResult.error, dirHandle);
     }
     if (this.closed) {
+      await coordinator.discard();
       return this.abandonInitialize(
         db,
         initializationError("Runtime store is closed"),
+        dirHandle,
       );
     }
 
@@ -2416,29 +2630,33 @@ export class SqliteRuntimeStore implements RuntimeStore {
         initializationError("Failed to initialize project salt", cause),
     )();
     if (saltResult.isErr()) {
-      return this.abandonInitialize(db, saltResult.error);
+      await coordinator.discard();
+      return this.abandonInitialize(db, saltResult.error, dirHandle);
     }
     const projectSalt = saltResult.value;
 
-    // Apply restrictive permissions to the DB file (best-effort)
-    await fs.chmod(this.options.dbPath, 0o600).catch((cause) => {
-      log.warn(
-        { path: this.options.dbPath, mode: 0o600, cause },
-        "Failed to tighten runtime DB permissions",
-      );
-    });
-    await fs.chmod(`${this.options.dbPath}-wal`, 0o600).catch((cause) => {
-      log.warn(
-        { path: `${this.options.dbPath}-wal`, mode: 0o600, cause },
-        "Failed to tighten runtime WAL permissions",
-      );
-    });
-    await fs.chmod(`${this.options.dbPath}-shm`, 0o600).catch((cause) => {
-      log.warn(
-        { path: `${this.options.dbPath}-shm`, mode: 0o600, cause },
-        "Failed to tighten runtime SHM permissions",
-      );
-    });
+    // Migrations and salt initialization above wrote directly against
+    // `rawDb`, bypassing the Kysely driver's automatic flush-on-autocommit.
+    // Persist that combined effect now, through the same coordinator - this
+    // also releases the lock acquired above and establishes
+    // `boundLeafIdentity` for the first time.
+    const initialFlush = await ResultAsync.fromPromise(
+      coordinator.commit(rawDb.serialize()),
+      (cause) =>
+        cause instanceof CoordinatorFailureSentinel
+          ? mapDirectoryGuardError(cause.guardError)
+          : initializationError(
+              "Failed to persist initial Runtime Store snapshot",
+              cause,
+            ),
+    );
+    if (initialFlush.isErr()) {
+      return this.abandonInitialize(db, initialFlush.error, dirHandle);
+    }
+
+    // The in-memory database never produces WAL/SHM sidecar files - the
+    // only on-disk artifact is `weave.db` itself, written exclusively
+    // through `writeLeafAtomic`.
 
     // Deterministic test seam: close() can win before publication.
     if (this.options.beforeInitPublish !== undefined) {
@@ -2447,7 +2665,7 @@ export class SqliteRuntimeStore implements RuntimeStore {
         (cause) => initializationError("Initialization interrupted", cause),
       );
       if (gate.isErr()) {
-        return this.abandonInitialize(db, gate.error);
+        return this.abandonInitialize(db, gate.error, dirHandle);
       }
     }
 
@@ -2456,8 +2674,15 @@ export class SqliteRuntimeStore implements RuntimeStore {
       return this.abandonInitialize(
         db,
         initializationError("Runtime store is closed"),
+        dirHandle,
       );
     }
+
+    // Held for the store's entire lifetime (Spec 33 §18) so every later
+    // commit can revalidate stable parent/target identity; closed only in
+    // `close()` or on a later poisoning/init failure.
+    this.dirHandle = dirHandle;
+    this.leafName = leafName;
 
     this.db = db;
     this._projectSalt = projectSalt;
@@ -2470,33 +2695,70 @@ export class SqliteRuntimeStore implements RuntimeStore {
     return ok(undefined);
   }
 
+  /**
+   * Re-verifies the `weave.db` leaf's identity through the held directory
+   * descriptor (Spec 33 §18: "revalidates file identity across
+   * migration/commit"). On mismatch, poisons the store (all further
+   * operations fail closed) and returns a typed error.
+   */
+  private revalidateLeafIdentity(): ResultAsync<void, RuntimeStoreError> {
+    if (!this.dirHandle || !this.leafName || !this.boundLeafIdentity) {
+      return okAsync(undefined);
+    }
+    const boundIdentity = this.boundLeafIdentity;
+    return this.dirHandle
+      .verifyLeaf(this.leafName, { create: false, mode: 0o600 })
+      .mapErr((cause) => {
+        this.poisoned = true;
+        return mapDirectoryGuardError(cause);
+      })
+      .andThen((observed) => {
+        if (!directoryIdentitiesMatch(observed, boundIdentity)) {
+          this.poisoned = true;
+          return err(
+            initializationError(
+              "Runtime DB identity changed; store closed to further operations",
+            ),
+          );
+        }
+        return ok(undefined);
+      });
+  }
+
   transaction<T>(
     callback: TransactionCallback<T>,
   ): ResultAsync<T, RuntimeStoreError> {
     return this.ensureInitialized().andThen((db) => {
-      return ResultAsync.fromPromise(
-        db.transaction().execute(async (txDb) => {
-          const tx = new SqliteRuntimeStoreTransaction(
-            txDb,
-            this.clock,
-            this.options.strictJournal ?? false,
-          );
+      return this.revalidateLeafIdentity().andThen(
+        () =>
+          ResultAsync.fromPromise(
+            db.transaction().execute(async (txDb) => {
+              const tx = new SqliteRuntimeStoreTransaction(
+                txDb,
+                this.clock,
+                this.options.strictJournal ?? false,
+              );
 
-          const result = await callback(tx);
+              const result = await callback(tx);
 
-          if (result.isErr()) {
-            // Throw to trigger Kysely transaction rollback
-            throw new TxCallbackErrSentinel(result.error);
-          }
+              if (result.isErr()) {
+                // Throw to trigger Kysely transaction rollback
+                throw new TxCallbackErrSentinel(result.error);
+              }
 
-          return result.value;
-        }),
-        (cause) => {
-          if (cause instanceof TxCallbackErrSentinel) {
-            return cause.storeError;
-          }
-          return queryError("Transaction failed", cause);
-        },
+              return result.value;
+            }),
+            (cause) => {
+              if (cause instanceof TxCallbackErrSentinel) {
+                return cause.storeError;
+              }
+              return queryError("Transaction failed", cause);
+            },
+          ),
+        // `commitTransaction`'s flush (triggered inside the Kysely memory
+        // driver once `db.inTransaction` goes false) already re-verifies
+        // and rebinds `boundLeafIdentity` as part of persisting every
+        // commit (Spec 33 §18) - no separate post-commit check is needed.
       );
     });
   }
@@ -2530,6 +2792,12 @@ export class SqliteRuntimeStore implements RuntimeStore {
       this.initialized = false;
       this._projectSalt = null;
       this.initializingPromise = null;
+      if (this.dirHandle) {
+        this.dirHandle.close();
+        this.dirHandle = null;
+      }
+      this.leafName = null;
+      this.boundLeafIdentity = null;
 
       if (!db) return okAsync(undefined);
 

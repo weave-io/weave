@@ -202,6 +202,7 @@ async function signedBootstrap(
       correlationId: "child-1",
       kind: "bootstrap",
       body: {
+        mode: "ordinary",
         agentName: "shuttle",
         composedPrompt: "You are Shuttle, a delegated specialist.",
         models: [],
@@ -254,6 +255,7 @@ describe("private child mode (Spec 33 §11.2-§11.5, end-to-end against a fake h
         correlationId: "child-1",
         kind: "bootstrap",
         body: {
+          mode: "ordinary",
           agentName: "shuttle",
           composedPrompt: "You are Shuttle, a delegated specialist.",
           models: [],

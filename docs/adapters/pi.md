@@ -1,6 +1,6 @@
 # Pi Adapter Guide
 
-**Status:** Activation, normalized configuration, tool policy, and delegation transport implemented; do not treat this guide as release proof
+**Status:** Activation, normalized configuration, tool policy, delegation transport, and workflow lifecycle projection implemented; packaging and live release proof remain pending
 
 **Related:** [Pi adapter architecture](../pi-adapter.md) · [Spec 33](../specs/33-spec-pi-adapter/33-spec-pi-adapter.md) · [Adapter readiness](../adapter-readiness-status.md)
 
@@ -12,7 +12,7 @@ For supported sessions, the adapter loads the permitted Weave config, consumes m
 
 The adapter also governs discovered Pi-native tools through input-aware resolvers and the engine permission session. It checks exact built-in provenance, sealed registry coverage, and controller generation before each call. Policy `deny` blocks, `allow` consumes a single-use permit without prompting, and `ask` opens a bounded approval dialog only outside health-only mode. Missing or malformed resolver input is unresolved and supports one-time approval only. Unrelated third-party tools remain unmanaged.
 
-The adapter also ships a bounded `weave_delegate` tool and its private authenticated child transport (see [Delegation](#delegation) below). Workflow lifecycle projection, packaging proof, and live TUI validation remain pending.
+The adapter also ships a bounded `weave_delegate` tool and its private authenticated child transport (see [Delegation](#delegation) below). Workflow commands, direct-step execution, plans, artifacts, recovery, and reconciliation are implemented. Packaging proof and live TUI validation remain pending.
 
 ## Compatibility
 
@@ -58,6 +58,18 @@ Use `/weave` to open the palette or invoke a direct command:
 
 Session start, idle, recovery discovery, and normal chat do not authorize workflow work. The adapter continues automatically only when the engine returns a next effect in the same uninterrupted authorized controller generation.
 
+## Workflow lifecycle
+
+The palette and nine direct commands project all ten engine lifecycle operations through one generation-checked `PiWorkflowController`. `/weave:start`, `/weave:run`, and `/weave:resume` require fresh user confirmation before the adapter mints a one-use authorization token. A recovery banner is informational and never resumes work by itself.
+
+Workflow steps use a direct private-child transport distinct from ordinary `weave_delegate` calls. Only the root direct-step child receives `weave_complete_step`; nested helpers do not inherit completion authority. The tool records one bounded structured completion candidate. Free-form assistant text, process exit, duplicate signals, malformed candidates, and late calls never count as successful completion. `user_confirm` candidates remain withheld until `/weave:advance` confirms them.
+
+Before dispatch, the adapter reuses the prior attempt's pinned artifact revisions on retries and verifies each consumed artifact's current SHA-256 digest through a held, no-follow file descriptor. Plan catalog and artifact reads reject traversal and symlink components. New artifact revisions reset approval, and an agent cannot approve its own artifact. The compact plan widget refreshes after lifecycle transitions; explicit reconciliation handles mismatched execution state.
+
+Trusted sessions open the engine Runtime Store under `.weave/runtime`. The engine holds the project/runtime directory chain with no-follow descriptors, coordinates stores with a bounded OS lock, runs SQLite in memory, and atomically persists serialized snapshots through descriptor-relative temporary files. Database, temporary, and lock leaves use restrictive permissions; no WAL/SHM sidecars are created. Recovery pointers supplement this authoritative state but never grant resume authority.
+
+Ordinary parent chat does not interleave silently with a live direct step. Pi asks whether to pause the workflow first; declining leaves the workflow running and withholds the prompt.
+
 ## Health-only mode
 
 If `/weave:health` reports health-only mode, the adapter blocks work but keeps diagnostics available. Common causes include:
@@ -72,7 +84,7 @@ Fix the reported cause and start a new Pi session. Do not bypass health-only mod
 
 ## Delegation
 
-`weave_delegate` runs one bounded task on a single eligible agent as a private ephemeral child, then returns that child's own structured result. It never creates or advances workflow state (that is a distinct, later port).
+`weave_delegate` runs one bounded task on a single eligible agent as a private ephemeral child, then returns that child's own structured result. It never creates or advances workflow state; workflow steps use the distinct direct-step transport described above.
 
 **Exact command.** A delegated child is spawned as `pi --mode rpc --no-session`, never as an interactive session. This is the only Pi RPC entry point the adapter uses; a real user never starts this path themselves.
 

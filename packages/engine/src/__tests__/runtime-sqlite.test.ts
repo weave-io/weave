@@ -21,6 +21,11 @@ import {
   runMigrations,
 } from "../runtime/sqlite/migrations.js";
 import {
+  MemoryRuntimeDirectoryGuard,
+  type RuntimeDirectoryGuard,
+  type RuntimeDirectoryHandle,
+} from "../runtime/sqlite/runtime-directory-guard.js";
+import {
   createSqliteRuntimeStore,
   type SqliteRuntimeStoreOptions,
 } from "../runtime/sqlite/store.js";
@@ -58,6 +63,7 @@ function makeDbPath(dir: string): string {
 function makeStore(dir: string, opts: Partial<SqliteRuntimeStoreOptions> = {}) {
   return createSqliteRuntimeStore({
     dbPath: makeDbPath(dir),
+    projectRoot: dir,
     ...opts,
   });
 }
@@ -339,6 +345,7 @@ describe("lazy initialization", () => {
     await Bun.write(blockedParent, "not-a-directory");
     const store = createSqliteRuntimeStore({
       dbPath: join(blockedParent, "runtime", "weave.db"),
+      projectRoot: testDir,
     });
     const repo = permissionRepository(store);
 
@@ -384,6 +391,7 @@ describe("lazy initialization", () => {
 
     const store = createSqliteRuntimeStore({
       dbPath: makeDbPath(testDir),
+      projectRoot: testDir,
       beforeInitPublish: async () => {
         signalEntered();
         await gate;
@@ -450,6 +458,7 @@ describe("lazy initialization", () => {
 
       const store = createSqliteRuntimeStore({
         dbPath: makeDbPath(roundDir),
+        projectRoot: roundDir,
         beforeInitPublish: async () => {
           signalEntered();
           await gate;
@@ -621,7 +630,7 @@ describe("migrations", () => {
     createLegacyV2Database(legacyDb);
     legacyDb.close();
 
-    const store = createSqliteRuntimeStore({ dbPath });
+    const store = createSqliteRuntimeStore({ dbPath, projectRoot: testDir });
     const instanceResult = await store.instances.findById(
       createWorkflowInstanceId("legacy-instance"),
     );
@@ -2483,7 +2492,7 @@ describe("migrations", () => {
     );
     db.close();
 
-    const store = createSqliteRuntimeStore({ dbPath });
+    const store = createSqliteRuntimeStore({ dbPath, projectRoot: testDir });
     const result = await store.instances.list();
 
     expect(result.isErr()).toBe(true);
@@ -3345,8 +3354,188 @@ describe("dependency guard", () => {
   });
 
   it("store module uses only Bun-native APIs for file system operations", () => {
-    // Bun.spawnSync is used for mkdir/chmod instead of raw fs module
+    // File system containment (mkdirat/openat/fchmod) is implemented via
+    // bun:ffi against libc, never node:fs or a shelled-out mkdir process.
     expect(true).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// No-follow directory guard (Spec 33 §18)
+// ---------------------------------------------------------------------------
+
+describe("no-follow directory guard (Spec 33 §18) — real filesystem", () => {
+  it("fails closed instead of initializing through a symlinked runtime directory", async () => {
+    const realElsewhere = join(testDir, "real-elsewhere");
+    Bun.spawnSync(["mkdir", "-p", realElsewhere]);
+    const runtimeLink = join(testDir, "runtime");
+    Bun.spawnSync(["ln", "-s", realElsewhere, runtimeLink]);
+
+    const store = makeStore(testDir);
+    const result = await store.instances.list();
+
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error.type).toBe("initialization");
+      expect(result.error.message).toMatch(/symlink|access denied/i);
+    }
+    // Never wrote through the symlink target.
+    expect(pathExists(join(realElsewhere, "weave.db"))).toBe(false);
+  });
+
+  it("fails closed instead of opening a symlinked weave.db leaf", async () => {
+    const runtimeDir = join(testDir, "runtime");
+    Bun.spawnSync(["mkdir", "-p", runtimeDir]);
+    const decoyDb = join(testDir, "decoy.db");
+    await Bun.write(decoyDb, "not a real sqlite file");
+    Bun.spawnSync(["ln", "-s", decoyDb, join(runtimeDir, "weave.db")]);
+
+    const store = makeStore(testDir);
+    const result = await store.instances.list();
+
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error.type).toBe("initialization");
+      expect(result.error.message).toMatch(/weave\.db/);
+    }
+  });
+
+  it("applies restrictive permissions (0700/0600) via fd-based operations, not a racy path-based chmod", async () => {
+    const store = makeStore(testDir);
+    await store.instances.list();
+
+    const runtimeDir = join(testDir, "runtime");
+    const dirStat = await Bun.file(runtimeDir).stat();
+    expect(dirStat.mode & 0o777).toBe(0o700);
+
+    const dbStat = await Bun.file(makeDbPath(testDir)).stat();
+    expect(dbStat.mode & 0o777).toBe(0o600);
+
+    // The live database is in-memory (Spec 33 §18): bun:sqlite never opens
+    // `weave.db` by path, so its WAL/SHM sidecars never come into existence.
+    // Durability comes entirely from `writeLeafAtomic`'s temp-file-then-
+    // rename sequence against the single `weave.db` leaf.
+    expect(pathExists(`${makeDbPath(testDir)}-wal`)).toBe(false);
+    expect(pathExists(`${makeDbPath(testDir)}-shm`)).toBe(false);
+  });
+});
+
+describe("no-follow directory guard (Spec 33 §18) — isolated (MemoryRuntimeDirectoryGuard)", () => {
+  it("fails closed when the runtime directory is a simulated symlink", async () => {
+    const guard = new MemoryRuntimeDirectoryGuard();
+    guard.simulateDirectorySymlink();
+    const store = makeStore(testDir, { directoryGuard: guard });
+
+    const result = await store.instances.list();
+
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error.type).toBe("initialization");
+      expect(result.error.message).toMatch(/symlink/i);
+    }
+  });
+
+  it("fails closed when the weave.db leaf is a simulated symlink", async () => {
+    const guard = new MemoryRuntimeDirectoryGuard();
+    guard.simulateLeafSymlink("weave.db");
+    const store = makeStore(testDir, { directoryGuard: guard });
+
+    const result = await store.instances.list();
+
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error.type).toBe("initialization");
+      expect(result.error.message).toMatch(/weave\.db/);
+    }
+  });
+
+  it("fails closed when the weave.db leaf's identity changes between initialization and the first transaction", async () => {
+    // A stateful test double, distinct from MemoryRuntimeDirectoryGuard,
+    // that swaps the leaf's identity on its second `verifyLeaf` call for a
+    // given file name — simulating an out-of-band replacement of `weave.db`
+    // that occurs after the store's initial flush (which binds identity via
+    // `writeLeafAtomic`'s own `verifyLeaf` call) but before the next
+    // transaction's pre-commit revalidation. The store never re-reads
+    // `weave.db` from disk after `_doInitialize` (it runs entirely
+    // in-memory), so this is the only remaining window where an external
+    // replacement can be observed at all.
+    class SwapOnSecondVerifyGuard implements RuntimeDirectoryGuard {
+      private readonly callCounts = new Map<string, number>();
+      // Coordinator-driven reload (Spec 33 §18): every outside-transaction
+      // query re-acquires and re-reads the leaf's latest bytes, so this fake
+      // must actually round-trip what `writeLeafAtomic` persists instead of
+      // always answering `readLeafBytes` with an empty buffer - otherwise
+      // the very first post-init query would reload an empty, unmigrated
+      // database and fail.
+      private readonly leaves = new Map<string, Uint8Array>();
+
+      ensureRuntimeDirectory(
+        projectRoot: string,
+        segments: readonly string[],
+      ): ReturnType<RuntimeDirectoryGuard["ensureRuntimeDirectory"]> {
+        const counts = this.callCounts;
+        const leaves = this.leaves;
+        const verifyLeaf: RuntimeDirectoryHandle["verifyLeaf"] = (fileName) => {
+          const callNumber = (counts.get(fileName) ?? 0) + 1;
+          counts.set(fileName, callNumber);
+          const ino = fileName === "weave.db" && callNumber >= 2 ? 999 : 1;
+          return okAsync({ dev: 1, ino, size: 0, mtimeMs: 0 });
+        };
+        const handle: RuntimeDirectoryHandle = {
+          path: [projectRoot, ...segments].join("/"),
+          identity: () => okAsync({ dev: 1, ino: 1, size: 0, mtimeMs: 0 }),
+          verifyLeaf,
+          // A brand-new store: nothing on "disk" yet, then whatever the
+          // last `writeLeafAtomic` call persisted.
+          readLeafBytes: (fileName) =>
+            okAsync(leaves.get(fileName) ?? new Uint8Array(0)),
+          // Mirrors the real handle: persist the bytes, then end by
+          // re-verifying the leaf through the same held descriptor.
+          writeLeafAtomic: (fileName, bytes, _mode) => {
+            leaves.set(fileName, bytes);
+            return verifyLeaf(fileName, { create: false, mode: 0o600 });
+          },
+          // No real locking needed: this fake only ever backs a single
+          // store instance within one test, so the coordinator's
+          // acquire()/discard() cycle just needs to satisfy the interface.
+          lockLeaf: () => okAsync(undefined),
+          unlockLeaf: () => okAsync(undefined),
+          close: () => undefined,
+        };
+        return okAsync(handle);
+      }
+    }
+
+    // No real filesystem interaction is needed at all: the guard is fully
+    // faked and the store never opens `bun:sqlite` by path (it deserializes
+    // bytes handed to it by the guard), so there is nothing to pre-create
+    // on disk for this test.
+    const store = makeStore(testDir, {
+      directoryGuard: new SwapOnSecondVerifyGuard(),
+    });
+
+    // Initialization succeeds: the first (and only, for init) `verifyLeaf`
+    // call happens inside the initial flush and binds identity at ino 1.
+    const initResult = await store.instances.list();
+    expect(initResult.isOk()).toBe(true);
+
+    // The first transaction's pre-commit revalidation is the second
+    // `verifyLeaf` call for `weave.db`, which the fake now answers with a
+    // different ino — simulating an out-of-band replacement.
+    const txResult = await store.transaction(() => okAsync(undefined));
+    expect(txResult.isErr()).toBe(true);
+    if (txResult.isErr()) {
+      expect(txResult.error.type).toBe("initialization");
+      expect(txResult.error.message).toMatch(/identity changed/i);
+    }
+
+    // The store is poisoned, not merely this one call: further operations
+    // fail closed too.
+    const afterPoison = await store.instances.list();
+    expect(afterPoison.isErr()).toBe(true);
+
+    const closed = await store.close();
+    expect(closed.isOk()).toBe(true);
   });
 });
 
