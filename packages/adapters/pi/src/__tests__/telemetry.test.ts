@@ -180,6 +180,27 @@ describe("PiTelemetry — data ban (Spec 33 §19.1)", () => {
     expect(extracted?.usage.cost).toBe(0.002);
   });
 
+  it("accepts exact-host responseId as the stable assistant identity", () => {
+    const extracted = extractAssistantUsageFromMessage({
+      message: {
+        role: "assistant",
+        responseId: "msg-response-1",
+        usage: { input: 2, output: 22 },
+      },
+    });
+
+    expect(extracted).toEqual({
+      id: "msg-response-1",
+      usage: {
+        inputTokens: 2,
+        outputTokens: 22,
+        cacheReadTokens: undefined,
+        cacheWriteTokens: undefined,
+        cost: undefined,
+      },
+    });
+  });
+
   it("ignores non-assistant messages and missing ids", () => {
     expect(
       extractAssistantUsageFromMessage({ message: { role: "user", id: "x" } }),

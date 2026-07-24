@@ -190,13 +190,31 @@ describe("subtreeIds", () => {
 });
 
 describe("extractAssistantTextDeltaPreview (Task 9 finding 1)", () => {
-  it("reads delta.text when present", () => {
+  it("reads legacy delta.text when present", () => {
     expect(
       extractAssistantTextDeltaPreview({
         type: "message_update",
         delta: { text: "hello" },
       }),
     ).toBe("hello");
+  });
+
+  it("reads the exact-host 0.81.1 assistantMessageEvent text delta", () => {
+    expect(
+      extractAssistantTextDeltaPreview({
+        type: "message_update",
+        assistantMessageEvent: { type: "text_delta", delta: "hello" },
+      }),
+    ).toBe("hello");
+  });
+
+  it("ignores non-text exact-host assistant events", () => {
+    expect(
+      extractAssistantTextDeltaPreview({
+        type: "message_update",
+        assistantMessageEvent: { type: "text_end", content: "hello" },
+      }),
+    ).toBeUndefined();
   });
 
   it("returns undefined when delta is missing", () => {

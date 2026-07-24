@@ -731,8 +731,9 @@ export class PiRpcChild {
       return;
     const messageRecord = message as Record<string, JsonValue>;
     if (messageRecord.role !== "assistant") return;
-    const id = messageRecord.id;
-    if (typeof id !== "string" || id.length === 0) return;
+    const idCandidate = messageRecord.id ?? messageRecord.responseId;
+    if (typeof idCandidate !== "string" || idCandidate.length === 0) return;
+    const id = idCandidate;
     if (this.seenUsageMessageIds.has(id)) return;
     const usageValue = messageRecord.usage;
     if (

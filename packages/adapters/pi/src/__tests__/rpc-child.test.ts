@@ -350,7 +350,7 @@ describe("PiRpcChild", () => {
     await runPromise;
   });
 
-  it("projects settled per-message usage once and deduplicates by message id", async () => {
+  it("projects exact-host usage once and deduplicates by responseId", async () => {
     const processPort = new FakeChildProcessPort();
     const child = new PiRpcChild("child-1", "root", "gen-1", "shuttle", 1, {
       processPort,
@@ -370,7 +370,7 @@ describe("PiRpcChild", () => {
       type: "message_end",
       message: {
         role: "assistant",
-        id: "msg-1",
+        responseId: "msg-1",
         usage: {
           input: 10,
           output: 5,
@@ -381,7 +381,7 @@ describe("PiRpcChild", () => {
       },
     };
     spawned.emitLine(usageEvent);
-    spawned.emitLine(usageEvent); // duplicate id -> must not double count
+    spawned.emitLine(usageEvent); // duplicate responseId -> no double count
     expect(child.snapshot().usage).toEqual({
       inputTokens: 10,
       outputTokens: 5,

@@ -372,7 +372,7 @@ Parse strict LF-delimited JSON records. Handle split UTF-8 chunks, multiple reco
 ### 11.5 Child tree and controls
 
 
-Show bounded child state: logical name, parent, status, current turn/tool, elapsed time, usage, and latest output truncated to 4 KiB of valid UTF-8 at a code-point boundary. The truncated view is transient and MUST NOT enter logs, journals, Runtime Store state, or recovery pointers.
+Show bounded child state: logical name, parent, status, current turn/tool, elapsed time, usage, and latest output truncated to 4 KiB of valid UTF-8 at a code-point boundary. For host 0.81.1, streamed text comes from `message_update.assistantMessageEvent` entries whose type is `text_delta` and whose `delta` is a string; adapters may also accept the legacy `delta.text` shape. The truncated view is transient and MUST NOT enter logs, journals, Runtime Store state, or recovery pointers.
 
 *   Alt+1..Alt+9 selects a direct child of the selected node.
 *   Backspace selects its parent; at root Pi keeps normal editor behavior.
@@ -618,7 +618,7 @@ Prune after activation and then after 256 relevant writes or 15 minutes. Remove 
 
 The Runtime Store MUST expose idempotent detailed observations and durable rollups. Pi records one observation per settled assistant message from primary or child; never session totals or tool-result usage.
 
-Observation fields are ID, time, source, optional workflow/step/agent/model, optional non-negative token counters, and optional non-negative finite cost. Missing values remain absent. Identity derives from Pi message identity, never text.
+Observation fields are ID, time, source, optional workflow/step/agent/model, optional non-negative token counters, and optional non-negative finite cost. Missing values remain absent. Identity derives from Pi message identity, never text. Host 0.81.1 assistant messages use `responseId`; adapters may also accept the legacy `id` field.
 
 Same ID plus same normalized values is a no-op. Same ID plus different values is an invariant breach. Insert and rollup are atomic. Rollups group by available workflow, step, agent, model, and source and sum each known field independently. Detail pruning does not subtract rollups.
 

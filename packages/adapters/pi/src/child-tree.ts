@@ -79,21 +79,31 @@ export function truncateLatestOutput(text: string): string {
 }
 
 /**
- * Reads the streamed text delta from a `message_update` event record's
- * `delta.text` field, if present. Shared between the parent's `PiChildRpc`
- * (Spec 33 §11.5 streaming preview) and the child's own runtime (Task 9
- * finding 1: real settlement summaries) so both sides read the exact same
- * observable shape from one place instead of drifting apart.
+ * Reads a streamed assistant text delta from either supported Pi RPC shape:
+ * the legacy `delta.text` object or 0.81.1's
+ * `assistantMessageEvent: { type: "text_delta", delta: string }`. Shared by
+ * the parent tree preview and child settlement summary.
  */
 export function extractAssistantTextDeltaPreview(
   record: Record<string, JsonValue>,
 ): string | undefined {
   const delta = record.delta;
-  if (typeof delta !== "object" || delta === null || Array.isArray(delta)) {
+  if (typeof delta === "object" && delta !== null && !Array.isArray(delta)) {
+    const text = (delta as Record<string, JsonValue>).text;
+    if (typeof text === "string") return text;
+  }
+
+  const assistantEvent = record.assistantMessageEvent;
+  if (
+    typeof assistantEvent !== "object" ||
+    assistantEvent === null ||
+    Array.isArray(assistantEvent)
+  ) {
     return undefined;
   }
-  const text = (delta as Record<string, JsonValue>).text;
-  return typeof text === "string" ? text : undefined;
+  const eventRecord = assistantEvent as Record<string, JsonValue>;
+  if (eventRecord.type !== "text_delta") return undefined;
+  return typeof eventRecord.delta === "string" ? eventRecord.delta : undefined;
 }
 
 /**

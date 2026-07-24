@@ -173,8 +173,10 @@ export function extractAssistantUsageFromMessage(
     return undefined;
   const messageRecord = message as Record<string, JsonValue>;
   if (messageRecord.role !== "assistant") return undefined;
-  const id = messageRecord.id;
-  if (typeof id !== "string" || id.length === 0) return undefined;
+  const idCandidate = messageRecord.id ?? messageRecord.responseId;
+  if (typeof idCandidate !== "string" || idCandidate.length === 0)
+    return undefined;
+  const id = idCandidate;
   const usageValue = messageRecord.usage;
   if (
     typeof usageValue !== "object" ||

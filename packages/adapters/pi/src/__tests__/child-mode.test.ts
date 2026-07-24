@@ -355,12 +355,21 @@ describe("private child mode (Spec 33 §11.2-§11.5, end-to-end against a fake h
     const { host, output } = await buildChildExtension();
     await host.fire(
       "message_update",
-      { type: "message_update", delta: { text: "Here is the " } },
+      {
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "text_delta",
+          delta: "Here is the ",
+        },
+      },
       fakeCtx(),
     );
     await host.fire(
       "message_update",
-      { type: "message_update", delta: { text: "real result." } },
+      {
+        type: "message_update",
+        assistantMessageEvent: { type: "text_delta", delta: "real result." },
+      },
       fakeCtx(),
     );
     await host.fire("agent_settled", {}, fakeCtx());
