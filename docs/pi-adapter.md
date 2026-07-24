@@ -10,9 +10,11 @@
 
 ## Implementation status
 
-The package foundation lives in [`packages/adapters/pi`](../packages/adapters/pi). It provides the compiled Pi extension entry, exact host compatibility checks, a read-only safe initializer, generation-scoped controllers, normalized effective-capability health reports, health-only command gating, and an isolated recording fake host. The fake-host suite proves load-time inertness, command ownership checks, stale-generation rejection, trust-withheld behavior, and the exact 19-probe report shape without starting Pi.
+The implementation lives in [`packages/adapters/pi`](../packages/adapters/pi). It provides the compiled Pi extension entry, exact host compatibility checks, a read-only safe initializer, generation-scoped controllers, normalized effective-capability health reports, health-only command gating, and an isolated recording fake host. The fake-host suite proves load-time inertness, command ownership checks, stale-generation rejection, trust withholding, and the exact 19-probe report shape without starting Pi.
 
-Configuration projection, registered-tool enforcement, delegation transport, workflow lifecycle projection, packed-consumer proof, and live TUI evidence remain pending. This foundation is not a full-readiness claim.
+The adapter now also loads the permitted normalized config, consumes successful materialized descriptors in plan order, reports isolated descriptor errors, and activates valid Loom state on the first `before_agent_start` event. That event supplies Pi's loaded skill catalog; the adapter resolves requested skills exactly, applies deterministic model intent against `ctx.modelRegistry.getAvailable()`, appends one delimited `composedPrompt` block without replacing Pi or other-extension context, and reports deduplicated model or temperature degradation. Model application and prompt authority recheck the controller generation after asynchronous host work.
+
+Registered-tool enforcement, delegation transport, workflow lifecycle projection, packed-consumer proof, and live TUI evidence remain pending. These implemented slices are not a full-readiness claim.
 
 ## Activation model
 

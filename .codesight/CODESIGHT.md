@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 179 lib files | 33 env vars | 6 middleware | 0% test coverage
-> **Token savings:** this file is ~17,800 tokens. Without it, AI exploration would cost ~61,500 tokens. **Saves ~43,700 tokens per conversation.**
-> **Last scanned:** 2026-07-24 00:01 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 184 lib files | 33 env vars | 6 middleware | 0% test coverage
+> **Token savings:** this file is ~18,200 tokens. Without it, AI exploration would cost ~62,800 tokens. **Saves ~44,600 tokens per conversation.**
+> **Last scanned:** 2026-07-24 01:19 — re-run after significant changes
 
 ---
 
@@ -81,9 +81,10 @@
   - function buildBlockedProbeSet: (reason) => CapabilityProbeResult[]
   - function sanitizeCapabilityProbeResults: (raw) => CapabilityProbeResult[]
   - class DefaultPiCapabilityProber
+  - interface PiCandidatePlanContext
   - interface PiPreflightContext
   - interface PiCapabilityProbeSource
-  - const PROJECT_PATH_DEPENDENT_CAPABILITIES: readonly CapabilityId[]
+  - _...1 more_
 - `packages/adapters/pi/src/commands.ts`
   - function classifyWeaveCommand: (name) => WeaveCommandClassification
   - function parseNpmSourceName: (source) => string | undefined
@@ -92,6 +93,14 @@
   - type WeaveCommandClassification
   - const WEAVE_COMMAND_NAMES
   - _...1 more_
+- `packages/adapters/pi/src/config-activator.ts`
+  - function createTrustWithheldFileReader: (inner, projectRoot) => FileReader
+  - function buildDescriptorCatalog: (plan) => PiDescriptorCatalog
+  - function logMaterializationErrors: (errors, logger) => void
+  - class PiConfigActivator
+  - interface PiConfigLoaderPort
+  - interface PiMaterializerPort
+  - _...7 more_
 - `packages/adapters/pi/src/controller.ts`
   - class PiExtensionController
   - interface PiGeneration
@@ -119,10 +128,30 @@
   - type HostPackageInfo
   - _...4 more_
 - `packages/adapters/pi/src/host-inventory.ts` — function readValidatedCommands: (api, "getCommands">) => Result<PiCommandInfo[], PiAdapterFailure>, function readValidatedTools: (api, "getAllTools">) => Result<PiToolInfo[], PiAdapterFailure>
+- `packages/adapters/pi/src/model-resolution.ts`
+  - class PiModelResolver
+  - class PiModelActivator
+  - interface PiModelApplyPort
+  - type PiModelResolutionSource
+  - type PiModelResolution
+  - type PiModelActivationOutcome
+- `packages/adapters/pi/src/port-safety.ts`
+  - function safelyAwaitPortResult: (call) => void
+  - function safelyListAvailableModels: (modelRegistry, "getAvailable">) => Result<readonly PiModelInfo[], string>
+  - const MODEL_REGISTRY_THREW_REASON
+- `packages/adapters/pi/src/primary-session.ts`
+  - function renderWeavePromptBlock: (descriptor) => string
+  - function appendWeaveBlockOnce: (systemPrompt, descriptor) => string
+  - class PiPrimarySession
+  - interface PiPrimaryCapabilityWarning
+  - interface PiActivePrimary
+  - interface PiPrimaryActivationContext
+  - _...3 more_
 - `packages/adapters/pi/src/safe-initializer.ts`
   - class PiSafeInitializer
   - interface PiPreflightResult
   - interface PiSafeInitializerDeps
+- `packages/adapters/pi/src/skill-catalog.ts` — function toEngineSkillInfo: (skill) => SkillInfo, class PiSkillCatalog
 - `packages/cli/src/args.ts`
   - function parseArgs: (argv) => Result<ParsedArgs, ArgParseError>
   - interface ParsedArgs
@@ -905,7 +934,7 @@
 - `BASE_URL` **required** — packages/docs/src/data/docs-search.ts
 - `GITHUB_OUTPUT` **required** — scripts/release/stable-finalize.ts
 - `GITHUB_TOKEN` **required** — scripts/release/bind-artifacts.ts
-- `HOME` **required** — packages/cli/src/detect/probes.ts
+- `HOME` **required** — packages/adapters/pi/src/__tests__/config-activator.test.ts
 - `LOG_LEVEL` **required** — packages/config/src/logger.ts
 - `PATH` **required** — scripts/release/__tests__/release-orchestrator.test.ts
 - `PWD` **required** — packages/adapters/opencode/dist-types/adapter.d.ts
@@ -973,6 +1002,7 @@
 - `packages/cli/src/args.ts` — imported by **14** files
 - `packages/engine/src/tool-policy.ts` — imported by **14** files
 - `scripts/release/model.ts` — imported by **14** files
+- `packages/adapters/pi/src/types.ts` — imported by **13** files
 - `packages/engine/src/logger.ts` — imported by **13** files
 - `scripts/release/filesystem.ts` — imported by **13** files
 - `scripts/release/clock.ts` — imported by **13** files
@@ -980,7 +1010,6 @@
 - `packages/engine/src/runtime/errors.ts` — imported by **12** files
 - `packages/engine/src/compose.ts` — imported by **11** files
 - `packages/engine/src/execution-lifecycle/metadata.ts` — imported by **11** files
-- `scripts/release/errors.ts` — imported by **11** files
 
 ## Import Map (who imports what)
 
@@ -1000,7 +1029,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 172 test files found
+> 177 test files found
 
 ---
 

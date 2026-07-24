@@ -70,9 +70,10 @@
   - function buildBlockedProbeSet: (reason) => CapabilityProbeResult[]
   - function sanitizeCapabilityProbeResults: (raw) => CapabilityProbeResult[]
   - class DefaultPiCapabilityProber
+  - interface PiCandidatePlanContext
   - interface PiPreflightContext
   - interface PiCapabilityProbeSource
-  - const PROJECT_PATH_DEPENDENT_CAPABILITIES: readonly CapabilityId[]
+  - _...1 more_
 - `packages/adapters/pi/src/commands.ts`
   - function classifyWeaveCommand: (name) => WeaveCommandClassification
   - function parseNpmSourceName: (source) => string | undefined
@@ -81,6 +82,14 @@
   - type WeaveCommandClassification
   - const WEAVE_COMMAND_NAMES
   - _...1 more_
+- `packages/adapters/pi/src/config-activator.ts`
+  - function createTrustWithheldFileReader: (inner, projectRoot) => FileReader
+  - function buildDescriptorCatalog: (plan) => PiDescriptorCatalog
+  - function logMaterializationErrors: (errors, logger) => void
+  - class PiConfigActivator
+  - interface PiConfigLoaderPort
+  - interface PiMaterializerPort
+  - _...7 more_
 - `packages/adapters/pi/src/controller.ts`
   - class PiExtensionController
   - interface PiGeneration
@@ -108,10 +117,30 @@
   - type HostPackageInfo
   - _...4 more_
 - `packages/adapters/pi/src/host-inventory.ts` — function readValidatedCommands: (api, "getCommands">) => Result<PiCommandInfo[], PiAdapterFailure>, function readValidatedTools: (api, "getAllTools">) => Result<PiToolInfo[], PiAdapterFailure>
+- `packages/adapters/pi/src/model-resolution.ts`
+  - class PiModelResolver
+  - class PiModelActivator
+  - interface PiModelApplyPort
+  - type PiModelResolutionSource
+  - type PiModelResolution
+  - type PiModelActivationOutcome
+- `packages/adapters/pi/src/port-safety.ts`
+  - function safelyAwaitPortResult: (call) => void
+  - function safelyListAvailableModels: (modelRegistry, "getAvailable">) => Result<readonly PiModelInfo[], string>
+  - const MODEL_REGISTRY_THREW_REASON
+- `packages/adapters/pi/src/primary-session.ts`
+  - function renderWeavePromptBlock: (descriptor) => string
+  - function appendWeaveBlockOnce: (systemPrompt, descriptor) => string
+  - class PiPrimarySession
+  - interface PiPrimaryCapabilityWarning
+  - interface PiActivePrimary
+  - interface PiPrimaryActivationContext
+  - _...3 more_
 - `packages/adapters/pi/src/safe-initializer.ts`
   - class PiSafeInitializer
   - interface PiPreflightResult
   - interface PiSafeInitializerDeps
+- `packages/adapters/pi/src/skill-catalog.ts` — function toEngineSkillInfo: (skill) => SkillInfo, class PiSkillCatalog
 - `packages/cli/src/args.ts`
   - function parseArgs: (argv) => Result<ParsedArgs, ArgParseError>
   - interface ParsedArgs

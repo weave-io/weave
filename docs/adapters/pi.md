@@ -6,7 +6,9 @@
 
 ## Current implementation
 
-The package foundation is implemented in [`packages/adapters/pi`](../../packages/adapters/pi). It registers inert command shells and session delegates, then uses exact host, TUI, trust, command-ownership, and capability probes to create a generation-scoped controller. Failed required probes or withheld trust keep the extension in health-only mode. Configuration projection, tool enforcement, delegation, workflows, packaging proof, and live TUI validation remain pending.
+The implemented package in [`packages/adapters/pi`](../../packages/adapters/pi) registers inert command shells and session delegates, then uses exact host, TUI, trust, command-ownership, candidate-plan, and capability probes to create a generation-scoped controller. Failed required probes or withheld trust keep the extension in health-only mode.
+
+For supported sessions, the adapter loads the permitted Weave config, consumes materialized descriptors in stable plan order, and prepares Loom as the ordinary primary. On the first `before_agent_start`, it uses Pi's loaded skill catalog and authenticated model registry to resolve Loom's exact skill and ordered model intent. It applies a resolved model through Pi, preserves model fallback as a visible degradation, and appends Loom's final `composedPrompt` once to Pi's existing prompt. Declared temperature remains ignored and appears as a deduplicated health warning. Tool enforcement, delegation, workflows, packaging proof, and live TUI validation remain pending.
 
 ## Compatibility
 

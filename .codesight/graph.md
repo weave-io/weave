@@ -14,6 +14,7 @@
 - `packages/cli/src/args.ts` — imported by **14** files
 - `packages/engine/src/tool-policy.ts` — imported by **14** files
 - `scripts/release/model.ts` — imported by **14** files
+- `packages/adapters/pi/src/types.ts` — imported by **13** files
 - `packages/engine/src/logger.ts` — imported by **13** files
 - `scripts/release/filesystem.ts` — imported by **13** files
 - `scripts/release/clock.ts` — imported by **13** files
@@ -21,7 +22,6 @@
 - `packages/engine/src/runtime/errors.ts` — imported by **12** files
 - `packages/engine/src/compose.ts` — imported by **11** files
 - `packages/engine/src/execution-lifecycle/metadata.ts` — imported by **11** files
-- `scripts/release/errors.ts` — imported by **11** files
 
 ## Import Map (who imports what)
 

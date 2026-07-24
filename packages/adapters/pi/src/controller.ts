@@ -67,7 +67,10 @@ export class PiExtensionController {
   constructor(private readonly deps: PiExtensionControllerDeps) {}
 
   activate(
-    session: Pick<PiSessionContext, "mode" | "isProjectTrusted">,
+    session: Pick<
+      PiSessionContext,
+      "mode" | "isProjectTrusted" | "cwd" | "modelRegistry"
+    >,
     commands: readonly PiCommandInfo[],
   ): ResultAsync<PiGeneration, PiAdapterFailure> {
     const id = this.deps.idGenerator.next();

@@ -11,6 +11,7 @@ import { FakeHostPackageReader } from "./fakes/fake-host-package-reader.js";
 import {
   FakeClock,
   FakeIdGenerator,
+  fakeConfigActivator,
   RecordingLogger,
 } from "./fakes/fake-pi-host.js";
 
@@ -54,6 +55,7 @@ function makeController(probes: readonly CapabilityProbeResult[]) {
       version: "0.81.1",
     }),
     capabilityProber: new FixedProber(probes),
+    configActivator: fakeConfigActivator(),
   });
   return new PiExtensionController({
     safeInitializer,
@@ -64,7 +66,12 @@ function makeController(probes: readonly CapabilityProbeResult[]) {
 }
 
 function trustedTuiSession() {
-  return { mode: "tui" as const, isProjectTrusted: () => true };
+  return {
+    mode: "tui" as const,
+    isProjectTrusted: () => true,
+    cwd: "/fake/project",
+    modelRegistry: { getAvailable: () => [] },
+  };
 }
 
 describe("PiExtensionController.activate", () => {

@@ -40,6 +40,8 @@
     "@earendil-works/pi-tui": { "optional": true }
   },
   "devDependencies": {
+    "@weaveio/weave-config": "workspace:*",
+    "@weaveio/weave-core": "workspace:*",
     "@weaveio/weave-engine": "workspace:*",
     "typescript": "^5.4.5"
   },

@@ -22,11 +22,119 @@ export const PROJECT_PATH_DEPENDENT_CAPABILITIES: readonly CapabilityId[] = [
   "plan-file-compatibility",
 ];
 
+/**
+ * Real, candidate-plan-derived facts for the four Spec 33 §7.2 steps 5-8
+ * capabilities (config activation, materialization, primary selection,
+ * prompt composition), computed once during preflight (Spec 33 §21) and
+ * threaded into probing so these capabilities reflect the actual outcome
+ * instead of a placeholder. Absent (`undefined`) only when preflight is
+ * blocked before config activation could safely run (Spec 33 §7.2 step 9,
+ * §28 "wrong mode/host/version -> health-only").
+ */
+export interface PiCandidatePlanContext {
+  readonly configLoaded: boolean;
+  readonly materializationErrorCount: number;
+  readonly primaryDescriptorFound: boolean;
+  readonly primaryModelDryResolved: boolean;
+}
+
 /** Input a capability prober needs; assembled after mode/host/trust are known. */
 export interface PiPreflightContext {
   readonly mode: PiMode;
   readonly trust: PiTrustState;
   readonly commands: readonly PiCommandInfo[];
+  readonly candidatePlan?: PiCandidatePlanContext;
+}
+
+const CANDIDATE_PLAN_CAPABILITIES: ReadonlySet<CapabilityId> = new Set([
+  "config-materialization",
+  "agent-materialization",
+  "primary-agent-selection",
+  "prompt-composition",
+]);
+
+/**
+ * Evaluates the four candidate-plan-aware capabilities against real
+ * materialization/primary-selection facts (Spec 33 §7.2, §21, §28). Never
+ * raises a declared ceiling - only reports what actually happened.
+ */
+function evaluateCandidatePlanCapability(
+  id: CapabilityId,
+  plan: PiCandidatePlanContext,
+): CapabilityProbeResult {
+  if (id === "config-materialization") {
+    return plan.configLoaded
+      ? { capabilityId: id, probeStatus: "ok", details: "config-loaded" }
+      : {
+          capabilityId: id,
+          probeStatus: "unavailable",
+          details: "config-load-failed",
+        };
+  }
+  if (id === "agent-materialization") {
+    if (!plan.configLoaded) {
+      return {
+        capabilityId: id,
+        probeStatus: "unavailable",
+        details: "config-not-loaded",
+      };
+    }
+    // `materializeAgents` never fails wholesale (Spec 33 §8.1): a failing
+    // descriptor is isolated and reported in `plan.errors`, but unrelated
+    // valid descriptors (Loom included) still materialize. A per-descriptor
+    // error is therefore reported here as detail, never as a degradation of
+    // this required, global capability (Spec 33 §28 "partial descriptor
+    // failures -> keep unrelated valid descriptors").
+    return {
+      capabilityId: id,
+      probeStatus: "ok",
+      details:
+        plan.materializationErrorCount > 0
+          ? `materialized (${plan.materializationErrorCount} isolated descriptor error(s))`
+          : "materialized",
+    };
+  }
+  if (id === "primary-agent-selection") {
+    if (!plan.configLoaded) {
+      return {
+        capabilityId: id,
+        probeStatus: "unavailable",
+        details: "config-not-loaded",
+      };
+    }
+    if (!plan.primaryDescriptorFound) {
+      return {
+        capabilityId: id,
+        probeStatus: "unavailable",
+        details: "no-eligible-primary",
+      };
+    }
+    // An unresolved model intent degrades that descriptor's *model* health
+    // (Spec 33 §9.2: retain the current authenticated Pi model, expose
+    // descriptor model degradation) - it does not make the primary
+    // unselectable. A valid, eligible primary remains selectable/usable
+    // under model fallback, so this required capability stays `ok`.
+    return {
+      capabilityId: id,
+      probeStatus: "ok",
+      details: plan.primaryModelDryResolved
+        ? "primary-selectable"
+        : "primary-selectable-model-fallback",
+    };
+  }
+  // prompt-composition
+  if (!plan.configLoaded || !plan.primaryDescriptorFound) {
+    return {
+      capabilityId: id,
+      probeStatus: "unavailable",
+      details: "no-composed-prompt-available",
+    };
+  }
+  return {
+    capabilityId: id,
+    probeStatus: "ok",
+    details: "composed-prompt-available",
+  };
 }
 
 /** Adapter-owned seam so tests can substitute a fully-controlled probe set (Spec 33 §24). */
@@ -125,6 +233,12 @@ export class DefaultPiCapabilityProber implements PiCapabilityProbeSource {
         probeStatus: "ok",
         details: "native-per-message-usage-fields",
       };
+    }
+    if (
+      context.candidatePlan !== undefined &&
+      CANDIDATE_PLAN_CAPABILITIES.has(id)
+    ) {
+      return evaluateCandidatePlanCapability(id, context.candidatePlan);
     }
     if (
       context.trust === "withheld" &&

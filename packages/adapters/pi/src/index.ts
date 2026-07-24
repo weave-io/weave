@@ -1,5 +1,6 @@
 export { PI_ADAPTER_CAPABILITY_CONTRACT } from "./capability-declarations.js";
 export type {
+  PiCandidatePlanContext,
   PiCapabilityProbeSource,
   PiPreflightContext,
 } from "./capability-prober.js";
@@ -20,6 +21,23 @@ export {
   parseNpmSourceName,
   WEAVE_COMMAND_NAMES,
 } from "./commands.js";
+export type {
+  PiConfigActivationInput,
+  PiConfigActivationResult,
+  PiConfigActivatorDeps,
+  PiConfigLoaderPort,
+  PiDescriptorCatalog,
+  PiMaterializerPort,
+} from "./config-activator.js";
+export {
+  buildDescriptorCatalog,
+  createTrustWithheldFileReader,
+  defaultPiConfigLoaderPort,
+  defaultPiFileReader,
+  defaultPiMaterializerPort,
+  logMaterializationErrors,
+  PiConfigActivator,
+} from "./config-activator.js";
 export type {
   PiCommandGateDecision,
   PiExtensionControllerDeps,
@@ -69,23 +87,49 @@ export {
 } from "./host-compatibility.js";
 export { readValidatedCommands, readValidatedTools } from "./host-inventory.js";
 export type {
+  PiModelActivationOutcome,
+  PiModelApplyPort,
+  PiModelInfo,
+  PiModelResolution,
+  PiModelResolutionSource,
+} from "./model-resolution.js";
+export { PiModelActivator, PiModelResolver } from "./model-resolution.js";
+export type {
+  PiActivePrimary,
+  PiPrimaryActivationContext,
+  PiPrimaryActivationError,
+  PiPrimaryCapabilityWarning,
+  PiPrimarySessionDeps,
+} from "./primary-session.js";
+export {
+  appendWeaveBlockOnce,
+  DEFAULT_PRIMARY_AGENT_NAME,
+  PiPrimarySession,
+  renderWeavePromptBlock,
+} from "./primary-session.js";
+export type {
   PiPreflightResult,
   PiSafeInitializerDeps,
 } from "./safe-initializer.js";
 export { PiSafeInitializer } from "./safe-initializer.js";
+export { PiSkillCatalog, toEngineSkillInfo } from "./skill-catalog.js";
 export type {
   Clock,
   IdGenerator,
   PiAdapterLogger,
+  PiBeforeAgentStartEvent,
+  PiBuildSystemPromptOptions,
   PiCommandHandler,
   PiCommandInfo,
   PiCommandRegistration,
   PiEventHandler,
   PiExtensionApi,
   PiMode,
+  PiModelRegistry,
   PiResourceOrigin,
   PiResourceScope,
   PiSessionContext,
+  PiSkillInfo,
   PiSourceInfo,
   PiToolInfo,
   PiTrustState,

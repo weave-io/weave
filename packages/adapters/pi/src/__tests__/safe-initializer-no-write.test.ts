@@ -51,6 +51,7 @@ describe("PiSafeInitializer.preflight call discipline", () => {
       "./fakes/fake-host-package-reader.js"
     );
     const { HOST_PACKAGE_NAME } = await import("../host-compatibility.js");
+    const { fakeConfigActivator } = await import("./fakes/fake-pi-host.js");
 
     const reader = FakeHostPackageReader.ok({
       name: HOST_PACKAGE_NAME,
@@ -59,9 +60,15 @@ describe("PiSafeInitializer.preflight call discipline", () => {
     const initializer = new PiSafeInitializer({
       hostPackageReader: reader,
       capabilityProber: new DefaultPiCapabilityProber(),
+      configActivator: fakeConfigActivator(),
     });
     await initializer.preflight(
-      { mode: "tui", isProjectTrusted: () => true },
+      {
+        mode: "tui",
+        isProjectTrusted: () => true,
+        cwd: "/fake/project",
+        modelRegistry: { getAvailable: () => [] },
+      },
       [],
     );
     expect(reader.callCount).toBe(1);

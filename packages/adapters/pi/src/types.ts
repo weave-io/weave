@@ -53,6 +53,44 @@ export interface PiToolInfo {
   readonly sourceInfo: PiSourceInfo;
 }
 
+/**
+ * One entry from Pi's authenticated model catalog
+ * (`ctx.modelRegistry.getAvailable()`) or the currently active model
+ * (`ctx.model`).
+ */
+export interface PiModelInfo {
+  readonly provider: string;
+  readonly id: string;
+  readonly name?: string;
+}
+
+/** Narrow projection of `ctx.modelRegistry`: authenticated-model discovery only. */
+export interface PiModelRegistry {
+  getAvailable(): readonly PiModelInfo[];
+}
+
+/**
+ * One entry from `before_agent_start`'s `event.systemPromptOptions.skills`
+ * (also `ctx.getSystemPromptOptions().skills` in command contexts): Pi's
+ * own already-discovered, already-trusted skill catalog for this turn.
+ */
+export interface PiSkillInfo {
+  readonly name: string;
+  readonly filePath?: string;
+  readonly sourceInfo?: PiSourceInfo;
+}
+
+/** The subset of Pi's `BuildSystemPromptOptions` this adapter reads. */
+export interface PiBuildSystemPromptOptions {
+  readonly skills?: readonly PiSkillInfo[];
+}
+
+/** The subset of the `before_agent_start` event payload this adapter reads. */
+export interface PiBeforeAgentStartEvent {
+  readonly systemPrompt?: string;
+  readonly systemPromptOptions?: PiBuildSystemPromptOptions;
+}
+
 /** Notification severity accepted by `ctx.ui.notify`. */
 export type PiUiNotifyLevel = "info" | "warning" | "error";
 
@@ -73,6 +111,10 @@ export interface PiSessionContext {
   readonly cwd: string;
   isProjectTrusted(): boolean;
   readonly ui: PiUiPort;
+  /** The currently active model, if any (`ctx.model`). */
+  readonly model: PiModelInfo | undefined;
+  /** Authenticated-model discovery (`ctx.modelRegistry`). */
+  readonly modelRegistry: PiModelRegistry;
 }
 
 /** A registered command handler. Receives raw argument text and the live session context. */
@@ -101,6 +143,15 @@ export interface PiExtensionApi {
   getCommands(): readonly PiCommandInfo[];
   getAllTools(): readonly PiToolInfo[];
   on(event: string, handler: PiEventHandler): void;
+  /**
+   * Applies a model selection (`ExtensionAPI.setModel`). May reject/throw for
+   * an invalid or unauthenticated model. May also *resolve* to `false`
+   * without throwing (e.g. the host declined the selection) - callers MUST
+   * treat a resolved `false` as a failed application, not as success.
+   */
+  setModel(
+    model: PiModelInfo,
+  ): boolean | undefined | Promise<boolean | undefined>;
 }
 
 /** Injected monotonic-enough clock port. */

@@ -55,6 +55,8 @@
         "zod": "^4.4.3",
       },
       "devDependencies": {
+        "@weaveio/weave-config": "workspace:*",
+        "@weaveio/weave-core": "workspace:*",
         "@weaveio/weave-engine": "workspace:*",
         "typescript": "^5.4.5",
       },

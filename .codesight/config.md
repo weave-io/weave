@@ -6,7 +6,7 @@
 - `BASE_URL` **required** — packages/docs/src/data/docs-search.ts
 - `GITHUB_OUTPUT` **required** — scripts/release/stable-finalize.ts
 - `GITHUB_TOKEN` **required** — scripts/release/bind-artifacts.ts
-- `HOME` **required** — packages/cli/src/detect/probes.ts
+- `HOME` **required** — packages/adapters/pi/src/__tests__/config-activator.test.ts
 - `LOG_LEVEL` **required** — packages/config/src/logger.ts
 - `PATH` **required** — scripts/release/__tests__/release-orchestrator.test.ts
 - `PWD` **required** — packages/adapters/opencode/dist-types/adapter.d.ts

@@ -1,4 +1,11 @@
+import type { MaterializationPlan } from "@weaveio/weave-engine";
+import { okAsync } from "neverthrow";
 import { ADAPTER_PACKAGE_IDENTITY } from "../../commands.js";
+import type {
+  PiConfigLoaderPort,
+  PiMaterializerPort,
+} from "../../config-activator.js";
+import { PiConfigActivator } from "../../config-activator.js";
 import type {
   Clock,
   IdGenerator,
@@ -8,7 +15,10 @@ import type {
   PiEventHandler,
   PiExtensionApi,
   PiMode,
+  PiModelInfo,
+  PiModelRegistry,
   PiSessionContext,
+  PiSkillInfo,
   PiSourceInfo,
   PiToolInfo,
   PiUiNotifyLevel,
@@ -45,6 +55,8 @@ export interface FakePiHostOptions {
   readonly trusted?: boolean;
   readonly cwd?: string;
   readonly installPath?: string;
+  readonly currentModel?: PiModelInfo;
+  readonly availableModels?: readonly PiModelInfo[];
 }
 
 /**
@@ -64,21 +76,39 @@ export class RecordingFakePiHost {
   readonly statusCalls: RecordedStatus[] = [];
   readonly widgetCalls: RecordedWidget[] = [];
 
+  /**
+   * Records every model `setModel` was *invoked* with, regardless of
+   * outcome - applied, declined (`false`), still-pending (`deferNextSetModel`),
+   * or about to throw (`poisonSetModel`). Use `currentModel` to observe
+   * whether an invocation actually took effect.
+   */
+  readonly setModelCalls: PiModelInfo[] = [];
+
   private mode: PiMode;
   private trusted: boolean;
   private readonly cwd: string;
   private readonly installPath: string;
   private commandsInventory: PiCommandInfo[] = [];
   private toolsInventory: PiToolInfo[] = [];
+  private currentModel: PiModelInfo | undefined;
+  private availableModels: readonly PiModelInfo[];
   private readonly handlers = new Map<string, PiEventHandler[]>();
   private getCommandsOverride: (() => readonly PiCommandInfo[]) | undefined;
   private getAllToolsOverride: (() => readonly PiToolInfo[]) | undefined;
+  private setModelOverride:
+    | ((model: PiModelInfo) => boolean | Promise<boolean>)
+    | undefined;
+  private getAvailableModelsOverride:
+    | (() => readonly PiModelInfo[])
+    | undefined;
 
   constructor(options: FakePiHostOptions = {}) {
     this.mode = options.mode ?? "tui";
     this.trusted = options.trusted ?? true;
     this.cwd = options.cwd ?? "/fake/project";
     this.installPath = options.installPath ?? "/fake/node_modules";
+    this.currentModel = options.currentModel;
+    this.availableModels = options.availableModels ?? [];
   }
 
   /** The object handed to an extension's default factory. */
@@ -107,6 +137,14 @@ export class RecordingFakePiHost {
       const existing = this.handlers.get(event) ?? [];
       existing.push(handler);
       this.handlers.set(event, existing);
+    },
+    setModel: (model) => {
+      this.setModelCalls.push(model);
+      if (this.setModelOverride !== undefined) {
+        return this.setModelOverride(model);
+      }
+      this.currentModel = model;
+      return true;
     },
   };
 
@@ -164,6 +202,62 @@ export class RecordingFakePiHost {
     this.toolsInventory.push(tool);
   }
 
+  setModels(models: readonly PiModelInfo[]): void {
+    this.availableModels = models;
+  }
+
+  setCurrentModel(model: PiModelInfo | undefined): void {
+    this.currentModel = model;
+  }
+
+  /** The model currently applied on the host, for test observability. */
+  getCurrentModel(): PiModelInfo | undefined {
+    return this.currentModel;
+  }
+
+  /** Makes the next `modelRegistry.getAvailable()` call throw. */
+  poisonGetAvailableModels(): void {
+    this.getAvailableModelsOverride = () => {
+      // Deliberately sensitive-looking content: proves callers never
+      // surface a thrown message's content into logs or failures.
+      throw new Error(
+        "leaked: /Users/attacker/.ssh/id_rsa token=sk-super-secret-123",
+      );
+    };
+  }
+
+  /** Makes the next `setModel()` call throw, simulating a host that rejects the selection with an exception. */
+  poisonSetModel(): void {
+    this.setModelOverride = () => {
+      throw new Error("simulated host failure: setModel");
+    };
+  }
+
+  /**
+   * Makes the next `setModel()` call resolve to `false` *without* throwing,
+   * simulating a host that declines the selection silently (distinct from
+   * `poisonSetModel()`'s thrown-exception case).
+   */
+  declineNextSetModel(): void {
+    this.setModelOverride = () => false;
+  }
+
+  /**
+   * Makes the next `setModel()` call return a pending promise that only
+   * settles once `settle()` is invoked, letting tests exercise a session
+   * replacement while a model application is still in flight.
+   */
+  deferNextSetModel(): { settle: (succeeded: boolean) => void } {
+    let resolveFn!: (value: boolean) => void;
+    const promise = new Promise<boolean>((resolve) => {
+      resolveFn = resolve;
+    });
+    this.setModelOverride = () => promise;
+    return {
+      settle: (succeeded: boolean) => resolveFn(succeeded),
+    };
+  }
+
   /** Makes the next `getCommands()` calls throw, simulating a broken host. */
   poisonGetCommands(): void {
     this.getCommandsOverride = () => {
@@ -188,6 +282,15 @@ export class RecordingFakePiHost {
     const mode = this.mode;
     const trusted = this.trusted;
     const cwd = this.cwd;
+    const model = this.currentModel;
+    const modelRegistry: PiModelRegistry = {
+      getAvailable: () => {
+        if (this.getAvailableModelsOverride !== undefined) {
+          return this.getAvailableModelsOverride();
+        }
+        return this.availableModels;
+      },
+    };
     const ui: PiUiPort = {
       notify: (message, level) => {
         this.notifyCalls.push({ message, level });
@@ -204,6 +307,8 @@ export class RecordingFakePiHost {
       cwd,
       isProjectTrusted: () => trusted,
       ui,
+      model,
+      modelRegistry,
     };
   }
 
@@ -224,6 +329,38 @@ export class RecordingFakePiHost {
       await handler({ reason: "shutdown" }, ctx);
     }
     return ctx;
+  }
+
+  /**
+   * Fires every registered `before_agent_start` handler in registration
+   * order, chaining each handler's returned `systemPrompt` (if any) into the
+   * next handler's `event.systemPrompt`, mirroring Pi's own chaining
+   * behavior (docs/extensions.md). Returns the final chained value.
+   */
+  async triggerBeforeAgentStart(
+    event: Record<string, unknown> = {},
+    skills: readonly PiSkillInfo[] = [],
+  ): Promise<{ systemPrompt: string | undefined; results: unknown[] }> {
+    const ctx = this.createSessionContext();
+    const handlers = this.handlers.get("before_agent_start") ?? [];
+    let systemPrompt = event.systemPrompt as string | undefined;
+    const results: unknown[] = [];
+    for (const handler of handlers) {
+      const result = await handler(
+        { ...event, systemPrompt, systemPromptOptions: { skills } },
+        ctx,
+      );
+      results.push(result);
+      if (
+        typeof result === "object" &&
+        result !== null &&
+        "systemPrompt" in result &&
+        typeof (result as { systemPrompt?: unknown }).systemPrompt === "string"
+      ) {
+        systemPrompt = (result as { systemPrompt: string }).systemPrompt;
+      }
+    }
+    return { systemPrompt, results };
   }
 
   /** Invokes a registered command handler by name with a fresh context, returning the context used. */
@@ -255,6 +392,25 @@ export class FakeClock implements Clock {
   advance(ms: number): void {
     this.current += ms;
   }
+}
+
+/**
+ * A fully in-memory `PiConfigActivator` whose `configLoader`/`materializer`
+ * ports are directly injected fixtures - it never touches `Bun.file()`,
+ * the network, or a real developer config, matching AGENTS.md's testing
+ * rules for adapter/harness-crossing modules.
+ */
+export function fakeConfigActivator(
+  plan: MaterializationPlan = { agents: [], errors: [] },
+): PiConfigActivator {
+  const configLoader: PiConfigLoaderPort = {
+    load: () =>
+      okAsync({ agents: {}, disabled: { agents: [], skills: [] } } as never),
+  };
+  const materializer: PiMaterializerPort = {
+    materialize: () => okAsync(plan),
+  };
+  return new PiConfigActivator({ configLoader, materializer });
 }
 
 export class RecordingLogger implements PiAdapterLogger {
