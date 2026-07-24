@@ -4,8 +4,8 @@
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
 > 0 routes | 0 models | 0 components | 220 lib files | 33 env vars | 9 middleware | 0% test coverage
-> **Token savings:** this file is ~21,500 tokens. Without it, AI exploration would cost ~72,900 tokens. **Saves ~51,500 tokens per conversation.**
-> **Last scanned:** 2026-07-24 19:12 — re-run after significant changes
+> **Token savings:** this file is ~21,500 tokens. Without it, AI exploration would cost ~72,900 tokens. **Saves ~51,400 tokens per conversation.**
+> **Last scanned:** 2026-07-24 21:18 — re-run after significant changes
 
 ---
 
@@ -92,13 +92,13 @@
   - interface PiCapabilityProbeSource
   - _...1 more_
 - `packages/adapters/pi/src/child-control-bodies.ts`
+  - function toModelIdentityBody: (model) => PiModelIdentityBody
   - function parseControlBody: (kind, body) => void
+  - interface HostModelIdentity
   - type PiBootstrapBody
   - type PiOrdinaryBootstrapBody
   - type PiDirectStepBootstrapBody
-  - type PiBootstrapAckBody
-  - type PiModelIdentityBody
-  - _...13 more_
+  - _...15 more_
 - `packages/adapters/pi/src/child-crypto.ts`
   - function bytesToHex: (bytes) => string
   - function hexToBytes: (hex) => Uint8Array | undefined
@@ -108,13 +108,13 @@
   - class WebCryptoRandomPort
   - _...5 more_
 - `packages/adapters/pi/src/child-env.ts`
+  - function resolveCurrentPiExecutablePath: (envPort) => string | undefined
+  - function buildDefaultPiChildCommand: (envPort) => readonly string[]
   - function sanitizedBaseEnv: (isDeniedKey) => void
   - class BunEnvPort
   - const WEAVE_CHILD_SECRET_ENV
   - const WEAVE_CHILD_ID_ENV
-  - const WEAVE_CONTROLLER_GENERATION_ENV
-  - const WEAVE_CHILD_AGENT_NAME_ENV
-  - _...2 more_
+  - _...5 more_
 - `packages/adapters/pi/src/child-envelope.ts`
   - function signEnvelope: (input, secret, hmac) => ResultAsync<PiControlEnvelope, EnvelopeError>
   - function verifyEnvelope: (candidate, secret, hmac) => ResultAsync<PiControlEnvelope, EnvelopeError>
@@ -1229,7 +1229,7 @@
 
 - `packages/cli/src/evals/types.ts` — imported by **39** files
 - `packages/engine/src/runtime/types.ts` — imported by **29** files
-- `packages/adapters/pi/src/types.ts` — imported by **27** files
+- `packages/adapters/pi/src/types.ts` — imported by **28** files
 - `packages/cli/src/theme/colors.ts` — imported by **20** files
 - `packages/cli/src/io/terminal.ts` — imported by **18** files
 - `packages/cli/src/evals/openrouter-client.ts` — imported by **18** files
@@ -1252,7 +1252,7 @@
 
 - `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/dashboard-indexes.test.ts`, `packages/cli/src/evals/__tests__/github-contents-publisher.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts` +34 more
 - `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts` +24 more
-- `packages/adapters/pi/src/types.ts` ← `packages/adapters/pi/src/__tests__/capability-prober.test.ts`, `packages/adapters/pi/src/__tests__/child-runtime.test.ts`, `packages/adapters/pi/src/__tests__/controller.test.ts`, `packages/adapters/pi/src/__tests__/delegation-tool.test.ts`, `packages/adapters/pi/src/__tests__/extension-tool-governance.test.ts` +22 more
+- `packages/adapters/pi/src/types.ts` ← `packages/adapters/pi/src/__tests__/capability-prober.test.ts`, `packages/adapters/pi/src/__tests__/child-env.test.ts`, `packages/adapters/pi/src/__tests__/child-runtime.test.ts`, `packages/adapters/pi/src/__tests__/controller.test.ts`, `packages/adapters/pi/src/__tests__/delegation-tool.test.ts` +23 more
 - `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts` +15 more
 - `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts` +13 more
 - `packages/cli/src/evals/openrouter-client.ts` ← `packages/cli/src/evals/__tests__/loom-routing-runner.test.ts`, `packages/cli/src/evals/__tests__/pattern-planning-runner.test.ts`, `packages/cli/src/evals/__tests__/runner.test.ts`, `packages/cli/src/evals/__tests__/shuttle-execution-runner.test.ts`, `packages/cli/src/evals/__tests__/spindle-tools-runner.test.ts` +13 more

@@ -92,6 +92,40 @@ const ModelIdentityBodySchema = z
   .strict();
 
 /**
+ * A minimal host-supplied model identity: exactly the fields
+ * {@link ModelIdentityBodySchema} accepts. Any real harness model object
+ * (`ctx.model`, an entry from `ctx.modelRegistry.getAvailable()`, or a
+ * `PiModelResolver` match drawn from either) may legitimately carry
+ * additional runtime fields beyond `provider`/`id`/`name` - context window
+ * sizes, pricing, capability flags, etc. - since `PiModelInfo` is a
+ * structural TypeScript interface, not a runtime guarantee that no other
+ * field exists on the object.
+ */
+export interface HostModelIdentity {
+  readonly provider: string;
+  readonly id: string;
+  readonly name?: string;
+}
+
+/**
+ * Projects a host-supplied model object down to exactly the fields
+ * {@link ModelIdentityBodySchema}'s `.strict()` shape allows (Spec 33
+ * §11.2 finding 2). Every call site that places a resolved/applied model
+ * identity into a `bootstrap` or `bootstrap-ack` control body MUST route
+ * it through this function first - passing the raw host object directly
+ * fails closed at `parseControlBody`/`runTask`'s own re-validation
+ * (`bootstrap-body-invalid`) the instant the host object carries any
+ * field beyond `provider`/`id`/`name`.
+ */
+export function toModelIdentityBody(
+  model: HostModelIdentity,
+): PiModelIdentityBody {
+  return model.name === undefined
+    ? { provider: model.provider, id: model.id }
+    : { provider: model.provider, id: model.id, name: model.name };
+}
+
+/**
  * The bounded, non-secret delegation context carried in `bootstrap` (Spec
  * 33 §11.2 Task 9): who is delegating, at what depth, and in what project
  * directory. Every field here is operational metadata already visible

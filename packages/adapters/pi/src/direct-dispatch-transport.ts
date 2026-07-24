@@ -9,6 +9,7 @@
  */
 import type { DelegationTarget } from "@weaveio/weave-engine";
 import type { ResultAsync } from "neverthrow";
+import { toModelIdentityBody } from "./child-control-bodies.js";
 import type { HmacPort, RandomPort } from "./child-crypto.js";
 import type { PiChildProcessPort } from "./child-process-port.js";
 import { WEAVE_DELEGATION_TOOL_NAME } from "./delegation-tool.js";
@@ -162,7 +163,14 @@ export function createDirectDispatchTransport(
       input.models,
       deps.availableModels ?? [],
     );
-    const resolvedModel = resolution.resolved ? resolution.model : undefined;
+    // The matched entry is drawn straight from `deps.availableModels` (the
+    // host's own catalog snapshot) and may carry fields beyond
+    // provider/id/name; project it down before it ever reaches this
+    // bootstrap's `ModelIdentityBodySchema`-validated field (Spec 33 §11.2
+    // finding 2).
+    const resolvedModel = resolution.resolved
+      ? toModelIdentityBody(resolution.model)
+      : undefined;
 
     const bootstrap: PiDirectStepBootstrap = {
       mode: "direct-step",

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "bun:test";
-import { parseControlBody } from "../child-control-bodies.js";
+import {
+  parseControlBody,
+  toModelIdentityBody,
+} from "../child-control-bodies.js";
 import { MAX_CONTROL_BODY_BYTES } from "../child-envelope.js";
 import { MAX_TASK_INPUT_CHARS } from "../delegation-limits.js";
 
@@ -86,6 +89,96 @@ describe("DelegateRequestBodySchema.task bound (Spec 33 \u00a711.2 Task 9 unific
     const result = parseControlBody("delegate-request", {
       agentName: "shuttle",
       task: "",
+    });
+    expect(result.ok).toBe(false);
+  });
+});
+
+// Spec 33 §11.2 finding 2: a real host-supplied model object (`ctx.model`,
+// an entry from `ctx.modelRegistry.getAvailable()`, or a `PiModelResolver`
+// match drawn from either) may carry fields beyond provider/id/name -
+// `ModelIdentityBodySchema` is `.strict()` and rejects any such body
+// outright, which previously surfaced as `runTask`'s
+// `bootstrap-body-invalid` failure the instant a real host model object
+// carried an extra field.
+describe("toModelIdentityBody", () => {
+  it("projects a host model object down to exactly provider/id/name", () => {
+    const projected = toModelIdentityBody({
+      provider: "anthropic",
+      id: "claude-sonnet-4-5",
+      name: "Claude Sonnet 4.5",
+    });
+    expect(projected).toEqual({
+      provider: "anthropic",
+      id: "claude-sonnet-4-5",
+      name: "Claude Sonnet 4.5",
+    });
+  });
+
+  it("drops every host extra field beyond provider/id/name", () => {
+    const hostModel = {
+      provider: "anthropic",
+      id: "claude-sonnet-4-5",
+      name: "Claude Sonnet 4.5",
+      contextWindow: 200000,
+      pricing: { input: 3, output: 15 },
+      capabilities: ["vision", "tools"],
+    };
+    const projected = toModelIdentityBody(hostModel);
+    expect(Object.keys(projected).sort()).toEqual(["id", "name", "provider"]);
+    expect(projected).not.toHaveProperty("contextWindow");
+    expect(projected).not.toHaveProperty("pricing");
+    expect(projected).not.toHaveProperty("capabilities");
+  });
+
+  it("omits the optional name key entirely when absent (never emits an undefined-valued key)", () => {
+    const hostModel = {
+      provider: "anthropic",
+      id: "claude-sonnet-4-5",
+      contextWindow: 200000,
+    };
+    const projected = toModelIdentityBody(hostModel);
+    expect(Object.keys(projected).sort()).toEqual(["id", "provider"]);
+    expect("name" in projected).toBe(false);
+  });
+
+  it("produces a value that passes ModelIdentityBodySchema's strict validation inside a bootstrap body", () => {
+    const hostModel = {
+      provider: "anthropic",
+      id: "claude-sonnet-4-5",
+      name: "Claude Sonnet 4.5",
+      contextWindow: 200000,
+      pricing: { input: 3, output: 15 },
+    };
+    const result = parseControlBody("bootstrap", {
+      mode: "ordinary",
+      agentName: "shuttle",
+      composedPrompt: "hi",
+      models: [],
+      correlationId: "child-1",
+      context: { parentAgentName: "loom", parentDepth: 0, cwd: "/project" },
+      activeTools: [],
+      resolvedModel: toModelIdentityBody(hostModel),
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it("proves the raw host object (unprojected) is exactly what previously failed bootstrap-body-invalid", () => {
+    const hostModel = {
+      provider: "anthropic",
+      id: "claude-sonnet-4-5",
+      name: "Claude Sonnet 4.5",
+      contextWindow: 200000,
+    };
+    const result = parseControlBody("bootstrap", {
+      mode: "ordinary",
+      agentName: "shuttle",
+      composedPrompt: "hi",
+      models: [],
+      correlationId: "child-1",
+      context: { parentAgentName: "loom", parentDepth: 0, cwd: "/project" },
+      activeTools: [],
+      resolvedModel: hostModel,
     });
     expect(result.ok).toBe(false);
   });

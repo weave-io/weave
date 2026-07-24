@@ -19,6 +19,7 @@ import {
 import {
   type PiApprovalRequestBody,
   parseControlBody,
+  toModelIdentityBody,
 } from "./child-control-bodies.js";
 import {
   type HmacPort,
@@ -28,6 +29,7 @@ import {
 } from "./child-crypto.js";
 import {
   BunEnvPort,
+  buildDefaultPiChildCommand,
   sanitizedBaseEnv,
   WEAVE_CHILD_SECRET_ENV,
 } from "./child-env.js";
@@ -179,6 +181,16 @@ export interface PiExtensionDeps {
   readonly randomPort: RandomPort;
   readonly hmacPort: HmacPort;
   readonly processPort: PiChildProcessPort;
+  /**
+   * The private RPC child's default spawn command (Spec 33 §11.2 finding
+   * 1): the exact executable that launched this host process, never a bare
+   * `"pi"` a spawner would have to re-resolve via `PATH` (which can
+   * silently select an unrelated, PATH-shadowing `pi` install). Production
+   * wiring MUST derive this via `buildDefaultPiChildCommand(envPort)`;
+   * tests MUST override with a fixed command, independent of both `PATH`
+   * and the real launching executable.
+   */
+  readonly childCommand: readonly string[];
   readonly childOutputPort: PiChildOutputPort;
   /**
    * Opens the engine's Runtime Store (Spec 33 §18) - injected so no test
@@ -254,6 +266,7 @@ class SystemClock implements Clock {
 /** Production dependency set. No I/O happens here - everything is deferred to `session_start`. */
 export function createDefaultPiExtensionDeps(): PiExtensionDeps {
   const log = logger.child({ module: "adapter-pi" });
+  const envPort = new BunEnvPort();
   return {
     hostPackageReader: new BunHostPackageReader(),
     capabilityProber: new DefaultPiCapabilityProber(),
@@ -262,10 +275,11 @@ export function createDefaultPiExtensionDeps(): PiExtensionDeps {
     logger: log,
     configActivator: new PiConfigActivator(),
     permissionBridge: new PiPermissionBridge({ logger: log }),
-    envPort: new BunEnvPort(),
+    envPort,
     randomPort: new WebCryptoRandomPort(),
     hmacPort: new WebCryptoHmacPort(),
     processPort: new BunPiChildProcessPort(),
+    childCommand: buildDefaultPiChildCommand(envPort),
     childOutputPort: new StdoutChildOutputPort(),
     runtimeStoreFactory: new SqliteRuntimeStoreFactory(),
     pathContainmentPort: new BunPathContainmentPort(),
@@ -453,7 +467,14 @@ function buildChildBootstrapBody(
       full?.models ?? [],
       availableModels,
     );
-    return resolution.resolved ? resolution.model : undefined;
+    // The matched entry is drawn straight from the host's own
+    // `ctx.modelRegistry.getAvailable()` results and may carry fields
+    // beyond provider/id/name; project it down before it ever reaches a
+    // `ModelIdentityBodySchema`-validated control body (Spec 33 §11.2
+    // finding 2).
+    return resolution.resolved
+      ? toModelIdentityBody(resolution.model)
+      : undefined;
   })();
   const bootstrap: PiChildBootstrapBody = {
     mode: "ordinary",
@@ -817,8 +838,17 @@ async function applyChildBootstrap(
       runtime.dispose();
       return;
     }
-    appliedModel =
+    // Both `outcome.model` (a `PiModelResolver` match) and
+    // `outcome.currentModel` (`ctx.model`, forwarded through unchanged on a
+    // degraded outcome) are raw host objects that may carry fields beyond
+    // provider/id/name; project before this ever reaches the ack body's
+    // `ModelIdentityBodySchema`-validated field (Spec 33 §11.2 finding 2).
+    const rawAppliedModel =
       outcome.status === "applied" ? outcome.model : outcome.currentModel;
+    appliedModel =
+      rawAppliedModel === undefined
+        ? undefined
+        : toModelIdentityBody(rawAppliedModel);
   }
 
   // Only now - descriptor prompt recorded for append, tool policy planned/
@@ -2079,6 +2109,10 @@ export function createPiExtension(
           processPort: deps.processPort,
           randomPort: deps.randomPort,
           hmacPort: deps.hmacPort,
+          // The exact executable that launched this host, never a bare
+          // "pi" a spawner would have to re-resolve via `PATH` (Spec 33
+          // §11.2 finding 1).
+          command: deps.childCommand,
           // Preserves ordinary runtime necessities (PATH/HOME/etc.) for the
           // spawned `pi` process, while never forwarding secrets/credentials
           // or this adapter's own private child-bootstrap variables.
@@ -2196,6 +2230,10 @@ export function createPiExtension(
                   hmacPort: deps.hmacPort,
                   logger: deps.logger,
                   idGenerator: deps.idGenerator,
+                  // The exact executable that launched this host, never a
+                  // bare "pi" a spawner would have to re-resolve via `PATH`
+                  // (Spec 33 §11.2 finding 1).
+                  command: deps.childCommand,
                   baseEnv: sanitizedBaseEnv(isDeniedKey),
                   registry: directStepChildRegistry,
                   availableModels: safelyListAvailableModels(

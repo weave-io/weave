@@ -81,13 +81,13 @@
   - interface PiCapabilityProbeSource
   - _...1 more_
 - `packages/adapters/pi/src/child-control-bodies.ts`
+  - function toModelIdentityBody: (model) => PiModelIdentityBody
   - function parseControlBody: (kind, body) => void
+  - interface HostModelIdentity
   - type PiBootstrapBody
   - type PiOrdinaryBootstrapBody
   - type PiDirectStepBootstrapBody
-  - type PiBootstrapAckBody
-  - type PiModelIdentityBody
-  - _...13 more_
+  - _...15 more_
 - `packages/adapters/pi/src/child-crypto.ts`
   - function bytesToHex: (bytes) => string
   - function hexToBytes: (hex) => Uint8Array | undefined
@@ -97,13 +97,13 @@
   - class WebCryptoRandomPort
   - _...5 more_
 - `packages/adapters/pi/src/child-env.ts`
+  - function resolveCurrentPiExecutablePath: (envPort) => string | undefined
+  - function buildDefaultPiChildCommand: (envPort) => readonly string[]
   - function sanitizedBaseEnv: (isDeniedKey) => void
   - class BunEnvPort
   - const WEAVE_CHILD_SECRET_ENV
   - const WEAVE_CHILD_ID_ENV
-  - const WEAVE_CONTROLLER_GENERATION_ENV
-  - const WEAVE_CHILD_AGENT_NAME_ENV
-  - _...2 more_
+  - _...5 more_
 - `packages/adapters/pi/src/child-envelope.ts`
   - function signEnvelope: (input, secret, hmac) => ResultAsync<PiControlEnvelope, EnvelopeError>
   - function verifyEnvelope: (candidate, secret, hmac) => ResultAsync<PiControlEnvelope, EnvelopeError>

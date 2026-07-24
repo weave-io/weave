@@ -335,7 +335,9 @@ Each delegated or directly dispatched agent runs as ephemeral:
 pi --mode rpc --no-session
 ```
 
-The adapter MUST pass the child's descriptor prompt, resolved model, active tool set, permission bridge, correlation, and bounded context. It MUST stream events, account usage, propagate abort, and clean all descendants.
+`pi` here MUST be resolved through an injectable, Bun-compatible executable seam, never hardcoded inline at the spawn call site. Production MUST prefer the exact executable that launched the current Pi host process (read from the invoking shell's own `_` environment variable via the adapter's `PiEnvPort`) over a bare command name, because a bare-name spawn lets `PATH` order silently select an unrelated `pi` install (e.g. a different toolchain's shim) shadowing the real host, whose runtime then fails packed-extension import (`Cannot find module 'bun:ffi'`). The seam falls back to the bare command name - not yet a hard failure - only when `_` is absent, empty, or not an absolute path, so this is a best-effort mitigation, not a guarantee that a PATH-shadowed child can never be spawned in that fallback case. Tests MUST override the seam with a fixed command so `PATH` shadowing can never change what a test observes as the spawned command.
+
+The adapter MUST pass the child's descriptor prompt, resolved model, active tool set, permission bridge, correlation, and bounded context. It MUST stream events, account usage, propagate abort, and clean all descendants. Any resolved or applied model identity placed in a bootstrap or bootstrap-ack control body MUST be projected down to exactly `provider`/`id`/optional `name` first — a host-supplied model object may carry additional runtime fields (context window, pricing, capability flags, etc.), and the strict schema for that field rejects any body carrying such an extra field outright.
 
 The public adapter remains TUI-only. Child mode activates only after the controller handshake marker succeeds. User-started RPC sessions do not activate Weave child behavior.
 
