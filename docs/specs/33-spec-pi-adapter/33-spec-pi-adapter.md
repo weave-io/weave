@@ -650,7 +650,7 @@ Each generation MUST return exactly one sanitized probe for all 19 IDs. `ok` pre
 
 Any required effective degraded/unsupported result enters health-only mode. Optional gaps warn. Health-only mode disables start, run, advance, resume, dispatch, approval, and delegation; it preserves health, status, idempotent abort, and cleanup.
 
-Read-only probes cover host/mode, trust/config readability, required APIs/events/commands, descriptor inputs, model/auth, skills, complete discovered Pi-native/Weave-owned tool inventory with sealed registration and interception coverage, child executable/extension presence without spawning, existing Runtime Store metadata without create/migration/write, plan prerequisites, usage fields, and optional dependencies. Discovering any governed tool without one authoritative resolver and unavoidable interception lowers tool-policy capability to unavailable.
+Read-only probes cover host/mode, trust/config readability, required APIs/events/commands, descriptor inputs, model/auth, skills, complete discovered Pi-native/Weave-owned tool inventory with sealed registration and interception coverage, child executable/extension presence without spawning, existing Runtime Store metadata without create/migration/write, plan prerequisites, usage fields, and optional dependencies. Candidate-plan probes may preserve delegated-specialist execution only when the sealed plan contains the governed `weave_delegate` registration. They may preserve event logging only when trusted Runtime Store containment proves the journal and rotating-log prerequisites before activation. Discovering any governed tool without one authoritative resolver and unavoidable interception lowers tool-policy capability to unavailable.
 
 ## 22. Host compatibility
 

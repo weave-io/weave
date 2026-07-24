@@ -229,7 +229,36 @@ describe("DefaultPiCapabilityProber", () => {
     expect(promptComposition?.details).toBe("not-yet-implemented");
   });
 
-  it("reports workflow-persistence, workflow-step-dispatch, and plan-file-compatibility as ok once config has loaded", () => {
+  it("reports sealed delegation, event logging, workflow, and plan capabilities as ok", () => {
+    const probes = prober.probe({
+      mode: "tui",
+      trust: "trusted",
+      commands: ALL_OWNED_COMMANDS,
+      candidatePlan: {
+        configLoaded: true,
+        materializationErrorCount: 0,
+        primaryDescriptorFound: true,
+        primaryModelDryResolved: true,
+        delegationToolPlanned: true,
+        eventLoggingPlanned: true,
+        toolPolicyCoverage: "ok",
+        runtimeDirectoryContained: true,
+        plansDirectoryContained: true,
+      },
+    });
+    for (const id of [
+      "delegated-specialist-execution",
+      "event-logging",
+      "workflow-persistence",
+      "workflow-step-dispatch",
+      "plan-file-compatibility",
+    ] as const) {
+      const entry = probes.find((probe) => probe.capabilityId === id);
+      expect(entry?.probeStatus).toBe("ok");
+    }
+  });
+
+  it("keeps delegation and event logging unavailable without their candidate-plan proofs", () => {
     const probes = prober.probe({
       mode: "tui",
       trust: "trusted",
@@ -244,14 +273,15 @@ describe("DefaultPiCapabilityProber", () => {
         plansDirectoryContained: true,
       },
     });
-    for (const id of [
-      "workflow-persistence",
-      "workflow-step-dispatch",
-      "plan-file-compatibility",
-    ] as const) {
-      const entry = probes.find((probe) => probe.capabilityId === id);
-      expect(entry?.probeStatus).toBe("ok");
-    }
+    expect(
+      probes.find(
+        (probe) => probe.capabilityId === "delegated-specialist-execution",
+      )?.probeStatus,
+    ).toBe("unavailable");
+    expect(
+      probes.find((probe) => probe.capabilityId === "event-logging")
+        ?.probeStatus,
+    ).toBe("unavailable");
   });
 
   it("never raises workflow-persistence, workflow-step-dispatch, or plan-file-compatibility above unavailable when config failed to load", () => {

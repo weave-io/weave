@@ -33,6 +33,10 @@ export interface PiCandidatePlanContext {
   readonly materializationErrorCount: number;
   readonly primaryDescriptorFound: boolean;
   readonly primaryModelDryResolved: boolean;
+  /** True only when the candidate plan includes the governed `weave_delegate` tool. */
+  readonly delegationToolPlanned?: boolean;
+  /** True only when the trusted Runtime Store path passed containment checks. */
+  readonly eventLoggingPlanned?: boolean;
   /**
    * Result of the registered-tool coverage proof (Spec 33 §12, §21):
    * `"ok"` when `verifyPermissionCoverage` succeeded for the sealed
@@ -64,10 +68,12 @@ const CANDIDATE_PLAN_CAPABILITIES: ReadonlySet<CapabilityId> = new Set([
   "config-materialization",
   "agent-materialization",
   "primary-agent-selection",
+  "delegated-specialist-execution",
   "prompt-composition",
   "workflow-persistence",
   "workflow-step-dispatch",
   "plan-file-compatibility",
+  "event-logging",
 ]);
 
 /**
@@ -169,6 +175,27 @@ function evaluateCandidatePlanCapability(
         : "primary-selectable-model-fallback",
     };
   }
+  if (id === "delegated-specialist-execution") {
+    if (!plan.configLoaded || !plan.primaryDescriptorFound) {
+      return {
+        capabilityId: id,
+        probeStatus: "unavailable",
+        details: "no-delegation-primary",
+      };
+    }
+    if (plan.delegationToolPlanned !== true) {
+      return {
+        capabilityId: id,
+        probeStatus: "unavailable",
+        details: "delegation-tool-not-planned",
+      };
+    }
+    return {
+      capabilityId: id,
+      probeStatus: "ok",
+      details: "authenticated-delegation-tool-planned",
+    };
+  }
   if (id === "prompt-composition") {
     if (!plan.configLoaded || !plan.primaryDescriptorFound) {
       return {
@@ -181,6 +208,27 @@ function evaluateCandidatePlanCapability(
       capabilityId: id,
       probeStatus: "ok",
       details: "composed-prompt-available",
+    };
+  }
+  if (id === "event-logging") {
+    if (!plan.configLoaded) {
+      return {
+        capabilityId: id,
+        probeStatus: "unavailable",
+        details: "config-not-loaded",
+      };
+    }
+    if (plan.eventLoggingPlanned !== true) {
+      return {
+        capabilityId: id,
+        probeStatus: "unavailable",
+        details: "event-log-prerequisites-unproven",
+      };
+    }
+    return {
+      capabilityId: id,
+      probeStatus: "ok",
+      details: "runtime-journal-and-log-sink-planned",
     };
   }
   // `workflow-persistence`/`workflow-step-dispatch`: `configLoaded` alone
@@ -312,13 +360,11 @@ function evaluateCommandEntrypoints(
 }
 
 /**
- * Production capability prober for this foundation task. Only
- * `command-entrypoints` and `token-usage-reporting` reflect real,
- * independently-verifiable facts today; every other capability honestly
- * reports `unavailable` (or, under trust-withheld, the narrow
- * `project-trust-withheld` `ok`) until the subsystem that backs it lands in
- * a later task. This never raises a declared ceiling - it only ever
- * preserves or lowers it, matching `lowerReadinessByProbe`.
+ * Production capability prober. Native host facts come from the command and
+ * usage surfaces; adapter-emulated facts come from the sealed candidate plan.
+ * Capabilities without a concrete, read-only proof remain unavailable. This
+ * never raises a declared ceiling - it only preserves or lowers it, matching
+ * `lowerReadinessByProbe`.
  */
 export class DefaultPiCapabilityProber implements PiCapabilityProbeSource {
   probe(context: PiPreflightContext): readonly CapabilityProbeResult[] {

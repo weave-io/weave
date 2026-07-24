@@ -206,6 +206,7 @@ describe("PiSafeInitializer.preflight", () => {
       "config-materialization",
       "agent-materialization",
       "primary-agent-selection",
+      "delegated-specialist-execution",
       "prompt-composition",
       "workflow-persistence",
       "workflow-step-dispatch",
@@ -234,6 +235,12 @@ describe("PiSafeInitializer.preflight", () => {
       (probe) => probe.capabilityId === "primary-agent-selection",
     );
     expect(primaryAgentSelection?.probeStatus).toBe("unavailable");
+    const delegatedSpecialistExecution =
+      preflight.healthReport.probeResults.find(
+        (probe) => probe.capabilityId === "delegated-specialist-execution",
+      );
+    expect(delegatedSpecialistExecution?.probeStatus).toBe("unavailable");
+    expect(delegatedSpecialistExecution?.details).toBe("no-delegation-primary");
     const promptComposition = preflight.healthReport.probeResults.find(
       (probe) => probe.capabilityId === "prompt-composition",
     );

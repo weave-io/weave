@@ -390,6 +390,11 @@ export class PiSafeInitializer {
                 materializationErrorCount: activation.descriptors.errors.length,
                 primaryDescriptorFound: primaryEligible,
                 primaryModelDryResolved: modelResolution.resolved,
+                delegationToolPlanned: weaveOwnedRegistrations.some(
+                  (registration) => registration.tool.name === "weave_delegate",
+                ),
+                eventLoggingPlanned:
+                  trust === "trusted" && runtimeDirectoryContained === true,
                 toolPolicyCoverage: toolPolicyCoverageFromPlan(planned),
                 runtimeDirectoryContained,
                 plansDirectoryContained,
