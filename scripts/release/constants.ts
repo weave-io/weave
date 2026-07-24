@@ -129,6 +129,7 @@ export interface PublicPackageBuild {
   entries: readonly PublicBuildEntry[];
   declarations: readonly PublicDeclarationBuild[];
   bootstrap?: readonly string[];
+  runtimeExternals?: readonly string[];
 }
 
 export interface PublicDeclarationBuild {
@@ -204,6 +205,7 @@ export const PUBLIC_PACKAGE_BUILDS = {
     ],
   },
   "@weaveio/weave-adapter-pi": {
+    runtimeExternals: ["kysely", "pino"],
     entries: [
       {
         source: "packages/adapters/pi/src/index.ts",

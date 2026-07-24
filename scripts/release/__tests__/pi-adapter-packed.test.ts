@@ -78,6 +78,7 @@ describe("pi adapter packed artifact (Spec 33 §5, §22, §24F, §25 PI-PKG)", (
       // built, bundled output (not devDependencies, not private
       // @weaveio/* workspace packages - those are bundled inline)
       expect(manifest.dependencies).toEqual({
+        kysely: "^0.27.5",
         mustache: "^4.2.0",
         neverthrow: "^8.2.0",
         pino: "^9.6.0",

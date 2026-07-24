@@ -20,8 +20,8 @@ import { TarInspector } from "../tar-inspector.js";
  * isolated directory (never the developer's project) alongside a local
  * *fake* `@earendil-works/pi-coding-agent` peer pinned to the exact
  * release-tested version (0.81.1), plus fake `pi-ai`/`pi-tui` peers and
- * this workspace's own already-resolved real runtime dependencies
- * (mustache/neverthrow/typebox/zod). No `npm install`, no registry, no
+ * this workspace's own already-resolved real runtime dependencies. No
+ * `npm install`, no registry, no
  * network call of any kind, and the extension's default factory is only
  * inspected - never invoked - so Pi is never started.
  */
@@ -60,12 +60,14 @@ const FAKE_HOST_PACKAGES: Record<string, { version: string; source: string }> =
  * workspace's own Bun-managed store so the clean room never touches
  * npm/network, independent of any single package's own linked subset.
  */
-const REAL_RUNTIME_DEPENDENCIES: Record<string, string> = {
-  mustache: "4.2.0",
-  neverthrow: "8.2.0",
-  typebox: "1.1.38",
-  zod: "4.4.3",
-};
+const REAL_RUNTIME_DEPENDENCY_STORES = [
+  "kysely@0.27.6",
+  "mustache@4.2.0",
+  "neverthrow@8.2.0",
+  "pino@9.14.0",
+  "typebox@1.1.38",
+  "zod@4.4.3",
+] as const;
 
 class IsolatedFakeHostConsumer {
   private constructor(readonly directory: string) {}
@@ -144,20 +146,28 @@ describe("pi adapter clean-room fake-host consumer (Spec 33 §24F, §25 PI-PKG)"
         await Bun.write(join(dir, "index.js"), config.source);
       }
 
-      // materialize the real, already-resolved runtime deps this
-      // workspace uses, so the clean room never touches the registry
-      for (const [name, version] of Object.entries(REAL_RUNTIME_DEPENDENCIES)) {
-        const sourceDir = join(
+      // Materialize each dependency store's complete node_modules set. Pino
+      // has transitive runtime dependencies, so copying only its leaf package
+      // would make this clean-room proof weaker than a real package install.
+      for (const store of REAL_RUNTIME_DEPENDENCY_STORES) {
+        const sourceDir = `${join(
           process.cwd(),
           "node_modules/.bun",
-          `${name}@${version}`,
+          store,
           "node_modules",
-          name,
-        );
-        const targetDir = join(consumer.directory, "node_modules", name);
-        const copy = Bun.spawn(["cp", "-R", sourceDir, targetDir]);
+        )}/.`;
+        const targetDir = join(consumer.directory, "node_modules");
+        const copy = Bun.spawn(["cp", "-RL", sourceDir, targetDir]);
         expect(await copy.exited).toBe(0);
       }
+
+      const extensionEntry = inspected.value.find(
+        (entry) => entry.path === "package/dist/extension.js",
+      );
+      expect(extensionEntry).toBeDefined();
+      expect(new TextDecoder().decode(extensionEntry?.contents)).not.toContain(
+        "import.meta.require",
+      );
 
       // clean-room proof: both packed entry points load in complete
       // isolation, without npm/network - and the extension's default

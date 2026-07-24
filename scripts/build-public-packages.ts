@@ -360,6 +360,11 @@ export class PublicPackageBuilder {
       executable?: boolean;
     }[],
   ): ResultAsync<void, PublicPackageBuildError> {
+    const build: PublicPackageBuild = PUBLIC_PACKAGE_BUILDS[packageName];
+    const external = [
+      ...PUBLIC_RUNTIME_EXTERNALS,
+      ...(build.runtimeExternals ?? []),
+    ];
     let result = this.getBuildDefines(packageName);
     for (const entry of entries) {
       result = result.andThen((define) =>
@@ -369,7 +374,7 @@ export class PublicPackageBuilder {
             outdir: join(entry.output, ".."),
             target: "bun",
             format: "esm",
-            external: [...PUBLIC_RUNTIME_EXTERNALS],
+            external,
             define,
           }),
           () => ({

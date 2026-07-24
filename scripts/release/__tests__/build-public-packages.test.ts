@@ -3,6 +3,10 @@ import {
   hasPrivateDeclarationReference,
   hasPrivateDependencyReference,
 } from "../../build-public-packages.js";
+import {
+  PUBLIC_PACKAGE_BUILDS,
+  PUBLIC_RUNTIME_EXTERNALS,
+} from "../constants.js";
 
 describe("public package build guard", () => {
   it("rejects bundled private workspace dependency maps", () => {
@@ -48,5 +52,13 @@ describe("public package build guard", () => {
         "@weaveio/weave-core",
       ),
     ).toBe(true);
+  });
+
+  it("keeps Pi's CommonJS-heavy externals scoped to the Pi build", () => {
+    expect(PUBLIC_RUNTIME_EXTERNALS).not.toContain("pino");
+    expect(PUBLIC_RUNTIME_EXTERNALS).not.toContain("kysely");
+    expect(
+      PUBLIC_PACKAGE_BUILDS["@weaveio/weave-adapter-pi"].runtimeExternals,
+    ).toEqual(["kysely", "pino"]);
   });
 });
