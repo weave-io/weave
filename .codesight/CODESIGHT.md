@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 184 lib files | 33 env vars | 6 middleware | 0% test coverage
-> **Token savings:** this file is ~18,200 tokens. Without it, AI exploration would cost ~62,800 tokens. **Saves ~44,600 tokens per conversation.**
-> **Last scanned:** 2026-07-24 01:19 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 186 lib files | 33 env vars | 6 middleware | 0% test coverage
+> **Token savings:** this file is ~18,400 tokens. Without it, AI exploration would cost ~63,300 tokens. **Saves ~44,900 tokens per conversation.**
+> **Last scanned:** 2026-07-24 03:08 — re-run after significant changes
 
 ---
 
@@ -89,10 +89,10 @@
   - function classifyWeaveCommand: (name) => WeaveCommandClassification
   - function parseNpmSourceName: (source) => string | undefined
   - function isOwnSourceInfo: (sourceInfo) => boolean
+  - function isGenuineBuiltinSourceInfo: (sourceInfo, toolName) => boolean
   - type WeaveCommandName
   - type WeaveCommandClassification
-  - const WEAVE_COMMAND_NAMES
-  - _...1 more_
+  - _...3 more_
 - `packages/adapters/pi/src/config-activator.ts`
   - function createTrustWithheldFileReader: (inner, projectRoot) => FileReader
   - function buildDescriptorCatalog: (plan) => PiDescriptorCatalog
@@ -113,8 +113,8 @@
   - function makeInteractiveTuiRequiredFailure: (mode) => PiAdapterFailure
   - function makeActivationFailedFailure: (reason) => PiAdapterFailure
   - function makeCommandCollisionFailure: (commandName) => PiAdapterFailure
-  - function makeControllerGenerationStaleFailure: (generationId) => PiAdapterFailure
-  - _...11 more_
+  - function makeRequiredCapabilityUnavailableFailure: (capabilityId, reason) => PiAdapterFailure
+  - _...12 more_
 - `packages/adapters/pi/src/extension.ts`
   - function createDefaultPiExtensionDeps: () => PiExtensionDeps
   - function createPiExtension: (overrides) => (pi: PiExtensionApi) => void
@@ -135,6 +135,14 @@
   - type PiModelResolutionSource
   - type PiModelResolution
   - type PiModelActivationOutcome
+- `packages/adapters/pi/src/permission-bridge.ts`
+  - function createChildRelayApprovalPort: (relay, childId) => PiApprovalUiPort
+  - class PiPermissionBridge
+  - interface PiApprovalPendingRequestView
+  - interface PiApprovalPromptRequest
+  - interface PiApprovalUiPort
+  - interface PiChildApprovalRelayPort
+  - _...7 more_
 - `packages/adapters/pi/src/port-safety.ts`
   - function safelyAwaitPortResult: (call) => void
   - function safelyListAvailableModels: (modelRegistry, "getAvailable">) => Result<readonly PiModelInfo[], string>
@@ -152,6 +160,10 @@
   - interface PiPreflightResult
   - interface PiSafeInitializerDeps
 - `packages/adapters/pi/src/skill-catalog.ts` — function toEngineSkillInfo: (skill) => SkillInfo, class PiSkillCatalog
+- `packages/adapters/pi/src/tool-governance.ts`
+  - function classifyDiscoveredTools: (allTools, weaveOwnedNames) => PiToolClassification
+  - function buildNativeToolResolver: (toolName, capability) => PermissionResolver
+  - interface PiToolClassification
 - `packages/cli/src/args.ts`
   - function parseArgs: (argv) => Result<ParsedArgs, ArgParseError>
   - interface ParsedArgs
@@ -996,13 +1008,13 @@
 - `packages/cli/src/io/terminal.ts` — imported by **18** files
 - `packages/cli/src/evals/openrouter-client.ts` — imported by **18** files
 - `packages/cli/src/evals/report-schema.ts` — imported by **17** files
+- `packages/adapters/pi/src/types.ts` — imported by **16** files
 - `packages/engine/src/runtime/store.ts` — imported by **16** files
 - `scripts/release/stable-train.ts` — imported by **16** files
 - `scripts/release/npm-registry-client.ts` — imported by **15** files
 - `packages/cli/src/args.ts` — imported by **14** files
 - `packages/engine/src/tool-policy.ts` — imported by **14** files
 - `scripts/release/model.ts` — imported by **14** files
-- `packages/adapters/pi/src/types.ts` — imported by **13** files
 - `packages/engine/src/logger.ts` — imported by **13** files
 - `scripts/release/filesystem.ts` — imported by **13** files
 - `scripts/release/clock.ts` — imported by **13** files
@@ -1019,17 +1031,17 @@
 - `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts` +13 more
 - `packages/cli/src/evals/openrouter-client.ts` ← `packages/cli/src/evals/__tests__/loom-routing-runner.test.ts`, `packages/cli/src/evals/__tests__/pattern-planning-runner.test.ts`, `packages/cli/src/evals/__tests__/runner.test.ts`, `packages/cli/src/evals/__tests__/shuttle-execution-runner.test.ts`, `packages/cli/src/evals/__tests__/spindle-tools-runner.test.ts` +13 more
 - `packages/cli/src/evals/report-schema.ts` ← `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts` +12 more
+- `packages/adapters/pi/src/types.ts` ← `packages/adapters/pi/src/__tests__/capability-prober.test.ts`, `packages/adapters/pi/src/__tests__/controller.test.ts`, `packages/adapters/pi/src/__tests__/extension-tool-governance.test.ts`, `packages/adapters/pi/src/__tests__/primary-session.test.ts`, `packages/adapters/pi/src/__tests__/safe-initializer.test.ts` +11 more
 - `packages/engine/src/runtime/store.ts` ← `packages/engine/src/__tests__/permission-service.test.ts`, `packages/engine/src/__tests__/runtime-journal.test.ts`, `packages/engine/src/execution-lifecycle/artifacts.ts`, `packages/engine/src/execution-lifecycle/dispatch.ts`, `packages/engine/src/execution-lifecycle/inspection.ts` +11 more
 - `scripts/release/stable-train.ts` ← `scripts/release/__tests__/artifact-manifest.test.ts`, `scripts/release/__tests__/control-executable.test.ts`, `scripts/release/__tests__/github-client.test.ts`, `scripts/release/__tests__/metadata-replay.test.ts`, `scripts/release/__tests__/payload-layout.e2e.test.ts` +11 more
 - `scripts/release/npm-registry-client.ts` ← `scripts/release/__tests__/github-client.test.ts`, `scripts/release/__tests__/nightly-plan.test.ts`, `scripts/release/__tests__/npm-registry-client.test.ts`, `scripts/release/__tests__/payload-layout.e2e.test.ts`, `scripts/release/__tests__/promotion-commands.test.ts` +10 more
-- `packages/cli/src/args.ts` ← `packages/cli/src/__tests__/args.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/prompt.test.ts` +9 more
 
 ---
 
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 177 test files found
+> 180 test files found
 
 ---
 

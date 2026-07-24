@@ -70,6 +70,7 @@ describe("PiSafeInitializer.preflight call discipline", () => {
         modelRegistry: { getAvailable: () => [] },
       },
       [],
+      [],
     );
     expect(reader.callCount).toBe(1);
   });

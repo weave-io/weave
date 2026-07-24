@@ -78,10 +78,10 @@
   - function classifyWeaveCommand: (name) => WeaveCommandClassification
   - function parseNpmSourceName: (source) => string | undefined
   - function isOwnSourceInfo: (sourceInfo) => boolean
+  - function isGenuineBuiltinSourceInfo: (sourceInfo, toolName) => boolean
   - type WeaveCommandName
   - type WeaveCommandClassification
-  - const WEAVE_COMMAND_NAMES
-  - _...1 more_
+  - _...3 more_
 - `packages/adapters/pi/src/config-activator.ts`
   - function createTrustWithheldFileReader: (inner, projectRoot) => FileReader
   - function buildDescriptorCatalog: (plan) => PiDescriptorCatalog
@@ -102,8 +102,8 @@
   - function makeInteractiveTuiRequiredFailure: (mode) => PiAdapterFailure
   - function makeActivationFailedFailure: (reason) => PiAdapterFailure
   - function makeCommandCollisionFailure: (commandName) => PiAdapterFailure
-  - function makeControllerGenerationStaleFailure: (generationId) => PiAdapterFailure
-  - _...11 more_
+  - function makeRequiredCapabilityUnavailableFailure: (capabilityId, reason) => PiAdapterFailure
+  - _...12 more_
 - `packages/adapters/pi/src/extension.ts`
   - function createDefaultPiExtensionDeps: () => PiExtensionDeps
   - function createPiExtension: (overrides) => (pi: PiExtensionApi) => void
@@ -124,6 +124,14 @@
   - type PiModelResolutionSource
   - type PiModelResolution
   - type PiModelActivationOutcome
+- `packages/adapters/pi/src/permission-bridge.ts`
+  - function createChildRelayApprovalPort: (relay, childId) => PiApprovalUiPort
+  - class PiPermissionBridge
+  - interface PiApprovalPendingRequestView
+  - interface PiApprovalPromptRequest
+  - interface PiApprovalUiPort
+  - interface PiChildApprovalRelayPort
+  - _...7 more_
 - `packages/adapters/pi/src/port-safety.ts`
   - function safelyAwaitPortResult: (call) => void
   - function safelyListAvailableModels: (modelRegistry, "getAvailable">) => Result<readonly PiModelInfo[], string>
@@ -141,6 +149,10 @@
   - interface PiPreflightResult
   - interface PiSafeInitializerDeps
 - `packages/adapters/pi/src/skill-catalog.ts` — function toEngineSkillInfo: (skill) => SkillInfo, class PiSkillCatalog
+- `packages/adapters/pi/src/tool-governance.ts`
+  - function classifyDiscoveredTools: (allTools, weaveOwnedNames) => PiToolClassification
+  - function buildNativeToolResolver: (toolName, capability) => PermissionResolver
+  - interface PiToolClassification
 - `packages/cli/src/args.ts`
   - function parseArgs: (argv) => Result<ParsedArgs, ArgParseError>
   - interface ParsedArgs

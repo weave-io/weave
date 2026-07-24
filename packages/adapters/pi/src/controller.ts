@@ -15,6 +15,7 @@ import type {
   PiAdapterLogger,
   PiCommandInfo,
   PiSessionContext,
+  PiToolInfo,
 } from "./types.js";
 
 /**
@@ -72,10 +73,11 @@ export class PiExtensionController {
       "mode" | "isProjectTrusted" | "cwd" | "modelRegistry"
     >,
     commands: readonly PiCommandInfo[],
+    tools: readonly PiToolInfo[],
   ): ResultAsync<PiGeneration, PiAdapterFailure> {
     const id = this.deps.idGenerator.next();
     return this.deps.safeInitializer
-      .preflight(session, commands)
+      .preflight(session, commands, tools)
       .map((preflight) => {
         const generation: PiGeneration = {
           id,

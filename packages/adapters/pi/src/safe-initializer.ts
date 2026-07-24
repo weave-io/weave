@@ -28,18 +28,42 @@ import {
   type HostPackageReader,
 } from "./host-compatibility.js";
 import { PiModelResolver } from "./model-resolution.js";
+import type { PiToolPolicyPlan } from "./permission-bridge.js";
+import { PiPermissionBridge } from "./permission-bridge.js";
 import {
   safelyAwaitPortResult,
   safelyListAvailableModels,
 } from "./port-safety.js";
 import { DEFAULT_PRIMARY_AGENT_NAME } from "./primary-session.js";
 import type {
+  PiAdapterLogger,
   PiCommandInfo,
   PiMode,
   PiModelRegistry,
   PiSessionContext,
+  PiToolInfo,
   PiTrustState,
 } from "./types.js";
+
+/** Silent default logger used only when no `permissionBridge` is injected. */
+const noopLogger: PiAdapterLogger = {
+  debug: () => {},
+  info: () => {},
+  warn: () => {},
+  error: () => {},
+};
+
+/**
+ * Reduces a `planToolPolicy` result to the bounded `toolPolicyCoverage` fact
+ * the capability prober needs - never raises a declared ceiling.
+ */
+function toolPolicyCoverageFromPlan(
+  planned: Result<PiToolPolicyPlan, PiAdapterFailure>,
+): "ok" | { reason: string } {
+  if (planned.isErr()) return { reason: "tool-policy-plan-failed" };
+  if (planned.value.coverage.isOk()) return "ok";
+  return { reason: coverageFailureReason(planned.value.coverage.error) };
+}
 
 /**
  * Result of the read-only preflight sequence (Spec 33 §7.2, steps 2-11).
@@ -73,6 +97,12 @@ export interface PiPreflightResult {
   readonly trust: PiTrustState;
   readonly configActivation?: PiConfigActivationResult;
   readonly configActivationFailure?: PiAdapterFailure;
+  /**
+   * Sealed, coverage-proven tool-policy plan (Spec 33 §7.2 step 9, §12),
+   * computed once here and reused unchanged at real activation - `undefined`
+   * only when it never ran (mode/host blocked or config activation failed).
+   */
+  readonly toolPolicy?: PiToolPolicyPlan;
   readonly healthReport: AdapterHealthReport;
   readonly healthOnlyMode: boolean;
 }
@@ -81,6 +111,7 @@ export interface PiSafeInitializerDeps {
   readonly hostPackageReader: HostPackageReader;
   readonly capabilityProber: PiCapabilityProbeSource;
   readonly configActivator: PiConfigActivator;
+  readonly permissionBridge?: PiPermissionBridge;
   readonly capabilityContract?: AdapterCapabilityContract;
 }
 
@@ -93,13 +124,25 @@ interface CandidatePlanOutcome {
   readonly probeContext?: PiCandidatePlanContext;
   readonly activation?: PiConfigActivationResult;
   readonly failure?: PiAdapterFailure;
+  readonly toolPolicy?: PiToolPolicyPlan;
+}
+
+/** Bounded, closed-set reason for a coverage-proof failure - never raw context content. */
+function coverageFailureReason(
+  error: import("@weaveio/weave-engine").PermissionCoverageError,
+): string {
+  if (error.type === "incomplete_coverage") return `incomplete:${error.reason}`;
+  return "invalid-coverage-context";
 }
 
 export class PiSafeInitializer {
   private readonly contract: AdapterCapabilityContract;
+  private readonly permissionBridge: PiPermissionBridge;
 
   constructor(private readonly deps: PiSafeInitializerDeps) {
     this.contract = deps.capabilityContract ?? PI_ADAPTER_CAPABILITY_CONTRACT;
+    this.permissionBridge =
+      deps.permissionBridge ?? new PiPermissionBridge({ logger: noopLogger });
   }
 
   preflight(
@@ -108,6 +151,7 @@ export class PiSafeInitializer {
       "mode" | "isProjectTrusted" | "cwd" | "modelRegistry"
     >,
     commands: readonly PiCommandInfo[],
+    tools: readonly PiToolInfo[],
   ): ResultAsync<PiPreflightResult, PiAdapterFailure> {
     const mode = session.mode;
     const modeSupported = mode === "tui";
@@ -127,6 +171,7 @@ export class PiSafeInitializer {
         session.cwd,
         trust,
         session.modelRegistry,
+        tools,
       ).andThen((candidate) =>
         this.computeProbes(blocked, blockedReason, {
           mode,
@@ -148,6 +193,7 @@ export class PiSafeInitializer {
             trust,
             configActivation: candidate.activation,
             configActivationFailure: candidate.failure,
+            toolPolicy: candidate.toolPolicy,
             healthReport,
             healthOnlyMode:
               blocked || trust === "withheld" || healthReport.healthOnlyMode,
@@ -193,6 +239,7 @@ export class PiSafeInitializer {
     projectRoot: string,
     trust: PiTrustState,
     modelRegistry: PiModelRegistry,
+    tools: readonly PiToolInfo[],
   ): ResultAsync<CandidatePlanOutcome, never> {
     if (blocked) {
       return okAsync({});
@@ -233,13 +280,36 @@ export class PiSafeInitializer {
               )
             : { resolved: false as const };
 
+          const policies = Object.fromEntries(
+            [...activation.descriptors.byName].map(([name, descriptor]) => [
+              name,
+              descriptor.effectiveToolPolicy,
+            ]),
+          );
+          // `permissionBridge.planToolPolicy` is pure/read-only and already
+          // returns a `Result`, but it is an injected port - `Result.fromThrowable`
+          // catches a misbehaving implementation throwing synchronously
+          // instead of letting that escape as an unhandled exception
+          // (neverthrow-wrap-exceptions).
+          const planned = Result.fromThrowable(
+            () =>
+              this.permissionBridge.planToolPolicy({
+                allTools: tools,
+                weaveOwnedRegistrations: [],
+                policies,
+              }),
+            () => makeInvariantViolationFailure("tool-policy-plan-threw"),
+          )().andThen((result) => result);
+
           return {
             activation,
+            toolPolicy: planned.isOk() ? planned.value : undefined,
             probeContext: {
               configLoaded: true,
               materializationErrorCount: activation.descriptors.errors.length,
               primaryDescriptorFound: primaryEligible,
               primaryModelDryResolved: modelResolution.resolved,
+              toolPolicyCoverage: toolPolicyCoverageFromPlan(planned),
             },
           };
         },
@@ -250,6 +320,7 @@ export class PiSafeInitializer {
             materializationErrorCount: 0,
             primaryDescriptorFound: false,
             primaryModelDryResolved: false,
+            toolPolicyCoverage: { reason: "config-not-loaded" },
           },
         }),
       ),

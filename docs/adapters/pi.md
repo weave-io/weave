@@ -1,6 +1,6 @@
 # Pi Adapter Guide
 
-**Status:** Activation foundation implemented; do not treat this guide as release proof
+**Status:** Activation, normalized configuration, and tool policy implemented; do not treat this guide as release proof
 
 **Related:** [Pi adapter architecture](../pi-adapter.md) · [Spec 33](../specs/33-spec-pi-adapter/33-spec-pi-adapter.md) · [Adapter readiness](../adapter-readiness-status.md)
 
@@ -8,7 +8,9 @@
 
 The implemented package in [`packages/adapters/pi`](../../packages/adapters/pi) registers inert command shells and session delegates, then uses exact host, TUI, trust, command-ownership, candidate-plan, and capability probes to create a generation-scoped controller. Failed required probes or withheld trust keep the extension in health-only mode.
 
-For supported sessions, the adapter loads the permitted Weave config, consumes materialized descriptors in stable plan order, and prepares Loom as the ordinary primary. On the first `before_agent_start`, it uses Pi's loaded skill catalog and authenticated model registry to resolve Loom's exact skill and ordered model intent. It applies a resolved model through Pi, preserves model fallback as a visible degradation, and appends Loom's final `composedPrompt` once to Pi's existing prompt. Declared temperature remains ignored and appears as a deduplicated health warning. Tool enforcement, delegation, workflows, packaging proof, and live TUI validation remain pending.
+For supported sessions, the adapter loads the permitted Weave config, consumes materialized descriptors in stable plan order, and prepares Loom as the ordinary primary. On the first `before_agent_start`, it uses Pi's loaded skill catalog and authenticated model registry to resolve Loom's exact skill and ordered model intent. It applies a resolved model through Pi, preserves model fallback as a visible degradation, and appends Loom's final `composedPrompt` once to Pi's existing prompt. Declared temperature remains ignored and appears as a deduplicated health warning.
+
+The adapter also governs discovered Pi-native tools through input-aware resolvers and the engine permission session. It checks exact built-in provenance, sealed registry coverage, and controller generation before each call. Policy `deny` blocks, `allow` consumes a single-use permit without prompting, and `ask` opens a bounded approval dialog only outside health-only mode. Missing or malformed resolver input is unresolved and supports one-time approval only. Unrelated third-party tools remain unmanaged. Delegation, workflows, packaging proof, and live TUI validation remain pending.
 
 ## Compatibility
 
@@ -74,9 +76,9 @@ Private children are an implementation detail. Do not start Pi RPC mode to use W
 
 ## Approvals
 
-Weave governs registered Pi and Weave-owned tools through input-aware permission requests. Approval choices may be once, current session, durable project approval, or reject, subject to policy and request type. Policy `deny` always wins. Unresolved input can receive one-time approval only.
+Weave governs registered Pi and Weave-owned tools through input-aware permission requests. Approval choices may be once, current session, or reject. Durable project approval appears only after a trusted persistent Runtime Store is active. Policy `deny` always wins. Unresolved input can receive one-time approval only, and health-only mode never opens an approval dialog.
 
-Unregistered third-party tools remain under their owner's behavior and appear as unmanaged rather than allowed by Weave.
+A changed tool input, stale or replayed permit, displaced tool owner, stale controller generation, resolver failure, or missing permission session blocks the call. Unregistered third-party tools remain under their owner's behavior and appear as unmanaged rather than allowed by Weave.
 
 ## Recovery and privacy
 

@@ -15,10 +15,12 @@ repository for the full normative contract this package implements.
 
 ## Status
 
-This package currently ships the activation and normalized-configuration
-slices: exact host checks, TUI-only and project-trust-aware safe initialization,
-effective capability health reporting, health-only command gating, ordered
-agent materialization, Loom primary activation, exact composed-prompt append,
-Pi-owned skill/model context, deterministic model intent, and visible
-model/temperature degradation. Tool-policy enforcement, workflows, delegation,
-and plan/artifact projection land in later releases.
+This package currently ships the activation, normalized-configuration, and
+registered-tool-policy slices: exact host checks, trust-aware safe initialization,
+effective capability health reporting, ordered agent materialization, Loom
+primary activation, exact composed-prompt append, Pi-owned skill/model context,
+and deterministic model intent. It also provides provenance-aware native-tool
+coverage, input-aware permission resolvers, allow/deny/ask enforcement, bounded
+approval UI, single-use permit consumption, and unmanaged third-party tool
+passthrough. Durable approvals, concrete Weave-owned tools, workflows,
+delegation, persistence, and plan/artifact projection land in later releases.

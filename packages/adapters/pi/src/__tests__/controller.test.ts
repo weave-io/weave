@@ -80,10 +80,12 @@ describe("PiExtensionController.activate", () => {
     const first = await controller.activate(
       trustedTuiSession(),
       ALL_OWNED_COMMANDS,
+      [],
     );
     const second = await controller.activate(
       trustedTuiSession(),
       ALL_OWNED_COMMANDS,
+      [],
     );
     expect(first.isOk()).toBe(true);
     expect(second.isOk()).toBe(true);
@@ -102,7 +104,7 @@ describe("PiExtensionController.activate", () => {
 describe("PiExtensionController command gating", () => {
   it("allows every classification when the generation is ready", async () => {
     const controller = makeController(allOkProbes());
-    await controller.activate(trustedTuiSession(), ALL_OWNED_COMMANDS);
+    await controller.activate(trustedTuiSession(), ALL_OWNED_COMMANDS, []);
     for (const name of WEAVE_COMMAND_NAMES) {
       const decision = controller.evaluateCommandGate(name)._unsafeUnwrap();
       expect(decision.allowed).toBe(true);
@@ -111,7 +113,7 @@ describe("PiExtensionController command gating", () => {
 
   it("blocks mutating commands but allows read-only and idempotent-cleanup commands in health-only mode", async () => {
     const controller = makeController(degradedProbes());
-    await controller.activate(trustedTuiSession(), ALL_OWNED_COMMANDS);
+    await controller.activate(trustedTuiSession(), ALL_OWNED_COMMANDS, []);
     const mutating = [
       "weave:start",
       "weave:run",
@@ -146,11 +148,11 @@ describe("PiExtensionController command gating", () => {
 describe("PiExtensionController generation replacement and staleness", () => {
   it("rejects an operation handle captured before a replacement as ControllerGenerationStale", async () => {
     const controller = makeController(allOkProbes());
-    await controller.activate(trustedTuiSession(), ALL_OWNED_COMMANDS);
+    await controller.activate(trustedTuiSession(), ALL_OWNED_COMMANDS, []);
     const handle = controller.beginOperation()._unsafeUnwrap();
     expect(handle.assertStillCurrent().isOk()).toBe(true);
 
-    await controller.activate(trustedTuiSession(), ALL_OWNED_COMMANDS);
+    await controller.activate(trustedTuiSession(), ALL_OWNED_COMMANDS, []);
 
     const staleCheck = handle.assertStillCurrent();
     expect(staleCheck.isErr()).toBe(true);
@@ -161,8 +163,8 @@ describe("PiExtensionController generation replacement and staleness", () => {
 
   it("a fresh operation handle taken after replacement remains current", async () => {
     const controller = makeController(allOkProbes());
-    await controller.activate(trustedTuiSession(), ALL_OWNED_COMMANDS);
-    await controller.activate(trustedTuiSession(), ALL_OWNED_COMMANDS);
+    await controller.activate(trustedTuiSession(), ALL_OWNED_COMMANDS, []);
+    await controller.activate(trustedTuiSession(), ALL_OWNED_COMMANDS, []);
     const handle = controller.beginOperation()._unsafeUnwrap();
     expect(handle.assertStillCurrent().isOk()).toBe(true);
   });
@@ -176,7 +178,7 @@ describe("PiExtensionController generation replacement and staleness", () => {
 describe("PiExtensionController.shutdown", () => {
   it("clears the active generation and command gating then fails closed", async () => {
     const controller = makeController(allOkProbes());
-    await controller.activate(trustedTuiSession(), ALL_OWNED_COMMANDS);
+    await controller.activate(trustedTuiSession(), ALL_OWNED_COMMANDS, []);
     expect(controller.shutdown().isOk()).toBe(true);
     expect(controller.getCurrentGeneration()).toBeUndefined();
     expect(controller.evaluateCommandGate("weave:status").isErr()).toBe(true);
@@ -184,14 +186,14 @@ describe("PiExtensionController.shutdown", () => {
 
   it("is idempotent: calling shutdown twice does not throw or error", async () => {
     const controller = makeController(allOkProbes());
-    await controller.activate(trustedTuiSession(), ALL_OWNED_COMMANDS);
+    await controller.activate(trustedTuiSession(), ALL_OWNED_COMMANDS, []);
     expect(controller.shutdown().isOk()).toBe(true);
     expect(controller.shutdown().isOk()).toBe(true);
   });
 
   it("an operation handle from before shutdown is stale afterward", async () => {
     const controller = makeController(allOkProbes());
-    await controller.activate(trustedTuiSession(), ALL_OWNED_COMMANDS);
+    await controller.activate(trustedTuiSession(), ALL_OWNED_COMMANDS, []);
     const handle = controller.beginOperation()._unsafeUnwrap();
     controller.shutdown();
     expect(handle.assertStillCurrent().isErr()).toBe(true);

@@ -61,7 +61,7 @@ function installExtension(
 }
 
 describe("createPiExtension factory (layer C: compiled extension against a fake host)", () => {
-  it("registers exactly the nine /weave:* command shells and three lifecycle delegates, nothing else", () => {
+  it("registers exactly the nine /weave:* command shells and four lifecycle delegates, nothing else", () => {
     const host = new RecordingFakePiHost();
     installExtension(host);
     expect(host.registerCommandCalls.map((call) => call.name).sort()).toEqual(
@@ -71,6 +71,7 @@ describe("createPiExtension factory (layer C: compiled extension against a fake 
       "before_agent_start",
       "session_shutdown",
       "session_start",
+      "tool_call",
     ]);
   });
 
@@ -149,7 +150,20 @@ describe("createPiExtension factory (layer C: compiled extension against a fake 
       idGenerator: new FakeIdGenerator(),
       clock: new FakeClock(),
       logger: new RecordingLogger(),
-      configActivator: fakeConfigActivator(),
+      // A real project always materializes at least one agent; an empty
+      // agent set has no policy to bind and the engine's permission
+      // activation itself rejects an empty policy map, so this fixture
+      // must include one to reach a genuinely healthy "ready" outcome.
+      configActivator: fakeConfigActivator({
+        agents: [
+          {
+            agentName: "loom",
+            source: "explicit",
+            descriptor: loomDescriptor(),
+          },
+        ],
+        errors: [],
+      }),
     });
     factory(host.api);
     await host.triggerSessionStart();

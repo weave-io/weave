@@ -95,14 +95,46 @@ export interface PiBeforeAgentStartEvent {
 export type PiUiNotifyLevel = "info" | "warning" | "error";
 
 /**
- * Narrow projection of `ctx.ui`. Diagnostics/status surfaces only - no
- * message/entry renderers, no shortcuts, no editor overrides (Spec 33 §7.1
- * reserves those for later tasks).
+ * Narrow projection of `ctx.ui`. Diagnostics/status/notify surfaces plus the
+ * two interactive dialog primitives the registered-tool approval bridge
+ * needs (`select`/`confirm`, Spec 33 §12.4) - no message/entry renderers,
+ * no shortcuts, no editor overrides (Spec 33 §7.1 reserves those for later
+ * tasks).
  */
+/**
+ * Narrow mirror of Pi's own `ExtensionUIDialogOptions`
+ * (`dist/core/extensions/types.d.ts` lines 35-41). The field name MUST
+ * match Pi's exactly (`timeout`, in milliseconds, not `timeoutMs`) since
+ * this object is passed straight through to the real `ctx.ui.select`/
+ * `confirm` call with no translation layer - a renamed field would be
+ * silently ignored by the real host and the dialog would never time out.
+ * Once elapsed, Pi auto-dismisses the dialog (resolving the
+ * reject-equivalent value) with a live countdown display.
+ */
+export interface PiUiDialogOptions {
+  readonly timeout?: number;
+}
+
 export interface PiUiPort {
   notify(message: string, level?: PiUiNotifyLevel): void;
   setStatus(key: string, value: string | undefined): void;
   setWidget(key: string, value: unknown): void;
+  /**
+   * Interactive single-choice prompt (`ctx.ui.select`). Resolves to
+   * `undefined` when the user cancels OR the dialog times out - callers
+   * MUST treat both as a reject-equivalent, never as an implicit choice.
+   */
+  select(
+    title: string,
+    options: readonly string[],
+    opts?: PiUiDialogOptions,
+  ): Promise<string | undefined>;
+  /** Interactive yes/no prompt (`ctx.ui.confirm`). */
+  confirm(
+    title: string,
+    message: string,
+    opts?: PiUiDialogOptions,
+  ): Promise<boolean>;
 }
 
 /** Narrow projection of `ExtensionContext` used by command handlers and lifecycle delegates. */
@@ -111,6 +143,8 @@ export interface PiSessionContext {
   readonly cwd: string;
   isProjectTrusted(): boolean;
   readonly ui: PiUiPort;
+  /** Whether dialog-capable UI is available (`ctx.hasUI`) - false in headless/print modes. */
+  readonly hasUI: boolean;
   /** The currently active model, if any (`ctx.model`). */
   readonly model: PiModelInfo | undefined;
   /** Authenticated-model discovery (`ctx.modelRegistry`). */
@@ -135,6 +169,54 @@ export type PiEventHandler = (
 ) => unknown | Promise<unknown>;
 
 /**
+ * A single content block returned from a registered tool's `execute()`.
+ * Mirrors the narrow slice of Pi's `AgentToolResult` this adapter produces.
+ */
+export interface PiToolResultContent {
+  readonly type: "text";
+  readonly text: string;
+}
+
+/**
+ * Registration input for `pi.registerTool()` (Spec 33 §6, §12.2). `parameters`
+ * is deliberately `unknown` - the concrete TypeBox schema shape is owned by
+ * the real Pi package, which this narrow port does not depend on.
+ */
+export interface PiToolRegistration {
+  readonly name: string;
+  readonly label: string;
+  readonly description: string;
+  readonly parameters: unknown;
+  readonly promptSnippet?: string;
+  readonly promptGuidelines?: readonly string[];
+  execute(
+    toolCallId: string,
+    params: Record<string, unknown>,
+    ctx: PiSessionContext,
+  ): Promise<{ content: readonly PiToolResultContent[] }>;
+}
+
+/**
+ * Fired before a native or registered tool executes (`pi.on("tool_call", ...)`).
+ * `input` is mutable - a handler may patch it in place before execution.
+ * Real Pi narrows this per built-in tool name; this port only needs the
+ * generic shape since every governed-tool resolver treats `input` as opaque
+ * `Record<string, unknown>` call data (Spec 33 §12.3).
+ */
+export interface PiToolCallEvent {
+  readonly type: "tool_call";
+  readonly toolCallId: string;
+  readonly toolName: string;
+  input: Record<string, unknown>;
+}
+
+/** Result of a `tool_call` handler: `undefined`/no block = allow. */
+export interface PiToolCallEventResult {
+  readonly block?: boolean;
+  readonly reason?: string;
+}
+
+/**
  * Narrow projection of the Pi `ExtensionAPI` object passed to an extension's
  * default factory. Only the members this adapter's foundation layer uses.
  */
@@ -143,6 +225,15 @@ export interface PiExtensionApi {
   getCommands(): readonly PiCommandInfo[];
   getAllTools(): readonly PiToolInfo[];
   on(event: string, handler: PiEventHandler): void;
+  /**
+   * Registers a tool the LLM can call (`ExtensionAPI.registerTool`). Fire and
+   * forget, no receipt - the real Pi host silently overrides any existing
+   * tool of the same name. Spec 33 §7.1 requires callers to prove the name
+   * is free via `getAllTools()` *before* calling this, and to re-read
+   * `getAllTools()` afterward to verify this package's `sourceInfo` actually
+   * owns the new entry before treating it as governed.
+   */
+  registerTool(tool: PiToolRegistration): void;
   /**
    * Applies a model selection (`ExtensionAPI.setModel`). May reject/throw for
    * an invalid or unauthenticated model. May also *resolve* to `false`

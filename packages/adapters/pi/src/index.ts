@@ -17,7 +17,9 @@ export type {
 export {
   ADAPTER_PACKAGE_IDENTITY,
   classifyWeaveCommand,
+  isGenuineBuiltinSourceInfo,
   isOwnSourceInfo,
+  PI_BUILTIN_TOOL_SOURCE,
   parseNpmSourceName,
   WEAVE_COMMAND_NAMES,
 } from "./commands.js";
@@ -61,6 +63,7 @@ export {
   makeHostVersionUnsupportedFailure,
   makeInteractiveTuiRequiredFailure,
   makeInvariantViolationFailure,
+  makeRequiredCapabilityUnavailableFailure,
   PiAdapterFailureCodeSchema,
   PiAdapterFailureImpactSchema,
   PiAdapterFailurePhaseSchema,
@@ -95,6 +98,23 @@ export type {
 } from "./model-resolution.js";
 export { PiModelActivator, PiModelResolver } from "./model-resolution.js";
 export type {
+  PiApprovalChoiceInput,
+  PiApprovalPendingRequestView,
+  PiApprovalPromptRequest,
+  PiApprovalScope,
+  PiApprovalUiPort,
+  PiChildApprovalRelayPort,
+  PiPermissionBridgeDeps,
+  PiToolCallDecision,
+  PiToolPolicyPlan,
+  PiWeaveToolRegistration,
+} from "./permission-bridge.js";
+export {
+  APPROVAL_UI_TIMEOUT_MS,
+  createChildRelayApprovalPort,
+  PiPermissionBridge,
+} from "./permission-bridge.js";
+export type {
   PiActivePrimary,
   PiPrimaryActivationContext,
   PiPrimaryActivationError,
@@ -113,6 +133,12 @@ export type {
 } from "./safe-initializer.js";
 export { PiSafeInitializer } from "./safe-initializer.js";
 export { PiSkillCatalog, toEngineSkillInfo } from "./skill-catalog.js";
+export type { PiToolClassification } from "./tool-governance.js";
+export {
+  buildNativeToolResolver,
+  classifyDiscoveredTools,
+  PI_NATIVE_TOOL_CAPABILITY,
+} from "./tool-governance.js";
 export type {
   Clock,
   IdGenerator,
@@ -131,8 +157,13 @@ export type {
   PiSessionContext,
   PiSkillInfo,
   PiSourceInfo,
+  PiToolCallEvent,
+  PiToolCallEventResult,
   PiToolInfo,
+  PiToolRegistration,
+  PiToolResultContent,
   PiTrustState,
+  PiUiDialogOptions,
   PiUiNotifyLevel,
   PiUiPort,
 } from "./types.js";

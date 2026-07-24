@@ -1,6 +1,6 @@
 # Pi Adapter Architecture
 
-**Status:** Package and activation foundation implemented; full projection and runtime proof pending
+**Status:** Activation, normalized configuration, and registered-tool policy implemented; delegation, lifecycle, and release proof pending
 
 **Related:** [Spec 33 — Full-readiness Pi adapter](specs/33-spec-pi-adapter/33-spec-pi-adapter.md) · [Spec 34 — Harness-neutral permissions](specs/34-spec-harness-neutral-permissions/34-spec-harness-neutral-permissions.md) · [Adapter Boundary](adapter-boundary.md) · [Pi operator guide](adapters/pi.md) · [Adapter Readiness](adapter-readiness-status.md)
 
@@ -14,7 +14,9 @@ The implementation lives in [`packages/adapters/pi`](../packages/adapters/pi). I
 
 The adapter now also loads the permitted normalized config, consumes successful materialized descriptors in plan order, reports isolated descriptor errors, and activates valid Loom state on the first `before_agent_start` event. That event supplies Pi's loaded skill catalog; the adapter resolves requested skills exactly, applies deterministic model intent against `ctx.modelRegistry.getAvailable()`, appends one delimited `composedPrompt` block without replacing Pi or other-extension context, and reports deduplicated model or temperature degradation. Model application and prompt authority recheck the controller generation after asynchronous host work.
 
-Registered-tool enforcement, delegation transport, workflow lifecycle projection, packed-consumer proof, and live TUI evidence remain pending. These implemented slices are not a full-readiness claim.
+The adapter now also seals an input-aware permission registry for discovered Pi-native tools, proves interception coverage, binds agent policy through the engine permission session, and consumes single-use permits immediately before execution. Policy `deny` blocks, `allow` proceeds without a grant, and `ask` uses a bounded Pi approval dialog when the adapter is healthy. Unresolved input permits one-time approval only. Tool provenance and controller generation are rechecked at each governed call; changed provenance, stale authority, resolver failure, missing coverage, or unavailable permission state blocks. Unrelated third-party tools remain unmanaged and preserve their owner's behavior.
+
+Delegation transport, workflow lifecycle projection, packed-consumer proof, and live TUI evidence remain pending. Weave-owned tool registration is implemented as a guarded mechanism, but no concrete Weave-owned tool ships yet. Durable project approvals remain unavailable until the trusted Runtime Store is activated by the persistence slice. These implemented slices are not a full-readiness claim.
 
 ## Activation model
 
@@ -54,7 +56,7 @@ Only an explicit user start or resume authorizes work. Session start, idle, sett
 
 ## Health-only mode
 
-Static capabilities are ceilings. Activation probes all 19 capability IDs once; 12 are required and 7 are optional under Spec 33. A missing, failed, degraded, or unsupported required effective capability enters health-only mode. Optional gaps warn. The adapter still exposes health and safe diagnostics but blocks materialization, workflow mutation, delegation, and governed registered-tool execution.
+Static capabilities are ceilings. Activation probes all 19 capability IDs once; 12 are required and 7 are optional under Spec 33. A missing, failed, degraded, or unsupported required effective capability enters health-only mode. Optional gaps warn. The adapter still exposes health and safe diagnostics but blocks materialization, workflow mutation, delegation, and permission approval. Governed calls also block whenever registry coverage, provenance, or the permission session is unavailable.
 
 ## Private children
 

@@ -69,9 +69,9 @@ See [Adapter Bootstrap Guide](adapter-bootstrap.md) for the canonical
 
 ---
 
-## Pi Adapter — Foundation Implemented, Full Readiness Pending
+## Pi Adapter — Configuration and Tool Policy Implemented, Full Readiness Pending
 
-[Spec 33](specs/33-spec-pi-adapter/33-spec-pi-adapter.md) defines full readiness for `@weaveio/weave-adapter-pi` on interactive Earendil Works Pi TUI sessions. The package and activation foundation now exist, but later projection, packaging, and live-proof gates remain open.
+[Spec 33](specs/33-spec-pi-adapter/33-spec-pi-adapter.md) defines full readiness for `@weaveio/weave-adapter-pi` on interactive Earendil Works Pi TUI sessions. The package, activation, normalized-configuration, and registered-tool-policy slices now exist, but later projection, packaging, and live-proof gates remain open.
 
 | Area | Current effective status | Gate |
 | --- | --- | --- |
@@ -79,7 +79,8 @@ See [Adapter Bootstrap Guide](adapter-bootstrap.md) for the canonical
 | Harness-neutral prerequisites | ✅ Implemented | Delegation, permissions, revisioned plans/artifacts, usage/retention, effective probes, rotating logs |
 | Pi package/runtime foundation | ✅ Implemented | Compiled extension entry, exact host checks, safe initializer, controller generations, normalized 19-probe health report, health-only gating, and isolated fake-host tests |
 | Pi normalized configuration projection | ✅ Implemented | Trust-aware config activation, ordered materialization-plan consumption, Loom primary activation, exact prompt append, Pi skill/model context, deterministic model intent, and visible temperature/model degradation |
-| Pi policy, delegation, and lifecycle projection | ⏳ Pending | Remaining adapter implementation and isolated tests |
+| Pi registered-tool policy | ✅ Implemented | Provenance-aware native-tool inventory, sealed coverage proof, input-aware resolvers, allow/deny/ask evaluation, bounded parent approval UI, child relay port, permit consumption, stale-authority rejection, and unmanaged third-party passthrough |
+| Pi delegation and lifecycle projection | ⏳ Pending | Child transport, workflow projection, persistence integration, concrete Weave-owned tools, and isolated tests |
 | Packed package and exact-host consumer | ⏳ Pending | `PI-PKG` manifest evidence |
 | Stable interactive TUI readiness | ⏳ Pending | Digest-bound live smoke for all mandatory `PI-*` rows |
 

@@ -20,10 +20,45 @@ import type {
   PiSessionContext,
   PiSkillInfo,
   PiSourceInfo,
+  PiToolCallEvent,
+  PiToolCallEventResult,
   PiToolInfo,
+  PiToolRegistration,
+  PiUiDialogOptions,
   PiUiNotifyLevel,
   PiUiPort,
 } from "../../types.js";
+
+/**
+ * Builds a `PiSourceInfo` matching Pi's own documented shape for a genuine
+ * built-in tool (`docs/extensions.md`: `getAllTools()` reports built-ins
+ * with `sourceInfo: { path: "<builtin:NAME>", source: "builtin", scope:
+ * "temporary", origin: "top-level" }`). No extension can set `source:
+ * "builtin"` through the public `registerTool()` API - only Pi's own
+ * runtime assigns it - so this is the fake's canonical "real built-in"
+ * fixture.
+ */
+export function piBuiltinSourceInfo(toolName: string): PiSourceInfo {
+  return {
+    path: `<builtin:${toolName}>`,
+    source: "builtin",
+    scope: "temporary",
+    origin: "top-level",
+  };
+}
+
+/** Builds a `PiSourceInfo` for a rival (non-Weave) extension's registration. */
+export function foreignToolSourceInfo(
+  overrides: Partial<PiSourceInfo> = {},
+): PiSourceInfo {
+  return {
+    path: "/fake/node_modules/some-other-extension/dist/index.js",
+    source: "npm:some-other-extension",
+    scope: "user",
+    origin: "package",
+    ...overrides,
+  };
+}
 
 export interface RecordedCommandRegistration {
   readonly name: string;
@@ -50,6 +85,18 @@ export interface RecordedWidget {
   readonly value: unknown;
 }
 
+export interface RecordedSelectCall {
+  readonly title: string;
+  readonly options: readonly string[];
+  readonly opts: PiUiDialogOptions | undefined;
+}
+
+export interface RecordedConfirmCall {
+  readonly title: string;
+  readonly message: string;
+  readonly opts: PiUiDialogOptions | undefined;
+}
+
 export interface FakePiHostOptions {
   readonly mode?: PiMode;
   readonly trusted?: boolean;
@@ -57,6 +104,7 @@ export interface FakePiHostOptions {
   readonly installPath?: string;
   readonly currentModel?: PiModelInfo;
   readonly availableModels?: readonly PiModelInfo[];
+  readonly hasUI?: boolean;
 }
 
 /**
@@ -83,13 +131,19 @@ export class RecordingFakePiHost {
    * whether an invocation actually took effect.
    */
   readonly setModelCalls: PiModelInfo[] = [];
+  readonly registerToolCalls: PiToolRegistration[] = [];
+  readonly selectCalls: RecordedSelectCall[] = [];
+  readonly confirmCalls: RecordedConfirmCall[] = [];
 
   private mode: PiMode;
   private trusted: boolean;
+  private hasUI: boolean;
   private readonly cwd: string;
   private readonly installPath: string;
   private commandsInventory: PiCommandInfo[] = [];
   private toolsInventory: PiToolInfo[] = [];
+  private selectResponses: (string | undefined)[] = [];
+  private confirmResponses: boolean[] = [];
   private currentModel: PiModelInfo | undefined;
   private availableModels: readonly PiModelInfo[];
   private readonly handlers = new Map<string, PiEventHandler[]>();
@@ -98,6 +152,9 @@ export class RecordingFakePiHost {
   private setModelOverride:
     | ((model: PiModelInfo) => boolean | Promise<boolean>)
     | undefined;
+  private registerToolOverride:
+    | ((tool: PiToolRegistration) => void)
+    | undefined;
   private getAvailableModelsOverride:
     | (() => readonly PiModelInfo[])
     | undefined;
@@ -105,6 +162,7 @@ export class RecordingFakePiHost {
   constructor(options: FakePiHostOptions = {}) {
     this.mode = options.mode ?? "tui";
     this.trusted = options.trusted ?? true;
+    this.hasUI = options.hasUI ?? true;
     this.cwd = options.cwd ?? "/fake/project";
     this.installPath = options.installPath ?? "/fake/node_modules";
     this.currentModel = options.currentModel;
@@ -145,6 +203,21 @@ export class RecordingFakePiHost {
       }
       this.currentModel = model;
       return true;
+    },
+    registerTool: (tool) => {
+      this.registerToolCalls.push(tool);
+      if (this.registerToolOverride !== undefined) {
+        this.registerToolOverride(tool);
+        return;
+      }
+      this.toolsInventory = this.toolsInventory.filter(
+        (existing) => existing.name !== tool.name,
+      );
+      this.toolsInventory.push({
+        name: tool.name,
+        description: tool.description,
+        sourceInfo: this.ownSourceInfo(),
+      });
     },
   };
 
@@ -200,6 +273,39 @@ export class RecordingFakePiHost {
 
   injectTool(tool: PiToolInfo): void {
     this.toolsInventory.push(tool);
+  }
+
+  /**
+   * Simulates a (possibly foreign) extension calling `registerTool()` for a
+   * name that already exists - Pi replaces the existing entry rather than
+   * duplicating it, so a later call always wins as the single source of
+   * truth for that name (`docs/extensions.md`: "Extensions can override
+   * built-in tools ... by registering a tool with the same name").
+   */
+  displaceTool(name: string, sourceInfo: PiSourceInfo): void {
+    this.toolsInventory = this.toolsInventory.filter((t) => t.name !== name);
+    this.toolsInventory.push({ name, sourceInfo });
+  }
+
+  /** Makes the next `registerTool()` call throw, simulating a broken host. */
+  poisonRegisterTool(): void {
+    this.registerToolOverride = () => {
+      throw new Error("simulated host failure: registerTool");
+    };
+  }
+
+  setHasUI(hasUI: boolean): void {
+    this.hasUI = hasUI;
+  }
+
+  /** Queues the next `ctx.ui.select()` response. `undefined` simulates a cancel (Esc). */
+  scriptSelect(response: string | undefined): void {
+    this.selectResponses.push(response);
+  }
+
+  /** Queues the next `ctx.ui.confirm()` response. */
+  scriptConfirm(response: boolean): void {
+    this.confirmResponses.push(response);
   }
 
   setModels(models: readonly PiModelInfo[]): void {
@@ -258,6 +364,25 @@ export class RecordingFakePiHost {
     };
   }
 
+  /**
+   * Defers the next `select()` response indefinitely until `settle()` is
+   * called - lets a test drive another event (e.g. a fresh `session_start`
+   * producing a new controller generation) while an approval prompt is
+   * still in flight, then resolve it.
+   */
+  deferNextSelect(): { settle: (response: string | undefined) => void } {
+    let resolveFn!: (value: string | undefined) => void;
+    const promise = new Promise<string | undefined>((resolve) => {
+      resolveFn = resolve;
+    });
+    const originalShift = this.selectResponses.shift.bind(this.selectResponses);
+    this.selectResponses.shift = () => {
+      this.selectResponses.shift = originalShift;
+      return promise as unknown as string | undefined;
+    };
+    return { settle: (response) => resolveFn(response) };
+  }
+
   /** Makes the next `getCommands()` calls throw, simulating a broken host. */
   poisonGetCommands(): void {
     this.getCommandsOverride = () => {
@@ -301,12 +426,21 @@ export class RecordingFakePiHost {
       setWidget: (key, value) => {
         this.widgetCalls.push({ key, value });
       },
+      select: async (title, options, opts) => {
+        this.selectCalls.push({ title, options, opts });
+        return this.selectResponses.shift();
+      },
+      confirm: async (title, message, opts) => {
+        this.confirmCalls.push({ title, message, opts });
+        return this.confirmResponses.shift() ?? false;
+      },
     };
     return {
       mode,
       cwd,
       isProjectTrusted: () => trusted,
       ui,
+      hasUI: this.hasUI,
       model,
       modelRegistry,
     };
@@ -370,6 +504,27 @@ export class RecordingFakePiHost {
     if (call === undefined) throw new Error(`command not registered: ${name}`);
     await call.registration.handler(rawArgs, ctx);
     return ctx;
+  }
+
+  /**
+   * Fires every registered `tool_call` handler in registration order,
+   * mirroring Pi's real behavior: later handlers see any mutation an
+   * earlier handler made to `event.input`, and a `{block: true}` result
+   * stops further handlers from running (Spec 33 §12.1). Returns the
+   * blocking result, or `undefined` if every handler allowed the call.
+   */
+  async triggerToolCall(
+    event: PiToolCallEvent,
+  ): Promise<PiToolCallEventResult | undefined> {
+    const ctx = this.createSessionContext();
+    const handlers = this.handlers.get("tool_call") ?? [];
+    for (const handler of handlers) {
+      const result = (await handler(event, ctx)) as
+        | PiToolCallEventResult
+        | undefined;
+      if (result?.block === true) return result;
+    }
+    return undefined;
   }
 }
 

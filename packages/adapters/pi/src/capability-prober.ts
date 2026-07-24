@@ -36,6 +36,13 @@ export interface PiCandidatePlanContext {
   readonly materializationErrorCount: number;
   readonly primaryDescriptorFound: boolean;
   readonly primaryModelDryResolved: boolean;
+  /**
+   * Result of the registered-tool coverage proof (Spec 33 §12, §21):
+   * `"ok"` when `verifyPermissionCoverage` succeeded for the sealed
+   * candidate registry; a bounded, closed-set `reason` string otherwise.
+   * `undefined` only when the plan never ran (mode/host blocked).
+   */
+  readonly toolPolicyCoverage?: "ok" | { readonly reason: string };
 }
 
 /** Input a capability prober needs; assembled after mode/host/trust are known. */
@@ -52,6 +59,36 @@ const CANDIDATE_PLAN_CAPABILITIES: ReadonlySet<CapabilityId> = new Set([
   "primary-agent-selection",
   "prompt-composition",
 ]);
+
+/**
+ * Evaluates `tool-policy-mapping` against the registered-tool coverage
+ * proof computed once during preflight (Spec 33 §12, §21). Never raises a
+ * declared ceiling - `undefined` (plan never ran) and an incomplete/invalid
+ * coverage result both report `unavailable`.
+ */
+function evaluateToolPolicyCapability(
+  plan: PiCandidatePlanContext,
+): CapabilityProbeResult {
+  if (plan.toolPolicyCoverage === undefined) {
+    return {
+      capabilityId: "tool-policy-mapping",
+      probeStatus: "unavailable",
+      details: "tool-policy-plan-not-run",
+    };
+  }
+  if (plan.toolPolicyCoverage === "ok") {
+    return {
+      capabilityId: "tool-policy-mapping",
+      probeStatus: "ok",
+      details: "registered-tool-coverage-proven",
+    };
+  }
+  return {
+    capabilityId: "tool-policy-mapping",
+    probeStatus: "unavailable",
+    details: plan.toolPolicyCoverage.reason,
+  };
+}
 
 /**
  * Evaluates the four candidate-plan-aware capabilities against real
@@ -233,6 +270,15 @@ export class DefaultPiCapabilityProber implements PiCapabilityProbeSource {
         probeStatus: "ok",
         details: "native-per-message-usage-fields",
       };
+    }
+    if (id === "tool-policy-mapping") {
+      return context.candidatePlan !== undefined
+        ? evaluateToolPolicyCapability(context.candidatePlan)
+        : {
+            capabilityId: id,
+            probeStatus: "unavailable",
+            details: "tool-policy-plan-not-run",
+          };
     }
     if (
       context.candidatePlan !== undefined &&

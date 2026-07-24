@@ -195,6 +195,22 @@ export function makeCommandCollisionFailure(
   };
 }
 
+export function makeRequiredCapabilityUnavailableFailure(
+  capabilityId: string,
+  reason: string,
+): PiAdapterFailure {
+  return {
+    code: "RequiredCapabilityUnavailable",
+    phase: "capability",
+    scope: ADAPTER_SCOPE,
+    impact: "health-only",
+    retryable: false,
+    recovery: "health-check",
+    safeMessage: "A required adapter capability is unavailable.",
+    correlation: { capabilityId, reason },
+  };
+}
+
 export function makeControllerGenerationStaleFailure(
   generationId: string,
 ): PiAdapterFailure {
