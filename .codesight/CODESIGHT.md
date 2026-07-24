@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 216 lib files | 33 env vars | 7 middleware | 0% test coverage
-> **Token savings:** this file is ~21,000 tokens. Without it, AI exploration would cost ~71,400 tokens. **Saves ~50,400 tokens per conversation.**
-> **Last scanned:** 2026-07-24 17:27 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 220 lib files | 33 env vars | 9 middleware | 0% test coverage
+> **Token savings:** this file is ~21,500 tokens. Without it, AI exploration would cost ~72,900 tokens. **Saves ~51,500 tokens per conversation.**
+> **Last scanned:** 2026-07-24 18:47 — re-run after significant changes
 
 ---
 
@@ -168,7 +168,7 @@
   - function isGenuineBuiltinSourceInfo: (sourceInfo, toolName) => boolean
   - type WeaveCommandName
   - type WeaveCommandClassification
-  - _...3 more_
+  - _...4 more_
 - `packages/adapters/pi/src/config-activator.ts`
   - function createTrustWithheldFileReader: (inner, projectRoot) => FileReader
   - function buildDescriptorCatalog: (plan) => PiDescriptorCatalog
@@ -223,6 +223,11 @@
   - function cloneApprovalPromptRequestAsJson: (request) => JsonValue
   - function createPiExtension: (overrides) => (pi: PiExtensionApi) => void
   - interface PiExtensionDeps
+- `packages/adapters/pi/src/host-compatibility-matrix.ts`
+  - function validateHostCompatibilityMatrix: (matrix) => Result<PiHostCompatibilityMatrix, HostCompatibilityMatrixError>
+  - interface PiHostCompatibilityMatrix
+  - type HostCompatibilityMatrixError
+  - const PI_HOST_COMPATIBILITY_MATRIX: PiHostCompatibilityMatrix
 - `packages/adapters/pi/src/host-compatibility.ts`
   - function parseSemver: (version) => Result<ParsedVersion, void>
   - function isSupportedHostVersion: (version) => boolean
@@ -839,7 +844,7 @@
   - function findPlanLeaf: (parents, taskId) => PlanTaskNode | undefined
   - function authorizePlanCoordinator: (coordinatorAgent, planName, authorizedCoordinator) => Result<undefined, PlanStateError>
   - function validatePlanTransition: (snapshot, input, authorizedCoordinator) => Result<PlanTaskNode, PlanStateError>
-  - _...9 more_
+  - _...10 more_
 - `packages/engine/src/review-orchestration.ts`
   - function fanOut: (agentName, config) => Result<ReviewFanOutPlan, ReviewOrchestrationError>
   - function collate: (results) => Result<CollatedReview, ReviewOrchestrationError>
@@ -1000,6 +1005,16 @@
   - function loadDocuments: (root) => Promise<DocumentStore>
   - interface DocumentStore
   - type LinkCheckError
+- `scripts/release/acceptance-manifest.ts`
+  - function validateAcceptanceManifestStructure: (candidate) => Result<AcceptanceManifest, AcceptanceManifestError[]>
+  - function verifyAcceptanceManifestEvidence: (manifest, deps, TestEvidence>>;
+    checklistResults, SmokeChecklistResult>;
+  }) => Promise<EvidenceVerificationReport>
+  - function buildAcceptanceManifest: (input) => AcceptanceManifest
+  - class BunEvidenceFileReader
+  - interface ClosedSetSpec
+  - interface EvidenceFileReader
+  - _...19 more_
 - `scripts/release/artifact-binding.ts`
   - function createBindingRecord: (input) => Result<ArtifactBindingRecord, BindingError>
   - function verifyBindingRecord: (record, context, github) => ResultAsync<ArtifactBindingRecord, BindingError>
@@ -1030,6 +1045,10 @@
   - interface CommandResult
   - interface CommandRunner
 - `scripts/release/filesystem.ts` — class BunFileSystem, interface FileSystem
+- `scripts/release/generate-acceptance-manifest.ts`
+  - function generateAcceptanceManifest: (root) => ResultAsync<
+  - interface GeneratedAcceptanceManifestResult
+  - type GenerateAcceptanceManifestError
 - `scripts/release/github-client.ts`
   - class GitHubRestClient
   - interface WorkflowRunMetadata
@@ -1109,6 +1128,14 @@
   - interface PromotionCommands
   - interface StableFinalizeResult
   - _...4 more_
+- `scripts/release/smoke-checklist.ts`
+  - function parseSmokeChecklist: (markdown) => Result<ParsedSmokeChecklist, SmokeChecklistParseError>
+  - class BunSmokeChecklistReader
+  - interface SmokeChecklistItem
+  - interface ParsedSmokeChecklist
+  - interface SmokeChecklistReader
+  - type SmokeChecklistResult
+  - _...3 more_
 - `scripts/release/stable-lineage.ts` — function hasProgressedLineage: (original, progressed) => boolean
 - `scripts/release/stable-train.ts`
   - function canonicalTrainJson: (record) => string
@@ -1182,11 +1209,13 @@
 ## validation
 - migrate.d — `packages/cli/dist-types/commands/migrate.d.ts`
 - migrate — `packages/cli/src/commands/migrate.ts`
+- generate-acceptance-manifest — `scripts/release/generate-acceptance-manifest.ts`
 
 ## custom
 - migrate-conversion.test — `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`
 - migrate.test — `packages/cli/src/commands/__tests__/migrate.test.ts`
 - runtime-directory-guard — `packages/engine/src/runtime/sqlite/runtime-directory-guard.ts`
+- generate-acceptance-manifest.test — `scripts/release/__tests__/generate-acceptance-manifest.test.ts`
 
 ## auth
 - authorization.test — `packages/engine/src/__tests__/execution-lifecycle/authorization.test.ts`
@@ -1237,7 +1266,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 211 test files found
+> 216 test files found
 
 ---
 

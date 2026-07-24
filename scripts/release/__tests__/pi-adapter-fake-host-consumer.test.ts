@@ -8,6 +8,7 @@ import {
   HOST_VERSION_FLOOR,
   isSupportedHostVersion,
 } from "../../../packages/adapters/pi/src/host-compatibility.js";
+import { PI_HOST_COMPATIBILITY_MATRIX } from "../../../packages/adapters/pi/src/host-compatibility-matrix.js";
 import { PackagePolicyValidator } from "../package-policy.js";
 import { BunPackageCommandRunner, PublicPackagePackager } from "../packager.js";
 import { TarInspector } from "../tar-inspector.js";
@@ -24,7 +25,8 @@ import { TarInspector } from "../tar-inspector.js";
  * network call of any kind, and the extension's default factory is only
  * inspected - never invoked - so Pi is never started.
  */
-const EXACT_TESTED_HOST_VERSION = "0.81.1";
+const EXACT_TESTED_HOST_VERSION =
+  PI_HOST_COMPATIBILITY_MATRIX.exactTestedVersion;
 
 /**
  * Minimal stub bodies for the handful of runtime *value* imports the

@@ -157,7 +157,7 @@
   - function isGenuineBuiltinSourceInfo: (sourceInfo, toolName) => boolean
   - type WeaveCommandName
   - type WeaveCommandClassification
-  - _...3 more_
+  - _...4 more_
 - `packages/adapters/pi/src/config-activator.ts`
   - function createTrustWithheldFileReader: (inner, projectRoot) => FileReader
   - function buildDescriptorCatalog: (plan) => PiDescriptorCatalog
@@ -212,6 +212,11 @@
   - function cloneApprovalPromptRequestAsJson: (request) => JsonValue
   - function createPiExtension: (overrides) => (pi: PiExtensionApi) => void
   - interface PiExtensionDeps
+- `packages/adapters/pi/src/host-compatibility-matrix.ts`
+  - function validateHostCompatibilityMatrix: (matrix) => Result<PiHostCompatibilityMatrix, HostCompatibilityMatrixError>
+  - interface PiHostCompatibilityMatrix
+  - type HostCompatibilityMatrixError
+  - const PI_HOST_COMPATIBILITY_MATRIX: PiHostCompatibilityMatrix
 - `packages/adapters/pi/src/host-compatibility.ts`
   - function parseSemver: (version) => Result<ParsedVersion, void>
   - function isSupportedHostVersion: (version) => boolean
@@ -828,7 +833,7 @@
   - function findPlanLeaf: (parents, taskId) => PlanTaskNode | undefined
   - function authorizePlanCoordinator: (coordinatorAgent, planName, authorizedCoordinator) => Result<undefined, PlanStateError>
   - function validatePlanTransition: (snapshot, input, authorizedCoordinator) => Result<PlanTaskNode, PlanStateError>
-  - _...9 more_
+  - _...10 more_
 - `packages/engine/src/review-orchestration.ts`
   - function fanOut: (agentName, config) => Result<ReviewFanOutPlan, ReviewOrchestrationError>
   - function collate: (results) => Result<CollatedReview, ReviewOrchestrationError>
@@ -989,6 +994,16 @@
   - function loadDocuments: (root) => Promise<DocumentStore>
   - interface DocumentStore
   - type LinkCheckError
+- `scripts/release/acceptance-manifest.ts`
+  - function validateAcceptanceManifestStructure: (candidate) => Result<AcceptanceManifest, AcceptanceManifestError[]>
+  - function verifyAcceptanceManifestEvidence: (manifest, deps, TestEvidence>>;
+    checklistResults, SmokeChecklistResult>;
+  }) => Promise<EvidenceVerificationReport>
+  - function buildAcceptanceManifest: (input) => AcceptanceManifest
+  - class BunEvidenceFileReader
+  - interface ClosedSetSpec
+  - interface EvidenceFileReader
+  - _...19 more_
 - `scripts/release/artifact-binding.ts`
   - function createBindingRecord: (input) => Result<ArtifactBindingRecord, BindingError>
   - function verifyBindingRecord: (record, context, github) => ResultAsync<ArtifactBindingRecord, BindingError>
@@ -1019,6 +1034,10 @@
   - interface CommandResult
   - interface CommandRunner
 - `scripts/release/filesystem.ts` — class BunFileSystem, interface FileSystem
+- `scripts/release/generate-acceptance-manifest.ts`
+  - function generateAcceptanceManifest: (root) => ResultAsync<
+  - interface GeneratedAcceptanceManifestResult
+  - type GenerateAcceptanceManifestError
 - `scripts/release/github-client.ts`
   - class GitHubRestClient
   - interface WorkflowRunMetadata
@@ -1098,6 +1117,14 @@
   - interface PromotionCommands
   - interface StableFinalizeResult
   - _...4 more_
+- `scripts/release/smoke-checklist.ts`
+  - function parseSmokeChecklist: (markdown) => Result<ParsedSmokeChecklist, SmokeChecklistParseError>
+  - class BunSmokeChecklistReader
+  - interface SmokeChecklistItem
+  - interface ParsedSmokeChecklist
+  - interface SmokeChecklistReader
+  - type SmokeChecklistResult
+  - _...3 more_
 - `scripts/release/stable-lineage.ts` — function hasProgressedLineage: (original, progressed) => boolean
 - `scripts/release/stable-train.ts`
   - function canonicalTrainJson: (record) => string

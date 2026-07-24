@@ -5,9 +5,11 @@ import {
   derivePlanParentState,
   isAllowedPlanLeafTransition,
   isPlanSnapshotComplete,
+  PLAN_TASK_STATES,
   type PlanStateError,
   type PlanStateProvider,
   type PlanTaskSnapshot,
+  type PlanTaskState,
   type PlanTaskTransition,
   validatePlanTransition,
 } from "@weaveio/weave-engine";
@@ -85,6 +87,18 @@ class RecordingPlanProvider implements PlanStateProvider {
 }
 
 describe("revisioned plan transition semantics", () => {
+  it("PLAN_TASK_STATES exhaustively covers every PlanTaskState (Spec 33 §16 plan markers)", () => {
+    const members: readonly PlanTaskState[] = PLAN_TASK_STATES;
+    expect(new Set(members)).toEqual(
+      new Set([
+        "pending",
+        "in_progress",
+        "completed",
+      ] satisfies PlanTaskState[]),
+    );
+    expect(members).toHaveLength(3);
+  });
+
   it("accepts only the closed leaf transition graph", () => {
     expect(isAllowedPlanLeafTransition("pending", "in_progress")).toBe(true);
     expect(isAllowedPlanLeafTransition("in_progress", "completed")).toBe(true);

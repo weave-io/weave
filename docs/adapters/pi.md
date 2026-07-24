@@ -1,6 +1,6 @@
 # Pi Adapter Guide
 
-**Status:** Runtime features, diagnostics, packed-package proof, and nightly release integration implemented; acceptance manifest and stable live proof remain pending
+**Status:** Runtime features, diagnostics, packed-package proof, nightly release integration, and the Spec 33 acceptance manifest/exact-host compatibility matrix/digest-bound smoke-checklist machinery are implemented; the live TUI smoke pass itself remains pending
 
 **Related:** [Pi adapter architecture](../pi-adapter.md) · [Spec 33](../specs/33-spec-pi-adapter/33-spec-pi-adapter.md) · [Adapter readiness](../adapter-readiness-status.md)
 
@@ -12,7 +12,7 @@ For supported sessions, the adapter loads the permitted Weave config, consumes m
 
 The adapter also governs discovered Pi-native tools through input-aware resolvers and the engine permission session. It checks exact built-in provenance, sealed registry coverage, and controller generation before each call. Policy `deny` blocks, `allow` consumes a single-use permit without prompting, and `ask` opens a bounded approval dialog only outside health-only mode. Missing or malformed resolver input is unresolved and supports one-time approval only. Unrelated third-party tools remain unmanaged.
 
-The adapter also ships a bounded `weave_delegate` tool and its private authenticated child transport (see [Delegation](#delegation) below). Workflow commands, direct-step execution, plans, artifacts, recovery, and reconciliation are implemented. Bounded diagnostics, packed-package policy, clean-room fake-host consumption, and nightly release integration are also implemented. The complete acceptance manifest and digest-bound stable TUI validation remain pending.
+The adapter also ships a bounded `weave_delegate` tool and its private authenticated child transport (see [Delegation](#delegation) below). Workflow commands, direct-step execution, plans, artifacts, recovery, and reconciliation are implemented. Bounded diagnostics, packed-package policy, clean-room fake-host consumption, and nightly release integration are also implemented. The acceptance manifest, exact-host compatibility matrix, and digest-bound stable TUI smoke-checklist machinery are implemented (see [Package proof](#package-proof) below); the live TUI smoke pass has not been executed.
 
 ## Compatibility
 
@@ -124,4 +124,10 @@ Health output, journal entries, usage observations, and logs omit prompts, respo
 
 ## Package proof
 
-The public package build emits `dist/index.js` and Pi's `dist/extension.js`, preserves the supported host peer range and `pi.extensions` manifest field, and rejects lifecycle scripts, private dependencies, undeclared imports, or unexpected tar entries. Release tests pack those staged files and load the tarball in an offline clean room with a fake `@earendil-works/pi-coding-agent@0.81.1` host. The package participates in the nightly release plan; stable publication still requires the acceptance manifest and digest-bound live TUI checklist.
+The public package build emits `dist/index.js` and Pi's `dist/extension.js`, preserves the supported host peer range and `pi.extensions` manifest field, and rejects lifecycle scripts, private dependencies, undeclared imports, or unexpected tar entries. Release tests pack those staged files and load the tarball in an offline clean room with a fake `@earendil-works/pi-coding-agent@0.81.1` host. The package participates in the nightly release plan.
+
+The exact-host compatibility matrix (`packages/adapters/pi/src/host-compatibility-matrix.ts`) is the single source-controlled record naming the host package, supported range, floor, and exact tested version (Spec 33 §22); `scripts/release/host-compatibility.ts`'s constants and the matrix can never drift apart because the matrix derives its range from the same constants at import time.
+
+The acceptance manifest ([`docs/specs/33-spec-pi-adapter/acceptance-manifest.json`](../specs/33-spec-pi-adapter/acceptance-manifest.json)) traces every mandatory `PI-*` requirement to real named tests, packed proof, and live-smoke checklist items (`scripts/release/acceptance-manifest.ts` validates the schema, rejects duplicate/orphan/missing IDs, and verifies the named evidence exists and that the closed sets it claims (19 capability IDs, 9 direct commands plus 3 command classifications, 10 lifecycle operations, 11 private control envelope/reply kinds, 3 permission-gate outcome kinds, 3 plan-task markers, artifact-approval actor kinds plus reconciliation authorization sources, host package/floor/ceiling boundary tokens, and every failure code/impact/recovery value) are exhaustive, and rejects any packed-proof or live-smoke evidence entry that exists but is never referenced by a requirement row). `scripts/release/generate-acceptance-manifest.ts` regenerates it from a real local pack digest and the current git HEAD — never a fabricated digest.
+
+Stable publication still requires a human to run the digest-bound live TUI smoke checklist ([`33-smoke-checklist.md`](../specs/33-spec-pi-adapter/33-smoke-checklist.md)) against the exact released artifact and record the outcome; every requirement row's `result` stays `pending` until that happens.

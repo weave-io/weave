@@ -25,6 +25,13 @@ export type WeaveCommandClassification =
   | "read-only"
   | "idempotent-cleanup";
 
+/** All valid `WeaveCommandClassification` values as a readonly tuple (Spec 33 §13/§21 invalid-state gating). */
+export const WEAVE_COMMAND_CLASSIFICATIONS = [
+  "mutating",
+  "read-only",
+  "idempotent-cleanup",
+] as const satisfies readonly WeaveCommandClassification[];
+
 const MUTATING_COMMANDS: ReadonlySet<WeaveCommandName> = new Set([
   "weave:start",
   "weave:run",

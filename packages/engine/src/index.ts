@@ -230,6 +230,7 @@ export {
   findPlanLeaf,
   isAllowedPlanLeafTransition,
   isPlanSnapshotComplete,
+  PLAN_TASK_STATES,
   validatePlanTransition,
 } from "./plan-state-provider.js";
 export type {

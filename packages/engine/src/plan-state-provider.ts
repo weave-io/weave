@@ -25,6 +25,13 @@ import { err, errAsync, ok, type Result, type ResultAsync } from "neverthrow";
 /** Leaf/parent task progress state derived from checkbox markers. */
 export type PlanTaskState = "pending" | "in_progress" | "completed";
 
+/** All valid `PlanTaskState` values as a readonly tuple (Spec 33 §16 plan markers). */
+export const PLAN_TASK_STATES = [
+  "pending",
+  "in_progress",
+  "completed",
+] as const satisfies readonly PlanTaskState[];
+
 /** Whether the parsed plan matched the canonical two-level grammar. */
 export type PlanFormat = "canonical" | "legacy";
 
