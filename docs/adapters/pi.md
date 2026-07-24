@@ -1,6 +1,6 @@
 # Pi Adapter Guide
 
-**Status:** Activation, normalized configuration, and tool policy implemented; do not treat this guide as release proof
+**Status:** Activation, normalized configuration, tool policy, and delegation transport implemented; do not treat this guide as release proof
 
 **Related:** [Pi adapter architecture](../pi-adapter.md) · [Spec 33](../specs/33-spec-pi-adapter/33-spec-pi-adapter.md) · [Adapter readiness](../adapter-readiness-status.md)
 
@@ -10,7 +10,9 @@ The implemented package in [`packages/adapters/pi`](../../packages/adapters/pi) 
 
 For supported sessions, the adapter loads the permitted Weave config, consumes materialized descriptors in stable plan order, and prepares Loom as the ordinary primary. On the first `before_agent_start`, it uses Pi's loaded skill catalog and authenticated model registry to resolve Loom's exact skill and ordered model intent. It applies a resolved model through Pi, preserves model fallback as a visible degradation, and appends Loom's final `composedPrompt` once to Pi's existing prompt. Declared temperature remains ignored and appears as a deduplicated health warning.
 
-The adapter also governs discovered Pi-native tools through input-aware resolvers and the engine permission session. It checks exact built-in provenance, sealed registry coverage, and controller generation before each call. Policy `deny` blocks, `allow` consumes a single-use permit without prompting, and `ask` opens a bounded approval dialog only outside health-only mode. Missing or malformed resolver input is unresolved and supports one-time approval only. Unrelated third-party tools remain unmanaged. Delegation, workflows, packaging proof, and live TUI validation remain pending.
+The adapter also governs discovered Pi-native tools through input-aware resolvers and the engine permission session. It checks exact built-in provenance, sealed registry coverage, and controller generation before each call. Policy `deny` blocks, `allow` consumes a single-use permit without prompting, and `ask` opens a bounded approval dialog only outside health-only mode. Missing or malformed resolver input is unresolved and supports one-time approval only. Unrelated third-party tools remain unmanaged.
+
+The adapter also ships a bounded `weave_delegate` tool and its private authenticated child transport (see [Delegation](#delegation) below). Workflow lifecycle projection, packaging proof, and live TUI validation remain pending.
 
 ## Compatibility
 
@@ -68,9 +70,27 @@ If `/weave:health` reports health-only mode, the adapter blocks work but keeps d
 
 Fix the reported cause and start a new Pi session. Do not bypass health-only mode by calling private extension APIs.
 
-## Delegation limits
+## Delegation
 
-Project settings define finite child, concurrency, depth, and process limits. Agent overrides may narrow direct-child and concurrency limits only. The adapter queues within those limits and fails closed when live count state is unavailable.
+`weave_delegate` runs one bounded task on a single eligible agent as a private ephemeral child, then returns that child's own structured result. It never creates or advances workflow state (that is a distinct, later port).
+
+**Exact command.** A delegated child is spawned as `pi --mode rpc --no-session`, never as an interactive session. This is the only Pi RPC entry point the adapter uses; a real user never starts this path themselves.
+
+**Auth and framing.** Each child receives an independent, process-scoped 256-bit secret over its environment (read once, then erased from the child's own environment on first use) and proves possession with an HMAC-SHA-256-signed handshake before either side accepts anything else. Every subsequent control envelope (`bootstrap`, `bootstrap-ack`, `cancel`, `settled`, `cancelled`, `error`, `approval-request`/`-response`, `delegate-request`/`-response`) is signed the same way, carries a monotonic per-direction sequence number and a random nonce, and travels as one strict line-delimited JSON object per line over the child's stdio. Malformed, unsigned, replayed (repeated nonce or non-increasing sequence), or unauthenticated lines fail closed and the runtime disposes itself rather than guessing intent.
+
+**Queues and budgets.** Project settings (and narrower per-agent overrides, direct-child and concurrency limits only) define finite direct-child, concurrency, depth, and global live-process limits, resolved per requesting agent. A request that exceeds direct-child, concurrency, or depth limits is denied immediately; a request within the per-parent direct-child limit but currently over the concurrency or process ceiling queues in FIFO order per parent and is promoted automatically as capacity frees up. The controller fails closed (denies) whenever live count state cannot be resolved, rather than guessing a lower bound.
+
+**Nested relay.** A live child may itself request delegation (its own `weave_delegate` tool, wired the same way as the root's). The parent-side controller restricts any such nested request to that exact child's own declared `delegationTargets` from its bootstrap descriptor — a child can never delegate to an agent its own bootstrap did not name. Every child's own governed tool-call approvals (including a nested child's) relay through the single parent TUI, tagged with the originating child's id, never a nested/child-local approval UI.
+
+**Cleanup.** Cancelling a node cancels that node and every descendant, including not-yet-spawned queued requests under that subtree. A live child is asked to cancel cooperatively (signed `cancel` envelope, then a raw abort command), bounded by a grace period; if it does not exit in time it is force-killed. Process exit while a cancel is outstanding is treated as the expected outcome, not an unexpected exit. Every child's secret is zeroed and its resources released exactly once (idempotent), whether it settles, fails, or is cancelled.
+
+**Active tool/model/context bootstrap.** The parent sends the new child exactly one signed `bootstrap` control envelope containing its resolved agent name, composed prompt, ordered model preference list (plus a parent-resolved model directly, for a root-level delegation with a live model registry), effective tool policy, its own eligible `delegationTargets`, delegation context (parent agent name, parent depth, cwd), and the exact active-tool name list the child must apply. The child validates the bootstrap's `correlationId` against its own authenticated identity, applies the exact active-tool set via the host's `setActiveTools`, resolves a model (using the parent-resolved model if present, else resolving against its own catalog), and only signals readiness (`bootstrap-ack`) after every step succeeds — any failure disposes the child without ever partially applying a bootstrap.
+
+**Tree controls.** The parent renders a live child tree widget and supports direct keyboard navigation over it: Alt+1 through Alt+9 select a direct child by spawn order, Backspace selects the parent (host default at the root), and Esc requests cancellation of the selected node (host default at the root). `/weave:abort` cancels the full owned execution child tree from the palette.
+
+**Limitations.** Pi's `agent_settled` event carries no payload (`{"type":"agent_settled"}` only) — a child cannot read a stop/error signal directly off it. The adapter instead tracks the most recently observed assistant `stopReason` (`stop`/`length`/`toolUse`/`error`/`aborted`) from `message_end` events and derives a `failed` outcome only when that value is `"error"` or `"aborted"`; every other case (including no observed stop reason at all) reports `completed`. A child never reports `completed` once its own cancellation has been admitted, closing the only remaining race between a stray settlement and an already-sent cancellation. A completed child's settlement summary is its own bounded (<=4KiB, valid UTF-8) final assistant output, truncated at a UTF-8 code-point boundary; a fixed fallback string is used only when a completed turn produced no observable assistant text.
+
+**Tests.** Delegation is exercised at three layers with no real Pi process, secret material, or filesystem I/O: pure control-body/limit unit tests (`child-control-bodies.test.ts`, `strict-json.test.ts`), an injected-port parent/child protocol layer (`rpc-child.test.ts`, `child-runtime.test.ts`, `child-crypto.test.ts`, `child-envelope.test.ts`, `child-framing.test.ts`) using a fake child process port and fake clock, and an end-to-end fake-host layer (`child-mode.test.ts`, `delegation-controller.test.ts`, `delegation-tool.test.ts`) that fires real Pi lifecycle events against a recording fake host and asserts on the exact signed envelopes written to its output port.
 
 Private children are an implementation detail. Do not start Pi RPC mode to use Weave directly; public adapter operation is interactive TUI only.
 

@@ -1,6 +1,7 @@
 import type {
   AdapterCapabilityContract,
   AdapterHealthReport,
+  AgentDescriptor,
   CapabilityProbeResult,
 } from "@weaveio/weave-engine";
 import { buildAdapterHealthReport } from "@weaveio/weave-engine";
@@ -28,7 +29,10 @@ import {
   type HostPackageReader,
 } from "./host-compatibility.js";
 import { PiModelResolver } from "./model-resolution.js";
-import type { PiToolPolicyPlan } from "./permission-bridge.js";
+import type {
+  PiToolPolicyPlan,
+  PiWeaveToolRegistration,
+} from "./permission-bridge.js";
 import { PiPermissionBridge } from "./permission-bridge.js";
 import {
   safelyAwaitPortResult,
@@ -103,6 +107,14 @@ export interface PiPreflightResult {
    * only when it never ran (mode/host blocked or config activation failed).
    */
   readonly toolPolicy?: PiToolPolicyPlan;
+  /**
+   * The exact Weave-owned registrations threaded into `toolPolicy`'s
+   * coverage proof above (Spec 33 §11.1) - `extension.ts` MUST reuse this
+   * identical array at real registration time (`registerWeaveOwnedTools`)
+   * rather than recomputing a different one, or the sealed coverage proof
+   * would no longer describe what was actually registered.
+   */
+  readonly weaveOwnedRegistrations: readonly PiWeaveToolRegistration[];
   readonly healthReport: AdapterHealthReport;
   readonly healthOnlyMode: boolean;
 }
@@ -113,6 +125,18 @@ export interface PiSafeInitializerDeps {
   readonly configActivator: PiConfigActivator;
   readonly permissionBridge?: PiPermissionBridge;
   readonly capabilityContract?: AdapterCapabilityContract;
+  /**
+   * Caller-supplied builder for the ordinary-delegation Weave-owned tool
+   * (Spec 33 §11.1) - mirrors the existing caller-supplied-resolver pattern
+   * so this foundational module never depends on the concrete delegation
+   * controller. Receives the eligible default-primary descriptor and the
+   * successful config activation; returns zero or one registrations. Not
+   * called at all when there is no eligible primary this generation.
+   */
+  readonly buildDelegationToolRegistrations?: (
+    primary: AgentDescriptor,
+    activation: PiConfigActivationResult,
+  ) => readonly PiWeaveToolRegistration[];
 }
 
 interface HostOutcome {
@@ -125,6 +149,7 @@ interface CandidatePlanOutcome {
   readonly activation?: PiConfigActivationResult;
   readonly failure?: PiAdapterFailure;
   readonly toolPolicy?: PiToolPolicyPlan;
+  readonly weaveOwnedRegistrations: readonly PiWeaveToolRegistration[];
 }
 
 /** Bounded, closed-set reason for a coverage-proof failure - never raw context content. */
@@ -194,6 +219,7 @@ export class PiSafeInitializer {
             configActivation: candidate.activation,
             configActivationFailure: candidate.failure,
             toolPolicy: candidate.toolPolicy,
+            weaveOwnedRegistrations: candidate.weaveOwnedRegistrations,
             healthReport,
             healthOnlyMode:
               blocked || trust === "withheld" || healthReport.healthOnlyMode,
@@ -242,7 +268,7 @@ export class PiSafeInitializer {
     tools: readonly PiToolInfo[],
   ): ResultAsync<CandidatePlanOutcome, never> {
     if (blocked) {
-      return okAsync({});
+      return okAsync({ weaveOwnedRegistrations: [] });
     }
 
     // `configActivator` is an injected port - even though it is *typed* as
@@ -266,6 +292,13 @@ export class PiSafeInitializer {
           );
           const primaryEligible =
             primary !== undefined && primary.mode !== "subagent";
+          const weaveOwnedRegistrations =
+            primaryEligible && primary !== undefined
+              ? (this.deps.buildDelegationToolRegistrations?.(
+                  primary as NonNullable<typeof primary>,
+                  activation,
+                ) ?? [])
+              : [];
           // `modelRegistry` is an injected port; a throwing
           // `getAvailable()` must not crash preflight - Spec 33 §9.2's own
           // fail-closed behavior for model resolution is to degrade rather
@@ -295,7 +328,7 @@ export class PiSafeInitializer {
             () =>
               this.permissionBridge.planToolPolicy({
                 allTools: tools,
-                weaveOwnedRegistrations: [],
+                weaveOwnedRegistrations,
                 policies,
               }),
             () => makeInvariantViolationFailure("tool-policy-plan-threw"),
@@ -304,6 +337,7 @@ export class PiSafeInitializer {
           return {
             activation,
             toolPolicy: planned.isOk() ? planned.value : undefined,
+            weaveOwnedRegistrations,
             probeContext: {
               configLoaded: true,
               materializationErrorCount: activation.descriptors.errors.length,
@@ -315,6 +349,7 @@ export class PiSafeInitializer {
         },
         (failure): CandidatePlanOutcome => ({
           failure,
+          weaveOwnedRegistrations: [],
           probeContext: {
             configLoaded: false,
             materializationErrorCount: 0,

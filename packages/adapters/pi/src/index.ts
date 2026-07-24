@@ -10,6 +10,63 @@ export {
   PROJECT_PATH_DEPENDENT_CAPABILITIES,
   sanitizeCapabilityProbeResults,
 } from "./capability-prober.js";
+export {
+  type ErasableSecret as PiErasableSecret,
+  generateChildSecret,
+  generateNonceHex,
+  type HmacPort as PiHmacPort,
+  type RandomPort as PiRandomPort,
+  WebCryptoHmacPort,
+  WebCryptoRandomPort,
+} from "./child-crypto.js";
+export {
+  PiChildAuthState,
+  type PiControlDirection,
+  type PiControlEnvelope,
+  type PiControlKind,
+  signEnvelope,
+  verifyEnvelope,
+} from "./child-envelope.js";
+export {
+  type FramingError as PiFramingError,
+  MAX_FRAME_RECORD_BYTES,
+  PiLineFramer,
+} from "./child-framing.js";
+export {
+  BunPiChildProcessPort,
+  type ChildProcessError as PiChildProcessError,
+  type PiChildProcessPort,
+  type PiChildSpawnInput,
+  type PiSpawnedChildProcess,
+} from "./child-process-port.js";
+export {
+  type PiChildBootstrapHandlers,
+  type PiChildOutputPort,
+  PiChildRuntime,
+  type PiChildRuntimeDeps,
+} from "./child-runtime.js";
+export {
+  DEFAULT_HANDSHAKE_TIMEOUT_MS,
+  DEFAULT_REPLY_TIMEOUT_MS,
+  DEFAULT_SETTLEMENT_TIMEOUT_MS,
+  SystemTimerPort,
+  type TimerHandle,
+  type TimerPort,
+} from "./child-timer.js";
+export {
+  addUsage,
+  applyTreeControlKey,
+  EMPTY_USAGE_AGGREGATE,
+  MAX_LATEST_OUTPUT_BYTES,
+  type PiChildStatus,
+  type PiChildTreeNode,
+  type PiChildUsageAggregate,
+  type PiTreeControlKey,
+  type PiTreeControlOutcome,
+  ROOT_NODE_ID,
+  subtreeIds,
+  truncateLatestOutput,
+} from "./child-tree.js";
 export type {
   WeaveCommandClassification,
   WeaveCommandName,
@@ -47,6 +104,17 @@ export type {
   PiOperationHandle,
 } from "./controller.js";
 export { PiExtensionController } from "./controller.js";
+export {
+  PiDelegationController,
+  type PiDelegationControllerDeps,
+  type PiDelegationRequest,
+} from "./delegation-controller.js";
+export {
+  buildDelegationToolRegistration,
+  type PiDelegationToolDeps,
+  WEAVE_DELEGATION_TOOL_NAME,
+  WEAVE_DELEGATION_TOOL_OWNER,
+} from "./delegation-tool.js";
 export type {
   PiAdapterFailure,
   PiAdapterFailureCode,
@@ -127,12 +195,25 @@ export {
   PiPrimarySession,
   renderWeavePromptBlock,
 } from "./primary-session.js";
+export {
+  type PiChildSettlement,
+  PiRpcChild,
+  type PiRpcChildDeps,
+  type PiRpcChildSpawnInput,
+} from "./rpc-child.js";
 export type {
   PiPreflightResult,
   PiSafeInitializerDeps,
 } from "./safe-initializer.js";
 export { PiSafeInitializer } from "./safe-initializer.js";
 export { PiSkillCatalog, toEngineSkillInfo } from "./skill-catalog.js";
+export {
+  type CanonicalizeError,
+  canonicalizeToBytes,
+  type JsonValue as PiJsonValue,
+  parseStrictJson,
+  type StrictJsonParseError,
+} from "./strict-json.js";
 export type { PiToolClassification } from "./tool-governance.js";
 export {
   buildNativeToolResolver,

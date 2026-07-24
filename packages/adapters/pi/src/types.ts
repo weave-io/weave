@@ -97,9 +97,10 @@ export type PiUiNotifyLevel = "info" | "warning" | "error";
 /**
  * Narrow projection of `ctx.ui`. Diagnostics/status/notify surfaces plus the
  * two interactive dialog primitives the registered-tool approval bridge
- * needs (`select`/`confirm`, Spec 33 §12.4) - no message/entry renderers,
- * no shortcuts, no editor overrides (Spec 33 §7.1 reserves those for later
- * tasks).
+ * needs (`select`/`confirm`, Spec 33 §12.4), plus the widget/status and
+ * compositional custom-editor surfaces Task 9 needs to expose the bounded
+ * child tree and wire Alt+1..9/Backspace/Esc (Spec 33 §11.5) - no
+ * message/entry renderers or shortcuts (out of this task's scope).
  */
 /**
  * Narrow mirror of Pi's own `ExtensionUIDialogOptions`
@@ -118,7 +119,21 @@ export interface PiUiDialogOptions {
 export interface PiUiPort {
   notify(message: string, level?: PiUiNotifyLevel): void;
   setStatus(key: string, value: string | undefined): void;
-  setWidget(key: string, value: unknown): void;
+  setWidget(
+    key: string,
+    value: unknown,
+    options?: { placement?: "aboveEditor" | "belowEditor" },
+  ): void;
+  /**
+   * Mirrors Pi's own `ctx.ui.getEditorComponent()`. Deliberately typed
+   * `unknown` - the concrete `EditorFactory`/`CustomEditor` shape is owned
+   * by the real `@earendil-works/pi-coding-agent`/`@earendil-works/pi-tui`
+   * packages, which this narrow port does not depend on. Only
+   * `src/extension.ts` (the real adapter boundary) casts through this.
+   */
+  getEditorComponent?(): unknown;
+  /** Mirrors Pi's own `ctx.ui.setEditorComponent()`; pass `undefined` to restore the host default editor. */
+  setEditorComponent?(factory: unknown): void;
   /**
    * Interactive single-choice prompt (`ctx.ui.select`). Resolves to
    * `undefined` when the user cancels OR the dialog times out - callers
@@ -243,6 +258,47 @@ export interface PiExtensionApi {
   setModel(
     model: PiModelInfo,
   ): boolean | undefined | Promise<boolean | undefined>;
+  /**
+   * Registers a keyboard shortcut (`ExtensionAPI.registerShortcut`, Spec 33
+   * §11.5). Used only for Alt+1..Alt+9 direct-child selection, which are not
+   * default editor keys and so are safe to bind exclusively. Backspace
+   * (parent selection) and Esc (cancel selected subtree) are wired
+   * separately, and NOT through this shortcut port: `src/extension.ts`'s
+   * `WeaveChildTreeEditor` composes the real `CustomEditor` via
+   * `ctx.ui.getEditorComponent()`/`setEditorComponent()` and drives the same
+   * pure `child-tree.ts` reducer from its own `handleInput`, falling through
+   * to `super.handleInput` for every key it does not recognize or that the
+   * reducer reports as root-level host-default behavior.
+   */
+  registerShortcut?(
+    shortcut: string,
+    registration: {
+      description?: string;
+      handler: (ctx: PiSessionContext) => void | Promise<void>;
+    },
+  ): void;
+  /**
+   * Enables/disables active tools, including dynamically registered ones
+   * (`ExtensionAPI.setActiveTools`, Spec 33 §11.2 Task 9). Names not
+   * already registered are documented as silently ignored by the real
+   * host, so callers MUST re-read {@link getActiveTools} (when supported)
+   * to verify the resulting set rather than trusting this call's return.
+   */
+  setActiveTools(names: readonly string[]): void | Promise<void>;
+  /**
+   * Reads the currently active tool names (`ExtensionAPI.getActiveTools`).
+   * Optional because this narrow port must stay usable against older/fake
+   * hosts that predate it; callers that need atomicity proof degrade to
+   * trusting their own `setActiveTools` request only when this is absent.
+   */
+  getActiveTools?(): readonly string[];
+}
+
+/** Injected environment-variable port for reading the child's private bootstrap values (Spec 33 §11.3). Production reads/deletes Bun's own `Bun.env` (see `child-env.ts`'s `BunEnvPort`) - never Node's `process.env`, and never argv or prompt text. */
+export interface PiEnvPort {
+  read(name: string): string | undefined;
+  /** Deletes the value so it cannot be read again later in the child's lifetime. */
+  deleteValue(name: string): void;
 }
 
 /** Injected monotonic-enough clock port. */

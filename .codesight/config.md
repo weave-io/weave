@@ -8,7 +8,7 @@
 - `GITHUB_TOKEN` **required** — scripts/release/bind-artifacts.ts
 - `HOME` **required** — packages/adapters/pi/src/__tests__/config-activator.test.ts
 - `LOG_LEVEL` **required** — packages/config/src/logger.ts
-- `PATH` **required** — scripts/release/__tests__/release-orchestrator.test.ts
+- `PATH` **required** — packages/adapters/pi/src/__tests__/child-env.test.ts
 - `PWD` **required** — packages/adapters/opencode/dist-types/adapter.d.ts
 - `RELEASE_APP_TOKEN` **required** — scripts/release/release-refs-main.ts
 - `RELEASE_AWAITING_STABLE_TRAIN` **required** — scripts/release/release-refs-main.ts

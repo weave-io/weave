@@ -74,6 +74,76 @@
   - interface PiPreflightContext
   - interface PiCapabilityProbeSource
   - _...1 more_
+- `packages/adapters/pi/src/child-control-bodies.ts`
+  - function parseControlBody: (kind, body) => void
+  - type PiBootstrapBody
+  - type PiBootstrapAckBody
+  - type PiModelIdentityBody
+  - type PiTaskContextBody
+  - type PiCancelBody
+  - _...11 more_
+- `packages/adapters/pi/src/child-crypto.ts`
+  - function bytesToHex: (bytes) => string
+  - function hexToBytes: (hex) => Uint8Array | undefined
+  - function timingSafeEqualHex: (a, b) => boolean
+  - function generateChildSecret: (random) => ErasableSecret
+  - function generateNonceHex: (random) => string
+  - class WebCryptoRandomPort
+  - _...5 more_
+- `packages/adapters/pi/src/child-env.ts`
+  - function sanitizedBaseEnv: (isDeniedKey) => void
+  - class BunEnvPort
+  - const WEAVE_CHILD_SECRET_ENV
+  - const WEAVE_CHILD_ID_ENV
+  - const WEAVE_CONTROLLER_GENERATION_ENV
+  - const WEAVE_CHILD_AGENT_NAME_ENV
+  - _...2 more_
+- `packages/adapters/pi/src/child-envelope.ts`
+  - function signEnvelope: (input, secret, hmac) => ResultAsync<PiControlEnvelope, EnvelopeError>
+  - function verifyEnvelope: (candidate, secret, hmac) => ResultAsync<PiControlEnvelope, EnvelopeError>
+  - function looksLikeControlEnvelope: (candidate) => boolean
+  - class PiChildAuthState
+  - interface PiControlEnvelope
+  - interface UnsignedEnvelopeInput
+  - _...8 more_
+- `packages/adapters/pi/src/child-framing.ts`
+  - class PiLineFramer
+  - interface ParsedFrame
+  - type FramingError
+  - const MAX_FRAME_RECORD_BYTES
+- `packages/adapters/pi/src/child-process-port.ts`
+  - class BunPiChildProcessPort
+  - interface PiChildStdout
+  - interface PiSpawnedChildProcess
+  - interface PiChildSpawnInput
+  - interface PiChildProcessPort
+  - type ChildProcessError
+- `packages/adapters/pi/src/child-runtime.ts`
+  - class PiChildRuntime
+  - interface PiChildOutputPort
+  - interface PiChildRuntimeDeps
+  - interface PiChildBootstrapHandlers
+  - type PiChildRuntimeError
+  - type PiChildOutputError
+  - _...1 more_
+- `packages/adapters/pi/src/child-timer.ts`
+  - class SystemTimerPort
+  - interface TimerHandle
+  - interface TimerPort
+  - const DEFAULT_HANDSHAKE_TIMEOUT_MS
+  - const DEFAULT_REPLY_TIMEOUT_MS
+  - const DEFAULT_SETTLEMENT_TIMEOUT_MS
+  - _...1 more_
+- `packages/adapters/pi/src/child-tree-keys.ts` — function classifyChildTreeKey: (data) => PiTreeControlKey | undefined
+- `packages/adapters/pi/src/child-tree-render.ts` — function renderChildTreeLines: (nodes, selectedId, cumulativeUsage) => string[]
+- `packages/adapters/pi/src/child-tree.ts`
+  - function addUsage: (a, b) => PiChildUsageAggregate
+  - function truncateLatestOutput: (text) => string
+  - function extractAssistantTextDeltaPreview: (record, JsonValue>) => string | undefined
+  - function extractAssistantStopReason: (record, JsonValue>) => string | undefined
+  - function applyTreeControlKey: (nodes, PiChildTreeNode>, selectedId, key) => PiTreeControlOutcome
+  - function subtreeIds: (nodes, PiChildTreeNode>, nodeId) => readonly string[]
+  - _...9 more_
 - `packages/adapters/pi/src/commands.ts`
   - function classifyWeaveCommand: (name) => WeaveCommandClassification
   - function parseNpmSourceName: (source) => string | undefined
@@ -96,6 +166,19 @@
   - interface PiOperationHandle
   - interface PiCommandGateDecision
   - interface PiExtensionControllerDeps
+- `packages/adapters/pi/src/delegation-controller.ts`
+  - class PiDelegationController
+  - interface PiDelegationContext
+  - interface PiDelegationControllerDeps
+  - interface PiDelegationRequest
+- `packages/adapters/pi/src/delegation-tool.ts`
+  - function buildDelegationToolRegistration: (deps) => PiWeaveToolRegistration
+  - function buildRelayedDelegationToolRegistration: (deps) => PiWeaveToolRegistration
+  - interface PiDelegationToolDeps
+  - interface PiRelayedDelegationToolDeps
+  - const WEAVE_DELEGATION_TOOL_NAME
+  - const WEAVE_DELEGATION_TOOL_OWNER
+  - _...1 more_
 - `packages/adapters/pi/src/errors.ts`
   - function makeHostIdentityUnknownFailure: (reason) => PiAdapterFailure
   - function makeHostVersionUnsupportedFailure: (version, reason) => PiAdapterFailure
@@ -103,9 +186,11 @@
   - function makeActivationFailedFailure: (reason) => PiAdapterFailure
   - function makeCommandCollisionFailure: (commandName) => PiAdapterFailure
   - function makeRequiredCapabilityUnavailableFailure: (capabilityId, reason) => PiAdapterFailure
-  - _...12 more_
+  - _...26 more_
 - `packages/adapters/pi/src/extension.ts`
   - function createDefaultPiExtensionDeps: () => PiExtensionDeps
+  - function classifyApprovalRelayFailureCause: (cause) => "thrown-error" | "rejected-non-error"
+  - function cloneApprovalPromptRequestAsJson: (request) => JsonValue
   - function createPiExtension: (overrides) => (pi: PiExtensionApi) => void
   - interface PiExtensionDeps
 - `packages/adapters/pi/src/host-compatibility.ts`
@@ -144,14 +229,27 @@
   - interface PiActivePrimary
   - interface PiPrimaryActivationContext
   - _...3 more_
+- `packages/adapters/pi/src/rpc-child.ts`
+  - class PiRpcChild
+  - interface PiRpcChildDeps
+  - interface PiRpcChildSpawnInput
+  - type PiChildSettlement
 - `packages/adapters/pi/src/safe-initializer.ts`
   - class PiSafeInitializer
   - interface PiPreflightResult
   - interface PiSafeInitializerDeps
 - `packages/adapters/pi/src/skill-catalog.ts` — function toEngineSkillInfo: (skill) => SkillInfo, class PiSkillCatalog
+- `packages/adapters/pi/src/strict-json.ts`
+  - function parseStrictJson: (text) => Result<JsonValue, StrictJsonParseError>
+  - function canonicalizeToBytes: (value) => Result<Uint8Array, CanonicalizeError>
+  - type JsonPrimitive
+  - type JsonValue
+  - type StrictJsonParseError
+  - type CanonicalizeError
 - `packages/adapters/pi/src/tool-governance.ts`
   - function classifyDiscoveredTools: (allTools, weaveOwnedNames) => PiToolClassification
   - function buildNativeToolResolver: (toolName, capability) => PermissionResolver
+  - function deriveActiveToolNames: (policy, delegationToolName) => readonly string[]
   - interface PiToolClassification
 - `packages/cli/src/args.ts`
   - function parseArgs: (argv) => Result<ParsedArgs, ArgParseError>

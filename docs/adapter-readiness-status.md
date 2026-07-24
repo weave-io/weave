@@ -69,9 +69,9 @@ See [Adapter Bootstrap Guide](adapter-bootstrap.md) for the canonical
 
 ---
 
-## Pi Adapter — Configuration and Tool Policy Implemented, Full Readiness Pending
+## Pi Adapter — Configuration, Tool Policy, and Delegation Transport Implemented, Full Readiness Pending
 
-[Spec 33](specs/33-spec-pi-adapter/33-spec-pi-adapter.md) defines full readiness for `@weaveio/weave-adapter-pi` on interactive Earendil Works Pi TUI sessions. The package, activation, normalized-configuration, and registered-tool-policy slices now exist, but later projection, packaging, and live-proof gates remain open.
+[Spec 33](specs/33-spec-pi-adapter/33-spec-pi-adapter.md) defines full readiness for `@weaveio/weave-adapter-pi` on interactive Earendil Works Pi TUI sessions. The package, activation, normalized-configuration, registered-tool-policy, and delegation-transport slices now exist, but workflow lifecycle projection, packaging, and live-proof gates remain open.
 
 | Area | Current effective status | Gate |
 | --- | --- | --- |
@@ -80,11 +80,14 @@ See [Adapter Bootstrap Guide](adapter-bootstrap.md) for the canonical
 | Pi package/runtime foundation | ✅ Implemented | Compiled extension entry, exact host checks, safe initializer, controller generations, normalized 19-probe health report, health-only gating, and isolated fake-host tests |
 | Pi normalized configuration projection | ✅ Implemented | Trust-aware config activation, ordered materialization-plan consumption, Loom primary activation, exact prompt append, Pi skill/model context, deterministic model intent, and visible temperature/model degradation |
 | Pi registered-tool policy | ✅ Implemented | Provenance-aware native-tool inventory, sealed coverage proof, input-aware resolvers, allow/deny/ask evaluation, bounded parent approval UI, child relay port, permit consumption, stale-authority rejection, and unmanaged third-party passthrough |
-| Pi delegation and lifecycle projection | ⏳ Pending | Child transport, workflow projection, persistence integration, concrete Weave-owned tools, and isolated tests |
+| Pi delegation transport (Task 9) | ✅ Implemented | Authenticated `pi --mode rpc --no-session` children, engine-resolved queue/budget authorization, bootstrap/cleanup lifecycle, nested-relay restriction to declared delegation targets, `weave_delegate` tool with real (not placeholder) child settlement summaries, documented `agent_settled` no-payload limitation, and isolated layered tests |
+| Pi workflow lifecycle projection | ⏳ Pending | Workflow dispatch, persistence integration, concrete Weave-owned workflow tools |
 | Packed package and exact-host consumer | ⏳ Pending | `PI-PKG` manifest evidence |
 | Stable interactive TUI readiness | ⏳ Pending | Digest-bound live smoke for all mandatory `PI-*` rows |
 
 Pi reports static declarations as ceilings and lowers them through one activation probe per capability. Any required effective degraded or unsupported capability enters health-only mode. The adapter must not claim ready until the final acceptance manifest maps all 20 requirement IDs to existing automated proof, required packed evidence, and bound live-smoke evidence.
+
+**Task 9 audit fixes.** A post-review audit of the delegation transport found and fixed four issues, all with regression tests: (1) a completed child's settlement summary now carries its own real bounded assistant output instead of a constant placeholder; (2) `agent_settled` never reports `completed` after cancellation has been admitted, and derives a `failed` outcome from the last observed assistant `stopReason` since `agent_settled` itself carries no payload; (3) approval-relay failure logs emit a fixed cause classification instead of a raw `String(cause)`, and the approval-request clone uses explicit typed construction instead of `JSON.parse(JSON.stringify(...))`; (4) `@earendil-works/pi-ai` and `@earendil-works/pi-tui` moved from optional to required peer dependencies, matching genuine unconditional production imports.
 
 See [Pi Adapter Architecture](pi-adapter.md) and the [Pi Adapter Guide](adapters/pi.md).
 

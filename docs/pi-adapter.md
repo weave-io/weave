@@ -1,6 +1,6 @@
 # Pi Adapter Architecture
 
-**Status:** Activation, normalized configuration, and registered-tool policy implemented; delegation, lifecycle, and release proof pending
+**Status:** Activation, normalized configuration, registered-tool policy, and delegation transport implemented; workflow lifecycle projection and release proof pending
 
 **Related:** [Spec 33 — Full-readiness Pi adapter](specs/33-spec-pi-adapter/33-spec-pi-adapter.md) · [Spec 34 — Harness-neutral permissions](specs/34-spec-harness-neutral-permissions/34-spec-harness-neutral-permissions.md) · [Adapter Boundary](adapter-boundary.md) · [Pi operator guide](adapters/pi.md) · [Adapter Readiness](adapter-readiness-status.md)
 
@@ -16,7 +16,9 @@ The adapter now also loads the permitted normalized config, consumes successful 
 
 The adapter now also seals an input-aware permission registry for discovered Pi-native tools, proves interception coverage, binds agent policy through the engine permission session, and consumes single-use permits immediately before execution. Policy `deny` blocks, `allow` proceeds without a grant, and `ask` uses a bounded Pi approval dialog when the adapter is healthy. Unresolved input permits one-time approval only. Tool provenance and controller generation are rechecked at each governed call; changed provenance, stale authority, resolver failure, missing coverage, or unavailable permission state blocks. Unrelated third-party tools remain unmanaged and preserve their owner's behavior.
 
-Delegation transport, workflow lifecycle projection, packed-consumer proof, and live TUI evidence remain pending. Weave-owned tool registration is implemented as a guarded mechanism, but no concrete Weave-owned tool ships yet. Durable project approvals remain unavailable until the trusted Runtime Store is activated by the persistence slice. These implemented slices are not a full-readiness claim.
+The adapter now also ships the private delegation transport and the `weave_delegate` tool: an engine-resolved per-agent budget (direct-child, concurrency, depth, and global live-process limits) authorizes, queues (FIFO per parent), or denies each request; an authorized request spawns an independent authenticated `pi --mode rpc --no-session` child, bootstraps its exact composed prompt, active-tool set, and resolved model in one signed envelope, and relays that child's own governed tool-call approvals to the sole parent TUI. A live child may itself request nested delegation, restricted to its own declared delegation targets. `weave_delegate` never creates or advances workflow state; it only runs one bounded task and returns the child's own structured settlement.
+
+Workflow lifecycle projection, packed-consumer proof, and live TUI evidence remain pending. Weave-owned tool registration is implemented as a guarded mechanism; `weave_delegate` is its first concrete Weave-owned tool. Durable project approvals remain unavailable until the trusted Runtime Store is activated by the persistence slice. These implemented slices are not a full-readiness claim.
 
 ## Activation model
 
@@ -60,7 +62,13 @@ Static capabilities are ceilings. Activation probes all 19 capability IDs once; 
 
 ## Private children
 
-Delegated agents run as ephemeral `pi --mode rpc --no-session` children. Each child authenticates with an independent 256-bit secret and HMAC-SHA-256 envelopes over strict line-delimited JSON. Sequence and nonce checks prevent replay. Children are inspectable and cancellable, not steerable. Public user-started RPC mode does not activate this path.
+Delegated agents run as ephemeral `pi --mode rpc --no-session` children. Each child authenticates with an independent 256-bit secret (read once from its own environment, then erased) and proves possession via an HMAC-SHA-256-signed handshake; every subsequent control envelope is signed the same way, carries a monotonic per-direction sequence number and a random nonce, and travels as one strict line-delimited JSON object per line. Sequence and nonce checks prevent replay; malformed or unauthenticated lines fail closed and dispose the runtime rather than guessing intent.
+
+The parent-side `PiDelegationController` owns a per-parent FIFO queue and the global live-process count against engine-resolved limits, spawns and bootstraps each authorized child (exact composed prompt, active-tool set, and resolved model in one signed `bootstrap` envelope, acknowledged only after every step applies cleanly), and relays a child's own governed tool-call approvals to the sole parent TUI, tagged with the originating child's id. A live child may itself request nested delegation restricted to its own declared delegation targets. Cancelling a node cancels every descendant, including not-yet-spawned queued requests; a live child is asked to cancel cooperatively, bounded by a grace period, then force-killed. Every child's secret is zeroed and its resources released exactly once, whatever the outcome.
+
+Children are inspectable (a live tree widget with Alt+1-9/Backspace/Esc keyboard controls) and cancellable, not steerable. Public user-started RPC mode does not activate this path.
+
+**Known limitation.** Pi's `agent_settled` event carries no payload, so a child cannot read a stop/error signal directly off it. The adapter derives a `failed` outcome from the most recently observed assistant `stopReason` (`error`/`aborted`) seen on `message_end`; every other case, including no observed stop reason, reports `completed`. A child never reports `completed` once its own cancellation has been admitted. A completed child's settlement summary is its own bounded (<=4KiB, valid UTF-8) final assistant output, with a fixed fallback string used only when a completed turn produced no observable assistant text.
 
 ## Data handling
 

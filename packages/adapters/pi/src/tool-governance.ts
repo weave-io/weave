@@ -12,6 +12,7 @@
  */
 
 import type {
+  EffectiveToolPolicy,
   PermissionCapability,
   PermissionResolver,
 } from "@weaveio/weave-engine";
@@ -464,4 +465,44 @@ function grantableRequest(
       },
     },
   ]);
+}
+
+/**
+ * Derives the exact, closed set of concrete Pi tool names a delegated
+ * child's bootstrap should activate (Spec 33 §11.2 Task 9): every
+ * `PI_NATIVE_TOOL_CAPABILITY` entry whose capability the child's own
+ * effective tool policy does not explicitly `deny`, plus the child's own
+ * registered Weave-owned delegation tool name when one is supplied.
+ *
+ * Pure and parent-side: this never calls `getAllTools()` or any other live
+ * Pi discovery - the native tool-name set is the closed, version-pinned
+ * list above, so the parent can derive this list *before* the child process
+ * even exists. The child still independently re-derives and validates its
+ * own live tool-policy plan in `applyChildBootstrap`; this function only
+ * produces the list the parent asserts and the child must strictly
+ * validate against that live plan before calling `pi.setActiveTools()`.
+ *
+ * A capability absent from `policy` (or a fully `undefined` policy) is
+ * treated as included - `EffectiveToolPolicy` only ever carries `"deny"`,
+ * `"ask"`, or `"allow"`, never an absent/unknown value, and only `"deny"`
+ * means the tool must never even be offered as active.
+ */
+export function deriveActiveToolNames(
+  policy: EffectiveToolPolicy | undefined,
+  delegationToolName: string | undefined,
+): readonly string[] {
+  const names: string[] = [];
+  for (const [toolName, capability] of Object.entries(
+    PI_NATIVE_TOOL_CAPABILITY,
+  )) {
+    if (policy !== undefined && policy[capability] === "deny") continue;
+    names.push(toolName);
+  }
+  if (
+    delegationToolName !== undefined &&
+    (policy === undefined || policy.delegate !== "deny")
+  ) {
+    names.push(delegationToolName);
+  }
+  return names;
 }

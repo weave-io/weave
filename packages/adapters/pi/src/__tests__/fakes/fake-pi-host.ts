@@ -105,6 +105,8 @@ export interface FakePiHostOptions {
   readonly currentModel?: PiModelInfo;
   readonly availableModels?: readonly PiModelInfo[];
   readonly hasUI?: boolean;
+  /** Set `false` to simulate an older host that does not implement `getActiveTools()` (Spec 33 §11.2 Task 9). Defaults to `true`. */
+  readonly supportsGetActiveTools?: boolean;
 }
 
 /**
@@ -134,6 +136,8 @@ export class RecordingFakePiHost {
   readonly registerToolCalls: PiToolRegistration[] = [];
   readonly selectCalls: RecordedSelectCall[] = [];
   readonly confirmCalls: RecordedConfirmCall[] = [];
+  /** Every list `setActiveTools()` was invoked with, in call order, regardless of outcome. */
+  readonly setActiveToolsCalls: (readonly string[])[] = [];
 
   private mode: PiMode;
   private trusted: boolean;
@@ -158,6 +162,12 @@ export class RecordingFakePiHost {
   private getAvailableModelsOverride:
     | (() => readonly PiModelInfo[])
     | undefined;
+  private activeTools: readonly string[] = [];
+  private setActiveToolsOverride:
+    | ((names: readonly string[]) => void)
+    | undefined;
+  private getActiveToolsOverride: (() => readonly string[]) | undefined;
+  private readonly hasGetActiveTools: boolean;
 
   constructor(options: FakePiHostOptions = {}) {
     this.mode = options.mode ?? "tui";
@@ -167,59 +177,85 @@ export class RecordingFakePiHost {
     this.installPath = options.installPath ?? "/fake/node_modules";
     this.currentModel = options.currentModel;
     this.availableModels = options.availableModels ?? [];
+    this.hasGetActiveTools = options.supportsGetActiveTools ?? true;
+    // Built in the constructor body, not as a field initializer: the
+    // `getActiveTools` branch below reads `this.hasGetActiveTools`, which is
+    // only assigned once the constructor body runs - a field initializer
+    // would observe it as still-unset (Spec 33 §11.2 Task 9 fake-host fix).
+    this.api = this.buildApi();
   }
 
   /** The object handed to an extension's default factory. */
-  readonly api: PiExtensionApi = {
-    registerCommand: (name, registration) => {
-      this.registerCommandCalls.push({ name, registration });
-      this.commandsInventory.push({
-        name,
-        description: registration.description,
-        source: "extension",
-        sourceInfo: this.ownSourceInfo(),
-      });
-    },
-    getCommands: () => {
-      if (this.getCommandsOverride !== undefined)
-        return this.getCommandsOverride();
-      return [...this.commandsInventory];
-    },
-    getAllTools: () => {
-      if (this.getAllToolsOverride !== undefined)
-        return this.getAllToolsOverride();
-      return [...this.toolsInventory];
-    },
-    on: (event, handler) => {
-      this.onCalls.push({ event, handler });
-      const existing = this.handlers.get(event) ?? [];
-      existing.push(handler);
-      this.handlers.set(event, existing);
-    },
-    setModel: (model) => {
-      this.setModelCalls.push(model);
-      if (this.setModelOverride !== undefined) {
-        return this.setModelOverride(model);
-      }
-      this.currentModel = model;
-      return true;
-    },
-    registerTool: (tool) => {
-      this.registerToolCalls.push(tool);
-      if (this.registerToolOverride !== undefined) {
-        this.registerToolOverride(tool);
-        return;
-      }
-      this.toolsInventory = this.toolsInventory.filter(
-        (existing) => existing.name !== tool.name,
-      );
-      this.toolsInventory.push({
-        name: tool.name,
-        description: tool.description,
-        sourceInfo: this.ownSourceInfo(),
-      });
-    },
-  };
+  readonly api: PiExtensionApi;
+
+  private buildApi(): PiExtensionApi {
+    return {
+      registerCommand: (name, registration) => {
+        this.registerCommandCalls.push({ name, registration });
+        this.commandsInventory.push({
+          name,
+          description: registration.description,
+          source: "extension",
+          sourceInfo: this.ownSourceInfo(),
+        });
+      },
+      getCommands: () => {
+        if (this.getCommandsOverride !== undefined)
+          return this.getCommandsOverride();
+        return [...this.commandsInventory];
+      },
+      getAllTools: () => {
+        if (this.getAllToolsOverride !== undefined)
+          return this.getAllToolsOverride();
+        return [...this.toolsInventory];
+      },
+      on: (event, handler) => {
+        this.onCalls.push({ event, handler });
+        const existing = this.handlers.get(event) ?? [];
+        existing.push(handler);
+        this.handlers.set(event, existing);
+      },
+      setModel: (model) => {
+        this.setModelCalls.push(model);
+        if (this.setModelOverride !== undefined) {
+          return this.setModelOverride(model);
+        }
+        this.currentModel = model;
+        return true;
+      },
+      registerTool: (tool) => {
+        this.registerToolCalls.push(tool);
+        if (this.registerToolOverride !== undefined) {
+          this.registerToolOverride(tool);
+          return;
+        }
+        this.toolsInventory = this.toolsInventory.filter(
+          (existing) => existing.name !== tool.name,
+        );
+        this.toolsInventory.push({
+          name: tool.name,
+          description: tool.description,
+          sourceInfo: this.ownSourceInfo(),
+        });
+      },
+      setActiveTools: (names) => {
+        this.setActiveToolsCalls.push(names);
+        if (this.setActiveToolsOverride !== undefined) {
+          this.setActiveToolsOverride(names);
+          return;
+        }
+        this.activeTools = [...names];
+      },
+      getActiveTools: this.hasGetActiveTools
+        ? () => {
+            if (this.getActiveToolsOverride !== undefined) {
+              return this.getActiveToolsOverride();
+            }
+            return [...this.activeTools];
+          }
+        : undefined,
+    };
+  }
 
   private ownSourceInfo(): PiSourceInfo {
     return {
@@ -285,6 +321,29 @@ export class RecordingFakePiHost {
   displaceTool(name: string, sourceInfo: PiSourceInfo): void {
     this.toolsInventory = this.toolsInventory.filter((t) => t.name !== name);
     this.toolsInventory.push({ name, sourceInfo });
+  }
+
+  /** The tool names the host currently reports as active (post-`setActiveTools()`), for test observability. */
+  getAppliedActiveTools(): readonly string[] {
+    return [...this.activeTools];
+  }
+
+  /** Makes the next `setActiveTools()` call throw, simulating a host that rejects the request. */
+  poisonSetActiveTools(): void {
+    this.setActiveToolsOverride = () => {
+      throw new Error("simulated host failure: setActiveTools");
+    };
+  }
+
+  /**
+   * Simulates a host that silently drops some requested tool names instead
+   * of applying the exact requested set - `getActiveTools()` afterward
+   * reports `resultingNames` rather than what was actually passed in.
+   */
+  simulateActiveToolsMismatch(resultingNames: readonly string[]): void {
+    this.setActiveToolsOverride = () => {
+      this.activeTools = [...resultingNames];
+    };
   }
 
   /** Makes the next `registerTool()` call throw, simulating a broken host. */

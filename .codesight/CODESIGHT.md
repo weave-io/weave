@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 186 lib files | 33 env vars | 6 middleware | 0% test coverage
-> **Token savings:** this file is ~18,400 tokens. Without it, AI exploration would cost ~63,300 tokens. **Saves ~44,900 tokens per conversation.**
-> **Last scanned:** 2026-07-24 03:08 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 201 lib files | 33 env vars | 6 middleware | 0% test coverage
+> **Token savings:** this file is ~19,600 tokens. Without it, AI exploration would cost ~67,200 tokens. **Saves ~47,600 tokens per conversation.**
+> **Last scanned:** 2026-07-24 08:07 — re-run after significant changes
 
 ---
 
@@ -85,6 +85,76 @@
   - interface PiPreflightContext
   - interface PiCapabilityProbeSource
   - _...1 more_
+- `packages/adapters/pi/src/child-control-bodies.ts`
+  - function parseControlBody: (kind, body) => void
+  - type PiBootstrapBody
+  - type PiBootstrapAckBody
+  - type PiModelIdentityBody
+  - type PiTaskContextBody
+  - type PiCancelBody
+  - _...11 more_
+- `packages/adapters/pi/src/child-crypto.ts`
+  - function bytesToHex: (bytes) => string
+  - function hexToBytes: (hex) => Uint8Array | undefined
+  - function timingSafeEqualHex: (a, b) => boolean
+  - function generateChildSecret: (random) => ErasableSecret
+  - function generateNonceHex: (random) => string
+  - class WebCryptoRandomPort
+  - _...5 more_
+- `packages/adapters/pi/src/child-env.ts`
+  - function sanitizedBaseEnv: (isDeniedKey) => void
+  - class BunEnvPort
+  - const WEAVE_CHILD_SECRET_ENV
+  - const WEAVE_CHILD_ID_ENV
+  - const WEAVE_CONTROLLER_GENERATION_ENV
+  - const WEAVE_CHILD_AGENT_NAME_ENV
+  - _...2 more_
+- `packages/adapters/pi/src/child-envelope.ts`
+  - function signEnvelope: (input, secret, hmac) => ResultAsync<PiControlEnvelope, EnvelopeError>
+  - function verifyEnvelope: (candidate, secret, hmac) => ResultAsync<PiControlEnvelope, EnvelopeError>
+  - function looksLikeControlEnvelope: (candidate) => boolean
+  - class PiChildAuthState
+  - interface PiControlEnvelope
+  - interface UnsignedEnvelopeInput
+  - _...8 more_
+- `packages/adapters/pi/src/child-framing.ts`
+  - class PiLineFramer
+  - interface ParsedFrame
+  - type FramingError
+  - const MAX_FRAME_RECORD_BYTES
+- `packages/adapters/pi/src/child-process-port.ts`
+  - class BunPiChildProcessPort
+  - interface PiChildStdout
+  - interface PiSpawnedChildProcess
+  - interface PiChildSpawnInput
+  - interface PiChildProcessPort
+  - type ChildProcessError
+- `packages/adapters/pi/src/child-runtime.ts`
+  - class PiChildRuntime
+  - interface PiChildOutputPort
+  - interface PiChildRuntimeDeps
+  - interface PiChildBootstrapHandlers
+  - type PiChildRuntimeError
+  - type PiChildOutputError
+  - _...1 more_
+- `packages/adapters/pi/src/child-timer.ts`
+  - class SystemTimerPort
+  - interface TimerHandle
+  - interface TimerPort
+  - const DEFAULT_HANDSHAKE_TIMEOUT_MS
+  - const DEFAULT_REPLY_TIMEOUT_MS
+  - const DEFAULT_SETTLEMENT_TIMEOUT_MS
+  - _...1 more_
+- `packages/adapters/pi/src/child-tree-keys.ts` — function classifyChildTreeKey: (data) => PiTreeControlKey | undefined
+- `packages/adapters/pi/src/child-tree-render.ts` — function renderChildTreeLines: (nodes, selectedId, cumulativeUsage) => string[]
+- `packages/adapters/pi/src/child-tree.ts`
+  - function addUsage: (a, b) => PiChildUsageAggregate
+  - function truncateLatestOutput: (text) => string
+  - function extractAssistantTextDeltaPreview: (record, JsonValue>) => string | undefined
+  - function extractAssistantStopReason: (record, JsonValue>) => string | undefined
+  - function applyTreeControlKey: (nodes, PiChildTreeNode>, selectedId, key) => PiTreeControlOutcome
+  - function subtreeIds: (nodes, PiChildTreeNode>, nodeId) => readonly string[]
+  - _...9 more_
 - `packages/adapters/pi/src/commands.ts`
   - function classifyWeaveCommand: (name) => WeaveCommandClassification
   - function parseNpmSourceName: (source) => string | undefined
@@ -107,6 +177,19 @@
   - interface PiOperationHandle
   - interface PiCommandGateDecision
   - interface PiExtensionControllerDeps
+- `packages/adapters/pi/src/delegation-controller.ts`
+  - class PiDelegationController
+  - interface PiDelegationContext
+  - interface PiDelegationControllerDeps
+  - interface PiDelegationRequest
+- `packages/adapters/pi/src/delegation-tool.ts`
+  - function buildDelegationToolRegistration: (deps) => PiWeaveToolRegistration
+  - function buildRelayedDelegationToolRegistration: (deps) => PiWeaveToolRegistration
+  - interface PiDelegationToolDeps
+  - interface PiRelayedDelegationToolDeps
+  - const WEAVE_DELEGATION_TOOL_NAME
+  - const WEAVE_DELEGATION_TOOL_OWNER
+  - _...1 more_
 - `packages/adapters/pi/src/errors.ts`
   - function makeHostIdentityUnknownFailure: (reason) => PiAdapterFailure
   - function makeHostVersionUnsupportedFailure: (version, reason) => PiAdapterFailure
@@ -114,9 +197,11 @@
   - function makeActivationFailedFailure: (reason) => PiAdapterFailure
   - function makeCommandCollisionFailure: (commandName) => PiAdapterFailure
   - function makeRequiredCapabilityUnavailableFailure: (capabilityId, reason) => PiAdapterFailure
-  - _...12 more_
+  - _...26 more_
 - `packages/adapters/pi/src/extension.ts`
   - function createDefaultPiExtensionDeps: () => PiExtensionDeps
+  - function classifyApprovalRelayFailureCause: (cause) => "thrown-error" | "rejected-non-error"
+  - function cloneApprovalPromptRequestAsJson: (request) => JsonValue
   - function createPiExtension: (overrides) => (pi: PiExtensionApi) => void
   - interface PiExtensionDeps
 - `packages/adapters/pi/src/host-compatibility.ts`
@@ -155,14 +240,27 @@
   - interface PiActivePrimary
   - interface PiPrimaryActivationContext
   - _...3 more_
+- `packages/adapters/pi/src/rpc-child.ts`
+  - class PiRpcChild
+  - interface PiRpcChildDeps
+  - interface PiRpcChildSpawnInput
+  - type PiChildSettlement
 - `packages/adapters/pi/src/safe-initializer.ts`
   - class PiSafeInitializer
   - interface PiPreflightResult
   - interface PiSafeInitializerDeps
 - `packages/adapters/pi/src/skill-catalog.ts` — function toEngineSkillInfo: (skill) => SkillInfo, class PiSkillCatalog
+- `packages/adapters/pi/src/strict-json.ts`
+  - function parseStrictJson: (text) => Result<JsonValue, StrictJsonParseError>
+  - function canonicalizeToBytes: (value) => Result<Uint8Array, CanonicalizeError>
+  - type JsonPrimitive
+  - type JsonValue
+  - type StrictJsonParseError
+  - type CanonicalizeError
 - `packages/adapters/pi/src/tool-governance.ts`
   - function classifyDiscoveredTools: (allTools, weaveOwnedNames) => PiToolClassification
   - function buildNativeToolResolver: (toolName, capability) => PermissionResolver
+  - function deriveActiveToolNames: (policy, delegationToolName) => readonly string[]
   - interface PiToolClassification
 - `packages/cli/src/args.ts`
   - function parseArgs: (argv) => Result<ParsedArgs, ArgParseError>
@@ -948,7 +1046,7 @@
 - `GITHUB_TOKEN` **required** — scripts/release/bind-artifacts.ts
 - `HOME` **required** — packages/adapters/pi/src/__tests__/config-activator.test.ts
 - `LOG_LEVEL` **required** — packages/config/src/logger.ts
-- `PATH` **required** — scripts/release/__tests__/release-orchestrator.test.ts
+- `PATH` **required** — packages/adapters/pi/src/__tests__/child-env.test.ts
 - `PWD` **required** — packages/adapters/opencode/dist-types/adapter.d.ts
 - `RELEASE_APP_TOKEN` **required** — scripts/release/release-refs-main.ts
 - `RELEASE_AWAITING_STABLE_TRAIN` **required** — scripts/release/release-refs-main.ts
@@ -1004,11 +1102,11 @@
 
 - `packages/cli/src/evals/types.ts` — imported by **39** files
 - `packages/engine/src/runtime/types.ts` — imported by **29** files
+- `packages/adapters/pi/src/types.ts` — imported by **22** files
 - `packages/cli/src/theme/colors.ts` — imported by **20** files
 - `packages/cli/src/io/terminal.ts` — imported by **18** files
 - `packages/cli/src/evals/openrouter-client.ts` — imported by **18** files
 - `packages/cli/src/evals/report-schema.ts` — imported by **17** files
-- `packages/adapters/pi/src/types.ts` — imported by **16** files
 - `packages/engine/src/runtime/store.ts` — imported by **16** files
 - `scripts/release/stable-train.ts` — imported by **16** files
 - `scripts/release/npm-registry-client.ts` — imported by **15** files
@@ -1027,11 +1125,11 @@
 
 - `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/dashboard-indexes.test.ts`, `packages/cli/src/evals/__tests__/github-contents-publisher.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts` +34 more
 - `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts` +24 more
+- `packages/adapters/pi/src/types.ts` ← `packages/adapters/pi/src/__tests__/capability-prober.test.ts`, `packages/adapters/pi/src/__tests__/child-runtime.test.ts`, `packages/adapters/pi/src/__tests__/controller.test.ts`, `packages/adapters/pi/src/__tests__/delegation-tool.test.ts`, `packages/adapters/pi/src/__tests__/extension-tool-governance.test.ts` +17 more
 - `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts` +15 more
 - `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts` +13 more
 - `packages/cli/src/evals/openrouter-client.ts` ← `packages/cli/src/evals/__tests__/loom-routing-runner.test.ts`, `packages/cli/src/evals/__tests__/pattern-planning-runner.test.ts`, `packages/cli/src/evals/__tests__/runner.test.ts`, `packages/cli/src/evals/__tests__/shuttle-execution-runner.test.ts`, `packages/cli/src/evals/__tests__/spindle-tools-runner.test.ts` +13 more
 - `packages/cli/src/evals/report-schema.ts` ← `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts` +12 more
-- `packages/adapters/pi/src/types.ts` ← `packages/adapters/pi/src/__tests__/capability-prober.test.ts`, `packages/adapters/pi/src/__tests__/controller.test.ts`, `packages/adapters/pi/src/__tests__/extension-tool-governance.test.ts`, `packages/adapters/pi/src/__tests__/primary-session.test.ts`, `packages/adapters/pi/src/__tests__/safe-initializer.test.ts` +11 more
 - `packages/engine/src/runtime/store.ts` ← `packages/engine/src/__tests__/permission-service.test.ts`, `packages/engine/src/__tests__/runtime-journal.test.ts`, `packages/engine/src/execution-lifecycle/artifacts.ts`, `packages/engine/src/execution-lifecycle/dispatch.ts`, `packages/engine/src/execution-lifecycle/inspection.ts` +11 more
 - `scripts/release/stable-train.ts` ← `scripts/release/__tests__/artifact-manifest.test.ts`, `scripts/release/__tests__/control-executable.test.ts`, `scripts/release/__tests__/github-client.test.ts`, `scripts/release/__tests__/metadata-replay.test.ts`, `scripts/release/__tests__/payload-layout.e2e.test.ts` +11 more
 - `scripts/release/npm-registry-client.ts` ← `scripts/release/__tests__/github-client.test.ts`, `scripts/release/__tests__/nightly-plan.test.ts`, `scripts/release/__tests__/npm-registry-client.test.ts`, `scripts/release/__tests__/payload-layout.e2e.test.ts`, `scripts/release/__tests__/promotion-commands.test.ts` +10 more
@@ -1041,7 +1139,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 180 test files found
+> 195 test files found
 
 ---
 

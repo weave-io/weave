@@ -1,10 +1,51 @@
-import type { AgentDescriptor, PermissionSession } from "@weaveio/weave-engine";
-import { logger } from "@weaveio/weave-engine";
-import { ResultAsync } from "neverthrow";
+import { CustomEditor } from "@earendil-works/pi-coding-agent";
+import type {
+  AgentDescriptor,
+  DelegationTarget,
+  EffectiveToolPolicy,
+  PermissionSession,
+} from "@weaveio/weave-engine";
+import { isDeniedKey, logger } from "@weaveio/weave-engine";
+import { Result, ResultAsync } from "neverthrow";
 import {
   DefaultPiCapabilityProber,
   type PiCapabilityProbeSource,
 } from "./capability-prober.js";
+import {
+  type PiApprovalRequestBody,
+  parseControlBody,
+} from "./child-control-bodies.js";
+import {
+  type HmacPort,
+  type RandomPort,
+  WebCryptoHmacPort,
+  WebCryptoRandomPort,
+} from "./child-crypto.js";
+import {
+  BunEnvPort,
+  sanitizedBaseEnv,
+  WEAVE_CHILD_SECRET_ENV,
+} from "./child-env.js";
+import {
+  BunPiChildProcessPort,
+  type PiChildProcessPort,
+} from "./child-process-port.js";
+import {
+  type PiChildOutputError,
+  type PiChildOutputPort,
+  PiChildRuntime,
+} from "./child-runtime.js";
+import {
+  applyTreeControlKey,
+  EMPTY_USAGE_AGGREGATE,
+  extractAssistantStopReason,
+  extractAssistantTextDeltaPreview,
+  type PiChildTreeNode,
+  ROOT_NODE_ID,
+  truncateLatestOutput,
+} from "./child-tree.js";
+import { classifyChildTreeKey } from "./child-tree-keys.js";
+import { renderChildTreeLines } from "./child-tree-render.js";
 import { WEAVE_COMMAND_NAMES, type WeaveCommandName } from "./commands.js";
 import {
   logMaterializationErrors,
@@ -14,19 +55,34 @@ import {
   PiExtensionController,
   type PiExtensionControllerDeps,
 } from "./controller.js";
+import {
+  type PiDelegationContext,
+  PiDelegationController,
+} from "./delegation-controller.js";
+import {
+  buildDelegationToolRegistration,
+  buildRelayedDelegationToolRegistration,
+  WEAVE_DELEGATION_TOOL_NAME,
+} from "./delegation-tool.js";
 import { makeRequiredCapabilityUnavailableFailure } from "./errors.js";
 import {
   BunHostPackageReader,
   type HostPackageReader,
 } from "./host-compatibility.js";
 import { readValidatedCommands, readValidatedTools } from "./host-inventory.js";
-import type { PiModelApplyPort } from "./model-resolution.js";
+import {
+  PiModelActivator,
+  type PiModelApplyPort,
+  PiModelResolver,
+} from "./model-resolution.js";
 import {
   APPROVAL_UI_TIMEOUT_MS,
+  createChildRelayApprovalPort,
   type PiApprovalChoiceInput,
   type PiApprovalPromptRequest,
   type PiApprovalScope,
   type PiApprovalUiPort,
+  type PiChildApprovalRelayPort,
   PiPermissionBridge,
   type PiToolPolicyPlan,
 } from "./permission-bridge.js";
@@ -38,11 +94,16 @@ import {
 } from "./primary-session.js";
 import { PiSafeInitializer } from "./safe-initializer.js";
 import { PiSkillCatalog } from "./skill-catalog.js";
-import { PI_NATIVE_TOOL_CAPABILITY } from "./tool-governance.js";
+import { type JsonValue, parseStrictJson } from "./strict-json.js";
+import {
+  deriveActiveToolNames,
+  PI_NATIVE_TOOL_CAPABILITY,
+} from "./tool-governance.js";
 import type {
   Clock,
   IdGenerator,
   PiAdapterLogger,
+  PiEnvPort,
   PiExtensionApi,
   PiModelInfo,
   PiSessionContext,
@@ -59,6 +120,30 @@ export interface PiExtensionDeps {
   readonly logger: PiAdapterLogger;
   readonly configActivator: PiConfigActivator;
   readonly permissionBridge: PiPermissionBridge;
+  readonly envPort: PiEnvPort;
+  readonly randomPort: RandomPort;
+  readonly hmacPort: HmacPort;
+  readonly processPort: PiChildProcessPort;
+  readonly childOutputPort: PiChildOutputPort;
+}
+
+/** Production child-side stdout writer: writes directly to this process's own real stdout, interleaved with Pi's own event/response lines. */
+class StdoutChildOutputPort implements PiChildOutputPort {
+  // Bun's own stdout `FileSink` writer, never Node's `process.stdout`.
+  private readonly writer = Bun.stdout.writer();
+
+  writeLine(bytes: Uint8Array): ResultAsync<void, PiChildOutputError> {
+    return ResultAsync.fromThrowable(
+      async () => {
+        this.writer.write(bytes);
+        await this.writer.flush();
+      },
+      (): PiChildOutputError => ({
+        type: "ChildOutputWriteFailed",
+        reason: "stdout-write-failed",
+      }),
+    )();
+  }
 }
 
 class CryptoIdGenerator implements IdGenerator {
@@ -84,6 +169,11 @@ export function createDefaultPiExtensionDeps(): PiExtensionDeps {
     logger: log,
     configActivator: new PiConfigActivator(),
     permissionBridge: new PiPermissionBridge({ logger: log }),
+    envPort: new BunEnvPort(),
+    randomPort: new WebCryptoRandomPort(),
+    hmacPort: new WebCryptoHmacPort(),
+    processPort: new BunPiChildProcessPort(),
+    childOutputPort: new StdoutChildOutputPort(),
   };
 }
 
@@ -190,6 +280,712 @@ const APPROVAL_SCOPE_LABELS: Readonly<Record<PiApprovalScope, string>> = {
   durable: "Allow always for this project",
 };
 const APPROVAL_REJECT_LABEL = "Reject";
+
+/**
+ * Hidden, non-public command a private child process's own extension
+ * instance uses to receive parent-to-child authenticated control envelopes
+ * (Spec 33 \u00a711.3). Delivered as ordinary RPC `prompt` command text
+ * (`/weave:__control__ <json>`) - never `steer`/`follow_up` - so it rides
+ * Pi's own documented command dispatch rather than any raw sideband.
+ */
+const HIDDEN_CONTROL_COMMAND_NAME = "weave:__control__";
+
+interface PiChildBootstrapBody {
+  readonly agentName: string;
+  readonly composedPrompt: string;
+  readonly models: readonly string[];
+  readonly effectiveToolPolicy: EffectiveToolPolicy | undefined;
+  readonly delegationTargets: readonly DelegationTarget[];
+  /** Must equal this child's own env-derived child id (Spec 33 §11.2 Task 9); a mismatch fails closed. */
+  readonly correlationId: string;
+  readonly context: PiDelegationContext;
+  /** The exact, parent-derived active tool name list this child MUST apply via `pi.setActiveTools()` (Spec 33 §11.2 Task 9). */
+  readonly activeTools: readonly string[];
+  /** Present only when the parent itself resolved a concrete model identity (root-level delegation, live `ctx.modelRegistry`); absent means this child must resolve against its own authenticated catalog (Spec 33 §9.2, §11.2 Task 9). */
+  readonly resolvedModel: PiModelInfo | undefined;
+}
+
+/**
+ * Builds one delegated child's bootstrap payload from its own resolved
+ * descriptor (Spec 33 §8, §10-11) - critically including that
+ * descriptor's own `delegationTargets`, so a running child can register
+ * its own nested/descendant delegation tool once bootstrapped, relayed
+ * through its authenticated parent/root coordinator rather than an
+ * independent, untracked budget. Also derives the exact active-tool set
+ * (Spec 33 §11.2 Task 9) and, when a live session `ctx` is available
+ * (root-level delegation only), a concrete parent-resolved model identity.
+ */
+function buildChildBootstrapBody(
+  descriptorsByName: ReadonlyMap<string, AgentDescriptor>,
+  target: DelegationTarget,
+  childId: string,
+  context: PiDelegationContext,
+  ctx?: PiSessionContext,
+): JsonValue {
+  const full = descriptorsByName.get(target.name);
+  const hasDelegationTool = (full?.delegationTargets.length ?? 0) > 0;
+  const activeTools = deriveActiveToolNames(
+    full?.effectiveToolPolicy,
+    hasDelegationTool ? WEAVE_DELEGATION_TOOL_NAME : undefined,
+  );
+  const resolvedModel = ((): PiModelInfo | undefined => {
+    if (ctx === undefined) return undefined;
+    const availableModels = safelyListAvailableModels(
+      ctx.modelRegistry,
+    ).unwrapOr([]);
+    const resolution = new PiModelResolver().resolve(
+      full?.models ?? [],
+      availableModels,
+    );
+    return resolution.resolved ? resolution.model : undefined;
+  })();
+  const bootstrap: PiChildBootstrapBody = {
+    agentName: target.name,
+    composedPrompt: full?.composedPrompt ?? "",
+    models: full?.models ?? [],
+    effectiveToolPolicy: full?.effectiveToolPolicy,
+    delegationTargets: full?.delegationTargets ?? [],
+    correlationId: childId,
+    context,
+    activeTools,
+    resolvedModel,
+  };
+  return bootstrap as unknown as JsonValue;
+}
+
+/**
+ * Validates a raw bootstrap body against the real strict schema (Spec 33
+ * §11.3) instead of ad hoc field reads with silent defaults. A malformed
+ * body fails closed: bootstrap is never applied and the parent's own
+ * `awaitBootstrapAck` times out, producing a typed `ChildReplyMissing`
+ * failure for that child rather than silently proceeding with empty
+ * descriptor/model/policy state.
+ */
+function parseChildBootstrapBody(
+  body: JsonValue,
+): PiChildBootstrapBody | undefined {
+  const parsed = parseControlBody("bootstrap", body);
+  if (!parsed.ok) return undefined;
+  return {
+    agentName: parsed.value.agentName,
+    composedPrompt: parsed.value.composedPrompt,
+    models: parsed.value.models,
+    effectiveToolPolicy: parsed.value.effectiveToolPolicy as
+      | EffectiveToolPolicy
+      | undefined,
+    delegationTargets: parsed.value.delegationTargets ?? [],
+    correlationId: parsed.value.correlationId,
+    context: parsed.value.context,
+    activeTools: parsed.value.activeTools,
+    resolvedModel: parsed.value.resolvedModel,
+  };
+}
+
+/**
+ * Per-generation state for a spawned private child's own extension
+ * instance. Distinct from `PiActiveSession` (the parent's own generation
+ * state) - a real process is either a parent TUI session or a private RPC
+ * child, never both at once, but both share this one compiled extension
+ * module.
+ */
+interface PiChildModeState {
+  active: boolean;
+  childId: string;
+  agentName: string;
+  composedPrompt: string;
+  promptAppended: boolean;
+  /** True only once the bootstrap descriptor/model/policy have actually been applied and acked - never before. */
+  bootstrapApplied: boolean;
+  toolPolicy: PiToolPolicyPlan | undefined;
+  permissionSession: PermissionSession | undefined;
+  runtime: PiChildRuntime | undefined;
+  /**
+   * The current turn's accumulated assistant text, truncated to <=4KiB
+   * valid UTF-8 (Task 9 finding 1). Reset on every `turn_start` so a stale
+   * previous turn's text is never reported as this turn's settlement
+   * summary; fed by `message_update` deltas; read (and re-truncated as a
+   * belt-and-suspenders bound) when `agent_settled` fires.
+   */
+  latestAssistantOutput: string;
+  /**
+   * The most recently observed assistant `stopReason` from a `message_end`
+   * event (Task 9 finding 2) - `"stop"`, `"length"`, `"toolUse"`, `"error"`,
+   * or `"aborted"`. `agent_settled` itself carries no payload, so this is
+   * the only observable signal available to derive a failed outcome.
+   */
+  lastAssistantStopReason: string | undefined;
+}
+
+function createChildModeState(): PiChildModeState {
+  return {
+    active: false,
+    childId: "",
+    agentName: "",
+    composedPrompt: "",
+    promptAppended: false,
+    bootstrapApplied: false,
+    toolPolicy: undefined,
+    permissionSession: undefined,
+    runtime: undefined,
+    latestAssistantOutput: "",
+    lastAssistantStopReason: undefined,
+  };
+}
+
+/** Safe, fixed fallback summary used only when a completed child produced no observable assistant text (Task 9 finding 1). */
+const EMPTY_CHILD_SUMMARY_FALLBACK = "(child produced no assistant output)";
+
+/**
+ * Applies the parent's bootstrap payload to this child's own extension
+ * state: records the descriptor's composed prompt for one-time append in
+ * `before_agent_start`, plans+activates this child's own governed-tool
+ * permission session (Spec 33 \u00a712) scoped to its own descriptor policy,
+ * and resolves+applies its own model intent - all independent of, and
+ * never overriding, the parent's own primary session.
+ */
+async function applyChildBootstrap(
+  pi: PiExtensionApi,
+  ctx: PiSessionContext,
+  deps: PiExtensionDeps,
+  state: PiChildModeState,
+  runtime: PiChildRuntime,
+  body: JsonValue,
+): Promise<void> {
+  const parsed = parseChildBootstrapBody(body);
+  if (parsed === undefined) {
+    deps.logger.error(
+      {},
+      "malformed bootstrap body; failing closed and never acking bootstrap",
+    );
+    runtime.dispose();
+    return;
+  }
+  // Correlation check (Spec 33 §11.2 Task 9): the bootstrap's own
+  // `correlationId` must match this child's own env-derived child id -
+  // anything else means this bootstrap targets a different child (or is
+  // forged), and must never be applied.
+  if (parsed.correlationId !== state.childId) {
+    deps.logger.error(
+      {},
+      "bootstrap correlationId mismatch; failing closed and never acking bootstrap",
+    );
+    runtime.dispose();
+    return;
+  }
+  const policies: Record<string, EffectiveToolPolicy> =
+    parsed.effectiveToolPolicy !== undefined
+      ? { [parsed.agentName]: parsed.effectiveToolPolicy }
+      : {};
+  // A bootstrapped child with its own declared delegation targets gets its
+  // own weave_delegate tool, relayed through this exact child's own
+  // authenticated runtime rather than an independent budget (Spec 33
+  // §10-11 nested/descendant delegation).
+  const weaveOwnedRegistrations =
+    parsed.delegationTargets.length === 0
+      ? []
+      : [
+          buildRelayedDelegationToolRegistration({
+            targets: parsed.delegationTargets,
+            getRuntime: () => state.runtime,
+          }),
+        ];
+  const planned = deps.permissionBridge.planToolPolicy({
+    allTools: pi.getAllTools(),
+    weaveOwnedRegistrations,
+    policies,
+  });
+  if (planned.isErr()) {
+    deps.logger.error(
+      { code: planned.error.code },
+      "child tool-policy planning failed; failing closed and never acking bootstrap",
+    );
+    runtime.dispose();
+    return;
+  }
+  const registered = deps.permissionBridge.registerWeaveOwnedTools(
+    pi,
+    weaveOwnedRegistrations,
+  );
+  if (registered.isErr()) {
+    deps.logger.error(
+      { code: registered.error.code },
+      "child weave-owned tool registration failed; failing closed and never acking bootstrap",
+    );
+    runtime.dispose();
+    return;
+  }
+  const activated = await deps.permissionBridge.activate({
+    project: ctx.cwd,
+    controllerSession: state.childId,
+    plan: planned.value,
+  });
+  if (activated.isErr()) {
+    deps.logger.error(
+      { code: activated.error.code },
+      "child permission-session activation failed; failing closed and never acking bootstrap",
+    );
+    runtime.dispose();
+    return;
+  }
+
+  // Strict active-tool-set validation (Spec 33 §11.2 Task 9): every name
+  // the parent requested must be one this child's own live plan actually
+  // recognizes as governed (genuinely built-in native, or the exact
+  // weave-owned registration just verified above) - an unknown name means
+  // either a stale parent-side derivation or a forged bootstrap, and fails
+  // closed either way rather than silently activating an unverified tool.
+  const knownGoverned = new Set<string>([
+    ...planned.value.verifiedNative,
+    ...planned.value.weaveOwned,
+  ]);
+  const unknownTools = parsed.activeTools.filter(
+    (name) => !knownGoverned.has(name),
+  );
+  if (unknownTools.length > 0) {
+    deps.logger.error(
+      { unknownTools },
+      "bootstrap requested unknown active tool names; failing closed and never acking bootstrap",
+    );
+    runtime.dispose();
+    return;
+  }
+  const applySetActiveTools = ResultAsync.fromThrowable(
+    async (names: readonly string[]) => {
+      await pi.setActiveTools(names);
+    },
+    (error) => (error instanceof Error ? error : new Error(String(error))),
+  );
+  const setActiveToolsResult = await applySetActiveTools(parsed.activeTools);
+  if (setActiveToolsResult.isErr()) {
+    deps.logger.error(
+      {},
+      "host rejected setActiveTools; failing closed and never acking bootstrap",
+    );
+    runtime.dispose();
+    return;
+  }
+  let appliedActiveTools: string[] = [...parsed.activeTools];
+  if (pi.getActiveTools !== undefined) {
+    const readActiveTools = Result.fromThrowable(
+      () => pi.getActiveTools?.() ?? [],
+      (error) => (error instanceof Error ? error : new Error(String(error))),
+    );
+    const verifyResult = readActiveTools();
+    if (verifyResult.isErr()) {
+      deps.logger.error(
+        {},
+        "host rejected getActiveTools verification; failing closed and never acking bootstrap",
+      );
+      runtime.dispose();
+      return;
+    }
+    const reported = new Set(verifyResult.value);
+    const expected = new Set(parsed.activeTools);
+    const matches =
+      reported.size === expected.size &&
+      [...expected].every((name) => reported.has(name));
+    if (!matches) {
+      deps.logger.error(
+        {},
+        "host active tools do not match requested set; failing closed and never acking bootstrap",
+      );
+      runtime.dispose();
+      return;
+    }
+    appliedActiveTools = [...reported];
+  }
+
+  // Model activation (Spec 33 §9.2, §11.2 Task 9): apply the parent's own
+  // already-resolved identity directly when present (root-level
+  // delegation); otherwise resolve against this child's own authenticated
+  // catalog, exactly as an ordinary primary/descriptor would (Spec 33
+  // §9.2, never fuzzy-matched either way). Either way, only a genuinely
+  // *applied* model gates the ack - a merely "degraded" outcome (unresolved
+  // or host-rejected) never silently acks.
+  // Only a genuine *activation* failure (a model resolved but the host
+  // rejected applying it) fails bootstrap closed. "Nothing in the intent
+  // resolved" is not a failure - Spec 33 §9.2 requires gracefully keeping
+  // whatever model Pi already had active in that case, so `appliedModel`
+  // may legitimately stay `undefined` (no override took effect) without
+  // blocking the rest of bootstrap.
+  let appliedModel: PiModelInfo | undefined;
+  if (parsed.resolvedModel !== undefined) {
+    const applyResult = await createPiModelApplyPort(pi).applyModel(
+      parsed.resolvedModel,
+    );
+    if (applyResult.isErr()) {
+      deps.logger.error(
+        {},
+        "host rejected parent-resolved model; failing closed and never acking bootstrap",
+      );
+      runtime.dispose();
+      return;
+    }
+    appliedModel = parsed.resolvedModel;
+  } else {
+    const availableModels = safelyListAvailableModels(
+      ctx.modelRegistry,
+    ).unwrapOr([]);
+    const outcomeResult = await new PiModelActivator().activate(
+      parsed.models,
+      availableModels,
+      ctx.model,
+      createPiModelApplyPort(pi),
+    );
+    // `activate()` is typed `ResultAsync<PiModelActivationOutcome, never>` -
+    // it never fails, only ever reports "applied" or "degraded" outcomes -
+    // so unwrapping here can never throw.
+    const outcome = outcomeResult._unsafeUnwrap();
+    if (outcome.status === "degraded" && outcome.reason === "apply-failed") {
+      deps.logger.error(
+        {},
+        "host rejected child-resolved model; failing closed and never acking bootstrap",
+      );
+      runtime.dispose();
+      return;
+    }
+    appliedModel =
+      outcome.status === "applied" ? outcome.model : outcome.currentModel;
+  }
+
+  // Only now - descriptor prompt recorded for append, tool policy planned/
+  // registered/activated, active tools applied+verified, and a concrete
+  // model actually applied - is bootstrap atomic and safe to ack (Spec 33
+  // §11.2 Task 9). Every failure branch above disposed the runtime and
+  // returned before this point; there is no partial-application state, and
+  // the parent never sends task work on the strength of the bootstrap send
+  // alone (Spec 33 §11.3/§11.5).
+  state.agentName = parsed.agentName;
+  state.composedPrompt = parsed.composedPrompt;
+  state.toolPolicy = planned.value;
+  state.permissionSession = activated.value;
+  state.bootstrapApplied = true;
+  // `resolvedModel` is genuinely optional in `PiBootstrapAckBody` (Spec 33
+  // §11.2 Task 9) - the key must be entirely absent, not present with an
+  // `undefined` value, since `undefined` is not a valid `JsonValue` and
+  // would make the ack envelope fail canonical (JCS) signing, silently
+  // discarded by this `void` call and leaving the parent waiting forever.
+  void runtime.reportBootstrapAck(
+    appliedModel !== undefined
+      ? { activeTools: appliedActiveTools, resolvedModel: appliedModel }
+      : { activeTools: appliedActiveTools },
+  );
+}
+
+/**
+ * Fixed, closed-set classification of an approval-relay failure's `cause`
+ * (Task 9 finding 3). The raw `cause` value is unknown, untyped content -
+ * it could carry private paths, environment values, or secrets embedded in
+ * an error message - so it must never be logged verbatim. Only this fixed
+ * code is safe to emit.
+ */
+export function classifyApprovalRelayFailureCause(
+  cause: unknown,
+): "thrown-error" | "rejected-non-error" {
+  return cause instanceof Error ? "thrown-error" : "rejected-non-error";
+}
+
+/**
+ * Builds a plain `JsonValue` clone of an already-validated approval prompt
+ * request via explicit, typed field-by-field construction (Task 9 finding
+ * 3) - never `JSON.parse(JSON.stringify(...))`, which can throw on a
+ * cyclic value or an accessor that throws, and can silently drop/alter
+ * fields (e.g. `undefined`, `NaN`, non-plain prototypes) in ways a caller
+ * would not expect from a "safe" clone. Every field read here is a plain,
+ * already-schema-validated primitive or array of primitives, so this
+ * cannot throw.
+ */
+export function cloneApprovalPromptRequestAsJson(
+  request: PiApprovalPromptRequest,
+): JsonValue {
+  return {
+    agentName: request.agentName,
+    toolIdentity: request.toolIdentity,
+    requests: request.requests.map((pending) => ({
+      summary: pending.summary,
+      ...(pending.details !== undefined ? { details: pending.details } : {}),
+      unresolved: pending.unresolved,
+    })),
+    allowedScopes: [...request.allowedScopes],
+  };
+}
+
+/**
+ * Relays one of a live child's own governed tool-call approval prompts to
+ * the sole parent TUI, preserving the child's identity, then delivers the
+ * caller's choice back to that exact child over the authenticated channel
+ * (Spec 33 \u00a711.5, \u00a712.4).
+ */
+function relayChildApprovalToParentUi(
+  ctx: PiSessionContext,
+  controllerCell: { controller: PiDelegationController | undefined },
+  logger: PiAdapterLogger,
+): (
+  childId: string,
+  correlationId: string,
+  request: PiApprovalRequestBody,
+) => void {
+  // At most one outstanding parent-side correlation per (childId,
+  // correlationId): a duplicate/replayed relay for the same decision must
+  // never open a second concurrent UI prompt for it.
+  const inFlight = new Set<string>();
+  const rejectResponse: JsonValue = { scope: "reject" };
+  return (childId, correlationId, request) => {
+    const key = `${childId}:${correlationId}`;
+    if (inFlight.has(key)) {
+      logger.warn(
+        { childId, correlationId },
+        "dropped duplicate concurrent child approval-request relay",
+      );
+      return;
+    }
+    inFlight.add(key);
+    // `PiApprovalRequestBody` (the already-validated wire body) and
+    // `PiApprovalPromptRequest` (the UI-facing type) share the exact same
+    // shape by construction - used directly here, no cast.
+    const promptRequest: PiApprovalPromptRequest = {
+      ...request,
+      agentName: `${request.agentName} (child ${childId})`,
+    };
+    const approvalUi = createParentUiApprovalPort(ctx);
+    void (async (): Promise<void> => {
+      const choice = await approvalUi.promptApproval(promptRequest);
+      const candidate: JsonValue = choice ?? rejectResponse;
+      // Never forward a UI response to the child without validating it
+      // against the exact same schema the child itself will re-validate on
+      // arrival - a malformed/unexpected shape here always fails closed to
+      // `reject` rather than being relayed as-is.
+      const validated = parseControlBody("approval-response", candidate);
+      const responseBody: JsonValue = validated.ok ? candidate : rejectResponse;
+      await controllerCell.controller?.respondToApproval(
+        childId,
+        correlationId,
+        responseBody,
+      );
+    })()
+      .catch(async (cause: unknown) => {
+        // A thrown/rejected UI or send failure must never become an
+        // unhandled rejection - fail closed with an explicit reject rather
+        // than leaving the child's own approval wait to time out silently.
+        // Never log the raw `cause` value: it is unknown, untyped content
+        // (it could carry private paths, environment values, or secrets
+        // embedded in an error message) - only a fixed, closed-set
+        // classification code is safe to emit (Task 9 finding 3).
+        logger.error(
+          {
+            childId,
+            correlationId,
+            causeCode: classifyApprovalRelayFailureCause(cause),
+          },
+          "child approval relay failed; responding with reject",
+        );
+        await controllerCell.controller?.respondToApproval(
+          childId,
+          correlationId,
+          rejectResponse,
+        );
+      })
+      .finally(() => {
+        inFlight.delete(key);
+      });
+  };
+}
+
+/**
+ * Detects whether this process is a private RPC child (Spec 33 \u00a711.2
+ * -\u00a711.5) by reading its bootstrap secret from the environment only.
+ * A real user-started RPC session never sets this variable, so it never
+ * activates any of this child-only behavior. Returns `true` once child
+ * mode is fully wired (the caller must not run its own parent-oriented
+ * `session_start` logic in that case), `false` for every ordinary session.
+ */
+async function activateChildModeIfApplicable(
+  pi: PiExtensionApi,
+  ctx: PiSessionContext,
+  deps: PiExtensionDeps,
+  state: PiChildModeState,
+): Promise<boolean> {
+  if (deps.envPort.read(WEAVE_CHILD_SECRET_ENV) === undefined) return false;
+  const runtime = new PiChildRuntime({
+    envPort: deps.envPort,
+    randomPort: deps.randomPort,
+    hmacPort: deps.hmacPort,
+    outputPort: deps.childOutputPort,
+    logger: deps.logger,
+  });
+  const outcome = await runtime.start();
+  state.active = true;
+  state.runtime = runtime;
+  if (outcome.isErr() || outcome.value.kind !== "activated") {
+    deps.logger.error({}, "private child bootstrap handshake failed");
+    return true;
+  }
+  state.childId = outcome.value.childId;
+
+  pi.registerCommand(HIDDEN_CONTROL_COMMAND_NAME, {
+    handler: (rawArgs: string) => {
+      const parsed = parseStrictJson(rawArgs);
+      if (parsed.isErr()) return;
+      // `admitControlLine` verifies asynchronously (real HMAC signing/
+      // verification); the caller-supplied handlers below are the only
+      // reliable place to react once verification actually completes -
+      // never a synchronous flag read immediately after calling it.
+      runtime.admitControlLine(parsed.value, {
+        onBootstrap: (body) => {
+          void applyChildBootstrap(pi, ctx, deps, state, runtime, body);
+        },
+        onCancel: () => {
+          void runtime.reportCancelled();
+        },
+      });
+    },
+  });
+
+  pi.on("tool_call", async (event, toolCtx: PiSessionContext) => {
+    if (!state.active) return undefined;
+    const toolCallEvent = event as PiToolCallEvent;
+    const toolIdentity = toolCallEvent.toolName;
+    const isNativeCapabilityName = Object.hasOwn(
+      PI_NATIVE_TOOL_CAPABILITY,
+      toolIdentity,
+    );
+    if (
+      !state.bootstrapApplied ||
+      state.toolPolicy === undefined ||
+      state.permissionSession === undefined
+    ) {
+      // Never govern (nor silently pass through) a native-capability tool
+      // call before bootstrap has actually been confirmed applied - the
+      // child must not race its own bootstrap (Spec 33 §11.3/§11.5).
+      if (isNativeCapabilityName) {
+        return { block: true, reason: "tool-policy-unavailable" };
+      }
+      return undefined;
+    }
+    const isGovernanceRelevant =
+      isNativeCapabilityName ||
+      state.toolPolicy.weaveOwned.includes(toolIdentity);
+    if (!isGovernanceRelevant) return undefined;
+    const relay: PiChildApprovalRelayPort = {
+      relay: async (_childId, request) => {
+        const safeRequest = cloneApprovalPromptRequestAsJson(request);
+        const result = await runtime.requestApproval(safeRequest);
+        // `requestApproval` already validated the reply against the exact
+        // same schema `PiApprovalChoiceInput` mirrors, so the resolved
+        // value is used directly here - no cast.
+        return result.match(
+          (response) => response,
+          () => undefined,
+        );
+      },
+    };
+    const result = await ResultAsync.fromPromise(
+      deps.permissionBridge.intercept({
+        session: state.permissionSession,
+        plan: state.toolPolicy,
+        project: toolCtx.cwd,
+        controllerSession: state.childId,
+        agentName: state.agentName,
+        toolIdentity,
+        call: toolCallEvent.input,
+        approvalUiAvailable: true,
+        approvalUi: createChildRelayApprovalPort(relay, state.childId),
+        pi,
+      }),
+      () => "child-tool-policy-bridge-rejected" as const,
+    ).andThen((decision) => decision);
+    if (result.isErr()) {
+      return { block: true, reason: "tool-policy-intercept-failed" };
+    }
+    const decision = result.value;
+    if (decision.kind === "block")
+      return { block: true, reason: decision.reason };
+    if (decision.kind === "allow-unmanaged") return undefined;
+    if (typeof decision.call === "object" && decision.call !== null) {
+      for (const key of Object.keys(toolCallEvent.input))
+        delete toolCallEvent.input[key];
+      Object.assign(toolCallEvent.input, decision.call);
+    }
+    return undefined;
+  });
+
+  pi.on("before_agent_start", (event) => {
+    if (!state.bootstrapApplied || state.promptAppended) return undefined;
+    state.promptAppended = true;
+    const nativePrompt = readSystemPrompt(event);
+    const systemPrompt =
+      nativePrompt.length > 0
+        ? `${nativePrompt}\n\n${state.composedPrompt}`
+        : state.composedPrompt;
+    return { systemPrompt };
+  });
+
+  // A new turn starts a fresh transient output buffer rather than carrying
+  // a previous turn's trailing text forward forever (mirrors the parent's
+  // own `PiChildRpc` buffer semantics, Spec 33 §11.5).
+  pi.on("turn_start", () => {
+    state.latestAssistantOutput = "";
+  });
+
+  pi.on("message_update", (event) => {
+    const record = asJsonRecord(event);
+    if (record === undefined) return undefined;
+    const preview = extractAssistantTextDeltaPreview(record);
+    if (preview !== undefined) {
+      state.latestAssistantOutput = truncateLatestOutput(
+        state.latestAssistantOutput + preview,
+      );
+    }
+    return undefined;
+  });
+
+  // `agent_settled` itself carries no payload at all
+  // (`{"type":"agent_settled"}` per the pi-coding-agent RPC docs) - it
+  // cannot tell us whether the run that just settled ended in error. The
+  // last observed assistant message's `stopReason` (`"error"`/`"aborted"`
+  // vs. `"stop"`/`"length"`/`"toolUse"`), delivered on `message_end`, is the
+  // one observable signal the RPC protocol exposes for this (Task 9 finding
+  // 2). We track it here and consult it below instead of trusting
+  // `agent_settled` to carry an outcome it structurally cannot express.
+  pi.on("message_end", (event) => {
+    const record = asJsonRecord(event);
+    if (record === undefined) return undefined;
+    const stopReason = extractAssistantStopReason(record);
+    if (stopReason !== undefined) state.lastAssistantStopReason = stopReason;
+    return undefined;
+  });
+
+  pi.on("agent_settled", () => {
+    // A cancellation already in flight (or already reported) owns the
+    // terminal outcome - never race a stray `"completed"` report past a
+    // `"cancelled"` one that already went out, and never report completed
+    // more than once (Task 9 finding 2).
+    if (runtime.isCancelled()) return;
+    if (
+      state.lastAssistantStopReason === "error" ||
+      state.lastAssistantStopReason === "aborted"
+    ) {
+      void runtime.reportSettled("failed", {
+        reason: `assistant stop reason: ${state.lastAssistantStopReason}`,
+      });
+      return;
+    }
+    const summary = truncateLatestOutput(state.latestAssistantOutput);
+    void runtime.reportSettled("completed", {
+      summary: summary.length > 0 ? summary : EMPTY_CHILD_SUMMARY_FALLBACK,
+    });
+  });
+
+  return true;
+}
+
+/** Narrows an event payload to a plain JSON-ish record, or `undefined` if it is not one. Never throws. */
+function asJsonRecord(event: unknown): Record<string, JsonValue> | undefined {
+  if (typeof event !== "object" || event === null || Array.isArray(event)) {
+    return undefined;
+  }
+  return event as Record<string, JsonValue>;
+}
 
 /**
  * Direct parent-TUI approval port (Spec 33 §12.4): prompts `ctx.ui.select`
@@ -303,17 +1099,118 @@ function renderHealthMessage(
 function renderStatusMessage(
   controller: PiExtensionController,
   activeSession: PiActiveSession | undefined,
+  delegationController?: PiDelegationController,
 ): string {
   const generation = controller.getCurrentGeneration();
   if (generation === undefined) {
     return "Weave has not completed activation yet.";
   }
-  return [
+  const lines = [
     `generation: ${generation.id}`,
     `trust: ${generation.preflight.trust}`,
     `mode: ${generation.preflight.mode}`,
     `health-only: ${effectiveHealthOnly(generation, activeSession)}`,
-  ].join("\n");
+  ];
+  const tree = delegationController?.snapshotTree() ?? [];
+  lines.push(`children: ${tree.length}`);
+  if (tree.length > 0 && delegationController !== undefined) {
+    lines.push(
+      ...renderChildTreeLines(
+        tree,
+        ROOT_NODE_ID,
+        delegationController.snapshotCumulativeUsage(),
+      ),
+    );
+  }
+  return lines.join("\n");
+}
+
+const WEAVE_CHILD_TREE_WIDGET_KEY = "weave-children";
+
+/** Renders the bounded child-tree widget (Spec 33 §11.5) via the real, always-available `ctx.ui.setWidget` surface. Hides the widget entirely (empty array) once there are no children left. */
+function renderChildTreeWidget(
+  ctx: PiSessionContext,
+  controller: PiDelegationController | undefined,
+  selectionCell: { selectedId: string },
+): void {
+  const nodes = controller?.snapshotTree() ?? [];
+  const lines = renderChildTreeLines(
+    nodes,
+    selectionCell.selectedId,
+    controller?.snapshotCumulativeUsage() ?? EMPTY_USAGE_AGGREGATE,
+  );
+  ctx.ui.setWidget(
+    WEAVE_CHILD_TREE_WIDGET_KEY,
+    lines.length === 0 ? undefined : lines,
+    {
+      placement: "belowEditor",
+    },
+  );
+}
+
+interface WeaveChildTreeEditorDeps {
+  getNodesMap(): ReadonlyMap<string, PiChildTreeNode>;
+  getSelection(): string;
+  setSelection(nodeId: string): void;
+  cancelSubtree(nodeId: string): void;
+}
+
+/**
+ * Compositional custom editor (Spec 33 §11.5, per `docs/tui.md` "Pattern
+ * 7"/`examples/extensions/modal-editor.ts`) production-wiring Alt+1..Alt+9
+ * (direct-child selection), Backspace (parent selection), and Esc (cancel
+ * selected subtree). Extends the real `CustomEditor` (not a bare shortcut)
+ * specifically to inherit Pi's own app keybindings and preserve every host
+ * default: any key `classifyChildTreeKey` does not recognize, and any
+ * recognized key whose pure `applyTreeControlKey` reducer reports
+ * `{ kind: "host-default" }` (Backspace/Esc at the root node) or
+ * `{ kind: "no-target" }`, falls straight through to `super.handleInput`.
+ */
+class WeaveChildTreeEditor extends CustomEditor {
+  private readonly weaveDeps: WeaveChildTreeEditorDeps;
+
+  constructor(
+    tui: unknown,
+    theme: unknown,
+    keybindings: unknown,
+    deps: WeaveChildTreeEditorDeps,
+  ) {
+    // Adapts the narrow port's deliberately opaque (tui, theme, keybindings)
+    // values back to Pi's own real `CustomEditor` constructor parameter
+    // types - this is the one adapter-boundary cast, never propagated
+    // beyond this constructor call, and never uses `any`.
+    const [ctorTui, ctorTheme, ctorKeybindings] = [
+      tui,
+      theme,
+      keybindings,
+    ] as ConstructorParameters<typeof CustomEditor>;
+    super(ctorTui, ctorTheme, ctorKeybindings);
+    this.weaveDeps = deps;
+  }
+
+  override handleInput(data: string): void {
+    const key = classifyChildTreeKey(data);
+    if (key === undefined) {
+      super.handleInput(data);
+      return;
+    }
+    const outcome = applyTreeControlKey(
+      this.weaveDeps.getNodesMap(),
+      this.weaveDeps.getSelection(),
+      key,
+    );
+    if (outcome.kind === "selected") {
+      this.weaveDeps.setSelection(outcome.nodeId);
+      return;
+    }
+    if (outcome.kind === "cancel-requested") {
+      this.weaveDeps.cancelSubtree(outcome.nodeId);
+      return;
+    }
+    // `host-default` (root-level Backspace/Esc) or `no-target`: preserve
+    // Pi's own default editor behavior exactly (Spec 33 §11.5).
+    super.handleInput(data);
+  }
 }
 
 /**
@@ -330,12 +1227,55 @@ export function createPiExtension(
     ...createDefaultPiExtensionDeps(),
     ...overrides,
   };
+  // Populated only once `session_start` has activated a real generation and
+  // constructed a live delegation controller for it (Spec 33 §11). The
+  // registration's static shape/resolver are built here, at preflight time,
+  // from the *declared* primary descriptor alone; the lazy accessor lets the
+  // coverage proof describe the tool before a controller instance can exist,
+  // while `execute()` always runs on a later turn, well after the cell below
+  // is populated.
+  const delegationControllerCell: {
+    controller: PiDelegationController | undefined;
+  } = {
+    controller: undefined,
+  };
+  // Bounded, live child-tree selection state (Spec 33 §11.5) - reset to the
+  // root whenever a fresh generation activates.
+  const treeSelectionCell: { selectedId: string } = {
+    selectedId: ROOT_NODE_ID,
+  };
   const controllerDeps: PiExtensionControllerDeps = {
     safeInitializer: new PiSafeInitializer({
       hostPackageReader: deps.hostPackageReader,
       capabilityProber: deps.capabilityProber,
       configActivator: deps.configActivator,
       permissionBridge: deps.permissionBridge,
+      buildDelegationToolRegistrations: (primary, activation) =>
+        primary.delegationTargets.length === 0
+          ? []
+          : [
+              buildDelegationToolRegistration({
+                targets: primary.delegationTargets,
+                getController: () => delegationControllerCell.controller,
+                parentId: ROOT_NODE_ID,
+                parentDepth: 0,
+                parentAgentName: primary.name,
+                idGenerator: deps.idGenerator,
+                buildBootstrap: (target, _task, childId, ctx) =>
+                  buildChildBootstrapBody(
+                    activation.descriptors.byName,
+                    target,
+                    childId,
+                    {
+                      parentAgentName: primary.name,
+                      parentDepth: 0,
+                      cwd: ctx.cwd,
+                    },
+                    ctx,
+                  ),
+                buildEnv: () => ({}),
+              }),
+            ],
     }),
     idGenerator: deps.idGenerator,
     clock: deps.clock,
@@ -343,12 +1283,18 @@ export function createPiExtension(
   };
   const controller = new PiExtensionController(controllerDeps);
   let activeSession: PiActiveSession | undefined;
+  const childModeState = createChildModeState();
 
   return function piAdapterExtension(pi: PiExtensionApi): void {
     for (const name of WEAVE_COMMAND_NAMES) {
       pi.registerCommand(name, {
         description: commandDescription(name),
-        handler: (_rawArgs: string, ctx: PiSessionContext) => {
+        handler: async (_rawArgs: string, ctx: PiSessionContext) => {
+          // A private delegated child never exposes the parent's public
+          // /weave:* commands, even though registerCommand runs once at
+          // factory time before child mode can be detected (Spec 33 §7.1,
+          // §11.2 - public adapter surface stays TUI-only).
+          if (childModeState.active) return;
           const gate = controller.evaluateCommandGate(name);
           if (gate.isErr()) {
             ctx.ui.notify(gate.error.safeMessage, "error");
@@ -376,13 +1322,32 @@ export function createPiExtension(
           }
           if (name === "weave:status") {
             ctx.ui.notify(
-              renderStatusMessage(controller, activeSession),
+              renderStatusMessage(
+                controller,
+                activeSession,
+                delegationControllerCell.controller,
+              ),
               "info",
             );
             return;
           }
           if (name === "weave:abort") {
-            ctx.ui.notify("No active Weave execution to abort.", "info");
+            const delegationController = delegationControllerCell.controller;
+            if (
+              delegationController === undefined ||
+              delegationController.snapshotTree().length === 0
+            ) {
+              ctx.ui.notify("No active Weave execution to abort.", "info");
+              return;
+            }
+            const cancelled =
+              await delegationController.cancelSubtree(ROOT_NODE_ID);
+            ctx.ui.notify(
+              cancelled.isOk()
+                ? "Cancelled the active Weave child tree."
+                : "Cancel requested; some children may still be shutting down.",
+              cancelled.isOk() ? "info" : "warning",
+            );
             return;
           }
           ctx.ui.notify(
@@ -394,6 +1359,13 @@ export function createPiExtension(
     }
 
     pi.on("session_start", async (_event, ctx: PiSessionContext) => {
+      const isChild = await activateChildModeIfApplicable(
+        pi,
+        ctx,
+        deps,
+        childModeState,
+      );
+      if (isChild) return;
       const commands = readValidatedCommands(pi);
       if (commands.isErr()) {
         ctx.ui.notify(commands.error.safeMessage, "error");
@@ -470,7 +1442,7 @@ export function createPiExtension(
       if (toolPolicy?.coverage.isOk()) {
         const registered = deps.permissionBridge.registerWeaveOwnedTools(
           pi,
-          [],
+          generation.preflight.weaveOwnedRegistrations,
         );
         if (registered.isErr()) {
           permissionActivationFailed = true;
@@ -523,9 +1495,98 @@ export function createPiExtension(
           ? "health-only - run /weave:health for details"
           : "ready",
       );
+
+      // The delegation transport is only ever constructed for a fully
+      // activated generation, never at factory time (Spec 33 §7.1) and
+      // never for a health-only/trust-withheld generation - delegation is a
+      // registered capability tool and durable operation exactly like the
+      // ones Spec 33 §7.3/§21 already disable in those states.
+      if (
+        !effectiveHealthOnly(generation, activeSession) &&
+        generation.preflight.trust !== "withheld"
+      ) {
+        delegationControllerCell.controller = new PiDelegationController({
+          config: configActivation.config,
+          generationId: generation.id,
+          idGenerator: deps.idGenerator,
+          logger: deps.logger,
+          processPort: deps.processPort,
+          randomPort: deps.randomPort,
+          hmacPort: deps.hmacPort,
+          // Preserves ordinary runtime necessities (PATH/HOME/etc.) for the
+          // spawned `pi` process, while never forwarding secrets/credentials
+          // or this adapter's own private child-bootstrap variables.
+          baseEnv: sanitizedBaseEnv(isDeniedKey),
+          rootAgentName: () =>
+            activeSession?.primarySession.getCurrent()?.descriptor.name ??
+            DEFAULT_PRIMARY_AGENT_NAME,
+          onChildApprovalRequest: relayChildApprovalToParentUi(
+            ctx,
+            delegationControllerCell,
+            deps.logger,
+          ),
+          // Nested/descendant delegation (Spec 33 §10-11): a requesting
+          // child is only ever resolved against ITS OWN declared
+          // `delegationTargets`, never the full descriptor set - exactly
+          // the same restriction the root's own tool already applies.
+          resolveDelegationTarget: (requestingAgentName, targetAgentName) =>
+            configActivation.descriptors.byName
+              .get(requestingAgentName)
+              ?.delegationTargets.find(
+                (target) => target.name === targetAgentName,
+              ),
+          buildBootstrap: (target, childId, context) =>
+            buildChildBootstrapBody(
+              configActivation.descriptors.byName,
+              target,
+              childId,
+              context,
+              ctx,
+            ),
+          onTreeChanged: () => {
+            renderChildTreeWidget(
+              ctx,
+              delegationControllerCell.controller,
+              treeSelectionCell,
+            );
+          },
+        });
+        treeSelectionCell.selectedId = ROOT_NODE_ID;
+        renderChildTreeWidget(
+          ctx,
+          delegationControllerCell.controller,
+          treeSelectionCell,
+        );
+        // Compositional custom editor (Spec 33 §11.5): production-wires
+        // Alt+1..Alt+9/Backspace/Esc against the live child tree while
+        // preserving every Pi host default (see `WeaveChildTreeEditor`).
+        ctx.ui.setEditorComponent?.(
+          (tui: unknown, theme: unknown, keybindings: unknown) =>
+            new WeaveChildTreeEditor(tui, theme, keybindings, {
+              getNodesMap: () => {
+                const nodes =
+                  delegationControllerCell.controller?.snapshotTree() ?? [];
+                return new Map(nodes.map((node) => [node.id, node]));
+              },
+              getSelection: () => treeSelectionCell.selectedId,
+              setSelection: (nodeId) => {
+                treeSelectionCell.selectedId = nodeId;
+                renderChildTreeWidget(
+                  ctx,
+                  delegationControllerCell.controller,
+                  treeSelectionCell,
+                );
+              },
+              cancelSubtree: (nodeId) => {
+                void delegationControllerCell.controller?.cancelSubtree(nodeId);
+              },
+            }),
+        );
+      }
     });
 
     pi.on("tool_call", async (event, ctx: PiSessionContext) => {
+      if (childModeState.active) return undefined;
       const toolCallEvent = event as PiToolCallEvent;
       const toolIdentity = toolCallEvent.toolName;
       // Structurally always-governance-relevant: Pi's closed native-capability
@@ -683,6 +1744,7 @@ export function createPiExtension(
     });
 
     pi.on("before_agent_start", async (event, ctx: PiSessionContext) => {
+      if (childModeState.active) return undefined;
       if (activeSession === undefined) return undefined;
       if (
         activeSession.generationId !== controller.getCurrentGeneration()?.id
@@ -793,9 +1855,20 @@ export function createPiExtension(
       };
     });
 
-    pi.on("session_shutdown", () => {
+    pi.on("session_shutdown", (_event, ctx?: PiSessionContext) => {
       activeSession = undefined;
+      delegationControllerCell.controller?.disposeAll();
+      delegationControllerCell.controller = undefined;
+      treeSelectionCell.selectedId = ROOT_NODE_ID;
+      // Bounded child-tree widget/editor state must never survive past this
+      // generation (Spec 33 §11.5/§23 cleanup-idempotence) - clear it even
+      // though `disposeAll()` above already terminated every child.
+      ctx?.ui.setWidget(WEAVE_CHILD_TREE_WIDGET_KEY, undefined);
+      ctx?.ui.setEditorComponent?.(undefined);
       controller.shutdown();
+      // Idempotent regardless of role: a no-op for an ordinary parent
+      // session, and terminal secret/process cleanup for a private child.
+      childModeState.runtime?.dispose();
     });
   };
 }

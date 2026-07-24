@@ -240,3 +240,231 @@ export function makeInvariantViolationFailure(
     correlation: { detail },
   };
 }
+
+function childScope(childId: string): PiAdapterFailureScope {
+  return { kind: "child", id: childId };
+}
+
+/**
+ * Child/protocol closed-failure factories (Spec 33 §11, §23). Every
+ * `correlation` value here is a bounded identifier, count, or closed reason
+ * string - never raw RPC/control payload content, prompt text, or secret
+ * material (Spec 33 §19.1).
+ */
+export function makeChildCapacityExceededFailure(
+  childId: string,
+  reason: "max_children" | "max_depth",
+): PiAdapterFailure {
+  return {
+    code: "ChildCapacityExceeded",
+    phase: "child",
+    scope: childScope(childId),
+    impact: "operation-stopped",
+    retryable: true,
+    recovery: "retry",
+    safeMessage:
+      "Delegation limits do not permit spawning this child right now.",
+    correlation: { reason },
+  };
+}
+
+export function makeChildSpawnFailedFailure(
+  childId: string,
+  reason: string,
+): PiAdapterFailure {
+  return {
+    code: "ChildSpawnFailed",
+    phase: "child",
+    scope: childScope(childId),
+    impact: "operation-stopped",
+    retryable: true,
+    recovery: "retry",
+    safeMessage: "Weave could not start the delegated child process.",
+    correlation: { reason },
+  };
+}
+
+export function makeChildHandshakeMissingFailure(
+  childId: string,
+): PiAdapterFailure {
+  return {
+    code: "ChildHandshakeMissing",
+    phase: "child",
+    scope: childScope(childId),
+    impact: "operation-stopped",
+    retryable: true,
+    recovery: "retry",
+    safeMessage:
+      "The delegated child did not complete its authenticated handshake in time.",
+  };
+}
+
+export function makeChildAuthenticationFailedFailure(
+  childId: string,
+  reason: string,
+): PiAdapterFailure {
+  return {
+    code: "ChildAuthenticationFailed",
+    phase: "protocol",
+    scope: childScope(childId),
+    impact: "operation-stopped",
+    retryable: false,
+    recovery: "abort",
+    safeMessage: "A message from the delegated child failed authentication.",
+    correlation: { reason },
+  };
+}
+
+export function makeChildEnvelopeMalformedFailure(
+  childId: string,
+  reason: string,
+): PiAdapterFailure {
+  return {
+    code: "ChildEnvelopeMalformed",
+    phase: "protocol",
+    scope: childScope(childId),
+    impact: "operation-stopped",
+    retryable: false,
+    recovery: "abort",
+    safeMessage:
+      "A private control message from the delegated child was malformed.",
+    correlation: { reason },
+  };
+}
+
+export function makeChildEnvelopeReplayFailure(
+  childId: string,
+): PiAdapterFailure {
+  return {
+    code: "ChildEnvelopeReplay",
+    phase: "protocol",
+    scope: childScope(childId),
+    impact: "operation-stopped",
+    retryable: false,
+    recovery: "abort",
+    safeMessage:
+      "A private control message from the delegated child was replayed or out of order.",
+  };
+}
+
+export function makeChildReplyMissingFailure(
+  childId: string,
+): PiAdapterFailure {
+  return {
+    code: "ChildReplyMissing",
+    phase: "protocol",
+    scope: childScope(childId),
+    impact: "operation-stopped",
+    retryable: true,
+    recovery: "retry",
+    safeMessage: "The delegated child did not reply in time.",
+  };
+}
+
+export function makeChildReplyDuplicateFailure(
+  childId: string,
+): PiAdapterFailure {
+  return {
+    code: "ChildReplyDuplicate",
+    phase: "protocol",
+    scope: childScope(childId),
+    impact: "operation-stopped",
+    retryable: false,
+    recovery: "abort",
+    safeMessage:
+      "The delegated child sent a duplicate reply for an already-settled correlation.",
+  };
+}
+
+export function makeChildReplyLateFailure(childId: string): PiAdapterFailure {
+  return {
+    code: "ChildReplyLate",
+    phase: "protocol",
+    scope: childScope(childId),
+    impact: "operation-stopped",
+    retryable: false,
+    recovery: "abort",
+    safeMessage:
+      "The delegated child sent a reply after its correlation was already settled.",
+  };
+}
+
+export function makeChildExitedUnexpectedlyFailure(
+  childId: string,
+  exitCode: number | null,
+): PiAdapterFailure {
+  return {
+    code: "ChildExitedUnexpectedly",
+    phase: "child",
+    scope: childScope(childId),
+    impact: "operation-stopped",
+    retryable: true,
+    recovery: "retry",
+    safeMessage: "The delegated child process exited before settling its work.",
+    correlation: { exitCode: exitCode ?? -1 },
+  };
+}
+
+export function makeChildSettlementMissingFailure(
+  childId: string,
+): PiAdapterFailure {
+  return {
+    code: "ChildSettlementMissing",
+    phase: "completion",
+    scope: childScope(childId),
+    impact: "operation-stopped",
+    retryable: true,
+    recovery: "retry",
+    safeMessage:
+      "The delegated child did not send an authenticated settlement.",
+  };
+}
+
+export function makeChildAbortFailedFailure(
+  childId: string,
+  reason: string,
+): PiAdapterFailure {
+  return {
+    code: "ChildAbortFailed",
+    phase: "cleanup",
+    scope: childScope(childId),
+    impact: "degraded",
+    retryable: true,
+    recovery: "retry",
+    safeMessage:
+      "Weave could not confirm the delegated child stopped cleanly; it was terminated.",
+    correlation: { reason },
+  };
+}
+
+export function makeRpcBridgeUnavailableFailure(
+  reason: string,
+): PiAdapterFailure {
+  return {
+    code: "RpcBridgeUnavailable",
+    phase: "child",
+    scope: ADAPTER_SCOPE,
+    impact: "health-only",
+    retryable: false,
+    recovery: "health-check",
+    safeMessage: "The private delegation transport is unavailable.",
+    correlation: { reason },
+  };
+}
+
+export function makeUiBridgeFailedFailure(
+  childId: string,
+  reason: string,
+): PiAdapterFailure {
+  return {
+    code: "UiBridgeFailed",
+    phase: "protocol",
+    scope: childScope(childId),
+    impact: "degraded",
+    retryable: true,
+    recovery: "retry",
+    safeMessage:
+      "Weave could not relay a child approval prompt to the parent session.",
+    correlation: { reason },
+  };
+}
