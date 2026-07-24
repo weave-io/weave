@@ -405,6 +405,8 @@ A registration contains opaque runtime tool identity, owner identity, semantic r
 
 Registry sealing is transactional. Duplicate concrete identity rejects the candidate generation. Replacement is idle-only and atomic, creates a new generation, and invalidates outstanding challenges and permits.
 
+Concrete Pi registered-tool executors MUST mirror the host's five-argument ABI: `(toolCallId, params, signal, onUpdate, ctx)`. Adapter code that needs session context reads only the fifth argument; treating the abort signal as context corrupts delegation and other context-bound calls.
+
 ### 12.3 Normalized requests and evaluation
 
 

@@ -121,7 +121,7 @@ export function buildDelegationToolRegistration(
     promptGuidelines: [
       "Use only an `agent` name listed as an eligible delegation target for this session.",
     ],
-    execute: async (_toolCallId, params, ctx) => {
+    execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
       const parsed = parseDelegationCall(params);
       if (parsed === undefined || !allowedNames.has(parsed.agent)) {
         return {

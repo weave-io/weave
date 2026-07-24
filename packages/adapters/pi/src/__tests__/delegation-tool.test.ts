@@ -147,6 +147,8 @@ describe("buildDelegationToolRegistration", () => {
     const result = await registration.tool.execute(
       "call-1",
       { agent: "nope", task: "x" },
+      undefined,
+      undefined,
       ctx(),
     );
     const text = JSON.parse((result.content[0] as { text: string }).text);
@@ -161,6 +163,8 @@ describe("buildDelegationToolRegistration", () => {
     const result = await registration.tool.execute(
       "call-1",
       { agent: "shuttle", task: "x" },
+      undefined,
+      undefined,
       ctx(),
     );
     const text = JSON.parse((result.content[0] as { text: string }).text);
@@ -187,6 +191,8 @@ describe("buildDelegationToolRegistration", () => {
     const result = await registration.tool.execute(
       "call-1",
       { agent: "shuttle", task: "do it" },
+      undefined,
+      undefined,
       ctx(),
     );
     const text = JSON.parse((result.content[0] as { text: string }).text);
@@ -219,6 +225,8 @@ describe("buildDelegationToolRegistration", () => {
     const result = await registration.tool.execute(
       "call-1",
       { agent: "shuttle", task: "do it" },
+      undefined,
+      undefined,
       ctx(),
     );
     const text = JSON.parse((result.content[0] as { text: string }).text);

@@ -207,6 +207,8 @@ export interface PiToolRegistration {
   execute(
     toolCallId: string,
     params: Record<string, unknown>,
+    signal: AbortSignal | undefined,
+    onUpdate: ((update: unknown) => void) | undefined,
     ctx: PiSessionContext,
   ): Promise<{ content: readonly PiToolResultContent[] }>;
 }
