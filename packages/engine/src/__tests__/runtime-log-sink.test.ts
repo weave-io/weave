@@ -212,4 +212,28 @@ describe("RotatingRuntimeLogSink with memory filesystem", () => {
     expect(lines[0]).toBe('{"i":0}');
     expect(lines[19]).toBe('{"i":19}');
   });
+
+  it("flushes and closes held handles exactly once", async () => {
+    const fs = new MemoryRuntimeLogFileSystem();
+    const sink = new RotatingRuntimeLogSink({
+      projectRoot: "/proj",
+      fileName: "closed.ndjson",
+      settings: { max_segment_bytes: 10_000, max_segments: 3 },
+      fs,
+    });
+    await sink.initialize();
+    sink.write("before-close\n");
+
+    const firstClose = await sink.close();
+    const secondClose = await sink.close();
+    expect(firstClose.isOk()).toBe(true);
+    expect(secondClose.isOk()).toBe(true);
+
+    sink.write("after-close\n");
+    await sink.flush();
+    expect(fs.readText(sink.activePath)).toBe("before-close\n");
+
+    const reopen = await sink.initialize();
+    expect(reopen.isErr()).toBe(true);
+  });
 });

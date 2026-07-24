@@ -15,7 +15,14 @@ import {
   type DelegationTarget,
   resolveEffectiveDelegationLimits,
 } from "@weaveio/weave-engine";
-import { err, errAsync, ok, type Result, ResultAsync } from "neverthrow";
+import {
+  err,
+  errAsync,
+  ok,
+  okAsync,
+  type Result,
+  ResultAsync,
+} from "neverthrow";
 import type {
   PiApprovalRequestBody,
   PiDelegateRequestBody,
@@ -40,6 +47,7 @@ import {
 } from "./errors.js";
 import { type PiChildSettlement, PiRpcChild } from "./rpc-child.js";
 import type { JsonValue } from "./strict-json.js";
+import type { PiTelemetryUsageSink } from "./telemetry.js";
 import type { IdGenerator, PiAdapterLogger } from "./types.js";
 
 /** A bounded task/context object, echoed at multiple layers (Spec 33 §11.2 Task 9): tool parsing, control schema, this controller, and the RPC prompt send in `rpc-child.ts`. */
@@ -113,6 +121,13 @@ export interface PiDelegationControllerDeps {
    */
   readonly onTreeChanged?: () => void;
   readonly treeRefreshIntervalMs?: number;
+  /**
+   * Durable usage-ledger seam (Spec 33 §19.4). When present, every settled
+   * child assistant message (deduplicated per {@link PiRpcChild}'s own
+   * `seenUsageMessageIds`) is also recorded as one exact-once usage
+   * observation. Absent in tests that don't exercise telemetry.
+   */
+  readonly telemetry?: PiTelemetryUsageSink;
 }
 
 export interface PiDelegationRequest {
@@ -347,6 +362,20 @@ export class PiDelegationController {
           body: PiDelegateRequestBody,
         ) =>
           this.handleChildDelegationRequest(relayChildId, correlationId, body),
+        onAssistantUsageObserved: (usage) => {
+          this.deps.telemetry
+            ?.recordAssistantUsage({
+              id: usage.id,
+              source: "child",
+              agentName: request.agentName,
+              inputTokens: usage.inputTokens,
+              outputTokens: usage.outputTokens,
+              cacheReadTokens: usage.cacheReadTokens,
+              cacheWriteTokens: usage.cacheWriteTokens,
+              cost: usage.cost,
+            })
+            .orElse(() => okAsync("noop" as const));
+        },
       },
     );
     this.children.set(childId, child);
@@ -393,7 +422,7 @@ export class PiDelegationController {
    * Handles a live child's own relayed delegation request (Spec 33
    * §10-11): nested/descendant delegation is never an independent,
    * untracked budget - it is authorized and spawned through this exact
-   * same {@link delegate} method, under the requesting child's own
+   * same `delegate` method, under the requesting child's own
    * identity/depth, against the same global tree/process budget as every
    * other delegation. Every outcome - invalid body, ineligible target,
    * capacity denial, or settlement - always sends exactly one correlated
@@ -551,7 +580,7 @@ export class PiDelegationController {
    * cancelled subtree invisible to the BFS traversal and leave them
    * un-cancelled, spawning later under a since-cancelled ancestor. Uses
    * the exact same live+queued node set, in the exact same deterministic
-   * order, as {@link snapshotTree} so tree state and cancellation always
+   * order, as `snapshotTree` so tree state and cancellation always
    * agree on what the tree currently contains.
    */
   private snapshotNodesForSubtreeLookup(): ReadonlyMap<

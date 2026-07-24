@@ -101,9 +101,9 @@ export type PiChildStartOutcome =
 /**
  * One child process's own private-control state. Not itself a
  * `pi.on(...)` wiring layer - callers route raw stdin-derived JSON lines
- * for the hidden control command into {@link admitControlLine} and route
+ * for the hidden control command into `admitControlLine` and route
  * their own settlement moment (e.g. `agent_settled`) into
- * {@link reportSettled}.
+ * `reportSettled`.
  */
 export class PiChildRuntime {
   private secretBytes: Uint8Array | undefined;
@@ -411,7 +411,7 @@ export class PiChildRuntime {
   /**
    * Relays one of this child's own governed tool-call approval prompts to
    * the sole parent TUI (Spec 33 §11.5/§12) and awaits the correlated
-   * reply. Bounded by {@link CHILD_APPROVAL_TIMEOUT_MS} so a lost/duplicate
+   * reply. Bounded by `CHILD_APPROVAL_TIMEOUT_MS` so a lost/duplicate
    * reply can never hang the child's own tool-call turn forever.
    */
   requestApproval(
@@ -444,7 +444,7 @@ export class PiChildRuntime {
   /**
    * Shared correlated request/reply infrastructure for both approval and
    * delegation round-trips. `T` is always exactly the validated body type
-   * {@link admitCorrelatedReply} already produced via `parseControlBody`
+   * `admitCorrelatedReply` already produced via `parseControlBody`
    * before ever calling `resolve` - this is the one contained internal
    * cast that lets every actual caller (`requestApproval`/
    * `requestDelegation`, and everything downstream of them) receive a

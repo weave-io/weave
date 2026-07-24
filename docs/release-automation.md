@@ -59,8 +59,10 @@ verification is the release-specific integrity check.
 ## Public boundary and external setup
 
 Sanitized public packs are CLI and OpenCode for stable/nightly trains plus the
-nightly standalone Claude adapter. Core, config, and engine are bundled private
-layers. Configure trusted publishing for `weave-io/weave` `publish.yml`, protect
+nightly standalone Claude and Pi adapters. The Pi pack preserves its
+`pi.extensions` entry and host peer range, and release tests consume its staged
+tarball offline against fake exact-version host packages. Core, config, and
+engine are bundled private layers. Configure trusted publishing for `weave-io/weave` `publish.yml`, protect
 `main` and release environments, and use no npm automation token. Release PRs
 must link their related issue. `preview` is retired; historical versions remain
 published under the no-unpublish policy.

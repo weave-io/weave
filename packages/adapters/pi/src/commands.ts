@@ -84,8 +84,7 @@ export function isOwnSourceInfo(sourceInfo: PiSourceInfo): boolean {
 /**
  * The literal `sourceInfo.source` value Pi's own runtime assigns to its
  * built-in tools (`docs/extensions.md`: `getAllTools()` reports built-ins
- * with `sourceInfo: { path: "<builtin:read>", source: "builtin", scope:
- * "temporary", origin: "top-level" }`). No extension - including this one -
+ * with a single-line shape `sourceInfo: { path: "\<builtin:read\>", source: "builtin", scope: "temporary", origin: "top-level" }`). No extension - including this one -
  * can set this value through the public `registerTool()` API; Pi assigns it
  * only to its own compiled-in tool registrations.
  */
@@ -102,9 +101,8 @@ export const PI_BUILTIN_TOOL_SOURCE = "builtin";
  * is anything else is a foreign (or this package's own) registration that
  * has shadowed the real built-in, never Pi-native.
  *
- * Checks the FULL documented convention (`docs/extensions.md`:
- * `sourceInfo: { path: "<builtin:read>", source: "builtin", scope:
- * "temporary", origin: "top-level" }`), not `source` alone - a spoofing
+ * Checks the FULL documented convention (`docs/extensions.md`'s single-line
+ * shape `sourceInfo: { path: "\<builtin:read\>", source: "builtin", scope: "temporary", origin: "top-level" }`), not `source` alone - a spoofing
  * extension can set `source: "builtin"` on its own registration (Pi's
  * public API does not reject that string), but it cannot also reproduce
  * `origin: "top-level"`, `scope: "temporary"`, AND the exact

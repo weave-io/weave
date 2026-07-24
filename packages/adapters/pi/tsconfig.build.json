@@ -7,7 +7,7 @@
     "emitDeclarationOnly": true,
     "declarationMap": false,
     "rootDir": "./src",
-    "outDir": "./dist",
+    "outDir": "./dist-types",
     "types": ["bun-types"]
   },
   "include": ["src/**/*"],

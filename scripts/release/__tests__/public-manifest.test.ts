@@ -66,6 +66,10 @@ describe("release policy", () => {
         directory: "packages/adapters/claude-code",
         channels: ["nightly"],
       },
+      "@weaveio/weave-adapter-pi": {
+        directory: "packages/adapters/pi",
+        channels: ["nightly"],
+      },
     });
   });
 });
@@ -183,6 +187,7 @@ describe("PublicManifestBuilder", () => {
       "packages/cli/package.json",
       "packages/adapters/opencode/package.json",
       "packages/adapters/claude-code/package.json",
+      "packages/adapters/pi/package.json",
     ];
 
     for (const manifestPath of manifestPaths) {

@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 215 lib files | 33 env vars | 7 middleware | 0% test coverage
-> **Token savings:** this file is ~20,900 tokens. Without it, AI exploration would cost ~71,100 tokens. **Saves ~50,200 tokens per conversation.**
-> **Last scanned:** 2026-07-24 16:09 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 216 lib files | 33 env vars | 7 middleware | 0% test coverage
+> **Token savings:** this file is ~21,000 tokens. Without it, AI exploration would cost ~71,400 tokens. **Saves ~50,400 tokens per conversation.**
+> **Last scanned:** 2026-07-24 17:27 — re-run after significant changes
 
 ---
 
@@ -311,6 +311,14 @@
   - function recordCompletionAttempt: (recorder, windowOpen, raw, stepName) => CompletionRecordAttempt
   - function buildWeaveCompleteStepToolRegistration: (deps) => void
   - _...6 more_
+- `packages/adapters/pi/src/telemetry.ts`
+  - function extractAssistantUsageFromMessage: (record, JsonValue>) => |
+  - function createPiTelemetryLogger: (options) => ResultAsync<
+  - function createPiTelemetry: (options) => ResultAsync<
+  - class PiTelemetry
+  - interface PiJournalEventInput
+  - interface PiAssistantUsageInput
+  - _...11 more_
 - `packages/adapters/pi/src/tool-governance.ts`
   - function classifyDiscoveredTools: (allTools, weaveOwnedNames) => PiToolClassification
   - function buildNativeToolResolver: (toolName, capability) => PermissionResolver
@@ -1192,7 +1200,7 @@
 
 - `packages/cli/src/evals/types.ts` — imported by **39** files
 - `packages/engine/src/runtime/types.ts` — imported by **29** files
-- `packages/adapters/pi/src/types.ts` — imported by **25** files
+- `packages/adapters/pi/src/types.ts` — imported by **27** files
 - `packages/cli/src/theme/colors.ts` — imported by **20** files
 - `packages/cli/src/io/terminal.ts` — imported by **18** files
 - `packages/cli/src/evals/openrouter-client.ts` — imported by **18** files
@@ -1206,16 +1214,16 @@
 - `packages/engine/src/logger.ts` — imported by **13** files
 - `scripts/release/filesystem.ts` — imported by **13** files
 - `scripts/release/clock.ts` — imported by **13** files
+- `packages/adapters/pi/src/strict-json.ts` — imported by **12** files
 - `packages/cli/src/fs/file-system.ts` — imported by **12** files
 - `packages/engine/src/runtime/errors.ts` — imported by **12** files
-- `packages/adapters/pi/src/strict-json.ts` — imported by **11** files
 - `packages/engine/src/compose.ts` — imported by **11** files
 
 ## Import Map (who imports what)
 
 - `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/dashboard-indexes.test.ts`, `packages/cli/src/evals/__tests__/github-contents-publisher.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts` +34 more
 - `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts` +24 more
-- `packages/adapters/pi/src/types.ts` ← `packages/adapters/pi/src/__tests__/capability-prober.test.ts`, `packages/adapters/pi/src/__tests__/child-runtime.test.ts`, `packages/adapters/pi/src/__tests__/controller.test.ts`, `packages/adapters/pi/src/__tests__/delegation-tool.test.ts`, `packages/adapters/pi/src/__tests__/extension-tool-governance.test.ts` +20 more
+- `packages/adapters/pi/src/types.ts` ← `packages/adapters/pi/src/__tests__/capability-prober.test.ts`, `packages/adapters/pi/src/__tests__/child-runtime.test.ts`, `packages/adapters/pi/src/__tests__/controller.test.ts`, `packages/adapters/pi/src/__tests__/delegation-tool.test.ts`, `packages/adapters/pi/src/__tests__/extension-tool-governance.test.ts` +22 more
 - `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts` +15 more
 - `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts` +13 more
 - `packages/cli/src/evals/openrouter-client.ts` ← `packages/cli/src/evals/__tests__/loom-routing-runner.test.ts`, `packages/cli/src/evals/__tests__/pattern-planning-runner.test.ts`, `packages/cli/src/evals/__tests__/runner.test.ts`, `packages/cli/src/evals/__tests__/shuttle-execution-runner.test.ts`, `packages/cli/src/evals/__tests__/spindle-tools-runner.test.ts` +13 more
@@ -1229,7 +1237,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 208 test files found
+> 211 test files found
 
 ---
 

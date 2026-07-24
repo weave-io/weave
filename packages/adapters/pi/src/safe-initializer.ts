@@ -92,7 +92,7 @@ function toolPolicyCoverageFromPlan(
  * adapter into a ready (non-health-only) state while trust is absent.
  *
  * `configActivation` is `undefined` when config activation never ran
- * (mode/host blocked - Spec 33 §28 "wrong mode/host/version -> health-only"
+ * (mode/host blocked - Spec 33 §28 "wrong mode/host/version -\> health-only"
  * means config is never loaded/materialized). `configActivationFailure` is
  * set instead when activation was attempted but the config itself failed to
  * load/parse. Callers (e.g. `extension.ts`'s `session_start`) reuse this
@@ -273,7 +273,7 @@ export class PiSafeInitializer {
   /**
    * Spec 33 §7.2 steps 5-8: loads the permitted config and materializes it
    * into candidate descriptors - but only when mode/host are not blocked
-   * (Spec 33 §28 "wrong mode/host/version -> health-only" means config MUST
+   * (Spec 33 §28 "wrong mode/host/version -\> health-only" means config MUST
    * NOT be loaded or materialized at all in that state). Also performs a
    * *pure, dry-run* model resolution for the default primary purely to
    * inform capability probing; it never applies a model (`pi.setModel`) -

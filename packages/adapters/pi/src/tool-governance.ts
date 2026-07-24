@@ -378,7 +378,7 @@ function buildGrepFindResolver(
 }
 
 /**
- * Builds a pure, synchronous {@link PermissionResolver} for one governed Pi
+ * Builds a pure, synchronous `PermissionResolver` for one governed Pi
  * built-in tool: reads the exact input field Pi's own schema defines for
  * that tool (Spec 33 §12.1 "input-aware registrations") and returns exactly
  * one grantable request when the field is present, non-empty, and safe.

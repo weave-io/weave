@@ -60,7 +60,7 @@ export interface PiChildTreeNode {
   readonly startedAtMs: number;
   readonly elapsedMs: number;
   readonly usage: PiChildUsageAggregate;
-  /** Latest streamed output, truncated to <=4 KiB valid UTF-8 at a code-point boundary. Transient only. */
+  /** Latest streamed output, truncated to \<=4 KiB valid UTF-8 at a code-point boundary. Transient only. */
   readonly latestOutput: string;
 }
 

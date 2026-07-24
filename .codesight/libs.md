@@ -300,6 +300,14 @@
   - function recordCompletionAttempt: (recorder, windowOpen, raw, stepName) => CompletionRecordAttempt
   - function buildWeaveCompleteStepToolRegistration: (deps) => void
   - _...6 more_
+- `packages/adapters/pi/src/telemetry.ts`
+  - function extractAssistantUsageFromMessage: (record, JsonValue>) => |
+  - function createPiTelemetryLogger: (options) => ResultAsync<
+  - function createPiTelemetry: (options) => ResultAsync<
+  - class PiTelemetry
+  - interface PiJournalEventInput
+  - interface PiAssistantUsageInput
+  - _...11 more_
 - `packages/adapters/pi/src/tool-governance.ts`
   - function classifyDiscoveredTools: (allTools, weaveOwnedNames) => PiToolClassification
   - function buildNativeToolResolver: (toolName, capability) => PermissionResolver

@@ -16,7 +16,8 @@ repository for the full normative contract this package implements.
 ## Status
 
 This package currently ships the activation, normalized-configuration,
-registered-tool-policy, delegation-transport, and workflow-lifecycle slices:
+registered-tool-policy, delegation-transport, workflow-lifecycle, diagnostics,
+and public-packaging slices:
 exact host checks,
 trust-aware safe initialization, effective capability health reporting, ordered
 agent materialization, Loom primary activation, exact composed-prompt append,
@@ -47,8 +48,16 @@ also projects revisioned plans, digest-bound artifacts and approvals, recovery,
 reconciliation, parent-chat pause handling, and trusted no-follow Runtime Store
 persistence.
 
-Packed-consumer checks, release diagnostics, the acceptance manifest, and
-stable interactive TUI smoke evidence remain pending release gates.
+Diagnostics project bounded, redacted Runtime Journal events and exactly-once
+primary/child usage observations, run configured retention at safe boundaries,
+and write through a no-follow rotating pino sink. Telemetry failures degrade
+visibly without blocking activation or recursing through a failed sink.
+
+The public build emits both documented entry points, validates the staged npm
+manifest and tar inventory, and passes an offline clean-room consumer against a
+fake exact-version Pi host. The package is integrated into the nightly release
+plan. The complete acceptance manifest and digest-bound stable interactive TUI
+smoke evidence remain pending release gates.
 
 ### Peer dependencies
 

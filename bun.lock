@@ -51,7 +51,9 @@
       "name": "@weaveio/weave-adapter-pi",
       "version": "0.0.1",
       "dependencies": {
+        "mustache": "^4.2.0",
         "neverthrow": "^8.2.0",
+        "pino": "^9.6.0",
         "typebox": "1.1.38",
         "zod": "^4.4.3",
       },

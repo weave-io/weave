@@ -1,10 +1,12 @@
 import { join } from "node:path";
 import { CustomEditor } from "@earendil-works/pi-coding-agent";
+import { DEFAULT_RUNTIME_SETTINGS } from "@weaveio/weave-core";
 import type {
   AgentDescriptor,
   DelegationTarget,
   EffectiveToolPolicy,
   PermissionSession,
+  RuntimeLogFileSystem,
 } from "@weaveio/weave-engine";
 import { isDeniedKey, logger } from "@weaveio/weave-engine";
 import { okAsync, Result, ResultAsync } from "neverthrow";
@@ -125,6 +127,15 @@ import {
   type WEAVE_COMPLETE_STEP_TOOL_NAME,
 } from "./structured-completion.js";
 import {
+  createPiTelemetry,
+  extractAssistantUsageFromMessage,
+  type PiJournalPort,
+  type PiRetentionPort,
+  type PiTelemetry,
+  type PiTelemetryUiPort,
+  type PiUsagePort,
+} from "./telemetry.js";
+import {
   deriveActiveToolNames,
   PI_NATIVE_TOOL_CAPABILITY,
 } from "./tool-governance.js";
@@ -194,6 +205,18 @@ export interface PiExtensionDeps {
    * filesystem scan in a test).
    */
   readonly planCatalogPort: PiPlanCatalogPort;
+  /**
+   * Injectable telemetry seams (Spec 33 §19) — journal/usage/retention
+   * ports and the rotating log-sink filesystem. Absent means "construct
+   * the real engine-backed implementation against the opened Runtime
+   * Store" (production default). Tests MUST override with in-memory/fake
+   * seams (Spec 33 §24 layer B: no real filesystem/log rotation in a
+   * unit test).
+   */
+  readonly telemetryLogFileSystem?: RuntimeLogFileSystem;
+  readonly telemetryJournal?: PiJournalPort;
+  readonly telemetryUsage?: PiUsagePort;
+  readonly telemetryRetention?: PiRetentionPort;
 }
 
 /** Production child-side stdout writer: writes directly to this process's own real stdout, interleaved with Pi's own event/response lines. */
@@ -1490,6 +1513,14 @@ export function createPiExtension(
   const activeWorkflowInstanceCell: {
     value: { workflowInstanceId: string; leaseId?: string } | undefined;
   } = { value: undefined };
+  // Per-generation telemetry unit (Spec 33 §19) - constructed only once the
+  // Runtime Store opens for a trusted, non-health-only generation. Read
+  // lazily (never captured by value) by the delegation controller's
+  // `telemetry` wrapper below, since children may spawn well after this
+  // cell is populated.
+  const telemetryCell: { telemetry: PiTelemetry | undefined } = {
+    telemetry: undefined,
+  };
   let currentWorkflows: Record<
     string,
     import("@weaveio/weave-engine").WorkflowExecutionContext["workflows"][string]
@@ -2062,6 +2093,22 @@ export function createPiExtension(
               treeSelectionCell,
             );
           },
+          // Lazy wrapper (Spec 33 §19.4): `telemetryCell.telemetry` is only
+          // populated once the Runtime Store opens successfully, below -
+          // reading it here would always see `undefined`. A settled child
+          // assistant message always arrives well after that point, so the
+          // lazy read is safe; absent telemetry degrades to a silent no-op
+          // rather than blocking child settlement.
+          telemetry: {
+            recordAssistantUsage: (input) => {
+              const telemetry = telemetryCell.telemetry;
+              if (telemetry === undefined) return okAsync("noop" as const);
+              return telemetry.recordAssistantUsage(input).mapErr((failure) => {
+                telemetry.recordDegradation(failure);
+                return failure;
+              });
+            },
+          },
         });
         // Workflow lifecycle projection (Spec 33 §10/§14): opens the Runtime
         // Store only now that trust/health are confirmed, then constructs
@@ -2073,6 +2120,54 @@ export function createPiExtension(
             "Runtime Store open/migration failed; workflow lifecycle commands unavailable this generation",
           );
         } else {
+          // Adapter telemetry (Spec 33 §19): activated only now that the
+          // Runtime Store is open for a trusted, non-health-only
+          // generation. Never blocks activation - a rotating-log-sink or
+          // retention failure degrades visibly instead.
+          const telemetryResult = await createPiTelemetry({
+            store: storeResult.value,
+            settings:
+              configActivation.config.settings?.runtime ??
+              DEFAULT_RUNTIME_SETTINGS,
+            projectRoot: ctx.cwd,
+            clock: deps.clock,
+            fallbackLogger: deps.logger,
+            logFileSystem: deps.telemetryLogFileSystem,
+            journal: deps.telemetryJournal,
+            usage: deps.telemetryUsage,
+            retention: deps.telemetryRetention,
+          });
+          // `createPiTelemetry`'s error type is `never` - it always
+          // degrades internally rather than failing. `.isErr()` is checked
+          // only to satisfy Result narrowing, never expected to be true.
+          if (!telemetryResult.isErr()) {
+            const { telemetry, logDegradation } = telemetryResult.value;
+            telemetryCell.telemetry = telemetry;
+            const ui: PiTelemetryUiPort = {
+              notify: (message, level) => ctx.ui.notify(message, level),
+            };
+            if (logDegradation !== undefined) {
+              telemetry.recordDegradation(logDegradation);
+              telemetry.notifyFailureOnce(ui, logDegradation);
+            }
+            const retentionActivation = await telemetry.activate();
+            if (retentionActivation.isErr()) {
+              telemetry.recordDegradation(retentionActivation.error);
+              telemetry.notifyFailureOnce(ui, retentionActivation.error);
+            }
+            await telemetry
+              .recordJournalEvent({
+                family: "generation",
+                event: "activated",
+                severity: "info",
+                data: {
+                  generationId: generation.id,
+                  healthOnly: generation.healthOnlyMode,
+                  trust: generation.preflight.trust,
+                },
+              })
+              .orElse(() => okAsync(undefined));
+          }
           workflowControllerCell.controller = new PiWorkflowController({
             store: storeResult.value,
             planStateProvider: createPiPlanStateProvider(ctx.cwd),
@@ -2467,6 +2562,45 @@ export function createPiExtension(
       };
     });
 
+    // Spec 33 §19.4: one exact-once usage observation per settled primary
+    // assistant message. Identity is the message's own id, never text -
+    // `extractAssistantUsageFromMessage` returns only bounded safe token/
+    // cost scalars, never message content. A no-op when telemetry hasn't
+    // been constructed (health-only/untrusted generation, or store open
+    // failure) or when the generation has already been replaced.
+    pi.on("message_end", async (event, ctx) => {
+      if (childModeState.active) return undefined;
+      if (activeSession === undefined) return undefined;
+      if (
+        activeSession.generationId !== controller.getCurrentGeneration()?.id
+      ) {
+        return undefined;
+      }
+      const record = asJsonRecord(event);
+      if (record === undefined) return undefined;
+      const extracted = extractAssistantUsageFromMessage(record);
+      if (extracted === undefined) return undefined;
+      const telemetry = telemetryCell.telemetry;
+      if (telemetry === undefined) return undefined;
+      const agentName =
+        activeSession.primarySession.getCurrent()?.descriptor.name ??
+        DEFAULT_PRIMARY_AGENT_NAME;
+      const recorded = await telemetry.recordAssistantUsage({
+        id: extracted.id,
+        source: "primary",
+        agentName,
+        ...extracted.usage,
+      });
+      if (recorded.isErr()) {
+        telemetry.recordDegradation(recorded.error);
+        telemetry.notifyFailureOnce(
+          { notify: (message, level) => ctx.ui.notify(message, level) },
+          recorded.error,
+        );
+      }
+      return undefined;
+    });
+
     pi.on("session_shutdown", async (_event, ctx?: PiSessionContext) => {
       // Spec 33 §14/§18: termination while a lease is active is a required
       // `observeSession` trigger point - observe *before* clearing the
@@ -2485,6 +2619,24 @@ export function createPiExtension(
       activeWorkflowInstanceCell.value = undefined;
       currentWorkflows = {};
       treeSelectionCell.selectedId = ROOT_NODE_ID;
+      // Adapter telemetry cleanup (Spec 33 §19.3): records one best-effort
+      // shutdown journal entry, then stops retention scheduling and
+      // releases the rotating log sink. Idempotent - a repeated
+      // `session_shutdown` (or one with no telemetry ever constructed)
+      // is a no-op.
+      if (telemetryCell.telemetry !== undefined) {
+        await telemetryCell.telemetry
+          .recordJournalEvent({
+            family: "generation",
+            event: "shutdown",
+            severity: "info",
+          })
+          .orElse(() => okAsync(undefined));
+        await telemetryCell.telemetry
+          .shutdown()
+          .orElse(() => okAsync(undefined));
+        telemetryCell.telemetry = undefined;
+      }
       // Bounded child-tree widget/editor state must never survive past this
       // generation (Spec 33 §11.5/§23 cleanup-idempotence) - clear it even
       // though `disposeAll()` above already terminated every child.

@@ -60,7 +60,7 @@ export interface PiExtensionControllerDeps {
  * generation. `shutdown` idempotently clears the active generation. Command
  * shells call `evaluateCommandGate` fresh on every invocation, so ordinary
  * dispatch is never stale by construction - staleness only matters for work
- * that spans an `await` boundary via {@link beginOperation}.
+ * that spans an `await` boundary via `beginOperation`.
  */
 export class PiExtensionController {
   private currentGeneration: PiGeneration | undefined;

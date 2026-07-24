@@ -7,6 +7,8 @@ const CONFIG_PATHS = [
   "packages/adapters/opencode/api-extractor.index.json",
   "packages/adapters/opencode/api-extractor.plugin.json",
   "packages/adapters/claude-code/api-extractor.json",
+  "packages/adapters/pi/api-extractor.index.json",
+  "packages/adapters/pi/api-extractor.extension.json",
 ] as const;
 
 type ApiExtractorConfigError = {

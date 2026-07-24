@@ -1,6 +1,6 @@
 # Pi Adapter Guide
 
-**Status:** Activation, normalized configuration, tool policy, delegation transport, and workflow lifecycle projection implemented; packaging and live release proof remain pending
+**Status:** Runtime features, diagnostics, packed-package proof, and nightly release integration implemented; acceptance manifest and stable live proof remain pending
 
 **Related:** [Pi adapter architecture](../pi-adapter.md) · [Spec 33](../specs/33-spec-pi-adapter/33-spec-pi-adapter.md) · [Adapter readiness](../adapter-readiness-status.md)
 
@@ -12,7 +12,7 @@ For supported sessions, the adapter loads the permitted Weave config, consumes m
 
 The adapter also governs discovered Pi-native tools through input-aware resolvers and the engine permission session. It checks exact built-in provenance, sealed registry coverage, and controller generation before each call. Policy `deny` blocks, `allow` consumes a single-use permit without prompting, and `ask` opens a bounded approval dialog only outside health-only mode. Missing or malformed resolver input is unresolved and supports one-time approval only. Unrelated third-party tools remain unmanaged.
 
-The adapter also ships a bounded `weave_delegate` tool and its private authenticated child transport (see [Delegation](#delegation) below). Workflow commands, direct-step execution, plans, artifacts, recovery, and reconciliation are implemented. Packaging proof and live TUI validation remain pending.
+The adapter also ships a bounded `weave_delegate` tool and its private authenticated child transport (see [Delegation](#delegation) below). Workflow commands, direct-step execution, plans, artifacts, recovery, and reconciliation are implemented. Bounded diagnostics, packed-package policy, clean-room fake-host consumption, and nightly release integration are also implemented. The complete acceptance manifest and digest-bound stable TUI validation remain pending.
 
 ## Compatibility
 
@@ -112,8 +112,16 @@ Weave governs registered Pi and Weave-owned tools through input-aware permission
 
 A changed tool input, stale or replayed permit, displaced tool owner, stale controller generation, resolver failure, or missing permission session blocks the call. Unregistered third-party tools remain under their owner's behavior and appear as unmanaged rather than allowed by Weave.
 
-## Recovery and privacy
+## Diagnostics, usage, and privacy
 
 A recovery banner is informational. Only `/weave:resume` or an equivalent explicit palette action authorizes resume. Pi session entries are correlation pointers; the engine Runtime Store is authoritative.
 
-Health output and logs omit prompts, responses, tool arguments/results, authorization constraints, secrets, and RPC payloads. Include only sanitized `/weave:health` output when reporting an issue.
+Trusted healthy generations write bounded normalized events to the Runtime Journal and record one usage observation for each settled primary or child assistant message. Message identity, never message text, supplies the exact-once key. Configured journal and usage retention runs on activation and later safe write/time boundaries.
+
+The adapter writes scoped pino records to `.weave/runtime/logs/pi-adapter.ndjson`. The engine sink holds no-follow directory and file identities, rotates only between records, prunes serially, and closes held handles at shutdown. Log, journal, usage, or retention failure produces one deduplicated TUI diagnostic and degrades telemetry without blocking ordinary activation.
+
+Health output, journal entries, usage observations, and logs omit prompts, responses, transcripts, tool arguments/results, authorization constraints, plan/artifact contents, private paths, secrets, environment values, and RPC payloads. Include only sanitized `/weave:health` output when reporting an issue.
+
+## Package proof
+
+The public package build emits `dist/index.js` and Pi's `dist/extension.js`, preserves the supported host peer range and `pi.extensions` manifest field, and rejects lifecycle scripts, private dependencies, undeclared imports, or unexpected tar entries. Release tests pack those staged files and load the tarball in an offline clean room with a fake `@earendil-works/pi-coding-agent@0.81.1` host. The package participates in the nightly release plan; stable publication still requires the acceptance manifest and digest-bound live TUI checklist.

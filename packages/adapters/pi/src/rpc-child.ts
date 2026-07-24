@@ -136,6 +136,23 @@ export interface PiRpcChildDeps {
     correlationId: string,
     request: PiDelegateRequestBody,
   ) => void;
+  /**
+   * Invoked once per settled assistant message this child reports (Spec 33
+   * §19.4), immediately after the existing in-memory `usage` aggregate is
+   * updated. Carries only bounded safe scalars (a stable message id and
+   * optional non-negative token/cost counters) — never raw text. The
+   * caller (delegation controller) is responsible for recording this as a
+   * durable usage observation via the injected telemetry seam; a no-op
+   * default here keeps every existing construction site unaffected.
+   */
+  readonly onAssistantUsageObserved?: (usage: {
+    readonly id: string;
+    readonly inputTokens?: number;
+    readonly outputTokens?: number;
+    readonly cacheReadTokens?: number;
+    readonly cacheWriteTokens?: number;
+    readonly cost?: number;
+  }) => void;
 }
 
 export interface PiRpcChildSpawnInput {
@@ -191,6 +208,16 @@ export class PiRpcChild {
         correlationId: string,
         request: PiDelegateRequestBody,
       ) => void)
+    | undefined;
+  private readonly onAssistantUsageObserved:
+    | ((usage: {
+        readonly id: string;
+        readonly inputTokens?: number;
+        readonly outputTokens?: number;
+        readonly cacheReadTokens?: number;
+        readonly cacheWriteTokens?: number;
+        readonly cost?: number;
+      }) => void)
     | undefined;
   private cwd = "";
 
@@ -258,6 +285,7 @@ export class PiRpcChild {
     this.now = deps.now ?? (() => Date.now());
     this.onApprovalRequest = deps.onApprovalRequest;
     this.onDelegationRequest = deps.onDelegationRequest;
+    this.onAssistantUsageObserved = deps.onAssistantUsageObserved;
   }
 
   getId(): string {
@@ -715,13 +743,15 @@ export class PiRpcChild {
       return;
     const usageRecord = usageValue as Record<string, JsonValue>;
     this.seenUsageMessageIds.add(id);
-    this.usage = addUsage(this.usage, {
+    const projected = {
       inputTokens: safeNumberField(usageRecord, "input"),
       outputTokens: safeNumberField(usageRecord, "output"),
       cacheReadTokens: safeNumberField(usageRecord, "cacheRead"),
       cacheWriteTokens: safeNumberField(usageRecord, "cacheWrite"),
       cost: extractCostTotal(usageRecord),
-    });
+    };
+    this.usage = addUsage(this.usage, projected);
+    this.onAssistantUsageObserved?.({ id, ...projected });
   }
 
   private awaitHandshake(): ResultAsync<void, PiAdapterFailure> {
@@ -980,7 +1010,7 @@ export class PiRpcChild {
    * The single terminal-failure path: rejects every outstanding waiter
    * with `failure`, then kills the process and erases the secret. Safe to
    * call more than once (idempotent via the same `disposed` guard as
-   * {@link dispose}) and preserves the `"failed"` status against later
+   * `dispose`) and preserves the `"failed"` status against later
    * cleanup calls, so the child's final snapshot stays inspectable.
    */
   private failOutstanding(failure: PiAdapterFailure): void {
@@ -1074,7 +1104,7 @@ export class PiRpcChild {
     );
   }
 
-  /** Idempotent terminal cleanup: kills the process if still alive and zeroes the secret. Safe to call more than once. Never overwrites a status already made terminal by {@link failOutstanding}/settlement. */
+  /** Idempotent terminal cleanup: kills the process if still alive and zeroes the secret. Safe to call more than once. Never overwrites a status already made terminal by `failOutstanding`/settlement. */
   dispose(): void {
     if (this.disposed) return;
     if (this.status !== "completed" && this.status !== "failed") {

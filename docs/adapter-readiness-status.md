@@ -69,9 +69,9 @@ See [Adapter Bootstrap Guide](adapter-bootstrap.md) for the canonical
 
 ---
 
-## Pi Adapter — Workflow Lifecycle Implemented, Full Readiness Pending
+## Pi Adapter — Diagnostics and Packaging Implemented, Full Readiness Pending
 
-[Spec 33](specs/33-spec-pi-adapter/33-spec-pi-adapter.md) defines full readiness for `@weaveio/weave-adapter-pi` on interactive Earendil Works Pi TUI sessions. The package, activation, normalized configuration, registered-tool policy, delegation transport, and workflow lifecycle slices now exist. Packaging and live-proof gates remain open.
+[Spec 33](specs/33-spec-pi-adapter/33-spec-pi-adapter.md) defines full readiness for `@weaveio/weave-adapter-pi` on interactive Earendil Works Pi TUI sessions. The runtime, diagnostics, packed-package proof, and nightly release integration now exist. The traced acceptance manifest and digest-bound stable live proof remain open.
 
 | Area | Current effective status | Gate |
 | --- | --- | --- |
@@ -82,14 +82,17 @@ See [Adapter Bootstrap Guide](adapter-bootstrap.md) for the canonical
 | Pi registered-tool policy | ✅ Implemented | Provenance-aware native-tool inventory, sealed coverage proof, input-aware resolvers, allow/deny/ask evaluation, bounded parent approval UI, child relay port, permit consumption, stale-authority rejection, and unmanaged third-party passthrough |
 | Pi delegation transport (Task 9) | ✅ Implemented | Authenticated `pi --mode rpc --no-session` children, engine-resolved queue/budget authorization, bootstrap/cleanup lifecycle, nested-relay restriction to declared delegation targets, `weave_delegate` tool with real (not placeholder) child settlement summaries, documented `agent_settled` no-payload limitation, and isolated layered tests |
 | Pi workflow lifecycle projection (Task 10) | ✅ Implemented | Native `/weave` palette plus nine direct commands; all ten engine lifecycle operations; explicit start/resume authorization; distinct direct-step children with governed structured completion; retry-stable artifact pins and digest checks; plan/artifact projection; no-follow Runtime Store persistence; recovery pointers; parent-chat pause handling; and reconciliation |
-| Packed package and exact-host consumer | ⏳ Pending | `PI-PKG` manifest evidence |
-| Stable interactive TUI readiness | ⏳ Pending | Digest-bound live smoke for all mandatory `PI-*` rows |
+| Pi diagnostics and retention (Task 11) | ✅ Implemented | Closed bounded Runtime Journal families; redacted scoped pino sink; exact-once primary/child usage; safe-boundary retention; deduplicated visible degradation; idempotent handle cleanup |
+| Packed package and exact-host consumer (Task 11) | ✅ Implemented | Exact tar inventory and manifest policy; offline clean-room consumption against fake host `0.81.1`; nightly release-plan integration |
+| Stable interactive TUI readiness | ⏳ Pending | Traced acceptance manifest and digest-bound live smoke for all mandatory `PI-*` rows |
 
 Pi reports static declarations as ceilings and lowers them through one activation probe per capability. Any required effective degraded or unsupported capability enters health-only mode. The adapter must not claim ready until the final acceptance manifest maps all 20 requirement IDs to existing automated proof, required packed evidence, and bound live-smoke evidence.
 
 **Task 9 audit fixes.** A post-review audit of the delegation transport found and fixed four issues, all with regression tests: (1) a completed child's settlement summary now carries its own real bounded assistant output instead of a constant placeholder; (2) `agent_settled` never reports `completed` after cancellation has been admitted, and derives a `failed` outcome from the last observed assistant `stopReason` since `agent_settled` itself carries no payload; (3) approval-relay failure logs emit a fixed cause classification instead of a raw `String(cause)`, and the approval-request clone uses explicit typed construction instead of `JSON.parse(JSON.stringify(...))`; (4) `@earendil-works/pi-ai` and `@earendil-works/pi-tui` moved from optional to required peer dependencies, matching genuine unconditional production imports.
 
-**Task 10 evidence.** Fake-host and injected-port tests cover the palette/direct-command equivalence, authorization tokens, lifecycle effects, direct-step correlation, single structured completion, `user_confirm` release, recovery, reconciliation, plan rendering, approval guards, retry-stable artifact revisions, no-follow artifact/plan I/O, and Runtime Store open/migration. Engine conformance tests cover descriptor-held directory traversal, restrictive permissions, atomic snapshot persistence, lock-based cross-store concurrency, and the absence of WAL/SHM sidecars. Packed consumption and a real stable-TUI session remain Task 11/12 gates.
+**Task 10 evidence.** Fake-host and injected-port tests cover the palette/direct-command equivalence, authorization tokens, lifecycle effects, direct-step correlation, single structured completion, `user_confirm` release, recovery, reconciliation, plan rendering, approval guards, retry-stable artifact revisions, no-follow artifact/plan I/O, and Runtime Store open/migration. Engine conformance tests cover descriptor-held directory traversal, restrictive permissions, atomic snapshot persistence, lock-based cross-store concurrency, and the absence of WAL/SHM sidecars.
+
+**Task 11 evidence.** Telemetry tests cover the full closed journal-family set, raw-content rejection, usage retry idempotency and conflict handling, retention activation, one-time TUI diagnostics, rotating-sink degradation, and idempotent shutdown. Release tests build and inspect the staged Pi tarball, enforce public manifest and import policy, and load the packed extension in an offline clean room with fake exact-host peers. A real digest-bound stable-TUI session remains the Task 12 gate.
 
 See [Pi Adapter Architecture](pi-adapter.md) and the [Pi Adapter Guide](adapters/pi.md).
 

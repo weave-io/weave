@@ -54,6 +54,7 @@ const packageVersions = {
   "@weaveio/weave-cli": "0.1.0",
   "@weaveio/weave-adapter-opencode": "0.1.0",
   "@weaveio/weave-adapter-claude-code": "0.1.0",
+  "@weaveio/weave-adapter-pi": "0.1.0",
 } as const;
 
 describe("NightlyPlanner", () => {

@@ -81,6 +81,7 @@ describe("createPiExtension factory (layer C: compiled extension against a fake 
     expect(host.onCalls.map((call) => call.event).sort()).toEqual([
       "before_agent_start",
       "input",
+      "message_end",
       "session_shutdown",
       "session_start",
       "tool_call",

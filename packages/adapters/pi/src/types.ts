@@ -281,7 +281,7 @@ export interface PiExtensionApi {
    * Enables/disables active tools, including dynamically registered ones
    * (`ExtensionAPI.setActiveTools`, Spec 33 §11.2 Task 9). Names not
    * already registered are documented as silently ignored by the real
-   * host, so callers MUST re-read {@link getActiveTools} (when supported)
+   * host, so callers MUST re-read `getActiveTools` (when supported)
    * to verify the resulting set rather than trusting this call's return.
    */
   setActiveTools(names: readonly string[]): void | Promise<void>;

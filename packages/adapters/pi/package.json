@@ -21,13 +21,15 @@
     "extensions": ["./dist/extension.js"]
   },
   "scripts": {
-    "build": "rm -rf dist && bun build ./src/index.ts ./src/extension.ts --outdir ./dist --target bun --external @earendil-works/pi-coding-agent --external @earendil-works/pi-ai --external @earendil-works/pi-tui && tsc -p tsconfig.build.json",
+    "build": "bun ../../../scripts/build-public-packages.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "bun test src",
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "mustache": "^4.2.0",
     "neverthrow": "^8.2.0",
+    "pino": "^9.6.0",
     "typebox": "1.1.38",
     "zod": "^4.4.3"
   },

@@ -26,7 +26,7 @@ export const PROJECT_PATH_DEPENDENT_CAPABILITIES: readonly CapabilityId[] = [
  * threaded into probing so these capabilities reflect the actual outcome
  * instead of a placeholder. Absent (`undefined`) only when preflight is
  * blocked before config activation could safely run (Spec 33 §7.2 step 9,
- * §28 "wrong mode/host/version -> health-only").
+ * §28 "wrong mode/host/version -\> health-only").
  */
 export interface PiCandidatePlanContext {
   readonly configLoaded: boolean;
@@ -48,7 +48,7 @@ export interface PiCandidatePlanContext {
    * `false` (unproven) by every caller.
    */
   readonly runtimeDirectoryContained?: boolean;
-  /** Same proof as {@link runtimeDirectoryContained}, for `.weave/plans`. */
+  /** Same proof as `runtimeDirectoryContained`, for `.weave/plans`. */
   readonly plansDirectoryContained?: boolean;
 }
 
@@ -399,7 +399,7 @@ interface RawProbeCandidate {
 
 /**
  * Normalizes a raw, potentially-anomalous probe array from an injected
- * prober into exactly one sanitized {@link CapabilityProbeResult} per
+ * prober into exactly one sanitized `CapabilityProbeResult` per
  * canonical capability ID (Spec 33 §21). A missing, duplicate,
  * contradictory, malformed-status, unknown-ID, or unsafe-detail entry for a
  * given ID is reduced to a single `unavailable` sanitized row for that ID.

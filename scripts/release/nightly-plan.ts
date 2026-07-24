@@ -425,6 +425,7 @@ function loadPackageVersions(): ResultAsync<
       "packages/adapters/opencode/package.json",
     "@weaveio/weave-adapter-claude-code":
       "packages/adapters/claude-code/package.json",
+    "@weaveio/weave-adapter-pi": "packages/adapters/pi/package.json",
   };
   return ResultAsync.fromPromise(
     Promise.all(

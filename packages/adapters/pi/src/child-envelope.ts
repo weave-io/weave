@@ -259,7 +259,7 @@ export class PiChildAuthState {
     this.expectedIncomingDirection = expectedIncomingDirection;
   }
 
-  /** Allocates the next outgoing sequence number (the direction opposite {@link expectedIncomingDirection}). */
+  /** Allocates the next outgoing sequence number (the direction opposite `expectedIncomingDirection`). */
   allocateOutgoingSequence(): number {
     const sequence = this.nextOutgoingSequence;
     this.nextOutgoingSequence += 1;

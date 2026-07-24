@@ -1,6 +1,6 @@
 # Pi Adapter Architecture
 
-**Status:** Activation, normalized configuration, registered-tool policy, delegation transport, and workflow lifecycle projection implemented; packaging and live release proof pending
+**Status:** Runtime features, diagnostics, packed-package proof, and nightly release integration implemented; acceptance manifest and stable live proof pending
 
 **Related:** [Spec 33 — Full-readiness Pi adapter](specs/33-spec-pi-adapter/33-spec-pi-adapter.md) · [Spec 34 — Harness-neutral permissions](specs/34-spec-harness-neutral-permissions/34-spec-harness-neutral-permissions.md) · [Adapter Boundary](adapter-boundary.md) · [Pi operator guide](adapters/pi.md) · [Adapter Readiness](adapter-readiness-status.md)
 
@@ -20,7 +20,11 @@ The adapter now also ships the private delegation transport and the `weave_deleg
 
 The adapter now also projects all ten lifecycle operations through the `/weave` palette and nine direct commands. Explicit starts and resumes mint one-use authorization only after fresh user confirmation. Workflow steps use a distinct direct-step child transport; only the root step child receives `weave_complete_step`, and completion requires one bounded structured candidate. The projection includes `user_confirm` withholding, retry-stable artifact revision pins, digest checks, artifact approval and self-approval guards, revisioned plan rendering, recovery pointers, parent-chat pause handling, and reconciliation.
 
-Trusted activation opens the engine Runtime Store under `.weave/runtime`. The engine holds the project/runtime directory chain with no-follow descriptors, serializes cross-store access with a bounded OS lock, runs `bun:sqlite` in memory, and atomically persists serialized snapshots through descriptor-relative temporary leaves. This avoids path reopens and WAL/SHM sidecars while retaining restrictive local permissions. Packed-consumer proof and live TUI evidence remain pending, so these implemented slices are not yet a full-readiness claim.
+Trusted activation opens the engine Runtime Store under `.weave/runtime`. The engine holds the project/runtime directory chain with no-follow descriptors, serializes cross-store access with a bounded OS lock, runs `bun:sqlite` in memory, and atomically persists serialized snapshots through descriptor-relative temporary leaves. This avoids path reopens and WAL/SHM sidecars while retaining restrictive local permissions.
+
+The adapter projects bounded normalized Runtime Journal families, exactly-once primary and child usage observations, configured retention, deduplicated TUI failures, and scoped pino output. Its no-follow rotating sink serializes record writes and rotation, then flushes and closes held handles at generation shutdown. Journal validation rejects raw-content fields and oversized or malformed event data before persistence.
+
+The public build now emits both package entry points, passes package-policy and exact-inventory checks, and loads from a packed tarball in an offline clean room against a fake exact-version host. Pi is in the nightly release plan. The acceptance manifest and digest-bound stable TUI evidence remain pending, so these implemented slices are not yet a full-readiness claim.
 
 ## Activation model
 
@@ -82,10 +86,12 @@ Children are inspectable (a live tree widget with Alt+1-9/Backspace/Esc keyboard
 
 ## Data handling
 
-The adapter uses scoped pino logs and bounded sanitized Runtime Journal observations. It never logs or persists prompts, responses, transcripts, raw RPC, tool input/output, normalized authorization constraints, approval material, environment values, or child secrets.
+The adapter uses scoped pino logs and bounded sanitized Runtime Journal observations. Closed journal families cover activation/health, generations, probes, workflow/recovery, leases, effects, plans, completion, artifacts, child lifecycle/protocol, delegation, UI bridge, usage, retention, and telemetry degradation. Stable Pi message IDs key usage observations; a bounded generation-local timestamp map makes retries compare exactly without using message content.
+
+It never logs or persists prompts, responses, transcripts, raw RPC, tool input/output, normalized authorization constraints, approval material, plan/artifact content, private paths, environment values, or child secrets. Telemetry failure logs only closed failure codes, phases, impacts, and safe correlation fields.
 
 Harness session entries hold correlation-only recovery pointers. They do not authorize resume. Engine Runtime Store state and explicit user intent remain authoritative.
 
 ## Proof standard
 
-Automated tests use fake Pi hosts, injected process/RPC ports, in-memory stores, and narrow Bun filesystem conformance tests. They do not start Pi or mutate developer state. Release readiness also requires a clean packed consumer test and digest-bound stable TUI smoke evidence described by Spec 33's acceptance manifest.
+Automated tests use fake Pi hosts, injected process/RPC ports, in-memory stores, and narrow Bun filesystem conformance tests. They do not start Pi or mutate developer state. Package proof stages the public files, checks the exact tar inventory and manifest policy, and consumes the tarball offline with fake exact-version host peers. Full release readiness still requires the traced acceptance manifest and digest-bound stable TUI smoke evidence described by Spec 33.

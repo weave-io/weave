@@ -465,9 +465,9 @@ export class PiPermissionBridge {
 
   /**
    * The single authoritative interception path for a governed tool call
-   * (Spec 33 §12.1). Never rejects - every failure resolves to `{kind:
-   * "block"}` with a bounded, closed-set reason. Unmanaged tools never
-   * reach the engine at all and never receive a permit.
+   * (Spec 33 §12.1). Never rejects - every failure resolves to
+   * `{ kind: "block" }` with a bounded, closed-set reason. Unmanaged tools
+   * never reach the engine at all and never receive a permit.
    *
    * Re-reads and re-validates the live tool inventory for this exact
    * `toolIdentity` before ever calling the engine (Spec 33 §7.2, §12.1) -

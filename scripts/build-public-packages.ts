@@ -237,6 +237,7 @@ export class PublicPackageBuilder {
     return this.runTypeScriptProjects([
       "packages/cli/tsconfig.build.json",
       "packages/adapters/opencode/tsconfig.build.json",
+      "packages/adapters/pi/tsconfig.build.json",
     ]);
   }
 

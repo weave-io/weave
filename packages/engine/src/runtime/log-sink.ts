@@ -926,6 +926,8 @@ export class RotatingRuntimeLogSink implements DestinationStream {
   private chain: Promise<void> = Promise.resolve();
   private initialized = false;
   private failed = false;
+  private closed = false;
+  private closeOperation: ResultAsync<void, RuntimeLogSinkError> | undefined;
   private lastError: RuntimeLogSinkError | null = null;
   private bytesInSegment = 0;
 
@@ -954,6 +956,12 @@ export class RotatingRuntimeLogSink implements DestinationStream {
    * it, and bind parent/file identities. Production never synthesizes identity.
    */
   initialize(): ResultAsync<void, RuntimeLogSinkError> {
+    if (this.closed) {
+      return errAsync({
+        type: "initialization",
+        message: "log sink is closed",
+      });
+    }
     return this.fs
       .ensureLogDirectory(this.logDirectory, this.directoryMode)
       .andThen((parent) => {
@@ -993,6 +1001,7 @@ export class RotatingRuntimeLogSink implements DestinationStream {
    * Failures are swallowed after recording so pino does not recurse.
    */
   write(chunk: string | Uint8Array): void {
+    if (this.closed) return;
     const bytes =
       typeof chunk === "string" ? new TextEncoder().encode(chunk) : chunk;
 
@@ -1025,6 +1034,42 @@ export class RotatingRuntimeLogSink implements DestinationStream {
           cause: String(cause),
         }) as const,
     );
+  }
+
+  /**
+   * Flush queued records, then release the active file and parent directory
+   * handles. The first call seals the sink against new writes; repeated calls
+   * share the same close operation.
+   */
+  close(): ResultAsync<void, RuntimeLogSinkError> {
+    if (this.closeOperation !== undefined) return this.closeOperation;
+    this.closed = true;
+
+    this.closeOperation = this.flush()
+      .andThen(() => {
+        const handle = this.handle;
+        if (handle === null) return okAsync(undefined);
+        return handle.close();
+      })
+      .andThen(() => {
+        const parent = this.parent;
+        if (parent === null) return okAsync(undefined);
+        return parent.close();
+      })
+      .map(() => {
+        this.handle = null;
+        this.parent = null;
+        this.fileIdentity = null;
+        this.parentIdentity = null;
+        this.initialized = false;
+        return undefined;
+      })
+      .mapErr((error) => {
+        this.recordFailure(error);
+        return error;
+      });
+
+    return this.closeOperation;
   }
 
   private writeRecord(

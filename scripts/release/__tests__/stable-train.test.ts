@@ -87,6 +87,7 @@ describe("stable train records", () => {
         "@weaveio/weave-cli": "1.0.0",
         "@weaveio/weave-adapter-opencode": "1.0.0",
         "@weaveio/weave-adapter-claude-code": "1.0.0",
+        "@weaveio/weave-adapter-pi": "1.0.0",
       },
     });
     expect(plan.isOk()).toBe(true);
@@ -225,6 +226,7 @@ describe("stable train records", () => {
         "@weaveio/weave-cli": "1.2.2",
         "@weaveio/weave-adapter-opencode": "1.0.0",
         "@weaveio/weave-adapter-claude-code": "1.0.0",
+        "@weaveio/weave-adapter-pi": "1.0.0",
       },
       reservedVersions: { "@weaveio/weave-cli": ["1.2.3"] },
     });

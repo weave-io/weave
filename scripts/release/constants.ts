@@ -25,7 +25,7 @@ export const ACTIONS_ARTIFACT_RETENTION_DAYS = 30 as const;
 
 /** Limits untrusted workflow values before they reach a command or API. */
 export const RELEASE_INPUT_LIMITS = {
-  packageCount: 3,
+  packageCount: 4,
   artifactCount: 3,
   artifactBytes: 5 * 1024 * 1024,
   manifestBytes: 64 * 1024,
@@ -89,6 +89,10 @@ export const PUBLIC_PACKAGES = {
     directory: "packages/adapters/claude-code",
     channels: ["nightly"],
   },
+  "@weaveio/weave-adapter-pi": {
+    directory: "packages/adapters/pi",
+    channels: ["nightly"],
+  },
 } as const satisfies Record<
   string,
   { directory: string; channels: readonly ReleaseChannel[] }
@@ -99,6 +103,9 @@ export type PublicPackageName = keyof typeof PUBLIC_PACKAGES;
 /** Third-party packages that are intentionally resolved by a packed artifact. */
 export const PUBLIC_RUNTIME_EXTERNALS = [
   "@clack/prompts",
+  "@earendil-works/pi-ai",
+  "@earendil-works/pi-coding-agent",
+  "@earendil-works/pi-tui",
   "@langchain/core",
   "@langchain/openai",
   "@opencode-ai/plugin",
@@ -108,6 +115,7 @@ export const PUBLIC_RUNTIME_EXTERNALS = [
   "mustache",
   "neverthrow",
   "openevals",
+  "typebox",
   "zod",
 ] as const;
 
@@ -195,6 +203,28 @@ export const PUBLIC_PACKAGE_BUILDS = {
       "skills/compose/SKILL.md",
     ],
   },
+  "@weaveio/weave-adapter-pi": {
+    entries: [
+      {
+        source: "packages/adapters/pi/src/index.ts",
+        output: "packages/adapters/pi/dist/index.js",
+      },
+      {
+        source: "packages/adapters/pi/src/extension.ts",
+        output: "packages/adapters/pi/dist/extension.js",
+      },
+    ],
+    declarations: [
+      {
+        config: "packages/adapters/pi/api-extractor.index.json",
+        output: "packages/adapters/pi/dist/index.d.ts",
+      },
+      {
+        config: "packages/adapters/pi/api-extractor.extension.json",
+        output: "packages/adapters/pi/dist/extension.d.ts",
+      },
+    ],
+  },
 } as const satisfies Record<PublicPackageName, PublicPackageBuild>;
 
 /** Fields that may cross from a source workspace manifest into an npm artifact. */
@@ -217,6 +247,7 @@ export const PUBLIC_MANIFEST_FIELDS = [
   "os",
   "cpu",
   "publishConfig",
+  "pi",
 ] as const;
 
 export const RUNTIME_DEPENDENCY_FIELDS = [
