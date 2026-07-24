@@ -111,4 +111,42 @@ describe("PiModelResolver", () => {
     const result = resolver.resolve(["Gpt-5", "gpt"], catalog);
     expect(result).toEqual({ resolved: false });
   });
+
+  it("rehydrates a compact identity to the exact full catalog object", () => {
+    const fullModel = {
+      provider: "anthropic",
+      id: "claude-sonnet-5",
+      baseUrl: "https://api.anthropic.com",
+    };
+    const result = new PiModelResolver().resolveIdentity(
+      { provider: fullModel.provider, id: fullModel.id },
+      [fullModel],
+    );
+
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap()).toBe(fullModel);
+  });
+
+  it("fails closed when a compact identity is absent from the catalog", () => {
+    const result = new PiModelResolver().resolveIdentity(
+      { provider: "anthropic", id: "missing" },
+      catalog,
+    );
+
+    expect(result._unsafeUnwrapErr()).toEqual({
+      type: "ModelIdentityUnavailable",
+    });
+  });
+
+  it("fails closed when a compact canonical identity is duplicated", () => {
+    const duplicate = { provider: "anthropic", id: "duplicate" };
+    const result = new PiModelResolver().resolveIdentity(duplicate, [
+      duplicate,
+      { ...duplicate, name: "Duplicate" },
+    ]);
+
+    expect(result._unsafeUnwrapErr()).toEqual({
+      type: "ModelIdentityAmbiguous",
+    });
+  });
 });

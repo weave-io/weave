@@ -789,13 +789,11 @@ async function applyChildBootstrap(
     appliedActiveTools = [...reported];
   }
 
-  // Model activation (Spec 33 §9.2, §11.2 Task 9): apply the parent's own
-  // already-resolved identity directly when present (root-level
-  // delegation); otherwise resolve against this child's own authenticated
-  // catalog, exactly as an ordinary primary/descriptor would (Spec 33
-  // §9.2, never fuzzy-matched either way). Either way, only a genuinely
-  // *applied* model gates the ack - a merely "degraded" outcome (unresolved
-  // or host-rejected) never silently acks.
+  // Model activation (Spec 33 §9.2, §11.2 Task 9): rehydrate the parent's
+  // compact resolved identity from this child's authenticated catalog when
+  // present (root-level delegation); otherwise resolve the descriptor's
+  // intent against that catalog. Only a full catalog model may reach
+  // `pi.setModel()`; the compact identity exists only on the control channel.
   // Only a genuine *activation* failure (a model resolved but the host
   // rejected applying it) fails bootstrap closed. "Nothing in the intent
   // resolved" is not a failure - Spec 33 §9.2 requires gracefully keeping
@@ -804,8 +802,23 @@ async function applyChildBootstrap(
   // blocking the rest of bootstrap.
   let appliedModel: PiModelInfo | undefined;
   if (parsed.resolvedModel !== undefined) {
-    const applyResult = await createPiModelApplyPort(pi).applyModel(
+    const availableModels = safelyListAvailableModels(
+      ctx.modelRegistry,
+    ).unwrapOr([]);
+    const resolved = new PiModelResolver().resolveIdentity(
       parsed.resolvedModel,
+      availableModels,
+    );
+    if (resolved.isErr()) {
+      deps.logger.error(
+        { reason: resolved.error.type },
+        "parent-resolved model is not a unique child catalog entry; failing closed and never acking bootstrap",
+      );
+      runtime.dispose();
+      return;
+    }
+    const applyResult = await createPiModelApplyPort(pi).applyModel(
+      resolved.value,
     );
     if (applyResult.isErr()) {
       deps.logger.error(
@@ -815,7 +828,7 @@ async function applyChildBootstrap(
       runtime.dispose();
       return;
     }
-    appliedModel = parsed.resolvedModel;
+    appliedModel = toModelIdentityBody(resolved.value);
   } else {
     const availableModels = safelyListAvailableModels(
       ctx.modelRegistry,

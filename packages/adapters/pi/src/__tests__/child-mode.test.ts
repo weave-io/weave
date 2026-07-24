@@ -24,6 +24,7 @@ import type {
   PiEnvPort,
   PiEventHandler,
   PiExtensionApi,
+  PiModelInfo,
   PiSessionContext,
   PiToolInfo,
 } from "../types.js";
@@ -97,9 +98,9 @@ class MinimalFakeHost implements PiExtensionApi {
   registerTool(): void {}
   /** Set to `false` to simulate the host declining a `setModel()` call. */
   modelAccepted = true;
-  readonly setModelCalls: PiToolInfo[] = [];
-  setModel(model: unknown): boolean {
-    this.setModelCalls.push(model as PiToolInfo);
+  readonly setModelCalls: PiModelInfo[] = [];
+  setModel(model: PiModelInfo): boolean {
+    this.setModelCalls.push(model);
     return this.modelAccepted;
   }
   readonly setActiveToolsCalls: (readonly string[])[] = [];
@@ -572,6 +573,50 @@ describe("private child mode (Spec 33 §11.2-§11.5, end-to-end against a fake h
       fakeCtx(),
     );
     expect(appended).toBeUndefined();
+  });
+
+  it("rehydrates a compact parent model identity to the full child catalog object before setModel, then keeps the ack compact", async () => {
+    const catalogModel = {
+      provider: "anthropic",
+      id: "claude-sonnet-5",
+      name: "Claude Sonnet 5",
+      api: "anthropic-messages",
+      baseUrl: "https://api.anthropic.com",
+      contextWindow: 1_000_000,
+    };
+    const sessionCtx = fakeCtx({
+      modelRegistry: { getAvailable: () => [catalogModel] },
+    });
+    const { host, output, secretBytes } = await buildChildExtension(sessionCtx);
+    const envelope = await signedBootstrap(secretBytes, {
+      effectiveToolPolicy: {
+        read: "allow",
+        write: "deny",
+        execute: "deny",
+        delegate: "deny",
+        network: "deny",
+      },
+      resolvedModel: {
+        provider: catalogModel.provider,
+        id: catalogModel.id,
+        name: catalogModel.name,
+      },
+    });
+
+    await deliverEnvelope(host, envelope);
+    await flush();
+
+    expect(host.setModelCalls).toEqual([catalogModel]);
+    expect(host.setModelCalls[0]).toBe(catalogModel);
+    const ack = output.lines.find((line) => line.kind === "bootstrap-ack");
+    expect((ack?.body as Record<string, unknown>).resolvedModel).toEqual({
+      provider: catalogModel.provider,
+      id: catalogModel.id,
+      name: catalogModel.name,
+    });
+    expect(
+      (ack?.body as { resolvedModel: Record<string, unknown> }).resolvedModel,
+    ).not.toHaveProperty("baseUrl");
   });
 
   it("fails closed (no ack, no work applied) when the host rejects the resolved model, even though tools already applied cleanly", async () => {

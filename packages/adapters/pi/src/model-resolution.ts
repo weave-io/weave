@@ -1,4 +1,4 @@
-import { okAsync, type ResultAsync } from "neverthrow";
+import { err, ok, okAsync, type Result, type ResultAsync } from "neverthrow";
 import type { PiModelInfo } from "./types.js";
 
 export type { PiModelInfo } from "./types.js";
@@ -49,6 +49,10 @@ export type PiModelResolution =
   | {
       readonly resolved: false;
     };
+
+export type PiModelIdentityResolutionError =
+  | { readonly type: "ModelIdentityUnavailable" }
+  | { readonly type: "ModelIdentityAmbiguous" };
 
 /**
  * Pi-owned deterministic model matcher (Spec 33 §6 `PiModelResolver`).
@@ -101,6 +105,25 @@ export class PiModelResolver {
     }
 
     return { resolved: false };
+  }
+
+  /**
+   * Rehydrates a compact authenticated model identity from a child control
+   * body into the one full model object owned by this Pi process. The host's
+   * `setModel()` requires that catalog object, not the compact transport
+   * shape. Missing and duplicate canonical identities fail closed.
+   */
+  resolveIdentity(
+    identity: Pick<PiModelInfo, "provider" | "id">,
+    availableModels: readonly PiModelInfo[],
+  ): Result<PiModelInfo, PiModelIdentityResolutionError> {
+    const matches = availableModels.filter(
+      (model) =>
+        model.provider === identity.provider && model.id === identity.id,
+    );
+    if (matches.length === 0) return err({ type: "ModelIdentityUnavailable" });
+    if (matches.length > 1) return err({ type: "ModelIdentityAmbiguous" });
+    return ok(matches[0] as PiModelInfo);
   }
 }
 
