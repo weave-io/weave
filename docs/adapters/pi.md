@@ -1,8 +1,12 @@
 # Pi Adapter Guide
 
-**Status:** Planned contract; do not treat this guide as release proof
+**Status:** Activation foundation implemented; do not treat this guide as release proof
 
 **Related:** [Pi adapter architecture](../pi-adapter.md) · [Spec 33](../specs/33-spec-pi-adapter/33-spec-pi-adapter.md) · [Adapter readiness](../adapter-readiness-status.md)
+
+## Current implementation
+
+The package foundation is implemented in [`packages/adapters/pi`](../../packages/adapters/pi). It registers inert command shells and session delegates, then uses exact host, TUI, trust, command-ownership, and capability probes to create a generation-scoped controller. Failed required probes or withheld trust keep the extension in health-only mode. Configuration projection, tool enforcement, delegation, workflows, packaging proof, and live TUI validation remain pending.
 
 ## Compatibility
 

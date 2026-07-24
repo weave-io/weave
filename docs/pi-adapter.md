@@ -1,12 +1,18 @@
 # Pi Adapter Architecture
 
-**Status:** Contract accepted; implementation and runtime proof pending
+**Status:** Package and activation foundation implemented; full projection and runtime proof pending
 
 **Related:** [Spec 33 — Full-readiness Pi adapter](specs/33-spec-pi-adapter/33-spec-pi-adapter.md) · [Spec 34 — Harness-neutral permissions](specs/34-spec-harness-neutral-permissions/34-spec-harness-neutral-permissions.md) · [Adapter Boundary](adapter-boundary.md) · [Pi operator guide](adapters/pi.md) · [Adapter Readiness](adapter-readiness-status.md)
 
 ## Purpose
 
 `@weaveio/weave-adapter-pi` projects normalized Weave configuration and lifecycle decisions into interactive Earendil Works Pi TUI sessions. The package is a Pi extension. Public print, text, JSON, RPC, and SDK operation are out of scope. The adapter may start private authenticated RPC children for delegation and direct workflow steps.
+
+## Implementation status
+
+The package foundation lives in [`packages/adapters/pi`](../packages/adapters/pi). It provides the compiled Pi extension entry, exact host compatibility checks, a read-only safe initializer, generation-scoped controllers, normalized effective-capability health reports, health-only command gating, and an isolated recording fake host. The fake-host suite proves load-time inertness, command ownership checks, stale-generation rejection, trust-withheld behavior, and the exact 19-probe report shape without starting Pi.
+
+Configuration projection, registered-tool enforcement, delegation transport, workflow lifecycle projection, packed-consumer proof, and live TUI evidence remain pending. This foundation is not a full-readiness claim.
 
 ## Activation model
 

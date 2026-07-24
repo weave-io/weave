@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 167 lib files | 33 env vars | 6 middleware | 0% test coverage
-> **Token savings:** this file is ~16,600 tokens. Without it, AI exploration would cost ~58,400 tokens. **Saves ~41,800 tokens per conversation.**
-> **Last scanned:** 2026-07-23 21:12 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 179 lib files | 33 env vars | 6 middleware | 0% test coverage
+> **Token savings:** this file is ~17,800 tokens. Without it, AI exploration would cost ~61,500 tokens. **Saves ~43,700 tokens per conversation.**
+> **Last scanned:** 2026-07-24 00:01 — re-run after significant changes
 
 ---
 
@@ -77,6 +77,52 @@
   - type OpenCodeToolPermissions
   - const READ_TOOL_NAMES: readonly string[]
 - `packages/adapters/opencode/src/translate-agent.ts` — function translateAgent: (descriptor, resolvedModel?) => Result<OpenCodeAgentConfig, TranslateAgentError>, type TranslateAgentError
+- `packages/adapters/pi/src/capability-prober.ts`
+  - function buildBlockedProbeSet: (reason) => CapabilityProbeResult[]
+  - function sanitizeCapabilityProbeResults: (raw) => CapabilityProbeResult[]
+  - class DefaultPiCapabilityProber
+  - interface PiPreflightContext
+  - interface PiCapabilityProbeSource
+  - const PROJECT_PATH_DEPENDENT_CAPABILITIES: readonly CapabilityId[]
+- `packages/adapters/pi/src/commands.ts`
+  - function classifyWeaveCommand: (name) => WeaveCommandClassification
+  - function parseNpmSourceName: (source) => string | undefined
+  - function isOwnSourceInfo: (sourceInfo) => boolean
+  - type WeaveCommandName
+  - type WeaveCommandClassification
+  - const WEAVE_COMMAND_NAMES
+  - _...1 more_
+- `packages/adapters/pi/src/controller.ts`
+  - class PiExtensionController
+  - interface PiGeneration
+  - interface PiOperationHandle
+  - interface PiCommandGateDecision
+  - interface PiExtensionControllerDeps
+- `packages/adapters/pi/src/errors.ts`
+  - function makeHostIdentityUnknownFailure: (reason) => PiAdapterFailure
+  - function makeHostVersionUnsupportedFailure: (version, reason) => PiAdapterFailure
+  - function makeInteractiveTuiRequiredFailure: (mode) => PiAdapterFailure
+  - function makeActivationFailedFailure: (reason) => PiAdapterFailure
+  - function makeCommandCollisionFailure: (commandName) => PiAdapterFailure
+  - function makeControllerGenerationStaleFailure: (generationId) => PiAdapterFailure
+  - _...11 more_
+- `packages/adapters/pi/src/extension.ts`
+  - function createDefaultPiExtensionDeps: () => PiExtensionDeps
+  - function createPiExtension: (overrides) => (pi: PiExtensionApi) => void
+  - interface PiExtensionDeps
+- `packages/adapters/pi/src/host-compatibility.ts`
+  - function parseSemver: (version) => Result<ParsedVersion, void>
+  - function isSupportedHostVersion: (version) => boolean
+  - function checkHostCompatibility: (info) => Result<HostPackageInfo, PiAdapterFailure>
+  - class BunHostPackageReader
+  - interface HostPackageReader
+  - type HostPackageInfo
+  - _...4 more_
+- `packages/adapters/pi/src/host-inventory.ts` — function readValidatedCommands: (api, "getCommands">) => Result<PiCommandInfo[], PiAdapterFailure>, function readValidatedTools: (api, "getAllTools">) => Result<PiToolInfo[], PiAdapterFailure>
+- `packages/adapters/pi/src/safe-initializer.ts`
+  - class PiSafeInitializer
+  - interface PiPreflightResult
+  - interface PiSafeInitializerDeps
 - `packages/cli/src/args.ts`
   - function parseArgs: (argv) => Result<ParsedArgs, ArgParseError>
   - interface ParsedArgs
@@ -440,12 +486,12 @@
 - `packages/docs/src/utils/base-url.ts` — function normalizeBaseUrl: (base) => string, function withBaseUrl: (base, path) => string
 - `packages/engine/src/capability-contract.ts`
   - function evaluateCoreReadinessProfile: (contract) => ProfileEvaluationResult
+  - function lowerReadinessByProbe: (declared, resolution) => CapabilityReadiness
+  - function evaluateEffectiveCapabilities: (contract, probeResults) => EffectiveCapabilityEvaluation
   - function buildAdapterHealthReport: (input) => AdapterHealthReport
   - function buildHumanRows: (report) => HumanReadinessRow[]
   - function buildToonRows: (report) => ToonReadinessRow[]
-  - function toJson: (report) => string
-  - interface CapabilityEntry
-  - _...18 more_
+  - _...23 more_
 - `packages/engine/src/compose.ts`
   - function detectAppendCollisions: (configs) => AppendCollision[]
   - function composeWorkflowStepPrompt: (stepName, step, workflow, templateContext) => ResultAsync<WorkflowStepComposedPrompt, ComposeError>
@@ -569,6 +615,14 @@
   - function activatePermissionSessionForTesting: (input) => ResultAsync<PermissionSession, PermissionError>
   - class PermissionSession
   - _...2 more_
+- `packages/engine/src/plan-state-provider.ts`
+  - function isAllowedPlanLeafTransition: (from, to) => boolean
+  - function derivePlanParentState: (childStates) => PlanTaskState
+  - function isPlanSnapshotComplete: (parents) => boolean
+  - function findPlanLeaf: (parents, taskId) => PlanTaskNode | undefined
+  - function authorizePlanCoordinator: (coordinatorAgent, planName, authorizedCoordinator) => Result<undefined, PlanStateError>
+  - function validatePlanTransition: (snapshot, input, authorizedCoordinator) => Result<PlanTaskNode, PlanStateError>
+  - _...9 more_
 - `packages/engine/src/review-orchestration.ts`
   - function fanOut: (agentName, config) => Result<ReviewFanOutPlan, ReviewOrchestrationError>
   - function collate: (results) => Result<CollatedReview, ReviewOrchestrationError>
@@ -589,15 +643,30 @@
   - function queryError: (message, cause?) => RuntimeStoreQueryError
   - function notFoundError: (entity, id, message?) => RuntimeStoreNotFoundError
   - function conflictError: (entity, message, conflictingId?) => RuntimeStoreConflictError
-  - _...11 more_
+  - _...15 more_
 - `packages/engine/src/runtime/fingerprint.ts` — function createProjectSalt: () => string, function fingerprintContent: (salt, content) => ResultAsync<string, RuntimeStoreError>
 - `packages/engine/src/runtime/journal-writer.ts` — class RuntimeJournalWriter, interface WriteJournalEntryInput
+- `packages/engine/src/runtime/log-sink.ts`
+  - function createRotatingRuntimeLogSink: (options) => ResultAsync<RotatingRuntimeLogSink, RuntimeLogSinkError>
+  - function asPinoDestination: (sink) => DestinationStream
+  - function wouldRotate: (bytesInSegment, incomingBytes, maxSegmentBytes) => boolean
+  - function identitiesMatch: (a, b) => boolean
+  - function validateLogSettings: (settings) => Result<RuntimeLogSettings, RuntimeLogSinkError>
+  - class BunRuntimeLogFileSystem
+  - _...8 more_
 - `packages/engine/src/runtime/memory-store.ts`
   - function createInMemoryRuntimeStore: (options) => InMemoryRuntimeStore
   - class InMemoryRuntimeStore
   - interface InMemoryRuntimeStoreFailureConfig
   - interface InMemoryRuntimeStoreOptions
 - `packages/engine/src/runtime/permission-repository.ts` — function registerPermissionApprovalRepository: (store, repository) => void, function getPermissionApprovalRepository: (store) => Result<PermissionApprovalRepository, PermissionError>
+- `packages/engine/src/runtime/retention.ts`
+  - class RuntimeRetentionService
+  - interface RuntimeRetentionServiceOptions
+  - interface RetentionScheduler
+  - interface RetentionRunResult
+  - const DEFAULT_RETENTION_WRITE_THRESHOLD
+  - const DEFAULT_RETENTION_INTERVAL_MS
 - `packages/engine/src/runtime/sanitizer.ts`
   - function isDeniedKey: (key) => boolean
   - function sanitizeJournalData: (data) => Result<JsonObject, RuntimeStoreError>
@@ -617,9 +686,17 @@
   - function createExecutionLeaseId: (raw) => ExecutionLeaseId
   - function createSessionSnapshotId: (raw) => SessionSnapshotId
   - function createRuntimeJournalEntryId: (raw) => RuntimeJournalEntryId
+  - function createUsageObservationId: (raw) => UsageObservationId
   - function createOwnerId: (raw) => OwnerId
-  - function createArtifactId: (raw) => ArtifactId
-  - _...30 more_
+  - _...41 more_
+- `packages/engine/src/runtime/usage.ts`
+  - function normalizeUsageObservation: (input) => Result<NormalizedUsageObservation, RuntimeStoreError>
+  - function denormalizeUsageObservation: (normalized) => UsageObservation
+  - function normalizedUsageEqual: (a, b) => boolean
+  - function usageRollupKey: (normalized) => string
+  - function emptyUsageRollup: (normalized) => UsageRollup
+  - function applyObservationToRollup: (rollup, normalized) => UsageRollup
+  - _...3 more_
 - `packages/engine/src/runtime-command-operations/control.ts` — function abortExecution: (input) => import("neverthrow").ResultAsync<, function advanceStep: (input) => import("neverthrow").ResultAsync<StepAdvancedData, CommandOperationError>
 - `packages/engine/src/runtime-command-operations/health.ts` — function runtimeHealth: (input) => RuntimeHealthResult
 - `packages/engine/src/runtime-command-operations/run-named-workflow.ts` — function runNamedWorkflow: (input, projectEffect) => void
@@ -885,36 +962,36 @@
 ## Most Imported Files (change these carefully)
 
 - `packages/cli/src/evals/types.ts` — imported by **39** files
+- `packages/engine/src/runtime/types.ts` — imported by **29** files
 - `packages/cli/src/theme/colors.ts` — imported by **20** files
 - `packages/cli/src/io/terminal.ts` — imported by **18** files
 - `packages/cli/src/evals/openrouter-client.ts` — imported by **18** files
 - `packages/cli/src/evals/report-schema.ts` — imported by **17** files
-- `packages/engine/src/runtime/types.ts` — imported by **16** files
+- `packages/engine/src/runtime/store.ts` — imported by **16** files
 - `scripts/release/stable-train.ts` — imported by **16** files
-- `packages/engine/src/runtime/store.ts` — imported by **15** files
 - `scripts/release/npm-registry-client.ts` — imported by **15** files
 - `packages/cli/src/args.ts` — imported by **14** files
 - `packages/engine/src/tool-policy.ts` — imported by **14** files
 - `scripts/release/model.ts` — imported by **14** files
+- `packages/engine/src/logger.ts` — imported by **13** files
 - `scripts/release/filesystem.ts` — imported by **13** files
 - `scripts/release/clock.ts` — imported by **13** files
 - `packages/cli/src/fs/file-system.ts` — imported by **12** files
-- `packages/engine/src/logger.ts` — imported by **12** files
+- `packages/engine/src/runtime/errors.ts` — imported by **12** files
 - `packages/engine/src/compose.ts` — imported by **11** files
-- `packages/engine/src/runtime/errors.ts` — imported by **11** files
 - `packages/engine/src/execution-lifecycle/metadata.ts` — imported by **11** files
 - `scripts/release/errors.ts` — imported by **11** files
 
 ## Import Map (who imports what)
 
 - `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/dashboard-indexes.test.ts`, `packages/cli/src/evals/__tests__/github-contents-publisher.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts` +34 more
+- `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts` +24 more
 - `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts` +15 more
 - `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts` +13 more
 - `packages/cli/src/evals/openrouter-client.ts` ← `packages/cli/src/evals/__tests__/loom-routing-runner.test.ts`, `packages/cli/src/evals/__tests__/pattern-planning-runner.test.ts`, `packages/cli/src/evals/__tests__/runner.test.ts`, `packages/cli/src/evals/__tests__/shuttle-execution-runner.test.ts`, `packages/cli/src/evals/__tests__/spindle-tools-runner.test.ts` +13 more
 - `packages/cli/src/evals/report-schema.ts` ← `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts` +12 more
-- `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts` +11 more
+- `packages/engine/src/runtime/store.ts` ← `packages/engine/src/__tests__/permission-service.test.ts`, `packages/engine/src/__tests__/runtime-journal.test.ts`, `packages/engine/src/execution-lifecycle/artifacts.ts`, `packages/engine/src/execution-lifecycle/dispatch.ts`, `packages/engine/src/execution-lifecycle/inspection.ts` +11 more
 - `scripts/release/stable-train.ts` ← `scripts/release/__tests__/artifact-manifest.test.ts`, `scripts/release/__tests__/control-executable.test.ts`, `scripts/release/__tests__/github-client.test.ts`, `scripts/release/__tests__/metadata-replay.test.ts`, `scripts/release/__tests__/payload-layout.e2e.test.ts` +11 more
-- `packages/engine/src/runtime/store.ts` ← `packages/engine/src/__tests__/permission-service.test.ts`, `packages/engine/src/__tests__/runtime-journal.test.ts`, `packages/engine/src/execution-lifecycle/artifacts.ts`, `packages/engine/src/execution-lifecycle/dispatch.ts`, `packages/engine/src/execution-lifecycle/inspection.ts` +10 more
 - `scripts/release/npm-registry-client.ts` ← `scripts/release/__tests__/github-client.test.ts`, `scripts/release/__tests__/nightly-plan.test.ts`, `scripts/release/__tests__/npm-registry-client.test.ts`, `scripts/release/__tests__/payload-layout.e2e.test.ts`, `scripts/release/__tests__/promotion-commands.test.ts` +10 more
 - `packages/cli/src/args.ts` ← `packages/cli/src/__tests__/args.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/prompt.test.ts` +9 more
 
@@ -923,7 +1000,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 157 test files found
+> 172 test files found
 
 ---
 

@@ -69,19 +69,20 @@ See [Adapter Bootstrap Guide](adapter-bootstrap.md) for the canonical
 
 ---
 
-## Pi Adapter — Contract Accepted, Implementation Pending
+## Pi Adapter — Foundation Implemented, Full Readiness Pending
 
-[Spec 33](specs/33-spec-pi-adapter/33-spec-pi-adapter.md) defines full readiness for `@weaveio/weave-adapter-pi` on interactive Earendil Works Pi TUI sessions. The contract is accepted, but no readiness capability is implemented or verified merely because the spec exists.
+[Spec 33](specs/33-spec-pi-adapter/33-spec-pi-adapter.md) defines full readiness for `@weaveio/weave-adapter-pi` on interactive Earendil Works Pi TUI sessions. The package and activation foundation now exist, but later projection, packaging, and live-proof gates remain open.
 
 | Area | Current effective status | Gate |
 | --- | --- | --- |
 | Contract and requirement IDs | ✅ Accepted | Spec 33 plus ADRs 0008–0011 |
-| Harness-neutral prerequisites | ⏳ Pending | Delegation, permissions, revisioned plans/artifacts, usage/retention, effective probes, rotating logs |
-| Pi package/runtime projection | ⏳ Pending | Fake-host and isolated adapter tests |
+| Harness-neutral prerequisites | ✅ Implemented | Delegation, permissions, revisioned plans/artifacts, usage/retention, effective probes, rotating logs |
+| Pi package/runtime foundation | ✅ Implemented | Compiled extension entry, exact host checks, safe initializer, controller generations, normalized 19-probe health report, health-only gating, and isolated fake-host tests |
+| Pi configuration, policy, delegation, and lifecycle projection | ⏳ Pending | Remaining adapter implementation and isolated tests |
 | Packed package and exact-host consumer | ⏳ Pending | `PI-PKG` manifest evidence |
 | Stable interactive TUI readiness | ⏳ Pending | Digest-bound live smoke for all mandatory `PI-*` rows |
 
-Pi must report static declarations as ceilings and lower them through one activation probe per capability. Any required effective degraded or unsupported capability enters health-only mode. The adapter must not claim ready until the final acceptance manifest maps all 20 requirement IDs to existing automated proof, required packed evidence, and bound live-smoke evidence.
+Pi reports static declarations as ceilings and lowers them through one activation probe per capability. Any required effective degraded or unsupported capability enters health-only mode. The adapter must not claim ready until the final acceptance manifest maps all 20 requirement IDs to existing automated proof, required packed evidence, and bound live-smoke evidence.
 
 See [Pi Adapter Architecture](pi-adapter.md) and the [Pi Adapter Guide](adapters/pi.md).
 

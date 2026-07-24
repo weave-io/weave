@@ -66,6 +66,52 @@
   - type OpenCodeToolPermissions
   - const READ_TOOL_NAMES: readonly string[]
 - `packages/adapters/opencode/src/translate-agent.ts` — function translateAgent: (descriptor, resolvedModel?) => Result<OpenCodeAgentConfig, TranslateAgentError>, type TranslateAgentError
+- `packages/adapters/pi/src/capability-prober.ts`
+  - function buildBlockedProbeSet: (reason) => CapabilityProbeResult[]
+  - function sanitizeCapabilityProbeResults: (raw) => CapabilityProbeResult[]
+  - class DefaultPiCapabilityProber
+  - interface PiPreflightContext
+  - interface PiCapabilityProbeSource
+  - const PROJECT_PATH_DEPENDENT_CAPABILITIES: readonly CapabilityId[]
+- `packages/adapters/pi/src/commands.ts`
+  - function classifyWeaveCommand: (name) => WeaveCommandClassification
+  - function parseNpmSourceName: (source) => string | undefined
+  - function isOwnSourceInfo: (sourceInfo) => boolean
+  - type WeaveCommandName
+  - type WeaveCommandClassification
+  - const WEAVE_COMMAND_NAMES
+  - _...1 more_
+- `packages/adapters/pi/src/controller.ts`
+  - class PiExtensionController
+  - interface PiGeneration
+  - interface PiOperationHandle
+  - interface PiCommandGateDecision
+  - interface PiExtensionControllerDeps
+- `packages/adapters/pi/src/errors.ts`
+  - function makeHostIdentityUnknownFailure: (reason) => PiAdapterFailure
+  - function makeHostVersionUnsupportedFailure: (version, reason) => PiAdapterFailure
+  - function makeInteractiveTuiRequiredFailure: (mode) => PiAdapterFailure
+  - function makeActivationFailedFailure: (reason) => PiAdapterFailure
+  - function makeCommandCollisionFailure: (commandName) => PiAdapterFailure
+  - function makeControllerGenerationStaleFailure: (generationId) => PiAdapterFailure
+  - _...11 more_
+- `packages/adapters/pi/src/extension.ts`
+  - function createDefaultPiExtensionDeps: () => PiExtensionDeps
+  - function createPiExtension: (overrides) => (pi: PiExtensionApi) => void
+  - interface PiExtensionDeps
+- `packages/adapters/pi/src/host-compatibility.ts`
+  - function parseSemver: (version) => Result<ParsedVersion, void>
+  - function isSupportedHostVersion: (version) => boolean
+  - function checkHostCompatibility: (info) => Result<HostPackageInfo, PiAdapterFailure>
+  - class BunHostPackageReader
+  - interface HostPackageReader
+  - type HostPackageInfo
+  - _...4 more_
+- `packages/adapters/pi/src/host-inventory.ts` — function readValidatedCommands: (api, "getCommands">) => Result<PiCommandInfo[], PiAdapterFailure>, function readValidatedTools: (api, "getAllTools">) => Result<PiToolInfo[], PiAdapterFailure>
+- `packages/adapters/pi/src/safe-initializer.ts`
+  - class PiSafeInitializer
+  - interface PiPreflightResult
+  - interface PiSafeInitializerDeps
 - `packages/cli/src/args.ts`
   - function parseArgs: (argv) => Result<ParsedArgs, ArgParseError>
   - interface ParsedArgs
@@ -429,12 +475,12 @@
 - `packages/docs/src/utils/base-url.ts` — function normalizeBaseUrl: (base) => string, function withBaseUrl: (base, path) => string
 - `packages/engine/src/capability-contract.ts`
   - function evaluateCoreReadinessProfile: (contract) => ProfileEvaluationResult
+  - function lowerReadinessByProbe: (declared, resolution) => CapabilityReadiness
+  - function evaluateEffectiveCapabilities: (contract, probeResults) => EffectiveCapabilityEvaluation
   - function buildAdapterHealthReport: (input) => AdapterHealthReport
   - function buildHumanRows: (report) => HumanReadinessRow[]
   - function buildToonRows: (report) => ToonReadinessRow[]
-  - function toJson: (report) => string
-  - interface CapabilityEntry
-  - _...18 more_
+  - _...23 more_
 - `packages/engine/src/compose.ts`
   - function detectAppendCollisions: (configs) => AppendCollision[]
   - function composeWorkflowStepPrompt: (stepName, step, workflow, templateContext) => ResultAsync<WorkflowStepComposedPrompt, ComposeError>
@@ -558,6 +604,14 @@
   - function activatePermissionSessionForTesting: (input) => ResultAsync<PermissionSession, PermissionError>
   - class PermissionSession
   - _...2 more_
+- `packages/engine/src/plan-state-provider.ts`
+  - function isAllowedPlanLeafTransition: (from, to) => boolean
+  - function derivePlanParentState: (childStates) => PlanTaskState
+  - function isPlanSnapshotComplete: (parents) => boolean
+  - function findPlanLeaf: (parents, taskId) => PlanTaskNode | undefined
+  - function authorizePlanCoordinator: (coordinatorAgent, planName, authorizedCoordinator) => Result<undefined, PlanStateError>
+  - function validatePlanTransition: (snapshot, input, authorizedCoordinator) => Result<PlanTaskNode, PlanStateError>
+  - _...9 more_
 - `packages/engine/src/review-orchestration.ts`
   - function fanOut: (agentName, config) => Result<ReviewFanOutPlan, ReviewOrchestrationError>
   - function collate: (results) => Result<CollatedReview, ReviewOrchestrationError>
@@ -578,15 +632,30 @@
   - function queryError: (message, cause?) => RuntimeStoreQueryError
   - function notFoundError: (entity, id, message?) => RuntimeStoreNotFoundError
   - function conflictError: (entity, message, conflictingId?) => RuntimeStoreConflictError
-  - _...11 more_
+  - _...15 more_
 - `packages/engine/src/runtime/fingerprint.ts` — function createProjectSalt: () => string, function fingerprintContent: (salt, content) => ResultAsync<string, RuntimeStoreError>
 - `packages/engine/src/runtime/journal-writer.ts` — class RuntimeJournalWriter, interface WriteJournalEntryInput
+- `packages/engine/src/runtime/log-sink.ts`
+  - function createRotatingRuntimeLogSink: (options) => ResultAsync<RotatingRuntimeLogSink, RuntimeLogSinkError>
+  - function asPinoDestination: (sink) => DestinationStream
+  - function wouldRotate: (bytesInSegment, incomingBytes, maxSegmentBytes) => boolean
+  - function identitiesMatch: (a, b) => boolean
+  - function validateLogSettings: (settings) => Result<RuntimeLogSettings, RuntimeLogSinkError>
+  - class BunRuntimeLogFileSystem
+  - _...8 more_
 - `packages/engine/src/runtime/memory-store.ts`
   - function createInMemoryRuntimeStore: (options) => InMemoryRuntimeStore
   - class InMemoryRuntimeStore
   - interface InMemoryRuntimeStoreFailureConfig
   - interface InMemoryRuntimeStoreOptions
 - `packages/engine/src/runtime/permission-repository.ts` — function registerPermissionApprovalRepository: (store, repository) => void, function getPermissionApprovalRepository: (store) => Result<PermissionApprovalRepository, PermissionError>
+- `packages/engine/src/runtime/retention.ts`
+  - class RuntimeRetentionService
+  - interface RuntimeRetentionServiceOptions
+  - interface RetentionScheduler
+  - interface RetentionRunResult
+  - const DEFAULT_RETENTION_WRITE_THRESHOLD
+  - const DEFAULT_RETENTION_INTERVAL_MS
 - `packages/engine/src/runtime/sanitizer.ts`
   - function isDeniedKey: (key) => boolean
   - function sanitizeJournalData: (data) => Result<JsonObject, RuntimeStoreError>
@@ -606,9 +675,17 @@
   - function createExecutionLeaseId: (raw) => ExecutionLeaseId
   - function createSessionSnapshotId: (raw) => SessionSnapshotId
   - function createRuntimeJournalEntryId: (raw) => RuntimeJournalEntryId
+  - function createUsageObservationId: (raw) => UsageObservationId
   - function createOwnerId: (raw) => OwnerId
-  - function createArtifactId: (raw) => ArtifactId
-  - _...30 more_
+  - _...41 more_
+- `packages/engine/src/runtime/usage.ts`
+  - function normalizeUsageObservation: (input) => Result<NormalizedUsageObservation, RuntimeStoreError>
+  - function denormalizeUsageObservation: (normalized) => UsageObservation
+  - function normalizedUsageEqual: (a, b) => boolean
+  - function usageRollupKey: (normalized) => string
+  - function emptyUsageRollup: (normalized) => UsageRollup
+  - function applyObservationToRollup: (rollup, normalized) => UsageRollup
+  - _...3 more_
 - `packages/engine/src/runtime-command-operations/control.ts` — function abortExecution: (input) => import("neverthrow").ResultAsync<, function advanceStep: (input) => import("neverthrow").ResultAsync<StepAdvancedData, CommandOperationError>
 - `packages/engine/src/runtime-command-operations/health.ts` — function runtimeHealth: (input) => RuntimeHealthResult
 - `packages/engine/src/runtime-command-operations/run-named-workflow.ts` — function runNamedWorkflow: (input, projectEffect) => void
