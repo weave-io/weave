@@ -233,7 +233,7 @@ describe("sqlite permission persistence and schema", () => {
     await reopened.close();
   });
 
-  it("uses the exact version-three allowlisted schema and persists across reopen", async () => {
+  it("uses the exact permission-grant schema and persists across reopen", async () => {
     const store = sqlite();
     ok(await permissionRepository(store).saveMany([record()]));
     await store.close();
@@ -265,7 +265,7 @@ describe("sqlite permission persistence and schema", () => {
         /input|raw|constraint|canonical|secret|token/i.test(x),
       ),
     ).toBe(false);
-    expect(CURRENT_SCHEMA_VERSION).toBe(3);
+    expect(CURRENT_SCHEMA_VERSION).toBe(4);
     db.close();
     const reopened = sqlite();
     expect(
