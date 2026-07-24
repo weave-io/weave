@@ -381,6 +381,8 @@ Show bounded child state: logical name, parent, status, current turn/tool, elaps
 
 Cancelling an ordinary helper returns a structured cancelled result to its parent. Cancelling the direct workflow-step child calls `handleUserInterrupt(...pause)`, terminates that subtree, and leaves the step resumable.
 
+Cancelling a child sends the authenticated `cancel` control envelope *and* the ordinary RPC `abort` command, in that order, then waits boundedly for either an authenticated reply or process exit before force-killing. On some exact hosts the raw `abort` command can end the child's in-flight turn - and the child's own extension can report an ordinary `settled` envelope for that aborted turn - before the still-queued hidden-command prompt carrying the `cancel` envelope is even dispatched to the child's own control-command handler, so no `cancelled` envelope is ever sent back at all. This is a legitimate outcome of the requested cancellation, never a protocol violation: a `settled` envelope (still schema-validated) arriving while the parent's own cancellation is in flight, an authenticated `cancelled` envelope, the process exiting mid-cancellation, or the bounded grace period elapsing with no reply at all MUST all resolve the same structured `{outcome: "cancelled"}` settlement to the delegating parent - never `ChildEnvelopeMalformed` or another error. This applies only once the child's task was genuinely dispatched (settlement was actually pending); cancelling a child that never advanced past handshake or bootstrap-ack still fails the delegation closed, since there is no in-flight task settlement to report as cancelled.
+
 ## 12. Tool permission subsystem
 
 

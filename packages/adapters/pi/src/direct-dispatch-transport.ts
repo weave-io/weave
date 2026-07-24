@@ -201,8 +201,18 @@ export function createDirectDispatchTransport(
       .andThen(() =>
         child.runTask(spawnInput, bootstrap as unknown as JsonValue),
       )
-      .map((settlement) => {
+      .map((settlement): DirectDispatchSettlement => {
         deps.registry?.setActive(undefined);
+        // A direct-step child's own cancellation (Spec 33 §11.5, §15) is
+        // handled by `handleUserInterrupt(...pause)` at the workflow layer,
+        // never as a structured completion candidate - `PiChildSettlement`'s
+        // `"cancelled"` outcome has no equivalent in the narrower
+        // `DirectDispatchSettlement` shape `interpretSettlement` expects, so
+        // it is projected down to the same closed `"failed"` shape every
+        // other non-completion outcome already uses here.
+        if (settlement.outcome === "cancelled") {
+          return { outcome: "failed", reason: "cancelled" };
+        }
         return settlement;
       })
       .mapErr((failure) => {

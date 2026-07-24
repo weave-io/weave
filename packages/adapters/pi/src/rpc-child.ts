@@ -168,7 +168,8 @@ export interface PiRpcChildSpawnInput {
 
 export type PiChildSettlement =
   | { readonly outcome: "completed"; readonly summary: string }
-  | { readonly outcome: "failed"; readonly reason: string };
+  | { readonly outcome: "failed"; readonly reason: string }
+  | { readonly outcome: "cancelled" };
 
 const DEFAULT_COMMAND = ["pi", "--mode", "rpc", "--no-session"] as const;
 
@@ -412,11 +413,11 @@ export class PiRpcChild {
     if (this.disposed || this.settled) return;
     if (this.status === "cancelling") {
       // Exit during a cancellation in progress is the expected outcome,
-      // not an unexpected-exit failure - resolve the bounded cancel wait
-      // immediately rather than force-waiting out the grace period.
-      const cancelResolvers = this.cancelResolvers;
-      this.cancelResolvers = undefined;
-      cancelResolvers?.resolve();
+      // not an unexpected-exit failure - complete the cancellation
+      // immediately (resolving both the bounded cancel wait and this
+      // child's own settlement as `cancelled`, Spec 33 §11.5) rather than
+      // force-waiting out the grace period.
+      this.completeCancellation();
       return;
     }
     this.failOutstanding(
@@ -527,6 +528,32 @@ export class PiRpcChild {
       return;
     }
     if (envelope.kind === "settled") {
+      if (this.status === "cancelling") {
+        // Legitimate race, never a protocol violation (Spec 33 §11.5): the
+        // raw RPC `abort` command this parent writes right after the
+        // authenticated `cancel` envelope (see `cancel()`) can end the
+        // child's current turn before the queued hidden-command prompt
+        // carrying that `cancel` envelope is even dispatched by the exact
+        // host, so the child's own extension reports an ordinary
+        // `settled` envelope for the aborted turn before it ever admits
+        // the cancel and reports `cancelled` itself. Cancelling an
+        // ordinary helper always yields a structured cancelled result to
+        // its parent regardless of which control kind this race lets the
+        // child report first - still validate the body shape (defense in
+        // depth) before treating it as the cancellation's own outcome.
+        const parsed = parseControlBody("settled", envelope.body);
+        if (!parsed.ok) {
+          this.failOutstanding(
+            makeChildEnvelopeMalformedFailure(
+              this.childId,
+              "settled-body-invalid",
+            ),
+          );
+          return;
+        }
+        this.completeCancellation();
+        return;
+      }
       if (!this.settled && this.status !== "running") {
         this.failOutstanding(
           makeChildEnvelopeMalformedFailure(
@@ -554,9 +581,7 @@ export class PiRpcChild {
         );
         return;
       }
-      const resolvers = this.cancelResolvers;
-      this.cancelResolvers = undefined;
-      resolvers?.resolve();
+      this.completeCancellation();
       return;
     }
     if (envelope.kind === "error") {
@@ -651,6 +676,51 @@ export class PiRpcChild {
     body: JsonValue,
   ): ResultAsync<void, PiAdapterFailure> {
     return this.sendControl("delegate-response", correlationId, body);
+  }
+
+  /**
+   * The single terminal-cancellation path (Spec 33 §11.5): resolves this
+   * child's own outstanding settlement wait (`runTask()`/`awaitSettlement`)
+   * with a structured `{ outcome: "cancelled" }` result - never an error -
+   * and resolves the bounded `cancel()` wait too, before terminating
+   * resources. Reachable from every legitimate way a requested
+   * cancellation can actually conclude: an authenticated `cancelled` ack,
+   * a racing `settled` report for the aborted turn, the process exiting
+   * mid-cancellation, or the bounded grace period elapsing with no reply
+   * at all. Idempotent via the same `settled` guard as normal settlement.
+   */
+  private completeCancellation(): void {
+    if (this.settled) return;
+    this.settled = true;
+    this.status = "cancelled";
+    const settlementResolvers = this.settlementResolvers;
+    this.settlementResolvers = undefined;
+    if (settlementResolvers !== undefined) {
+      // A task was genuinely dispatched and running - Spec 33 §11.5
+      // requires cancelling an ordinary helper to resolve as a structured
+      // cancelled result, never an error.
+      settlementResolvers.resolve({ outcome: "cancelled" });
+    } else {
+      // Cancelled before the child ever reached a running task (still
+      // handshaking or awaiting its bootstrap-ack) - there is no
+      // in-flight task to report a structured cancelled *settlement* for,
+      // so the caller's own spawn/handshake/bootstrap wait must still
+      // fail closed rather than hang forever with nothing to resolve it.
+      const failure = makeChildAbortFailedFailure(
+        this.childId,
+        "cancelled-before-running",
+      );
+      const handshakeResolvers = this.handshakeResolvers;
+      this.handshakeResolvers = undefined;
+      handshakeResolvers?.reject(failure);
+      const bootstrapAckResolvers = this.bootstrapAckResolvers;
+      this.bootstrapAckResolvers = undefined;
+      bootstrapAckResolvers?.reject(failure);
+    }
+    const cancelResolvers = this.cancelResolvers;
+    this.cancelResolvers = undefined;
+    cancelResolvers?.resolve();
+    this.terminateResources();
   }
 
   private completeSettlement(envelope: PiControlEnvelope): void {
@@ -1090,14 +1160,23 @@ export class PiRpcChild {
     return new ResultAsync(
       new Promise((resolve) => {
         const timer = this.timerPort.schedule(() => {
+          // Neither an authenticated `cancelled`/`settled` reply nor a
+          // process exit arrived in time - force-kill, but this is still a
+          // legitimate, requested cancellation (Spec 33 §11.5), so it must
+          // still resolve as a structured cancelled result, never as an
+          // abort-failed error.
           this.cancelResolvers = undefined;
-          this.dispose();
+          this.completeCancellation();
           resolve(ok(undefined));
         }, this.cancelGraceMs);
         this.cancelResolvers = {
+          // `completeCancellation()` (the only caller of this resolver, from
+          // `dispatchControlKind`'s `cancelled`/raced-`settled` handling or
+          // `handleProcessExit`) has already finalized status/settlement and
+          // terminated resources by the time this runs - just clear the
+          // timer and settle this bounded wait.
           resolve: () => {
             timer.cancel();
-            this.dispose();
             resolve(ok(undefined));
           },
         };

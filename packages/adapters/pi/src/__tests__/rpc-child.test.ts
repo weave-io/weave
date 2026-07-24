@@ -587,6 +587,65 @@ describe("PiRpcChild", () => {
     expect(spawned.killed).toBe(true);
   });
 
+  it("resolves as a structured cancelled result when the child's own abort-triggered settled report races ahead of its cancelled ack (exact-host cancellation timing)", async () => {
+    // Reproduces the live exact-host bug: Backspace, Alt+4, Esc on a
+    // delegated child mid-response cancels it, but the child's own
+    // extension can report an ordinary "settled" (for the turn the raw RPC
+    // "abort" command just ended) before the still-queued hidden-command
+    // prompt carrying the authenticated "cancel" envelope is ever
+    // dispatched to it, so no "cancelled" envelope is ever sent back at
+    // all. weave_delegate previously surfaced this as
+    // {ok:false,error:"ChildEnvelopeMalformed"} instead of a structured
+    // cancelled result (Spec 33 §11.5).
+    const processPort = new FakeChildProcessPort();
+    const child = new PiRpcChild("child-1", "root", "gen-1", "shuttle", 1, {
+      processPort,
+      randomPort,
+      hmacPort,
+      logger: noopLogger(),
+    });
+    const spawnPromise = child.spawnAndHandshake(baseSpawnInput());
+    await flush();
+    const spawned = processPort.spawnedProcesses[0];
+    const secretBytes = extractSecretFromSpawn(processPort);
+    const responder = new ScriptedChildResponder(spawned, "child-1", "gen-1");
+    await responder.send("handshake", "child-1", {}, secretBytes);
+    await spawnPromise;
+
+    const runPromise = child.runTask(baseSpawnInput(), validBootstrap());
+    await flush();
+    await responder.send("bootstrap-ack", "child-1", validAck(), secretBytes);
+    await flush();
+
+    const cancelPromise = child.cancel();
+    await flush();
+    const lines = spawned.writtenLines();
+    expect(
+      lines.some((line) => (line as { type: string }).type === "abort"),
+    ).toBe(true);
+
+    // The child's own "cancelled" ack never arrives - only the ordinary
+    // "settled" report for the turn the raw abort just ended, exactly as
+    // the live smoke evidence shows.
+    await responder.send(
+      "settled",
+      "child-1",
+      { outcome: "failed", reason: "assistant stop reason: aborted" },
+      secretBytes,
+    );
+
+    const result = await runPromise;
+    await cancelPromise;
+
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap()).toEqual({ outcome: "cancelled" });
+    expect(child.snapshot().status).toBe("cancelled");
+    expect(spawned.killed).toBe(true);
+
+    child.dispose();
+    child.dispose(); // idempotent
+  });
+
   it("clears the secret reference on every terminal path, including spawn failure", async () => {
     const processPort = new FakeChildProcessPort();
     processPort.failNextSpawn({ type: "SpawnFailed", reason: "boom" });
