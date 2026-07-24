@@ -585,6 +585,77 @@ describe("PiRpcChild", () => {
     child.dispose();
     child.dispose(); // idempotent
     expect(spawned.killed).toBe(true);
+    // The terminal cleanup path must guarantee termination via the
+    // mandatory force-kill, not merely the cooperative default signal.
+    expect(spawned.forceKilled).toBe(true);
+  });
+
+  it("force-kills the process when the bounded cancellation grace period elapses with no cooperative reply at all (non-cooperative/stopped child), guaranteeing no leaked process", async () => {
+    // Reproduces the live exact-host bug (Spec 33 §11.5, Final4 exact-host
+    // smoke): a delegated child was SIGSTOP'd to simulate
+    // non-cooperation, selected via the child tree, and Esc-cancelled.
+    // Neither an authenticated "cancelled" ack, a racing "settled" report,
+    // nor the process actually exiting ever arrived - only the bounded
+    // cancellation grace period elapsing. weave_delegate still correctly
+    // settled `{ok:true, settlement:{outcome:"cancelled"}}`, but `ps`
+    // still showed the child in a stopped `T+` state, because
+    // `terminateResources()` only ever called the cooperative default
+    // `kill()` (SIGTERM), which a stopped process can leave pending
+    // indefinitely instead of acting on. This proves the grace-timeout
+    // path now force-kills instead.
+    const processPort = new FakeChildProcessPort();
+    const timers: Array<() => void> = [];
+    const child = new PiRpcChild("child-1", "root", "gen-1", "shuttle", 1, {
+      processPort,
+      randomPort,
+      hmacPort,
+      logger: noopLogger(),
+      timerPort: {
+        schedule: (cb) => {
+          timers.push(cb);
+          return { cancel: () => {} };
+        },
+      },
+    });
+    const spawnPromise = child.spawnAndHandshake(baseSpawnInput());
+    await flush();
+    const spawned = processPort.spawnedProcesses[0];
+    const secretBytes = extractSecretFromSpawn(processPort);
+    const responder = new ScriptedChildResponder(spawned, "child-1", "gen-1");
+    await responder.send("handshake", "child-1", {}, secretBytes);
+    await spawnPromise;
+
+    const runPromise = child.runTask(baseSpawnInput(), validBootstrap());
+    await flush();
+    await responder.send("bootstrap-ack", "child-1", validAck(), secretBytes);
+    await flush();
+
+    const cancelPromise = child.cancel();
+    await flush();
+    const lines = spawned.writtenLines();
+    expect(
+      lines.some((line) => (line as { type: string }).type === "abort"),
+    ).toBe(true);
+
+    // The simulated stopped/non-cooperative child never replies and never
+    // exits - only the bounded grace timer, fired directly here
+    // (deterministic, no real timers), can conclude the cancellation.
+    expect(spawned.killed).toBe(false);
+    expect(spawned.forceKilled).toBe(false);
+    const graceTimer = timers.at(-1);
+    graceTimer?.();
+
+    const result = await runPromise;
+    await cancelPromise;
+
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap()).toEqual({ outcome: "cancelled" });
+    expect(child.snapshot().status).toBe("cancelled");
+    expect(child.isDisposed()).toBe(true);
+    // The mandatory force-kill - never merely the cooperative default
+    // signal - is what must actually guarantee the process is gone here.
+    expect(spawned.forceKilled).toBe(true);
+    expect(spawned.killed).toBe(true);
   });
 
   it("resolves as a structured cancelled result when the child's own abort-triggered settled report races ahead of its cancelled ack (exact-host cancellation timing)", async () => {
@@ -641,6 +712,7 @@ describe("PiRpcChild", () => {
     expect(result._unsafeUnwrap()).toEqual({ outcome: "cancelled" });
     expect(child.snapshot().status).toBe("cancelled");
     expect(spawned.killed).toBe(true);
+    expect(spawned.forceKilled).toBe(true);
 
     child.dispose();
     child.dispose(); // idempotent
@@ -685,6 +757,7 @@ describe("PiRpcChild", () => {
     expect(child.snapshot().status).toBe("failed");
     expect(child.isDisposed()).toBe(true);
     expect(spawned.killed).toBe(true);
+    expect(spawned.forceKilled).toBe(true);
     // Cleanup must be idempotent and must never clobber the preserved
     // "failed" status back to "cancelled".
     child.dispose();
@@ -723,6 +796,7 @@ describe("PiRpcChild", () => {
     expect(result._unsafeUnwrapErr().code).toBe("ChildReplyMissing");
     expect(child.snapshot().status).toBe("failed");
     expect(spawned.killed).toBe(true);
+    expect(spawned.forceKilled).toBe(true);
     expect(child.isDisposed()).toBe(true);
   });
 
@@ -755,6 +829,7 @@ describe("PiRpcChild", () => {
     const result = await runPromise;
     expect(result.isOk()).toBe(true);
     expect(spawned.killed).toBe(true);
+    expect(spawned.forceKilled).toBe(true);
     expect(child.isDisposed()).toBe(true);
     expect(child.snapshot().status).toBe("completed");
   });
@@ -860,6 +935,7 @@ describe("PiRpcChild", () => {
     expect(result.isErr()).toBe(true);
     expect(child.isDisposed()).toBe(true);
     expect(spawned.killed).toBe(true);
+    expect(spawned.forceKilled).toBe(true);
   });
 
   it("fails closed on a `cancelled` envelope that arrives while no cancellation is in flight", async () => {
@@ -883,6 +959,7 @@ describe("PiRpcChild", () => {
     await flush();
     expect(child.snapshot().status).toBe("failed");
     expect(spawned.killed).toBe(true);
+    expect(spawned.forceKilled).toBe(true);
   });
 
   it("clamps negative and non-finite usage fields to zero rather than propagating them", async () => {
@@ -978,6 +1055,7 @@ describe("PiRpcChild", () => {
     await flush();
     expect(child.snapshot().status).toBe("failed");
     expect(spawned.killed).toBe(true);
+    expect(spawned.forceKilled).toBe(true);
   });
 
   it("fails closed (and does not hang) when the process's stdout read fails", async () => {

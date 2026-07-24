@@ -26,8 +26,24 @@ export interface PiChildStdout {
 export interface PiSpawnedChildProcess {
   writeStdin(bytes: Uint8Array): Result<void, ChildProcessError>;
   readonly stdout: PiChildStdout;
-  /** Never throws, regardless of the underlying process's state. */
+  /**
+   * Cooperative/default termination (SIGTERM). Never throws, regardless of
+   * the underlying process's state. A stopped (`SIGSTOP`'d) or otherwise
+   * non-cooperative process is free to leave a signal with this default
+   * disposition pending indefinitely rather than acting on it - callers
+   * that must *guarantee* the process is gone (any bounded/terminal
+   * cleanup path) need `forceKill()`, not this.
+   */
   kill(): void;
+  /**
+   * Mandatory force-kill (`SIGKILL`-equivalent): the one signal whose
+   * default disposition can never be caught, blocked, or ignored, and
+   * which the kernel delivers even to a stopped process instead of
+   * leaving it pending. Every terminal/bounded-grace cleanup path must use
+   * this, not `kill()`, to actually guarantee the process is gone.
+   * Never throws, regardless of the underlying process's state.
+   */
+  forceKill(): void;
   readonly exited: Promise<number | null>;
 }
 
@@ -55,6 +71,63 @@ export interface PiChildProcessPort {
 const SPAWN_FAILED_REASON = "child-process-spawn-failed";
 const WRITE_FAILED_REASON = "child-process-write-failed";
 const READ_FAILED_REASON = "child-process-read-failed";
+
+/**
+ * Cooperative/default termination sends no explicit signal at all -
+ * `Bun.spawn`'s own `Subprocess.kill()` then applies its own default
+ * (`SIGTERM`). Mandatory force-kill always sends this exact numeric
+ * signal (`SIGKILL`) - passed as a number, matching `Bun.spawn`'s own
+ * `kill(exitCode?: number | NodeJS.Signals)` signature, so it never
+ * depends on the host platform's string-to-signal-name mapping. `SIGKILL`
+ * is the one signal whose default disposition can never be caught,
+ * blocked, or ignored, and the kernel delivers it to a stopped
+ * (`SIGSTOP`'d) process immediately rather than leaving it pending until
+ * the process is resumed - this is exactly what a plain default-signal
+ * `kill()` cannot guarantee (Spec 33 §11.5).
+ */
+export const FORCE_KILL_SIGNAL = 9;
+
+/**
+ * The pure signal-selection mapping underlying {@link PiSpawnedChildProcess.kill}
+ * vs {@link PiSpawnedChildProcess.forceKill}: cooperative termination sends
+ * no explicit signal (letting the runtime apply its own default, `SIGTERM`);
+ * mandatory force-kill always sends {@link FORCE_KILL_SIGNAL} (`SIGKILL`)
+ * explicitly. Exported and unit-tested on its own (Spec 33 §24 layer D/§11.5)
+ * because the surrounding process boundary - the real `Bun.spawn` call
+ * itself - is deliberately never exercised by an automated test; this pure
+ * mapping is the one piece of "which signal do we actually ask for" logic
+ * that can be proven without spawning a real process.
+ */
+export function resolveKillSignal(
+  mode: "cooperative" | "force",
+): number | undefined {
+  if (mode === "force") return FORCE_KILL_SIGNAL;
+  return undefined;
+}
+
+/**
+ * Sends `signal` (or, when `undefined`, no explicit signal at all - the
+ * runtime's own default) to `subprocess.kill()`. Killing an already-dead
+ * process can throw; this helper's own contract is "best-effort, never
+ * throws" - every caller (both {@link PiSpawnedChildProcess.kill} and
+ * {@link PiSpawnedChildProcess.forceKill}) relies on that.
+ */
+function sendSignal(
+  subprocess: { kill(signal?: number): void },
+  signal: number | undefined,
+): void {
+  try {
+    if (signal === undefined) {
+      subprocess.kill();
+    } else {
+      subprocess.kill(signal);
+    }
+  } catch {
+    // Intentionally swallowed: nothing upstream can act on a failed kill of
+    // an already-gone process, and this helper must not itself become a
+    // new source of unhandled exceptions.
+  }
+}
 
 export class BunPiChildProcessPort implements PiChildProcessPort {
   spawn(
@@ -113,18 +186,8 @@ export class BunPiChildProcessPort implements PiChildProcessPort {
         onEnd: (cb) => endHandlers.push(cb),
         onError: (cb) => errorHandlers.push(cb),
       },
-      kill: () => {
-        // Killing an already-dead process can throw; this method's own
-        // contract is "best-effort, never throws" - every caller (cleanup
-        // paths above all) relies on that.
-        try {
-          subprocess.kill();
-        } catch {
-          // Intentionally swallowed: nothing upstream can act on a failed
-          // kill of an already-gone process, and this method must not
-          // itself become a new source of unhandled exceptions.
-        }
-      },
+      kill: () => sendSignal(subprocess, resolveKillSignal("cooperative")),
+      forceKill: () => sendSignal(subprocess, resolveKillSignal("force")),
       exited: subprocess.exited,
     };
   }

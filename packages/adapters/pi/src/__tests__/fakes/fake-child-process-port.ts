@@ -22,6 +22,12 @@ import type {
 export class FakeSpawnedProcess implements PiSpawnedChildProcess {
   readonly writtenChunks: Uint8Array[] = [];
   killed = false;
+  /**
+   * Set only by {@link forceKill}, never by the cooperative {@link kill}.
+   * Lets tests assert the mandatory-force-kill path was actually taken
+   * (Spec 33 §11.5), not merely that *some* kill happened.
+   */
+  forceKilled = false;
   private dataHandlers: Array<(chunk: Uint8Array) => void> = [];
   private endHandlers: Array<() => void> = [];
   private errorHandlers: Array<(reason: string) => void> = [];
@@ -108,6 +114,11 @@ export class FakeSpawnedProcess implements PiSpawnedChildProcess {
 
   kill(): void {
     this.killed = true;
+  }
+
+  forceKill(): void {
+    this.killed = true;
+    this.forceKilled = true;
   }
 }
 

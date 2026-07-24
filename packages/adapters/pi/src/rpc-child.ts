@@ -1106,11 +1106,21 @@ export class PiRpcChild {
     cancelResolvers?.resolve();
   }
 
-  /** Kills the process (if any) and erases the secret/auth state. Idempotent; never touches `status`. */
+  /**
+   * The single terminal cleanup step (Spec 33 §11.5/§11.2): force-kills
+   * the process (if any) and erases the secret/auth state. Idempotent;
+   * never touches `status`. Always uses {@link PiSpawnedChildProcess.forceKill}
+   * rather than the cooperative default `kill()` - this is the *only*
+   * place any child process is ever terminated, and a non-cooperative or
+   * stopped (`SIGSTOP`'d) child must not be able to survive it (the exact
+   * bug a plain default-signal `kill()` here previously allowed: a
+   * stopped child left `T+` in `ps` well past the bounded cancellation
+   * grace, never actually reaped).
+   */
   private terminateResources(): void {
     if (this.disposed) return;
     this.disposed = true;
-    this.process?.kill();
+    this.process?.forceKill();
     this.secret?.dispose();
     this.secret = undefined;
     this.authState?.dispose();
