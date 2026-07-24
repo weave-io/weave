@@ -373,6 +373,7 @@ async function activatedFixture(
     weaveOwnedRegistrations?: readonly PiWeaveToolRegistration[];
     allTools?: readonly PiToolInfo[];
     runtimeStore?: import("@weaveio/weave-engine").RuntimeStore;
+    activationRuntimeStore?: import("@weaveio/weave-engine").RuntimeStore;
     controllerSession?: string;
   } = {},
 ): Promise<ActivatedFixture> {
@@ -398,6 +399,7 @@ async function activatedFixture(
       project: "project",
       controllerSession: options.controllerSession ?? "gen-1",
       plan,
+      runtimeStore: options.activationRuntimeStore,
     })
   )._unsafeUnwrap();
   return { bridge, plan, session, logger, pi: fakePi(allTools) };
@@ -800,6 +802,32 @@ describe("PiPermissionBridge.intercept", () => {
     });
     expect(approval.requests).toHaveLength(1);
     expect(approval.requests[0].allowedScopes).toEqual(["once", "session"]);
+  });
+
+  it("offers durable scope when production binds the opened Runtime Store at activation", async () => {
+    const { bridge, plan, session, pi } = await activatedFixture(
+      { loom: askPolicy },
+      { activationRuntimeStore: createInMemoryRuntimeStore() },
+    );
+    const approval = recordingApprovalUi();
+    approval.respond({ scope: "reject" });
+    await bridge.intercept({
+      session,
+      plan,
+      project: "project",
+      controllerSession: "gen-1",
+      agentName: "loom",
+      toolIdentity: "bash",
+      call: { command: "ls" },
+      approvalUiAvailable: true,
+      approvalUi: approval.ui,
+      pi: pi.api,
+    });
+    expect(approval.requests[0]?.allowedScopes).toEqual([
+      "once",
+      "session",
+      "durable",
+    ]);
   });
 
   it("'durable' allows a grant to persist across sessions when a durable store is explicitly injected", async () => {

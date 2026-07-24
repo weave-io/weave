@@ -7,6 +7,7 @@ import type {
   EffectiveToolPolicy,
   PermissionSession,
   RuntimeLogFileSystem,
+  RuntimeStore,
 } from "@weaveio/weave-engine";
 import { isDeniedKey, logger } from "@weaveio/weave-engine";
 import { okAsync, Result, ResultAsync } from "neverthrow";
@@ -1964,6 +1965,27 @@ export function createPiExtension(
         deps.logger,
       );
 
+      // Open the trusted project's Runtime Store once and share that exact
+      // instance with permissions, telemetry, and workflow lifecycle. Safe
+      // preflight remains read-only; this is the first mutating activation
+      // boundary. A failed open leaves durable grants and workflow commands
+      // unavailable without falling back to a fake durable scope.
+      let runtimeStore: RuntimeStore | undefined;
+      if (
+        !generation.healthOnlyMode &&
+        generation.preflight.trust === "trusted"
+      ) {
+        const opened = await deps.runtimeStoreFactory.open(ctx.cwd);
+        if (opened.isErr()) {
+          deps.logger.warn(
+            { failure: opened.error },
+            "Runtime Store open/migration failed; durable permissions and workflow lifecycle commands unavailable this generation",
+          );
+        } else {
+          runtimeStore = opened.value;
+        }
+      }
+
       // Registration/activation only proceeds once the sealed tool-policy
       // plan's coverage proof succeeded this generation (Spec 33 §7.2 step
       // 13, §12.1). An incomplete/invalid coverage proof leaves
@@ -1997,6 +2019,7 @@ export function createPiExtension(
             project: ctx.cwd,
             controllerSession: generation.id,
             plan: toolPolicy,
+            ...(runtimeStore === undefined ? {} : { runtimeStore }),
           });
           if (activated.isErr()) {
             permissionActivationFailed = true;
@@ -2110,22 +2133,15 @@ export function createPiExtension(
             },
           },
         });
-        // Workflow lifecycle projection (Spec 33 §10/§14): opens the Runtime
-        // Store only now that trust/health are confirmed, then constructs
-        // the coordinator that projects all ten engine lifecycle ops.
-        const storeResult = await deps.runtimeStoreFactory.open(ctx.cwd);
-        if (storeResult.isErr()) {
-          deps.logger.warn(
-            { failure: storeResult.error },
-            "Runtime Store open/migration failed; workflow lifecycle commands unavailable this generation",
-          );
-        } else {
+        // Workflow lifecycle projection (Spec 33 §10/§14) reuses the same
+        // trusted Runtime Store already bound to durable permissions.
+        if (runtimeStore !== undefined) {
           // Adapter telemetry (Spec 33 §19): activated only now that the
           // Runtime Store is open for a trusted, non-health-only
           // generation. Never blocks activation - a rotating-log-sink or
           // retention failure degrades visibly instead.
           const telemetryResult = await createPiTelemetry({
-            store: storeResult.value,
+            store: runtimeStore,
             settings:
               configActivation.config.settings?.runtime ??
               DEFAULT_RUNTIME_SETTINGS,
@@ -2169,7 +2185,7 @@ export function createPiExtension(
               .orElse(() => okAsync(undefined));
           }
           workflowControllerCell.controller = new PiWorkflowController({
-            store: storeResult.value,
+            store: runtimeStore,
             planStateProvider: createPiPlanStateProvider(ctx.cwd),
             artifactProvider: new BunPiArtifactProvider(),
             directDispatch: new TransportDirectDispatchPort(

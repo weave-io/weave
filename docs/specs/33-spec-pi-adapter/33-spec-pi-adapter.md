@@ -426,7 +426,7 @@ Outcomes are `unmanaged`, `denied`, `approval_required`, or `authorized`. Operat
 ### 12.4 Approval and permits
 
 
-UI choices are allow once, allow for session, allow durably with optional expiry, and reject. Unresolved requests support only once or reject. Rejection does not persist hidden policy.
+UI choices are allow once, allow for session, allow durably with optional expiry, and reject. The production permission session MUST bind the same trusted, opened Runtime Store instance used by workflow lifecycle and telemetry before it advertises durable approval; an in-memory fallback MUST omit that choice. Unresolved requests support only once or reject. Rejection does not persist hidden policy.
 
 A permit is opaque, short-lived, single-use, and bound to project, session, agent, registry generation, policy fingerprint, normalized requests or unresolved call binding, exact intercepted call, expiry, and consumed state. Pi consumes it immediately before execution. Any changed input, identity, generation, policy, expiry, or replay blocks.
 

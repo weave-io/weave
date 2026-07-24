@@ -204,14 +204,13 @@ function coverageErrorReason(error: PermissionCoverageError): string {
 }
 
 export class PiPermissionBridge {
-  private readonly store: RuntimeStore;
+  private store: RuntimeStore;
   private readonly logger: PiAdapterLogger;
   /**
-   * True only when the caller explicitly injected a `RuntimeStore` (Spec 33
-   * task boundary: task 11 owns activating a genuinely durable, trusted
-   * store). Gates whether `"durable"` is ever offered as an approval scope.
+   * True only when activation has a caller-supplied durable Runtime Store.
+   * Gates whether `"durable"` is ever offered as an approval scope.
    */
-  private readonly durableCapable: boolean;
+  private durableCapable: boolean;
 
   constructor(deps: PiPermissionBridgeDeps) {
     this.durableCapable = deps.runtimeStore !== undefined;
@@ -426,12 +425,22 @@ export class PiPermissionBridge {
     return ok(verified);
   }
 
-  /** Activates a `PermissionSession` bound to the plan's sealed registry generation. */
+  /**
+   * Activates a `PermissionSession` bound to the plan's sealed registry.
+   * Production passes the trusted project's opened Runtime Store here so
+   * durable grants use the same durable repository as workflow state. The
+   * constructor store remains the isolated-test and pre-runtime fallback.
+   */
   activate(input: {
     readonly project: string;
     readonly controllerSession: string;
     readonly plan: PiToolPolicyPlan;
+    readonly runtimeStore?: RuntimeStore;
   }): ResultAsync<PermissionSession, PiAdapterFailure> {
+    if (input.runtimeStore !== undefined) {
+      this.store = input.runtimeStore;
+      this.durableCapable = true;
+    }
     const service = createPermissionService(this.store);
     return ResultAsync.fromPromise(
       service.activate({

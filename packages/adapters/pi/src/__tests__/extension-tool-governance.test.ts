@@ -191,6 +191,9 @@ describe("tool_call governance (layer C: compiled extension against a fake host)
     const result = await host.triggerToolCall(bashCall("ls -la"));
     expect(result).toBeUndefined();
     expect(host.selectCalls).toHaveLength(1);
+    expect(host.selectCalls[0].options).toContain(
+      "Allow always for this project",
+    );
     expect(host.selectCalls[0].opts?.timeout).toBeGreaterThan(0);
   });
 
