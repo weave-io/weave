@@ -437,7 +437,12 @@ describe("private child mode (Spec 33 §11.2-§11.5, end-to-end against a fake h
         type: "tool_call",
         toolCallId: "tc-complete",
         toolName: WEAVE_COMPLETE_STEP_TOOL_NAME,
-        input: { ...completionInput },
+        // Pass the EXACT SAME object reference, not a spread copy - this is
+        // the shape a real Pi host actually sends (issue #21 Task 12: the
+        // control-channel bypass returns {call:input.call} with the SAME
+        // object as toolCallEvent.input, and the prior spread copy here
+        // masked the aliasing bug).
+        input: completionInput,
       },
       fakeCtx(),
     );
@@ -445,6 +450,7 @@ describe("private child mode (Spec 33 §11.2-§11.5, end-to-end against a fake h
 
     // Simulate the real host actually invoking the now-allowed tool - the
     // `tool_call` event only decides allow/block, never invokes the tool.
+    // This also receives the exact same object reference.
     await registration?.execute(
       "tc-complete",
       completionInput,

@@ -1138,9 +1138,16 @@ async function activateChildModeIfApplicable(
       return { block: true, reason: decision.reason };
     if (decision.kind === "allow-unmanaged") return undefined;
     if (typeof decision.call === "object" && decision.call !== null) {
-      for (const key of Object.keys(toolCallEvent.input))
-        delete toolCallEvent.input[key];
-      Object.assign(toolCallEvent.input, decision.call);
+      // Identity guard (issue #21 Task 12): only destructively replace when
+      // decision.call is a distinct normalized object. When the control-channel
+      // bypass returns {kind:"allow",call:input.call} with the SAME reference
+      // as toolCallEvent.input, deleting keys would empty both aliases before
+      // Object.assign runs, leaving the recorder with a malformed empty shape.
+      if (decision.call !== toolCallEvent.input) {
+        for (const key of Object.keys(toolCallEvent.input))
+          delete toolCallEvent.input[key];
+        Object.assign(toolCallEvent.input, decision.call);
+      }
     }
     return undefined;
   });

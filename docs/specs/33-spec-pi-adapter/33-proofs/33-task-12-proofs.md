@@ -258,6 +258,53 @@ per "What remains" below; the smoke run that found this bug must be
 repeated end-to-end against the fixed adapter before any row is marked
 `Pass`.
 
+**Second live finding: control-call aliasing bug (issue #21 Task 12).**
+Continuing exact-host diagnostics after the completion-channel policy fix,
+the direct-step child emitted a valid tool input
+`{outcome:"success",method:"agent_signal",message:"SMOKE_FLOW_COMPLETE"}`
+but the recorder saw a malformed empty shape `{}` — the completion candidate
+reached settlement with no `outcome` field, failing closed per Spec 33 §15.
+
+**Root cause.** The control-channel bypass in
+`PiPermissionBridge.intercept()` returns `{kind:"allow",call:input.call}`
+with the SAME object reference as `toolCallEvent.input` when the call is
+eligible and already normalized. `extension.ts`'s `tool_call` handler then
+destructively replaces `toolCallEvent.input`: it deletes every key from
+`toolCallEvent.input`, then `Object.assign`s from `decision.call` — but
+these are aliases to the exact same object, so the delete loop empties both
+before the assign runs, leaving the recorder (and the real Pi host's tool
+execution path) with `{}`.
+
+The existing `child-mode.test.ts` missed this because the test passed
+`{...completionInput}` (a spread copy) to `host.fire("tool_call", ...)`
+while `registration.execute` received the separate original
+`completionInput` — two distinct objects, so the destructive replacement
+had no cross-talk.
+
+**Fix.** Minimal safe identity guard in `extension.ts`'s child-mode
+`tool_call` handler: only perform the destructive key deletion and
+`Object.assign` when `decision.call !== toolCallEvent.input`. When they are
+the same reference, the input is already correct and requires no mutation.
+This preserves policy normalization (the engine may still return a distinct
+normalized `call` object), provenance (unchanged), and the closed schema (no
+new fields, no type widening).
+
+**Regression coverage.** Modified the existing "a direct-step child's own
+weave_complete_step call bypasses the descriptor's execute:deny policy"
+test in `child-mode.test.ts` to pass the exact same `completionInput`
+object reference to both `host.fire("tool_call", ...)` and
+`registration.execute(...)`, proving the bug red (settlement outcome:
+`"failed"` instead of `"completed"`), then green after the identity guard.
+No additional focused same-reference/distinct-reference tests added — the
+existing test now exercises the same-reference path (the regression), and
+the numerous other tool-call tests throughout the suite implicitly cover
+the distinct-reference path (unchanged behavior).
+
+```
+$ bun test packages/adapters/pi/src/__tests__/child-mode.test.ts
+ 26 pass, 0 fail, 78 expect() calls
+```
+
 ## What remains (live execution — for the parent agent)
 
 This task deliberately stops short of claiming stable readiness. The prior
