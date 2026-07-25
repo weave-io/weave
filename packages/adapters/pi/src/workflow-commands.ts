@@ -34,10 +34,28 @@ export interface PiWorkflowCommandUiPort {
 /** Adapter-supplied lookup for the currently-tracked workflow instance/lease and available plans/workflows - Spec 33 keeps "multiple active workflows" out of scope, so there is at most one tracked instance per generation. */
 export interface PiActiveWorkflowTracker {
   getActiveInstance():
-    | { workflowInstanceId: string; leaseId?: string }
+    | {
+        workflowInstanceId: string;
+        leaseId?: string;
+        /**
+         * Set only when this instance was reconstructed from a durable
+         * recovery pointer (Issue #21 Task 12 S020), never for an
+         * ordinarily tracked in-session instance. Carries the exact
+         * pre-reload owner (controller generation) the pointer's lease
+         * was acquired under, so `handleWeaveResume` can build an explicit
+         * takeover correlation for `resumeExecution`.
+         */
+        controllerGeneration?: string;
+      }
     | undefined;
   setActiveInstance(
-    instance: { workflowInstanceId: string; leaseId?: string } | undefined,
+    instance:
+      | {
+          workflowInstanceId: string;
+          leaseId?: string;
+          controllerGeneration?: string;
+        }
+      | undefined,
   ): void;
   /**
    * Lists safe plan basenames under `.weave/plans` (Spec 33 §16) - backs
@@ -295,7 +313,22 @@ export async function handleWeaveResume(
     return;
   }
   const result = await controller.resumeExecution(
-    { workflowInstanceId: active.workflowInstanceId, context },
+    {
+      workflowInstanceId: active.workflowInstanceId,
+      context,
+      // Issue #21 Task 12 S020: only present when this instance was
+      // reconstructed from a durable recovery pointer, and only reaches
+      // the engine now that the user has freshly confirmed above.
+      ...(active.leaseId !== undefined &&
+      active.controllerGeneration !== undefined
+        ? {
+            recoveryTakeover: {
+              expectedLeaseId: active.leaseId,
+              expectedControllerGeneration: active.controllerGeneration,
+            },
+          }
+        : {}),
+    },
     authorization.value,
   );
   result.match(

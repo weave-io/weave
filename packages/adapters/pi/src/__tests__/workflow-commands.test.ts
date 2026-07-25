@@ -232,6 +232,121 @@ describe("handleWeaveResume", () => {
     expect(resumeCalledWithInstanceId).toBe("wf-1");
     expect(tracked).toEqual({ workflowInstanceId: "wf-1", leaseId: "lease-2" });
   });
+
+  it("forwards recoveryTakeover to resumeExecution only when the tracked instance carries a controllerGeneration (Issue #21 Task 12 S020)", async () => {
+    const tracker = fakeTracker({
+      getActiveInstance: () => ({
+        workflowInstanceId: "wf-1",
+        leaseId: "lease-old",
+        controllerGeneration: "gen-old",
+      }),
+      buildContext: (name) => ({
+        workflowName: name,
+        goal: "g",
+        slug: "s",
+        workflows: {},
+      }),
+    });
+    const ui = fakeUi({ confirm: async () => true });
+    let capturedInput: unknown;
+    const controller = fakeController({
+      inspect: (async () =>
+        okAsync({
+          workflowInstanceId: "wf-1",
+          workflowName: "wf",
+          status: "paused",
+        })) as never,
+      resumeExecution: ((input: unknown) => {
+        capturedInput = input;
+        return okAsync({
+          workflowInstanceId: "wf-1",
+          leaseId: "lease-new",
+          finalStatus: "running",
+        });
+      }) as never,
+    });
+    await handleWeaveResume(ui, controller, tracker);
+    expect(capturedInput).toMatchObject({
+      recoveryTakeover: {
+        expectedLeaseId: "lease-old",
+        expectedControllerGeneration: "gen-old",
+      },
+    });
+  });
+
+  it("never forwards recoveryTakeover for an ordinary in-session instance with no controllerGeneration", async () => {
+    const tracker = fakeTracker({
+      getActiveInstance: () => ({
+        workflowInstanceId: "wf-1",
+        leaseId: "lease-1",
+      }),
+      buildContext: (name) => ({
+        workflowName: name,
+        goal: "g",
+        slug: "s",
+        workflows: {},
+      }),
+    });
+    const ui = fakeUi({ confirm: async () => true });
+    let capturedInput: unknown;
+    const controller = fakeController({
+      inspect: (async () =>
+        okAsync({
+          workflowInstanceId: "wf-1",
+          workflowName: "wf",
+          status: "paused",
+        })) as never,
+      resumeExecution: ((input: unknown) => {
+        capturedInput = input;
+        return okAsync({
+          workflowInstanceId: "wf-1",
+          leaseId: "lease-2",
+          finalStatus: "running",
+        });
+      }) as never,
+    });
+    await handleWeaveResume(ui, controller, tracker);
+    expect(capturedInput).not.toHaveProperty("recoveryTakeover");
+  });
+
+  it("surfaces LeaseLost when the engine rejects a mismatched/absent takeover, matching the exact S020 regression message", async () => {
+    const tracker = fakeTracker({
+      getActiveInstance: () => ({
+        workflowInstanceId: "wf-1",
+        leaseId: "lease-old",
+        controllerGeneration: "gen-old",
+      }),
+      buildContext: (name) => ({
+        workflowName: name,
+        goal: "g",
+        slug: "s",
+        workflows: {},
+      }),
+    });
+    const ui = fakeUi({ confirm: async () => true });
+    const controller = fakeController({
+      inspect: (async () =>
+        okAsync({
+          workflowInstanceId: "wf-1",
+          workflowName: "wf",
+          status: "paused",
+        })) as never,
+      resumeExecution: (() =>
+        errAsync({
+          code: "LeaseLost",
+          safeMessage:
+            "The execution lease is no longer held; explicit resume is required.",
+        })) as never,
+    });
+    await handleWeaveResume(ui, controller, tracker);
+    expect(
+      ui.notified.some((n) =>
+        n.message.includes(
+          "The execution lease is no longer held; explicit resume is required.",
+        ),
+      ),
+    ).toBe(true);
+  });
 });
 
 describe("handleWeavePlan", () => {

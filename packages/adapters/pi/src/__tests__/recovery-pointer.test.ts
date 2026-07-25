@@ -121,6 +121,7 @@ describe("activeInstanceFromRecoveryPointer", () => {
     expect(activeInstanceFromRecoveryPointer(pointer.value)).toEqual({
       workflowInstanceId: "wf-1",
       leaseId: "lease-1",
+      controllerGeneration: "gen-old",
     });
   });
 

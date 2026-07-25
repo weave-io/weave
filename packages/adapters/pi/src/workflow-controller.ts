@@ -291,6 +291,19 @@ export interface PiResumeWorkflowInput {
   readonly workflowInstanceId: string;
   readonly context: WorkflowExecutionContext;
   readonly metadata?: Record<string, string | number | boolean>;
+  /**
+   * Explicit, user-authorized takeover correlation for one exact
+   * pre-reload lease (Issue #21 Task 12 S020). Populated only from a
+   * durable recovery pointer's `leaseId`/`controllerGeneration` after the
+   * pointer has been judged eligible and the user has freshly confirmed
+   * `/weave:resume` - never automatically. Forwarded verbatim to the
+   * engine's `resumeExecution`, which is the sole authority over whether
+   * the takeover actually succeeds.
+   */
+  readonly recoveryTakeover?: {
+    readonly expectedLeaseId: string;
+    readonly expectedControllerGeneration: string;
+  };
 }
 
 export interface PiRunResult {
@@ -457,6 +470,18 @@ export class PiWorkflowController {
         ownerId: createOwnerId(this.deps.ownerId),
         authorizationSource: "user",
         ...(input.metadata !== undefined ? { metadata: input.metadata } : {}),
+        ...(input.recoveryTakeover !== undefined
+          ? {
+              recoveryTakeover: {
+                expectedLeaseId: createExecutionLeaseId(
+                  input.recoveryTakeover.expectedLeaseId,
+                ),
+                expectedOwnerId: createOwnerId(
+                  input.recoveryTakeover.expectedControllerGeneration,
+                ),
+              },
+            }
+          : {}),
       },
       this.deps.store,
     )

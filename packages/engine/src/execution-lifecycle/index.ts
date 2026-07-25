@@ -91,6 +91,7 @@ export type {
   ResumeExecutionInput,
   ResumeExecutionOutput,
   ResumeExecutionResult,
+  ResumeRecoveryTakeover,
   SafeMetadata,
   StartExecutionInput,
   StartExecutionOutput,

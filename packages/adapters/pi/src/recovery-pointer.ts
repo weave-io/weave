@@ -117,13 +117,20 @@ export function isPointerEligibleForExplicitResume(
  */
 export function activeInstanceFromRecoveryPointer(
   pointer: PiWeaveRecoveryPointerV1,
-): { workflowInstanceId: string; leaseId: string } | undefined {
+):
+  | {
+      workflowInstanceId: string;
+      leaseId: string;
+      controllerGeneration: string;
+    }
+  | undefined {
   if (!isPointerEligibleForExplicitResume(pointer)) return undefined;
   if (pointer.workflowId === undefined) return undefined;
   if (pointer.leaseId === undefined) return undefined;
   return {
     workflowInstanceId: pointer.workflowId,
     leaseId: pointer.leaseId,
+    controllerGeneration: pointer.controllerGeneration,
   };
 }
 

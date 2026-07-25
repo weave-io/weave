@@ -28,6 +28,7 @@ import type {
   ConsumedArtifactRecord,
   ExecutionLease,
   ExecutionLeaseId,
+  OwnerId,
   SessionSnapshotId,
   StepAttemptRecord,
   WorkflowInstance,
@@ -326,12 +327,32 @@ export interface StartExecutionOutput {
 // 3. resumeExecution — Input / Output
 // ---------------------------------------------------------------------------
 
+/**
+ * Explicit, user-authorized takeover correlation for one exact pre-reload
+ * lease (Issue #21 Task 12 S020). Combined with the sibling
+ * `workflowInstanceId`, this must match the active `ExecutionLease` exactly
+ * (lease ID and owner) or `resumeExecution` fails closed with the ordinary
+ * `lease_conflict` error - never a broad foreign-lease steal.
+ */
+export interface ResumeRecoveryTakeover {
+  /** The exact lease ID the durable pointer correlated to this instance. */
+  readonly expectedLeaseId: ExecutionLeaseId;
+  /** The exact owner ID the currently active lease must be held by. */
+  readonly expectedOwnerId: OwnerId;
+}
+
 export interface ResumeExecutionInput {
   readonly workflowInstanceId: WorkflowInstanceId;
   readonly ownerId: string;
   readonly authorizationSource?: ExecutionAuthorizationSource;
   readonly now?: string;
   readonly metadata?: SafeMetadata;
+  /**
+   * Optional explicit takeover correlation. See {@link ResumeRecoveryTakeover}.
+   * Absent by default; ordinary resume behavior (acquire, replacing only an
+   * already-expired lease) is unchanged when omitted.
+   */
+  readonly recoveryTakeover?: ResumeRecoveryTakeover;
 }
 
 export interface ResumeExecutionOutput {

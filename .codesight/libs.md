@@ -273,7 +273,7 @@
   - function parseRecoveryPointer: (raw) => Result<PiWeaveRecoveryPointerV1, RecoveryPointerValidationFailure>
   - function isPointerForCurrentGeneration: (pointer, currentGenerationId) => boolean
   - function isPointerEligibleForExplicitResume: (pointer) => boolean
-  - function activeInstanceFromRecoveryPointer: (pointer) => void
+  - function activeInstanceFromRecoveryPointer: (pointer) => |
   - class InMemoryRecoveryPointerStore
   - class BunJsonlRecoveryPointerStore
   - _...5 more_

@@ -1574,7 +1574,13 @@ export function createPiExtension(
     controller: undefined,
   };
   const activeWorkflowInstanceCell: {
-    value: { workflowInstanceId: string; leaseId?: string } | undefined;
+    value:
+      | {
+          workflowInstanceId: string;
+          leaseId?: string;
+          controllerGeneration?: string;
+        }
+      | undefined;
   } = { value: undefined };
   // Per-generation telemetry unit (Spec 33 §19) - constructed only once the
   // Runtime Store opens for a trusted, non-health-only generation. Read

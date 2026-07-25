@@ -354,6 +354,189 @@ describe("PiWorkflowController — recovery pointer", () => {
   });
 });
 
+describe("PiWorkflowController — resumeExecution recoveryTakeover (Issue #21 Task 12 S020)", () => {
+  it("reload leaves the store paused at wait with the pre-reload lease unexpired, and S019 stays inert (no auto resume)", async () => {
+    const old = buildHarness({
+      ownerId: "controller-gen-old",
+      controllerGenerationId: "controller-gen-old",
+    });
+    const workflowInstanceId = await createInstance(old.store);
+    old.directDispatch.enqueue(
+      okAsync({
+        outcome: "paused",
+        method: "agent_signal",
+      } as PiDirectDispatchCandidate) as never,
+    );
+    const auth = authorizeByExplicitUser(true);
+    if (!auth.isOk()) throw new Error("unexpected");
+    const started = await old.controller.startExecution(
+      { workflowInstanceId, context: buildContext() },
+      auth.value,
+    );
+    expect(started.isOk()).toBe(true);
+
+    // A fresh generation opens the same store (simulating /reload) but
+    // never itself resumes anything.
+    const activeLease = await old.store.leases.findActive();
+    expect(activeLease.isOk()).toBe(true);
+    if (activeLease.isOk()) expect(activeLease.value).not.toBeNull();
+    const instance = await old.store.instances.findById(
+      // biome-ignore lint/suspicious/noExplicitAny: branded id round-trip for the test harness only
+      workflowInstanceId as any,
+    );
+    expect(instance.isOk()).toBe(true);
+    if (instance.isOk()) expect(instance.value?.status).toBe("paused");
+  });
+
+  it("takes over the exact correlated pre-reload lease with a fresh owner and continues dispatch", async () => {
+    const old = buildHarness({
+      ownerId: "controller-gen-old",
+      controllerGenerationId: "controller-gen-old",
+    });
+    const store = old.store;
+    const workflowInstanceId = await createInstance(store);
+    old.directDispatch.enqueue(
+      okAsync({
+        outcome: "paused",
+        method: "agent_signal",
+      } as PiDirectDispatchCandidate) as never,
+    );
+    const auth = authorizeByExplicitUser(true);
+    if (!auth.isOk()) throw new Error("unexpected");
+    const started = await old.controller.startExecution(
+      { workflowInstanceId, context: buildContext() },
+      auth.value,
+    );
+    expect(started.isOk()).toBe(true);
+    if (!started.isOk()) return;
+    const oldLeaseId = started.value.leaseId;
+    if (oldLeaseId === undefined) throw new Error("expected an active lease");
+
+    // A fresh generation (new PiWorkflowController, new ownerId) shares
+    // the same durable store - the exact S020 scenario.
+    const fresh = buildHarness({
+      store,
+      ownerId: "controller-gen-new",
+      controllerGenerationId: "controller-gen-new",
+    });
+    // The paused candidate never advanced past "plan" - resuming retries
+    // "plan" (now succeeding), which auto-advances into "implement".
+    fresh.directDispatch.enqueue(okAsync(successCandidate()) as never);
+    fresh.directDispatch.enqueue(okAsync(successCandidate()) as never);
+    const resumeAuth = authorizeByExplicitUser(true);
+    if (!resumeAuth.isOk()) throw new Error("unexpected");
+    const resumed = await fresh.controller.resumeExecution(
+      {
+        workflowInstanceId,
+        context: buildContext(),
+        recoveryTakeover: {
+          expectedLeaseId: oldLeaseId,
+          expectedControllerGeneration: "controller-gen-old",
+        },
+      },
+      resumeAuth.value,
+    );
+
+    expect(resumed.isOk()).toBe(true);
+    if (resumed.isOk()) {
+      expect(resumed.value.leaseId).not.toBe(oldLeaseId);
+      expect(resumed.value.finalStatus).toBe("completed");
+    }
+    expect(fresh.directDispatch.calls.length).toBe(2);
+  });
+
+  it("fails closed with the exact LeaseLost message when the correlation is mismatched", async () => {
+    const old = buildHarness({
+      ownerId: "controller-gen-old",
+      controllerGenerationId: "controller-gen-old",
+    });
+    const store = old.store;
+    const workflowInstanceId = await createInstance(store);
+    old.directDispatch.enqueue(
+      okAsync({
+        outcome: "paused",
+        method: "agent_signal",
+      } as PiDirectDispatchCandidate) as never,
+    );
+    const auth = authorizeByExplicitUser(true);
+    if (!auth.isOk()) throw new Error("unexpected");
+    const started = await old.controller.startExecution(
+      { workflowInstanceId, context: buildContext() },
+      auth.value,
+    );
+    expect(started.isOk()).toBe(true);
+
+    const fresh = buildHarness({
+      store,
+      ownerId: "controller-gen-new",
+      controllerGenerationId: "controller-gen-new",
+    });
+    const resumeAuth = authorizeByExplicitUser(true);
+    if (!resumeAuth.isOk()) throw new Error("unexpected");
+    const resumed = await fresh.controller.resumeExecution(
+      {
+        workflowInstanceId,
+        context: buildContext(),
+        recoveryTakeover: {
+          expectedLeaseId: "some-other-lease",
+          expectedControllerGeneration: "controller-gen-old",
+        },
+      },
+      resumeAuth.value,
+    );
+
+    expect(resumed.isErr()).toBe(true);
+    if (resumed.isErr()) {
+      expect(resumed.error.code).toBe("LeaseLost");
+      expect(resumed.error.safeMessage).toBe(
+        "The execution lease is no longer held; explicit resume is required.",
+      );
+    }
+  });
+
+  it("reproduces the exact S020 regression without recoveryTakeover: a fresh owner's plain resume conflicts on the still-unexpired old lease", async () => {
+    const old = buildHarness({
+      ownerId: "controller-gen-old",
+      controllerGenerationId: "controller-gen-old",
+    });
+    const store = old.store;
+    const workflowInstanceId = await createInstance(store);
+    old.directDispatch.enqueue(
+      okAsync({
+        outcome: "paused",
+        method: "agent_signal",
+      } as PiDirectDispatchCandidate) as never,
+    );
+    const auth = authorizeByExplicitUser(true);
+    if (!auth.isOk()) throw new Error("unexpected");
+    const started = await old.controller.startExecution(
+      { workflowInstanceId, context: buildContext() },
+      auth.value,
+    );
+    expect(started.isOk()).toBe(true);
+
+    const fresh = buildHarness({
+      store,
+      ownerId: "controller-gen-new",
+      controllerGenerationId: "controller-gen-new",
+    });
+    const resumeAuth = authorizeByExplicitUser(true);
+    if (!resumeAuth.isOk()) throw new Error("unexpected");
+    const resumed = await fresh.controller.resumeExecution(
+      { workflowInstanceId, context: buildContext() },
+      resumeAuth.value,
+    );
+
+    expect(resumed.isErr()).toBe(true);
+    if (resumed.isErr()) {
+      expect(resumed.error.code).toBe("LeaseLost");
+      expect(resumed.error.safeMessage).toBe(
+        "The execution lease is no longer held; explicit resume is required.",
+      );
+    }
+  });
+});
+
 describe("PiWorkflowController — inspectExecution stays read-only", () => {
   it("returns a snapshot without mutating instance state", async () => {
     const { store, controller } = buildHarness();
