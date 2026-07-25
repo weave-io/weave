@@ -4,6 +4,12 @@
 - Issue: weave-io/weave#21, Task 12
 - Status: ✅ Complete — all 20 `PI-*` rows pass and all 23 exact-host interactive TUI checks passed against one digest-bound artifact
 
+> **Historical binding:** This proof and its manifest preserve the exact
+> `>=0.81.1 <0.82.0` host range declared by the accepted Task 12 artifact.
+> The current adapter later moved to a minimum-only `>=0.81.1` runtime and
+> peer range. New manifests use that current range; this immutable proof does
+> not rewrite the metadata of the artifact it originally verified.
+
 ## Summary
 
 Task 12 is complete. The acceptance machinery traces every requirement to

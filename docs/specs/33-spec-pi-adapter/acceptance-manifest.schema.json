@@ -14,7 +14,7 @@
       "required": ["package", "supportedRange", "floorVersion", "exactTestedVersion"],
       "properties": {
         "package": { "const": "@earendil-works/pi-coding-agent" },
-        "supportedRange": { "const": ">=0.81.1 <0.82.0" },
+        "supportedRange": { "type": "string", "pattern": "^>=0\\.81\\.1(?: <\\d+\\.\\d+\\.\\d+)?$" },
         "floorVersion": { "const": "0.81.1" },
         "exactTestedVersion": { "type": "string", "pattern": "^0\\.81\\.[1-9][0-9]*$" }
       }

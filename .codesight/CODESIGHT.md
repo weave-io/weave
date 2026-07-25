@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 220 lib files | 33 env vars | 9 middleware | 0% test coverage
 > **Token savings:** this file is ~21,500 tokens. Without it, AI exploration would cost ~72,900 tokens. **Saves ~51,400 tokens per conversation.**
-> **Last scanned:** 2026-07-25 13:57 — re-run after significant changes
+> **Last scanned:** 2026-07-25 19:00 — re-run after significant changes
 
 ---
 
@@ -237,7 +237,7 @@
   - class BunHostPackageReader
   - interface HostPackageReader
   - type HostPackageInfo
-  - _...4 more_
+  - _...3 more_
 - `packages/adapters/pi/src/host-inventory.ts` — function readValidatedCommands: (api, "getCommands">) => Result<PiCommandInfo[], PiAdapterFailure>, function readValidatedTools: (api, "getAllTools">) => Result<PiToolInfo[], PiAdapterFailure>
 - `packages/adapters/pi/src/model-resolution.ts`
   - class PiModelResolver

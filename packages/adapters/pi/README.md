@@ -1,7 +1,7 @@
 # @weaveio/weave-adapter-pi
 
 Pi adapter for the Weave orchestration framework. Targets the Earendil Works
-Pi fork (`@earendil-works/pi-coding-agent`, `>=0.81.1 <0.82.0`) in interactive
+Pi fork (`@earendil-works/pi-coding-agent`, `>=0.81.1`) in interactive
 TUI parent sessions only.
 
 Install as a Pi package:

@@ -19,12 +19,12 @@ describe("isSupportedHostVersion", () => {
     expect(isSupportedHostVersion("0.81.0")).toBe(false);
   });
 
-  it("rejects the exclusive ceiling 0.82.0", () => {
-    expect(isSupportedHostVersion("0.82.0")).toBe(false);
+  it("accepts the local 0.82.1 host above the original tested minor", () => {
+    expect(isSupportedHostVersion("0.82.1")).toBe(true);
   });
 
-  it("rejects a version above the ceiling", () => {
-    expect(isSupportedHostVersion("0.83.0")).toBe(false);
+  it("accepts later stable major versions because support has no ceiling", () => {
+    expect(isSupportedHostVersion("1.0.0")).toBe(true);
   });
 
   it("rejects a prerelease at the floor (no force/ignore override)", () => {
@@ -99,7 +99,7 @@ describe("checkHostCompatibility", () => {
   it("produces a failure with health-only impact and no retry", () => {
     const result = checkHostCompatibility({
       name: HOST_PACKAGE_NAME,
-      version: "0.82.0",
+      version: "0.81.0",
     });
     const failure = result._unsafeUnwrapErr();
     expect(failure.impact).toBe("health-only");

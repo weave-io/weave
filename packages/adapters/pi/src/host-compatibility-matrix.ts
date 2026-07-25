@@ -1,7 +1,6 @@
 import { err, ok, type Result } from "neverthrow";
 import {
   HOST_PACKAGE_NAME,
-  HOST_VERSION_CEILING,
   HOST_VERSION_FLOOR,
   isSupportedHostVersion,
 } from "./host-compatibility.js";
@@ -34,7 +33,7 @@ export interface PiHostCompatibilityMatrix {
 
 export const PI_HOST_COMPATIBILITY_MATRIX: PiHostCompatibilityMatrix = {
   package: HOST_PACKAGE_NAME,
-  supportedRange: `>=${HOST_VERSION_FLOOR} <${HOST_VERSION_CEILING}`,
+  supportedRange: `>=${HOST_VERSION_FLOOR}`,
   floorVersion: HOST_VERSION_FLOOR,
   exactTestedVersion: "0.81.1",
 };
@@ -46,7 +45,7 @@ export type HostCompatibilityMatrixError =
   | { type: "ExactVersionMalformed"; version: string }
   | { type: "ExactVersionOutOfRange"; version: string };
 
-const EXACT_TESTED_VERSION_PATTERN = /^0\.81\.[1-9][0-9]*$|^0\.81\.1$/;
+const EXACT_TESTED_VERSION_PATTERN = /^\d+\.\d+\.\d+$/;
 
 /**
  * Verifies a compatibility matrix record is internally consistent: the
@@ -64,7 +63,7 @@ export function validateHostCompatibilityMatrix(
       expected: HOST_PACKAGE_NAME,
       actual: matrix.package,
     });
-  const expectedRange = `>=${HOST_VERSION_FLOOR} <${HOST_VERSION_CEILING}`;
+  const expectedRange = `>=${HOST_VERSION_FLOOR}`;
   if (matrix.supportedRange !== expectedRange)
     return err({
       type: "RangeDrift",

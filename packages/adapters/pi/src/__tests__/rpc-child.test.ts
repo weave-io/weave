@@ -154,6 +154,19 @@ function flush(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+async function waitFor(
+  predicate: () => boolean,
+  timeoutMs = 2_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) {
+      throw new Error("test setup: timed out waiting for asynchronous event");
+    }
+    await flushMs(1);
+  }
+}
+
 function extractControlEnvelopeFromPrompt(line: unknown): JsonValue {
   const record = line as { type: string; message: string };
   expect(record.type).toBe("prompt");
@@ -315,7 +328,7 @@ describe("PiRpcChild", () => {
       approvalRequestBody,
       secretBytes,
     );
-    await flush();
+    await waitFor(() => relayed.length === 1);
     expect(relayed).toEqual([
       {
         childId: "child-1",

@@ -128,11 +128,11 @@ describe("PiSafeInitializer.preflight", () => {
     expect(preflight.hostSupported).toBe(false);
   });
 
-  it("enters health-only mode when the host version is out of range", async () => {
+  it("enters health-only mode when the host version is below the floor", async () => {
     const initializer = new PiSafeInitializer({
       hostPackageReader: FakeHostPackageReader.ok({
         name: HOST_PACKAGE_NAME,
-        version: "0.82.0",
+        version: "0.81.0",
       }),
       capabilityProber: new FixedProber(allOkProbes()),
       configActivator: fakeConfigActivator(),

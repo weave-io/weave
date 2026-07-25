@@ -17,7 +17,6 @@ import {
 } from "../../packages/adapters/pi/src/errors.js";
 import {
   HOST_PACKAGE_NAME,
-  HOST_VERSION_CEILING,
   HOST_VERSION_FLOOR,
 } from "../../packages/adapters/pi/src/host-compatibility.js";
 import { PI_HOST_COMPATIBILITY_MATRIX } from "../../packages/adapters/pi/src/host-compatibility-matrix.js";
@@ -121,7 +120,7 @@ export type AcceptanceManifestRequirement = z.infer<typeof RequirementSchema>;
 export const HostSchema = z
   .object({
     package: z.literal(PI_HOST_COMPATIBILITY_MATRIX.package),
-    supportedRange: z.literal(PI_HOST_COMPATIBILITY_MATRIX.supportedRange),
+    supportedRange: z.string().regex(/^>=0\.81\.1(?: <\d+\.\d+\.\d+)?$/),
     floorVersion: z.literal(PI_HOST_COMPATIBILITY_MATRIX.floorVersion),
     exactTestedVersion: z.string().regex(/^0\.81\.[1-9][0-9]*$/),
   })
@@ -240,11 +239,10 @@ export const PERMISSION_OUTCOME_KINDS = [
 /** The 2 `ArtifactApprovalActor` kinds (Spec 33 §17). */
 export const ARTIFACT_APPROVAL_ACTOR_KINDS = ["user", "agent"] as const;
 
-/** The 3 source-controlled host-compatibility boundary tokens (Spec 33 §22). */
+/** The 2 source-controlled host-compatibility boundary tokens (Spec 33 §22). */
 export const HOST_BOUNDARY_TOKENS = [
   HOST_PACKAGE_NAME,
   HOST_VERSION_FLOOR,
-  HOST_VERSION_CEILING,
 ] as const;
 
 export const CLOSED_SET_REQUIREMENTS: Partial<
@@ -284,7 +282,7 @@ export const CLOSED_SET_REQUIREMENTS: Partial<
     ],
   },
   "PI-PKG": {
-    description: "host package/floor/ceiling boundary tokens (Spec 33 §22)",
+    description: "host package/minimum-version boundary tokens (Spec 33 §22)",
     members: HOST_BOUNDARY_TOKENS,
   },
   "PI-ERR": {

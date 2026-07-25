@@ -226,7 +226,7 @@
   - class BunHostPackageReader
   - interface HostPackageReader
   - type HostPackageInfo
-  - _...4 more_
+  - _...3 more_
 - `packages/adapters/pi/src/host-inventory.ts` — function readValidatedCommands: (api, "getCommands">) => Result<PiCommandInfo[], PiAdapterFailure>, function readValidatedTools: (api, "getAllTools">) => Result<PiToolInfo[], PiAdapterFailure>
 - `packages/adapters/pi/src/model-resolution.ts`
   - class PiModelResolver

@@ -11,9 +11,7 @@ import {
 describe("PI_HOST_COMPATIBILITY_MATRIX", () => {
   it("names the exact host package, range, floor, and tested version (Spec 33 §22)", () => {
     expect(PI_HOST_COMPATIBILITY_MATRIX.package).toBe(HOST_PACKAGE_NAME);
-    expect(PI_HOST_COMPATIBILITY_MATRIX.supportedRange).toBe(
-      ">=0.81.1 <0.82.0",
-    );
+    expect(PI_HOST_COMPATIBILITY_MATRIX.supportedRange).toBe(">=0.81.1");
     expect(PI_HOST_COMPATIBILITY_MATRIX.floorVersion).toBe(HOST_VERSION_FLOOR);
     expect(PI_HOST_COMPATIBILITY_MATRIX.exactTestedVersion).toBe("0.81.1");
   });
@@ -36,10 +34,10 @@ describe("validateHostCompatibilityMatrix", () => {
     if (result.isErr()) expect(result.error.type).toBe("PackageMismatch");
   });
 
-  it("rejects a supported range that has drifted from the floor/ceiling constants", () => {
+  it("rejects a supported range that has drifted from the floor constant", () => {
     const result = validateHostCompatibilityMatrix({
       ...PI_HOST_COMPATIBILITY_MATRIX,
-      supportedRange: ">=0.80.0 <0.82.0",
+      supportedRange: ">=0.80.0",
     });
     expect(result.isErr()).toBe(true);
     if (result.isErr()) expect(result.error.type).toBe("RangeDrift");
@@ -63,13 +61,22 @@ describe("validateHostCompatibilityMatrix", () => {
     if (result.isErr()) expect(result.error.type).toBe("ExactVersionMalformed");
   });
 
-  it("rejects an exact tested version outside the supported range", () => {
+  it("rejects an exact tested version below the floor", () => {
     const result = validateHostCompatibilityMatrix({
       ...PI_HOST_COMPATIBILITY_MATRIX,
-      exactTestedVersion: "0.82.0",
+      exactTestedVersion: "0.81.0",
     });
     expect(result.isErr()).toBe(true);
-    if (result.isErr()) expect(result.error.type).toBe("ExactVersionMalformed");
+    if (result.isErr())
+      expect(result.error.type).toBe("ExactVersionOutOfRange");
+  });
+
+  it("accepts an exact tested version in a later minor", () => {
+    const result = validateHostCompatibilityMatrix({
+      ...PI_HOST_COMPATIBILITY_MATRIX,
+      exactTestedVersion: "0.82.1",
+    });
+    expect(result.isOk()).toBe(true);
   });
 
   it("accepts a later exact tested patch still inside the supported range", () => {

@@ -73,6 +73,21 @@ describe("buildAcceptanceManifest + validateAcceptanceManifestStructure", () => 
     expect(result.isOk()).toBe(true);
   });
 
+  it("accepts the immutable Task 12 manifest's historical capped host range", () => {
+    const manifest = buildAcceptanceManifest({
+      artifactBinding: VALID_ARTIFACT_BINDING,
+      requirements: ACCEPTANCE_MANIFEST_REQUIREMENTS,
+    });
+    const result = validateAcceptanceManifestStructure({
+      ...manifest,
+      host: {
+        ...manifest.host,
+        supportedRange: ">=0.81.1 <0.82.0",
+      },
+    });
+    expect(result.isOk()).toBe(true);
+  });
+
   it("covers exactly the 20 mandatory requirement IDs, no more, no fewer", () => {
     const manifest = buildAcceptanceManifest({
       artifactBinding: VALID_ARTIFACT_BINDING,

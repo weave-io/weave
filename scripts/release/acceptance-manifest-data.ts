@@ -519,7 +519,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
       liveSmoke: { required: true, checklistIds: ["S001", "S023"] },
       result: "pass",
       notes:
-        "Closed-set check verifies the host boundary tokens (HOST_PACKAGE_NAME, HOST_VERSION_FLOOR, HOST_VERSION_CEILING) appear across the referenced tests.",
+        "Closed-set check verifies the minimum-only host boundary tokens (HOST_PACKAGE_NAME, HOST_VERSION_FLOOR) appear across the referenced tests.",
     },
     {
       id: "PI-MODE",

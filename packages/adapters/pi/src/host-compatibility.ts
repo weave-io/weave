@@ -12,9 +12,6 @@ export const HOST_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
 /** Inclusive floor of the supported host version range (Spec 33 §22). */
 export const HOST_VERSION_FLOOR = "0.81.1";
 
-/** Exclusive ceiling of the supported host version range (Spec 33 §22). */
-export const HOST_VERSION_CEILING = "0.82.0";
-
 export const HostPackageInfoSchema = z.object({
   name: z.string().min(1),
   version: z.string().min(1),
@@ -51,21 +48,17 @@ function compareCore(a: ParsedVersion, b: ParsedVersion): -1 | 0 | 1 {
 }
 
 const FLOOR = { major: 0, minor: 81, patch: 1 };
-const CEILING = { major: 0, minor: 82, patch: 0 };
 
 /**
- * Exact `>=0.81.1 <0.82.0` range check. There is no force/ignore override
- * (Spec 33 §22): any prerelease/build-metadata suffix fails closed rather than
- * being coerced into the range.
+ * Minimum-only `>=0.81.1` range check. There is no maximum version and no
+ * force/ignore override (Spec 33 §22): prereleases fail closed rather than
+ * being coerced into the supported range.
  */
 export function isSupportedHostVersion(version: string): boolean {
   const parsed = parseSemver(version);
   if (parsed.isErr()) return false;
   if (parsed.value.prerelease !== undefined) return false;
-  return (
-    compareCore(parsed.value, FLOOR) >= 0 &&
-    compareCore(parsed.value, CEILING) < 0
-  );
+  return compareCore(parsed.value, FLOOR) >= 0;
 }
 
 /**

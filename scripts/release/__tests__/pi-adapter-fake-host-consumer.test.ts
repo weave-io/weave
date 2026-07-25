@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   HOST_PACKAGE_NAME,
-  HOST_VERSION_CEILING,
   HOST_VERSION_FLOOR,
   isSupportedHostVersion,
 } from "../../../packages/adapters/pi/src/host-compatibility.js";
@@ -119,7 +118,7 @@ describe("pi adapter clean-room fake-host consumer (Spec 33 §24F, §25 PI-PKG)"
         new TextDecoder().decode(manifestEntry?.contents),
       ) as { peerDependencies: Record<string, string> };
       expect(manifest.peerDependencies[HOST_PACKAGE_NAME]).toBe(
-        `>=${HOST_VERSION_FLOOR} <${HOST_VERSION_CEILING}`,
+        `>=${HOST_VERSION_FLOOR}`,
       );
 
       // materialize the packed artifact - no npm install, no network

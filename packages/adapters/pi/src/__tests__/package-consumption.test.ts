@@ -16,7 +16,7 @@ describe("public package entry points", () => {
     expect(typeof pkg.isSupportedHostVersion).toBe("function");
     expect(pkg.HOST_PACKAGE_NAME).toBe("@earendil-works/pi-coding-agent");
     expect(pkg.HOST_VERSION_FLOOR).toBe("0.81.1");
-    expect(pkg.HOST_VERSION_CEILING).toBe("0.82.0");
+    expect("HOST_VERSION_CEILING" in pkg).toBe(false);
     expect(pkg.WEAVE_COMMAND_NAMES).toHaveLength(9);
     expect(pkg.PI_ADAPTER_CAPABILITY_CONTRACT.capabilities).toHaveLength(19);
     expect(typeof pkg.createPiExtension).toBe("function");

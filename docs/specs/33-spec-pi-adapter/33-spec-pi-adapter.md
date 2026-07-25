@@ -38,7 +38,7 @@ OpenCode and Claude Code are evidence, not implementation templates. Prompt-only
 
 
 *   Earendil Works `@earendil-works/pi-coding-agent` only.
-*   Host versions `>=0.81.1 <0.82.0`.
+*   Stable host versions `>=0.81.1`; there is no maximum version.
 *   Interactive Pi TUI parent sessions.
 *   One globally installed Pi package with one compiled extension entry.
 *   Agent materialization, primary selection, skills, model intent, tool policy, categories, review variants, delegation, workflows, lifecycle projection, plans, artifacts, recovery, diagnostics, usage, capabilities, packaging, and release evidence.
@@ -104,7 +104,7 @@ The package MUST:
 *   expose `.` as the testable controller/service library;
 *   expose `./extension` with exactly one default extension factory;
 *   depend on Weave core/config/engine at runtime;
-*   declare `@earendil-works/pi-coding-agent` as an unbundled peer at `>=0.81.1 <0.82.0`;
+*   declare `@earendil-works/pi-coding-agent` as an unbundled peer at `>=0.81.1` with no maximum version;
 *   declare any imported Pi-provided package as an unbundled `"*"` peer;
 *   contain no install lifecycle scripts;
 *   exclude source maps, tests, fixtures, private paths, and unneeded source from the tarball.
@@ -694,7 +694,7 @@ Read-only probes cover host/mode, trust/config readability, required APIs/events
 One source-controlled compatibility record MUST name:
 
 *   host package `@earendil-works/pi-coding-agent`;
-*   range `>=0.81.1 <0.82.0`;
+*   minimum-only range `>=0.81.1`;
 *   floor `0.81.1`;
 *   exact release-tested version.
 

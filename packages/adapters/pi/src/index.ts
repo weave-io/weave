@@ -150,7 +150,6 @@ export {
   BunHostPackageReader,
   checkHostCompatibility,
   HOST_PACKAGE_NAME,
-  HOST_VERSION_CEILING,
   HOST_VERSION_FLOOR,
   HostPackageInfoSchema,
   isSupportedHostVersion,

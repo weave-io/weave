@@ -69,7 +69,7 @@ describe("pi adapter packed artifact (Spec 33 §5, §22, §24F, §25 PI-PKG)", (
 
       // preserved, unmodified exact host peer range (Spec 33 §22)
       expect(manifest.peerDependencies).toEqual({
-        "@earendil-works/pi-coding-agent": ">=0.81.1 <0.82.0",
+        "@earendil-works/pi-coding-agent": ">=0.81.1",
         "@earendil-works/pi-ai": "*",
         "@earendil-works/pi-tui": "*",
       });
