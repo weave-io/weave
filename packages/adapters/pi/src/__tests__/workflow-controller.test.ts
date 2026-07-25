@@ -1,10 +1,14 @@
 import { describe, expect, it } from "bun:test";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { parseConfig } from "@weaveio/weave-core";
 import {
   type ArtifactApprovalActor,
   createExecutionLeaseId,
   createInMemoryRuntimeStore,
   createOwnerId,
+  createSqliteRuntimeStore,
+  createWorkflowInstanceId,
   type RuntimeStore,
   type WorkflowExecutionContext,
 } from "@weaveio/weave-engine";
@@ -1399,5 +1403,119 @@ describe("PiWorkflowController — onPlanSnapshotChanged fires at every required
     });
     expect(reconciled.isOk()).toBe(true);
     expect(notified).toEqual([workflowInstanceId]);
+  });
+});
+
+describe("PiWorkflowController — terminal completion idle observation ordering against a real SQLite Runtime Store (#21 Task 12)", () => {
+  // A live-exact-host regression: `completeStep` on the workflow's final
+  // step releases the active ExecutionLease - the SQLite Runtime Store
+  // deletes that row outright. Observing `idle` for that same settlement
+  // any later tries to record a SessionSnapshot against a lease_id that no
+  // longer exists, which the real SQLite FK constraint (unlike the
+  // in-memory store used by every other test in this file) rejects. The
+  // failure was silent to the caller - `observeBestEffort` degrades any
+  // observation failure to a logged warning, never a returned error - so
+  // only a real SQLite store, a captured logger, and an explicit snapshot
+  // count/status assertion can prove this ordering is correct.
+  let projectRoot: string;
+
+  function openStore(): RuntimeStore {
+    projectRoot = join(
+      tmpdir(),
+      `weave-workflow-controller-${crypto.randomUUID()}`,
+    );
+    Bun.spawnSync(["mkdir", "-p", projectRoot]);
+    return createSqliteRuntimeStore({
+      dbPath: join(projectRoot, ".weave", "runtime", "weave.db"),
+      projectRoot,
+    });
+  }
+
+  function cleanupStore(): void {
+    Bun.spawnSync(["rm", "-rf", projectRoot]);
+  }
+
+  it("records the terminal step's idle SessionSnapshot with no lifecycle warning, even though completeStep already released the lease", async () => {
+    const store = openStore();
+    try {
+      const warnings: unknown[] = [];
+      const directDispatch = new FakeDirectDispatchPort();
+      const recoveryPointerStore = new InMemoryRecoveryPointerStore();
+      const generationCurrent = { value: true };
+      const deps: PiWorkflowControllerDeps = {
+        store,
+        planStateProvider: new FakePlanStateProvider(),
+        artifactProvider: new FakePiArtifactProvider(new Map()),
+        directDispatch,
+        recoveryPointerStore,
+        clock: { now: () => 1_700_000_000_000 },
+        idGenerator: { next: () => "generated-id" },
+        logger: {
+          debug() {},
+          info() {},
+          warn: (...args: unknown[]) => warnings.push(args),
+          error() {},
+        },
+        controllerGenerationId: "gen-1",
+        assertGenerationCurrent: () =>
+          generationCurrent.value
+            ? ok(undefined)
+            : err(makeControllerGenerationStaleFailure("gen-1")),
+        ownerId: "test-owner",
+        projectRoot: "/tmp/fake-project",
+        maxAutoAdvanceSteps: 10,
+        resolveAgentDescriptor: (agentName) => ({
+          name: agentName,
+          composedPrompt: `You are ${agentName}.`,
+          models: [],
+          mode: "subagent",
+          effectiveToolPolicy: {
+            read: "allow",
+            write: "allow",
+            execute: "allow",
+            delegate: "deny",
+            network: "deny",
+          },
+          rawToolPolicy: undefined,
+          delegationTargets: [],
+          skills: [],
+        }),
+      };
+      const controller = new PiWorkflowController(deps);
+      const workflowInstanceId = await createInstance(store);
+      directDispatch.enqueue(okAsync(successCandidate()) as never);
+      directDispatch.enqueue(okAsync(successCandidate()) as never);
+
+      const auth = authorizeByExplicitUser(true);
+      if (!auth.isOk()) throw new Error("unexpected");
+      const result = await controller.startExecution(
+        { workflowInstanceId, context: buildContext() },
+        auth.value,
+      );
+
+      expect(result.isOk()).toBe(true);
+      if (result.isOk()) expect(result.value.finalStatus).toBe("completed");
+
+      // The regression: on the pre-fix ordering, recording the terminal
+      // step's idle observation after `completeStep` released the lease hit
+      // a real FK constraint violation, degraded to a logged warning, and
+      // silently dropped the SessionSnapshot row - even though the run
+      // itself reported "completed". None of that may happen now.
+      expect(warnings).toEqual([]);
+
+      const snapshots = await store.snapshots.listByWorkflowInstance(
+        createWorkflowInstanceId(workflowInstanceId),
+      );
+      expect(snapshots.isOk()).toBe(true);
+      if (!snapshots.isOk()) return;
+      const idleForImplement = snapshots.value.filter(
+        (snapshot) =>
+          snapshot.sessionStatus === "idle" &&
+          snapshot.stepName === "implement",
+      );
+      expect(idleForImplement).toHaveLength(1);
+    } finally {
+      cleanupStore();
+    }
   });
 });

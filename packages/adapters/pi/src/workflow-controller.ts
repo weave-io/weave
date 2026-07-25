@@ -1018,45 +1018,47 @@ export class PiWorkflowController {
             ? { artifacts: candidate.artifacts }
             : {}),
         };
-        // Spec 33 §13/§14: a `user_confirm`-method candidate reports that the
-        // direct-step agent believes the step is ready, but `completion
-        // user_confirm` steps exist precisely so a *user*, not an agent,
-        // supplies the actual confirmation (the engine itself places no
-        // restriction on who supplies a `user_confirm` signal - trust is an
-        // adapter-owned decision). Auto-completing the instant the
-        // candidate arrives would make `/weave:advance` permanently a
-        // dead command with nothing to confirm. Withhold `completeStep`
-        // and stash the validated signal; only an explicit
-        // `/weave:advance` (-> {@link confirmStep}, itself requiring a
-        // fresh {@link AuthorizedByUser}) may release it.
-        if (signal.method === "user_confirm") {
-          this.pendingUserConfirmation = {
+        // Record the idle observation now, while `leaseId` still
+        // references a live lease - `completeStep` (called below) releases
+        // and, for a terminal step, deletes it (#21 Task 12).
+        return this.observeBestEffort({
+          workflowInstanceId,
+          leaseId,
+          agentName: dispatchEffect.runAgent.agentName,
+          sessionStatus: "idle",
+          stepName,
+        }).andThen(() => {
+          // Spec 33 §13/§14: `user_confirm` requires an explicit
+          // `/weave:advance` (-> {@link confirmStep}) to release - an
+          // agent-supplied candidate alone is never enough.
+          if (signal.method === "user_confirm") {
+            this.pendingUserConfirmation = {
+              workflowInstanceId,
+              leaseId,
+              agentName: dispatchEffect.runAgent.agentName,
+              context,
+              stepName,
+              signal,
+              iteration,
+              maxSteps,
+            };
+            return okAsync<PiRunResult, PiAdapterFailure>({
+              workflowInstanceId,
+              leaseId,
+              finalStatus: "running",
+              currentStepName: stepName,
+            });
+          }
+          return this.settleCompletionSignal(
             workflowInstanceId,
             leaseId,
-            agentName: dispatchEffect.runAgent.agentName,
             context,
             stepName,
             signal,
             iteration,
             maxSteps,
-          };
-          return okAsync<PiRunResult, PiAdapterFailure>({
-            workflowInstanceId,
-            leaseId,
-            finalStatus: "running",
-            currentStepName: stepName,
-          });
-        }
-        return this.settleCompletionSignal(
-          workflowInstanceId,
-          leaseId,
-          context,
-          dispatchEffect.runAgent.agentName,
-          stepName,
-          signal,
-          iteration,
-          maxSteps,
-        );
+          );
+        });
       });
   }
 
@@ -1101,7 +1103,6 @@ export class PiWorkflowController {
       pending.workflowInstanceId,
       pending.leaseId,
       pending.context,
-      pending.agentName,
       pending.stepName,
       pending.signal,
       pending.iteration,
@@ -1115,17 +1116,19 @@ export class PiWorkflowController {
   /**
    * Shared tail of the direct-step dispatch loop: calls `completeStep`
    * exactly once with an already-validated {@link StepCompletionSignal},
-   * appends the recovery pointer, observes settlement/idle, applies the
-   * optional review/security-rejection reconciliation, and projects
-   * completeStep's own returned effects (pause/complete/auto-advance)
-   * exactly once (Spec 33 §14). Shared by the immediate non-`user_confirm`
-   * path in {@link runDispatchAgentEffect} and by {@link confirmStep}.
+   * appends the recovery pointer, applies the optional review/security-
+   * rejection reconciliation, and projects completeStep's own returned
+   * effects (pause/complete/auto-advance) exactly once (Spec 33 §14).
+   * The idle observation already fired in {@link runDispatchAgentEffect}
+   * before this `completeStep` call, so a terminal step's lease release
+   * never races it (#21 Task 12). Shared by the immediate
+   * non-`user_confirm` path in {@link runDispatchAgentEffect} and by
+   * {@link confirmStep}.
    */
   private settleCompletionSignal(
     workflowInstanceId: string,
     leaseId: string,
     context: WorkflowExecutionContext,
-    agentName: string,
     stepName: string,
     signal: StepCompletionSignal,
     iteration: number,
@@ -1146,16 +1149,10 @@ export class PiWorkflowController {
         this.mapCompletionError(workflowInstanceId, stepName, cause),
       )
       .andThen((completeOutput) =>
+        // No idle observation here - it already fired in
+        // {@link runDispatchAgentEffect} before `leaseId` could be released
+        // (#21 Task 12).
         this.appendRecoveryPointer(workflowInstanceId, leaseId)
-          .andThen(() =>
-            this.observeBestEffort({
-              workflowInstanceId,
-              leaseId,
-              agentName,
-              sessionStatus: "idle",
-              stepName,
-            }),
-          )
           .andThen(() =>
             this.maybeReconcileReviewRejection(
               workflowInstanceId,
