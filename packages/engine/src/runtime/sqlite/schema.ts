@@ -80,8 +80,15 @@ export interface SessionSnapshotRow {
   readonly id: string;
   /** FK → workflow_instances.id. */
   readonly workflow_instance_id: string;
-  /** FK → execution_leases.id. */
-  readonly lease_id: string;
+  /**
+   * FK → execution_leases.id, nullable.
+   *
+   * `ON DELETE SET NULL` (schema v5+): releasing the referenced
+   * `ExecutionLease` severs this link but preserves the historical
+   * SessionSnapshot row. `NULL` means the originating lease has since
+   * been released; it does not mean the snapshot was recorded without one.
+   */
+  readonly lease_id: string | null;
   /** Harness adapter name. */
   readonly harness_name: string;
   /** Harness adapter version, or null. */

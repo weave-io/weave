@@ -30,7 +30,7 @@ import {
  * The highest schema version this Weave build supports.
  * Increment this when adding a new migration.
  */
-export const CURRENT_SCHEMA_VERSION = 4;
+export const CURRENT_SCHEMA_VERSION = 5;
 
 // ---------------------------------------------------------------------------
 // Migration definition
@@ -40,6 +40,15 @@ interface Migration {
   readonly version: number;
   readonly name: string;
   readonly sql: string;
+  /**
+   * `true` when this migration's SQL recreates a table involved in a
+   * foreign key relationship (SQLite has no `ALTER TABLE` support for
+   * changing column nullability or a FK's `ON DELETE` action). Foreign key
+   * enforcement is disabled for the whole pending-migration transaction
+   * when any pending migration sets this flag, and restored immediately
+   * after the transaction settles (commit or rollback).
+   */
+  readonly foreignKeysOff?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -473,6 +482,58 @@ const MIGRATIONS: readonly Migration[] = [
 
       CREATE INDEX IF NOT EXISTS idx_usage_rollups_source
         ON usage_rollups (source_kind, source_name);
+    `,
+  },
+  {
+    version: 5,
+    name: "session_snapshots_lease_set_null",
+    // SQLite cannot ALTER a column's nullability or a foreign key's
+    // ON DELETE action in place, so the table is recreated: a completed
+    // WorkflowInstance's terminal lease release must be able to delete the
+    // ExecutionLease row without losing the historical SessionSnapshot rows
+    // that observed it. NOT NULL + (implicit) ON DELETE NO ACTION on
+    // `lease_id` made every such release fail with a foreign key constraint
+    // violation (#21 Task 12). `lease_id` becomes nullable with
+    // ON DELETE SET NULL: the lease link is severed, the observation
+    // survives.
+    foreignKeysOff: true,
+    sql: `
+      CREATE TABLE session_snapshots_v5 (
+        id                    TEXT NOT NULL PRIMARY KEY,
+        workflow_instance_id  TEXT NOT NULL,
+        lease_id              TEXT,
+        harness_name          TEXT NOT NULL,
+        harness_version       TEXT,
+        agent_name            TEXT NOT NULL,
+        model_id              TEXT,
+        step_name             TEXT,
+        session_status        TEXT NOT NULL,
+        recorded_at           TEXT NOT NULL,
+        metadata_json         TEXT NOT NULL DEFAULT '{}',
+        FOREIGN KEY (workflow_instance_id) REFERENCES workflow_instances (id),
+        FOREIGN KEY (lease_id)             REFERENCES execution_leases (id) ON DELETE SET NULL
+      );
+
+      INSERT INTO session_snapshots_v5 (
+        id, workflow_instance_id, lease_id, harness_name, harness_version,
+        agent_name, model_id, step_name, session_status, recorded_at,
+        metadata_json
+      )
+      SELECT
+        id, workflow_instance_id, lease_id, harness_name, harness_version,
+        agent_name, model_id, step_name, session_status, recorded_at,
+        metadata_json
+      FROM session_snapshots;
+
+      DROP TABLE session_snapshots;
+
+      ALTER TABLE session_snapshots_v5 RENAME TO session_snapshots;
+
+      CREATE INDEX IF NOT EXISTS idx_session_snapshots_workflow_instance_id
+        ON session_snapshots (workflow_instance_id);
+
+      CREATE INDEX IF NOT EXISTS idx_session_snapshots_recorded_at
+        ON session_snapshots (recorded_at);
     `,
   },
 ];
@@ -1302,6 +1363,74 @@ function verifyPermissionGrantsSchema(
 }
 
 // ---------------------------------------------------------------------------
+// Foreign key enforcement toggle (migration v5 table recreation)
+// ---------------------------------------------------------------------------
+
+/**
+ * Disable foreign key enforcement for this connection.
+ *
+ * Must be called with no pending transaction — SQLite silently no-ops a
+ * `PRAGMA foreign_keys` write issued inside `BEGIN`/`COMMIT`. Callers must
+ * invoke this before `BEGIN` and restore enforcement with
+ * {@link enableForeignKeys} once the transaction settles.
+ */
+function disableForeignKeys(db: Database): Result<void, RuntimeStoreError> {
+  return Result.fromThrowable(
+    () => {
+      db.exec("PRAGMA foreign_keys=OFF;");
+    },
+    (cause) =>
+      initializationError(
+        "Failed to disable foreign keys for migration",
+        cause,
+      ),
+  )();
+}
+
+/** Restore foreign key enforcement disabled by {@link disableForeignKeys}. */
+function enableForeignKeys(db: Database): Result<void, RuntimeStoreError> {
+  return Result.fromThrowable(
+    () => {
+      db.exec("PRAGMA foreign_keys=ON;");
+    },
+    (cause) =>
+      initializationError(
+        "Failed to re-enable foreign keys after migration",
+        cause,
+      ),
+  )();
+}
+
+/**
+ * Run SQLite's built-in `PRAGMA foreign_key_check` and fail closed when it
+ * reports any violation. Run after the migration v5 table recreation (with
+ * enforcement still off) to prove the copy preserved every foreign key
+ * relationship instead of trusting the recreation SQL alone.
+ */
+function verifyNoForeignKeyViolations(
+  db: Database,
+): Result<void, RuntimeStoreError> {
+  const check = Result.fromThrowable(
+    () => db.prepare("PRAGMA foreign_key_check;").all(),
+    (cause) => cause,
+  )();
+  if (check.isErr()) {
+    return err(
+      initializationError(
+        "Failed to verify foreign key integrity",
+        check.error,
+      ),
+    );
+  }
+  if (check.value.length > 0) {
+    return err(
+      initializationError("Migration introduced a foreign key violation"),
+    );
+  }
+  return ok(undefined);
+}
+
+// ---------------------------------------------------------------------------
 // runMigrations
 // ---------------------------------------------------------------------------
 
@@ -1325,6 +1454,11 @@ function verifyPermissionGrantsSchema(
  * - When the effective schema version is >= 3 (including no-pending reopen),
  *   re-verifies the live `permission_grants` relation (including BINARY
  *   collations on identity/index keys) before returning Ok.
+ * - Migration v5 recreates `session_snapshots` with a nullable `lease_id`
+ *   and `ON DELETE SET NULL` (SQLite cannot ALTER either in place). Foreign
+ *   key enforcement is disabled for the whole pending-migration transaction
+ *   while any pending migration requires it, and restored immediately after
+ *   the transaction settles either way.
  *
  * This function is idempotent: calling it on a healthy up-to-date DB is a no-op
  * aside from live-schema verification. Dropped or altered v3 relations fail
@@ -1400,6 +1534,18 @@ export function runMigrations(db: Database): Result<void, RuntimeStoreError> {
     return ok(undefined);
   }
 
+  // Migration v5 recreates `session_snapshots` to change `lease_id`'s
+  // nullability and ON DELETE action — SQLite has no ALTER for either, so
+  // enforcement must be off for the whole pending-migration transaction, not
+  // just that one migration's statements.
+  const needsForeignKeysOff = pending.some(
+    (migration) => migration.foreignKeysOff === true,
+  );
+  if (needsForeignKeysOff) {
+    const disabled = disableForeignKeys(db);
+    if (disabled.isErr()) return err(disabled.error);
+  }
+
   // Apply all pending migrations in a single transaction.
   try {
     db.exec("BEGIN");
@@ -1407,6 +1553,12 @@ export function runMigrations(db: Database): Result<void, RuntimeStoreError> {
       db.exec(migration.sql);
       if (migration.version === 3) {
         const verified = verifyPermissionGrantsSchema(db);
+        if (verified.isErr()) {
+          throw new Error(verified.error.message);
+        }
+      }
+      if (migration.version === 5) {
+        const verified = verifyNoForeignKeyViolations(db);
         if (verified.isErr()) {
           throw new Error(verified.error.message);
         }
@@ -1427,12 +1579,18 @@ export function runMigrations(db: Database): Result<void, RuntimeStoreError> {
       () => db.exec("ROLLBACK"),
       (rollbackCause) => rollbackCause,
     )();
+    if (needsForeignKeysOff) enableForeignKeys(db);
     if (rollback.isErr()) {
       return err(
         initializationError("Migration transaction failed", rollback.error),
       );
     }
     return err(initializationError("Migration transaction failed", cause));
+  }
+
+  if (needsForeignKeysOff) {
+    const enabled = enableForeignKeys(db);
+    if (enabled.isErr()) return err(enabled.error);
   }
 
   // Post-commit: re-check triggers (a hostile migration body must not leave

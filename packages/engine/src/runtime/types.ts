@@ -554,8 +554,15 @@ export interface SessionSnapshot {
   readonly id: SessionSnapshotId;
   /** The WorkflowInstance this snapshot is associated with. */
   readonly workflowInstanceId: WorkflowInstanceId;
-  /** The ExecutionLease active when this snapshot was taken. */
-  readonly leaseId: ExecutionLeaseId;
+  /**
+   * The ExecutionLease active when this snapshot was taken.
+   *
+   * Undefined for historical snapshots whose lease has since been
+   * released: `ExecutionLeaseRepository.release()` severs this link
+   * (rather than deleting the snapshot) so the observation survives
+   * terminal workflow completion.
+   */
+  readonly leaseId?: ExecutionLeaseId;
   /** Harness adapter name (e.g. "opencode", "claude-code"). */
   readonly harnessName: string;
   /** Harness adapter version string, if available. */

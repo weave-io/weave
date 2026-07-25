@@ -256,6 +256,11 @@ export interface ExecutionLeaseRepository {
    *
    * Fails with `not_found` if the lease does not exist.
    * Fails with `conflict` if the lease is owned by a different owner.
+   *
+   * Any `SessionSnapshot` that observed this lease is preserved: its
+   * `leaseId` link is severed (set to `undefined`/`NULL`), not deleted.
+   * Terminal workflow completion must be able to release the lease that
+   * drove it without losing that historical record.
    */
   release(
     id: ExecutionLeaseId,
@@ -272,6 +277,7 @@ export interface ExecutionLeaseRepository {
  */
 export interface RecordSessionSnapshotInput {
   readonly workflowInstanceId: WorkflowInstanceId;
+  /** The active ExecutionLease at record time. Always required to record. */
   readonly leaseId: ExecutionLeaseId;
   readonly harnessName: string;
   readonly harnessVersion?: string;

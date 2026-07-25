@@ -440,10 +440,16 @@ class InMemoryExecutionLeaseRepository implements ExecutionLeaseRepository {
   private readonly store = new Map<string, ExecutionLease>();
   private failures: InMemoryRuntimeStoreFailureConfig;
   private readonly clock: () => Date;
+  private readonly onRelease?: (leaseId: ExecutionLeaseId) => void;
 
-  constructor(failures: InMemoryRuntimeStoreFailureConfig, clock: () => Date) {
+  constructor(
+    failures: InMemoryRuntimeStoreFailureConfig,
+    clock: () => Date,
+    onRelease?: (leaseId: ExecutionLeaseId) => void,
+  ) {
     this.failures = failures;
     this.clock = clock;
+    this.onRelease = onRelease;
   }
 
   /** Update the shared failure config reference. */
@@ -580,6 +586,10 @@ class InMemoryExecutionLeaseRepository implements ExecutionLeaseRepository {
       );
     }
     this.store.delete(id);
+    // Parity with the SQLite store's ON DELETE SET NULL: sever historical
+    // SessionSnapshot references to the released lease instead of dropping
+    // the snapshot itself.
+    this.onRelease?.(id);
     return okAsync(undefined);
   }
 
@@ -612,6 +622,20 @@ class InMemorySessionSnapshotRepository implements SessionSnapshotRepository {
   /** Update the shared failure config reference. */
   setFailures(failures: InMemoryRuntimeStoreFailureConfig): void {
     this.failures = failures;
+  }
+
+  /**
+   * Sever every SessionSnapshot's reference to a released ExecutionLease.
+   *
+   * Mirrors the SQLite store's `ON DELETE SET NULL` foreign key action:
+   * the snapshot rows survive, only the `leaseId` link is cleared.
+   */
+  severLeaseReferences(leaseId: ExecutionLeaseId): void {
+    for (const [id, snapshot] of this.store) {
+      if (snapshot.leaseId !== leaseId) continue;
+      const { leaseId: _severed, ...rest } = snapshot;
+      this.store.set(id, rest as SessionSnapshot);
+    }
   }
 
   record(
@@ -1108,11 +1132,12 @@ export class InMemoryRuntimeStore implements RuntimeStore {
     this.failureConfig = { ...(options.failOn ?? {}) };
 
     this.instances = new InMemoryWorkflowInstanceRepository(this.failureConfig);
+    this.snapshots = new InMemorySessionSnapshotRepository(this.failureConfig);
     this.leases = new InMemoryExecutionLeaseRepository(
       this.failureConfig,
       this.clock,
+      (leaseId) => this.snapshots.severLeaseReferences(leaseId),
     );
-    this.snapshots = new InMemorySessionSnapshotRepository(this.failureConfig);
     this.journal = new InMemoryRuntimeJournalRepository(this.failureConfig);
     this.usage = new InMemoryUsageRepository(this.failureConfig);
     // Construct after the injected Date clock is assigned so revoke/list/match

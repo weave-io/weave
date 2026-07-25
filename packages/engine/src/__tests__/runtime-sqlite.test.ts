@@ -31,7 +31,9 @@ import {
 } from "../runtime/sqlite/store.js";
 import {
   createArtifactId,
+  createExecutionLeaseId,
   createOwnerId,
+  createSessionSnapshotId,
   createWorkflowInstanceId,
 } from "../runtime/types.js";
 
@@ -565,13 +567,13 @@ describe("migrations", () => {
     }
   });
 
-  it("applies fresh migrations through version 4", () => {
+  it("applies fresh migrations through version 5", () => {
     const dbPath = join(testDir, "fresh.db");
     const db = new Database(dbPath);
 
     const result = runMigrations(db);
     expect(result.isOk()).toBe(true);
-    expect(readSchemaVersion(db)).toBe(4);
+    expect(readSchemaVersion(db)).toBe(5);
 
     const migrations = db
       .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
@@ -581,6 +583,7 @@ describe("migrations", () => {
       { version: 2, name: "add_step_attempts_json" },
       { version: 3, name: "permission_grants" },
       { version: 4, name: "usage_observations_and_rollups" },
+      { version: 5, name: "session_snapshots_lease_set_null" },
     ]);
     expect(
       db
@@ -617,8 +620,9 @@ describe("migrations", () => {
       { version: 2 },
       { version: 3 },
       { version: 4 },
+      { version: 5 },
     ]);
-    expect(readSchemaVersion(db)).toBe(4);
+    expect(readSchemaVersion(db)).toBe(5);
     db.close();
   });
 
@@ -665,7 +669,7 @@ describe("migrations", () => {
     await store.close();
 
     const db = new Database(dbPath);
-    expect(readSchemaVersion(db)).toBe(4);
+    expect(readSchemaVersion(db)).toBe(5);
     expect(
       db
         .prepare(
@@ -683,13 +687,77 @@ describe("migrations", () => {
     db.close();
   });
 
-  it("rejects future version 5 without mutating the DB", () => {
+  // Regression for #21 Task 12, proven against a real pre-existing v2
+  // database (not just a fresh v5 one): a SessionSnapshot created under
+  // the legacy schema (lease_id NOT NULL, implicit ON DELETE NO ACTION)
+  // must survive the v5 table-recreate migration, and its referenced
+  // lease must then be releasable without a FOREIGN KEY constraint
+  // failure — with the snapshot's leaseId severed (NULL/undefined)
+  // rather than the row being dropped.
+  it("upgrades a genuine version-two database and lets a pre-existing SessionSnapshot's lease be released", async () => {
+    const runtimeDir = join(testDir, "runtime-v2-snapshot");
+    Bun.spawnSync(["mkdir", "-p", runtimeDir]);
+    const dbPath = join(runtimeDir, "weave.db");
+    const legacyDb = new Database(dbPath);
+    createLegacyV2Database(legacyDb);
+    legacyDb.exec(`
+      INSERT INTO execution_leases (
+        id, workflow_instance_id, owner_id, acquired_at, expires_at, last_heartbeat_at
+      ) VALUES (
+        'legacy-lease', 'legacy-instance', 'legacy-owner',
+        '2025-01-01T00:00:00.000Z', '2025-01-01T01:00:00.000Z', NULL
+      );
+      INSERT INTO session_snapshots (
+        id, workflow_instance_id, lease_id, harness_name, harness_version,
+        agent_name, model_id, step_name, session_status, recorded_at, metadata_json
+      ) VALUES (
+        'legacy-snapshot', 'legacy-instance', 'legacy-lease', 'legacy-harness', NULL,
+        'shuttle', NULL, 'plan', 'active', '2025-01-01T00:00:00.000Z', '{}'
+      );
+    `);
+    legacyDb.close();
+
+    const store = createSqliteRuntimeStore({ dbPath, projectRoot: testDir });
+
+    const before = (
+      await store.snapshots.findById(createSessionSnapshotId("legacy-snapshot"))
+    )._unsafeUnwrap();
+    expect(before).not.toBeNull();
+    expect(before?.leaseId).toBe(createExecutionLeaseId("legacy-lease"));
+
+    const releaseResult = await store.leases.release(
+      createExecutionLeaseId("legacy-lease"),
+      createOwnerId("legacy-owner"),
+    );
+    expect(releaseResult.isOk()).toBe(true);
+
+    const after = (
+      await store.snapshots.findById(createSessionSnapshotId("legacy-snapshot"))
+    )._unsafeUnwrap();
+    expect(after).not.toBeNull();
+    expect(after?.leaseId).toBeUndefined();
+    expect(after?.harnessName).toBe("legacy-harness");
+    expect(after?.stepName).toBe("plan");
+
+    await store.close();
+
+    const db = new Database(dbPath);
+    expect(readSchemaVersion(db)).toBe(5);
+    expect(
+      db
+        .prepare("SELECT lease_id FROM session_snapshots WHERE id = ?")
+        .get("legacy-snapshot"),
+    ).toEqual({ lease_id: null });
+    db.close();
+  });
+
+  it("rejects future version 6 without mutating the DB", () => {
     const dbPath = join(testDir, "future.db");
     const db = new Database(dbPath);
 
     db.exec(CANONICAL_BOOTSTRAP_DDL);
     db.exec(
-      "INSERT INTO runtime_metadata (key, value) VALUES ('schema_version', '5')",
+      "INSERT INTO runtime_metadata (key, value) VALUES ('schema_version', '6')",
     );
 
     const result = runMigrations(db);
@@ -697,10 +765,10 @@ describe("migrations", () => {
     const error = result._unsafeUnwrapErr();
     expect(error.type).toBe("migration_version");
     if (error.type === "migration_version") {
-      expect(error.foundVersion).toBe(5);
+      expect(error.foundVersion).toBe(6);
       expect(error.supportedVersion).toBe(CURRENT_SCHEMA_VERSION);
     }
-    expect(readSchemaVersion(db)).toBe(5);
+    expect(readSchemaVersion(db)).toBe(6);
     assertNoPermissionGrantsTable(db);
     expect(
       db.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get(),
@@ -893,7 +961,7 @@ describe("migrations", () => {
 
     const result = runMigrations(db);
     expect(result.isOk()).toBe(true);
-    expect(readSchemaVersion(db)).toBe(4);
+    expect(readSchemaVersion(db)).toBe(5);
     expect(
       db
         .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
@@ -903,6 +971,7 @@ describe("migrations", () => {
       { version: 2, name: "add_step_attempts_json" },
       { version: 3, name: "permission_grants" },
       { version: 4, name: "usage_observations_and_rollups" },
+      { version: 5, name: "session_snapshots_lease_set_null" },
     ]);
     expect(
       db
@@ -1168,11 +1237,11 @@ describe("migrations", () => {
   it("no-pending healthy current reopen re-verifies live permission_grants schema", () => {
     const db = new Database(join(testDir, "healthy-reopen.db"));
     expect(runMigrations(db).isOk()).toBe(true);
-    expect(readSchemaVersion(db)).toBe(4);
+    expect(readSchemaVersion(db)).toBe(5);
 
     const second = runMigrations(db);
     expect(second.isOk()).toBe(true);
-    expect(readSchemaVersion(db)).toBe(4);
+    expect(readSchemaVersion(db)).toBe(5);
     expect(
       db
         .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
@@ -1182,6 +1251,7 @@ describe("migrations", () => {
       { version: 2, name: "add_step_attempts_json" },
       { version: 3, name: "permission_grants" },
       { version: 4, name: "usage_observations_and_rollups" },
+      { version: 5, name: "session_snapshots_lease_set_null" },
     ]);
     db.close();
   });
@@ -1196,7 +1266,7 @@ describe("migrations", () => {
 
     const result = runMigrations(db);
     assertInitializationError(result, "Invalid permission_grants schema");
-    expect(readSchemaVersion(db)).toBe(4);
+    expect(readSchemaVersion(db)).toBe(5);
     expect(
       db
         .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
@@ -1216,7 +1286,7 @@ describe("migrations", () => {
 
     const result = runMigrations(db);
     assertInitializationError(result, "Invalid permission_grants schema");
-    expect(readSchemaVersion(db)).toBe(4);
+    expect(readSchemaVersion(db)).toBe(5);
     expect(
       db
         .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
@@ -1276,7 +1346,7 @@ describe("migrations", () => {
 
     const result = runMigrations(db);
     assertInitializationError(result, "Invalid permission_grants schema");
-    expect(readSchemaVersion(db)).toBe(4);
+    expect(readSchemaVersion(db)).toBe(5);
     expect(
       db
         .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
@@ -2898,6 +2968,59 @@ describe("ExecutionLease CRUD and conflicts", () => {
     );
     expect(result.isErr()).toBe(true);
     expect(result._unsafeUnwrapErr().type).toBe("conflict");
+    await store.close();
+  });
+
+  // Regression for #21 Task 12: terminal completeStep() must be able to
+  // release the lease that drove a workflow to `completed` even though a
+  // SessionSnapshot recorded during execution still references it. Before
+  // the fix, session_snapshots.lease_id was NOT NULL with an implicit
+  // ON DELETE NO ACTION foreign key, so this release failed with
+  // "FOREIGN KEY constraint failed" and the lease was never released.
+  it("release succeeds and severs the leaseId link on SessionSnapshots that observed it", async () => {
+    const store = makeStore(testDir);
+    const wfi = (
+      await store.instances.create({ workflowName: "wf", goal: "g", slug: "g" })
+    )._unsafeUnwrap();
+    const lease = (
+      await store.leases.acquire({
+        workflowInstanceId: wfi.id,
+        ownerId: createOwnerId("owner-001"),
+        ttlMs: 60_000,
+      })
+    )._unsafeUnwrap();
+    const snapshot = (
+      await store.snapshots.record({
+        workflowInstanceId: wfi.id,
+        leaseId: lease.id,
+        harnessName: "test-harness",
+        agentName: "shuttle",
+        stepName: "plan",
+        sessionStatus: "active",
+        metadata: { stepCount: 1, isResumed: false },
+      })
+    )._unsafeUnwrap();
+    expect(snapshot.leaseId).toBe(lease.id);
+
+    const releaseResult = await store.leases.release(lease.id, lease.ownerId);
+    expect(releaseResult.isOk()).toBe(true);
+
+    const leaseAfterRelease = await store.leases.findById(lease.id);
+    expect(leaseAfterRelease._unsafeUnwrap()).toBeNull();
+
+    const snapshotAfterRelease = (
+      await store.snapshots.findById(snapshot.id)
+    )._unsafeUnwrap();
+    expect(snapshotAfterRelease).not.toBeNull();
+    expect(snapshotAfterRelease?.leaseId).toBeUndefined();
+    // The rest of the historical observation is untouched.
+    expect(snapshotAfterRelease?.harnessName).toBe("test-harness");
+    expect(snapshotAfterRelease?.stepName).toBe("plan");
+    expect(snapshotAfterRelease?.metadata).toEqual({
+      stepCount: 1,
+      isResumed: false,
+    });
+
     await store.close();
   });
 });

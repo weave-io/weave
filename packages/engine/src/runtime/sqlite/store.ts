@@ -229,7 +229,9 @@ function rowToSessionSnapshot(row: SessionSnapshotRow): SessionSnapshot {
   return {
     id: createSessionSnapshotId(row.id),
     workflowInstanceId: createWorkflowInstanceId(row.workflow_instance_id),
-    leaseId: createExecutionLeaseId(row.lease_id),
+    ...(row.lease_id !== null
+      ? { leaseId: createExecutionLeaseId(row.lease_id) }
+      : {}),
     harnessName: row.harness_name,
     ...(row.harness_version !== null
       ? { harnessVersion: row.harness_version }
