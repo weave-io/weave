@@ -95,6 +95,38 @@ export function isPointerEligibleForExplicitResume(
   return pointer.status === "recoverable";
 }
 
+/**
+ * Reconstructs the tracker-shaped `{ workflowInstanceId, leaseId }`
+ * correlation an explicit `/weave:resume` needs from a durable recovery
+ * pointer alone (Issue #21 Task 12 S020).
+ *
+ * Reload/restart installs a fresh controller generation whose in-memory
+ * `PiActiveWorkflowTracker` starts empty even though the durable pointer
+ * file on disk survives - by design, this must never auto-resume anything
+ * (S019). But once the user explicitly runs `/weave:resume`, the dispatcher
+ * needs *some* correlation to hand `handleWeaveResume` (which only ever
+ * reads the in-memory tracker, never the pointer store itself). This
+ * function is that seam: pure, fails closed on anything that isn't a
+ * recoverable pointer with both a known `workflowId` and `leaseId` -
+ * malformed correlation data with either missing is never enough to seed,
+ * even though `resumeExecution` itself later consumes only
+ * `workflowInstanceId`. It never itself authorizes work - the caller still
+ * owes the engine a fresh `controller.inspect()` / `resumeExecution()`
+ * round trip, so the Runtime Store and lease semantics remain the only
+ * authority over whether resume actually succeeds.
+ */
+export function activeInstanceFromRecoveryPointer(
+  pointer: PiWeaveRecoveryPointerV1,
+): { workflowInstanceId: string; leaseId: string } | undefined {
+  if (!isPointerEligibleForExplicitResume(pointer)) return undefined;
+  if (pointer.workflowId === undefined) return undefined;
+  if (pointer.leaseId === undefined) return undefined;
+  return {
+    workflowInstanceId: pointer.workflowId,
+    leaseId: pointer.leaseId,
+  };
+}
+
 export interface PiRecoveryPointerStore {
   appendPointer(
     pointer: PiWeaveRecoveryPointerV1,

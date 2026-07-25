@@ -587,6 +587,8 @@ Restart, reload, switch, fork, shutdown, or lease loss stops dispatch and shows 
 
 Automatic recovery (startup hooks, continuation) rejects pointers whose `controllerGeneration` does not match the current generation. Explicit resume (`/weave:resume` with user confirmation) uses the pointer for correlation only; terminal pointers always fail closed, but recoverable pointers are eligible even from a prior generation—the Runtime Store and lease semantics remain authoritative (Issue #21 Task 12 S019/S020).
 
+A fresh generation's in-memory active-workflow tracker starts empty on every reload, restart, switch, or fork (S019); this MUST NOT itself resume or spawn anything even though the durable pointer file survives. Only inside the explicit `/weave:resume` handler, and only when the tracker has no in-memory instance of its own, the dispatcher MAY reconstruct `{ workflowInstanceId, leaseId }` correlation from the newest eligible pointer to hand the resume path something to inspect (S020). Reconstruction MUST fail closed—produce no correlation at all—unless the pointer's `status` is `"recoverable"` and both `workflowId` and `leaseId` are present; a terminal pointer, or one missing either field, never seeds anything. The reconstructed `leaseId` is a hint only—`handleWeaveResume` still round-trips through `controller.inspect()` and `controller.resumeExecution()`, and a successful resume always replaces the tracker with the fresh lease the engine returns.
+
 ## 19. Diagnostics, retention, and usage
 
 

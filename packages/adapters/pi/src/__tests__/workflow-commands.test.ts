@@ -172,6 +172,66 @@ describe("handleWeaveResume", () => {
     await handleWeaveResume(ui, controller, tracker);
     expect(called).toBe(false);
   });
+
+  it("resumes an instance reconstructed from a durable recovery pointer after reload/new-generation, via fresh confirmation, inspect, resume, and lease replacement (Issue #21 Task 12 S020)", async () => {
+    // Simulates the dispatcher's own seeding step: a reload/restart
+    // installs a fresh generation whose in-memory tracker starts empty, so
+    // the dispatcher reconstructs this correlation from the durable
+    // recovery pointer (`activeInstanceFromRecoveryPointer`) *before*
+    // calling this handler - never inside it.
+    let tracked: { workflowInstanceId: string; leaseId?: string } | undefined =
+      {
+        workflowInstanceId: "wf-1",
+        leaseId: "lease-1",
+      };
+    const tracker = fakeTracker({
+      getActiveInstance: () => tracked,
+      setActiveInstance: (instance) => {
+        tracked = instance;
+      },
+      buildContext: (name) => ({
+        workflowName: name,
+        goal: "g",
+        slug: "s",
+        workflows: {},
+      }),
+    });
+    let confirmCalled = false;
+    const ui = fakeUi({
+      confirm: async () => {
+        confirmCalled = true;
+        return true;
+      },
+    });
+    let inspectedInstanceId: string | undefined;
+    let resumeCalledWithInstanceId: string | undefined;
+    const controller = fakeController({
+      inspect: ((workflowInstanceId: string) => {
+        inspectedInstanceId = workflowInstanceId;
+        return okAsync({
+          workflowInstanceId,
+          workflowName: "wf",
+          status: "paused",
+        });
+      }) as never,
+      resumeExecution: ((input: { workflowInstanceId: string }) => {
+        resumeCalledWithInstanceId = input.workflowInstanceId;
+        // A fresh lease from the engine, replacing the stale one carried by
+        // the durable pointer - proving the pointer supplied correlation
+        // only, never authority over the lease itself.
+        return okAsync({
+          workflowInstanceId: input.workflowInstanceId,
+          leaseId: "lease-2",
+          finalStatus: "running",
+        });
+      }) as never,
+    });
+    await handleWeaveResume(ui, controller, tracker);
+    expect(confirmCalled).toBe(true);
+    expect(inspectedInstanceId).toBe("wf-1");
+    expect(resumeCalledWithInstanceId).toBe("wf-1");
+    expect(tracked).toEqual({ workflowInstanceId: "wf-1", leaseId: "lease-2" });
+  });
 });
 
 describe("handleWeavePlan", () => {

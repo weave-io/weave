@@ -21,7 +21,7 @@
 - `scripts/release/clock.ts` — imported by **13** files
 - `packages/cli/src/fs/file-system.ts` — imported by **12** files
 - `packages/engine/src/runtime/errors.ts` — imported by **12** files
-- `packages/engine/src/compose.ts` — imported by **11** files
+- `packages/adapters/pi/src/commands.ts` — imported by **11** files
 
 ## Import Map (who imports what)
 

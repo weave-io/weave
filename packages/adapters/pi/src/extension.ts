@@ -115,6 +115,7 @@ import {
   PiPrimarySession,
 } from "./primary-session.js";
 import {
+  activeInstanceFromRecoveryPointer,
   BunJsonlRecoveryPointerStore,
   isPointerEligibleForExplicitResume,
 } from "./recovery-pointer.js";
@@ -1832,6 +1833,26 @@ export function createPiExtension(
             "warning",
           );
           return;
+        }
+        // Issue #21 Task 12 S020: reload/restart installs a fresh generation
+        // whose in-memory tracker starts empty even though the durable
+        // pointer survives on disk (by design - reload must never itself
+        // auto-resume or spawn a child). Only here, inside the explicit
+        // user-invoked `/weave:resume` path, and only when this generation
+        // has not already tracked an instance of its own, reconstruct the
+        // tracker's correlation from the pointer so `handleWeaveResume`
+        // below has something to hand the engine. `handleWeaveResume`
+        // still requires a fresh confirm and still round-trips through
+        // `controller.inspect()`/`resumeExecution()`, so the Runtime Store
+        // and lease semantics remain the sole authority over whether resume
+        // actually succeeds - this only supplies correlation.
+        if (tracker.getActiveInstance() === undefined) {
+          const reconstructed = activeInstanceFromRecoveryPointer(
+            pointer.value,
+          );
+          if (reconstructed !== undefined) {
+            tracker.setActiveInstance(reconstructed);
+          }
         }
       }
       await handleWeaveResume(ctx.ui, workflowController, tracker);

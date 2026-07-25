@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 220 lib files | 33 env vars | 9 middleware | 0% test coverage
 > **Token savings:** this file is ~21,500 tokens. Without it, AI exploration would cost ~72,900 tokens. **Saves ~51,400 tokens per conversation.**
-> **Last scanned:** 2026-07-25 02:25 — re-run after significant changes
+> **Last scanned:** 2026-07-25 06:37 — re-run after significant changes
 
 ---
 
@@ -283,11 +283,11 @@
 - `packages/adapters/pi/src/recovery-pointer.ts`
   - function parseRecoveryPointer: (raw) => Result<PiWeaveRecoveryPointerV1, RecoveryPointerValidationFailure>
   - function isPointerForCurrentGeneration: (pointer, currentGenerationId) => boolean
+  - function isPointerEligibleForExplicitResume: (pointer) => boolean
+  - function activeInstanceFromRecoveryPointer: (pointer) => void
   - class InMemoryRecoveryPointerStore
   - class BunJsonlRecoveryPointerStore
-  - interface PiRecoveryPointerStore
-  - type PiWeaveRecoveryPointerV1
-  - _...3 more_
+  - _...5 more_
 - `packages/adapters/pi/src/rpc-child.ts`
   - class PiRpcChild
   - interface PiRpcChildDeps
@@ -1248,7 +1248,7 @@
 - `scripts/release/clock.ts` — imported by **13** files
 - `packages/cli/src/fs/file-system.ts` — imported by **12** files
 - `packages/engine/src/runtime/errors.ts` — imported by **12** files
-- `packages/engine/src/compose.ts` — imported by **11** files
+- `packages/adapters/pi/src/commands.ts` — imported by **11** files
 
 ## Import Map (who imports what)
 

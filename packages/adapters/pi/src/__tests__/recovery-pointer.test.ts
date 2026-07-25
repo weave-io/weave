@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import {
+  activeInstanceFromRecoveryPointer,
   InMemoryRecoveryPointerStore,
   isPointerEligibleForExplicitResume,
   isPointerForCurrentGeneration,
@@ -103,6 +104,53 @@ describe("isPointerEligibleForExplicitResume", () => {
     if (!pointer.isOk()) throw new Error("fixture invalid");
     // Terminal pointers always fail closed, regardless of generation
     expect(isPointerEligibleForExplicitResume(pointer.value)).toBe(false);
+  });
+});
+
+describe("activeInstanceFromRecoveryPointer", () => {
+  it("reconstructs the tracker correlation for a recoverable pointer with a complete workflowId/leaseId pair", () => {
+    const pointer = parseRecoveryPointer({
+      ...VALID_POINTER,
+      controllerGeneration: "gen-old",
+      status: "recoverable",
+    });
+    if (!pointer.isOk()) throw new Error("fixture invalid");
+    // Issue #21 Task 12 S020: a prior-generation recoverable pointer still
+    // reconstructs correlation - the pointer's own generation never gates
+    // explicit resume, only its status does.
+    expect(activeInstanceFromRecoveryPointer(pointer.value)).toEqual({
+      workflowInstanceId: "wf-1",
+      leaseId: "lease-1",
+    });
+  });
+
+  it("never seeds correlation for a terminal pointer", () => {
+    const pointer = parseRecoveryPointer({
+      ...VALID_POINTER,
+      status: "terminal",
+    });
+    if (!pointer.isOk()) throw new Error("fixture invalid");
+    expect(activeInstanceFromRecoveryPointer(pointer.value)).toBeUndefined();
+  });
+
+  it("fails closed when workflowId is missing, even though status is recoverable", () => {
+    const pointer = parseRecoveryPointer({
+      ...VALID_POINTER,
+      workflowId: undefined,
+      status: "recoverable",
+    });
+    if (!pointer.isOk()) throw new Error("fixture invalid");
+    expect(activeInstanceFromRecoveryPointer(pointer.value)).toBeUndefined();
+  });
+
+  it("fails closed when leaseId is missing, even though workflowId and status are otherwise valid", () => {
+    const pointer = parseRecoveryPointer({
+      ...VALID_POINTER,
+      leaseId: undefined,
+      status: "recoverable",
+    });
+    if (!pointer.isOk()) throw new Error("fixture invalid");
+    expect(activeInstanceFromRecoveryPointer(pointer.value)).toBeUndefined();
   });
 });
 

@@ -272,11 +272,11 @@
 - `packages/adapters/pi/src/recovery-pointer.ts`
   - function parseRecoveryPointer: (raw) => Result<PiWeaveRecoveryPointerV1, RecoveryPointerValidationFailure>
   - function isPointerForCurrentGeneration: (pointer, currentGenerationId) => boolean
+  - function isPointerEligibleForExplicitResume: (pointer) => boolean
+  - function activeInstanceFromRecoveryPointer: (pointer) => void
   - class InMemoryRecoveryPointerStore
   - class BunJsonlRecoveryPointerStore
-  - interface PiRecoveryPointerStore
-  - type PiWeaveRecoveryPointerV1
-  - _...3 more_
+  - _...5 more_
 - `packages/adapters/pi/src/rpc-child.ts`
   - class PiRpcChild
   - interface PiRpcChildDeps
