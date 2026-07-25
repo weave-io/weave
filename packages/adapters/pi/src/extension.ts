@@ -11,6 +11,11 @@ import type {
 } from "@weaveio/weave-engine";
 import { isDeniedKey, logger } from "@weaveio/weave-engine";
 import { okAsync, Result, ResultAsync } from "neverthrow";
+import {
+  nextCycleablePrimaryAgent,
+  PI_PRIMARY_AGENT_CYCLE_SHORTCUT,
+  renderActiveAgentBadge,
+} from "./agent-cycle.js";
 import { BunPiArtifactProvider } from "./artifact-provider.js";
 import {
   DefaultPiCapabilityProber,
@@ -1418,7 +1423,9 @@ function setActiveAgentStatus(
 ): void {
   ctx.ui.setStatus(
     WEAVE_AGENT_STATUS_KEY,
-    agentName === undefined ? undefined : `agent: ${agentName}`,
+    agentName === undefined
+      ? undefined
+      : renderActiveAgentBadge(agentName, ctx.ui.theme),
   );
 }
 
@@ -1889,7 +1896,102 @@ export function createPiExtension(
     }
   }
 
+  async function cyclePrimaryAgent(
+    pi: PiExtensionApi,
+    ctx: PiSessionContext,
+  ): Promise<void> {
+    if (childModeState.active) return;
+
+    const session = activeSession;
+    const generation = controller.getCurrentGeneration();
+    if (
+      session === undefined ||
+      generation === undefined ||
+      session.generationId !== generation.id ||
+      effectiveHealthOnly(generation, session)
+    ) {
+      ctx.ui.notify(
+        "Weave primary-agent cycling is unavailable in this session.",
+        "warning",
+      );
+      return;
+    }
+    if (directStepChildRegistry.isActive()) {
+      ctx.ui.notify(
+        "Finish or pause the active workflow step before switching primary agents.",
+        "warning",
+      );
+      return;
+    }
+
+    const current = session.primarySession.getCurrent();
+    const next = nextCycleablePrimaryAgent(
+      session.descriptors,
+      current?.descriptor.name ?? session.pendingPrimaryName,
+    );
+    if (next === undefined) {
+      ctx.ui.notify("No other Weave primary agent is available.", "info");
+      return;
+    }
+
+    if (current === undefined) {
+      session.pendingPrimaryName = next.name;
+      session.primaryActivationAttempted = false;
+      session.primaryActivationFailure = undefined;
+      setActiveAgentStatus(ctx, next.name);
+      ctx.ui.notify(`Switched Weave primary agent to ${next.name}.`, "info");
+      return;
+    }
+
+    const operation = controller.beginOperation();
+    if (operation.isErr()) {
+      ctx.ui.notify(
+        "Could not switch Weave primary agents in this session.",
+        "warning",
+      );
+      return;
+    }
+
+    const availableModels = safelyListAvailableModels(ctx.modelRegistry);
+    if (availableModels.isErr()) {
+      deps.logger.warn(
+        { agentName: next.name, reason: availableModels.error },
+        "ctx.modelRegistry.getAvailable() threw while cycling primary agents; treating as no available models",
+      );
+    }
+    const activation = await session.primarySession.activate(next, {
+      availableModels: availableModels.unwrapOr([]),
+      currentModel: ctx.model,
+      modelApplier: createPiModelApplyPort(pi),
+      disabledSkills: session.disabledSkills,
+    });
+
+    if (operation.value.assertStillCurrent().isErr()) return;
+    if (activation.isErr()) {
+      session.primaryActivationFailure = activation.error;
+      ctx.ui.notify(
+        `Could not switch Weave primary agent to ${next.name}.`,
+        "error",
+      );
+      return;
+    }
+
+    session.pendingPrimaryName = next.name;
+    session.primaryActivationAttempted = true;
+    session.primaryActivationFailure = undefined;
+    setActiveAgentStatus(ctx, next.name);
+    ctx.ui.notify(`Switched Weave primary agent to ${next.name}.`, "info");
+    await observeActiveLeaseBestEffort(next.name, "active");
+  }
+
   return function piAdapterExtension(pi: PiExtensionApi): void {
+    pi.registerShortcut?.(PI_PRIMARY_AGENT_CYCLE_SHORTCUT, {
+      description: "Cycle Weave primary agent",
+      handler: async (ctx: PiSessionContext) => {
+        await cyclePrimaryAgent(pi, ctx);
+      },
+    });
+
     for (const name of WEAVE_COMMAND_NAMES) {
       pi.registerCommand(name, {
         description: commandDescription(name),

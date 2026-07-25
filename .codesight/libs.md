@@ -66,6 +66,11 @@
   - type OpenCodeToolPermissions
   - const READ_TOOL_NAMES: readonly string[]
 - `packages/adapters/opencode/src/translate-agent.ts` — function translateAgent: (descriptor, resolvedModel?) => Result<OpenCodeAgentConfig, TranslateAgentError>, type TranslateAgentError
+- `packages/adapters/pi/src/agent-cycle.ts`
+  - function listCycleablePrimaryAgents: (descriptors, AgentDescriptor>) => readonly AgentDescriptor[]
+  - function nextCycleablePrimaryAgent: (descriptors, AgentDescriptor>, currentName) => AgentDescriptor | undefined
+  - function renderActiveAgentBadge: (agentName, theme?) => string
+  - const PI_PRIMARY_AGENT_CYCLE_SHORTCUT
 - `packages/adapters/pi/src/artifact-provider.ts`
   - class BunPiArtifactProvider
   - class FakePiArtifactProvider

@@ -70,6 +70,14 @@ export interface RecordedEventSubscription {
   readonly handler: PiEventHandler;
 }
 
+export interface RecordedShortcutRegistration {
+  readonly shortcut: string;
+  readonly registration: {
+    readonly description?: string;
+    readonly handler: (ctx: PiSessionContext) => void | Promise<void>;
+  };
+}
+
 export interface RecordedNotify {
   readonly message: string;
   readonly level: PiUiNotifyLevel | undefined;
@@ -121,6 +129,7 @@ export interface FakePiHostOptions {
  */
 export class RecordingFakePiHost {
   readonly registerCommandCalls: RecordedCommandRegistration[] = [];
+  readonly registerShortcutCalls: RecordedShortcutRegistration[] = [];
   readonly onCalls: RecordedEventSubscription[] = [];
   readonly notifyCalls: RecordedNotify[] = [];
   readonly statusCalls: RecordedStatus[] = [];
@@ -198,6 +207,9 @@ export class RecordingFakePiHost {
           source: "extension",
           sourceInfo: this.ownSourceInfo(),
         });
+      },
+      registerShortcut: (shortcut, registration) => {
+        this.registerShortcutCalls.push({ shortcut, registration });
       },
       getCommands: () => {
         if (this.getCommandsOverride !== undefined)
@@ -562,6 +574,19 @@ export class RecordingFakePiHost {
     const call = this.registerCommandCalls.find((entry) => entry.name === name);
     if (call === undefined) throw new Error(`command not registered: ${name}`);
     await call.registration.handler(rawArgs, ctx);
+    return ctx;
+  }
+
+  /** Invokes a registered shortcut handler with a fresh context. */
+  async invokeShortcut(shortcut: string): Promise<PiSessionContext> {
+    const ctx = this.createSessionContext();
+    const call = this.registerShortcutCalls.find(
+      (entry) => entry.shortcut === shortcut,
+    );
+    if (call === undefined) {
+      throw new Error(`shortcut not registered: ${shortcut}`);
+    }
+    await call.registration.handler(ctx);
     return ctx;
   }
 

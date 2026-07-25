@@ -56,7 +56,11 @@ Use `/weave` to open the palette or invoke a direct command:
 - `/weave:plan` — show the read-only task tree;
 - `/weave:artifact` — inspect or explicitly act on an artifact.
 
-Session start, idle, recovery discovery, and normal chat do not authorize workflow work. The adapter continues automatically only when the engine returns a next effect in the same uninterrupted authorized controller generation. Pi's persistent footer shows `agent: <name>` under status key `weave-agent`, using the exact normalized active descriptor name. It shows `agent: loom` during ordinary chat, switches to a workflow agent such as `agent: tapestry` while that direct step runs, restores the primary after settlement, and clears in health-only mode or at shutdown.
+Session start, idle, recovery discovery, and normal chat do not authorize workflow work. The adapter continues automatically only when the engine returns a next effect in the same uninterrupted authorized controller generation.
+
+Press `Alt+A` to cycle materialized agents whose mode is `primary` or `all`, in config order. The shortcut skips subagents such as Shuttle, refuses to switch during a live direct workflow step, and keeps the current primary if the next agent cannot activate. Shift+Tab remains Pi's thinking-cycle shortcut.
+
+Pi's persistent footer shows `◆ WEAVE · <NORMALIZED-NAME>` under status key `weave-agent`. It uses Pi's theme when available, shows `◆ WEAVE · LOOM` during ordinary chat, switches to a workflow agent such as `◆ WEAVE · TAPESTRY` while that direct step runs, restores the primary after settlement, and clears in health-only mode or at shutdown.
 
 ## Workflow lifecycle
 

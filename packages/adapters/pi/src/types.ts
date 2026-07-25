@@ -94,13 +94,28 @@ export interface PiBeforeAgentStartEvent {
 /** Notification severity accepted by `ctx.ui.notify`. */
 export type PiUiNotifyLevel = "info" | "warning" | "error";
 
+/** Narrow projection of Pi's theme helpers used by the active-agent badge. */
+export interface PiUiThemePort {
+  fg(
+    color:
+      | "accent"
+      | "muted"
+      | "text"
+      | "warning"
+      | "error"
+      | "success"
+      | "dim",
+    text: string,
+  ): string;
+  bold(text: string): string;
+}
+
 /**
  * Narrow projection of `ctx.ui`. Diagnostics/status/notify surfaces plus the
  * two interactive dialog primitives the registered-tool approval bridge
  * needs (`select`/`confirm`, Spec 33 §12.4), plus the widget/status and
  * compositional custom-editor surfaces Task 9 needs to expose the bounded
- * child tree and wire Alt+1..9/Backspace/Esc (Spec 33 §11.5) - no
- * message/entry renderers or shortcuts (out of this task's scope).
+ * child tree and wire Alt+1..9/Backspace/Esc (Spec 33 §11.5).
  */
 /**
  * Narrow mirror of Pi's own `ExtensionUIDialogOptions`
@@ -117,6 +132,7 @@ export interface PiUiDialogOptions {
 }
 
 export interface PiUiPort {
+  readonly theme?: PiUiThemePort;
   notify(message: string, level?: PiUiNotifyLevel): void;
   setStatus(key: string, value: string | undefined): void;
   setWidget(
@@ -262,8 +278,8 @@ export interface PiExtensionApi {
   ): boolean | undefined | Promise<boolean | undefined>;
   /**
    * Registers a keyboard shortcut (`ExtensionAPI.registerShortcut`, Spec 33
-   * §11.5). Used only for Alt+1..Alt+9 direct-child selection, which are not
-   * default editor keys and so are safe to bind exclusively. Backspace
+   * §11.5). Alt+A cycles primary agents. Alt+1..Alt+9 direct-child selection
+   * uses keys that are not default editor bindings. Backspace
    * (parent selection) and Esc (cancel selected subtree) are wired
    * separately, and NOT through this shortcut port: `src/extension.ts`'s
    * `WeaveChildTreeEditor` composes the real `CustomEditor` via

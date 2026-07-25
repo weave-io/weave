@@ -1,8 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import type { WeaveConfig } from "@weaveio/weave-core";
-import type {
-  AgentDescriptor,
-  MaterializationPlan,
+import {
+  type AgentDescriptor,
+  ALL_CAPABILITY_IDS,
+  type MaterializationPlan,
 } from "@weaveio/weave-engine";
 import { ok, okAsync } from "neverthrow";
 import { DefaultPiCapabilityProber } from "../capability-prober.js";
@@ -38,6 +39,16 @@ function fakeConfigActivator(
     configLoader: { load: () => okAsync(EMPTY_CONFIG) },
     materializer: { materialize: () => okAsync(plan) },
   });
+}
+
+function allOkCapabilityProber() {
+  return {
+    probe: () =>
+      ALL_CAPABILITY_IDS.map((capabilityId) => ({
+        capabilityId,
+        probeStatus: "ok" as const,
+      })),
+  };
 }
 
 function installExtension(
@@ -78,6 +89,15 @@ describe("createPiExtension factory (layer C: compiled extension against a fake 
     expect(host.registerCommandCalls.map((call) => call.name).sort()).toEqual(
       [...WEAVE_COMMAND_NAMES, "weave"].sort(),
     );
+    expect(host.registerShortcutCalls).toEqual([
+      {
+        shortcut: "alt+a",
+        registration: {
+          description: "Cycle Weave primary agent",
+          handler: expect.any(Function),
+        },
+      },
+    ]);
     expect(host.onCalls.map((call) => call.event).sort()).toEqual([
       "before_agent_start",
       "input",
@@ -128,38 +148,12 @@ describe("createPiExtension factory (layer C: compiled extension against a fake 
 
   it("becomes ready (health-only false is possible) when every probe is fully controlled to ok via the injected prober", async () => {
     const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
-    class AllOkProber {
-      probe() {
-        return [
-          "command-entrypoints",
-          "token-usage-reporting",
-          "config-materialization",
-          "agent-materialization",
-          "primary-agent-selection",
-          "delegated-specialist-execution",
-          "prompt-composition",
-          "tool-policy-mapping",
-          "workflow-persistence",
-          "workflow-step-dispatch",
-          "plan-file-compatibility",
-          "event-logging",
-          "context-window-monitor",
-          "idle-continuation",
-          "compaction-recovery",
-          "analytics-dashboard",
-          "static-artifact-generation",
-          "eval-integration",
-          "multiple-active-workflows",
-        ].map((capabilityId) => ({ capabilityId, probeStatus: "ok" as const }));
-      }
-    }
     const factory = createPiExtension({
       hostPackageReader: FakeHostPackageReader.ok({
         name: HOST_PACKAGE_NAME,
         version: "0.81.1",
       }),
-      // biome-ignore lint/suspicious/noExplicitAny: structural fake, exact capability ID union is exercised via the real ALL_CAPABILITY_IDS list above
-      capabilityProber: new AllOkProber() as any,
+      capabilityProber: allOkCapabilityProber(),
       idGenerator: new FakeIdGenerator(),
       clock: new FakeClock(),
       logger: new RecordingLogger(),
@@ -189,7 +183,7 @@ describe("createPiExtension factory (layer C: compiled extension against a fake 
     ).toBe("ready");
     expect(host.statusCalls).toContainEqual({
       key: "weave-agent",
-      value: "agent: loom",
+      value: "◆ WEAVE · LOOM",
     });
   });
 
@@ -346,6 +340,16 @@ function loomDescriptor(
   };
 }
 
+function tapestryDescriptor(
+  overrides: Partial<AgentDescriptor> = {},
+): AgentDescriptor {
+  return loomDescriptor({
+    name: "tapestry",
+    composedPrompt: "You are Tapestry, the workflow orchestrator.",
+    ...overrides,
+  });
+}
+
 describe("createPiExtension: config activation, materialization consumption, primary activation, prompt append (Spec 33 \u00a77.2, \u00a78, \u00a79)", () => {
   it("materializes config, activates the default primary (loom), and never touches a real developer config file", async () => {
     const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
@@ -370,6 +374,144 @@ describe("createPiExtension: config activation, materialization consumption, pri
     expect(systemPrompt).toContain("Pi's native system prompt.");
     expect(systemPrompt).toContain("You are Loom, the main orchestrator.");
     expect(systemPrompt).toContain('name="loom"');
+  });
+
+  it("cycles active primary agents with Alt+A, skips subagents, and updates the badge and prompt", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    installExtension(host, "0.81.1", {
+      capabilityProber: allOkCapabilityProber(),
+      configActivator: fakeConfigActivator({
+        agents: [
+          {
+            agentName: "loom",
+            source: "explicit",
+            descriptor: loomDescriptor(),
+          },
+          {
+            agentName: "shuttle",
+            source: "explicit",
+            descriptor: loomDescriptor({
+              name: "shuttle",
+              mode: "subagent",
+            }),
+          },
+          {
+            agentName: "tapestry",
+            source: "explicit",
+            descriptor: tapestryDescriptor(),
+          },
+        ],
+        errors: [],
+      }),
+    });
+    await host.triggerSessionStart();
+    await host.triggerBeforeAgentStart({ systemPrompt: "native" });
+
+    await host.invokeShortcut("alt+a");
+
+    expect(host.statusCalls.at(-1)).toEqual({
+      key: "weave-agent",
+      value: "◆ WEAVE · TAPESTRY",
+    });
+    expect(host.notifyCalls.at(-1)).toEqual({
+      message: "Switched Weave primary agent to tapestry.",
+      level: "info",
+    });
+    const tapestryTurn = await host.triggerBeforeAgentStart({
+      systemPrompt: "native",
+    });
+    expect(tapestryTurn.systemPrompt).toContain(
+      "You are Tapestry, the workflow orchestrator.",
+    );
+    expect(tapestryTurn.systemPrompt).not.toContain(
+      "You are Loom, the main orchestrator.",
+    );
+
+    await host.invokeShortcut("alt+a");
+
+    expect(host.statusCalls.at(-1)).toEqual({
+      key: "weave-agent",
+      value: "◆ WEAVE · LOOM",
+    });
+  });
+
+  it("cycles the pending primary before the first turn", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    installExtension(host, "0.81.1", {
+      capabilityProber: allOkCapabilityProber(),
+      configActivator: fakeConfigActivator({
+        agents: [
+          {
+            agentName: "loom",
+            source: "explicit",
+            descriptor: loomDescriptor(),
+          },
+          {
+            agentName: "tapestry",
+            source: "explicit",
+            descriptor: tapestryDescriptor(),
+          },
+        ],
+        errors: [],
+      }),
+    });
+    await host.triggerSessionStart();
+
+    await host.invokeShortcut("alt+a");
+
+    const firstTurn = await host.triggerBeforeAgentStart({
+      systemPrompt: "native",
+    });
+    expect(firstTurn.systemPrompt).toContain(
+      "You are Tapestry, the workflow orchestrator.",
+    );
+    expect(firstTurn.systemPrompt).not.toContain(
+      "You are Loom, the main orchestrator.",
+    );
+  });
+
+  it("keeps the active primary and badge when the next primary cannot activate", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    installExtension(host, "0.81.1", {
+      capabilityProber: allOkCapabilityProber(),
+      configActivator: fakeConfigActivator({
+        agents: [
+          {
+            agentName: "loom",
+            source: "explicit",
+            descriptor: loomDescriptor(),
+          },
+          {
+            agentName: "tapestry",
+            source: "explicit",
+            descriptor: tapestryDescriptor({ skills: ["missing"] }),
+          },
+        ],
+        errors: [],
+      }),
+    });
+    await host.triggerSessionStart();
+    await host.triggerBeforeAgentStart({ systemPrompt: "native", skills: [] });
+
+    await host.invokeShortcut("alt+a");
+
+    expect(host.statusCalls.at(-1)).toEqual({
+      key: "weave-agent",
+      value: "◆ WEAVE · LOOM",
+    });
+    expect(host.notifyCalls.at(-1)).toEqual({
+      message: "Could not switch Weave primary agent to tapestry.",
+      level: "error",
+    });
+    const nextTurn = await host.triggerBeforeAgentStart({
+      systemPrompt: "native",
+    });
+    expect(nextTurn.systemPrompt).toContain(
+      "You are Loom, the main orchestrator.",
+    );
+    expect(nextTurn.systemPrompt).not.toContain(
+      "You are Tapestry, the workflow orchestrator.",
+    );
   });
 
   it("appends nothing extra when the same descriptor's before_agent_start fires twice", async () => {

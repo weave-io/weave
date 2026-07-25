@@ -149,13 +149,13 @@ Framework factories and callbacks MAY return Pi-required shapes. Every fallible 
 The extension factory MUST only:
 
 1.   construct `PiExtensionController` with explicit dependencies;
-2.   register lifecycle/event delegates and the exact direct command shells once;
-3.   bind command shells to an inert generation gate that exposes no work before activation;
+2.   register lifecycle/event delegates, the exact direct command shells, and the Alt+A primary-agent cycle shortcut once;
+3.   bind command shells and the shortcut to an inert generation gate that exposes no work before activation;
 4.   return control to Pi.
 
 Pi command registration returns `void`. The adapter MUST NOT invent a registration receipt. At `session_start`, it calls `pi.getCommands()` and verifies that every required command has one unsuffixed invocation whose `sourceInfo` identifies this package and that no same-base suffixed entries exist. Pi's documented duplicate-command behavior preserves every colliding command under numeric suffixes; Weave then enters health-only mode and shows the collision through an always-available startup status/widget rather than depending on the collided health command.
 
-The factory MUST NOT register Weave-owned tools, global shortcuts, message renderers, or entry renderers. During trusted ready activation, the controller registers a Weave-owned tool only after `pi.getAllTools()` proves its name free, then immediately re-reads provenance to verify ownership before enabling it. It governs built-in tools through `tool_call` interception and never overrides them. It implements child-tree keys through a compositional editor wrapper installed with `getEditorComponent()`/`setEditorComponent()`, not `registerShortcut()`. Diagnostics and child views use status/widgets/custom UI, so renderer collisions cannot displace another extension.
+The factory MUST NOT register Weave-owned tools, message renderers, entry renderers, or any global shortcut except Alt+A for primary-agent cycling. Shift+Tab remains Pi's reserved thinking-cycle key and MUST NOT be overridden. The Alt+A handler stays inert before a healthy session generation exists. During trusted ready activation, the controller registers a Weave-owned tool only after `pi.getAllTools()` proves its name free, then immediately re-reads provenance to verify ownership before enabling it. It governs built-in tools through `tool_call` interception and never overrides them. It implements child-tree keys through a compositional editor wrapper installed with `getEditorComponent()`/`setEditorComponent()`, not `registerShortcut()`. Diagnostics and child views use status/widgets/custom UI, so renderer collisions cannot displace another extension.
 
 It MUST NOT load project config, open or migrate the Runtime Store, materialize descriptors, start timers, append session entries, capture a session context for later reuse, or launch a child.
 
@@ -237,7 +237,11 @@ The parent TUI has exactly one active primary descriptor:
 *   `all` descriptors remain eligible for both direct selection and delegation.
 *   Category shuttles remain delegated subagents.
 
-Primary activation MUST be atomic from the user's perspective: descriptor identity, prompt source, model intent, active registered tools, effective policy, skills guidance, status, and recovery correlation either all change or all remain at the prior valid state. Plan state, never prompt inference or category glob matching, controls Loom/Tapestry handoff. In TUI mode the adapter MUST maintain a separate persistent footer status keyed `weave-agent` whose value is `agent: <normalized-name>`. It shows the current primary while idle, switches to the exact normalized descriptor name of a live direct workflow agent, restores the primary after success or failure, and clears in health-only mode and at session shutdown.
+Primary activation MUST be atomic from the user's perspective: descriptor identity, prompt source, model intent, active registered tools, effective policy, skills guidance, status, and recovery correlation either all change or all remain at the prior valid state. Plan state, never prompt inference or category glob matching, controls Loom/Tapestry handoff.
+
+Alt+A cycles only materialized descriptors whose mode is `primary` or `all`, in materialization order. It never selects a `subagent`. Before the first turn it changes the pending primary; after activation it applies the next descriptor atomically. The adapter rejects manual cycling during a live direct workflow step, in health-only or child mode, or when fewer than two eligible primaries exist. Activation failure preserves the prior primary and badge.
+
+In TUI mode the adapter MUST maintain a separate persistent footer status keyed `weave-agent`. Its readable form is `◆ WEAVE · <NORMALIZED-NAME>`, with Pi theme accent, bold, and muted tokens when available and the same plain-text form otherwise. It shows the current primary while idle, switches to the exact normalized descriptor name of a live direct workflow agent, restores the primary after success or failure, and clears in health-only mode and at session shutdown.
 
 ### 8.3 Prompt append
 

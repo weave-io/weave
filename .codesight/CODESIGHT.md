@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 220 lib files | 33 env vars | 9 middleware | 0% test coverage
-> **Token savings:** this file is ~21,500 tokens. Without it, AI exploration would cost ~72,900 tokens. **Saves ~51,400 tokens per conversation.**
-> **Last scanned:** 2026-07-25 19:00 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 221 lib files | 33 env vars | 9 middleware | 0% test coverage
+> **Token savings:** this file is ~21,600 tokens. Without it, AI exploration would cost ~73,200 tokens. **Saves ~51,500 tokens per conversation.**
+> **Last scanned:** 2026-07-25 19:57 — re-run after significant changes
 
 ---
 
@@ -77,6 +77,11 @@
   - type OpenCodeToolPermissions
   - const READ_TOOL_NAMES: readonly string[]
 - `packages/adapters/opencode/src/translate-agent.ts` — function translateAgent: (descriptor, resolvedModel?) => Result<OpenCodeAgentConfig, TranslateAgentError>, type TranslateAgentError
+- `packages/adapters/pi/src/agent-cycle.ts`
+  - function listCycleablePrimaryAgents: (descriptors, AgentDescriptor>) => readonly AgentDescriptor[]
+  - function nextCycleablePrimaryAgent: (descriptors, AgentDescriptor>, currentName) => AgentDescriptor | undefined
+  - function renderActiveAgentBadge: (agentName, theme?) => string
+  - const PI_PRIMARY_AGENT_CYCLE_SHORTCUT
 - `packages/adapters/pi/src/artifact-provider.ts`
   - class BunPiArtifactProvider
   - class FakePiArtifactProvider
@@ -1231,7 +1236,7 @@
 ## Most Imported Files (change these carefully)
 
 - `packages/cli/src/evals/types.ts` — imported by **39** files
-- `packages/adapters/pi/src/types.ts` — imported by **29** files
+- `packages/adapters/pi/src/types.ts` — imported by **31** files
 - `packages/engine/src/runtime/types.ts` — imported by **28** files
 - `packages/cli/src/theme/colors.ts` — imported by **20** files
 - `packages/cli/src/io/terminal.ts` — imported by **18** files
@@ -1254,7 +1259,7 @@
 ## Import Map (who imports what)
 
 - `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/dashboard-indexes.test.ts`, `packages/cli/src/evals/__tests__/github-contents-publisher.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts` +34 more
-- `packages/adapters/pi/src/types.ts` ← `packages/adapters/pi/src/__tests__/capability-prober.test.ts`, `packages/adapters/pi/src/__tests__/child-env.test.ts`, `packages/adapters/pi/src/__tests__/child-runtime.test.ts`, `packages/adapters/pi/src/__tests__/controller.test.ts`, `packages/adapters/pi/src/__tests__/delegation-tool.test.ts` +24 more
+- `packages/adapters/pi/src/types.ts` ← `packages/adapters/pi/src/__tests__/agent-cycle.test.ts`, `packages/adapters/pi/src/__tests__/capability-prober.test.ts`, `packages/adapters/pi/src/__tests__/child-env.test.ts`, `packages/adapters/pi/src/__tests__/child-runtime.test.ts`, `packages/adapters/pi/src/__tests__/controller.test.ts` +26 more
 - `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts` +23 more
 - `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts` +15 more
 - `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts` +13 more
@@ -1269,7 +1274,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 221 test files found
+> 222 test files found
 
 ---
 
