@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 221 lib files | 33 env vars | 9 middleware | 0% test coverage
 > **Token savings:** this file is ~21,600 tokens. Without it, AI exploration would cost ~73,200 tokens. **Saves ~51,500 tokens per conversation.**
-> **Last scanned:** 2026-07-25 19:57 — re-run after significant changes
+> **Last scanned:** 2026-07-25 20:21 — re-run after significant changes
 
 ---
 
@@ -198,11 +198,11 @@
 - `packages/adapters/pi/src/delegation-tool.ts`
   - function buildDelegationToolRegistration: (deps) => PiWeaveToolRegistration
   - function buildRelayedDelegationToolRegistration: (deps) => PiWeaveToolRegistration
+  - interface PiDelegationInvocationContext
   - interface PiDelegationToolDeps
   - interface PiRelayedDelegationToolDeps
   - const WEAVE_DELEGATION_TOOL_NAME
-  - const WEAVE_DELEGATION_TOOL_OWNER
-  - _...1 more_
+  - _...2 more_
 - `packages/adapters/pi/src/direct-dispatch-transport.ts`
   - function createDirectDispatchTransport: (deps, generationId) => DirectDispatchTransport
   - class PiDirectStepChildRegistry

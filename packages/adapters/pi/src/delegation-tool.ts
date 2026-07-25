@@ -63,8 +63,18 @@ function buildDelegationParameters(allowedNames: ReadonlySet<string>) {
   });
 }
 
-export interface PiDelegationToolDeps {
+export interface PiDelegationInvocationContext {
+  readonly parentAgentName: string;
   readonly targets: readonly DelegationTarget[];
+}
+
+export interface PiDelegationToolDeps {
+  /** Union used by Pi's static tool schema. Runtime eligibility comes from `getInvocationContext` when supplied. */
+  readonly targets: readonly DelegationTarget[];
+  /** Reads the active primary identity and its current target set at execution time. */
+  readonly getInvocationContext?: () =>
+    | PiDelegationInvocationContext
+    | undefined;
   /**
    * Lazily reads the live delegation controller. `undefined` until the
    * generation that built this tool has finished its own real activation -
@@ -90,6 +100,7 @@ export interface PiDelegationToolDeps {
     task: string,
     childId: string,
     ctx: PiSessionContext,
+    parentAgentName: string,
   ) => JsonValue;
   readonly buildEnv: () => Record<string, string>;
 }
@@ -192,7 +203,19 @@ function parseDelegationCall(
   return { agent, task };
 }
 
-/** Builds the one Weave-owned delegation tool, restricted to `deps.targets`, for one eligible primary or child. */
+function readInvocationContext(
+  deps: PiDelegationToolDeps,
+): PiDelegationInvocationContext | undefined {
+  if (deps.getInvocationContext !== undefined) {
+    return deps.getInvocationContext();
+  }
+  return {
+    parentAgentName: deps.parentAgentName,
+    targets: deps.targets,
+  };
+}
+
+/** Builds the one Weave-owned delegation tool with runtime-scoped primary eligibility. */
 export function buildDelegationToolRegistration(
   deps: PiDelegationToolDeps,
 ): PiWeaveToolRegistration {
@@ -212,7 +235,11 @@ export function buildDelegationToolRegistration(
       if (parsed === undefined || !allowedNames.has(parsed.agent)) {
         return failureResult("invalid-delegation-target");
       }
-      const target = deps.targets.find(
+      const invocation = readInvocationContext(deps);
+      if (invocation === undefined) {
+        return failureResult("delegation-transport-unavailable");
+      }
+      const target = invocation.targets.find(
         (candidate) => candidate.name === parsed.agent,
       );
       if (target === undefined) {
@@ -238,12 +265,18 @@ export function buildDelegationToolRegistration(
       const request: PiDelegationRequest = {
         parentId: deps.parentId,
         parentDepth: deps.parentDepth,
-        parentAgentName: deps.parentAgentName,
+        parentAgentName: invocation.parentAgentName,
         agentName: parsed.agent,
         task: parsed.task,
         cwd: ctx.cwd,
         env: deps.buildEnv(),
-        bootstrap: deps.buildBootstrap(target, parsed.task, childId, ctx),
+        bootstrap: deps.buildBootstrap(
+          target,
+          parsed.task,
+          childId,
+          ctx,
+          invocation.parentAgentName,
+        ),
         childId,
       };
       const settlement = controller.delegate(request).match(
@@ -286,7 +319,11 @@ export function buildDelegationToolRegistration(
           },
         ]);
       }
-      if (!allowedNames.has(parsed.agent)) {
+      const invocation = readInvocationContext(deps);
+      const isActiveTarget = invocation?.targets.some(
+        (target) => target.name === parsed.agent,
+      );
+      if (!allowedNames.has(parsed.agent) || isActiveTarget !== true) {
         return err({
           type: "unsafe_input",
           path: "agent",

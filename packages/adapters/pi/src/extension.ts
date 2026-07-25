@@ -12,6 +12,7 @@ import type {
 import { isDeniedKey, logger } from "@weaveio/weave-engine";
 import { okAsync, Result, ResultAsync } from "neverthrow";
 import {
+  listCycleablePrimaryAgents,
   nextCycleablePrimaryAgent,
   PI_PRIMARY_AGENT_CYCLE_SHORTCUT,
   renderActiveAgentBadge,
@@ -1616,6 +1617,7 @@ export function createPiExtension(
     string,
     import("@weaveio/weave-engine").WorkflowExecutionContext["workflows"][string]
   > = {};
+  let activeSession: PiActiveSession | undefined;
   const controllerDeps: PiExtensionControllerDeps = {
     safeInitializer: new PiSafeInitializer({
       hostPackageReader: deps.hostPackageReader,
@@ -1623,39 +1625,57 @@ export function createPiExtension(
       configActivator: deps.configActivator,
       permissionBridge: deps.permissionBridge,
       pathContainmentPort: deps.pathContainmentPort,
-      buildDelegationToolRegistrations: (primary, activation) =>
-        primary.delegationTargets.length === 0
-          ? []
-          : [
-              buildDelegationToolRegistration({
-                targets: primary.delegationTargets,
-                getController: () => delegationControllerCell.controller,
-                parentId: ROOT_NODE_ID,
-                parentDepth: 0,
-                parentAgentName: primary.name,
-                idGenerator: deps.idGenerator,
-                buildBootstrap: (target, _task, childId, ctx) =>
-                  buildChildBootstrapBody(
-                    activation.descriptors.byName,
-                    target,
-                    childId,
-                    {
-                      parentAgentName: primary.name,
-                      parentDepth: 0,
-                      cwd: ctx.cwd,
-                    },
-                    ctx,
-                  ),
-                buildEnv: () => ({}),
-              }),
-            ],
+      buildDelegationToolRegistrations: (primary, activation) => {
+        const targetsByName = new Map<string, DelegationTarget>();
+        for (const descriptor of listCycleablePrimaryAgents(
+          activation.descriptors.byName,
+        )) {
+          for (const target of descriptor.delegationTargets) {
+            targetsByName.set(target.name, target);
+          }
+        }
+        const targets = [...targetsByName.values()];
+        if (targets.length === 0) return [];
+
+        return [
+          buildDelegationToolRegistration({
+            targets,
+            getInvocationContext: () => {
+              const descriptor =
+                activeSession?.primarySession.getCurrent()?.descriptor;
+              if (descriptor === undefined) return undefined;
+              return {
+                parentAgentName: descriptor.name,
+                targets: descriptor.delegationTargets,
+              };
+            },
+            getController: () => delegationControllerCell.controller,
+            parentId: ROOT_NODE_ID,
+            parentDepth: 0,
+            parentAgentName: primary.name,
+            idGenerator: deps.idGenerator,
+            buildBootstrap: (target, _task, childId, ctx, parentAgentName) =>
+              buildChildBootstrapBody(
+                activation.descriptors.byName,
+                target,
+                childId,
+                {
+                  parentAgentName,
+                  parentDepth: 0,
+                  cwd: ctx.cwd,
+                },
+                ctx,
+              ),
+            buildEnv: () => ({}),
+          }),
+        ];
+      },
     }),
     idGenerator: deps.idGenerator,
     clock: deps.clock,
     logger: deps.logger,
   };
   const controller = new PiExtensionController(controllerDeps);
-  let activeSession: PiActiveSession | undefined;
   const childModeState = createChildModeState();
 
   function buildWorkflowTracker(projectRoot: string): PiActiveWorkflowTracker {

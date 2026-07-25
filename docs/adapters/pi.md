@@ -58,7 +58,7 @@ Use `/weave` to open the palette or invoke a direct command:
 
 Session start, idle, recovery discovery, and normal chat do not authorize workflow work. The adapter continues automatically only when the engine returns a next effect in the same uninterrupted authorized controller generation.
 
-Press `Alt+A` to cycle materialized agents whose mode is `primary` or `all`, in config order. The shortcut skips subagents such as Shuttle, refuses to switch during a live direct workflow step, and keeps the current primary if the next agent cannot activate. Shift+Tab remains Pi's thinking-cycle shortcut.
+Press `Alt+A` to cycle materialized agents whose mode is `primary` or `all`, in config order. The shortcut skips subagents such as Shuttle, refuses to switch during a live direct workflow step, and keeps the current primary if the next agent cannot activate. After a switch, `weave_delegate` reads the active primary's normalized identity and delegation targets at call time, so Loom and Tapestry can both delegate without stale parent credentials. Shift+Tab remains Pi's thinking-cycle shortcut.
 
 Pi's persistent footer shows `◆ WEAVE · <NORMALIZED-NAME>` under status key `weave-agent`. It uses Pi's theme when available, shows `◆ WEAVE · LOOM` during ordinary chat, switches to a workflow agent such as `◆ WEAVE · TAPESTRY` while that direct step runs, restores the primary after settlement, and clears in health-only mode or at shutdown.
 

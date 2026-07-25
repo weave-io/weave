@@ -187,11 +187,11 @@
 - `packages/adapters/pi/src/delegation-tool.ts`
   - function buildDelegationToolRegistration: (deps) => PiWeaveToolRegistration
   - function buildRelayedDelegationToolRegistration: (deps) => PiWeaveToolRegistration
+  - interface PiDelegationInvocationContext
   - interface PiDelegationToolDeps
   - interface PiRelayedDelegationToolDeps
   - const WEAVE_DELEGATION_TOOL_NAME
-  - const WEAVE_DELEGATION_TOOL_OWNER
-  - _...1 more_
+  - _...2 more_
 - `packages/adapters/pi/src/direct-dispatch-transport.ts`
   - function createDirectDispatchTransport: (deps, generationId) => DirectDispatchTransport
   - class PiDirectStepChildRegistry

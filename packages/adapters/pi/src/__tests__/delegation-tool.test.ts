@@ -257,6 +257,55 @@ describe("buildDelegationToolRegistration", () => {
     expect(capturedRequest?.cwd).toBe("/project");
   });
 
+  it("execute: reads the active primary identity and targets after a primary switch", async () => {
+    let capturedRequest: PiDelegationRequest | undefined;
+    let bootstrapParentAgentName: string | undefined;
+    const deps = {
+      ...baseDeps({
+        getController: () =>
+          fakeController((request) => {
+            capturedRequest = request;
+            return okAsync({ outcome: "completed", summary: "done" });
+          }),
+        buildBootstrap: (_target, _task, _childId, _ctx, parentAgentName) => {
+          bootstrapParentAgentName = parentAgentName;
+          return {};
+        },
+      }),
+      getInvocationContext: () => ({
+        parentAgentName: "tapestry",
+        targets: [TARGETS[1]],
+      }),
+    };
+    const registration = buildDelegationToolRegistration(deps);
+
+    const accepted = await registration.tool.execute(
+      "call-1",
+      { agent: "shuttle-backend", task: "do it" },
+      undefined,
+      undefined,
+      ctx(),
+    );
+    expect(JSON.parse((accepted.content[0] as { text: string }).text)).toEqual({
+      ok: true,
+      settlement: { outcome: "completed", summary: "done" },
+    });
+    expect(capturedRequest?.parentAgentName).toBe("tapestry");
+    expect(bootstrapParentAgentName).toBe("tapestry");
+
+    const rejected = await registration.tool.execute(
+      "call-2",
+      { agent: "shuttle", task: "do it" },
+      undefined,
+      undefined,
+      ctx(),
+    );
+    expect(JSON.parse((rejected.content[0] as { text: string }).text)).toEqual({
+      ok: false,
+      error: "invalid-delegation-target",
+    });
+  });
+
   it("execute: surfaces a controller failure as a structured error code, never throwing", async () => {
     const registration = buildDelegationToolRegistration(
       baseDeps({
