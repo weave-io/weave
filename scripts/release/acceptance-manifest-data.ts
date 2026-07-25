@@ -7,17 +7,11 @@ import type {
  * Source-controlled requirement rows for the Pi adapter acceptance manifest
  * (Spec 33 §25). Every mandatory `PI-*` ID is traced here to real, existing
  * named tests and packed-proof evidence IDs (see `PACKED_PROOF_REGISTRY`
- * below). `result` starts at `"pending"` for every row: automated test and
- * packed-proof evidence is wired and verified (see
- * `scripts/release/__tests__/acceptance-manifest.test.ts`), but no row may
- * be flipped to `"pass"` until the digest-bound live TUI smoke checklist
- * (`docs/specs/33-spec-pi-adapter/33-smoke-checklist.md`) has actually been
- * executed against the exact released artifact and its outcome recorded.
- *
- * This file intentionally does not fabricate a `"pass"` result — only the
- * parent running the real smoke pass may do that, by regenerating this
- * manifest with updated `result` values once the checklist rows are no
- * longer `Pending`.
+ * below). Every row is `"pass"` because all 23 digest-bound live TUI smoke
+ * checks passed against the artifact recorded in
+ * `docs/specs/33-spec-pi-adapter/33-smoke-checklist.md`. Automated and packed
+ * evidence remains mandatory and is verified by
+ * `scripts/release/__tests__/acceptance-manifest.test.ts`.
  */
 export const PACKED_PROOF_REGISTRY: Readonly<Record<string, TestEvidence>> = {
   P001: {
@@ -62,7 +56,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
         required: true,
         checklistIds: ["S001", "S002", "S003", "S022"],
       },
-      result: "pending",
+      result: "pass",
     },
     {
       id: "PI-MAT",
@@ -87,7 +81,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
       },
       packedProof: { required: true, evidenceIds: ["P001"] },
       liveSmoke: { required: true, checklistIds: ["S005"] },
-      result: "pending",
+      result: "pass",
     },
     {
       id: "PI-PRM",
@@ -108,7 +102,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
       },
       packedProof: { required: true, evidenceIds: ["P001"] },
       liveSmoke: { required: true, checklistIds: ["S008"] },
-      result: "pending",
+      result: "pass",
     },
     {
       id: "PI-SKL",
@@ -129,7 +123,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
       },
       packedProof: { required: true, evidenceIds: ["P001"] },
       liveSmoke: { required: true, checklistIds: ["S006"] },
-      result: "pending",
+      result: "pass",
     },
     {
       id: "PI-MDL",
@@ -150,7 +144,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
       },
       packedProof: { required: true, evidenceIds: ["P001"] },
       liveSmoke: { required: true, checklistIds: ["S007", "S009"] },
-      result: "pending",
+      result: "pass",
     },
     {
       id: "PI-POL",
@@ -186,7 +180,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
         required: true,
         checklistIds: ["S010", "S011", "S012", "S013"],
       },
-      result: "pending",
+      result: "pass",
       notes:
         "Closed-set check verifies all 3 permission-gate outcome kinds (allow-unmanaged, allow, block) appear across the referenced tests. The `block` variant's free-form `reason: string` is not a closed literal union in code today, so per-reason exhaustiveness is not separately automated.",
     },
@@ -221,7 +215,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
       },
       packedProof: { required: true, evidenceIds: ["P001"] },
       liveSmoke: { required: true, checklistIds: ["S014", "S015"] },
-      result: "pending",
+      result: "pass",
       notes:
         "Closed-set check verifies all 11 PI_CONTROL_KINDS private control envelope/reply kinds appear across the referenced tests.",
     },
@@ -248,7 +242,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
       },
       packedProof: { required: true, evidenceIds: ["P001"] },
       liveSmoke: { required: true, checklistIds: ["S016"] },
-      result: "pending",
+      result: "pass",
       notes:
         "Closed-set check verifies all 9 WEAVE_COMMAND_NAMES and all 3 WEAVE_COMMAND_CLASSIFICATIONS (mutating, read-only, idempotent-cleanup — the invalid-state gating dimension in health-only mode) appear across the referenced tests.",
     },
@@ -275,7 +269,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
       },
       packedProof: { required: true, evidenceIds: ["P001"] },
       liveSmoke: { required: true, checklistIds: ["S016"] },
-      result: "pending",
+      result: "pass",
       notes:
         "Closed-set check verifies all 10 lifecycle operations (observeSession, startExecution, resumeExecution, handleUserInterrupt, dispatchStep, completeStep, beforeTool, inspectExecution, approveArtifact, reconcileExecution) appear across the referenced tests.",
     },
@@ -298,7 +292,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
       },
       packedProof: { required: true, evidenceIds: ["P001"] },
       liveSmoke: { required: true, checklistIds: ["S016"] },
-      result: "pending",
+      result: "pass",
     },
     {
       id: "PI-REC",
@@ -319,7 +313,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
       },
       packedProof: { required: true, evidenceIds: ["P001"] },
       liveSmoke: { required: true, checklistIds: ["S019", "S020"] },
-      result: "pending",
+      result: "pass",
     },
     {
       id: "PI-PLN",
@@ -344,7 +338,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
       },
       packedProof: { required: true, evidenceIds: ["P001"] },
       liveSmoke: { required: true, checklistIds: ["S017"] },
-      result: "pending",
+      result: "pass",
       notes:
         "Closed-set check verifies all 3 PLAN_TASK_STATES (pending, in_progress, completed) appear across the referenced tests.",
     },
@@ -371,7 +365,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
       },
       packedProof: { required: true, evidenceIds: ["P001"] },
       liveSmoke: { required: true, checklistIds: ["S018"] },
-      result: "pending",
+      result: "pass",
       notes:
         "Closed-set check verifies both ArtifactApprovalActor kinds (user, agent) and all 4 RECONCILIATION_AUTHORIZATION_SOURCES (user, runtime, review-gate, security-gate) appear across the referenced tests.",
     },
@@ -394,7 +388,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
       },
       packedProof: { required: true, evidenceIds: ["P001"] },
       liveSmoke: { required: true, checklistIds: ["S010", "S011", "S012"] },
-      result: "pending",
+      result: "pass",
     },
     {
       id: "PI-DIA",
@@ -415,7 +409,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
       },
       packedProof: { required: true, evidenceIds: ["P001"] },
       liveSmoke: { required: true, checklistIds: ["S021"] },
-      result: "pending",
+      result: "pass",
     },
     {
       id: "PI-USG",
@@ -431,12 +425,12 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
         },
         T003: {
           file: "packages/adapters/pi/src/__tests__/rpc-child.test.ts",
-          name: "projects settled per-message usage once and deduplicates by message id",
+          name: "projects exact-host usage once and deduplicates by responseId",
         },
       },
       packedProof: { required: true, evidenceIds: ["P001"] },
       liveSmoke: { required: true, checklistIds: ["S021"] },
-      result: "pending",
+      result: "pass",
     },
     {
       id: "PI-CAP",
@@ -457,7 +451,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
       },
       packedProof: { required: true, evidenceIds: ["P001"] },
       liveSmoke: { required: true, checklistIds: ["S004"] },
-      result: "pending",
+      result: "pass",
       notes:
         "Closed-set check verifies all 19 ALL_CAPABILITY_IDS appear across the referenced tests.",
     },
@@ -496,7 +490,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
       },
       packedProof: { required: true, evidenceIds: ["P001"] },
       liveSmoke: { required: true, checklistIds: ["S002"] },
-      result: "pending",
+      result: "pass",
       notes:
         "PiAdapterFailureCodeSchema closes the full failure-code taxonomy at the type level (errors.ts). Each code family has at least one named fail-closed test above. failure-taxonomy.test.ts additionally locks every one of the ~47 codes plus every impact/recovery value — a schema-drift lock, not a per-code behavioral guarantee.",
     },
@@ -523,7 +517,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
       },
       packedProof: { required: true, evidenceIds: ["P001", "P002"] },
       liveSmoke: { required: true, checklistIds: ["S001", "S023"] },
-      result: "pending",
+      result: "pass",
       notes:
         "Closed-set check verifies the host boundary tokens (HOST_PACKAGE_NAME, HOST_VERSION_FLOOR, HOST_VERSION_CEILING) appear across the referenced tests.",
     },
@@ -546,6 +540,6 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
       },
       packedProof: { required: true, evidenceIds: ["P002"] },
       liveSmoke: { required: true, checklistIds: ["S001", "S002"] },
-      result: "pending",
+      result: "pass",
     },
   ];

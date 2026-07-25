@@ -39,7 +39,7 @@ import {
 
 function checklistResults(
   ids: Iterable<string>,
-  result: "Pending" | "Pass" | "Fail" = "Pending",
+  result: "Pending" | "Pass" | "Fail" = "Pass",
 ): ReadonlyMap<string, "Pending" | "Pass" | "Fail"> {
   return new Map(Array.from(ids, (id) => [id, result]));
 }
@@ -298,6 +298,7 @@ describe("verifyAcceptanceManifestEvidence (mocked reader)", () => {
       packedProofRegistry: PACKED_PROOF_REGISTRY,
       checklistResults: checklistResults(
         manifest.requirements.flatMap((row) => row.liveSmoke.checklistIds),
+        "Pending",
       ),
     });
     const activation = report.issues.find(

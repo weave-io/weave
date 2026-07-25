@@ -24,7 +24,7 @@ describe("generateAcceptanceManifest", () => {
     expect(manifest.artifactBinding.sha256).toMatch(/^[a-f0-9]{64}$/);
     expect(manifest.artifactBinding.subjectSha).toMatch(/^[a-f0-9]{40}$/);
     expect(manifest.requirements).toHaveLength(20);
-    expect(manifest.requirements.every((row) => row.result === "pending")).toBe(
+    expect(manifest.requirements.every((row) => row.result === "pass")).toBe(
       true,
     );
   }, 60_000);

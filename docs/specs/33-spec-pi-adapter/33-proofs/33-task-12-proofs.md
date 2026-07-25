@@ -2,16 +2,18 @@
 
 - Spec: [`33-spec-pi-adapter.md`](../33-spec-pi-adapter.md) §22, §25
 - Issue: weave-io/weave#21, Task 12
-- Status: ✅ Automated machinery complete, including exhaustive closed-set wiring for all 9 categories Spec 33 §25 names — ✅ a real completion-channel policy bug found during live exact-host smoke is fixed and regression-tested (see "Addendum" below) — ⏳ live TUI smoke execution and result recording still outstanding (see "What remains" below)
+- Status: ✅ Complete — all 20 `PI-*` rows pass and all 23 exact-host interactive TUI checks passed against one digest-bound artifact
 
 ## Summary
 
-This change completes the machinery Spec 33 §25 requires for the acceptance
-manifest, without fabricating the one thing that can only come from a real
-interactive Pi TUI session: live smoke *results*. A prior pass (audited and
-extended by this change) added the manifest, validator, host-compatibility
-matrix, smoke-checklist parser, and generator; this pass closes the gaps an
-audit against §22–§25 found:
+Task 12 is complete. The acceptance machinery traces every requirement to
+named automated and packed proof, and the live smoke run supplies the evidence
+that only a real interactive Pi TUI can provide. The final run passed all 23
+checks against one immutable artifact binding. Earlier attempts found six
+runtime defects; each was fixed, regression-tested, repacked, and followed by
+a full checklist restart.
+
+The acceptance implementation includes:
 
 1. A checked-in, schema-valid acceptance manifest
    (`docs/specs/33-spec-pi-adapter/acceptance-manifest.json`) tracing every
@@ -134,11 +136,12 @@ rejects drift. `PI-PKG`'s closed set now also asserts the three boundary
 tokens (`HOST_PACKAGE_NAME`, `HOST_VERSION_FLOOR`, `HOST_VERSION_CEILING`)
 are present in the tests that exercise that matrix.
 
-### ✅ Digest-bound stable TUI smoke checklist/evidence machinery prepared, not executed
+### ✅ Digest-bound stable TUI smoke checklist executed
 
-`docs/specs/33-spec-pi-adapter/33-smoke-checklist.md` is unchanged (23
-rows, all `Pending`). Every row is now referenced by at least one
-requirement (`S022` fix).
+All 23 rows in `docs/specs/33-spec-pi-adapter/33-smoke-checklist.md` are
+`Pass`. Every row is referenced by at least one requirement. The final run
+used Pi `0.81.1`, `anthropic/claude-sonnet-5`, and the exact artifact and
+source digests recorded in the checklist and manifest.
 
 ### ✅ Fallible file/pack/generation APIs use Result/ResultAsync, never throw
 
@@ -151,14 +154,11 @@ root with no such package"` test calls `generateAcceptanceManifest` with a
 nonexistent root and asserts `isErr()` with the correct discriminant,
 rather than expecting a throw).
 
-### ✅ Readiness docs updated without claiming false readiness
+### ✅ Readiness docs record full Pi readiness
 
 `docs/adapter-readiness-status.md`, `docs/pi-adapter.md`, and
-`docs/adapters/pi.md` (already updated by the prior pass) now also name
-the full nine-category closed-set list and the orphan-rejection behavior
-instead of the narrower "capability/command/lifecycle" description; the
-live-TUI-smoke-pending / `result: "pending"` framing is unchanged and still
-accurate.
+`docs/adapters/pi.md` now record the completed exact-host smoke run and link
+to the digest-bound checklist, manifest, and this proof.
 
 ## Test run
 
@@ -251,12 +251,9 @@ $ bun test packages/adapters/pi   # full adapter package
 $ bun run typecheck   # exit 0, 0 errors across every workspace package
 ```
 
-This fix does not itself flip any `docs/specs/33-spec-pi-adapter/33-smoke-checklist.md`
-row to `Pass`, nor `scripts/release/acceptance-manifest-data.ts`'s `pending`
-results — live TUI smoke execution and result recording remain outstanding
-per "What remains" below; the smoke run that found this bug must be
-repeated end-to-end against the fixed adapter before any row is marked
-`Pass`.
+This attempt remained non-authoritative until the adapter was repacked and
+the complete checklist was restarted. The final16 run provides the binding
+that is marked `Pass`.
 
 **Second live finding: control-call aliasing bug (issue #21 Task 12).**
 Continuing exact-host diagnostics after the completion-channel policy fix,
@@ -362,30 +359,60 @@ $ bun test packages/adapters/pi
 $ bun run typecheck   # exit 0
 ```
 
-This fix makes S019/S020 testable in live TUI smoke: a paused execution
-after `/reload` will not auto-resume (S019), and `/weave:resume` will
-explicitly resume it (S020) even though the `controllerGeneration` has
-advanced.
+That change fixed the generation gate, but later attempts exposed two more
+recovery defects before S020 could pass.
 
-## What remains (live execution — for the parent agent)
+## Further live findings
 
-This task deliberately stops short of claiming stable readiness. The prior
-pass's item 4 ("optionally extend `CLOSED_SET_REQUIREMENTS`") is now done;
-only the live-execution items remain:
+### Reload lost active workflow correlation
 
-1. **Run the digest-bound live TUI smoke checklist.** Install the exact
-   packed tarball (regenerate via
-   `bun scripts/release/generate-acceptance-manifest.ts` for a fresh local
-   binding, or use the real CI-produced artifact at actual release time)
-   inside a real interactive Pi TUI session against the exact tested host
-   version, and work through all 23 rows of
-   `docs/specs/33-spec-pi-adapter/33-smoke-checklist.md`.
-2. **Record the outcome.** Update the checklist rows from `Pending` to
-   `Pass`/`Fail`, and once all 23 are `Pass` against the same binding, flip
-   every requirement's `result` in `scripts/release/acceptance-manifest-data.ts`
-   (and regenerate `acceptance-manifest.json`) from `"pending"` to `"pass"`.
-3. **Bind to the real release artifact.** At actual stable-release time,
-   replace the generator's local `payloadArtifactId`/`runAttempt` with the
-   real GitHub Actions artifact identity per Spec 33 §25's `pi-stable-smoke`
-   gate, and re-run the smoke checklist against that exact binding — any
-   rebuild invalidates the previous pass.
+After `/reload`, the recoverable pointer remained on disk but the
+closure-backed active-workflow tracker was empty. `/weave:resume` therefore
+reported that no recoverable execution was tracked. Commit `875b27f` added
+fail-closed reconstruction from a recoverable pointer containing both the
+workflow and lease IDs. Runtime Store inspection and fresh confirmation stay
+authoritative.
+
+### Terminal completion observed a deleted lease
+
+A completed workflow logged `LifecycleProjectionFailed` with
+`reason: "persistence:query"`. The direct-step controller called
+`completeStep` first; terminal completion deleted the lease; then the
+controller tried to insert an idle snapshot referencing that lease. Commit
+`90a1ea1` records the child's idle state before `completeStep`. A real SQLite
+regression proved the old order red and the new order green. Final smoke runs
+showed no projection warning.
+
+### Explicit resume conflicted with the prior generation's live lease
+
+Tracker reconstruction reached the confirmation dialog, but engine resume
+still conflicted with the unexpired pre-reload lease. Commit `d8a20d5` added
+an engine-owned `recoveryTakeover`. It requires literal user authorization
+and atomically verifies the exact workflow, lease, and prior owner before it
+releases that lease and acquires a fresh one. Missing, terminal, malformed,
+or mismatched correlation fails without mutation; ordinary resume behavior
+is unchanged.
+
+## Final executed binding
+
+- Package: `@weaveio/weave-adapter-pi@0.0.1`
+- Payload: `weaveio-weave-adapter-pi-0.0.1.tgz`
+- SHA-256: `b1cb577545af10c1c559bf619dca546132a50d6514357f2b2ab8b027b12badbf`
+- Subject SHA: `d8a20d58fe3f11daa63c7d4c8e0895c81a8435a1`
+- Run attempt: `16`
+- Host: `@earendil-works/pi-coding-agent@0.81.1`
+- Host binary SHA-256: `271b7a506398e4ece04c664c7723705d4fa874c98e7a62d7b289e1fa582cf3c9`
+- Checklist version: `1`
+- Model: `anthropic/claude-sonnet-5`
+
+## Final live result
+
+All S001–S023 checks passed. The run verified health-only isolation and zero
+untrusted writes; trusted activation and reload; all 19 health rows; Loom,
+skill, model, prompt, and temperature behavior; allow, deny, ask, and
+unmanaged tool paths; ordinary and direct-child delegation; child approval;
+cooperative and forced cancellation; workflows, plans, artifacts, and
+recovery; primary and child usage accounting with no journal content leaks;
+clean process and database-handle shutdown; and inert durable state after
+removing the package. The adapter was installed only in an isolated test
+agent directory. The default `~/.pi` installation remained unchanged.
