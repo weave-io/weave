@@ -22,7 +22,7 @@ The first adapter release supports only the Earendil Works Pi host package:
 @earendil-works/pi-coding-agent >=0.81.1
 ```
 
-Host package identity and version are checked at activation. Unsupported or ambiguous hosts fail closed into health-only mode.
+Host package identity and version are checked at activation. There is no maximum version, but the adapter remains Bun-only: the launcher must expose Bun built-ins such as `bun:ffi` and `bun:sqlite` to extensions. Unsupported or ambiguous hosts fail closed into health-only mode when the module can activate; a Node-like extension loader that cannot resolve Bun built-ins fails earlier at package load and must use a Bun launcher.
 
 ## Install
 
@@ -32,7 +32,7 @@ When a release has passed Spec 33's package and smoke gates, install it as a Pi 
 pi install npm:@weaveio/weave-adapter-pi
 ```
 
-The published package declares `pi.extensions: ["./dist/extension.js"]`; users do not need a wrapper extension. The package has no install or postinstall scripts.
+The published package declares `pi.extensions: ["./dist/extension.js"]`; users do not need a wrapper extension. The package has no install or postinstall scripts. If the installed `pi` executable uses a Node-like extension runtime, launch the same installed CLI module through Bun (for example, `bun /path/to/@earendil-works/pi-coding-agent/dist/cli.js`) or place a local `pi` script that executes that command earlier on `PATH`.
 
 > **Security:** Pi packages run with the user's full process and filesystem authority. Install only the published package digest that passed Spec 33, and review the [source and security boundary](../pi-adapter.md) before enabling it.
 

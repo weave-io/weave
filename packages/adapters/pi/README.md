@@ -10,6 +10,18 @@ Install as a Pi package:
 pi install npm:@weaveio/weave-adapter-pi
 ```
 
+The adapter has no maximum Pi version, but its runtime is Bun-only. The Pi
+launcher must expose Bun built-ins such as `bun:ffi` and `bun:sqlite` to
+extensions. If a compiled Pi launcher loads extensions through a Node-like
+runtime, run the same installed Pi CLI under Bun instead:
+
+```bash
+bun /path/to/@earendil-works/pi-coding-agent/dist/cli.js
+```
+
+A local `pi` wrapper may execute that command so normal `pi` invocations keep
+working. This is a launcher requirement, not a second wrapper extension.
+
 See `docs/specs/33-spec-pi-adapter/33-spec-pi-adapter.md` in the Weave
 repository for the full normative contract this package implements.
 

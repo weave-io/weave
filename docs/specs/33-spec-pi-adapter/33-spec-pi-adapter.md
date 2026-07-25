@@ -39,6 +39,7 @@ OpenCode and Claude Code are evidence, not implementation templates. Prompt-only
 
 *   Earendil Works `@earendil-works/pi-coding-agent` only.
 *   Stable host versions `>=0.81.1`; there is no maximum version.
+*   A Bun runtime/launcher that exposes required built-ins such as `bun:ffi` and `bun:sqlite` to extensions.
 *   Interactive Pi TUI parent sessions.
 *   One globally installed Pi package with one compiled extension entry.
 *   Agent materialization, primary selection, skills, model intent, tool policy, categories, review variants, delegation, workflows, lifecycle projection, plans, artifacts, recovery, diagnostics, usage, capabilities, packaging, and release evidence.
@@ -115,7 +116,7 @@ Canonical installation is:
 pi install npm:@weaveio/weave-adapter-pi
 ```
 
-Updates and removal use Pi's native package commands. Installation documentation MUST warn that Pi packages run with full process and filesystem authority and link to source and the security model.
+Updates and removal use Pi's native package commands. Installation documentation MUST warn that Pi packages run with full process and filesystem authority and link to source and the security model. The package is Bun-only. If a compiled Pi executable loads extensions through a Node-like runtime that cannot resolve Bun built-ins, users MUST launch the same installed Pi CLI module through Bun or place an equivalent local `pi` launcher earlier on `PATH`; this is a launcher requirement, not a second wrapper extension.
 
 ## 6. Component model
 
