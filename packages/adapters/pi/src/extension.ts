@@ -1407,8 +1407,20 @@ function renderStatusMessage(
   return lines.join("\n");
 }
 
+const WEAVE_AGENT_STATUS_KEY = "weave-agent";
 const WEAVE_CHILD_TREE_WIDGET_KEY = "weave-children";
 const WEAVE_PLAN_WIDGET_KEY = "weave-plan";
+
+/** Shows one exact normalized descriptor name in Pi's persistent footer. */
+function setActiveAgentStatus(
+  ctx: PiSessionContext,
+  agentName: string | undefined,
+): void {
+  ctx.ui.setStatus(
+    WEAVE_AGENT_STATUS_KEY,
+    agentName === undefined ? undefined : `agent: ${agentName}`,
+  );
+}
 
 /**
  * Renders the bounded compact plan widget (Spec 33 §16) via the real,
@@ -2145,11 +2157,16 @@ export function createPiExtension(
       // healthy preflight - correct it now so the visible status always
       // reflects the adapter's true effective health for this generation
       // (Spec 33 §21).
+      const sessionHealthOnly = effectiveHealthOnly(generation, activeSession);
       ctx.ui.setStatus(
         "weave",
-        effectiveHealthOnly(generation, activeSession)
+        sessionHealthOnly
           ? "health-only - run /weave:health for details"
           : "ready",
+      );
+      setActiveAgentStatus(
+        ctx,
+        sessionHealthOnly ? undefined : activeSession.pendingPrimaryName,
       );
 
       // The delegation transport is only ever constructed for a fully
@@ -2319,6 +2336,16 @@ export function createPiExtension(
             // `agentDescriptor` fields.
             resolveAgentDescriptor: (agentName) =>
               configActivation.descriptors.byName.get(agentName),
+            onDirectStepActiveChange: (active, agentName) => {
+              if (active) {
+                setActiveAgentStatus(ctx, agentName);
+                return;
+              }
+              const currentPrimaryName =
+                activeSession?.primarySession.getCurrent()?.descriptor.name ??
+                activeSession?.pendingPrimaryName;
+              setActiveAgentStatus(ctx, currentPrimaryName);
+            },
             recoveryPointerStore: new BunJsonlRecoveryPointerStore(
               join(ctx.cwd, ".weave", "runtime", "pi-recovery-pointer.ndjson"),
             ),
@@ -2784,6 +2811,7 @@ export function createPiExtension(
       // Bounded child-tree widget/editor state must never survive past this
       // generation (Spec 33 §11.5/§23 cleanup-idempotence) - clear it even
       // though `disposeAll()` above already terminated every child.
+      ctx?.ui.setStatus(WEAVE_AGENT_STATUS_KEY, undefined);
       ctx?.ui.setWidget(WEAVE_CHILD_TREE_WIDGET_KEY, undefined);
       ctx?.ui.setWidget(WEAVE_PLAN_WIDGET_KEY, undefined);
       ctx?.ui.setEditorComponent?.(undefined);

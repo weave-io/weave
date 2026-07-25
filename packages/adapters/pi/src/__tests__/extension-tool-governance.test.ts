@@ -222,7 +222,9 @@ describe("tool_call governance (layer C: compiled extension against a fake host)
     host.injectTool({ name: "bash", sourceInfo: piBuiltinSourceInfo("bash") });
     install(host, askPolicy);
     await host.triggerSessionStart();
-    expect(host.statusCalls.at(-1)?.value).toContain("health-only");
+    expect(
+      host.statusCalls.filter((call) => call.key === "weave").at(-1)?.value,
+    ).toContain("health-only");
 
     const result = await host.triggerToolCall(bashCall("ls -la"));
     expect(result).toEqual({
@@ -240,7 +242,9 @@ describe("tool_call governance (layer C: compiled extension against a fake host)
     host.injectTool({ name: "bash", sourceInfo: piBuiltinSourceInfo("bash") });
     install(host, allowPolicy);
     await host.triggerSessionStart();
-    expect(host.statusCalls.at(-1)?.value).toContain("health-only");
+    expect(
+      host.statusCalls.filter((call) => call.key === "weave").at(-1)?.value,
+    ).toContain("health-only");
 
     const result = await host.triggerToolCall(bashCall("ls -la"));
     expect(result).toBeUndefined();
@@ -475,7 +479,9 @@ describe("tool_call governance (layer C: compiled extension against a fake host)
     });
     await host.triggerSessionStart();
 
-    const statusMessage = host.statusCalls.at(-1)?.value ?? "";
+    const statusMessage =
+      host.statusCalls.filter((call) => call.key === "weave").at(-1)?.value ??
+      "";
     expect(statusMessage).toContain("health-only");
 
     await host.invokeCommand("weave:status");

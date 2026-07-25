@@ -193,7 +193,7 @@ export function createDirectDispatchTransport(
       depth: DIRECT_DISPATCH_DEPTH,
       cwd: input.cwd,
       env: {},
-      task: input.composedPrompt,
+      task: input.taskPrompt,
     };
 
     // Derive the direct-step child's own governed active-tool set exactly

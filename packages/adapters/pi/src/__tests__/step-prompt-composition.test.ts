@@ -12,13 +12,15 @@
  * Fix: the engine now threads the rendered text out-of-band via the
  * ephemeral `stepPromptText` field on `DispatchStepOutput`/
  * `CompleteStepOutput`. `PiWorkflowController.runDispatchAgentEffect`
- * receives it as an extra parameter and composes it with
- * `realDescriptor.composedPrompt` using a fixed delimiter before calling
- * `directDispatch.dispatch()`.
+ * receives it as an extra parameter and sends it as the direct child's
+ * bounded task prompt while the descriptor's `composedPrompt` remains the
+ * child's system prompt. Keeping those channels separate prevents a full
+ * canonical primary prompt (such as Tapestry's) from overflowing the
+ * ordinary delegation-task bound.
  *
  * These tests prove, against a fully scripted `FakeDirectDispatchPort` (no
  * real Pi process, no network — Spec 33 §24), that the exact rendered
- * `step.prompt` text reaches the `composedPrompt` sent to the child, both
+ * `step.prompt` text reaches the task prompt sent to the child, both
  * on the very first dispatch (driven by `dispatchStep` via
  * `runDispatchLoop`) and on the auto-advanced second step (driven by
  * `completeStep`'s own returned `dispatch-agent` effect).
@@ -93,11 +95,13 @@ interface Harness {
   store: RuntimeStore;
   directDispatch: FakeDirectDispatchPort;
   controller: PiWorkflowController;
+  activeChanges: Array<{ active: boolean; agentName: string }>;
 }
 
 function buildHarness(): Harness {
   const store = createInMemoryRuntimeStore();
   const directDispatch = new FakeDirectDispatchPort();
+  const activeChanges: Array<{ active: boolean; agentName: string }> = [];
   const deps: PiWorkflowControllerDeps = {
     store,
     planStateProvider: new FakePlanStateProvider(),
@@ -112,6 +116,9 @@ function buildHarness(): Harness {
     ownerId: "test-owner",
     projectRoot: "/tmp/fake-project",
     maxAutoAdvanceSteps: 10,
+    onDirectStepActiveChange: (active, agentName) => {
+      activeChanges.push({ active, agentName });
+    },
     // The activated descriptor's own composedPrompt is deliberately
     // distinct from the step.prompt text so a test assertion that finds
     // both substrings in the right order can only pass if the fix
@@ -133,7 +140,12 @@ function buildHarness(): Harness {
       skills: [],
     }),
   };
-  return { store, directDispatch, controller: new PiWorkflowController(deps) };
+  return {
+    store,
+    directDispatch,
+    controller: new PiWorkflowController(deps),
+    activeChanges,
+  };
 }
 
 async function createInstance(store: RuntimeStore): Promise<string> {
@@ -148,7 +160,7 @@ async function createInstance(store: RuntimeStore): Promise<string> {
 }
 
 describe("PiWorkflowController — direct-dispatch step-prompt composition (Task 12)", () => {
-  it("composes the first step's rendered step.prompt with the agent's own composedPrompt", async () => {
+  it("keeps the first step task separate from the agent's own composedPrompt", async () => {
     const { store, directDispatch, controller } = buildHarness();
     const workflowInstanceId = await createInstance(store);
     directDispatch.enqueue(okAsync(successCandidate()) as never);
@@ -164,32 +176,15 @@ describe("PiWorkflowController — direct-dispatch step-prompt composition (Task
 
     const firstCall = directDispatch.calls[0];
     expect(firstCall?.stepName).toBe("plan");
-    const composedPrompt = firstCall?.composedPrompt ?? "";
-
-    // The agent's own resolved descriptor prompt is present.
-    expect(composedPrompt).toContain("AGENT-BASE-PROMPT-FOR-pattern");
-    // The rendered step.prompt text — the exact bug this fix closes — is
-    // present too, in full, with the template already substituted.
-    expect(composedPrompt).toContain("Create a plan for: test goal");
-    // The engine's `RunAgentEffect.agentDescriptor.composedPrompt` is
-    // always "" (security invariant) — this proves the sent text did not
-    // come from that field, only from `realDescriptor` + `stepPromptText`.
-    expect(composedPrompt).not.toBe("");
-    // Base prompt precedes the step instructions, joined by a clear
-    // delimiter rather than concatenated with no separation.
-    const baseIndex = composedPrompt.indexOf("AGENT-BASE-PROMPT-FOR-pattern");
-    const stepIndex = composedPrompt.indexOf("Create a plan for: test goal");
-    expect(baseIndex).toBeGreaterThanOrEqual(0);
-    expect(stepIndex).toBeGreaterThan(baseIndex);
-    const between = composedPrompt.slice(
-      baseIndex + "AGENT-BASE-PROMPT-FOR-pattern".length,
-      stepIndex,
+    expect(firstCall?.composedPrompt).toBe("AGENT-BASE-PROMPT-FOR-pattern");
+    expect(firstCall?.taskPrompt).toBe("Create a plan for: test goal");
+    expect(firstCall?.composedPrompt).not.toContain(
+      "Create a plan for: test goal",
     );
-    expect(between.trim().length).toBeGreaterThan(0);
   });
 
-  it("composes the auto-advanced second step's rendered step.prompt (driven by completeStep, not dispatchStep)", async () => {
-    const { store, directDispatch, controller } = buildHarness();
+  it("keeps the auto-advanced second step task separate and reports normalized active-agent names", async () => {
+    const { store, directDispatch, controller, activeChanges } = buildHarness();
     const workflowInstanceId = await createInstance(store);
     directDispatch.enqueue(okAsync(successCandidate()) as never);
     directDispatch.enqueue(okAsync(successCandidate()) as never);
@@ -209,8 +204,13 @@ describe("PiWorkflowController — direct-dispatch step-prompt composition (Task
     ]);
 
     const secondCall = directDispatch.calls[1];
-    const composedPrompt = secondCall?.composedPrompt ?? "";
-    expect(composedPrompt).toContain("AGENT-BASE-PROMPT-FOR-shuttle");
-    expect(composedPrompt).toContain("Implement the plan for: test goal");
+    expect(secondCall?.composedPrompt).toBe("AGENT-BASE-PROMPT-FOR-shuttle");
+    expect(secondCall?.taskPrompt).toBe("Implement the plan for: test goal");
+    expect(activeChanges).toEqual([
+      { active: true, agentName: "pattern" },
+      { active: false, agentName: "pattern" },
+      { active: true, agentName: "shuttle" },
+      { active: false, agentName: "shuttle" },
+    ]);
   });
 });

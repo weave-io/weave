@@ -56,13 +56,13 @@ Use `/weave` to open the palette or invoke a direct command:
 - `/weave:plan` — show the read-only task tree;
 - `/weave:artifact` — inspect or explicitly act on an artifact.
 
-Session start, idle, recovery discovery, and normal chat do not authorize workflow work. The adapter continues automatically only when the engine returns a next effect in the same uninterrupted authorized controller generation.
+Session start, idle, recovery discovery, and normal chat do not authorize workflow work. The adapter continues automatically only when the engine returns a next effect in the same uninterrupted authorized controller generation. Pi's persistent footer shows `agent: <name>` under status key `weave-agent`, using the exact normalized active descriptor name. It shows `agent: loom` during ordinary chat, switches to a workflow agent such as `agent: tapestry` while that direct step runs, restores the primary after settlement, and clears in health-only mode or at shutdown.
 
 ## Workflow lifecycle
 
 The palette and nine direct commands project all ten engine lifecycle operations through one generation-checked `PiWorkflowController`. `/weave:start`, `/weave:run`, and `/weave:resume` require fresh user confirmation before the adapter mints a one-use authorization token. A recovery banner is informational and never resumes work by itself.
 
-Workflow steps use a direct private-child transport distinct from ordinary `weave_delegate` calls. Only the root direct-step child receives `weave_complete_step`; nested helpers do not inherit completion authority. When a step agent such as Tapestry calls `weave_delegate`, the direct transport authenticates the request and relays it into the generation's shared `PiDelegationController`. The nested child therefore uses the step agent's own eligible targets and the same depth, concurrency, process, queue, cancellation, and cleanup rules as ordinary delegation. The tool records one bounded structured completion candidate. Free-form assistant text, process exit, duplicate signals, malformed candidates, and late calls never count as successful completion. `user_confirm` candidates remain withheld until `/weave:advance` confirms them.
+Workflow steps use a direct private-child transport distinct from ordinary `weave_delegate` calls. The signed bootstrap installs the activated descriptor's `composedPrompt` as system context; the separately rendered workflow `step.prompt` travels as the bounded RPC task. The adapter never concatenates the full descriptor prompt into that task, which lets canonical primaries such as Tapestry run without weakening the ordinary delegation-task bound. Only the root direct-step child receives `weave_complete_step`; nested helpers do not inherit completion authority. When a step agent such as Tapestry calls `weave_delegate`, the direct transport authenticates the request and relays it into the generation's shared `PiDelegationController`. The nested child therefore uses the step agent's own eligible targets and the same depth, concurrency, process, queue, cancellation, and cleanup rules as ordinary delegation. The tool records one bounded structured completion candidate. Free-form assistant text, process exit, duplicate signals, malformed candidates, and late calls never count as successful completion. `user_confirm` candidates remain withheld until `/weave:advance` confirms them.
 
 Before dispatch, the adapter reuses the prior attempt's pinned artifact revisions on retries and verifies each consumed artifact's current SHA-256 digest through a held, no-follow file descriptor. Plan catalog and artifact reads reject traversal and symlink components. New artifact revisions reset approval, and an agent cannot approve its own artifact. The compact plan widget refreshes after lifecycle transitions; explicit reconciliation handles mismatched execution state.
 
@@ -84,7 +84,7 @@ Fix the reported cause and start a new Pi session. Do not bypass health-only mod
 
 ## Delegation
 
-`weave_delegate` runs one bounded task on a single eligible agent as a private ephemeral child, then returns that child's own structured result. It never creates or advances workflow state; workflow steps use the distinct direct-step transport described above.
+`weave_delegate` runs one bounded task on a single eligible subagent as a private ephemeral child, then returns that child's own structured result. Its `agent` parameter is an enum of exact normalized names from the invoking descriptor's `delegationTargets` (for example `shuttle` or `shuttle-backend`); display labels, descriptions, and aliases are invalid. It never creates or advances workflow state; workflow steps use the distinct direct-step transport described above.
 
 **Exact command.** A delegated child is spawned as `pi --mode rpc --no-session`, never as an interactive session. This is the only Pi RPC entry point the adapter uses; a real user never starts this path themselves.
 

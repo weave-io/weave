@@ -184,14 +184,22 @@ describe("createPiExtension factory (layer C: compiled extension against a fake 
     });
     factory(host.api);
     await host.triggerSessionStart();
-    expect(host.statusCalls.at(-1)?.value).toBe("ready");
+    expect(
+      host.statusCalls.filter((call) => call.key === "weave").at(-1)?.value,
+    ).toBe("ready");
+    expect(host.statusCalls).toContainEqual({
+      key: "weave-agent",
+      value: "agent: loom",
+    });
   });
 
   it("enters health-only mode (real prober) on a fresh trusted TUI session, since later subsystems are not implemented yet, and blocks mutating commands", async () => {
     const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
     installExtension(host);
     await host.triggerSessionStart();
-    expect(host.statusCalls.at(-1)?.value).toContain("health-only");
+    expect(
+      host.statusCalls.filter((call) => call.key === "weave").at(-1)?.value,
+    ).toContain("health-only");
     const ctx = await host.invokeCommand("weave:start");
     expect(host.notifyCalls.at(-1)?.message).toContain("health-only mode");
     expect(ctx.mode).toBe("tui");
@@ -217,14 +225,18 @@ describe("createPiExtension factory (layer C: compiled extension against a fake 
     const host = new RecordingFakePiHost({ mode: "print", trusted: true });
     installExtension(host);
     await host.triggerSessionStart();
-    expect(host.statusCalls.at(-1)?.value).toContain("health-only");
+    expect(
+      host.statusCalls.filter((call) => call.key === "weave").at(-1)?.value,
+    ).toContain("health-only");
   });
 
   it("blocks activation on an unsupported host version", async () => {
     const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
     installExtension(host, "0.80.0");
     await host.triggerSessionStart();
-    expect(host.statusCalls.at(-1)?.value).toContain("health-only");
+    expect(
+      host.statusCalls.filter((call) => call.key === "weave").at(-1)?.value,
+    ).toContain("health-only");
   });
 
   it("detects a command collision from a rival extension and reports command-entrypoints as unavailable via /weave:health", async () => {
@@ -232,7 +244,9 @@ describe("createPiExtension factory (layer C: compiled extension against a fake 
     installExtension(host);
     host.renameOwnCommand("weave:health", "weave:health:2");
     await host.triggerSessionStart();
-    expect(host.statusCalls.at(-1)?.value).toContain("health-only");
+    expect(
+      host.statusCalls.filter((call) => call.key === "weave").at(-1)?.value,
+    ).toContain("health-only");
     // The rename simulates what Pi's inventory (`getCommands()`) reports after a
     // collision; our own registered handler is still invoked under its original
     // name -- `/weave:health` remains read-only and available in health-only mode.
@@ -251,7 +265,9 @@ describe("createPiExtension factory (layer C: compiled extension against a fake 
     installExtension(host);
     host.injectForeignCommand("weave:health:1");
     await host.triggerSessionStart();
-    expect(host.statusCalls.at(-1)?.value).toContain("health-only");
+    expect(
+      host.statusCalls.filter((call) => call.key === "weave").at(-1)?.value,
+    ).toContain("health-only");
     await host.invokeCommand("weave:health");
     const message = host.notifyCalls.at(-1)?.message;
     expect(message).toContain(

@@ -1,12 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { DelegationTarget } from "@weaveio/weave-engine";
-import {
-  errAsync,
-  ok,
-  okAsync,
-  type Result,
-  ResultAsync,
-} from "neverthrow";
+import { errAsync, ok, okAsync, type Result, ResultAsync } from "neverthrow";
 import type {
   PiDelegationController,
   PiDelegationRequest,
@@ -128,13 +122,20 @@ describe("buildDelegationToolRegistration", () => {
   it("exposes the fixed tool identity and restricts the schema enum to the supplied targets", () => {
     const registration = buildDelegationToolRegistration(baseDeps());
     expect(registration.tool.name).toBe(WEAVE_DELEGATION_TOOL_NAME);
+    expect(registration.tool.label).toBe("Delegate to a Weave subagent");
     expect(registration.owner).toBe(WEAVE_DELEGATION_TOOL_OWNER);
     const parameters = registration.tool.parameters as {
-      properties: { agent: { enum: string[] } };
+      properties: { agent: { enum: string[]; description: string } };
     };
     expect(parameters.properties.agent.enum.sort()).toEqual([
       "shuttle",
       "shuttle-backend",
+    ]);
+    expect(parameters.properties.agent.description).toContain(
+      "Exact normalized subagent name",
+    );
+    expect(registration.tool.promptGuidelines).toEqual([
+      "Pass the exact normalized subagent name from the `agent` enum; never use a display label, description, or alias.",
     ]);
   });
 

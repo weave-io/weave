@@ -118,7 +118,8 @@ function baseInput(
     leaseId: "lease-1",
     stepName: "verify",
     agentName: "smoke-child",
-    composedPrompt: "Call weave_complete_step exactly once.",
+    composedPrompt: "You are the workflow step agent.",
+    taskPrompt: "Call weave_complete_step exactly once.",
     cwd: "/project",
     // Deliberately different from the transport's own generated `childId`
     // (Spec 33 §14's engine-level effect correlation), so the assertion

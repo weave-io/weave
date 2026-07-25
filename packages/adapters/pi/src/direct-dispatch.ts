@@ -41,7 +41,10 @@ export interface PiDirectDispatchInput {
   readonly leaseId: string;
   readonly stepName: string;
   readonly agentName: string;
+  /** Activated descriptor prompt installed as the child's system context. */
   readonly composedPrompt: string;
+  /** Rendered workflow-step instructions sent as the bounded RPC task. */
+  readonly taskPrompt: string;
   readonly cwd: string;
   /** Pre-generated so the caller can pin it into the bootstrap/prompt correlation before spawning. */
   readonly correlationId: string;

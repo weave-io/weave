@@ -110,19 +110,13 @@ const USER_AUTHORIZATION_TOKEN: AuthorizedByUser = {
 };
 
 /**
- * Delimiter inserted between an activated agent's own
- * `AgentDescriptor.composedPrompt` and the rendered `step.prompt` text
- * threaded in from the engine's `stepPromptText` ephemeral output field
- * (`DispatchStepOutput`/`CompleteStepOutput`/`ReconcileExecutionOutput`)
- * when composing a direct-dispatch prompt in {@link
- * PiWorkflowController.runDispatchAgentEffect}. `dispatchStep`/`completeStep`
- * render `step.prompt` but only ever place its byte length inside a
- * `RunAgentEffect` (a security invariant: raw prompt text never enters a
- * `LifecycleEffect`) - `stepPromptText` is the one adapter-facing,
- * non-effect channel that carries the actual rendered text, and this
- * delimiter keeps the two prompt sources unambiguous to the child.
+ * Fallback task for a legacy direct dispatch with no configured step prompt.
+ * The activated descriptor prompt still arrives through the signed bootstrap
+ * and becomes the child's system context; this bounded task only starts the
+ * turn without duplicating that potentially large prompt.
  */
-const STEP_PROMPT_DELIMITER = "\n\n---\n\n## Workflow Step Instructions\n\n";
+const DEFAULT_DIRECT_STEP_TASK_PROMPT =
+  "Execute the current workflow step according to your system instructions.";
 
 /** Spec 33 §13: only an explicit `confirmed === true` from a real user action mints this token. Never call with a value derived from prompt text, agent output, or a hook/event payload. */
 export function authorizeByExplicitUser(
@@ -246,8 +240,11 @@ export interface PiWorkflowControllerDeps {
   readonly projectRoot: string;
   /** Bounded upper bound on auto-advance iterations within one call, closing any pathological infinite-effect loop. */
   readonly maxAutoAdvanceSteps?: number;
-  /** Notified `true` immediately before a direct-step child is spawned and `false` once it settles (success or failure) - lets the extension track "is a direct-step child currently running" for parent-chat concurrency (Spec 33 §14) without this class depending on any Pi UI/event type. */
-  readonly onDirectStepActiveChange?: (active: boolean) => void;
+  /** Notifies the extension of direct-step activity with the exact normalized descriptor name, without depending on any Pi UI/event type. */
+  readonly onDirectStepActiveChange?: (
+    active: boolean,
+    agentName: string,
+  ) => void;
   /**
    * Notified after every dispatch, completion, plan-transition-bearing
    * completion, resume, and interrupt outcome that leaves the instance in
@@ -984,9 +981,9 @@ export class PiWorkflowController {
       );
     }
 
-    this.deps.onDirectStepActiveChange?.(true);
+    this.deps.onDirectStepActiveChange?.(true, realDescriptor.name);
     const settleActive = (): void =>
-      this.deps.onDirectStepActiveChange?.(false);
+      this.deps.onDirectStepActiveChange?.(false, realDescriptor.name);
 
     return this.observeBestEffort({
       workflowInstanceId,
@@ -1001,10 +998,8 @@ export class PiWorkflowController {
           leaseId,
           stepName,
           agentName: dispatchEffect.runAgent.agentName,
-          composedPrompt:
-            stepPromptText !== undefined
-              ? `${realDescriptor.composedPrompt}${STEP_PROMPT_DELIMITER}${stepPromptText}`
-              : realDescriptor.composedPrompt,
+          composedPrompt: realDescriptor.composedPrompt,
+          taskPrompt: stepPromptText ?? DEFAULT_DIRECT_STEP_TASK_PROMPT,
           models: realDescriptor.models,
           effectiveToolPolicy: realDescriptor.effectiveToolPolicy,
           delegationTargets: realDescriptor.delegationTargets,

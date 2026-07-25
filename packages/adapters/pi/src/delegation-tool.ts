@@ -52,7 +52,8 @@ const MAX_TASK_PREVIEW_CHARS = 200;
 function buildDelegationParameters(allowedNames: ReadonlySet<string>) {
   return Type.Object({
     agent: StringEnum(Array.from(allowedNames), {
-      description: "Name of the eligible Weave agent to delegate to.",
+      description:
+        "Exact normalized subagent name from this agent's eligible delegation targets.",
     }),
     task: Type.String({
       minLength: 1,
@@ -99,9 +100,9 @@ function truncatePreview(text: string): string {
     : `${text.slice(0, MAX_TASK_PREVIEW_CHARS)}\u2026`;
 }
 
-function toolResult(
-  text: PiToolResultContent["text"],
-): { content: readonly PiToolResultContent[] } {
+function toolResult(text: PiToolResultContent["text"]): {
+  content: readonly PiToolResultContent[];
+} {
   return { content: [{ type: "text", text }] };
 }
 
@@ -199,12 +200,12 @@ export function buildDelegationToolRegistration(
 
   const tool: PiToolRegistration = {
     name: WEAVE_DELEGATION_TOOL_NAME,
-    label: "Delegate to a Weave agent",
+    label: "Delegate to a Weave subagent",
     description:
-      "Delegates one bounded task to a single eligible Weave agent, run as a private ephemeral child, and returns its structured result. Never advances or creates workflow state.",
+      "Delegates one bounded task to a single eligible normalized Weave subagent name, run as a private ephemeral child, and returns its structured result. Never advances or creates workflow state.",
     parameters: buildDelegationParameters(allowedNames),
     promptGuidelines: [
-      "Use only an `agent` name listed as an eligible delegation target for this session.",
+      "Pass the exact normalized subagent name from the `agent` enum; never use a display label, description, or alias.",
     ],
     execute: async (_toolCallId, params, signal, _onUpdate, ctx) => {
       const parsed = parseDelegationCall(params);
@@ -231,8 +232,7 @@ export function buildDelegationToolRegistration(
       // here instead would misreport a delegation that never actually ran.
       if (signal?.aborted === true) {
         return failureResult(
-          makeChildAbortFailedFailure(childId, "aborted-before-dispatch")
-            .code,
+          makeChildAbortFailedFailure(childId, "aborted-before-dispatch").code,
         );
       }
       const request: PiDelegationRequest = {
