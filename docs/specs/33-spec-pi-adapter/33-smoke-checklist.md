@@ -62,7 +62,7 @@ having actually run it against the bound artifact.
 | S012 | Tool policy | Confirm an `ask`-policy registered tool opens exactly one dialog and that `once`/`session`/`durable` approval scopes behave as advertised. | Pending |
 | S013 | Tool policy | Confirm an unmanaged/unregistered tool call is left untouched by the permission bridge. | Pending |
 | S014 | Authenticated child | Confirm `weave_delegate` spawns an authenticated `pi --mode rpc --no-session` child and that envelopes are HMAC-signed and sequenced. | Pending |
-| S015 | Authenticated child | Confirm a delegated child's approval dialog and cooperative-then-forced cancellation both behave as documented. | Pending |
+| S015 | Authenticated child | Confirm a delegated child's approval dialog and cooperative-then-forced cancellation both behave as documented, *and* that host-level abort/interrupt (`app.interrupt`/Esc) on the parent's own `weave_delegate` tool call cancels the exact generated child subtree immediately, rather than only after that child eventually settles on its own (see [`33-proofs/33-ordinary-delegation-cancellation-fix.md`](33-proofs/33-ordinary-delegation-cancellation-fix.md)). | Pending |
 | S016 | Workflow/completion | Confirm `/weave:start` and `/weave:run` drive a full workflow through to a `weave_complete_step`-signaled completion. | Pending |
 | S017 | Plan/artifact | Confirm `/weave:plan` reflects live plan markers/transitions matching `.weave/plans` state. | Pending |
 | S018 | Plan/artifact | Confirm `/weave:artifact` approves or rejects an artifact revision with digest verification. | Pending |

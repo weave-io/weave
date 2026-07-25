@@ -16,12 +16,18 @@ import type {
   PiDelegationRequest,
 } from "./delegation-controller.js";
 import { MAX_TASK_INPUT_CHARS } from "./delegation-limits.js";
+import {
+  makeChildAbortFailedFailure,
+  type PiAdapterFailure,
+} from "./errors.js";
 import type { PiWeaveToolRegistration } from "./permission-bridge.js";
+import type { PiChildSettlement } from "./rpc-child.js";
 import type { JsonValue } from "./strict-json.js";
 import type {
   IdGenerator,
   PiSessionContext,
   PiToolRegistration,
+  PiToolResultContent,
 } from "./types.js";
 
 export const WEAVE_DELEGATION_TOOL_NAME = "weave_delegate";
@@ -93,6 +99,85 @@ function truncatePreview(text: string): string {
     : `${text.slice(0, MAX_TASK_PREVIEW_CHARS)}\u2026`;
 }
 
+function toolResult(
+  text: PiToolResultContent["text"],
+): { content: readonly PiToolResultContent[] } {
+  return { content: [{ type: "text", text }] };
+}
+
+function successResult(settlement: PiChildSettlement): {
+  content: readonly PiToolResultContent[];
+} {
+  return toolResult(JSON.stringify({ ok: true, settlement }));
+}
+
+function failureResult(error: string): {
+  content: readonly PiToolResultContent[];
+} {
+  return toolResult(JSON.stringify({ ok: false, error }));
+}
+
+/**
+ * Wires the root tool's own Pi-supplied `AbortSignal` to
+ * `controller.cancelSubtree(childId)` (Spec 33 §11.5 cooperative
+ * cancellation) so aborting the `weave_delegate` call - app-level
+ * interrupt/escape - immediately cancels the exact generated child
+ * subtree rather than only after it settles on its own.
+ *
+ * Returns a promise that resolves *only* if the abort-triggered
+ * `cancelSubtree()` itself fails - never if it succeeds. A successful
+ * cancellation must never "win" any race it is placed in: the delegated
+ * child's own eventual `{ outcome: "cancelled" }` settlement (observed via
+ * `controller.delegate()`'s own promise) is always the result that
+ * actually resolves the tool call in that case. This is what lets the
+ * caller safely `Promise.race` this against `controller.delegate()`
+ * without a merely-successful cancellation ever short-circuiting past the
+ * settlement the child itself reports - while a *failed* cancellation
+ * still resolves promptly instead of leaving the tool hanging behind a
+ * child that may now never settle.
+ */
+function watchForCancelSubtreeFailure(
+  signal: AbortSignal,
+  controller: PiDelegationController,
+  childId: string,
+): {
+  readonly failure: Promise<{ content: readonly PiToolResultContent[] }>;
+  readonly unwire: () => void;
+} {
+  let resolveFailure:
+    | ((result: { content: readonly PiToolResultContent[] }) => void)
+    | undefined;
+  const failure = new Promise<{
+    content: readonly PiToolResultContent[];
+  }>((resolve) => {
+    resolveFailure = resolve;
+  });
+  const onAbort = (): void => {
+    void controller.cancelSubtree(childId).match(
+      // A successful cancellation must never resolve this promise - only
+      // `controller.delegate()`'s own settlement (racing alongside this)
+      // is allowed to conclude the tool call in that case.
+      () => undefined,
+      (failures: readonly PiAdapterFailure[]) => {
+        const first =
+          failures[0] ??
+          makeChildAbortFailedFailure(childId, "cancel-subtree-failed");
+        resolveFailure?.(failureResult(first.code));
+      },
+    );
+  };
+  signal.addEventListener("abort", onAbort, { once: true });
+  // Closes the listener-registration race: the signal may have aborted
+  // between the caller's own pre-dispatch `signal.aborted` check and this
+  // listener actually attaching - `addEventListener` never re-fires for an
+  // abort that already happened, so this must be checked explicitly.
+  if (signal.aborted) onAbort();
+  return {
+    failure,
+    unwire: () => signal.removeEventListener("abort", onAbort),
+  };
+}
+
 function parseDelegationCall(
   call: unknown,
 ): { agent: string; task: string } | undefined {
@@ -121,52 +206,35 @@ export function buildDelegationToolRegistration(
     promptGuidelines: [
       "Use only an `agent` name listed as an eligible delegation target for this session.",
     ],
-    execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
+    execute: async (_toolCallId, params, signal, _onUpdate, ctx) => {
       const parsed = parseDelegationCall(params);
       if (parsed === undefined || !allowedNames.has(parsed.agent)) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({
-                ok: false,
-                error: "invalid-delegation-target",
-              }),
-            },
-          ],
-        };
+        return failureResult("invalid-delegation-target");
       }
       const target = deps.targets.find(
         (candidate) => candidate.name === parsed.agent,
       );
       if (target === undefined) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({
-                ok: false,
-                error: "invalid-delegation-target",
-              }),
-            },
-          ],
-        };
+        return failureResult("invalid-delegation-target");
       }
       const controller = deps.getController();
       if (controller === undefined) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({
-                ok: false,
-                error: "delegation-transport-unavailable",
-              }),
-            },
-          ],
-        };
+        return failureResult("delegation-transport-unavailable");
       }
       const childId = deps.idGenerator.next();
+      // Cooperative cancellation (Spec 33 §11.5): a Pi tool call aborted
+      // (app interrupt/escape) before this tool ever dispatched a child has
+      // no in-flight task to report a structured cancelled *settlement*
+      // for - the same fail-closed rule `PiRpcChild.completeCancellation`
+      // applies to a cancel arriving before its own child leaves
+      // handshake/bootstrap-ack. Fabricating a successful cancelled result
+      // here instead would misreport a delegation that never actually ran.
+      if (signal?.aborted === true) {
+        return failureResult(
+          makeChildAbortFailedFailure(childId, "aborted-before-dispatch")
+            .code,
+        );
+      }
       const request: PiDelegationRequest = {
         parentId: deps.parentId,
         parentDepth: deps.parentDepth,
@@ -178,21 +246,28 @@ export function buildDelegationToolRegistration(
         bootstrap: deps.buildBootstrap(target, parsed.task, childId, ctx),
         childId,
       };
-      return controller.delegate(request).match(
-        (settlement) => ({
-          content: [
-            { type: "text", text: JSON.stringify({ ok: true, settlement }) },
-          ],
-        }),
-        (failure) => ({
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({ ok: false, error: failure.code }),
-            },
-          ],
-        }),
+      const settlement = controller.delegate(request).match(
+        (value) => successResult(value),
+        (failure) => failureResult(failure.code),
       );
+      if (signal === undefined) return settlement;
+      // Wires the exact generated `childId`'s subtree to this tool call's
+      // own `AbortSignal` (Spec 33 §11.5) so aborting the root `weave_delegate`
+      // tool immediately cancels it instead of only noticing after the child
+      // settles on its own. Races the delegated child's own settlement
+      // against only a *failed* cancellation attempt - a successful one never
+      // wins this race and this call always still awaits the child's own
+      // `{ outcome: "cancelled" }` settlement, per `watchForCancelSubtreeFailure`.
+      const { failure: cancelFailure, unwire } = watchForCancelSubtreeFailure(
+        signal,
+        controller,
+        childId,
+      );
+      try {
+        return await Promise.race([settlement, cancelFailure]);
+      } finally {
+        unwire();
+      }
     },
   };
 

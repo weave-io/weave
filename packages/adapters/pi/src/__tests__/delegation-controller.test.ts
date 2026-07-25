@@ -592,6 +592,39 @@ describe("PiDelegationController", () => {
     controller.disposeAll();
   });
 
+  it("cancelSubtree on a child whose task was genuinely dispatched (bootstrap-acked, running) resolves that exact child's own pending delegate() promise as a structured cancelled settlement (Spec 33 \u00a711.5) - the invariant the weave_delegate tool's abort wiring depends on", async () => {
+    const port = new FakeChildProcessPort();
+    const controller = makeController(
+      config(
+        limitsSource({
+          maxChildren: 9,
+          maxConcurrency: 9,
+          maxDepth: 3,
+          maxProcesses: 9,
+        }),
+      ),
+      port,
+    );
+    const delegatePromise = controller.delegate(request({ parentId: "root" }));
+    await flush();
+    const spawned = port.spawnedProcesses[0]!;
+    const childId = childIdOf(spawned, port);
+    // Genuinely running - past handshake and bootstrap-ack, task dispatched
+    // - not merely queued or mid-handshake, which instead fail closed
+    // (Spec 33 \u00a711.5, `PiRpcChild.completeCancellation`'s
+    // `cancelled-before-running` branch, covered elsewhere in this file).
+    await sendChildToRunning(spawned, port, "gen-1");
+
+    const cancelResult = await controller.cancelSubtree(childId);
+    expect(cancelResult.isOk()).toBe(true);
+    expect(spawned.killed).toBe(true);
+
+    const settlement = await delegatePromise;
+    expect(settlement.isOk()).toBe(true);
+    expect(settlement._unsafeUnwrap()).toEqual({ outcome: "cancelled" });
+    controller.disposeAll();
+  });
+
   it("disposeAll drains the queue and disposes every live child, idempotently", async () => {
     const port = new FakeChildProcessPort();
     const controller = makeController(
