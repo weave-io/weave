@@ -285,7 +285,12 @@ export function dispatchStep(
             artifactNames,
           );
           if (promptResult.isErr()) return errAsync(promptResult.error);
-          const promptMetadata = promptResult.value;
+          // Split the security contract at the source: only `byteLength`
+          // travels into the effect (`buildConfiguredRunAgentEffect`); the
+          // rendered `text` is threaded solely through the ephemeral
+          // top-level `stepPromptText` output field below.
+          const promptMetadata = { byteLength: promptResult.value.byteLength };
+          const stepPromptText = promptResult.value.text;
 
           const hasInputs = step.inputs && step.inputs.length > 0;
 
@@ -317,6 +322,7 @@ export function dispatchStep(
                     ),
                   },
                 ],
+                stepPromptText,
                 ...(hasInputs ? { artifactInputSummary } : {}),
               }),
             );

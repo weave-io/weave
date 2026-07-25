@@ -118,12 +118,13 @@
   - type FramingError
   - const MAX_FRAME_RECORD_BYTES
 - `packages/adapters/pi/src/child-process-port.ts`
+  - function resolveKillSignal: (mode) => number | undefined
   - class BunPiChildProcessPort
   - interface PiChildStdout
   - interface PiSpawnedChildProcess
   - interface PiChildSpawnInput
   - interface PiChildProcessPort
-  - type ChildProcessError
+  - _...2 more_
 - `packages/adapters/pi/src/child-runtime.ts`
   - class PiChildRuntime
   - interface PiChildOutputPort
@@ -232,7 +233,8 @@
   - interface PiModelApplyPort
   - type PiModelResolutionSource
   - type PiModelResolution
-  - type PiModelActivationOutcome
+  - type PiModelIdentityResolutionError
+  - _...1 more_
 - `packages/adapters/pi/src/path-containment.ts`
   - function isLexicallyContained: (relativePath) => boolean
   - function isDirectoryContainmentSafeWith: (port, projectRoot, relativeDir) => ResultAsync<boolean, never>

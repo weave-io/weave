@@ -109,6 +109,21 @@ const USER_AUTHORIZATION_TOKEN: AuthorizedByUser = {
   __brand: "weave-user-authorized",
 };
 
+/**
+ * Delimiter inserted between an activated agent's own
+ * `AgentDescriptor.composedPrompt` and the rendered `step.prompt` text
+ * threaded in from the engine's `stepPromptText` ephemeral output field
+ * (`DispatchStepOutput`/`CompleteStepOutput`/`ReconcileExecutionOutput`)
+ * when composing a direct-dispatch prompt in {@link
+ * PiWorkflowController.runDispatchAgentEffect}. `dispatchStep`/`completeStep`
+ * render `step.prompt` but only ever place its byte length inside a
+ * `RunAgentEffect` (a security invariant: raw prompt text never enters a
+ * `LifecycleEffect`) - `stepPromptText` is the one adapter-facing,
+ * non-effect channel that carries the actual rendered text, and this
+ * delimiter keeps the two prompt sources unambiguous to the child.
+ */
+const STEP_PROMPT_DELIMITER = "\n\n---\n\n## Workflow Step Instructions\n\n";
+
 /** Spec 33 §13: only an explicit `confirmed === true` from a real user action mints this token. Never call with a value derived from prompt text, agent output, or a hook/event payload. */
 export function authorizeByExplicitUser(
   confirmed: boolean,
@@ -631,6 +646,7 @@ export class PiWorkflowController {
       readonly effects: readonly LifecycleEffect[];
       readonly handlerStepName?: string;
       readonly gateReRunStepName?: string;
+      readonly stepPromptText?: string;
     },
   ): ResultAsync<void, PiAdapterFailure> {
     const dispatchEffect = output.effects.find(
@@ -657,6 +673,7 @@ export class PiWorkflowController {
       stepName,
       0,
       this.deps.maxAutoAdvanceSteps ?? 50,
+      output.stepPromptText,
     ).map(() => undefined);
   }
 
@@ -837,6 +854,7 @@ export class PiWorkflowController {
             dispatchOutput.stepName,
             0,
             maxSteps,
+            dispatchOutput.stepPromptText,
           );
         });
     });
@@ -899,6 +917,13 @@ export class PiWorkflowController {
     stepName: string,
     iteration: number,
     maxSteps: number,
+    /**
+     * EPHEMERAL rendered `step.prompt` text for `stepName`, threaded in
+     * from the engine's `stepPromptText` output field (never from any
+     * `LifecycleEffect`). `undefined` for legacy/fallback dispatch, which
+     * has no configured `step.prompt` to render.
+     */
+    stepPromptText: string | undefined,
   ): ResultAsync<PiRunResult, PiAdapterFailure> {
     if (iteration >= maxSteps) {
       return errAsync(
@@ -951,7 +976,10 @@ export class PiWorkflowController {
           leaseId,
           stepName,
           agentName: dispatchEffect.runAgent.agentName,
-          composedPrompt: realDescriptor.composedPrompt,
+          composedPrompt:
+            stepPromptText !== undefined
+              ? `${realDescriptor.composedPrompt}${STEP_PROMPT_DELIMITER}${stepPromptText}`
+              : realDescriptor.composedPrompt,
           models: realDescriptor.models,
           effectiveToolPolicy: realDescriptor.effectiveToolPolicy,
           delegationTargets: realDescriptor.delegationTargets,
@@ -1137,9 +1165,12 @@ export class PiWorkflowController {
               signal,
             ),
           )
-          .map(() => completeOutput.effects),
+          .map(() => ({
+            effects: completeOutput.effects,
+            stepPromptText: completeOutput.stepPromptText,
+          })),
       )
-      .andThen((effects) => {
+      .andThen(({ effects, stepPromptText }) => {
         const pause = effects.find(
           (effect) => effect.kind === "pause-execution",
         );
@@ -1199,6 +1230,7 @@ export class PiWorkflowController {
             freshSnapshot.currentStepName,
             iteration + 1,
             maxSteps,
+            stepPromptText,
           );
         });
       });

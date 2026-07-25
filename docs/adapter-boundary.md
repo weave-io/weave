@@ -462,6 +462,31 @@ type LifecycleEffect =
 
 Adapters receive these effects and apply harness-specific materialisation (e.g. spawning an agent, pausing a session, updating UI state).
 
+### Ephemeral Step Prompt Text (`stepPromptText`)
+
+`RunAgentEffect.promptMetadata` carries only `{ byteLength: number }` — never the rendered `step.prompt` text. This is a deliberate security invariant: `LifecycleEffect` values are logged, replayed, and can flow through recovery pointers, so raw prompt content must never enter one.
+
+A direct-dispatch adapter still needs the actual rendered text to hand to the child it spawns. To satisfy both constraints, `dispatchStep`, `completeStep`, and `reconcileExecution` each return the rendered `step.prompt` text as an **ephemeral, top-level** `stepPromptText?: string` field on their output type (`DispatchStepOutput`, `CompleteStepOutput`, `ReconcileExecutionOutput`) — a sibling of `effects`, never nested inside one:
+
+```ts
+interface DispatchStepOutput {
+  readonly stepName: string;
+  readonly effects: readonly LifecycleEffect[];
+  readonly artifactInputSummary?: ArtifactInputSummary;
+  /** EPHEMERAL — rendered step.prompt text. Never persisted, never logged,
+   * never placed on an effect. Present only for the adapter's immediate use
+   * composing a direct-dispatch prompt for this call. */
+  readonly stepPromptText?: string;
+}
+```
+
+Ownership split:
+
+- **Engine** renders `step.prompt` (via `renderStepPrompt`) and returns both the redacted `promptMetadata.byteLength` (safe to embed in `RunAgentEffect`) and the ephemeral `stepPromptText` (safe only as an immediate return value). The engine never persists `stepPromptText` and never places it on a `LifecycleEffect`.
+- **Adapter** receives `stepPromptText` from the lifecycle call's return value only (never from an effect), and is responsible for combining it with the activated `AgentDescriptor.composedPrompt` before dispatch. The Pi adapter does this in `PiWorkflowController.runDispatchAgentEffect`, joining `realDescriptor.composedPrompt` and `stepPromptText` with a fixed delimiter (`STEP_PROMPT_DELIMITER`) immediately before calling `directDispatch.dispatch()` — the joined string is never itself stored or forwarded into a `LifecycleEffect`.
+
+This mirrors the `ArtifactIntegrityMetadata` split above: the engine owns the type, the redaction rule, and the rendering; the adapter owns using the raw value at the harness boundary without ever writing it back into engine-owned, persisted, or logged structures.
+
 ### `LifecycleError` Discriminated Union
 
 All lifecycle methods return `ResultAsync<T, LifecycleError>` from neverthrow — errors are never thrown.

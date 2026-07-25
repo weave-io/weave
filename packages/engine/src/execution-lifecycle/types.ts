@@ -372,6 +372,18 @@ export interface DispatchStepOutput {
   readonly stepName: string;
   readonly effects: readonly LifecycleEffect[];
   readonly artifactInputSummary?: ArtifactInputSummary;
+  /**
+   * EPHEMERAL — the fully rendered `step.prompt` text for `stepName`, present
+   * only when a configured step's prompt was rendered during this dispatch.
+   *
+   * This is NOT part of any `LifecycleEffect` and MUST NOT be persisted,
+   * logged, or copied into one. Adapters read it exactly once, compose it
+   * with their own resolved `AgentDescriptor.composedPrompt`, and discard it.
+   * `RunAgentEffect.promptMetadata.byteLength` remains the only
+   * effect-visible trace of the rendered prompt (Spec 33 §8.1 / composedPrompt
+   * security invariant).
+   */
+  readonly stepPromptText?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -390,6 +402,14 @@ export interface CompleteStepInput {
 
 export interface CompleteStepOutput {
   readonly effects: readonly LifecycleEffect[];
+  /**
+   * EPHEMERAL — the fully rendered `step.prompt` text for the step targeted
+   * by this output's `dispatch-agent` effect (if any), present only when
+   * `completeStep` auto-advanced to a next step or re-dispatched a gate step
+   * on retry. See `DispatchStepOutput.stepPromptText` for the same security
+   * contract: never persisted, never logged, never copied into an effect.
+   */
+  readonly stepPromptText?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -547,6 +567,13 @@ export interface ReconcileExecutionOutput {
   readonly handlerFound: boolean;
   readonly effects: readonly LifecycleEffect[];
   readonly gateReRunStepName?: string;
+  /**
+   * EPHEMERAL — the fully rendered `step.prompt` text for `handlerStepName`,
+   * present only when a handler step was found and dispatched. See
+   * `DispatchStepOutput.stepPromptText` for the same security contract:
+   * never persisted, never logged, never copied into an effect.
+   */
+  readonly stepPromptText?: string;
 }
 
 // ---------------------------------------------------------------------------

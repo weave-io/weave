@@ -259,7 +259,8 @@ function dispatchHandlerOrPause(
         artifactNames,
       );
       if (promptResult.isErr()) return errAsync(promptResult.error);
-      const promptMetadata = promptResult.value;
+      const promptMetadata = { byteLength: promptResult.value.byteLength };
+      const stepPromptText = promptResult.value.text;
       const runAgent = buildConfiguredRunAgentEffect(
         handlerStep,
         promptMetadata,
@@ -269,6 +270,7 @@ function dispatchHandlerOrPause(
         handlerFound: true,
         ...(gateReRunStepName !== undefined ? { gateReRunStepName } : {}),
         effects: [{ kind: "dispatch-agent", runAgent }],
+        stepPromptText,
       });
     });
 }

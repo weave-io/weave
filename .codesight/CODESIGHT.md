@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 220 lib files | 33 env vars | 9 middleware | 0% test coverage
 > **Token savings:** this file is ~21,500 tokens. Without it, AI exploration would cost ~72,900 tokens. **Saves ~51,400 tokens per conversation.**
-> **Last scanned:** 2026-07-24 21:18 — re-run after significant changes
+> **Last scanned:** 2026-07-25 02:25 — re-run after significant changes
 
 ---
 
@@ -129,12 +129,13 @@
   - type FramingError
   - const MAX_FRAME_RECORD_BYTES
 - `packages/adapters/pi/src/child-process-port.ts`
+  - function resolveKillSignal: (mode) => number | undefined
   - class BunPiChildProcessPort
   - interface PiChildStdout
   - interface PiSpawnedChildProcess
   - interface PiChildSpawnInput
   - interface PiChildProcessPort
-  - type ChildProcessError
+  - _...2 more_
 - `packages/adapters/pi/src/child-runtime.ts`
   - class PiChildRuntime
   - interface PiChildOutputPort
@@ -243,7 +244,8 @@
   - interface PiModelApplyPort
   - type PiModelResolutionSource
   - type PiModelResolution
-  - type PiModelActivationOutcome
+  - type PiModelIdentityResolutionError
+  - _...1 more_
 - `packages/adapters/pi/src/path-containment.ts`
   - function isLexicallyContained: (relativePath) => boolean
   - function isDirectoryContainmentSafeWith: (port, projectRoot, relativeDir) => ResultAsync<boolean, never>
@@ -1228,8 +1230,8 @@
 ## Most Imported Files (change these carefully)
 
 - `packages/cli/src/evals/types.ts` — imported by **39** files
+- `packages/adapters/pi/src/types.ts` — imported by **29** files
 - `packages/engine/src/runtime/types.ts` — imported by **29** files
-- `packages/adapters/pi/src/types.ts` — imported by **28** files
 - `packages/cli/src/theme/colors.ts` — imported by **20** files
 - `packages/cli/src/io/terminal.ts` — imported by **18** files
 - `packages/cli/src/evals/openrouter-client.ts` — imported by **18** files
@@ -1240,10 +1242,10 @@
 - `packages/cli/src/args.ts` — imported by **14** files
 - `packages/engine/src/tool-policy.ts` — imported by **14** files
 - `scripts/release/model.ts` — imported by **14** files
+- `packages/adapters/pi/src/strict-json.ts` — imported by **13** files
 - `packages/engine/src/logger.ts` — imported by **13** files
 - `scripts/release/filesystem.ts` — imported by **13** files
 - `scripts/release/clock.ts` — imported by **13** files
-- `packages/adapters/pi/src/strict-json.ts` — imported by **12** files
 - `packages/cli/src/fs/file-system.ts` — imported by **12** files
 - `packages/engine/src/runtime/errors.ts` — imported by **12** files
 - `packages/engine/src/compose.ts` — imported by **11** files
@@ -1251,8 +1253,8 @@
 ## Import Map (who imports what)
 
 - `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/dashboard-indexes.test.ts`, `packages/cli/src/evals/__tests__/github-contents-publisher.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts` +34 more
+- `packages/adapters/pi/src/types.ts` ← `packages/adapters/pi/src/__tests__/capability-prober.test.ts`, `packages/adapters/pi/src/__tests__/child-env.test.ts`, `packages/adapters/pi/src/__tests__/child-runtime.test.ts`, `packages/adapters/pi/src/__tests__/controller.test.ts`, `packages/adapters/pi/src/__tests__/delegation-tool.test.ts` +24 more
 - `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts`, `packages/engine/src/__tests__/runtime-contract.test.ts` +24 more
-- `packages/adapters/pi/src/types.ts` ← `packages/adapters/pi/src/__tests__/capability-prober.test.ts`, `packages/adapters/pi/src/__tests__/child-env.test.ts`, `packages/adapters/pi/src/__tests__/child-runtime.test.ts`, `packages/adapters/pi/src/__tests__/controller.test.ts`, `packages/adapters/pi/src/__tests__/delegation-tool.test.ts` +23 more
 - `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts` +15 more
 - `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts` +13 more
 - `packages/cli/src/evals/openrouter-client.ts` ← `packages/cli/src/evals/__tests__/loom-routing-runner.test.ts`, `packages/cli/src/evals/__tests__/pattern-planning-runner.test.ts`, `packages/cli/src/evals/__tests__/runner.test.ts`, `packages/cli/src/evals/__tests__/shuttle-execution-runner.test.ts`, `packages/cli/src/evals/__tests__/spindle-tools-runner.test.ts` +13 more
@@ -1266,7 +1268,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 216 test files found
+> 220 test files found
 
 ---
 
