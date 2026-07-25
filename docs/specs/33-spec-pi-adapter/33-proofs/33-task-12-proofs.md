@@ -305,6 +305,68 @@ $ bun test packages/adapters/pi/src/__tests__/child-mode.test.ts
  26 pass, 0 fail, 78 expect() calls
 ```
 
+**Third live finding: S019/S020 recovery contradiction (issue #21 Task 12).**
+Live exact-host smoke testing of final11 against checklist items S019 and
+S020 revealed a contradiction: a valid two-step workflow (autonomous
+`prepare` step, interactive `wait` step) executed step `prepare`,
+appended a recoverable recovery pointer, and paused at interactive step
+`wait`. Within the same interactive session, `/reload` stopped dispatch
+and spawned no child (S019 pass as expected). However, `/weave:resume`
+returned "Resume refused: the last recovery pointer is stale or terminal
+for this session" solely because `pointer.controllerGeneration` differed
+from the newly activated generation after reload. Spec 33 §18 says
+stale-generation pointers produce no work, but also that restart/reload
+stops dispatch and only explicit resume reacquires — the current logic
+made explicit user-confirmed resume impossible for the exact paused
+execution S020 was meant to validate.
+
+**Root cause.** The `/weave:resume` handler in `extension.ts` treated ALL
+generation mismatches as terminal. Spec 33 §18's original language
+"Malformed, unknown-version, stale-generation, or mismatched pointers
+produce one deduplicated diagnostic and no work" conflated automatic
+recovery (startup hooks, continuation) with explicit user-confirmed
+resume, making it impossible to resume a paused execution after any
+process/reload event that advanced the `controllerGeneration`.
+
+**Fix.** Introduce `isPointerEligibleForExplicitResume` in
+`recovery-pointer.ts`: terminal pointers always fail closed (security
+invariant preserved), but recoverable pointers are eligible even from a
+prior generation when the user explicitly confirms resume. The pointer
+provides correlation only — Runtime Store inspection and lease semantics
+remain authoritative per Spec 33 §18. Automatic recovery (startup hooks,
+continuation) still rejects generation mismatches via the existing
+`isPointerForCurrentGeneration`. Update `extension.ts` `/weave:resume`
+handler to use the new eligibility check instead of the blanket
+stale-or-terminal rejection.
+
+**Spec clarification.** Updated Spec 33 §18 to distinguish automatic
+recovery (generation-match required) from explicit resume (prior-generation
+recoverable allowed, terminal always fails). Updated edge-case table §28
+for Restart/reload/fork/switch.
+
+**Regression coverage.** Four new unit tests in
+`recovery-pointer.test.ts`: same-generation recoverable (eligible),
+prior-generation recoverable (eligible, Issue #21 Task 12 S019/S020),
+same-generation terminal (ineligible), prior-generation terminal
+(ineligible, terminal always fails). All existing workflow controller
+tests continue to pass with same-generation behavior unchanged; lease
+conflict safety preserved.
+
+```
+$ bun test packages/adapters/pi/src/__tests__/recovery-pointer.test.ts
+ 13 pass, 0 fail, 21 expect() calls
+
+$ bun test packages/adapters/pi
+ 677 pass, 0 fail, 1866 expect() calls across 48 files
+
+$ bun run typecheck   # exit 0
+```
+
+This fix makes S019/S020 testable in live TUI smoke: a paused execution
+after `/reload` will not auto-resume (S019), and `/weave:resume` will
+explicitly resume it (S020) even though the `controllerGeneration` has
+advanced.
+
 ## What remains (live execution — for the parent agent)
 
 This task deliberately stops short of claiming stable readiness. The prior

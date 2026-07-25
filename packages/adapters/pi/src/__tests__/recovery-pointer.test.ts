@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
   InMemoryRecoveryPointerStore,
+  isPointerEligibleForExplicitResume,
   isPointerForCurrentGeneration,
   parseRecoveryPointer,
   RECOVERY_POINTER_SCHEMA_VERSION,
@@ -57,6 +58,51 @@ describe("isPointerForCurrentGeneration", () => {
     if (!pointer.isOk()) throw new Error("fixture invalid");
     expect(isPointerForCurrentGeneration(pointer.value, "gen-1")).toBe(true);
     expect(isPointerForCurrentGeneration(pointer.value, "gen-2")).toBe(false);
+  });
+});
+
+describe("isPointerEligibleForExplicitResume", () => {
+  it("returns true for a recoverable pointer from the same generation", () => {
+    const pointer = parseRecoveryPointer({
+      ...VALID_POINTER,
+      controllerGeneration: "gen-1",
+      status: "recoverable",
+    });
+    if (!pointer.isOk()) throw new Error("fixture invalid");
+    expect(isPointerEligibleForExplicitResume(pointer.value)).toBe(true);
+  });
+
+  it("returns true for a recoverable pointer from a prior generation", () => {
+    const pointer = parseRecoveryPointer({
+      ...VALID_POINTER,
+      controllerGeneration: "gen-old",
+      status: "recoverable",
+    });
+    if (!pointer.isOk()) throw new Error("fixture invalid");
+    // Explicit resume allows prior-generation recoverable pointers
+    // (Issue #21 Task 12 S019/S020)
+    expect(isPointerEligibleForExplicitResume(pointer.value)).toBe(true);
+  });
+
+  it("returns false for a terminal pointer from the same generation", () => {
+    const pointer = parseRecoveryPointer({
+      ...VALID_POINTER,
+      controllerGeneration: "gen-1",
+      status: "terminal",
+    });
+    if (!pointer.isOk()) throw new Error("fixture invalid");
+    expect(isPointerEligibleForExplicitResume(pointer.value)).toBe(false);
+  });
+
+  it("returns false for a terminal pointer from a prior generation", () => {
+    const pointer = parseRecoveryPointer({
+      ...VALID_POINTER,
+      controllerGeneration: "gen-old",
+      status: "terminal",
+    });
+    if (!pointer.isOk()) throw new Error("fixture invalid");
+    // Terminal pointers always fail closed, regardless of generation
+    expect(isPointerEligibleForExplicitResume(pointer.value)).toBe(false);
   });
 });
 

@@ -579,11 +579,13 @@ interface PiWeaveRecoveryPointerV1 {
 }
 ```
 
-`planName` and `planRevision` appear together. The active branch's newest valid pointer is compared with Runtime Store state; Runtime Store always wins. Missing pointers are harmless. Malformed, unknown-version, stale-generation, or mismatched pointers produce one deduplicated diagnostic and no work.
+`planName` and `planRevision` appear together. The active branch's newest valid pointer is compared with Runtime Store state; Runtime Store always wins. Missing pointers are harmless. Malformed or unknown-version pointers produce one deduplicated diagnostic and no work.
 
 Pointer append failure degrades telemetry after the authoritative commit; it MUST NOT roll back or repeat that commit.
 
 Restart, reload, switch, fork, shutdown, or lease loss stops dispatch and shows recovery. Inspection/observation may run, but only explicit resume reacquires and continues. Parent compaction alone does not pause children or create a new authorization boundary.
+
+Automatic recovery (startup hooks, continuation) rejects pointers whose `controllerGeneration` does not match the current generation. Explicit resume (`/weave:resume` with user confirmation) uses the pointer for correlation only; terminal pointers always fail closed, but recoverable pointers are eligible even from a prior generation—the Runtime Store and lease semantics remain authoritative (Issue #21 Task 12 S019/S020).
 
 ## 19. Diagnostics, retention, and usage
 
@@ -848,7 +850,7 @@ A later step MUST NOT claim readiness while an earlier consumed contract remains
 | Child exits without settled completion | Typed missing-settlement/completion failure. |
 | Duplicate/late completion | Reject; do not advance. |
 | Parent prompt during workflow | Explicit pause choice; never concurrent mutation. |
-| Restart/reload/fork/switch | Stop dispatch; no auto-resume; stale generation rejected. |
+| Restart/reload/fork/switch | Stop dispatch; no auto-resume; automatic recovery rejects generation mismatch; explicit resume allows prior-generation recoverable pointers (Issue #21 Task 12). |
 | Parent compaction | Keep children; refresh bounded status; no transcript injection. |
 | Stale plan revision | Fail closed; refresh snapshot; no implicit rewrite. |
 | Legacy/malformed plan | Degraded readable legacy or typed malformed error; no read-time rewrite. |

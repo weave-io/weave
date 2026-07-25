@@ -114,7 +114,10 @@ import {
   type PiPrimaryActivationError,
   PiPrimarySession,
 } from "./primary-session.js";
-import { BunJsonlRecoveryPointerStore } from "./recovery-pointer.js";
+import {
+  BunJsonlRecoveryPointerStore,
+  isPointerEligibleForExplicitResume,
+} from "./recovery-pointer.js";
 import {
   type PiRuntimeStoreFactory,
   SqliteRuntimeStoreFactory,
@@ -1819,14 +1822,13 @@ export function createPiExtension(
         return;
       }
       if (pointer.value !== undefined) {
-        const currentGenerationId = controller.getCurrentGeneration()?.id;
-        const stale =
-          pointer.value.status === "terminal" ||
-          (currentGenerationId !== undefined &&
-            pointer.value.controllerGeneration !== currentGenerationId);
-        if (stale) {
+        // Issue #21 Task 12 S019/S020: terminal pointers always fail closed;
+        // recoverable pointers are eligible even from a prior generation.
+        // The pointer provides correlation only - Runtime Store + lease
+        // semantics remain authoritative.
+        if (!isPointerEligibleForExplicitResume(pointer.value)) {
           ctx.ui.notify(
-            "Resume refused: the last recovery pointer is stale or terminal for this session. Nothing was resumed.",
+            "Resume refused: the last recovery pointer is terminal. Nothing was resumed.",
             "warning",
           );
           return;

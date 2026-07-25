@@ -71,14 +71,28 @@ export function parseRecoveryPointer(
 
 /**
  * A pointer is stale/mismatched relative to the *current* controller
- * generation when its `controllerGeneration` doesn't match. Recovery must
- * never treat a stale-generation pointer as authorizing anything.
+ * generation when its `controllerGeneration` doesn't match. Automatic
+ * recovery (startup hooks, continuation) must never treat a stale-generation
+ * pointer as authorizing anything.
  */
 export function isPointerForCurrentGeneration(
   pointer: PiWeaveRecoveryPointerV1,
   currentGenerationId: string,
 ): boolean {
   return pointer.controllerGeneration === currentGenerationId;
+}
+
+/**
+ * Check if a pointer is eligible for explicit resume (user-confirmed
+ * /weave:resume). Terminal pointers always fail closed. Recoverable pointers
+ * are eligible even from a prior generation - the pointer provides
+ * correlation only; the Runtime Store and lease semantics remain
+ * authoritative (Issue #21 Task 12 S019/S020).
+ */
+export function isPointerEligibleForExplicitResume(
+  pointer: PiWeaveRecoveryPointerV1,
+): boolean {
+  return pointer.status === "recoverable";
 }
 
 export interface PiRecoveryPointerStore {
