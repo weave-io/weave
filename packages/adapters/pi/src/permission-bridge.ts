@@ -146,6 +146,24 @@ export function createChildRelayApprovalPort(
  * resolver on the caller's behalf, so distinct calls only ever share a
  * grant when the caller's own resolver intentionally maps them to the same
  * normalized request (Spec 34 §5).
+ *
+ * `controlChannel: true` marks a private controller-reporting tool (Spec
+ * 33 §15's `weave_complete_step` is the only current example) whose calls
+ * must never be gated by the descriptor's ordinary `read`/`write`/
+ * `execute`/`delegate`/`network` capability policy - it reports the child's
+ * own completion candidate to its own parent controller and is not a
+ * user/agent-governable action. This flag alone grants nothing: it only
+ * makes the tool *eligible* for `intercept()`'s narrow control-channel
+ * bypass (see `docs/adapter-boundary.md`'s Control-channel tools section),
+ * which additionally requires the caller to attest a live, active
+ * direct-step context (`directStepActive: true`) for THIS exact call and
+ * still re-verifies this registration's own provenance every time. The
+ * `resolver` supplied here still MUST map real calls to a normal capability
+ * (kept as a fail-closed fallback): if the bypass's live conditions are
+ * ever not met - e.g. a nested/ordinary child, or a call arriving outside
+ * an active direct-step session - this registration is governed exactly
+ * like any other Weave-owned tool and blocks under a `deny` policy, never
+ * silently permitted.
  */
 export interface PiWeaveToolRegistration {
   readonly tool: PiToolRegistration;
@@ -154,6 +172,7 @@ export interface PiWeaveToolRegistration {
   readonly summary: string;
   readonly details?: string;
   readonly resolver: PermissionResolver;
+  readonly controlChannel?: true;
 }
 
 /** The sealed, coverage-proven tool-policy plan for one controller generation. */
@@ -165,6 +184,14 @@ export interface PiToolPolicyPlan {
   readonly verifiedNative: readonly string[];
   readonly weaveOwned: readonly string[];
   readonly unmanaged: readonly string[];
+  /**
+   * Subset of `weaveOwned` registered with `controlChannel: true` (Spec 33
+   * §15). Membership here is necessary but never sufficient for
+   * `intercept()`'s control-channel bypass - the caller must ALSO attest
+   * `directStepActive: true` for the exact call, and live provenance must
+   * still re-verify, every single time.
+   */
+  readonly controlChannelTools: readonly string[];
   readonly policies: Readonly<Record<string, EffectiveToolPolicy>>;
   readonly coverage: Result<PermissionCoverageProof, PermissionCoverageError>;
 }
@@ -320,12 +347,24 @@ export class PiPermissionBridge {
       );
     }
 
+    // Control-channel membership is an adapter-local classification, never
+    // reported to `verifyPermissionCoverage` as `bypassableToolIdentities`
+    // (that engine list means "not intercepted at all" and MUST stay empty
+    // for a healthy adapter - Spec 34 §5, §7). `weave_complete_step` remains
+    // fully registered and fully intercepted on every call; only
+    // `intercept()`'s own capability-policy evaluation step is narrowly
+    // skipped for it, and only under the live conditions checked there.
+    const controlChannelTools = input.weaveOwnedRegistrations
+      .filter((registration) => registration.controlChannel === true)
+      .map((registration) => registration.tool.name);
+
     return ok({
       registry,
       native: classification.native,
       verifiedNative: classification.verifiedNative,
       weaveOwned: classification.weaveOwned,
       unmanaged: classification.unmanaged,
+      controlChannelTools,
       policies: input.policies,
       coverage,
     });
@@ -484,6 +523,13 @@ export class PiPermissionBridge {
    * since been displaced (a foreign extension registered over it after
    * activation) blocks here rather than silently authorizing against a
    * provenance the host no longer honors.
+   *
+   * `directStepActive` is the caller's own live attestation (never derived
+   * here) that the exact child issuing this call currently holds an active
+   * direct-step state (Spec 33 §15) - see `PiChildModeState.directStep` in
+   * `extension.ts`. It is consulted ONLY to decide whether a
+   * `controlChannelTools` member is eligible for the narrow bypass below;
+   * it has no effect on any other tool, and by itself grants nothing.
    */
   intercept(input: {
     readonly session: PermissionSession;
@@ -496,6 +542,7 @@ export class PiPermissionBridge {
     readonly approvalUiAvailable: boolean;
     readonly approvalUi: PiApprovalUiPort;
     readonly pi: Pick<PiExtensionApi, "getAllTools">;
+    readonly directStepActive?: boolean;
   }): ResultAsync<PiToolCallDecision, PiAdapterFailure> {
     const isVerifiedNative = input.plan.verifiedNative.includes(
       input.toolIdentity,
@@ -519,6 +566,40 @@ export class PiPermissionBridge {
       );
       return ResultAsync.fromSafePromise(
         Promise.resolve({ kind: "block", reason: revalidated.error } as const),
+      );
+    }
+
+    // Narrow control-channel bypass (Spec 33 §15; see
+    // `docs/adapter-boundary.md`'s Control-channel tools section). A tool
+    // only reaches here if it is EITHER genuinely native OR Weave-owned AND
+    // just passed live provenance revalidation above - so this bypass can
+    // never fire for a spoofed, displaced, or foreign-shadowed name. It
+    // additionally requires:
+    //   1. this exact tool identity was registered with `controlChannel:
+    //      true` for the CURRENT sealed generation (`plan.controlChannelTools`);
+    //   2. the caller attests `directStepActive: true` for the exact call
+    //      happening right now - never inferred from the tool's own name or
+    //      registration alone, and never cached from a prior call.
+    // Only `weave_complete_step`, only for the one root direct-step child
+    // that registered it, only while that child's own direct-step state is
+    // still active. It intentionally never calls `session.authorizeCall` -
+    // that engine capability-policy evaluation is exactly the ordinary
+    // read/write/execute/delegate/network gate this private
+    // controller-reporting channel must never be subject to (a descriptor's
+    // `execute: deny` must never block the child's own completion report).
+    // If either condition is false, control falls straight through to the
+    // ordinary engine-mediated path below - fail-closed, not fail-open.
+    const isEligibleControlChannelCall =
+      isWeaveOwned &&
+      input.plan.controlChannelTools.includes(input.toolIdentity) &&
+      input.directStepActive === true;
+    if (isEligibleControlChannelCall) {
+      this.logger.info(
+        { toolIdentity: input.toolIdentity },
+        "control-channel call authorized without capability policy",
+      );
+      return ResultAsync.fromSafePromise(
+        Promise.resolve({ kind: "allow", call: input.call } as const),
       );
     }
 

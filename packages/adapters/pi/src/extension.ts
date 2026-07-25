@@ -1119,6 +1119,14 @@ async function activateChildModeIfApplicable(
         approvalUiAvailable: true,
         approvalUi: createChildRelayApprovalPort(relay, state.childId),
         pi,
+        // Live attestation for the bridge's narrow control-channel bypass
+        // (Spec 33 §15): true only while THIS child owns direct-step state
+        // (set at bootstrap commit, undefined for every ordinary/nested
+        // child - see `PiChildModeState.directStep`). Read fresh on every
+        // call, never cached. The completion recorder remains the authority
+        // that classifies calls after its window closes as typed `late`
+        // attempts rather than valid completion candidates.
+        directStepActive: state.directStep !== undefined,
       }),
       () => "child-tool-policy-bridge-rejected" as const,
     ).andThen((decision) => decision);

@@ -109,6 +109,7 @@ function weaveEchoResolver(): PermissionResolver {
 function weaveTool(
   name: string,
   resolver: PermissionResolver,
+  options: { controlChannel?: true } = {},
 ): PiWeaveToolRegistration {
   const definition: PiToolRegistration = {
     name,
@@ -123,6 +124,7 @@ function weaveTool(
     revision: "1",
     summary: name,
     resolver,
+    ...(options.controlChannel === true ? { controlChannel: true as const } : {}),
   };
 }
 
@@ -954,6 +956,7 @@ describe("PiPermissionBridge.intercept", () => {
       verifiedNative: [],
       weaveOwned: ["weave_unresolvable"],
       unmanaged: [],
+      controlChannelTools: [],
       policies: { loom: askPolicy },
       coverage: ok({
         generationId: registry.id,
@@ -1027,6 +1030,7 @@ describe("PiPermissionBridge.intercept", () => {
       verifiedNative: [],
       weaveOwned: ["weave_broken"],
       unmanaged: [],
+      controlChannelTools: [],
       policies: { loom: allowPolicy },
       coverage: ok({
         generationId: registry.id,
@@ -1127,6 +1131,118 @@ describe("PiPermissionBridge.intercept", () => {
       approvalUiAvailable: false,
       approvalUi: fixedApprovalUi(undefined),
       pi: pi.api,
+    });
+    expect(outcome._unsafeUnwrap()).toEqual({
+      kind: "block",
+      reason: "tool-provenance-changed",
+    });
+  });
+
+  it("a control-channel tool bypasses a deny policy only when the caller attests live directStepActive:true, and never authorizes via the engine's ordinary capability grant", async () => {
+    const registration = weaveTool("weave_complete_step", weaveEchoResolver(), {
+      controlChannel: true,
+    });
+    const { bridge, plan, session, pi } = await activatedFixture(
+      { loom: denyPolicy },
+      {
+        weaveOwnedRegistrations: [registration],
+        allTools: [tool("weave_complete_step", ownSourceInfo())],
+      },
+    );
+
+    // Without a live directStepActive attestation, the control channel is
+    // governed exactly like any other Weave-owned tool - deny wins.
+    const withoutAttestation = await bridge.intercept({
+      session,
+      plan,
+      project: "project",
+      controllerSession: "gen-1",
+      agentName: "loom",
+      toolIdentity: "weave_complete_step",
+      call: { command: "report success" },
+      approvalUiAvailable: false,
+      approvalUi: fixedApprovalUi(undefined),
+      pi: pi.api,
+    });
+    expect(withoutAttestation._unsafeUnwrap()).toEqual({
+      kind: "block",
+      reason: "policy-denied",
+    });
+
+    // With a live attestation, the exact same deny policy no longer blocks
+    // this exact control-channel tool - but an ordinary governed tool under
+    // the same policy remains denied (no broad unmanaged bypass).
+    const withAttestation = await bridge.intercept({
+      session,
+      plan,
+      project: "project",
+      controllerSession: "gen-1",
+      agentName: "loom",
+      toolIdentity: "weave_complete_step",
+      call: { command: "report success" },
+      approvalUiAvailable: false,
+      approvalUi: fixedApprovalUi(undefined),
+      pi: pi.api,
+      directStepActive: true,
+    });
+    expect(withAttestation._unsafeUnwrap()).toEqual({
+      kind: "allow",
+      call: { command: "report success" },
+    });
+  });
+
+  it("a control-channel tool that is not registered as controlChannel in the plan is never bypassed, even with directStepActive:true", async () => {
+    const registration = weaveTool("weave_echo", weaveEchoResolver());
+    const { bridge, plan, session, pi } = await activatedFixture(
+      { loom: denyPolicy },
+      {
+        weaveOwnedRegistrations: [registration],
+        allTools: [tool("weave_echo", ownSourceInfo())],
+      },
+    );
+    const outcome = await bridge.intercept({
+      session,
+      plan,
+      project: "project",
+      controllerSession: "gen-1",
+      agentName: "loom",
+      toolIdentity: "weave_echo",
+      call: { command: "echo hi" },
+      approvalUiAvailable: false,
+      approvalUi: fixedApprovalUi(undefined),
+      pi: pi.api,
+      directStepActive: true,
+    });
+    expect(outcome._unsafeUnwrap()).toEqual({
+      kind: "block",
+      reason: "policy-denied",
+    });
+  });
+
+  it("a displaced/colliding control-channel tool still blocks even with a live directStepActive:true attestation", async () => {
+    const registration = weaveTool("weave_complete_step", weaveEchoResolver(), {
+      controlChannel: true,
+    });
+    const { bridge, plan, session, pi } = await activatedFixture(
+      { loom: denyPolicy },
+      {
+        weaveOwnedRegistrations: [registration],
+        allTools: [tool("weave_complete_step", ownSourceInfo())],
+      },
+    );
+    pi.set([tool("weave_complete_step", foreignToolSourceInfo())]);
+    const outcome = await bridge.intercept({
+      session,
+      plan,
+      project: "project",
+      controllerSession: "gen-1",
+      agentName: "loom",
+      toolIdentity: "weave_complete_step",
+      call: { command: "report success" },
+      approvalUiAvailable: false,
+      approvalUi: fixedApprovalUi(undefined),
+      pi: pi.api,
+      directStepActive: true,
     });
     expect(outcome._unsafeUnwrap()).toEqual({
       kind: "block",

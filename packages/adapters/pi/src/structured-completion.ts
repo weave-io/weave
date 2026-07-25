@@ -402,6 +402,19 @@ export function recordCompletionAttempt(
  * this. Records exactly one candidate; never advances workflow state
  * itself - the parent controller validates it after `agent_settled` and
  * calls `completeStep` exactly once.
+ *
+ * The returned registration sets `controlChannel: true`
+ * (`PiWeaveToolRegistration`, `permission-bridge.ts`): this tool reports
+ * the child's own completion candidate to its own parent controller, and
+ * MUST remain callable regardless of the descriptor's ordinary
+ * `read`/`write`/`execute`/`delegate`/`network` tool policy (a smoke
+ * descriptor with `execute: deny` must never block its own step-completion
+ * report - the exact-host smoke regression this closes). `controlChannel`
+ * alone grants nothing; `PiPermissionBridge.intercept()` only honors the
+ * bypass when the caller ALSO attests a live `directStepActive: true` for
+ * this exact call and live provenance re-verifies every time (see that
+ * method's doc comment and `docs/adapter-boundary.md`'s Control-channel
+ * tools section).
  */
 export function buildWeaveCompleteStepToolRegistration(deps: {
   readonly stepName: string;
@@ -454,10 +467,20 @@ export function buildWeaveCompleteStepToolRegistration(deps: {
     owner: WEAVE_COMPLETE_STEP_TOOL_OWNER,
     revision: WEAVE_COMPLETE_STEP_TOOL_REVISION,
     summary: `Report completion of workflow step "${deps.stepName}".`,
-    // This is a private controller-reporting channel, not a
-    // user/agent-governable action (Spec 33 §15): it never requests
-    // approval, always resolves to a fixed, closed grant under the
-    // `execute` capability the step's own real work already requires.
+    // Marks this registration eligible for `PiPermissionBridge.intercept()`'s
+    // narrow control-channel bypass (Spec 33 §15) - see that flag's doc
+    // comment on `PiWeaveToolRegistration` for the full contract. This is a
+    // private controller-reporting channel, not a user/agent-governable
+    // action: it reports the child's own completion candidate to its own
+    // parent controller and never requests approval.
+    controlChannel: true,
+    // Fail-closed fallback ONLY (Spec 33 §15): the bypass above is what
+    // actually authorizes this tool for a live, active direct-step child.
+    // If that bypass's live conditions are ever not met - e.g. this exact
+    // registration somehow reached a nested/ordinary child, or the call
+    // arrives outside an active direct-step session - control falls
+    // through to this resolver and the ordinary `execute` capability policy
+    // applies exactly like any other governed tool, including `deny`.
     resolver: () =>
       ok([
         {

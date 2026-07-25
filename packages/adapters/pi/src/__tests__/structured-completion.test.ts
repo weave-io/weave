@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import {
+  buildWeaveCompleteStepToolRegistration,
   parseStructuredCompletionCandidate,
   SingleCompletionCandidateRecorder,
   serializeCompletionCandidate,
@@ -108,5 +109,80 @@ describe("SingleCompletionCandidateRecorder", () => {
     expect(second.isErr()).toBe(true);
     expect(recorder.hadDuplicateAttempt()).toBe(true);
     expect(recorder.take()).toEqual({ outcome: "success" });
+  });
+});
+
+describe("buildWeaveCompleteStepToolRegistration", () => {
+  it("marks the registration as a control channel and keeps an execute-capability resolver as a fail-closed fallback", () => {
+    const recorder = new SingleCompletionCandidateRecorder();
+    const registration = buildWeaveCompleteStepToolRegistration({
+      stepName: "implement",
+      recorder,
+      isWindowOpen: () => true,
+    });
+    expect(registration.controlChannel).toBe(true);
+    const resolved = registration
+      .resolver({
+        call: { outcome: "success" },
+        context: {
+          toolIdentity: "weave_complete_step",
+          owner: registration.owner,
+          revision: registration.revision,
+        },
+      })
+      ._unsafeUnwrap();
+    expect(resolved).toHaveLength(1);
+    expect(resolved[0]).toMatchObject({
+      unresolved: false,
+      capability: "execute",
+    });
+  });
+
+  it("the tool's own execute() records the candidate the recorder later hands to settlement (recorder receives the candidate)", async () => {
+    const recorder = new SingleCompletionCandidateRecorder();
+    const attempts: string[] = [];
+    const registration = buildWeaveCompleteStepToolRegistration({
+      stepName: "implement",
+      recorder,
+      isWindowOpen: () => true,
+      onAttempt: (attempt) => attempts.push(attempt.outcome),
+    });
+    const result = await registration.tool.execute(
+      "tc-1",
+      { outcome: "success", method: "agent_signal", message: "done" },
+      undefined,
+      undefined,
+      {} as never,
+    );
+    expect(attempts).toEqual(["recorded"]);
+    expect(recorder.take()).toEqual({
+      outcome: "success",
+      method: "agent_signal",
+      message: "done",
+    });
+    expect(result.content[0]).toEqual({
+      type: "text",
+      text: JSON.stringify({ ok: true }),
+    });
+  });
+
+  it("a call that arrives after the completion window has closed is recorded as 'late', not authored into the recorder", async () => {
+    const recorder = new SingleCompletionCandidateRecorder();
+    const attempts: string[] = [];
+    const registration = buildWeaveCompleteStepToolRegistration({
+      stepName: "implement",
+      recorder,
+      isWindowOpen: () => false,
+      onAttempt: (attempt) => attempts.push(attempt.outcome),
+    });
+    await registration.tool.execute(
+      "tc-1",
+      { outcome: "success" },
+      undefined,
+      undefined,
+      {} as never,
+    );
+    expect(attempts).toEqual(["late"]);
+    expect(recorder.take()).toBeUndefined();
   });
 });

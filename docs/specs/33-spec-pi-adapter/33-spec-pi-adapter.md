@@ -509,6 +509,7 @@ The tool records one candidate; it does not advance state. The controller waits 
 *   Missing, duplicate, malformed, rejected, or late candidates are typed operation failures.
 *   Nested helper children do not receive workflow completion authority.
 *   Retry, compaction, and queued continuation before `agent_settled` do not settle the step.
+*   `weave_complete_step` is a private controller-reporting channel, not a user/agent-governable action: it MUST remain callable by its exact registered direct-step child regardless of that child's own `read`/`write`/`execute`/`delegate`/`network` tool policy. The adapter enforces this through a narrow, live-reverified control-channel authorization path — see [`docs/adapter-boundary.md`'s “Control-channel Tools” section](../../adapter-boundary.md#control-channel-tools) — never through a change to §12's engine-owned capability evaluation, and never for any other tool or any nested/ordinary child.
 
 ## 16. Revisioned plan state
 

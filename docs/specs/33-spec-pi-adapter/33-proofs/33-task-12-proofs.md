@@ -2,7 +2,7 @@
 
 - Spec: [`33-spec-pi-adapter.md`](../33-spec-pi-adapter.md) §22, §25
 - Issue: weave-io/weave#21, Task 12
-- Status: ✅ Automated machinery complete, including exhaustive closed-set wiring for all 9 categories Spec 33 §25 names — ⏳ live TUI smoke execution outstanding (intentionally not performed by this change; see "What remains" below)
+- Status: ✅ Automated machinery complete, including exhaustive closed-set wiring for all 9 categories Spec 33 §25 names — ✅ a real completion-channel policy bug found during live exact-host smoke is fixed and regression-tested (see "Addendum" below) — ⏳ live TUI smoke execution and result recording still outstanding (see "What remains" below)
 
 ## Summary
 
@@ -186,6 +186,77 @@ New/changed test files in this pass:
 | `scripts/release/__tests__/acceptance-manifest.test.ts` | +4 tests: orphan packed-proof entry, orphan checklist item, no-orphan-for-real-data, expanded closed-set fixture injection for all 9 categories |
 | `scripts/release/__tests__/generate-acceptance-manifest.test.ts` | +1 test: typed error path (no throw) for a nonexistent root; existing happy-path test updated to unwrap the new `ResultAsync` |
 | `scripts/release/__tests__/smoke-checklist.test.ts` | Updated real-checklist test to unwrap the new `ResultAsync`-based `read()` |
+
+## Addendum: live exact-host smoke found and fixed a real completion-channel policy bug
+
+Running the live exact-host smoke against a direct-step child descriptor
+with `execute: deny` surfaced a real defect this proof's automated
+machinery could not catch on its own (it proves evidence *exists*, not
+that the adapter's runtime behavior is correct): the child's
+`composedPrompt` contained the workflow step instructions as expected, but
+`latestAssistantOutput` ended as plain prose (`SMOKE_FLOW_COMPLETE`) with
+`stopReason: "stop"` and no completion candidate — the workflow failed with
+a missing candidate instead of completing structurally.
+
+**Root cause.** `buildWeaveCompleteStepToolRegistration`
+(`structured-completion.ts`) documented `weave_complete_step` as a private
+controller-reporting channel that "never requests approval," but its
+resolver unconditionally mapped every call to capability `execute`. The
+valid smoke descriptor denies `execute`, so `PiPermissionBridge.intercept()`
+blocked the completion call before the recorder ever saw it — the doc
+comment's claim and the actual policy evaluation had silently diverged.
+The model, unable to report completion structurally, fell back to prose,
+which is never a valid settlement per Spec 33 §15.
+
+**Fix.** A narrow, adapter-owned control-channel authorization path in
+`PiPermissionBridge.intercept()` (documented in full in
+[`docs/adapter-boundary.md`'s "Control-channel Tools"
+section](../../adapter-boundary.md#control-channel-tools)): a
+registration opts in with `controlChannel: true`; the caller (`extension.ts`)
+attests a live, freshly-derived `directStepActive: state.directStep !== undefined`
+for every call; `intercept()` still unconditionally re-verifies live tool
+provenance first; only when the registered identity is both
+`controlChannel`-eligible in the sealed plan and the live attestation is
+true does `intercept()` skip the engine's ordinary capability-policy gate
+and allow the call directly. Every other tool, and every ordinary/nested
+child, is unaffected — `execute: deny` still blocks `bash` on the very same
+descriptor. This is not a change to engine capability semantics; it is
+entirely adapter-owned per `docs/adapter-boundary.md`'s ownership matrix
+("Concrete tool discovery, identities, resolvers, interception, and
+approval UI" is adapter-owned).
+
+**Regression coverage added** (see `docs/adapter-boundary.md`'s
+Control-channel Tools section for the exact file/test list):
+unit-level bypass-eligibility tests in `permission-bridge.test.ts`
+(execute-deny blocks bash but allows completion only with attestation;
+no bypass without plan membership; displaced/colliding provenance still
+blocks even with attestation); end-to-end tests in `child-mode.test.ts`
+against the real compiled extension (same four properties, plus proof that
+an ordinary/nested child never registers `weave_complete_step` and gains
+no completion authority even when it names the exact tool, and that the
+recorded candidate reaches the settlement envelope); and
+`structured-completion.test.ts` proves the registration itself carries
+`controlChannel: true` and that its `execute()` still records into the
+recorder (the fail-closed fallback resolver still maps to `execute`).
+
+```
+$ bun test packages/adapters/pi/src/__tests__/permission-bridge.test.ts \
+    packages/adapters/pi/src/__tests__/structured-completion.test.ts \
+    packages/adapters/pi/src/__tests__/child-mode.test.ts
+ 79 pass, 0 fail
+
+$ bun test packages/adapters/pi   # full adapter package
+ 673 pass, 0 fail, 1866 expect() calls across 48 files
+
+$ bun run typecheck   # exit 0, 0 errors across every workspace package
+```
+
+This fix does not itself flip any `docs/specs/33-spec-pi-adapter/33-smoke-checklist.md`
+row to `Pass`, nor `scripts/release/acceptance-manifest-data.ts`'s `pending`
+results — live TUI smoke execution and result recording remain outstanding
+per "What remains" below; the smoke run that found this bug must be
+repeated end-to-end against the fixed adapter before any row is marked
+`Pass`.
 
 ## What remains (live execution — for the parent agent)
 

@@ -97,6 +97,15 @@ retains its own identity plus evaluation fields even when the UI groups prompts:
 Denied views stay presentation-only (no challenge `requestId`, no pending
 evaluation fields).
 
+This precedence governs every call an adapter routes through the engine's
+`authorizeCall`/`authorizeCaptured` evaluation. It is adapter-owned whether a
+given registered call reaches that evaluation at all: a narrow class of
+private control-channel tools (e.g. the Pi adapter's `weave_complete_step`,
+Spec 33 §15) may bypass it entirely under adapter-verified live conditions
+— never a blanket exception, and never for ordinary governed tools. See
+[Adapter Boundary's "Control-channel Tools"](adapter-boundary.md#control-channel-tools)
+for the exact narrow contract and its invariants.
+
 ## Challenge choices and scopes
 
 Native UI may offer each grantable pending request:

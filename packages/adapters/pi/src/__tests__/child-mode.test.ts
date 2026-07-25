@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { okAsync, type ResultAsync } from "neverthrow";
 import { MAX_CWD_LENGTH } from "../child-control-bodies.js";
+import { ADAPTER_PACKAGE_IDENTITY } from "../commands.js";
 import {
   bytesToHex,
   generateNonceHex,
@@ -19,6 +20,7 @@ import {
   createPiExtension,
 } from "../extension.js";
 import type { JsonValue } from "../strict-json.js";
+import { WEAVE_COMPLETE_STEP_TOOL_NAME } from "../structured-completion.js";
 import type {
   PiCommandRegistration,
   PiEnvPort,
@@ -26,7 +28,9 @@ import type {
   PiExtensionApi,
   PiModelInfo,
   PiSessionContext,
+  PiSourceInfo,
   PiToolInfo,
+  PiToolRegistration,
 } from "../types.js";
 import { FakeChildProcessPort } from "./fakes/fake-child-process-port.js";
 
@@ -95,7 +99,34 @@ class MinimalFakeHost implements PiExtensionApi {
     existing.push(handler);
     this.events.set(event, existing);
   }
-  registerTool(): void {}
+  /** Every `registerTool()` call, in order - lets a test invoke a registered tool's own `execute()` directly, simulating the host actually running it after governance allows the call. */
+  readonly registerToolCalls: PiToolRegistration[] = [];
+  registerTool(tool: PiToolRegistration): void {
+    this.registerToolCalls.push(tool);
+    this.toolsInventory = [
+      ...this.toolsInventory.filter((existing) => existing.name !== tool.name),
+      { name: tool.name, sourceInfo: this.ownSourceInfo() },
+    ];
+  }
+  private ownSourceInfo(): PiSourceInfo {
+    return {
+      path: `/fake/node_modules/${ADAPTER_PACKAGE_IDENTITY}/dist/extension.js`,
+      source: `npm:${ADAPTER_PACKAGE_IDENTITY}`,
+      scope: "user",
+      origin: "package",
+    };
+  }
+  /** Simulates a foreign extension shadowing an already-registered tool name post-registration (Spec 33 §7.2). */
+  displaceTool(name: string, sourceInfo: PiSourceInfo): void {
+    this.toolsInventory = [
+      ...this.toolsInventory.filter((t) => t.name !== name),
+      { name, sourceInfo },
+    ];
+  }
+  /** Looks up a registered tool's own `execute()` by name, for a test to invoke directly. */
+  registeredTool(name: string): PiToolRegistration | undefined {
+    return this.registerToolCalls.find((t) => t.name === name);
+  }
   /** Set to `false` to simulate the host declining a `setModel()` call. */
   modelAccepted = true;
   readonly setModelCalls: PiModelInfo[] = [];
@@ -321,6 +352,247 @@ describe("private child mode (Spec 33 §11.2-§11.5, end-to-end against a fake h
       block: true,
       reason: expect.any(String),
     } as never);
+  });
+
+  it("a direct-step child's own weave_complete_step call bypasses the descriptor's execute:deny policy, while bash remains blocked, and the recorded candidate reaches settlement (issue #21 Task 12 exact-host smoke fix)", async () => {
+    const { host, output, secretBytes } = await buildChildExtension();
+    const bootstrap = await signEnvelope(
+      {
+        childId: "child-1",
+        generationId: "gen-1",
+        direction: "parent-to-child",
+        sequence: 1,
+        nonce: generateNonceHex(randomPort),
+        correlationId: "child-1",
+        kind: "bootstrap",
+        body: {
+          mode: "direct-step",
+          agentName: "shuttle",
+          composedPrompt: "You are Shuttle, executing one workflow step.",
+          models: [],
+          effectiveToolPolicy: {
+            read: "allow",
+            write: "ask",
+            execute: "deny",
+            delegate: "deny",
+            network: "deny",
+          },
+          correlationId: "child-1",
+          context: {
+            parentAgentName: "workflow-controller",
+            parentDepth: 0,
+            cwd: "/project",
+          },
+          // `execute` is denied and `bash` maps to `execute`, so the exact
+          // valid active-tool set excludes it; `weave_complete_step` is a
+          // control channel, never gated by this policy at all.
+          activeTools: [WEAVE_COMPLETE_STEP_TOOL_NAME],
+          workflowInstanceId: "wf-1",
+          leaseId: "lease-1",
+          stepName: "implement",
+          completionTool: WEAVE_COMPLETE_STEP_TOOL_NAME,
+        },
+      },
+      secretBytes,
+      hmacPort,
+    );
+    await deliverEnvelope(
+      host,
+      bootstrap._unsafeUnwrap() as unknown as JsonValue,
+    );
+    await flush();
+
+    // The tool actually reached the host, owned by this adapter.
+    const registration = host.registeredTool(WEAVE_COMPLETE_STEP_TOOL_NAME);
+    expect(registration).toBeDefined();
+
+    // The descriptor's own `execute: deny` still blocks an ordinary governed
+    // native tool call exactly as before this fix - this is not a broad
+    // unmanaged bypass.
+    const blockedBash = await host.fire(
+      "tool_call",
+      {
+        type: "tool_call",
+        toolCallId: "tc-bash",
+        toolName: "bash",
+        input: { command: "rm -rf /" },
+      },
+      fakeCtx(),
+    );
+    expect(blockedBash).toEqual({
+      block: true,
+      reason: expect.any(String),
+    } as never);
+
+    // The exact-host smoke's fixed bug: the child's own completion report
+    // must NOT be blocked by that same `execute: deny` policy.
+    const completionInput = {
+      outcome: "success",
+      method: "agent_signal",
+      message: "SMOKE_FLOW_COMPLETE",
+    };
+    const allowedCompletion = await host.fire(
+      "tool_call",
+      {
+        type: "tool_call",
+        toolCallId: "tc-complete",
+        toolName: WEAVE_COMPLETE_STEP_TOOL_NAME,
+        input: { ...completionInput },
+      },
+      fakeCtx(),
+    );
+    expect(allowedCompletion).toBeUndefined();
+
+    // Simulate the real host actually invoking the now-allowed tool - the
+    // `tool_call` event only decides allow/block, never invokes the tool.
+    await registration?.execute(
+      "tc-complete",
+      completionInput,
+      undefined,
+      undefined,
+      fakeCtx(),
+    );
+
+    await host.fire("agent_settled", {}, fakeCtx());
+    await flush();
+    const settled = output.lines.at(-1);
+    expect(settled?.kind).toBe("settled");
+    const body = settled?.body as { outcome: string; summary?: string };
+    expect(body.outcome).toBe("completed");
+    expect(body.summary).toContain("SMOKE_FLOW_COMPLETE");
+  });
+
+  it("still blocks a direct-step child's weave_complete_step call when its provenance is displaced by a foreign extension after registration, even while direct-step state is active", async () => {
+    const { host, secretBytes } = await buildChildExtension();
+    const bootstrap = await signEnvelope(
+      {
+        childId: "child-1",
+        generationId: "gen-1",
+        direction: "parent-to-child",
+        sequence: 1,
+        nonce: generateNonceHex(randomPort),
+        correlationId: "child-1",
+        kind: "bootstrap",
+        body: {
+          mode: "direct-step",
+          agentName: "shuttle",
+          composedPrompt: "You are Shuttle, executing one workflow step.",
+          models: [],
+          effectiveToolPolicy: {
+            read: "allow",
+            write: "ask",
+            execute: "deny",
+            delegate: "deny",
+            network: "deny",
+          },
+          correlationId: "child-1",
+          context: {
+            parentAgentName: "workflow-controller",
+            parentDepth: 0,
+            cwd: "/project",
+          },
+          activeTools: [WEAVE_COMPLETE_STEP_TOOL_NAME],
+          workflowInstanceId: "wf-1",
+          leaseId: "lease-1",
+          stepName: "implement",
+          completionTool: WEAVE_COMPLETE_STEP_TOOL_NAME,
+        },
+      },
+      secretBytes,
+      hmacPort,
+    );
+    await deliverEnvelope(
+      host,
+      bootstrap._unsafeUnwrap() as unknown as JsonValue,
+    );
+    await flush();
+    expect(host.registeredTool(WEAVE_COMPLETE_STEP_TOOL_NAME)).toBeDefined();
+
+    // A foreign extension (or a colliding second registration) shadows the
+    // exact name after activation - live provenance re-verification MUST
+    // still block this call, regardless of an active direct-step context.
+    host.displaceTool(WEAVE_COMPLETE_STEP_TOOL_NAME, {
+      path: "/fake/node_modules/some-other-extension/dist/index.js",
+      source: "npm:some-other-extension",
+      scope: "user",
+      origin: "package",
+    });
+
+    const blocked = await host.fire(
+      "tool_call",
+      {
+        type: "tool_call",
+        toolCallId: "tc-complete",
+        toolName: WEAVE_COMPLETE_STEP_TOOL_NAME,
+        input: { outcome: "success" },
+      },
+      fakeCtx(),
+    );
+    expect(blocked).toEqual({
+      block: true,
+      reason: "tool-provenance-changed",
+    } as never);
+  });
+
+  it("an ordinary (non-direct-step) child never registers weave_complete_step and gains no completion authority even when it names the exact tool", async () => {
+    const { host, secretBytes } = await buildChildExtension();
+    const bootstrap = await signEnvelope(
+      {
+        childId: "child-1",
+        generationId: "gen-1",
+        direction: "parent-to-child",
+        sequence: 1,
+        nonce: generateNonceHex(randomPort),
+        correlationId: "child-1",
+        kind: "bootstrap",
+        body: {
+          mode: "ordinary",
+          agentName: "shuttle",
+          composedPrompt: "You are Shuttle, a nested delegated specialist.",
+          models: [],
+          effectiveToolPolicy: {
+            read: "allow",
+            write: "allow",
+            execute: "allow",
+            delegate: "deny",
+            network: "deny",
+          },
+          correlationId: "child-1",
+          context: {
+            parentAgentName: "shuttle",
+            parentDepth: 1,
+            cwd: "/project",
+          },
+          activeTools: ["bash"],
+        },
+      },
+      secretBytes,
+      hmacPort,
+    );
+    await deliverEnvelope(
+      host,
+      bootstrap._unsafeUnwrap() as unknown as JsonValue,
+    );
+    await flush();
+
+    // Only a direct-step bootstrap ever registers weave_complete_step -
+    // an ordinary/nested child never receives it (Spec 33 §15).
+    expect(host.registeredTool(WEAVE_COMPLETE_STEP_TOOL_NAME)).toBeUndefined();
+
+    // A call naming that exact tool anyway is not a Weave-owned control
+    // channel for this child - it is unmanaged, never specially allowed.
+    const outcome = await host.fire(
+      "tool_call",
+      {
+        type: "tool_call",
+        toolCallId: "tc-fake-complete",
+        toolName: WEAVE_COMPLETE_STEP_TOOL_NAME,
+        input: { outcome: "success" },
+      },
+      fakeCtx(),
+    );
+    expect(outcome).toBeUndefined();
+    expect(host.registerToolCalls).toHaveLength(0);
   });
 
   it("reports settlement exactly once via an authenticated envelope on agent_settled", async () => {
