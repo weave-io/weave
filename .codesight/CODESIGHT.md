@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 220 lib files | 33 env vars | 9 middleware | 0% test coverage
 > **Token savings:** this file is ~21,500 tokens. Without it, AI exploration would cost ~72,900 tokens. **Saves ~51,400 tokens per conversation.**
-> **Last scanned:** 2026-07-25 08:01 — re-run after significant changes
+> **Last scanned:** 2026-07-25 13:28 — re-run after significant changes
 
 ---
 
@@ -188,6 +188,7 @@
   - class PiDelegationController
   - interface PiDelegationContext
   - interface PiDelegationControllerDeps
+  - interface PiAuthenticatedDelegationRequest
   - interface PiDelegationRequest
 - `packages/adapters/pi/src/delegation-tool.ts`
   - function buildDelegationToolRegistration: (deps) => PiWeaveToolRegistration

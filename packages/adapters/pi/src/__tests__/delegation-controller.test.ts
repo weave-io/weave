@@ -751,6 +751,68 @@ describe("PiDelegationController", () => {
     controller.disposeAll();
   });
 
+  it("delegates for an authenticated direct-step parent through the shared tracked budget", async () => {
+    const port = new FakeChildProcessPort();
+    const controller = makeController(
+      config(
+        `${limitsSource({
+          maxChildren: 2,
+          maxConcurrency: 2,
+          maxDepth: 3,
+          maxProcesses: 2,
+        })}\nagent tapestry {\n}\n`,
+      ),
+      port,
+      {
+        resolveDelegationTarget: (requestingAgentName, targetAgentName) =>
+          requestingAgentName === "tapestry" &&
+          targetAgentName === "tapestry-worker"
+            ? { name: "tapestry-worker", triggers: [], isCategory: false }
+            : undefined,
+        buildBootstrap: (target, childId, context) => ({
+          mode: "ordinary" as const,
+          agentName: target.name,
+          composedPrompt: `You are ${target.name}.`,
+          models: [],
+          correlationId: childId,
+          context: {
+            parentAgentName: context.parentAgentName,
+            parentDepth: context.parentDepth,
+            cwd: context.cwd,
+          },
+          activeTools: [],
+        }),
+      },
+    );
+
+    const settlementPromise = controller.delegateFromAuthenticatedParent({
+      parentId: "direct-workflow-step",
+      parentDepth: 0,
+      parentAgentName: "tapestry",
+      agentName: "tapestry-worker",
+      task: "Reply exactly TAPESTRY_CHILD_OK",
+      cwd: "/project",
+    });
+    await flush();
+
+    expect(port.spawnedProcesses.length).toBe(1);
+    const child = port.spawnedProcesses[0]!;
+    const childId = childIdOf(child, port);
+    expect(childId).toBe("child-1");
+    const treeNode = controller
+      .snapshotTree()
+      .find((node) => node.id === childId);
+    expect(treeNode?.parentId).toBe("direct-workflow-step");
+
+    await respondHandshakeAndSettle(child, port, "gen-1");
+    const settlement = await settlementPromise;
+    expect(settlement._unsafeUnwrap()).toEqual({
+      outcome: "completed",
+      summary: "ok",
+    });
+    controller.disposeAll();
+  });
+
   it("relays a live child's delegate-request through the same tracked global budget, not an independent one", async () => {
     const port = new FakeChildProcessPort();
     const controller = makeController(

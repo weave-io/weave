@@ -76,7 +76,10 @@ import {
   createDirectDispatchTransport,
   PiDirectStepChildRegistry,
 } from "./direct-dispatch-transport.js";
-import { makeRequiredCapabilityUnavailableFailure } from "./errors.js";
+import {
+  makeChildAbortFailedFailure,
+  makeRequiredCapabilityUnavailableFailure,
+} from "./errors.js";
 import {
   BunHostPackageReader,
   type HostPackageReader,
@@ -2275,6 +2278,8 @@ export function createPiExtension(
               })
               .orElse(() => okAsync(undefined));
           }
+          const directStepDelegationController =
+            delegationControllerCell.controller;
           workflowControllerCell.controller = new PiWorkflowController({
             store: runtimeStore,
             planStateProvider: createPiPlanStateProvider(ctx.cwd),
@@ -2296,6 +2301,13 @@ export function createPiExtension(
                   availableModels: safelyListAvailableModels(
                     ctx.modelRegistry,
                   ).unwrapOr([]),
+                  relayDelegation:
+                    directStepDelegationController === undefined
+                      ? undefined
+                      : (request) =>
+                          directStepDelegationController.delegateFromAuthenticatedParent(
+                            request,
+                          ),
                 },
                 generation.id,
               ),
@@ -2318,8 +2330,29 @@ export function createPiExtension(
               controller.beginOperation().map(() => undefined),
             ownerId: generation.id,
             projectRoot: ctx.cwd,
-            cancelActiveDirectStepChild: () =>
-              directStepChildRegistry.cancel() ?? okAsync(undefined),
+            cancelActiveDirectStepChild: () => {
+              const directChildId = directStepChildRegistry.getActiveChildId();
+              const cancelDirectChild =
+                directStepChildRegistry.cancel() ?? okAsync(undefined);
+              if (
+                directChildId === undefined ||
+                directStepDelegationController === undefined
+              ) {
+                return cancelDirectChild;
+              }
+              return cancelDirectChild.andThen(() =>
+                directStepDelegationController
+                  .cancelSubtree(directChildId)
+                  .mapErr(
+                    (failures) =>
+                      failures[0] ??
+                      makeChildAbortFailedFailure(
+                        directChildId,
+                        "descendant cancellation failed",
+                      ),
+                  ),
+              );
+            },
             // Spec 33 §16: refreshes the bounded compact plan widget after
             // every dispatch/completion/resume/interrupt/reconcile outcome.
             // Best-effort and fire-and-forget - this class never reads plan

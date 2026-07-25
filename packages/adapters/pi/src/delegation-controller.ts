@@ -130,6 +130,12 @@ export interface PiDelegationControllerDeps {
   readonly telemetry?: PiTelemetryUsageSink;
 }
 
+export interface PiAuthenticatedDelegationRequest extends PiDelegationContext {
+  readonly parentId: string;
+  readonly agentName: string;
+  readonly task: string;
+}
+
 export interface PiDelegationRequest {
   readonly parentId: string;
   readonly parentDepth: number;
@@ -176,17 +182,64 @@ export class PiDelegationController {
     request: PiDelegationRequest,
   ): ResultAsync<PiChildSettlement, PiAdapterFailure> {
     const childId = request.childId ?? this.deps.idGenerator.next();
-    if (this.disposedAll) {
+    const validation = this.validateRequest(childId, request);
+    if (validation.isErr()) return errAsync(validation.error);
+    const identity = this.verifyParentIdentity(request);
+    if (identity.isErr()) {
+      return errAsync(makeChildAbortFailedFailure(childId, identity.error));
+    }
+    return this.authorizeAndDispatch(childId, request);
+  }
+
+  /**
+   * Relays one request from an authenticated, currently running direct-step
+   * child into this controller's ordinary child tree and shared budgets.
+   * Only the direct-step RPC transport may call this seam: that transport
+   * has already verified the child's HMAC envelope, generation, identity,
+   * sequence, and running state before exposing the request here.
+   */
+  delegateFromAuthenticatedParent(
+    request: PiAuthenticatedDelegationRequest,
+  ): ResultAsync<PiChildSettlement, PiAdapterFailure> {
+    const childId = this.deps.idGenerator.next();
+    const target = this.deps.resolveDelegationTarget?.(
+      request.parentAgentName,
+      request.agentName,
+    );
+    const buildBootstrap = this.deps.buildBootstrap;
+    if (target === undefined || buildBootstrap === undefined) {
       return errAsync(
-        makeChildAbortFailedFailure(childId, "controller disposed"),
+        makeChildAbortFailedFailure(childId, "invalid delegation target"),
       );
+    }
+    const delegationRequest: PiDelegationRequest = {
+      ...request,
+      env: {},
+      childId,
+      bootstrap: buildBootstrap(target, childId, {
+        parentAgentName: request.parentAgentName,
+        parentDepth: request.parentDepth,
+        cwd: request.cwd,
+      }),
+    };
+    const validation = this.validateRequest(childId, delegationRequest);
+    if (validation.isErr()) return errAsync(validation.error);
+    return this.authorizeAndDispatch(childId, delegationRequest);
+  }
+
+  private validateRequest(
+    childId: string,
+    request: PiDelegationRequest,
+  ): Result<void, PiAdapterFailure> {
+    if (this.disposedAll) {
+      return err(makeChildAbortFailedFailure(childId, "controller disposed"));
     }
     if (
       request.parentId.length === 0 ||
       !Number.isInteger(request.parentDepth) ||
       request.parentDepth < 0
     ) {
-      return errAsync(
+      return err(
         makeChildAbortFailedFailure(childId, "invalid parent reference"),
       );
     }
@@ -204,14 +257,17 @@ export class PiDelegationController {
       request.cwd.length < 1 ||
       request.cwd.length > MAX_CWD_LENGTH
     ) {
-      return errAsync(
+      return err(
         makeChildAbortFailedFailure(childId, "task or context exceeds bound"),
       );
     }
-    const identity = this.verifyParentIdentity(request);
-    if (identity.isErr()) {
-      return errAsync(makeChildAbortFailedFailure(childId, identity.error));
-    }
+    return ok(undefined);
+  }
+
+  private authorizeAndDispatch(
+    childId: string,
+    request: PiDelegationRequest,
+  ): ResultAsync<PiChildSettlement, PiAdapterFailure> {
     const decision = this.authorize(request);
     if (decision.isErr()) {
       // Config-level limit-resolution failures should already be rejected at

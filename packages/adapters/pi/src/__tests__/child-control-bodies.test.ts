@@ -62,6 +62,55 @@ describe("BootstrapBodySchema composedPrompt bound", () => {
   });
 });
 
+describe("BootstrapBodySchema delegation trigger metadata", () => {
+  it("accepts the engine's optional routing_hint on a delegation target trigger", () => {
+    const result = parseControlBody("bootstrap", {
+      agentName: "tapestry",
+      composedPrompt: "Delegate every implementation task.",
+      models: [],
+      delegationTargets: [
+        {
+          name: "shuttle",
+          description: "Shuttle (Domain Specialist)",
+          triggers: [
+            {
+              domain: "Implementation",
+              trigger: "Bounded coding tasks",
+              routing_hint: "Use for clearly scoped implementation tasks",
+            },
+          ],
+          isCategory: false,
+        },
+      ],
+      ...REQUIRED_BOOTSTRAP_FIELDS,
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it("rejects a routing_hint over the private-control bound", () => {
+    const result = parseControlBody("bootstrap", {
+      agentName: "tapestry",
+      composedPrompt: "Delegate every implementation task.",
+      models: [],
+      delegationTargets: [
+        {
+          name: "shuttle",
+          triggers: [
+            {
+              domain: "Implementation",
+              trigger: "Bounded coding tasks",
+              routing_hint: "x".repeat(1_025),
+            },
+          ],
+          isCategory: false,
+        },
+      ],
+      ...REQUIRED_BOOTSTRAP_FIELDS,
+    });
+    expect(result.ok).toBe(false);
+  });
+});
+
 describe("DelegateRequestBodySchema.task bound (Spec 33 \u00a711.2 Task 9 unification)", () => {
   // A live child relaying its own nested `delegate-request` must be held to
   // the exact same `MAX_TASK_INPUT_CHARS` bound enforced at tool parsing

@@ -12,6 +12,7 @@ import type { ResultAsync } from "neverthrow";
 import { toModelIdentityBody } from "./child-control-bodies.js";
 import type { HmacPort, RandomPort } from "./child-crypto.js";
 import type { PiChildProcessPort } from "./child-process-port.js";
+import type { PiAuthenticatedDelegationRequest } from "./delegation-controller.js";
 import { WEAVE_DELEGATION_TOOL_NAME } from "./delegation-tool.js";
 import type {
   DirectDispatchSettlement,
@@ -20,7 +21,7 @@ import type {
 } from "./direct-dispatch.js";
 import type { PiAdapterFailure } from "./errors.js";
 import { type PiModelInfo, PiModelResolver } from "./model-resolution.js";
-import { PiRpcChild } from "./rpc-child.js";
+import { type PiChildSettlement, PiRpcChild } from "./rpc-child.js";
 import type { JsonValue } from "./strict-json.js";
 import { WEAVE_COMPLETE_STEP_TOOL_NAME } from "./structured-completion.js";
 import { deriveActiveToolNames } from "./tool-governance.js";
@@ -53,6 +54,14 @@ export interface PiDirectDispatchTransportDeps {
    * never a hard failure).
    */
   readonly availableModels?: readonly PiModelInfo[];
+  /**
+   * Relays an authenticated request from the direct-step child into the
+   * generation's shared ordinary-delegation controller. The direct child
+   * itself remains exempt from ordinary budgets; every nested child does not.
+   */
+  readonly relayDelegation?: (
+    request: PiAuthenticatedDelegationRequest,
+  ) => ResultAsync<PiChildSettlement, PiAdapterFailure>;
 }
 
 /**
@@ -72,6 +81,11 @@ export class PiDirectStepChildRegistry {
 
   isActive(): boolean {
     return this.active !== undefined && !this.active.isSettled();
+  }
+
+  getActiveChildId(): string | undefined {
+    if (!this.isActive()) return undefined;
+    return this.active?.getId();
   }
 
   cancel(): ResultAsync<void, PiAdapterFailure> | undefined {
@@ -120,7 +134,14 @@ export function createDirectDispatchTransport(
     input: PiDirectDispatchInput,
   ): ResultAsync<DirectDispatchSettlement, PiAdapterFailure> => {
     const childId = `direct-${input.workflowInstanceId}-${input.stepName}-${deps.idGenerator.next()}`;
-    const child = new PiRpcChild(
+    let child: PiRpcChild;
+    const respondToDelegation = (
+      correlationId: string,
+      body: JsonValue,
+    ): void => {
+      void child.sendDelegationResponse(correlationId, body);
+    };
+    child = new PiRpcChild(
       childId,
       DIRECT_DISPATCH_PARENT_ID,
       generationId,
@@ -133,6 +154,34 @@ export function createDirectDispatchTransport(
         logger: deps.logger,
         command: deps.command,
         baseEnv: deps.baseEnv,
+        onDelegationRequest: (authenticatedChildId, correlationId, body) => {
+          const relayDelegation = deps.relayDelegation;
+          if (relayDelegation === undefined) {
+            respondToDelegation(correlationId, {
+              ok: false,
+              error: "nested-delegation-unavailable",
+            });
+            return;
+          }
+          void relayDelegation({
+            parentId: authenticatedChildId,
+            parentDepth: DIRECT_DISPATCH_DEPTH,
+            parentAgentName: input.agentName,
+            agentName: body.agentName,
+            task: body.task,
+            cwd: input.cwd,
+          }).match(
+            (settlement) => {
+              respondToDelegation(correlationId, { ok: true, settlement });
+            },
+            (failure) => {
+              respondToDelegation(correlationId, {
+                ok: false,
+                error: failure.code,
+              });
+            },
+          );
+        },
       },
     );
 
@@ -228,6 +277,15 @@ export function createDirectDispatchTransport(
       })
       .mapErr((failure) => {
         deps.registry?.setActive(undefined);
+        deps.logger.error(
+          {
+            childId,
+            agentName: input.agentName,
+            code: failure.code,
+            correlation: failure.correlation,
+          },
+          "direct-step child transport failed",
+        );
         return failure;
       });
   };

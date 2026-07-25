@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { okAsync } from "neverthrow";
 import {
   generateNonceHex,
   hexToBytes,
@@ -232,6 +233,124 @@ describe("createDirectDispatchTransport (Spec 33 §11.2, §14, §15)", () => {
         message: "SMOKE_FLOW_COMPLETE",
       }),
     } as never);
+  });
+
+  it("relays a direct-step child's nested delegation through the shared parent controller", async () => {
+    const processPort = new FakeChildProcessPort();
+    const idGenerator = new FakeIdGenerator();
+    const relayRequests: unknown[] = [];
+    const relayDelegation = (request: unknown) => {
+      relayRequests.push(request);
+      return okAsync({
+        outcome: "completed" as const,
+        summary: "TAPESTRY_CHILD_OK",
+      });
+    };
+    const transport = createDirectDispatchTransport(
+      {
+        processPort,
+        randomPort,
+        hmacPort,
+        logger: noopLogger(),
+        idGenerator,
+        availableModels: AVAILABLE_MODELS,
+        relayDelegation,
+      } as Parameters<typeof createDirectDispatchTransport>[0] & {
+        readonly relayDelegation: typeof relayDelegation;
+      },
+      "gen-1",
+    );
+
+    const resultPromise = transport(
+      baseInput({
+        agentName: "tapestry",
+        delegationTargets: [
+          { name: "tapestry-worker", triggers: [], isCategory: false },
+        ],
+      }),
+    );
+    await flush();
+
+    const spawned = processPort.spawnedProcesses[0];
+    expect(spawned).toBeDefined();
+    const expectedChildId = "direct-wf-1-verify-generation-1";
+    const secretBytes = extractSecretFromSpawn(processPort);
+    const responder = new ScriptedChildResponder(
+      spawned,
+      expectedChildId,
+      "gen-1",
+    );
+    await responder.send("handshake", expectedChildId, {}, secretBytes);
+    await flush();
+    await flush();
+    const bootstrapEnvelope = extractControlEnvelopeFromPrompt(
+      spawned.writtenLines()[0],
+    );
+    await responder.send(
+      "bootstrap-ack",
+      expectedChildId,
+      {
+        activeTools: [...(bootstrapEnvelope.body.activeTools ?? [])],
+        resolvedModel: bootstrapEnvelope.body.resolvedModel,
+      } as JsonValue,
+      secretBytes,
+    );
+    await flush();
+
+    await responder.send(
+      "delegate-request",
+      `${expectedChildId}-delegate-0`,
+      {
+        agentName: "tapestry-worker",
+        task: "Reply exactly TAPESTRY_CHILD_OK",
+      },
+      secretBytes,
+    );
+    await flush();
+    await flush();
+
+    expect(relayRequests).toEqual([
+      {
+        parentId: expectedChildId,
+        parentDepth: 0,
+        parentAgentName: "tapestry",
+        agentName: "tapestry-worker",
+        task: "Reply exactly TAPESTRY_CHILD_OK",
+        cwd: "/project",
+      },
+    ]);
+    const delegationResponse = extractControlEnvelopeFromPrompt(
+      spawned.writtenLines().at(-1),
+    ) as unknown as {
+      readonly kind: string;
+      readonly correlationId: string;
+      readonly body: {
+        readonly ok: boolean;
+        readonly settlement?: unknown;
+      };
+    };
+    expect(delegationResponse.kind).toBe("delegate-response");
+    expect(delegationResponse.correlationId).toBe(
+      `${expectedChildId}-delegate-0`,
+    );
+    expect(delegationResponse.body).toEqual({
+      ok: true,
+      settlement: {
+        outcome: "completed",
+        summary: "TAPESTRY_CHILD_OK",
+      },
+    });
+
+    await responder.send(
+      "settled",
+      expectedChildId,
+      {
+        outcome: "completed",
+        summary: serializeCompletionCandidate({ outcome: "success" }),
+      },
+      secretBytes,
+    );
+    expect((await resultPromise).isOk()).toBe(true);
   });
 
   it("registers/clears the direct-step child in the shared registry across a full bootstrap-ack/settle cycle", async () => {

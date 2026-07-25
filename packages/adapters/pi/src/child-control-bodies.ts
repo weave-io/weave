@@ -54,6 +54,7 @@ const DelegationTriggerSchema = z
   .object({
     domain: z.string().max(MAX_NAME_LENGTH),
     trigger: z.string().max(MAX_NAME_LENGTH),
+    routing_hint: z.string().max(1_024).optional(),
   })
   .strict();
 

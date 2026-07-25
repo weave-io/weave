@@ -177,6 +177,7 @@
   - class PiDelegationController
   - interface PiDelegationContext
   - interface PiDelegationControllerDeps
+  - interface PiAuthenticatedDelegationRequest
   - interface PiDelegationRequest
 - `packages/adapters/pi/src/delegation-tool.ts`
   - function buildDelegationToolRegistration: (deps) => PiWeaveToolRegistration
