@@ -616,6 +616,22 @@ describe("prompt command", () => {
       expect(output).toContain("docs/prompt-composition.md");
     });
 
+    it("Should_describe_current_delegation_template_fields", async () => {
+      const { terminal, ctx } = context({ promptSubcommand: "self-modify" });
+
+      const result = await runPrompt(ctx);
+
+      expect(result._unsafeUnwrap()).toBe(0);
+      const output = terminal.out.join("\n");
+      expect(output).toContain("delegation.targets");
+      expect(output).toContain("{{name}}");
+      expect(output).toContain("{{description}}");
+      expect(output).not.toContain("delegation.section");
+      expect(output).not.toContain("delegation.mermaid");
+      expect(output).not.toContain("fallback suppression");
+      expect(output).not.toContain("Mermaid");
+    });
+
     it("Should_use_explicit_global_scope_when_scope_flag_is_global", async () => {
       const { terminal, ctx } = context({
         promptSubcommand: "self-modify",

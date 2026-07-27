@@ -123,7 +123,7 @@ The printed guide includes:
 - Target-aware rules (global vs. local scope differences)
 - A step-by-step workflow: identify → read DSL section → edit config → place prompt files → validate → inspect
 - Common DSL patterns (override builtin, add agent, add category, disable agent)
-- Prompt-specific rules (Mustache context fields, `{{{delegation.section}}}`, mutual exclusivity of `prompt`/`prompt_file`)
+- Prompt-specific rules (Mustache context fields, `{{#delegation.targets}}` iteration, mutual exclusivity of `prompt`/`prompt_file`)
 - Verification commands (`weave validate`, `weave prompt list`, `weave prompt inspect`)
 
 ### Canonical doc authority
