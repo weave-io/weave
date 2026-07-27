@@ -5,7 +5,7 @@ agent to an adapter. The output of that composition step is an
 `AgentDescriptor`: a normalized, harness-agnostic record containing the final
 prompt text plus the other adapter-facing fields derived during composition.
 
-**Related:** [ADR 0001: Prompt Composition Templates](adr/0001-prompt-composition-templates.md) · [Adapter Boundary](adapter-boundary.md) · [Config Loading](config-loading.md) · [Tool Policy Evaluation](tool-policy-evaluation.md) · [Agent Guide / neverthrow rules](../AGENTS.md) · [Context Glossary](../CONTEXT.md) · [CLI — `weave prompt self-modify`](cli.md#weave-prompt-self-modify)
+**Related:** [ADR 0001: Prompt Composition Templates](adr/0001-prompt-composition-templates.md) · [Builtin Prompt Guidelines](builtin-prompt-guidelines.md) · [Adapter Boundary](adapter-boundary.md) · [Config Loading](config-loading.md) · [Tool Policy Evaluation](tool-policy-evaluation.md) · [Agent Guide / neverthrow rules](../AGENTS.md) · [Context Glossary](../CONTEXT.md) · [CLI — `weave prompt self-modify`](cli.md#weave-prompt-self-modify)
 
 ---
 
@@ -44,9 +44,11 @@ The `weave prompt self-modify` guide enforces this: it lists `docs/prompt-compos
 ### Builtin prompt files
 
 Builtin prompt files (shipped in `packages/config/prompts/`) are Markdown
-documents. They are product-level defaults, not Weave-repo policy carriers, and
-they should remain skill-agnostic unless and until skill content becomes part of
-the composed prompt contract.
+documents. The durable role, ownership, autonomy, verification, portability,
+and size contract is defined in [Builtin Prompt Guidelines](builtin-prompt-guidelines.md).
+They are product-level defaults, not Weave-repo policy carriers, and they should
+remain skill-agnostic unless and until skill content becomes part of the
+composed prompt contract.
 They should:
 
 - state the agent's abstract behavioral boundaries (e.g. read-only, planning-only,
