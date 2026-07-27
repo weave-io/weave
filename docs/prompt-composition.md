@@ -37,7 +37,7 @@ Read this doc **before** making any change that touches:
 - `prompt` or `prompt_file` values in an agent or category block
 - `prompt_append` or `prompt_append_file` values in an agent, category, or workflow block
 - Mustache template tags in any prompt source
-- Delegation section rendering (`{{{delegation.section}}}`, `{{#delegation.targets}}`)
+- Delegation target iteration (`{{#delegation.targets}}`)
 
 The `weave prompt self-modify` guide enforces this: it lists `docs/prompt-composition.md` as a required pre-read for prompt-related changes. See [CLI — `weave prompt self-modify`](cli.md#weave-prompt-self-modify).
 
@@ -105,7 +105,7 @@ interface DelegationTarget {
 | `displayName` | Optional presentation metadata from agent `display_name`; not a stable id. |
 | `description` | Optional agent description passed through from config. |
 | `category` | Optional metadata for generated category shuttles: category name, optional description, and declared patterns only. Omitted for regular agents. |
-| `composedPrompt` | Final prompt text after prompt loading, delegation section formatting, and `prompt_append` composition. |
+| `composedPrompt` | Final prompt text after prompt loading, template rendering, and `prompt_append` composition. |
 | `models` | Ordered model preference intent from config, defaulting to `[]`; availability and selected-model lookup are adapter-owned. |
 | `mode` | Adapter-facing mode hint, defaulting to `"subagent"` when omitted. |
 | `temperature` | Optional temperature passed through unchanged. |
@@ -307,9 +307,6 @@ Final agent prompt text is assembled in this order:
 `prompt_append` and `prompt_append_file` are mutually exclusive — only one may
 be declared per agent or category block. Both are resolved and rendered using
 the same Template Context as the primary source.
-
-There is no automatic fallback delegation block. Delegation guidance must be
-explicitly placed in the prompt source using `{{#delegation.targets}}` loops.
 
 ### Workflow step prompt composition
 
