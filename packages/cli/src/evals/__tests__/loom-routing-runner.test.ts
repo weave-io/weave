@@ -629,6 +629,31 @@ describe("extractRoutedAgents", () => {
 // ---------------------------------------------------------------------------
 
 describe("analyzeLoomRouting", () => {
+  it("observes the required Pattern route for plan authoring", () => {
+    const result = analyzeLoomRouting(
+      "The plan-authoring task should go to Pattern for an implementation plan.",
+    );
+
+    expect(result.primaryRoutedAgents).toEqual(["pattern"]);
+  });
+
+  it("observes the required Thread route for codebase exploration", () => {
+    const result = analyzeLoomRouting(
+      "Delegate to Thread to explore the codebase and map the settings flow.",
+    );
+
+    expect(result.primaryRoutedAgents).toEqual(["thread"]);
+    expect(result.exploratoryAgents).toEqual(["thread"]);
+  });
+
+  it("observes the required Warp route for security audits", () => {
+    const result = analyzeLoomRouting(
+      "Route to Warp for the security audit before implementation.",
+    );
+
+    expect(result.primaryRoutedAgents).toEqual(["warp"]);
+  });
+
   it("treats exploratory thread pre-hops as non-primary when shuttle follows", () => {
     const result = analyzeLoomRouting(
       "Delegation Sequence:\n1. [Sequential] thread: Explore the current settings UX\n2. [Sequential] shuttle: Implement the settings UX update",

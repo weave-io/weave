@@ -8,6 +8,24 @@ For the full eval guide — architecture, CI model, sanitization rules, raw-arti
 
 > **What can and cannot land here**: fixture files (`model-matrix.json`, case JSONs, rubric JSONs) are the only files that belong in this directory. Raw artifacts, composed prompt text, transcripts, API keys, and `eval-bundles/` output must never be committed here or to any external results repository without passing the sanitizer defined in `packages/cli/src/evals/sanitizer.ts`.
 
+## Prompt reduction and live-eval status
+
+The eight builtin source prompts currently measure **14,225 UTF-8 bytes and
+2,048 words**, versus the **35,643 bytes and 5,268 words** baseline: 60.1% and
+61.1% reductions. The per-agent before/after table and missed-target flags are
+in [`docs/builtin-prompt-guidelines.md`](../docs/builtin-prompt-guidelines.md#reduction-checkpoint).
+Use the [eval procedure](../docs/agent-evals.md#verification-procedure) and the
+[Prompt Composition contract](../docs/prompt-composition.md) for repeatable
+checks; provider-specific controls remain adapter/runtime concerns under the
+[Adapter Boundary](../docs/adapter-boundary.md).
+
+The authorized `OPENROUTER_API_KEY` absence blocked live execution before model
+calls. There are **zero live run IDs** for the requested provider matrix, so
+these fixtures and source metrics do not prove live model behavior. Dry runs do
+not need credentials. Never store raw prompts, transcripts, secrets, or
+transient eval bundles.
+
+
 ## Directory Layout
 
 ```
@@ -18,7 +36,10 @@ evals/
 │   ├── loom-routing/                   # Loom agent routing eval cases
 │   │   ├── loom-route-backend-api.json
 │   │   ├── loom-route-frontend-ui.json
-│   │   └── loom-route-ambiguous-direct-shuttle.json
+│   │   ├── loom-route-ambiguous-direct-shuttle.json
+│   │   ├── loom-route-plan-authoring.json
+│   │   ├── loom-route-codebase-exploration.json
+│   │   └── loom-route-security-audit.json
 │   ├── tapestry-execution/             # Tapestry execution/delegation eval cases
 │   │   ├── tapestry-execute-plan-step.json
 │   │   └── tapestry-delegate-to-shuttle.json
@@ -52,7 +73,10 @@ evals/
     ├── loom-routing/                   # Scoring rubrics for loom-routing cases
     │   ├── loom-route-backend-api.json
     │   ├── loom-route-frontend-ui.json
-    │   └── loom-route-ambiguous-direct-shuttle.json
+    │   ├── loom-route-ambiguous-direct-shuttle.json
+    │   ├── loom-route-plan-authoring.json
+    │   ├── loom-route-codebase-exploration.json
+    │   └── loom-route-security-audit.json
     ├── tapestry-execution/             # Scoring rubrics for tapestry-execution cases
     │   ├── tapestry-execute-plan-step.json
     │   └── tapestry-delegate-to-shuttle.json
@@ -117,10 +141,10 @@ All current suites are **text-only**. A fixture may assert only what is visible 
 
 | Suite                       | Description                                                  |
 | --------------------------- | ------------------------------------------------------------ |
-| `loom-routing`              | Verify Loom routes requests to the correct agent/category    |
+| `loom-routing`              | Verify Loom routes requests to the correct agent/category, including Pattern plans, Thread exploration, and Warp audits |
 | `tapestry-execution`        | Verify Tapestry executes steps and delegates to sub-agents   |
 | `tapestry-category-routing` | Verify Tapestry routes to the correct category shuttle agent |
-| `shuttle-execution`         | Verify Shuttle mirrors delegated task structure and final evidence reporting from text |
+| `shuttle-execution`         | Verify Shuttle reports bounded file scope, acceptance evidence, check results, honest limits, and no fabricated telemetry from text |
 | `spindle-tools`             | Verify Spindle cites sources, separates source facts from interpretation, and reports confidence from text |
 | `pattern-planning`          | Verify Pattern emits structurally strong implementation plans |
 | `weft-review`               | Verify Weft emits structurally valid approve/reject reviews   |
@@ -169,19 +193,19 @@ scorer path can grade representative planning cases without wish-casting.
 
 ### Shuttle-execution fixture guidance
 
-`shuttle-execution` cases must stay bounded and text-observable. Encode the
-delegated task intake directly in the runner prompt/case description so the
-suite can score only final-report structure that appears in assistant text,
-such as:
+`shuttle-execution` cases must stay bounded and text-observable. Score only
+final-report signals visible in assistant text:
 
-- reflecting the assigned task envelope (`Task [N/M]`, `What`, `Files`, `Acceptance`)
-- acknowledging listed files in a `Files changed` section
-- reporting commands/tests and their outputs as text evidence
-- explicitly confirming whether all acceptance criteria are met
+- bounded references to affected files
+- acceptance evidence, without requiring a restated input envelope
+- commands or checks together with their results
+- honest assumptions and explicit limits
+- no fabricated file, tool, shell, network, or mutation telemetry
 
-Do not require real file mutation, tool-call telemetry, shell history, or
-hidden workspace state. The suite validates Shuttle's completion reporting
-discipline, not actual repository changes.
+Do not require `Task [N/M]`, a `Task intake` restatement, exact headings, real
+file mutation, tool-call telemetry, shell history, or hidden workspace state.
+The suite validates Shuttle's completion-reporting discipline, not repository
+side effects.
 
 ### Spindle-tools fixture guidance
 

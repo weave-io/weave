@@ -5,7 +5,7 @@ agent to an adapter. The output of that composition step is an
 `AgentDescriptor`: a normalized, harness-agnostic record containing the final
 prompt text plus the other adapter-facing fields derived during composition.
 
-**Related:** [ADR 0001: Prompt Composition Templates](adr/0001-prompt-composition-templates.md) · [Adapter Boundary](adapter-boundary.md) · [Config Loading](config-loading.md) · [Tool Policy Evaluation](tool-policy-evaluation.md) · [Agent Guide / neverthrow rules](../AGENTS.md) · [Context Glossary](../CONTEXT.md) · [CLI — `weave prompt self-modify`](cli.md#weave-prompt-self-modify)
+**Related:** [ADR 0001: Prompt Composition Templates](adr/0001-prompt-composition-templates.md) · [Builtin Prompt Guidelines](builtin-prompt-guidelines.md) · [Adapter Boundary](adapter-boundary.md) · [Config Loading](config-loading.md) · [Tool Policy Evaluation](tool-policy-evaluation.md) · [Agent Guide / neverthrow rules](../AGENTS.md) · [Context Glossary](../CONTEXT.md) · [CLI — `weave prompt self-modify`](cli.md#weave-prompt-self-modify)
 
 ---
 
@@ -37,16 +37,18 @@ Read this doc **before** making any change that touches:
 - `prompt` or `prompt_file` values in an agent or category block
 - `prompt_append` or `prompt_append_file` values in an agent, category, or workflow block
 - Mustache template tags in any prompt source
-- Delegation section rendering (`{{{delegation.section}}}`, `{{#delegation.targets}}`)
+- Delegation target iteration (`{{#delegation.targets}}`)
 
 The `weave prompt self-modify` guide enforces this: it lists `docs/prompt-composition.md` as a required pre-read for prompt-related changes. See [CLI — `weave prompt self-modify`](cli.md#weave-prompt-self-modify).
 
 ### Builtin prompt files
 
 Builtin prompt files (shipped in `packages/config/prompts/`) are Markdown
-documents. They are product-level defaults, not Weave-repo policy carriers, and
-they should remain skill-agnostic unless and until skill content becomes part of
-the composed prompt contract.
+documents. The durable role, ownership, autonomy, verification, portability,
+and size contract is defined in [Builtin Prompt Guidelines](builtin-prompt-guidelines.md).
+They are product-level defaults, not Weave-repo policy carriers, and they should
+remain skill-agnostic unless and until skill content becomes part of the
+composed prompt contract.
 They should:
 
 - state the agent's abstract behavioral boundaries (e.g. read-only, planning-only,
@@ -103,7 +105,7 @@ interface DelegationTarget {
 | `displayName` | Optional presentation metadata from agent `display_name`; not a stable id. |
 | `description` | Optional agent description passed through from config. |
 | `category` | Optional metadata for generated category shuttles: category name, optional description, and declared patterns only. Omitted for regular agents. |
-| `composedPrompt` | Final prompt text after prompt loading, delegation section formatting, and `prompt_append` composition. |
+| `composedPrompt` | Final prompt text after prompt loading, template rendering, and `prompt_append` composition. |
 | `models` | Ordered model preference intent from config, defaulting to `[]`; availability and selected-model lookup are adapter-owned. |
 | `mode` | Adapter-facing mode hint, defaulting to `"subagent"` when omitted. |
 | `temperature` | Optional temperature passed through unchanged. |
@@ -305,9 +307,6 @@ Final agent prompt text is assembled in this order:
 `prompt_append` and `prompt_append_file` are mutually exclusive — only one may
 be declared per agent or category block. Both are resolved and rendered using
 the same Template Context as the primary source.
-
-There is no automatic fallback delegation block. Delegation guidance must be
-explicitly placed in the prompt source using `{{#delegation.targets}}` loops.
 
 ### Workflow step prompt composition
 
