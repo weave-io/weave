@@ -593,6 +593,9 @@ describe("prompt command", () => {
       expect(output).toContain("delegation.targets");
       expect(output).toContain("{{name}}");
       expect(output).toContain("{{description}}");
+      expect(output).toContain("{{domains}}");
+      expect(output).toContain("{{#triggers}}");
+      expect(output).toContain("sole detailed\nself-modification contract");
       expect(output).not.toContain("delegation.section");
       expect(output).not.toContain("delegation.mermaid");
       expect(output).not.toContain("fallback suppression");

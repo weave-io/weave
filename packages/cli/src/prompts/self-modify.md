@@ -1,7 +1,11 @@
 # Weave Self-Modification Guide
 
-You are modifying Weave's own configuration. This guide tells you exactly which
-files to read, what rules to follow, and how to verify your changes.
+You are modifying Weave's own configuration. This command is the sole detailed
+self-modification contract. Other agent prompts should direct you here instead
+of duplicating this procedure.
+
+This guide tells you exactly which files to read, what rules to follow, and how
+to verify your changes.
 
 ---
 
