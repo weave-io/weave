@@ -34,11 +34,11 @@ import {
 import { EVAL_SHORT_AGENT_FILTERS } from "../types.js";
 
 const WEFT_PROMPT_VERDICT_RE =
-  /strict(?:ly structured)?(?: merge)? verdict|verdict tag[\s\S]*\[APPROVE\][\s\S]*\[REJECT\]/i;
+  /\b(?:one|single)\b[\s\S]{0,40}\bverdict\b[\s\S]{0,120}\[APPROVE\][\s\S]{0,120}\[REJECT\]/i;
 const WEFT_PROMPT_REVIEWED_FILES_RE =
-  /reviewed files[\s\S]*backticked file paths/i;
+  /\breviewed files\b\s*:[\s\S]{0,120}`[^`]+`/i;
 const WEFT_PROMPT_BLOCKER_RE =
-  /BLOCKER:[\s\S]*specific file path[\s\S]*(?:fix|add|update|remove|guard|validate|handle)/i;
+  /\bBLOCKER:[\s\S]{0,240}\b(?:path|file)\b[\s\S]{0,240}\b(?:fix|add|update|remove|guard|validate|handle|action)\b/i;
 const PATTERN_PROMPT_SCOPE_RE =
   /## Scope\b[\s\S]*in scope[\s\S]*out of scope[\s\S]*constraints/i;
 const PATTERN_PROMPT_ORDER_RE = /## Dependencies and Order\b/i;
@@ -48,11 +48,11 @@ const SHUTTLE_PROMPT_BOUNDED_EVIDENCE_RE =
 const SHUTTLE_PROMPT_HONESTY_RE =
   /(?:only|what is) observed[\s\S]*(?:claim|proof|telemetry)|do not claim[\s\S]*(?:proof|telemetry|runtime events)/i;
 const SPINDLE_PROMPT_FACTS_RE =
-  /`Source facts`\s+section[\s\S]*(?:grounded|cited sources)/i;
+  /^#{2,6}\s+(?:Source facts|Facts from sources|Verified facts)\s*$[\s\S]{0,500}\b(?:grounded|cited|citation|supported)\b/im;
 const SPINDLE_PROMPT_SOURCES_RE =
-  /`Sources`\s+section[\s\S]*(?:cited source|page or section)/i;
+  /^#{2,6}\s+(?:Sources|Citations)\s*$[\s\S]{0,500}\b(?:cited source|URL|page|heading|section|location)\b/im;
 const SPINDLE_PROMPT_HONESTY_RE =
-  /(?:network access|directly)[\s\S]*(?:documentation|specifications|changelogs)/i;
+  /\b(?:retrieval|browsing|network)\b[\s\S]{0,180}\b(?:unavailable|occurred|runtime|access)\b/i;
 
 const COMPOSED_LIMITS: Record<string, { bytes: number; words: number }> = {
   loom: { bytes: 4_500, words: 650 },
