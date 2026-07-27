@@ -39,7 +39,13 @@ export const PiAdapterFailureCodeSchema = z.enum([
   "ChildSettlementMissing",
   "ChildAbortFailed",
   "RpcBridgeUnavailable",
-  "UiBridgeFailed",
+  "ChildHistoryCorrupt",
+  "ChildHistoryQuotaExceeded",
+  "ChildHistoryQuarantined",
+  "ChildHistoryClearRefused",
+  "ChildRecoveryUnavailable",
+  "ChildInteractionUnavailable",
+  "UiBridgeUnavailable",
   // completion
   "CompletionSignalMissing",
   "CompletionSignalDuplicate",
@@ -454,20 +460,101 @@ export function makeRpcBridgeUnavailableFailure(
   };
 }
 
-export function makeUiBridgeFailedFailure(
+export function makeChildHistoryCorruptFailure(
   childId: string,
-  reason: string,
 ): PiAdapterFailure {
   return {
-    code: "UiBridgeFailed",
+    code: "ChildHistoryCorrupt",
+    phase: "persistence",
+    scope: childScope(childId),
+    impact: "degraded",
+    retryable: false,
+    recovery: "none",
+    safeMessage: "The private child history is corrupt and was not opened.",
+  };
+}
+
+export function makeChildHistoryQuotaExceededFailure(
+  childId: string,
+): PiAdapterFailure {
+  return {
+    code: "ChildHistoryQuotaExceeded",
+    phase: "persistence",
+    scope: childScope(childId),
+    impact: "operation-stopped",
+    retryable: false,
+    recovery: "none",
+    safeMessage: "The private child history quota has been reached.",
+  };
+}
+
+export function makeChildHistoryQuarantinedFailure(
+  childId: string,
+): PiAdapterFailure {
+  return {
+    code: "ChildHistoryQuarantined",
+    phase: "persistence",
+    scope: childScope(childId),
+    impact: "degraded",
+    retryable: false,
+    recovery: "none",
+    safeMessage: "The private child history was quarantined for safety.",
+  };
+}
+
+export function makeChildHistoryClearRefusedFailure(
+  childId: string,
+): PiAdapterFailure {
+  return {
+    code: "ChildHistoryClearRefused",
+    phase: "persistence",
+    scope: childScope(childId),
+    impact: "degraded",
+    retryable: false,
+    recovery: "none",
+    safeMessage: "Weave refused to clear the private child history.",
+  };
+}
+
+export function makeChildRecoveryUnavailableFailure(
+  childId: string,
+): PiAdapterFailure {
+  return {
+    code: "ChildRecoveryUnavailable",
+    phase: "child",
+    scope: childScope(childId),
+    impact: "operation-stopped",
+    retryable: false,
+    recovery: "none",
+    safeMessage: "The delegated child cannot be recovered safely.",
+  };
+}
+
+export function makeChildInteractionUnavailableFailure(
+  childId: string,
+): PiAdapterFailure {
+  return {
+    code: "ChildInteractionUnavailable",
+    phase: "protocol",
+    scope: childScope(childId),
+    impact: "degraded",
+    retryable: false,
+    recovery: "none",
+    safeMessage: "The delegated child cannot accept interaction right now.",
+  };
+}
+
+export function makeUiBridgeUnavailableFailure(
+  childId: string,
+): PiAdapterFailure {
+  return {
+    code: "UiBridgeUnavailable",
     phase: "protocol",
     scope: childScope(childId),
     impact: "degraded",
     retryable: true,
     recovery: "retry",
-    safeMessage:
-      "Weave could not relay a child approval prompt to the parent session.",
-    correlation: { reason },
+    safeMessage: "The child extension UI bridge is unavailable.",
   };
 }
 

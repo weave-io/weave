@@ -13,6 +13,16 @@
  * @see docs/specs/33-spec-pi-adapter/33-spec-pi-adapter.md (Spec 33 §6, §7)
  */
 
+export type {
+  PiChildHistoryIndexV1,
+  PiChildHistoryRecord,
+  PiChildHistoryStatus,
+} from "./child-history-schema.js";
+export type {
+  PiChildSessionEvent,
+  PiExtensionUiResponse,
+} from "./child-session-events.js";
+
 /** Pi's four extension execution modes. Only `"tui"` is in scope (Spec 33 §3). */
 export type PiMode = "tui" | "rpc" | "json" | "print";
 
