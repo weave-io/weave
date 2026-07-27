@@ -417,8 +417,6 @@ You are {{agent.name}}.
 | `{{toolPolicy.effective.execute}}` | `allow`\|`deny`\|`ask` | Resolved execute permission |
 | `{{toolPolicy.effective.delegate}}` | `allow`\|`deny`\|`ask` | Resolved delegate permission |
 | `{{toolPolicy.effective.network}}` | `allow`\|`deny`\|`ask` | Resolved network permission |
-| `{{{delegation.section}}}` | string? | Full `## Delegation` Markdown block with Mermaid diagram and bullets |
-| `{{{delegation.mermaid}}}` | string? | Mermaid diagram block only |
 | `{{#delegation.targets}}` | array | Iterate over eligible delegation targets |
 | `{{name}}` | string | Target agent name (inside `delegation.targets`) |
 | `{{description}}` | string? | Target description (inside `delegation.targets`) |

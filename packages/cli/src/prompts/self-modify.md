@@ -133,14 +133,17 @@ This auto-generates a `shuttle-backend` agent descriptor.
 
 If you are editing prompt text or `prompt_file` / `prompt_append` values:
 
-- [ ] Read `docs/prompt-composition.md` for Mustache template context fields,
-      delegation section rendering, and fallback suppression rules.
-- [ ] Use `{{{delegation.section}}}` (triple braces) to embed the delegation
-      routing block — it contains Markdown.
+{{=<% %>=}}
+- [ ] Read `docs/prompt-composition.md` for the supported Mustache template
+      context and composition rules.
+- [ ] Use `{{#delegation.targets}}` to iterate over eligible delegation targets;
+      inside the loop, use fields such as `{{name}}`, `{{description}}`,
+      `{{domains}}`, and `{{#triggers}}`.
 - [ ] `prompt` and `prompt_file` are mutually exclusive per agent.
 - [ ] `prompt_append` and `prompt_append_file` are mutually exclusive per agent.
 - [ ] Unsupported Mustache features (partials, helpers, lambdas) are rejected
       at composition time.
+<%={{ }}=%>
 
 ---
 
