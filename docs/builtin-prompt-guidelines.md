@@ -30,17 +30,17 @@ use UTF-8 bytes and whitespace-delimited words; no raw prompt text is stored.
 
 | Builtin | Baseline bytes / words | Current bytes / words | Per-agent target | Target |
 | --- | ---: | ---: | ---: | :---: |
-| Loom | 7,649 / 1,108 | 2,319 / 323 | 4,500 / 650 | pass |
-| Tapestry | 8,830 / 1,296 | 2,409 / 315 | 4,000 / 600 | pass |
-| Pattern | 3,612 / 566 | 2,035 / 298 | 2,800 / 420 | pass |
+| Loom | 7,649 / 1,108 | 2,513 / 357 | 4,500 / 650 | pass |
+| Tapestry | 8,830 / 1,296 | 2,493 / 329 | 4,000 / 600 | pass |
+| Pattern | 3,612 / 566 | 2,197 / 321 | 2,800 / 420 | pass |
 | Shuttle | 2,802 / 410 | 1,422 / 214 | 1,900 / 280 | pass |
 | Thread | 1,662 / 255 | 1,143 / 179 | 1,200 / 180 | pass |
 | Spindle | 2,367 / 341 | 1,411 / 203 | 1,600 / 230 | pass |
 | Weft | 3,438 / 527 | 1,569 / 231 | 2,300 / 350 | pass |
 | Warp | 5,283 / 765 | 1,917 / 285 | 3,000 / 450 | pass |
-| **All eight** | **35,643 / 5,268** | **14,225 / 2,048** | **23,200 / 3,400** | **pass** |
+| **All eight** | **35,643 / 5,268** | **14,665 / 2,119** | **23,200 / 3,400** | **pass** |
 
-The aggregate is **60.1% smaller by bytes** and **61.1% smaller by words**
+The aggregate is **58.9% smaller by bytes** and **59.8% smaller by words**
 than baseline, with no missed per-agent target. The aggregate is below both
 hard ceilings. Verify it with:
 
@@ -98,12 +98,17 @@ Prompt reduction must not change named Weave behavior. The eight builtins must
 continue to express and compose the following semantics where applicable:
 
 - Loom can handle small, bounded, local work directly; it routes substantial
-  planning to Pattern, implementation to an eligible Shuttle, evidence work to
-  Thread or Spindle, requested review to Weft, and security audits to Warp.
+  planning to Pattern at most once per request, implementation to an eligible
+  Shuttle, evidence work to Thread or Spindle, requested review to Weft, and
+  security audits to Warp. It reports an invalid completed Pattern handoff
+  instead of repeating it.
 - Tapestry remains the non-implementation coordinator: it may schedule and
-  delegate authorized work, but it does not perform implementation itself.
+  delegate authorized work, but it does not perform implementation itself. It
+  verifies each settled task, records valid completion in the canonical plan,
+  re-reads that plan, and continues through ready work.
 - Pattern produces dependency-aware plans with scope, exact file ownership, and
-  acceptance criteria, then stops at plan creation.
+  acceptance criteria, saves the canonical plan artifact, reports its path,
+  then stops at plan creation.
 - Shuttle implements an authorized plan or bounded change and reports evidence;
   it does not invent authorization or silently claim completion.
 - Thread is a read-only local explorer. Spindle is a read-only external
@@ -166,8 +171,9 @@ Verification is role-specific and outcome-based:
 - Reviewers and auditors cite concrete findings and distinguish a clean result
   from an unverified result. A gate uses `APPROVE` or `BLOCK` when its caller
   needs a machine-visible decision.
-- Coordinators verify that delegated outcomes and required artifacts exist
-  before reporting the coordinated work complete.
+- Coordinators verify that delegated outcomes and required artifacts exist,
+  record the plan transitions they own, and re-read plan state before reporting
+  the coordinated work complete.
 
 Do not repeat the same success criteria in every section. Define it once in the
 role contract and let the engine, workflow, or evaluator own the rest.

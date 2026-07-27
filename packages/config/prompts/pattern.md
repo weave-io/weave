@@ -46,7 +46,7 @@ Background, relevant file paths, existing patterns, and constraints.
 Commands to run and what passing output means.
 ```
 
-Use `- [ ]` for every actionable item. Omit **Files** only for verification-only tasks. Make scope and sequencing explicit. Do not create human approval or confirmation tasks. After saving, say: "Plan saved. Review it and start execution when ready."
+Use `- [ ]` for every actionable item. Omit **Files** only for verification-only tasks. Make scope and sequencing explicit. Do not create human approval or confirmation tasks. You must save the canonical plan artifact before finishing, then report its exact path. You must not finish with progress-only prose. After saving, say: "Plan saved at `.weave/plans/{slug}.md`. Review it and start execution when ready."
 
 ## Constraints
 

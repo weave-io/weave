@@ -137,6 +137,34 @@ describe("builtin prompt source contract", () => {
     expect(tapestry).toContain(".weave/learnings/{plan_name}.md");
   });
 
+  it("requires Tapestry to settle each child result and reread canonical plan state", async () => {
+    const text = await Bun.file(join(PROMPTS_DIR, "tapestry.md")).text();
+    expect(text).toMatch(/after each child settles/i);
+    expect(text).toMatch(/verify its files.+acceptance evidence/i);
+    expect(text).toMatch(/immediately mark that task `\[x\]`/i);
+    expect(text).toMatch(/re-read the plan/i);
+    expect(text).toMatch(/schedule the next ready task/i);
+    expect(text).toMatch(/do not delegate plan-state edits/i);
+    expect(text).toMatch(/child-authored checkbox.+unfinished/i);
+  });
+
+  it("makes Loom fail closed after one invalid Pattern handoff", async () => {
+    const text = await Bun.file(join(PROMPTS_DIR, "loom.md")).text();
+    expect(text).toMatch(/delegate to Pattern at most once per user request/i);
+    expect(text).toMatch(/completed handoff/i);
+    expect(text).toMatch(/canonical plan artifact/i);
+    expect(text).toMatch(/invalid handoff and stop/i);
+    expect(text).toMatch(/do not call Pattern again/i);
+  });
+
+  it("requires Pattern to save and report the canonical plan artifact", async () => {
+    const text = await Bun.file(join(PROMPTS_DIR, "pattern.md")).text();
+    expect(text).toMatch(/must save/i);
+    expect(text).toMatch(/canonical plan artifact/i);
+    expect(text).toMatch(/report/i);
+    expect(text).toMatch(/must not finish with progress-only prose/i);
+  });
+
   it("keeps delegation inventory in composition rather than source prose", async () => {
     for (const agentName of AGENTS) {
       const text = await Bun.file(join(PROMPTS_DIR, `${agentName}.md`)).text();
