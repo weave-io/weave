@@ -1,5 +1,5 @@
 /**
- * Bounded recovery pointer persistence (Spec 33 §18). Pi's own JSONL entries
+ * Bounded recovery pointer persistence (Pi adapter contract). Pi's own JSONL entries
  * hold correlation only - never the Runtime Store's authoritative state.
  * `PiWeaveRecoveryPointerV1` is deliberately narrow: after a matching
  * Runtime Store commit succeeds, the adapter appends one pointer; on
@@ -33,7 +33,7 @@ export type PiWeaveRecoveryPointerV1 = z.infer<
   typeof PiWeaveRecoveryPointerSchema
 >;
 
-/** planName and planRevision must appear together, never one without the other (Spec 33 §18). */
+/** planName and planRevision must appear together, never one without the other (Pi adapter contract). */
 function hasConsistentPlanFields(candidate: PiWeaveRecoveryPointerV1): boolean {
   return (
     (candidate.planName === undefined) ===

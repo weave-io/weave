@@ -3,7 +3,7 @@
  * scales correctly with category count.
  *
  * Measured token counts (approximate, chars / 4) from a previous run are
- * documented in docs/category-routing-findings.md under "Token Cost".
+ * documented in docs/guides/evals.md under "Token Cost".
  *
  * No file I/O, no real adapter calls, no console output -- pure composition.
  */

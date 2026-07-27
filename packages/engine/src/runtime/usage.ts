@@ -1,7 +1,7 @@
 /**
  * Usage observation normalization and rollup helpers.
  *
- * Spec 12 retention/usage extension + Spec 33 §19.4:
+ * Runtime Store contract retention/usage extension + Pi adapter contract:
  * - Same ID + same normalized values → no-op
  * - Same ID + different values → invariant breach
  * - Rollups group by available dimensions and sum each known field independently

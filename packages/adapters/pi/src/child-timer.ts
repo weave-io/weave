@@ -1,4 +1,4 @@
-/** Injected timer port for handshake/reply/settlement timeouts (Spec 33 §11). Production uses only `globalThis.setTimeout`. */
+/** Injected timer port for handshake/reply/settlement timeouts (Pi adapter contract). Production uses only `globalThis.setTimeout`. */
 export interface TimerHandle {
   cancel(): void;
 }
@@ -14,7 +14,7 @@ export class SystemTimerPort implements TimerPort {
   }
 }
 
-/** Default budgets for the private child protocol (Spec 33 §11). */
+/** Default budgets for the private child protocol (Pi adapter contract). */
 export const DEFAULT_HANDSHAKE_TIMEOUT_MS = 10_000;
 export const DEFAULT_REPLY_TIMEOUT_MS = 15_000;
 export const DEFAULT_SETTLEMENT_TIMEOUT_MS = 15 * 60 * 1000;

@@ -19,7 +19,7 @@
  * - `$TIMESTAMP` — ISO-8601 timestamp of command invocation
  *
  * @see https://opencode.ai/docs/commands/ — OpenCode commands documentation
- * @see docs/adapter-bootstrap.md — Command Surface Registration section
+ * @see docs/guides/adapter-development.md — Command Surface Registration section
  */
 
 // ---------------------------------------------------------------------------

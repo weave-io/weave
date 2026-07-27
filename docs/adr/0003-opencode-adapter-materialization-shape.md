@@ -2,7 +2,7 @@
 
 **Status**: Accepted  
 **Date**: 2026-05-26  
-**Related**: [Adapter Boundary](../adapter-boundary.md) · [Adapter Readiness Status](../adapter-readiness-status.md) · [Spec 20 — OpenCode Adapter Materialization](../specs/20-spec-opencode-adapter-materialization/20-spec-opencode-adapter-materialization.md) · [ADR 0001 — Prompt Composition Templates](0001-prompt-composition-templates.md) · [ADR 0002 — Runtime Persistence Store](0002-runtime-persistence-store.md) · [Legacy Architecture](../legacy-architecture.md)
+**Related**: [Adapter Boundary](../architecture/adapter-boundary.md) · [Adapter Capabilities](../reference/adapter-capabilities.md) · [OpenCode Adapter](../adapters/opencode.md) · [ADR 0001 — Prompt Composition Templates](0001-prompt-composition-templates.md) · [ADR 0002 — Runtime Persistence Store](0002-runtime-persistence-store.md)
 
 ---
 
@@ -166,6 +166,5 @@ The `[weave-managed]` ownership tag is embedded in the agent's `description` fie
 - [`packages/adapters/opencode/src/model-resolution.ts`](../../packages/adapters/opencode/src/model-resolution.ts) — Adapter-local model resolution with fail-fast rule.
 - [`packages/adapters/opencode/src/skill-discovery.ts`](../../packages/adapters/opencode/src/skill-discovery.ts) — Harness-injection-based skill validation helpers.
 - [`packages/adapters/opencode/src/sdk-types.ts`](../../packages/adapters/opencode/src/sdk-types.ts) — Sole SDK import surface for the adapter.
-- [Spec 20 — OpenCode Adapter Materialization](../specs/20-spec-opencode-adapter-materialization/20-spec-opencode-adapter-materialization.md) — Normative spec for this work.
-- [Adapter Boundary](../adapter-boundary.md) — Ownership rules that this ADR must not violate.
-- [Legacy Architecture](../legacy-architecture.md) — Alpha/OpenCode-era reference for the plugin install/runtime story.
+- [OpenCode Adapter](../adapters/opencode.md) — Current implementation contract.
+- [Adapter Boundary](../architecture/adapter-boundary.md) — Ownership rules that this ADR must not violate.

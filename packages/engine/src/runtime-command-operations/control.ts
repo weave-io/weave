@@ -24,7 +24,7 @@
  * - Terminal-state executions return typed errors rather than silently
  *   succeeding or failing.
  *
- * @see docs/specs/30-spec-minimal-runtime-command-lifecycle/30-spec-minimal-runtime-command-lifecycle.md
+ * @see docs/reference/cli.md
  * @see docs/adapter-boundary.md
  * @see packages/engine/src/execution-lifecycle/interrupts.ts — handleUserInterrupt
  * @see packages/engine/src/execution-lifecycle/completion.ts — completeStep

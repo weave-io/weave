@@ -2,7 +2,7 @@
 
 **Status:** Accepted
 
-**Related:** [Adapter Readiness Status](../adapter-readiness-status.md) · [Spec 07 — Adapter Capability Contract](../specs/07-spec-adapter-capability-contract/07-spec-adapter-capability-contract.md) · [Spec 12 — Runtime Persistence](../specs/12-spec-runtime-persistence/12-spec-runtime-persistence.md) · [Spec 33 — Full-readiness Pi adapter](../specs/33-spec-pi-adapter/33-spec-pi-adapter.md)
+**Related:** [Adapter Capabilities](../reference/adapter-capabilities.md) · [Runtime Store](../reference/runtime.md) · [Pi Adapter](../adapters/pi.md)
 
 ## Context
 

@@ -1,6 +1,6 @@
 /**
  * Bounded, inspectable child-tree state and the selection/cancel control
- * model (Spec 33 §11.5). Pure data and a pure reducer - no process, I/O, or
+ * model (Pi adapter contract). Pure data and a pure reducer - no process, I/O, or
  * Pi dependency - so the tree UI's control semantics can be fully unit
  * tested without a real host.
  */
@@ -49,7 +49,7 @@ export function addUsage(
   };
 }
 
-/** One bounded, transient node in the inspectable child tree (Spec 33 §11.5). Never persisted. */
+/** One bounded, transient node in the inspectable child tree (Pi adapter contract). Never persisted. */
 export interface PiChildTreeNode {
   readonly id: string;
   readonly parentId: string | undefined;
@@ -160,7 +160,7 @@ export type PiTreeControlOutcome =
  * no-parent selection - the root - reports `host-default` so the caller
  * preserves normal editor behavior), and Esc (request cancellation of the
  * selected subtree; at root, reports `host-default` so the caller preserves
- * normal Esc behavior) - Spec 33 §11.5.
+ * normal Esc behavior) - Pi adapter contract.
  */
 export function applyTreeControlKey(
   nodes: ReadonlyMap<string, PiChildTreeNode>,

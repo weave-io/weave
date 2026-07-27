@@ -1,5 +1,5 @@
 /**
- * Owns one delegated child's full parent-side lifecycle (Spec 33
+ * Owns one delegated child's full parent-side lifecycle (Pi adapter contract
  * §11.2-§11.5): spawns `pi --mode rpc --no-session` via the injected
  * process port, injects an independent 256-bit secret via environment
  * only, awaits the authenticated handshake before treating the child as
@@ -124,7 +124,7 @@ export interface PiRpcChildDeps {
   ) => void;
   /**
    * Invoked when this child relays a request to delegate further work of
-   * its own (Spec 33 §10-11: nested/descendant delegation). The caller
+   * its own (Pi adapter contract: nested/descendant delegation). The caller
    * (the delegation controller) must authorize it under this child's own
    * identity/depth against the SAME global tree/process budget as every
    * other delegation - never an independent, untracked budget - and
@@ -137,7 +137,7 @@ export interface PiRpcChildDeps {
     request: PiDelegateRequestBody,
   ) => void;
   /**
-   * Invoked once per settled assistant message this child reports (Spec 33
+   * Invoked once per settled assistant message this child reports (Pi adapter contract
    * §19.4), immediately after the existing in-memory `usage` aggregate is
    * updated. Carries only bounded safe scalars (a stable message id and
    * optional non-negative token/cost counters) — never raw text. The
@@ -365,7 +365,7 @@ export class PiRpcChild {
         // Install the resolver *before* wiring the transport, so any
         // authenticated handshake dispatched the instant the listener is
         // attached (or, in principle, buffered/replayed by the port)
-        // always finds a live waiter rather than racing it (Spec 33 §11.3
+        // always finds a live waiter rather than racing it (Pi adapter contract
         // fail-closed authentication - a lost handshake must never look
         // like an unauthenticated child).
         const handshakeWait = this.awaitHandshake();
@@ -401,7 +401,7 @@ export class PiRpcChild {
     spawned.stdout.onError(() => this.handleProcessExit(null));
   }
 
-  /** Observes the process's own real exit code (Spec 33 §11.2) rather than relying solely on the stdout stream ending. */
+  /** Observes the process's own real exit code (Pi adapter contract) rather than relying solely on the stdout stream ending. */
   private wireExit(spawned: PiSpawnedChildProcess): void {
     spawned.exited.then(
       (exitCode) => this.handleProcessExit(exitCode),
@@ -415,7 +415,7 @@ export class PiRpcChild {
       // Exit during a cancellation in progress is the expected outcome,
       // not an unexpected-exit failure - complete the cancellation
       // immediately (resolving both the bounded cancel wait and this
-      // child's own settlement as `cancelled`, Spec 33 §11.5) rather than
+      // child's own settlement as `cancelled`, as required by the Pi adapter contract) rather than
       // force-waiting out the grace period.
       this.completeCancellation();
       return;
@@ -483,7 +483,7 @@ export class PiRpcChild {
   }
 
   /**
-   * Enforces the child's strict protocol state machine (Spec 33 §11.3):
+   * Enforces the child's strict protocol state machine (Pi adapter contract):
    * `handshake` only while awaiting it, `bootstrap-ack` only while a
    * bootstrap is outstanding, `settled` only once bootstrap has been
    * confirmed applied, `cancelled` only while a cancellation is in
@@ -529,7 +529,7 @@ export class PiRpcChild {
     }
     if (envelope.kind === "settled") {
       if (this.status === "cancelling") {
-        // Legitimate race, never a protocol violation (Spec 33 §11.5): the
+        // Legitimate race, never a protocol violation (Pi adapter contract): the
         // raw RPC `abort` command this parent writes right after the
         // authenticated `cancel` envelope (see `cancel()`) can end the
         // child's current turn before the queued hidden-command prompt
@@ -670,7 +670,7 @@ export class PiRpcChild {
     return this.sendControl("approval-response", correlationId, body);
   }
 
-  /** Answers one of this child's own relayed delegation requests, correlated by id (Spec 33 §10-11). */
+  /** Answers one of this child's own relayed delegation requests, correlated by id (Pi adapter contract). */
   sendDelegationResponse(
     correlationId: string,
     body: JsonValue,
@@ -679,7 +679,7 @@ export class PiRpcChild {
   }
 
   /**
-   * The single terminal-cancellation path (Spec 33 §11.5): resolves this
+   * The single terminal-cancellation path (Pi adapter contract): resolves this
    * child's own outstanding settlement wait (`runTask()`/`awaitSettlement`)
    * with a structured `{ outcome: "cancelled" }` result - never an error -
    * and resolves the bounded `cancel()` wait too, before terminating
@@ -696,7 +696,7 @@ export class PiRpcChild {
     const settlementResolvers = this.settlementResolvers;
     this.settlementResolvers = undefined;
     if (settlementResolvers !== undefined) {
-      // A task was genuinely dispatched and running - Spec 33 §11.5
+      // A task was genuinely dispatched and running - Pi adapter contract
       // requires cancelling an ordinary helper to resolve as a structured
       // cancelled result, never an error.
       settlementResolvers.resolve({ outcome: "cancelled" });
@@ -760,7 +760,7 @@ export class PiRpcChild {
     const type = record.type;
     if (type === "turn_start") {
       this.currentTurn += 1;
-      // Latest output is transient per Spec 33 §11.5: a new turn starts a
+      // Latest output is transient under the Pi adapter contract: a new turn starts a
       // fresh transient buffer rather than carrying the previous turn's
       // trailing text forward forever.
       this.latestOutput = "";
@@ -920,7 +920,7 @@ export class PiRpcChild {
    * settlement. Never sends work on the strength of the bootstrap send
    * alone. Both waits are installed *before* the corresponding send, so a
    * synchronous/fast reply can never race ahead of the resolver meant to
-   * catch it (Spec 33 §11.3).
+   * catch it (Pi adapter contract).
    */
   runTask(
     input: PiRpcChildSpawnInput,
@@ -937,7 +937,7 @@ export class PiRpcChild {
     // Re-parses what this parent itself is about to send, so the ack
     // validation below has a trustworthy expectation to compare against
     // rather than trusting the caller-supplied `bootstrap` value blindly
-    // (Spec 33 §11.2 Task 9).
+    // (Pi adapter contract).
     const expectedBootstrap = parseControlBody("bootstrap", bootstrap);
     if (!expectedBootstrap.ok) {
       const failure = makeChildEnvelopeMalformedFailure(
@@ -993,7 +993,7 @@ export class PiRpcChild {
     // back exactly that identity, no substitutions. When this parent sent
     // no `resolvedModel` (nested/relayed delegation), the child resolved
     // against its own authenticated catalog and its ack is informational
-    // only - Spec 33 §9.2 graceful degradation applies, so no match is
+    // only - Pi adapter contract graceful degradation applies, so no match is
     // required here.
     if (expected.resolvedModel !== undefined) {
       const modelMatches =
@@ -1107,7 +1107,7 @@ export class PiRpcChild {
   }
 
   /**
-   * The single terminal cleanup step (Spec 33 §11.5/§11.2): force-kills
+   * The single terminal cleanup step (Pi adapter contract): force-kills
    * the process (if any) and erases the secret/auth state. Idempotent;
    * never touches `status`. Always uses {@link PiSpawnedChildProcess.forceKill}
    * rather than the cooperative default `kill()` - this is the *only*
@@ -1129,7 +1129,7 @@ export class PiRpcChild {
 
   /**
    * Cancels this child: sends the authenticated `cancel` envelope *before*
-   * the ordinary RPC `abort` command (Spec 33 §11.5), then waits boundedly
+   * the ordinary RPC `abort` command (Pi adapter contract), then waits boundedly
    * for either an authenticated `cancelled` ack or process exit, and only
    * then force-kills if neither arrived in time. Guarantees termination of
    * the underlying process on every path - authenticated notice delivered
@@ -1172,7 +1172,7 @@ export class PiRpcChild {
         const timer = this.timerPort.schedule(() => {
           // Neither an authenticated `cancelled`/`settled` reply nor a
           // process exit arrived in time - force-kill, but this is still a
-          // legitimate, requested cancellation (Spec 33 §11.5), so it must
+          // legitimate, requested cancellation (Pi adapter contract), so it must
           // still resolve as a structured cancelled result, never as an
           // abort-failed error.
           this.cancelResolvers = undefined;

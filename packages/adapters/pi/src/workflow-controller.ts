@@ -1,12 +1,12 @@
 /**
  * Adapter-owned coordinator that projects all ten engine execution-lifecycle
- * operations (Spec 33 §13-§18; docs/adapter-boundary.md "Execution Lifecycle
+ * operations (Pi adapter contract; docs/architecture/adapter-boundary.md "Execution Lifecycle
  * Surface"). This class never reimplements engine state-transition logic -
  * every method is a thin, typed projection that calls the corresponding
  * `@weaveio/weave-engine` lifecycle function and applies the effects it
  * returns *exactly once*. It owns only:
  *
- *  - explicit user-authorization enforcement for start/resume (Spec 33 §13,
+ *  - explicit user-authorization enforcement for start/resume (Pi adapter contract,
  *    ADR 0004): callers must present an `AuthorizedByUser` token that only
  *    {@link authorizeByExplicitUser} can mint, and only from a real
  *    `confirmed === true` boolean - never from prompt text, delegation,
@@ -15,22 +15,22 @@
  *  - the direct-step dispatch loop. The *first* dispatch of a run/resume
  *    calls `dispatchStep` once; every subsequent step within the same
  *    uninterrupted generation is driven exclusively by the `dispatch-agent`
- *    effect `completeStep` itself returns (Spec 33 §14: "apply each
+ *    effect `completeStep` itself returns (Pi adapter contract: "apply each
  *    returned effect exactly once... auto-dispatch next only when returned
  *    by completeStep") - `dispatchStep` is never called a second time for a
  *    step `completeStep` already advanced past;
  *  - artifact digest recomputation before dispatch (adapter-owned per
- *    docs/adapter-boundary.md) and explicit `pinnedArtifactRevisions`
+ *    docs/architecture/adapter-boundary.md) and explicit `pinnedArtifactRevisions`
  *    computed from the current `inspect()` snapshot for every declared
  *    step input - reusing the exact revisions the step's prior attempt
  *    (if any) already consumed by default, and only pinning the current
- *    latest revision for inputs with no prior attempt (Spec 22 Unit 3:
+ *    latest revision for inputs with no prior attempt (execution lifecycle contract:
  *    "reuse the same consumed artifact revisions on retry by default";
  *    Non-Goal 5: no automatic latest-artifact rebinding on retry - see
  *    `computePinnedArtifactRevisions`), and routing a pinned-digest/
  *    revision mismatch to `reconcileExecution` with reason
- *    `"execution-mismatch"` instead of silently rebinding (Spec 33 §17);
- *  - session observation at every Spec 33 §14 point (authorized
+ *    `"execution-mismatch"` instead of silently rebinding (Pi adapter contract);
+ *  - session observation at every Pi adapter contract point (authorized
  *    start/resume, each direct-step activation, each settlement, pause,
  *    and termination);
  *  - appending a bounded recovery pointer after a matching Runtime Store
@@ -118,7 +118,7 @@ const USER_AUTHORIZATION_TOKEN: AuthorizedByUser = {
 const DEFAULT_DIRECT_STEP_TASK_PROMPT =
   "Execute the current workflow step according to your system instructions.";
 
-/** Spec 33 §13: only an explicit `confirmed === true` from a real user action mints this token. Never call with a value derived from prompt text, agent output, or a hook/event payload. */
+/** Pi adapter contract: only an explicit `confirmed === true` from a real user action mints this token. Never call with a value derived from prompt text, agent output, or a hook/event payload. */
 export function authorizeByExplicitUser(
   confirmed: boolean,
 ): Result<AuthorizedByUser, PiAdapterFailure> {
@@ -134,7 +134,7 @@ export function authorizeByExplicitUser(
 
 /**
  * True when a `dispatchStep` failure is a pinned artifact digest or plan
- * revision mismatch (Spec 33 §16, §17) - the only condition that routes to
+ * revision mismatch (Pi adapter contract) - the only condition that routes to
  * `reconcileExecution` with reason `"execution-mismatch"` instead of a bare
  * typed failure. This is a typed discriminant on the engine's own
  * `LifecycleError` shape (`policy_decision` with `rule ===
@@ -159,7 +159,7 @@ function isArtifactMismatch(cause: LifecycleError): boolean {
  * `LifecycleError.message` is free text that can embed persistence-layer
  * detail (e.g. absolute paths, driver text); it must never reach
  * `PiAdapterFailure.correlation`, which is safe-by-construction diagnostic
- * data (Spec 33 §19, §23).
+ * data (Pi adapter contract).
  */
 function sanitizeLifecycleErrorReason(cause: LifecycleError): string {
   if (cause.type === "validation") {
@@ -195,7 +195,7 @@ function sanitizeLifecycleErrorReason(cause: LifecycleError): string {
  * artifacts.ts`) exactly - same "last matching entry in dispatch order is
  * latest" convention - so the adapter's retry-pin computation agrees with
  * what the engine would reuse by default if `pinnedArtifactRevisions` were
- * omitted (Spec 22 Unit 3).
+ * omitted (execution lifecycle contract).
  */
 function latestStepAttempt(
   stepAttempts: readonly StepAttemptRecord[],
@@ -248,7 +248,7 @@ export interface PiWorkflowControllerDeps {
   /**
    * Notified after every dispatch, completion, plan-transition-bearing
    * completion, resume, and interrupt outcome that leaves the instance in
-   * a new state (Spec 33 §16) - lets the extension refresh the bounded
+   * a new state (Pi adapter contract) - lets the extension refresh the bounded
    * compact plan widget without this class depending on any Pi UI type or
    * re-deriving "which plan is active" itself. Best-effort and read-only
    * from this class's perspective: it never reads plan state itself, only
@@ -256,7 +256,7 @@ export interface PiWorkflowControllerDeps {
    * pair may now return something new. A no-op when undefined.
    */
   readonly onPlanSnapshotChanged?: (workflowInstanceId: string) => void;
-  /** Cancels the currently in-flight direct-step child's underlying process, if any (Spec 33 §11.5/§14). Distinct from ordinary delegation's `cancelSubtree` - direct-step children are never part of that tree. A no-op resolves `ok(undefined)` when nothing is active. */
+  /** Cancels the currently in-flight direct-step child's underlying process, if any (Pi adapter contract). Distinct from ordinary delegation's `cancelSubtree` - direct-step children are never part of that tree. A no-op resolves `ok(undefined)` when nothing is active. */
   readonly cancelActiveDirectStepChild?: () => ResultAsync<
     void,
     PiAdapterFailure
@@ -264,7 +264,7 @@ export interface PiWorkflowControllerDeps {
   /**
    * Resolves a direct-step agent's own real descriptor (composed prompt,
    * models, tool policy, delegation targets) from the adapter's own
-   * activated descriptor catalog by name (Spec 33 §6, §13-§15) - parallel
+   * catalog by name (Pi adapter contract) - parallel to how ordinary
    * to how ordinary delegation's `buildChildBootstrapBody` resolves from
    * `target.name`. The engine's own `RunAgentEffect.agentDescriptor` is
    * deliberately never used for this (its `composedPrompt`/`models`/tool
@@ -327,7 +327,7 @@ export class PiWorkflowController {
   /**
    * Set only while a direct-step agent has submitted a validated
    * `user_confirm`-method candidate that is withheld pending a genuine
-   * `/weave:advance` (Spec 33 §13/§14). Cleared the instant it is
+   * `/weave:advance` (Pi adapter contract). Cleared the instant it is
    * released by {@link confirmStep}, so a replayed advance can never
    * settle the same signal twice. Never persisted - a fresh generation
    * (new `PiWorkflowController`) always starts with this undefined, so a
@@ -349,7 +349,7 @@ export class PiWorkflowController {
 
   constructor(private readonly deps: PiWorkflowControllerDeps) {}
 
-  /** Fires {@link PiWorkflowControllerDeps.onPlanSnapshotChanged} exactly once per outcome (Spec 33 §16) - a no-op when undefined. */
+  /** Fires {@link PiWorkflowControllerDeps.onPlanSnapshotChanged} exactly once per outcome (Pi adapter contract) - a no-op when undefined. */
   private notifyPlanChanged(workflowInstanceId: string): void {
     this.deps.onPlanSnapshotChanged?.(workflowInstanceId);
   }
@@ -651,7 +651,7 @@ export class PiWorkflowController {
   }
 
   /**
-   * Applies every effect `reconcileExecution` returns exactly once (Spec 33
+   * Applies every effect `reconcileExecution` returns exactly once (Pi adapter contract
    * §14) - including a `dispatch-agent` effect, which `applyNonDispatchEffects`
    * alone cannot project (a redirect to an earlier step's declared
    * `reconciliation_handlers` entry is exactly this shape). Falls back to
@@ -681,7 +681,7 @@ export class PiWorkflowController {
     if (context === undefined) {
       this.deps.logger.warn(
         {},
-        "reconcileExecution returned a dispatch-agent effect but no WorkflowExecutionContext was supplied; cannot project it (Spec 33 §14)",
+        "reconcileExecution returned a dispatch-agent effect but no WorkflowExecutionContext was supplied; cannot project it (Pi adapter contract)",
       );
       return ResultAsync.fromSafePromise(Promise.resolve(undefined));
     }
@@ -765,7 +765,7 @@ export class PiWorkflowController {
       });
   }
 
-  /** Read-only recovery pointer projection for a startup banner (Spec 33 §18). Never triggers resume - the caller must still obtain fresh {@link AuthorizedByUser} authorization via `/weave:resume`. */
+  /** Read-only recovery pointer projection for a startup banner (Pi adapter contract). Never triggers resume - the caller must still obtain fresh {@link AuthorizedByUser} authorization via `/weave:resume`. */
   readRecoveryPointer(): ResultAsync<
     PiWeaveRecoveryPointerV1 | undefined,
     PiAdapterFailure
@@ -774,7 +774,7 @@ export class PiWorkflowController {
   }
 
   /**
-   * Read-only plan snapshot projection for `/weave:plan` (Spec 33 §16).
+   * Read-only plan snapshot projection for `/weave:plan` (Pi adapter contract).
    * Thin passthrough to the injected `PlanStateProvider.readSnapshot` -
    * never reimplements plan parsing/CAS logic; only maps the engine's
    * `PlanStateError` onto this adapter's closed failure taxonomy. Never
@@ -882,7 +882,7 @@ export class PiWorkflowController {
     });
   }
 
-  /** Maps a `dispatchStep` failure caused by a pinned artifact digest/revision mismatch (Spec 33 §17) to `reconcileExecution` with reason `"execution-mismatch"` instead of silently rebinding; every other cause returns the bare typed failure unchanged. */
+  /** Maps a `dispatchStep` failure caused by a pinned artifact digest/revision mismatch (Pi adapter contract) to `reconcileExecution` with reason `"execution-mismatch"` instead of silently rebinding; every other cause returns the bare typed failure unchanged. */
   private handleDispatchStepFailure(
     workflowInstanceId: string,
     leaseId: string,
@@ -927,7 +927,7 @@ export class PiWorkflowController {
    * Projects exactly one `dispatch-agent` effect: spawns the direct-step
    * child, validates its one structured completion candidate, and calls
    * `completeStep`. If `completeStep` itself returns a further
-   * `dispatch-agent` effect (auto-advance, Spec 33 §14), this recurses
+   * `dispatch-agent` effect under the Pi adapter contract (auto-advance), this recurses
    * directly on *that* effect - it never calls `dispatchStep` again for the
    * step the engine already advanced past.
    */
@@ -1048,7 +1048,7 @@ export class PiWorkflowController {
           sessionStatus: "idle",
           stepName,
         }).andThen(() => {
-          // Spec 33 §13/§14: `user_confirm` requires an explicit
+          // Pi adapter contract: `user_confirm` requires an explicit
           // `/weave:advance` (-> {@link confirmStep}) to release - an
           // agent-supplied candidate alone is never enough.
           if (signal.method === "user_confirm") {
@@ -1083,12 +1083,12 @@ export class PiWorkflowController {
   }
 
   /**
-   * `/weave:advance` (Spec 33 §13): the ONLY caller that may release a
+   * `/weave:advance` (Pi adapter contract): the ONLY caller that may release a
    * pending `user_confirm` completion signal - requires a fresh
    * {@link AuthorizedByUser} token, never prose/idle/continuation. A no-op
    * candidate is never fabricated here: this only ever forwards the exact
    * validated signal the direct-step agent already produced via
-   * `weave_complete_step` (Spec 33 §15 candidate protocol preserved -
+   * `weave_complete_step` (Pi adapter contract candidate protocol preserved -
    * `/weave:advance` gates *release*, it never invents a substitute
    * candidate). Returns a typed failure - never a silent no-op - when no
    * step is currently awaiting confirmation, or when it targets a
@@ -1138,7 +1138,7 @@ export class PiWorkflowController {
    * exactly once with an already-validated {@link StepCompletionSignal},
    * appends the recovery pointer, applies the optional review/security-
    * rejection reconciliation, and projects completeStep's own returned
-   * effects (pause/complete/auto-advance) exactly once (Spec 33 §14).
+   * effects (pause/complete/auto-advance) exactly once (Pi adapter contract).
    * The idle observation already fired in {@link runDispatchAgentEffect}
    * before this `completeStep` call, so a terminal step's lease release
    * never races it (#21 Task 12). Shared by the immediate
@@ -1224,7 +1224,7 @@ export class PiWorkflowController {
         }
         // completeStep itself returned the next dispatch - apply *that*
         // exact effect, never re-derive one via a redundant dispatchStep
-        // call (Spec 33 §14: apply each returned effect exactly once). The
+        // call (Pi adapter contract: apply each returned effect exactly once). The
         // effect's `runAgent.agentName` is the *agent* assigned to the next
         // step, not necessarily the step's own name, so the authoritative
         // step name is read back from the instance completeStep just
@@ -1255,10 +1255,10 @@ export class PiWorkflowController {
 
   /**
    * Determines the *exact* required `pinnedArtifactRevisions` for a step's
-   * declared inputs before dispatch (Spec 33 §17: "recompute required
+   * declared inputs before dispatch (Pi adapter contract: "recompute required
    * digests AND pass pinned revisions").
    *
-   * Retry-safe by construction (Spec 22 Unit 3: "reuse the same consumed
+   * Retry-safe by construction (execution lifecycle contract: "reuse the same consumed
    * artifact revisions on retry by default"; Non-Goal 5: "This spec does
    * not allow silent rebinding to newer approved artifacts during retry or
    * reconciliation"): for each declared input name, this first looks for
@@ -1294,7 +1294,7 @@ export class PiWorkflowController {
    * {@link computeArtifactDigests} always recomputes it, and the engine's
    * `verifyArtifactIntegrity` always enforces it regardless of pin status.
    * A retry pin whose reused revision no longer matches recomputed bytes
-   * fails closed via the pinned-digest mismatch path (Spec 33 §17) instead
+   * fails closed via the pinned-digest mismatch path (Pi adapter contract) instead
    * of silently rebinding to whatever newer revision now matches.
    */
   private computePinnedArtifactRevisions(
@@ -1403,7 +1403,7 @@ export class PiWorkflowController {
    * Maps a `LifecycleError` to a `PiAdapterFailure` using only
    * {@link sanitizeLifecycleErrorReason}'s bounded discriminant-derived
    * reason - the engine's free-text `cause.message` never reaches
-   * `correlation` (Spec 33 §19, §23).
+   * `correlation` (Pi adapter contract).
    */
   private mapLifecycleError(
     workflowInstanceId: string,
@@ -1429,7 +1429,7 @@ export class PiWorkflowController {
    * problem) is a distinct `CompletionRejected` failure, not a generic
    * projection failure. Every branch uses only
    * {@link sanitizeLifecycleErrorReason}'s bounded reason - never
-   * `cause.message` (Spec 33 §19, §23).
+   * `cause.message` (Pi adapter contract).
    */
   private mapCompletionError(
     workflowInstanceId: string,

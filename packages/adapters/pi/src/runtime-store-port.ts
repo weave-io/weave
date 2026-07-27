@@ -1,5 +1,5 @@
 /**
- * Runtime Store open/migrate wiring (Spec 33 §7.2 step 12, §18). The engine
+ * Runtime Store open/migrate wiring (Pi adapter contract,). The engine
  * owns the `RuntimeStore` type and its SQLite implementation
  * (`@weaveio/weave-engine`'s `createSqliteRuntimeStore`); this module only
  * owns *when* the adapter opens it (only after project trust is confirmed)
@@ -22,7 +22,7 @@ import {
 export interface PiRuntimeStoreFactory {
   /**
    * Opens the Runtime Store rooted at the already-trusted `projectRoot`
-   * (Spec 33 §7.2/§18). The canonical `.weave/runtime/weave.db` layout is
+   * (Pi adapter contract). The canonical `.weave/runtime/weave.db` layout is
    * computed internally so callers never construct a `dbPath` that could
    * drift from the no-follow guard's expectations.
    */

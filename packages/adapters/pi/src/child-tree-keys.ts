@@ -1,5 +1,5 @@
 /**
- * Maps raw terminal input bytes to child-tree control keys (Spec 33 §11.5):
+ * Maps raw terminal input bytes to child-tree control keys (Pi adapter contract):
  * Alt+1..Alt+9 (direct-child selection), Backspace (parent selection), and
  * Esc (cancel selected subtree). Pure and independently testable via
  * `matchesKey` alone - the host-default-preserving wiring lives in the

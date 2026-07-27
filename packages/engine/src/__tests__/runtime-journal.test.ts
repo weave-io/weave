@@ -5,7 +5,7 @@
  * no raw content persistence, fingerprint stability within one store,
  * and fingerprint difference across salts.
  *
- * @see docs/specs/12-spec-runtime-persistence/12-spec-runtime-persistence.md
+ * @see docs/reference/runtime.md
  */
 
 import { describe, expect, it } from "bun:test";

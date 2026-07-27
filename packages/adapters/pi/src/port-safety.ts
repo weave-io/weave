@@ -28,7 +28,7 @@ export function safelyAwaitPortResult<T, E, F>(
 /**
  * A closed, sanitized reason for a `safelyListAvailableModels` failure.
  * Deliberately does not embed anything derived from the thrown value -
- * Spec 33 bans private paths, environment values, and secrets from public
+ * Pi adapter contract bans private paths, environment values, and secrets from public
  * failures, and an injected host's exception content cannot be trusted not
  * to contain any of those.
  */
@@ -39,14 +39,14 @@ export const MODEL_REGISTRY_THREW_REASON = "model-registry-get-available-threw";
  * *typed* as a plain synchronous array return, but - like any
  * adapter-supplied port - a misbehaving concrete implementation could still
  * throw. A throw here must not crash preflight or a `before_agent_start`
- * turn: Spec 33 §9.2's own fail-closed behavior for model resolution is to
+ * turn: Pi adapter contract's own fail-closed behavior for model resolution is to
  * retain the current authenticated model and degrade, so an unreadable
  * catalog is treated the same way as an empty one.
  *
  * The returned `Err` always carries a fixed, closed-set reason
  * (`MODEL_REGISTRY_THREW_REASON`) rather than any text derived from the
  * thrown value - callers must never surface arbitrary exception content in
- * logs or failure correlation fields (Spec 33 closed-failure contract).
+ * logs or failure correlation fields (Pi adapter contract closed-failure contract).
  * Callers fall back to an empty list rather than letting the exception
  * escape (neverthrow-wrap-exceptions).
  */

@@ -1,5 +1,5 @@
 /**
- * Structured completion for direct workflow-step children (Spec 33 §15).
+ * Structured completion for direct workflow-step children (Pi adapter contract).
  *
  * A direct-step child receives exactly one governed `weave_complete_step`
  * tool. Its closed input is the *only* legitimate source of a completion
@@ -25,7 +25,7 @@ export const WEAVE_COMPLETE_STEP_TOOL_NAME = "weave_complete_step";
 export const WEAVE_COMPLETE_STEP_TOOL_OWNER = "@weaveio/weave-adapter-pi";
 export const WEAVE_COMPLETE_STEP_TOOL_REVISION = "1";
 
-/** Spec 33 §15: bounded message, closed enums, no raw content. */
+/** Pi adapter contract: bounded message, closed enums, no raw content. */
 const MAX_MESSAGE_LENGTH = 4096;
 const MAX_NEXT_STEP_HINT_LENGTH = 256;
 const MAX_ARTIFACT_REFS = 32;
@@ -147,7 +147,7 @@ function parseArtifactRefs(
 /**
  * Validates one raw completion-candidate payload (the `weave_complete_step`
  * tool's input, exactly as received - never re-derived from prose) against
- * the closed Spec 33 §15 shape. `raw === undefined` maps to
+ * the closed Pi adapter contract shape. `raw === undefined` maps to
  * `CompletionSignalMissing` (the step settled without ever calling the
  * tool); a value failing shape validation maps to
  * `CompletionSignalMalformed`.
@@ -256,7 +256,7 @@ export function parseStructuredCompletionCandidate(
 /**
  * Serializes a validated candidate back to a bounded JSON string (used as
  * the reusable `PiChildSettlement.summary` payload when a direct-step child
- * settles - Spec 33 §11.2/§15: direct dispatch reuses the private child
+ * settles - Pi adapter contract: direct dispatch reuses the private child
  * transport, but its completion semantics are distinct from ordinary
  * delegation's free-text summary).
  */
@@ -306,7 +306,7 @@ export class SingleCompletionCandidateRecorder {
 
 /**
  * The real Pi-compatible TypeBox parameter schema for `weave_complete_step`
- * (Spec 33 §15), matching {@link parseStructuredCompletionCandidate}'s
+ * (Pi adapter contract), matching {@link parseStructuredCompletionCandidate}'s
  * closed shape exactly: closed outcome/method enums via `StringEnum`
  * (provider-safe, never `anyOf`/`const`), bounded strings, a bounded
  * artifact array.
@@ -373,7 +373,7 @@ export interface CompletionRecordAttempt {
 
 /**
  * Pure: classifies one `weave_complete_step` call against the recorder and
- * whether the completion window is still open (Spec 33 §15). Missing,
+ * whether the completion window is still open (Pi adapter contract). Missing,
  * duplicate, malformed, and late are distinct typed outcomes, never merged
  * into a single generic failure.
  */
@@ -396,7 +396,7 @@ export function recordCompletionAttempt(
 
 /**
  * Builds the one Weave-owned `weave_complete_step` tool for a single
- * direct-step child (Spec 33 §15). Never registered for ordinary-delegation
+ * direct-step child (Pi adapter contract). Never registered for ordinary-delegation
  * or nested-helper children - only the direct-step bootstrap branch
  * (`mode: "direct-step"`, see `direct-dispatch-transport.ts`) registers
  * this. Records exactly one candidate; never advances workflow state
@@ -421,7 +421,7 @@ export function buildWeaveCompleteStepToolRegistration(deps: {
   readonly recorder: SingleCompletionCandidateRecorder;
   readonly isWindowOpen: () => boolean;
   /**
-   * Fired for every attempt, recorded or not (Spec 33 §15). This is the
+   * Fired for every attempt, recorded or not (Pi adapter contract). This is the
    * only observation point available before `agent_settled` fires - the
    * controller consults it (not free-form prose or process-exit state) to
    * distinguish a missing candidate from a duplicate/late/malformed one at

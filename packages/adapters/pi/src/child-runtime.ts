@@ -1,5 +1,5 @@
 /**
- * Child-side private control runtime (Spec 33 §11.2-§11.3): the code that
+ * Child-side private control runtime (Pi adapter contract): the code that
  * runs *inside* a `pi --mode rpc --no-session` process spawned by a
  * parent's `PiDelegationController`. It never trusts its own presence in
  * "rpc" mode alone - it looks for its own bootstrap secret via the
@@ -426,7 +426,7 @@ export class PiChildRuntime {
 
   /**
    * Relays this child's own request to delegate further work through its
-   * authenticated parent/root coordinator (Spec 33 §10-11). Nested
+   * authenticated parent/root coordinator (Pi adapter contract). Nested
    * delegation is never a second, independent, untracked budget: the
    * parent authorizes it under this exact child's identity/depth against
    * the same global tree/process budget as every other delegation.

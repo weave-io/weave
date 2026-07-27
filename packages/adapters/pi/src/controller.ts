@@ -20,7 +20,7 @@ import type {
 
 /**
  * One controller generation: the atomic bundle of state created by a single
- * `session_start` activation (Spec 33 §7.2/§7.4). Replaced wholesale on
+ * `session_start` activation (Pi adapter contract). Replaced wholesale on
  * reload/new/resume/fork/session replacement - never mutated in place.
  */
 export interface PiGeneration {
@@ -32,8 +32,8 @@ export interface PiGeneration {
 
 /**
  * A capability to check generation identity across an `await` boundary, so
- * a callback captured before a replacement can detect it is stale (Spec
- * Spec 33 §7.4) instead of silently acting on behalf of a generation that no
+ * a callback captured before a replacement can detect that it is stale under the
+ * Pi adapter contract instead of silently acting on behalf of a generation that no
  * longer exists.
  */
 export interface PiOperationHandle {
@@ -105,7 +105,7 @@ export class PiExtensionController {
 
   /**
    * Snapshots the current generation identity so async work can prove, once
-   * it resumes, whether a replacement happened in between (Spec 33 §7.4).
+   * it resumes, whether a replacement happened in between (Pi adapter contract).
    */
   beginOperation(): Result<PiOperationHandle, PiAdapterFailure> {
     const generation = this.currentGeneration;
@@ -124,7 +124,7 @@ export class PiExtensionController {
   }
 
   /**
-   * The health-only gate (Spec 33 §21): blocks `mutating` commands while a
+   * The health-only gate (Pi adapter contract): blocks `mutating` commands while a
    * required capability is degraded/unsupported, but always allows
    * `read-only` and `idempotent-cleanup` commands regardless of health.
    */

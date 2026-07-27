@@ -422,7 +422,7 @@ describe("PiDelegationController", () => {
     expect(port.spawnedProcesses.length).toBe(0);
   });
 
-  it("fails closed (never spawns a process) when the request's own context.cwd exceeds the bounded control-schema limit (Spec 33 \u00a711.2 Task 9)", async () => {
+  it("fails closed (never spawns a process) when the request's own context.cwd exceeds the bounded control-schema limit (Pi adapter contract)", async () => {
     const port = new FakeChildProcessPort();
     const controller = makeController(config(GENEROUS), port);
     const result = await controller.delegate(
@@ -592,7 +592,7 @@ describe("PiDelegationController", () => {
     controller.disposeAll();
   });
 
-  it("cancelSubtree on a child whose task was genuinely dispatched (bootstrap-acked, running) resolves that exact child's own pending delegate() promise as a structured cancelled settlement (Spec 33 \u00a711.5) - the invariant the weave_delegate tool's abort wiring depends on", async () => {
+  it("cancelSubtree on a child whose task was genuinely dispatched (bootstrap-acked, running) resolves that exact child's own pending delegate() promise as a structured cancelled settlement (Pi adapter contract) - the invariant the weave_delegate tool's abort wiring depends on", async () => {
     const port = new FakeChildProcessPort();
     const controller = makeController(
       config(
@@ -611,7 +611,7 @@ describe("PiDelegationController", () => {
     const childId = childIdOf(spawned, port);
     // Genuinely running - past handshake and bootstrap-ack, task dispatched
     // - not merely queued or mid-handshake, which instead fail closed
-    // (Spec 33 \u00a711.5, `PiRpcChild.completeCancellation`'s
+    // (Pi adapter contract, `PiRpcChild.completeCancellation`'s
     // `cancelled-before-running` branch, covered elsewhere in this file).
     await sendChildToRunning(spawned, port, "gen-1");
 
@@ -874,7 +874,7 @@ describe("PiDelegationController", () => {
 
     // Still only one live process: the relayed request shares the exact
     // same global `max_processes` budget as every other delegation, never
-    // an independent/untracked one (Spec 33 §10-11).
+    // an independent/untracked one (Pi adapter contract).
     expect(port.spawnedProcesses.length).toBe(1);
 
     const settled = await signEnvelope(

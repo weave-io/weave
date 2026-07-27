@@ -7,13 +7,13 @@ import { TarInspector } from "../tar-inspector.js";
 
 /**
  * Packed-artifact proof for the pi adapter's public package/build/pack
- * policy (Spec 33 §5 package and public surface, §22 host compatibility,
+ * policy (Pi adapter contract package and public surface, host compatibility,
  * §24 layer F packed tarball, §25 acceptance manifest PI-PKG).
  *
  * Runs `npm pack --ignore-scripts` on the staged, publicly-approved files
  * only (no lifecycle scripts, no network). Never starts Pi.
  */
-describe("pi adapter packed artifact (Spec 33 §5, §22, §24F, §25 PI-PKG)", () => {
+describe("pi adapter packed artifact (Pi adapter contract, PI-PKG)", () => {
   it("packs @weaveio/weave-adapter-pi with an inventory-clean, policy-valid tarball", async () => {
     const root = join(".release", `pi-pkg-packed-${randomUUID()}`);
     const packager = new PublicPackagePackager(
@@ -64,10 +64,10 @@ describe("pi adapter packed artifact (Spec 33 §5, §22, §24F, §25 PI-PKG)", (
       expect(manifest.scripts).toBeUndefined();
       expect(manifest.devDependencies).toBeUndefined();
 
-      // preserved custom pi manifest field (Spec 33 §5)
+      // preserved custom pi manifest field (Pi adapter contract)
       expect(manifest.pi).toEqual({ extensions: ["./dist/extension.js"] });
 
-      // preserved, unmodified exact host peer range (Spec 33 §22)
+      // preserved, unmodified exact host peer range (Pi adapter contract)
       expect(manifest.peerDependencies).toEqual({
         "@earendil-works/pi-coding-agent": ">=0.81.1",
         "@earendil-works/pi-ai": "*",

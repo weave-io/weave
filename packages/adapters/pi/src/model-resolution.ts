@@ -4,19 +4,19 @@ import type { PiModelInfo } from "./types.js";
 export type { PiModelInfo } from "./types.js";
 
 /**
- * Pi-owned deterministic model matching (Spec 33 §6, §9.2).
+ * Pi-owned deterministic model matching (Pi adapter contract).
  *
  * Weave's engine `resolveAdapterModelIntent` (see `@weaveio/weave-engine`)
  * resolves an *ordered preference list* against a flat set of exact-string
  * model identifiers. Pi's authenticated model catalog is richer — each entry
  * has a `provider`, an `id`, and an optional human-readable `name` — and
- * Spec 33 §9.2 requires a specific three-tier exact-match cascade over that
+ * The Pi adapter contract requires a specific three-tier exact-match cascade over that
  * shape. That cascade is Pi-specific (adapter-owned): the engine helper does
  * not attempt canonical `provider/id` composition or bare-id/name uniqueness
  * checks, so this module implements the cascade directly rather than forcing
  * it through the generic engine helper.
  *
- * Rules (Spec 33 §9.2, §28):
+ * Rules (Pi adapter contract):
  * 1. Exact canonical `provider/id` match.
  * 2. Exact bare `id` match, only when the id is unique across the catalog.
  * 3. Exact human-readable `name` match, only when the name is unique.
@@ -26,18 +26,18 @@ export type { PiModelInfo } from "./types.js";
  * degraded — this module reports `{ resolved: false }` for that case and
  * does not choose a fallback itself.
  *
- * @see docs/specs/33-spec-pi-adapter/33-spec-pi-adapter.md
+ * @see docs/adapters/pi.md
  * @see docs/adapter-boundary.md
  */
 
-/** Which tier of the Spec 33 §9.2 cascade produced a resolution. */
+/** Which tier of the Pi adapter contract cascade produced a resolution. */
 export type PiModelResolutionSource = "canonical" | "bare-id" | "human-name";
 
 /**
  * Outcome of resolving one descriptor's ordered `models` intent against a
  * Pi model catalog. `resolved: false` means every entry was skipped; the
  * caller must keep the current Pi model and mark this descriptor's model
- * health as degraded (Spec 33 §9.2, §28).
+ * health as degraded (Pi adapter contract).
  */
 export type PiModelResolution =
   | {
@@ -55,7 +55,7 @@ export type PiModelIdentityResolutionError =
   | { readonly type: "ModelIdentityAmbiguous" };
 
 /**
- * Pi-owned deterministic model matcher (Spec 33 §6 `PiModelResolver`).
+ * Pi-owned deterministic model matcher (Pi adapter contract `PiModelResolver`).
  *
  * Pure and stateless: no I/O, no harness calls. The adapter is responsible
  * for supplying the current authenticated model catalog (`availableModels`)
@@ -129,7 +129,7 @@ export class PiModelResolver {
 
 /**
  * Adapter-facing seam over Pi's real `ExtensionAPI.setModel(model)`
- * (Spec 33 §9.2). Production wiring wraps the real host call with
+ * (Pi adapter contract). Production wiring wraps the real host call with
  * `ResultAsync.fromThrowable` so a throwing/rejecting host call never
  * escapes as an unhandled exception; tests inject a fully-controlled fake.
  */
@@ -139,7 +139,7 @@ export interface PiModelApplyPort {
 
 /**
  * The outcome of resolving *and applying* a descriptor's model intent
- * (Spec 33 §9.2, §28): either the resolved model was successfully applied
+ * (Pi adapter contract): either the resolved model was successfully applied
  * through `pi.setModel`, or the descriptor's model health is degraded and
  * the caller must leave Pi's current model untouched. `reason` distinguishes
  * "nothing in the ordered intent resolved" from "resolution succeeded but
@@ -159,7 +159,7 @@ export type PiModelActivationOutcome =
     };
 
 /**
- * Spec 33 §6/§9.2: resolves a descriptor's ordered model intent against
+ * Pi adapter contract: resolves a descriptor's ordered model intent against
  * Pi's authenticated catalog, then applies it through the injected
  * `PiModelApplyPort`. Never fuzzy-matches, never falls back to a
  * different model, and never throws — every failure path (unresolved

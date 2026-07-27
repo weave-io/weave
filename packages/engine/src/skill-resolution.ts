@@ -8,7 +8,7 @@
  * - `SkillResolutionConfigInput` — explicit input for config-wide resolution.
  * - `SkillResolutionError` — discriminated error union for missing non-disabled skills.
  *
- * Design principles (Spec 09, Unit 1 & 3):
+ * Design principles (skill-resolution contract, & 3):
  * - Engine owns only `name` as the stable matching key.
  * - All other metadata is adapter-owned pass-through; the engine never inspects it.
  * - No harness-specific references: no OpenCode, Claude Code, Pi, Bun.file, or process-spawning.

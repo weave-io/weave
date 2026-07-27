@@ -40,7 +40,7 @@
  * 9. `approveArtifact`   — adapter approves or rejects an artifact
  * 10. `reconcileExecution` — adapter triggers reconciliation routing
  *
- * @see docs/adapter-boundary.md — Execution Lifecycle Surface section
+ * @see docs/architecture/adapter-boundary.md — Execution Lifecycle Surface section
  * @see docs/adr/0004-workflow-first-execution-contract.md — Execution boundary
  */
 

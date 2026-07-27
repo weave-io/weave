@@ -711,10 +711,10 @@ describe("renderTemplate — strict full-path validation", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Spec 22 Unit 4 — Trust boundary: bounded template context for appends
+// execution lifecycle contract — Trust boundary: bounded template context for appends
 // ---------------------------------------------------------------------------
 
-describe("renderTemplate — Spec 22 Unit 4 trust boundary", () => {
+describe("renderTemplate — execution lifecycle contract trust boundary", () => {
   /**
    * Simulates the bounded allowed-paths set used for workflow step appends.
    * Append instructions must only reference the bounded AgentPromptTemplateContext

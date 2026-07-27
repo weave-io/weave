@@ -12,7 +12,7 @@ import type { PiSkillInfo } from "./types.js";
  * `event.systemPromptOptions.skills`, shape `{name, filePath, sourceInfo}`)
  * into the engine's harness-neutral `SkillInfo`. `filePath`/`sourceInfo` are
  * carried through as opaque `metadata` — the engine only requires `name`
- * for matching (Spec 33 §9.1) and never reads skill file contents itself.
+ * for matching (Pi adapter contract) and never reads skill file contents itself.
  */
 export function toEngineSkillInfo(skill: PiSkillInfo): SkillInfo {
   return {
@@ -22,11 +22,11 @@ export function toEngineSkillInfo(skill: PiSkillInfo): SkillInfo {
 }
 
 /**
- * Pi-owned skill discovery context (Spec 33 §6 `PiSkillCatalog`, §9.1).
+ * Pi-owned skill discovery context (Pi adapter contract `PiSkillCatalog`,).
  *
  * Pi owns skill discovery, trust, precedence, collision handling, and
  * provenance (docs/skills.md); Weave never scans Pi's skill directories
- * itself (docs/adapter-boundary.md). This class only holds the adapter's
+ * itself (docs/architecture/adapter-boundary.md). This class only holds the adapter's
  * current snapshot of Pi's already-discovered skill catalog — sourced from
  * `before_agent_start`'s `systemPromptOptions.skills`, the earliest point
  * Pi exposes it — and delegates exact, case-sensitive matching to the
@@ -34,7 +34,7 @@ export function toEngineSkillInfo(skill: PiSkillInfo): SkillInfo {
  *
  * Per-agent resolution (not the batch `resolveSkillsForConfig`) is used
  * deliberately: `resolveSkillsForConfig` fails globally the moment any one
- * agent has a missing skill, which would violate Spec 33 §8.1's requirement
+ * agent has a missing skill, which would violate Pi adapter contract's requirement
  * that a missing requested skill disable only the one affected descriptor.
  */
 export class PiSkillCatalog {

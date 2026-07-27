@@ -4,7 +4,7 @@
  * All fallible Runtime Store repository operations return
  * `ResultAsync<T, RuntimeStoreError>` from neverthrow.
  *
- * @see docs/specs/12-spec-runtime-persistence/12-spec-runtime-persistence.md
+ * @see docs/reference/runtime.md
  */
 
 // ---------------------------------------------------------------------------
@@ -157,7 +157,7 @@ export interface RuntimeStoreJournalWriteError {
 /**
  * Invariant breach — e.g. reusing a usage observation ID with different values.
  *
- * Spec 33 §23 / §28: a conflicting usage duplicate is an invariant violation
+ * Pi adapter contract: a conflicting usage duplicate is an invariant violation
  * and must not double-count rollups.
  */
 export interface RuntimeStoreInvariantViolationError {

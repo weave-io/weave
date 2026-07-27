@@ -611,9 +611,9 @@ describe("prompt command", () => {
 
       expect(result._unsafeUnwrap()).toBe(0);
       const output = terminal.out.join("\n");
-      expect(output).toContain("docs/dsl-reference.md");
-      expect(output).toContain("docs/config-loading.md");
-      expect(output).toContain("docs/prompt-composition.md");
+      expect(output).toContain("docs/reference/dsl.md");
+      expect(output).toContain("docs/reference/configuration.md");
+      expect(output).toContain("docs/reference/prompts.md");
     });
 
     it("Should_describe_current_delegation_template_fields", async () => {
@@ -686,9 +686,9 @@ describe("prompt command", () => {
 
       expect(result._unsafeUnwrap()).toBe(0);
       const output = terminal.out.join("\n");
-      expect(output).toContain("docs/dsl-reference.md");
-      expect(output).toContain("docs/config-loading.md");
-      expect(output).toContain("docs/prompt-composition.md");
+      expect(output).toContain("docs/reference/dsl.md");
+      expect(output).toContain("docs/reference/configuration.md");
+      expect(output).toContain("docs/reference/prompts.md");
     });
 
     it("Should_use_injected_cwd_for_local_scope_paths", async () => {

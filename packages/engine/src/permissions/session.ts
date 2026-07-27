@@ -951,7 +951,7 @@ export class PermissionSession {
     id: string,
     request: PermissionRequest,
   ): PendingPermissionRequestView {
-    // Spec 34 §6: each pending request retains its own identity, decision,
+    // permission contract: each pending request retains its own identity, decision,
     // source, and reason even when the UI groups them. Closed bounded fields
     // only — never raw policy objects, digests, or caller-controlled text.
     if (request.unresolved) {

@@ -72,7 +72,7 @@ function makeBoundaryCase(overrides: Partial<EvalCase> = {}): EvalCase {
   return makeResearchCase({
     id: "spindle-tools-source-boundary-network-claims",
     description:
-      "Synthetic research brief: [1] docs/agent-evals.md says text-only evals do not capture real tool-call or network events. [2] evals/README.md says network/tool usage stays out of scope unless surfaced as plain text claims. Explain the boundary with citations and explicit confidence.",
+      "Synthetic research brief: [1] docs/guides/evals.md says text-only evals do not capture real tool-call or network events. [2] evals/README.md says network/tool usage stays out of scope unless surfaced as plain text claims. Explain the boundary with citations and explicit confidence.",
     tags: ["research", "boundary", "text-only"],
     ...overrides,
   });

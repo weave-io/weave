@@ -10,10 +10,10 @@
  * `planExists` and `isPlanComplete` remain compatibility projections over
  * `readSnapshot`.
  *
- * @see docs/specs/19-spec-plan-state-provider/19-spec-plan-state-provider.md
- * @see docs/specs/33-spec-pi-adapter/33-spec-pi-adapter.md §16
+ * @see docs/reference/execution-lifecycle.md
+ * @see docs/adapters/pi.md
  * @see docs/adr/0010-plan-state-and-artifact-approval-authority.md
- * @see docs/adapter-boundary.md — Plan State Provider subsection
+ * @see docs/architecture/adapter-boundary.md — Plan State Provider subsection
  */
 
 import { err, errAsync, ok, type Result, type ResultAsync } from "neverthrow";
@@ -25,7 +25,7 @@ import { err, errAsync, ok, type Result, type ResultAsync } from "neverthrow";
 /** Leaf/parent task progress state derived from checkbox markers. */
 export type PlanTaskState = "pending" | "in_progress" | "completed";
 
-/** All valid `PlanTaskState` values as a readonly tuple (Spec 33 §16 plan markers). */
+/** All valid `PlanTaskState` values as a readonly tuple (Pi adapter contract plan markers). */
 export const PLAN_TASK_STATES = [
   "pending",
   "in_progress",
@@ -98,7 +98,7 @@ export interface PlanTaskTransition {
  * - `ProviderUnavailable` — infrastructure failure (`cause` retained for
  *   existing call sites; `reason` is a stable summary)
  *
- * Spec 33 closed plan failures:
+ * Pi adapter contract closed plan failures:
  * - `PlanMissing`, `PlanReadFailed`, `PlanWriteFailed`, `PlanRevisionStale`,
  *   `PlanTreeMalformed`, `LegacyPlanUnsupported`
  *
@@ -208,7 +208,7 @@ export interface PlanStateProvider {
    * Compatibility projection: whether every leaf is completed.
    *
    * Returns `ok(true)` / `ok(false)` from snapshot completeness. Missing plans
-   * return a typed error (not `ok(false)`), preserving the Spec 19 contract.
+   * return a typed error (not `ok(false)`), preserving the plan-state contract.
    */
   isPlanComplete(planName: string): ResultAsync<boolean, PlanStateError>;
 }

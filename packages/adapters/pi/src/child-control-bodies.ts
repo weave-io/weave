@@ -1,6 +1,6 @@
 /**
  * Strict, bounded Zod schemas for every private control envelope body kind
- * (Spec 33 §11.3). Replaces ad hoc `unknown`/manual-field-read parsing of
+ * (Pi adapter contract). Replaces ad hoc `unknown`/manual-field-read parsing of
  * envelope bodies with real schema validation: every field is bounded in
  * length/count, every shape is closed (`.strict()`), and every discriminated
  * body (e.g. `settled`, `delegate-response`) is validated as a genuine
@@ -27,14 +27,14 @@ const MAX_APPROVAL_REQUESTS = 20;
 export const MAX_ACTIVE_TOOLS = 64;
 /** Bounds the bootstrap `context.cwd` field - a real filesystem path, not name-length text. */
 export const MAX_CWD_LENGTH = 4_096;
-/** Bounds `context.parentDepth` - mirrors Spec 33 §10's own depth-limit universe generously; a value outside this is always malformed, never a legitimate deep tree. */
+/** Bounds `context.parentDepth` - mirrors Pi adapter contract's own depth-limit universe generously; a value outside this is always malformed, never a legitimate deep tree. */
 const MAX_PARENT_DEPTH = 64;
 // `composedPrompt` is by far the largest field in any control body, and is
 // the one field in this file that previously had no explicit bound of its
 // own (unlike every other string field here). Every control body - the
 // entire bootstrap body, not just this one field - must already fit under
 // the envelope's own `MAX_CONTROL_BODY_BYTES` (64KiB) cap enforced at
-// canonicalization time (Spec 33 §11.3-11.4), so an unbounded string field
+// canonicalization time (Pi adapter contract), so an unbounded string field
 // was never actually able to smuggle unbounded data through - but it did
 // mean a bootstrap body could consume nearly the *entire* 64KiB budget on
 // `composedPrompt` alone, starving `agentName`/`models`/
@@ -76,7 +76,7 @@ const DelegationTargetBodySchema = z
 const OpaqueBoundedObjectSchema = z.record(z.string(), z.unknown());
 
 /**
- * A resolved, concrete Pi model identity (Spec 33 §9.2, §11.2 Task 9) -
+ * A resolved, concrete Pi model identity (Pi adapter contract) -
  * never an intent string to be re-resolved. Carried in `bootstrap` only
  * when the parent itself resolved the descriptor's model intent against
  * its own authenticated catalog (root-level delegation, where a live
@@ -110,7 +110,7 @@ export interface HostModelIdentity {
 
 /**
  * Projects a host-supplied model object down to exactly the fields
- * {@link ModelIdentityBodySchema}'s `.strict()` shape allows (Spec 33
+ * {@link ModelIdentityBodySchema}'s `.strict()` shape allows (Pi adapter contract
  * §11.2 finding 2). Every call site that places a resolved/applied model
  * identity into a `bootstrap` or `bootstrap-ack` control body MUST route
  * it through this function first - passing the raw host object directly
@@ -142,7 +142,7 @@ const TaskContextBodySchema = z
   .strict();
 
 /**
- * Fields shared by every bootstrap variant (Spec 33 §11.2 Task 9 and §13/§15
+ * Fields shared by every bootstrap variant (Pi adapter contract and
  * direct-step dispatch). `mode` is the required discriminant: `"ordinary"`
  * for delegation-spawned children (weave_delegate / relayed nested
  * delegation), `"direct-step"` for a workflow-step child spawned directly
@@ -161,7 +161,7 @@ const BootstrapCommonShape = {
     .array(DelegationTargetBodySchema)
     .max(MAX_DELEGATION_TARGETS)
     .optional(),
-  /** The task/child correlation id (Spec 33 §11.2 Task 9) - the child must reject bootstrap whose `correlationId` does not match its own env-derived child id. */
+  /** The task/child correlation id (Pi adapter contract) - the child must reject bootstrap whose `correlationId` does not match its own env-derived child id. */
   correlationId: NameSchema,
   context: TaskContextBodySchema,
   /** The exact, parent-derived active tool name list the child MUST apply via `setActiveTools()` (Spec 33 §11.2 Task 9). */
@@ -178,7 +178,7 @@ const OrdinaryBootstrapBodySchema = z
   .strict();
 
 /**
- * Direct-step bootstrap (Spec 33 §13-§15): additionally carries the
+ * Direct-step bootstrap (Pi adapter contract): additionally carries the
  * workflow instance/lease/step correlation the child needs to call the
  * `weave_complete_step` tool the parent registers ONLY for this mode, and
  * `completionTool` as a literal so the child can verify the parent's own
@@ -186,7 +186,7 @@ const OrdinaryBootstrapBodySchema = z
  * Nested helpers spawned BY a direct-step child never receive this shape -
  * they always go through `buildChildBootstrapBody`'s ordinary path, so
  * completion authority never propagates below the root direct-step child
- * (Spec 33 §15 "Nested helper children do NOT receive workflow completion
+ * (Pi adapter contract "Nested helper children do NOT receive workflow completion
  * authority").
  */
 const DirectStepBootstrapBodySchema = z
@@ -219,10 +219,10 @@ const BootstrapAckBodySchema = z
     activeTools: z.array(NameSchema).max(MAX_ACTIVE_TOOLS),
     // Optional: present whenever a concrete model actually applies. Absent
     // only when the descriptor declared no resolvable model preference and
-    // Pi's already-active model was correctly left untouched (Spec 33
+    // Pi's already-active model was correctly left untouched (Pi adapter contract
     // §9.2's graceful degradation) - never absent because of a silently
     // swallowed *activation* failure, which fails the whole bootstrap
-    // closed before an ack is ever sent (Spec 33 §11.2 Task 9).
+    // closed before an ack is ever sent (Pi adapter contract).
     resolvedModel: ModelIdentityBodySchema.optional(),
   })
   .strict();
@@ -363,7 +363,7 @@ export type ControlBodyValidationError = {
 /**
  * Validates `body` against the strict, bounded schema for `kind`. Never
  * throws; a body carrying extra fields, wrong types, out-of-range lengths,
- * or an unrecognized discriminant is rejected outright (Spec 33 §11.3) -
+ * or an unrecognized discriminant is rejected outright (Pi adapter contract) -
  * this is the sole parsing path every control-body consumer (parent- and
  * child-side) MUST use instead of ad hoc unsafe field reads/casts.
  */

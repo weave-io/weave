@@ -516,11 +516,11 @@ describe("sanitized JSON fixture", () => {
 });
 
 // ---------------------------------------------------------------------------
-// § 9 — Spec 22 Unit 4: command-entrypoints as canonical execution-entry
+// § 9 — execution lifecycle contract: command-entrypoints as canonical execution-entry
 // ---------------------------------------------------------------------------
 
 /**
- * Spec 22 Unit 4 proof: `command-entrypoints` is the canonical execution-entry
+ * execution lifecycle contract proof: `command-entrypoints` is the canonical execution-entry
  * capability. `workflow-step-dispatch` is supporting execution context — it is
  * NOT a second execution-entry capability.
  *
@@ -534,7 +534,7 @@ describe("sanitized JSON fixture", () => {
  * 4. `workflow-step-dispatch` alone cannot substitute for `command-entrypoints`.
  */
 
-describe("Spec 22 Unit 4: command-entrypoints is the canonical execution-entry capability", () => {
+describe("execution lifecycle contract: command-entrypoints is the canonical execution-entry capability", () => {
   it("command harness with native command support passes the profile", () => {
     // A harness that exposes literal /run-workflow commands declares native.
     const contract = withOverride(
@@ -559,7 +559,7 @@ describe("Spec 22 Unit 4: command-entrypoints is the canonical execution-entry c
 
   it("non-command harness with emulated delivery passes the profile", () => {
     // A harness without literal commands (e.g. skill/script/UI delivery)
-    // declares emulated — this is the Spec 22 Unit 4 non-OpenCode proof path.
+    // declares emulated — this is the execution lifecycle contract non-OpenCode proof path.
     const contract = withOverride(
       fullPassingContract(),
       "command-entrypoints",

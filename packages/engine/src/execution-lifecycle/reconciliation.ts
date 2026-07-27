@@ -124,7 +124,7 @@ function resolveReconciliationHandler(
  * Check whether the plan associated with the triggering step is already
  * complete, and if so, return a `policy_decision` error.
  *
- * **Immutability rule** (Spec 22 Unit 3):
+ * **Immutability rule** (execution lifecycle contract):
  * Completed `Plan Markdown` tasks are immutable. Reconciliation must not
  * revise them in place. Corrective work must be expressed as follow-up tasks.
  */

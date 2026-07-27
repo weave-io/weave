@@ -5,7 +5,7 @@
  * lease conflicts, schema version failure, transaction commit/rollback,
  * strict journal failure, and best-effort journal failure.
  *
- * @see docs/specs/12-spec-runtime-persistence/12-spec-runtime-persistence.md
+ * @see docs/reference/runtime.md
  */
 
 import { Database } from "bun:sqlite";
@@ -3484,10 +3484,10 @@ describe("dependency guard", () => {
 });
 
 // ---------------------------------------------------------------------------
-// No-follow directory guard (Spec 33 §18)
+// No-follow directory guard (Pi adapter contract)
 // ---------------------------------------------------------------------------
 
-describe("no-follow directory guard (Spec 33 §18) — real filesystem", () => {
+describe("no-follow directory guard (Pi adapter contract) — real filesystem", () => {
   it("fails closed instead of initializing through a symlinked runtime directory", async () => {
     const realElsewhere = join(testDir, "real-elsewhere");
     Bun.spawnSync(["mkdir", "-p", realElsewhere]);
@@ -3534,7 +3534,7 @@ describe("no-follow directory guard (Spec 33 §18) — real filesystem", () => {
     const dbStat = await Bun.file(makeDbPath(testDir)).stat();
     expect(dbStat.mode & 0o777).toBe(0o600);
 
-    // The live database is in-memory (Spec 33 §18): bun:sqlite never opens
+    // The live database is in-memory (Pi adapter contract): bun:sqlite never opens
     // `weave.db` by path, so its WAL/SHM sidecars never come into existence.
     // Durability comes entirely from `writeLeafAtomic`'s temp-file-then-
     // rename sequence against the single `weave.db` leaf.
@@ -3543,7 +3543,7 @@ describe("no-follow directory guard (Spec 33 §18) — real filesystem", () => {
   });
 });
 
-describe("no-follow directory guard (Spec 33 §18) — isolated (MemoryRuntimeDirectoryGuard)", () => {
+describe("no-follow directory guard (Pi adapter contract) — isolated (MemoryRuntimeDirectoryGuard)", () => {
   it("fails closed when the runtime directory is a simulated symlink", async () => {
     const guard = new MemoryRuntimeDirectoryGuard();
     guard.simulateDirectorySymlink();
@@ -3584,7 +3584,7 @@ describe("no-follow directory guard (Spec 33 §18) — isolated (MemoryRuntimeDi
     // replacement can be observed at all.
     class SwapOnSecondVerifyGuard implements RuntimeDirectoryGuard {
       private readonly callCounts = new Map<string, number>();
-      // Coordinator-driven reload (Spec 33 §18): every outside-transaction
+      // Coordinator-driven reload (Pi adapter contract): every outside-transaction
       // query re-acquires and re-reads the leaf's latest bytes, so this fake
       // must actually round-trip what `writeLeafAtomic` persists instead of
       // always answering `readLeafBytes` with an empty buffer - otherwise

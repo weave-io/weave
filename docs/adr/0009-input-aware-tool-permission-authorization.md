@@ -2,7 +2,7 @@
 
 **Status:** Accepted
 
-**Related:** [Permissions guide](../permissions.md) · [Spec 34 — Harness-neutral permission subsystem](../specs/34-spec-harness-neutral-permissions/34-spec-harness-neutral-permissions.md) · [Spec 12 — Runtime Persistence](../specs/12-spec-runtime-persistence/12-spec-runtime-persistence.md) · [Spec 13 — Minimal Execution Lifecycle Surface](../specs/13-spec-minimal-execution-lifecycle-surface/13-spec-minimal-execution-lifecycle-surface.md) · [Spec 33 — Full-readiness Pi adapter](../specs/33-spec-pi-adapter/33-spec-pi-adapter.md) · [Tool Policy Evaluation](../tool-policy-evaluation.md) · [Adapter Boundary](../adapter-boundary.md)
+**Related:** [Permissions](../reference/permissions.md) · [Runtime Store](../reference/runtime.md) · [Execution Lifecycle](../reference/execution-lifecycle.md) · [Pi Adapter](../adapters/pi.md) · [Tool Policy](../reference/tool-policy.md) · [Adapter Boundary](../architecture/adapter-boundary.md)
 
 ## Context
 
@@ -47,7 +47,7 @@ Resolver throw, error, empty output, invalid output, unsafe input, stale state, 
 - Multi-request calls fail closed if any request fails.
 - Registry replacement must be idle-only and atomic; it invalidates outstanding challenges and permits and rejects observed-generation replay.
 - Existing static policy helpers remain useful but no longer prove full call authorization.
-- Adapter authors should start from the [Permissions guide](../permissions.md); Spec 34 remains normative.
+- Adapter authors should start from the [Permissions guide](../reference/permissions.md); permission contract remains normative.
 
 ## Rejected alternatives
 

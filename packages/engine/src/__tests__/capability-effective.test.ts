@@ -1,5 +1,5 @@
 /**
- * Probe-lowered effective capability contract (Spec 07 extension / Spec 33 §21).
+ * Probe-lowered effective capability contract (adapter capability contract extension / Pi adapter contract).
  */
 
 import { describe, expect, it } from "bun:test";

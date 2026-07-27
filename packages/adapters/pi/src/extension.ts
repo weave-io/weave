@@ -195,7 +195,7 @@ export interface PiExtensionDeps {
   readonly hmacPort: HmacPort;
   readonly processPort: PiChildProcessPort;
   /**
-   * The private RPC child's default spawn command (Spec 33 §11.2 finding
+   * The private RPC child's default spawn command (Pi adapter contract finding
    * 1): the exact executable that launched this host process, never a bare
    * `"pi"` a spawner would have to re-resolve via `PATH` (which can
    * silently select an unrelated, PATH-shadowing `pi` install). Production
@@ -206,7 +206,7 @@ export interface PiExtensionDeps {
   readonly childCommand: readonly string[];
   readonly childOutputPort: PiChildOutputPort;
   /**
-   * Opens the engine's Runtime Store (Spec 33 §18) - injected so no test
+   * Opens the engine's Runtime Store (Pi adapter contract) - injected so no test
    * ever performs a real SQLite open/migration against a real (or
    * nonexistent, unwritable) path. Production wiring MUST use
    * `SqliteRuntimeStoreFactory`; tests MUST override with
@@ -215,28 +215,28 @@ export interface PiExtensionDeps {
   readonly runtimeStoreFactory: PiRuntimeStoreFactory;
   /**
    * Real, no-follow-safe containment proof for `.weave/runtime`/
-   * `.weave/plans` (Spec 33 §17, §18, §21) - injected into
+   * `.weave/plans` (Pi adapter contract) - injected into
    * `PiSafeInitializer` so capability probing never merely trusts
    * `configLoaded`. Production wiring MUST use `BunPathContainmentPort`;
    * tests MUST override with `FakePathContainmentPort`/
-   * `NullPathContainmentPort` (Spec 33 §24 layer D: no real process spawn
+   * `NullPathContainmentPort` (Pi adapter contract: no real process spawn
    * in a test).
    */
   readonly pathContainmentPort: PathContainmentPort;
   /**
-   * Production, no-follow-safe `.weave/plans` directory listing (Spec 33
+   * Production, no-follow-safe `.weave/plans` directory listing (Pi adapter contract
    * §16) - backs `/weave:start`'s plan-selection prompt and `/weave:plan`'s
    * catalog. Production wiring MUST use `BunPiPlanCatalogPort`; tests MUST
-   * override with `FakePiPlanCatalogPort` (Spec 33 §24 layer D: no real
+   * override with `FakePiPlanCatalogPort` (Pi adapter contract: no real
    * filesystem scan in a test).
    */
   readonly planCatalogPort: PiPlanCatalogPort;
   /**
-   * Injectable telemetry seams (Spec 33 §19) — journal/usage/retention
+   * Injectable telemetry seams (Pi adapter contract) — journal/usage/retention
    * ports and the rotating log-sink filesystem. Absent means "construct
    * the real engine-backed implementation against the opened Runtime
    * Store" (production default). Tests MUST override with in-memory/fake
-   * seams (Spec 33 §24 layer B: no real filesystem/log rotation in a
+   * seams (Pi adapter contract: no real filesystem/log rotation in a
    * unit test).
    */
   readonly telemetryLogFileSystem?: RuntimeLogFileSystem;
@@ -302,14 +302,14 @@ export function createDefaultPiExtensionDeps(): PiExtensionDeps {
 
 /**
  * The materialized descriptor catalog and primary-activation state for one
- * generation (Spec 33 §7.2 steps 5-8, 13-14). Kept out of
- * `PiExtensionController`'s own `PiGeneration` type for this task so the
- * task-6 controller contract stays stable; a future task may fold this in.
+ * generation under the Pi adapter contract. Kept out of
+ * `PiExtensionController`'s own `PiGeneration` type to keep the controller
+ * contract stable; a future change may fold this in.
  *
  * Primary activation (skills + model, together) is deferred from
  * `session_start` to the *first* `before_agent_start` on purpose: Pi only
  * exposes its loaded skill catalog via `systemPromptOptions.skills` at that
- * point (not at `session_start`), and Spec 33 §8.2/§28 requires activation
+ * point (not at `session_start`), and the Pi adapter contract requires activation
  * to be atomic across skills and model together - so neither can be
  * committed before both are knowable.
  */
@@ -344,7 +344,7 @@ interface PiActiveSession {
   readonly permissionActivationFailed: boolean;
 }
 
-/** Reads `event.systemPrompt` (Spec 33 §8.3) without assuming any other event shape. */
+/** Reads `event.systemPrompt` (Pi adapter contract) without assuming any other event shape. */
 function readSystemPrompt(event: unknown): string {
   if (typeof event === "object" && event !== null && "systemPrompt" in event) {
     const value = (event as { systemPrompt?: unknown }).systemPrompt;
@@ -355,7 +355,7 @@ function readSystemPrompt(event: unknown): string {
 
 /**
  * Reads `event.systemPromptOptions.skills` (Pi's real, already-loaded skill
- * catalog for this turn - Spec 33 §9.1) without assuming any other shape.
+ * catalog for this turn under the Pi adapter contract without assuming any other shape.
  * Malformed or missing entries are dropped rather than throwing.
  */
 function readBeforeAgentStartSkills(event: unknown): readonly PiSkillInfo[] {
@@ -374,7 +374,7 @@ function readBeforeAgentStartSkills(event: unknown): readonly PiSkillInfo[] {
 }
 
 /**
- * Wraps Pi's real `ExtensionAPI.setModel(model)` (Spec 33 §9.2) so a
+ * Wraps Pi's real `ExtensionAPI.setModel(model)` (Pi adapter contract) so a
  * throwing or rejecting host call never escapes as an unhandled exception -
  * it is captured and reported as a degraded model activation instead.
  */
@@ -407,7 +407,7 @@ const APPROVAL_REJECT_LABEL = "Reject";
 /**
  * Hidden, non-public command a private child process's own extension
  * instance uses to receive parent-to-child authenticated control envelopes
- * (Spec 33 \u00a711.3). Delivered as ordinary RPC `prompt` command text
+ * (Pi adapter contract). Delivered as ordinary RPC `prompt` command text
  * (`/weave:__control__ <json>`) - never `steer`/`follow_up` - so it rides
  * Pi's own documented command dispatch rather than any raw sideband.
  */
@@ -419,7 +419,7 @@ interface PiChildBootstrapCommon {
   readonly models: readonly string[];
   readonly effectiveToolPolicy: EffectiveToolPolicy | undefined;
   readonly delegationTargets: readonly DelegationTarget[];
-  /** Must equal this child's own env-derived child id (Spec 33 §11.2 Task 9); a mismatch fails closed. */
+  /** Must equal this child's own env-derived child id (Pi adapter contract); a mismatch fails closed. */
   readonly correlationId: string;
   readonly context: PiDelegationContext;
   /** The exact, parent-derived active tool name list this child MUST apply via `pi.setActiveTools()` (Spec 33 §11.2 Task 9). */
@@ -429,7 +429,7 @@ interface PiChildBootstrapCommon {
 }
 
 /**
- * Strict, mode-discriminated bootstrap union (Spec 33 §13-§15): `mode:
+ * Strict, mode-discriminated bootstrap union (Pi adapter contract): `mode:
  * "ordinary"` for a delegation-spawned child (`weave_delegate` or relayed
  * nested delegation), `mode: "direct-step"` for a workflow-step child
  * spawned directly by `PiWorkflowController`. Only the direct-step variant
@@ -450,7 +450,7 @@ type PiChildBootstrapBody =
 
 /**
  * Builds one delegated child's bootstrap payload from its own resolved
- * descriptor (Spec 33 §8, §10-11) - critically including that
+ * descriptor (Pi adapter contract) - critically including that
  * descriptor's own `delegationTargets`, so a running child can register
  * its own nested/descendant delegation tool once bootstrapped, relayed
  * through its authenticated parent/root coordinator rather than an
@@ -483,7 +483,7 @@ function buildChildBootstrapBody(
     // The matched entry is drawn straight from the host's own
     // `ctx.modelRegistry.getAvailable()` results and may carry fields
     // beyond provider/id/name; project it down before it ever reaches a
-    // `ModelIdentityBodySchema`-validated control body (Spec 33 §11.2
+  // `ModelIdentityBodySchema`-validated control body (Pi adapter contract
     // finding 2).
     return resolution.resolved
       ? toModelIdentityBody(resolution.model)
@@ -505,7 +505,7 @@ function buildChildBootstrapBody(
 }
 
 /**
- * Validates a raw bootstrap body against the real strict schema (Spec 33
+ * Validates a raw bootstrap body against the real strict schema (Pi adapter contract
  * §11.3) instead of ad hoc field reads with silent defaults. A malformed
  * body fails closed: bootstrap is never applied and the parent's own
  * `awaitBootstrapAck` times out, producing a typed `ChildReplyMissing`
@@ -577,14 +577,14 @@ interface PiChildModeState {
    */
   lastAssistantStopReason: string | undefined;
   /**
-   * Present only for a direct-step child (Spec 33 §13-§15) - `undefined`
+   * Present only for a direct-step child (Pi adapter contract) - `undefined`
    * for every ordinary-delegation child. Drives `weave_complete_step`
    * registration and structured (not free-text) settlement reporting.
    */
   directStep: PiDirectStepChildState | undefined;
 }
 
-/** Per-turn direct-step completion state (Spec 33 §15). */
+/** Per-turn direct-step completion state (Pi adapter contract). */
 interface PiDirectStepChildState {
   readonly stepName: string;
   readonly recorder: SingleCompletionCandidateRecorder;
@@ -639,7 +639,7 @@ async function applyChildBootstrap(
     runtime.dispose();
     return;
   }
-  // Correlation check (Spec 33 §11.2 Task 9): the bootstrap's own
+  // Correlation check (Pi adapter contract): the bootstrap's own
   // `correlationId` must match this child's own env-derived child id -
   // anything else means this bootstrap targets a different child (or is
   // forged), and must never be applied.
@@ -676,7 +676,7 @@ async function applyChildBootstrap(
             getRuntime: () => state.runtime,
           }),
         ]),
-    // Only a direct-step child (Spec 33 §13-§15) ever receives
+    // Only a direct-step child (Pi adapter contract) ever receives
     // `weave_complete_step`; nested helpers it may itself spawn always use
     // the ordinary path above and never get this registration, so
     // completion authority never propagates below the root direct-step
@@ -802,14 +802,14 @@ async function applyChildBootstrap(
     appliedActiveTools = [...reported];
   }
 
-  // Model activation (Spec 33 §9.2, §11.2 Task 9): rehydrate the parent's
+  // Model activation (Pi adapter contract): rehydrate the parent's
   // compact resolved identity from this child's authenticated catalog when
   // present (root-level delegation); otherwise resolve the descriptor's
   // intent against that catalog. Only a full catalog model may reach
   // `pi.setModel()`; the compact identity exists only on the control channel.
   // Only a genuine *activation* failure (a model resolved but the host
   // rejected applying it) fails bootstrap closed. "Nothing in the intent
-  // resolved" is not a failure - Spec 33 §9.2 requires gracefully keeping
+  // resolved" is not a failure - the Pi adapter contract requires gracefully keeping
   // whatever model Pi already had active in that case, so `appliedModel`
   // may legitimately stay `undefined` (no override took effect) without
   // blocking the rest of bootstrap.
@@ -868,7 +868,7 @@ async function applyChildBootstrap(
     // `outcome.currentModel` (`ctx.model`, forwarded through unchanged on a
     // degraded outcome) are raw host objects that may carry fields beyond
     // provider/id/name; project before this ever reaches the ack body's
-    // `ModelIdentityBodySchema`-validated field (Spec 33 §11.2 finding 2).
+    // `ModelIdentityBodySchema`-validated field (Pi adapter contract).
     const rawAppliedModel =
       outcome.status === "applied" ? outcome.model : outcome.currentModel;
     appliedModel =
@@ -898,7 +898,7 @@ async function applyChildBootstrap(
           lastAttempt: undefined,
         }
       : undefined;
-  // `resolvedModel` is genuinely optional in `PiBootstrapAckBody` (Spec 33
+  // `resolvedModel` is genuinely optional in `PiBootstrapAckBody` (Pi adapter contract
   // §11.2 Task 9) - the key must be entirely absent, not present with an
   // `undefined` value, since `undefined` is not a valid `JsonValue` and
   // would make the ack envelope fail canonical (JCS) signing, silently
@@ -1030,7 +1030,7 @@ function relayChildApprovalToParentUi(
 }
 
 /**
- * Detects whether this process is a private RPC child (Spec 33 \u00a711.2
+ * Detects whether this process is a private RPC child (Pi adapter contract)
  * -\u00a711.5) by reading its bootstrap secret from the environment only.
  * A real user-started RPC session never sets this variable, so it never
  * activates any of this child-only behavior. Returns `true` once child
@@ -1178,7 +1178,7 @@ async function activateChildModeIfApplicable(
 
   // A new turn starts a fresh transient output buffer rather than carrying
   // a previous turn's trailing text forward forever (mirrors the parent's
-  // own `PiChildRpc` buffer semantics, Spec 33 §11.5).
+  // own `PiChildRpc` buffer semantics under the Pi adapter contract.
   pi.on("turn_start", () => {
     state.latestAssistantOutput = "";
   });
@@ -1218,7 +1218,7 @@ async function activateChildModeIfApplicable(
     // more than once (Task 9 finding 2).
     if (runtime.isCancelled()) return;
     // Direct-step completion window closes the instant this event fires
-    // (Spec 33 §15) - a tool call that races in afterward must observe
+    // (Pi adapter contract) - a tool call that races in afterward must observe
     // `windowOpen === false` and be rejected as late, never recorded.
     if (state.directStep !== undefined) state.directStep.windowOpen = false;
     if (
@@ -1231,7 +1231,7 @@ async function activateChildModeIfApplicable(
       return;
     }
     if (state.directStep !== undefined) {
-      // A direct-step child's settlement is NEVER free-form prose (Spec 33
+      // A direct-step child's settlement is NEVER free-form prose (Pi adapter contract
       // §15): report the one recorded structured completion candidate as
       // JSON, or a specific typed failure reason - `missing`/`duplicate`/
       // `late`/`malformed:<msg>` - that `direct-dispatch.ts`'s
@@ -1431,7 +1431,7 @@ function setActiveAgentStatus(
 }
 
 /**
- * Renders the bounded compact plan widget (Spec 33 §16) via the real,
+ * Renders the bounded compact plan widget (Pi adapter contract) via the real,
  * always-available `ctx.ui.setWidget` surface. Read-only: resolves the
  * active workflow instance's plan name via `inspect()`/`InspectExecutionOutput.slug`
  * (never assumes a name), then reads that plan's snapshot via
@@ -1466,7 +1466,7 @@ async function refreshPlanWidget(
   );
 }
 
-/** Renders the bounded child-tree widget (Spec 33 §11.5) via the real, always-available `ctx.ui.setWidget` surface. Hides the widget entirely (empty array) once there are no children left. */
+/** Renders the bounded child-tree widget (Pi adapter contract) via the real, always-available `ctx.ui.setWidget` surface. Hides the widget entirely (empty array) once there are no children left. */
 function renderChildTreeWidget(
   ctx: PiSessionContext,
   controller: PiDelegationController | undefined,
@@ -1495,7 +1495,7 @@ interface WeaveChildTreeEditorDeps {
 }
 
 /**
- * Compositional custom editor (Spec 33 §11.5, per `docs/tui.md` "Pattern
+ * Compositional custom editor (Pi adapter contract, per `docs/tui.md` "Pattern
  * 7"/`examples/extensions/modal-editor.ts`) production-wiring Alt+1..Alt+9
  * (direct-child selection), Backspace (parent selection), and Esc (cancel
  * selected subtree). Extends the real `CustomEditor` (not a bare shortcut)
@@ -1546,19 +1546,19 @@ class WeaveChildTreeEditor extends CustomEditor {
       this.weaveDeps.cancelSubtree(outcome.nodeId);
       return;
     }
-    // `host-default` (root-level Backspace/Esc - Spec 33 §11.5 requires
+    // `host-default` (root-level Backspace/Esc - the Pi adapter contract requires
     // preserving normal host behavior here with no exception, including
     // for a live direct-step child; pausing a running workflow is only
     // ever done through the explicit, confirmed parent-chat interrupt path
-    // in the `input` handler below, per Spec 33 §14) or `no-target`:
+    // in the `input` handler below, under the Pi adapter contract) or `no-target`:
     // preserve Pi's own default editor behavior exactly.
     super.handleInput(data);
   }
 }
 
 /**
- * The one compiled extension entry (Spec 33 §5/§7.1). The returned factory is
- * synchronous and, per Spec 33 §7.1, only: constructs the controller, registers the
+ * The one compiled extension entry (Pi adapter contract). The returned factory is
+ * synchronous and, under the Pi adapter contract, only: constructs the controller, registers the
  * nine inert `/weave:*` command shells and the lifecycle delegates, and
  * returns. It never loads project config, opens the Runtime Store, starts a
  * timer, or launches a child process at factory time.
@@ -1571,7 +1571,7 @@ export function createPiExtension(
     ...overrides,
   };
   // Populated only once `session_start` has activated a real generation and
-  // constructed a live delegation controller for it (Spec 33 §11). The
+  // constructed a live delegation controller for it (Pi adapter contract). The
   // registration's static shape/resolver are built here, at preflight time,
   // from the *declared* primary descriptor alone; the lazy accessor lets the
   // coverage proof describe the tool before a controller instance can exist,
@@ -1582,12 +1582,12 @@ export function createPiExtension(
   } = {
     controller: undefined,
   };
-  // Bounded, live child-tree selection state (Spec 33 §11.5) - reset to the
+  // Bounded, live child-tree selection state (Pi adapter contract) - reset to the
   // root whenever a fresh generation activates.
   const treeSelectionCell: { selectedId: string } = {
     selectedId: ROOT_NODE_ID,
   };
-  // Per-generation workflow controller (Spec 33 §10/§14) - projects all ten
+  // Per-generation workflow controller (Pi adapter contract) - projects all ten
   // engine lifecycle operations. Constructed only when trusted and not
   // health-only, mirroring `delegationControllerCell`'s gating.
   const directStepChildRegistry = new PiDirectStepChildRegistry();
@@ -1605,7 +1605,7 @@ export function createPiExtension(
         }
       | undefined;
   } = { value: undefined };
-  // Per-generation telemetry unit (Spec 33 §19) - constructed only once the
+  // Per-generation telemetry unit (Pi adapter contract) - constructed only once the
   // Runtime Store opens for a trusted, non-health-only generation. Read
   // lazily (never captured by value) by the delegation controller's
   // `telemetry` wrapper below, since children may spawn well after this
@@ -1701,7 +1701,7 @@ export function createPiExtension(
     };
   }
 
-  // Spec 33 §14: `observeSession` must fire for primary/direct-step
+  // Pi adapter contract: `observeSession` must fire for primary/direct-step
   // activation and for termination, not only for start/resume and
   // direct-step settlement - but only "while a lease is active" (i.e. a
   // workflow instance/lease is presently tracked). Best-effort and never a
@@ -1740,7 +1740,7 @@ export function createPiExtension(
   }
 
   // Shared dispatch used by both the colon-prefixed direct commands and the
-  // bare `/weave` native palette (Spec 33 §13): every action, regardless of
+  // bare `/weave` native palette (Pi adapter contract): every action, regardless of
   // how it was invoked, goes through this exact one gate/generation/health
   // check and the exact same handleWeaveXxx() handler - the palette never
   // gets a second, looser code path.
@@ -1751,7 +1751,7 @@ export function createPiExtension(
   ): Promise<void> {
     // A private delegated child never exposes the parent's public
     // /weave:* commands, even though registerCommand runs once at
-    // factory time before child mode can be detected (Spec 33 §7.1,
+    // factory time before child mode can be detected (Pi adapter contract,
     // §11.2 - public adapter surface stays TUI-only).
     if (childModeState.active) return;
     const gate = controller.evaluateCommandGate(name);
@@ -1856,7 +1856,7 @@ export function createPiExtension(
       return;
     }
     if (name === "weave:resume") {
-      // Fresh confirm alone is not enough (Spec 33 §18): a stale
+      // Fresh confirm alone is not enough (Pi adapter contract): a stale
       // recovery pointer (wrong controller generation, or a
       // pointer already marked "terminal") must refuse resume
       // before the engine is ever asked, rather than let a paused
@@ -2021,7 +2021,7 @@ export function createPiExtension(
       });
     }
 
-    // Native `/weave` palette (Spec 33 §13): the same nine actions as the
+    // Native `/weave` palette (Pi adapter contract): the same nine actions as the
     // colon commands, derived from `inspect()`/current state, with invalid
     // actions hidden/disabled with a reason - dispatched through the exact
     // same `dispatchWeaveCommand` gate/generation/health check, never a
@@ -2077,7 +2077,7 @@ export function createPiExtension(
       },
     });
 
-    // Parent-chat/workflow concurrency (Spec 33 §14): an ordinary prompt
+    // Parent-chat/workflow concurrency (Pi adapter contract): an ordinary prompt
     // arriving while a direct-step child is active must never be silently
     // interleaved with the workflow's own mutation. Ask first; only a
     // confirmed pause cancels the direct-step subtree and lets the prompt
@@ -2160,7 +2160,7 @@ export function createPiExtension(
           : "ready",
       );
 
-      // Spec 33 §28: wrong mode/host/version blocks config activation
+      // Pi adapter contract: wrong mode/host/version blocks config activation
       // entirely - `PiSafeInitializer.preflight` never calls
       // `PiConfigActivator` in that state, so `configActivation` below is
       // always `undefined` here. This check makes that guarantee explicit
@@ -2292,10 +2292,10 @@ export function createPiExtension(
       );
 
       // The delegation transport is only ever constructed for a fully
-      // activated generation, never at factory time (Spec 33 §7.1) and
+      // activated generation, never at factory time (Pi adapter contract) and
       // never for a health-only/trust-withheld generation - delegation is a
       // registered capability tool and durable operation exactly like the
-      // ones Spec 33 §7.3/§21 already disable in those states.
+      // ones Pi adapter contract already disable in those states.
       if (
         !effectiveHealthOnly(generation, activeSession) &&
         generation.preflight.trust !== "withheld"
@@ -2309,7 +2309,7 @@ export function createPiExtension(
           randomPort: deps.randomPort,
           hmacPort: deps.hmacPort,
           // The exact executable that launched this host, never a bare
-          // "pi" a spawner would have to re-resolve via `PATH` (Spec 33
+          // "pi" a spawner would have to re-resolve via `PATH` (Pi adapter contract
           // §11.2 finding 1).
           command: deps.childCommand,
           // Preserves ordinary runtime necessities (PATH/HOME/etc.) for the
@@ -2324,7 +2324,7 @@ export function createPiExtension(
             delegationControllerCell,
             deps.logger,
           ),
-          // Nested/descendant delegation (Spec 33 §10-11): a requesting
+          // Nested/descendant delegation (Pi adapter contract): a requesting
           // child is only ever resolved against ITS OWN declared
           // `delegationTargets`, never the full descriptor set - exactly
           // the same restriction the root's own tool already applies.
@@ -2349,7 +2349,7 @@ export function createPiExtension(
               treeSelectionCell,
             );
           },
-          // Lazy wrapper (Spec 33 §19.4): `telemetryCell.telemetry` is only
+          // Lazy wrapper (Pi adapter contract): `telemetryCell.telemetry` is only
           // populated once the Runtime Store opens successfully, below -
           // reading it here would always see `undefined`. A settled child
           // assistant message always arrives well after that point, so the
@@ -2369,7 +2369,7 @@ export function createPiExtension(
         // Workflow lifecycle projection (Spec 33 §10/§14) reuses the same
         // trusted Runtime Store already bound to durable permissions.
         if (runtimeStore !== undefined) {
-          // Adapter telemetry (Spec 33 §19): activated only now that the
+          // Adapter telemetry (Pi adapter contract): activated only now that the
           // Runtime Store is open for a trusted, non-health-only
           // generation. Never blocks activation - a rotating-log-sink or
           // retention failure degrades visibly instead.
@@ -2433,7 +2433,7 @@ export function createPiExtension(
                   idGenerator: deps.idGenerator,
                   // The exact executable that launched this host, never a
                   // bare "pi" a spawner would have to re-resolve via `PATH`
-                  // (Spec 33 §11.2 finding 1).
+                  // (Pi adapter contract).
                   command: deps.childCommand,
                   baseEnv: sanitizedBaseEnv(isDeniedKey),
                   registry: directStepChildRegistry,
@@ -2453,7 +2453,7 @@ export function createPiExtension(
             ),
             // Resolves a direct-step agent's own REAL descriptor (composed
             // prompt, models, tool policy, delegation targets) from this
-            // generation's own activated catalog by name (Spec 33 §6,
+            // generation's own activated catalog by name (Pi adapter contract,
             // §13-§15) - never the engine effect's own always-empty
             // `agentDescriptor` fields.
             resolveAgentDescriptor: (agentName) =>
@@ -2502,7 +2502,7 @@ export function createPiExtension(
                   ),
               );
             },
-            // Spec 33 §16: refreshes the bounded compact plan widget after
+            // Pi adapter contract: refreshes the bounded compact plan widget after
             // every dispatch/completion/resume/interrupt/reconcile outcome.
             // Best-effort and fire-and-forget - this class never reads plan
             // state itself, and a rendering failure must never affect the
@@ -2515,7 +2515,7 @@ export function createPiExtension(
               );
             },
           });
-          // Recovery banner (Spec 33 §18): read-only on every session start.
+          // Recovery banner (Pi adapter contract): read-only on every session start.
           // Never resumes anything itself - only `/weave:resume` (with its
           // own fresh confirm and generation/lease recheck, above) may ever
           // reacquire a paused execution.
@@ -2532,7 +2532,7 @@ export function createPiExtension(
               "info",
             );
           }
-          // Spec 33 §16: initial compact plan widget render at session
+          // Pi adapter contract: initial compact plan widget render at session
           // start/recovery - shows the recovered pending workflow's plan
           // immediately, or hides the widget when nothing is recoverable.
           // Never auto-resumes anything itself.
@@ -2550,7 +2550,7 @@ export function createPiExtension(
           delegationControllerCell.controller,
           treeSelectionCell,
         );
-        // Compositional custom editor (Spec 33 §11.5): production-wires
+        // Compositional custom editor (Pi adapter contract): production-wires
         // Alt+1..Alt+9/Backspace/Esc against the live child tree while
         // preserving every Pi host default (see `WeaveChildTreeEditor`).
         ctx.ui.setEditorComponent?.(
@@ -2750,7 +2750,7 @@ export function createPiExtension(
 
       // Already committed this generation: just append. Re-resolving here
       // would silently override a native mid-session user model change
-      // (Spec 33 §9.2 "a native user model change governs the current
+      // (Pi adapter contract "a native user model change governs the current
       // active period"), so activation only happens once per generation.
       if (session.primarySession.getCurrent() !== undefined) {
         return {
@@ -2774,7 +2774,7 @@ export function createPiExtension(
       }
 
       // Pi only exposes its loaded skill catalog here, at the first turn
-      // (Spec 33 §9.1) - refresh the catalog immediately before the
+      // (Pi adapter contract) - refresh the catalog immediately before the
       // atomic activation that depends on it.
       session.primarySession.refreshSkills(readBeforeAgentStartSkills(event));
 
@@ -2798,7 +2798,7 @@ export function createPiExtension(
         // `MODEL_REGISTRY_THREW_REASON` literal - never anything derived
         // from what the host actually threw, since that content cannot be
         // trusted not to contain private paths, environment values, or
-        // secrets (Spec 33 closed-failure contract).
+        // secrets (Pi adapter contract closed-failure contract).
         deps.logger.warn(
           {
             agentName: descriptor.name,
@@ -2843,7 +2843,7 @@ export function createPiExtension(
         return undefined;
       }
 
-      // Spec 33 §14: a primary activation that actually took authority this
+      // Pi adapter contract: a primary activation that actually took authority this
       // generation (Loom/Tapestry becoming the active primary) is one of
       // the required `observeSession` trigger points, when a workflow lease
       // is presently active (e.g. Loom re-activating while a workflow is
@@ -2855,7 +2855,7 @@ export function createPiExtension(
       };
     });
 
-    // Spec 33 §19.4: one exact-once usage observation per settled primary
+    // Pi adapter contract: one exact-once usage observation per settled primary
     // assistant message. Identity is the message's own id, never text -
     // `extractAssistantUsageFromMessage` returns only bounded safe token/
     // cost scalars, never message content. A no-op when telemetry hasn't
@@ -2895,7 +2895,7 @@ export function createPiExtension(
     });
 
     pi.on("session_shutdown", async (_event, ctx?: PiSessionContext) => {
-      // Spec 33 §14/§18: termination while a lease is active is a required
+      // Pi adapter contract: termination while a lease is active is a required
       // `observeSession` trigger point - observe *before* clearing the
       // tracked instance/controller below (a no-op when no lease is
       // tracked). Best-effort only: shutdown must still proceed even if
@@ -2912,7 +2912,7 @@ export function createPiExtension(
       activeWorkflowInstanceCell.value = undefined;
       currentWorkflows = {};
       treeSelectionCell.selectedId = ROOT_NODE_ID;
-      // Adapter telemetry cleanup (Spec 33 §19.3): records one best-effort
+      // Adapter telemetry cleanup (Pi adapter contract): records one best-effort
       // shutdown journal entry, then stops retention scheduling and
       // releases the rotating log sink. Idempotent - a repeated
       // `session_shutdown` (or one with no telemetry ever constructed)
@@ -2931,7 +2931,7 @@ export function createPiExtension(
         telemetryCell.telemetry = undefined;
       }
       // Bounded child-tree widget/editor state must never survive past this
-      // generation (Spec 33 §11.5/§23 cleanup-idempotence) - clear it even
+      // generation (Pi adapter contract cleanup-idempotence) - clear it even
       // though `disposeAll()` above already terminated every child.
       ctx?.ui.setStatus(WEAVE_AGENT_STATUS_KEY, undefined);
       ctx?.ui.setWidget(WEAVE_CHILD_TREE_WIDGET_KEY, undefined);

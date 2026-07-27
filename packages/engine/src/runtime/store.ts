@@ -8,7 +8,7 @@
  * - `find*()` — returns `ResultAsync<T | null, RuntimeStoreError>` (null if not found)
  * - `get*()` — returns `ResultAsync<T, RuntimeStoreError>` (errors with `not_found` if missing)
  *
- * @see docs/specs/12-spec-runtime-persistence/12-spec-runtime-persistence.md
+ * @see docs/reference/runtime.md
  */
 
 import type { ResultAsync } from "neverthrow";
@@ -483,7 +483,7 @@ export type TransactionCallback<T> = (
  * Implementations include the default SQLite/Kysely store and the
  * in-memory test utility.
  *
- * @see docs/specs/12-spec-runtime-persistence/12-spec-runtime-persistence.md
+ * @see docs/reference/runtime.md
  */
 export interface RuntimeStore {
   /** WorkflowInstance repository. */

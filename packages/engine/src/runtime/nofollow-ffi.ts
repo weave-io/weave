@@ -1,9 +1,9 @@
 /**
  * Shared, low-level Bun `bun:ffi` primitives for no-follow filesystem access.
  *
- * Extracted from `./log-sink.ts` (Spec 33 §19.2 / ADR 0011) so that other
+ * Extracted from `./log-sink.ts` (Pi adapter contract and ADR 0011) so that other
  * Weave-owned runtime I/O with the same no-follow stable-identity
- * requirement — notably the Runtime Store's SQLite open path (Spec 33 §18)
+ * requirement — notably the Runtime Store's SQLite open path (Pi adapter contract)
  * — can reuse the exact same platform flags, libc symbol loading, and
  * fd-identity helpers instead of re-declaring them.
  *

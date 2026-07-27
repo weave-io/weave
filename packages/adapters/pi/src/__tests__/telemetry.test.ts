@@ -109,7 +109,7 @@ function buildTelemetry(overrides?: {
   });
 }
 
-describe("PiTelemetry — TUI diagnostics dedupe (Spec 33 §19.2)", () => {
+describe("PiTelemetry — TUI diagnostics dedupe (Pi adapter contract)", () => {
   it("notifies exactly once per unique code+scope+correlation identity", () => {
     const telemetry = buildTelemetry();
     const { ui, notifications } = fakeUi();
@@ -153,7 +153,7 @@ describe("PiTelemetry — TUI diagnostics dedupe (Spec 33 §19.2)", () => {
   });
 });
 
-describe("PiTelemetry — data ban (Spec 33 §19.1)", () => {
+describe("PiTelemetry — data ban (Pi adapter contract)", () => {
   it("extractAssistantUsageFromMessage never surfaces message text/content", () => {
     const extracted = extractAssistantUsageFromMessage({
       message: {
@@ -228,7 +228,7 @@ describe("PiTelemetry — data ban (Spec 33 §19.1)", () => {
     expect(extracted?.usage.cacheReadTokens).toBeUndefined();
   });
 
-  it("declares every normalized journal family required by Spec 33", () => {
+  it("declares every normalized journal family required by Pi adapter contract", () => {
     expect(PI_JOURNAL_FAMILIES).toEqual([
       "activation-health",
       "generation",
@@ -282,7 +282,7 @@ describe("PiTelemetry — data ban (Spec 33 §19.1)", () => {
   });
 });
 
-describe("PiTelemetry — exactly-once usage observation (Spec 33 §19.4)", () => {
+describe("PiTelemetry — exactly-once usage observation (Pi adapter contract)", () => {
   it("records one usage observation per settled assistant message id", async () => {
     const telemetry = buildTelemetry();
     const first = await telemetry.recordAssistantUsage({
@@ -350,7 +350,7 @@ describe("PiTelemetry — exactly-once usage observation (Spec 33 §19.4)", () =
   });
 });
 
-describe("PiTelemetry — telemetry degradation (Spec 33 §19.2/§23)", () => {
+describe("PiTelemetry — telemetry degradation (Pi adapter contract)", () => {
   it("recordJournalEvent maps a journal write failure to JournalWriteFailed and never throws", async () => {
     const failingJournal: PiJournalPort = {
       write: () =>
@@ -448,7 +448,7 @@ describe("PiTelemetry — telemetry degradation (Spec 33 §19.2/§23)", () => {
   });
 });
 
-describe("PiTelemetry — activation and cleanup (Spec 33 §19.3)", () => {
+describe("PiTelemetry — activation and cleanup (Pi adapter contract)", () => {
   it("activate() runs an immediate retention pass and records an activation journal entry", async () => {
     const store = createInMemoryRuntimeStore();
     const activations: string[] = [];

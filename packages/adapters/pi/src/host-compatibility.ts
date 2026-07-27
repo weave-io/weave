@@ -9,7 +9,7 @@ import {
 /** The one compatible host package. Upstream `@mariozechner/pi-coding-agent` is a different identity. */
 export const HOST_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
 
-/** Inclusive floor of the supported host version range (Spec 33 §22). */
+/** Inclusive floor of the supported host version range (Pi adapter contract). */
 export const HOST_VERSION_FLOOR = "0.81.1";
 
 export const HostPackageInfoSchema = z.object({
@@ -51,7 +51,7 @@ const FLOOR = { major: 0, minor: 81, patch: 1 };
 
 /**
  * Minimum-only `>=0.81.1` range check. There is no maximum version and no
- * force/ignore override (Spec 33 §22): prereleases fail closed rather than
+ * force/ignore override (Pi adapter contract): prereleases fail closed rather than
  * being coerced into the supported range.
  */
 export function isSupportedHostVersion(version: string): boolean {

@@ -1,5 +1,5 @@
 /**
- * Pure, Pi-independent rendering of the bounded compact plan widget (Spec 33
+ * Pure, Pi-independent rendering of the bounded compact plan widget (Pi adapter contract
  * §16). Shows `Task N of M`, the previous/current/next parent task, every
  * subtask of the current parent, and badges for any *other* parent task
  * that is also `in_progress`. Read-only and bounded - never mutates the

@@ -151,7 +151,7 @@ export interface PermissionRegistryGenerationMetadata {
  */
 export type PendingPermissionDecision = "ask";
 /**
- * Origin of a pending request (Spec 34 §6).
+ * Origin of a pending request (permission contract).
  * - `policy`: grantable request under effective capability policy `ask`
  *   without a matching grant
  * - `resolver`: explicit unresolved mapping that always requires approval

@@ -7,7 +7,7 @@
  *
  * All imports come from the public `@weaveio/weave-engine` barrel — no private paths.
  *
- * @see docs/specs/12-spec-runtime-persistence/12-spec-runtime-persistence.md
+ * @see docs/reference/runtime.md
  */
 
 import { describe, expect, it } from "bun:test";

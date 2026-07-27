@@ -69,4 +69,4 @@ result.match(
 );
 ```
 
-See [../../docs/adapter-boundary.md](../../docs/adapter-boundary.md) for how parsed config flows into engine composition APIs and adapters.
+See [../../docs/architecture/adapter-boundary.md](../../docs/architecture/adapter-boundary.md) for how parsed config flows into engine composition APIs and adapters.

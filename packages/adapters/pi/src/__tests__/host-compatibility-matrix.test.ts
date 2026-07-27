@@ -9,7 +9,7 @@ import {
 } from "../host-compatibility-matrix.js";
 
 describe("PI_HOST_COMPATIBILITY_MATRIX", () => {
-  it("names the exact host package, range, floor, and tested version (Spec 33 §22)", () => {
+  it("names the exact host package, range, floor, and tested version (Pi adapter contract)", () => {
     expect(PI_HOST_COMPATIBILITY_MATRIX.package).toBe(HOST_PACKAGE_NAME);
     expect(PI_HOST_COMPATIBILITY_MATRIX.supportedRange).toBe(">=0.81.1");
     expect(PI_HOST_COMPATIBILITY_MATRIX.floorVersion).toBe(HOST_VERSION_FLOOR);

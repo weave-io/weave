@@ -31,7 +31,7 @@
  * Boundary rule: this module calls the engine's `runNamedWorkflow` operation
  * and the adapter interface. It must not import directly from `@opencode-ai/sdk`.
  *
- * @see docs/adapter-boundary.md — Execution Lifecycle Surface section
+ * @see docs/architecture/adapter-boundary.md — Execution Lifecycle Surface section
  * @see start-plan-execution.ts — the `/weave:start` ordinary-usage path
  * @see packages/engine/src/runtime-command-operations/run-named-workflow.ts
  */

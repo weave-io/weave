@@ -8,9 +8,9 @@
  * - Public import paths compile (imports from @weaveio/weave-engine)
  * - SafeMetadata structural constraint
  * - Error factory helpers produce correct discriminants
- * - ExecutionOperationKind discriminated union (Spec 22 Unit 1)
+ * - ExecutionOperationKind discriminated union (execution lifecycle contract)
  * - ExecutionAuthorizationSource — explicit authorization enforcement (Task 1.3)
- * - inspectExecution read-only behavior (Spec 22 Unit 1)
+ * - inspectExecution read-only behavior (execution lifecycle contract)
  * - observeSession boundary: cannot create instances or leases (ADR 0004)
  * - Agent-, hook-, and event-initiated self-start paths are rejected (ADR 0004)
  */
@@ -6177,10 +6177,10 @@ describe("completeStep: blocking issue fixes", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Spec 22 Unit 1: ExecutionOperationKind — explicit operations are first-class
+// execution lifecycle contract: ExecutionOperationKind — explicit operations are first-class
 // ---------------------------------------------------------------------------
 
-describe("ExecutionOperationKind (Spec 22 Unit 1)", () => {
+describe("ExecutionOperationKind (execution lifecycle contract)", () => {
   it("EXECUTION_OPERATION_KINDS contains all 5 explicit operation kinds", () => {
     expect(EXECUTION_OPERATION_KINDS).toHaveLength(5);
     expect(EXECUTION_OPERATION_KINDS).toContain("start");
@@ -6219,10 +6219,10 @@ describe("ExecutionOperationKind (Spec 22 Unit 1)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Spec 22 Unit 1: inspectExecution — read-only, no side effects
+// execution lifecycle contract: inspectExecution — read-only, no side effects
 // ---------------------------------------------------------------------------
 
-describe("inspectExecution (Spec 22 Unit 1)", () => {
+describe("inspectExecution (execution lifecycle contract)", () => {
   it("InspectExecutionInput / InspectExecutionOutput type shapes are correct", () => {
     const input: InspectExecutionInput = {
       workflowInstanceId: wfId,
@@ -6469,7 +6469,7 @@ describe("inspectExecution (Spec 22 Unit 1)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Spec 22 Unit 1 / ADR 0004: observeSession boundary invariants
+// Execution lifecycle contract and ADR 0004: observeSession boundary invariants
 // ---------------------------------------------------------------------------
 
 describe("observeSession boundary invariants (ADR 0004)", () => {
@@ -7140,7 +7140,7 @@ describe("observeSession: side-effect-free boundary (ADR 0004)", () => {
 
 // ---------------------------------------------------------------------------
 // Task 1.4: No implicit execution — ordinary conversation, idle, and session
-// observation paths (ADR 0004 / Spec 22 Unit 1)
+// observation paths (ADR 0004 / execution lifecycle contract)
 // ---------------------------------------------------------------------------
 
 describe("No implicit execution: ordinary conversation-adjacent paths (ADR 0004)", () => {
@@ -9050,10 +9050,10 @@ describe("reconcileExecution (Runtime Store)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// reconcileExecution — gate re-run behavior (Spec 22 Unit 3)
+// reconcileExecution — gate re-run behavior (execution lifecycle contract)
 // ---------------------------------------------------------------------------
 
-describe("reconcileExecution — gate re-run (Spec 22 Unit 3)", () => {
+describe("reconcileExecution — gate re-run (execution lifecycle contract)", () => {
   /**
    * Workflow for gate re-run tests.
    *
@@ -9383,10 +9383,10 @@ describe("reconcileExecution — gate re-run (Spec 22 Unit 3)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// reconcileExecution — before-plan exclusion (Spec 22 Unit 3)
+// reconcileExecution — before-plan exclusion (execution lifecycle contract)
 // ---------------------------------------------------------------------------
 
-describe("reconcileExecution — before-plan exclusion (Spec 22 Unit 3)", () => {
+describe("reconcileExecution — before-plan exclusion (execution lifecycle contract)", () => {
   /**
    * Workflow with before-plan extension point.
    *
@@ -9787,10 +9787,10 @@ describe("reconcileExecution — before-plan exclusion (Spec 22 Unit 3)", () => 
 });
 
 // ---------------------------------------------------------------------------
-// reconcileExecution — immutable completed plan tasks (Spec 22 Unit 3)
+// reconcileExecution — immutable completed plan tasks (execution lifecycle contract)
 // ---------------------------------------------------------------------------
 
-describe("reconcileExecution — immutable completed plan tasks (Spec 22 Unit 3)", () => {
+describe("reconcileExecution — immutable completed plan tasks (execution lifecycle contract)", () => {
   /**
    * Workflow for immutable plan tests.
    *
@@ -10259,7 +10259,7 @@ describe("reconcileExecution — immutable completed plan tasks (Spec 22 Unit 3)
 });
 
 // ---------------------------------------------------------------------------
-// reconcileExecution — runtime-contract.test.ts coverage (Spec 22 Unit 3)
+// reconcileExecution — runtime-contract.test.ts coverage (execution lifecycle contract)
 // ---------------------------------------------------------------------------
 
 describe("reconcileExecution — closed reason set enforcement", () => {

@@ -1,7 +1,7 @@
 /**
  * Execution Lifecycle — beforeTool compatibility and static policy preview.
  *
- * `beforeTool` is the authoritative Spec 34 compatibility path. It accepts
+ * `beforeTool` is the authoritative permission contract compatibility path. It accepts
  * only a registered call snapshot and delegates directly to PermissionSession.
  * The legacy one-capability evaluator lives in `previewToolPolicy`; its result
  * is informational and cannot authorize execution or establish readiness.
@@ -257,7 +257,7 @@ export function previewToolPolicy(
 }
 
 /**
- * Authorize one intercepted registered call through the Spec 34 permission
+ * Authorize one intercepted registered call through the permission contract permission
  * session. Legacy static-policy-shaped input is rejected by the exact-shape
  * snapshot instead of being dispatched to a fallback evaluator.
  *

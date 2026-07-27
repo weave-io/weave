@@ -1,6 +1,6 @@
 /**
  * Injected randomness/HMAC ports and secret-handling helpers for the
- * private child transport (Spec 33 §11.3). Production implementations use
+ * private child transport (Pi adapter contract). Production implementations use
  * only Web Crypto (`crypto.getRandomValues`/`crypto.subtle`), which Bun
  * implements natively - no Node `crypto` module import.
  */
@@ -129,7 +129,7 @@ function toFreshBuffer(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
  * Deliberately does not surface the thrown value's own message: an
  * exception from Web Crypto could in principle echo back input material,
  * and this reason string can end up in adapter failure `correlation`
- * fields, which must never carry raw payload/secret content (Spec 33
+ * fields, which must never carry raw payload/secret content (Pi adapter contract
  * §19.1). Every HMAC failure is reported through this single bounded,
  * closed-set reason regardless of cause.
  */
@@ -175,7 +175,7 @@ const NONCE_BYTES = 16; // 128 bits
  * A 256-bit secret held in an erasable buffer. `dispose()` zeroes the
  * underlying bytes so no reference to the live secret value can outlive a
  * terminal path (spawn failure, handshake timeout, settlement, abort, or
- * shutdown) - Spec 33 §11.3.
+ * shutdown) - Pi adapter contract.
  */
 export class ErasableSecret {
   private bytes: Uint8Array | undefined;

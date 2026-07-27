@@ -1,8 +1,8 @@
 /**
- * Injected process port for spawning a private RPC child (Spec 33 §11.2).
+ * Injected process port for spawning a private RPC child (Pi adapter contract).
  * Production implementation uses only `Bun.spawn` - no `node:child_process`.
  * Tests always inject a scripted fake; no automated test may spawn a real
- * process (AGENTS.md, Spec 33 §24 layer D).
+ * process (see AGENTS.md and the Pi adapter contract).
  */
 import { err, ok, type Result, ResultAsync } from "neverthrow";
 
@@ -65,7 +65,7 @@ export interface PiChildProcessPort {
  * whatever the host process or OS actually threw. That content can't be
  * trusted not to carry paths, environment values, or other data that must
  * never reach an adapter failure's correlation fields, logs, or the TUI
- * (Spec 33 §19.1), and mirrors the same closed-reason pattern already used
+ * (Pi adapter contract), and mirrors the same closed-reason pattern already used
  * by `child-crypto.ts`'s own `describeThrown`.
  */
 const SPAWN_FAILED_REASON = "child-process-spawn-failed";
@@ -83,7 +83,7 @@ const READ_FAILED_REASON = "child-process-read-failed";
  * blocked, or ignored, and the kernel delivers it to a stopped
  * (`SIGSTOP`'d) process immediately rather than leaving it pending until
  * the process is resumed - this is exactly what a plain default-signal
- * `kill()` cannot guarantee (Spec 33 §11.5).
+ * `kill()` cannot guarantee (Pi adapter contract).
  */
 export const FORCE_KILL_SIGNAL = 9;
 

@@ -223,7 +223,7 @@ describe("BunFilesystemPlanStateProvider: isPlanComplete", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Revisioned snapshots and transitions (Spec 33 §16)
+// Revisioned snapshots and transitions (Pi adapter contract)
 // ---------------------------------------------------------------------------
 
 describe("BunFilesystemPlanStateProvider: revisioned plan state", () => {

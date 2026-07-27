@@ -239,11 +239,11 @@ export const ArtifactDeclSchema = z.object({
 export const OnRejectSchema = z.enum(["pause", "fail", "retry"]);
 
 // ---------------------------------------------------------------------------
-// Reconciliation reason (closed built-in set — Spec 22 Unit 3)
+// Reconciliation reason (closed built-in set — execution lifecycle contract)
 // ---------------------------------------------------------------------------
 
 /**
- * The closed built-in set of reconciliation reasons defined by Spec 22 Unit 3.
+ * The closed built-in set of reconciliation reasons defined by the execution lifecycle contract.
  *
  * - `execution-mismatch`    — runtime validation or execution checks detected a
  *                             mismatch between expected and actual execution state.
@@ -263,7 +263,7 @@ export const ReconciliationReasonSchema = z.enum([
 ]);
 
 // ---------------------------------------------------------------------------
-// Reconciliation handler (step-local declaration — Spec 22 Unit 3)
+// Reconciliation handler (step-local declaration — execution lifecycle contract)
 // ---------------------------------------------------------------------------
 
 /**
@@ -372,7 +372,7 @@ export const WorkflowStepSchema = z
     outputs: z.array(ArtifactDeclSchema).optional(),
     on_reject: OnRejectSchema.optional(),
     /**
-     * Step-local reconciliation handler declarations (Spec 22 Unit 3).
+     * Step-local reconciliation handler declarations (execution lifecycle contract).
      *
      * Declares that this step is the upstream handler for the listed
      * reconciliation reasons. The engine routes reconciliation to the nearest

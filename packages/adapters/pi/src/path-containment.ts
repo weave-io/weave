@@ -1,10 +1,10 @@
 /**
- * Shared, no-follow-safe path-containment primitives (Spec 33 §17, §18, §21).
+ * Shared, no-follow-safe path-containment primitives (Pi adapter contract).
  *
  * Every caller that must prove a relative path resolves safely inside a
- * canonical project root - artifact reads (Spec 33 §17), plan catalog
- * listing (Spec 33 §16), and the read-only Runtime Store/plan directory
- * containment probes used by capability probing (Spec 33 §21, §28
+ * canonical project root - artifact reads (Pi adapter contract), plan catalog
+ * listing (Pi adapter contract), and the read-only Runtime Store/plan directory
+ * containment probes used by capability probing (Pi adapter contract
  * "trust-withheld must not claim workflow persistence available") - shares
  * exactly one containment implementation instead of duplicating the
  * symlink-walk logic.
@@ -18,7 +18,7 @@
  * check is a separate process, a separate open, and a separate race window
  * from the actual read it is supposed to protect - a path-check-then-reopen
  * TOCTOU dressed up as a containment proof, never a genuine same-handle
- * no-follow guarantee (Spec 33 §17/§18: "a path check followed by an
+ * no-follow guarantee (Pi adapter contract: "a path check followed by an
  * unrelated reopen is forbidden").
  *
  * Bun *does* expose a genuine no-follow primitive through its FFI bridge to
@@ -44,9 +44,9 @@
  * never silently degrade to an unsafe path-based read.
  *
  * Tests must inject `FakePathContainmentPort`/`FakeSecureRelativeFileProvider`
- * to exercise the *safe* path of a caller (Spec 33 §24 layer D forbids real
+ * to exercise the *safe* path of a caller (Pi adapter contract forbids real
  * process spawns in unit/integration tests); real-filesystem conformance is
- * covered separately by scratch-temp-directory tests (Spec 33 §24 layer E).
+ * covered separately by scratch-temp-directory tests (Pi adapter contract).
  */
 
 import { dlopen, ptr, read } from "bun:ffi";
@@ -88,7 +88,7 @@ function toResultAsync<T, E>(result: Result<T, E>): ResultAsync<T, E> {
  * a relative *directory* path resolves safely inside a canonical project
  * root depends only on this narrow interface, never on `Bun.$`/process
  * spawning directly, so it stays testable with a fully scripted fake
- * (Spec 33 §24). Used for read-only directory-existence probes
+ * (Pi adapter contract). Used for read-only directory-existence probes
  * (`.weave/runtime`, `.weave/plans`) - never for reading file bytes; see
  * {@link SecureRelativeFileProvider} for that.
  */
@@ -256,7 +256,7 @@ function openNoFollowDirectoryChain(
 }
 
 /**
- * Fully no-follow-safe production port (Spec 33 §16-§18, §21): proves every
+ * Fully no-follow-safe production port (Pi adapter contract): proves every
  * directory component of `relativePath` under `canonicalRoot` via a held
  * `openat(O_DIRECTORY | O_NOFOLLOW)` chain (see file header). Reports the
  * resolved absolute path as proof on success - this string is purely
@@ -310,7 +310,7 @@ export class NullPathContainmentPort implements PathContainmentPort {
   }
 }
 
-/** Scripted fake for isolated tests (Spec 33 §24 layer D) - never spawns a real process. */
+/** Scripted fake for isolated tests (Pi adapter contract) - never spawns a real process. */
 export class FakePathContainmentPort implements PathContainmentPort {
   constructor(
     private readonly results: ReadonlyMap<
@@ -333,7 +333,7 @@ export class FakePathContainmentPort implements PathContainmentPort {
 }
 
 /**
- * Read-only directory-containment probe (Spec 33 §21): proves a project
+ * Read-only directory-containment probe (Pi adapter contract): proves a project
  * subdirectory either resolves safely inside the canonical project root, or
  * does not exist yet (safe to create later) - never that it is reachable
  * only through a rejected symlink or path escape. Never creates, migrates,
@@ -376,7 +376,7 @@ export interface SecureDirectoryListing {
 }
 
 /**
- * Bun-only no-follow relative-file provider (Spec 33 §16, §17, §21): reads
+ * Bun-only no-follow relative-file provider (Pi adapter contract): reads
  * a project-relative regular file's bytes, or lists a project-relative
  * directory's regular-file basenames, entirely through held file
  * descriptors opened with `O_NOFOLLOW`/`O_DIRECTORY | O_NOFOLLOW` - never a
@@ -575,7 +575,7 @@ export class BunSecureRelativeFileProvider
   }
 }
 
-/** Scripted fake for isolated tests (Spec 33 §24 layer D) - never touches the real filesystem. */
+/** Scripted fake for isolated tests (Pi adapter contract) - never touches the real filesystem. */
 export class FakeSecureRelativeFileProvider
   implements SecureRelativeFileProvider
 {

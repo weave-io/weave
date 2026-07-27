@@ -1,7 +1,7 @@
 import type { PiSourceInfo } from "./types.js";
 
 /**
- * The nine `/weave:*` direct commands (Spec 33 §13). Registered once, as
+ * The nine `/weave:*` direct commands (Pi adapter contract). Registered once, as
  * inert shells, by the extension factory. Behavior beyond gating is
  * implemented in later tasks; this foundation only classifies each command
  * so the health-only gate knows what to block.
@@ -25,7 +25,7 @@ export type WeaveCommandClassification =
   | "read-only"
   | "idempotent-cleanup";
 
-/** All valid `WeaveCommandClassification` values as a readonly tuple (Spec 33 §13/§21 invalid-state gating). */
+/** All valid `WeaveCommandClassification` values as a readonly tuple (Pi adapter contract invalid-state gating). */
 export const WEAVE_COMMAND_CLASSIFICATIONS = [
   "mutating",
   "read-only",
@@ -46,7 +46,7 @@ const IDEMPOTENT_CLEANUP_COMMANDS: ReadonlySet<WeaveCommandName> = new Set([
 
 /**
  * Health-only mode blocks `mutating` commands only. `read-only` (status,
- * health, plan) and `idempotent-cleanup` (abort) remain available (Spec 33
+ * health, plan) and `idempotent-cleanup` (abort) remain available (Pi adapter contract
  * §21).
  */
 export function classifyWeaveCommand(
@@ -57,7 +57,7 @@ export function classifyWeaveCommand(
   return "read-only";
 }
 
-/** The npm package name used to install this adapter (Spec 33 §7.1). */
+/** The npm package name used to install this adapter (Pi adapter contract). */
 export const ADAPTER_PACKAGE_IDENTITY = "@weaveio/weave-adapter-pi";
 
 /**
@@ -77,7 +77,7 @@ export function parseNpmSourceName(source: string): string | undefined {
 }
 
 /**
- * Canonical provenance check (Spec 33 §7.1): ownership of a discovered
+ * Canonical provenance check (Pi adapter contract): ownership of a discovered
  * command or tool MUST be read from `sourceInfo`, never inferred from
  * command/tool names or ad hoc path parsing. A resource is ours only when
  * Pi loaded it from a `package` origin whose configured npm source resolves

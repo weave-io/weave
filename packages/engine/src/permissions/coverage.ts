@@ -10,7 +10,7 @@
  * `incomplete_coverage` is issue #21 "Enforce registered-tool policy".
  * This module supplies only the neutral proof primitive and its contract.
  *
- * See: docs/specs/34-spec-harness-neutral-permissions/34-spec-harness-neutral-permissions.md
+ * See: docs/reference/permissions.md
  */
 
 import { err, ok, Result } from "neverthrow";

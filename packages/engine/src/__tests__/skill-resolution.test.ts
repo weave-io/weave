@@ -1,5 +1,5 @@
 /**
- * Type-focused tests for the public skill-resolution types (Spec 09, Unit 1).
+ * Type-focused tests for the public skill-resolution types (skill-resolution contract,).
  *
  * These tests prove:
  * - `SkillInfo.name` is the only engine-owned matching key.
@@ -312,7 +312,7 @@ describe("resolveSkillsForAgent — name is the only matching key", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Focused resolution tests — required by Spec 09 Task 2 acceptance criteria
+// Focused resolution tests — required by skill-resolution contract acceptance criteria
 // ---------------------------------------------------------------------------
 
 describe("resolveSkillsForAgent — available skill resolution", () => {
@@ -624,7 +624,7 @@ describe("resolveSkillsForAgent — missing non-disabled skill errors", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Config-wide resolution tests — Spec 09 Task 3 acceptance criteria
+// Config-wide resolution tests — skill-resolution contract acceptance criteria
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------

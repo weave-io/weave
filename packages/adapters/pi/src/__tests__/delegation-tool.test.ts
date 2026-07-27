@@ -70,7 +70,7 @@ function baseDeps(
  * externally - mirrors the real coupling this tool's abort wiring depends
  * on, where the exact same underlying child settlement promise is what
  * `controller.cancelSubtree()` resolves once it actually cancels the live
- * child (Spec 33 §11.5), rather than the tool fabricating its own result.
+ * child (Pi adapter contract), rather than the tool fabricating its own result.
  */
 function pendingSettlement(): {
   settlement: ResultAsync<PiChildSettlement, PiAdapterFailure>;

@@ -6,7 +6,7 @@ import {
 } from "../errors.js";
 
 /**
- * Schema-lock proof for the Pi adapter's closed failure contract (Spec 33
+ * Schema-lock proof for the Pi adapter's closed failure contract (Pi adapter contract
  * §23). PI-ERR's acceptance-manifest closed set asserts that every one of
  * these code/impact/recovery literals appears somewhere in this file's text,
  * so any code silently added to or removed from `PiAdapterFailureCodeSchema`
@@ -99,7 +99,7 @@ const FROZEN_RECOVERIES = [
   "none",
 ] as const;
 
-describe("PiAdapterFailureCodeSchema closed-set exhaustiveness (Spec 33 §23)", () => {
+describe("PiAdapterFailureCodeSchema closed-set exhaustiveness (Pi adapter contract)", () => {
   it("matches the frozen failure-code list exactly, in both directions", () => {
     const actual = new Set(PiAdapterFailureCodeSchema.options);
     const frozen = new Set(FROZEN_FAILURE_CODES);
@@ -113,7 +113,7 @@ describe("PiAdapterFailureCodeSchema closed-set exhaustiveness (Spec 33 §23)", 
   });
 });
 
-describe("PiAdapterFailureImpactSchema closed-set exhaustiveness (Spec 33 §23)", () => {
+describe("PiAdapterFailureImpactSchema closed-set exhaustiveness (Pi adapter contract)", () => {
   it("matches the frozen impact list exactly, in both directions", () => {
     const actual = new Set(PiAdapterFailureImpactSchema.options);
     const frozen = new Set(FROZEN_IMPACTS);
@@ -121,7 +121,7 @@ describe("PiAdapterFailureImpactSchema closed-set exhaustiveness (Spec 33 §23)"
   });
 });
 
-describe("PiAdapterFailureRecoverySchema closed-set exhaustiveness (Spec 33 §23)", () => {
+describe("PiAdapterFailureRecoverySchema closed-set exhaustiveness (Pi adapter contract)", () => {
   it("matches the frozen recovery list exactly, in both directions", () => {
     const actual = new Set(PiAdapterFailureRecoverySchema.options);
     const frozen = new Set(FROZEN_RECOVERIES);

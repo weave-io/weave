@@ -362,7 +362,7 @@ describe("PiSafeInitializer.preflight", () => {
     expect(result._unsafeUnwrapErr().code).toBe("InvariantViolation");
   });
 
-  it("reports config/agent-materialization, primary-agent-selection, and prompt-composition as ok from a real candidate plan (Spec 33 \u00a76, \u00a77.2, \u00a728)", async () => {
+  it("reports config/agent-materialization, primary-agent-selection, and prompt-composition as ok from a real candidate plan (Pi adapter contract)", async () => {
     const loom: AgentDescriptor = {
       name: "loom",
       composedPrompt: "You are Loom.",
@@ -414,7 +414,7 @@ describe("PiSafeInitializer.preflight", () => {
     expect(statusOf("prompt-composition")).toBe("ok");
   });
 
-  it("keeps primary-agent-selection ok (with a fallback detail) when the default primary's model intent does not dry-resolve -- Spec 33 \u00a79.2 ties this to descriptor model health, not primary selectability", async () => {
+  it("keeps primary-agent-selection ok (with a fallback detail) when the default primary's model intent does not dry-resolve -- the Pi adapter contract ties this to descriptor model health, not primary selectability", async () => {
     const loom: AgentDescriptor = {
       name: "loom",
       composedPrompt: "You are Loom.",
@@ -662,7 +662,7 @@ describe("PiSafeInitializer.preflight", () => {
 
     // preflight() must not reject/throw; the primary is still found and
     // remains selectable/usable, just with the model-fallback detail since
-    // the catalog could not be read (Spec 33 §9.2 fail-closed behavior).
+    // the catalog could not be read (Pi adapter contract fail-closed behavior).
     expect(result.isOk()).toBe(true);
     const preflight = result._unsafeUnwrap();
     const primaryAgentSelection = preflight.healthReport.probeResults.find(

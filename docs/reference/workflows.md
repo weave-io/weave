@@ -1,0 +1,354 @@
+# Workflow Schema
+
+This document describes the typed workflow schema. It covers field semantics, the completion method model, validation constraints, the `name`/`display_name` mapping convention, and the `__name` parser pattern that makes parameterised completion syntax possible.
+
+**Related source files:**
+
+- [`packages/core/src/schema.ts`](../../packages/core/src/schema.ts) — all Zod schemas and inferred types
+- [`packages/core/src/validate.ts`](../../packages/core/src/validate.ts) — `transformStepProperties()` and `astToPlainObject()`
+- [`packages/core/src/parser.ts`](../../packages/core/src/parser.ts) — named block value parser enhancement
+- [DSL Reference](dsl.md) — canonical `.weave` DSL syntax reference
+- [`packages/config/src/merge.ts`](../../packages/config/src/merge.ts) — `extends`, `insert_before`, `insert_after` merge semantics
+- [Execution Lifecycle](execution-lifecycle.md) — dispatch, completion, artifacts, and reconciliation
+- [Product Vision](../architecture/product-vision.md) — Loom-led ordinary usage and explicit workflows
+- [ADR 0006 — End-to-End Orchestration Flow](../adr/0006-end-to-end-orchestration-flow.md) — Loom → Pattern → Tapestry → Weft/Warp flow
+
+> **Scope note**: Workflows are **explicit, user-invoked** constructs. They are not the default path for ordinary Weave usage. Ordinary usage is Loom-led: Loom handles conversational triage, delegates bounded tasks to Shuttle, and asks Pattern to create a plan when needed. A workflow begins only when a user explicitly invokes one (e.g. via `/weave:start` or an equivalent adapter command). See [product model](../architecture/product-vision.md) for the authoritative statement of the default model.
+
+---
+
+## Workflow Config Fields
+
+A workflow is declared with the `workflow <name> { }` top-level block.
+
+| Field              | Type                        | Required | Description                                                                                                                    |
+| ------------------ | --------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `name`             | `string`                    | no       | Internal name (set from block identifier, not the `name` field)                                                                |
+| `description`      | `string`                    | no       | Human-readable description of the workflow's purpose                                                                           |
+| `version`          | `number` (positive integer) | **yes**  | Schema version for future migration; must be ≥ 1                                                                               |
+| `steps`            | `WorkflowStep[]`            | **yes**  | Ordered list of steps; at least one required                                                                           |
+| `extension_points` | `{ before_plan?: boolean }` | no       | Declares which named extension slots this workflow publishes; `before-plan` is the only slot in v1 (see `before-plan` section) |
+
+---
+
+## Step Fields
+
+Each `step <name> { }` block inside a workflow produces a `WorkflowStep`.
+
+| Field           | Type               | Required | Description                                                                                                                                                                                  |
+| --------------- | ------------------ | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`          | `string`           | **yes**  | The step's block identifier (e.g. `step plan { }` → `"plan"`)                                                                                                                               |
+| `display_name`  | `string`           | no       | Human-readable label — sourced from the inner `name "..."` property                                                                                                                          |
+| `type`          | `WorkflowStepType` | **yes**  | Execution mode: `autonomous`, `interactive`, or `gate`                                                                                                                                       |
+| `agent`         | `string`           | **yes**  | Name of the agent that runs this step                                                                                                                                                        |
+| `prompt`        | `string`           | **yes**  | Instruction sent to the agent; may contain `{{template}}` variables                                                                                                                          |
+| `completion`    | `CompletionMethod` | **yes**  | How the that it is done (see below)                                                                                                                                             |
+| `inputs`        | `ArtifactDecl[]`   | no       | Named artifacts this from a previous step                                                                                                                                      |
+| `outputs`       | `ArtifactDecl[]`   | no       | Named artifacts this for downstream steps                                                                                                                                      |
+| `role`          | `"planning"`       | no       | Semantic role of this step; `"planning"` marks the canonical planning step (at most one per workflow that publishes `extension_points { before-plan }`)                                       |
+| `on_reject`     | `OnReject`         | no       | Behaviour when a gate (only valid when `type` is `"gate"`)                                                                                                                      |
+| `insert_before` | `string`           | no       | Position this before the named anchor the base workflow (only meaningful on extension workflows; mutually exclusive with `insert_after`)                             |
+| `insert_after`  | `string`           | no       | Position this after the named anchor the base workflow (only meaningful on extension workflows; mutually exclusive with `insert_before`)                             |
+
+### Step Type Enum
+
+| Value         | Meaning                                         |
+| ------------- | ----------------------------------------------- |
+| `autonomous`  | Agent works alone without user interaction      |
+| `interactive` | User can intervene mid-step                     |
+| `gate`        | Approve/reject checkpoint; supports `on_reject` |
+
+---
+
+## Completion Methods
+
+The `completion` field uses a **discriminated union** keyed on `method`. There are five variants:
+
+| Method           | Extra fields        | Description                                      |
+| ---------------- | ------------------- | ------------------------------------------------ |
+| `agent_signal`   | —                   | Agent emits an explicit done signal              |
+| `user_confirm`   | —                   | User explicitly approves the        |
+| `plan_created`   | `plan_name: string` | Agent writes a named plan file                   |
+| `plan_complete`  | `plan_name: string` | Agent finishes executing a named plan            |
+| `review_verdict` | —                   | Gate agent returns an approve or reject decision |
+
+### DSL syntax
+
+A bare identifier completion (no parameters):
+
+```weave
+completion user_confirm
+```
+
+A parameterised completion (named block value pattern — see below):
+
+```weave
+completion plan_created {
+  plan_name "{{instance.slug}}"
+}
+```
+
+The validator in `transformStepProperties()` maps these two forms:
+
+- `IdentifierValue("user_confirm")` → `{ method: "user_confirm" }`
+- `BlockValue(__name: "plan_created", plan_name: "...")` → `{ method: "plan_created", plan_name: "..." }`
+
+---
+
+## `on_reject` Constraint
+
+`on_reject` is **only valid on `type: "gate"` steps**. Setting it on an `autonomous` or `interactive` step produces a `ValidationError` (enforced by a Zod `.refine()` on `WorkflowStepSchema`).
+
+| Value   | Behaviour when gate rejects      |
+| ------- | -------------------------------- |
+| `pause` | Workflow pauses for user input   |
+| `fail`  | Workflow terminates with failure |
+| `retry` | Step is re-executed              |
+
+---
+
+## `name` vs `display_name` Mapping
+
+The DSL has an intentional collision: every has a block-level identifier **and** a `name "..."` property inside. The validator disambiguates them:
+
+| DSL source                            | Mapped field   | Example value   |
+| ------------------------------------- | -------------- | --------------- |
+| `step plan { }` (block id)            | `name`         | `"plan"`        |
+| `name "Create plan"` (inner property) | `display_name` | `"Create plan"` |
+
+This convention is implemented in `transformStepProperties()` in `validate.ts`. The `name` key inside the step is re-keyed to `display_name` before Zod validation, so `WorkflowStepSchema.name` always holds the programmer-facing identifier and `display_name` holds the human label.
+
+---
+
+## `__name` Named Block Value Parser Pattern
+
+### Why it exists
+
+The DSL syntax `completion plan_created { plan_name "..." }` requires the parser to understand a value form that doesn't fit either of the two existing patterns:
+
+- `key identifier` — produces an `IdentifierValue`
+- `key { block }` — produces a `BlockValue`
+
+The new pattern is `key identifier { block }` — an identifier immediately followed by a brace block.
+
+### How it works
+
+When `#parseValue()` in `parser.ts` consumes an `Identifier` token and the next token is `LBrace`, it:
+
+1. Parses the brace block via `#parseBlockLiteral()`.
+2. Prepends a synthetic `Property` with key `"__name"` and value `IdentifierValue(identifierText)` to the block's property list.
+3. Returns the resulting `BlockValue`.
+
+This means `completion plan_created { plan_name "x" }` produces:
+
+```
+BlockValue {
+  properties: [
+    { key: "__name", value: IdentifierValue("plan_created") },
+    { key: "__name", value: StringValue("x") }
+  ]
+}
+```
+
+The `__name` property is a **convention** — it is not a DSL keyword, not a schema field, and not visible to end users. It is stripped by `transformStepProperties()` in the validator, which reads `__name` to set the `method` discriminant.
+
+### General-purpose enhancement
+
+The `identifier { block }` pattern is not specific to `completion`. Any property in any block can use it:
+
+```weave
+some_key my_method {
+  param1 "value"
+}
+```
+
+This produces the same `BlockValue` structure with `__name: "my_method"`. Future DSL features that need named parameterised blocks can leverage this pattern without parser changes.
+
+---
+
+## Artifact References
+
+`inputs` and `outputs` are arrays of `ArtifactDecl`:
+
+```ts
+type ArtifactDecl = {
+  name: string;
+  description: string;
+};
+```
+
+In the DSL:
+
+```weave
+outputs [
+  { name "plan_path" description "Path to the generated plan file" }
+]
+```
+
+Both `name` and `description` are required. Artifact names are used as template variables in downstream via `{{artifacts.<name>}}`.
+
+---
+
+## Execution Semantics
+
+> **Implementation:** [`packages/engine/src/execution-lifecycle.ts`](../../packages/engine/src/execution-lifecycle.ts) · **Boundary:** [`docs/architecture/adapter-boundary.md — Workflow Engine`](../architecture/adapter-boundary.md#workflow-engine)
+
+This section describes how the engine consumes the workflow schema at runtime. The engine drives execution through the Execution Lifecycle Surface — adapters map harness events into lifecycle calls; the engine evaluates policy and returns typed effects.
+
+### Step Ordering
+
+Steps are executed in declaration order. The `steps` array in `WorkflowConfig` is the authoritative sequence:
+
+1. `startExecution` sets `currentStepName` to `steps[0].name` (the first step's block identifier).
+2. `completeStep` advances to the next index. When the completed the last in the array, the engine transitions the instance to `completed`, releases the execution lease, and emits a `complete-execution` effect.
+3. There is no branching or conditional routing — is fixed by the DSL declaration.
+
+### Input/Output Artifact Passing
+
+Artifacts flow between the Runtime Store:
+
+- **`outputs`** — declared on the producing step. When `completeStep` is called with `outcome: "success"`, the engine validates that every artifact named in `step.outputs` is present in `completionSignal.artifacts`. Validation is all-or-nothing: a missing artifact returns a `validation` error before any state changes. Validated artifacts are persisted via `store.instances.addArtifact()`.
+- **`inputs`** — declared on the consuming step. When `dispatchStep` is called, the engine validates that every artifact named in `step.inputs` is already present in the instance's artifact store. A missing input artifact returns a `not_found` error before the dispatch effect is emitted.
+- Artifact names are used as template variables in downstream via `{{artifacts.<name>}}`. The engine renders `step.prompt` with the current artifact map before emitting the `RunAgentEffect`.
+
+### Completion Method Evaluation
+
+The `completion` field on each step declares the expected completion contract. When `completeStep` receives a `completionSignal` with a `method` field, the engine validates it against the step's declared `completion.method`:
+
+| Method | Signal requirements | Engine behaviour |
+| --- | --- | --- |
+| `agent_signal` | `outcome: "success"` | Treat as success; auto-advance to next step |
+| `user_confirm` | `outcome: "success"` | Treat as success; auto-advance to next step |
+| `review_verdict` | `outcome: "success"`, `approved: boolean` | `approved: true` → advance; `approved: false` → apply `on_reject` policy |
+| `plan_created` | `outcome: "success"` | Check `.weave/plans/<plan_name>.md` exists |
+| `plan_complete` | `outcome: "success"` | Check plan file has no `- [ ]` checkboxes remaining |
+
+A method mismatch (signal method ≠ declared method) returns a `validation` error before any state changes. When `method` is omitted from the signal, the engine skips method validation (legacy path).
+
+### `on_reject` Handling
+
+`on_reject` is only valid on `type: "gate"` steps. When a `review_verdict` signal arrives with `approved: false`, the engine reads `step.on_reject` and applies the corresponding policy:
+
+| `on_reject` value | Engine action |
+| --- | --- |
+| `pause` | Transitions instance to `paused` status, emits `pause-execution` effect (lease remains held). The instance remains resumable via `resumeExecution`. |
+| `fail` | Transitions instance to `failed` status (terminal), releases the execution lease, emits `complete-execution` effect. |
+| `retry` | Re-dispatches the same step with a fresh `correlationId`. The instance status remains `running`; the step is not advanced. |
+
+When `on_reject` is absent and a gate rejects, the engine defaults to `pause` behaviour.
+
+### Prompt Template Rendering
+
+`step.prompt` is a Mustache template rendered by the engine before the `RunAgentEffect` is emitted. Available template variables include:
+
+- `{{instance.goal}}` — the human-readable goal for this execution
+- `{{instance.slug}}` — the URL-safe slug for this execution
+- `{{artifacts.<name>}}` — artifact values produced by previous rendered prompt is never included in `RunAgentEffect` directly — only `promptMetadata` (byte length) is surfaced in the effect. The raw rendered prompt is passed to the agent through the harness-owned dispatch path.
+
+### Security Invariants
+
+- `StepCompletionSignal` structurally excludes raw prompts, completions, transcripts, credentials, and tokens. Only `outcome`, `method`, `approved`, `message` (safe human-readable), `artifacts`, and `nextStepHint` are accepted.
+- `promptMetadata` in `RunAgentEffect` carries only `byteLength` — no raw prompt text appears in emitted effects or the Runtime Store.
+- `SafeMetadata` on all lifecycle inputs is validated against a credential denylist before any state changes.
+
+---
+
+## `before-plan` Extension Surface
+
+A workflow may publish one named slot for reviewed work that must run before its canonical planning step. Publication and composition use different syntax.
+
+### Publish the slot
+
+```weave
+workflow plan-and-execute {
+  description "Research, plan, implement, and review a feature end-to-end"
+  version 1
+
+  extension_points {
+    before-plan
+  }
+
+  step research {
+    name "Research the codebase and external context"
+    type autonomous
+    agent thread
+    prompt "Explore the codebase for: {{instance.goal}}"
+    completion agent_signal
+  }
+
+  step plan {
+    name "Create implementation plan"
+    role planning
+    type autonomous
+    agent pattern
+    prompt "Create a detailed implementation plan for: {{instance.goal}}"
+    completion plan_created {
+      plan_name "{{instance.slug}}"
+    }
+    outputs [
+      { name "plan_path" description "Path to the generated plan file" }
+    ]
+  }
+}
+```
+
+A workflow that publishes `before-plan` must contain exactly one `role planning` step. The slot enriches planning inputs; it does not replace planning.
+
+### Fill the slot
+
+A top-level directive names ordinary step declarations:
+
+```weave
+step write-design {
+  name "Write design"
+  type autonomous
+  agent pattern
+  prompt "Write a design for: {{instance.goal}}"
+  completion agent_signal
+  outputs [
+    { name "design_path" description "Path to the design document" }
+  ]
+}
+
+step review-design {
+  name "Review design"
+  type gate
+  agent weft
+  prompt "Review {{artifacts.design_path}} for: {{instance.goal}}"
+  completion review_verdict
+  on_reject pause
+  inputs [
+    { name "design_path" description "Design to review" }
+  ]
+}
+
+extend before-plan ["write-design", "review-design"]
+```
+
+The config layer applies one global ordered `before-plan` list to every workflow that publishes the slot. Multiple directives union-merge in declaration order. A missing step name is a validation error.
+
+### Resolution order
+
+For each publishing workflow, the config layer:
+
+1. merges inherited and overriding workflow declarations;
+2. finds the single planning step;
+3. resolves the global `extend before-plan` names to declared steps;
+4. inserts those steps immediately before planning, in declared order;
+5. applies `insert_before`, `insert_after`, and same-name replacement rules;
+6. returns a flat `WorkflowConfig` to the engine.
+
+The engine never sees `extension_points`, `extend_before_plan`, or insertion directives.
+
+### Constraints
+
+| Constraint | Rule |
+| --- | --- |
+| Planning role | Exactly one `role planning` step in a publishing workflow |
+| Reconciliation | Before-plan steps do not act as reconciliation handlers in v1 |
+| Artifact flow | Inputs and outputs are explicit; there is no implicit artifact passing |
+| Approval | An artifact producer cannot approve its own revision |
+| Scope | The extension list is global in v1; there is no per-workflow targeting |
+| Missing names | Fail validation rather than silently skipping a step |
+
+For the full workflow syntax, see [DSL](dsl.md#workflows). Runtime dispatch and reconciliation are defined by [Execution Lifecycle](execution-lifecycle.md).

@@ -2,7 +2,7 @@
 
 **Status:** Accepted
 
-**Related:** [Spec 33 — Full-readiness Pi adapter](../specs/33-spec-pi-adapter/33-spec-pi-adapter.md) · [DSL Reference](../dsl-reference.md) · [Adapter Boundary](../adapter-boundary.md)
+**Related:** [Pi Adapter](../adapters/pi.md) · [DSL Reference](../reference/dsl.md) · [Adapter Boundary](../architecture/adapter-boundary.md)
 
 ## Context
 
@@ -16,8 +16,8 @@ Weave will model delegation limits as portable configuration.
 
 Project settings define:
 
-- `max_children`: maximum direct children per parent;
-- `max_concurrency`: maximum concurrent children per parent;
+- `max_children`: hard cap on active direct children running in parallel per parent; settled or disposed children release capacity;
+- `max_concurrency`: maximum concurrent children per parent before requests queue;
 - `max_depth`: maximum delegation depth below the root;
 - `max_processes`: maximum live delegated work units across the adapter.
 
@@ -25,7 +25,7 @@ Agents may narrow only `max_children` and `max_concurrency`. They may not raise 
 
 Core owns DSL syntax, validation, and defaults. Config owns layer merge. Engine owns `EffectiveDelegationLimits` and `authorizeDelegation()`, a pure decision over adapter-supplied counts. Adapters own queues, process or task counts, spawn, cancellation, and final enforcement.
 
-The defaults are 9 direct children, 3 concurrent children per parent, depth 3 below root, and 9 live work units globally. Validation uses bounded positive integers and precise field paths.
+The defaults are a hard cap of 9 active direct children, 3 concurrent children per parent before queuing, depth 3 below root, and 9 live work units globally. Validation uses bounded positive integers and precise field paths.
 
 ## Consequences
 

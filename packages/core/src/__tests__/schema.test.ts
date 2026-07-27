@@ -525,7 +525,7 @@ describe("WorkflowConfigSchema", () => {
   });
 
   // -------------------------------------------------------------------------
-  // WorkflowConfigSchema — prompt_append and prompt_append_file (Spec 22 Unit 4)
+  // WorkflowConfigSchema — prompt_append and prompt_append_file (execution lifecycle contract)
   // -------------------------------------------------------------------------
 
   it("accepts workflow with prompt_append (workflow-scope append)", () => {
@@ -621,7 +621,7 @@ describe("WorkflowConfigSchema", () => {
 });
 
 // ---------------------------------------------------------------------------
-// WorkflowStepSchema — prompt_append and prompt_append_file (Spec 22 Unit 4)
+// WorkflowStepSchema — prompt_append and prompt_append_file (execution lifecycle contract)
 // ---------------------------------------------------------------------------
 
 describe("WorkflowStepSchema — prompt_append and prompt_append_file", () => {
@@ -1655,7 +1655,7 @@ describe("WorkflowStepSchema — reconciliation_handlers", () => {
 // ---------------------------------------------------------------------------
 
 describe("WorkflowStepSchema — v1 before-plan non-reconciling contract", () => {
-  // Spec 22 Unit 2 states: "before-plan steps do not participate in
+  // The execution lifecycle contract states: "before-plan steps do not
   // reconciliation semantics" in v1.
   //
   // As of Task 4.1, `reconciliation_handlers` IS a valid schema field on

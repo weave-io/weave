@@ -210,7 +210,7 @@ export class BunSqliteDialect implements Dialect {
 
 /**
  * Cross-store/cross-process coordination for the in-memory dialect
- * (Spec 33 §18 concurrency hardening). Every distinct `SqliteRuntimeStore`
+ * (Pi adapter contract concurrency hardening). Every distinct `SqliteRuntimeStore`
  * instance over the same `weave.db` path owns an entirely independent
  * in-memory `bun:sqlite` `Database`; without a real, OS-level exclusive
  * lock plus a fresh reload immediately before every outside-transaction

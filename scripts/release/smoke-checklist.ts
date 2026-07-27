@@ -1,7 +1,7 @@
 import { err, ok, type Result, ResultAsync } from "neverthrow";
 
 /**
- * Parser for the digest-bound stable TUI smoke checklist (Spec 33 §25).
+ * Parser for the digest-bound stable TUI smoke checklist (Pi adapter contract).
  *
  * The checklist itself (`docs/specs/33-spec-pi-adapter/33-smoke-checklist.md`)
  * is a manual, human-executed document — this module only extracts its

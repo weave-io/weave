@@ -152,26 +152,26 @@ weave prompt self-modify --scope local    # guide for project scope
 The printed guide includes:
 
 - The selected scope label and canonical config/prompts paths for that scope.
-- A pre-flight checklist naming `docs/dsl-reference.md` and `docs/config-loading.md` as required reading.
-- A note that `docs/prompt-composition.md` must be read before any prompt-related change.
-- A clear statement that **`packages/docs/` is a public mirror, not the canonical source** — the authoritative docs live in `docs/` at the repo root.
+- A pre-flight checklist naming `docs/reference/dsl.md` and `docs/reference/configuration.md` as required reading.
+- A note that `docs/reference/prompts.md` must be read before any prompt-related change.
+- A clear statement that repo-root `docs/` owns internal contracts while `packages/docs/` owns public user guidance.
 - Target-aware rules for global vs. local scope differences.
 - A step-by-step workflow: identify → read DSL section → edit config → place prompt files → validate → inspect.
 - Common DSL patterns (override builtin, add agent, add category, disable agent).
 - Prompt-specific rules (Mustache context fields, `{{{delegation.section}}}`, mutual exclusivity of `prompt`/`prompt_file`).
 - Verification commands (`weave validate`, `weave prompt list`, `weave prompt inspect`).
 
-### Canonical doc authority
+### Documentation audience
 
-The guide explicitly names repo-root `docs/` as the canonical source and `packages/docs/` as a public mirror. Agents following the guide must load `docs/dsl-reference.md` and `docs/config-loading.md` from the repo root — not from `packages/docs/`. The two may diverge; `docs/` always wins.
+The guide points source contributors to `docs/reference/dsl.md` and `docs/reference/configuration.md` for internal contracts. The public site is not a mirror: `packages/docs/` owns user-facing guidance. Changes that affect both audiences update both surfaces.
 
 ### Base docs first
 
 The guide enforces a **base docs first** reading order:
 
-1. `docs/dsl-reference.md` — DSL syntax reference
-2. `docs/config-loading.md` — merge rules, builtin agents, prompt-file resolution
-3. `docs/prompt-composition.md` — only when the change touches prompt text or prompt fields
+1. `docs/reference/dsl.md` — DSL syntax reference
+2. `docs/reference/configuration.md` — merge rules, builtin agents, prompt-file resolution
+3. `docs/reference/prompts.md` — only when the change touches prompt text or prompt fields
 
 Agents must not skip to target-specific sections without first reading the base docs.
 
@@ -182,8 +182,8 @@ When Loom receives a self-modification request, it should:
 1. Clarify the config object type before asking about scope.
 2. Ask about scope only after the object type is clear.
 3. Run `weave prompt self-modify [--scope <scope>]` to obtain the guide.
-4. Load `docs/dsl-reference.md` and `docs/config-loading.md` before any edits.
-5. Load `docs/prompt-composition.md` before any prompt-related edits.
+4. Load `docs/reference/dsl.md` and `docs/reference/configuration.md` before any edits.
+5. Load `docs/reference/prompts.md` before any prompt-related edits.
 
 ## `weave runtime status`
 

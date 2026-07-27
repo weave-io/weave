@@ -5,7 +5,7 @@
  * and the `SafeMetadata` type used across lifecycle modules.
  *
  * @see packages/engine/src/execution-lifecycle.ts — compatibility barrel
- * @see docs/adapter-boundary.md — Execution Lifecycle Surface section
+ * @see docs/reference/execution-lifecycle.md
  */
 
 import type { ReconciliationReason, WorkflowConfig } from "@weaveio/weave-core";

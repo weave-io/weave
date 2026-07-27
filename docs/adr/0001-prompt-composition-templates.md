@@ -2,7 +2,7 @@
 
 **Status**: Accepted  
 **Date**: 2026-05-19  
-**Related**: [Prompt Composition Guide](../prompt-composition.md) · [Adapter Boundary](../adapter-boundary.md) · [Context Glossary](../../CONTEXT.md)
+**Related**: [Prompt Composition Guide](../reference/prompts.md) · [Adapter Boundary](../architecture/adapter-boundary.md) · [Context Glossary](../../CONTEXT.md)
 
 ---
 

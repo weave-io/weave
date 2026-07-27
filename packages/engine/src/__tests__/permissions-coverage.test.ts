@@ -1,5 +1,5 @@
 /**
- * Spec 34 task 3 — harness-neutral permission coverage proof.
+ * permission contract task 3 — harness-neutral permission coverage proof.
  *
  * Uses an in-memory fake adapter only. No live harness, child process,
  * network, or concrete Pi/OpenCode interception paths.

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 /**
- * Structural guard for Spec 33 §6/§7.1/§7.2: the safe-init/controller
+ * Structural guard for Pi adapter contract: the safe-init/controller
  * foundation MUST NOT touch the filesystem, spawn a process, or start a
  * timer. Rather than trust behavior alone, this scans the compiled sources
  * for forbidden tokens so a future edit that introduces one of these calls

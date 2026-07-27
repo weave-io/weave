@@ -23,7 +23,7 @@ import { PI_HOST_COMPATIBILITY_MATRIX } from "../../packages/adapters/pi/src/hos
 import type { SmokeChecklistResult } from "./smoke-checklist.js";
 
 /**
- * Acceptance manifest builder and validator (Spec 33 §25, PI-PKG).
+ * Acceptance manifest builder and validator (Pi adapter contract, PI-PKG).
  *
  * Mirrors `docs/specs/33-spec-pi-adapter/acceptance-manifest.schema.json`
  * (the checked-in normative contract) as Zod schemas, provides the
@@ -61,7 +61,7 @@ export type RequirementId = (typeof REQUIREMENT_IDS)[number];
 
 export const RequirementIdSchema = z.enum(REQUIREMENT_IDS);
 
-const NORMATIVE_SECTION_PATTERN = /^33§[0-9]+(\.[0-9]+)?$/;
+const CONTRACT_REFERENCE_PATTERN = /^(?:docs\/(?!specs(?:\/|$))|packages\/|scripts\/)[A-Za-z0-9._/-]+(?:#[a-z0-9]+(?:-[a-z0-9]+)*)?$/;
 const TEST_KEY_PATTERN = /^T[0-9]{3}$/;
 const PROOF_ID_PATTERN = /^P[0-9]{3}$/;
 const SMOKE_ID_PATTERN = /^S[0-9]{3}$/;
@@ -78,11 +78,11 @@ export type TestEvidence = z.infer<typeof TestEvidenceSchema>;
 export const RequirementSchema = z
   .object({
     id: RequirementIdSchema,
-    normativeSections: z
-      .array(z.string().regex(NORMATIVE_SECTION_PATTERN))
+    contractReferences: z
+      .array(z.string().regex(CONTRACT_REFERENCE_PATTERN))
       .min(1)
       .refine((items) => new Set(items).size === items.length, {
-        message: "normative sections must be unique",
+        message: "contract references must be unique",
       }),
     tests: z
       .record(z.string().regex(TEST_KEY_PATTERN), TestEvidenceSchema)
@@ -236,10 +236,10 @@ export const PERMISSION_OUTCOME_KINDS = [
   "block",
 ] as const;
 
-/** The 2 `ArtifactApprovalActor` kinds (Spec 33 §17). */
+/** The 2 `ArtifactApprovalActor` kinds (Pi adapter contract). */
 export const ARTIFACT_APPROVAL_ACTOR_KINDS = ["user", "agent"] as const;
 
-/** The 2 source-controlled host-compatibility boundary tokens (Spec 33 §22). */
+/** The 2 source-controlled host-compatibility boundary tokens (Pi adapter contract). */
 export const HOST_BOUNDARY_TOKENS = [
   HOST_PACKAGE_NAME,
   HOST_VERSION_FLOOR,
@@ -249,20 +249,20 @@ export const CLOSED_SET_REQUIREMENTS: Partial<
   Record<RequirementId, ClosedSetSpec>
 > = {
   "PI-CAP": {
-    description: "19 capability IDs (Spec 33 §21)",
+    description: "20 capability IDs (Pi adapter contract)",
     members: ALL_CAPABILITY_IDS,
   },
   "PI-CMD": {
     description:
-      "9 direct /weave:* commands plus the 3 command classifications gating invalid (health-only) states (Spec 33 §13, §21)",
+      "9 direct /weave:* commands plus the 3 command classifications gating invalid (health-only) states (Pi adapter contract)",
     members: [...WEAVE_COMMAND_NAMES, ...WEAVE_COMMAND_CLASSIFICATIONS],
   },
   "PI-LIF": {
-    description: "10 lifecycle operations (Spec 33 §14)",
+    description: "10 lifecycle operations (Pi adapter contract)",
     members: LIFECYCLE_OPERATIONS,
   },
   "PI-DEL": {
-    description: "11 private control envelope/reply kinds (Spec 33 §11.3)",
+    description: "9 private control envelope kinds (Pi adapter contract)",
     members: PI_CONTROL_KINDS,
   },
   "PI-POL": {
@@ -270,24 +270,24 @@ export const CLOSED_SET_REQUIREMENTS: Partial<
     members: PERMISSION_OUTCOME_KINDS,
   },
   "PI-PLN": {
-    description: "3 plan task markers/states (Spec 33 §16)",
+    description: "3 plan task markers/states (Pi adapter contract)",
     members: PLAN_TASK_STATES,
   },
   "PI-ART": {
     description:
-      "2 artifact-approval actor kinds plus 4 reconciliation authorization sources (Spec 33 §17)",
+      "2 artifact-approval actor kinds plus 4 reconciliation authorization sources (Pi adapter contract)",
     members: [
       ...ARTIFACT_APPROVAL_ACTOR_KINDS,
       ...RECONCILIATION_AUTHORIZATION_SOURCES,
     ],
   },
   "PI-PKG": {
-    description: "host package/minimum-version boundary tokens (Spec 33 §22)",
+    description: "host package/minimum-version boundary tokens (Pi adapter contract)",
     members: HOST_BOUNDARY_TOKENS,
   },
   "PI-ERR": {
     description:
-      "every PiAdapterFailureCode, impact, and recovery value (Spec 33 §23)",
+      "every PiAdapterFailureCode, impact, and recovery value (Pi adapter contract)",
     members: [
       ...PiAdapterFailureCodeSchema.options,
       ...PiAdapterFailureImpactSchema.options,
@@ -351,7 +351,7 @@ export interface EvidenceVerificationReport {
  *    concatenated content of the row's referenced test files.
  *
  * This never runs the named tests — it only proves the evidence trail is
- * real, matching Spec 33 §25's "CI ... verifies named tests and evidence
+ * real, matching Pi adapter contract's "CI ... verifies named tests and evidence
  * exist" requirement.
  */
 export async function verifyAcceptanceManifestEvidence(

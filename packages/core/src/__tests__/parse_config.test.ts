@@ -1072,7 +1072,7 @@ extend before-plan ["spec-review"]`;
 // ---------------------------------------------------------------------------
 
 describe("parseConfig — before-plan non-reconciling in v1", () => {
-  // Spec 22 Unit 2: "before-plan steps do not participate in reconciliation
+  // execution lifecycle contract: "before-plan steps do not participate in reconciliation
   // semantics" in v1. As of Task 4.1, `reconciliation_handlers` is a valid
   // schema field. The v1 non-reconciling constraint for before-plan steps is
   // enforced at the engine/runtime layer, not the schema/validate layer.
@@ -1363,7 +1363,7 @@ describe("parseConfig — reconciliation_handlers on workflow steps", () => {
 });
 
 // ---------------------------------------------------------------------------
-// parseConfig — workflow-level prompt_append and prompt_append_file (Spec 22 Unit 4)
+// parseConfig — workflow-level prompt_append and prompt_append_file (execution lifecycle contract)
 // ---------------------------------------------------------------------------
 
 describe("parseConfig — workflow-level prompt_append and prompt_append_file", () => {
@@ -1494,7 +1494,7 @@ describe("parseConfig — workflow-level prompt_append and prompt_append_file", 
 });
 
 // ---------------------------------------------------------------------------
-// parseConfig — step-level prompt_append and prompt_append_file (Spec 22 Unit 4)
+// parseConfig — step-level prompt_append and prompt_append_file (execution lifecycle contract)
 // ---------------------------------------------------------------------------
 
 describe("parseConfig — step-level prompt_append and prompt_append_file", () => {

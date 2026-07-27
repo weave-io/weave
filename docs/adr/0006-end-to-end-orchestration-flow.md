@@ -2,7 +2,7 @@
 
 **Status**: Accepted  
 **Date**: 2026-06-04  
-**Related**: [ADR 0004 — Workflow-First Execution Contract](0004-workflow-first-execution-contract.md) · [Spec 22 — Workflow-First Execution](../specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md) · [Workflow Schema](../workflow-schema.md) · [Adapter Boundary](../adapter-boundary.md) · [Legacy Architecture](../legacy-architecture.md) · [Product Vision](../product-vision.md)
+**Related**: [ADR 0004 — Workflow-First Execution Contract](0004-workflow-first-execution-contract.md) · [Execution Lifecycle](../reference/execution-lifecycle.md) · [Workflows](../reference/workflows.md) · [Adapter Boundary](../architecture/adapter-boundary.md) · [Product Vision](../architecture/product-vision.md)
 
 ---
 
@@ -70,19 +70,19 @@ Loom is the `primary` agent — the user-facing orchestrator. It handles all inc
 
 Loom does not start durable execution on its own. Ordinary Loom conversation, idle events, and continuation hooks are explicitly forbidden from implicitly calling `startExecution`. See [ADR 0004](0004-workflow-first-execution-contract.md) for the enforcement rationale.
 
-#### 2. Optional before-plan steps
+#### 2. Optional before-plan work
 
-For large work, the user may have configured `extend before-plan [...]` in their project `.weave/config.weave`. These steps run before the canonical planning step and produce reviewed artifacts (e.g. a specification document) that feed into planning.
+For large work, the user may configure `extend before-plan [...]` in the project `.weave/config.weave`. These steps run before the canonical planning step and produce reviewed artifacts that feed into planning.
 
 Before-plan steps are user-configured, not builtin. The builtin `plan-and-execute` workflow publishes the `extension_points { before-plan }` slot; users fill it with their own steps. In v1, before-plan steps do not participate in reconciliation semantics.
 
-See [Workflow Schema — before-plan Extension Surface](../workflow-schema.md#before-plan-extension-surface) for the full DSL contract.
+See [Workflow Schema — before-plan Extension Surface](../reference/workflows.md#before-plan-extension-surface) for the full DSL contract.
 
-#### 3. Pattern: planning step
+#### 3. Pattern: planning
 
-Pattern is the `planning` agent. It reads the goal (and any before-plan artifacts) and writes a structured plan file to `.weave/plans/<slug>.md`. The planning step uses `completion plan_created { plan_name "{{instance.slug}}" }` — the engine verifies the plan file exists before advancing.
+Pattern is the planning agent. It reads the goal and any before-plan artifacts, then writes a structured plan file to `.weave/plans/<slug>.md`. Its step declares `completion plan_created { plan_name "{{instance.slug}}" }`; the engine verifies the plan file exists before advancing.
 
-The planning step carries `role planning` in the DSL. At most one step per workflow may carry this role.
+The planning step has `role planning` in the DSL. A workflow may have at most one planning step; a workflow that publishes `before-plan` must have exactly one.
 
 #### 4. User-authorized execution trigger
 
@@ -127,21 +127,21 @@ Gate steps are the only steps that can reject. Rejection routes through the engi
 | Portability | OpenCode-only | Any harness that implements the adapter delivery path |
 | State location | OpenCode session context + hook state | Engine-owned Runtime Store (`.weave/runtime/weave.db`) |
 
-The legacy `/start-work` → Tapestry flow is documented in [`docs/legacy-architecture.md`](../legacy-architecture.md) as migration context. The OpenCode adapter may expose a backward-compatible command, but it must be implemented as an adapter-owned projection of `startExecution` — not as a hook-driven agent switch.
+The legacy `/start-work` → Tapestry flow is documented in [`docs/architecture/product-vision.md`](../architecture/product-vision.md) as migration context. The OpenCode adapter may expose a backward-compatible command, but it must be implemented as an adapter-owned projection of `startExecution` — not as a hook-driven agent switch.
 
 ---
 
 ## Where Issue #52 Fits
 
-> **⚠ Superseded interpretation** — The guidance below (adding `default_workflow`, selecting `plan-and-execute` as a hidden default, updating Loom's prompt to name a workflow) was the original reading of issue #52. [Spec 29 — Default Usage Is Not Workflow-Driven](../specs/29-spec-default-usage-not-workflow-driven/29-spec-default-usage-not-workflow-driven.md) supersedes that interpretation. Ordinary Weave usage is Loom-led; workflows are explicit, user-invoked constructs. The plumbing described below remains valid for named workflow execution; the "default on-ramp" framing does not apply to ordinary usage. Read this section as historical context only.
+> **⚠ Superseded interpretation** — The guidance below (adding `default_workflow`, selecting `plan-and-execute` as a hidden default, updating Loom's prompt to name a workflow) was the original reading of issue #52. [product model — Default Usage Is Not Workflow-Driven](../architecture/product-vision.md) supersedes that interpretation. Ordinary Weave usage is Loom-led; workflows are explicit, user-invoked constructs. The plumbing described below remains valid for named workflow execution; the "default on-ramp" framing does not apply to ordinary usage. Read this section as historical context only.
 
 **Issue #52: `[config] Add builtin default-plan workflow`**
 
 PR #82 built the execution plumbing:
 
-- The engine's `startExecution` / `dispatchStep` / `completeStep` lifecycle surface (Spec 13, Spec 22).
-- The `WorkflowInstance` and `ExecutionLease` runtime records (Spec 12).
-- The `before-plan` extension point DSL and schema (Spec 22 Unit 2).
+- The engine's `startExecution` / `dispatchStep` / `completeStep` lifecycle surface (execution lifecycle contract, execution lifecycle contract).
+- The `WorkflowInstance` and `ExecutionLease` runtime records (Runtime Store contract).
+- The `before-plan` extension point DSL and schema (execution lifecycle contract).
 - The `plan-and-execute` builtin workflow in `packages/config/src/builtins.ts` — including the `extension_points { before-plan }` publication, the `role planning` step, and the Tapestry `implement` step.
 
 **Issue #52 is the next layer**: it would define the canonical default route through that plumbing in builtin config. Concretely, this means deciding and declaring in `BUILTIN_WEAVE_SOURCE`:
@@ -178,11 +178,11 @@ In summary: **PR #82 built the roads; issue #52 paves the default on-ramp.**
 
 ### What issue #52 would add
 
-> **⚠ Superseded** — See [Spec 29](../specs/29-spec-default-usage-not-workflow-driven/29-spec-default-usage-not-workflow-driven.md). The items below reflect the original interpretation; they are preserved as historical context.
+> **⚠ Superseded** — See [product model](../architecture/product-vision.md). The items below reflect the original interpretation; they are preserved as historical context.
 
-- ~~A `default_workflow` DSL field or equivalent engine/adapter convention.~~ (Spec 29: ordinary usage is Loom-led; no hidden default workflow is selected.)
-- ~~Optionally, a default `extend before-plan` configuration in builtins.~~ (Spec 29: pre-plan behavior belongs to Loom config/prompt composition, not workflow extension machinery.)
-- ~~A Loom prompt or routing update that names the canonical workflow for large work.~~ (Spec 29: Loom's prompt may describe delegation intent, but it shall not implicitly select a workflow for ordinary usage.)
+- ~~A `default_workflow` DSL field or equivalent engine/adapter convention.~~ (product model: ordinary usage is Loom-led; no hidden default workflow is selected.)
+- ~~Optionally, a default `extend before-plan` configuration in builtins.~~ (product model: pre-plan behavior belongs to Loom config/prompt composition, not workflow extension machinery.)
+- ~~A Loom prompt or routing update that names the canonical workflow for large work.~~ (product model: Loom's prompt may describe delegation intent, but it shall not implicitly select a workflow for ordinary usage.)
 
 ---
 
@@ -191,9 +191,9 @@ In summary: **PR #82 built the roads; issue #52 paves the default on-ramp.**
 - [`packages/config/src/builtins.ts`](../../packages/config/src/builtins.ts) — Builtin agent and workflow DSL source, including `plan-and-execute`, `quick-fix`, and `tapestry-execution`.
 - [`packages/adapters/opencode/src/run-workflow.ts`](../../packages/adapters/opencode/src/run-workflow.ts) — OpenCode adapter's explicit user-driven `startExecution` delivery path.
 - [`docs/adr/0004-workflow-first-execution-contract.md`](0004-workflow-first-execution-contract.md) — ADR establishing `startExecution` as the sole authorized execution entry point and forbidding implicit execution start.
-- [`docs/specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md`](../specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md) — Normative spec for the workflow-first execution model.
-- [`docs/workflow-schema.md`](../workflow-schema.md) — Workflow DSL fields, step types, completion methods, artifact passing, and the `before-plan` extension surface.
-- [`docs/adapter-boundary.md`](../adapter-boundary.md) — Engine/adapter ownership matrix; Execution Lifecycle Surface section.
-- [`docs/legacy-architecture.md`](../legacy-architecture.md) — Documents the `/start-work` → Tapestry flow this ADR supersedes.
-- [`docs/product-vision.md`](../product-vision.md) — Harness-agnostic architecture and core mental model.
-- [`docs/specs/29-spec-default-usage-not-workflow-driven/29-spec-default-usage-not-workflow-driven.md`](../specs/29-spec-default-usage-not-workflow-driven/29-spec-default-usage-not-workflow-driven.md) — Spec 29: supersedes the "add default_workflow" interpretation; defines ordinary usage as Loom-led.
+- [`docs/reference/execution-lifecycle.md`](../reference/execution-lifecycle.md) — Normative spec for the workflow-first execution model.
+- [`docs/reference/workflows.md`](../reference/workflows.md) — Workflow DSL fields,, completion methods, artifact passing, and the `before-plan` extension surface.
+- [`docs/architecture/adapter-boundary.md`](../architecture/adapter-boundary.md) — Engine/adapter ownership matrix; Execution Lifecycle Surface section.
+- [`docs/architecture/product-vision.md`](../architecture/product-vision.md) — Documents the `/start-work` → Tapestry flow this ADR supersedes.
+- [`docs/architecture/product-vision.md`](../architecture/product-vision.md) — Harness-agnostic architecture and core mental model.
+- [`docs/architecture/product-vision.md`](../architecture/product-vision.md) — product model: supersedes the "add default_workflow" interpretation; defines ordinary usage as Loom-led.

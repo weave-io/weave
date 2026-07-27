@@ -1,7 +1,7 @@
 /**
  * Engine-scoped rotating pino sink under `.weave/runtime/logs`.
  *
- * Spec 33 §19.2 / ADR 0011:
+ * Pi adapter contract and ADR 0011:
  * - Bun-only I/O with no-follow stable parent/file identity
  * - Hold a no-follow parent directory handle; open/rotate segments relative to it
  * - Reject symlink or swapped parent/target identity (fail closed)
@@ -139,7 +139,7 @@ const DEFAULT_FILE_MODE = 0o600;
 //
 // The low-level libc symbol loading, platform flag constants, and fd-identity
 // primitives live in `./nofollow-ffi.ts` and are shared with the Runtime
-// Store's SQLite open path (Spec 33 §18, `./sqlite/runtime-directory-guard.ts`).
+// Store's SQLite open path (Pi adapter contract, `./sqlite/runtime-directory-guard.ts`).
 // This module adapts the shared, generic `NoFollowFfiError` onto its own
 // public `RuntimeLogSinkError` union.
 // ---------------------------------------------------------------------------

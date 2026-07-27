@@ -1,5 +1,5 @@
 /**
- * No-follow directory/file guard for the Runtime Store (Spec 33 §18).
+ * No-follow directory/file guard for the Runtime Store (Pi adapter contract).
  *
  * The engine Runtime Store under `.weave/runtime/**` may open only after
  * project trust. This guard acquires and *holds*, for the store's entire
@@ -14,7 +14,7 @@
  *
  * ## The bun:sqlite handoff and why there is no path reopen at all
  *
- * Spec 33 §18 forbids "a path check followed by an unrelated reopen".
+ * Pi adapter contract forbids "a path check followed by an unrelated reopen".
  * `bun:sqlite`'s `Database` constructor only ever accepts a path *string*
  * or in-memory bytes (verified against `bun-types`/the compiled `bun:sqlite`
  * module — there is no fd-based or `O_NOFOLLOW`-aware constructor). Handing
@@ -48,7 +48,7 @@
  * the standard POSIX atomic-replace pattern, performed exclusively through
  * the already no-follow-proven directory descriptor.
  *
- * @see docs/specs/33-spec-pi-adapter/33-spec-pi-adapter.md §18
+ * @see docs/adapters/pi.md
  */
 
 import { basename } from "node:path";
@@ -74,7 +74,7 @@ import {
 } from "../nofollow-ffi.js";
 
 /**
- * Bounded, non-blocking `flock` acquisition (Spec 33 §18 concurrency
+ * Bounded, non-blocking `flock` acquisition (Pi adapter contract concurrency
  * hardening). Every attempt uses `LOCK_NB` so a contended lock returns
  * immediately instead of blocking the single-threaded event loop — a
  * blocking `flock` FFI call would freeze the whole process, including the
@@ -124,7 +124,7 @@ export interface RuntimeDirectoryHandle {
    * Re-verifies the held project-root and runtime-directory descriptors
    * still refer to the identity captured when they were opened. Used to
    * revalidate stable parent/target identity across migration and every
-   * subsequent transaction commit (Spec 33 §18).
+   * subsequent transaction commit (Pi adapter contract).
    */
   identity(): ResultAsync<RuntimeFileIdentity, RuntimeDirectoryGuardError>;
 
@@ -726,7 +726,7 @@ export class BunRuntimeDirectoryGuard implements RuntimeDirectoryGuard {
 }
 
 // ---------------------------------------------------------------------------
-// In-memory test double (Spec 33 §24 layer D — no real filesystem)
+// In-memory test double (Pi adapter contract — no real filesystem)
 // ---------------------------------------------------------------------------
 
 interface MemoryLeaf {

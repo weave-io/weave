@@ -5,7 +5,7 @@ import type {
 
 /**
  * Source-controlled requirement rows for the Pi adapter acceptance manifest
- * (Spec 33 §25). Every mandatory `PI-*` ID is traced here to real, existing
+ * (Pi adapter contract). Every mandatory `PI-*` ID is traced here to real, existing
  * named tests and packed-proof evidence IDs (see `PACKED_PROOF_REGISTRY`
  * below). Every row is `"pass"` because all 23 digest-bound live TUI smoke
  * checks passed against the artifact recorded in
@@ -28,7 +28,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
   [
     {
       id: "PI-ACT",
-      normativeSections: ["33§7"],
+      contractReferences: ["docs/adapters/pi.md#activation"],
       tests: {
         T001: {
           file: "packages/adapters/pi/src/__tests__/safe-initializer.test.ts",
@@ -60,7 +60,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
     },
     {
       id: "PI-MAT",
-      normativeSections: ["33§8.1", "33§8.2"],
+      contractReferences: ["docs/adapters/pi.md#workflow-projection", "docs/architecture/adapter-boundary.md#materialization"],
       tests: {
         T001: {
           file: "packages/adapters/pi/src/__tests__/config-activator.test.ts",
@@ -85,7 +85,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
     },
     {
       id: "PI-PRM",
-      normativeSections: ["33§8.3"],
+      contractReferences: ["docs/adapters/pi.md#user-surface"],
       tests: {
         T001: {
           file: "packages/adapters/pi/src/__tests__/primary-session.test.ts",
@@ -106,7 +106,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
     },
     {
       id: "PI-SKL",
-      normativeSections: ["33§9.1"],
+      contractReferences: ["docs/architecture/adapter-boundary.md#skills"],
       tests: {
         T001: {
           file: "packages/adapters/pi/src/__tests__/skill-catalog.test.ts",
@@ -127,7 +127,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
     },
     {
       id: "PI-MDL",
-      normativeSections: ["33§9.2", "33§9.3"],
+      contractReferences: ["docs/architecture/adapter-boundary.md#models"],
       tests: {
         T001: {
           file: "packages/adapters/pi/src/__tests__/model-resolution.test.ts",
@@ -148,7 +148,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
     },
     {
       id: "PI-POL",
-      normativeSections: ["33§12"],
+      contractReferences: ["docs/reference/permissions.md#adapter-support"],
       tests: {
         T001: {
           file: "packages/adapters/pi/src/__tests__/permission-bridge.test.ts",
@@ -186,7 +186,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
     },
     {
       id: "PI-DEL",
-      normativeSections: ["33§10", "33§11"],
+      contractReferences: ["docs/adapters/pi.md#private-children", "docs/reference/execution-lifecycle.md#effects"],
       tests: {
         T001: {
           file: "packages/adapters/pi/src/__tests__/delegation-controller.test.ts",
@@ -221,7 +221,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
     },
     {
       id: "PI-CMD",
-      normativeSections: ["33§13"],
+      contractReferences: ["docs/adapters/pi.md#user-surface"],
       tests: {
         T001: {
           file: "packages/adapters/pi/src/__tests__/extension.test.ts",
@@ -248,7 +248,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
     },
     {
       id: "PI-LIF",
-      normativeSections: ["33§14"],
+      contractReferences: ["docs/reference/execution-lifecycle.md#explicit-execution-operations"],
       tests: {
         T001: {
           file: "packages/adapters/pi/src/__tests__/workflow-controller.test.ts",
@@ -275,7 +275,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
     },
     {
       id: "PI-CMP",
-      normativeSections: ["33§15"],
+      contractReferences: ["docs/reference/execution-lifecycle.md#completion"],
       tests: {
         T001: {
           file: "packages/adapters/pi/src/__tests__/structured-completion.test.ts",
@@ -296,7 +296,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
     },
     {
       id: "PI-REC",
-      normativeSections: ["33§18"],
+      contractReferences: ["docs/reference/execution-lifecycle.md#leases-and-recovery"],
       tests: {
         T001: {
           file: "packages/adapters/pi/src/__tests__/recovery-pointer.test.ts",
@@ -317,7 +317,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
     },
     {
       id: "PI-PLN",
-      normativeSections: ["33§16"],
+      contractReferences: ["docs/adapters/pi.md#workflow-projection"],
       tests: {
         T001: {
           file: "packages/adapters/pi/src/__tests__/plan-catalog.test.ts",
@@ -344,7 +344,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
     },
     {
       id: "PI-ART",
-      normativeSections: ["33§17"],
+      contractReferences: ["docs/reference/execution-lifecycle.md#artifacts"],
       tests: {
         T001: {
           file: "packages/adapters/pi/src/__tests__/artifact-provider.test.ts",
@@ -371,7 +371,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
     },
     {
       id: "PI-PER",
-      normativeSections: ["33§12", "33§18", "33§20"],
+      contractReferences: ["docs/reference/runtime.md#runtime-store", "docs/reference/permissions.md#runtime-store-migration-v3-and-data-ban"],
       tests: {
         T001: {
           file: "packages/adapters/pi/src/__tests__/runtime-store-port.test.ts",
@@ -392,11 +392,11 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
     },
     {
       id: "PI-DIA",
-      normativeSections: ["33§19.1", "33§19.2", "33§19.3"],
+      contractReferences: ["docs/reference/runtime.md#journal-and-snapshots"],
       tests: {
         T001: {
           file: "packages/adapters/pi/src/__tests__/telemetry.test.ts",
-          name: "declares every normalized journal family required by Spec 33",
+          name: "declares every normalized journal family required by Pi adapter contract",
         },
         T002: {
           file: "packages/adapters/pi/src/__tests__/telemetry.test.ts",
@@ -413,7 +413,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
     },
     {
       id: "PI-USG",
-      normativeSections: ["33§19.4"],
+      contractReferences: ["docs/reference/runtime.md#retention-and-usage"],
       tests: {
         T001: {
           file: "packages/adapters/pi/src/__tests__/telemetry.test.ts",
@@ -434,7 +434,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
     },
     {
       id: "PI-CAP",
-      normativeSections: ["33§21"],
+      contractReferences: ["docs/reference/adapter-capabilities.md#capability-contract"],
       tests: {
         T001: {
           file: "packages/adapters/pi/src/__tests__/capability-prober.test.ts",
@@ -457,7 +457,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
     },
     {
       id: "PI-ERR",
-      normativeSections: ["33§23"],
+      contractReferences: ["docs/reference/adapter-capabilities.md#readiness-levels"],
       tests: {
         T001: {
           file: "packages/adapters/pi/src/__tests__/safe-initializer.test.ts",
@@ -496,7 +496,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
     },
     {
       id: "PI-PKG",
-      normativeSections: ["33§5", "33§22", "33§24", "33§25"],
+      contractReferences: ["docs/adapters/pi.md#verification", "docs/architecture/adapter-boundary.md#materialization"],
       tests: {
         T001: {
           file: "packages/adapters/pi/src/__tests__/package-consumption.test.ts",
@@ -512,7 +512,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
         },
         T004: {
           file: "packages/adapters/pi/src/__tests__/host-compatibility-matrix.test.ts",
-          name: "names the exact host package, range, floor, and tested version (Spec 33 §22)",
+          name: "names the exact host package, range, floor, and tested version (Pi adapter contract)",
         },
       },
       packedProof: { required: true, evidenceIds: ["P001", "P002"] },
@@ -523,7 +523,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
     },
     {
       id: "PI-MODE",
-      normativeSections: ["33§3", "33§7", "33§11.2"],
+      contractReferences: ["docs/adapters/pi.md#activation", "docs/adapters/pi.md#health-only-mode", "docs/adapters/pi.md#private-children"],
       tests: {
         T001: {
           file: "packages/adapters/pi/src/__tests__/extension.test.ts",

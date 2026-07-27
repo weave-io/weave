@@ -6,9 +6,9 @@ import {
 } from "./host-compatibility.js";
 
 /**
- * Exact-host compatibility matrix (Spec 33 §22, §25 PI-PKG).
+ * Exact-host compatibility matrix (Pi adapter contract PI-PKG).
  *
- * Spec 33 §22 requires exactly one source-controlled compatibility record
+ * The Pi adapter contract requires exactly one source-controlled compatibility record
  * naming the host package, its supported range, the floor version, and the
  * exact release-tested version. This module is that record. Every other
  * place that needs the "exact tested host version" (release scripts, the
@@ -26,7 +26,7 @@ export interface PiHostCompatibilityMatrix {
   /**
    * The exact host version this adapter is release-tested against. Must be
    * inside `supportedRange` and match the `0.81.x` pattern the acceptance
-   * manifest schema requires (Spec 33 §22, §25).
+   * manifest schema requires (Pi adapter contract).
    */
   readonly exactTestedVersion: string;
 }

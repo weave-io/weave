@@ -1,5 +1,5 @@
 /**
- * Engine-scoped rotating runtime log sink (Spec 33 §19.2).
+ * Engine-scoped rotating runtime log sink (Pi adapter contract).
  */
 
 import { describe, expect, it } from "bun:test";

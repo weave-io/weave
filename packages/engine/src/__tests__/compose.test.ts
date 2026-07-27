@@ -1654,7 +1654,7 @@ describe("composeAgentDescriptor — trust boundary for prompt_append", () => {
 });
 
 // ---------------------------------------------------------------------------
-// composeWorkflowStepPrompt — Spec 22 Unit 4
+// composeWorkflowStepPrompt — execution lifecycle contract
 // ---------------------------------------------------------------------------
 
 /**
@@ -1699,7 +1699,7 @@ function makeWorkflow(overrides: Partial<WorkflowConfig> = {}): WorkflowConfig {
   };
 }
 
-describe("composeWorkflowStepPrompt — Spec 22 Unit 4", () => {
+describe("composeWorkflowStepPrompt — execution lifecycle contract", () => {
   describe("no appends", () => {
     it("Step_with_no_appends_returns_step_prompt_unchanged", async () => {
       const step = makeStep({ prompt: "Do the work." });
@@ -1894,7 +1894,7 @@ describe("composeWorkflowStepPrompt — Spec 22 Unit 4", () => {
     });
   });
 
-  describe("step-local precedence (Spec 22 Unit 4 core rule)", () => {
+  describe("step-local precedence (execution lifecycle contract core rule)", () => {
     it("Step_scope_append_takes_precedence_over_workflow_scope_append", async () => {
       // Both scopes have an append — step-local wins
       const step = makeStep({
@@ -2065,7 +2065,7 @@ describe("composeWorkflowStepPrompt — Spec 22 Unit 4", () => {
 
   describe("trust boundary — bounded template context", () => {
     it("Append_cannot_reference_unknown_paths_outside_bounded_context", async () => {
-      // Spec 22 Unit 4: appends are rendered against bounded template context only
+      // execution lifecycle contract: appends are rendered against bounded template context only
       const step = makeStep({
         prompt: "Step prompt.",
         prompt_append: "Untrusted: {{artifact.contents}}.",
@@ -2443,7 +2443,7 @@ describe("composeWorkflowStepPrompt — Spec 22 Unit 4", () => {
 });
 
 // ---------------------------------------------------------------------------
-// detectAppendCollisions — Spec 22 Unit 4 collision surfacing
+// detectAppendCollisions — execution lifecycle contract collision surfacing
 // ---------------------------------------------------------------------------
 
 describe("detectAppendCollisions", () => {

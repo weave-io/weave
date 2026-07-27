@@ -1,5 +1,5 @@
 /**
- * Direct workflow-step dispatch (Spec 33 §11.1, §11.2, §15).
+ * Direct workflow-step dispatch (Pi adapter contract).
  *
  * Ordinary delegation (`weave_delegate`) returns a structured result to the
  * *invoking agent* and never creates/advances workflow state. Direct
@@ -10,7 +10,7 @@
  *
  * The production implementation reuses the same private child transport as
  * ordinary delegation (`PiDelegationController`/`PiRpcChild`) rather than a
- * second protocol implementation, per Spec 33 §11.2 ("Direct dispatch may
+ * second protocol implementation, under the Pi adapter contract ("Direct dispatch may
  * reuse private child transport"). The child settles through the existing
  * `PiChildSettlement` channel; its `summary` carries a bounded JSON
  * completion candidate (produced by the child's governed
@@ -49,7 +49,7 @@ export interface PiDirectDispatchInput {
   /** Pre-generated so the caller can pin it into the bootstrap/prompt correlation before spawning. */
   readonly correlationId: string;
   /**
-   * The direct-step agent's OWN resolved descriptor fields (Spec 33 §6,
+   * The direct-step agent's OWN resolved descriptor fields (Pi adapter contract,
    * §13-§15), resolved by the caller against its own activated descriptor
    * catalog by `agentName` - never the engine-emitted `RunAgentEffect`'s
    * own `agentDescriptor`, whose `composedPrompt`/`models`/tool-policy are
@@ -86,7 +86,7 @@ export interface PiDirectDispatchCandidate {
  * Adapter-owned direct-dispatch port. `PiWorkflowController` depends only
  * on this narrow interface, never on the delegation transport directly, so
  * it stays testable against a fully scripted fake with no real Pi/child
- * processes (Spec 33 §24).
+ * processes (Pi adapter contract).
  */
 export interface PiDirectDispatchPort {
   dispatch(
@@ -130,7 +130,7 @@ export class TransportDirectDispatchPort implements PiDirectDispatchPort {
   ): Result<PiDirectDispatchCandidate, PiAdapterFailure> {
     if (settlement.outcome === "failed") {
       // The child's own `weave_complete_step` recorder distinguishes
-      // missing/duplicate/late/malformed completion attempts (Spec 33
+      // missing/duplicate/late/malformed completion attempts (Pi adapter contract
       // §15) via these fixed, closed reason strings - never free text -
       // so this is the one place that maps them to the exact typed
       // failure the engine/UI expect, instead of one generic

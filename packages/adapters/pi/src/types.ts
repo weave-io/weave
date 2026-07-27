@@ -10,7 +10,7 @@
  * to be installed. `src/extension.ts` is the only file that adapts the real
  * Pi-provided object into this shape.
  *
- * @see docs/specs/33-spec-pi-adapter/33-spec-pi-adapter.md (Spec 33 §6, §7)
+ * @see docs/adapters/pi.md (Pi adapter contract)
  */
 
 export type {
@@ -23,7 +23,7 @@ export type {
   PiExtensionUiResponse,
 } from "./child-session-events.js";
 
-/** Pi's four extension execution modes. Only `"tui"` is in scope (Spec 33 §3). */
+/** Pi's four extension execution modes. Only `"tui"` is in scope (Pi adapter contract). */
 export type PiMode = "tui" | "rpc" | "json" | "print";
 
 /** Whether the current project has been granted local trust. */
@@ -36,7 +36,7 @@ export type PiResourceScope = "user" | "project" | "temporary";
 export type PiResourceOrigin = "package" | "top-level";
 
 /**
- * Canonical provenance for a discovered command or tool. Per Spec 33 §7.1,
+ * Canonical provenance for a discovered command or tool. Per Pi adapter contract,
  * ownership MUST be read from `sourceInfo`, never inferred from names or ad
  * hoc path parsing.
  */
@@ -219,7 +219,7 @@ export interface PiToolResultContent {
 }
 
 /**
- * Registration input for `pi.registerTool()` (Spec 33 §6, §12.2). `parameters`
+ * Registration input for `pi.registerTool()` (Pi adapter contract). `parameters`
  * is deliberately `unknown` - the concrete TypeBox schema shape is owned by
  * the real Pi package, which this narrow port does not depend on.
  */
@@ -287,7 +287,7 @@ export interface PiExtensionApi {
     model: PiModelInfo,
   ): boolean | undefined | Promise<boolean | undefined>;
   /**
-   * Registers a keyboard shortcut (`ExtensionAPI.registerShortcut`, Spec 33
+   * Registers a keyboard shortcut (`ExtensionAPI.registerShortcut`, Pi adapter contract
    * §11.5). Alt+A cycles primary agents. Alt+1..Alt+9 direct-child selection
    * uses keys that are not default editor bindings. Backspace
    * (parent selection) and Esc (cancel selected subtree) are wired
@@ -322,7 +322,7 @@ export interface PiExtensionApi {
   getActiveTools?(): readonly string[];
 }
 
-/** Injected environment-variable port for reading the child's private bootstrap values (Spec 33 §11.3). Production reads/deletes Bun's own `Bun.env` (see `child-env.ts`'s `BunEnvPort`) - never Node's `process.env`, and never argv or prompt text. */
+/** Injected environment-variable port for reading the child's private bootstrap values (Pi adapter contract). Production reads/deletes Bun's own `Bun.env` (see `child-env.ts`'s `BunEnvPort`) - never Node's `process.env`, and never argv or prompt text. */
 export interface PiEnvPort {
   read(name: string): string | undefined;
   /** Deletes the value so it cannot be read again later in the child's lifetime. */

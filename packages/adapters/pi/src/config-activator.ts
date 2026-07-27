@@ -36,7 +36,7 @@ export const defaultPiFileReader: FileReader = {
  * `${projectRoot}/.weave/` is blocked, while everything else (notably the
  * global `~/.weave/config.weave` scope) still delegates to `inner`.
  *
- * This is how `PiConfigActivator` honors Spec 33 §7.3 ("an untrusted
+ * This is how `PiConfigActivator` honors Pi adapter contract ("an untrusted
  * project MUST withhold ... project config") without requiring
  * `@weaveio/weave-config` to know anything about Pi's trust model: the
  * adapter alone decides which paths are permitted input to the otherwise
@@ -100,7 +100,7 @@ export interface PiConfigActivationInput {
 }
 
 /**
- * The adapter's consumed view of a `MaterializationPlan` (Spec 33 §8.1):
+ * The adapter's consumed view of a `MaterializationPlan` (Pi adapter contract):
  * every successful descriptor indexed by its stable `name`, in the plan's
  * deterministic order, alongside every reported error. A descriptor that
  * failed composition is simply absent here under its name — it is never
@@ -138,7 +138,7 @@ export function buildDescriptorCatalog(
 }
 
 /**
- * Reports every `MaterializationPlan.errors` item (Spec 33 §8.1). Each
+ * Reports every `MaterializationPlan.errors` item (Pi adapter contract). Each
  * error type is logged with its own precise fields; nothing here retries or
  * substitutes a failed descriptor's identity.
  */
@@ -176,11 +176,11 @@ export function logMaterializationErrors(
 }
 
 /**
- * Spec 33 §6 `PiConfigActivator`: loads the permitted Weave config for the
+ * Pi adapter contract `PiConfigActivator`: loads the permitted Weave config for the
  * current trust state and materializes it into a descriptor catalog.
  *
  * Read-only and side-effect free beyond the injected `FileReader` — no
- * Runtime Store, no timers, no process launches (Spec 33 §7.2 steps 5-8).
+ * Runtime Store, no timers, no process launches (Pi adapter contract).
  */
 export class PiConfigActivator {
   constructor(private readonly deps: PiConfigActivatorDeps = {}) {}
@@ -206,7 +206,7 @@ export class PiConfigActivator {
     // exceptions).
     // The reason strings passed to `makeActivationFailedFailure` below are
     // fixed, closed-set literals - never anything derived from `cause`.
-    // Spec 33's closed-failure contract bans private paths, environment
+    // Pi adapter closed-failure contract bans private paths, environment
     // values, and secrets from public failures, and an injected port's
     // thrown/rejected content cannot be trusted not to contain any of
     // those.

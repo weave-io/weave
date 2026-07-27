@@ -191,7 +191,7 @@ describe("PiConfigActivator (unit, fake ports)", () => {
     expect(failure.code).toBe("ActivationFailed");
     // The correlation reason is a fixed, closed-set literal - never the raw
     // thrown message, since that content cannot be trusted not to contain
-    // private paths, environment values, or secrets (Spec 33 closed-failure
+    // private paths, environment values, or secrets (Pi adapter contract closed-failure
     // contract).
     expect(failure.correlation).toEqual({ reason: "config-load-threw" });
     expect(JSON.stringify(failure)).not.toContain("id_rsa");

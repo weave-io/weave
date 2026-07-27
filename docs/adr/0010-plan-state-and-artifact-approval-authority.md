@@ -2,7 +2,7 @@
 
 **Status:** Accepted
 
-**Related:** [Spec 19 — Plan State Provider](../specs/19-spec-plan-state-provider/19-spec-plan-state-provider.md) · [Spec 22 — Workflow-First Execution](../specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md) · [Spec 33 — Full-readiness Pi adapter](../specs/33-spec-pi-adapter/33-spec-pi-adapter.md) · [Adapter Boundary](../adapter-boundary.md)
+**Related:** [Execution Lifecycle](../reference/execution-lifecycle.md) · [Pi Adapter](../adapters/pi.md) · [Adapter Boundary](../architecture/adapter-boundary.md)
 
 ## Context
 

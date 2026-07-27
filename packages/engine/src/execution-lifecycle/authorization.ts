@@ -2,7 +2,7 @@
  * Execution Lifecycle — authorization validation helpers.
  *
  * Validates execution and reconciliation authorization sources against the
- * engine's closed authorization contract (ADR 0004, Spec 22 Unit 3).
+ * engine's closed authorization contract (ADR 0004, execution lifecycle contract).
  *
  * @see docs/adr/0004-workflow-first-execution-contract.md
  * @see docs/specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md

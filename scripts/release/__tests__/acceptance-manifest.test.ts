@@ -145,9 +145,9 @@ describe("buildAcceptanceManifest + validateAcceptanceManifestStructure", () => 
       requirements: [
         {
           ...first,
-          normativeSections: [
-            first.normativeSections[0],
-            first.normativeSections[0],
+          contractReferences: [
+            first.contractReferences[0],
+            first.contractReferences[0],
           ],
           packedProof: {
             required: true,

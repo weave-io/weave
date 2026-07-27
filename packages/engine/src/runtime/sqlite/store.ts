@@ -2239,7 +2239,7 @@ class CoordinatorFailureSentinel extends Error {
 
 /**
  * `MemoryStoreCoordinator` implemented on top of a held `RuntimeDirectoryHandle`
- * (Spec 33 §18 concurrency hardening). Every `acquire()` takes the leaf's
+ * (Pi adapter contract concurrency hardening). Every `acquire()` takes the leaf's
  * exclusive advisory lock (`lockLeaf`, itself bounded-retry with backoff)
  * and reloads its latest on-disk bytes (`readLeafBytes`) so a concurrent
  * store's already-committed writes are never silently overwritten.
@@ -2312,7 +2312,7 @@ export interface SqliteRuntimeStoreOptions {
   readonly dbPath: string;
   /**
    * Absolute path to the harness-established, already-trusted project root
-   * (Spec 33 §7.2/§18). The no-follow directory guard opens this directly
+   * (Pi adapter contract). The no-follow directory guard opens this directly
    * (it is assumed to already exist) and walks every path component between
    * it and `dbPath`'s directory, holding both the root and the runtime
    * directory descriptors for the store's entire lifetime.
@@ -2339,7 +2339,7 @@ export interface SqliteRuntimeStoreOptions {
   readonly beforeInitPublish?: () => Promise<void>;
   /**
    * No-follow directory verification for the runtime directory and the
-   * `weave.db` leaf (Spec 33 §18). Defaults to `BunRuntimeDirectoryGuard`.
+   * `weave.db` leaf (Pi adapter contract). Defaults to `BunRuntimeDirectoryGuard`.
    * Tests inject `MemoryRuntimeDirectoryGuard` to exercise symlink-rejection
    * and identity-change paths without touching a real filesystem.
    * @internal
@@ -2364,7 +2364,7 @@ export class SqliteRuntimeStore implements RuntimeStore {
   private readonly clock: () => Date;
   private readonly directoryGuard: RuntimeDirectoryGuard;
   private _projectSalt: string | null = null;
-  /** Held for the store's lifetime (Spec 33 §18); closed only in `close()` or on init failure. */
+  /** Held for the store's lifetime (Pi adapter contract); closed only in `close()` or on init failure. */
   private dirHandle: RuntimeDirectoryHandle | null = null;
   /** The `weave.db` leaf name, captured once at init for per-commit revalidation. */
   private leafName: string | null = null;
@@ -2515,7 +2515,7 @@ export class SqliteRuntimeStore implements RuntimeStore {
     }
 
     // Acquire held, no-follow handles for both the canonical project root
-    // and the runtime directory (Spec 33 §18), walking every intermediate
+    // and the runtime directory (Pi adapter contract), walking every intermediate
     // path component with a no-follow `openat` (never a single absolute-path
     // open, which only proves the final component). Every subsequent
     // operation on the `weave.db` leaf and its WAL/SHM sidecars happens
@@ -2536,7 +2536,7 @@ export class SqliteRuntimeStore implements RuntimeStore {
       return err(initializationError("Runtime store is closed"));
     }
 
-    // Cross-store coordinator over the held directory descriptor (Spec 33
+    // Cross-store coordinator over the held directory descriptor (Pi adapter contract
     // §18 concurrency hardening): every `acquire()` takes the leaf's
     // exclusive advisory lock and reloads its latest on-disk bytes, and
     // `commit()` persists atomically and always releases the lock
@@ -2680,7 +2680,7 @@ export class SqliteRuntimeStore implements RuntimeStore {
       );
     }
 
-    // Held for the store's entire lifetime (Spec 33 §18) so every later
+    // Held for the store's entire lifetime (Pi adapter contract) so every later
     // commit can revalidate stable parent/target identity; closed only in
     // `close()` or on a later poisoning/init failure.
     this.dirHandle = dirHandle;
@@ -2699,7 +2699,7 @@ export class SqliteRuntimeStore implements RuntimeStore {
 
   /**
    * Re-verifies the `weave.db` leaf's identity through the held directory
-   * descriptor (Spec 33 §18: "revalidates file identity across
+   * descriptor (Pi adapter contract: "revalidates file identity across
    * migration/commit"). On mismatch, poisons the store (all further
    * operations fail closed) and returns a typed error.
    */
@@ -2760,7 +2760,7 @@ export class SqliteRuntimeStore implements RuntimeStore {
         // `commitTransaction`'s flush (triggered inside the Kysely memory
         // driver once `db.inTransaction` goes false) already re-verifies
         // and rebinds `boundLeafIdentity` as part of persisting every
-        // commit (Spec 33 §18) - no separate post-commit check is needed.
+        // commit (Pi adapter contract) - no separate post-commit check is needed.
       );
     });
   }

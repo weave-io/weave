@@ -1,6 +1,6 @@
 /**
  * A minimal, dependency-free strict JSON parser and RFC 8785-compatible
- * canonicalizer (Spec 33 §11.3-§11.4).
+ * canonicalizer (Pi adapter contract).
  *
  * `JSON.parse` cannot be reused for parsing: it silently *collapses*
  * duplicate object keys (keeping the last value) before a reviver ever

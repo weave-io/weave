@@ -1,6 +1,6 @@
 /**
  * Strict LF-delimited JSON line framer for the private RPC child transport
- * (Spec 33 §11.4). Operates on raw bytes, never on strings or a generic
+ * (Pi adapter contract). Operates on raw bytes, never on strings or a generic
  * Unicode line reader:
  *
  * - Splits records on ASCII LF (`0x0a`) only, so a record containing

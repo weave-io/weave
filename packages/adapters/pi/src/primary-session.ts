@@ -16,9 +16,9 @@ const WEAVE_BLOCK_START = "weave:agent:start";
 const WEAVE_BLOCK_END = "weave:agent:end";
 
 /**
- * Renders the single delimited Weave block Spec 33 §8.3 requires: the
+ * Renders the single delimited Weave block required by the Pi adapter contract: the
  * active descriptor's stable identity plus its final `composedPrompt`,
- * verbatim. Descriptors' `composedPrompt` is already final (Spec 33 §8.1) —
+ * verbatim. Descriptors' `composedPrompt` is already final (Pi adapter contract) —
  * this function never re-renders or re-templates it.
  */
 export function renderWeavePromptBlock(descriptor: AgentDescriptor): string {
@@ -40,7 +40,7 @@ function hasWeaveBlockFor(
 
 /**
  * Appends the active descriptor's composed-prompt block to Pi's
- * already-chained system prompt exactly once (Spec 33 §8.3). Preserves
+ * already-chained system prompt exactly once (Pi adapter contract). Preserves
  * everything already in `systemPrompt` (Pi's own context, native
  * tool/skill guidance, other extensions' additions) and is idempotent: if
  * this exact descriptor's block is already present, the prompt is returned
@@ -72,7 +72,7 @@ export type PiPrimaryActivationError =
 
 /**
  * A visible, deduplicated capability degradation surfaced by primary
- * activation (Spec 33 §9.2, §9.3): a temperature that had to be ignored, or
+ * activation (Pi adapter contract): a temperature that had to be ignored, or
  * a model that could not be resolved/applied. Callers (e.g. `/weave:health`,
  * capability probing) read this instead of relying on log lines alone.
  */
@@ -84,7 +84,7 @@ export interface PiPrimaryCapabilityWarning {
 
 /**
  * The atomically-activated primary descriptor and every piece of state that
- * must change together with it (Spec 33 §8.2): descriptor identity, prompt
+ * must change together with it (Pi adapter contract): descriptor identity, prompt
  * source, applied model, and resolved skills.
  *
  * Registered tools and recovery correlation are out of scope for this task
@@ -115,11 +115,11 @@ export interface PiPrimarySessionDeps {
 export const DEFAULT_PRIMARY_AGENT_NAME = "loom";
 
 /**
- * Spec 33 §6 `PiPrimarySession`: owns the parent TUI's single active
+ * Pi adapter contract `PiPrimarySession`: owns the parent TUI's single active
  * primary descriptor and activates it atomically.
  *
  * Activation either commits every piece of `PiActivePrimary` together, or
- * leaves the session at its prior valid state (Spec 33 §8.2, §28). Skill
+ * leaves the session at its prior valid state (Pi adapter contract). Skill
  * resolution and model application must both *settle* — succeed, or (for
  * the model) settle into an accepted degraded state — before anything is
  * committed; a `SkillResolutionFailed`/`NotEligiblePrimary` error never
@@ -142,7 +142,7 @@ export class PiPrimarySession {
 
   /**
    * Replaces the Pi-owned skill discovery snapshot used by the next
-   * `activate()` call (Spec 33 §9.1). Pi only exposes its loaded skill
+   * `activate()` call (Pi adapter contract). Pi only exposes its loaded skill
    * catalog via `before_agent_start`'s `systemPromptOptions.skills`, so
    * callers refresh this immediately before activating.
    */
@@ -169,13 +169,13 @@ export class PiPrimarySession {
   /**
    * Activates `descriptor` as the primary. `mode: "primary"` and
    * `mode: "all"` descriptors are eligible; `mode: "subagent"` is rejected
-   * (Spec 33 §8.2 — category shuttles and subagents remain delegated only).
+   * (Pi adapter contract — category shuttles and subagents remain delegated only).
    *
    * Resolves skills and applies the resolved model through
    * `context.modelApplier` (Pi's real `setModel`) before committing
    * anything. A resolved-but-unresolvable model, or a model the host
    * rejects, degrades this descriptor's model health but does not fail the
-   * activation (Spec 33 §9.2, §28); only an ineligible mode or a missing
+   * activation (Pi adapter contract); only an ineligible mode or a missing
    * skill fails it, leaving the prior primary untouched.
    */
   activate(
@@ -209,7 +209,7 @@ export class PiPrimarySession {
         capability: "temperature",
         agentName: descriptor.name,
         detail:
-          "declared temperature is ignored: Pi has no stable sampling API yet (Spec 33 §9.3)",
+          "declared temperature is ignored: Pi has no stable sampling API yet (Pi adapter contract)",
       });
     }
 
@@ -248,7 +248,7 @@ export class PiPrimarySession {
 
   /**
    * Re-activates the descriptor that was active immediately before the
-   * current one (Spec 33 §8.2 "plan exit restores the prior valid
+   * current one (Pi adapter contract "plan exit restores the prior valid
    * primary"). Re-runs full atomic activation rather than replaying stale
    * state, so skills/models are re-resolved and re-applied against the
    * current context.
@@ -270,7 +270,7 @@ export class PiPrimarySession {
     return this.activate(prior, context);
   }
 
-  /** Appends the current primary's composed-prompt block (Spec 33 §8.3). No-op if there is no active primary. */
+  /** Appends the current primary's composed-prompt block (Pi adapter contract). No-op if there is no active primary. */
   appendToSystemPrompt(systemPrompt: string): string {
     if (this.current === undefined) return systemPrompt;
     return appendWeaveBlockOnce(systemPrompt, this.current.descriptor);

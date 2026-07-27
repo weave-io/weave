@@ -66,7 +66,7 @@ function installExtension(
     clock: new FakeClock(),
     logger: new RecordingLogger(),
     configActivator: fakeConfigActivator(),
-    // Real `BunPathContainmentPort` spawns a genuine subprocess (Spec 33
+    // Real `BunPathContainmentPort` spawns a genuine subprocess (Pi adapter contract
     // §24 layer D forbids this in tests); this fake host's `cwd` is a
     // nonexistent path anyway, so any real spawn would fail closed and
     // wrongly flip workflow-persistence/etc. to unavailable for reasons
@@ -305,7 +305,7 @@ describe("createPiExtension factory (layer C: compiled extension against a fake 
     expect(ctxA).not.toBe(ctxB);
   });
 
-  it("clears the compact plan widget on session_shutdown (Spec 33 §16) alongside the child-tree widget", async () => {
+  it("clears the compact plan widget on session_shutdown (Pi adapter contract) alongside the child-tree widget", async () => {
     const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
     installExtension(host);
     await host.triggerSessionStart();
@@ -612,7 +612,7 @@ describe("createPiExtension: config activation, materialization consumption, pri
       systemPrompt: "native",
     });
 
-    // A degraded model is an accepted terminal state (Spec 33 §9.2, §28) --
+    // A degraded model is an accepted terminal state (Pi adapter contract) --
     // the descriptor still activates and its prompt still gets appended.
     // The call was attempted (recorded) even though it threw and never took
     // effect (currentModel stays whatever it was before).
@@ -874,7 +874,7 @@ describe("createPiExtension: config activation, materialization consumption, pri
     );
   });
 
-  it("never loads or materializes config when the mode is unsupported (Spec 33 §28 wrong-mode -> health-only)", async () => {
+  it("never loads or materializes config when the mode is unsupported (Pi adapter contract wrong-mode -> health-only)", async () => {
     let activateCalls = 0;
     const host = new RecordingFakePiHost({ mode: "print", trusted: true });
     installExtension(host, "0.81.1", {
@@ -895,7 +895,7 @@ describe("createPiExtension: config activation, materialization consumption, pri
     expect(systemPrompt).toBe("native");
   });
 
-  it("never loads or materializes config on an unsupported host version (Spec 33 §28 wrong-host -> health-only)", async () => {
+  it("never loads or materializes config on an unsupported host version (Pi adapter contract wrong-host -> health-only)", async () => {
     let activateCalls = 0;
     const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
     installExtension(host, "0.80.0", {

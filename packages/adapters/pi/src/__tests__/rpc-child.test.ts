@@ -41,7 +41,7 @@ function baseSpawnInput(
 }
 
 /**
- * A schema-valid bootstrap body (Spec 33 §11.2 Task 9): every test that
+ * A schema-valid bootstrap body (Pi adapter contract): every test that
  * exercises `runTask()` beyond the bootstrap-ack wait itself needs one,
  * since `runTask()` now re-parses its own `bootstrap` argument up front
  * and fails closed on anything malformed - these tests are not testing
@@ -60,7 +60,7 @@ function validBootstrap(overrides: Record<string, unknown> = {}): JsonValue {
   } as JsonValue;
 }
 
-/** A schema-valid bootstrap-ack body (Spec 33 §11.2 Task 9) - `runTask()` validates it against the `bootstrap` it sent before proceeding to task work. */
+/** A schema-valid bootstrap-ack body (Pi adapter contract) - `runTask()` validates it against the `bootstrap` it sent before proceeding to task work. */
 function validAck(overrides: Record<string, unknown> = {}): JsonValue {
   return { activeTools: [], ...overrides } as JsonValue;
 }
@@ -201,7 +201,7 @@ describe("PiRpcChild", () => {
     expect(result.isOk()).toBe(true);
     // Handshake alone does not yet mean "running": the child must still
     // prove it applied the bootstrap descriptor via bootstrap-ack before
-    // any work is sent (Spec 33 §11.3/§11.5).
+    // any work is sent (Pi adapter contract).
     expect(child.snapshot().status).toBe("handshaking");
   });
 
@@ -604,7 +604,7 @@ describe("PiRpcChild", () => {
   });
 
   it("force-kills the process when the bounded cancellation grace period elapses with no cooperative reply at all (non-cooperative/stopped child), guaranteeing no leaked process", async () => {
-    // Reproduces the live exact-host bug (Spec 33 §11.5, Final4 exact-host
+    // Reproduces the live exact-host bug (Pi adapter contract, Final4 exact-host
     // smoke): a delegated child was SIGSTOP'd to simulate
     // non-cooperation, selected via the child tree, and Esc-cancelled.
     // Neither an authenticated "cancelled" ack, a racing "settled" report,
@@ -680,7 +680,7 @@ describe("PiRpcChild", () => {
     // dispatched to it, so no "cancelled" envelope is ever sent back at
     // all. weave_delegate previously surfaced this as
     // {ok:false,error:"ChildEnvelopeMalformed"} instead of a structured
-    // cancelled result (Spec 33 §11.5).
+    // cancelled result (Pi adapter contract).
     const processPort = new FakeChildProcessPort();
     const child = new PiRpcChild("child-1", "root", "gen-1", "shuttle", 1, {
       processPort,

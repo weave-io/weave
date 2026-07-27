@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 /**
- * Package-isolated consumption test (Spec 33 §24 layer F, narrowed to what a
+ * Package-isolated consumption test (Pi adapter contract, narrowed to what a
  * clean-room consumer can exercise without a packed tarball): imports only
  * through the published entry points (`@weaveio/weave-adapter-pi` and its
  * `/extension` subpath), the same way an external consumer's `package.json`

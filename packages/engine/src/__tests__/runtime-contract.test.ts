@@ -5,7 +5,7 @@
  * Uses a simple in-memory stub to verify behavioral contracts without
  * requiring a real SQLite implementation.
  *
- * @see docs/specs/12-spec-runtime-persistence/12-spec-runtime-persistence.md
+ * @see docs/reference/runtime.md
  */
 
 import { describe, expect, it } from "bun:test";
@@ -1427,11 +1427,11 @@ describe("WorkflowInstance CRUD", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests: Spec 22 Unit 1 — WorkflowInstance and ExecutionLease are only created
+// Tests: execution lifecycle contract — WorkflowInstance and ExecutionLease are only created
 // through explicit user-authorized execution transitions
 // ---------------------------------------------------------------------------
 
-describe("Spec 22 Unit 1 — explicit execution boundary (WorkflowInstance + ExecutionLease)", () => {
+describe("execution lifecycle contract — explicit execution boundary (WorkflowInstance + ExecutionLease)", () => {
   it("WorkflowInstance starts in 'created' status — not 'running' — before any execution transition", async () => {
     // A newly created WorkflowInstance must be in 'created' status.
     // Only an explicit execution transition (startExecution) may move it to 'running'.
@@ -1547,10 +1547,10 @@ describe("Spec 22 Unit 1 — explicit execution boundary (WorkflowInstance + Exe
 });
 
 // ---------------------------------------------------------------------------
-// Tests: Spec 22 Unit 1 — ExecutionAuthorizationSource contract (Task 1.3)
+// Tests: execution lifecycle contract — ExecutionAuthorizationSource contract (Task 1.3)
 // ---------------------------------------------------------------------------
 
-describe("Spec 22 Unit 1 — ExecutionAuthorizationSource contract (ADR 0004)", () => {
+describe("execution lifecycle contract — ExecutionAuthorizationSource contract (ADR 0004)", () => {
   it("EXECUTION_AUTHORIZATION_SOURCES contains exactly 4 values", () => {
     expect(EXECUTION_AUTHORIZATION_SOURCES).toHaveLength(4);
   });
@@ -1982,10 +1982,10 @@ describe("ArtifactRef integrity-verification metadata", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Reconciliation contract — Spec 22 Unit 3
+// Reconciliation contract — execution lifecycle contract
 // ---------------------------------------------------------------------------
 
-describe("Reconciliation contract — closed reason set (Spec 22 Unit 3)", () => {
+describe("Reconciliation contract — closed reason set (execution lifecycle contract)", () => {
   it("RECONCILIATION_REASONS contains exactly the four closed built-in values", () => {
     expect(RECONCILIATION_REASONS).toHaveLength(4);
     expect(RECONCILIATION_REASONS).toContain("execution-mismatch");
@@ -2068,7 +2068,7 @@ describe("Reconciliation contract — closed reason set (Spec 22 Unit 3)", () =>
   });
 });
 
-describe("Reconciliation contract — WorkflowInstance and ExecutionLease invariants (Spec 22 Unit 3)", () => {
+describe("Reconciliation contract — WorkflowInstance and ExecutionLease invariants (execution lifecycle contract)", () => {
   it("WorkflowInstance status 'paused' is the fail-closed state for reconciliation without a handler", () => {
     // Structural: 'paused' must be a valid WorkflowInstanceStatus
     const validStatuses = WORKFLOW_INSTANCE_STATUSES;
@@ -2123,10 +2123,10 @@ describe("Reconciliation contract — WorkflowInstance and ExecutionLease invari
 });
 
 // ---------------------------------------------------------------------------
-// Reconciliation contract — gate re-run (Spec 22 Unit 3)
+// Reconciliation contract — gate re-run (execution lifecycle contract)
 // ---------------------------------------------------------------------------
 
-describe("Reconciliation contract — gate re-run (Spec 22 Unit 3)", () => {
+describe("Reconciliation contract — gate re-run (execution lifecycle contract)", () => {
   it("ReconcileExecutionOutput carries gateReRunStepName for gate-originated reasons", () => {
     // Structural: the output type must support gateReRunStepName as an optional field.
     // This test documents the contract shape without requiring a live store.
@@ -2226,10 +2226,10 @@ describe("Reconciliation contract — gate re-run (Spec 22 Unit 3)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Reconciliation contract — before-plan exclusion (Spec 22 Unit 3)
+// Reconciliation contract — before-plan exclusion (execution lifecycle contract)
 // ---------------------------------------------------------------------------
 
-describe("Reconciliation contract — before-plan exclusion (Spec 22 Unit 3)", () => {
+describe("Reconciliation contract — before-plan exclusion (execution lifecycle contract)", () => {
   it("before-plan steps do not participate in reconciliation — v1 rule is documented", () => {
     // Structural proof: the v1 rule is that before-plan steps do not participate
     // in reconciliation semantics. This test documents the invariant.
@@ -2307,10 +2307,10 @@ describe("Reconciliation contract — before-plan exclusion (Spec 22 Unit 3)", (
 });
 
 // ---------------------------------------------------------------------------
-// Reconciliation contract — immutable completed plan tasks (Spec 22 Unit 3)
+// Reconciliation contract — immutable completed plan tasks (execution lifecycle contract)
 // ---------------------------------------------------------------------------
 
-describe("Reconciliation contract — immutable completed plan tasks (Spec 22 Unit 3)", () => {
+describe("Reconciliation contract — immutable completed plan tasks (execution lifecycle contract)", () => {
   it("ReconcileExecutionInput accepts an optional planStateProvider field", () => {
     // Structural: ReconcileExecutionInput must support planStateProvider as an
     // optional field. This test documents the contract shape.

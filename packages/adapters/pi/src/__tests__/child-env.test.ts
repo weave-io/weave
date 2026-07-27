@@ -60,7 +60,7 @@ describe("sanitizedBaseEnv", () => {
   });
 });
 
-// Spec 33 §11.2 finding 1: a bare `"pi"` spawn command lets `Bun.spawn`'s
+// Pi adapter contract: a bare `"pi"` spawn command lets `Bun.spawn`'s
 // own `PATH` resolution silently select an unrelated `pi` install (e.g. a
 // different toolchain's shim) shadowing the real host - whose runtime then
 // fails packed-extension import with `Cannot find module 'bun:ffi'`. `_` is

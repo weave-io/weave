@@ -1,5 +1,5 @@
 /**
- * Native `/weave:*` command handlers and palette actions (Spec 33 §13).
+ * Native `/weave:*` command handlers and palette actions (Pi adapter contract).
  * Pure builder functions: given a {@link PiWorkflowController} and the
  * active session's UI port, they return real handlers - never the inert
  * `"not yet implemented"` shells. Only this module's start/resume handlers
@@ -31,7 +31,7 @@ export interface PiWorkflowCommandUiPort {
   confirm(title: string, message: string): Promise<boolean>;
 }
 
-/** Adapter-supplied lookup for the currently-tracked workflow instance/lease and available plans/workflows - Spec 33 keeps "multiple active workflows" out of scope, so there is at most one tracked instance per generation. */
+/** Adapter-supplied lookup for the currently-tracked workflow instance/lease and available plans/workflows - Pi adapter contract keeps "multiple active workflows" out of scope, so there is at most one tracked instance per generation. */
 export interface PiActiveWorkflowTracker {
   getActiveInstance():
     | {
@@ -58,7 +58,7 @@ export interface PiActiveWorkflowTracker {
       | undefined,
   ): void;
   /**
-   * Lists safe plan basenames under `.weave/plans` (Spec 33 §16) - backs
+   * Lists safe plan basenames under `.weave/plans` (Pi adapter contract) - backs
    * both `/weave:start`'s selection prompt and `/weave:plan`'s picker.
    * Async because production wiring proves no-follow containment through a
    * real file descriptor chain, not a synchronous cache.
@@ -254,7 +254,7 @@ export async function handleWeaveAdvance(
   );
   // Explicit user confirmation only - never inferred from prompt text,
   // delegation, tools, idle/session events, or continuation/recovery
-  // banners (Spec 33 §13/§14). `confirmStep` itself fails closed with a
+  // banners (Pi adapter contract). `confirmStep` itself fails closed with a
   // typed error when no step is actually awaiting this confirmation, so
   // this command never silently no-ops on a step that doesn't allow it.
   const authorization = authorizeByExplicitUser(confirmed);
@@ -495,8 +495,8 @@ export async function handleWeaveArtifact(
     `Artifact ${artifactId} ${decision === "approve" ? "approved" : "rejected"}.`,
     "info",
   );
-  // A user-driven rejection is an explicit revision request (Spec 33 §14/
-  // §17) - reconcile it under the fixed `user-revision-request` reason so
+  // A user-driven rejection is an explicit revision request under the Pi adapter contract.
+  // Reconcile it under the fixed `user-revision-request` reason so
   // any step's declared `reconciliation_handlers` entry can redirect
   // execution, mirroring the review/security gate pattern.
   if (decision !== "reject") return;
@@ -554,7 +554,7 @@ export interface PiPaletteAction {
   readonly disabledReason?: string;
 }
 
-/** Palette exposes the same nine actions as the commands, hidden/disabled with a reason when invalid (Spec 33 §13). */
+/** Palette exposes the same nine actions as the commands, hidden/disabled with a reason when invalid (Pi adapter contract). */
 export function buildPaletteActions(input: {
   readonly healthOnly: boolean;
   readonly hasActiveInstance: boolean;

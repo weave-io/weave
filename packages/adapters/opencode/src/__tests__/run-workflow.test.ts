@@ -1,7 +1,7 @@
 /**
  * Integration tests for `runWorkflow` — explicit named-workflow execution.
  *
- * ## What these tests prove (Spec 22 Unit 4 / ADR 0004)
+ * ## What these tests prove (execution lifecycle contract and ADR 0004)
  *
  * 1. **Explicit named-workflow execution via engine delegation** — `runWorkflow`
  *    is the OpenCode adapter's helper for running a specific, named workflow
@@ -635,10 +635,10 @@ describe("runWorkflow — delegates to engine runNamedWorkflow with OpenCode ada
 });
 
 // ---------------------------------------------------------------------------
-// Tests — explicit named-workflow execution boundary (Spec 22 Unit 4 / ADR 0004)
+// Tests — explicit named-workflow execution boundary (execution lifecycle contract and ADR 0004)
 // ---------------------------------------------------------------------------
 
-describe("runWorkflow — explicit named-workflow execution boundary (Spec 22 Unit 4)", () => {
+describe("runWorkflow — explicit named-workflow execution boundary (execution lifecycle contract)", () => {
   /**
    * Proof: `runWorkflow` executes a specific, named workflow by delegating to
    * the engine's `runNamedWorkflow` command operation. The caller must supply
@@ -792,10 +792,10 @@ describe("runWorkflow — explicit named-workflow execution boundary (Spec 22 Un
 });
 
 // ---------------------------------------------------------------------------
-// Tests — PlanStateProvider at completion boundaries (Spec 22 Unit 4)
+// Tests — PlanStateProvider at completion boundaries (execution lifecycle contract)
 // ---------------------------------------------------------------------------
 
-describe("runWorkflow — PlanStateProvider at named-workflow completion boundaries (Spec 22 Unit 4)", () => {
+describe("runWorkflow — PlanStateProvider at named-workflow completion boundaries (execution lifecycle contract)", () => {
   /**
    * Proof: when a named-workflow step uses `plan_created` as its completion
    * method, the engine requires a `PlanStateProvider`. The adapter (OpenCode)
@@ -804,7 +804,7 @@ describe("runWorkflow — PlanStateProvider at named-workflow completion boundar
    * which passes it to `runWorkflowLifecycle` and ultimately to `completeStep`.
    *
    * ADR 0004 Decision 3: "Adapters are delivery layers, not semantic owners."
-   * Spec 19: "Adapters supply a `PlanStateProvider` implementation via
+   * plan-state contract: "Adapters supply a `PlanStateProvider` implementation via
    * `CompleteStepInput.planStateProvider`."
    */
   it("fails with LifecycleError when plan_created step has no PlanStateProvider", async () => {

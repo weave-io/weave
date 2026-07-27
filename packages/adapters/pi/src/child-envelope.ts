@@ -1,6 +1,6 @@
 /**
  * Authenticated private control envelopes exchanged between the controller
- * (parent) and a delegated RPC child (Spec 33 §11.3).
+ * (parent) and a delegated RPC child (Pi adapter contract).
  *
  * These envelopes are a distinct, HMAC-authenticated channel layered *on
  * top of* Pi's own documented RPC protocol - never a replacement for it,
@@ -10,7 +10,7 @@
  * are written by the child's own loaded extension code directly to its
  * process's stdout, interleaved with (but structurally distinguishable
  * from) Pi's own event/response JSON lines. See `rpc-child.ts` for the
- * transport wiring and `docs/specs/33-spec-pi-adapter/33-spec-pi-adapter.md`
+ * transport wiring and `docs/adapters/pi.md`
  * §11.2-§11.4 for the full contract this module implements.
  *
  * Only genuine controller-issued instructions (handshake, descriptor
@@ -33,7 +33,7 @@ import {
 export const CONTROL_ENVELOPE_TYPE_MARKER = "weave_control" as const;
 export const CONTROL_ENVELOPE_SCHEMA_VERSION = 1 as const;
 
-/** Private control body cap, stricter than the general 1 MiB RPC record cap (Spec 33 §11.4). */
+/** Private signed control-body cap (Pi adapter contract). */
 export const MAX_CONTROL_BODY_BYTES = 64 * 1024;
 
 export type PiControlDirection = "parent-to-child" | "child-to-parent";
@@ -51,7 +51,7 @@ export const PI_CONTROL_KINDS = [
   "approval-request",
   "approval-response",
   // A child relays its own delegation request through its authenticated
-  // parent/root coordinator (Spec 33 §10-11): nested delegation is never a
+  // parent/root coordinator (Pi adapter contract): nested delegation is never a
   // second, untracked budget - every descendant request travels this exact
   // control channel back to the one root-owned `PiDelegationController`.
   "delegate-request",
@@ -234,7 +234,7 @@ export type AuthStateError =
  * Per-child sequence/nonce bookkeeping. Enforces that only the exact next
  * sequence number in the `child-to-parent` direction is admitted (both
  * late/replayed and out-of-order/future messages are rejected) and that no
- * nonce is ever accepted twice (Spec 33 §11.3).
+ * nonce is ever accepted twice (Pi adapter contract).
  */
 export class PiChildAuthState {
   private nextIncomingSequence = 1;

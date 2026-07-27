@@ -13,7 +13,7 @@ import { BunPackageCommandRunner, PublicPackagePackager } from "../packager.js";
 import { TarInspector } from "../tar-inspector.js";
 
 /**
- * Clean-room fake-host consumer proof (Spec 33 §24 layer F, §25 PI-PKG).
+ * Clean-room fake-host consumer proof (Pi adapter contract, PI-PKG).
  *
  * Materializes the packed `@weaveio/weave-adapter-pi` tarball into a fully
  * isolated directory (never the developer's project) alongside a local
@@ -83,7 +83,7 @@ class IsolatedFakeHostConsumer {
   }
 }
 
-describe("pi adapter clean-room fake-host consumer (Spec 33 §24F, §25 PI-PKG)", () => {
+describe("pi adapter clean-room fake-host consumer (Pi adapter contract, PI-PKG)", () => {
   it(`installs the packed tarball against a local fake ${HOST_PACKAGE_NAME}@${EXACT_TESTED_HOST_VERSION} host, without network or starting Pi`, async () => {
     // the exact host version this test binds to must fall inside the
     // adapter's own declared, enforced compatibility range

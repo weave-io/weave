@@ -75,7 +75,7 @@ function toolPolicyCoverageFromPlan(
 }
 
 /**
- * Result of the read-only preflight sequence (Spec 33 §7.2, steps 2-11).
+ * Result of the read-only preflight sequence (Pi adapter contract,).
  * Never mutates harness state, opens the Runtime Store, starts a timer, or
  * launches a process. `healthOnlyMode` is a *computed fact*, not a
  * rejection of activation - `preflight` still succeeds (returns `Ok`) when
@@ -86,13 +86,13 @@ function toolPolicyCoverageFromPlan(
  * Withheld project trust always forces `healthOnlyMode: true` (fail
  * closed), even when every probe -- including the narrow
  * `project-trust-withheld` `ok` status for project-path-dependent
- * capabilities (Spec 33 §7.3) -- reports success. That narrow `ok` proves
+ * capabilities (Pi adapter contract) -- reports success. That narrow `ok` proves
  * only that project-path access was correctly withheld; it never proves the
  * underlying capability is usable, so it MUST NOT be able to promote the
  * adapter into a ready (non-health-only) state while trust is absent.
  *
  * `configActivation` is `undefined` when config activation never ran
- * (mode/host blocked - Spec 33 §28 "wrong mode/host/version -\> health-only"
+ * (mode/host blocked - Pi adapter contract "wrong mode/host/version -\> health-only"
  * means config is never loaded/materialized). `configActivationFailure` is
  * set instead when activation was attempted but the config itself failed to
  * load/parse. Callers (e.g. `extension.ts`'s `session_start`) reuse this
@@ -132,7 +132,7 @@ export interface PiSafeInitializerDeps {
   readonly capabilityContract?: AdapterCapabilityContract;
   /**
    * Caller-supplied builder for the ordinary-delegation Weave-owned tool
-   * (Spec 33 §11.1) - mirrors the existing caller-supplied-resolver pattern
+   * (Pi adapter contract) - mirrors the existing caller-supplied-resolver pattern
    * so this foundational module never depends on the concrete delegation
    * controller. Receives the eligible default-primary descriptor and the
    * successful config activation; returns zero or one registrations. Not
@@ -144,12 +144,12 @@ export interface PiSafeInitializerDeps {
   ) => readonly PiWeaveToolRegistration[];
   /**
    * Real, no-follow-safe containment proof for `.weave/runtime`/`.weave/plans`
-   * (Spec 33 §18, §21, §28) - gates `workflow-persistence`/
+   * (Pi adapter contract) - gates `workflow-persistence`/
    * `workflow-step-dispatch`/`plan-file-compatibility` on more than
    * `configLoaded`. Defaults to `NullPathContainmentPort` (always
    * fail-closed, never spawns a process) so omitting this dependency never
    * silently promotes those capabilities to `ok` and no test accidentally
-   * spawns a real process (Spec 33 §24 layer D) - production wiring in
+   * spawns a real process (Pi adapter contract) - production wiring in
    * `extension.ts` MUST supply `BunPathContainmentPort` explicitly.
    */
   readonly pathContainmentPort?: PathContainmentPort;
@@ -271,9 +271,9 @@ export class PiSafeInitializer {
   }
 
   /**
-   * Spec 33 §7.2 steps 5-8: loads the permitted config and materializes it
+   * Pi adapter contract: loads the permitted config and materializes it
    * into candidate descriptors - but only when mode/host are not blocked
-   * (Spec 33 §28 "wrong mode/host/version -\> health-only" means config MUST
+   * (Pi adapter contract "wrong mode/host/version -\> health-only" means config MUST
    * NOT be loaded or materialized at all in that state). Also performs a
    * *pure, dry-run* model resolution for the default primary purely to
    * inform capability probing; it never applies a model (`pi.setModel`) -
@@ -297,7 +297,7 @@ export class PiSafeInitializer {
     // unhandled rejection or a synchronous throw escaping this method
     // (neverthrow-wrap-exceptions). The failure reason below is a fixed,
     // closed-set literal - never anything derived from the thrown/rejected
-    // value, since Spec 33's closed-failure contract bans private paths,
+    // value, since Pi adapter closed-failure contract bans private paths,
     // environment values, and secrets from public failures.
     return ResultAsync.fromSafePromise(
       (async (): Promise<CandidatePlanOutcome> => {
@@ -320,7 +320,7 @@ export class PiSafeInitializer {
                   ) ?? [])
                 : [];
             // `modelRegistry` is an injected port; a throwing
-            // `getAvailable()` must not crash preflight - Spec 33 §9.2's own
+            // `getAvailable()` must not crash preflight - Pi adapter contract's own
             // fail-closed behavior for model resolution is to degrade rather
             // than fail, so an unreadable catalog is treated as an empty one.
             const availableModels = safelyListAvailableModels(
@@ -354,7 +354,7 @@ export class PiSafeInitializer {
               () => makeInvariantViolationFailure("tool-policy-plan-threw"),
             )().andThen((result) => result);
 
-            // Project-path containment (Spec 33 §18, §21, §28) is only ever
+            // Project-path containment (Pi adapter contract) is only ever
             // computed under confirmed project trust - probing `.weave/runtime`/
             // `.weave/plans` is itself project-path access, which withheld
             // trust must never perform even though config can still load in a

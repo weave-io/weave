@@ -399,7 +399,7 @@ export const noopProjectEffect = (
  * Build an `ok` probe result for every one of the 19 capability IDs.
  *
  * `ok` probes never lower effective readiness below the static declaration
- * (Spec 07 / Spec 33 §21), so fixtures using this helper preserve the exact
+ * (adapter capability and Pi adapter contracts), so fixtures using this helper preserve the exact
  * pre-probe declared readiness for every capability.
  */
 export function okProbesForAll(): CapabilityProbeResult[] {

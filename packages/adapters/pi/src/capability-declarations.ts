@@ -1,7 +1,7 @@
 import type { AdapterCapabilityContract } from "@weaveio/weave-engine";
 
 /**
- * Static capability ceilings for this adapter build (Spec 33 §21). These are
+ * Static capability ceilings for this adapter build (Pi adapter contract). These are
  * declarations, not runtime facts: `evaluateEffectiveCapabilities` (Task 5,
  * `@weaveio/weave-engine`) lowers each one by an exactly-one-per-ID runtime
  * probe. A probe may only preserve or lower a declared level, never raise
@@ -107,13 +107,13 @@ export const PI_ADAPTER_CAPABILITY_CONTRACT: AdapterCapabilityContract = {
     {
       id: "eval-integration",
       description:
-        "Evaluation harness integration (explicitly out of scope, Spec 33 §3)",
+        "Evaluation harness integration (explicitly out of scope under the Pi adapter contract)",
       readiness: "unsupported",
     },
     {
       id: "multiple-active-workflows",
       description:
-        "Running more than one active workflow concurrently (explicitly out of scope, Spec 33 §3)",
+        "Running more than one active workflow concurrently (explicitly out of scope under the Pi adapter contract)",
       readiness: "unsupported",
     },
   ],

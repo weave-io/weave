@@ -14,7 +14,7 @@ import type {
 } from "../../child-process-port.js";
 
 /**
- * A fully scripted stand-in for a real child process (Spec 33 §24 layer D:
+ * A fully scripted stand-in for a real child process (Pi adapter contract:
  * no automated test may spawn a real process). The test drives every byte
  * the "child" ever sends via {@link FakeSpawnedProcess.emitLine}/`emit`,
  * and inspects every byte the parent ever wrote via `writtenText`.
@@ -25,7 +25,7 @@ export class FakeSpawnedProcess implements PiSpawnedChildProcess {
   /**
    * Set only by {@link forceKill}, never by the cooperative {@link kill}.
    * Lets tests assert the mandatory-force-kill path was actually taken
-   * (Spec 33 §11.5), not merely that *some* kill happened.
+   * (Pi adapter contract), not merely that *some* kill happened.
    */
   forceKilled = false;
   private dataHandlers: Array<(chunk: Uint8Array) => void> = [];

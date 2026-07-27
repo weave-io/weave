@@ -21,7 +21,7 @@
  *   adapter-supplied lists. If absent, the engine derives them from the
  *   profile evaluation failures and warnings in the health report.
  *
- * @see docs/specs/30-spec-minimal-runtime-command-lifecycle/30-spec-minimal-runtime-command-lifecycle.md
+ * @see docs/reference/cli.md
  * @see docs/adapter-boundary.md
  * @see packages/engine/src/capability-contract.ts — AdapterHealthReport, buildAdapterHealthReport
  * @see packages/engine/src/runtime-command-operations/types.ts

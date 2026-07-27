@@ -1467,7 +1467,7 @@ describe("mergeConfigsResult — before-plan extension surface ownership", () =>
   });
 
   it("(bp-10a) before-plan non-reconciling in v1: no reconciliation fields on steps after merge", () => {
-    // Spec 22 Unit 2: "before-plan steps do not participate in reconciliation
+    // execution lifecycle contract: "before-plan steps do not participate in reconciliation
     // semantics" in v1. After merge, no step in the merged workflow has
     // reconciliation_handler or on_reconcile fields.
     const base = cfg(`

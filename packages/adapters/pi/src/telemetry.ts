@@ -1,5 +1,5 @@
 /**
- * Spec 33 §19 — adapter diagnostics, retention, and usage telemetry.
+ * Pi adapter contract — adapter diagnostics, retention, and usage telemetry.
  *
  * Normalizes Runtime Journal families, records exactly-once usage
  * observations for settled primary/child assistant messages, activates
@@ -9,7 +9,7 @@
  * `createRotatingRuntimeLogSink`) — it never reimplements journal
  * validation, usage idempotency, retention pruning, or log rotation.
  *
- * See docs/specs/33-spec-pi-adapter/33-spec-pi-adapter.md §19.
+ * See docs/adapters/pi.md.
  *
  * Data ban (§19.1): every method here accepts only bounded, closed-set safe
  * scalars (IDs, event-type names, enum values, counts, costs, timestamps).
@@ -48,7 +48,7 @@ import type { JsonValue } from "./strict-json.js";
 import type { Clock, PiAdapterLogger } from "./types.js";
 
 /**
- * Normalized Runtime Journal families this adapter emits (Spec 33 §19.2).
+ * Normalized Runtime Journal families this adapter emits (Pi adapter contract).
  * Every journal entry is tagged with exactly one family via its
  * `eventType` prefix (`"<family>.<event>"`), so downstream consumers can
  * filter deterministically without parsing free-text.
@@ -93,7 +93,7 @@ export interface PiJournalEventInput {
 export type PiAssistantUsageSource = "primary" | "child";
 
 export interface PiAssistantUsageInput {
-  /** Stable Pi message identity — never derived from text (Spec 33 §19.4). */
+  /** Stable Pi message identity — never derived from text (Pi adapter contract). */
   readonly id: string;
   readonly source: PiAssistantUsageSource;
   readonly workflowInstanceId?: string;
@@ -233,7 +233,7 @@ export interface PiTelemetryOptions {
 }
 
 /**
- * One adapter-side telemetry unit per generation (Spec 33 §19). Constructed
+ * One adapter-side telemetry unit per generation (Pi adapter contract). Constructed
  * once activation is confirmed trusted and healthy; disposed on shutdown.
  */
 export class PiTelemetry implements PiTelemetryUsageSink {
@@ -274,7 +274,7 @@ export class PiTelemetry implements PiTelemetryUsageSink {
   }
 
   /**
-   * Activates retention pruning for this generation (Spec 33 §19.3): runs
+   * Activates retention pruning for this generation (Pi adapter contract): runs
    * an immediate pass and arms the interval/threshold-based scheduler.
    * Never blocks adapter activation — a failure degrades and is reported
    * via the returned `err`, but callers must not treat it as fatal.
@@ -337,7 +337,7 @@ export class PiTelemetry implements PiTelemetryUsageSink {
 
   /**
    * Records exactly one usage observation for a settled primary or child
-   * assistant message (Spec 33 §19.4). Identity is the caller-supplied
+   * assistant message (Pi adapter contract). Identity is the caller-supplied
    * stable Pi message ID, never text. The underlying store is idempotent:
    * the same ID with the same normalized values is a no-op; the same ID
    * with different values is a closed `InvariantViolation` failure.
@@ -399,7 +399,7 @@ export class PiTelemetry implements PiTelemetryUsageSink {
 
   /**
    * Deduplicates a TUI diagnostic by failure code, scope, and safe
-   * correlation ID (Spec 33 §19.2). Exposes exactly one notification per
+   * correlation ID (Pi adapter contract). Exposes exactly one notification per
    * unique identity — repeat calls for the same identity are no-ops.
    */
   notifyFailureOnce(ui: PiTelemetryUiPort, failure: PiAdapterFailure): void {
@@ -465,7 +465,7 @@ function safeStoreErrorType(cause: RuntimeStoreError): string {
 
 /**
  * Builds the production rotating pino sink for `.weave/runtime/logs/
- * pi-adapter.ndjson` (Spec 33 §19.2), reusing the engine's
+ * pi-adapter.ndjson` (Pi adapter contract), reusing the engine's
  * `createRotatingRuntimeLogSink` (no-follow identities, atomic rotation,
  * serialized rotation/pruning). On failure, degrades to `fallbackLogger`
  * rather than blocking activation — the caller decides whether to surface

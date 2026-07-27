@@ -2,7 +2,7 @@
 
 **Status**: Accepted  
 **Date**: 2026-05-20  
-**Related**: [Runtime Persistence Spec](../specs/12-spec-runtime-persistence/12-spec-runtime-persistence.md) · [Adapter Boundary](../adapter-boundary.md) · [Context Glossary](../../CONTEXT.md) · [Issue #50](https://github.com/weave-io/weave/issues/50)
+**Related**: [Runtime Store](../reference/runtime.md) · [Adapter Boundary](../architecture/adapter-boundary.md) · [Context Glossary](../../CONTEXT.md) · [Issue #50](https://github.com/weave-io/weave/issues/50)
 
 ---
 

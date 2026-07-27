@@ -135,8 +135,8 @@ const permitInput = (registry: ReturnType<typeof makeRegistry>) => ({
   registryGeneration: registry.id,
   call: { value: 1 },
 });
-/** Spec 34 red phase: security contract tests. */
-describe("Spec 34 — permission session security", () => {
+/** permission contract red phase: security contract tests. */
+describe("permission contract — permission session security", () => {
   it("rejects field-specific malformed activation values and freezes policy", async () => {
     const c = clock();
     const options = base(c);

@@ -574,7 +574,7 @@ function loadAppendSourceFromInput(
 /**
  * Compose the final prompt for a single workflow step.
  *
- * ## Precedence rules (Spec 22 Unit 4)
+ * ## Precedence rules (execution lifecycle contract)
  *
  * 1. **Step-local precedence**: when the step declares its own
  *    `prompt_append` / `prompt_append_file`, that append is used exclusively.

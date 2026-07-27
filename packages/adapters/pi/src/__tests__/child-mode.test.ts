@@ -250,7 +250,7 @@ async function signedBootstrap(
   return envelope._unsafeUnwrap() as unknown as JsonValue;
 }
 
-describe("private child mode (Spec 33 §11.2-§11.5, end-to-end against a fake host)", () => {
+describe("private child mode (Pi adapter contract, end-to-end against a fake host)", () => {
   it("detects the bootstrap secret via environment only, completes the handshake, and registers the hidden control command", async () => {
     const { host, output } = await buildChildExtension();
     expect(host.commands.has("weave:__control__")).toBe(true);
@@ -582,7 +582,7 @@ describe("private child mode (Spec 33 §11.2-§11.5, end-to-end against a fake h
     await flush();
 
     // Only a direct-step bootstrap ever registers weave_complete_step -
-    // an ordinary/nested child never receives it (Spec 33 §15).
+    // an ordinary/nested child never receives it (Pi adapter contract).
     expect(host.registeredTool(WEAVE_COMPLETE_STEP_TOOL_NAME)).toBeUndefined();
 
     // A call naming that exact tool anyway is not a Weave-owned control

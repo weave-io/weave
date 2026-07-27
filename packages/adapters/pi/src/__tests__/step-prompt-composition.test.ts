@@ -19,7 +19,7 @@
  * ordinary delegation-task bound.
  *
  * These tests prove, against a fully scripted `FakeDirectDispatchPort` (no
- * real Pi process, no network — Spec 33 §24), that the exact rendered
+ * real Pi process, no network — Pi adapter contract), that the exact rendered
  * `step.prompt` text reaches the task prompt sent to the child, both
  * on the very first dispatch (driven by `dispatchStep` via
  * `runDispatchLoop`) and on the auto-advanced second step (driven by

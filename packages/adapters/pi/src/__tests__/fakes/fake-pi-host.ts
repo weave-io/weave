@@ -119,7 +119,7 @@ export interface FakePiHostOptions {
 
 /**
  * Records every call an extension makes against a narrow, adapter-owned
- * port surface (Spec 33 §24, layer C/D). Supports fresh contexts per
+ * port surface (Pi adapter contract,). Supports fresh contexts per
  * generation, mode/trust simulation, foreign-command collision injection,
  * and host failure injection (a poisoned `getCommands`/`getAllTools`).
  *

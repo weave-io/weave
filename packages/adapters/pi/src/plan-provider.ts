@@ -1,6 +1,6 @@
 /**
- * Adapter-owned `PlanStateProvider` wiring (Spec 33 §16;
- * docs/adapter-boundary.md "Plan State Provider"). The engine owns the
+ * Adapter-owned `PlanStateProvider` wiring (Pi adapter contract;
+ * docs/architecture/adapter-boundary.md "Plan State Provider"). The engine owns the
  * `PlanStateProvider` interface, `validatePlanName`, and all transition
  * policy; the concrete Bun filesystem implementation lives in
  * `@weaveio/weave-config` (`BunFilesystemPlanStateProvider`). This module
@@ -15,7 +15,7 @@ export const PI_PLAN_COORDINATOR_AGENT = DEFAULT_PLAN_COORDINATOR;
 
 /**
  * Builds the production `PlanStateProvider` for a trusted project root. Must
- * only be called after project trust is confirmed (Spec 33 §7.3) - the
+ * only be called after project trust is confirmed (Pi adapter contract) - the
  * provider itself proves canonical-root containment and no-follow symlink
  * rejection on every call, but the *decision* to construct it at all is the
  * adapter's trust gate.

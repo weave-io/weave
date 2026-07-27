@@ -11,7 +11,7 @@
  * These types are engine-owned and live in @weaveio/weave-engine, not @weaveio/weave-core.
  * No SQLite or Kysely types are referenced here — this file is pure domain.
  *
- * @see docs/specs/12-spec-runtime-persistence/12-spec-runtime-persistence.md
+ * @see docs/reference/runtime.md
  */
 
 // ---------------------------------------------------------------------------
@@ -347,7 +347,7 @@ export interface ArtifactRefInput {
  * Replaces the bare `approverAgent` string so self-approval, gate authority,
  * and user provenance are enforceable without harness-specific types.
  *
- * @see docs/specs/33-spec-pi-adapter/33-spec-pi-adapter.md §17
+ * @see docs/adapters/pi.md
  * @see docs/adr/0010-plan-state-and-artifact-approval-authority.md
  */
 export type ArtifactApprovalActor =
@@ -547,7 +547,7 @@ export interface ExecutionLease {
  * - PII-like harness-private fields
  * - User secrets or session-private state
  *
- * @see docs/specs/12-spec-runtime-persistence/12-spec-runtime-persistence.md
+ * @see docs/reference/runtime.md
  */
 export interface SessionSnapshot {
   /** Unique identifier for this snapshot. */
@@ -680,7 +680,7 @@ export interface JournalQueryFilter {
 }
 
 // ---------------------------------------------------------------------------
-// Usage observations and rollups (Spec 12 retention/usage extension)
+// Usage observations and rollups (Runtime Store contract retention/usage extension)
 // ---------------------------------------------------------------------------
 
 /**

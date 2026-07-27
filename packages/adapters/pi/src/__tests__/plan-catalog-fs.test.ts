@@ -4,7 +4,7 @@ import { $ } from "bun";
 import { BunPiPlanCatalogPort } from "../plan-catalog.js";
 
 /**
- * Real Bun filesystem conformance tests (Spec 33 §24 layer E) for the
+ * Real Bun filesystem conformance tests (Pi adapter contract) for the
  * production `.weave/plans` directory listing - scratch temp directory
  * only. `Bun.$`/`Bun.write` are fixture scaffolding only (see
  * `artifact-provider-fs.test.ts`'s header for the same rationale); the code

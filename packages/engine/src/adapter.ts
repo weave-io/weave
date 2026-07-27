@@ -40,7 +40,7 @@ export interface HarnessAdapter {
    * Return the list of skills available in this harness instance.
    *
    * The engine calls this once during the bootstrap sequence — after `init()`
-   * and before agent materialisation (see `docs/adapter-bootstrap.md`) — to
+   * and before agent materialisation (see `docs/guides/adapter-development.md`) — to
    * obtain the adapter-provided skill context used for skill resolution. The
    * engine matches each agent's declared
    * `skills [...]` entries against `SkillInfo.name` values in the returned

@@ -2,7 +2,7 @@ import type { PlanStateError } from "@weaveio/weave-engine";
 import { z } from "zod";
 
 /**
- * Closed failure contract for the Pi adapter (Spec 33 §23). The full code and
+ * Closed failure contract for the Pi adapter (Pi adapter contract). The full code and
  * phase unions are declared here even though this foundation task only
  * constructs a subset of them, so later tasks extend behavior without
  * widening the taxonomy.
@@ -254,10 +254,10 @@ function childScope(childId: string): PiAdapterFailureScope {
 }
 
 /**
- * Child/protocol closed-failure factories (Spec 33 §11, §23). Every
+ * Child/protocol closed-failure factories (Pi adapter contract). Every
  * `correlation` value here is a bounded identifier, count, or closed reason
  * string - never raw RPC/control payload content, prompt text, or secret
- * material (Spec 33 §19.1).
+ * material (Pi adapter contract).
  */
 export function makeChildCapacityExceededFailure(
   childId: string,
@@ -567,8 +567,8 @@ function stepScope(stepName: string): PiAdapterFailureScope {
 }
 
 /**
- * Persistence closed-failure factories (Spec 33 §18, §23). `RuntimeStoreOpenFailed`
- * / `RuntimeStoreMigrationFailed` are health-only (Spec 33 §7.2 step 12): the
+ * Persistence closed-failure factories (Pi adapter contract). `RuntimeStoreOpenFailed`
+ * / `RuntimeStoreMigrationFailed` are health-only (Pi adapter contract): the
  * Runtime Store is authoritative, so an unopenable/unmigratable store must
  * never be silently skipped.
  */
@@ -619,7 +619,7 @@ export function makeRuntimeStoreWriteFailedFailure(
   };
 }
 
-/** Execution closed-failure factories (Spec 33 §14, §23). */
+/** Execution closed-failure factories (Pi adapter contract). */
 export function makeLeaseLostFailure(
   workflowInstanceId: string,
   reason: string,
@@ -672,7 +672,7 @@ export function makeLifecycleEffectFailedFailure(
 }
 
 /**
- * Structured-completion closed-failure factories (Spec 33 §15, §23). Every
+ * Structured-completion closed-failure factories (Pi adapter contract). Every
  * completion candidate must arrive as one valid `weave_complete_step`
  * invocation settled by `agent_settled` - never free-form prose, process
  * exit, or retried/queued continuation before settlement.
@@ -755,7 +755,7 @@ export function makeCompletionRejectedFailure(
   };
 }
 
-/** Plan closed-failure factories (Spec 33 §16, §23). */
+/** Plan closed-failure factories (Pi adapter contract). */
 export function makePlanMissingFailure(planName: string): PiAdapterFailure {
   return {
     code: "PlanMissing",
@@ -852,8 +852,8 @@ export function makeLegacyPlanUnsupportedFailure(
 }
 
 /**
- * Maps the engine's full `PlanStateError` union (Spec 19) onto the Pi
- * adapter's closed failure taxonomy (Spec 33 §23). Only a read-only
+ * Maps the engine's full `PlanStateError` union (plan-state contract) onto the Pi
+ * adapter's closed failure taxonomy (Pi adapter contract). Only a read-only
  * passthrough (`PiWorkflowController.readPlanSnapshot`) uses this today, so
  * write/transition-only variants (`PlanWriteFailed`, `PlanRevisionStale`,
  * `UnauthorizedCoordinator`, `InvalidTransition`) are mapped defensively
@@ -906,7 +906,7 @@ export function mapPlanStateErrorToPiFailure(
   }
 }
 
-/** Artifact closed-failure factories (Spec 33 §17, §23). */
+/** Artifact closed-failure factories (Pi adapter contract). */
 export function makePlanCatalogUnavailableFailure(
   reason: string,
 ): PiAdapterFailure {
@@ -971,7 +971,7 @@ export function makeArtifactApprovalFailedFailure(
   };
 }
 
-/** Telemetry closed-failure factories (Spec 33 §18-§19, §23). All are degraded-only except a strict-journal transaction failure, which the caller maps to "operation-stopped" itself. */
+/** Telemetry closed-failure factories (Pi adapter contract). All are degraded-only except a strict-journal transaction failure, which the caller maps to "operation-stopped" itself. */
 export function makeSessionPointerAppendFailedFailure(
   reason: string,
 ): PiAdapterFailure {

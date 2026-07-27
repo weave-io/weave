@@ -143,7 +143,7 @@ describe("DelegateRequestBodySchema.task bound (Spec 33 \u00a711.2 Task 9 unific
   });
 });
 
-// Spec 33 §11.2 finding 2: a real host-supplied model object (`ctx.model`,
+// Pi adapter contract: a real host-supplied model object (`ctx.model`,
 // an entry from `ctx.modelRegistry.getAvailable()`, or a `PiModelResolver`
 // match drawn from either) may carry fields beyond provider/id/name -
 // `ModelIdentityBodySchema` is `.strict()` and rejects any such body

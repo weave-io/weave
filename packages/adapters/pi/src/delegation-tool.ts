@@ -1,5 +1,5 @@
 /**
- * The single Weave-owned ordinary-delegation tool (Spec 33 §11.1). Targets
+ * The single Weave-owned ordinary-delegation tool (Pi adapter contract). Targets
  * are restricted to the invoking descriptor's own normalized
  * `delegationTargets` - never re-derived, never bypassing Task 8's
  * caller-supplied-resolver/guarded-registration path. Execution returns a
@@ -34,7 +34,7 @@ export const WEAVE_DELEGATION_TOOL_NAME = "weave_delegate";
 export const WEAVE_DELEGATION_TOOL_OWNER = "@weaveio/weave-adapter-pi";
 export const WEAVE_DELEGATION_TOOL_REVISION = "1";
 const MAX_TASK_PREVIEW_CHARS = 200;
-// The raw `task` tool argument bound itself (Spec 33 §11.2 Task 9) lives in
+// The raw `task` tool argument validation (Pi adapter contract) lives in
 // `delegation-limits.js` - a dependency-free leaf module shared with
 // `child-control-bodies.ts`, `delegation-controller.ts`, and `rpc-child.ts`
 // - so every layer enforces the exact same limit without this tool module
@@ -42,7 +42,7 @@ const MAX_TASK_PREVIEW_CHARS = 200;
 
 /**
  * The real Pi-compatible TypeBox parameter schema for `weave_delegate`
- * (Spec 33 §7/§11.1) - built from the actual `typebox` package Pi itself
+ * (Pi adapter contract) - built from the actual `typebox` package Pi itself
  * validates tool arguments against, using `@earendil-works/pi-ai`'s
  * `StringEnum` helper so the `agent` enum stays compatible with providers
  * (e.g. Google) that reject `anyOf`/`const`-shaped unions. `task` is a
@@ -85,15 +85,15 @@ export interface PiDelegationToolDeps {
   readonly getController: () => PiDelegationController | undefined;
   readonly parentId: string;
   readonly parentDepth: number;
-  /** The invoking primary's own agent name - limits are the parent's own budget, never the target's (Spec 33 §10). */
+  /** The invoking primary's own agent name - limits are the parent's own budget, never the target's (Pi adapter contract). */
   readonly parentAgentName: string;
-  /** Generates each delegated child's id up front (Spec 33 §11.2 Task 9), so it can be embedded as the bootstrap's own `correlationId` before `controller.delegate()` assigns one internally. */
+  /** Generates each delegated child's id up front (Pi adapter contract), so it can be embedded as the bootstrap's own `correlationId` before `controller.delegate()` assigns one internally. */
   readonly idGenerator: IdGenerator;
   /**
    * Builds the bootstrap payload, given the pre-generated `childId` and the
    * live session `ctx` - the only place a root-level delegation has access
    * to `ctx.modelRegistry` for a concrete parent-resolved model identity
-   * (Spec 33 §9.2, §11.2 Task 9).
+   * (Pi adapter contract).
    */
   readonly buildBootstrap: (
     target: DelegationTarget,
@@ -131,7 +131,7 @@ function failureResult(error: string): {
 
 /**
  * Wires the root tool's own Pi-supplied `AbortSignal` to
- * `controller.cancelSubtree(childId)` (Spec 33 §11.5 cooperative
+ * `controller.cancelSubtree(childId)` (Pi adapter contract cooperative
  * cancellation) so aborting the `weave_delegate` call - app-level
  * interrupt/escape - immediately cancels the exact generated child
  * subtree rather than only after it settles on its own.
@@ -250,7 +250,7 @@ export function buildDelegationToolRegistration(
         return failureResult("delegation-transport-unavailable");
       }
       const childId = deps.idGenerator.next();
-      // Cooperative cancellation (Spec 33 §11.5): a Pi tool call aborted
+      // Cooperative cancellation (Pi adapter contract): a Pi tool call aborted
       // (app interrupt/escape) before this tool ever dispatched a child has
       // no in-flight task to report a structured cancelled *settlement*
       // for - the same fail-closed rule `PiRpcChild.completeCancellation`
@@ -285,7 +285,7 @@ export function buildDelegationToolRegistration(
       );
       if (signal === undefined) return settlement;
       // Wires the exact generated `childId`'s subtree to this tool call's
-      // own `AbortSignal` (Spec 33 §11.5) so aborting the root `weave_delegate`
+      // own `AbortSignal` (Pi adapter contract) so aborting the root `weave_delegate`
       // tool immediately cancels it instead of only noticing after the child
       // settles on its own. Races the delegated child's own settlement
       // against only a *failed* cancellation attempt - a successful one never
@@ -353,7 +353,7 @@ export interface PiRelayedDelegationToolDeps {
 }
 
 /**
- * Builds a delegated child's own `weave_delegate` tool (Spec 33 §10-11,
+ * Builds a delegated child's own `weave_delegate` tool (Pi adapter contract,
  * nested/descendant delegation). Unlike the root's direct
  * `buildDelegationToolRegistration`, this never talks to a
  * `PiDelegationController` directly - a private child process has none of

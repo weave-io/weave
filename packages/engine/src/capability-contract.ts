@@ -62,7 +62,7 @@ export const CapabilityReadinessSchema = z.enum([
  *   analytics-dashboard, eval-integration, static-artifact-generation,
  *   multiple-active-workflows
  *
- * ## Execution-entry capability model (Spec 22 Unit 4)
+ * ## Execution-entry capability model (execution lifecycle contract)
  *
  * `command-entrypoints` is the **canonical execution-entry capability**. It
  * models how an adapter exposes the explicit user-authorized trigger that
@@ -490,7 +490,7 @@ export interface AdapterHealthReport {
 }
 
 // ---------------------------------------------------------------------------
-// § 3.1 — Probe-lowered effective readiness (Spec 07 extension / Spec 33 §21)
+// § 3.1 — Probe-lowered effective readiness (adapter capability contract extension / Pi adapter contract)
 // ---------------------------------------------------------------------------
 
 /**
@@ -599,7 +599,7 @@ function resolveProbeForId(
 /**
  * Evaluate static declarations through exactly one probe per capability ID.
  *
- * Rules (Spec 33 §21 / Spec 07 effective extension):
+ * Effective-readiness rules for the Pi adapter capability contract:
  * - Static declaration is a ceiling
  * - `ok` preserves declaration
  * - `degraded` lowers to degraded (without raising unsupported)

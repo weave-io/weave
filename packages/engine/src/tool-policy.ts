@@ -58,7 +58,7 @@ export type EffectiveToolPolicy = {
  *
  * Value: `"ask"` — requires explicit user approval before the harness grants
  * the capability. This is the safest default and must not be changed without
- * an approved spec update (see `docs/specs/08-spec-abstract-tool-policy-evaluation/`).
+ * an approved spec update (see `docs/reference/tool-policy.md`).
  */
 export const DEFAULT_PERMISSION: ToolPermission = "ask";
 
@@ -104,7 +104,7 @@ export function evaluateEffectiveToolPolicy(
 // an EffectiveToolPolicy.
 //
 // Alignment: this contract maps directly to the `tool-policy-mapping`
-// capability defined in Spec 07 (docs/specs/07-spec-adapter-capability-contract/).
+// capability defined in adapter capability contract (docs/reference/adapter-capabilities.md).
 // Adapters that declare `tool-policy-mapping` as `native` or `emulated` are
 // expected to supply ConcreteToolClassification entries and consume ToolDecision
 // results to enforce Weave policy using harness-specific mechanisms.
@@ -189,7 +189,7 @@ export type ToolDecision = MappedToolDecision | UnmappedToolDecision;
  * every tool identifier in `toolIds`.
  *
  * **Pure and deterministic** — no I/O, no harness names, no adapter calls.
- * Aligned with Spec 07 `tool-policy-mapping` capability
+ * Aligned with adapter capability contract `tool-policy-mapping` capability
  * (see `docs/specs/07-spec-adapter-capability-contract/`).
  *
  * Rules:

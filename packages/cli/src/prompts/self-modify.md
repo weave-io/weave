@@ -18,16 +18,16 @@ to verify your changes.
 
 ## Before you start
 
-- [ ] Read `docs/dsl-reference.md` — canonical DSL syntax reference
-- [ ] Read `docs/config-loading.md` — three-layer merge rules, builtin agents,
+- [ ] Read `docs/reference/dsl.md` — canonical DSL syntax reference
+- [ ] Read `docs/reference/configuration.md` — three-layer merge rules, builtin agents,
       prompt-file resolution, and config discovery
 - [ ] If your change touches prompt text, `prompt_file`, `prompt_append`, or
-      `prompt_append_file`: also read `docs/prompt-composition.md`
+      `prompt_append_file`: also read `docs/reference/prompts.md`
 
-> **`packages/docs/` is a public mirror, not the canonical source.**
-> The Astro/Starlight site under `packages/docs/` publishes a subset of the
-> docs for the public website. The authoritative docs live in `docs/` at the
-> repo root. When the two diverge, `docs/` wins.
+> **`docs/` and `packages/docs/` serve different audiences.**
+> Use the repo-root references above for internal configuration and composition
+> contracts. `packages/docs/` owns public user guidance. If a change affects
+> both audiences, update both surfaces; neither one is a mirror of the other.
 
 ---
 
@@ -67,7 +67,7 @@ to verify your changes.
 
 1. **Identify the change** — agent override, new agent, category, workflow,
    settings, or disable block.
-2. **Read the relevant DSL section** in `docs/dsl-reference.md`.
+2. **Read the relevant DSL section** in `docs/reference/dsl.md`.
 3. **Edit `{{{configPath}}}`** using the DSL syntax (block-structured, no
    semicolons, double-quoted strings, bare enums).
 4. **Place prompt files** (if any) in `{{{promptsDir}}}`.
@@ -138,7 +138,7 @@ This auto-generates a `shuttle-backend` agent descriptor.
 If you are editing prompt text or `prompt_file` / `prompt_append` values:
 
 {{=<% %>=}}
-- [ ] Read `docs/prompt-composition.md` for the supported Mustache template
+- [ ] Read `docs/reference/prompts.md` for the supported Mustache template
       context and composition rules.
 - [ ] Use `{{#delegation.targets}}` to iterate over eligible delegation targets;
       inside the loop, use fields such as `{{name}}`, `{{description}}`,

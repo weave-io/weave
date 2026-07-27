@@ -1,7 +1,7 @@
 /**
  * Serialized retention/pruning service for Runtime Store journal + usage detail.
  *
- * Spec 33 §19.3 / Spec 12 retention extension:
+ * Runtime Store retention contract:
  * - Prune after activation, then after 256 relevant writes or 15 minutes
  * - Age first, then oldest above count
  * - One serialized single-flight task

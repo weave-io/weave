@@ -87,7 +87,7 @@ class RecordingPlanProvider implements PlanStateProvider {
 }
 
 describe("revisioned plan transition semantics", () => {
-  it("PLAN_TASK_STATES exhaustively covers every PlanTaskState (Spec 33 §16 plan markers)", () => {
+  it("PLAN_TASK_STATES exhaustively covers every PlanTaskState (Pi adapter contract plan markers)", () => {
     const members: readonly PlanTaskState[] = PLAN_TASK_STATES;
     expect(new Set(members)).toEqual(
       new Set([

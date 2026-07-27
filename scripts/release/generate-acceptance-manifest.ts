@@ -27,7 +27,7 @@ import {
 
 /**
  * Regenerates `docs/specs/33-spec-pi-adapter/acceptance-manifest.json`
- * (Spec 33 §25) from the source-controlled requirement rows in
+ * (Pi adapter contract) from the source-controlled requirement rows in
  * `acceptance-manifest-data.ts`.
  *
  * The `artifactBinding` this script produces is computed from a *real* local
@@ -38,7 +38,7 @@ import {
  * identifier and `runAttempt` is fixed at `1` for a local/dev regeneration.
  * A real stable release replaces this block with the exact GitHub Actions
  * artifact identity before the live TUI smoke checklist is run against it
- * (Spec 33 §25's `pi-stable-smoke` gate).
+ * (Pi adapter contract's `pi-stable-smoke` gate).
  *
  * Every requirement's `result` stays whatever `acceptance-manifest-data.ts`
  * declares (`"pending"` until the checklist has actually been executed and

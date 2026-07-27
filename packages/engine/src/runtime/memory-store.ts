@@ -7,7 +7,7 @@
  * Designed for use in unit and integration tests. Supports configurable
  * failure injection to exercise error paths without a real SQLite database.
  *
- * @see docs/specs/12-spec-runtime-persistence/12-spec-runtime-persistence.md
+ * @see docs/reference/runtime.md
  */
 
 import { errAsync, okAsync, ResultAsync } from "neverthrow";

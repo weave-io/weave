@@ -91,7 +91,7 @@ function agentActor(
   return { kind: "agent", agentName, gate };
 }
 
-/** A single-step workflow whose one step declares a normative `spec` input artifact - the minimal fixture for pre-dispatch artifact-integrity tests (Spec 33 §17). */
+/** A single-step workflow whose one step declares a normative `spec` input artifact - the minimal fixture for pre-dispatch artifact-integrity tests (Pi adapter contract). */
 const ARTIFACT_INPUT_WORKFLOW = cfg(`
 workflow artifact-flow {
   description "Single-step workflow gated on an approved spec artifact"
@@ -595,7 +595,7 @@ describe("PiWorkflowController — generation recheck at async boundaries", () =
   });
 });
 
-describe("PiWorkflowController — no duplicate effect application (Spec 33 §14)", () => {
+describe("PiWorkflowController — no duplicate effect application (Pi adapter contract)", () => {
   it("dispatches each step exactly once for a two-step workflow, never re-deriving an already-returned completeStep effect", async () => {
     const { store, directDispatch, controller } = buildHarness();
     const workflowInstanceId = await createInstance(store);
@@ -687,7 +687,7 @@ function userConfirmContext(): WorkflowExecutionContext {
   };
 }
 
-describe("PiWorkflowController — /weave:advance user_confirm gating (Spec 33 §13/§14/§15)", () => {
+describe("PiWorkflowController — /weave:advance user_confirm gating (Pi adapter contract)", () => {
   it("withholds completeStep when the candidate's method is user_confirm, leaving the instance running", async () => {
     const { store, directDispatch, controller } = buildHarness();
     const workflowInstanceId = await createInstance(store, "confirm-flow");
@@ -710,7 +710,7 @@ describe("PiWorkflowController — /weave:advance user_confirm gating (Spec 33 �
     // The direct-step agent's own user_confirm candidate is never enough by
     // itself - completeStep is withheld until a genuine /weave:advance, so
     // the run stays "running" at the same step rather than silently
-    // completing (Spec 33 §13: "/weave:advance ... only when the step
+    // completing (Pi adapter contract: "/weave:advance ... only when the step
     // allows it" would otherwise be a dead command).
     expect(result.value.finalStatus).toBe("running");
     expect(result.value.currentStepName).toBe("review");
@@ -777,7 +777,7 @@ describe("PiWorkflowController — /weave:advance user_confirm gating (Spec 33 �
   });
 });
 
-describe("PiWorkflowController — observeSession fires at every required trigger point (Spec 33 §14)", () => {
+describe("PiWorkflowController — observeSession fires at every required trigger point (Pi adapter contract)", () => {
   function spyOnSnapshotStatuses(store: RuntimeStore): string[] {
     const recorded: string[] = [];
     const originalRecord = store.snapshots.record.bind(store.snapshots);
@@ -864,7 +864,7 @@ describe("PiWorkflowController — observeSession fires at every required trigge
   });
 });
 
-describe("PiWorkflowController — pre-dispatch artifact integrity (Spec 33 §17)", () => {
+describe("PiWorkflowController — pre-dispatch artifact integrity (Pi adapter contract)", () => {
   it("dispatches normally when the recomputed digest matches the pinned artifact", async () => {
     const bytes = new TextEncoder().encode("approved spec content");
     const digest = sha256Hex("approved spec content");
@@ -1010,7 +1010,7 @@ describe("PiWorkflowController — pre-dispatch artifact integrity (Spec 33 §17
     if (instance.isOk()) expect(instance.value?.status).toBe("paused");
   });
 
-  it("never pins an artifact whose prior approval was invalidated by a newer, unapproved revision — dispatch fails closed on the engine's own approval-invalidation check instead of silently skipping it (Spec 33 §17 exact pinnedArtifactRevisions behavior)", async () => {
+  it("never pins an artifact whose prior approval was invalidated by a newer, unapproved revision — dispatch fails closed on the engine's own approval-invalidation check instead of silently skipping it (Pi adapter contract exact pinnedArtifactRevisions behavior)", async () => {
     const approvedContent = "approved spec v1";
     const driftedContent = "unapproved spec v2 — drifted since approval";
     const driftedDigest = sha256Hex(driftedContent);
@@ -1087,7 +1087,7 @@ describe("PiWorkflowController — pre-dispatch artifact integrity (Spec 33 §17
   });
 });
 
-describe("PiWorkflowController — retry pins reuse the prior attempt's consumed artifact revisions (Spec 22 Unit 3 default retry reuse)", () => {
+describe("PiWorkflowController — retry pins reuse the prior attempt's consumed artifact revisions (execution lifecycle contract default retry reuse)", () => {
   it("resuming a paused step records the retry's consumed artifact as the prior attempt's revision, even though a newer, fully-approved revision with different content now exists — never silently rebinds", async () => {
     const originalContent = "approved spec v1";
     const originalDigest = sha256Hex(originalContent);
@@ -1201,7 +1201,7 @@ describe("PiWorkflowController — retry pins reuse the prior attempt's consumed
     // `computePinnedArtifactRevisions` is responsible for: the retry's
     // *recorded consumed revision* must still be revision 1 - the prior
     // attempt's pin - never silently rebound to revision 2 just because
-    // it is newer and approved. Silent rebinding would violate Spec 22's
+    // it is newer and approved. Silent rebinding would violate execution lifecycle contract's
     // "reuse the same consumed artifact revisions on retry by default"
     // and Non-Goal 5 ("no automatic latest-artifact rebinding on retry").
     directDispatch.enqueue(okAsync(successCandidate()) as never);
@@ -1353,7 +1353,7 @@ describe("PiWorkflowController — retry pins reuse the prior attempt's consumed
   });
 });
 
-describe("PiWorkflowController — approveArtifact boundary (Spec 33 §17)", () => {
+describe("PiWorkflowController — approveArtifact boundary (Pi adapter contract)", () => {
   it("binds the artifact's current revision and a user actor for an ordinary /weave:artifact approval", async () => {
     const { store, controller } = buildHarness();
     const workflowInstanceId = await createInstance(store);
@@ -1417,7 +1417,7 @@ describe("PiWorkflowController — approveArtifact boundary (Spec 33 §17)", () 
       if (rejected.isErr()) {
         // The correlation reason is a bounded, closed-vocabulary string
         // derived only from the engine's typed `rule` discriminant - never
-        // the engine's free-text `message` (Spec 33 §19/§23; the message
+        // the engine's free-text `message` (Pi adapter contract; the message
         // itself may embed the artifact's producer/gate identity and must
         // not reach adapter-failure correlation data).
         expect(rejected.error.correlation?.reason).toBe(
@@ -1468,7 +1468,7 @@ describe("PiWorkflowController — approveArtifact boundary (Spec 33 §17)", () 
   });
 });
 
-describe("PiWorkflowController — onPlanSnapshotChanged fires at every required trigger point (Spec 33 §16)", () => {
+describe("PiWorkflowController — onPlanSnapshotChanged fires at every required trigger point (Pi adapter contract)", () => {
   it("fires after a dispatch settles within startExecution", async () => {
     const notified: string[] = [];
     const { store, directDispatch, controller } = buildHarness({

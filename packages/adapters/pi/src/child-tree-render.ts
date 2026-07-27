@@ -1,5 +1,5 @@
 /**
- * Pure, Pi-independent rendering of the bounded child tree widget (Spec 33
+ * Pure, Pi-independent rendering of the bounded child tree widget (Pi adapter contract
  * §11.5) - one line per node (name, status, current tool, turn count,
  * elapsed time, per-child usage), the currently selected node marked, and
  * a trailing cumulative-usage summary line. No Pi/TUI dependency: the

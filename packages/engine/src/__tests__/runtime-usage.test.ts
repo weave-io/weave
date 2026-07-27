@@ -1,5 +1,5 @@
 /**
- * Usage observations + durable rollups (Spec 12 extension / Spec 33 §19.4).
+ * Usage observations + durable rollups (Runtime Store contract extension / Pi adapter contract).
  */
 
 import { describe, expect, it } from "bun:test";

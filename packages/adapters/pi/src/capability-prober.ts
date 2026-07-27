@@ -8,7 +8,7 @@ import type { PiCommandInfo, PiMode, PiTrustState } from "./types.js";
 
 /**
  * Capabilities whose "not yet implemented" probe would otherwise read a
- * project path. Per Spec 33 §7.3, while a project is untrusted these report
+ * project path. Per Pi adapter contract, while a project is untrusted these report
  * `ok` for the narrow fact that project access was correctly withheld, not
  * that the capability itself is supported.
  */
@@ -20,12 +20,12 @@ export const PROJECT_PATH_DEPENDENT_CAPABILITIES: readonly CapabilityId[] = [
 ];
 
 /**
- * Real, candidate-plan-derived facts for the four Spec 33 §7.2 steps 5-8
+ * Real, candidate-plan-derived facts for the four Pi adapter contract
  * capabilities (config activation, materialization, primary selection,
- * prompt composition), computed once during preflight (Spec 33 §21) and
+ * prompt composition), computed once during preflight (Pi adapter contract) and
  * threaded into probing so these capabilities reflect the actual outcome
  * instead of a placeholder. Absent (`undefined`) only when preflight is
- * blocked before config activation could safely run (Spec 33 §7.2 step 9,
+ * blocked before config activation could safely run (Pi adapter contract,
  * §28 "wrong mode/host/version -\> health-only").
  */
 export interface PiCandidatePlanContext {
@@ -46,7 +46,7 @@ export interface PiCandidatePlanContext {
   readonly toolPolicyCoverage?: "ok" | { readonly reason: string };
   /**
    * Real, read-only no-follow containment proof for `.weave/runtime` under
-   * the project root (Spec 33 §21, §28): `true` only when that path either
+   * the project root (Pi adapter contract): `true` only when that path either
    * resolves safely inside the project root or does not exist yet - never
    * merely because config loaded. Missing/undefined is treated the same as
    * `false` (unproven) by every caller.
@@ -108,7 +108,7 @@ function evaluateToolPolicyCapability(
 
 /**
  * Evaluates the four candidate-plan-aware capabilities against real
- * materialization/primary-selection facts (Spec 33 §7.2, §21, §28). Never
+ * materialization/primary-selection facts (Pi adapter contract). Never
  * raises a declared ceiling - only reports what actually happened.
  */
 function evaluateCandidatePlanCapability(
@@ -132,11 +132,11 @@ function evaluateCandidatePlanCapability(
         details: "config-not-loaded",
       };
     }
-    // `materializeAgents` never fails wholesale (Spec 33 §8.1): a failing
+    // `materializeAgents` never fails wholesale (Pi adapter contract): a failing
     // descriptor is isolated and reported in `plan.errors`, but unrelated
     // valid descriptors (Loom included) still materialize. A per-descriptor
     // error is therefore reported here as detail, never as a degradation of
-    // this required, global capability (Spec 33 §28 "partial descriptor
+    // this required, global capability (Pi adapter contract "partial descriptor
     // failures -> keep unrelated valid descriptors").
     return {
       capabilityId: id,
@@ -163,7 +163,7 @@ function evaluateCandidatePlanCapability(
       };
     }
     // An unresolved model intent degrades that descriptor's *model* health
-    // (Spec 33 §9.2: retain the current authenticated Pi model, expose
+    // (Pi adapter contract: retain the current authenticated Pi model, expose
     // descriptor model degradation) - it does not make the primary
     // unselectable. A valid, eligible primary remains selectable/usable
     // under model fallback, so this required capability stays `ok`.
@@ -235,7 +235,7 @@ function evaluateCandidatePlanCapability(
   // only proves config parsed - it says nothing about whether the Runtime
   // Store's own directory is actually reachable. This capability is `ok`
   // only when config loaded *and* a real, read-only no-follow containment
-  // proof of `.weave/runtime` succeeded (Spec 33 §21, §28). It still never
+  // proof of `.weave/runtime` succeeded (Pi adapter contract). It still never
   // opens the store itself - a real open/migration failure at
   // `session_start` degrades the *session's* workflow surface separately
   // (see `renderHealthMessage`'s runtime-store line) - but it no longer
@@ -265,10 +265,10 @@ function evaluateCandidatePlanCapability(
     };
   }
   // plan-file-compatibility: `createPiPlanStateProvider` binds the
-  // concrete `BunFilesystemPlanStateProvider` (Spec 33 §16), but that is
+  // concrete `BunFilesystemPlanStateProvider` (Pi adapter contract), but that is
   // only a real, provable structural fact once `.weave/plans` itself has
   // also passed the same real containment proof - `configLoaded` alone is
-  // not concrete evidence (Spec 33 §21, §28).
+  // not concrete evidence (Pi adapter contract).
   if (!plan.configLoaded) {
     return {
       capabilityId: id,
@@ -290,7 +290,7 @@ function evaluateCandidatePlanCapability(
   };
 }
 
-/** Adapter-owned seam so tests can substitute a fully-controlled probe set (Spec 33 §24). */
+/** Adapter-owned seam so tests can substitute a fully-controlled probe set (Pi adapter contract). */
 export interface PiCapabilityProbeSource {
   probe(context: PiPreflightContext): readonly CapabilityProbeResult[];
 }
@@ -298,7 +298,7 @@ export interface PiCapabilityProbeSource {
 /**
  * Returns exactly one `unavailable` probe for every capability ID, with a
  * shared reason. Used when mode or host identity/version blocks preflight
- * before any other probe can safely run (Spec 33 §7.2 step 9).
+ * before any other probe can safely run (Pi adapter contract).
  */
 export function buildBlockedProbeSet(reason: string): CapabilityProbeResult[] {
   return ALL_CAPABILITY_IDS.map((capabilityId) => ({
@@ -321,7 +321,7 @@ function isSuffixedVariant(entryName: string, baseName: string): boolean {
 }
 
 /**
- * Verifies exclusive ownership of every required `/weave:*` command (Spec 33
+ * Verifies exclusive ownership of every required `/weave:*` command (Pi adapter contract
  * §7.1): each name must have exactly one unsuffixed invocation whose
  * `sourceInfo` proves it is ours, and no same-base numeric-suffixed entry
  * may exist at all (a suffix means some registration collided on this name,
@@ -425,7 +425,7 @@ const VALID_PROBE_STATUSES: ReadonlySet<string> = new Set([
 ]);
 const KNOWN_CAPABILITY_IDS: ReadonlySet<string> = new Set(ALL_CAPABILITY_IDS);
 
-/** Bound on a sanitized probe `details` string (Spec 33 §19.1: no raw payloads in diagnostics). */
+/** Bound on a sanitized probe `details` string (Pi adapter contract: no raw payloads in diagnostics). */
 const MAX_SAFE_DETAILS_LENGTH = 200;
 /** Printable ASCII only — matches the plain-punctuation, no-secrets diagnostics contract. */
 const SAFE_DETAILS_PATTERN = /^[\x20-\x7E]*$/;
@@ -446,7 +446,7 @@ interface RawProbeCandidate {
 /**
  * Normalizes a raw, potentially-anomalous probe array from an injected
  * prober into exactly one sanitized `CapabilityProbeResult` per
- * canonical capability ID (Spec 33 §21). A missing, duplicate,
+ * canonical capability ID (Pi adapter contract). A missing, duplicate,
  * contradictory, malformed-status, unknown-ID, or unsafe-detail entry for a
  * given ID is reduced to a single `unavailable` sanitized row for that ID.
  * This never raises readiness — it only ever preserves or lowers the

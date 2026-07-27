@@ -1,5 +1,5 @@
 /**
- * Port-level regression test for the exact-host live smoke bug (Spec 33
+ * Port-level regression test for the exact-host live smoke bug (Pi adapter contract
  * §11.5): `PiRpcChild.terminateResources()` previously used only
  * `PiSpawnedChildProcess.kill()`, which `BunPiChildProcessPort` mapped to
  * `subprocess.kill()` with no explicit signal - the runtime's own default,
@@ -10,7 +10,7 @@
  * the bounded cancellation grace, never actually reaped.
  *
  * `BunPiChildProcessPort` itself calls the real `Bun.spawn` and is
- * deliberately never exercised by an automated test (Spec 33 §24 layer D:
+ * deliberately never exercised by an automated test (Pi adapter contract:
  * "no automated test may spawn a real process" - see `child-process-port.ts`).
  * `resolveKillSignal` is the one piece of "which signal do we actually ask
  * for" logic pulled out into a pure, synchronous function specifically so

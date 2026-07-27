@@ -1,6 +1,6 @@
 /**
- * Adapter-owned artifact file I/O and digest computation (Spec 33 §17;
- * docs/adapter-boundary.md "Artifact Integrity Metadata"). The engine only
+ * Adapter-owned artifact file I/O and digest computation (Pi adapter contract;
+ * docs/architecture/adapter-boundary.md "Artifact Integrity Metadata"). The engine only
  * owns `ArtifactIntegrityMetadata`'s type/format/fail-closed comparison; it
  * never reads artifact contents. This module reads bytes from a verified,
  * contained, no-follow-checked path under the canonical project root and
@@ -39,7 +39,7 @@ export interface PiArtifactDigest {
 }
 
 /**
- * Adapter-owned artifact port (docs/adapter-boundary.md: "artifact digest
+ * Adapter-owned artifact port (docs/architecture/adapter-boundary.md: "artifact digest
  * computation ... = Adapter"). Production and fakes both implement this;
  * `PiWorkflowController` never reads files itself.
  */
@@ -95,7 +95,7 @@ export class BunPiArtifactProvider implements PiArtifactProvider {
     }
     // Reads bytes and computes identity from one no-follow-verified
     // descriptor chain (`SecureRelativeFileProvider.readFile`) - never a
-    // lexical check followed by a separate path-based reopen (Spec 33
+    // lexical check followed by a separate path-based reopen (Pi adapter contract
     // §17/§18).
     return this.provider
       .readFile(input.projectRoot, input.relativePath)

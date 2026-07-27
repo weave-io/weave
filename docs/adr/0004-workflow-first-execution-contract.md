@@ -2,9 +2,9 @@
 
 **Status**: Accepted  
 **Date**: 2026-06-02  
-**Related**: [Spec 22 — Workflow-First Execution](../specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md) · [Adapter Boundary](../adapter-boundary.md) · [Context Glossary](../../CONTEXT.md) · [Product Vision](../product-vision.md) · [Spec 13 — Minimal Execution Lifecycle Surface](../specs/13-spec-minimal-execution-lifecycle-surface/13-spec-minimal-execution-lifecycle-surface.md) · [ADR 0002 — Runtime Persistence Store](0002-runtime-persistence-store.md) · [Legacy Architecture](../legacy-architecture.md)
+**Related**: [Execution Lifecycle](../reference/execution-lifecycle.md) · [Adapter Boundary](../architecture/adapter-boundary.md) · [Context Glossary](../../CONTEXT.md) · [Product Vision](../architecture/product-vision.md) · [ADR 0002 — Runtime Persistence Store](0002-runtime-persistence-store.md)
 
-> **Extension note:** This ADR's references to the original seven lifecycle methods describe the accepted baseline at the time of decision. [Spec 33 §14](../specs/33-spec-pi-adapter/33-spec-pi-adapter.md#14-ten-lifecycle-projections) extends that surface to ten operations without changing this ADR's explicit user-authorization boundary.
+> **Extension note:** This ADR's references to the original seven lifecycle methods describe the accepted baseline at the time of decision. [Pi adapter contract](../adapters/pi.md) extends that surface to ten operations without changing this ADR's explicit user-authorization boundary.
 
 ---
 
@@ -12,7 +12,7 @@
 
 ### The legacy model
 
-The alpha OpenCode-Weave system (documented in [`docs/legacy-architecture.md`](../legacy-architecture.md)) started durable execution through a chain of OpenCode-specific mechanisms:
+The alpha OpenCode-Weave system (documented in [`docs/architecture/product-vision.md`](../architecture/product-vision.md)) started durable execution through a chain of OpenCode-specific mechanisms:
 
 1. The user typed `/start-work` in the OpenCode chat interface.
 2. OpenCode parsed the command and fired the `start-work-hook`.
@@ -31,11 +31,11 @@ This model had three structural problems:
 
 ### The harness-agnostic successor
 
-Weave's product vision (see [`docs/product-vision.md`](../product-vision.md)) requires that execution semantics be engine-owned and harness-agnostic. The engine should define what execution means; adapters should define how execution is delivered in a specific harness.
+Weave's product vision (see [`docs/architecture/product-vision.md`](../architecture/product-vision.md)) requires that execution semantics be engine-owned and harness-agnostic. The engine should define what execution means; adapters should define how execution is delivered in a specific harness.
 
-Spec 12 (Runtime Persistence Store, see [ADR 0002](0002-runtime-persistence-store.md)) established the `WorkflowInstance` and `ExecutionLease` as the engine-owned runtime concepts for tracking durable execution state. Spec 13 (Minimal Execution Lifecycle Surface) defined seven typed lifecycle methods — `observeSession`, `startExecution`, `resumeExecution`, `handleUserInterrupt`, `dispatchStep`, `completeStep`, and `beforeTool` — as the engine-owned API that adapters call after mapping harness events into normalized inputs.
+Runtime Store contract (Runtime Persistence Store, see [ADR 0002](0002-runtime-persistence-store.md)) established the `WorkflowInstance` and `ExecutionLease` as the engine-owned runtime concepts for tracking durable execution state. execution lifecycle contract (Minimal Execution Lifecycle Surface) defined seven typed lifecycle methods — `observeSession`, `startExecution`, `resumeExecution`, `handleUserInterrupt`, `dispatchStep`, `completeStep`, and `beforeTool` — as the engine-owned API that adapters call after mapping harness events into normalized inputs.
 
-Spec 22 (Workflow-First Execution) builds on these foundations to make the execution boundary explicit and portable.
+execution lifecycle contract (Workflow-First Execution) builds on these foundations to make the execution boundary explicit and portable.
 
 ---
 
@@ -93,7 +93,7 @@ The Tapestry agent remains a valid workflow execution agent, but its role is now
 
 ### 5. Execution state is grounded in engine-owned runtime concepts
 
-All execution state lives in the Runtime Store under `.weave/runtime/weave.db`. The engine owns this state through the `WorkflowInstance` and `ExecutionLease` records defined in Spec 12.
+All execution state lives in the Runtime Store under `.weave/runtime/weave.db`. The engine owns this state through the `WorkflowInstance` and `ExecutionLease` records defined in Runtime Store contract.
 
 - A `WorkflowInstance` is the durable record of a workflow run's execution state, coordination metadata, and artifact references.
 - An `ExecutionLease` is the coordination record that grants one actor permission to actively drive a workflow run.
@@ -111,7 +111,7 @@ Adapters do not own execution state. They may emit sanitized observations throug
 - Ordinary Loom conversation, session idle events, continuation hooks, and lifecycle observations are explicitly forbidden from implicitly starting durable execution.
 - The OpenCode adapter's `/start-work` hook must be refactored to call `startExecution` rather than producing a `switchAgent` effect directly. The preferred replacement command name for command-capable adapters is `/weave:start`; `/start-work` may be retained as a compatibility alias but is not the architectural center.
 - The `workContinuation` hook's implicit Tapestry re-injection behavior is superseded by `resumeExecution`, which requires an explicit adapter-mediated trigger.
-- Adapters must declare their execution-contract delivery mechanism through the Spec 07 `command-entrypoints` capability readiness vocabulary (`native`, `emulated`, `degraded`, `unsupported`) rather than assuming every harness exposes literal commands. Command names are adapter-owned; the engine does not prescribe them.
+- Adapters must declare their execution-contract delivery mechanism through the adapter capability contract `command-entrypoints` capability readiness vocabulary (`native`, `emulated`, `degraded`, `unsupported`) rather than assuming every harness exposes literal commands. Command names are adapter-owned; the engine does not prescribe them.
 
 ### What is now possible
 
@@ -129,9 +129,9 @@ Adapters do not own execution state. They may emit sanitized observations throug
 
 ### What is deferred
 
-- Full adapter implementation for OpenCode, Claude Code, and Pi delivery paths is deferred to follow-up work (Spec 22 Unit 6 and adapter-specific slices).
-- The `before-plan` extension contract, artifact approval semantics, and reconciliation routing are defined in Spec 22 Units 2–4 and implemented in follow-up tasks.
-- Prompt composition at workflow and step scope is defined in Spec 22 Unit 4 and implemented in follow-up tasks.
+- Full adapter implementation for OpenCode, Claude Code, and Pi delivery paths is deferred to follow-up work (execution lifecycle contract and adapter-specific slices).
+- The `before-plan` extension contract, artifact approval semantics, and reconciliation routing are defined in execution lifecycle contract Units 2–4 and implemented in follow-up tasks.
+- Prompt composition at workflow and is defined in execution lifecycle contract and implemented in follow-up tasks.
 
 ### Trade-offs accepted
 
@@ -159,9 +159,9 @@ Adapters do not own execution state. They may emit sanitized observations throug
 ## References
 
 - [`packages/engine/src/execution-lifecycle.ts`](../../packages/engine/src/execution-lifecycle.ts) — The seven lifecycle methods that implement the execution contract.
-- [`docs/specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md`](../specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md) — Normative spec for this work; Unit 1 defines the execution contract requirements.
-- [`docs/specs/13-spec-minimal-execution-lifecycle-surface/13-spec-minimal-execution-lifecycle-surface.md`](../specs/13-spec-minimal-execution-lifecycle-surface/13-spec-minimal-execution-lifecycle-surface.md) — Spec that defined the seven lifecycle methods this ADR builds on.
+- [Execution Lifecycle](../reference/execution-lifecycle.md) — Current execution contract.
+- [`docs/reference/execution-lifecycle.md`](../reference/execution-lifecycle.md) — Spec that defined the seven lifecycle methods this ADR builds on.
 - [`docs/adr/0002-runtime-persistence-store.md`](0002-runtime-persistence-store.md) — ADR that established `WorkflowInstance`, `ExecutionLease`, and the Runtime Store.
-- [`docs/adapter-boundary.md`](../adapter-boundary.md) — Ownership rules for engine/adapter boundary; the Execution Lifecycle Surface section describes the adapter's role.
-- [`docs/legacy-architecture.md`](../legacy-architecture.md) — Documents the `/start-work` → Tapestry flow this ADR supersedes.
-- [`docs/product-vision.md`](../product-vision.md) — Product vision requiring harness-agnostic execution semantics.
+- [`docs/architecture/adapter-boundary.md`](../architecture/adapter-boundary.md) — Ownership rules for engine/adapter boundary; the Execution Lifecycle Surface section describes the adapter's role.
+- [`docs/architecture/product-vision.md`](../architecture/product-vision.md) — Documents the `/start-work` → Tapestry flow this ADR supersedes.
+- [`docs/architecture/product-vision.md`](../architecture/product-vision.md) — Product vision requiring harness-agnostic execution semantics.

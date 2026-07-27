@@ -19,7 +19,7 @@
  *   returns a `command_validation` error without touching the store.
  * - `/start-work` is out of scope for this operation.
  *
- * @see docs/specs/30-spec-minimal-runtime-command-lifecycle/30-spec-minimal-runtime-command-lifecycle.md
+ * @see docs/reference/cli.md
  * @see docs/adapter-boundary.md
  * @see packages/engine/src/runtime-command-operations/workflow-runner.ts
  * @see packages/engine/src/runtime-command-operations/types.ts

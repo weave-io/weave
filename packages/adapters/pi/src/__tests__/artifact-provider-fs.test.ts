@@ -4,7 +4,7 @@ import { $ } from "bun";
 import { BunPiArtifactProvider } from "../artifact-provider.js";
 
 /**
- * Real Bun filesystem conformance tests (Spec 33 §24 layer E) - uses a
+ * Real Bun filesystem conformance tests (Pi adapter contract) - uses a
  * scratch temp directory only, never the dev project tree. Fixture setup
  * uses Bun's own shell (`Bun.$`) and `Bun.write` rather than `node:fs` -
  * Bun exposes no native `mkdtemp`/`symlink` primitive, and `node:fs` is

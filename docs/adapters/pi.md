@@ -1,137 +1,144 @@
-# Pi Adapter Guide
+# Pi Adapter
 
-**Status:** Ready — all 20 Spec 33 acceptance rows and all 23 digest-bound exact-host Pi TUI checks pass
+`@weaveio/weave-adapter-pi` projects normalized Weave configuration and lifecycle decisions into an interactive Pi TUI session. It is a Pi extension, not a standalone print/JSON/RPC/SDK runtime. The adapter may start private authenticated RPC children for delegation and direct workflow steps.
 
-**Related:** [Pi adapter architecture](../pi-adapter.md) · [Spec 33](../specs/33-spec-pi-adapter/33-spec-pi-adapter.md) · [Adapter readiness](../adapter-readiness-status.md)
+**Related:** [Adapter Boundary](../architecture/adapter-boundary.md) · [Capabilities](../reference/adapter-capabilities.md) · [Execution Lifecycle](../reference/execution-lifecycle.md) · [Runtime Store](../reference/runtime.md) · [Delegation](../reference/delegation.md)
 
-## Current implementation
+---
 
-The implemented package in [`packages/adapters/pi`](../../packages/adapters/pi) registers inert command shells and session delegates, then uses exact host, TUI, trust, command-ownership, candidate-plan, and capability probes to create a generation-scoped controller. Failed required probes or withheld trust keep the extension in health-only mode.
+## Boundary
 
-For supported sessions, the adapter loads the permitted Weave config, consumes materialized descriptors in stable plan order, and prepares Loom as the ordinary primary. On the first `before_agent_start`, it uses Pi's loaded skill catalog and authenticated model registry to resolve Loom's exact skill and ordered model intent. It applies a resolved model through Pi, preserves model fallback as a visible degradation, and appends Loom's final `composedPrompt` once to Pi's existing prompt. Declared temperature remains ignored and appears as a deduplicated health warning.
+The engine owns normalized descriptors, prompt composition, model intent, skill matching, portable delegation authorization, lifecycle state, Runtime Store state, usage rollups, artifact/plan semantics, and capability evaluation.
 
-The adapter also governs discovered Pi-native tools through input-aware resolvers and the engine permission session. It checks exact built-in provenance, sealed registry coverage, and controller generation before each call. Policy `deny` blocks, `allow` consumes a single-use permit without prompting, and `ask` opens a bounded approval dialog only outside health-only mode. Missing or malformed resolver input is unresolved and supports one-time approval only. Unrelated third-party tools remain unmanaged.
+The Pi adapter owns:
 
-The adapter also ships a bounded `weave_delegate` tool and its private authenticated child transport (see [Delegation](#delegation) below). Workflow commands, direct-step execution, plans, artifacts, recovery, and reconciliation are implemented. Bounded diagnostics, packed-package policy, clean-room fake-host consumption, and nightly release integration are also implemented. The acceptance manifest, exact-host compatibility matrix, and completed digest-bound stable TUI smoke checklist provide the readiness proof (see [Package proof](#package-proof) below).
+- Pi model, skill, event, command, and tool discovery;
+- extension callbacks, command registration, TUI views, and keybindings;
+- exact host compatibility checks and runtime probes;
+- concrete model and thinking-level activation;
+- private child processes, RPC framing, queues, cancellation, and UI;
+- no-follow plan and artifact file providers;
+- translation of engine effects into Pi operations.
 
-## Compatibility
+The adapter does **not** map or enforce Weave `tool_policy`. It registers no global `tool_call` interceptor, permission registry, approval UI, grant, or permit. Pi and each concrete tool owner retain authorization. The `tool-policy-mapping` declaration names `pi-native-tool-control`; that is an ownership claim, not Weave policy enforcement.
 
-The first adapter release supports only the Earendil Works Pi host package:
+## Activation
 
-```text
-@earendil-works/pi-coding-agent >=0.81.1
-```
+Package load is inert. The extension factory creates a generation controller and registers gated delegates and command shells, but it does not read project files, probe resources, open the Runtime Store, start services, or register Weave tools.
 
-Host package identity and version are checked at activation. There is no maximum version, but the adapter remains Bun-only: the launcher must expose Bun built-ins such as `bun:ffi` and `bun:sqlite` to extensions. Unsupported or ambiguous hosts fail closed into health-only mode when the module can activate; a Node-like extension loader that cannot resolve Bun built-ins fails earlier at package load and must use a Bun launcher.
+On `session_start`, a fresh generation:
 
-## Install
+1. determines project trust;
+2. loads builtin/global config plus project config only when trusted;
+3. probes every known capability through read-only Pi context;
+4. builds the effective health report;
+5. enters health-only or trust-withheld mode when required;
+6. opens the Runtime Store only for a trusted healthy generation;
+7. materializes descriptors in plan order;
+8. activates commands, tools, the selected primary agent, and runtime services.
 
-When a release has passed Spec 33's package and smoke gates, install it as a Pi package:
+A controller generation owns callbacks, children, and transient session state. Replacement or shutdown invalidates stale work, cancels descendants, flushes held sinks, and closes resources. Shutdown is idempotent.
 
-```shell
-pi install npm:@weaveio/weave-adapter-pi
-```
+Pi registration returns no receipt, so activation verifies command provenance and generated suffixes through `getCommands()` rather than assuming registration succeeded. Authority-bearing callbacks recheck the generation after asynchronous host work.
 
-The published package declares `pi.extensions: ["./dist/extension.js"]`; users do not need a wrapper extension. The package has no install or postinstall scripts. If the installed `pi` executable uses a Node-like extension runtime, launch the same installed CLI module through Bun (for example, `bun /path/to/@earendil-works/pi-coding-agent/dist/cli.js`) or place a local `pi` script that executes that command earlier on `PATH`.
+## Agents, prompts, models, and skills
 
-> **Security:** Pi packages run with the user's full process and filesystem authority. Install only the published package digest that passed Spec 33, and review the [source and security boundary](../pi-adapter.md) before enabling it.
+The first `before_agent_start` event supplies Pi's loaded skill catalog. The adapter:
 
-## Configuration and trust
+- resolves requested skills through the engine matcher;
+- resolves ordered model intent against `ctx.modelRegistry.getAvailable()`;
+- applies a valid thinking suffix separately from model identity;
+- appends one delimited composed-prompt block without replacing Pi or other-extension context;
+- reports model or temperature degradation once per generation.
 
-Global configuration lives at `~/.weave/config.weave`. Project configuration lives at `.weave/config.weave`.
+Alt+A cycles healthy `primary` and `all` descriptors in materialization order while Pi is idle. It skips subagents and switches atomically. The footer shows `◆ WEAVE · <NORMALIZED-NAME>`, follows a direct workflow agent while it runs, restores the primary after settlement, and clears in health-only mode or at shutdown.
 
-In an untrusted project, the adapter loads only builtin/global configuration and does not read or write project prompts, skills, plans, artifacts, runtime state, or any other project path. It may expose ordinary prompt-only chat from builtin/global descriptors, but it disables project-local and durable operations, delegation, and capability-bearing registered tools. After Pi establishes project trust, reload into a fresh session so a new controller generation can activate project configuration.
+The registered `weave_delegate` schema is static because Pi requires it at registration time. Each invocation still resolves the live primary identity and that descriptor's current eligible targets, so switching primary agents cannot reuse stale authority.
 
-## Start and inspect
+## User surface
 
-Use `/weave` to open the palette or invoke a direct command:
+- `/weave` — native command palette;
+- `/weave:start` — confirm and submit an existing plan as a visible foreground Tapestry turn;
+- `/weave:run` — explicitly start an engine-managed durable workflow;
+- `/weave:resume`, `/weave:advance`, `/weave:abort` — explicit lifecycle actions;
+- `/weave:status`, `/weave:health`, `/weave:plan`, `/weave:artifact` — read-only views unless an explicit artifact action is chosen;
+- `Alt+A` — cycle healthy primary-capable agents.
 
-- `/weave:start [plan]` — select or name an existing plan and start its plan execution;
-- `/weave:run [workflow]` — select or name a configured workflow and start it;
-- `/weave:status` — inspect active execution;
-- `/weave:health` — inspect host and capability probes;
-- `/weave:resume` — explicitly resume durable state;
-- `/weave:abort` — confirm cancellation and terminate the full owned execution child tree;
-- `/weave:advance` — answer an allowed blocked transition;
-- `/weave:plan` — show the read-only task tree;
-- `/weave:artifact` — inspect or explicitly act on an artifact.
+Only an explicit user command authorizes work. Session start, idle, settlement, recovery discovery, ordinary chat, and health views never start or resume durable execution.
 
-Session start, idle, recovery discovery, and normal chat do not authorize workflow work. The adapter continues automatically only when the engine returns a next effect in the same uninterrupted authorized controller generation.
+`/weave:start` is a foreground Pi turn and does not create durable workflow state. `/weave:run` and `/weave:resume` call the engine lifecycle surface.
 
-Press `Alt+A` to cycle materialized agents whose mode is `primary` or `all`, in config order. The shortcut skips subagents such as Shuttle, refuses to switch during a live direct workflow step, and keeps the current primary if the next agent cannot activate. After a switch, `weave_delegate` reads the active primary's normalized identity and delegation targets at call time, so Loom and Tapestry can both delegate without stale parent credentials. Shift+Tab remains Pi's thinking-cycle shortcut.
+## Workflow projection
 
-Pi's persistent footer shows `◆ WEAVE · <NORMALIZED-NAME>` under status key `weave-agent`. It uses Pi's theme when available, shows `◆ WEAVE · LOOM` during ordinary chat, switches to a workflow agent such as `◆ WEAVE · TAPESTRY` while that direct step runs, restores the primary after settlement, and clears in health-only mode or at shutdown.
+One generation-scoped `PiWorkflowController` maps commands and Pi observations into the ten engine lifecycle projections. It does not reimplement workflow transitions.
 
-## Workflow lifecycle
+A direct workflow step runs in a private child but is not ordinary delegation:
 
-The palette and nine direct commands project all ten engine lifecycle operations through one generation-checked `PiWorkflowController`. `/weave:start`, `/weave:run`, and `/weave:resume` require fresh user confirmation before the adapter mints a one-use authorization token. A recovery banner is informational and never resumes work by itself.
+- signed bootstrap carries descriptor/system context and resolved model;
+- rendered workflow-step text is sent separately as the task;
+- oversized task text is split into generated prompt records below the RPC record limit;
+- only the root direct child receives `weave_complete_step`;
+- one bounded structured completion candidate plus Pi settlement is required;
+- prose and process exit are never success signals.
 
-Workflow steps use a direct private-child transport distinct from ordinary `weave_delegate` calls. The signed bootstrap installs the activated descriptor's `composedPrompt` as system context; the separately rendered workflow `step.prompt` travels as the bounded RPC task. The adapter never concatenates the full descriptor prompt into that task, which lets canonical primaries such as Tapestry run without weakening the ordinary delegation-task bound. Only the root direct-step child receives `weave_complete_step`; nested helpers do not inherit completion authority. When a step agent such as Tapestry calls `weave_delegate`, the direct transport authenticates the request and relays it into the generation's shared `PiDelegationController`. The nested child therefore uses the step agent's own eligible targets and the same depth, concurrency, process, queue, cancellation, and cleanup rules as ordinary delegation. The tool records one bounded structured completion candidate. Free-form assistant text, process exit, duplicate signals, malformed candidates, and late calls never count as successful completion. `user_confirm` candidates remain withheld until `/weave:advance` confirms them.
+Nested helpers remain ordinary delegated children. They consume shared budgets, enter the child tree beneath the direct child, inherit only their own declared delegation targets, and receive no workflow-completion authority.
 
-Before dispatch, the adapter reuses the prior attempt's pinned artifact revisions on retries and verifies each consumed artifact's current SHA-256 digest through a held, no-follow file descriptor. Plan catalog and artifact reads reject traversal and symlink components. New artifact revisions reset approval, and an agent cannot approve its own artifact. The compact plan widget refreshes after lifecycle transitions; explicit reconciliation handles mismatched execution state.
+Retries use persisted attempt metadata so they reuse the artifact revisions consumed by the earlier attempt rather than silently binding to newer revisions. User confirmation, digest comparison, artifact approval and self-approval guards, recovery pointers, parent-chat pause handling, and reconciliation remain engine-owned decisions projected through Pi.
 
-Trusted sessions open the engine Runtime Store under `.weave/runtime`. The engine holds the project/runtime directory chain with no-follow descriptors, coordinates stores with a bounded OS lock, runs SQLite in memory, and atomically persists serialized snapshots through descriptor-relative temporary files. Database, temporary, and lock leaves use restrictive permissions; no WAL/SHM sidecars are created. Recovery pointers supplement this authoritative state but never grant resume authority.
+## Private children
 
-Ordinary parent chat does not interleave silently with a live direct step. Pi asks whether to pause the workflow first; declining leaves the workflow running and withholds the prompt.
+`weave_delegate` authorizes one non-empty task against engine-resolved limits: eligible targets, direct-child budget, active-child `max_children`, depth, and global live-process count. `max_children` caps children running in parallel; settled or disposed children release capacity.
+
+Authorized work enters a FIFO queue per parent and spawns an independent `pi --mode rpc --no-session` process. Each child has its own 256-bit secret, read once from the environment and then erased.
+
+The control protocol uses:
+
+- HMAC-SHA-256-signed strict line-delimited JSON envelopes;
+- an authenticated handshake before bootstrap;
+- monotonic sequence numbers and random nonces in each direction;
+- closed envelope kinds and validated bounded bodies;
+- one bootstrap acknowledgment after prompt, tools, and model activation succeed.
+
+Malformed, unauthenticated, replayed, or out-of-sequence input fails closed and disposes the runtime. Every secret is zeroed and every resource released exactly once.
+
+A child may request nested delegation only to its own declared targets. Canceling a node cancels queued and live descendants. Live children get a bounded cooperative grace period before force termination.
+
+Children are inspectable and cancellable through the TUI tree, not steerable. Public user-started RPC mode does not activate this private path.
+
+### Settlement limitation
+
+Pi's `agent_settled` event has no payload. The adapter derives `failed` from the latest assistant `message_end.stopReason` when it is `error` or `aborted`; every other case, including no observed reason, settles as `completed`. Once cancellation is admitted, that child cannot report `completed`.
+
+A completed child's result is its own bounded final assistant text, with a fixed fallback when the turn emitted none.
+
+## Plans, artifacts, and recovery
+
+The adapter's no-follow providers prove project containment, read plan/artifact files, and compute digests. The engine owns plan state, workflow transitions, artifact identity/revisions, approval, leases, and integrity comparison.
+
+Pi session entries contain correlation-only recovery pointers. They do not authorize resume. Runtime Store state plus explicit user intent remain authoritative.
+
+## Runtime and data handling
+
+Trusted healthy activation opens `.weave/runtime/weave.db` through the engine Runtime Store. The engine hardens the project/runtime path, serializes cross-store access with a bounded OS lock, uses `bun:sqlite`, and atomically publishes durable state.
+
+The adapter records bounded normalized journal families, exactly-once primary/child usage observations, configured retention, deduplicated TUI failures, and scoped pino output. Its rotating file sink serializes writes and closes held handles at generation shutdown.
+
+The adapter never logs or persists prompts, responses, transcripts, raw RPC, tool input/output, plan/artifact content, private paths, environment values, or child secrets. Telemetry failures expose only closed codes, phases, impacts, and safe correlation fields.
 
 ## Health-only mode
 
-If `/weave:health` reports health-only mode, the adapter blocks work but keeps diagnostics available. Common causes include:
+Static capability declarations are ceilings. Activation probes every closed capability ID once. Any missing, failed, degraded, or unsupported required effective capability enters health-only mode; optional gaps warn.
 
-- wrong Pi package identity or unsupported version;
-- a missing required host hook or RPC capability;
-- unreadable or invalid Weave configuration;
-- permission, Runtime Store, plan, or artifact provider failure;
-- a required capability probe reporting degraded or unsupported.
+Health-only mode exposes health and safe diagnostics but blocks materialization, workflow mutation, and delegation. Pi/tool-owner authorization remains in force regardless of mode.
 
-Fix the reported cause and start a new Pi session. Do not bypass health-only mode by calling private extension APIs.
+## Verification
 
-## Delegation
+Unit and integration tests use a recording fake host, injected process/RPC ports, in-memory stores, and narrow Bun filesystem conformance tests. They do not start Pi or modify developer state.
 
-`weave_delegate` runs one bounded task on a single eligible subagent as a private ephemeral child, then returns that child's own structured result. Its `agent` parameter is an enum of exact normalized names from the invoking descriptor's `delegationTargets` (for example `shuttle` or `shuttle-backend`); display labels, descriptions, and aliases are invalid. It never creates or advances workflow state; workflow steps use the distinct direct-step transport described above.
+Release validation stages the package, checks exact tar inventory and policy, and loads the packed extension against a fake exact-version host. Machine-consumed acceptance inputs live under [`scripts/release/pi-acceptance/`](../../scripts/release/pi-acceptance/):
 
-**Exact command.** A delegated child is spawned as `pi --mode rpc --no-session`, never as an interactive session. This is the only Pi RPC entry point the adapter uses; a real user never starts this path themselves.
+- [`acceptance-manifest.json`](../../scripts/release/pi-acceptance/acceptance-manifest.json) binds every mandatory `PI-*` requirement to named tests and packed evidence;
+- [`acceptance-manifest.schema.json`](../../scripts/release/pi-acceptance/acceptance-manifest.schema.json) validates the generated manifest;
+- [`smoke-checklist.md`](../../scripts/release/pi-acceptance/smoke-checklist.md) defines the digest-bound live TUI checks.
 
-**Auth and framing.** Each child receives an independent, process-scoped 256-bit secret over its environment (read once, then erased from the child's own environment on first use) and proves possession with an HMAC-SHA-256-signed handshake before either side accepts anything else. Every subsequent control envelope (`bootstrap`, `bootstrap-ack`, `cancel`, `settled`, `cancelled`, `error`, `approval-request`/`-response`, `delegate-request`/`-response`) is signed the same way, carries a monotonic per-direction sequence number and a random nonce, and travels as one strict line-delimited JSON object per line over the child's stdio. Malformed, unsigned, replayed (repeated nonce or non-increasing sequence), or unauthenticated lines fail closed and the runtime disposes itself rather than guessing intent.
-
-**Queues and budgets.** Project settings (and narrower per-agent overrides, direct-child and concurrency limits only) define finite direct-child, concurrency, depth, and global live-process limits, resolved per requesting agent. A request that exceeds direct-child, concurrency, or depth limits is denied immediately; a request within the per-parent direct-child limit but currently over the concurrency or process ceiling queues in FIFO order per parent and is promoted automatically as capacity frees up. The controller fails closed (denies) whenever live count state cannot be resolved, rather than guessing a lower bound.
-
-**Nested relay.** A live ordinary child or direct workflow-step child may itself request delegation through its own `weave_delegate` tool. The parent transport admits only an authenticated request from a running child, then the shared controller restricts the request to that exact child's own declared `delegationTargets` from its bootstrap descriptor — a child can never delegate to an agent its own bootstrap did not name. A direct-step child remains outside the ordinary process budget, but every helper it delegates enters the shared ordinary tree under the direct child ID and consumes the normal budget. Cancelling the direct child also cancels that descendant subtree. Every child's own governed tool-call approvals (including a nested child's) relay through the single parent TUI, tagged with the originating child's id, never a nested/child-local approval UI.
-
-**Cleanup.** Cancelling a node cancels that node and every descendant, including not-yet-spawned queued requests under that subtree. A live child is asked to cancel cooperatively (signed `cancel` envelope, then a raw abort command), bounded by a grace period; if it does not exit in time it is force-killed. Process exit while a cancel is outstanding is treated as the expected outcome, not an unexpected exit. Every child's secret is zeroed and its resources released exactly once (idempotent), whether it settles, fails, or is cancelled.
-
-**Active tool/model/context bootstrap.** The parent sends the new child exactly one signed `bootstrap` control envelope containing its resolved agent name, composed prompt, ordered model preference list (plus a parent-resolved model directly, for a root-level delegation with a live model registry), effective tool policy, its own eligible `delegationTargets`, delegation context (parent agent name, parent depth, cwd), and the exact active-tool name list the child must apply. Each target preserves the engine's bounded trigger metadata, including optional `routing_hint`; the transport schema must not reject that normalized field or a delegation-capable step agent such as Tapestry fails bootstrap before its first turn. The child validates the bootstrap's `correlationId` against its own authenticated identity, applies the exact active-tool set via the host's `setActiveTools`, resolves a model (using the parent-resolved model if present, else resolving against its own catalog), and only signals readiness (`bootstrap-ack`) after every step succeeds — any failure disposes the child without ever partially applying a bootstrap.
-
-**Tree controls.** The parent renders a live child tree widget and supports direct keyboard navigation over it: Alt+1 through Alt+9 select a direct child by spawn order, Backspace selects the parent (host default at the root), and Esc requests cancellation of the selected node (host default at the root). `/weave:abort` cancels the full owned execution child tree from the palette.
-
-**Limitations.** Pi's `agent_settled` event carries no payload (`{"type":"agent_settled"}` only) — a child cannot read a stop/error signal directly off it. The adapter instead tracks the most recently observed assistant `stopReason` (`stop`/`length`/`toolUse`/`error`/`aborted`) from `message_end` events and derives a `failed` outcome only when that value is `"error"` or `"aborted"`; every other case (including no observed stop reason at all) reports `completed`. A child never reports `completed` once its own cancellation has been admitted, closing the only remaining race between a stray settlement and an already-sent cancellation. A completed child's settlement summary is its own bounded (<=4KiB, valid UTF-8) final assistant output, truncated at a UTF-8 code-point boundary; a fixed fallback string is used only when a completed turn produced no observable assistant text.
-
-**Tests.** Delegation is exercised at three automated layers with no real Pi process, secret material, or filesystem I/O: pure control-body/limit unit tests (`child-control-bodies.test.ts`, `strict-json.test.ts`), an injected-port parent/child protocol layer (`rpc-child.test.ts`, `child-runtime.test.ts`, `child-crypto.test.ts`, `child-envelope.test.ts`, `child-framing.test.ts`, `direct-dispatch-transport.test.ts`) using a fake child process port and fake clock, and an end-to-end fake-host layer (`child-mode.test.ts`, `delegation-controller.test.ts`, `delegation-tool.test.ts`) that fires real Pi lifecycle events against a recording fake host and asserts on the exact signed envelopes written to its output port. The direct-dispatch regression combines a Tapestry step, authenticated `delegate-request`, shared-controller relay, and correlated `delegate-response`; the control-body regression carries a real optional trigger `routing_hint` through strict bootstrap validation.
-
-Private children are an implementation detail. Do not start Pi RPC mode to use Weave directly; public adapter operation is interactive TUI only.
-
-## Approvals
-
-Weave governs registered Pi and Weave-owned tools through input-aware permission requests. Approval choices may be once, current session, or reject. Durable project approval appears only after a trusted persistent Runtime Store is active. Policy `deny` always wins. Unresolved input can receive one-time approval only, and health-only mode never opens an approval dialog.
-
-A changed tool input, stale or replayed permit, displaced tool owner, stale controller generation, resolver failure, or missing permission session blocks the call. Unregistered third-party tools remain under their owner's behavior and appear as unmanaged rather than allowed by Weave.
-
-## Diagnostics, usage, and privacy
-
-A recovery banner is informational. Only `/weave:resume` or an equivalent explicit palette action authorizes resume. Pi session entries are correlation pointers; the engine Runtime Store is authoritative.
-
-Trusted healthy generations write bounded normalized events to the Runtime Journal and record one usage observation for each settled primary or child assistant message. Message identity, never message text, supplies the exact-once key. Configured journal and usage retention runs on activation and later safe write/time boundaries.
-
-The adapter writes scoped pino records to `.weave/runtime/logs/pi-adapter.ndjson`. The engine sink holds no-follow directory and file identities, rotates only between records, prunes serially, and closes held handles at shutdown. Log, journal, usage, or retention failure produces one deduplicated TUI diagnostic and degrades telemetry without blocking ordinary activation.
-
-Health output, journal entries, usage observations, and logs omit prompts, responses, transcripts, tool arguments/results, authorization constraints, plan/artifact contents, private paths, secrets, environment values, and RPC payloads. Include only sanitized `/weave:health` output when reporting an issue.
-
-## Package proof
-
-The public package build emits `dist/index.js` and Pi's `dist/extension.js`, preserves the supported host peer range and `pi.extensions` manifest field, and rejects lifecycle scripts, private dependencies, undeclared imports, or unexpected tar entries. It keeps `pino` and `kysely` external and declares both as direct runtime dependencies. This avoids Bun's `import.meta.require` CommonJS bridge in the compiled extension: Pi 0.81.1's `jiti/static` loader otherwise converts that bridge into a `data:` module that the compiled host rejects with `NameTooLong`. The clean-room package test rejects that bridge before importing the packed entry points. Release tests pack the staged files and load the tarball in an offline clean room with a fake `@earendil-works/pi-coding-agent@0.81.1` host. The package participates in the nightly release plan.
-
-The exact-host compatibility matrix (`packages/adapters/pi/src/host-compatibility-matrix.ts`) is the single source-controlled record naming the host package, supported range, floor, and exact tested version (Spec 33 §22); `scripts/release/host-compatibility.ts`'s constants and the matrix can never drift apart because the matrix derives its range from the same constants at import time.
-
-The acceptance manifest ([`docs/specs/33-spec-pi-adapter/acceptance-manifest.json`](../specs/33-spec-pi-adapter/acceptance-manifest.json)) traces every mandatory `PI-*` requirement to real named tests, packed proof, and live-smoke checklist items (`scripts/release/acceptance-manifest.ts` validates the schema, rejects duplicate/orphan/missing IDs, and verifies the named evidence exists and that the closed sets it claims (19 capability IDs, 9 direct commands plus 3 command classifications, 10 lifecycle operations, 11 private control envelope/reply kinds, 3 permission-gate outcome kinds, 3 plan-task markers, artifact-approval actor kinds plus reconciliation authorization sources, host package/minimum-version boundary tokens, and every failure code/impact/recovery value) are exhaustive, and rejects any packed-proof or live-smoke evidence entry that exists but is never referenced by a requirement row). `scripts/release/generate-acceptance-manifest.ts` regenerates it from a real local pack digest and the current git HEAD — never a fabricated digest.
-
-All 23 rows in the digest-bound live TUI smoke checklist ([`33-smoke-checklist.md`](../specs/33-spec-pi-adapter/33-smoke-checklist.md)) passed against Pi `0.81.1`. The exact package digest, source revision, run attempt, host version, and checklist version are recorded in the checklist and [`acceptance-manifest.json`](../specs/33-spec-pi-adapter/acceptance-manifest.json). See the [`Task 12 proof`](../specs/33-spec-pi-adapter/33-proofs/33-task-12-proofs.md) for the live findings and final verification.
+[`scripts/release/acceptance-manifest.ts`](../../scripts/release/acceptance-manifest.ts) validates requirement references and closed-set coverage without running tests. [`generate-acceptance-manifest.ts`](../../scripts/release/generate-acceptance-manifest.ts) regenerates the checked-in manifest from the current package digest and commit. Automated checks do not replace live TUI validation.

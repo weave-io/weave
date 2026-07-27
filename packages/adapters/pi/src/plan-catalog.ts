@@ -1,5 +1,5 @@
 /**
- * Adapter-owned plan catalog discovery (Spec 33 §13, §16; docs/adapter-
+ * Adapter-owned plan catalog discovery (Pi adapter contract; docs/adapter-
  * boundary.md "Plan State Provider"). `/weave:start [plan]`'s selection
  * list and `/weave:plan`'s plan picker both need to know *which* plan
  * names exist under `.weave/plans` before any one of them can be read via

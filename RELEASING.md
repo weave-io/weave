@@ -1,7 +1,7 @@
 # Releasing Weave
 
 This is the operator runbook for public Weave releases. The durable design is in
-[release automation](docs/release-automation.md).
+[release automation](docs/contributing/releases.md).
 
 ## Non-negotiable rules
 

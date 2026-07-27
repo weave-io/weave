@@ -10,7 +10,7 @@ import { ADAPTER_PACKAGE_IDENTITY, WEAVE_COMMAND_NAMES } from "../commands.js";
 import type { PiCommandInfo } from "../types.js";
 
 /**
- * A command whose `sourceInfo` proves canonical ownership (Spec 33 §7.1):
+ * A command whose `sourceInfo` proves canonical ownership (Pi adapter contract):
  * `origin: "package"` plus a `source` that resolves, via the same
  * `npm:<name>[@version]` convention Pi's own package manager uses, to this
  * package's exact npm name. Ownership MUST NOT be inferred from the command

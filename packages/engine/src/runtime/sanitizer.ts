@@ -10,7 +10,7 @@
  * This is intentionally strict: false positives are preferable to leaking
  * credentials or raw content.
  *
- * @see docs/specs/12-spec-runtime-persistence/12-spec-runtime-persistence.md
+ * @see docs/reference/runtime.md
  */
 
 import { err, ok, type Result } from "neverthrow";

@@ -22,7 +22,7 @@ bun /path/to/@earendil-works/pi-coding-agent/dist/cli.js
 A local `pi` wrapper may execute that command so normal `pi` invocations keep
 working. This is a launcher requirement, not a second wrapper extension.
 
-See `docs/specs/33-spec-pi-adapter/33-spec-pi-adapter.md` in the Weave
+See `docs/adapters/pi.md` in the Weave
 repository for the full normative contract this package implements.
 
 ## Status

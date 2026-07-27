@@ -1,6 +1,6 @@
 import type { PiEnvPort } from "./types.js";
 
-/** Non-secret env vars used to bootstrap a private child (Spec 33 §11.2-§11.3). */
+/** Non-secret env vars used to bootstrap a private child (Pi adapter contract). */
 export const WEAVE_CHILD_SECRET_ENV = "WEAVE_CHILD_SECRET";
 export const WEAVE_CHILD_ID_ENV = "WEAVE_CHILD_ID";
 export const WEAVE_CONTROLLER_GENERATION_ENV = "WEAVE_CONTROLLER_GENERATION";
@@ -18,7 +18,7 @@ export class BunEnvPort implements PiEnvPort {
   }
 }
 
-/** Fallback child executable name, used only when the exact launching executable cannot be determined (Spec 33 §11.2 finding 1). */
+/** Fallback child executable name, used only when the exact launching executable cannot be determined (Pi adapter contract). */
 export const DEFAULT_PI_CHILD_EXECUTABLE = "pi";
 
 /** The env var every POSIX shell sets, in a spawned process's own environment, to the resolved path of the command that actually launched it. */
@@ -26,7 +26,7 @@ const LAST_COMMAND_ENV = "_";
 
 /**
  * Resolves the exact executable that launched the current Pi host process
- * (Spec 33 §11.2 finding 1), via the injected `PiEnvPort` rather than a bare
+ * (Pi adapter contract), via the injected `PiEnvPort` rather than a bare
  * command name a spawner would have to re-resolve via `PATH`. `Bun.spawn`ing
  * a bare `"pi"` lets `PATH` order silently pick an unrelated `pi` install
  * (e.g. a different toolchain's shim) shadowing the real host - whose Node
@@ -45,7 +45,7 @@ export function resolveCurrentPiExecutablePath(
 }
 
 /**
- * Builds the private RPC child's default spawn command (Spec 33 §11.2
+ * Builds the private RPC child's default spawn command (Pi adapter contract
  * finding 1): the exact executable that launched this host process,
  * falling back to the bare `"pi"` name only when that cannot be determined.
  * Production wiring (`createDefaultPiExtensionDeps`) always calls this with
@@ -65,7 +65,7 @@ export function buildDefaultPiChildCommand(
  * use as the base environment for a spawned private child - preserves
  * ordinary runtime necessities (`PATH`, `HOME`, etc.) so the child process
  * can actually locate and run `pi`, while never forwarding any
- * credential/secret-shaped variable (Spec 33 §19.1's sensitive-key policy)
+ * credential/secret-shaped variable (Pi adapter contract's sensitive-key policy)
  * and never forwarding this adapter's own private child-bootstrap
  * variables (the caller always sets those explicitly, per child).
  */

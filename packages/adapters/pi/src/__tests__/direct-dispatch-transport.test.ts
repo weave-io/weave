@@ -28,10 +28,10 @@ import { FakeIdGenerator } from "./fakes/fake-pi-host.js";
  * its own authenticated `childId` for `PiRpcChild`, but the bootstrap body
  * it sent placed the caller's own, unrelated engine-level
  * `PiDirectDispatchInput.correlationId` (`dispatchEffect.runAgent.correlationId`,
- * `PiWorkflowController`'s own effect/audit correlation, Spec 33 §14) into
+ * `PiWorkflowController`'s own effect/audit correlation under the Pi adapter contract) into
  * the bootstrap's `correlationId` field instead. `applyChildBootstrap`
  * requires `parsed.correlationId === state.childId` (the child's own
- * env-derived authenticated identity, Spec 33 §11.2 Task 9) and fails
+ * env-derived authenticated identity, as required by the Pi adapter contract) and fails
  * closed - disposing the runtime without ever sending a `bootstrap-ack` -
  * on any mismatch, so every direct-step dispatch (workflow steps) failed
  * closed while ordinary delegation (whose `buildChildBootstrapBody` always
@@ -122,7 +122,7 @@ function baseInput(
     taskPrompt: "Call weave_complete_step exactly once.",
     cwd: "/project",
     // Deliberately different from the transport's own generated `childId`
-    // (Spec 33 §14's engine-level effect correlation), so the assertion
+    // (Pi adapter contract's engine-level effect correlation), so the assertion
     // below cannot pass by accident if the two were ever conflated again.
     correlationId: "engine-effect-correlation-unrelated",
     models: ["anthropic/claude-sonnet-5"],
@@ -140,7 +140,7 @@ function baseInput(
 
 const AVAILABLE_MODELS = [{ provider: "anthropic", id: "claude-sonnet-5" }];
 
-describe("createDirectDispatchTransport (Spec 33 §11.2, §14, §15)", () => {
+describe("createDirectDispatchTransport (Pi adapter contract)", () => {
   it("bootstraps the direct-step child using its own generated childId as the control-envelope correlationId, never the caller's unrelated engine-level correlationId", async () => {
     const processPort = new FakeChildProcessPort();
     const idGenerator = new FakeIdGenerator();
@@ -224,7 +224,7 @@ describe("createDirectDispatchTransport (Spec 33 §11.2, §14, §15)", () => {
     const settlement = await resultPromise;
     expect(settlement.isOk()).toBe(true);
     // `DirectDispatchTransport` passes the raw `PiChildSettlement` through
-    // unparsed (Spec 33 §15) - structured-candidate interpretation happens
+    // unparsed (Pi adapter contract) - structured-candidate interpretation happens
     // one layer up, in `direct-dispatch.ts`'s own port, not here.
     expect(settlement._unsafeUnwrap()).toEqual({
       outcome: "completed",
