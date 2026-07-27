@@ -8,6 +8,24 @@ For the full eval guide — architecture, CI model, sanitization rules, raw-arti
 
 > **What can and cannot land here**: fixture files (`model-matrix.json`, case JSONs, rubric JSONs) are the only files that belong in this directory. Raw artifacts, composed prompt text, transcripts, API keys, and `eval-bundles/` output must never be committed here or to any external results repository without passing the sanitizer defined in `packages/cli/src/evals/sanitizer.ts`.
 
+## Prompt reduction and live-eval status
+
+The eight builtin source prompts currently measure **13,994 UTF-8 bytes and
+2,026 words**, versus the **35,643 bytes and 5,268 words** baseline: 60.7% and
+61.5% reductions. The per-agent before/after table and missed-target flags are
+in [`docs/builtin-prompt-guidelines.md`](../docs/builtin-prompt-guidelines.md#reduction-checkpoint).
+Use the [eval procedure](../docs/agent-evals.md#verification-procedure) and the
+[Prompt Composition contract](../docs/prompt-composition.md) for repeatable
+checks; provider-specific controls remain adapter/runtime concerns under the
+[Adapter Boundary](../docs/adapter-boundary.md).
+
+The authorized `OPENROUTER_API_KEY` absence blocked live execution before model
+calls. There are **zero live run IDs** for the requested provider matrix, so
+these fixtures and source metrics do not prove live model behavior. Dry runs do
+not need credentials. Never store raw prompts, transcripts, secrets, or
+transient eval bundles.
+
+
 ## Directory Layout
 
 ```

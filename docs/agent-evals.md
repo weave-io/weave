@@ -39,6 +39,50 @@ weave eval run
 
 All publishable output passes through the central allowlist sanitizer in `packages/cli/src/evals/sanitizer.ts` before being written. Raw artifacts are written to a separate `raw/` subdirectory that is never included in publishable bundles or external publication.
 
+## Builtin prompt reduction checkpoint
+
+The current eight source prompts total **13,994 UTF-8 bytes and 2,026
+whitespace-delimited words**, down from **35,643 bytes and 5,268 words**. That is
+60.7% less by bytes and 61.5% less by words, within the [builtin prompt
+size contract](builtin-prompt-guidelines.md#reduction-checkpoint). The detailed
+per-agent table, retained behavior, removed contradictions, and ownership
+rationale are in [Builtin Prompt Guidelines](builtin-prompt-guidelines.md).
+
+This checkpoint has no live model proof. `OPENROUTER_API_KEY` was authorized to
+remain absent, so the live eval was blocked before model execution and produced
+zero run IDs. The recorded requested models had zero completed runs:
+`anthropic/claude-opus-4.5`, `anthropic/claude-sonnet-4.5`, and
+`openai/gpt-5.5`. The available evidence is local source metrics and the
+fixture-loading dry run, not a claim about provider behavior. Run the procedure
+below when credentials are available; do not commit raw prompts, transcripts,
+secrets, or transient bundles.
+
+Exact provider token counts are not a portable hard gate: tokenizers differ by
+provider and model, can change independently, and are not part of the engine's
+[Prompt Composition contract](prompt-composition.md). Use byte/word checks for
+deterministic source growth gates; record provider token counts only as
+versioned eval observations at the adapter/runtime boundary. Provider-specific
+controls and recommendations therefore stay in adapters, runtime configuration,
+or future model-config work, not builtin prompt text. See the [Adapter
+Boundary](adapter-boundary.md) and the linked [Anthropic](builtin-prompt-guidelines.md#anthropic-specific-findings)
+and [OpenAI](builtin-prompt-guidelines.md#openai-specific-findings) source
+articles.
+
+### Verification procedure
+
+```bash
+bun packages/cli/src/main.ts eval run --dry-run
+for f in packages/config/prompts/{loom,tapestry,pattern,shuttle,thread,spindle,weft,warp}.md; do
+  printf '%s\t' "${f##*/}"; wc -c -w < "$f"
+done
+wc -c -w packages/config/prompts/{loom,tapestry,pattern,shuttle,thread,spindle,weft,warp}.md
+```
+
+The dry run validates fixtures and filters without model calls or credentials;
+the metric commands verify the source contract without capturing prompt
+content.
+
+
 ---
 
 ## Fixture Layout
