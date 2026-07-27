@@ -93,7 +93,10 @@ Running `weave prompt` without a subcommand prints inline usage and exits with c
 
 ## `weave prompt self-modify`
 
-`weave prompt self-modify` prints a deterministic, text-only guide that tells an agent exactly which files to read, what rules to follow, and how to verify changes when modifying Weave's own configuration.
+`weave prompt self-modify` is the sole detailed self-modification contract. It
+prints a deterministic, scope-aware Markdown guide for changing Weave
+configuration. Agents should run it instead of embedding a duplicate
+self-modification procedure in another prompt or guide.
 
 ```bash
 weave prompt self-modify                  # guide for global scope (default)
