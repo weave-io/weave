@@ -16,6 +16,7 @@ The published docs site is built from the Astro + Starlight package at [`package
 | [Config Loading](config-loading.md) | Three-layer merge, builtin agents, config discovery, prompt file resolution |
 | [Model Resolution](model-resolution.md) | Model intent, adapter responsibility, category shuttle model preferences |
 | [Prompt Composition](prompt-composition.md) | Mustache templates, delegation section, template context fields |
+| [Builtin Prompt Guidelines](builtin-prompt-guidelines.md) | Provider-portable builtin prompt contract, ownership, autonomy, verification, and regression rules |
 | [Tool Policy Evaluation](tool-policy-evaluation.md) | Abstract capabilities, `EffectiveToolPolicy`, adapter mapping |
 | [Permissions](permissions.md) | Harness-neutral authorization: registry, grants, challenges, permits, coverage proof, `beforeTool` vs `previewToolPolicy` |
 | [Delegation Limits](delegation-limits.md) | Portable caps, merge behavior, effective limits, and authorization decisions |

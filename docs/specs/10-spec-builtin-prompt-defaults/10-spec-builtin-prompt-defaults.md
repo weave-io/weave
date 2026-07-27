@@ -12,6 +12,13 @@ The feature covers more than prompt copy. It also defines how builtin `triggers`
 
 **Latest-standards research:** no latest-standards external research was needed. This feature concerns internal prompt/config architecture rather than a third-party library, framework, or service.
 
+**Prompt contract:** The durable provider-portable rules for shipped builtin
+prompts live in [Builtin Prompt Guidelines](../../builtin-prompt-guidelines.md).
+That guide records the ownership matrix, autonomy and verification boundaries,
+provider-specific evidence, forbidden anti-patterns, and the local extracts used
+to apply them. This spec is normative for the builtin-default implementation;
+the guide is normative for prompt authoring.
+
 ## Goals
 
 - Ship real Markdown builtin prompt files for `loom`, `tapestry`, `shuttle`, `pattern`, `thread`, `spindle`, `weft`, and `warp` in `packages/config/prompts/`.
@@ -19,6 +26,57 @@ The feature covers more than prompt copy. It also defines how builtin `triggers`
 - Promote useful builtin `triggers` into `packages/config/src/builtins.ts` so zero-config users receive generated delegation guidance.
 - Remove duplication that causes prompt/default drift by pruning mirror local prompt files and shrinking `.weave/config.weave` to intentional overrides only.
 - Add proof that builtin prompts are non-placeholder, free of obvious Weave-repo-only leakage, and compose correctly through the engine.
+
+## Builtin prompt contract
+
+Each shipped prompt shall define one stable role, its hard constraints, its
+calibrated autonomy or approval boundary, its role-specific observable success
+criteria, and a compact output shape. Equivalent wording is valid; tests shall
+assert these semantics rather than exact prose. Prompt files shall remain
+provider-portable and shall not contain hidden-reasoning requests, duplicated
+tool instructions, concrete adapter commands, provider settings, fixed
+concurrency values, or repeated success criteria. Delegation inventory remains
+config- and composition-owned. See [Adapter Boundary](../../adapter-boundary.md);
+this spec does not change that boundary.
+
+Prompt reduction shall preserve the named Weave behavior for Loom, Tapestry,
+Pattern, Shuttle, Thread, Spindle, Weft, and Warp: routing and delegation,
+non-implementation and planning stops, authorization boundaries, read-only
+evidence, implementation verification, review and security gate verdicts,
+category routing, review variants, plan state, and portable delegation limits.
+
+### Semantic regression expectations
+
+The full config/engine composition path shall produce a non-empty composed
+prompt for all eight builtins, with valid Mustache and no unresolved tags.
+Focused tests shall cover each role's constraints, autonomy boundary, success
+evidence, and output contract, plus generated delegation behavior where the
+builtin config declares it. Tests must not require provider-specific wording.
+
+### Portable size regression expectations
+
+Source-size checks shall measure UTF-8 bytes and whitespace-delimited words for
+each prompt and for the aggregate. They are deterministic, provider-neutral
+hard gates; provider token counts are optional evaluation observations, not a
+normative contract. No tokenizer dependency or provider tokenization is
+required.
+
+The maximum source sizes are:
+
+| Builtin | Bytes | Words |
+| --- | ---: | ---: |
+| Loom | 4,500 | 650 |
+| Tapestry | 4,000 | 600 |
+| Pattern | 2,800 | 420 |
+| Shuttle | 1,900 | 280 |
+| Thread | 1,200 | 180 |
+| Spindle | 1,600 | 230 |
+| Weft | 2,300 | 350 |
+| Warp | 3,000 | 450 |
+| **All eight** | **23,200** | **3,400** |
+
+A wording change may use any provider-portable phrasing, but it must remain
+within these ceilings and retain the semantic contract above.
 
 ## User Stories
 
