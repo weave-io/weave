@@ -21,6 +21,55 @@ Every builtin prompt should answer five questions, once and in a compact form:
 Prompts describe intent and behavior. They do not reproduce the engine,
 adapter, tool, or skill implementation.
 
+## Reduction checkpoint
+
+The eight source prompts were reduced against the baseline captured in
+`/tmp/weave-builtin-prompt-baseline/metrics/source-prompts.tsv`
+(the path is a local verification input, not a repository artifact). Metrics
+use UTF-8 bytes and whitespace-delimited words; no raw prompt text is stored.
+
+| Builtin | Baseline bytes / words | Current bytes / words | Per-agent target | Target |
+| --- | ---: | ---: | ---: | :---: |
+| Loom | 7,649 / 1,108 | 2,319 / 323 | 4,500 / 650 | pass |
+| Tapestry | 8,830 / 1,296 | 2,250 / 300 | 4,000 / 600 | pass |
+| Pattern | 3,612 / 566 | 1,963 / 291 | 2,800 / 420 | pass |
+| Shuttle | 2,802 / 410 | 1,422 / 214 | 1,900 / 280 | pass |
+| Thread | 1,662 / 255 | 1,143 / 179 | 1,200 / 180 | pass |
+| Spindle | 2,367 / 341 | 1,411 / 203 | 1,600 / 230 | pass |
+| Weft | 3,438 / 527 | 1,569 / 231 | 2,300 / 350 | pass |
+| Warp | 5,283 / 765 | 1,917 / 285 | 3,000 / 450 | pass |
+| **All eight** | **35,643 / 5,268** | **13,994 / 2,026** | **23,200 / 3,400** | **pass** |
+
+The aggregate is **60.7% smaller by bytes** and **61.5% smaller by words**
+than baseline, with no missed per-agent target. The aggregate is below both
+hard ceilings. Verify it with:
+
+```bash
+for f in packages/config/prompts/{loom,tapestry,pattern,shuttle,thread,spindle,weft,warp}.md; do
+  printf '%s\t' "${f##*/}"; wc -c -w < "$f"
+done
+wc -c -w packages/config/prompts/{loom,tapestry,pattern,shuttle,thread,spindle,weft,warp}.md
+```
+
+### What changed
+
+Reduction removed contradictory or duplicated instructions: repeated role and
+completion checklists, copied tool choreography, fixed concurrency and wait
+promises, provider/model controls, hand-maintained delegation inventories, and
+repository-specific procedures. It retained each role's authority boundary,
+planning or implementation stop, routing intent, read-only limits, evidence
+requirements, review/audit verdicts, and compact handoff shape. The full
+behavior contract is summarized in [What reduction must preserve](#what-reduction-must-preserve)
+and composed by the [Prompt Composition contract](prompt-composition.md).
+
+Provider-specific recommendations remain evidence for evaluation, not prompt
+content. Model selection, reasoning/effort, verbosity, caching, tool routing,
+concurrency, and other provider controls belong at the [Adapter Boundary](adapter-boundary.md),
+adapter/runtime configuration, or future model-config work. This keeps the
+source prompts portable across providers and prevents tokenizer or API changes
+from becoming prompt-contract changes.
+
+
 ## Universal rules
 
 These rules apply to every provider and every builtin:
