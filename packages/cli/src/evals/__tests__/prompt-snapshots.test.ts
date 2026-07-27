@@ -52,6 +52,22 @@ const SPINDLE_PROMPT_FACTS_CONTRACT =
 const SPINDLE_PROMPT_HONESTY_CONTRACT =
   "If network access is actually available in your runtime, use it to fetch documentation pages, specifications, and changelogs directly when needed.";
 
+const COMPOSED_LIMITS: Record<string, { bytes: number; words: number }> = {
+  loom: { bytes: 4_500, words: 650 },
+  tapestry: { bytes: 4_000, words: 600 },
+  pattern: { bytes: 2_800, words: 420 },
+  shuttle: { bytes: 1_900, words: 280 },
+  thread: { bytes: 1_200, words: 180 },
+  spindle: { bytes: 1_600, words: 230 },
+  weft: { bytes: 2_300, words: 350 },
+  warp: { bytes: 3_000, words: 450 },
+};
+const AGGREGATE_LIMITS = { bytes: 23_200, words: 3_400 };
+
+function promptWordCount(prompt: string): number {
+  return prompt.trim() === "" ? 0 : prompt.trim().split(/\\s+/u).length;
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -418,6 +434,36 @@ describe("composeAgentSnapshots — integration with builtin config", () => {
       expect(snapshot.hash).toHaveLength(64);
       expect(/^[0-9a-f]{64}$/.test(snapshot.hash)).toBe(true);
     }
+  });
+
+  it("enforces per-agent and aggregate portable composed-prompt budgets", async () => {
+    const result = await composeAgentSnapshots({
+      agentNames: Object.keys(COMPOSED_LIMITS),
+      rawArtifacts: true,
+    });
+    expect(result.isOk()).toBe(true);
+    const { snapshots, rawArtifacts } = result._unsafeUnwrap();
+    const artifactsByAgent = new Map(
+      rawArtifacts.map((artifact) => [
+        artifact.agentName,
+        artifact.composedPrompt,
+      ]),
+    );
+    let aggregateBytes = 0;
+    let aggregateWords = 0;
+    for (const snapshot of snapshots) {
+      const prompt = artifactsByAgent.get(snapshot.agentName);
+      expect(prompt).toBeDefined();
+      const limits = COMPOSED_LIMITS[snapshot.agentName];
+      expect(limits).toBeDefined();
+      if (prompt === undefined || limits === undefined) continue;
+      expect(snapshot.byteLength).toBeLessThanOrEqual(limits.bytes);
+      expect(promptWordCount(prompt)).toBeLessThanOrEqual(limits.words);
+      aggregateBytes += snapshot.byteLength;
+      aggregateWords += promptWordCount(prompt);
+    }
+    expect(aggregateBytes).toBeLessThanOrEqual(AGGREGATE_LIMITS.bytes);
+    expect(aggregateWords).toBeLessThanOrEqual(AGGREGATE_LIMITS.words);
   });
 
   it("loom and tapestry snapshots have different hashes", async () => {
