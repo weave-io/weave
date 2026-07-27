@@ -22,7 +22,7 @@ const PORTABLE_DENIALS = [
   /\b(?:claude|gpt|openai|anthropic|gemini)\b/i,
   /\b(?:temperature|top[- ]?p|verbosity|effort|reasoning|thinking|cache)\b/i,
   /\b(?:chain[- ]of[- ]thought|hidden deliberation|private scratch|internal reasoning)\b/i,
-  /(?:^|\s)\/[-\w]+|\bweave\s+(?:start|run|prompt|delegate)\b/i,
+  /(?:^|\s)\/[-\w]+|\bweave\s+(?:start|run|delegate)\b|\bweave\s+prompt(?!\s+self-modify(?=$|[^\w\s]))/i,
   /\b(?:parallel(?:ism)?|concurren(?:cy|t)|worker count|queue size)\b\s*[:=]?\s*\d+/i,
   /\b(?:retry|retries|sidebar|status panel|progress ritual|sleep|wait)\b/i,
   /\{\{\{delegation\.section\}\}\}/,
