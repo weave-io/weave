@@ -21,6 +21,7 @@ export type {
   ExtendBeforePlanDirective,
   IdentifierValue,
   NumberValue,
+  NullValue,
   Property,
   SettingAssignment,
   SourcePos,
@@ -28,6 +29,14 @@ export type {
   StringValue,
   WorkflowBlock,
 } from "./ast.js";
+// ---------------------------------------------------------------------------
+// Model thinking syntax
+// ---------------------------------------------------------------------------
+export type {
+  ModelIntentEntry,
+  ModelIntentParseError,
+} from "./model-thinking-syntax.js";
+export { parseModelIntentEntry } from "./model-thinking-syntax.js";
 // ---------------------------------------------------------------------------
 // Error types
 // ---------------------------------------------------------------------------
@@ -58,6 +67,7 @@ export type {
   CompletionMethod,
   DelegationSettings,
   DelegationTrigger,
+  JsonValue,
   ExtendBeforePlan,
   ExtensionPoints,
   LogLevel,
@@ -70,6 +80,7 @@ export type {
   RuntimeSettings,
   RuntimeUsageSettings,
   SettingsConfig,
+  ThinkingLevelDecl,
   ToolPermission,
   ToolPolicy,
   WeaveConfig,
@@ -82,6 +93,7 @@ export type {
 // Schemas (Zod objects — useful for re-validation or extension)
 // ---------------------------------------------------------------------------
 export {
+  AdapterSettingsSchema,
   AgentConfigSchema,
   AgentDelegationConfigSchema,
   ArtifactDeclSchema,
@@ -94,6 +106,7 @@ export {
   DEFAULT_RUNTIME_USAGE_SETTINGS,
   DelegationSettingsSchema,
   DelegationTriggerSchema,
+  JsonValueSchema,
   ExtendBeforePlanSchema,
   ExtensionPointsSchema,
   LogLevelSchema,
@@ -107,6 +120,8 @@ export {
   RuntimeSettingsSchema,
   RuntimeUsageSettingsSchema,
   SettingsConfigSchema,
+  ThinkingLevelSchema,
+  THINKING_LEVEL_VALUES,
   ToolPermissionSchema,
   ToolPolicySchema,
   WeaveConfigSchema,

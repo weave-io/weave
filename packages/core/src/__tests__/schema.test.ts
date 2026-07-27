@@ -1,5 +1,11 @@
 import { describe, expect, it } from "bun:test";
-import { ToolPermissionSchema, ToolPolicySchema } from "@weaveio/weave-core";
+import {
+  parseModelIntentEntry,
+  THINKING_LEVEL_VALUES,
+  ThinkingLevelSchema,
+  ToolPermissionSchema,
+  ToolPolicySchema,
+} from "@weaveio/weave-core";
 import {
   AgentConfigSchema,
   AgentDelegationConfigSchema,
@@ -66,6 +72,38 @@ describe("@weaveio/weave-core barrel exports", () => {
     if (parsed.success) {
       const perm: import("@weaveio/weave-core").ToolPermission = parsed.data;
       expect(perm).toBe("allow");
+    }
+  });
+
+  it("exports model thinking schemas, values, parser, and types from one barrel", () => {
+    expect(ThinkingLevelSchema.safeParse("high").success).toBe(true);
+    expect(THINKING_LEVEL_VALUES).toEqual([
+      "off",
+      "minimal",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ]);
+
+    const parsed = parseModelIntentEntry("provider/model#high");
+    expect(parsed.isOk()).toBe(true);
+    if (parsed.isOk()) {
+      const entry: import("@weaveio/weave-core").ModelIntentEntry =
+        parsed.value;
+      const level: import("@weaveio/weave-core").ThinkingLevelDecl =
+        entry.thinkingLevel ?? "off";
+      expect(entry.baseModel).toBe("provider/model");
+      expect(level).toBe("high");
+    }
+
+    const invalid = parseModelIntentEntry("provider/model#unknown");
+    expect(invalid.isErr()).toBe(true);
+    if (invalid.isErr()) {
+      const parseError: import("@weaveio/weave-core").ModelIntentParseError =
+        invalid.error;
+      expect(parseError.type).toBe("InvalidThinkingLevelSuffix");
     }
   });
 });
@@ -831,11 +869,27 @@ describe("SettingsConfigSchema", () => {
     }
   });
 
-  it("defaults log_level to INFO when omitted", () => {
+  it("accepts an explicit permission-enforcement toggle", () => {
+    const r = SettingsConfigSchema.safeParse({ enforce_permissions: false });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.enforce_permissions).toBe(false);
+    }
+  });
+
+  it("rejects a non-boolean permission-enforcement toggle", () => {
+    const r = SettingsConfigSchema.safeParse({
+      enforce_permissions: "false",
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it("preserves an omitted permission toggle for layered merge", () => {
     const r = SettingsConfigSchema.safeParse({});
     expect(r.success).toBe(true);
     if (r.success) {
       expect(r.data.log_level).toBe("INFO");
+      expect(r.data.enforce_permissions).toBeUndefined();
     }
   });
 
@@ -873,6 +927,7 @@ describe("SettingsConfigSchema", () => {
     expect(r.success).toBe(true);
     if (r.success) {
       expect(r.data.log_level).toBe("INFO");
+      expect(r.data.enforce_permissions).toBeUndefined();
       expect(r.data.runtime.journal.strict).toBe(false);
     }
   });
@@ -1896,5 +1951,104 @@ describe("delegation limit schemas", () => {
   it("rejects project-only fields in an agent override", () => {
     const result = AgentDelegationConfigSchema.safeParse({ max_depth: 2 });
     expect(result.success).toBe(false);
+  });
+});
+
+describe("opaque adapter settings", () => {
+  it("validates JSON values and bounds", () => {
+    expect(SettingsConfigSchema.safeParse({ adapters: { test: { value: null, list: [true, 1] } } }).success).toBe(true);
+    expect(SettingsConfigSchema.safeParse({ adapters: { test: { a: { b: { c: { d: { e: true } } } } } } }).success).toBe(false);
+    expect(SettingsConfigSchema.safeParse({ adapters: { test: { value: Number.POSITIVE_INFINITY } } }).success).toBe(false);
+  });
+});
+
+describe("model thinking suffix validation", () => {
+  it("accepts plain, suffixed, and escaped agent model entries", () => {
+    const result = AgentConfigSchema.safeParse({
+      models: ["plain-model", "gpt-4o#high", "weird\\#model"],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.models).toEqual([
+        "plain-model",
+        "gpt-4o#high",
+        "weird\\#model",
+      ]);
+    }
+  });
+
+  it("accepts plain, suffixed, and escaped review_models entries", () => {
+    const result = AgentConfigSchema.safeParse({
+      review_models: ["plain-review", "review-model#low", "review\\#model"],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.review_models).toEqual([
+        "plain-review",
+        "review-model#low",
+        "review\\#model",
+      ]);
+    }
+  });
+
+  it("accepts plain, suffixed, and escaped category model entries", () => {
+    const result = CategoryConfigSchema.safeParse({
+      patterns: ["src/**"],
+      models: ["plain-category", "category-model#max", "category\\#model"],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.models).toEqual([
+        "plain-category",
+        "category-model#max",
+        "category\\#model",
+      ]);
+    }
+  });
+
+  it("rejects an invalid agent model suffix with a readable indexed error", () => {
+    const result = AgentConfigSchema.safeParse({
+      models: ["plain-model", "gpt-4o#hgih"],
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toContainEqual(
+        expect.objectContaining({
+          path: ["models", 1],
+          message: expect.stringContaining("Allowed levels"),
+        }),
+      );
+    }
+  });
+
+  it("rejects an invalid review_models suffix with a readable indexed error", () => {
+    const result = AgentConfigSchema.safeParse({
+      review_models: ["plain-review", "review-model#bad"],
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toContainEqual(
+        expect.objectContaining({
+          path: ["review_models", 1],
+          message: expect.stringContaining("Allowed levels"),
+        }),
+      );
+    }
+  });
+
+  it("rejects an invalid category model suffix with a readable indexed error", () => {
+    const result = CategoryConfigSchema.safeParse({
+      patterns: ["src/**"],
+      models: ["plain-category", "category-model#bad"],
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toContainEqual(
+        expect.objectContaining({
+          path: ["models", 1],
+          message: expect.stringContaining("Allowed levels"),
+        }),
+      );
+    }
   });
 });

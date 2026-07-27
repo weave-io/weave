@@ -7,6 +7,10 @@
 
 import { z } from "zod";
 import {
+  THINKING_LEVEL_VALUES,
+  parseModelIntentEntry,
+} from "./model-thinking-syntax.js";
+import {
   refinePromptAppendExclusive,
   refinePromptExclusive,
   refinePromptFileSafe,
@@ -17,6 +21,27 @@ import {
 // ---------------------------------------------------------------------------
 
 export const ToolPermissionSchema = z.enum(["allow", "deny", "ask"]);
+
+/** Closed, harness-neutral vocabulary for per-model thinking intent. */
+export const ThinkingLevelSchema = z.enum(THINKING_LEVEL_VALUES);
+export { THINKING_LEVEL_VALUES };
+
+function addModelIntentIssues(
+  entries: string[] | undefined,
+  fieldPath: string[],
+  ctx: z.RefinementCtx,
+): void {
+  if (entries === undefined) return;
+  entries.forEach((entry, index) => {
+    const parsed = parseModelIntentEntry(entry);
+    if (parsed.isOk()) return;
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: [...fieldPath, index],
+      message: parsed.error.message,
+    });
+  });
+}
 
 export const DelegationTriggerSchema = z.object({
   domain: z.string(),
@@ -124,7 +149,11 @@ export const AgentConfigSchema = z
   .refine(...refinePromptExclusive())
   .refine(...refinePromptFileSafe("prompt_file"))
   .refine(...refinePromptAppendExclusive())
-  .refine(...refinePromptFileSafe("prompt_append_file"));
+  .refine(...refinePromptFileSafe("prompt_append_file"))
+  .superRefine((agent, ctx) => {
+    addModelIntentIssues(agent.models, ["models"], ctx);
+    addModelIntentIssues(agent.review_models, ["review_models"], ctx);
+  });
 
 // ---------------------------------------------------------------------------
 // Category
@@ -144,7 +173,10 @@ export const CategoryConfigSchema = z
     prompt_append_file: z.string().optional(),
   })
   .refine(...refinePromptAppendExclusive())
-  .refine(...refinePromptFileSafe("prompt_append_file"));
+  .refine(...refinePromptFileSafe("prompt_append_file"))
+  .superRefine((category, ctx) => {
+    addModelIntentIssues(category.models, ["models"], ctx);
+  });
 
 // ---------------------------------------------------------------------------
 // Disabled
@@ -522,6 +554,83 @@ export const WorkflowConfigSchema = z
 // Settings
 // ---------------------------------------------------------------------------
 
+/** Harness-neutral JSON data carried by opaque adapter settings. */
+export type JsonValue =
+  | null
+  | boolean
+  | string
+  | number
+  | JsonValue[]
+  | { [key: string]: JsonValue };
+
+export const JsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
+  z.union([
+    z.null(),
+    z.boolean(),
+    z.string(),
+    z.number().finite(),
+    z.array(JsonValueSchema),
+    z.record(z.string(), JsonValueSchema),
+  ]),
+);
+
+const ADAPTER_SETTINGS_MAX_DEPTH = 4;
+const ADAPTER_SETTINGS_MAX_BYTES = 64 * 1024;
+
+function canonicalJson(value: JsonValue): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function checkAdapterValue(
+  value: JsonValue,
+  path: (string | number)[],
+  depth: number,
+  ctx: z.RefinementCtx,
+): void {
+  if (depth > ADAPTER_SETTINGS_MAX_DEPTH) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path,
+      message: `adapter setting nesting exceeds maximum depth of ${ADAPTER_SETTINGS_MAX_DEPTH}`,
+    });
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((entry, index) => {
+      checkAdapterValue(entry, [...path, index], depth + 1, ctx);
+    });
+    return;
+  }
+  if (value !== null && typeof value === "object") {
+    Object.entries(value).forEach(([key, entry]) => {
+      checkAdapterValue(entry, [...path, key], depth + 1, ctx);
+    });
+  }
+}
+
+export const AdapterSettingsSchema = z
+  .record(z.string(), JsonValueSchema)
+  .superRefine((adapters, ctx) => {
+    for (const [harness, value] of Object.entries(adapters)) {
+      checkAdapterValue(value, [harness], 0, ctx);
+      const bytes = new TextEncoder().encode(canonicalJson(value)).byteLength;
+      if (bytes > ADAPTER_SETTINGS_MAX_BYTES) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [harness],
+          message: `adapter settings exceed the 64 KiB canonical JSON limit (${bytes} bytes)`,
+        });
+      }
+    }
+  });
+
 /** Valid log level values (uppercase bare identifiers in DSL). */
 export const LogLevelSchema = z.enum([
   "TRACE",
@@ -616,6 +725,10 @@ export const SettingsConfigSchema = z
     log_level: LogLevelSchema.default("INFO"),
     delegation: DelegationSettingsSchema.optional(),
     runtime: RuntimeSettingsSchema,
+    // Resolve the semantic default after layered config merge. Keeping this
+    // optional preserves whether a higher-priority scope omitted the field.
+    enforce_permissions: z.boolean().optional(),
+    adapters: AdapterSettingsSchema.optional(),
   })
   .default({
     log_level: "INFO",
@@ -720,6 +833,7 @@ export const WeaveConfigSchema = z
 // ---------------------------------------------------------------------------
 
 export type ToolPermission = z.infer<typeof ToolPermissionSchema>;
+export type ThinkingLevelDecl = z.infer<typeof ThinkingLevelSchema>;
 export type DelegationTrigger = z.infer<typeof DelegationTriggerSchema>;
 export type ToolPolicy = z.infer<typeof ToolPolicySchema>;
 export type DelegationSettings = z.infer<typeof DelegationSettingsSchema>;
@@ -766,5 +880,6 @@ export type RuntimeLogSettings = z.infer<typeof RuntimeLogSettingsSchema>;
 /** Runtime-specific settings (journal, usage, log retention). */
 export type RuntimeSettings = z.infer<typeof RuntimeSettingsSchema>;
 /** The `settings { ... }` block config shape. */
+export type JsonAdapterSettings = z.infer<typeof AdapterSettingsSchema>;
 export type SettingsConfig = z.infer<typeof SettingsConfigSchema>;
 export type WeaveConfig = z.infer<typeof WeaveConfigSchema>;

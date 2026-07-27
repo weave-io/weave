@@ -15,6 +15,7 @@ import type { SourcePos } from "./tokens.js";
 export type StringValue = { kind: "string"; value: string; pos: SourcePos };
 export type NumberValue = { kind: "number"; value: number; pos: SourcePos };
 export type BooleanValue = { kind: "boolean"; value: boolean; pos: SourcePos };
+export type NullValue = { kind: "null"; value: null; pos: SourcePos };
 export type IdentifierValue = {
   kind: "identifier";
   value: string;
@@ -35,6 +36,7 @@ export type AstValue =
   | StringValue
   | NumberValue
   | BooleanValue
+  | NullValue
   | IdentifierValue
   | ArrayValue
   | BlockValue;

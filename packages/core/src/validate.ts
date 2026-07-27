@@ -24,6 +24,8 @@ import { type WeaveConfig, WeaveConfigSchema } from "./schema.js";
  */
 function astValueToPlain(value: AstValue): unknown {
   switch (value.kind) {
+    case "null":
+      return null;
     case "string":
       return value.value;
     case "number":
@@ -237,6 +239,109 @@ function zodErrorToValidationErrors(zodError: ZodError): ValidationError[] {
 }
 
 // ---------------------------------------------------------------------------
+// Opaque adapter settings validation
+// ---------------------------------------------------------------------------
+
+function canonicalAstJson(value: AstValue): string {
+  if (value.kind === "array")
+    return `[${value.elements.map(canonicalAstJson).join(",")}]`;
+  if (value.kind === "block") {
+    const entries = value.properties
+      .map((property) => [property.key, canonicalAstJson(property.value)] as const)
+      .sort(([left], [right]) => left.localeCompare(right));
+    return `{${entries.map(([key, raw]) => `${JSON.stringify(key)}:${raw}`).join(",")}}`;
+  }
+  return JSON.stringify(astValueToPlain(value));
+}
+
+function validateAdapterAst(
+  value: AstValue,
+  path: string,
+  depth: number,
+  errors: ValidationError[],
+): void {
+  if (value.kind === "identifier") {
+    errors.push({
+      type: "ValidationError",
+      path,
+      message: `adapter settings accept JSON values only; identifier '${value.value}' is not valid`,
+    });
+    return;
+  }
+  if (value.kind === "number" && !Number.isFinite(value.value)) {
+    errors.push({
+      type: "ValidationError",
+      path,
+      message: "adapter settings numbers must be finite",
+    });
+    return;
+  }
+  if (depth > 4) {
+    errors.push({
+      type: "ValidationError",
+      path,
+      message: "adapter setting nesting exceeds maximum depth of 4",
+    });
+    return;
+  }
+  if (value.kind === "array") {
+    value.elements.forEach((entry, index) => {
+      validateAdapterAst(entry, `${path}.${index}`, depth + 1, errors);
+    });
+    return;
+  }
+  if (value.kind !== "block") return;
+
+  const seen = new Set<string>();
+  for (const property of value.properties) {
+    const propertyPath = `${path}.${property.key}`;
+    if (seen.has(property.key)) {
+      errors.push({
+        type: "ValidationError",
+        path: propertyPath,
+        message: `duplicate adapter setting key '${property.key}'`,
+      });
+      continue;
+    }
+    seen.add(property.key);
+    validateAdapterAst(property.value, propertyPath, depth + 1, errors);
+  }
+}
+
+function validateOpaqueAdapterSettings(ast: AstNode[]): ValidationError[] {
+  const errors: ValidationError[] = [];
+  for (const node of ast) {
+    if (node.type !== "setting" || node.key !== "settings") continue;
+    if (node.value.kind !== "block") continue;
+    const adapters = node.value.properties.find((property) => property.key === "adapters");
+    if (adapters === undefined || adapters.value.kind !== "block") continue;
+    const harnesses = new Set<string>();
+    for (const harness of adapters.value.properties) {
+      const path = `settings.adapters.${harness.key}`;
+      if (harnesses.has(harness.key)) {
+        errors.push({
+          type: "ValidationError",
+          path,
+          message: `duplicate adapter setting key '${harness.key}'`,
+        });
+        continue;
+      }
+      harnesses.add(harness.key);
+      validateAdapterAst(harness.value, path, 0, errors);
+      const bytes = new TextEncoder().encode(canonicalAstJson(harness.value)).byteLength;
+      if (bytes > 64 * 1024) {
+        errors.push({
+          type: "ValidationError",
+          path,
+          message: `adapter settings exceed the 64 KiB canonical JSON limit (${bytes} bytes)`,
+        });
+      }
+    }
+  }
+  return errors;
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -252,6 +357,7 @@ export function validate(
 ): Result<WeaveConfig, ValidationError[]> {
   const { plain, topLevelLogLevel, invalidSettingsShape } =
     astToPlainObject(ast);
+  const adapterErrors = validateOpaqueAdapterSettings(ast);
 
   if (invalidSettingsShape) {
     return err([
@@ -265,6 +371,7 @@ export function validate(
 
   if (topLevelLogLevel) {
     return err([
+      ...adapterErrors,
       {
         type: "ValidationError",
         path: "log_level",
@@ -273,6 +380,8 @@ export function validate(
       },
     ]);
   }
+
+  if (adapterErrors.length > 0) return err(adapterErrors);
 
   const parsed = WeaveConfigSchema.safeParse(plain);
 

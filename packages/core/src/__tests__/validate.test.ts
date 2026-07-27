@@ -14,6 +14,55 @@ function validateSource(src: string) {
   return validate(parseResult.value);
 }
 
+describe("validate — model thinking suffix", () => {
+  it("preserves plain, suffixed, and escaped raw model entries", () => {
+    const result = validateSource(`agent shuttle {
+  models ["plain-model", "gpt-4o#high", "weird\\#model"]
+}`);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().agents.shuttle?.models).toEqual([
+      "plain-model",
+      "gpt-4o#high",
+      "weird\\#model",
+    ]);
+  });
+
+  it("preserves raw review and category model entries", () => {
+    const result = validateSource(`agent weft {
+  review_models ["plain-review", "review-model#low", "review\\#model"]
+}
+category backend {
+  patterns ["src/**"]
+  models ["plain-category", "category-model#max", "category\\#model"]
+}`);
+    expect(result.isOk()).toBe(true);
+    const config = result._unsafeUnwrap();
+    expect(config.agents.weft?.review_models).toEqual([
+      "plain-review",
+      "review-model#low",
+      "review\\#model",
+    ]);
+    expect(config.categories.backend?.models).toEqual([
+      "plain-category",
+      "category-model#max",
+      "category\\#model",
+    ]);
+  });
+
+  it("rejects invalid suffixes with the field and entry index", () => {
+    const result = validateSource(`agent shuttle {
+  models ["plain-model", "gpt-4o#hgih"]
+}`);
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error[0]).toMatchObject({
+        path: "agents.shuttle.models.1",
+        message: expect.stringContaining("Allowed levels"),
+      });
+    }
+  });
+});
+
 describe("validate — valid agent", () => {
   it("valid agent with all fields", () => {
     const src = `agent loom {
@@ -534,6 +583,21 @@ describe("validate — settings block", () => {
     expect(result._unsafeUnwrap().settings.log_level).toBe("DEBUG");
   });
 
+  it("settings { enforce_permissions false } disables permission enforcement", () => {
+    const result = validateSource(`settings {
+  enforce_permissions false
+}`);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().settings.enforce_permissions).toBe(false);
+  });
+
+  it("rejects a non-boolean enforce_permissions value", () => {
+    const result = validateSource(`settings {
+  enforce_permissions off
+}`);
+    expect(result.isErr()).toBe(true);
+  });
+
   it("settings block with all valid log levels", () => {
     const levels = [
       "TRACE",
@@ -577,6 +641,7 @@ describe("validate — settings block", () => {
     expect(result.isOk()).toBe(true);
     const config = result._unsafeUnwrap();
     expect(config.settings.log_level).toBe("INFO");
+    expect(config.settings.enforce_permissions).toBeUndefined();
     expect(config.settings.runtime.journal.strict).toBe(false);
     expect(config.settings.runtime.journal.retention_days).toBe(30);
     expect(config.settings.runtime.journal.max_entries).toBe(10_000);
@@ -1541,5 +1606,21 @@ agent tapestry {
         ._unsafeUnwrapErr()
         .some((error) => error.path.includes("delegation")),
     ).toBe(true);
+  });
+
+  it("accepts all JSON-like opaque adapter values", () => {
+    const result = validateSource(`settings { adapters { test { text "x" number 1.5 flag true empty null list [1, false] object { key "value" } } } }`);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().settings.adapters?.test).toEqual({
+      text: "x", number: 1.5, flag: true, empty: null, list: [1, false], object: { key: "value" },
+    });
+  });
+
+  it("aggregates duplicate, non-JSON, and depth errors with adapter paths", () => {
+    const result = validateSource(`settings { adapters { test { bad nope deep { a { b { c { d { e true } } } } } } } }`);
+    expect(result.isErr()).toBe(true);
+    const paths = result._unsafeUnwrapErr().map((error) => error.path);
+    expect(paths).toContain("settings.adapters.test.bad");
+    expect(paths.some((path) => path.includes("settings.adapters.test.deep"))).toBe(true);
   });
 });

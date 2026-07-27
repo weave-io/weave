@@ -1,6 +1,7 @@
 import {
   DEFAULT_DELEGATION_LIMITS,
   type WeaveConfig,
+  AdapterSettingsSchema,
   WeaveConfigSchema,
   type WorkflowConfig,
   type WorkflowStep,
@@ -364,10 +365,22 @@ function mergeWorkflowRecord(
   return ok(combined);
 }
 
-function validateMergedDelegationLimits(
+function validateMergedConfig(
   config: WeaveConfig,
 ): Result<WeaveConfig, MergeError[]> {
   const issues: Array<{ path: string; message: string }> = [];
+  const adapters = config.settings.adapters;
+  if (adapters !== undefined) {
+    const parsed = AdapterSettingsSchema.safeParse(adapters);
+    if (!parsed.success) {
+      issues.push(
+        ...parsed.error.issues.map((issue) => ({
+          path: ["settings", "adapters", ...issue.path].join("."),
+          message: issue.message,
+        })),
+      );
+    }
+  }
   const project = config.settings.delegation;
   const projectMaxChildren =
     project?.max_children ?? DEFAULT_DELEGATION_LIMITS.max_children;
@@ -506,7 +519,7 @@ export function mergeConfigsResult(
     return ok(WeaveConfigSchema.parse({}));
   }
   if (configs.length === 1) {
-    return validateMergedDelegationLimits(configs[0] as WeaveConfig);
+    return validateMergedConfig(configs[0] as WeaveConfig);
   }
 
   let acc: WeaveConfig = configs[0] as WeaveConfig;
@@ -516,7 +529,7 @@ export function mergeConfigsResult(
     if (result.isErr()) return err(result.error);
     acc = result.value;
   }
-  return validateMergedDelegationLimits(acc);
+  return validateMergedConfig(acc);
 }
 
 /**

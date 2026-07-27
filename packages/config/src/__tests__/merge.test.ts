@@ -40,6 +40,20 @@ describe("mergeConfigs", () => {
     expect(merged.settings.log_level).toBe("WARN");
   });
 
+  it("preserves a global permission opt-out when project scope omits it", () => {
+    const global = cfg("settings { enforce_permissions false }");
+    const project = cfg("");
+    const merged = mergeConfigs(global, project);
+    expect(merged.settings.enforce_permissions).toBe(false);
+  });
+
+  it("allows project scope to explicitly re-enable permission enforcement", () => {
+    const global = cfg("settings { enforce_permissions false }");
+    const project = cfg("settings { enforce_permissions true }");
+    const merged = mergeConfigs(global, project);
+    expect(merged.settings.enforce_permissions).toBe(true);
+  });
+
   // -------------------------------------------------------------------------
   // Agent deep-merge
   // -------------------------------------------------------------------------
@@ -1674,5 +1688,18 @@ describe("mergeConfigsResult — delegation limits", () => {
         ),
       ).toBe(true);
     }
+  });
+
+  it("deep-merges three adapter layers and preserves null overrides", () => {
+    const builtin = cfg(`settings { adapters { generic { object { base true } list [1, 2] value "base" } } }`);
+    const global = cfg(`settings { adapters { generic { object { global true } list [2, 3] value null } } }`);
+    const project = cfg(`settings { adapters { generic { object { project true } list [3, 4] } } }`);
+    const result = mergeConfigsResult(builtin, global, project);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().settings.adapters?.generic).toEqual({
+      object: { base: true, global: true, project: true },
+      list: [3, 4, 2, 1],
+      value: null,
+    });
   });
 });

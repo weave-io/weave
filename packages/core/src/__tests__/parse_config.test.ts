@@ -1,6 +1,77 @@
 import { describe, expect, it } from "bun:test";
 import { parseConfig } from "../parse-config.js";
 
+describe("parseConfig — opaque adapter settings", () => {
+  it("round-trips null and nested JSON values", () => {
+    const result = parseConfig(`settings { adapters { test { value null nested { ok true } } } }`);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().settings.adapters?.test).toEqual({ value: null, nested: { ok: true } });
+  });
+});
+
+describe("parseConfig — model thinking suffix", () => {
+  it("preserves plain, suffixed, and escaped raw entries for agents, reviews, and categories", () => {
+    const result = parseConfig(`agent shuttle {
+  models ["plain-model", "provider/model#high", "weird\\#model"]
+  review_models ["plain-review", "review/model#low", "review\\#model"]
+}
+category backend {
+  patterns ["src/**"]
+  models ["plain-category", "category/model#max", "category\\#model"]
+}`);
+    expect(result.isOk()).toBe(true);
+    const config = result._unsafeUnwrap();
+    expect(config.agents.shuttle?.models).toEqual([
+      "plain-model",
+      "provider/model#high",
+      "weird\\#model",
+    ]);
+    expect(config.agents.shuttle?.review_models).toEqual([
+      "plain-review",
+      "review/model#low",
+      "review\\#model",
+    ]);
+    expect(config.categories.backend?.models).toEqual([
+      "plain-category",
+      "category/model#max",
+      "category\\#model",
+    ]);
+  });
+
+  it("surfaces invalid suffixes as typed validation errors with field indexes", () => {
+    const result = parseConfig(`agent shuttle {
+  models ["plain-model", "provider/model#hgih"]
+  review_models ["plain-review", "review/model#bad"]
+}
+category backend {
+  patterns ["src/**"]
+  models ["plain-category", "category/model#invalid"]
+}`);
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: "ValidationError",
+            path: "agents.shuttle.models.1",
+            message: expect.stringContaining("Allowed levels"),
+          }),
+          expect.objectContaining({
+            type: "ValidationError",
+            path: "agents.shuttle.review_models.1",
+            message: expect.stringContaining("Allowed levels"),
+          }),
+          expect.objectContaining({
+            type: "ValidationError",
+            path: "categories.backend.models.1",
+            message: expect.stringContaining("Allowed levels"),
+          }),
+        ]),
+      );
+    }
+  });
+});
+
 describe("parseConfig — valid sources", () => {
   it("minimal valid source: single agent with inline prompt", () => {
     const src = `agent helper {
@@ -587,6 +658,21 @@ describe("parseConfig — settings block", () => {
     expect(config.settings.runtime.journal.strict).toBe(false);
   });
 
+  it("settings { enforce_permissions false } parses end-to-end", () => {
+    const result = parseConfig(`settings {
+  enforce_permissions false
+}`);
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().settings.enforce_permissions).toBe(false);
+  });
+
+  it("rejects a non-boolean enforce_permissions value end-to-end", () => {
+    const result = parseConfig(`settings {
+  enforce_permissions off
+}`);
+    expect(result.isErr()).toBe(true);
+  });
+
   it("settings { log_level WARN runtime { journal { strict true } } } parses correctly", () => {
     const src = `settings {
   log_level WARN
@@ -608,6 +694,7 @@ describe("parseConfig — settings block", () => {
     expect(result.isOk()).toBe(true);
     const config = result._unsafeUnwrap();
     expect(config.settings.log_level).toBe("INFO");
+    expect(config.settings.enforce_permissions).toBeUndefined();
     expect(config.settings.runtime.journal.strict).toBe(false);
     expect(config.settings.runtime.journal.retention_days).toBe(30);
     expect(config.settings.runtime.journal.max_entries).toBe(10_000);

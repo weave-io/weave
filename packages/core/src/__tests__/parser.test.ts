@@ -20,6 +20,25 @@ function parseSource(src: string) {
   return parse(lexResult.value);
 }
 
+describe("Parser — model strings", () => {
+  it("keeps plain, suffixed, and escaped hashes opaque inside string values", () => {
+    const result = parseSource(`agent shuttle {
+  models ["plain-model", "provider/model#high", "weird\\#model"]
+}`);
+    expect(result.isOk()).toBe(true);
+    const agent = result._unsafeUnwrap()[0] as AgentBlock;
+    const models = agent.properties.find((property) => property.key === "models");
+    expect(models?.value).toMatchObject({
+      kind: "array",
+      elements: [
+        { kind: "string", value: "plain-model" },
+        { kind: "string", value: "provider/model#high" },
+        { kind: "string", value: "weird\\#model" },
+      ],
+    });
+  });
+});
+
 describe("Parser — agent block", () => {
   it("parses a minimal agent block", () => {
     const result = parseSource("agent loom {\n  temperature 0.1\n}");
@@ -393,6 +412,19 @@ describe("Parser — settings block", () => {
     });
   });
 
+  it("parses settings { enforce_permissions false } as a boolean property", () => {
+    const result = parseSource(`settings {
+  enforce_permissions false
+}`);
+    expect(result.isOk()).toBe(true);
+    const node = result._unsafeUnwrap()[0] as SettingAssignment;
+    const block = node.value as BlockValue;
+    expect(block.properties[0]).toMatchObject({
+      key: "enforce_permissions",
+      value: { kind: "boolean", value: false },
+    });
+  });
+
   it("parses settings { runtime { journal { strict true } } } as nested blocks", () => {
     const src = `settings {
   log_level WARN
@@ -723,5 +755,16 @@ agent tapestry {
       kind: "number",
       value: 3,
     });
+  });
+
+  it("parses null inside opaque adapter settings", () => {
+    const result = parse(tokenize(`settings { adapters { test { value null } } }`)._unsafeUnwrap());
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      const settings = result.value[0] as SettingAssignment;
+      const adapters = (settings.value as BlockValue).properties[0]?.value as BlockValue;
+      const test = adapters.properties[0]?.value as BlockValue;
+      expect(test.properties[0]?.value).toMatchObject({ kind: "null", value: null });
+    }
   });
 });
