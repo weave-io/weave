@@ -41,9 +41,9 @@ All publishable output passes through the central allowlist sanitizer in `packag
 
 ## Builtin prompt reduction checkpoint
 
-The current eight source prompts total **13,994 UTF-8 bytes and 2,026
+The current eight source prompts total **14,225 UTF-8 bytes and 2,048
 whitespace-delimited words**, down from **35,643 bytes and 5,268 words**. That is
-60.7% less by bytes and 61.5% less by words, within the [builtin prompt
+60.1% less by bytes and 61.1% less by words, within the [builtin prompt
 size contract](builtin-prompt-guidelines.md#reduction-checkpoint). The detailed
 per-agent table, retained behavior, removed contradictions, and ownership
 rationale are in [Builtin Prompt Guidelines](builtin-prompt-guidelines.md).

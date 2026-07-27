@@ -10,9 +10,9 @@ For the full eval guide — architecture, CI model, sanitization rules, raw-arti
 
 ## Prompt reduction and live-eval status
 
-The eight builtin source prompts currently measure **13,994 UTF-8 bytes and
-2,026 words**, versus the **35,643 bytes and 5,268 words** baseline: 60.7% and
-61.5% reductions. The per-agent before/after table and missed-target flags are
+The eight builtin source prompts currently measure **14,225 UTF-8 bytes and
+2,048 words**, versus the **35,643 bytes and 5,268 words** baseline: 60.1% and
+61.1% reductions. The per-agent before/after table and missed-target flags are
 in [`docs/builtin-prompt-guidelines.md`](../docs/builtin-prompt-guidelines.md#reduction-checkpoint).
 Use the [eval procedure](../docs/agent-evals.md#verification-procedure) and the
 [Prompt Composition contract](../docs/prompt-composition.md) for repeatable
