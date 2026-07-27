@@ -45,31 +45,16 @@ function makeExecutionCase(overrides: Partial<EvalCase> = {}): EvalCase {
     expected_outcome: {
       kind: "task_completion",
       description:
-        "Respond with Shuttle-style intake reflection, file awareness, acceptance confirmation, and evidence reporting.",
+        "Respond with bounded file scope, acceptance evidence, check results, and honest assumptions.",
       required_artifacts: [
-        "shuttle_task_intake_structured",
-        "shuttle_files_acknowledged",
-        "shuttle_acceptance_confirmed",
-        "shuttle_evidence_reported",
+        "shuttle_file_scope_bounded",
+        "shuttle_acceptance_evidence",
+        "shuttle_checks_reported",
+        "shuttle_honest_assumptions",
       ],
     },
     accepted_alternates: [],
     transcript_expectations: [
-      {
-        check: "content_contains",
-        role: "assistant",
-        contains: "Files changed",
-      },
-      {
-        check: "content_contains",
-        role: "assistant",
-        contains: "Commands run",
-      },
-      {
-        check: "content_contains",
-        role: "assistant",
-        contains: "ALL acceptance criteria are met",
-      },
       {
         check: "agent_mentioned",
         agent_name: "shuttle",
@@ -87,14 +72,8 @@ function makeEvidenceCase(overrides: Partial<EvalCase> = {}): EvalCase {
       "Confirm a delegated shuttle task with explicit assumptions, test results, and bounded evidence from assistant text only.",
     transcript_expectations: [
       {
-        check: "content_contains",
-        role: "assistant",
-        contains: "Test results",
-      },
-      {
-        check: "content_contains",
-        role: "assistant",
-        contains: "Issues/assumptions",
+        check: "agent_mentioned",
+        agent_name: "shuttle",
       },
     ],
     ...overrides,
@@ -332,7 +311,10 @@ function executeCaseWithStubs(
       const runOutput: ModelRunOutput = {
         caseId: evalCase.id,
         modelId,
-        routedAgents: signals.taskIntakeStructured ? ["shuttle"] : [],
+        routedAgents:
+          signals.fileScopeBounded && signals.acceptanceEvidence
+            ? ["shuttle"]
+            : [],
         delegationChain: [],
         transcript: [
           { role: "user", content: userMessage },
@@ -340,10 +322,11 @@ function executeCaseWithStubs(
         ],
         rawContent: response.content,
         completionSignalled:
-          signals.taskIntakeStructured &&
-          signals.filesAcknowledged &&
-          signals.acceptanceConfirmed &&
-          signals.evidenceReported,
+          signals.fileScopeBounded &&
+          signals.acceptanceEvidence &&
+          signals.checksReported &&
+          signals.assumptionsHonest &&
+          !signals.fabricatedTelemetryDetected,
         producedArtifacts: signals.producedArtifacts,
       };
 
@@ -525,14 +508,18 @@ describe("extractShuttleExecutionSignals", () => {
       "- bun test packages/cli/src/evals/__tests__/shuttle-execution-runner.test.ts",
       "Test results: 4 passed, 0 failed",
       "ALL acceptance criteria are met.",
+      "Assumption: this is synthetic assistant text; no real file mutation or tool telemetry was observed.",
     ].join("\n");
 
     const signals = extractShuttleExecutionSignals(content);
     expect(signals.taskIntakeStructured).toBe(true);
     expect(signals.filesAcknowledged).toBe(true);
     expect(signals.acceptanceConfirmed).toBe(true);
+    expect(signals.acceptanceEvidence).toBe(true);
+    expect(signals.checksReported).toBe(true);
+    expect(signals.assumptionsHonest).toBe(true);
     expect(signals.evidenceReported).toBe(true);
-    expect(signals.producedArtifacts).toContain("shuttle_evidence_reported");
+    expect(signals.producedArtifacts).toContain("shuttle_checks_reported");
   });
 
   it("does not invent structure when the response is vague", () => {
@@ -540,19 +527,65 @@ describe("extractShuttleExecutionSignals", () => {
     expect(signals.taskIntakeStructured).toBe(false);
     expect(signals.filesAcknowledged).toBe(false);
     expect(signals.acceptanceConfirmed).toBe(false);
+    expect(signals.fileScopeBounded).toBe(false);
+    expect(signals.checksReported).toBe(false);
+    expect(signals.assumptionsHonest).toBe(false);
+  });
+
+  it("accepts prose without task-intake restatement or fixed headings", () => {
+    const signals = extractShuttleExecutionSignals(
+      [
+        "I considered `evals/README.md` and `packages/cli/src/evals/shuttle-execution-runner.ts`.",
+        "The acceptance criteria are satisfied: the report has bounded scope and evidence.",
+        "bun test packages/cli/src/evals/__tests__/shuttle-execution-runner.test.ts — 6 passed, 0 failed.",
+        "Assumption: this is synthetic text; no real file mutation or tool telemetry was observed.",
+      ].join("\n"),
+    );
+
+    expect(signals.taskIntakeStructured).toBe(false);
+    expect(signals.fileScopeBounded).toBe(true);
+    expect(signals.acceptanceEvidence).toBe(true);
+    expect(signals.checksReported).toBe(true);
+    expect(signals.assumptionsHonest).toBe(true);
+    expect(signals.fabricatedTelemetryDetected).toBe(false);
+  });
+
+  it("rejects missing checks and fabricated telemetry signals", () => {
+    const signals = extractShuttleExecutionSignals(
+      [
+        "Updated `evals/README.md`.",
+        "Acceptance criteria are met.",
+        "The actual filesystem and tool telemetry verify the change.",
+      ].join("\n"),
+    );
+
+    expect(signals.fileScopeBounded).toBe(true);
+    expect(signals.acceptanceEvidence).toBe(true);
+    expect(signals.checksReported).toBe(false);
+    expect(signals.fabricatedTelemetryDetected).toBe(true);
+    expect(signals.producedArtifacts).not.toContain(
+      "shuttle_honest_assumptions",
+    );
   });
 });
 
 describe("buildUserMessage", () => {
-  it("injects the delegated task intake envelope and text-only limits", () => {
+  it("injects bounded delegated-task instructions and text-only limits", () => {
     const message = buildUserMessage(makeExecutionCase());
-    expect(message).toContain("Task [1/1]: Synthetic Shuttle delegated task");
-    expect(message).toContain("**Files**:");
-    expect(message).toContain("Task intake");
     expect(message).toContain(
-      "Do not claim real file mutation or tool telemetry",
+      "Delegated task: Update the shuttle execution suite docs and report concrete completion evidence without claiming real file mutation telemetry.",
     );
-    expect(message).toContain("Acceptance confirmation");
+    expect(message).toContain(
+      "Relevant files include packages/cli/src/evals/shuttle-execution-runner.ts and evals/README.md.",
+    );
+    expect(message).toContain(
+      "Report only bounded, text-visible completion evidence.",
+    );
+    expect(message).toContain("acceptance evidence");
+    expect(message).toContain("commands or checks with their results");
+    expect(message).toContain("honest assumptions or limits");
+    expect(message).toContain("Do not claim hidden file mutation");
+    expect(message).not.toContain("Task [1/1]");
   });
 });
 
