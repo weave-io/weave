@@ -1,0 +1,10 @@
+{
+  "case_id": "loom-route-codebase-exploration",
+  "suite": "loom-routing",
+  "scoring": {
+    "outcome_weight": 0.8,
+    "per_expectation_weight": 0.2,
+    "required": true,
+    "notes": "Score the observable primary route to Thread for read-only codebase exploration. Thread is a route-level outcome here; static evidence is limited to the assistant naming Thread in text, not hidden file or tool telemetry."
+  }
+}
