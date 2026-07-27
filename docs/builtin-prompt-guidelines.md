@@ -125,38 +125,51 @@ role contract and let the engine, workflow, or evaluator own the rest.
 
 ## Anthropic-specific findings
 
-Anthropic's Claude guidance is useful evidence for provider evaluation, not a
-builtin prompt dependency. The current Claude best-practices guide recommends
-clear roles, explicit response formats, and XML tags when a prompt mixes
-instructions, context, examples, and inputs. It also recommends direct,
-concise responses for models whose default answers may be verbose.
+Anthropic's current Claude 5 context-engineering guidance is useful evidence for
+provider evaluation, not a builtin prompt dependency. It reports that newer
+models benefit from fewer overlapping rules and more room to use judgment. It
+also favors designing expressive tool and file interfaces over constraining the
+model with examples, loading detailed guidance through progressive disclosure,
+keeping tool descriptions simple instead of repeating them in the system
+prompt, and using rich references when a task needs them.
 
-Weave may use ordinary Markdown headings and bullets, and a prompt author may
-use clear delimiters when they improve comprehension. Do not add XML merely to
-satisfy Claude, and do not copy Claude model names, thinking budgets, effort
-settings, or API syntax into shipped prompts. Those choices belong to adapter or
-runtime configuration and cross-provider evaluation.
+These findings reinforce Weave's portable rules to state the role and authority
+boundary once, avoid duplicated tool instructions, and move detailed procedures
+to skills or references. They do not require XML, Claude model names, Claude
+commands, thinking budgets, effort settings, or API syntax in shipped prompts.
+The source also describes Claude Code features such as auto-memory and deferred
+tool loading; those remain harness-owned concerns.
 
-**Source:** [Anthropic — Prompting best practices](https://docs.anthropic.com/en/docs/build-with-claude/prompt-engineering/claude-4-best-practices)
+**Source:** [Anthropic — The new rules of context engineering for Claude 5 generation models](https://claude.com/blog/the-new-rules-of-context-engineering-for-claude-5-generation-models)
 
-**Local extract applied here:** the universal rules above keep role and output
-format explicit, prefer concise responses, and use progressive disclosure;
-they do not make XML, a Claude model, or a Claude setting part of the contract.
+**Research input:** This section was checked against a local extract of the
+linked article. The extract is evidence for these provider-specific findings,
+not a durable file dependency.
 
 ## OpenAI-specific findings
 
-OpenAI's prompt-engineering guidance emphasizes explicit role and workflow
-guidance and describes tool instructions and reasoning controls in the API. This
-supports testing a clear role, bounded workflow, and observable result. It does
-not justify embedding API parameters, reasoning effort, verbosity controls,
-model names, or provider-specific tool names in a builtin prompt.
+OpenAI's latest-model guidance reports that GPT-5.6 better infers user intent,
+so prompts often need less step-by-step prescription while still stating domain
+context, hard constraints, approval boundaries, and success criteria. It also
+recommends lean prompts that state each instruction once, concise relevant tool
+descriptions, explicit autonomy and approval boundaries, and response guidance
+that preserves required facts, decisions, caveats, next steps, and evidence
+before trimming repetition. Its examples distinguish direct model judgment from
+bounded programmatic tool workflows and call for representative evaluation of
+quality, completeness, latency, tokens, and cost.
 
-**Source:** [OpenAI — Prompt engineering](https://platform.openai.com/docs/guides/prompt-engineering)
+These findings support Weave's portable role, boundary, verification, output,
+and anti-duplication rules. They do not justify embedding GPT-5.6 model names,
+Responses API parameters, reasoning or verbosity controls, prompt-cache
+settings, programmatic-tool-calling routes, or provider-specific tool names in a
+builtin prompt. Those choices belong to adapters, runtime configuration, tool
+definitions, or evaluation.
 
-**Local extract applied here:** the ownership matrix assigns tool invocation to
-tool definitions and model/reasoning controls to adapters or runtime settings;
-the builtin retains only provider-neutral role, boundary, verification, and
-output semantics.
+**Source:** [OpenAI — Using GPT-5.6](https://developers.openai.com/api/docs/guides/latest-model)
+
+**Research input:** This section was checked against a local extract of the
+linked article. The extract is evidence for these provider-specific findings,
+not a durable file dependency.
 
 ## Anti-patterns
 
