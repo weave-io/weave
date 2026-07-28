@@ -2,14 +2,13 @@
 
 ## Environment Variables
 
-- `BASE_PATH` **required** — packages/docs/astro.config.mjs
-- `BASE_URL` **required** — packages/docs/src/data/docs-search.ts
+- `BASE_PATH` (has default) — packages/docs/astro.config.mjs
 - `GITHUB_OUTPUT` **required** — scripts/release/stable-finalize.ts
 - `GITHUB_TOKEN` **required** — scripts/release/bind-artifacts.ts
-- `HOME` **required** — packages/adapters/pi/src/__tests__/config-activator.test.ts
-- `LOG_LEVEL` **required** — packages/config/src/logger.ts
+- `HOME` (has default) — packages/adapters/pi/src/__tests__/config-activator.test.ts
+- `LOG_LEVEL` (has default) — packages/config/src/logger.ts
 - `PATH` **required** — packages/adapters/pi/src/__tests__/child-env.test.ts
-- `PWD` **required** — packages/adapters/opencode/dist-types/adapter.d.ts
+- `PWD` (has default) — packages/adapters/opencode/dist-types/adapter.d.ts
 - `RELEASE_APP_TOKEN` **required** — scripts/release/release-refs-main.ts
 - `RELEASE_AWAITING_STABLE_TRAIN` **required** — scripts/release/release-refs-main.ts
 - `RELEASE_CONTROL_DRY_RUN` **required** — scripts/release/control-main.ts
@@ -31,8 +30,8 @@
 - `RELEASE_SUBJECT_SHA` **required** — scripts/release/write-artifact-manifest.ts
 - `RELEASE_WORKFLOW_SHA` **required** — scripts/release/control-main.ts
 - `RUN_HARNESS_SMOKE` **required** — packages/adapters/opencode/src/__tests__/category-routing-smoke.test.ts
-- `SITE_URL` **required** — packages/docs/astro.config.mjs
-- `WEAVE_CLI_VERSION` **required** — packages/cli/src/theme/render.ts
+- `SITE_URL` (has default) — packages/docs/astro.config.mjs
+- `WEAVE_CLI_VERSION` (has default) — packages/cli/src/theme/render.ts
 - `WEAVE_LOG_FILE` **required** — packages/engine/src/env.ts
 - `WEAVE_RELEASE_FORCE_SCENARIO_FAILURE` **required** — scripts/release/verification-harness.ts
 

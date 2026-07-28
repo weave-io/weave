@@ -14,7 +14,8 @@
   - class OpenCodeAdapter
   - interface OpenCodeAdapterOptions
 - `packages/adapters/opencode/src/model-resolution.ts`
-  - function resolveModelForAgent: (descriptor, context) => Result<string, ModelResolutionError>
+  - function resolveModelForAgent: (descriptor, context) => Result<OpenCodeModelResolution, ModelResolutionError>
+  - interface OpenCodeModelResolution
   - interface OpenCodeModelContext
   - type ModelResolutionError
 - `packages/adapters/opencode/src/opencode-client.ts`
@@ -92,7 +93,7 @@
   - type PiBootstrapBody
   - type PiOrdinaryBootstrapBody
   - type PiDirectStepBootstrapBody
-  - _...15 more_
+  - _...13 more_
 - `packages/adapters/pi/src/child-crypto.ts`
   - function bytesToHex: (bytes) => string
   - function hexToBytes: (hex) => Uint8Array | undefined
@@ -121,7 +122,45 @@
   - class PiLineFramer
   - interface ParsedFrame
   - type FramingError
+  - const MAX_NATIVE_RECORD_BYTES
   - const MAX_FRAME_RECORD_BYTES
+- `packages/adapters/pi/src/child-history-fs.ts`
+  - function safeParentSessionComponent: (parentSessionId) => Result<string, PiChildHistoryFsError>
+  - function safeChildHistoryComponent: (childId) => Result<string, PiChildHistoryFsError>
+  - function resolvePiChildHistoryRoot: (input, env, string | undefined>>, homeDir) => Result<string, PiChildHistoryFsError>
+  - class MemoryPiChildHistoryFs
+  - interface HistoryIdentity
+  - interface PiChildHistoryDirectory
+  - _...2 more_
+- `packages/adapters/pi/src/child-history-schema.ts`
+  - function parsePiChildHistoryIndex: (value) => Result<PiChildHistoryIndexV1, PiChildHistorySchemaError>
+  - type PiChildHistoryKind
+  - type PiChildHistoryStatus
+  - type PiChildHistoryRecord
+  - type PiChildHistoryIndexV1
+  - type PiChildHistoryLayout
+  - _...13 more_
+- `packages/adapters/pi/src/child-history-store.ts`
+  - class PiChildHistoryStore
+  - interface PiChildHistoryStoreOptions
+  - interface PiChildHistoryOpenOptions
+  - type PiChildHistoryStoreError
+- `packages/adapters/pi/src/child-inspection-render.ts`
+  - function renderChildInspection: (input, width) => Result<PiChildInspectionRenderOutput, PiChildInspectionRenderError>
+  - function createChildInspectionRenderer: (transcriptInput?) => PiChildInspectionRenderer
+  - class PiChildInspectionRenderer
+  - interface InspectionBreadcrumbSegment
+  - interface InspectionWorkflowMeta
+  - interface InspectionSummary
+  - _...6 more_
+- `packages/adapters/pi/src/child-inspection-settings.ts`
+  - function parsePiChildInspectionSettings: (value) => Result<
+  - function resolvePiChildInspectionSettings: (config, "settings">) => Result<
+  - function effectivePiChildInspectionSettings: (resolution, choice?) => PiChildInspectionEffectiveSettings
+  - function formatPiChildInspectionSettingsIssues: (issues) => string
+  - interface PiChildInspectionSettingsIssue
+  - interface PiChildInspectionEffectiveSettings
+  - _...6 more_
 - `packages/adapters/pi/src/child-process-port.ts`
   - function resolveKillSignal: (mode) => number | undefined
   - class BunPiChildProcessPort
@@ -138,6 +177,22 @@
   - type PiChildRuntimeError
   - type PiChildOutputError
   - _...1 more_
+- `packages/adapters/pi/src/child-session-checkpoint.ts`
+  - function parsePiChildSessionCheckpoint: (value) => Result<PiChildSessionCheckpoint, PiChildCheckpointError>
+  - function decodePiChildSessionCheckpoint: (bytes) => Result<PiChildSessionCheckpoint, PiChildCheckpointError>
+  - function encodePiChildSessionCheckpoint: (value) => Result<Uint8Array, PiChildCheckpointError>
+  - function appendUnseenCheckpointEntries: (checkpoint, entries, activeLeaf, now, nextCursor?) => Result<PiChildSessionCheckpoint, PiChildCheckpointError>
+  - function createEmptyPiChildSessionCheckpoint: (now) => PiChildSessionCheckpoint
+  - type PiChildSessionCheckpoint
+  - _...4 more_
+- `packages/adapters/pi/src/child-session-events.ts`
+  - function preserveUnknownChildEvent: (value) => PiChildSessionEvent
+  - function parsePiChildSessionEvent
+  - type PiChildSessionEvent
+  - type PiChildEventType
+  - type PiExtensionUiResponse
+  - const MAX_CHILD_EVENT_STRING
+  - _...4 more_
 - `packages/adapters/pi/src/child-timer.ts`
   - class SystemTimerPort
   - interface TimerHandle
@@ -146,6 +201,14 @@
   - const DEFAULT_REPLY_TIMEOUT_MS
   - const DEFAULT_SETTLEMENT_TIMEOUT_MS
   - _...1 more_
+- `packages/adapters/pi/src/child-transcript.ts`
+  - function reducePiChildTranscript: (state, action) => Result<PiChildTranscriptState, PiChildTranscriptError>
+  - function createPiChildTranscriptState: () => PiChildTranscriptState
+  - function createPiChildTranscriptRenderer: (input) => PiChildTranscriptRenderer
+  - function renderPiChildTranscript: (state, width, input?) => PiChildTranscriptRender
+  - function renderPiChildTranscriptRows: (state, width, input?) => readonly PiChildTranscriptRenderedRow[]
+  - function renderPiChildTranscriptLines: (state, width, input?) => string[]
+  - _...45 more_
 - `packages/adapters/pi/src/child-tree-keys.ts` — function classifyChildTreeKey: (data) => PiTreeControlKey | undefined
 - `packages/adapters/pi/src/child-tree-render.ts` — function renderChildTreeLines: (nodes, selectedId, cumulativeUsage) => string[]
 - `packages/adapters/pi/src/child-tree.ts`
@@ -160,10 +223,10 @@
   - function classifyWeaveCommand: (name) => WeaveCommandClassification
   - function parseNpmSourceName: (source) => string | undefined
   - function isOwnSourceInfo: (sourceInfo) => boolean
-  - function isGenuineBuiltinSourceInfo: (sourceInfo, toolName) => boolean
   - type WeaveCommandName
   - type WeaveCommandClassification
-  - _...4 more_
+  - const WEAVE_COMMAND_NAMES
+  - _...2 more_
 - `packages/adapters/pi/src/config-activator.ts`
   - function createTrustWithheldFileReader: (inner, projectRoot) => FileReader
   - function buildDescriptorCatalog: (plan) => PiDescriptorCatalog
@@ -178,6 +241,14 @@
   - interface PiOperationHandle
   - interface PiCommandGateDecision
   - interface PiExtensionControllerDeps
+- `packages/adapters/pi/src/delegate-request-chunking.ts`
+  - function encodeDelegateRequestChunks: (task, transferId, agentName) => Result<readonly PiDelegateRequestChunk[], DelegateRequestChunkError>
+  - class DelegateRequestAssembler
+  - interface PiDelegateRequestChunk
+  - type DelegateRequestChunkError
+  - const DELEGATE_REQUEST_CHUNK_BYTES
+  - const MAX_DELEGATE_REQUEST_CHUNKS
+  - _...1 more_
 - `packages/adapters/pi/src/delegation-controller.ts`
   - class PiDelegationController
   - interface PiDelegationContext
@@ -185,13 +256,13 @@
   - interface PiAuthenticatedDelegationRequest
   - interface PiDelegationRequest
 - `packages/adapters/pi/src/delegation-tool.ts`
-  - function buildDelegationToolRegistration: (deps) => PiWeaveToolRegistration
-  - function buildRelayedDelegationToolRegistration: (deps) => PiWeaveToolRegistration
+  - function formatDelegationAgentName: (agentName) => string
+  - function buildDelegationToolRegistration: (deps) => PiToolRegistration
+  - function buildRelayedDelegationToolRegistration: (deps) => PiToolRegistration
   - interface PiDelegationInvocationContext
   - interface PiDelegationToolDeps
   - interface PiRelayedDelegationToolDeps
-  - const WEAVE_DELEGATION_TOOL_NAME
-  - _...2 more_
+  - _...1 more_
 - `packages/adapters/pi/src/direct-dispatch-transport.ts`
   - function createDirectDispatchTransport: (deps, generationId) => DirectDispatchTransport
   - class PiDirectStepChildRegistry
@@ -212,13 +283,14 @@
   - function makeActivationFailedFailure: (reason) => PiAdapterFailure
   - function makeCommandCollisionFailure: (commandName) => PiAdapterFailure
   - function makeRequiredCapabilityUnavailableFailure: (capabilityId, reason) => PiAdapterFailure
-  - _...53 more_
+  - _...59 more_
 - `packages/adapters/pi/src/extension.ts`
   - function createDefaultPiExtensionDeps: () => PiExtensionDeps
-  - function classifyApprovalRelayFailureCause: (cause) => "thrown-error" | "rejected-non-error"
-  - function cloneApprovalPromptRequestAsJson: (request) => JsonValue
+  - function buildChildBootstrapBody: (descriptorsByName, AgentDescriptor>, target, childId, context, ctx?) => JsonValue
   - function createPiExtension: (overrides) => (pi: PiExtensionApi) => void
+  - interface PiSharedLogRedirector
   - interface PiExtensionDeps
+  - const PI_SHARED_LOG_PATH
 - `packages/adapters/pi/src/host-compatibility-matrix.ts`
   - function validateHostCompatibilityMatrix: (matrix) => Result<PiHostCompatibilityMatrix, HostCompatibilityMatrixError>
   - interface PiHostCompatibilityMatrix
@@ -232,31 +304,23 @@
   - interface HostPackageReader
   - type HostPackageInfo
   - _...3 more_
-- `packages/adapters/pi/src/host-inventory.ts` — function readValidatedCommands: (api, "getCommands">) => Result<PiCommandInfo[], PiAdapterFailure>, function readValidatedTools: (api, "getAllTools">) => Result<PiToolInfo[], PiAdapterFailure>
+- `packages/adapters/pi/src/host-inventory.ts` — function readValidatedCommands: (api, "getCommands">) => Result<PiCommandInfo[], PiAdapterFailure>
 - `packages/adapters/pi/src/model-resolution.ts`
   - class PiModelResolver
   - class PiModelActivator
   - interface PiModelApplyPort
+  - interface PiThinkingApplyPort
   - type PiModelResolutionSource
   - type PiModelResolution
-  - type PiModelIdentityResolutionError
-  - _...1 more_
+  - _...2 more_
 - `packages/adapters/pi/src/path-containment.ts`
   - function isLexicallyContained: (relativePath) => boolean
+  - function inspectNoFollowDirectory: (path, mode) => ResultAsync<NoFollowEntryIdentity, NoFollowInspectionError>
+  - function inspectNoFollowFile: (path, mode) => ResultAsync<NoFollowEntryIdentity | undefined, NoFollowInspectionError>
   - function isDirectoryContainmentSafeWith: (port, projectRoot, relativeDir) => ResultAsync<boolean, never>
   - class BunPathContainmentPort
   - class NullPathContainmentPort
-  - class FakePathContainmentPort
-  - class BunSecureRelativeFileProvider
-  - _...7 more_
-- `packages/adapters/pi/src/permission-bridge.ts`
-  - function createChildRelayApprovalPort: (relay, childId) => PiApprovalUiPort
-  - class PiPermissionBridge
-  - interface PiApprovalPendingRequestView
-  - interface PiApprovalPromptRequest
-  - interface PiApprovalUiPort
-  - interface PiChildApprovalRelayPort
-  - _...7 more_
+  - _...11 more_
 - `packages/adapters/pi/src/plan-catalog.ts`
   - class BunPiPlanCatalogPort
   - class FakePiPlanCatalogPort
@@ -275,6 +339,14 @@
   - interface PiActivePrimary
   - interface PiPrimaryActivationContext
   - _...3 more_
+- `packages/adapters/pi/src/prompt-chunking.ts`
+  - function encodePromptChunks: (task, transferId) => readonly PromptChunk[]
+  - function parsePromptChunk: (raw) => ResultType<PromptChunk, PromptChunkError>
+  - class PromptChunkAssembler
+  - interface PromptChunk
+  - type PromptChunkError
+  - const PROMPT_CHUNK_COMMAND
+  - _...1 more_
 - `packages/adapters/pi/src/recovery-pointer.ts`
   - function parseRecoveryPointer: (raw) => Result<PiWeaveRecoveryPointerV1, RecoveryPointerValidationFailure>
   - function isPointerForCurrentGeneration: (pointer, currentGenerationId) => boolean
@@ -285,9 +357,12 @@
   - _...5 more_
 - `packages/adapters/pi/src/rpc-child.ts`
   - class PiRpcChild
+  - interface PiRestoreContextMetadata
+  - interface PiChildSessionObserver
   - interface PiRpcChildDeps
   - interface PiRpcChildSpawnInput
-  - type PiChildSettlement
+  - interface PiGetEntriesResult
+  - _...5 more_
 - `packages/adapters/pi/src/runtime-store-port.ts`
   - class SqliteRuntimeStoreFactory
   - class InMemoryRuntimeStoreFactory
@@ -312,7 +387,7 @@
   - function buildWeaveCompleteStepParameters: () => void
   - function recordCompletionAttempt: (recorder, windowOpen, raw, stepName) => CompletionRecordAttempt
   - function buildWeaveCompleteStepToolRegistration: (deps) => void
-  - _...6 more_
+  - _...4 more_
 - `packages/adapters/pi/src/telemetry.ts`
   - function extractAssistantUsageFromMessage: (record, JsonValue>) => |
   - function createPiTelemetryLogger: (options) => ResultAsync<
@@ -321,19 +396,14 @@
   - interface PiJournalEventInput
   - interface PiAssistantUsageInput
   - _...11 more_
-- `packages/adapters/pi/src/tool-governance.ts`
-  - function classifyDiscoveredTools: (allTools, weaveOwnedNames) => PiToolClassification
-  - function buildNativeToolResolver: (toolName, capability) => PermissionResolver
-  - function deriveActiveToolNames: (policy, delegationToolName) => readonly string[]
-  - interface PiToolClassification
 - `packages/adapters/pi/src/workflow-commands.ts`
-  - function handleWeaveStart: (rawArgs, ui, controller, tracker) => Promise<void>
+  - function handleWeaveStart: (rawArgs, ui, foregroundStarter, tracker) => Promise<void>
   - function handleWeaveRun: (rawArgs, ui, controller, tracker) => Promise<void>
   - function handleWeaveStatus: (ui, controller, tracker) => Promise<void>
   - function handleWeaveAbort: (ui, controller, tracker) => Promise<void>
   - function handleWeaveAdvance: (ui, controller, tracker) => Promise<void>
   - function handleWeaveResume: (ui, controller, tracker) => Promise<void>
-  - _...8 more_
+  - _...10 more_
 - `packages/adapters/pi/src/workflow-controller.ts`
   - function authorizeByExplicitUser: (confirmed) => Result<AuthorizedByUser, PiAdapterFailure>
   - class PiWorkflowController
@@ -634,7 +704,7 @@
   - class BufferTerminal
   - interface TerminalIO
 - `packages/cli/src/migration/conversion-warnings.ts` — function renderConversionWarnings: (warnings) => string
-- `packages/cli/src/migration/legacy-jsonc-converter.ts` — function stripJsoncComments: (source) => string, function convertLegacyJsonc: (source) => ConversionResult
+- `packages/cli/src/migration/legacy-jsonc-converter.ts` — function convertLegacyJsonc: (source) => ConversionResult
 - `packages/cli/src/migration/migration-plan.ts`
   - function buildMigrationPlan: (scope, fs, skippedWarningCount) => MigrationPlan
   - function detectLegacySource: (scope, fs) => ResultAsync<string | undefined,
@@ -695,6 +765,12 @@
   - type ValidationError
   - type ConfigError
 - `packages/core/src/lexer.ts` — function tokenize: (source) => Result<Token[], LexError[]>
+- `packages/core/src/model-thinking-syntax.ts`
+  - function parseModelIntentEntry: (raw) => Result<ModelIntentEntry, ModelIntentParseError>
+  - type ThinkingLevelDecl
+  - type ModelIntentEntry
+  - type ModelIntentParseError
+  - const THINKING_LEVEL_VALUES
 - `packages/core/src/parse-config.ts` — function parseConfig: (source) => Result<WeaveConfig, ConfigError[]>
 - `packages/core/src/parser.ts` — function parse: (tokens) => Result<AstNode[], ParseError[]>
 - `packages/core/src/prompt-schema-helpers.ts`
@@ -1011,7 +1087,7 @@
   - class BunEvidenceFileReader
   - interface ClosedSetSpec
   - interface EvidenceFileReader
-  - _...19 more_
+  - _...18 more_
 - `scripts/release/artifact-binding.ts`
   - function createBindingRecord: (input) => Result<ArtifactBindingRecord, BindingError>
   - function verifyBindingRecord: (record, context, github) => ResultAsync<ArtifactBindingRecord, BindingError>
