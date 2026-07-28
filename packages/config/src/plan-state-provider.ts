@@ -12,8 +12,8 @@
  *
  * `planExists` / `isPlanComplete` are projections of `readSnapshot`.
  *
- * @see docs/specs/19-spec-plan-state-provider/19-spec-plan-state-provider.md
- * @see docs/specs/33-spec-pi-adapter/33-spec-pi-adapter.md §16
+ * @see docs/reference/execution-lifecycle.md
+ * @see docs/adapters/pi.md#plans-artifacts-and-recovery
  * @see docs/adr/0010-plan-state-and-artifact-approval-authority.md
  */
 

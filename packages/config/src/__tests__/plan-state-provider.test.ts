@@ -146,7 +146,7 @@ describe("BunFilesystemPlanStateProvider: planExists", () => {
 
   it("returns ok(true) when plan file exists", async () => {
     const provider = new BunFilesystemPlanStateProvider(TEST_ROOT);
-    await writePlan(slug, "# Plan\n\n- [x] Task 1\n");
+    await writePlan(slug, "# Plan\n\n- [x]\n");
     const result = await provider.planExists(slug);
     expect(result.isOk()).toBe(true);
     if (!result.isOk()) return;
@@ -170,7 +170,7 @@ describe("BunFilesystemPlanStateProvider: isPlanComplete", () => {
     const provider = new BunFilesystemPlanStateProvider(TEST_ROOT);
     await writePlan(
       slug,
-      "# Plan\n\n- [x] Task 1\n- [x] Task 2\n- [x] Task 3\n",
+      "# Plan\n\n- [x]\n- [x]\n- [x]\n",
     );
     const result = await provider.isPlanComplete(slug);
     expect(result.isOk()).toBe(true);
@@ -191,7 +191,7 @@ describe("BunFilesystemPlanStateProvider: isPlanComplete", () => {
     const provider = new BunFilesystemPlanStateProvider(TEST_ROOT);
     await writePlan(
       slug,
-      "# Plan\n\n- [x] Task 1\n- [ ] Task 2 (incomplete)\n- [x] Task 3\n",
+      "# Plan\n\n- [x]\n- [ ] (incomplete)\n- [x]\n",
     );
     const result = await provider.isPlanComplete(slug);
     expect(result.isOk()).toBe(true);
