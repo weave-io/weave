@@ -38,6 +38,11 @@ export const PiAdapterFailureCodeSchema = z.enum([
   "ChildExitedUnexpectedly",
   "ChildSettlementMissing",
   "ChildAbortFailed",
+  // transfer (chunked payload delivery in either direction)
+  "ChildTransferTimedOut",
+  "ChildTransferRejected",
+  "ChildTransferTooLarge",
+  "ChildDeliveryFailed",
   "RpcBridgeUnavailable",
   "ChildHistoryCorrupt",
   "ChildHistoryQuotaExceeded",
@@ -71,6 +76,55 @@ export const PiAdapterFailureCodeSchema = z.enum([
   "RetentionFailed",
 ]);
 export type PiAdapterFailureCode = z.infer<typeof PiAdapterFailureCodeSchema>;
+
+/**
+ * The frozen transport limits for the Pi adapter's private child protocol.
+ *
+ * Three limits govern three different things and must never be conflated:
+ *
+ * 1. **Native record cap** (`nativeRecordBytes`) — the largest single native
+ *    Pi JSONL record the framer will accept or emit. Pi's own protocol owns
+ *    this number; Weave only refuses to buffer past it.
+ * 2. **Signed control-body cap** (`signedControlBodyBytes`) — the largest
+ *    authenticated Weave control-envelope body. This is a security bound on
+ *    what one signature covers and is never raised to fit a payload.
+ * 3. **Logical transfer cap** (`transferAggregateBytes`) — the largest
+ *    reassembled payload one chunked transfer may carry. A payload larger
+ *    than a signed body is split into chunks that each fit inside one, so
+ *    this cap grows independently of the other two.
+ *
+ * The remaining entries parameterize the transfer protocol itself:
+ * per-chunk decoded payload bytes, chunk count, concurrent transfers, the
+ * bounded ACK wait, the single retry, and the cap on output projected to the
+ * parent model.
+ *
+ * Changing any value here is a protocol change. `__tests__/failure-taxonomy.test.ts`
+ * freezes every one of them and proves they agree with `child-framing.ts`,
+ * `child-envelope.ts`, and `child-tree.ts`.
+ */
+export const PI_TRANSPORT_LIMITS = {
+  /** Largest native Pi JSONL record (8 MiB). Mirrors `MAX_NATIVE_RECORD_BYTES`. */
+  nativeRecordBytes: 8 * 1024 * 1024,
+  /** Largest signed control-envelope body (64 KiB). Mirrors `MAX_CONTROL_BODY_BYTES`. */
+  signedControlBodyBytes: 64 * 1024,
+  /** Decoded payload bytes carried by one transfer chunk (24 KiB). */
+  transferChunkPayloadBytes: 24 * 1024,
+  /** Largest reassembled logical transfer payload (64 MiB). */
+  transferAggregateBytes: 64 * 1024 * 1024,
+  /** Largest chunk count for one transfer. */
+  transferMaxChunks: 65_536,
+  /** Largest number of transfers one assembler tracks at once. */
+  maxConcurrentTransfers: 32,
+  /** Bounded wait for a transfer ACK or NACK before the sender gives up. */
+  transferAckTimeoutMs: 10_000,
+  /** Retries after a failed or timed-out transfer, before a typed failure. */
+  transferMaxRetries: 1,
+  /** Cap on output projected to the parent model. Mirrors `MAX_LATEST_OUTPUT_BYTES`. */
+  parentProjectionBytes: 4 * 1024,
+} as const;
+
+/** Names the logical channel a transfer failure belongs to, for correlation only. */
+export type PiTransferChannel = "prompt" | "delegate-request" | "output";
 
 export const PiAdapterFailurePhaseSchema = z.enum([
   "safe-init",
@@ -442,6 +496,87 @@ export function makeChildAbortFailedFailure(
     safeMessage:
       "Weave could not confirm the delegated child stopped cleanly; it was terminated.",
     correlation: { reason },
+  };
+}
+
+/**
+ * Chunked-transfer closed-failure factories. These exist so a delivery
+ * problem names its real cause instead of surfacing later as a settlement
+ * timeout: a child that never received its prompt must fail with a transfer
+ * error, never with `ChildSettlementMissing`.
+ *
+ * `reason` values are always closed, fixed strings chosen by the transfer
+ * module (never raw error text), so correlation stays safe to log.
+ */
+export function makeChildTransferTimedOutFailure(
+  childId: string,
+  channel: PiTransferChannel,
+): PiAdapterFailure {
+  return {
+    code: "ChildTransferTimedOut",
+    phase: "protocol",
+    scope: childScope(childId),
+    impact: "operation-stopped",
+    retryable: true,
+    recovery: "retry",
+    safeMessage:
+      "A chunked transfer to or from the delegated child was not acknowledged in time.",
+    correlation: { transfer: channel },
+  };
+}
+
+export function makeChildTransferRejectedFailure(
+  childId: string,
+  channel: PiTransferChannel,
+  reason: string,
+): PiAdapterFailure {
+  return {
+    code: "ChildTransferRejected",
+    phase: "protocol",
+    scope: childScope(childId),
+    impact: "operation-stopped",
+    retryable: true,
+    recovery: "retry",
+    safeMessage:
+      "The peer rejected a chunked transfer as malformed, duplicated, or out of range.",
+    correlation: { transfer: channel, reason },
+  };
+}
+
+export function makeChildTransferTooLargeFailure(
+  childId: string,
+  channel: PiTransferChannel,
+  byteLength: number,
+): PiAdapterFailure {
+  return {
+    code: "ChildTransferTooLarge",
+    phase: "protocol",
+    scope: childScope(childId),
+    impact: "operation-stopped",
+    // Retrying an oversized payload reproduces the same rejection.
+    retryable: false,
+    recovery: "none",
+    safeMessage:
+      "A chunked transfer exceeded the frozen aggregate transfer limit and was refused.",
+    correlation: { transfer: channel, byteLength },
+  };
+}
+
+export function makeChildDeliveryFailedFailure(
+  childId: string,
+  channel: PiTransferChannel,
+  reason: string,
+): PiAdapterFailure {
+  return {
+    code: "ChildDeliveryFailed",
+    phase: "protocol",
+    scope: childScope(childId),
+    impact: "operation-stopped",
+    retryable: true,
+    recovery: "retry",
+    safeMessage:
+      "Weave could not deliver a payload to the delegated child after its bounded retry.",
+    correlation: { transfer: channel, reason },
   };
 }
 
