@@ -7,13 +7,13 @@
  * private child transport class (`PiRpcChild`) rather than a second
  * protocol implementation.
  */
+import type { ThinkingLevelDecl } from "@weaveio/weave-core";
 import type { DelegationTarget } from "@weaveio/weave-engine";
 import type { ResultAsync } from "neverthrow";
 import { toModelIdentityBody } from "./child-control-bodies.js";
 import type { HmacPort, RandomPort } from "./child-crypto.js";
 import type { PiChildProcessPort } from "./child-process-port.js";
 import type { PiAuthenticatedDelegationRequest } from "./delegation-controller.js";
-import { WEAVE_DELEGATION_TOOL_NAME } from "./delegation-tool.js";
 import type {
   DirectDispatchSettlement,
   DirectDispatchTransport,
@@ -24,7 +24,6 @@ import { type PiModelInfo, PiModelResolver } from "./model-resolution.js";
 import { type PiChildSettlement, PiRpcChild } from "./rpc-child.js";
 import type { JsonValue } from "./strict-json.js";
 import { WEAVE_COMPLETE_STEP_TOOL_NAME } from "./structured-completion.js";
-import { deriveActiveToolNames } from "./tool-governance.js";
 import type { IdGenerator, PiAdapterLogger } from "./types.js";
 
 const DIRECT_DISPATCH_PARENT_ID = "workflow-controller";
@@ -47,7 +46,7 @@ export interface PiDirectDispatchTransportDeps {
   readonly registry?: PiDirectStepChildRegistry;
   /**
    * The authenticated model catalog captured once at session start (Spec
-   * 33 §9.2), used to resolve the direct-step descriptor's own `models`
+   * 33), used to resolve the direct-step descriptor's own `models`
    * intent into a concrete identity exactly as root-level ordinary
    * delegation does. Absent/empty means every entry is skipped and the
    * child resolves against its own catalog instead (graceful degradation,
@@ -98,8 +97,8 @@ export class PiDirectStepChildRegistry {
 /**
  * Bootstrap payload shape delivered to a direct-step child. The `mode`
  * field is what tells the child-side extension instance
- * (`activateChildModeIfApplicable`) to register the governed
- * `weave_complete_step` tool and to report its recorded structured
+ * (`activateChildModeIfApplicable`) to register the
+ * `weave_complete_step` tool and report its recorded structured
  * candidate as the settlement summary, instead of the ordinary-delegation
  * free-text summary path.
  */
@@ -108,7 +107,6 @@ export interface PiDirectStepBootstrap {
   readonly agentName: string;
   readonly composedPrompt: string;
   readonly models: readonly string[];
-  readonly effectiveToolPolicy: Record<string, unknown> | undefined;
   readonly delegationTargets: readonly DelegationTarget[];
   readonly workflowInstanceId: string;
   readonly leaseId: string;
@@ -119,10 +117,12 @@ export interface PiDirectStepBootstrap {
     readonly parentDepth: number;
     readonly cwd: string;
   };
-  readonly activeTools: readonly string[];
-  readonly resolvedModel:
-    | { readonly provider: string; readonly id: string; readonly name?: string }
-    | undefined;
+  readonly resolvedModel?: {
+    readonly provider: string;
+    readonly id: string;
+    readonly name?: string;
+  };
+  readonly thinkingLevel?: ThinkingLevelDecl;
   readonly completionTool: typeof WEAVE_COMPLETE_STEP_TOOL_NAME;
 }
 
@@ -196,18 +196,6 @@ export function createDirectDispatchTransport(
       task: input.taskPrompt,
     };
 
-    // Derive the direct-step child's own governed active-tool set exactly
-    // as ordinary root-level delegation does (Spec 33 §12), plus the
-    // always-present completion tool - never registered for any other
-    // bootstrap mode (Spec 33 §15).
-    const hasDelegationTool = input.delegationTargets.length > 0;
-    const activeTools = [
-      ...deriveActiveToolNames(
-        input.effectiveToolPolicy,
-        hasDelegationTool ? WEAVE_DELEGATION_TOOL_NAME : undefined,
-      ),
-      WEAVE_COMPLETE_STEP_TOOL_NAME,
-    ];
     const resolution = new PiModelResolver().resolve(
       input.models,
       deps.availableModels ?? [],
@@ -216,7 +204,7 @@ export function createDirectDispatchTransport(
     // host's own catalog snapshot) and may carry fields beyond
     // provider/id/name; project it down before it ever reaches this
     // bootstrap's `ModelIdentityBodySchema`-validated field (Pi adapter contract
-    // finding 2).
+    //).
     const resolvedModel = resolution.resolved
       ? toModelIdentityBody(resolution.model)
       : undefined;
@@ -226,9 +214,6 @@ export function createDirectDispatchTransport(
       agentName: input.agentName,
       composedPrompt: input.composedPrompt,
       models: input.models,
-      effectiveToolPolicy: input.effectiveToolPolicy as
-        | Record<string, unknown>
-        | undefined,
       delegationTargets: input.delegationTargets,
       workflowInstanceId: input.workflowInstanceId,
       leaseId: input.leaseId,
@@ -250,8 +235,10 @@ export function createDirectDispatchTransport(
         parentDepth: DIRECT_DISPATCH_DEPTH,
         cwd: input.cwd,
       },
-      activeTools,
-      resolvedModel,
+      ...(resolvedModel === undefined ? {} : { resolvedModel }),
+      ...(resolution.resolved && resolution.thinkingLevel !== undefined
+        ? { thinkingLevel: resolution.thinkingLevel }
+        : {}),
       completionTool: WEAVE_COMPLETE_STEP_TOOL_NAME,
     };
 

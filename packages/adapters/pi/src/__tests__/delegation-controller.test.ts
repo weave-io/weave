@@ -9,7 +9,6 @@ import {
   PiDelegationController,
   type PiDelegationRequest,
 } from "../delegation-controller.js";
-import { MAX_TASK_INPUT_CHARS } from "../delegation-limits.js";
 import {
   FakeChildProcessPort,
   type FakeSpawnedProcess,
@@ -63,7 +62,6 @@ function request(
       models: [],
       correlationId: "child-1",
       context: { parentAgentName: "loom", parentDepth: 0, cwd: "/project" },
-      activeTools: [],
     },
     ...overrides,
   };
@@ -157,7 +155,7 @@ async function respondHandshakeAndSettle(
       nonce: Buffer.from(randomPort.randomBytes(16)).toString("hex"),
       correlationId: childId,
       kind: "bootstrap-ack",
-      body: { activeTools: [] },
+      body: {},
     },
     secret,
     hmacPort,
@@ -175,7 +173,7 @@ async function respondHandshakeAndSettle(
       kind: "settled",
       body:
         outcome === "completed"
-          ? { outcome, summary: "ok" }
+          ? { outcome, assistantOutput: "ok", outputByteLength: 2 }
           : { outcome, reason: "boom" },
     },
     secret,
@@ -228,7 +226,7 @@ async function sendChildToRunning(
       nonce: Buffer.from(randomPort.randomBytes(16)).toString("hex"),
       correlationId: childId,
       kind: "bootstrap-ack",
-      body: { activeTools: [] },
+      body: {},
     },
     secret,
     hmacPort,
@@ -270,6 +268,8 @@ describe("PiDelegationController", () => {
     expect(result._unsafeUnwrap()).toEqual({
       outcome: "completed",
       summary: "ok",
+      outputByteLength: 2,
+      interventionCount: 0,
     });
   });
 
@@ -292,6 +292,42 @@ describe("PiDelegationController", () => {
     expect(second.isErr()).toBe(true);
     expect(second._unsafeUnwrapErr().code).toBe("ChildCapacityExceeded");
     expect(second._unsafeUnwrapErr().correlation?.reason).toBe("max_children");
+  });
+
+  it("releases max_children capacity after a child settles while denying concurrent overflow", async () => {
+    const port = new FakeChildProcessPort();
+    const controller = makeController(
+      config(
+        limitsSource({
+          maxChildren: 1,
+          maxConcurrency: 1,
+          maxDepth: 3,
+          maxProcesses: 9,
+        }),
+      ),
+      port,
+    );
+
+    const firstPromise = controller.delegate(request());
+    await flush();
+    expect(port.spawnedProcesses.length).toBe(1);
+
+    const concurrent = await controller.delegate(request());
+    expect(concurrent.isErr()).toBe(true);
+    expect(concurrent._unsafeUnwrapErr().code).toBe("ChildCapacityExceeded");
+    expect(concurrent._unsafeUnwrapErr().correlation?.reason).toBe(
+      "max_children",
+    );
+
+    await respondHandshakeAndSettle(port.spawnedProcesses[0]!, port, "gen-1");
+    expect((await firstPromise).isOk()).toBe(true);
+
+    const nextPromise = controller.delegate(request());
+    await flush();
+    expect(port.spawnedProcesses.length).toBe(2);
+    await respondHandshakeAndSettle(port.spawnedProcesses[1]!, port, "gen-1");
+    expect((await nextPromise).isOk()).toBe(true);
+    controller.disposeAll();
   });
 
   it("denies once max_depth is exceeded", async () => {
@@ -411,12 +447,10 @@ describe("PiDelegationController", () => {
     expect(result._unsafeUnwrapErr().code).toBe("ChildCapacityExceeded");
   });
 
-  it("fails closed (never spawns a process) when the request's own task exceeds the same bound enforced at tool parsing and RPC send (Spec 33 \u00a711.2 Task 9)", async () => {
+  it("still rejects an empty task before spawning a process", async () => {
     const port = new FakeChildProcessPort();
     const controller = makeController(config(GENEROUS), port);
-    const result = await controller.delegate(
-      request({ task: "x".repeat(MAX_TASK_INPUT_CHARS + 1) }),
-    );
+    const result = await controller.delegate(request({ task: "" }));
     expect(result.isErr()).toBe(true);
     expect(result._unsafeUnwrapErr().code).toBe("ChildAbortFailed");
     expect(port.spawnedProcesses.length).toBe(0);
@@ -663,94 +697,6 @@ describe("PiDelegationController", () => {
     controller.disposeAll();
   });
 
-  it("relays a live child's approval-request to the injected callback and delivers respondToApproval back to that exact child", async () => {
-    const port = new FakeChildProcessPort();
-    const relayed: { childId: string; correlationId: string }[] = [];
-    const controller = new PiDelegationController({
-      config: config(GENEROUS),
-      generationId: "gen-1",
-      idGenerator: new SequentialIdGenerator(),
-      logger: noopLogger,
-      processPort: port,
-      randomPort: new WebCryptoRandomPort(),
-      hmacPort: new WebCryptoHmacPort(),
-      timerPort: new SystemTimerPort(),
-      onChildApprovalRequest: (childId, correlationId) => {
-        relayed.push({ childId, correlationId });
-      },
-    });
-    void controller.delegate(request());
-    await flush();
-    const process = port.spawnedProcesses[0]!;
-    await sendHandshakeOnly(process, port, "gen-1");
-    await flush();
-    const secretBytes = extractSecret(process, port);
-    const childId = childIdOf(process, port);
-    const randomPort = new WebCryptoRandomPort();
-    const hmacPort = new WebCryptoHmacPort();
-    const bootstrapAck = await signEnvelope(
-      {
-        childId,
-        generationId: "gen-1",
-        direction: "child-to-parent",
-        sequence: 2,
-        nonce: Buffer.from(randomPort.randomBytes(16)).toString("hex"),
-        correlationId: childId,
-        kind: "bootstrap-ack",
-        body: { activeTools: [] },
-      },
-      secretBytes,
-      hmacPort,
-    );
-    process.emitLine(bootstrapAck._unsafeUnwrap());
-    await flush();
-    const approvalRequest = await signEnvelope(
-      {
-        childId,
-        generationId: "gen-1",
-        direction: "child-to-parent",
-        sequence: 3,
-        nonce: Buffer.from(randomPort.randomBytes(16)).toString("hex"),
-        correlationId: `${childId}-approval-0`,
-        kind: "approval-request",
-        body: {
-          agentName: "shuttle",
-          toolIdentity: "bash",
-          requests: [{ summary: "allow?", unresolved: false }],
-          allowedScopes: ["once", "session"],
-        },
-      },
-      secretBytes,
-      hmacPort,
-    );
-    process.emitLine(approvalRequest._unsafeUnwrap());
-    await flush();
-    expect(relayed).toEqual([
-      { childId, correlationId: `${childId}-approval-0` },
-    ]);
-
-    const response = await controller.respondToApproval(
-      childId,
-      `${childId}-approval-0`,
-      { scope: "once" },
-    );
-    expect(response.isOk()).toBe(true);
-    controller.disposeAll();
-  });
-
-  it("respondToApproval fails closed for an unknown child id", async () => {
-    const port = new FakeChildProcessPort();
-    const controller = makeController(config(GENEROUS), port);
-    const response = await controller.respondToApproval(
-      "no-such-child",
-      "corr-1",
-      {},
-    );
-    expect(response.isErr()).toBe(true);
-    expect(response._unsafeUnwrapErr().code).toBe("UiBridgeFailed");
-    controller.disposeAll();
-  });
-
   it("delegates for an authenticated direct-step parent through the shared tracked budget", async () => {
     const port = new FakeChildProcessPort();
     const controller = makeController(
@@ -780,7 +726,6 @@ describe("PiDelegationController", () => {
             parentDepth: context.parentDepth,
             cwd: context.cwd,
           },
-          activeTools: [],
         }),
       },
     );
@@ -809,6 +754,8 @@ describe("PiDelegationController", () => {
     expect(settlement._unsafeUnwrap()).toEqual({
       outcome: "completed",
       summary: "ok",
+      outputByteLength: 2,
+      interventionCount: 0,
     });
     controller.disposeAll();
   });
@@ -841,7 +788,6 @@ describe("PiDelegationController", () => {
             parentDepth: 1,
             cwd: "/project",
           },
-          activeTools: [],
         }),
       },
     );
@@ -920,7 +866,6 @@ describe("PiDelegationController", () => {
           parentDepth: 1,
           cwd: "/project",
         },
-        activeTools: [],
       }),
     });
     void controller.delegate(request());

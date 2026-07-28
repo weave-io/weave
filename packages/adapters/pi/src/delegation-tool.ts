@@ -1,39 +1,38 @@
 /**
  * The single Weave-owned ordinary-delegation tool (Pi adapter contract). Targets
  * are restricted to the invoking descriptor's own normalized
- * `delegationTargets` - never re-derived, never bypassing Task 8's
+ * `delegationTargets` - never re-derived, never bypassing's
  * caller-supplied-resolver/guarded-registration path. Execution returns a
  * structured result to the caller and never creates or advances workflow
  * state; direct workflow dispatch is a distinct port for a later task.
  */
 import { StringEnum } from "@earendil-works/pi-ai";
+import { Text } from "@earendil-works/pi-tui";
 import type { DelegationTarget } from "@weaveio/weave-engine";
-import { err, ok, type ResultAsync } from "neverthrow";
+import type { ResultAsync } from "neverthrow";
 import { Type } from "typebox";
 import type { PiChildRuntime, PiChildRuntimeError } from "./child-runtime.js";
+import type { PiChildTreeNode } from "./child-tree.js";
 import type {
   PiDelegationController,
   PiDelegationRequest,
 } from "./delegation-controller.js";
-import { MAX_TASK_INPUT_CHARS } from "./delegation-limits.js";
 import {
   makeChildAbortFailedFailure,
   type PiAdapterFailure,
 } from "./errors.js";
-import type { PiWeaveToolRegistration } from "./permission-bridge.js";
 import type { PiChildSettlement } from "./rpc-child.js";
 import type { JsonValue } from "./strict-json.js";
 import type {
   IdGenerator,
   PiSessionContext,
   PiToolRegistration,
+  PiToolResult,
   PiToolResultContent,
+  PiUiThemePort,
 } from "./types.js";
 
 export const WEAVE_DELEGATION_TOOL_NAME = "weave_delegate";
-export const WEAVE_DELEGATION_TOOL_OWNER = "@weaveio/weave-adapter-pi";
-export const WEAVE_DELEGATION_TOOL_REVISION = "1";
-const MAX_TASK_PREVIEW_CHARS = 200;
 // The raw `task` tool argument validation (Pi adapter contract) lives in
 // `delegation-limits.js` - a dependency-free leaf module shared with
 // `child-control-bodies.ts`, `delegation-controller.ts`, and `rpc-child.ts`
@@ -57,8 +56,7 @@ function buildDelegationParameters(allowedNames: ReadonlySet<string>) {
     }),
     task: Type.String({
       minLength: 1,
-      maxLength: MAX_TASK_INPUT_CHARS,
-      description: "The bounded task description for the delegated agent.",
+      description: "The task description for the delegated agent.",
     }),
   });
 }
@@ -73,8 +71,7 @@ export interface PiDelegationToolDeps {
   readonly targets: readonly DelegationTarget[];
   /** Reads the active primary identity and its current target set at execution time. */
   readonly getInvocationContext?: () =>
-    | PiDelegationInvocationContext
-    | undefined;
+    PiDelegationInvocationContext | undefined;
   /**
    * Lazily reads the live delegation controller. `undefined` until the
    * generation that built this tool has finished its own real activation -
@@ -105,28 +102,136 @@ export interface PiDelegationToolDeps {
   readonly buildEnv: () => Record<string, string>;
 }
 
-function truncatePreview(text: string): string {
-  return text.length <= MAX_TASK_PREVIEW_CHARS
-    ? text
-    : `${text.slice(0, MAX_TASK_PREVIEW_CHARS)}\u2026`;
+interface PiDelegationRenderDetails {
+  readonly kind: "weave-delegation";
+  readonly agent: string;
+  readonly displayName: string;
+  readonly status: string;
+  readonly currentTool?: string;
+  readonly latestOutput: string;
 }
 
-function toolResult(text: PiToolResultContent["text"]): {
-  content: readonly PiToolResultContent[];
-} {
-  return { content: [{ type: "text", text }] };
+function formatNamePart(part: string): string {
+  if (part.length === 0) return part;
+  return `${part[0]?.toUpperCase() ?? ""}${part.slice(1)}`;
 }
 
-function successResult(settlement: PiChildSettlement): {
-  content: readonly PiToolResultContent[];
-} {
-  return toolResult(JSON.stringify({ ok: true, settlement }));
+/** Formats normalized names for transcript display without changing tool identity. */
+export function formatDelegationAgentName(agentName: string): string {
+  if (agentName === "shuttle") return "Shuttle";
+  if (agentName.startsWith("shuttle-")) {
+    const category = agentName
+      .slice("shuttle-".length)
+      .split("-")
+      .map(formatNamePart)
+      .join("-");
+    return `${category}-Shuttle`;
+  }
+  return agentName.split("-").map(formatNamePart).join("-");
 }
 
-function failureResult(error: string): {
-  content: readonly PiToolResultContent[];
-} {
-  return toolResult(JSON.stringify({ ok: false, error }));
+function toolResult(
+  text: PiToolResultContent["text"],
+  details?: PiDelegationRenderDetails,
+): PiToolResult {
+  return { content: [{ type: "text", text }], details };
+}
+
+function settlementOutput(settlement: PiChildSettlement): string {
+  if (settlement.outcome === "completed") return settlement.summary;
+  if (settlement.outcome === "failed") return settlement.reason;
+  return "Cancelled";
+}
+
+function successResult(
+  agent: string,
+  settlement: PiChildSettlement,
+): PiToolResult {
+  return toolResult(JSON.stringify({ ok: true, settlement }), {
+    kind: "weave-delegation",
+    agent,
+    displayName: formatDelegationAgentName(agent),
+    status: settlement.outcome,
+    latestOutput: settlementOutput(settlement),
+  });
+}
+
+/**
+ * Reports a failure to the calling model with enough detail to act on it.
+ * `code` alone (e.g. a bare `"ChildSpawnFailed"`) tells the model nothing
+ * about *why* the child never started, so the closed, bounded `reason`
+ * correlation field and the human-readable `safeMessage` travel with it.
+ * Both are adapter-owned safe strings - never raw host errors, paths, or
+ * environment values.
+ */
+function failureResult(error: string, failure?: PiAdapterFailure): PiToolResult {
+  const reason = failure?.correlation?.reason;
+  const detail =
+    failure === undefined
+      ? undefined
+      : {
+          message: failure.safeMessage,
+          ...(typeof reason === "string" ? { reason } : {}),
+          retryable: failure.retryable,
+          recovery: failure.recovery,
+        };
+  const text = JSON.stringify({ ok: false, error, ...(detail ?? {}) });
+  return toolResult(text);
+}
+
+function streamingResult(
+  agent: string,
+  snapshot: PiChildTreeNode,
+): PiToolResult {
+  const details: PiDelegationRenderDetails = {
+    kind: "weave-delegation",
+    agent,
+    displayName: formatDelegationAgentName(agent),
+    status: snapshot.status,
+    currentTool: snapshot.currentTool,
+    latestOutput: snapshot.latestOutput,
+  };
+  const text = snapshot.latestOutput || `Status: ${snapshot.status}`;
+  return toolResult(text, details);
+}
+
+function readRenderDetails(
+  details: unknown,
+): PiDelegationRenderDetails | undefined {
+  if (typeof details !== "object" || details === null || Array.isArray(details))
+    return undefined;
+  const candidate = details as Partial<PiDelegationRenderDetails>;
+  if (candidate.kind !== "weave-delegation") return undefined;
+  if (
+    typeof candidate.agent !== "string" ||
+    typeof candidate.displayName !== "string" ||
+    typeof candidate.status !== "string" ||
+    typeof candidate.latestOutput !== "string"
+  )
+    return undefined;
+  return candidate as PiDelegationRenderDetails;
+}
+
+function renderStatus(
+  details: PiDelegationRenderDetails,
+  theme: PiUiThemePort,
+): string {
+  const tool =
+    details.currentTool === undefined ? "" : ` · ${details.currentTool}`;
+  return theme.fg("muted", `${details.status}${tool}`);
+}
+
+const COLLAPSED_PREVIEW_CODE_POINT_LIMIT = 240;
+
+function collapsedPreview(output: string): string {
+  const normalized = output.replace(/\s+/gu, " ").trim();
+  const codePoints = Array.from(normalized);
+  if (codePoints.length <= COLLAPSED_PREVIEW_CODE_POINT_LIMIT) {
+    return normalized;
+  }
+  return `…${codePoints
+    .slice(-(COLLAPSED_PREVIEW_CODE_POINT_LIMIT - 1))
+    .join("")}`;
 }
 
 /**
@@ -157,8 +262,7 @@ function watchForCancelSubtreeFailure(
   readonly unwire: () => void;
 } {
   let resolveFailure:
-    | ((result: { content: readonly PiToolResultContent[] }) => void)
-    | undefined;
+    ((result: { content: readonly PiToolResultContent[] }) => void) | undefined;
   const failure = new Promise<{
     content: readonly PiToolResultContent[];
   }>((resolve) => {
@@ -174,7 +278,7 @@ function watchForCancelSubtreeFailure(
         const first =
           failures[0] ??
           makeChildAbortFailedFailure(childId, "cancel-subtree-failed");
-        resolveFailure?.(failureResult(first.code));
+        resolveFailure?.(failureResult(first.code, first));
       },
     );
   };
@@ -199,7 +303,7 @@ function parseDelegationCall(
   const agent = record.agent;
   const task = record.task;
   if (typeof agent !== "string" || typeof task !== "string") return undefined;
-  if (task.length < 1 || task.length > MAX_TASK_INPUT_CHARS) return undefined;
+  if (task.length < 1) return undefined;
   return { agent, task };
 }
 
@@ -218,19 +322,51 @@ function readInvocationContext(
 /** Builds the one Weave-owned delegation tool with runtime-scoped primary eligibility. */
 export function buildDelegationToolRegistration(
   deps: PiDelegationToolDeps,
-): PiWeaveToolRegistration {
+): PiToolRegistration {
   const allowedNames = new Set(deps.targets.map((target) => target.name));
 
   const tool: PiToolRegistration = {
     name: WEAVE_DELEGATION_TOOL_NAME,
     label: "Delegate to a Weave subagent",
     description:
-      "Delegates one bounded task to a single eligible normalized Weave subagent name, run as a private ephemeral child, and returns its structured result. Never advances or creates workflow state.",
+      "Delegates one task to a single eligible normalized Weave subagent name, run as a private ephemeral child, and returns its structured result. Never advances or creates workflow state.",
     parameters: buildDelegationParameters(allowedNames),
     promptGuidelines: [
       "Pass the exact normalized subagent name from the `agent` enum; never use a display label, description, or alias.",
     ],
-    execute: async (_toolCallId, params, signal, _onUpdate, ctx) => {
+    renderCall: (args, theme) => {
+      const agent = typeof args.agent === "string" ? args.agent : "delegate";
+      const displayName = formatDelegationAgentName(agent);
+      return new Text(theme.fg("toolTitle", theme.bold(displayName)), 0, 0);
+    },
+    renderResult: (result, options, theme, context) => {
+      const details = readRenderDetails(result.details);
+      const agent =
+        details?.agent ??
+        (typeof context.args?.agent === "string"
+          ? context.args.agent
+          : "delegate");
+      const displayName =
+        details?.displayName ?? formatDelegationAgentName(agent);
+      if (details === undefined) {
+        const fallback = result.content[0]?.text ?? "";
+        return new Text(theme.fg("toolOutput", fallback), 0, 0);
+      }
+      const heading = `${theme.fg("toolTitle", theme.bold(displayName))} ${renderStatus(details, theme)}`;
+      if (details.latestOutput.length === 0) {
+        return new Text(heading, 0, 0);
+      }
+      const output = options.expanded
+        ? details.latestOutput
+        : collapsedPreview(details.latestOutput);
+      if (output.length === 0) return new Text(heading, 0, 0);
+      return new Text(
+        `${heading}\n${theme.fg("toolOutput", output)}`,
+        0,
+        0,
+      );
+    },
+    execute: async (_toolCallId, params, signal, onUpdate, ctx) => {
       const parsed = parseDelegationCall(params);
       if (parsed === undefined || !allowedNames.has(parsed.agent)) {
         return failureResult("invalid-delegation-target");
@@ -258,9 +394,11 @@ export function buildDelegationToolRegistration(
       // handshake/bootstrap-ack. Fabricating a successful cancelled result
       // here instead would misreport a delegation that never actually ran.
       if (signal?.aborted === true) {
-        return failureResult(
-          makeChildAbortFailedFailure(childId, "aborted-before-dispatch").code,
+        const aborted = makeChildAbortFailedFailure(
+          childId,
+          "aborted-before-dispatch",
         );
+        return failureResult(aborted.code, aborted);
       }
       const request: PiDelegationRequest = {
         parentId: deps.parentId,
@@ -277,11 +415,15 @@ export function buildDelegationToolRegistration(
           ctx,
           invocation.parentAgentName,
         ),
+        onUpdate:
+          onUpdate === undefined
+            ? undefined
+            : (snapshot) => onUpdate(streamingResult(parsed.agent, snapshot)),
         childId,
       };
       const settlement = controller.delegate(request).match(
-        (value) => successResult(value),
-        (failure) => failureResult(failure.code),
+        (value) => successResult(parsed.agent, value),
+        (failure) => failureResult(failure.code, failure),
       );
       if (signal === undefined) return settlement;
       // Wires the exact generated `childId`'s subtree to this tool call's
@@ -304,46 +446,7 @@ export function buildDelegationToolRegistration(
     },
   };
 
-  return {
-    tool,
-    owner: WEAVE_DELEGATION_TOOL_OWNER,
-    revision: WEAVE_DELEGATION_TOOL_REVISION,
-    summary: "Delegate a bounded task to one eligible agent.",
-    resolver: ({ call }) => {
-      const parsed = parseDelegationCall(call);
-      if (parsed === undefined) {
-        return ok([
-          {
-            unresolved: true,
-            display: { summary: "Delegate to an eligible agent" },
-          },
-        ]);
-      }
-      const invocation = readInvocationContext(deps);
-      const isActiveTarget = invocation?.targets.some(
-        (target) => target.name === parsed.agent,
-      );
-      if (!allowedNames.has(parsed.agent) || isActiveTarget !== true) {
-        return err({
-          type: "unsafe_input",
-          path: "agent",
-          message: "not an eligible delegation target",
-        });
-      }
-      return ok([
-        {
-          unresolved: false,
-          capability: "delegate",
-          operation: "delegate",
-          target: { kind: "weave-agent", identifier: parsed.agent },
-          display: {
-            summary: `Delegate to ${parsed.agent}`,
-            details: truncatePreview(parsed.task),
-          },
-        },
-      ]);
-    },
-  };
+  return tool;
 }
 
 export interface PiRelayedDelegationToolDeps {
@@ -366,14 +469,14 @@ export interface PiRelayedDelegationToolDeps {
  */
 export function buildRelayedDelegationToolRegistration(
   deps: PiRelayedDelegationToolDeps,
-): PiWeaveToolRegistration {
+): PiToolRegistration {
   const allowedNames = new Set(deps.targets.map((target) => target.name));
 
   const tool: PiToolRegistration = {
     name: WEAVE_DELEGATION_TOOL_NAME,
     label: "Delegate to a Weave agent",
     description:
-      "Delegates one bounded task to a single eligible Weave agent, run as a private ephemeral child of this session, and returns its structured result. Never advances or creates workflow state.",
+      "Delegates one task to a single eligible Weave agent, run as a private ephemeral child of this session, and returns its structured result. Never advances or creates workflow state.",
     parameters: buildDelegationParameters(allowedNames),
     promptGuidelines: [
       "Use only an `agent` name listed as an eligible delegation target for this session.",
@@ -428,40 +531,5 @@ export function buildRelayedDelegationToolRegistration(
     },
   };
 
-  return {
-    tool,
-    owner: WEAVE_DELEGATION_TOOL_OWNER,
-    revision: WEAVE_DELEGATION_TOOL_REVISION,
-    summary: "Delegate a bounded task to one eligible agent.",
-    resolver: ({ call }) => {
-      const parsed = parseDelegationCall(call);
-      if (parsed === undefined) {
-        return ok([
-          {
-            unresolved: true,
-            display: { summary: "Delegate to an eligible agent" },
-          },
-        ]);
-      }
-      if (!allowedNames.has(parsed.agent)) {
-        return err({
-          type: "unsafe_input",
-          path: "agent",
-          message: "not an eligible delegation target",
-        });
-      }
-      return ok([
-        {
-          unresolved: false,
-          capability: "delegate",
-          operation: "delegate",
-          target: { kind: "weave-agent", identifier: parsed.agent },
-          display: {
-            summary: `Delegate to ${parsed.agent}`,
-            details: truncatePreview(parsed.task),
-          },
-        },
-      ]);
-    },
-  };
+  return tool;
 }

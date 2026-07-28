@@ -18,7 +18,7 @@ describe("public package entry points", () => {
     expect(pkg.HOST_VERSION_FLOOR).toBe("0.81.1");
     expect("HOST_VERSION_CEILING" in pkg).toBe(false);
     expect(pkg.WEAVE_COMMAND_NAMES).toHaveLength(9);
-    expect(pkg.PI_ADAPTER_CAPABILITY_CONTRACT.capabilities).toHaveLength(19);
+    expect(pkg.PI_ADAPTER_CAPABILITY_CONTRACT.capabilities).toHaveLength(20);
     expect(typeof pkg.createPiExtension).toBe("function");
   });
 

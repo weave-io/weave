@@ -1,6 +1,6 @@
 /**
  * Port-level regression test for the exact-host live smoke bug (Pi adapter contract
- * §11.5): `PiRpcChild.terminateResources()` previously used only
+ *): `PiRpcChild.terminateResources()` previously used only
  * `PiSpawnedChildProcess.kill()`, which `BunPiChildProcessPort` mapped to
  * `subprocess.kill()` with no explicit signal - the runtime's own default,
  * `SIGTERM`. A stopped (`SIGSTOP`'d) or otherwise non-cooperative child can
@@ -17,7 +17,48 @@
  * it can be proven here without spawning anything real.
  */
 import { describe, expect, it } from "bun:test";
-import { FORCE_KILL_SIGNAL, resolveKillSignal } from "../child-process-port.js";
+import {
+  FORCE_KILL_SIGNAL,
+  resolveKillSignal,
+  writeAllToSink,
+} from "../child-process-port.js";
+
+describe("writeAllToSink", () => {
+  it("awaits flush while a slow sink accepts every byte in order", async () => {
+    const accepted: number[] = [];
+    const calls: string[] = [];
+    const sink = {
+      write: async (bytes: Uint8Array): Promise<number> => {
+        calls.push(`write:${bytes.length}`);
+        // Simulate a backpressured pipe that accepts at most three bytes per
+        // turn. The writer must retain and retry the unaccepted suffix.
+        const count = Math.min(3, bytes.length);
+        accepted.push(...bytes.slice(0, count));
+        return count;
+      },
+      flush: async (): Promise<void> => {
+        calls.push("flush");
+        await Promise.resolve();
+      },
+    };
+    const input = new TextEncoder().encode("abcdefghij");
+
+    const result = await writeAllToSink(sink, input);
+
+    expect(result.isOk()).toBe(true);
+    expect(new Uint8Array(accepted)).toEqual(input);
+    expect(calls).toEqual([
+      "write:10",
+      "flush",
+      "write:7",
+      "flush",
+      "write:4",
+      "flush",
+      "write:1",
+      "flush",
+    ]);
+  });
+});
 
 describe("resolveKillSignal", () => {
   it("resolves force-kill to the mandatory SIGKILL-equivalent signal", () => {

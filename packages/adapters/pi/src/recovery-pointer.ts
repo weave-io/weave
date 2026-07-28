@@ -87,7 +87,7 @@ export function isPointerForCurrentGeneration(
  * /weave:resume). Terminal pointers always fail closed. Recoverable pointers
  * are eligible even from a prior generation - the pointer provides
  * correlation only; the Runtime Store and lease semantics remain
- * authoritative (Issue #21 Task 12 S019/S020).
+ * authoritative (Issue #21 S019/S020).
  */
 export function isPointerEligibleForExplicitResume(
   pointer: PiWeaveRecoveryPointerV1,
@@ -98,7 +98,7 @@ export function isPointerEligibleForExplicitResume(
 /**
  * Reconstructs the tracker-shaped `{ workflowInstanceId, leaseId }`
  * correlation an explicit `/weave:resume` needs from a durable recovery
- * pointer alone (Issue #21 Task 12 S020).
+ * pointer alone (Issue #21 S020).
  *
  * Reload/restart installs a fresh controller generation whose in-memory
  * `PiActiveWorkflowTracker` starts empty even though the durable pointer
@@ -187,7 +187,7 @@ export class InMemoryRecoveryPointerStore implements PiRecoveryPointerStore {
  * pointer (never thrown, never crash the read path). This module does not
  * itself prove no-follow containment of the runtime directory - it is
  * expected to be constructed with an already-verified path (the Runtime
- * Store activation path establishes that proof; Task 10 scope is the
+ * Store activation path establishes that proof; scope is the
  * pointer record shape and read/append semantics, not a second containment
  * implementation).
  */

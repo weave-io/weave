@@ -3,10 +3,11 @@ import type {
   ResolvedSkill,
   SkillResolutionError,
 } from "@weaveio/weave-engine";
-import { errAsync, type ResultAsync } from "neverthrow";
+import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 import type {
   PiModelActivationOutcome,
   PiModelApplyPort,
+  PiThinkingApplyPort,
 } from "./model-resolution.js";
 import { PiModelActivator } from "./model-resolution.js";
 import type { PiSkillCatalog } from "./skill-catalog.js";
@@ -87,14 +88,20 @@ export interface PiPrimaryCapabilityWarning {
  * must change together with it (Pi adapter contract): descriptor identity, prompt
  * source, applied model, and resolved skills.
  *
- * Registered tools and recovery correlation are out of scope for this task
- * (tool-policy enforcement and workflow/lifecycle wiring are later tasks in
- * issue #21) and are not tracked here.
+ * Registered tools and recovery correlation are not tracked here.
  */
+export type PiPrimaryModelActivationOutcome =
+  | PiModelActivationOutcome
+  | {
+      readonly status: "preserved";
+      readonly currentModel: PiModelInfo | undefined;
+      readonly reason: "user-selected";
+    };
+
 export interface PiActivePrimary {
   readonly descriptor: AgentDescriptor;
   readonly promptBlock: string;
-  readonly modelActivation: PiModelActivationOutcome;
+  readonly modelActivation: PiPrimaryModelActivationOutcome;
   readonly resolvedSkills: readonly ResolvedSkill[];
   readonly temperatureDegraded: boolean;
 }
@@ -103,7 +110,10 @@ export interface PiPrimaryActivationContext {
   readonly availableModels: readonly PiModelInfo[];
   readonly currentModel: PiModelInfo | undefined;
   readonly modelApplier: PiModelApplyPort;
+  readonly thinkingApplier?: PiThinkingApplyPort;
   readonly disabledSkills?: readonly string[];
+  /** Keep a native Pi model selection instead of applying descriptor intent. */
+  readonly preserveCurrentModel?: boolean;
 }
 
 export interface PiPrimarySessionDeps {
@@ -213,14 +223,21 @@ export class PiPrimarySession {
       });
     }
 
-    return this.modelActivator
-      .activate(
-        descriptor.models,
-        context.availableModels,
-        context.currentModel,
-        context.modelApplier,
-      )
-      .map((modelActivation) => {
+    const modelActivation = context.preserveCurrentModel
+      ? okAsync<PiPrimaryModelActivationOutcome, never>({
+          status: "preserved",
+          currentModel: context.currentModel,
+          reason: "user-selected",
+        })
+      : this.modelActivator.activate(
+          descriptor.models,
+          context.availableModels,
+          context.currentModel,
+          context.modelApplier,
+          context.thinkingApplier,
+        );
+
+    return modelActivation.map((modelActivation) => {
         if (modelActivation.status === "degraded") {
           this.recordWarning({
             capability: "model",

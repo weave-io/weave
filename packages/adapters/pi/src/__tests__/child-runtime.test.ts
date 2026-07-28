@@ -17,6 +17,7 @@ import {
   type PiChildOutputPort,
   PiChildRuntime,
 } from "../child-runtime.js";
+import { encodeDelegateRequestChunks } from "../delegate-request-chunking.js";
 import type { JsonValue } from "../strict-json.js";
 import type { PiEnvPort } from "../types.js";
 
@@ -180,20 +181,21 @@ describe("PiChildRuntime.admitControlLine", () => {
           models: [],
           correlationId: "child-1",
           context: { parentAgentName: "loom", parentDepth: 0, cwd: "/project" },
-          activeTools: [],
         },
       },
       secretBytes,
       hmacPort,
     );
     let received: JsonValue | undefined;
-    runtime.admitControlLine(signed._unsafeUnwrap() as unknown as JsonValue, {
-      onBootstrap: (body) => {
-        received = body;
+    await runtime.admitControlLine(
+      signed._unsafeUnwrap() as unknown as JsonValue,
+      {
+        onBootstrap: (body) => {
+          received = body;
+        },
+        onCancel: () => {},
       },
-      onCancel: () => {},
-    });
-    await flush();
+    );
     expect(received).toEqual({
       mode: "ordinary",
       agentName: "shuttle",
@@ -201,7 +203,6 @@ describe("PiChildRuntime.admitControlLine", () => {
       models: [],
       correlationId: "child-1",
       context: { parentAgentName: "loom", parentDepth: 0, cwd: "/project" },
-      activeTools: [],
     });
   });
 
@@ -337,7 +338,6 @@ describe("PiChildRuntime.admitControlLine", () => {
       models: [],
       correlationId: "child-1",
       context: { parentAgentName: "loom", parentDepth: 0, cwd: "/project" },
-      activeTools: [],
     };
     const first = await signEnvelope(
       {
@@ -478,37 +478,6 @@ describe("PiChildRuntime.admitControlLine", () => {
     expect(runtime.isActivated()).toBe(false);
   });
 
-  it("does not drop an approval-response delivered before the send's own signing resolves (install-before-send)", async () => {
-    const { runtime, secretBytes } = await buildActivatedRuntime();
-    const pending = runtime.requestApproval({ summary: "allow?" });
-    // Deliver the reply immediately using the deterministic correlationId
-    // this, the runtime's first correlated request, will use - proving the
-    // pending map entry already exists before the outbound request has
-    // even finished signing/writing (install-before-send composition).
-    const correlationId = "child-1-approval-0";
-    const response = await signEnvelope(
-      {
-        childId: "child-1",
-        generationId: "gen-1",
-        direction: "parent-to-child",
-        sequence: 1,
-        nonce: generateNonceHex(randomPort),
-        correlationId,
-        kind: "approval-response",
-        body: { scope: "once" },
-      },
-      secretBytes,
-      hmacPort,
-    );
-    runtime.admitControlLine(response._unsafeUnwrap() as unknown as JsonValue, {
-      onBootstrap: () => {},
-      onCancel: () => {},
-    });
-    const result = await pending;
-    expect(result.isOk()).toBe(true);
-    expect(result._unsafeUnwrap()).toEqual({ scope: "once" });
-  });
-
   it("surfaces an outputPort write failure as a typed EnvelopeSignFailed result rather than throwing", async () => {
     const secretBytes = randomPort.randomBytes(32);
     const env = new FakeEnvPort(childEnv(bytesToHex(secretBytes)));
@@ -554,6 +523,23 @@ describe("PiChildRuntime.reportSettled / reportCancelled", () => {
     );
   });
 
+  it("allows a settlement retry after a failed output write without skipping its authenticated sequence", async () => {
+    const { runtime, output } = await buildActivatedRuntime();
+    output.failNextWrite({
+      type: "ChildOutputWriteFailed",
+      reason: "stdout-write-failed",
+    });
+
+    const first = await runtime.reportSettled("completed", { summary: "ok" });
+    expect(first.isErr()).toBe(true);
+    expect(output.lines).toHaveLength(1);
+
+    const second = await runtime.reportSettled("completed", { summary: "ok" });
+    expect(second.isOk()).toBe(true);
+    expect(output.lines).toHaveLength(2);
+    expect((output.lines.at(-1) as Record<string, unknown>).sequence).toBe(2);
+  });
+
   it("reports settlement exactly once - a second call is rejected rather than sending a duplicate envelope", async () => {
     const { runtime, output } = await buildActivatedRuntime();
     const first = await runtime.reportSettled("completed", { summary: "ok" });
@@ -567,15 +553,36 @@ describe("PiChildRuntime.reportSettled / reportCancelled", () => {
   });
 });
 
-describe("PiChildRuntime.requestApproval", () => {
-  it("sends a signed approval-request and resolves with the correlated approval-response body", async () => {
+describe("PiChildRuntime.requestDelegation", () => {
+  it("sends and resolves a nested task larger than one control envelope", async () => {
     const { runtime, output, secretBytes } = await buildActivatedRuntime();
-    const pending = runtime.requestApproval({ summary: "allow bash?" });
-    await flush();
-    const request = output.lines.at(-1) as Record<string, unknown>;
-    expect(request.kind).toBe("approval-request");
-    expect(request.direction).toBe("child-to-parent");
-    expect(request.body).toEqual({ summary: "allow bash?" });
+    const task = "nested-🙂\n" + "x".repeat(1_100_000);
+
+    const expectedChunkCount = encodeDelegateRequestChunks(
+      task,
+      "count-only",
+      "shuttle",
+    )._unsafeUnwrap().length;
+    const request = runtime.requestDelegation({
+      agentName: "shuttle",
+      task,
+    });
+    for (
+      let attempt = 0;
+      attempt < 100 && output.lines.length < expectedChunkCount + 1;
+      attempt += 1
+    ) {
+      await flush();
+    }
+
+    const chunks = output.lines.slice(1) as Array<Record<string, unknown>>;
+    expect(chunks.length).toBe(expectedChunkCount);
+    for (const chunk of chunks) {
+      expect(chunk.kind).toBe("delegate-request-chunk");
+      expect(JSON.stringify(chunk).length).toBeLessThan(64 * 1024);
+    }
+    const correlationId = chunks[0]?.correlationId;
+    expect(typeof correlationId).toBe("string");
 
     const response = await signEnvelope(
       {
@@ -584,58 +591,25 @@ describe("PiChildRuntime.requestApproval", () => {
         direction: "parent-to-child",
         sequence: 1,
         nonce: generateNonceHex(randomPort),
-        correlationId: request.correlationId as string,
-        kind: "approval-response",
-        body: { scope: "once" },
+        correlationId: correlationId as string,
+        kind: "delegate-response",
+        body: {
+          ok: true,
+          settlement: { outcome: "completed", summary: "done" },
+        },
       },
       secretBytes,
       hmacPort,
     );
-    runtime.admitControlLine(response._unsafeUnwrap() as unknown as JsonValue, {
-      onBootstrap: () => {},
-      onCancel: () => {},
-    });
-    const result = await pending;
-    expect(result.isOk()).toBe(true);
-    expect(result._unsafeUnwrap()).toEqual({ scope: "once" });
-  });
+    await runtime.admitControlLine(
+      response._unsafeUnwrap() as unknown as JsonValue,
+      { onBootstrap: () => {}, onCancel: () => {} },
+    );
 
-  it("times out (and never hangs the caller) when no approval-response ever arrives", async () => {
-    const secretBytes = randomPort.randomBytes(32);
-    const env = new FakeEnvPort(childEnv(bytesToHex(secretBytes)));
-    const output = new FakeOutputPort();
-    let scheduled: (() => void) | undefined;
-    const timerPort = {
-      schedule: (callback: () => void) => {
-        scheduled = callback;
-        return { cancel: () => {} };
-      },
-    };
-    const runtime = new PiChildRuntime({
-      envPort: env,
-      randomPort,
-      hmacPort,
-      outputPort: output,
-      logger: noopLogger(),
-      timerPort,
+    expect((await request)._unsafeUnwrap()).toEqual({
+      ok: true,
+      settlement: { outcome: "completed", summary: "done" },
     });
-    await runtime.start();
-    const pending = runtime.requestApproval({});
-    await flush();
-    scheduled?.();
-    const result = await pending;
-    expect(result.isErr()).toBe(true);
-    expect(result._unsafeUnwrapErr().type).toBe("ApprovalTimedOut");
-  });
-
-  it("rejects any still-pending approval request on dispose, rather than hanging forever", async () => {
-    const { runtime } = await buildActivatedRuntime();
-    const pending = runtime.requestApproval({});
-    await flush();
-    runtime.dispose();
-    const result = await pending;
-    expect(result.isErr()).toBe(true);
-    expect(result._unsafeUnwrapErr().type).toBe("ApprovalTimedOut");
   });
 });
 

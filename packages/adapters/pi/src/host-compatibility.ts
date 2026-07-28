@@ -1,4 +1,12 @@
-import { err, ok, type Result, ResultAsync } from "neverthrow";
+import { VERSION as PI_HOST_VERSION } from "@earendil-works/pi-coding-agent";
+import {
+  err,
+  errAsync,
+  ok,
+  okAsync,
+  type Result,
+  type ResultAsync,
+} from "neverthrow";
 import { z } from "zod";
 import {
   makeHostIdentityUnknownFailure,
@@ -91,27 +99,19 @@ export interface HostPackageReader {
 }
 
 /**
- * Production reader: resolves `@earendil-works/pi-coding-agent/package.json`
- * at safe-init time (never at factory/module-load time). The specifier is
- * built from a variable, not a string literal, so this compiles even in
- * workspaces where the peer package is not installed.
+ * Production reader: obtains the host version from Pi's public root module.
+ * Pi exposes that exact module through its extension loader even when the
+ * peer package is absent from the extension's own node_modules tree.
  */
 export class BunHostPackageReader implements HostPackageReader {
   read(): ResultAsync<HostPackageInfo, PiAdapterFailure> {
-    const specifier = `${HOST_PACKAGE_NAME}/package.json`;
-    return ResultAsync.fromPromise(
-      import(specifier, { with: { type: "json" } }) as Promise<unknown>,
-      () => makeHostIdentityUnknownFailure("host-package-unresolvable"),
-    ).andThen((mod) => {
-      const candidate =
-        typeof mod === "object" && mod !== null && "default" in mod
-          ? (mod as { default: unknown }).default
-          : mod;
-      const parsed = HostPackageInfoSchema.safeParse(candidate);
-      if (!parsed.success) {
-        return err(makeHostIdentityUnknownFailure("host-package-malformed"));
-      }
-      return ok(parsed.data);
+    const parsed = HostPackageInfoSchema.safeParse({
+      name: HOST_PACKAGE_NAME,
+      version: PI_HOST_VERSION,
     });
+    if (!parsed.success) {
+      return errAsync(makeHostIdentityUnknownFailure("host-package-malformed"));
+    }
+    return okAsync(parsed.data);
   }
 }

@@ -11,7 +11,7 @@ import type { AdapterCapabilityContract } from "@weaveio/weave-engine";
  * Pi facilities. Required-emulated: everything Weave itself must construct
  * on top of Pi. Optional tiers cover context-window monitoring, idle/compaction
  * continuation, analytics/artifact extras, and out-of-scope eval/multi-workflow
- * support (Spec 33 §3 marks the last two explicitly out of scope for this
+ * support (Pi adapter contract marks the last two explicitly out of scope for this
  * adapter).
  */
 export const PI_ADAPTER_CAPABILITY_CONTRACT: AdapterCapabilityContract = {
@@ -56,8 +56,8 @@ export const PI_ADAPTER_CAPABILITY_CONTRACT: AdapterCapabilityContract = {
     {
       id: "tool-policy-mapping",
       description:
-        "Governing tool calls through the engine permission subsystem",
-      readiness: "emulated",
+        "Leaving tool authorization under Pi and each tool owner's native control",
+      readiness: "native",
     },
     {
       id: "workflow-persistence",
@@ -83,6 +83,12 @@ export const PI_ADAPTER_CAPABILITY_CONTRACT: AdapterCapabilityContract = {
       id: "context-window-monitor",
       description: "Native context-window usage reporting",
       readiness: "native",
+    },
+    {
+      id: "model-thinking-activation",
+      description:
+        "Translating a descriptor's per-model thinking-level intent into pi.setThinkingLevel()",
+      readiness: "emulated",
     },
     {
       id: "idle-continuation",

@@ -9,6 +9,10 @@ import type {
 import { materializeAgents } from "@weaveio/weave-engine";
 import { errAsync, ResultAsync } from "neverthrow";
 import {
+  resolvePiChildInspectionSettings,
+  type PiChildInspectionSettingsResolution,
+} from "./child-inspection-settings.js";
+import {
   makeActivationFailedFailure,
   type PiAdapterFailure,
 } from "./errors.js";
@@ -117,6 +121,8 @@ export interface PiConfigActivationResult {
   readonly plan: MaterializationPlan;
   readonly descriptors: PiDescriptorCatalog;
   readonly trust: PiTrustState;
+  /** Pi validates this local block without rejecting unrelated adapter blocks. */
+  readonly childInspectionSettings: PiChildInspectionSettingsResolution;
 }
 
 /**
@@ -230,6 +236,10 @@ export class PiConfigActivator {
           plan,
           descriptors: buildDescriptorCatalog(plan),
           trust: input.trust,
+          childInspectionSettings: resolvePiChildInspectionSettings(config).match(
+            (resolution) => resolution,
+            (issues) => ({ status: "invalid" as const, issues }),
+          ),
         })),
       );
   }

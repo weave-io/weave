@@ -103,6 +103,17 @@ describe("resolveCurrentPiExecutablePath", () => {
     const envPort = new FakeEnvPort({ _: "pi" });
     expect(resolveCurrentPiExecutablePath(envPort)).toBeUndefined();
   });
+
+  it("returns undefined when `_` points at an absolute non-Pi wrapper or runtime", () => {
+    expect(
+      resolveCurrentPiExecutablePath(new FakeEnvPort({ _: "/usr/bin/bun" })),
+    ).toBeUndefined();
+    expect(
+      resolveCurrentPiExecutablePath(
+        new FakeEnvPort({ _: "/opt/homebrew/bin/timeout" }),
+      ),
+    ).toBeUndefined();
+  });
 });
 
 describe("buildDefaultPiChildCommand", () => {
@@ -112,7 +123,6 @@ describe("buildDefaultPiChildCommand", () => {
       "/opt/official/pi/pi",
       "--mode",
       "rpc",
-      "--no-session",
     ]);
   });
 
@@ -122,8 +132,26 @@ describe("buildDefaultPiChildCommand", () => {
       DEFAULT_PI_CHILD_EXECUTABLE,
       "--mode",
       "rpc",
-      "--no-session",
     ]);
+  });
+
+  it("never carries a session flag, which PiRpcChild would reject as ChildSpawnFailed", () => {
+    const envPort = new FakeEnvPort({ _: "/opt/official/pi/pi" });
+    const command = buildDefaultPiChildCommand(envPort);
+    for (const flag of [
+      "--no-session",
+      "--session-dir",
+      "--session",
+      "--continue",
+      "--resume",
+      "--fork",
+    ]) {
+      expect(
+        command.some(
+          (argument) => argument === flag || argument.startsWith(`${flag}=`),
+        ),
+      ).toBe(false);
+    }
   });
 
   it("a PATH entry that would shadow the real pi install never changes the built command", () => {

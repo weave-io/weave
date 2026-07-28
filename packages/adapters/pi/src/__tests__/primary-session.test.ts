@@ -118,6 +118,33 @@ describe("PiPrimarySession.activate", () => {
     expect(session.getCurrent()).toEqual(active);
   });
 
+  it("preserves a native user-selected model without applying descriptor model intent", async () => {
+    const userModel = { provider: "openai", id: "gpt-5" };
+    const applier = fakeApplier();
+    const session = new PiPrimarySession({
+      skillCatalog: new PiSkillCatalog(),
+      logger: new RecordingLogger(),
+    });
+
+    const result = await session.activate(
+      descriptor(),
+      context({
+        currentModel: userModel,
+        modelApplier: applier,
+        preserveCurrentModel: true,
+      }),
+    );
+
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().modelActivation).toEqual({
+      status: "preserved",
+      currentModel: userModel,
+      reason: "user-selected",
+    });
+    expect(applier.calls).toEqual([]);
+    expect(session.getCapabilityWarnings()).toEqual([]);
+  });
+
   it("allows mode: all descriptors as primary", async () => {
     const session = new PiPrimarySession({
       skillCatalog: new PiSkillCatalog(),

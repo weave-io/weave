@@ -1,6 +1,6 @@
 /**
  * Regression tests for the direct-dispatch step-prompt composition fix
- * (Weave issue #21 Task 12).
+ * (Weave issue #21).
  *
  * Root cause: `dispatchStep`/`completeStep` render `step.prompt` but only
  * ever placed its byte length inside `RunAgentEffect.promptMetadata` — the
@@ -13,10 +13,10 @@
  * ephemeral `stepPromptText` field on `DispatchStepOutput`/
  * `CompleteStepOutput`. `PiWorkflowController.runDispatchAgentEffect`
  * receives it as an extra parameter and sends it as the direct child's
- * bounded task prompt while the descriptor's `composedPrompt` remains the
+ * task prompt while the descriptor's `composedPrompt` remains the
  * child's system prompt. Keeping those channels separate prevents a full
  * canonical primary prompt (such as Tapestry's) from overflowing the
- * ordinary delegation-task bound.
+ * private transport boundary.
  *
  * These tests prove, against a fully scripted `FakeDirectDispatchPort` (no
  * real Pi process, no network — Pi adapter contract), that the exact rendered

@@ -59,6 +59,35 @@ describe("PiChildHistoryIndexV1", () => {
     ).toBe(false);
   });
 
+  it("rejects unsafe session paths, including an actual NUL byte", () => {
+    const unsafePaths = [
+      "children/child-1/\u0000session.jsonl",
+      "../session.jsonl",
+      "children/child-1/../session.jsonl",
+      "/tmp/session.jsonl",
+      "C:/tmp/session.jsonl",
+      "children\\\\child-1\\\\session.jsonl",
+      "children//session.jsonl",
+      "children/./session.jsonl",
+    ];
+
+    for (const sessionPath of unsafePaths) {
+      const result = PiChildHistoryIndexV1Schema.safeParse({
+        ...INDEX,
+        records: [{ ...RECORD, sessionPath }],
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues).toContainEqual(
+          expect.objectContaining({
+            path: ["records", 0, "sessionPath"],
+            message: "sessionPath must be a safe relative path",
+          }),
+        );
+      }
+    }
+  });
+
   it("keeps the prescribed private layout and no transcript field", () => {
     expect(PI_CHILD_HISTORY_LAYOUT).toEqual({
       indexFile: "index.v1.json",

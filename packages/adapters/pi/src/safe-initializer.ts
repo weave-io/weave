@@ -8,6 +8,13 @@ import { buildAdapterHealthReport } from "@weaveio/weave-engine";
 import { err, ok, okAsync, Result, ResultAsync } from "neverthrow";
 import { PI_ADAPTER_CAPABILITY_CONTRACT } from "./capability-declarations.js";
 import {
+  DEFAULT_PI_CHILD_INSPECTION_SETTINGS,
+  effectivePiChildInspectionSettings,
+  type PiChildInspectionEffectiveSettings,
+  type PiChildInspectionSettingsChoice,
+  type PiChildInspectionSettingsIssue,
+} from "./child-inspection-settings.js";
+import {
   buildBlockedProbeSet,
   type PiCandidatePlanContext,
   type PiCapabilityProbeSource,
@@ -34,11 +41,6 @@ import {
   NullPathContainmentPort,
   type PathContainmentPort,
 } from "./path-containment.js";
-import type {
-  PiToolPolicyPlan,
-  PiWeaveToolRegistration,
-} from "./permission-bridge.js";
-import { PiPermissionBridge } from "./permission-bridge.js";
 import {
   safelyAwaitPortResult,
   safelyListAvailableModels,
@@ -50,29 +52,9 @@ import type {
   PiMode,
   PiModelRegistry,
   PiSessionContext,
-  PiToolInfo,
+  PiToolRegistration,
   PiTrustState,
 } from "./types.js";
-
-/** Silent default logger used only when no `permissionBridge` is injected. */
-const noopLogger: PiAdapterLogger = {
-  debug: () => {},
-  info: () => {},
-  warn: () => {},
-  error: () => {},
-};
-
-/**
- * Reduces a `planToolPolicy` result to the bounded `toolPolicyCoverage` fact
- * the capability prober needs - never raises a declared ceiling.
- */
-function toolPolicyCoverageFromPlan(
-  planned: Result<PiToolPolicyPlan, PiAdapterFailure>,
-): "ok" | { reason: string } {
-  if (planned.isErr()) return { reason: "tool-policy-plan-failed" };
-  if (planned.value.coverage.isOk()) return "ok";
-  return { reason: coverageFailureReason(planned.value.coverage.error) };
-}
 
 /**
  * Result of the read-only preflight sequence (Pi adapter contract,).
@@ -106,29 +88,18 @@ export interface PiPreflightResult {
   readonly trust: PiTrustState;
   readonly configActivation?: PiConfigActivationResult;
   readonly configActivationFailure?: PiAdapterFailure;
-  /**
-   * Sealed, coverage-proven tool-policy plan (Spec 33 §7.2 step 9, §12),
-   * computed once here and reused unchanged at real activation - `undefined`
-   * only when it never ran (mode/host blocked or config activation failed).
-   */
-  readonly toolPolicy?: PiToolPolicyPlan;
-  /**
-   * The exact Weave-owned registrations threaded into `toolPolicy`'s
-   * coverage proof above (Spec 33 §11.1) - `extension.ts` MUST reuse this
-   * identical array at real registration time (`registerWeaveOwnedTools`)
-   * rather than recomputing a different one, or the sealed coverage proof
-   * would no longer describe what was actually registered.
-   */
-  readonly weaveOwnedRegistrations: readonly PiWeaveToolRegistration[];
+  /** Weave-owned tools prepared during read-only preflight. */
+  readonly toolRegistrations: readonly PiToolRegistration[];
   readonly healthReport: AdapterHealthReport;
   readonly healthOnlyMode: boolean;
+  /** One immutable object shared by the store, inspector, and recovery seams. */
+  readonly childInspection: PiChildInspectionEffectiveSettings;
 }
 
 export interface PiSafeInitializerDeps {
   readonly hostPackageReader: HostPackageReader;
   readonly capabilityProber: PiCapabilityProbeSource;
   readonly configActivator: PiConfigActivator;
-  readonly permissionBridge?: PiPermissionBridge;
   readonly capabilityContract?: AdapterCapabilityContract;
   /**
    * Caller-supplied builder for the ordinary-delegation Weave-owned tool
@@ -141,7 +112,7 @@ export interface PiSafeInitializerDeps {
   readonly buildDelegationToolRegistrations?: (
     primary: AgentDescriptor,
     activation: PiConfigActivationResult,
-  ) => readonly PiWeaveToolRegistration[];
+  ) => readonly PiToolRegistration[];
   /**
    * Real, no-follow-safe containment proof for `.weave/runtime`/`.weave/plans`
    * (Pi adapter contract) - gates `workflow-persistence`/
@@ -153,6 +124,14 @@ export interface PiSafeInitializerDeps {
    * `extension.ts` MUST supply `BunPathContainmentPort` explicitly.
    */
   readonly pathContainmentPort?: PathContainmentPort;
+  /**
+   * Resolves invalid Pi-local settings exactly once for this activation. A
+   * missing resolver fails closed to health-only mode; it never applies
+   * defaults implicitly.
+   */
+  readonly chooseInvalidChildInspectionSettings?: (
+    issues: readonly PiChildInspectionSettingsIssue[],
+  ) => ResultAsync<PiChildInspectionSettingsChoice, never>;
 }
 
 interface HostOutcome {
@@ -164,27 +143,15 @@ interface CandidatePlanOutcome {
   readonly probeContext?: PiCandidatePlanContext;
   readonly activation?: PiConfigActivationResult;
   readonly failure?: PiAdapterFailure;
-  readonly toolPolicy?: PiToolPolicyPlan;
-  readonly weaveOwnedRegistrations: readonly PiWeaveToolRegistration[];
-}
-
-/** Bounded, closed-set reason for a coverage-proof failure - never raw context content. */
-function coverageFailureReason(
-  error: import("@weaveio/weave-engine").PermissionCoverageError,
-): string {
-  if (error.type === "incomplete_coverage") return `incomplete:${error.reason}`;
-  return "invalid-coverage-context";
+  readonly toolRegistrations: readonly PiToolRegistration[];
 }
 
 export class PiSafeInitializer {
   private readonly contract: AdapterCapabilityContract;
-  private readonly permissionBridge: PiPermissionBridge;
   private readonly pathContainmentPort: PathContainmentPort;
 
   constructor(private readonly deps: PiSafeInitializerDeps) {
     this.contract = deps.capabilityContract ?? PI_ADAPTER_CAPABILITY_CONTRACT;
-    this.permissionBridge =
-      deps.permissionBridge ?? new PiPermissionBridge({ logger: noopLogger });
     this.pathContainmentPort =
       deps.pathContainmentPort ?? new NullPathContainmentPort();
   }
@@ -195,7 +162,6 @@ export class PiSafeInitializer {
       "mode" | "isProjectTrusted" | "cwd" | "modelRegistry"
     >,
     commands: readonly PiCommandInfo[],
-    tools: readonly PiToolInfo[],
   ): ResultAsync<PiPreflightResult, PiAdapterFailure> {
     const mode = session.mode;
     const modeSupported = mode === "tui";
@@ -215,38 +181,73 @@ export class PiSafeInitializer {
         session.cwd,
         trust,
         session.modelRegistry,
-        tools,
       ).andThen((candidate) =>
-        this.computeProbes(blocked, blockedReason, {
-          mode,
-          trust,
-          commands,
-          candidatePlan: candidate.probeContext,
-        }).andThen((probes) => {
-          const healthReport = buildAdapterHealthReport({
-            harness: HOST_PACKAGE_NAME,
-            capabilityContract: this.contract,
-            probeResults: probes,
-          });
+        this.resolveChildInspectionSettings(candidate.activation).andThen(
+          (childInspection) =>
+            this.computeProbes(blocked, blockedReason, {
+              mode,
+              trust,
+              commands,
+              candidatePlan: candidate.probeContext,
+            }).andThen((probes) => {
+              const healthReport = buildAdapterHealthReport({
+                harness: HOST_PACKAGE_NAME,
+                capabilityContract: this.contract,
+                probeResults: probes,
+              });
 
-          const result: PiPreflightResult = {
-            mode,
-            modeSupported,
-            host: hostOutcome.info,
-            hostSupported,
-            trust,
-            configActivation: candidate.activation,
-            configActivationFailure: candidate.failure,
-            toolPolicy: candidate.toolPolicy,
-            weaveOwnedRegistrations: candidate.weaveOwnedRegistrations,
-            healthReport,
-            healthOnlyMode:
-              blocked || trust === "withheld" || healthReport.healthOnlyMode,
-          };
-          return ok(result);
-        }),
+              const result: PiPreflightResult = {
+                mode,
+                modeSupported,
+                host: hostOutcome.info,
+                hostSupported,
+                trust,
+                configActivation: candidate.activation,
+                configActivationFailure: candidate.failure,
+                toolRegistrations: candidate.toolRegistrations,
+                healthReport,
+                healthOnlyMode:
+                  blocked ||
+                  trust === "withheld" ||
+                  healthReport.healthOnlyMode ||
+                  childInspection.mode === "health-only",
+                childInspection,
+              };
+              return ok(result);
+            }),
+        ),
       );
     });
+  }
+
+  private resolveChildInspectionSettings(
+    activation: PiConfigActivationResult | undefined,
+  ): ResultAsync<PiChildInspectionEffectiveSettings, never> {
+    if (activation === undefined) {
+      return okAsync(
+        effectivePiChildInspectionSettings({
+          status: "valid",
+          settings: DEFAULT_PI_CHILD_INSPECTION_SETTINGS,
+        }),
+      );
+    }
+
+    const resolution = activation.childInspectionSettings;
+    if (resolution.status === "valid") {
+      return okAsync(effectivePiChildInspectionSettings(resolution));
+    }
+
+    const choose = this.deps.chooseInvalidChildInspectionSettings;
+    if (choose === undefined) {
+      return okAsync(effectivePiChildInspectionSettings(resolution));
+    }
+
+    return safelyAwaitPortResult(
+      () => choose(resolution.issues),
+      (): PiChildInspectionSettingsChoice => "health-only",
+    )
+      .map((choice) => effectivePiChildInspectionSettings(resolution, choice))
+      .orElse(() => okAsync(effectivePiChildInspectionSettings(resolution)));
   }
 
   /**
@@ -284,10 +285,9 @@ export class PiSafeInitializer {
     projectRoot: string,
     trust: PiTrustState,
     modelRegistry: PiModelRegistry,
-    tools: readonly PiToolInfo[],
   ): ResultAsync<CandidatePlanOutcome, never> {
     if (blocked) {
-      return okAsync({ weaveOwnedRegistrations: [] });
+      return okAsync({ toolRegistrations: [] });
     }
 
     // `configActivator` is an injected port - even though it is *typed* as
@@ -312,7 +312,7 @@ export class PiSafeInitializer {
             );
             const primaryEligible =
               primary !== undefined && primary.mode !== "subagent";
-            const weaveOwnedRegistrations =
+            const toolRegistrations =
               primaryEligible && primary !== undefined
                 ? (this.deps.buildDelegationToolRegistrations?.(
                     primary as NonNullable<typeof primary>,
@@ -332,27 +332,6 @@ export class PiSafeInitializer {
                   availableModels,
                 )
               : { resolved: false as const };
-
-            const policies = Object.fromEntries(
-              [...activation.descriptors.byName].map(([name, descriptor]) => [
-                name,
-                descriptor.effectiveToolPolicy,
-              ]),
-            );
-            // `permissionBridge.planToolPolicy` is pure/read-only and already
-            // returns a `Result`, but it is an injected port - `Result.fromThrowable`
-            // catches a misbehaving implementation throwing synchronously
-            // instead of letting that escape as an unhandled exception
-            // (neverthrow-wrap-exceptions).
-            const planned = Result.fromThrowable(
-              () =>
-                this.permissionBridge.planToolPolicy({
-                  allTools: tools,
-                  weaveOwnedRegistrations,
-                  policies,
-                }),
-              () => makeInvariantViolationFailure("tool-policy-plan-threw"),
-            )().andThen((result) => result);
 
             // Project-path containment (Pi adapter contract) is only ever
             // computed under confirmed project trust - probing `.weave/runtime`/
@@ -383,19 +362,17 @@ export class PiSafeInitializer {
 
             return {
               activation,
-              toolPolicy: planned.isOk() ? planned.value : undefined,
-              weaveOwnedRegistrations,
+              toolRegistrations,
               probeContext: {
                 configLoaded: true,
                 materializationErrorCount: activation.descriptors.errors.length,
                 primaryDescriptorFound: primaryEligible,
                 primaryModelDryResolved: modelResolution.resolved,
-                delegationToolPlanned: weaveOwnedRegistrations.some(
-                  (registration) => registration.tool.name === "weave_delegate",
+                delegationToolPlanned: toolRegistrations.some(
+                  (registration) => registration.name === "weave_delegate",
                 ),
                 eventLoggingPlanned:
                   trust === "trusted" && runtimeDirectoryContained === true,
-                toolPolicyCoverage: toolPolicyCoverageFromPlan(planned),
                 runtimeDirectoryContained,
                 plansDirectoryContained,
               },
@@ -403,13 +380,12 @@ export class PiSafeInitializer {
           },
           (failure): CandidatePlanOutcome => ({
             failure,
-            weaveOwnedRegistrations: [],
+            toolRegistrations: [],
             probeContext: {
               configLoaded: false,
               materializationErrorCount: 0,
               primaryDescriptorFound: false,
               primaryModelDryResolved: false,
-              toolPolicyCoverage: { reason: "config-not-loaded" },
             },
           }),
         );

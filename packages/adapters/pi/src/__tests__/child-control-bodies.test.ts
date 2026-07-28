@@ -4,7 +4,6 @@ import {
   toModelIdentityBody,
 } from "../child-control-bodies.js";
 import { MAX_CONTROL_BODY_BYTES } from "../child-envelope.js";
-import { MAX_TASK_INPUT_CHARS } from "../delegation-limits.js";
 
 // Half of the envelope's own 64KiB control-body byte cap - see the
 // `MAX_COMPOSED_PROMPT_LENGTH` doc comment in child-control-bodies.ts for
@@ -12,15 +11,12 @@ import { MAX_TASK_INPUT_CHARS } from "../delegation-limits.js";
 // field plus JSON structural overhead within the same envelope).
 const MAX_COMPOSED_PROMPT_LENGTH = MAX_CONTROL_BODY_BYTES / 2;
 
-// The bounded correlation/context/active-tools fields (Spec 33 §11.2 Task
-// 9) are required on every bootstrap body regardless of composedPrompt
-// size - shared here so these composedPrompt-focused bound tests don't
-// have to restate them.
+// The bounded correlation/context fields are required on every bootstrap
+// body regardless of composedPrompt size.
 const REQUIRED_BOOTSTRAP_FIELDS = {
   mode: "ordinary" as const,
   correlationId: "child-1",
   context: { parentAgentName: "loom", parentDepth: 0, cwd: "/project" },
-  activeTools: [],
 };
 
 describe("BootstrapBodySchema composedPrompt bound", () => {
@@ -111,33 +107,45 @@ describe("BootstrapBodySchema delegation trigger metadata", () => {
   });
 });
 
-describe("DelegateRequestBodySchema.task bound (Spec 33 \u00a711.2 Task 9 unification)", () => {
-  // A live child relaying its own nested `delegate-request` must be held to
-  // the exact same `MAX_TASK_INPUT_CHARS` bound enforced at tool parsing
-  // (`delegation-tool.ts`), the controller (`delegation-controller.ts`),
-  // and RPC prompt send (`rpc-child.ts`) - never a looser transport-schema
-  // limit that would let a nested delegation smuggle a larger task through
-  // than an ordinary top-level `weave_delegate` tool call ever could.
-  it("accepts a task exactly at MAX_TASK_INPUT_CHARS", () => {
+describe("DelegateRequestBodySchema.task", () => {
+  // Nested delegation accepts the same non-empty task semantics as the
+  // top-level tool; transport size is handled by prompt chunking.
+  it("accepts a task larger than the former user-visible limit", () => {
     const result = parseControlBody("delegate-request", {
       agentName: "shuttle",
-      task: "a".repeat(MAX_TASK_INPUT_CHARS),
+      task: "a".repeat(100_000),
     });
     expect(result.ok).toBe(true);
-  });
-
-  it("rejects a task one character over MAX_TASK_INPUT_CHARS", () => {
-    const result = parseControlBody("delegate-request", {
-      agentName: "shuttle",
-      task: "a".repeat(MAX_TASK_INPUT_CHARS + 1),
-    });
-    expect(result.ok).toBe(false);
   });
 
   it("rejects an empty task", () => {
     const result = parseControlBody("delegate-request", {
       agentName: "shuttle",
       task: "",
+    });
+    expect(result.ok).toBe(false);
+  });
+});
+
+describe("BootstrapBodySchema thinking-level transport", () => {
+  it("accepts a core-owned thinking level", () => {
+    const result = parseControlBody("bootstrap", {
+      agentName: "shuttle",
+      composedPrompt: "hi",
+      models: ["fake/model-x#high"],
+      thinkingLevel: "high",
+      ...REQUIRED_BOOTSTRAP_FIELDS,
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it("rejects a thinking level outside the shared closed vocabulary", () => {
+    const result = parseControlBody("bootstrap", {
+      agentName: "shuttle",
+      composedPrompt: "hi",
+      models: ["fake/model-x#turbo"],
+      thinkingLevel: "turbo",
+      ...REQUIRED_BOOTSTRAP_FIELDS,
     });
     expect(result.ok).toBe(false);
   });
@@ -206,7 +214,6 @@ describe("toModelIdentityBody", () => {
       models: [],
       correlationId: "child-1",
       context: { parentAgentName: "loom", parentDepth: 0, cwd: "/project" },
-      activeTools: [],
       resolvedModel: toModelIdentityBody(hostModel),
     });
     expect(result.ok).toBe(true);
@@ -226,7 +233,6 @@ describe("toModelIdentityBody", () => {
       models: [],
       correlationId: "child-1",
       context: { parentAgentName: "loom", parentDepth: 0, cwd: "/project" },
-      activeTools: [],
       resolvedModel: hostModel,
     });
     expect(result.ok).toBe(false);

@@ -1,4 +1,8 @@
-import { err, ok, okAsync, type Result, type ResultAsync } from "neverthrow";
+import {
+  parseModelIntentEntry,
+  type ThinkingLevelDecl,
+} from "@weaveio/weave-engine";
+import { err, ok, okAsync, ResultAsync, type Result } from "neverthrow";
 import type { PiModelInfo } from "./types.js";
 
 export type { PiModelInfo } from "./types.js";
@@ -27,7 +31,7 @@ export type { PiModelInfo } from "./types.js";
  * does not choose a fallback itself.
  *
  * @see docs/adapters/pi.md
- * @see docs/adapter-boundary.md
+ * @see docs/architecture/adapter-boundary.md
  */
 
 /** Which tier of the Pi adapter contract cascade produced a resolution. */
@@ -45,10 +49,18 @@ export type PiModelResolution =
       readonly model: PiModelInfo;
       readonly intentEntry: string;
       readonly source: PiModelResolutionSource;
+      readonly thinkingLevel?: ThinkingLevelDecl;
     }
   | {
       readonly resolved: false;
     };
+
+function thinkingFields(
+  level: ThinkingLevelDecl | undefined,
+): { readonly thinkingLevel?: ThinkingLevelDecl } {
+  if (level === undefined) return {};
+  return { thinkingLevel: level };
+}
 
 export type PiModelIdentityResolutionError =
   | { readonly type: "ModelIdentityUnavailable" }
@@ -67,8 +79,13 @@ export class PiModelResolver {
     availableModels: readonly PiModelInfo[],
   ): PiModelResolution {
     for (const entry of modelIntent) {
+      const parsed = parseModelIntentEntry(entry);
+      const baseModel = parsed.isOk() ? parsed.value.baseModel : entry;
+      const thinkingLevel = parsed.isOk()
+        ? parsed.value.thinkingLevel
+        : undefined;
       const canonical = availableModels.find(
-        (model) => `${model.provider}/${model.id}` === entry,
+        (model) => `${model.provider}/${model.id}` === baseModel,
       );
       if (canonical !== undefined) {
         return {
@@ -76,11 +93,12 @@ export class PiModelResolver {
           model: canonical,
           intentEntry: entry,
           source: "canonical",
+          ...thinkingFields(thinkingLevel),
         };
       }
 
       const bareIdMatches = availableModels.filter(
-        (model) => model.id === entry,
+        (model) => model.id === baseModel,
       );
       if (bareIdMatches.length === 1) {
         return {
@@ -88,11 +106,12 @@ export class PiModelResolver {
           model: bareIdMatches[0] as PiModelInfo,
           intentEntry: entry,
           source: "bare-id",
+          ...thinkingFields(thinkingLevel),
         };
       }
 
       const nameMatches = availableModels.filter(
-        (model) => model.name === entry,
+        (model) => model.name === baseModel,
       );
       if (nameMatches.length === 1) {
         return {
@@ -100,6 +119,7 @@ export class PiModelResolver {
           model: nameMatches[0] as PiModelInfo,
           intentEntry: entry,
           source: "human-name",
+          ...thinkingFields(thinkingLevel),
         };
       }
     }
@@ -137,6 +157,34 @@ export interface PiModelApplyPort {
   applyModel(model: PiModelInfo): ResultAsync<void, Error>;
 }
 
+/** Adapter seam over Pi's context-level thinking setting. */
+export interface PiThinkingApplyPort {
+  applyThinkingLevel(level: ThinkingLevelDecl): ResultAsync<void, Error>;
+}
+
+function toError(cause: unknown): Error {
+  return cause instanceof Error ? cause : new Error(String(cause));
+}
+
+/**
+ * Keep the thinking port as a ResultAsync seam even when an injected port
+ * implementation violates that contract by throwing or returning a rejected
+ * promise. A thinking failure is deliberately handled after model activation,
+ * so it can never downgrade a model that already applied successfully.
+ */
+function safelyApplyThinkingLevel(
+  applier: PiThinkingApplyPort,
+  level: ThinkingLevelDecl,
+): ResultAsync<void, Error> {
+  return ResultAsync.fromThrowable(
+    async () => {
+      const applied = await applier.applyThinkingLevel(level);
+      if (applied.isErr()) throw applied.error;
+    },
+    toError,
+  )();
+}
+
 /**
  * The outcome of resolving *and applying* a descriptor's model intent
  * (Pi adapter contract): either the resolved model was successfully applied
@@ -151,6 +199,12 @@ export type PiModelActivationOutcome =
       readonly model: PiModelInfo;
       readonly intentEntry: string;
       readonly source: PiModelResolutionSource;
+      readonly thinkingLevel?: ThinkingLevelDecl;
+      /**
+       * `true` when the requested level applied, `false` when it was
+       * unavailable or failed, and omitted when no level was requested.
+       */
+      readonly thinkingApplied?: boolean;
     }
   | {
       readonly status: "degraded";
@@ -162,9 +216,11 @@ export type PiModelActivationOutcome =
  * Pi adapter contract: resolves a descriptor's ordered model intent against
  * Pi's authenticated catalog, then applies it through the injected
  * `PiModelApplyPort`. Never fuzzy-matches, never falls back to a
- * different model, and never throws — every failure path (unresolved
+ * different model, and never throws — every model failure path (unresolved
  * intent, or a host that rejects `setModel`) reports `degraded` and
- * preserves whatever model Pi already had active.
+ * preserves whatever model Pi already had active. A requested thinking level
+ * is attempted only after model success; its failure remains an applied model
+ * outcome with `thinkingApplied: false`.
  */
 export class PiModelActivator {
   constructor(
@@ -176,6 +232,7 @@ export class PiModelActivator {
     availableModels: readonly PiModelInfo[],
     currentModel: PiModelInfo | undefined,
     applier: PiModelApplyPort,
+    thinkingApplier?: PiThinkingApplyPort,
   ): ResultAsync<PiModelActivationOutcome, never> {
     const resolution = this.resolver.resolve(modelIntent, availableModels);
     if (!resolution.resolved) {
@@ -188,14 +245,50 @@ export class PiModelActivator {
 
     return applier
       .applyModel(resolution.model)
-      .map(
-        (): PiModelActivationOutcome => ({
-          status: "applied",
-          model: resolution.model,
-          intentEntry: resolution.intentEntry,
-          source: resolution.source,
-        }),
-      )
+      .andThen(() => {
+        if (resolution.thinkingLevel === undefined) {
+          return okAsync<PiModelActivationOutcome, Error>({
+            status: "applied",
+            model: resolution.model,
+            intentEntry: resolution.intentEntry,
+            source: resolution.source,
+          });
+        }
+        if (thinkingApplier === undefined) {
+          return okAsync<PiModelActivationOutcome, Error>({
+            status: "applied",
+            model: resolution.model,
+            intentEntry: resolution.intentEntry,
+            source: resolution.source,
+            thinkingLevel: resolution.thinkingLevel,
+            thinkingApplied: false,
+          });
+        }
+        return safelyApplyThinkingLevel(
+          thinkingApplier,
+          resolution.thinkingLevel,
+        )
+          .map(
+            (): PiModelActivationOutcome => ({
+              status: "applied",
+              model: resolution.model,
+              intentEntry: resolution.intentEntry,
+              source: resolution.source,
+              thinkingLevel: resolution.thinkingLevel,
+              thinkingApplied: true,
+            }),
+          )
+          .orElse(() =>
+            okAsync<PiModelActivationOutcome, never>({
+              status: "applied",
+              model: resolution.model,
+              intentEntry: resolution.intentEntry,
+              source: resolution.source,
+              thinkingLevel: resolution.thinkingLevel,
+              thinkingApplied: false,
+            }),
+          );
+      })
       .orElse(() =>
         okAsync<PiModelActivationOutcome, never>({
           status: "degraded",

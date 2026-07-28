@@ -113,31 +113,6 @@ describe("SingleCompletionCandidateRecorder", () => {
 });
 
 describe("buildWeaveCompleteStepToolRegistration", () => {
-  it("marks the registration as a control channel and keeps an execute-capability resolver as a fail-closed fallback", () => {
-    const recorder = new SingleCompletionCandidateRecorder();
-    const registration = buildWeaveCompleteStepToolRegistration({
-      stepName: "implement",
-      recorder,
-      isWindowOpen: () => true,
-    });
-    expect(registration.controlChannel).toBe(true);
-    const resolved = registration
-      .resolver({
-        call: { outcome: "success" },
-        context: {
-          toolIdentity: "weave_complete_step",
-          owner: registration.owner,
-          revision: registration.revision,
-        },
-      })
-      ._unsafeUnwrap();
-    expect(resolved).toHaveLength(1);
-    expect(resolved[0]).toMatchObject({
-      unresolved: false,
-      capability: "execute",
-    });
-  });
-
   it("the tool's own execute() records the candidate the recorder later hands to settlement (recorder receives the candidate)", async () => {
     const recorder = new SingleCompletionCandidateRecorder();
     const attempts: string[] = [];
@@ -147,7 +122,7 @@ describe("buildWeaveCompleteStepToolRegistration", () => {
       isWindowOpen: () => true,
       onAttempt: (attempt) => attempts.push(attempt.outcome),
     });
-    const result = await registration.tool.execute(
+    const result = await registration.execute(
       "tc-1",
       { outcome: "success", method: "agent_signal", message: "done" },
       undefined,
@@ -175,7 +150,7 @@ describe("buildWeaveCompleteStepToolRegistration", () => {
       isWindowOpen: () => false,
       onAttempt: (attempt) => attempts.push(attempt.outcome),
     });
-    await registration.tool.execute(
+    await registration.execute(
       "tc-1",
       { outcome: "success" },
       undefined,

@@ -113,6 +113,13 @@ rejection, not a quiet drop.
 Settlement carries structured fields. It never repurposes one field to mean two
 things.
 
+A completed settlement has these structured fields:
+
+- `assistantOutput` — the bounded parent projection;
+- `completionCandidate` — direct-step structured completion JSON, never prose;
+- `outputTransferId` — optional reference to an ACKed private output transfer;
+- `outputByteLength` — numeric metadata for the full private output.
+
 A direct-step child's structured completion candidate has its own field. The
 parent interpreter reads that field and only that field when interpreting a
 direct-step completion. Ordinary assistant output stays in its own separate
@@ -124,12 +131,14 @@ same field with terminal assistant text. Because a terminal `weave_complete_step
 message is a tool-use message, its extracted text was empty, and a valid
 completion degraded to `CompletionSignalMissing`.
 
-When final output exceeds the inline settlement bound, the child sends it as an
-acknowledged chunked transfer *before* the terminal settlement envelope, then
-settles referencing that transfer. Exactly-once settlement, strict sequence
-ordering, sequence rollback on failed writes, and the single bounded retry all
-hold unchanged. A failed output transfer degrades to a bounded inline summary —
-never to no settlement at all.
+When final output exceeds `parentProjectionBytes`, the child sends it as
+authenticated `transfer-chunk` controls *before* the terminal settlement
+envelope. The parent reassembles it privately and replies with authenticated
+`transfer-result` ACK or NACK; only after ACK does the child settle referencing
+that transfer. Exactly-once settlement, strict sequence ordering, sequence
+rollback on failed writes, and the single bounded retry all hold unchanged. A
+failed output transfer degrades to bounded inline `assistantOutput` plus
+`outputByteLength` — never to no settlement at all.
 
 ## 5. The parent projection rule
 

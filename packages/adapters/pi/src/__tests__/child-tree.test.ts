@@ -5,6 +5,7 @@ import {
   EMPTY_USAGE_AGGREGATE,
   extractAssistantStopReason,
   extractAssistantTextDeltaPreview,
+  extractAssistantThinkingDeltaPreview,
   MAX_LATEST_OUTPUT_BYTES,
   type PiChildTreeNode,
   ROOT_NODE_ID,
@@ -238,6 +239,59 @@ describe("extractAssistantTextDeltaPreview (Task 9 finding 1)", () => {
         type: "message_update",
         delta: { text: 42 },
       }),
+    ).toBeUndefined();
+  });
+
+  it("never mistakes a thinking delta for answer text", () => {
+    expect(
+      extractAssistantTextDeltaPreview({
+        type: "message_update",
+        assistantMessageEvent: { type: "thinking_delta", delta: "pondering" },
+      }),
+    ).toBeUndefined();
+  });
+});
+
+describe("extractAssistantThinkingDeltaPreview", () => {
+  it("reads a streamed thinking delta so a reasoning child never looks frozen", () => {
+    expect(
+      extractAssistantThinkingDeltaPreview({
+        type: "message_update",
+        assistantMessageEvent: { type: "thinking_delta", delta: "pondering" },
+      }),
+    ).toBe("pondering");
+  });
+
+  it("ignores answer-text deltas", () => {
+    expect(
+      extractAssistantThinkingDeltaPreview({
+        type: "message_update",
+        assistantMessageEvent: { type: "text_delta", delta: "hello" },
+      }),
+    ).toBeUndefined();
+  });
+
+  it("ignores thinking block boundaries that carry no delta", () => {
+    expect(
+      extractAssistantThinkingDeltaPreview({
+        type: "message_update",
+        assistantMessageEvent: { type: "thinking_start" },
+      }),
+    ).toBeUndefined();
+  });
+
+  it("returns undefined when the thinking delta is not a string", () => {
+    expect(
+      extractAssistantThinkingDeltaPreview({
+        type: "message_update",
+        assistantMessageEvent: { type: "thinking_delta", delta: 42 },
+      }),
+    ).toBeUndefined();
+  });
+
+  it("returns undefined when there is no assistant event at all", () => {
+    expect(
+      extractAssistantThinkingDeltaPreview({ type: "message_update" }),
     ).toBeUndefined();
   });
 });

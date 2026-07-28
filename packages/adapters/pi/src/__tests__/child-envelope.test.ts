@@ -4,6 +4,7 @@ import {
   WebCryptoHmacPort,
   WebCryptoRandomPort,
 } from "../child-crypto.js";
+import { MAX_FRAME_RECORD_BYTES } from "../child-framing.js";
 import {
   looksLikeControlEnvelope,
   MAX_CONTROL_BODY_BYTES,
@@ -12,11 +13,31 @@ import {
   type UnsignedEnvelopeInput,
   verifyEnvelope,
 } from "../child-envelope.js";
+import { canonicalizeToBytes } from "../strict-json.js";
 
 const randomPort = new WebCryptoRandomPort();
 const hmacPort = new WebCryptoHmacPort();
 const secretA = new Uint8Array(32).fill(7);
 const secretB = new Uint8Array(32).fill(9);
+const textEncoder = new TextEncoder();
+
+function bodyWithCanonicalByteLength(byteLength: number): { blob: string } {
+  const emptyBodyBytes = canonicalizeToBytes({ blob: "" })._unsafeUnwrap();
+  return {
+    blob: "x".repeat(byteLength - emptyBodyBytes.byteLength),
+  };
+}
+
+function candidateFrameByteLength(body: { blob: string }): number {
+  return textEncoder.encode(
+    `${JSON.stringify({
+      type: "weave_control",
+      schemaVersion: 1,
+      ...baseInput({ body }),
+      mac: "0".repeat(64),
+    })}\n`,
+  ).byteLength;
+}
 
 function baseInput(
   overrides: Partial<UnsignedEnvelopeInput> = {},
@@ -70,15 +91,44 @@ describe("signEnvelope / verifyEnvelope", () => {
     expect(verified._unsafeUnwrapErr().type).toBe("MacMismatch");
   });
 
-  it("rejects a body exceeding the 64 KiB control-envelope cap", async () => {
-    const oversized = { blob: "x".repeat(MAX_CONTROL_BODY_BYTES + 10) };
+  it("accepts exactly 64 KiB without conflating it with the 8 MiB native-record cap", async () => {
+    const exactBody = bodyWithCanonicalByteLength(MAX_CONTROL_BODY_BYTES);
+    expect(
+      canonicalizeToBytes(exactBody)._unsafeUnwrap().byteLength,
+    ).toBe(MAX_CONTROL_BODY_BYTES);
+    expect(candidateFrameByteLength(exactBody)).toBeLessThan(
+      MAX_FRAME_RECORD_BYTES,
+    );
+
+    const signed = await signEnvelope(
+      baseInput({ body: exactBody }),
+      secretA,
+      hmacPort,
+    );
+    expect(signed.isOk()).toBe(true);
+  });
+
+  it("rejects an over-cap body with a payload-safe error below the 8 MiB native-record cap", async () => {
+    const oversized = bodyWithCanonicalByteLength(MAX_CONTROL_BODY_BYTES + 1);
+    expect(
+      canonicalizeToBytes(oversized)._unsafeUnwrap().byteLength,
+    ).toBe(MAX_CONTROL_BODY_BYTES + 1);
+    expect(candidateFrameByteLength(oversized)).toBeLessThan(
+      MAX_FRAME_RECORD_BYTES,
+    );
+
     const signed = await signEnvelope(
       baseInput({ body: oversized }),
       secretA,
       hmacPort,
     );
     expect(signed.isErr()).toBe(true);
-    expect(signed._unsafeUnwrapErr().type).toBe("BodyTooLarge");
+    const error = signed._unsafeUnwrapErr();
+    expect(error).toEqual({
+      type: "BodyTooLarge",
+      byteLength: MAX_CONTROL_BODY_BYTES + 1,
+    });
+    expect(JSON.stringify(error)).not.toContain("x");
   });
 
   it("rejects a malformed shape (bad nonce format) before ever computing a MAC", async () => {

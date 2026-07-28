@@ -1,4 +1,5 @@
 import type { MaterializationPlan } from "@weaveio/weave-engine";
+import type { WeaveConfig } from "@weaveio/weave-core";
 import { okAsync } from "neverthrow";
 import { ADAPTER_PACKAGE_IDENTITY } from "../../commands.js";
 import type {
@@ -20,45 +21,11 @@ import type {
   PiSessionContext,
   PiSkillInfo,
   PiSourceInfo,
-  PiToolCallEvent,
-  PiToolCallEventResult,
-  PiToolInfo,
   PiToolRegistration,
   PiUiDialogOptions,
   PiUiNotifyLevel,
   PiUiPort,
 } from "../../types.js";
-
-/**
- * Builds a `PiSourceInfo` matching Pi's own documented shape for a genuine
- * built-in tool (`docs/extensions.md`: `getAllTools()` reports built-ins
- * with `sourceInfo: { path: "<builtin:NAME>", source: "builtin", scope:
- * "temporary", origin: "top-level" }`). No extension can set `source:
- * "builtin"` through the public `registerTool()` API - only Pi's own
- * runtime assigns it - so this is the fake's canonical "real built-in"
- * fixture.
- */
-export function piBuiltinSourceInfo(toolName: string): PiSourceInfo {
-  return {
-    path: `<builtin:${toolName}>`,
-    source: "builtin",
-    scope: "temporary",
-    origin: "top-level",
-  };
-}
-
-/** Builds a `PiSourceInfo` for a rival (non-Weave) extension's registration. */
-export function foreignToolSourceInfo(
-  overrides: Partial<PiSourceInfo> = {},
-): PiSourceInfo {
-  return {
-    path: "/fake/node_modules/some-other-extension/dist/index.js",
-    source: "npm:some-other-extension",
-    scope: "user",
-    origin: "package",
-    ...overrides,
-  };
-}
 
 export interface RecordedCommandRegistration {
   readonly name: string;
@@ -113,15 +80,14 @@ export interface FakePiHostOptions {
   readonly currentModel?: PiModelInfo;
   readonly availableModels?: readonly PiModelInfo[];
   readonly hasUI?: boolean;
-  /** Set `false` to simulate an older host that does not implement `getActiveTools()` (Spec 33 §11.2 Task 9). Defaults to `true`. */
-  readonly supportsGetActiveTools?: boolean;
+  readonly idle?: boolean;
 }
 
 /**
  * Records every call an extension makes against a narrow, adapter-owned
  * port surface (Pi adapter contract,). Supports fresh contexts per
  * generation, mode/trust simulation, foreign-command collision injection,
- * and host failure injection (a poisoned `getCommands`/`getAllTools`).
+ * and host failure injection.
  *
  * This is not a reimplementation of the real Pi `ExtensionAPI` - it is a
  * test double for this adapter's own `PiExtensionApi`/`PiSessionContext`
@@ -142,55 +108,58 @@ export class RecordingFakePiHost {
    * whether an invocation actually took effect.
    */
   readonly setModelCalls: PiModelInfo[] = [];
+  readonly setThinkingLevelCalls: string[] = [];
+  readonly activationCalls: (
+    | { readonly kind: "model"; readonly model: PiModelInfo }
+    | { readonly kind: "thinking"; readonly level: string }
+  )[] = [];
   readonly registerToolCalls: PiToolRegistration[] = [];
   readonly selectCalls: RecordedSelectCall[] = [];
+  /** Select calls made by the settings activation boundary. */
+  readonly settingsPopupCalls: RecordedSelectCall[] = [];
   readonly confirmCalls: RecordedConfirmCall[] = [];
-  /** Every list `setActiveTools()` was invoked with, in call order, regardless of outcome. */
-  readonly setActiveToolsCalls: (readonly string[])[] = [];
+  readonly sentUserMessages: {
+    readonly content: string;
+    readonly options?: { readonly deliverAs?: "steer" | "followUp" };
+  }[] = [];
 
   private mode: PiMode;
   private trusted: boolean;
   private hasUI: boolean;
+  private idle: boolean;
   private readonly cwd: string;
   private readonly installPath: string;
   private commandsInventory: PiCommandInfo[] = [];
-  private toolsInventory: PiToolInfo[] = [];
   private selectResponses: (string | undefined)[] = [];
-  private confirmResponses: boolean[] = [];
+  private confirmResponses: (boolean | Promise<boolean>)[] = [];
   private currentModel: PiModelInfo | undefined;
   private availableModels: readonly PiModelInfo[];
+  private currentSkills: readonly PiSkillInfo[] = [];
   private readonly handlers = new Map<string, PiEventHandler[]>();
   private getCommandsOverride: (() => readonly PiCommandInfo[]) | undefined;
-  private getAllToolsOverride: (() => readonly PiToolInfo[]) | undefined;
   private setModelOverride:
     | ((model: PiModelInfo) => boolean | Promise<boolean>)
     | undefined;
+  private setThinkingLevelOverride:
+    | ((level: string) => void | undefined | Promise<void | undefined>)
+    | undefined;
+  private thinkingLevel = "off";
   private registerToolOverride:
     | ((tool: PiToolRegistration) => void)
     | undefined;
   private getAvailableModelsOverride:
     | (() => readonly PiModelInfo[])
     | undefined;
-  private activeTools: readonly string[] = [];
-  private setActiveToolsOverride:
-    | ((names: readonly string[]) => void)
-    | undefined;
-  private getActiveToolsOverride: (() => readonly string[]) | undefined;
-  private readonly hasGetActiveTools: boolean;
 
   constructor(options: FakePiHostOptions = {}) {
     this.mode = options.mode ?? "tui";
     this.trusted = options.trusted ?? true;
     this.hasUI = options.hasUI ?? true;
+    this.idle = options.idle ?? true;
     this.cwd = options.cwd ?? "/fake/project";
     this.installPath = options.installPath ?? "/fake/node_modules";
     this.currentModel = options.currentModel;
     this.availableModels = options.availableModels ?? [];
-    this.hasGetActiveTools = options.supportsGetActiveTools ?? true;
-    // Built in the constructor body, not as a field initializer: the
-    // `getActiveTools` branch below reads `this.hasGetActiveTools`, which is
-    // only assigned once the constructor body runs - a field initializer
-    // would observe it as still-unset (Spec 33 §11.2 Task 9 fake-host fix).
     this.api = this.buildApi();
   }
 
@@ -216,56 +185,38 @@ export class RecordingFakePiHost {
           return this.getCommandsOverride();
         return [...this.commandsInventory];
       },
-      getAllTools: () => {
-        if (this.getAllToolsOverride !== undefined)
-          return this.getAllToolsOverride();
-        return [...this.toolsInventory];
-      },
       on: (event, handler) => {
         this.onCalls.push({ event, handler });
         const existing = this.handlers.get(event) ?? [];
         existing.push(handler);
         this.handlers.set(event, existing);
       },
+      sendUserMessage: (content, options) => {
+        this.sentUserMessages.push({
+          content,
+          ...(options === undefined ? {} : { options }),
+        });
+      },
       setModel: (model) => {
         this.setModelCalls.push(model);
+        this.activationCalls.push({ kind: "model", model });
         if (this.setModelOverride !== undefined) {
           return this.setModelOverride(model);
         }
         this.currentModel = model;
         return true;
       },
+      getThinkingLevel: () => this.thinkingLevel,
+      setThinkingLevel: (level) => {
+        this.setThinkingLevelCalls.push(level);
+        this.activationCalls.push({ kind: "thinking", level });
+        this.thinkingLevel = level;
+        return this.setThinkingLevelOverride?.(level);
+      },
       registerTool: (tool) => {
         this.registerToolCalls.push(tool);
-        if (this.registerToolOverride !== undefined) {
-          this.registerToolOverride(tool);
-          return;
-        }
-        this.toolsInventory = this.toolsInventory.filter(
-          (existing) => existing.name !== tool.name,
-        );
-        this.toolsInventory.push({
-          name: tool.name,
-          description: tool.description,
-          sourceInfo: this.ownSourceInfo(),
-        });
+        this.registerToolOverride?.(tool);
       },
-      setActiveTools: (names) => {
-        this.setActiveToolsCalls.push(names);
-        if (this.setActiveToolsOverride !== undefined) {
-          this.setActiveToolsOverride(names);
-          return;
-        }
-        this.activeTools = [...names];
-      },
-      getActiveTools: this.hasGetActiveTools
-        ? () => {
-            if (this.getActiveToolsOverride !== undefined) {
-              return this.getActiveToolsOverride();
-            }
-            return [...this.activeTools];
-          }
-        : undefined,
     };
   }
 
@@ -319,45 +270,6 @@ export class RecordingFakePiHost {
     };
   }
 
-  injectTool(tool: PiToolInfo): void {
-    this.toolsInventory.push(tool);
-  }
-
-  /**
-   * Simulates a (possibly foreign) extension calling `registerTool()` for a
-   * name that already exists - Pi replaces the existing entry rather than
-   * duplicating it, so a later call always wins as the single source of
-   * truth for that name (`docs/extensions.md`: "Extensions can override
-   * built-in tools ... by registering a tool with the same name").
-   */
-  displaceTool(name: string, sourceInfo: PiSourceInfo): void {
-    this.toolsInventory = this.toolsInventory.filter((t) => t.name !== name);
-    this.toolsInventory.push({ name, sourceInfo });
-  }
-
-  /** The tool names the host currently reports as active (post-`setActiveTools()`), for test observability. */
-  getAppliedActiveTools(): readonly string[] {
-    return [...this.activeTools];
-  }
-
-  /** Makes the next `setActiveTools()` call throw, simulating a host that rejects the request. */
-  poisonSetActiveTools(): void {
-    this.setActiveToolsOverride = () => {
-      throw new Error("simulated host failure: setActiveTools");
-    };
-  }
-
-  /**
-   * Simulates a host that silently drops some requested tool names instead
-   * of applying the exact requested set - `getActiveTools()` afterward
-   * reports `resultingNames` rather than what was actually passed in.
-   */
-  simulateActiveToolsMismatch(resultingNames: readonly string[]): void {
-    this.setActiveToolsOverride = () => {
-      this.activeTools = [...resultingNames];
-    };
-  }
-
   /** Makes the next `registerTool()` call throw, simulating a broken host. */
   poisonRegisterTool(): void {
     this.registerToolOverride = () => {
@@ -369,14 +281,33 @@ export class RecordingFakePiHost {
     this.hasUI = hasUI;
   }
 
+  setIdle(idle: boolean): void {
+    this.idle = idle;
+  }
+
   /** Queues the next `ctx.ui.select()` response. `undefined` simulates a cancel (Esc). */
   scriptSelect(response: string | undefined): void {
     this.selectResponses.push(response);
   }
 
+  /** Queues the explicit choice used by an invalid-settings activation popup. */
+  scriptSettingsChoice(response: "Use defaults" | "Enter health-only mode"): void {
+    this.scriptSelect(response);
+  }
+
   /** Queues the next `ctx.ui.confirm()` response. */
   scriptConfirm(response: boolean): void {
     this.confirmResponses.push(response);
+  }
+
+  /** Defers the next confirmation so tests can change session state while the dialog is open. */
+  deferNextConfirm(): { settle: (response: boolean) => void } {
+    let resolveFn!: (value: boolean) => void;
+    const promise = new Promise<boolean>((resolve) => {
+      resolveFn = resolve;
+    });
+    this.confirmResponses.push(promise);
+    return { settle: (response) => resolveFn(response) };
   }
 
   setModels(models: readonly PiModelInfo[]): void {
@@ -385,6 +316,21 @@ export class RecordingFakePiHost {
 
   setCurrentModel(model: PiModelInfo | undefined): void {
     this.currentModel = model;
+  }
+
+  /** Simulates a native Pi model selection and its documented event. */
+  async triggerModelSelect(
+    model: PiModelInfo,
+    source: "set" | "cycle" | "restore" = "set",
+  ): Promise<PiSessionContext> {
+    const previousModel = this.currentModel;
+    this.currentModel = model;
+    const ctx = this.createSessionContext();
+    const handlers = this.handlers.get("model_select") ?? [];
+    for (const handler of handlers) {
+      await handler({ model, previousModel, source }, ctx);
+    }
+    return ctx;
   }
 
   /** The model currently applied on the host, for test observability. */
@@ -408,6 +354,19 @@ export class RecordingFakePiHost {
     this.setModelOverride = () => {
       throw new Error("simulated host failure: setModel");
     };
+  }
+
+  /** Makes `pi.setThinkingLevel()` throw synchronously. */
+  poisonSetThinkingLevel(): void {
+    this.setThinkingLevelOverride = () => {
+      throw new Error("simulated host failure: setThinkingLevel");
+    };
+  }
+
+  /** Makes `pi.setThinkingLevel()` return a rejecting promise. */
+  rejectSetThinkingLevel(): void {
+    this.setThinkingLevelOverride = () =>
+      Promise.reject(new Error("simulated host rejection: setThinkingLevel"));
   }
 
   /**
@@ -438,8 +397,8 @@ export class RecordingFakePiHost {
   /**
    * Defers the next `select()` response indefinitely until `settle()` is
    * called - lets a test drive another event (e.g. a fresh `session_start`
-   * producing a new controller generation) while an approval prompt is
-   * still in flight, then resolve it.
+   * producing a new controller generation) while a selection is still in
+   * flight, then resolve it.
    */
   deferNextSelect(): { settle: (response: string | undefined) => void } {
     let resolveFn!: (value: string | undefined) => void;
@@ -467,12 +426,6 @@ export class RecordingFakePiHost {
       [{ name: 42 }] as unknown as readonly PiCommandInfo[];
   }
 
-  poisonGetAllTools(): void {
-    this.getAllToolsOverride = () => {
-      throw new Error("simulated host failure: getAllTools");
-    };
-  }
-
   /** Builds a brand-new session context object, never shared across generations. */
   createSessionContext(): PiSessionContext {
     const mode = this.mode;
@@ -498,22 +451,28 @@ export class RecordingFakePiHost {
         this.widgetCalls.push({ key, value });
       },
       select: async (title, options, opts) => {
-        this.selectCalls.push({ title, options, opts });
+        const call = { title, options, opts };
+        this.selectCalls.push(call);
+        if (title.startsWith("Invalid Pi child-inspection settings.")) {
+          this.settingsPopupCalls.push(call);
+        }
         return this.selectResponses.shift();
       },
       confirm: async (title, message, opts) => {
         this.confirmCalls.push({ title, message, opts });
-        return this.confirmResponses.shift() ?? false;
+        return await (this.confirmResponses.shift() ?? false);
       },
     };
     return {
       mode,
       cwd,
       isProjectTrusted: () => trusted,
+      isIdle: () => this.idle,
       ui,
       hasUI: this.hasUI,
       model,
       modelRegistry,
+      getSystemPromptOptions: () => ({ skills: this.currentSkills }),
     };
   }
 
@@ -546,6 +505,7 @@ export class RecordingFakePiHost {
     event: Record<string, unknown> = {},
     skills: readonly PiSkillInfo[] = [],
   ): Promise<{ systemPrompt: string | undefined; results: unknown[] }> {
+    this.currentSkills = skills;
     const ctx = this.createSessionContext();
     const handlers = this.handlers.get("before_agent_start") ?? [];
     let systemPrompt = event.systemPrompt as string | undefined;
@@ -589,27 +549,6 @@ export class RecordingFakePiHost {
     await call.registration.handler(ctx);
     return ctx;
   }
-
-  /**
-   * Fires every registered `tool_call` handler in registration order,
-   * mirroring Pi's real behavior: later handlers see any mutation an
-   * earlier handler made to `event.input`, and a `{block: true}` result
-   * stops further handlers from running (Spec 33 §12.1). Returns the
-   * blocking result, or `undefined` if every handler allowed the call.
-   */
-  async triggerToolCall(
-    event: PiToolCallEvent,
-  ): Promise<PiToolCallEventResult | undefined> {
-    const ctx = this.createSessionContext();
-    const handlers = this.handlers.get("tool_call") ?? [];
-    for (const handler of handlers) {
-      const result = (await handler(event, ctx)) as
-        | PiToolCallEventResult
-        | undefined;
-      if (result?.block === true) return result;
-    }
-    return undefined;
-  }
 }
 
 export class FakeIdGenerator implements IdGenerator {
@@ -641,10 +580,13 @@ export class FakeClock implements Clock {
  */
 export function fakeConfigActivator(
   plan: MaterializationPlan = { agents: [], errors: [] },
+  config: WeaveConfig = {
+    agents: {},
+    disabled: { agents: [], skills: [] },
+  } as unknown as WeaveConfig,
 ): PiConfigActivator {
   const configLoader: PiConfigLoaderPort = {
-    load: () =>
-      okAsync({ agents: {}, disabled: { agents: [], skills: [] } } as never),
+    load: () => okAsync(config),
   };
   const materializer: PiMaterializerPort = {
     materialize: () => okAsync(plan),

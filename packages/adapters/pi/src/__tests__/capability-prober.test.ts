@@ -6,6 +6,7 @@ import {
   PROJECT_PATH_DEPENDENT_CAPABILITIES,
   sanitizeCapabilityProbeResults,
 } from "../capability-prober.js";
+import { PI_ADAPTER_CAPABILITY_CONTRACT } from "../capability-declarations.js";
 import { ADAPTER_PACKAGE_IDENTITY, WEAVE_COMMAND_NAMES } from "../commands.js";
 import type { PiCommandInfo } from "../types.js";
 
@@ -46,12 +47,37 @@ function foreignCommand(
   };
 }
 
+function localCommand(name: string): PiCommandInfo {
+  return {
+    name,
+    source: "extension",
+    sourceInfo: {
+      path: "/Users/example/projects/weave/packages/adapters/pi/dist/extension.js",
+      source: "extension",
+      scope: "user",
+      origin: "top-level",
+    },
+  };
+}
+
 const ALL_OWNED_COMMANDS = WEAVE_COMMAND_NAMES.map(ownedCommand);
 
+describe("PI_ADAPTER_CAPABILITY_CONTRACT", () => {
+  it("declares model-thinking activation as emulated through Pi's thinking-level API", () => {
+    const capability = PI_ADAPTER_CAPABILITY_CONTRACT.capabilities.find(
+      (entry) => entry.id === "model-thinking-activation",
+    );
+    expect(capability?.readiness).toBe("emulated");
+    expect(capability?.description).toBe(
+      "Translating a descriptor's per-model thinking-level intent into pi.setThinkingLevel()",
+    );
+  });
+});
+
 describe("buildBlockedProbeSet", () => {
-  it("returns exactly one unavailable probe for all 19 capability IDs", () => {
+  it("returns exactly one unavailable probe for all 20 capability IDs", () => {
     const probes = buildBlockedProbeSet("interactive-tui-required");
-    expect(probes).toHaveLength(19);
+    expect(probes).toHaveLength(20);
     expect(probes).toHaveLength(ALL_CAPABILITY_IDS.length);
     for (const probe of probes) {
       expect(probe.probeStatus).toBe("unavailable");
@@ -71,10 +97,25 @@ describe("DefaultPiCapabilityProber", () => {
       trust: "trusted",
       commands: ALL_OWNED_COMMANDS,
     });
-    expect(probes).toHaveLength(19);
+    expect(probes).toHaveLength(20);
     const ids = probes.map((probe) => probe.capabilityId);
-    expect(new Set(ids).size).toBe(19);
+    expect(new Set(ids).size).toBe(20);
     expect([...ids].sort()).toEqual([...ALL_CAPABILITY_IDS].sort());
+  });
+
+  it("reports Pi native tool control without permission interception", () => {
+    const probes = prober.probe({
+      mode: "tui",
+      trust: "trusted",
+      commands: ALL_OWNED_COMMANDS,
+    });
+    expect(
+      probes.find((probe) => probe.capabilityId === "tool-policy-mapping"),
+    ).toEqual({
+      capabilityId: "tool-policy-mapping",
+      probeStatus: "ok",
+      details: "pi-native-tool-control",
+    });
   });
 
   it("reports command-entrypoints ok when all nine commands are exclusively owned", () => {
@@ -178,6 +219,24 @@ describe("DefaultPiCapabilityProber", () => {
     expect(entry?.probeStatus).toBe("unavailable");
   });
 
+  it("allows top-level commands only when local provenance enforcement is explicitly disabled", () => {
+    const localProber = new DefaultPiCapabilityProber({
+      enforceCommandProvenance: false,
+    });
+    const probes = localProber.probe({
+      mode: "tui",
+      trust: "trusted",
+      commands: WEAVE_COMMAND_NAMES.map(localCommand),
+    });
+    expect(
+      probes.find((probe) => probe.capabilityId === "command-entrypoints"),
+    ).toEqual({
+      capabilityId: "command-entrypoints",
+      probeStatus: "ok",
+      details: "all-nine-commands-present-local-provenance-disabled",
+    });
+  });
+
   it("reports token-usage-reporting ok regardless of trust", () => {
     const probes = prober.probe({
       mode: "tui",
@@ -241,7 +300,6 @@ describe("DefaultPiCapabilityProber", () => {
         primaryModelDryResolved: true,
         delegationToolPlanned: true,
         eventLoggingPlanned: true,
-        toolPolicyCoverage: "ok",
         runtimeDirectoryContained: true,
         plansDirectoryContained: true,
       },
@@ -268,7 +326,6 @@ describe("DefaultPiCapabilityProber", () => {
         materializationErrorCount: 0,
         primaryDescriptorFound: true,
         primaryModelDryResolved: true,
-        toolPolicyCoverage: "ok",
         runtimeDirectoryContained: true,
         plansDirectoryContained: true,
       },
@@ -294,7 +351,6 @@ describe("DefaultPiCapabilityProber", () => {
         materializationErrorCount: 0,
         primaryDescriptorFound: false,
         primaryModelDryResolved: false,
-        toolPolicyCoverage: { reason: "config-not-loaded" },
       },
     });
     for (const id of [
@@ -322,7 +378,7 @@ describe("sanitizeCapabilityProbeResults", () => {
 
   it("passes a fully well-formed probe set through unchanged, one row per ID", () => {
     const sanitized = sanitizeCapabilityProbeResults(fullValidSet());
-    expect(sanitized).toHaveLength(19);
+    expect(sanitized).toHaveLength(20);
     expect([...sanitized.map((probe) => probe.capabilityId)].sort()).toEqual(
       [...ALL_CAPABILITY_IDS].sort(),
     );
@@ -336,7 +392,7 @@ describe("sanitizeCapabilityProbeResults", () => {
       (probe) => probe.capabilityId !== "workflow-persistence",
     );
     const sanitized = sanitizeCapabilityProbeResults(raw);
-    expect(sanitized).toHaveLength(19);
+    expect(sanitized).toHaveLength(20);
     const entry = sanitized.find(
       (probe) => probe.capabilityId === "workflow-persistence",
     );
@@ -346,7 +402,7 @@ describe("sanitizeCapabilityProbeResults", () => {
   it("normalizes a duplicated capability ID (same status) to a single unavailable row", () => {
     const raw = [...fullValidSet(), okProbe("workflow-persistence")];
     const sanitized = sanitizeCapabilityProbeResults(raw);
-    expect(sanitized).toHaveLength(19);
+    expect(sanitized).toHaveLength(20);
     const entries = sanitized.filter(
       (probe) => probe.capabilityId === "workflow-persistence",
     );
@@ -362,7 +418,7 @@ describe("sanitizeCapabilityProbeResults", () => {
     );
     raw.push(okProbe("tool-policy-mapping"));
     const sanitized = sanitizeCapabilityProbeResults(raw);
-    expect(sanitized).toHaveLength(19);
+    expect(sanitized).toHaveLength(20);
     const entries = sanitized.filter(
       (probe) => probe.capabilityId === "tool-policy-mapping",
     );
@@ -377,7 +433,7 @@ describe("sanitizeCapabilityProbeResults", () => {
         : probe,
     );
     const sanitized = sanitizeCapabilityProbeResults(raw);
-    expect(sanitized).toHaveLength(19);
+    expect(sanitized).toHaveLength(20);
     const entry = sanitized.find(
       (probe) => probe.capabilityId === "event-logging",
     );
@@ -390,7 +446,7 @@ describe("sanitizeCapabilityProbeResults", () => {
       { capabilityId: "not-a-real-capability", probeStatus: "ok" },
     ];
     const sanitized = sanitizeCapabilityProbeResults(raw);
-    expect(sanitized).toHaveLength(19);
+    expect(sanitized).toHaveLength(20);
     expect(
       sanitized.some(
         (probe) => (probe.capabilityId as string) === "not-a-real-capability",
@@ -405,7 +461,7 @@ describe("sanitizeCapabilityProbeResults", () => {
         : probe,
     );
     const sanitized = sanitizeCapabilityProbeResults(raw);
-    expect(sanitized).toHaveLength(19);
+    expect(sanitized).toHaveLength(20);
     const entry = sanitized.find(
       (probe) => probe.capabilityId === "agent-materialization",
     );
@@ -419,14 +475,14 @@ describe("sanitizeCapabilityProbeResults", () => {
         : probe,
     );
     const sanitized = sanitizeCapabilityProbeResults(raw);
-    expect(sanitized).toHaveLength(19);
+    expect(sanitized).toHaveLength(20);
     const entry = sanitized.find(
       (probe) => probe.capabilityId === "primary-agent-selection",
     );
     expect(entry?.probeStatus).toBe("unavailable");
   });
 
-  it("handles every anomaly kind at once and still returns exactly 19 fail-closed rows", () => {
+  it("handles every anomaly kind at once and still returns exactly 20 fail-closed rows", () => {
     const raw: Record<string, unknown>[] = [
       // missing: config-materialization omitted entirely
       okProbe("agent-materialization"),
@@ -452,6 +508,7 @@ describe("sanitizeCapabilityProbeResults", () => {
       okProbe("static-artifact-generation"),
       okProbe("eval-integration"),
       okProbe("multiple-active-workflows"),
+      okProbe("model-thinking-activation"),
       // unknown ID, must be dropped without adding a row
       { capabilityId: "not-a-real-capability", probeStatus: "ok" },
       // unsafe detail on an otherwise well-formed, unique, valid-status probe
@@ -461,7 +518,7 @@ describe("sanitizeCapabilityProbeResults", () => {
       },
     ];
     const sanitized = sanitizeCapabilityProbeResults(raw);
-    expect(sanitized).toHaveLength(19);
+    expect(sanitized).toHaveLength(20);
     expect([...sanitized.map((probe) => probe.capabilityId)].sort()).toEqual(
       [...ALL_CAPABILITY_IDS].sort(),
     );

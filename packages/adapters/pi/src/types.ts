@@ -56,13 +56,6 @@ export interface PiCommandInfo {
   readonly sourceInfo: PiSourceInfo;
 }
 
-/** One entry from `pi.getAllTools()`. */
-export interface PiToolInfo {
-  readonly name: string;
-  readonly description?: string;
-  readonly sourceInfo: PiSourceInfo;
-}
-
 /**
  * One entry from Pi's authenticated model catalog
  * (`ctx.modelRegistry.getAvailable()`) or the currently active model
@@ -114,18 +107,18 @@ export interface PiUiThemePort {
       | "warning"
       | "error"
       | "success"
-      | "dim",
+      | "dim"
+      | "toolTitle"
+      | "toolOutput",
     text: string,
   ): string;
   bold(text: string): string;
 }
 
 /**
- * Narrow projection of `ctx.ui`. Diagnostics/status/notify surfaces plus the
- * two interactive dialog primitives the registered-tool approval bridge
- * needs (`select`/`confirm`, Spec 33 §12.4), plus the widget/status and
- * compositional custom-editor surfaces Task 9 needs to expose the bounded
- * child tree and wire Alt+1..9/Backspace/Esc (Spec 33 §11.5).
+ * Narrow projection of `ctx.ui`. Diagnostics/status/notify and dialog
+ * surfaces plus the widget/status and compositional custom-editor APIs used
+ * to expose the bounded child tree and wire Alt+1..9/Backspace/Esc.
  */
 /**
  * Narrow mirror of Pi's own `ExtensionUIDialogOptions`
@@ -183,6 +176,8 @@ export interface PiSessionContext {
   readonly mode: PiMode;
   readonly cwd: string;
   isProjectTrusted(): boolean;
+  /** Whether Pi is idle and can accept an immediate user-message turn. */
+  isIdle(): boolean;
   readonly ui: PiUiPort;
   /** Whether dialog-capable UI is available (`ctx.hasUI`) - false in headless/print modes. */
   readonly hasUI: boolean;
@@ -190,6 +185,8 @@ export interface PiSessionContext {
   readonly model: PiModelInfo | undefined;
   /** Authenticated-model discovery (`ctx.modelRegistry`). */
   readonly modelRegistry: PiModelRegistry;
+  /** Command-context access to Pi's current skill discovery snapshot. */
+  readonly getSystemPromptOptions?: () => PiBuildSystemPromptOptions;
 }
 
 /** A registered command handler. Receives raw argument text and the live session context. */
@@ -218,6 +215,28 @@ export interface PiToolResultContent {
   readonly text: string;
 }
 
+/** Narrow structural result shape accepted by Pi for final and partial tool output. */
+export interface PiToolResult {
+  readonly content: readonly PiToolResultContent[];
+  readonly details?: unknown;
+}
+
+/** Narrow structural component returned by Pi custom tool renderers. */
+export interface PiToolRenderComponent {
+  render(width: number): string[];
+  invalidate(): void;
+}
+
+export interface PiToolRenderOptions {
+  readonly expanded: boolean;
+  readonly isPartial: boolean;
+}
+
+export interface PiToolRenderContext {
+  readonly args?: Record<string, unknown>;
+  readonly lastComponent?: PiToolRenderComponent;
+}
+
 /**
  * Registration input for `pi.registerTool()` (Pi adapter contract). `parameters`
  * is deliberately `unknown` - the concrete TypeBox schema shape is owned by
@@ -230,33 +249,24 @@ export interface PiToolRegistration {
   readonly parameters: unknown;
   readonly promptSnippet?: string;
   readonly promptGuidelines?: readonly string[];
+  readonly renderCall?: (
+    args: Record<string, unknown>,
+    theme: PiUiThemePort,
+    context: PiToolRenderContext,
+  ) => PiToolRenderComponent;
+  readonly renderResult?: (
+    result: PiToolResult,
+    options: PiToolRenderOptions,
+    theme: PiUiThemePort,
+    context: PiToolRenderContext,
+  ) => PiToolRenderComponent;
   execute(
     toolCallId: string,
     params: Record<string, unknown>,
     signal: AbortSignal | undefined,
-    onUpdate: ((update: unknown) => void) | undefined,
+    onUpdate: ((update: PiToolResult) => void) | undefined,
     ctx: PiSessionContext,
-  ): Promise<{ content: readonly PiToolResultContent[] }>;
-}
-
-/**
- * Fired before a native or registered tool executes (`pi.on("tool_call", ...)`).
- * `input` is mutable - a handler may patch it in place before execution.
- * Real Pi narrows this per built-in tool name; this port only needs the
- * generic shape since every governed-tool resolver treats `input` as opaque
- * `Record<string, unknown>` call data (Spec 33 §12.3).
- */
-export interface PiToolCallEvent {
-  readonly type: "tool_call";
-  readonly toolCallId: string;
-  readonly toolName: string;
-  input: Record<string, unknown>;
-}
-
-/** Result of a `tool_call` handler: `undefined`/no block = allow. */
-export interface PiToolCallEventResult {
-  readonly block?: boolean;
-  readonly reason?: string;
+  ): Promise<PiToolResult>;
 }
 
 /**
@@ -266,16 +276,13 @@ export interface PiToolCallEventResult {
 export interface PiExtensionApi {
   registerCommand(name: string, registration: PiCommandRegistration): void;
   getCommands(): readonly PiCommandInfo[];
-  getAllTools(): readonly PiToolInfo[];
   on(event: string, handler: PiEventHandler): void;
-  /**
-   * Registers a tool the LLM can call (`ExtensionAPI.registerTool`). Fire and
-   * forget, no receipt - the real Pi host silently overrides any existing
-   * tool of the same name. Spec 33 §7.1 requires callers to prove the name
-   * is free via `getAllTools()` *before* calling this, and to re-read
-   * `getAllTools()` afterward to verify this package's `sourceInfo` actually
-   * owns the new entry before treating it as governed.
-   */
+  /** Sends a real user message into the current parent session and starts a turn. */
+  sendUserMessage(
+    content: string,
+    options?: { readonly deliverAs?: "steer" | "followUp" },
+  ): void;
+  /** Registers a tool the LLM can call (`ExtensionAPI.registerTool`). */
   registerTool(tool: PiToolRegistration): void;
   /**
    * Applies a model selection (`ExtensionAPI.setModel`). May reject/throw for
@@ -286,9 +293,13 @@ export interface PiExtensionApi {
   setModel(
     model: PiModelInfo,
   ): boolean | undefined | Promise<boolean | undefined>;
+  /** Reads Pi's current-session thinking level (`ExtensionAPI.getThinkingLevel`). */
+  getThinkingLevel?: () => string;
+  /** Applies Pi's current-session thinking level (`ExtensionAPI.setThinkingLevel`). */
+  setThinkingLevel?: (level: string) => void | undefined | Promise<void | undefined>;
   /**
    * Registers a keyboard shortcut (`ExtensionAPI.registerShortcut`, Pi adapter contract
-   * §11.5). Alt+A cycles primary agents. Alt+1..Alt+9 direct-child selection
+   *). Alt+A cycles primary agents. Alt+1..Alt+9 direct-child selection
    * uses keys that are not default editor bindings. Backspace
    * (parent selection) and Esc (cancel selected subtree) are wired
    * separately, and NOT through this shortcut port: `src/extension.ts`'s
@@ -305,21 +316,6 @@ export interface PiExtensionApi {
       handler: (ctx: PiSessionContext) => void | Promise<void>;
     },
   ): void;
-  /**
-   * Enables/disables active tools, including dynamically registered ones
-   * (`ExtensionAPI.setActiveTools`, Spec 33 §11.2 Task 9). Names not
-   * already registered are documented as silently ignored by the real
-   * host, so callers MUST re-read `getActiveTools` (when supported)
-   * to verify the resulting set rather than trusting this call's return.
-   */
-  setActiveTools(names: readonly string[]): void | Promise<void>;
-  /**
-   * Reads the currently active tool names (`ExtensionAPI.getActiveTools`).
-   * Optional because this narrow port must stay usable against older/fake
-   * hosts that predate it; callers that need atomicity proof degrade to
-   * trusting their own `setActiveTools` request only when this is absent.
-   */
-  getActiveTools?(): readonly string[];
 }
 
 /** Injected environment-variable port for reading the child's private bootstrap values (Pi adapter contract). Production reads/deletes Bun's own `Bun.env` (see `child-env.ts`'s `BunEnvPort`) - never Node's `process.env`, and never argv or prompt text. */
@@ -346,3 +342,12 @@ export interface PiAdapterLogger {
   warn(obj: Record<string, unknown>, msg?: string): void;
   error(obj: Record<string, unknown>, msg?: string): void;
 }
+
+export type {
+  PiChildInspectionEffectiveSettings,
+  PiChildInspectionSettings,
+  PiChildInspectionSettingsChoice,
+  PiChildInspectionSettingsIssue,
+  PiChildInspectionSettingsMode,
+  PiChildInspectionSettingsResolution,
+} from "./child-inspection-settings.js";

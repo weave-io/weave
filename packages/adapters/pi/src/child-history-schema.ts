@@ -92,6 +92,27 @@ const RecoveryMetadataSchema = z
   })
   .strict();
 
+const SAFE_SESSION_PATH_COMPONENT = /^[A-Za-z0-9._-]+$/;
+
+function isSafeRelativeSessionPath(value: string): boolean {
+  if (
+    value.includes("\0") ||
+    value.includes("\\") ||
+    value.startsWith("/") ||
+    /^[A-Za-z]:/.test(value)
+  ) {
+    return false;
+  }
+
+  return value.split("/").every(
+    (component) =>
+      component.length > 0 &&
+      component !== "." &&
+      component !== ".." &&
+      SAFE_SESSION_PATH_COMPONENT.test(component),
+  );
+}
+
 /** Export/index-facing metadata. It deliberately has no transcript fields. */
 export const PiChildHistoryRecordSchema = z
   .object({
@@ -106,7 +127,7 @@ export const PiChildHistoryRecordSchema = z
         .string()
         .min(1)
         .refine(
-          (value) => !value.includes("\\0") && !value.includes(".."),
+          isSafeRelativeSessionPath,
           "sessionPath must be a safe relative path",
         ),
     ),

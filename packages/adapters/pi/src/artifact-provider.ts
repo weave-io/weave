@@ -96,7 +96,7 @@ export class BunPiArtifactProvider implements PiArtifactProvider {
     // Reads bytes and computes identity from one no-follow-verified
     // descriptor chain (`SecureRelativeFileProvider.readFile`) - never a
     // lexical check followed by a separate path-based reopen (Pi adapter contract
-    // §17/§18).
+    //).
     return this.provider
       .readFile(input.projectRoot, input.relativePath)
       .mapErr((reason) =>

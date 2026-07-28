@@ -1,7 +1,11 @@
 import { describe, expect, it } from "bun:test";
-import { okAsync, type ResultAsync } from "neverthrow";
+import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 import { MAX_CWD_LENGTH } from "../child-control-bodies.js";
-import { ADAPTER_PACKAGE_IDENTITY } from "../commands.js";
+import {
+  ChunkTransferAssembler,
+  type TransferChunk,
+} from "../child-transfer.js";
+import { PI_TRANSPORT_LIMITS } from "../errors.js";
 import {
   bytesToHex,
   generateNonceHex,
@@ -15,11 +19,11 @@ import {
 } from "../child-env.js";
 import { signEnvelope } from "../child-envelope.js";
 import {
-  classifyApprovalRelayFailureCause,
-  cloneApprovalPromptRequestAsJson,
+  buildChildBootstrapBody,
   createPiExtension,
+  type PiExtensionDeps,
 } from "../extension.js";
-import type { JsonValue } from "../strict-json.js";
+import { canonicalizeToBytes, type JsonValue } from "../strict-json.js";
 import { WEAVE_COMPLETE_STEP_TOOL_NAME } from "../structured-completion.js";
 import type {
   PiCommandRegistration,
@@ -28,8 +32,6 @@ import type {
   PiExtensionApi,
   PiModelInfo,
   PiSessionContext,
-  PiSourceInfo,
-  PiToolInfo,
   PiToolRegistration,
 } from "../types.js";
 import { FakeChildProcessPort } from "./fakes/fake-child-process-port.js";
@@ -40,9 +42,8 @@ import { FakeChildProcessPort } from "./fakes/fake-child-process-port.js";
  * `PiExtensionApi` fake, with a scripted bootstrap secret delivered only
  * through the environment (never argv/prompt), proving the whole spawned
  * `pi --mode rpc --no-session` child path - handshake detection, hidden
- * control-command wiring, bootstrap application (composed prompt + tool
- * policy), governed tool-call blocking, and settlement reporting - without
- * ever starting a real Pi process.
+ * control-command wiring, bootstrap application, Weave tool registration,
+ * and settlement reporting without ever starting a real Pi process.
  */
 
 const randomPort = new WebCryptoRandomPort();
@@ -60,9 +61,29 @@ class FakeEnvPort implements PiEnvPort {
 
 class FakeOutputPort {
   readonly lines: Record<string, unknown>[] = [];
+  private nextError:
+    | { type: "ChildOutputWriteFailed"; reason: string }
+    | undefined;
+  failWritesRemaining = 0;
+  writeAttempts = 0;
+
+  failNextWrite(reason: string): void {
+    this.nextError = { type: "ChildOutputWriteFailed", reason };
+  }
+
   writeLine(
     bytes: Uint8Array,
   ): ResultAsync<void, { type: "ChildOutputWriteFailed"; reason: string }> {
+    this.writeAttempts += 1;
+    if (this.nextError !== undefined || this.failWritesRemaining > 0) {
+      const error = this.nextError ?? {
+        type: "ChildOutputWriteFailed" as const,
+        reason: "scripted-output-write-failure",
+      };
+      this.nextError = undefined;
+      this.failWritesRemaining = Math.max(0, this.failWritesRemaining - 1);
+      return errAsync(error);
+    }
     for (const line of new TextDecoder().decode(bytes).split("\n")) {
       if (line.length > 0) this.lines.push(JSON.parse(line));
     }
@@ -79,49 +100,16 @@ class MinimalFakeHost implements PiExtensionApi {
   getCommands() {
     return [];
   }
-  /** Overridable per test; defaults to just `bash` for the existing tests. */
-  toolsInventory: readonly PiToolInfo[] = [
-    {
-      name: "bash",
-      sourceInfo: {
-        path: "<builtin:bash>",
-        source: "builtin",
-        scope: "temporary",
-        origin: "top-level",
-      },
-    },
-  ];
-  getAllTools(): readonly PiToolInfo[] {
-    return this.toolsInventory;
-  }
   on(event: string, handler: PiEventHandler): void {
     const existing = this.events.get(event) ?? [];
     existing.push(handler);
     this.events.set(event, existing);
   }
-  /** Every `registerTool()` call, in order - lets a test invoke a registered tool's own `execute()` directly, simulating the host actually running it after governance allows the call. */
+  sendUserMessage(_content: string): void {}
+  /** Every `registerTool()` call, in order. */
   readonly registerToolCalls: PiToolRegistration[] = [];
   registerTool(tool: PiToolRegistration): void {
     this.registerToolCalls.push(tool);
-    this.toolsInventory = [
-      ...this.toolsInventory.filter((existing) => existing.name !== tool.name),
-      { name: tool.name, sourceInfo: this.ownSourceInfo() },
-    ];
-  }
-  private ownSourceInfo(): PiSourceInfo {
-    return {
-      path: `/fake/node_modules/${ADAPTER_PACKAGE_IDENTITY}/dist/extension.js`,
-      source: `npm:${ADAPTER_PACKAGE_IDENTITY}`,
-      scope: "user",
-      origin: "package",
-    };
-  }
-  /** Simulates a foreign extension shadowing an already-registered tool name post-registration (Spec 33 §7.2). */
-  displaceTool(name: string, sourceInfo: PiSourceInfo): void {
-    this.toolsInventory = [
-      ...this.toolsInventory.filter((t) => t.name !== name),
-      { name, sourceInfo },
-    ];
   }
   /** Looks up a registered tool's own `execute()` by name, for a test to invoke directly. */
   registeredTool(name: string): PiToolRegistration | undefined {
@@ -130,18 +118,24 @@ class MinimalFakeHost implements PiExtensionApi {
   /** Set to `false` to simulate the host declining a `setModel()` call. */
   modelAccepted = true;
   readonly setModelCalls: PiModelInfo[] = [];
+  readonly activationCalls: (
+    | { readonly kind: "model"; readonly model: PiModelInfo }
+    | { readonly kind: "thinking"; readonly level: string }
+  )[] = [];
+  thinkingLevelBehavior: "accept" | "throw" | "reject" = "accept";
   setModel(model: PiModelInfo): boolean {
     this.setModelCalls.push(model);
+    this.activationCalls.push({ kind: "model", model });
     return this.modelAccepted;
   }
-  readonly setActiveToolsCalls: (readonly string[])[] = [];
-  activeTools: readonly string[] = [];
-  setActiveTools(names: readonly string[]): void {
-    this.setActiveToolsCalls.push(names);
-    this.activeTools = [...names];
-  }
-  getActiveTools(): readonly string[] {
-    return this.activeTools;
+  setThinkingLevel(level: string): void | Promise<void> {
+    this.activationCalls.push({ kind: "thinking", level });
+    if (this.thinkingLevelBehavior === "throw") {
+      throw new Error("simulated child thinking-level host failure");
+    }
+    if (this.thinkingLevelBehavior === "reject") {
+      return Promise.reject(new Error("simulated child thinking-level rejection"));
+    }
   }
   async fire(
     event: string,
@@ -167,6 +161,7 @@ function fakeCtx(overrides: Partial<PiSessionContext> = {}): PiSessionContext {
     mode: "rpc",
     cwd: "/project",
     isProjectTrusted: () => true,
+    isIdle: () => true,
     ui: {
       notify: () => {},
       setStatus: () => {},
@@ -181,7 +176,10 @@ function fakeCtx(overrides: Partial<PiSessionContext> = {}): PiSessionContext {
   };
 }
 
-async function buildChildExtension(sessionCtx: PiSessionContext = fakeCtx()) {
+async function buildChildExtension(
+  sessionCtx: PiSessionContext = fakeCtx(),
+  overrides: Partial<PiExtensionDeps> = {},
+) {
   const secretBytes = randomPort.randomBytes(32);
   const env = new FakeEnvPort(
     new Map([
@@ -198,6 +196,7 @@ async function buildChildExtension(sessionCtx: PiSessionContext = fakeCtx()) {
     hmacPort,
     processPort: new FakeChildProcessPort(),
     childOutputPort: output,
+    ...overrides,
   });
   factory(host);
   // The hidden hidden `weave:__control__` command handler only takes
@@ -205,7 +204,11 @@ async function buildChildExtension(sessionCtx: PiSessionContext = fakeCtx()) {
   // own `ctx` (captured once, at `session_start`), not any per-invocation
   // ctx a caller might pass to the command handler. Tests that need a
   // specific `ctx.modelRegistry`/`ctx.model` must supply it here.
-  await host.fire("session_start", {}, sessionCtx);
+  await host.fire(
+    "session_start",
+    {},
+    sessionCtx,
+  );
   return { host, output, secretBytes };
 }
 
@@ -240,7 +243,6 @@ async function signedBootstrap(
         models: [],
         correlationId: "child-1",
         context: { parentAgentName: "loom", parentDepth: 0, cwd: "/project" },
-        activeTools: [],
         ...bodyOverrides,
       },
     },
@@ -275,271 +277,6 @@ describe("private child mode (Pi adapter contract, end-to-end against a fake hos
     expect(output.lines.length).toBe(0);
   });
 
-  it("applies the bootstrap descriptor's composed prompt exactly once, then blocks a governed native tool call denied by its own effective policy", async () => {
-    const { host, secretBytes } = await buildChildExtension();
-    const bootstrap = await signEnvelope(
-      {
-        childId: "child-1",
-        generationId: "gen-1",
-        direction: "parent-to-child",
-        sequence: 1,
-        nonce: generateNonceHex(randomPort),
-        correlationId: "child-1",
-        kind: "bootstrap",
-        body: {
-          mode: "ordinary",
-          agentName: "shuttle",
-          composedPrompt: "You are Shuttle, a delegated specialist.",
-          models: [],
-          effectiveToolPolicy: {
-            read: "allow",
-            write: "ask",
-            execute: "deny",
-            delegate: "deny",
-            network: "deny",
-          },
-          correlationId: "child-1",
-          context: {
-            parentAgentName: "loom",
-            parentDepth: 0,
-            cwd: "/project",
-          },
-          // `execute` is denied and `bash` (the only tool this fake host
-          // discovers) maps to `execute`, so the exact valid active-tool
-          // set for this policy is empty (Spec 33 §11.2 Task 9).
-          activeTools: [],
-        },
-      },
-      secretBytes,
-      hmacPort,
-    );
-    await deliverEnvelope(
-      host,
-      bootstrap._unsafeUnwrap() as unknown as JsonValue,
-    );
-    await flush();
-
-    const appended = await host.fire(
-      "before_agent_start",
-      { systemPrompt: "base prompt" },
-      fakeCtx(),
-    );
-    expect(appended).toEqual({
-      systemPrompt: expect.stringContaining("Shuttle"),
-    } as never);
-    expect((appended as { systemPrompt: string }).systemPrompt).toContain(
-      "You are Shuttle, a delegated specialist.",
-    );
-
-    const secondAppend = await host.fire(
-      "before_agent_start",
-      { systemPrompt: "base prompt" },
-      fakeCtx(),
-    );
-    expect(secondAppend).toBeUndefined();
-
-    const blocked = await host.fire(
-      "tool_call",
-      {
-        type: "tool_call",
-        toolCallId: "tc-1",
-        toolName: "bash",
-        input: { command: "rm -rf /" },
-      },
-      fakeCtx(),
-    );
-    expect(blocked).toEqual({
-      block: true,
-      reason: expect.any(String),
-    } as never);
-  });
-
-  it("a direct-step child's own weave_complete_step call bypasses the descriptor's execute:deny policy, while bash remains blocked, and the recorded candidate reaches settlement (issue #21 Task 12 exact-host smoke fix)", async () => {
-    const { host, output, secretBytes } = await buildChildExtension();
-    const bootstrap = await signEnvelope(
-      {
-        childId: "child-1",
-        generationId: "gen-1",
-        direction: "parent-to-child",
-        sequence: 1,
-        nonce: generateNonceHex(randomPort),
-        correlationId: "child-1",
-        kind: "bootstrap",
-        body: {
-          mode: "direct-step",
-          agentName: "shuttle",
-          composedPrompt: "You are Shuttle, executing one workflow step.",
-          models: [],
-          effectiveToolPolicy: {
-            read: "allow",
-            write: "ask",
-            execute: "deny",
-            delegate: "deny",
-            network: "deny",
-          },
-          correlationId: "child-1",
-          context: {
-            parentAgentName: "workflow-controller",
-            parentDepth: 0,
-            cwd: "/project",
-          },
-          // `execute` is denied and `bash` maps to `execute`, so the exact
-          // valid active-tool set excludes it; `weave_complete_step` is a
-          // control channel, never gated by this policy at all.
-          activeTools: [WEAVE_COMPLETE_STEP_TOOL_NAME],
-          workflowInstanceId: "wf-1",
-          leaseId: "lease-1",
-          stepName: "implement",
-          completionTool: WEAVE_COMPLETE_STEP_TOOL_NAME,
-        },
-      },
-      secretBytes,
-      hmacPort,
-    );
-    await deliverEnvelope(
-      host,
-      bootstrap._unsafeUnwrap() as unknown as JsonValue,
-    );
-    await flush();
-
-    // The tool actually reached the host, owned by this adapter.
-    const registration = host.registeredTool(WEAVE_COMPLETE_STEP_TOOL_NAME);
-    expect(registration).toBeDefined();
-
-    // The descriptor's own `execute: deny` still blocks an ordinary governed
-    // native tool call exactly as before this fix - this is not a broad
-    // unmanaged bypass.
-    const blockedBash = await host.fire(
-      "tool_call",
-      {
-        type: "tool_call",
-        toolCallId: "tc-bash",
-        toolName: "bash",
-        input: { command: "rm -rf /" },
-      },
-      fakeCtx(),
-    );
-    expect(blockedBash).toEqual({
-      block: true,
-      reason: expect.any(String),
-    } as never);
-
-    // The exact-host smoke's fixed bug: the child's own completion report
-    // must NOT be blocked by that same `execute: deny` policy.
-    const completionInput = {
-      outcome: "success",
-      method: "agent_signal",
-      message: "SMOKE_FLOW_COMPLETE",
-    };
-    const allowedCompletion = await host.fire(
-      "tool_call",
-      {
-        type: "tool_call",
-        toolCallId: "tc-complete",
-        toolName: WEAVE_COMPLETE_STEP_TOOL_NAME,
-        // Pass the EXACT SAME object reference, not a spread copy - this is
-        // the shape a real Pi host actually sends (issue #21 Task 12: the
-        // control-channel bypass returns {call:input.call} with the SAME
-        // object as toolCallEvent.input, and the prior spread copy here
-        // masked the aliasing bug).
-        input: completionInput,
-      },
-      fakeCtx(),
-    );
-    expect(allowedCompletion).toBeUndefined();
-
-    // Simulate the real host actually invoking the now-allowed tool - the
-    // `tool_call` event only decides allow/block, never invokes the tool.
-    // This also receives the exact same object reference.
-    await registration?.execute(
-      "tc-complete",
-      completionInput,
-      undefined,
-      undefined,
-      fakeCtx(),
-    );
-
-    await host.fire("agent_settled", {}, fakeCtx());
-    await flush();
-    const settled = output.lines.at(-1);
-    expect(settled?.kind).toBe("settled");
-    const body = settled?.body as { outcome: string; summary?: string };
-    expect(body.outcome).toBe("completed");
-    expect(body.summary).toContain("SMOKE_FLOW_COMPLETE");
-  });
-
-  it("still blocks a direct-step child's weave_complete_step call when its provenance is displaced by a foreign extension after registration, even while direct-step state is active", async () => {
-    const { host, secretBytes } = await buildChildExtension();
-    const bootstrap = await signEnvelope(
-      {
-        childId: "child-1",
-        generationId: "gen-1",
-        direction: "parent-to-child",
-        sequence: 1,
-        nonce: generateNonceHex(randomPort),
-        correlationId: "child-1",
-        kind: "bootstrap",
-        body: {
-          mode: "direct-step",
-          agentName: "shuttle",
-          composedPrompt: "You are Shuttle, executing one workflow step.",
-          models: [],
-          effectiveToolPolicy: {
-            read: "allow",
-            write: "ask",
-            execute: "deny",
-            delegate: "deny",
-            network: "deny",
-          },
-          correlationId: "child-1",
-          context: {
-            parentAgentName: "workflow-controller",
-            parentDepth: 0,
-            cwd: "/project",
-          },
-          activeTools: [WEAVE_COMPLETE_STEP_TOOL_NAME],
-          workflowInstanceId: "wf-1",
-          leaseId: "lease-1",
-          stepName: "implement",
-          completionTool: WEAVE_COMPLETE_STEP_TOOL_NAME,
-        },
-      },
-      secretBytes,
-      hmacPort,
-    );
-    await deliverEnvelope(
-      host,
-      bootstrap._unsafeUnwrap() as unknown as JsonValue,
-    );
-    await flush();
-    expect(host.registeredTool(WEAVE_COMPLETE_STEP_TOOL_NAME)).toBeDefined();
-
-    // A foreign extension (or a colliding second registration) shadows the
-    // exact name after activation - live provenance re-verification MUST
-    // still block this call, regardless of an active direct-step context.
-    host.displaceTool(WEAVE_COMPLETE_STEP_TOOL_NAME, {
-      path: "/fake/node_modules/some-other-extension/dist/index.js",
-      source: "npm:some-other-extension",
-      scope: "user",
-      origin: "package",
-    });
-
-    const blocked = await host.fire(
-      "tool_call",
-      {
-        type: "tool_call",
-        toolCallId: "tc-complete",
-        toolName: WEAVE_COMPLETE_STEP_TOOL_NAME,
-        input: { outcome: "success" },
-      },
-      fakeCtx(),
-    );
-    expect(blocked).toEqual({
-      block: true,
-      reason: "tool-provenance-changed",
-    } as never);
-  });
-
   it("an ordinary (non-direct-step) child never registers weave_complete_step and gains no completion authority even when it names the exact tool", async () => {
     const { host, secretBytes } = await buildChildExtension();
     const bootstrap = await signEnvelope(
@@ -556,20 +293,12 @@ describe("private child mode (Pi adapter contract, end-to-end against a fake hos
           agentName: "shuttle",
           composedPrompt: "You are Shuttle, a nested delegated specialist.",
           models: [],
-          effectiveToolPolicy: {
-            read: "allow",
-            write: "allow",
-            execute: "allow",
-            delegate: "deny",
-            network: "deny",
-          },
           correlationId: "child-1",
           context: {
             parentAgentName: "shuttle",
             parentDepth: 1,
             cwd: "/project",
           },
-          activeTools: ["bash"],
         },
       },
       secretBytes,
@@ -612,6 +341,18 @@ describe("private child mode (Pi adapter contract, end-to-end against a fake hos
     );
   });
 
+  it("retries settlement once after a failed output write without leaving a sequence gap", async () => {
+    const { host, output } = await buildChildExtension();
+    output.failNextWrite("stdout-write-failed");
+
+    await host.fire("agent_settled", {}, fakeCtx());
+    await flush();
+
+    const settled = output.lines.filter((line) => line.kind === "settled");
+    expect(settled).toHaveLength(1);
+    expect(settled[0]?.sequence).toBe(2);
+  });
+
   it("never sends a duplicate settled envelope if agent_settled fires more than once", async () => {
     const { host, output } = await buildChildExtension();
     await host.fire("agent_settled", {}, fakeCtx());
@@ -629,7 +370,7 @@ describe("private child mode (Pi adapter contract, end-to-end against a fake hos
     expect(settledLinesAfterSecond).toBe(1);
   });
 
-  it("reports the child's real streamed assistant text as the settlement summary, never the old constant placeholder (Task 9 finding 1)", async () => {
+  it("reports the child's real streamed assistant text as the settlement summary, never the old constant placeholder (Task 9)", async () => {
     const { host, output } = await buildChildExtension();
     await host.fire(
       "message_update",
@@ -657,8 +398,112 @@ describe("private child mode (Pi adapter contract, end-to-end against a fake hos
     expect(settled?.kind).toBe("settled");
     const body = settled?.body as Record<string, unknown>;
     expect(body.outcome).toBe("completed");
-    expect(body.summary).toBe("Here is the real result.");
-    expect(body.summary).not.toBe("delegated task settled");
+    expect(body.assistantOutput).toBe("Here is the real result.");
+    expect(body.assistantOutput).not.toBe("delegated task settled");
+  });
+
+  it("transfers large final output before settlement and projects only bounded text plus numeric metadata", async () => {
+    const { host, output, secretBytes } = await buildChildExtension();
+    const sentinel = "UNIQUE_TERMINAL_SENTINEL";
+    const fullOutput = `${"x".repeat(12_000)}${sentinel}`;
+    await host.fire(
+      "message_end",
+      {
+        type: "message_end",
+        message: {
+          role: "assistant",
+          id: "large-output",
+          stopReason: "stop",
+          content: [{ type: "text", text: fullOutput }],
+        },
+      },
+      fakeCtx(),
+    );
+
+    const settlementPending = host.fire("agent_settled", {}, fakeCtx());
+    await flush();
+    const chunks = output.lines.filter(
+      (line) => line.kind === "transfer-chunk",
+    );
+    expect(chunks.length).toBeGreaterThan(0);
+
+    const assembler = new ChunkTransferAssembler();
+    let reassembled: string | undefined;
+    let transferId = "";
+    for (const line of chunks) {
+      const body = line.body as unknown as TransferChunk;
+      transferId = body.transferId;
+      const accepted = assembler.accept(body);
+      expect(accepted.isOk()).toBe(true);
+      if (accepted.isOk() && accepted.value !== undefined) {
+        reassembled = accepted.value;
+      }
+    }
+    expect(reassembled).toBe(fullOutput);
+    expect(reassembled?.endsWith(sentinel)).toBe(true);
+
+    const ack = await signEnvelope(
+      {
+        childId: "child-1",
+        generationId: "gen-1",
+        direction: "parent-to-child",
+        sequence: 1,
+        nonce: generateNonceHex(randomPort),
+        correlationId: transferId,
+        kind: "transfer-result",
+        body: { channel: "output", transferId, status: "ack" },
+      },
+      secretBytes,
+      hmacPort,
+    );
+    expect(ack.isOk()).toBe(true);
+    if (ack.isErr()) return;
+    await deliverEnvelope(host, ack.value as unknown as JsonValue);
+    await settlementPending;
+    await flush();
+
+    const settled = output.lines.find((line) => line.kind === "settled");
+    const body = settled?.body as Record<string, unknown>;
+    expect(body.outputTransferId).toBe(transferId);
+    expect(body.outputByteLength).toBe(
+      new TextEncoder().encode(fullOutput).byteLength,
+    );
+    expect(
+      new TextEncoder().encode(String(body.assistantOutput)).byteLength,
+    ).toBeLessThanOrEqual(PI_TRANSPORT_LIMITS.parentProjectionBytes);
+  });
+
+  it("degrades a failed output transfer to bounded inline settlement after one retry", async () => {
+    const { host, output } = await buildChildExtension();
+    const fullOutput = "z".repeat(12_000);
+    await host.fire(
+      "message_end",
+      {
+        type: "message_end",
+        message: {
+          role: "assistant",
+          stopReason: "stop",
+          content: [{ type: "text", text: fullOutput }],
+        },
+      },
+      fakeCtx(),
+    );
+
+    const attemptsBeforeTransfer = output.writeAttempts;
+    // Fail the first chunk write on both attempts. Each failed authenticated
+    // send releases sequence 2, so the fallback settlement must reuse it.
+    output.failWritesRemaining = 2;
+    await host.fire("agent_settled", {}, fakeCtx());
+    await flush();
+
+    expect(output.writeAttempts - attemptsBeforeTransfer).toBe(3);
+    const settled = output.lines.find((line) => line.kind === "settled");
+    const body = settled?.body as Record<string, unknown>;
+    expect(body.outputTransferId).toBeUndefined();
+    expect(body.outputByteLength).toBe(12_000);
+    expect(
+      new TextEncoder().encode(String(body.assistantOutput)).byteLength,
+    ).toBeLessThanOrEqual(PI_TRANSPORT_LIMITS.parentProjectionBytes);
   });
 
   it("reports a safe fixed fallback summary (not the old constant) when a completed turn produced no observable assistant text", async () => {
@@ -669,8 +514,8 @@ describe("private child mode (Pi adapter contract, end-to-end against a fake hos
     const settled = output.lines.at(-1);
     const body = settled?.body as Record<string, unknown>;
     expect(body.outcome).toBe("completed");
-    expect(typeof body.summary).toBe("string");
-    expect(body.summary).not.toBe("delegated task settled");
+    expect(typeof body.assistantOutput).toBe("string");
+    expect(body.assistantOutput).not.toBe("delegated task settled");
   });
 
   it("resets the settlement summary buffer on turn_start so a later turn never reports a stale earlier turn's text", async () => {
@@ -694,11 +539,11 @@ describe("private child mode (Pi adapter contract, end-to-end against a fake hos
 
     const settled = output.lines.at(-1);
     const body = settled?.body as Record<string, unknown>;
-    expect(body.summary).toBe("fresh turn text");
-    expect(body.summary).not.toContain("stale text");
+    expect(body.assistantOutput).toBe("fresh turn text");
+    expect(body.assistantOutput).not.toContain("stale text");
   });
 
-  it("derives a failed outcome from the last observed assistant stopReason, since agent_settled itself carries no payload (Task 9 finding 2)", async () => {
+  it("derives a failed outcome from the last observed assistant stopReason, since agent_settled itself carries no payload (Task 9)", async () => {
     const { host, output } = await buildChildExtension();
     await host.fire(
       "message_end",
@@ -751,7 +596,7 @@ describe("private child mode (Pi adapter contract, end-to-end against a fake hos
     expect(body.outcome).toBe("completed");
   });
 
-  it("never reports completed after cancellation has already been admitted - no race to a stray completed settlement (Task 9 finding 2)", async () => {
+  it("never reports completed after cancellation has already been admitted - no race to a stray completed settlement (Task 9)", async () => {
     const { host, output, secretBytes } = await buildChildExtension();
     const cancelEnvelope = await signEnvelope(
       {
@@ -788,80 +633,6 @@ describe("private child mode (Pi adapter contract, end-to-end against a fake hos
     expect(cancelledLines).toHaveLength(1);
   });
 
-  it("calls the real setActiveTools() with exactly the parent-derived active-tool list before acking, and the ack echoes the same set", async () => {
-    const { host, output, secretBytes } = await buildChildExtension();
-    host.toolsInventory = [
-      {
-        name: "bash",
-        sourceInfo: {
-          path: "<builtin:bash>",
-          source: "builtin",
-          scope: "temporary",
-          origin: "top-level",
-        },
-      },
-      {
-        name: "read",
-        sourceInfo: {
-          path: "<builtin:read>",
-          source: "builtin",
-          scope: "temporary",
-          origin: "top-level",
-        },
-      },
-    ];
-    const envelope = await signedBootstrap(secretBytes, {
-      effectiveToolPolicy: {
-        read: "allow",
-        write: "deny",
-        execute: "deny",
-        delegate: "deny",
-        network: "deny",
-      },
-      activeTools: ["read"],
-    });
-    await deliverEnvelope(host, envelope);
-    await flush();
-
-    expect(host.setActiveToolsCalls).toEqual([["read"]]);
-    expect(host.getActiveTools()).toEqual(["read"]);
-    const ack = output.lines.find((line) => line.kind === "bootstrap-ack");
-    expect(ack).toBeDefined();
-    expect((ack?.body as Record<string, unknown>).activeTools).toEqual([
-      "read",
-    ]);
-  });
-
-  it("fails closed (no setActiveTools call, no ack, prompt never applied) when the bootstrap names a tool the child cannot verify as governed", async () => {
-    const { host, output, secretBytes } = await buildChildExtension();
-    const envelope = await signedBootstrap(secretBytes, {
-      // A real, activatable policy is required so the failure below is
-      // provably the unknown-tool-name gate and not an unrelated
-      // activation failure caused by an absent policy.
-      effectiveToolPolicy: {
-        read: "allow",
-        write: "deny",
-        execute: "deny",
-        delegate: "deny",
-        network: "deny",
-      },
-      activeTools: ["nonexistent-tool"],
-    });
-    await deliverEnvelope(host, envelope);
-    await flush();
-
-    expect(host.setActiveToolsCalls).toEqual([]);
-    expect(output.lines.some((line) => line.kind === "bootstrap-ack")).toBe(
-      false,
-    );
-    const appended = await host.fire(
-      "before_agent_start",
-      { systemPrompt: "base prompt" },
-      fakeCtx(),
-    );
-    expect(appended).toBeUndefined();
-  });
-
   it("rehydrates a compact parent model identity to the full child catalog object before setModel, then keeps the ack compact", async () => {
     const catalogModel = {
       provider: "anthropic",
@@ -876,13 +647,6 @@ describe("private child mode (Pi adapter contract, end-to-end against a fake hos
     });
     const { host, output, secretBytes } = await buildChildExtension(sessionCtx);
     const envelope = await signedBootstrap(secretBytes, {
-      effectiveToolPolicy: {
-        read: "allow",
-        write: "deny",
-        execute: "deny",
-        delegate: "deny",
-        network: "deny",
-      },
       resolvedModel: {
         provider: catalogModel.provider,
         id: catalogModel.id,
@@ -906,6 +670,199 @@ describe("private child mode (Pi adapter contract, end-to-end against a fake hos
     ).not.toHaveProperty("baseUrl");
   });
 
+  it("omits an unresolved ordinary parent model before signing so the child resolves locally", async () => {
+    const catalogModel = {
+      provider: "fake",
+      id: "model-x",
+      name: "Fake Model X",
+      api: "fake-api",
+    };
+    const targetDescriptor = {
+      name: "shuttle",
+      composedPrompt: "You are Shuttle, a delegated specialist.",
+      models: ["fake/model-x"],
+      mode: "subagent" as const,
+      effectiveToolPolicy: {
+        read: "allow" as const,
+        write: "allow" as const,
+        execute: "allow" as const,
+        delegate: "allow" as const,
+        network: "ask" as const,
+      },
+      rawToolPolicy: undefined,
+      delegationTargets: [],
+      skills: [],
+    };
+    const bootstrapBody = buildChildBootstrapBody(
+      new Map([[targetDescriptor.name, targetDescriptor]]),
+      {
+        name: targetDescriptor.name,
+        description: "A delegated specialist.",
+        triggers: [],
+        isCategory: false,
+      },
+      "child-1",
+      { parentAgentName: "loom", parentDepth: 0, cwd: "/project" },
+      fakeCtx({ modelRegistry: { getAvailable: () => [] } }),
+    );
+    const bootstrapRecord = bootstrapBody as unknown as Record<
+      string,
+      unknown
+    >;
+
+    expect(bootstrapRecord).not.toHaveProperty("resolvedModel");
+    expect(canonicalizeToBytes(bootstrapBody).isOk()).toBe(true);
+
+    const { host, output, secretBytes } = await buildChildExtension(
+      fakeCtx({ modelRegistry: { getAvailable: () => [catalogModel] } }),
+    );
+    const envelope = await signedBootstrap(secretBytes, bootstrapRecord);
+
+    await deliverEnvelope(host, envelope);
+    await flush();
+
+    expect(host.setModelCalls).toEqual([catalogModel]);
+    const ack = output.lines.find((line) => line.kind === "bootstrap-ack");
+    expect((ack?.body as Record<string, unknown>).resolvedModel).toEqual({
+      provider: catalogModel.provider,
+      id: catalogModel.id,
+      name: catalogModel.name,
+    });
+  });
+
+  it("applies transported thinking intent after ordinary child model activation", async () => {
+    const catalogModel = {
+      provider: "fake",
+      id: "model-x",
+      name: "Fake Model X",
+      api: "fake-api",
+    };
+    const { host, output, secretBytes } = await buildChildExtension(
+      fakeCtx({ modelRegistry: { getAvailable: () => [catalogModel] } }),
+    );
+    const envelope = await signedBootstrap(secretBytes, {
+      models: ["fake/model-x#high"],
+      resolvedModel: {
+        provider: catalogModel.provider,
+        id: catalogModel.id,
+        name: catalogModel.name,
+      },
+      thinkingLevel: "high",
+    });
+
+    await deliverEnvelope(host, envelope);
+    await flush();
+
+    expect(host.activationCalls).toEqual([
+      { kind: "model", model: catalogModel },
+      { kind: "thinking", level: "high" },
+    ]);
+    expect(output.lines.some((line) => line.kind === "bootstrap-ack")).toBe(
+      true,
+    );
+  });
+
+  it("applies transported thinking intent after direct-step child model activation", async () => {
+    const catalogModel = {
+      provider: "fake",
+      id: "model-x",
+      name: "Fake Model X",
+      api: "fake-api",
+    };
+    const { host, output, secretBytes } = await buildChildExtension(
+      fakeCtx({ modelRegistry: { getAvailable: () => [catalogModel] } }),
+    );
+    const envelope = await signedBootstrap(secretBytes, {
+      mode: "direct-step",
+      workflowInstanceId: "workflow-1",
+      leaseId: "lease-1",
+      stepName: "review",
+      models: ["fake/model-x#medium"],
+      resolvedModel: {
+        provider: catalogModel.provider,
+        id: catalogModel.id,
+        name: catalogModel.name,
+      },
+      thinkingLevel: "medium",
+      completionTool: WEAVE_COMPLETE_STEP_TOOL_NAME,
+    });
+
+    await deliverEnvelope(host, envelope);
+    await flush();
+
+    expect(host.activationCalls).toEqual([
+      { kind: "model", model: catalogModel },
+      { kind: "thinking", level: "medium" },
+    ]);
+    expect(host.registeredTool(WEAVE_COMPLETE_STEP_TOOL_NAME)).toBeDefined();
+    expect(output.lines.some((line) => line.kind === "bootstrap-ack")).toBe(
+      true,
+    );
+  });
+
+  it("does not call the thinking host for a child bootstrap without a thinking level", async () => {
+    const catalogModel = {
+      provider: "fake",
+      id: "model-x",
+      name: "Fake Model X",
+      api: "fake-api",
+    };
+    const { host, secretBytes } = await buildChildExtension(
+      fakeCtx({ modelRegistry: { getAvailable: () => [catalogModel] } }),
+    );
+    const envelope = await signedBootstrap(secretBytes, {
+      models: ["fake/model-x"],
+      resolvedModel: {
+        provider: catalogModel.provider,
+        id: catalogModel.id,
+        name: catalogModel.name,
+      },
+    });
+
+    await deliverEnvelope(host, envelope);
+    await flush();
+
+    expect(host.activationCalls).toEqual([
+      { kind: "model", model: catalogModel },
+    ]);
+  });
+
+  it.each(["throw", "reject"] as const)(
+    "keeps child model activation successful when the thinking host %s",
+    async (behavior) => {
+      const catalogModel = {
+        provider: "fake",
+        id: "model-x",
+        name: "Fake Model X",
+        api: "fake-api",
+      };
+      const { host, output, secretBytes } = await buildChildExtension(
+        fakeCtx({ modelRegistry: { getAvailable: () => [catalogModel] } }),
+      );
+      host.thinkingLevelBehavior = behavior;
+      const envelope = await signedBootstrap(secretBytes, {
+        models: ["fake/model-x#low"],
+        resolvedModel: {
+          provider: catalogModel.provider,
+          id: catalogModel.id,
+          name: catalogModel.name,
+        },
+        thinkingLevel: "low",
+      });
+
+      await expect(deliverEnvelope(host, envelope)).resolves.toBeUndefined();
+      await flush();
+
+      expect(host.activationCalls).toEqual([
+        { kind: "model", model: catalogModel },
+        { kind: "thinking", level: "low" },
+      ]);
+      expect(output.lines.some((line) => line.kind === "bootstrap-ack")).toBe(
+        true,
+      );
+    },
+  );
+
   it("fails closed (no ack, no work applied) when the host rejects the resolved model, even though tools already applied cleanly", async () => {
     const sessionCtx = fakeCtx({
       modelRegistry: {
@@ -917,13 +874,6 @@ describe("private child mode (Pi adapter contract, end-to-end against a fake hos
     const { host, output, secretBytes } = await buildChildExtension(sessionCtx);
     host.modelAccepted = false;
     const envelope = await signedBootstrap(secretBytes, {
-      effectiveToolPolicy: {
-        read: "allow",
-        write: "deny",
-        execute: "deny",
-        delegate: "deny",
-        network: "deny",
-      },
       models: ["fake/model-x"],
     });
     await deliverEnvelope(host, envelope);
@@ -975,76 +925,11 @@ describe("private child mode (Pi adapter contract, end-to-end against a fake hos
     expect(output.lines.some((line) => line.kind === "bootstrap-ack")).toBe(
       false,
     );
-    expect(host.setActiveToolsCalls).toEqual([]);
     const appended = await host.fire(
       "before_agent_start",
       { systemPrompt: "base prompt" },
       fakeCtx(),
     );
     expect(appended).toBeUndefined();
-  });
-});
-
-describe("classifyApprovalRelayFailureCause (Task 9 finding 3)", () => {
-  it("classifies a thrown Error as 'thrown-error', never the raw message", () => {
-    expect(
-      classifyApprovalRelayFailureCause(new Error("/secret/path leaked")),
-    ).toBe("thrown-error");
-  });
-
-  it("classifies any non-Error rejection as 'rejected-non-error'", () => {
-    expect(classifyApprovalRelayFailureCause("a raw string cause")).toBe(
-      "rejected-non-error",
-    );
-    expect(classifyApprovalRelayFailureCause(undefined)).toBe(
-      "rejected-non-error",
-    );
-    expect(classifyApprovalRelayFailureCause({ some: "object" })).toBe(
-      "rejected-non-error",
-    );
-  });
-});
-
-describe("cloneApprovalPromptRequestAsJson (Task 9 finding 3)", () => {
-  it("builds an explicit typed clone with every field preserved", () => {
-    const clone = cloneApprovalPromptRequestAsJson({
-      agentName: "shuttle (child child-1)",
-      toolIdentity: "bash",
-      requests: [
-        { summary: "allow bash?", details: "rm -rf /tmp/x", unresolved: false },
-      ],
-      allowedScopes: ["once", "session"],
-    });
-    expect(clone).toEqual({
-      agentName: "shuttle (child child-1)",
-      toolIdentity: "bash",
-      requests: [
-        { summary: "allow bash?", details: "rm -rf /tmp/x", unresolved: false },
-      ],
-      allowedScopes: ["once", "session"],
-    });
-  });
-
-  it("omits an absent optional 'details' field rather than writing it as undefined", () => {
-    const clone = cloneApprovalPromptRequestAsJson({
-      agentName: "shuttle",
-      toolIdentity: "bash",
-      requests: [{ summary: "allow bash?", unresolved: true }],
-      allowedScopes: ["once"],
-    });
-    const requests = (clone as { requests: unknown[] }).requests;
-    expect(requests[0]).toEqual({ summary: "allow bash?", unresolved: true });
-    expect(Object.hasOwn(requests[0] as object, "details")).toBe(false);
-  });
-
-  it("never throws for a well-formed request, unlike JSON.parse(JSON.stringify(...))", () => {
-    expect(() =>
-      cloneApprovalPromptRequestAsJson({
-        agentName: "shuttle",
-        toolIdentity: "bash",
-        requests: [{ summary: "allow?", unresolved: false }],
-        allowedScopes: ["once"],
-      }),
-    ).not.toThrow();
   });
 });

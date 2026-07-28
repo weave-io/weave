@@ -3,15 +3,21 @@ import type { WeaveConfig } from "@weaveio/weave-core";
 import {
   type AgentDescriptor,
   ALL_CAPABILITY_IDS,
+  createInMemoryRuntimeStore,
   type MaterializationPlan,
 } from "@weaveio/weave-engine";
-import { ok, okAsync } from "neverthrow";
+import { errAsync, ok, okAsync } from "neverthrow";
 import { DefaultPiCapabilityProber } from "../capability-prober.js";
 import { WEAVE_COMMAND_NAMES } from "../commands.js";
 import { PiConfigActivator } from "../config-activator.js";
-import { createPiExtension, type PiExtensionDeps } from "../extension.js";
+import {
+  createPiExtension,
+  PI_SHARED_LOG_PATH,
+  type PiExtensionDeps,
+} from "../extension.js";
 import { HOST_PACKAGE_NAME } from "../host-compatibility.js";
 import { FakePathContainmentPort } from "../path-containment.js";
+import { FakePiPlanCatalogPort } from "../plan-catalog.js";
 import { MODEL_REGISTRY_THREW_REASON } from "../port-safety.js";
 import { FakeHostPackageReader } from "./fakes/fake-host-package-reader.js";
 import {
@@ -34,9 +40,12 @@ const EMPTY_CONFIG = {
  */
 function fakeConfigActivator(
   plan: MaterializationPlan = { agents: [], errors: [] },
+  config: WeaveConfig | (() => WeaveConfig) = EMPTY_CONFIG,
 ): PiConfigActivator {
   return new PiConfigActivator({
-    configLoader: { load: () => okAsync(EMPTY_CONFIG) },
+    configLoader: {
+      load: () => okAsync(typeof config === "function" ? config() : config),
+    },
     materializer: { materialize: () => okAsync(plan) },
   });
 }
@@ -67,7 +76,7 @@ function installExtension(
     logger: new RecordingLogger(),
     configActivator: fakeConfigActivator(),
     // Real `BunPathContainmentPort` spawns a genuine subprocess (Pi adapter contract
-    // §24 layer D forbids this in tests); this fake host's `cwd` is a
+    // forbids this in tests); this fake host's `cwd` is a
     // nonexistent path anyway, so any real spawn would fail closed and
     // wrongly flip workflow-persistence/etc. to unavailable for reasons
     // unrelated to what any given test actually exercises. Reports every
@@ -83,7 +92,7 @@ function installExtension(
 }
 
 describe("createPiExtension factory (layer C: compiled extension against a fake host)", () => {
-  it("registers exactly the nine /weave:* command shells, the bare native palette command, and four lifecycle delegates, nothing else", () => {
+  it("registers commands, the palette shortcut, and six lifecycle delegates without a tool-call interceptor", () => {
     const host = new RecordingFakePiHost();
     installExtension(host);
     expect(host.registerCommandCalls.map((call) => call.name).sort()).toEqual(
@@ -102,9 +111,9 @@ describe("createPiExtension factory (layer C: compiled extension against a fake 
       "before_agent_start",
       "input",
       "message_end",
+      "model_select",
       "session_shutdown",
       "session_start",
-      "tool_call",
     ]);
   });
 
@@ -114,6 +123,23 @@ describe("createPiExtension factory (layer C: compiled extension against a fake 
     expect(host.notifyCalls).toHaveLength(0);
     expect(host.statusCalls).toHaveLength(0);
     expect(host.widgetCalls).toHaveLength(0);
+  });
+
+  it("redirects shared logs before session activation when a redirector is supplied", async () => {
+    const redirectedPaths: string[] = [];
+    const host = new RecordingFakePiHost({ cwd: "/fake/project" });
+    installExtension(host, "0.81.1", {
+      logRedirector: {
+        redirect: (filePath) => {
+          redirectedPaths.push(filePath);
+          return okAsync(undefined);
+        },
+      },
+    });
+
+    await host.triggerSessionStart();
+
+    expect(redirectedPaths).toEqual([`/fake/project/${PI_SHARED_LOG_PATH}`]);
   });
 
   it("does not touch timers or spawn processes at factory time", () => {
@@ -157,10 +183,8 @@ describe("createPiExtension factory (layer C: compiled extension against a fake 
       idGenerator: new FakeIdGenerator(),
       clock: new FakeClock(),
       logger: new RecordingLogger(),
-      // A real project always materializes at least one agent; an empty
-      // agent set has no policy to bind and the engine's permission
-      // activation itself rejects an empty policy map, so this fixture
-      // must include one to reach a genuinely healthy "ready" outcome.
+      // A real project always materializes at least one agent, so this
+      // fixture includes one to reach a healthy ready outcome.
       configActivator: fakeConfigActivator({
         agents: [
           {
@@ -194,6 +218,7 @@ describe("createPiExtension factory (layer C: compiled extension against a fake 
     expect(
       host.statusCalls.filter((call) => call.key === "weave").at(-1)?.value,
     ).toContain("health-only");
+    expect(host.registerToolCalls).toEqual([]);
     const ctx = await host.invokeCommand("weave:start");
     expect(host.notifyCalls.at(-1)?.message).toContain("health-only mode");
     expect(ctx.mode).toBe("tui");
@@ -350,7 +375,44 @@ function tapestryDescriptor(
   });
 }
 
-describe("createPiExtension: config activation, materialization consumption, primary activation, prompt append (Spec 33 \u00a77.2, \u00a78, \u00a79)", () => {
+function installForegroundStartTestExtension(
+  host: RecordingFakePiHost,
+  tapestryOverrides: Partial<AgentDescriptor> = {},
+): void {
+  installExtension(host, "0.81.1", {
+    capabilityProber: allOkCapabilityProber(),
+    configActivator: fakeConfigActivator({
+      agents: [
+        {
+          agentName: "loom",
+          source: "explicit",
+          descriptor: loomDescriptor(),
+        },
+        {
+          agentName: "tapestry",
+          source: "explicit",
+          descriptor: tapestryDescriptor(tapestryOverrides),
+        },
+      ],
+      errors: [],
+    }),
+    planCatalogPort: new FakePiPlanCatalogPort(["model-thinking-suffix"]),
+    runtimeStoreFactory: {
+      open: () =>
+        errAsync({
+          code: "RuntimeStoreOpenFailed",
+          phase: "persistence",
+          scope: { kind: "adapter" },
+          impact: "health-only",
+          retryable: true,
+          recovery: "retry",
+          safeMessage: "The runtime store is unavailable in this test.",
+        }),
+    },
+  });
+}
+
+describe("createPiExtension: config activation, materialization consumption, primary activation, prompt append", () => {
   it("materializes config, activates the default primary (loom), and never touches a real developer config file", async () => {
     const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
     installExtension(host, "0.81.1", {
@@ -374,6 +436,98 @@ describe("createPiExtension: config activation, materialization consumption, pri
     expect(systemPrompt).toContain("Pi's native system prompt.");
     expect(systemPrompt).toContain("You are Loom, the main orchestrator.");
     expect(systemPrompt).toContain('name="loom"');
+  });
+
+  it("starts an existing plan by switching the parent session to Tapestry and sending its kickoff as a user message", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    host.scriptConfirm(true);
+    installForegroundStartTestExtension(host);
+    await host.triggerSessionStart();
+    await host.triggerBeforeAgentStart({ systemPrompt: "native" });
+
+    await host.invokeCommand("weave:start", "model-thinking-suffix");
+
+    expect(host.statusCalls.at(-1)).toEqual({
+      key: "weave-agent",
+      value: "◆ WEAVE · TAPESTRY",
+    });
+    expect(host.sentUserMessages).toEqual([
+      {
+        content:
+          "Execute the existing Weave plan at `.weave/plans/model-thinking-suffix.md`. Begin with the first unchecked task and continue until every task is complete.",
+      },
+    ]);
+    const nextTurn = await host.triggerBeforeAgentStart({
+      systemPrompt: "native",
+    });
+    expect(nextTurn.systemPrompt).toContain(
+      "You are Tapestry, the workflow orchestrator.",
+    );
+    expect(nextTurn.systemPrompt).not.toContain(
+      "You are Loom, the main orchestrator.",
+    );
+  });
+
+  it("does not submit a first-turn kickoff when Tapestry cannot activate", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    host.scriptConfirm(true);
+    installForegroundStartTestExtension(host, { skills: ["missing"] });
+    await host.triggerSessionStart();
+
+    await host.invokeCommand("weave:start", "model-thinking-suffix");
+
+    expect(host.sentUserMessages).toHaveLength(0);
+    expect(host.statusCalls.at(-1)).toEqual({
+      key: "weave-agent",
+      value: "◆ WEAVE · LOOM",
+    });
+    expect(host.notifyCalls.at(-1)).toEqual({
+      message:
+        "Could not start plan: Tapestry could not activate in this session.",
+      level: "error",
+    });
+  });
+
+  it("does not submit the kickoff when the parent session becomes busy during confirmation", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const confirmation = host.deferNextConfirm();
+    installForegroundStartTestExtension(host);
+    await host.triggerSessionStart();
+    await host.triggerBeforeAgentStart({ systemPrompt: "native" });
+
+    const starting = host.invokeCommand("weave:start", "model-thinking-suffix");
+    await Bun.sleep(0);
+    host.setIdle(false);
+    confirmation.settle(true);
+    await starting;
+
+    expect(host.sentUserMessages).toHaveLength(0);
+    expect(host.notifyCalls.at(-1)).toEqual({
+      message:
+        "Could not start plan: Wait for the current turn to finish before starting a plan.",
+      level: "error",
+    });
+  });
+
+  it("does not submit the kickoff after session replacement during confirmation", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const confirmation = host.deferNextConfirm();
+    installForegroundStartTestExtension(host);
+    await host.triggerSessionStart();
+    await host.triggerBeforeAgentStart({ systemPrompt: "native" });
+
+    const starting = host.invokeCommand("weave:start", "model-thinking-suffix");
+    await Bun.sleep(0);
+    await host.triggerSessionStart();
+    confirmation.settle(true);
+    await starting;
+
+    expect(host.sentUserMessages).toHaveLength(0);
+    expect(host.notifyCalls.at(-1)).toEqual({
+      message:
+        "Could not start plan: The Pi session changed before the plan could start.",
+      level: "error",
+    });
   });
 
   it("cycles active primary agents with Alt+A, skips subagents, and updates the badge and prompt", async () => {
@@ -587,6 +741,116 @@ describe("createPiExtension: config activation, materialization consumption, pri
     expect(systemPrompt).toContain("You are Loom, the main orchestrator.");
   });
 
+  it("applies a requested thinking level after the model through pi.setThinkingLevel", async () => {
+    const catalogModel = {
+      provider: "anthropic",
+      id: "claude-sonnet-4-5",
+      name: "Claude Sonnet 4.5",
+    };
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      availableModels: [catalogModel],
+    });
+    installExtension(host, "0.81.1", {
+      configActivator: fakeConfigActivator({
+        agents: [
+          {
+            agentName: "loom",
+            source: "explicit",
+            descriptor: loomDescriptor({
+              models: ["anthropic/claude-sonnet-4-5#high"],
+            }),
+          },
+        ],
+        errors: [],
+      }),
+    });
+    await host.triggerSessionStart();
+
+    await host.triggerBeforeAgentStart({ systemPrompt: "native" });
+
+    expect(host.activationCalls).toEqual([
+      { kind: "model", model: catalogModel },
+      { kind: "thinking", level: "high" },
+    ]);
+    expect(host.getCurrentModel()).toBe(catalogModel);
+  });
+
+  it("does not report a model failure when pi.setThinkingLevel throws", async () => {
+    const catalogModel = {
+      provider: "anthropic",
+      id: "claude-sonnet-4-5",
+    };
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      availableModels: [catalogModel],
+    });
+    host.poisonSetThinkingLevel();
+    installExtension(host, "0.81.1", {
+      configActivator: fakeConfigActivator({
+        agents: [
+          {
+            agentName: "loom",
+            source: "explicit",
+            descriptor: loomDescriptor({ models: ["claude-sonnet-4-5#high"] }),
+          },
+        ],
+        errors: [],
+      }),
+    });
+    await host.triggerSessionStart();
+
+    const { systemPrompt } = await host.triggerBeforeAgentStart({
+      systemPrompt: "native",
+    });
+    await host.invokeCommand("weave:health");
+
+    expect(systemPrompt).toContain("You are Loom, the main orchestrator.");
+    expect(host.getCurrentModel()).toBe(catalogModel);
+    expect(host.notifyCalls.at(-1)?.message ?? "").not.toContain(
+      "warning [model] loom",
+    );
+  });
+
+  it("does not report a model failure when pi.setThinkingLevel rejects", async () => {
+    const catalogModel = {
+      provider: "anthropic",
+      id: "claude-sonnet-4-5",
+    };
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      availableModels: [catalogModel],
+    });
+    host.rejectSetThinkingLevel();
+    installExtension(host, "0.81.1", {
+      configActivator: fakeConfigActivator({
+        agents: [
+          {
+            agentName: "loom",
+            source: "explicit",
+            descriptor: loomDescriptor({ models: ["claude-sonnet-4-5#high"] }),
+          },
+        ],
+        errors: [],
+      }),
+    });
+    await host.triggerSessionStart();
+
+    const { systemPrompt } = await host.triggerBeforeAgentStart({
+      systemPrompt: "native",
+    });
+    await host.invokeCommand("weave:health");
+
+    expect(systemPrompt).toContain("You are Loom, the main orchestrator.");
+    expect(host.getCurrentModel()).toBe(catalogModel);
+    expect(host.notifyCalls.at(-1)?.message ?? "").not.toContain(
+      "warning [model] loom",
+    );
+  });
+
   it("keeps the current authenticated model and surfaces a visible, deduplicated degraded-model warning when pi.setModel rejects", async () => {
     const host = new RecordingFakePiHost({
       mode: "tui",
@@ -756,6 +1020,49 @@ describe("createPiExtension: config activation, materialization consumption, pri
     });
     expect(fresh.systemPrompt).toContain(
       "You are Loom, the main orchestrator.",
+    );
+  });
+
+  it("preserves a native model selected after startup but before the first prompt", async () => {
+    const weaveModel = {
+      provider: "anthropic",
+      id: "claude-sonnet-4-5",
+    };
+    const userModel = {
+      provider: "openai",
+      id: "gpt-5",
+    };
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      currentModel: weaveModel,
+      availableModels: [weaveModel, userModel],
+    });
+    installExtension(host, "0.81.1", {
+      configActivator: fakeConfigActivator({
+        agents: [
+          {
+            agentName: "loom",
+            source: "explicit",
+            descriptor: loomDescriptor(),
+          },
+        ],
+        errors: [],
+      }),
+    });
+    await host.triggerSessionStart();
+
+    await host.triggerModelSelect(userModel, "set");
+    const first = await host.triggerBeforeAgentStart({
+      systemPrompt: "native",
+    });
+
+    expect(first.systemPrompt).toContain("You are Loom, the main orchestrator.");
+    expect(host.setModelCalls).toHaveLength(0);
+    expect(host.getCurrentModel()).toBe(userModel);
+    await host.invokeCommand("weave:health");
+    expect(host.notifyCalls.at(-1)?.message ?? "").not.toContain(
+      "warning [model] loom",
     );
   });
 
@@ -940,5 +1247,127 @@ describe("createPiExtension: config activation, materialization consumption, pri
         (entry) => entry.level === "warn" && entry.obj.agentName === "broken",
       ),
     ).toBe(true);
+  });
+
+  it("shows one no-timeout two-choice settings popup and enters health-only without runtime writes", async () => {
+    const invalidConfig = {
+      ...EMPTY_CONFIG,
+      settings: {
+        adapters: {
+          pi: {
+            child_inspection: { max_bytes_per_child: 1 },
+          },
+        },
+      },
+    } as unknown as WeaveConfig;
+    let runtimeStoreOpenCalls = 0;
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    host.scriptSettingsChoice("Enter health-only mode");
+    installExtension(host, "0.81.1", {
+      capabilityProber: allOkCapabilityProber(),
+      configActivator: fakeConfigActivator(
+        {
+          agents: [
+            {
+              agentName: "loom",
+              source: "explicit",
+              descriptor: loomDescriptor(),
+            },
+          ],
+          errors: [],
+        },
+        invalidConfig,
+      ),
+      runtimeStoreFactory: {
+        open: () => {
+          runtimeStoreOpenCalls += 1;
+          return errAsync({
+            code: "RuntimeStoreOpenFailed",
+            phase: "persistence",
+            scope: { kind: "adapter" },
+            impact: "health-only",
+            retryable: true,
+            recovery: "retry",
+            safeMessage: "The runtime store must not open in health-only mode.",
+          });
+        },
+      },
+    });
+
+    await host.triggerSessionStart();
+
+    expect(host.settingsPopupCalls).toHaveLength(1);
+    expect(host.settingsPopupCalls[0]).toMatchObject({
+      options: ["Use defaults", "Enter health-only mode"],
+      opts: undefined,
+    });
+    expect(host.settingsPopupCalls[0]?.title).toContain(
+      "settings.adapters.pi.child_inspection.max_bytes_per_child",
+    );
+    expect(host.registerToolCalls).toHaveLength(0);
+    expect(runtimeStoreOpenCalls).toBe(0);
+    expect(
+      host.statusCalls.filter((call) => call.key === "weave").at(-1)?.value,
+    ).toContain("health-only");
+  });
+
+  it("applies defaults only after the explicit choice and recovers on a fixed reload", async () => {
+    let config: WeaveConfig = {
+      ...EMPTY_CONFIG,
+      settings: {
+        adapters: {
+          pi: {
+            child_inspection: { max_bytes_total: 1 },
+          },
+        },
+      },
+    } as unknown as WeaveConfig;
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    host.scriptSettingsChoice("Use defaults");
+    installExtension(host, "0.81.1", {
+      capabilityProber: allOkCapabilityProber(),
+      configActivator: fakeConfigActivator(
+        {
+          agents: [
+            {
+              agentName: "loom",
+              source: "explicit",
+              descriptor: loomDescriptor(),
+            },
+          ],
+          errors: [],
+        },
+        () => config,
+      ),
+      runtimeStoreFactory: {
+        open: () => okAsync(createInMemoryRuntimeStore()),
+      },
+    });
+
+    await host.triggerSessionStart();
+    expect(host.settingsPopupCalls).toHaveLength(1);
+    expect(
+      host.statusCalls.filter((call) => call.key === "weave").at(-1)?.value,
+    ).toBe("ready");
+
+    config = {
+      ...EMPTY_CONFIG,
+      settings: {
+        adapters: {
+          pi: { child_inspection: {} },
+        },
+      },
+    } as unknown as WeaveConfig;
+    await host.triggerSessionStart();
+
+    expect(host.settingsPopupCalls).toHaveLength(1);
+    expect(
+      host.statusCalls.filter((call) => call.key === "weave").at(-1)?.value,
+    ).toBe("ready");
+    expect(
+      host.statusCalls.filter(
+        (call) => call.key === "weave-agent" && call.value === "◆ WEAVE · LOOM",
+      ),
+    ).toHaveLength(2);
   });
 });

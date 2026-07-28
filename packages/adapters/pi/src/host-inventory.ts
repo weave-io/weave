@@ -4,7 +4,7 @@ import {
   makeInvariantViolationFailure,
   type PiAdapterFailure,
 } from "./errors.js";
-import type { PiCommandInfo, PiExtensionApi, PiToolInfo } from "./types.js";
+import type { PiCommandInfo, PiExtensionApi } from "./types.js";
 
 const PiSourceInfoSchema = z.object({
   path: z.string(),
@@ -18,12 +18,6 @@ const PiCommandInfoSchema = z.object({
   name: z.string().min(1),
   description: z.string().optional(),
   source: z.enum(["extension", "prompt", "skill"]),
-  sourceInfo: PiSourceInfoSchema,
-});
-
-const PiToolInfoSchema = z.object({
-  name: z.string().min(1),
-  description: z.string().optional(),
   sourceInfo: PiSourceInfoSchema,
 });
 
@@ -44,22 +38,6 @@ export function readValidatedCommands(
   const parsed = z.array(PiCommandInfoSchema).safeParse(raw.value);
   if (!parsed.success) {
     return err(makeInvariantViolationFailure("getCommands-malformed"));
-  }
-  return ok(parsed.data);
-}
-
-/** Same contract as {@link readValidatedCommands} for `pi.getAllTools()`. */
-export function readValidatedTools(
-  api: Pick<PiExtensionApi, "getAllTools">,
-): Result<PiToolInfo[], PiAdapterFailure> {
-  const raw = Result.fromThrowable(
-    () => api.getAllTools(),
-    () => makeInvariantViolationFailure("getAllTools-threw"),
-  )();
-  if (raw.isErr()) return err(raw.error);
-  const parsed = z.array(PiToolInfoSchema).safeParse(raw.value);
-  if (!parsed.success) {
-    return err(makeInvariantViolationFailure("getAllTools-malformed"));
   }
   return ok(parsed.data);
 }

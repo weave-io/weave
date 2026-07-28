@@ -7,13 +7,20 @@ import type {
 } from "../delegation-controller.js";
 import {
   buildDelegationToolRegistration,
+  formatDelegationAgentName,
   type PiDelegationToolDeps,
   WEAVE_DELEGATION_TOOL_NAME,
-  WEAVE_DELEGATION_TOOL_OWNER,
 } from "../delegation-tool.js";
-import type { PiAdapterFailure } from "../errors.js";
+import {
+  makeChildSpawnFailedFailure,
+  type PiAdapterFailure,
+} from "../errors.js";
 import type { PiChildSettlement } from "../rpc-child.js";
-import type { PiSessionContext } from "../types.js";
+import type {
+  PiSessionContext,
+  PiToolResult,
+  PiUiThemePort,
+} from "../types.js";
 
 const TARGETS: readonly DelegationTarget[] = [
   {
@@ -105,6 +112,7 @@ function ctx(): PiSessionContext {
     mode: "tui",
     cwd: "/project",
     isProjectTrusted: () => true,
+    isIdle: () => true,
     ui: {
       notify: () => {},
       setStatus: () => {},
@@ -121,10 +129,9 @@ function ctx(): PiSessionContext {
 describe("buildDelegationToolRegistration", () => {
   it("exposes the fixed tool identity and restricts the schema enum to the supplied targets", () => {
     const registration = buildDelegationToolRegistration(baseDeps());
-    expect(registration.tool.name).toBe(WEAVE_DELEGATION_TOOL_NAME);
-    expect(registration.tool.label).toBe("Delegate to a Weave subagent");
-    expect(registration.owner).toBe(WEAVE_DELEGATION_TOOL_OWNER);
-    const parameters = registration.tool.parameters as {
+    expect(registration.name).toBe(WEAVE_DELEGATION_TOOL_NAME);
+    expect(registration.label).toBe("Delegate to a Weave subagent");
+    const parameters = registration.parameters as {
       properties: { agent: { enum: string[]; description: string } };
     };
     expect(parameters.properties.agent.enum.sort()).toEqual([
@@ -134,55 +141,31 @@ describe("buildDelegationToolRegistration", () => {
     expect(parameters.properties.agent.description).toContain(
       "Exact normalized subagent name",
     );
-    expect(registration.tool.promptGuidelines).toEqual([
+    expect(registration.promptGuidelines).toEqual([
       "Pass the exact normalized subagent name from the `agent` enum; never use a display label, description, or alias.",
     ]);
   });
 
-  it("resolver: hard-rejects (never asks) an agent outside the eligible target set", () => {
+  it("renders the called subagent name instead of the protocol tool name", () => {
     const registration = buildDelegationToolRegistration(baseDeps());
-    const result = registration.resolver({
-      call: { agent: "not-a-real-target", task: "do it" },
-      context: { toolIdentity: "weave_delegate", owner: "x", revision: "1" },
-    });
-    expect(result.isErr()).toBe(true);
-    expect(result._unsafeUnwrapErr().type).toBe("unsafe_input");
-  });
+    const theme: PiUiThemePort = {
+      fg: (_color, text) => text,
+      bold: (text) => text,
+    };
+    const renderCall = registration.renderCall;
+    expect(renderCall).toBeDefined();
+    const render = (agent: string) =>
+      renderCall?.({ agent, task: "do it" }, theme, {})
+        .render(80)
+        .join("\n")
+        .trimEnd();
 
-  it("resolver: an unresolved/malformed call shape forces an ask rather than a reusable grant", () => {
-    const registration = buildDelegationToolRegistration(baseDeps());
-    const result = registration.resolver({
-      call: { agent: 123 },
-      context: { toolIdentity: "weave_delegate", owner: "x", revision: "1" },
-    });
-    expect(result.isOk()).toBe(true);
-    expect(result._unsafeUnwrap()).toEqual([
-      {
-        unresolved: true,
-        display: { summary: "Delegate to an eligible agent" },
-      },
-    ]);
-  });
-
-  it("resolver: a valid eligible target produces exactly one grantable delegate request", () => {
-    const registration = buildDelegationToolRegistration(baseDeps());
-    const result = registration.resolver({
-      call: { agent: "shuttle", task: "x".repeat(300) },
-      context: { toolIdentity: "weave_delegate", owner: "x", revision: "1" },
-    });
-    const requests = result._unsafeUnwrap();
-    expect(requests.length).toBe(1);
-    const [request] = requests;
-    expect(request.unresolved).toBe(false);
-    if (!request.unresolved) {
-      expect(request.capability).toBe("delegate");
-      expect(request.target).toEqual({
-        kind: "weave-agent",
-        identifier: "shuttle",
-      });
-      // Details are a bounded preview, never the full raw task text.
-      expect(request.display.details?.length).toBeLessThan(300);
-    }
+    expect(render("pattern")).toBe("Pattern");
+    expect(render("shuttle")).toBe("Shuttle");
+    expect(render("shuttle-infra")).toBe("Infra-Shuttle");
+    expect(formatDelegationAgentName("shuttle-data-platform")).toBe(
+      "Data-Platform-Shuttle",
+    );
   });
 
   it("execute: rejects an ineligible agent with a structured (not thrown) error, never touching the controller", async () => {
@@ -196,7 +179,7 @@ describe("buildDelegationToolRegistration", () => {
           }),
       }),
     );
-    const result = await registration.tool.execute(
+    const result = await registration.execute(
       "call-1",
       { agent: "nope", task: "x" },
       undefined,
@@ -212,7 +195,7 @@ describe("buildDelegationToolRegistration", () => {
     const registration = buildDelegationToolRegistration(
       baseDeps({ getController: () => undefined }),
     );
-    const result = await registration.tool.execute(
+    const result = await registration.execute(
       "call-1",
       { agent: "shuttle", task: "x" },
       undefined,
@@ -240,7 +223,7 @@ describe("buildDelegationToolRegistration", () => {
           }),
       }),
     );
-    const result = await registration.tool.execute(
+    const result = await registration.execute(
       "call-1",
       { agent: "shuttle", task: "do it" },
       undefined,
@@ -255,6 +238,80 @@ describe("buildDelegationToolRegistration", () => {
     expect(capturedRequest?.agentName).toBe("shuttle");
     expect(capturedRequest?.parentId).toBe("root");
     expect(capturedRequest?.cwd).toBe("/project");
+  });
+
+  it("execute: pushes bounded child output as a valid partial tool result", async () => {
+    let capturedRequest: PiDelegationRequest | undefined;
+    const updates: PiToolResult[] = [];
+    const registration = buildDelegationToolRegistration(
+      baseDeps({
+        getController: () =>
+          fakeController((request) => {
+            capturedRequest = request;
+            return okAsync({ outcome: "completed", summary: "done" });
+          }),
+      }),
+    );
+
+    await registration.execute(
+      "call-1",
+      { agent: "shuttle", task: "do it" },
+      undefined,
+      (update) => updates.push(update),
+      ctx(),
+    );
+    capturedRequest?.onUpdate?.({
+      id: "child-1",
+      parentId: "root",
+      name: "shuttle",
+      status: "running",
+      currentTurn: 1,
+      currentTool: "read",
+      startedAtMs: 0,
+      elapsedMs: 10,
+      usage: {
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        cost: 0,
+      },
+      latestOutput: "Inspecting the adapter",
+    });
+
+    expect(updates).toHaveLength(1);
+    expect(updates[0]?.content).toEqual([
+      { type: "text", text: "Inspecting the adapter" },
+    ]);
+    const renderer = registration.renderResult;
+    expect(renderer).toBeDefined();
+    const theme: PiUiThemePort = {
+      fg: (_color, text) => text,
+      bold: (text) => text,
+    };
+    const firstUpdate = updates[0];
+    expect(firstUpdate).toBeDefined();
+    if (firstUpdate === undefined) return;
+    const rendered = renderer?.(
+      firstUpdate,
+      { expanded: true, isPartial: true },
+      theme,
+      { args: { agent: "shuttle", task: "do it" } },
+    )
+      .render(80)
+      .join("\n");
+    expect(rendered).toContain("Shuttle");
+    expect(rendered).toContain("Inspecting the adapter");
+
+    const collapsed = renderer?.(
+      firstUpdate,
+      { expanded: false, isPartial: true },
+      theme,
+      { args: { agent: "shuttle", task: "do it" } },
+    )
+      .render(80)
+      .join("\n");
+    expect(collapsed).toContain("Inspecting the adapter");
   });
 
   it("execute: reads the active primary identity and targets after a primary switch", async () => {
@@ -279,7 +336,7 @@ describe("buildDelegationToolRegistration", () => {
     };
     const registration = buildDelegationToolRegistration(deps);
 
-    const accepted = await registration.tool.execute(
+    const accepted = await registration.execute(
       "call-1",
       { agent: "shuttle-backend", task: "do it" },
       undefined,
@@ -293,7 +350,7 @@ describe("buildDelegationToolRegistration", () => {
     expect(capturedRequest?.parentAgentName).toBe("tapestry");
     expect(bootstrapParentAgentName).toBe("tapestry");
 
-    const rejected = await registration.tool.execute(
+    const rejected = await registration.execute(
       "call-2",
       { agent: "shuttle", task: "do it" },
       undefined,
@@ -323,7 +380,7 @@ describe("buildDelegationToolRegistration", () => {
           ),
       }),
     );
-    const result = await registration.tool.execute(
+    const result = await registration.execute(
       "call-1",
       { agent: "shuttle", task: "do it" },
       undefined,
@@ -331,7 +388,13 @@ describe("buildDelegationToolRegistration", () => {
       ctx(),
     );
     const text = JSON.parse((result.content[0] as { text: string }).text);
-    expect(text).toEqual({ ok: false, error: "ChildCapacityExceeded" });
+    expect(text).toEqual({
+      ok: false,
+      error: "ChildCapacityExceeded",
+      message: "no capacity",
+      retryable: true,
+      recovery: "retry",
+    });
   });
 
   it("execute: a signal already aborted before the child is ever dispatched fails closed, never touching the controller's delegate()", async () => {
@@ -347,7 +410,7 @@ describe("buildDelegationToolRegistration", () => {
           }),
       }),
     );
-    const result = await registration.tool.execute(
+    const result = await registration.execute(
       "call-1",
       { agent: "shuttle", task: "do it" },
       abortController.signal,
@@ -355,7 +418,15 @@ describe("buildDelegationToolRegistration", () => {
       ctx(),
     );
     const text = JSON.parse((result.content[0] as { text: string }).text);
-    expect(text).toEqual({ ok: false, error: "ChildAbortFailed" });
+    expect(text).toEqual({
+      ok: false,
+      error: "ChildAbortFailed",
+      message:
+        "Weave could not confirm the delegated child stopped cleanly; it was terminated.",
+      reason: "aborted-before-dispatch",
+      retryable: true,
+      recovery: "retry",
+    });
     expect(delegateCalled).toBe(false);
   });
 
@@ -379,7 +450,7 @@ describe("buildDelegationToolRegistration", () => {
       }),
     );
     const abortController = new AbortController();
-    const resultPromise = registration.tool.execute(
+    const resultPromise = registration.execute(
       "call-1",
       { agent: "shuttle", task: "do it" },
       abortController.signal,
@@ -416,7 +487,7 @@ describe("buildDelegationToolRegistration", () => {
       }),
     );
     const abortController = new AbortController();
-    const resultPromise = registration.tool.execute(
+    const resultPromise = registration.execute(
       "call-1",
       { agent: "shuttle", task: "do it" },
       abortController.signal,
@@ -426,7 +497,13 @@ describe("buildDelegationToolRegistration", () => {
     abortController.abort();
     const result = await resultPromise;
     const text = JSON.parse((result.content[0] as { text: string }).text);
-    expect(text).toEqual({ ok: false, error: "ChildExitedUnexpectedly" });
+    expect(text).toEqual({
+      ok: false,
+      error: "ChildExitedUnexpectedly",
+      message: "child cancellation failed",
+      retryable: false,
+      recovery: "none",
+    });
   });
 
   it("execute: falls back to ChildAbortFailed when cancelSubtree() fails with an empty failure list", async () => {
@@ -443,7 +520,7 @@ describe("buildDelegationToolRegistration", () => {
       }),
     );
     const abortController = new AbortController();
-    const resultPromise = registration.tool.execute(
+    const resultPromise = registration.execute(
       "call-1",
       { agent: "shuttle", task: "do it" },
       abortController.signal,
@@ -453,7 +530,47 @@ describe("buildDelegationToolRegistration", () => {
     abortController.abort();
     const result = await resultPromise;
     const text = JSON.parse((result.content[0] as { text: string }).text);
-    expect(text).toEqual({ ok: false, error: "ChildAbortFailed" });
+    expect(text).toEqual({
+      ok: false,
+      error: "ChildAbortFailed",
+      message:
+        "Weave could not confirm the delegated child stopped cleanly; it was terminated.",
+      reason: "cancel-subtree-failed",
+      retryable: true,
+      recovery: "retry",
+    });
+  });
+
+  it("execute: carries the closed spawn reason so the caller can tell why the child never started", async () => {
+    const registration = buildDelegationToolRegistration(
+      baseDeps({
+        getController: () =>
+          fakeController(() =>
+            errAsync(
+              makeChildSpawnFailedFailure(
+                "child-1",
+                "invalid session spawn configuration: base command contains a session flag",
+              ),
+            ),
+          ),
+      }),
+    );
+    const result = await registration.execute(
+      "call-1",
+      { agent: "shuttle", task: "do it" },
+      undefined,
+      undefined,
+      ctx(),
+    );
+    const text = JSON.parse((result.content[0] as { text: string }).text);
+    expect(text.ok).toBe(false);
+    expect(text.error).toBe("ChildSpawnFailed");
+    expect(text.reason).toBe(
+      "invalid session spawn configuration: base command contains a session flag",
+    );
+    expect(text.message).toBe(
+      "Weave could not start the delegated child process.",
+    );
   });
 
   it("execute: a signal that never aborts never touches cancelSubtree, and the once-listener never leaks past the settled call", async () => {
@@ -471,7 +588,7 @@ describe("buildDelegationToolRegistration", () => {
       }),
     );
     const abortController = new AbortController();
-    const result = await registration.tool.execute(
+    const result = await registration.execute(
       "call-1",
       { agent: "shuttle", task: "do it" },
       abortController.signal,

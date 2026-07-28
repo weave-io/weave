@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { ResultAsync } from "neverthrow";
+import { ok, ResultAsync } from "neverthrow";
 import {
   generateNonceHex,
   type HmacError,
@@ -10,7 +10,21 @@ import {
 } from "../child-crypto.js";
 import { WEAVE_CHILD_SECRET_ENV } from "../child-env.js";
 import { type PiControlKind, signEnvelope } from "../child-envelope.js";
-import { PiRpcChild, type PiRpcChildSpawnInput } from "../rpc-child.js";
+import { MAX_NATIVE_RECORD_BYTES } from "../child-framing.js";
+import { encodeTransferChunks } from "../child-transfer.js";
+import type { PiChildTreeNode } from "../child-tree.js";
+import {
+  encodePromptChunks,
+  PROMPT_CHUNK_COMMAND,
+  PromptChunkAssembler,
+  parsePromptChunk,
+} from "../prompt-chunking.js";
+import {
+  type PiChildSessionObserver,
+  type PiExtensionUiResponseInput,
+  PiRpcChild,
+  type PiRpcChildSpawnInput,
+} from "../rpc-child.js";
 import type { JsonValue } from "../strict-json.js";
 import {
   FakeChildProcessPort,
@@ -55,14 +69,13 @@ function validBootstrap(overrides: Record<string, unknown> = {}): JsonValue {
     models: [],
     correlationId: "child-1",
     context: { parentAgentName: "loom", parentDepth: 0, cwd: "/project" },
-    activeTools: [],
     ...overrides,
   } as JsonValue;
 }
 
 /** A schema-valid bootstrap-ack body (Pi adapter contract) - `runTask()` validates it against the `bootstrap` it sent before proceeding to task work. */
 function validAck(overrides: Record<string, unknown> = {}): JsonValue {
-  return { activeTools: [], ...overrides } as JsonValue;
+  return { ...overrides } as JsonValue;
 }
 
 /** Plays the part of a well-behaved (or malicious, per test) child process. */
@@ -137,6 +150,14 @@ class DelayedSignHmacPort implements HmacPort {
   }
 }
 
+/** Fires only live-reply timers synchronously, exposing map-install races. */
+class ImmediateReplyTimerPort {
+  schedule(callback: () => void, delayMs: number) {
+    if (delayMs === 1) callback();
+    return { cancel() {} };
+  }
+}
+
 function flushMs(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -175,7 +196,345 @@ function extractControlEnvelopeFromPrompt(line: unknown): JsonValue {
   return JSON.parse(record.message.slice(prefix.length));
 }
 
+type SpawnSession = NonNullable<PiRpcChildSpawnInput["session"]>;
+
+async function startRestoreChild(
+  deps: Partial<ConstructorParameters<typeof PiRpcChild>[5]> = {},
+  session: SpawnSession = {
+    mode: "restore",
+    sessionDir: "/tmp/weave-sessions",
+    sessionPath: "/tmp/weave-sessions/child-1.jsonl",
+    activeLeafId: "leaf-restore",
+    checkpointCursor: 42,
+  },
+): Promise<{
+  child: PiRpcChild;
+  processPort: FakeChildProcessPort;
+  spawned: FakeSpawnedProcess;
+  responder: ScriptedChildResponder;
+  secretBytes: Uint8Array;
+  runPromise: ReturnType<PiRpcChild["runTask"]>;
+}> {
+  const processPort = new FakeChildProcessPort();
+  const child = new PiRpcChild("child-1", "root", "gen-1", "shuttle", 1, {
+    ...deps,
+    processPort,
+    randomPort,
+    hmacPort,
+    logger: noopLogger(),
+  });
+  const input = baseSpawnInput({ session });
+  const spawnPromise = child.spawnAndHandshake(input);
+  await flush();
+  const spawned = processPort.spawnedProcesses[0];
+  if (spawned === undefined) throw new Error("test setup: child not spawned");
+  const secretBytes = extractSecretFromSpawn(processPort);
+  const responder = new ScriptedChildResponder(spawned, "child-1", "gen-1");
+  await responder.send("handshake", "child-1", {}, secretBytes);
+  expect((await spawnPromise).isOk()).toBe(true);
+  const runPromise = child.runTask(input, validBootstrap());
+  await flush();
+  await responder.send("bootstrap-ack", "child-1", validAck(), secretBytes);
+  await flush();
+  return { child, processPort, spawned, responder, secretBytes, runPromise };
+}
+
+async function startRunningChild(
+  deps: Partial<ConstructorParameters<typeof PiRpcChild>[5]> = {},
+): Promise<{
+  child: PiRpcChild;
+  processPort: FakeChildProcessPort;
+  spawned: FakeSpawnedProcess;
+  responder: ScriptedChildResponder;
+  secretBytes: Uint8Array;
+  runPromise: ReturnType<PiRpcChild["runTask"]>;
+}> {
+  const processPort = new FakeChildProcessPort();
+  const child = new PiRpcChild("child-1", "root", "gen-1", "shuttle", 1, {
+    ...deps,
+    processPort,
+    randomPort,
+    hmacPort,
+    logger: noopLogger(),
+  });
+  const spawnPromise = child.spawnAndHandshake(baseSpawnInput());
+  await flush();
+  const spawned = processPort.spawnedProcesses[0];
+  if (spawned === undefined) throw new Error("test setup: child not spawned");
+  const secretBytes = extractSecretFromSpawn(processPort);
+  const responder = new ScriptedChildResponder(spawned, "child-1", "gen-1");
+  await responder.send("handshake", "child-1", {}, secretBytes);
+  expect((await spawnPromise).isOk()).toBe(true);
+  const runPromise = child.runTask(baseSpawnInput(), validBootstrap());
+  await flush();
+  await responder.send("bootstrap-ack", "child-1", validAck(), secretBytes);
+  await flush();
+  return { child, processPort, spawned, responder, secretBytes, runPromise };
+}
+
 describe("PiRpcChild", () => {
+  it("verifies restore context before task content and exposes only bounded metadata", async () => {
+    const observed: unknown[] = [];
+    const running = await startRestoreChild({
+      onRestoreContextVerified: (metadata) => {
+        observed.push(metadata);
+        return ok(undefined);
+      },
+    });
+
+    await waitFor(() =>
+      running.spawned
+        .writtenLines()
+        .some((line) => (line as Record<string, unknown>).type === "get_entries"),
+    );
+    const linesBeforeVerification = running.spawned.writtenLines();
+    const getEntriesIndex = linesBeforeVerification.findIndex(
+      (line) => (line as Record<string, unknown>).type === "get_entries",
+    );
+    const getEntries = linesBeforeVerification[getEntriesIndex] as Record<
+      string,
+      unknown
+    >;
+    expect(getEntries).toMatchObject({
+      type: "get_entries",
+      since: "leaf-restore",
+    });
+    expect(getEntries.since).not.toBe(42);
+    expect(
+      linesBeforeVerification.some(
+        (line) => (line as Record<string, unknown>).message === "do the thing",
+      ),
+    ).toBe(false);
+
+    running.spawned.emitLine({
+      id: getEntries.id,
+      type: "response",
+      command: "get_entries",
+      success: true,
+      data: { entries: [], leafId: "leaf-restore" },
+    });
+    await waitFor(() =>
+      running.spawned
+        .writtenLines()
+        .some((line) => (line as Record<string, unknown>).message === "do the thing"),
+    );
+
+    expect(observed).toEqual([
+      { activeLeafId: "leaf-restore", checkpointCursor: 42 },
+    ]);
+    expect(observed[0]).not.toHaveProperty("sessionPath");
+    expect(JSON.stringify(observed)).not.toContain("/tmp/weave-sessions");
+    const taskIndex = running.spawned.writtenLines().findIndex(
+      (line) => (line as Record<string, unknown>).message === "do the thing",
+    );
+    expect(taskIndex).toBeGreaterThan(getEntriesIndex);
+
+    running.child.dispose();
+    expect((await running.runPromise).isErr()).toBe(true);
+  });
+
+  it("fails closed on a restore leaf mismatch without sending task content", async () => {
+    const observed: unknown[] = [];
+    const running = await startRestoreChild({
+      onRestoreContextVerified: (metadata) => {
+        observed.push(metadata);
+        return ok(undefined);
+      },
+    });
+    await waitFor(() =>
+      running.spawned
+        .writtenLines()
+        .some((line) => (line as Record<string, unknown>).type === "get_entries"),
+    );
+    const getEntries = running.spawned.writtenLines().at(-1) as Record<
+      string,
+      unknown
+    >;
+    running.spawned.emitLine({
+      id: getEntries.id,
+      type: "response",
+      command: "get_entries",
+      success: true,
+      data: { entries: [], leafId: "different-leaf" },
+    });
+
+    expect((await running.runPromise).isErr()).toBe(true);
+    expect(observed).toEqual([]);
+    expect(
+      running.spawned
+        .writtenLines()
+        .some((line) => (line as Record<string, unknown>).message === "do the thing"),
+    ).toBe(false);
+  });
+
+  it("fails closed when the child settles or exits during restore verification", async () => {
+    for (const event of ["settled", "exit"] as const) {
+      const running = await startRestoreChild();
+      await waitFor(() =>
+        running.spawned
+          .writtenLines()
+          .some((line) => (line as Record<string, unknown>).type === "get_entries"),
+      );
+      if (event === "settled") {
+        await running.responder.send(
+          "settled",
+          "child-1",
+          { outcome: "completed", summary: "done" },
+          running.secretBytes,
+        );
+      } else {
+        running.spawned.exit(23);
+      }
+      expect((await running.runPromise).isErr()).toBe(true);
+      expect(
+        running.spawned
+          .writtenLines()
+          .some((line) => (line as Record<string, unknown>).message === "do the thing"),
+      ).toBe(false);
+    }
+  });
+
+  it("fails closed when the restore observer rejects metadata", async () => {
+    const running = await startRestoreChild({
+      onRestoreContextVerified: () => {
+        throw new Error("observer must not expose session content");
+      },
+    });
+    await waitFor(() =>
+      running.spawned
+        .writtenLines()
+        .some((line) => (line as Record<string, unknown>).type === "get_entries"),
+    );
+    const getEntries = running.spawned.writtenLines().at(-1) as Record<
+      string,
+      unknown
+    >;
+    running.spawned.emitLine({
+      id: getEntries.id,
+      type: "response",
+      command: "get_entries",
+      success: true,
+      data: { entries: [], leafId: "leaf-restore" },
+    });
+
+    expect((await running.runPromise).isErr()).toBe(true);
+    expect(
+      running.spawned
+        .writtenLines()
+        .some((line) => (line as Record<string, unknown>).message === "do the thing"),
+    ).toBe(false);
+  });
+
+  it("fails closed when restore get_entries fails, is malformed, or times out", async () => {
+    const cases: readonly {
+      response?: Readonly<Record<string, JsonValue>>;
+      timeout?: boolean;
+    }[] = [
+      {
+        response: {
+          id: "placeholder",
+          type: "response",
+          command: "get_entries",
+          success: false,
+          error: "private failure",
+        },
+      },
+      {
+        response: {
+          id: "placeholder",
+          type: "response",
+          command: "get_entries",
+          success: true,
+          data: { entries: "malformed", leafId: "leaf-restore" },
+        },
+      },
+      { timeout: true },
+    ];
+
+    for (const testCase of cases) {
+      const running = await startRestoreChild({
+        replyTimeoutMs: testCase.timeout ? 5 : undefined,
+      });
+      await waitFor(() =>
+        running.spawned
+          .writtenLines()
+          .some((line) => (line as Record<string, unknown>).type === "get_entries"),
+      );
+      if (testCase.response !== undefined) {
+        const getEntries = running.spawned.writtenLines().at(-1) as Record<
+          string,
+          unknown
+        >;
+        running.spawned.emitLine({
+          ...testCase.response,
+          id: getEntries.id,
+        });
+      } else {
+        await flushMs(20);
+      }
+      expect((await running.runPromise).isErr()).toBe(true);
+      expect(
+        running.spawned
+          .writtenLines()
+          .some((line) => (line as Record<string, unknown>).message === "do the thing"),
+      ).toBe(false);
+    }
+  });
+
+  it("rejects restore input with an unknown active-leaf cursor before spawning", async () => {
+    const processPort = new FakeChildProcessPort();
+    const child = new PiRpcChild("child-1", "root", "gen-1", "shuttle", 1, {
+      processPort,
+      randomPort,
+      hmacPort,
+      logger: noopLogger(),
+    });
+    const result = await child.spawnAndHandshake(
+      baseSpawnInput({
+        session: {
+          mode: "restore",
+          sessionDir: "/tmp/weave-sessions",
+          sessionPath: "/tmp/weave-sessions/child-1.jsonl",
+          activeLeafId: undefined as unknown as string,
+        },
+      }),
+    );
+    expect(result.isErr()).toBe(true);
+    expect(processPort.spawnInputs).toHaveLength(0);
+  });
+
+  it("skips restore verification for ephemeral and new sessions", async () => {
+    const sessions: readonly SpawnSession[] = [
+      { mode: "ephemeral" },
+      { mode: "new", sessionDir: "/tmp/weave-sessions" },
+    ];
+    for (const session of sessions) {
+      const running =
+        session.mode === "ephemeral"
+          ? await startRunningChild()
+          : await startRestoreChild({}, session);
+      await flush();
+      expect(
+        running.spawned
+          .writtenLines()
+          .some((line) => (line as Record<string, unknown>).type === "get_entries"),
+      ).toBe(false);
+      expect(
+        running.spawned
+          .writtenLines()
+          .some((line) => (line as Record<string, unknown>).message === "do the thing"),
+      ).toBe(true);
+      await running.responder.send(
+        "settled",
+        "child-1",
+        { outcome: "completed", summary: "done" },
+        running.secretBytes,
+      );
+      expect((await running.runPromise).isOk()).toBe(true);
+      running.child.dispose();
+    }
+  });
+
   it("passes the secret only via environment, never argv/prompt, and completes the handshake before returning", async () => {
     const processPort = new FakeChildProcessPort();
     const child = new PiRpcChild("child-1", "root", "gen-1", "shuttle", 1, {
@@ -205,38 +564,703 @@ describe("PiRpcChild", () => {
     expect(child.snapshot().status).toBe("handshaking");
   });
 
-  it("never sends an RPC steer or follow_up command; only prompt and abort", async () => {
+  it("builds the typed ephemeral, new, and restore session argv slices", async () => {
+    const cases = [
+      {
+        session: { mode: "ephemeral" as const },
+        command: ["pi", "--mode", "rpc", "--no-session"],
+      },
+      {
+        session: {
+          mode: "new" as const,
+          sessionDir: "/tmp/weave-sessions",
+        },
+        command: [
+          "pi",
+          "--mode",
+          "rpc",
+          "--session-dir",
+          "/tmp/weave-sessions",
+        ],
+      },
+      {
+        session: {
+          mode: "restore" as const,
+          sessionDir: "/tmp/weave-sessions",
+          sessionPath: "/tmp/weave-sessions/child-1.jsonl",
+          activeLeafId: "leaf-1",
+          checkpointCursor: 7,
+        },
+        command: [
+          "pi",
+          "--mode",
+          "rpc",
+          "--session-dir",
+          "/tmp/weave-sessions",
+          "--session",
+          "/tmp/weave-sessions/child-1.jsonl",
+        ],
+      },
+    ] as const;
+
+    for (const testCase of cases) {
+      const processPort = new FakeChildProcessPort();
+      const child = new PiRpcChild("child-1", "root", "gen-1", "shuttle", 1, {
+        processPort,
+        randomPort,
+        hmacPort,
+        logger: noopLogger(),
+      });
+      const spawnPromise = child.spawnAndHandshake(
+        baseSpawnInput({ session: testCase.session }),
+      );
+      await flush();
+      expect(processPort.spawnInputs[0]?.command).toEqual(testCase.command);
+      child.dispose();
+      expect((await spawnPromise).isErr()).toBe(true);
+    }
+  });
+
+  it("rejects unsafe session argv inputs before spawning", async () => {
+    const invalidSessions: readonly PiRpcChildSpawnInput["session"][] = [
+      { mode: "new", sessionDir: "relative/sessions" },
+      { mode: "new", sessionDir: "/tmp/weave-sessions\0" },
+      { mode: "new", sessionDir: "/tmp/weave-sessions/." },
+      { mode: "new", sessionDir: "/tmp/weave-sessions/../other" },
+      {
+        mode: "restore",
+        sessionDir: "/tmp/weave-sessions",
+        sessionPath: "/tmp/weave-sessions/child.txt",
+        activeLeafId: "leaf-1",
+      },
+      {
+        mode: "restore",
+        sessionDir: "/tmp/weave-sessions",
+        sessionPath: "child-1.jsonl",
+        activeLeafId: "leaf-1",
+      },
+      {
+        mode: "restore",
+        sessionDir: "/tmp/weave-sessions",
+        sessionPath: "/tmp/weave-sessions-other/child-1.jsonl",
+        activeLeafId: "leaf-1",
+      },
+      {
+        mode: "restore",
+        sessionDir: "/tmp/weave-sessions",
+        sessionPath: "/tmp/weave-sessions/sub/../../child-1.jsonl",
+        activeLeafId: "leaf-1",
+      },
+      {
+        mode: "restore",
+        sessionDir: "/tmp/weave-sessions",
+        sessionPath: "/tmp/weave-sessions/child-1.jsonl",
+        activeLeafId: "",
+      },
+      {
+        mode: "restore",
+        sessionDir: "/tmp/weave-sessions",
+        sessionPath: "/tmp/weave-sessions/child-1.jsonl",
+        activeLeafId: "leaf-1",
+        checkpointCursor: -1,
+      },
+    ];
+
+    for (const session of invalidSessions) {
+      const processPort = new FakeChildProcessPort();
+      const child = new PiRpcChild("child-1", "root", "gen-1", "shuttle", 1, {
+        processPort,
+        randomPort,
+        hmacPort,
+        logger: noopLogger(),
+      });
+      const result = await child.spawnAndHandshake(baseSpawnInput({ session }));
+      expect(result.isErr()).toBe(true);
+      expect(processPort.spawnInputs).toHaveLength(0);
+    }
+  });
+
+  it("rejects session flags already present in the base command before spawning", async () => {
     const processPort = new FakeChildProcessPort();
     const child = new PiRpcChild("child-1", "root", "gen-1", "shuttle", 1, {
       processPort,
       randomPort,
       hmacPort,
       logger: noopLogger(),
+      command: ["pi", "--mode", "rpc", "--resume=latest"],
     });
-    const spawnPromise = child.spawnAndHandshake(baseSpawnInput());
-    await flush();
-    const spawned = processPort.spawnedProcesses[0];
-    const secretBytes = extractSecretFromSpawn(processPort);
-    const responder = new ScriptedChildResponder(spawned, "child-1", "gen-1");
-    await responder.send("handshake", "child-1", {}, secretBytes);
-    await spawnPromise;
 
-    const runPromise = child.runTask(baseSpawnInput(), validBootstrap());
+    const result = await child.spawnAndHandshake(baseSpawnInput());
+    expect(result.isErr()).toBe(true);
+    expect(processPort.spawnInputs).toHaveLength(0);
+  });
+
+  it("sends exact steer/follow_up commands and counts only accepted interventions", async () => {
+    const counts: number[] = [];
+    const running = await startRunningChild({
+      onInterventionCountChanged: (count) => counts.push(count),
+    });
+
+    const steer = running.child.steer("child-1", "gen-1", "private steer text");
     await flush();
-    await responder.send("bootstrap-ack", "child-1", validAck(), secretBytes);
+    const steerLine = running.spawned.writtenLines().at(-1) as Record<
+      string,
+      unknown
+    >;
+    expect(steerLine).toMatchObject({
+      type: "steer",
+      message: "private steer text",
+      images: [],
+    });
+    expect(typeof steerLine.id).toBe("string");
+    running.spawned.emitLine({
+      id: steerLine.id,
+      type: "response",
+      command: "steer",
+      success: true,
+    });
+    expect((await steer).isOk()).toBe(true);
+    expect(running.child.getInterventionCount()).toBe(1);
+
+    const followUp = running.child.followUp(
+      "child-1",
+      "gen-1",
+      "private follow-up text",
+    );
     await flush();
-    await responder.send(
+    const followLine = running.spawned.writtenLines().at(-1) as Record<
+      string,
+      unknown
+    >;
+    expect(followLine).toMatchObject({
+      type: "follow_up",
+      message: "private follow-up text",
+      images: [],
+    });
+    running.spawned.emitLine({
+      id: followLine.id,
+      type: "response",
+      command: "follow_up",
+      success: true,
+    });
+    expect((await followUp).isOk()).toBe(true);
+    expect(counts).toEqual([1, 2]);
+    expect(JSON.stringify(counts)).not.toContain("private");
+    running.child.dispose();
+  });
+
+  it("guards live RPCs by identity and running lifecycle, and validates get_entries", async () => {
+    const queuedPort = new FakeChildProcessPort();
+    const queued = new PiRpcChild("child-1", "root", "gen-1", "shuttle", 1, {
+      processPort: queuedPort,
+      randomPort,
+      hmacPort,
+      logger: noopLogger(),
+    });
+    expect((await queued.steer("child-1", "gen-1", "not sent")).isErr()).toBe(
+      true,
+    );
+    expect(queuedPort.spawnedProcesses).toHaveLength(0);
+
+    const running = await startRunningChild();
+    const before = running.spawned.writtenLines().length;
+    expect(
+      (await running.child.steer("wrong-child", "gen-1", "not sent")).isErr(),
+    ).toBe(true);
+    expect(
+      (
+        await running.child.followUp("child-1", "stale-generation", "not sent")
+      ).isErr(),
+    ).toBe(true);
+    expect(running.spawned.writtenLines()).toHaveLength(before);
+
+    const entries = running.child.getEntries("child-1", "gen-1", "leaf-1");
+    await flush();
+    const line = running.spawned.writtenLines().at(-1) as Record<
+      string,
+      unknown
+    >;
+    expect(line).toEqual({ id: line.id, type: "get_entries", since: "leaf-1" });
+    running.spawned.emitLine({
+      id: line.id,
+      type: "response",
+      command: "get_entries",
+      success: true,
+      data: {
+        entries: [
+          {
+            type: "message",
+            id: "entry-1",
+            parentId: null,
+            timestamp: "2026-01-01T00:00:00.000Z",
+            message: { role: "user", content: "bounded" },
+          },
+        ],
+        leafId: "leaf-2",
+      },
+    });
+    expect((await entries)._unsafeUnwrap()).toEqual({
+      entries: [
+        {
+          type: "message",
+          id: "entry-1",
+          parentId: null,
+          timestamp: "2026-01-01T00:00:00.000Z",
+          message: { role: "user", content: "bounded" },
+        },
+      ],
+      leafId: "leaf-2",
+    });
+
+    const malformed = running.child.getEntries("child-1", "gen-1");
+    await flush();
+    const malformedLine = running.spawned.writtenLines().at(-1) as Record<
+      string,
+      unknown
+    >;
+    running.spawned.emitLine({
+      id: malformedLine.id,
+      type: "response",
+      command: "get_entries",
+      success: true,
+      data: { entries: "not-an-array", leafId: null },
+    });
+    expect((await malformed).isErr()).toBe(true);
+    running.child.dispose();
+  });
+
+  it("validates typed get_entries fields and bounds the complete response", async () => {
+    const running = await startRunningChild();
+
+    const malformed = running.child.getEntries("child-1", "gen-1");
+    await flush();
+    const malformedLine = running.spawned.writtenLines().at(-1) as Record<
+      string,
+      unknown
+    >;
+    running.spawned.emitLine({
+      id: malformedLine.id,
+      type: "response",
+      command: "get_entries",
+      success: true,
+      data: {
+        entries: [
+          {
+            type: "message",
+            id: "entry-1",
+            parentId: null,
+            timestamp: "2026-01-01T00:00:00.000Z",
+          },
+        ],
+        leafId: null,
+      },
+    });
+    expect((await malformed).isErr()).toBe(true);
+
+    const oversizedField = running.child.getEntries("child-1", "gen-1");
+    await flush();
+    const oversizedFieldLine = running.spawned.writtenLines().at(-1) as Record<
+      string,
+      unknown
+    >;
+    running.spawned.emitLine({
+      id: oversizedFieldLine.id,
+      type: "response",
+      command: "get_entries",
+      success: true,
+      data: {
+        entries: [
+          {
+            type: "custom",
+            id: "entry-2",
+            parentId: null,
+            timestamp: "2026-01-01T00:00:00.000Z",
+            customType: "test",
+            data: "x".repeat(64 * 1024 + 1),
+          },
+        ],
+        leafId: "entry-2",
+      },
+    });
+    expect((await oversizedField).isErr()).toBe(true);
+
+    const oversizedResponse = running.child.getEntries("child-1", "gen-1");
+    await flush();
+    const oversizedResponseLine = running.spawned
+      .writtenLines()
+      .at(-1) as Record<string, unknown>;
+    running.spawned.emitLine({
+      id: oversizedResponseLine.id,
+      type: "response",
+      command: "get_entries",
+      success: true,
+      data: {
+        entries: Array.from({ length: 256 }, (_, index) => ({
+          type: "custom",
+          id: `entry-${index}`,
+          parentId: null,
+          timestamp: "2026-01-01T00:00:00.000Z",
+          customType: "test",
+          data: "x".repeat(2048),
+        })),
+        leafId: "entry-255",
+      },
+    });
+    expect((await oversizedResponse).isErr()).toBe(true);
+    running.child.dispose();
+  });
+
+  it("rejects empty and byte-oversized intervention text before writing", async () => {
+    const running = await startRunningChild();
+    const before = running.spawned.writtenLines().length;
+
+    expect((await running.child.steer("child-1", "gen-1", "")).isErr()).toBe(
+      true,
+    );
+    expect(
+      (
+        await running.child.followUp("child-1", "gen-1", "💥".repeat(16_385))
+      ).isErr(),
+    ).toBe(true);
+    expect(running.spawned.writtenLines()).toHaveLength(before);
+    running.child.dispose();
+  });
+
+  it("installs a pending intervention before a synchronous reply timeout", async () => {
+    const running = await startRunningChild({
+      timerPort: new ImmediateReplyTimerPort(),
+      replyTimeoutMs: 1,
+    });
+    const before = running.spawned.writtenLines().length;
+
+    const result = await running.child.steer(
+      "child-1",
+      "gen-1",
+      "timeout without a write",
+    );
+
+    expect(result.isErr()).toBe(true);
+    expect(running.spawned.writtenLines()).toHaveLength(before);
+    expect(running.child.getInterventionCount()).toBe(0);
+    running.child.dispose();
+  });
+
+  it("does not count failed, malformed, mismatched, duplicate, or late responses", async () => {
+    const counts: number[] = [];
+    const running = await startRunningChild({
+      onInterventionCountChanged: (count) => counts.push(count),
+    });
+    const failed = running.child.steer("child-1", "gen-1", "secret text");
+    await flush();
+    const line = running.spawned.writtenLines().at(-1) as Record<
+      string,
+      unknown
+    >;
+    running.spawned.emitLine({
+      id: line.id,
+      type: "response",
+      command: "steer",
+      success: false,
+      error: "secret response error",
+    });
+    const failedResult = await failed;
+    expect(failedResult.isErr()).toBe(true);
+    expect(JSON.stringify(failedResult)).not.toContain("secret response error");
+    running.spawned.emitLine({
+      id: line.id,
+      type: "response",
+      command: "steer",
+      success: true,
+    });
+    expect(running.child.getInterventionCount()).toBe(0);
+    expect(counts).toEqual([]);
+    expect(JSON.stringify(counts)).not.toContain("secret");
+
+    const malformed = running.child.followUp(
+      "child-1",
+      "gen-1",
+      "private malformed",
+    );
+    await flush();
+    const malformedLine = running.spawned.writtenLines().at(-1) as Record<
+      string,
+      unknown
+    >;
+    running.spawned.emitLine({
+      id: malformedLine.id,
+      type: "response",
+      command: "follow_up",
+      success: "yes",
+      error: "private malformed response",
+    });
+    const malformedResult = await malformed;
+    expect(malformedResult.isErr()).toBe(true);
+    expect(JSON.stringify(malformedResult)).not.toContain(
+      "private malformed response",
+    );
+    expect(running.child.getInterventionCount()).toBe(0);
+
+    const failedEntries = running.child.getEntries("child-1", "gen-1");
+    await flush();
+    const failedEntriesLine = running.spawned.writtenLines().at(-1) as Record<
+      string,
+      unknown
+    >;
+    running.spawned.emitLine({
+      id: failedEntriesLine.id,
+      type: "response",
+      command: "get_entries",
+      success: false,
+      error: "private get_entries error",
+    });
+    const failedEntriesResult = await failedEntries;
+    expect(failedEntriesResult.isErr()).toBe(true);
+    expect(JSON.stringify(failedEntriesResult)).not.toContain(
+      "private get_entries error",
+    );
+
+    const mismatchedEntries = running.child.getEntries("child-1", "gen-1");
+    await flush();
+    const mismatchedEntriesLine = running.spawned
+      .writtenLines()
+      .at(-1) as Record<string, unknown>;
+    running.spawned.emitLine({
+      id: mismatchedEntriesLine.id,
+      type: "response",
+      command: "steer",
+      success: true,
+    });
+    expect((await mismatchedEntries).isErr()).toBe(true);
+    running.spawned.emitLine({
+      id: mismatchedEntriesLine.id,
+      type: "response",
+      command: "get_entries",
+      success: true,
+      data: { entries: [], leafId: null },
+    });
+    expect(running.child.getInterventionCount()).toBe(0);
+
+    const raced = running.child.followUp("child-1", "gen-1", "late text");
+    await flush();
+    const racedLine = running.spawned.writtenLines().at(-1) as Record<
+      string,
+      unknown
+    >;
+    await running.responder.send(
       "settled",
       "child-1",
       { outcome: "completed", summary: "done" },
-      secretBytes,
+      running.secretBytes,
     );
-    await runPromise;
+    expect((await running.runPromise).isOk()).toBe(true);
+    expect((await raced).isErr()).toBe(true);
+    running.spawned.emitLine({
+      id: racedLine.id,
+      type: "response",
+      command: "follow_up",
+      success: true,
+    });
+    expect(running.child.getInterventionCount()).toBe(0);
+    expect(counts).toEqual([]);
+    expect(JSON.stringify(counts)).not.toContain("private");
+    running.child.dispose();
+  });
 
-    for (const line of spawned.writtenLines()) {
-      const record = line as Record<string, unknown>;
-      expect(record.type === "prompt" || record.type === "abort").toBe(true);
+  it("writes only an authenticated normalized extension UI response", async () => {
+    const running = await startRunningChild();
+    const before = running.spawned.writtenLines().length;
+    expect(
+      (
+        await running.child.sendExtensionUiResponse("wrong-child", "gen-1", {
+          type: "extension_ui_response",
+          requestId: "req-1",
+          response: "no",
+        })
+      ).isErr(),
+    ).toBe(true);
+    expect(running.spawned.writtenLines()).toHaveLength(before);
+
+    running.spawned.emitLine({
+      type: "extension_ui_request",
+      requestType: "dialog",
+      requestId: "req-1",
+    });
+    const beforeCrossChild = running.spawned.writtenLines().length;
+    expect(
+      (
+        await running.child.sendExtensionUiResponse("other-child", "gen-1", {
+          type: "extension_ui_response",
+          requestId: "req-1",
+          response: "cross-child",
+        })
+      ).isErr(),
+    ).toBe(true);
+    expect(
+      (
+        await running.child.sendExtensionUiResponse("child-1", "other-gen", {
+          type: "extension_ui_response",
+          requestId: "req-1",
+          response: "stale-generation",
+        })
+      ).isErr(),
+    ).toBe(true);
+    expect(running.spawned.writtenLines()).toHaveLength(beforeCrossChild);
+    const result = running.child.sendExtensionUiResponse("child-1", "gen-1", {
+      type: "extension_ui_response",
+      requestId: "req-1",
+      response: { value: "yes" },
+      cancelled: false,
+    });
+    expect((await result).isOk()).toBe(true);
+    expect(running.spawned.writtenLines().at(-1)).toEqual({
+      type: "extension_ui_response",
+      id: "req-1",
+      value: "yes",
+    });
+    const beforeDuplicate = running.spawned.writtenLines().length;
+    expect(
+      (
+        await running.child.sendExtensionUiResponse("child-1", "gen-1", {
+          type: "extension_ui_response",
+          requestId: "req-1",
+          response: "late",
+        })
+      ).isErr(),
+    ).toBe(true);
+    expect(running.spawned.writtenLines()).toHaveLength(beforeDuplicate);
+    running.child.dispose();
+  });
+
+  it("correlates blocking UI requests and maps confirmation safely", async () => {
+    const running = await startRunningChild();
+    const before = running.spawned.writtenLines().length;
+
+    for (const requestType of ["notification", "widget"] as const) {
+      running.spawned.emitLine({
+        type: "extension_ui_request",
+        requestType,
+        requestId: `${requestType}-1`,
+      });
+      expect(
+        (
+          await running.child.sendExtensionUiResponse("child-1", "gen-1", {
+            type: "extension_ui_response",
+            requestId: `${requestType}-1`,
+            response: "not blocking",
+          })
+        ).isErr(),
+      ).toBe(true);
     }
+    expect(running.spawned.writtenLines()).toHaveLength(before);
+
+    running.spawned.emitLine({
+      type: "extension_ui_request",
+      requestType: "dialog",
+      requestId: "confirm-1",
+    });
+    expect(
+      (
+        await running.child.sendExtensionUiResponse("child-1", "gen-1", {
+          type: "extension_ui_response",
+          requestId: "confirm-1",
+          response: true,
+        })
+      ).isOk(),
+    ).toBe(true);
+    expect(running.spawned.writtenLines().at(-1)).toEqual({
+      type: "extension_ui_response",
+      id: "confirm-1",
+      confirmed: true,
+    });
+
+    running.spawned.emitLine({
+      type: "extension_ui_request",
+      requestType: "dialog",
+      requestId: "cancel-1",
+    });
+    expect(
+      (
+        await running.child.sendExtensionUiResponse("child-1", "gen-1", {
+          type: "extension_ui_response",
+          requestId: "cancel-1",
+          cancelled: true,
+        })
+      ).isOk(),
+    ).toBe(true);
+    expect(running.spawned.writtenLines().at(-1)).toEqual({
+      type: "extension_ui_response",
+      id: "cancel-1",
+      cancelled: true,
+    });
+
+    running.spawned.emitLine({
+      type: "extension_ui_request",
+      requestType: "dialog",
+      requestId: "smuggle-1",
+    });
+    const beforeMalformed = running.spawned.writtenLines().length;
+    const malformed = await running.child.sendExtensionUiResponse(
+      "child-1",
+      "gen-1",
+      {
+        type: "extension_ui_response",
+        requestId: "smuggle-1",
+        response: true,
+        id: "attacker-controlled-id",
+        extra: "private-payload",
+      } as unknown as PiExtensionUiResponseInput,
+    );
+    expect(malformed.isErr()).toBe(true);
+    expect(running.spawned.writtenLines()).toHaveLength(beforeMalformed);
+    expect(JSON.stringify(malformed)).not.toContain("private-payload");
+
+    running.child.dispose();
+  });
+
+  it("fails closed on UI write errors and clears requests during cleanup", async () => {
+    const running = await startRunningChild();
+    running.spawned.emitLine({
+      type: "extension_ui_request",
+      requestType: "dialog",
+      requestId: "write-failure-1",
+    });
+    running.spawned.failNextWrite({
+      type: "WriteFailed",
+      reason: "private raw write failure",
+    });
+    const failed = await running.child.sendExtensionUiResponse(
+      "child-1",
+      "gen-1",
+      {
+        type: "extension_ui_response",
+        requestId: "write-failure-1",
+        response: "value",
+      },
+    );
+    expect(failed.isErr()).toBe(true);
+    expect(JSON.stringify(failed)).not.toContain("private raw write failure");
+    expect(running.child.snapshot().status).toBe("failed");
+    expect(running.spawned.forceKilled).toBe(true);
+
+    const disposed = await startRunningChild();
+    disposed.spawned.emitLine({
+      type: "extension_ui_request",
+      requestType: "dialog",
+      requestId: "disposed-1",
+    });
+    const beforeDispose = disposed.spawned.writtenLines().length;
+    disposed.child.dispose();
+    const late = await disposed.child.sendExtensionUiResponse(
+      "child-1",
+      "gen-1",
+      {
+        type: "extension_ui_response",
+        requestId: "disposed-1",
+        response: "late",
+      },
+    );
+    expect(late.isErr()).toBe(true);
+    expect(disposed.spawned.writtenLines()).toHaveLength(beforeDispose);
   });
 
   it("delivers the bootstrap payload through an ordinary prompt command as a hidden control envelope, never a raw sideband", async () => {
@@ -281,78 +1305,65 @@ describe("PiRpcChild", () => {
     expect(settlement.isOk()).toBe(true);
     expect(settlement._unsafeUnwrap()).toEqual({
       outcome: "completed",
-      summary: "done",
+      summary: "",
+      interventionCount: 0,
     });
   });
 
-  it("relays the child's own approval-request to the caller-supplied callback, and delivers the caller's approval-response back to it", async () => {
+  it("delivers a task larger than one RPC record through prompt chunks", async () => {
+    const task = "large-🙂\n" + "x".repeat(1_100_000);
+    const input = baseSpawnInput({ task });
     const processPort = new FakeChildProcessPort();
-    const relayed: {
-      childId: string;
-      correlationId: string;
-      request: JsonValue;
-    }[] = [];
     const child = new PiRpcChild("child-1", "root", "gen-1", "shuttle", 1, {
       processPort,
       randomPort,
       hmacPort,
       logger: noopLogger(),
-      onApprovalRequest: (childId, correlationId, request) => {
-        relayed.push({ childId, correlationId, request });
-      },
     });
-    const spawnPromise = child.spawnAndHandshake(baseSpawnInput());
+    const spawnPromise = child.spawnAndHandshake(input);
     await flush();
     const spawned = processPort.spawnedProcesses[0];
     const secretBytes = extractSecretFromSpawn(processPort);
     const responder = new ScriptedChildResponder(spawned, "child-1", "gen-1");
     await responder.send("handshake", "child-1", {}, secretBytes);
     await spawnPromise;
-    // Approval requests are only accepted once the child is actually
-    // running - i.e. after it has proved bootstrap application via an
-    // authenticated `bootstrap-ack` (Spec 33 §11.3/§11.5).
-    const runPromise = child.runTask(baseSpawnInput(), validBootstrap());
+
+    const runPromise = child.runTask(input, validBootstrap());
     await flush();
     await responder.send("bootstrap-ack", "child-1", validAck(), secretBytes);
-    await flush();
+    const expectedChunkCount = encodePromptChunks(task, "count-only").length;
+    await waitFor(
+      () => spawned.writtenLines().length === expectedChunkCount + 1,
+    );
 
-    const approvalRequestBody = {
-      agentName: "shuttle",
-      toolIdentity: "bash",
-      requests: [{ summary: "allow bash?", unresolved: false }],
-      allowedScopes: ["once", "session"],
-    };
+    const assembler = new PromptChunkAssembler();
+    let assembled: string | undefined;
+    let transferId: string | undefined;
+    for (const line of spawned.writtenLines().slice(1)) {
+      const record = line as { type: string; message: string };
+      expect(record.type).toBe("prompt");
+      expect(record.message.startsWith(`${PROMPT_CHUNK_COMMAND} `)).toBe(true);
+      const parsed = parsePromptChunk(
+        record.message.slice(PROMPT_CHUNK_COMMAND.length + 1),
+      );
+      expect(parsed.isOk()).toBe(true);
+      if (parsed.isOk()) {
+        transferId = parsed.value.transferId;
+        assembled = assembler.accept(parsed.value)._unsafeUnwrap();
+      }
+    }
+    expect(assembled).toBe(task);
+    expect(transferId).toBeDefined();
     await responder.send(
-      "approval-request",
-      "child-1-approval-0",
-      approvalRequestBody,
+      "transfer-result",
+      transferId ?? "missing-transfer-id",
+      {
+        channel: "prompt",
+        transferId: transferId ?? "missing-transfer-id",
+        status: "ack",
+      },
       secretBytes,
     );
-    await waitFor(() => relayed.length === 1);
-    expect(relayed).toEqual([
-      {
-        childId: "child-1",
-        correlationId: "child-1-approval-0",
-        request: approvalRequestBody,
-      },
-    ]);
-
-    const responseResult = await child.sendApprovalResponse(
-      "child-1-approval-0",
-      {
-        scope: "once",
-      },
-    );
-    expect(responseResult.isOk()).toBe(true);
-    const lines = spawned.writtenLines();
-    const responseEnvelope = extractControlEnvelopeFromPrompt(lines.at(-1)) as {
-      kind: string;
-      correlationId: string;
-      body: JsonValue;
-    };
-    expect(responseEnvelope.kind).toBe("approval-response");
-    expect(responseEnvelope.correlationId).toBe("child-1-approval-0");
-    expect(responseEnvelope.body).toEqual({ scope: "once" });
 
     await responder.send(
       "settled",
@@ -360,7 +1371,55 @@ describe("PiRpcChild", () => {
       { outcome: "completed", summary: "done" },
       secretBytes,
     );
-    await runPromise;
+    expect((await runPromise).isOk()).toBe(true);
+  });
+
+  it("reports a dropped prompt transfer as a typed timeout, never missing settlement", async () => {
+    const task = "dropped-" + "x".repeat(1_100_000);
+    const timers: Array<() => void> = [];
+    const processPort = new FakeChildProcessPort();
+    const child = new PiRpcChild("child-1", "root", "gen-1", "shuttle", 1, {
+      processPort,
+      randomPort,
+      hmacPort,
+      logger: noopLogger(),
+      timerPort: {
+        schedule: (cb) => {
+          timers.push(cb);
+          return { cancel: () => {} };
+        },
+      },
+    });
+    const input = baseSpawnInput({ task });
+    const spawnPromise = child.spawnAndHandshake(input);
+    await flush();
+    const spawned = processPort.spawnedProcesses[0];
+    const secretBytes = extractSecretFromSpawn(processPort);
+    const responder = new ScriptedChildResponder(spawned, "child-1", "gen-1");
+    await responder.send("handshake", "child-1", {}, secretBytes);
+    await spawnPromise;
+
+    const runPromise = child.runTask(input, validBootstrap());
+    await flush();
+    await responder.send("bootstrap-ack", "child-1", validAck(), secretBytes);
+    await flush();
+
+    // The child never ACKs this transfer. The sender waits, retries the full
+    // transfer once, waits again, then names the delivery cause. It must not
+    // continue to the unrelated settlement timer.
+    const firstTransferTimeout = timers.at(-1);
+    expect(firstTransferTimeout).toBeDefined();
+    firstTransferTimeout?.();
+    await flush();
+    const secondTransferTimeout = timers.at(-1);
+    expect(secondTransferTimeout).toBeDefined();
+    secondTransferTimeout?.();
+
+    const result = await runPromise;
+    expect(result.isErr()).toBe(true);
+    if (result.isOk()) return;
+    expect(result.error.code).toBe("ChildTransferTimedOut");
+    expect(result.error.code).not.toBe("ChildSettlementMissing");
   });
 
   it("projects exact-host usage once and deduplicates by responseId", async () => {
@@ -936,10 +1995,10 @@ describe("PiRpcChild", () => {
     await flush();
     await responder.send("bootstrap-ack", "child-1", validAck(), secretBytes);
     await flush();
-    // "approval-response" is a parent-to-child-only kind; a child sending
+    // "delegate-response" is a parent-to-child-only kind; a child sending
     // it back is always illegal and must fail closed.
     await responder.send(
-      "approval-response",
+      "delegate-response",
       "child-1",
       { scope: "once" },
       secretBytes,
@@ -1014,13 +2073,15 @@ describe("PiRpcChild", () => {
     });
   });
 
-  it("accumulates streamed message_update deltas into the bounded latest-output buffer instead of replacing it with only the last delta", async () => {
+  it("accumulates streamed message_update deltas and pushes bounded snapshots to its parent", async () => {
     const processPort = new FakeChildProcessPort();
+    const streamingUpdates: PiChildTreeNode[] = [];
     const child = new PiRpcChild("child-1", "root", "gen-1", "shuttle", 1, {
       processPort,
       randomPort,
       hmacPort,
       logger: noopLogger(),
+      onStreamingUpdate: (snapshot) => streamingUpdates.push(snapshot),
     });
     const spawnPromise = child.spawnAndHandshake(baseSpawnInput());
     await flush();
@@ -1033,16 +2094,602 @@ describe("PiRpcChild", () => {
     spawned.emitLine({ type: "message_update", delta: { text: "hello " } });
     spawned.emitLine({ type: "message_update", delta: { text: "world" } });
     expect(child.snapshot().latestOutput).toBe("hello world");
+    expect(streamingUpdates.at(-1)?.latestOutput).toBe("hello world");
 
-    // A new turn starts a fresh transient buffer rather than carrying the
-    // previous turn's trailing text forward forever.
+    // Keep the previous preview visible across a turn boundary. The first
+    // delta from the new turn replaces it, avoiding a blank flash while the
+    // child starts its next model or tool step.
     spawned.emitLine({ type: "turn_start" });
-    expect(child.snapshot().latestOutput).toBe("");
+    expect(child.snapshot().latestOutput).toBe("hello world");
+    expect(streamingUpdates.at(-1)?.latestOutput).toBe("hello world");
     spawned.emitLine({
       type: "message_update",
       delta: { text: "second turn" },
     });
     expect(child.snapshot().latestOutput).toBe("second turn");
+    expect(streamingUpdates.at(-1)?.latestOutput).toBe("second turn");
+  });
+
+  it("streams thinking deltas so a reasoning child never looks frozen, and yields to answer text once it starts", async () => {
+    const processPort = new FakeChildProcessPort();
+    const streamingUpdates: PiChildTreeNode[] = [];
+    const child = new PiRpcChild("child-1", "root", "gen-1", "shuttle", 1, {
+      processPort,
+      randomPort,
+      hmacPort,
+      logger: noopLogger(),
+      onStreamingUpdate: (snapshot) => streamingUpdates.push(snapshot),
+    });
+    const spawnPromise = child.spawnAndHandshake(baseSpawnInput());
+    await flush();
+    const spawned = processPort.spawnedProcesses[0];
+    const secretBytes = extractSecretFromSpawn(processPort);
+    const responder = new ScriptedChildResponder(spawned, "child-1", "gen-1");
+    await responder.send("handshake", "child-1", {}, secretBytes);
+    await spawnPromise;
+
+    spawned.emitLine({
+      type: "message_update",
+      assistantMessageEvent: { type: "thinking_delta", delta: "weigh" },
+    });
+    spawned.emitLine({
+      type: "message_update",
+      assistantMessageEvent: { type: "thinking_delta", delta: "ing it" },
+    });
+    expect(child.snapshot().latestOutput).toBe("weighing it");
+    expect(streamingUpdates.at(-1)?.latestOutput).toBe("weighing it");
+
+    // Real answer text always wins: the reasoning preview is dropped the
+    // moment the model actually starts speaking.
+    spawned.emitLine({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", delta: "answer" },
+    });
+    expect(child.snapshot().latestOutput).toBe("answer");
+    expect(streamingUpdates.at(-1)?.latestOutput).toBe("answer");
+
+    // Once text exists, later thinking never overwrites it.
+    spawned.emitLine({
+      type: "message_update",
+      assistantMessageEvent: { type: "thinking_delta", delta: "more" },
+    });
+    expect(child.snapshot().latestOutput).toBe("answer");
+
+    // A new turn retains the previous preview until its first delta arrives.
+    spawned.emitLine({ type: "turn_start" });
+    expect(child.snapshot().latestOutput).toBe("answer");
+    spawned.emitLine({
+      type: "message_update",
+      assistantMessageEvent: { type: "thinking_delta", delta: "next thought" },
+    });
+    expect(child.snapshot().latestOutput).toBe("next thought");
+  });
+
+  it("settles from the latest completed assistant message, not transient or control text", async () => {
+    const running = await startRunningChild();
+    running.spawned.emitLine({
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "intermediate" }],
+      },
+    });
+    running.spawned.emitLine({
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "text_delta",
+        delta: "transient-control-summary",
+      },
+    });
+    running.spawned.emitLine({ type: "thinking", text: "private thinking" });
+    running.spawned.emitLine({
+      type: "tool_result",
+      result: "private tool result",
+    });
+    running.spawned.emitLine({
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: "private final thinking" },
+          { type: "text", text: "final answer" },
+          { type: "image", data: "private image" },
+          { type: "future_block", value: "private unknown" },
+        ],
+      },
+    });
+    await running.responder.send(
+      "settled",
+      "child-1",
+      { outcome: "completed", summary: "control-summary" },
+      running.secretBytes,
+    );
+
+    expect((await running.runPromise)._unsafeUnwrap()).toEqual({
+      outcome: "completed",
+      summary: "final answer",
+      interventionCount: 0,
+    });
+  });
+
+  it("returns an empty summary for absent, nonassistant, and tool-only messages", async () => {
+    const messages: JsonValue[] = [
+      { type: "message_end" },
+      {
+        type: "message_end",
+        message: { role: "user", content: "not assistant text" },
+      },
+      {
+        type: "message_end",
+        message: {
+          role: "assistant",
+          content: [{ type: "toolCall", name: "private-tool" }],
+        },
+      },
+    ];
+
+    for (const message of messages) {
+      const running = await startRunningChild();
+      running.spawned.emitLine(message);
+      await running.responder.send(
+        "settled",
+        "child-1",
+        { outcome: "completed", summary: "ignored-control-summary" },
+        running.secretBytes,
+      );
+      expect((await running.runPromise)._unsafeUnwrap()).toEqual({
+        outcome: "completed",
+        summary: "",
+        interventionCount: 0,
+      });
+    }
+  });
+
+  it("freezes interventionCount when settlement resolves", async () => {
+    const running = await startRunningChild();
+    const first = running.child.steer("child-1", "gen-1", "first");
+    await flush();
+    const firstLine = running.spawned.writtenLines().at(-1) as {
+      id: string;
+    };
+    running.spawned.emitLine({
+      id: firstLine.id,
+      type: "response",
+      command: "steer",
+      success: true,
+    });
+    expect((await first).isOk()).toBe(true);
+
+    const late = running.child.steer("child-1", "gen-1", "late");
+    await flush();
+    const lateLine = running.spawned.writtenLines().at(-1) as { id: string };
+    await running.responder.send(
+      "settled",
+      "child-1",
+      { outcome: "completed", summary: "ignored-control-summary" },
+      running.secretBytes,
+    );
+    const settlement = (await running.runPromise)._unsafeUnwrap();
+    running.spawned.emitLine({
+      id: lateLine.id,
+      type: "response",
+      command: "steer",
+      success: true,
+    });
+    expect(settlement).toEqual({
+      outcome: "completed",
+      summary: "",
+      interventionCount: 1,
+    });
+    expect(running.child.getInterventionCount()).toBe(1);
+    expect((await late).isErr()).toBe(true);
+  });
+
+  it("bounds a terminal assistant message over 1 MiB without leaking its payload", async () => {
+    const running = await startRunningChild();
+    const payload = "terminal-secret-payload";
+    const terminalText = "a".repeat(1_100_000) + payload;
+    running.spawned.emitLine({
+      type: "message_end",
+      message: { role: "assistant", content: terminalText },
+    });
+    await running.responder.send(
+      "settled",
+      "child-1",
+      { outcome: "completed", summary: "ignored-control-summary" },
+      running.secretBytes,
+    );
+
+    const result = await running.runPromise;
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.outcome).toBe("completed");
+      if (result.value.outcome === "completed") {
+        expect(new TextEncoder().encode(result.value.summary).byteLength).toBe(
+          4096,
+        );
+        expect(result.value.summary).toBe("a".repeat(4096));
+        expect(JSON.stringify(result.value)).not.toContain(payload);
+      }
+    }
+  });
+
+  it("forwards every bounded session event through the observer in wire order", async () => {
+    const processPort = new FakeChildProcessPort();
+    const observed: string[] = [];
+    const observer: PiChildSessionObserver = {
+      onEvent: (event) => {
+        observed.push(event.type);
+        return ok(undefined);
+      },
+    };
+    const child = new PiRpcChild("child-1", "root", "gen-1", "shuttle", 1, {
+      processPort,
+      randomPort,
+      hmacPort,
+      logger: noopLogger(),
+      sessionObserver: observer,
+    });
+    const spawnPromise = child.spawnAndHandshake(baseSpawnInput());
+    await flush();
+    const spawned = processPort.spawnedProcesses[0];
+    const secretBytes = extractSecretFromSpawn(processPort);
+    const responder = new ScriptedChildResponder(spawned, "child-1", "gen-1");
+    await responder.send("handshake", "child-1", {}, secretBytes);
+    await spawnPromise;
+
+    const events: JsonValue[] = [
+      { type: "message_update", text: "out of order" },
+      { type: "message_start" },
+      { type: "message_end" },
+      { type: "text", text: "text" },
+      { type: "thinking", text: "thinking" },
+      { type: "markdown", text: "markdown" },
+      { type: "tool_call" },
+      { type: "tool_partial_result" },
+      { type: "tool_result" },
+      { type: "tool_error" },
+      { type: "image" },
+      { type: "usage" },
+      { type: "queue_change" },
+      { type: "status" },
+      { type: "retry" },
+      {
+        type: "extension_ui_request",
+        requestType: "notification",
+        requestId: "notification-1",
+      },
+      {
+        type: "extension_ui_request",
+        requestType: "widget",
+        requestId: "widget-1",
+      },
+      {
+        type: "extension_ui_request",
+        requestType: "dialog",
+        requestId: "dialog-1",
+      },
+      { type: "future_event", payload: "bounded" },
+    ];
+    const encoded = new TextEncoder().encode(
+      events.map((event) => `${JSON.stringify(event)}\n`).join(""),
+    );
+    spawned.emit(encoded.slice(0, 37));
+    spawned.emit(encoded.slice(37));
+
+    expect(observed).toEqual([
+      "message_update",
+      "message_start",
+      "message_end",
+      "text",
+      "thinking",
+      "markdown",
+      "tool_call",
+      "tool_partial_result",
+      "tool_result",
+      "tool_error",
+      "image",
+      "usage",
+      "queue_change",
+      "status",
+      "retry",
+      "extension_ui_request",
+      "extension_ui_request",
+      "extension_ui_request",
+      "unknown",
+    ]);
+  });
+
+  it("accepts a native assistant record over 1 MiB before settlement", async () => {
+    const processPort = new FakeChildProcessPort();
+    const observed: Array<{ type: string }> = [];
+    const logs: Array<Record<string, unknown>> = [];
+    const rawPayload = "native-assistant-observer-secret";
+    const detail = `${rawPayload}${"x".repeat(16_384 - rawPayload.length)}`;
+    const details: Record<string, string> = {};
+    for (let index = 0; index < 64; index += 1) {
+      details[`detail-${index}`] = detail;
+    }
+    const nativeEvent: JsonValue = {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        id: "large-assistant-message",
+        usage: { input: 1, output: 2 },
+        details,
+      },
+    };
+    const nativeLine = new TextEncoder().encode(
+      `${JSON.stringify(nativeEvent)}\n`,
+    );
+    expect(nativeLine.byteLength).toBeGreaterThan(1 * 1024 * 1024);
+    expect(nativeLine.byteLength).toBeLessThanOrEqual(
+      MAX_NATIVE_RECORD_BYTES,
+    );
+    const captureLog = (record: Record<string, unknown>) => logs.push(record);
+    const child = new PiRpcChild("child-1", "root", "gen-1", "shuttle", 1, {
+      processPort,
+      randomPort,
+      hmacPort,
+      logger: {
+        debug: captureLog,
+        info: captureLog,
+        warn: captureLog,
+        error: captureLog,
+      },
+      sessionObserver: {
+        onEvent: (event) => {
+          observed.push(event);
+          return ok(undefined);
+        },
+      },
+    });
+    const spawnPromise = child.spawnAndHandshake(baseSpawnInput());
+    await flush();
+    const spawned = processPort.spawnedProcesses[0];
+    const secretBytes = extractSecretFromSpawn(processPort);
+    const responder = new ScriptedChildResponder(spawned, "child-1", "gen-1");
+    await responder.send("handshake", "child-1", {}, secretBytes);
+    await spawnPromise;
+
+    const runPromise = child.runTask(baseSpawnInput(), validBootstrap());
+    await flush();
+    await responder.send("bootstrap-ack", "child-1", validAck(), secretBytes);
+    await waitFor(() => child.snapshot().status === "running");
+
+    spawned.emit(nativeLine.slice(0, 4096));
+    spawned.emit(nativeLine.slice(4096));
+    expect(observed).toHaveLength(1);
+    expect(observed[0]?.type).toBe("message_end");
+    expect(JSON.stringify(observed)).toContain(rawPayload);
+
+    await responder.send(
+      "settled",
+      "child-1",
+      { outcome: "completed", summary: "done" },
+      secretBytes,
+    );
+    const result = await runPromise;
+    expect(result.isOk()).toBe(true);
+    expect(JSON.stringify(logs)).not.toContain(rawPayload);
+    expect(JSON.stringify(result)).not.toContain(rawPayload);
+  });
+
+  it("turns observer failures into safe typed child failures without logging payloads", async () => {
+    const processPort = new FakeChildProcessPort();
+    const logs: Array<Record<string, unknown>> = [];
+    const rawPayload = "observer-secret-payload";
+    const child = new PiRpcChild("child-1", "root", "gen-1", "shuttle", 1, {
+      processPort,
+      randomPort,
+      hmacPort,
+      logger: {
+        debug: () => undefined,
+        info: () => undefined,
+        warn: (record) => logs.push(record),
+        error: () => undefined,
+      },
+      sessionObserver: {
+        onEvent: () => {
+          throw new Error(rawPayload);
+        },
+      },
+    });
+    const spawnPromise = child.spawnAndHandshake(baseSpawnInput());
+    await flush();
+    const spawned = processPort.spawnedProcesses[0];
+    const secretBytes = extractSecretFromSpawn(processPort);
+    const responder = new ScriptedChildResponder(spawned, "child-1", "gen-1");
+    await responder.send("handshake", "child-1", {}, secretBytes);
+    await spawnPromise;
+
+    const runPromise = child.runTask(baseSpawnInput(), validBootstrap());
+    await flush();
+    await responder.send("bootstrap-ack", "child-1", validAck(), secretBytes);
+    await waitFor(() => child.snapshot().status === "running");
+    spawned.emitLine({ type: "text", text: rawPayload });
+
+    const result = await runPromise;
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error.code).toBe("ChildInteractionUnavailable");
+      expect(result.error.safeMessage).not.toContain(rawPayload);
+    }
+    expect(JSON.stringify(logs)).not.toContain(rawPayload);
+    expect(child.snapshot().status).toBe("failed");
+    expect(spawned.forceKilled).toBe(true);
+  });
+
+  it("keeps full output private while projecting only bounded text and numeric metadata", async () => {
+    const privateMarkers = [
+      "PRIVATE_TRANSCRIPT",
+      "PRIVATE_THINKING",
+      "PRIVATE_TOOL_CALL",
+      "PRIVATE_TOOL_RESULT",
+      "PRIVATE_EXTENSION_UI",
+    ];
+    const fullOutput = `${"x".repeat(6_000)}${privateMarkers.join("|")}`;
+    const captures: Array<{ output: string; byteLength: number }> = [];
+    const running = await startRunningChild({
+      onPrivateOutput: (capture) => {
+        captures.push(capture);
+        return ok(undefined);
+      },
+    });
+    const transferId = "private-output-transfer";
+    const chunks = encodeTransferChunks(fullOutput, transferId);
+    expect(chunks.isOk()).toBe(true);
+    if (chunks.isErr()) return;
+    for (const chunk of chunks.value) {
+      await running.responder.send(
+        "transfer-chunk",
+        transferId,
+        { channel: "output", ...chunk },
+        running.secretBytes,
+      );
+    }
+    await flush();
+
+    await running.responder.send(
+      "settled",
+      "child-1",
+      {
+        outcome: "completed",
+        assistantOutput: "bounded parent projection",
+        outputTransferId: transferId,
+        outputByteLength: new TextEncoder().encode(fullOutput).byteLength,
+      },
+      running.secretBytes,
+    );
+    const result = await running.runPromise;
+    expect(result.isOk()).toBe(true);
+    if (result.isErr()) return;
+
+    expect(captures).toEqual([
+      {
+        output: fullOutput,
+        byteLength: new TextEncoder().encode(fullOutput).byteLength,
+      },
+    ]);
+    expect(result.value).toEqual({
+      outcome: "completed",
+      summary: "bounded parent projection",
+      outputByteLength: new TextEncoder().encode(fullOutput).byteLength,
+      interventionCount: 0,
+    });
+    const projected = JSON.stringify(result.value);
+    for (const marker of privateMarkers) expect(projected).not.toContain(marker);
+  });
+
+  it("accepts the native record boundary and fails closed above it", async () => {
+    const input = baseSpawnInput();
+    const boundaryProcessPort = new FakeChildProcessPort();
+    const boundaryChild = new PiRpcChild(
+      "child-1",
+      "root",
+      "gen-1",
+      "shuttle",
+      1,
+      {
+        processPort: boundaryProcessPort,
+        randomPort,
+        hmacPort,
+        logger: noopLogger(),
+      },
+    );
+    const boundarySpawnPromise = boundaryChild.spawnAndHandshake(input);
+    await flush();
+    const boundarySpawned = boundaryProcessPort.spawnedProcesses[0];
+    const boundarySecret = extractSecretFromSpawn(boundaryProcessPort);
+    const boundaryResponder = new ScriptedChildResponder(
+      boundarySpawned,
+      "child-1",
+      "gen-1",
+    );
+    await boundaryResponder.send("handshake", "child-1", {}, boundarySecret);
+    await boundarySpawnPromise;
+
+    const boundaryRun = boundaryChild.runTask(input, validBootstrap());
+    await flush();
+    await boundaryResponder.send(
+      "bootstrap-ack",
+      "child-1",
+      validAck(),
+      boundarySecret,
+    );
+    await waitFor(() => boundaryChild.snapshot().status === "running");
+    const boundaryFixedOverhead =
+      JSON.stringify({ type: "text", text: "" }).length + 1;
+    const boundaryLine = `${JSON.stringify({
+      type: "text",
+      text: "b".repeat(MAX_NATIVE_RECORD_BYTES - boundaryFixedOverhead),
+    })}\n`;
+    expect(new TextEncoder().encode(boundaryLine).byteLength).toBe(
+      MAX_NATIVE_RECORD_BYTES,
+    );
+    boundarySpawned.emit(new TextEncoder().encode(boundaryLine));
+    expect(boundaryChild.snapshot().status).toBe("running");
+    await boundaryResponder.send(
+      "settled",
+      "child-1",
+      { outcome: "completed", summary: "done" },
+      boundarySecret,
+    );
+    const boundaryResult = await boundaryRun;
+    expect(boundaryResult.isOk()).toBe(true);
+    if (boundaryResult.isOk()) {
+      expect(boundaryResult.value).toEqual({
+        outcome: "completed",
+        summary: "",
+        interventionCount: 0,
+      });
+    }
+
+    const processPort = new FakeChildProcessPort();
+    const logs: Array<Record<string, unknown>> = [];
+    const rawPayload = "oversized-rpc-record-secret";
+    const child = new PiRpcChild("child-1", "root", "gen-1", "shuttle", 1, {
+      processPort,
+      randomPort,
+      hmacPort,
+      logger: {
+        debug: () => undefined,
+        info: () => undefined,
+        warn: (record) => logs.push(record),
+        error: () => undefined,
+      },
+    });
+    const spawnPromise = child.spawnAndHandshake(input);
+    await flush();
+    const spawned = processPort.spawnedProcesses[0];
+    const secretBytes = extractSecretFromSpawn(processPort);
+    const responder = new ScriptedChildResponder(spawned, "child-1", "gen-1");
+    await responder.send("handshake", "child-1", {}, secretBytes);
+    await spawnPromise;
+
+    const runPromise = child.runTask(input, validBootstrap());
+    await flush();
+    await responder.send("bootstrap-ack", "child-1", validAck(), secretBytes);
+    await waitFor(() => child.snapshot().status === "running");
+    const oversizedLine = `${JSON.stringify({
+      type: "text",
+      text: `${rawPayload}${"x".repeat(MAX_NATIVE_RECORD_BYTES)}`,
+    })}\n`;
+    expect(new TextEncoder().encode(oversizedLine).byteLength).toBeGreaterThan(
+      MAX_NATIVE_RECORD_BYTES,
+    );
+    spawned.emit(new TextEncoder().encode(oversizedLine));
+
+    const result = await runPromise;
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error.code).toBe("ChildEnvelopeMalformed");
+      expect(result.error.safeMessage).not.toContain(rawPayload);
+      expect(JSON.stringify(result.error)).not.toContain(rawPayload);
+    }
+    expect(JSON.stringify(logs)).not.toContain(rawPayload);
+    expect(child.snapshot().status).toBe("failed");
+    expect(spawned.forceKilled).toBe(true);
   });
 
   it("observes the process's own real exit code rather than relying only on stdout ending", async () => {

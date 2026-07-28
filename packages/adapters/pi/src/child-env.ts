@@ -25,6 +25,21 @@ export const DEFAULT_PI_CHILD_EXECUTABLE = "pi";
 const LAST_COMMAND_ENV = "_";
 
 /**
+ * `_` names whatever command the launching shell ran, which is only the Pi
+ * host when Pi itself was that command. Launch Pi from a wrapper, a task
+ * runner, or another Bun/Node process and `_` points at that binary
+ * instead. Spawning it with `--mode rpc` starts an unrelated program that
+ * never speaks the RPC protocol, so the child dies on garbage output with a
+ * confusing `ChildEnvelopeMalformed` rather than a clean failure. Requiring
+ * the basename to be exactly `pi` keeps the precise-path benefit while
+ * falling back to the bare name whenever `_` is something else.
+ */
+function looksLikePiExecutable(path: string): boolean {
+  const basename = path.slice(path.lastIndexOf("/") + 1);
+  return basename === DEFAULT_PI_CHILD_EXECUTABLE;
+}
+
+/**
  * Resolves the exact executable that launched the current Pi host process
  * (Pi adapter contract), via the injected `PiEnvPort` rather than a bare
  * command name a spawner would have to re-resolve via `PATH`. `Bun.spawn`ing
@@ -33,7 +48,7 @@ const LAST_COMMAND_ENV = "_";
  * runtime then fails packed-extension import with `Cannot find module
  * 'bun:ffi'`. `_` is exact host identity: read it, never re-derive it.
  * Returns `undefined` (never a fabricated guess) when `_` is absent, empty,
- * or not an absolute path.
+ * not an absolute path, or does not name a `pi` executable at all.
  */
 export function resolveCurrentPiExecutablePath(
   envPort: PiEnvPort,
@@ -41,23 +56,31 @@ export function resolveCurrentPiExecutablePath(
   const raw = envPort.read(LAST_COMMAND_ENV);
   if (raw === undefined || raw.length === 0) return undefined;
   if (!raw.startsWith("/")) return undefined;
+  if (!looksLikePiExecutable(raw)) return undefined;
   return raw;
 }
 
 /**
  * Builds the private RPC child's default spawn command (Pi adapter contract
- * finding 1): the exact executable that launched this host process,
+ *): the exact executable that launched this host process,
  * falling back to the bare `"pi"` name only when that cannot be determined.
  * Production wiring (`createDefaultPiExtensionDeps`) always calls this with
  * the real `BunEnvPort`; tests that need a fixed, PATH-independent command
  * override `PiExtensionDeps.childCommand` directly instead.
+ *
+ * This is a *base* command and must never carry a session flag. `PiRpcChild`
+ * owns session selection: `buildSpawnCommand` appends exactly one of
+ * `--no-session`, `--session-dir`, or `--session-dir --session` per spawn,
+ * and rejects any base command that already contains a session flag with
+ * `ChildSpawnFailed`. Adding `--no-session` here makes every delegation fail
+ * to spawn.
  */
 export function buildDefaultPiChildCommand(
   envPort: PiEnvPort,
 ): readonly string[] {
   const executable =
     resolveCurrentPiExecutablePath(envPort) ?? DEFAULT_PI_CHILD_EXECUTABLE;
-  return [executable, "--mode", "rpc", "--no-session"];
+  return [executable, "--mode", "rpc"];
 }
 
 /**

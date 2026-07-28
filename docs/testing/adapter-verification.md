@@ -48,13 +48,18 @@ protocol-specific tests.
 Some adapters use harness-owned source metadata to prove command or tool
 ownership. Preserve that provenance during local validation.
 
-For Pi, Weave commands must be loaded with the npm package source
-`npm:@weaveio/weave-adapter-pi`. Installing the directory as a `local/...`
-package changes `sourceInfo.source`; command ownership probes then fail closed
-and Pi enters health-only mode. To validate an unpublished tarball, retain the
-npm package registration and replace only that package's installed bytes with
-the exact inspected artifact. Never weaken the ownership probe to accommodate a
-convenient install method.
+For Pi release verification, Weave commands must be loaded with the npm package
+source `npm:@weaveio/weave-adapter-pi`. Installing the directory as a
+`local/...` package changes `sourceInfo.source`; command ownership probes then
+fail closed and Pi enters health-only mode. To validate an unpublished tarball,
+retain the npm package registration and replace only that package's installed
+bytes with the exact inspected artifact.
+
+Interactive local development may set
+`WEAVE_PI_UNSAFE_DISABLE_COMMAND_PROVENANCE=1` before Pi starts and load the
+built extension through a local symlink. This bypasses only source ownership;
+missing commands and numeric-suffix collisions still fail closed. Never use the
+override for release verification or packaged adapter proof.
 
 Pi packages declare Pi's core packages as peers. They must resolve from the
 running Pi host. Do not install nested copies of

@@ -13,7 +13,7 @@
  *    tools, idle/session events, or continuation/recovery banners;
  *  - lease/generation rebind-and-recheck at every async boundary;
  *  - the direct-step dispatch loop. The *first* dispatch of a run/resume
- *    calls `dispatchStep` once; every subsequent step within the same
+ *    calls `dispatchStep` once; every subsequent step has the same
  *    uninterrupted generation is driven exclusively by the `dispatch-agent`
  *    effect `completeStep` itself returns (Pi adapter contract: "apply each
  *    returned effect exactly once... auto-dispatch next only when returned
@@ -112,7 +112,7 @@ const USER_AUTHORIZATION_TOKEN: AuthorizedByUser = {
 /**
  * Fallback task for a legacy direct dispatch with no configured step prompt.
  * The activated descriptor prompt still arrives through the signed bootstrap
- * and becomes the child's system context; this bounded task only starts the
+ * and becomes the child's system context; this task only starts the
  * turn without duplicating that potentially large prompt.
  */
 const DEFAULT_DIRECT_STEP_TASK_PROMPT =
@@ -263,12 +263,12 @@ export interface PiWorkflowControllerDeps {
   >;
   /**
    * Resolves a direct-step agent's own real descriptor (composed prompt,
-   * models, tool policy, delegation targets) from the adapter's own
+   * models, delegation targets) from the adapter's own activated descriptor
    * catalog by name (Pi adapter contract) - parallel to how ordinary
-   * to how ordinary delegation's `buildChildBootstrapBody` resolves from
-   * `target.name`. The engine's own `RunAgentEffect.agentDescriptor` is
-   * deliberately never used for this (its `composedPrompt`/`models`/tool
-   * policy are always empty/minimal - a security invariant, not a bug).
+   * delegation's `buildChildBootstrapBody` resolves from `target.name`.
+   * The engine's own `RunAgentEffect.agentDescriptor` is deliberately never
+   * used for this (its `composedPrompt` and `models` are empty/minimal - a
+   * security invariant, not a bug).
    * Absent/returning `undefined` for a name the engine itself dispatched
    * is an adapter-catalog invariant violation and fails the dispatch
    * closed rather than silently sending an empty prompt.
@@ -290,7 +290,7 @@ export interface PiResumeWorkflowInput {
   readonly metadata?: Record<string, string | number | boolean>;
   /**
    * Explicit, user-authorized takeover correlation for one exact
-   * pre-reload lease (Issue #21 Task 12 S020). Populated only from a
+   * pre-reload lease (Issue #21 S020). Populated only from a
    * durable recovery pointer's `leaseId`/`controllerGeneration` after the
    * pointer has been judged eligible and the user has freshly confirmed
    * `/weave:resume` - never automatically. Forwarded verbatim to the
@@ -652,7 +652,7 @@ export class PiWorkflowController {
 
   /**
    * Applies every effect `reconcileExecution` returns exactly once (Pi adapter contract
-   * §14) - including a `dispatch-agent` effect, which `applyNonDispatchEffects`
+   *) - including a `dispatch-agent` effect, which `applyNonDispatchEffects`
    * alone cannot project (a redirect to an earlier step's declared
    * `reconciliation_handlers` entry is exactly this shape). Falls back to
    * `applyNonDispatchEffects`'s warn-and-drop only when no
@@ -959,12 +959,11 @@ export class PiWorkflowController {
     const generationCheck = this.deps.assertGenerationCurrent();
     if (generationCheck.isErr()) return errAsync(generationCheck.error);
 
-    // Resolve the REAL descriptor (composed prompt, models, tool policy,
-    // delegation targets) from the adapter's own activated catalog - never
-    // from `dispatchEffect.runAgent.agentDescriptor`, whose corresponding
-    // fields are deliberately always empty/minimal (engine security
-    // invariant: raw prompt text and resolved policy never travel in an
-    // effect). A name the engine itself dispatched but the adapter's own
+    // Resolve the real descriptor (composed prompt, models, delegation
+    // targets) from the adapter's own activated catalog - never from
+    // `dispatchEffect.runAgent.agentDescriptor`, whose corresponding fields
+    // are deliberately empty/minimal (engine security invariant: raw prompt
+    // text never travels in an effect). A name the engine itself dispatched but the adapter's own
     // catalog does not recognise is an adapter-catalog invariant
     // violation, not a degraded-but-safe case - fail closed rather than
     // silently spawn a child with an empty prompt and no governed tools.
@@ -1001,7 +1000,6 @@ export class PiWorkflowController {
           composedPrompt: realDescriptor.composedPrompt,
           taskPrompt: stepPromptText ?? DEFAULT_DIRECT_STEP_TASK_PROMPT,
           models: realDescriptor.models,
-          effectiveToolPolicy: realDescriptor.effectiveToolPolicy,
           delegationTargets: realDescriptor.delegationTargets,
           cwd: this.deps.projectRoot,
           correlationId:
@@ -1040,7 +1038,7 @@ export class PiWorkflowController {
         };
         // Record the idle observation now, while `leaseId` still
         // references a live lease - `completeStep` (called below) releases
-        // and, for a terminal step, deletes it (#21 Task 12).
+        // and, for a terminal step, deletes it (#21).
         return this.observeBestEffort({
           workflowInstanceId,
           leaseId,
@@ -1141,7 +1139,7 @@ export class PiWorkflowController {
    * effects (pause/complete/auto-advance) exactly once (Pi adapter contract).
    * The idle observation already fired in {@link runDispatchAgentEffect}
    * before this `completeStep` call, so a terminal step's lease release
-   * never races it (#21 Task 12). Shared by the immediate
+   * never races it (#21). Shared by the immediate
    * non-`user_confirm` path in {@link runDispatchAgentEffect} and by
    * {@link confirmStep}.
    */
@@ -1171,7 +1169,7 @@ export class PiWorkflowController {
       .andThen((completeOutput) =>
         // No idle observation here - it already fired in
         // {@link runDispatchAgentEffect} before `leaseId` could be released
-        // (#21 Task 12).
+        // (#21).
         this.appendRecoveryPointer(workflowInstanceId, leaseId)
           .andThen(() =>
             this.maybeReconcileReviewRejection(

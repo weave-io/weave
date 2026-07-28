@@ -145,11 +145,119 @@ describe("normalizePiExtensionUiRequest", () => {
         },
       },
     ],
+    [
+      "setStatus",
+      {
+        type: "extension_ui_request",
+        id: "status-1",
+        method: "setStatus",
+        statusKey: "agent",
+        statusText: "Working",
+      },
+      {
+        type: "extension_ui_request",
+        requestType: "widget",
+        requestId: "status-1",
+        widget: {
+          method: "setStatus",
+          statusKey: "agent",
+          statusText: "Working",
+        },
+      },
+    ],
+    [
+      "setWidget",
+      {
+        type: "extension_ui_request",
+        id: "widget-1",
+        method: "setWidget",
+        widgetKey: "build",
+        widgetLines: ["line-1", "line-2"],
+        widgetPlacement: "aboveEditor",
+      },
+      {
+        type: "extension_ui_request",
+        requestType: "widget",
+        requestId: "widget-1",
+        widget: {
+          method: "setWidget",
+          widgetKey: "build",
+          widgetLines: ["line-1", "line-2"],
+          widgetPlacement: "aboveEditor",
+        },
+      },
+    ],
+    [
+      "set_editor_text",
+      {
+        type: "extension_ui_request",
+        id: "editor-text-1",
+        method: "set_editor_text",
+        text: "Patch now",
+      },
+      {
+        type: "extension_ui_request",
+        requestType: "widget",
+        requestId: "editor-text-1",
+        widget: {
+          method: "set_editor_text",
+          text: "Patch now",
+        },
+      },
+    ],
   ] as const)("normalizes the native %s request", (_method, input, expected) => {
     const result = normalizePiExtensionUiRequest(input);
 
     expect(result.isOk()).toBe(true);
     expect(result._unsafeUnwrap()).toEqual(expected);
+  });
+
+  it("normalizes setStatus with statusText undefined as absent", () => {
+    const result = normalizePiExtensionUiRequest({
+      type: "extension_ui_request",
+      id: "status-2",
+      method: "setStatus",
+      statusKey: "agent",
+      statusText: undefined,
+    });
+
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap()).toEqual({
+      type: "extension_ui_request",
+      requestType: "widget",
+      requestId: "status-2",
+      widget: {
+        method: "setStatus",
+        statusKey: "agent",
+      },
+    });
+    expect(JSON.stringify(result._unsafeUnwrap().widget)).toBe(
+      '{"method":"setStatus","statusKey":"agent"}',
+    );
+  });
+
+  it("normalizes setWidget with undefined widgetLines as absent", () => {
+    const result = normalizePiExtensionUiRequest({
+      type: "extension_ui_request",
+      id: "widget-undef-1",
+      method: "setWidget",
+      widgetKey: "build",
+      widgetLines: undefined,
+    });
+
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap()).toEqual({
+      type: "extension_ui_request",
+      requestType: "widget",
+      requestId: "widget-undef-1",
+      widget: {
+        method: "setWidget",
+        widgetKey: "build",
+      },
+    });
+    expect(JSON.stringify(result._unsafeUnwrap().widget)).toBe(
+      '{"method":"setWidget","widgetKey":"build"}',
+    );
   });
 
   it.each([
@@ -238,6 +346,291 @@ describe("normalizePiExtensionUiRequest", () => {
         method: "select",
         title: "t",
         options: Array.from({ length: 129 }, (_, index) => String(index)),
+      },
+    ],
+    [
+      "setTitle extra field",
+      {
+        type: "extension_ui_request",
+        id: "id",
+        method: "setTitle",
+        title: "Panel",
+        unexpected: "do not copy",
+      },
+    ],
+    [
+      "setTitle missing title",
+      {
+        type: "extension_ui_request",
+        id: "id",
+        method: "setTitle",
+      },
+    ],
+    [
+      "setTitle empty title",
+      {
+        type: "extension_ui_request",
+        id: "id",
+        method: "setTitle",
+        title: "",
+      },
+    ],
+    [
+      "setTitle NUL in id",
+      {
+        type: "extension_ui_request",
+        id: "id\0hidden",
+        method: "setTitle",
+        title: "Panel",
+      },
+    ],
+    [
+      "setTitle NUL in title",
+      {
+        type: "extension_ui_request",
+        id: "id",
+        method: "setTitle",
+        title: "Panel\0hidden",
+      },
+    ],
+    [
+      "setTitle oversized title",
+      {
+        type: "extension_ui_request",
+        id: "id",
+        method: "setTitle",
+        title: "x".repeat(16_385),
+      },
+    ],
+    [
+      "setStatus extra field",
+      {
+        type: "extension_ui_request",
+        id: "id",
+        method: "setStatus",
+        statusKey: "agent",
+        statusText: "working",
+        unexpected: "do not copy",
+      },
+    ],
+    [
+      "setStatus empty key",
+      {
+        type: "extension_ui_request",
+        id: "id",
+        method: "setStatus",
+        statusKey: "",
+        statusText: "working",
+      },
+    ],
+    [
+      "setStatus NUL in key",
+      {
+        type: "extension_ui_request",
+        id: "id",
+        method: "setStatus",
+        statusKey: "agent\0hidden",
+        statusText: "working",
+      },
+    ],
+    [
+      "setStatus oversized key",
+      {
+        type: "extension_ui_request",
+        id: "id",
+        method: "setStatus",
+        statusKey: "x".repeat(16_385),
+        statusText: "working",
+      },
+    ],
+    [
+      "setStatus NUL in text",
+      {
+        type: "extension_ui_request",
+        id: "id",
+        method: "setStatus",
+        statusKey: "agent",
+        statusText: "working\0hidden",
+      },
+    ],
+    [
+      "setStatus oversized text",
+      {
+        type: "extension_ui_request",
+        id: "id",
+        method: "setStatus",
+        statusKey: "agent",
+        statusText: "x".repeat(16_385),
+      },
+    ],
+    [
+      "setStatus unsafe id",
+      {
+        type: "extension_ui_request",
+        id: "id\0hidden",
+        method: "setStatus",
+        statusKey: "agent",
+        statusText: "working",
+      },
+    ],
+    [
+      "setStatus wrong statusText type",
+      {
+        type: "extension_ui_request",
+        id: "id",
+        method: "setStatus",
+        statusKey: "agent",
+        statusText: 123,
+      },
+    ],
+    [
+      "setWidget extra field",
+      {
+        type: "extension_ui_request",
+        id: "id",
+        method: "setWidget",
+        widgetKey: "build",
+        unexpected: "do not copy",
+      },
+    ],
+    [
+      "setWidget empty key",
+      {
+        type: "extension_ui_request",
+        id: "id",
+        method: "setWidget",
+        widgetKey: "",
+      },
+    ],
+    [
+      "setWidget NUL in key",
+      {
+        type: "extension_ui_request",
+        id: "id",
+        method: "setWidget",
+        widgetKey: "agent\u0000hidden",
+      },
+    ],
+    [
+      "setWidget oversized key",
+      {
+        type: "extension_ui_request",
+        id: "id",
+        method: "setWidget",
+        widgetKey: "x".repeat(257),
+      },
+    ],
+    [
+      "setWidget too many lines",
+      {
+        type: "extension_ui_request",
+        id: "id",
+        method: "setWidget",
+        widgetKey: "build",
+        widgetLines: Array.from({ length: 129 }, (_, index) => String(index)),
+      },
+    ],
+    [
+      "setWidget NUL in lines",
+      {
+        type: "extension_ui_request",
+        id: "id",
+        method: "setWidget",
+        widgetKey: "build",
+        widgetLines: ["line\u0000hidden"],
+      },
+    ],
+    [
+      "setWidget oversized line",
+      {
+        type: "extension_ui_request",
+        id: "id",
+        method: "setWidget",
+        widgetKey: "build",
+        widgetLines: ["x".repeat(16_385)],
+      },
+    ],
+    [
+      "setWidget invalid placement",
+      {
+        type: "extension_ui_request",
+        id: "id",
+        method: "setWidget",
+        widgetKey: "build",
+        widgetPlacement: "left",
+      },
+    ],
+    [
+      "setWidget unsafe id",
+      {
+        type: "extension_ui_request",
+        id: "id\u0000hidden",
+        method: "setWidget",
+        widgetKey: "build",
+      },
+    ],
+    [
+      "setWidget wrong lines type",
+      {
+        type: "extension_ui_request",
+        id: "id",
+        method: "setWidget",
+        widgetKey: "build",
+        widgetLines: "line",
+      },
+    ],
+    [
+      "set_editor_text extra field",
+      {
+        type: "extension_ui_request",
+        id: "id",
+        method: "set_editor_text",
+        text: "draft",
+        unexpected: "do not copy",
+      },
+    ],
+    [
+      "set_editor_text missing text",
+      {
+        type: "extension_ui_request",
+        id: "id",
+        method: "set_editor_text",
+      },
+    ],
+    [
+      "set_editor_text NUL in text",
+      {
+        type: "extension_ui_request",
+        id: "id",
+        method: "set_editor_text",
+        text: "draft\u0000hidden",
+      },
+    ],
+    [
+      "set_editor_text oversized text",
+      {
+        type: "extension_ui_request",
+        id: "id",
+        method: "set_editor_text",
+        text: "x".repeat(16_385),
+      },
+    ],
+    [
+      "set_editor_text unsafe id",
+      {
+        type: "extension_ui_request",
+        id: "id\u0000hidden",
+        method: "set_editor_text",
+        text: "draft",
+      },
+    ],
+    [
+      "set_editor_text wrong type",
+      {
+        type: "extension_ui_request",
+        id: "id",
+        method: "set_editor_text",
+        text: 123,
       },
     ],
   ] as const)("rejects %s", (_case, input) => {
@@ -447,6 +840,38 @@ describe("PiChildExtensionUiBridge", () => {
     expect(bridge.snapshot().editorText).toBeUndefined();
   });
 
+  it("consumes normalized set_editor_text widget request and does not create response authority", async () => {
+    const calls: PiExtensionUiResponseInput[] = [];
+    const bridge = createPiChildExtensionUiBridge({
+      childId,
+      generationId,
+      sendExtensionUiResponse: senderFixture(calls),
+    });
+
+    const normalized = normalizePiExtensionUiRequest({
+      type: "extension_ui_request",
+      id: "native-editor-text-1",
+      method: "set_editor_text",
+      text: "editor text",
+    });
+
+    expect(normalized.isOk()).toBe(true);
+    expect(bridge.consume(normalized._unsafeUnwrap()).isOk()).toBe(true);
+    expect(bridge.snapshot().editorText).toBe("editor text");
+    expect(bridge.snapshot().pendingDialogCount).toBe(0);
+
+    expect(
+      (
+        await bridge.respond(
+          "native-editor-text-1",
+          generationId,
+          response("native-editor-text-1", true),
+        )
+      ).isErr(),
+    ).toBe(true);
+    expect(calls).toHaveLength(0);
+  });
+
   it("keeps multiple blocking dialogs pending and sends only correlated responses", async () => {
     const calls: PiExtensionUiResponseInput[] = [];
     const bridge = createPiChildExtensionUiBridge({
@@ -607,6 +1032,46 @@ describe("PiChildExtensionUiBridge", () => {
     expect((await bridge.respond(response("not-dialog-2", true))).isErr()).toBe(
       true,
     );
+    expect(calls).toHaveLength(0);
+  });
+
+  it("sets and clears setStatus via statusText as fire-and-forget widget calls", async () => {
+    const calls: PiExtensionUiResponseInput[] = [];
+    const bridge = createPiChildExtensionUiBridge({
+      childId,
+      generationId,
+      sendExtensionUiResponse: senderFixture(calls),
+    });
+
+    expect(bridge.snapshot().status).toBeUndefined();
+    expect(
+      bridge
+        .consume(
+          extensionEvent("widget", "status-fire", {
+            widget: { method: "setStatus", statusText: "running" },
+          }),
+        )
+        .isOk(),
+    ).toBe(true);
+    expect(bridge.snapshot().status).toBe("running");
+
+    expect(
+      bridge
+        .consume(
+          extensionEvent("widget", "status-fire-clear", {
+            widget: { method: "setStatus", statusText: null },
+          }),
+        )
+        .isOk(),
+    ).toBe(true);
+    expect(bridge.snapshot().status).toBeUndefined();
+
+    expect((await bridge.respond(response("status-fire", true))).isErr()).toBe(
+      true,
+    );
+    expect(
+      (await bridge.respond(response("status-fire-clear", true))).isErr(),
+    ).toBe(true);
     expect(calls).toHaveLength(0);
   });
 

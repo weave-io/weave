@@ -20,9 +20,10 @@ import {
   ResultAsync,
 } from "neverthrow";
 import {
-  type PiApprovalResponseBody,
   type PiBootstrapAckBody,
+  type PiDelegateRequestBody,
   type PiDelegateResponseBody,
+  type PiTransferResultBody,
   parseControlBody,
 } from "./child-control-bodies.js";
 import {
@@ -46,25 +47,32 @@ import {
 } from "./child-envelope.js";
 import { SystemTimerPort, type TimerPort } from "./child-timer.js";
 import type { JsonValue } from "./strict-json.js";
+import { encodeDelegateRequestChunks } from "./delegate-request-chunking.js";
+import { encodeTransferChunks } from "./child-transfer.js";
+import { PI_TRANSPORT_LIMITS } from "./errors.js";
 import type { PiAdapterLogger, PiEnvPort } from "./types.js";
 
 export type PiChildRuntimeError = {
-  readonly type: "EnvelopeSignFailed" | "ApprovalTimedOut";
+  readonly type:
+    | "EnvelopeSignFailed"
+    | "CorrelatedRequestTimedOut"
+    | "TransferTimedOut"
+    | "TransferRejected";
   readonly reason: string;
 };
+
+export interface PiChildOutputTransfer {
+  readonly transferId: string;
+  readonly byteLength: number;
+}
 
 export type PiChildOutputError = {
   readonly type: "ChildOutputWriteFailed";
   readonly reason: string;
 };
 
-/**
- * How long a child waits for its own `approval-request` to be answered by
- * the parent. Comfortably longer than the parent's own
- * `APPROVAL_UI_TIMEOUT_MS` (270s) so a real, in-flight parent-TUI dialog is
- * never cut short from the child's side of the round trip.
- */
-const CHILD_APPROVAL_TIMEOUT_MS = 300_000;
+/** How long a child waits for a correlated delegation reply. */
+const CHILD_CORRELATED_TIMEOUT_MS = 300_000;
 
 export interface PiChildOutputPort {
   /** Writes one already-LF-terminated line directly to this process's own stdout. */
@@ -112,18 +120,18 @@ export class PiChildRuntime {
   private generationId = "";
   private disposed = false;
   private correlationCounter = 0;
+  private outputTransferCounter = 0;
   /** Enforces "bootstrap exactly once" independent of any caller behavior. */
   private bootstrapAdmitted = false;
   /** Enforces "cancellation exactly once" independent of any caller behavior. */
   private cancelAdmitted = false;
   /** Enforces "settlement exactly once" independent of any caller behavior. */
   private settledReported = false;
-  /**
-   * Pending correlated request/reply round-trips this child itself
-   * initiated - both `approval-request`/`approval-response` (Spec 33
-   * §12) and `delegate-request`/`delegate-response` (Spec 33 §10-11)
-   * share this exact same bounded, single-use, correlation-keyed pattern.
-   */
+  /** Prevents concurrent terminal reports while allowing a failed report to retry. */
+  private settledReportInFlight = false;
+  /** Serializes allocation, signing, and output so failed sequences can be reused safely. */
+  private outgoingSendTail: Promise<void> = Promise.resolve();
+  /** Pending correlated delegation requests initiated by this child. */
   private readonly pendingCorrelated = new Map<
     string,
     {
@@ -131,6 +139,13 @@ export class PiChildRuntime {
       reject: (error: PiChildRuntimeError) => void;
     }
   >();
+  private pendingOutputTransfer:
+    | {
+        readonly transferId: string;
+        resolve: (body: PiTransferResultBody) => void;
+        reject: (error: PiChildRuntimeError) => void;
+      }
+    | undefined;
   private readonly timerPort: TimerPort;
 
   constructor(private readonly deps: PiChildRuntimeDeps) {
@@ -262,19 +277,16 @@ export class PiChildRuntime {
       await this.admitCancel(envelope.body, handlers);
       return;
     }
-    if (
-      envelope.kind === "approval-response" ||
-      envelope.kind === "delegate-response"
-    ) {
-      this.admitCorrelatedReply(
-        envelope.kind,
-        envelope.correlationId,
-        envelope.body,
-      );
+    if (envelope.kind === "delegate-response") {
+      this.admitCorrelatedReply(envelope.correlationId, envelope.body);
+      return;
+    }
+    if (envelope.kind === "transfer-result") {
+      this.admitOutputTransferResult(envelope.correlationId, envelope.body);
       return;
     }
     // Every other kind (`handshake`, `bootstrap-ack`, `settled`, `cancelled`,
-    // `error`, `approval-request`, `delegate-request`) is child-to-parent-only;
+    // `error`, `delegate-request`) is child-to-parent-only;
     // a parent ever sending one of these back is always a protocol violation,
     // never a message this side should legitimately see.
     this.deps.logger.warn(
@@ -335,10 +347,10 @@ export class PiChildRuntime {
   }
 
   private admitCorrelatedReply(
-    kind: "approval-response" | "delegate-response",
     correlationId: string,
     body: JsonValue,
   ): void {
+    const kind = "delegate-response";
     const parsed = parseControlBody(kind, body);
     if (!parsed.ok) {
       this.deps.logger.warn(
@@ -362,44 +374,97 @@ export class PiChildRuntime {
       return;
     }
     this.pendingCorrelated.delete(correlationId);
-    // Resolve with the already-validated typed body, never the raw one -
-    // every caller of `requestApproval`/`requestDelegation` gets back a
-    // value it can use directly, with no further cast at the call site.
+    // Resolve with the validated body, never the raw input.
+    pending.resolve(parsed.value);
+  }
+
+  private admitOutputTransferResult(
+    correlationId: string,
+    body: JsonValue,
+  ): void {
+    const parsed = parseControlBody("transfer-result", body);
+    if (!parsed.ok || parsed.value.channel !== "output") {
+      this.deps.logger.warn(
+        { childId: this.childId },
+        "rejected malformed output transfer result; stopping child runtime",
+      );
+      this.dispose();
+      return;
+    }
+    const pending = this.pendingOutputTransfer;
+    if (
+      pending === undefined ||
+      pending.transferId !== parsed.value.transferId ||
+      correlationId !== parsed.value.transferId
+    ) {
+      this.deps.logger.warn(
+        { childId: this.childId, correlationId },
+        "dropped unmatched output transfer result",
+      );
+      return;
+    }
+    if (parsed.value.status === "nack") {
+      pending.reject({
+        type: "TransferRejected",
+        reason: parsed.value.reason,
+      });
+      return;
+    }
     pending.resolve(parsed.value);
   }
 
   reportSettled(
     outcome: "completed" | "failed",
-    detail: { summary?: string; reason?: string },
+    detail: {
+      summary?: string;
+      assistantOutput?: string;
+      completionCandidate?: string;
+      outputTransferId?: string;
+      outputByteLength?: number;
+      reason?: string;
+    },
   ): ResultAsync<void, PiChildRuntimeError> {
-    if (this.settledReported) {
+    if (this.settledReported || this.settledReportInFlight) {
       return errAsync({
         type: "EnvelopeSignFailed",
         reason: "settlement-already-reported",
       });
     }
-    this.settledReported = true;
+    this.settledReportInFlight = true;
     const body: JsonValue = {
       outcome,
       ...(detail.summary !== undefined ? { summary: detail.summary } : {}),
+      ...(detail.assistantOutput !== undefined
+        ? { assistantOutput: detail.assistantOutput }
+        : {}),
+      ...(detail.completionCandidate !== undefined
+        ? { completionCandidate: detail.completionCandidate }
+        : {}),
+      ...(detail.outputTransferId !== undefined
+        ? { outputTransferId: detail.outputTransferId }
+        : {}),
+      ...(detail.outputByteLength !== undefined
+        ? { outputByteLength: detail.outputByteLength }
+        : {}),
       ...(detail.reason !== undefined ? { reason: detail.reason } : {}),
     };
-    return this.sendControl("settled", this.childId, body).map(() => undefined);
+    return this.sendControl("settled", this.childId, body)
+      .map(() => {
+        this.settledReportInFlight = false;
+        this.settledReported = true;
+        return undefined;
+      })
+      .mapErr((failure) => {
+        this.settledReportInFlight = false;
+        return failure;
+      });
   }
 
   reportCancelled(): ResultAsync<void, PiChildRuntimeError> {
     return this.sendControl("cancelled", this.childId, {}).map(() => undefined);
   }
 
-  /**
-   * Proves to the parent that the bootstrap descriptor/model/tool policy
-   * were actually applied - `body` carries the exact active-tool set
-   * `pi.getActiveTools()` reported and the concrete model identity that
-   * ended up active, both verified by the caller before this is ever sent
-   * (Spec 33 §11.2 Task 9, §11.3/§11.5). The parent never sends task work
-   * on the strength of the bootstrap send alone - it waits for this ack,
-   * and now cross-checks its body too.
-   */
+  /** Proves to the parent that bootstrap completed before task work starts. */
   reportBootstrapAck(
     body: PiBootstrapAckBody,
   ): ResultAsync<void, PiChildRuntimeError> {
@@ -408,20 +473,93 @@ export class PiChildRuntime {
     );
   }
 
-  /**
-   * Relays one of this child's own governed tool-call approval prompts to
-   * the sole parent TUI (Spec 33 §11.5/§12) and awaits the correlated
-   * reply. Bounded by `CHILD_APPROVAL_TIMEOUT_MS` so a lost/duplicate
-   * reply can never hang the child's own tool-call turn forever.
-   */
-  requestApproval(
-    body: JsonValue,
-  ): ResultAsync<PiApprovalResponseBody, PiChildRuntimeError> {
-    return this.sendCorrelatedRequest<PiApprovalResponseBody>(
-      "approval-request",
-      "approval",
-      body,
+  reportTransferResult(
+    body: PiTransferResultBody,
+  ): ResultAsync<void, PiChildRuntimeError> {
+    return this.sendControl("transfer-result", body.transferId, body).map(
+      () => undefined,
     );
+  }
+
+  transferOutput(
+    output: string,
+  ): ResultAsync<PiChildOutputTransfer, PiChildRuntimeError> {
+    return this.transferOutputAttempt(output, 0);
+  }
+
+  private transferOutputAttempt(
+    output: string,
+    attempt: number,
+  ): ResultAsync<PiChildOutputTransfer, PiChildRuntimeError> {
+    this.outputTransferCounter += 1;
+    const transferId = `${this.childId}:output:${this.outputTransferCounter}:${generateNonceHex(this.deps.randomPort)}`;
+    const chunks = encodeTransferChunks(output, transferId);
+    if (chunks.isErr()) {
+      return errAsync({
+        type: "EnvelopeSignFailed",
+        reason: chunks.error.type,
+      });
+    }
+
+    let resolveWait!: (
+      result: Result<PiTransferResultBody, PiChildRuntimeError>,
+    ) => void;
+    const wait = new ResultAsync<PiTransferResultBody, PiChildRuntimeError>(
+      new Promise((resolve) => {
+        resolveWait = resolve;
+      }),
+    );
+    const timer = this.timerPort.schedule(() => {
+      if (this.pendingOutputTransfer?.transferId !== transferId) return;
+      this.pendingOutputTransfer = undefined;
+      resolveWait(
+        err({ type: "TransferTimedOut", reason: "output-transfer-timeout" }),
+      );
+    }, PI_TRANSPORT_LIMITS.transferAckTimeoutMs);
+    this.pendingOutputTransfer = {
+      transferId,
+      resolve: (body) => {
+        timer.cancel();
+        this.pendingOutputTransfer = undefined;
+        resolveWait(ok(body));
+      },
+      reject: (failure) => {
+        timer.cancel();
+        this.pendingOutputTransfer = undefined;
+        resolveWait(err(failure));
+      },
+    };
+
+    let send: ResultAsync<void, PiChildRuntimeError> = okAsync(undefined);
+    for (const chunk of chunks.value) {
+      send = send.andThen(() =>
+        this.sendControl("transfer-chunk", transferId, {
+          channel: "output",
+          transferId,
+          index: chunk.index,
+          total: chunk.total,
+          data: chunk.data,
+        }),
+      );
+    }
+    return send
+      .orElse((failure) => {
+        if (this.pendingOutputTransfer?.transferId === transferId) {
+          this.pendingOutputTransfer.reject(failure);
+        }
+        return errAsync(failure);
+      })
+      .andThen(() => wait)
+      .map(() => ({
+        transferId,
+        byteLength: new TextEncoder().encode(output).byteLength,
+      }))
+      .orElse((failure) => {
+        if (attempt < PI_TRANSPORT_LIMITS.transferMaxRetries) {
+          return this.transferOutputAttempt(output, attempt + 1);
+        }
+        return errAsync(failure);
+      });
   }
 
   /**
@@ -434,28 +572,20 @@ export class PiChildRuntime {
   requestDelegation(
     body: JsonValue,
   ): ResultAsync<PiDelegateResponseBody, PiChildRuntimeError> {
-    return this.sendCorrelatedRequest<PiDelegateResponseBody>(
-      "delegate-request",
-      "delegate",
-      body,
-    );
+    const parsed = parseControlBody("delegate-request", body);
+    if (!parsed.ok)
+      return errAsync({
+        type: "EnvelopeSignFailed",
+        reason: "delegate-request-body-invalid",
+      });
+    return this.sendCorrelatedRequest<PiDelegateResponseBody>(parsed.value);
   }
 
-  /**
-   * Shared correlated request/reply infrastructure for both approval and
-   * delegation round-trips. `T` is always exactly the validated body type
-   * `admitCorrelatedReply` already produced via `parseControlBody`
-   * before ever calling `resolve` - this is the one contained internal
-   * cast that lets every actual caller (`requestApproval`/
-   * `requestDelegation`, and everything downstream of them) receive a
-   * properly typed value with no cast of its own.
-   */
+  /** Sends a bounded, correlated delegation request as authenticated chunks. */
   private sendCorrelatedRequest<T extends JsonValue>(
-    kind: "approval-request" | "delegate-request",
-    correlationPrefix: string,
-    body: JsonValue,
+    body: PiDelegateRequestBody,
   ): ResultAsync<T, PiChildRuntimeError> {
-    const correlationId = `${this.childId}-${correlationPrefix}-${this.correlationCounter}`;
+    const correlationId = `${this.childId}-delegate-${this.correlationCounter}`;
     this.correlationCounter += 1;
     let resolveWait!: (result: Result<T, PiChildRuntimeError>) => void;
     const wait = new ResultAsync<T, PiChildRuntimeError>(
@@ -469,9 +599,12 @@ export class PiChildRuntime {
     const timer = this.timerPort.schedule(() => {
       this.pendingCorrelated.delete(correlationId);
       resolveWait(
-        err({ type: "ApprovalTimedOut", reason: "no reply from parent" }),
+        err({
+          type: "CorrelatedRequestTimedOut",
+          reason: "no reply from parent",
+        }),
       );
-    }, CHILD_APPROVAL_TIMEOUT_MS);
+    }, CHILD_CORRELATED_TIMEOUT_MS);
     this.pendingCorrelated.set(correlationId, {
       resolve: (responseBody) => {
         timer.cancel();
@@ -482,7 +615,26 @@ export class PiChildRuntime {
         resolveWait(err(error));
       },
     });
-    return this.sendControl(kind, correlationId, body)
+    const chunks = encodeDelegateRequestChunks(
+      body.task,
+      `${this.childId}:${correlationId}`,
+      body.agentName,
+    );
+    if (chunks.isErr()) {
+      timer.cancel();
+      this.pendingCorrelated.delete(correlationId);
+      return errAsync({
+        type: "EnvelopeSignFailed",
+        reason: chunks.error.type,
+      });
+    }
+    let send: ResultAsync<void, PiChildRuntimeError> = okAsync(undefined);
+    for (const chunk of chunks.value) {
+      send = send.andThen(() =>
+        this.sendControl("delegate-request-chunk", correlationId, chunk),
+      );
+    }
+    return send
       .andThen(() => wait)
       .orElse((failure) => {
         // The send itself never made it out: nothing will ever answer
@@ -496,6 +648,35 @@ export class PiChildRuntime {
   }
 
   private sendControl(
+    kind: PiControlKind,
+    correlationId: string,
+    body: JsonValue,
+  ): ResultAsync<void, PiChildRuntimeError> {
+    let resolveResult!: (result: Result<void, PiChildRuntimeError>) => void;
+    const result = new ResultAsync<void, PiChildRuntimeError>(
+      new Promise((resolve) => {
+        resolveResult = resolve;
+      }),
+    );
+    const operation = this.outgoingSendTail.then(async () => {
+      resolveResult(await this.sendControlNow(kind, correlationId, body));
+    });
+    this.outgoingSendTail = operation.then(
+      () => undefined,
+      (error: unknown) => {
+        resolveResult(
+          err({
+            type: "EnvelopeSignFailed",
+            reason:
+              error instanceof Error ? error.message : "control send failed",
+          }),
+        );
+      },
+    );
+    return result;
+  }
+
+  private sendControlNow(
     kind: PiControlKind,
     correlationId: string,
     body: JsonValue,
@@ -538,7 +719,11 @@ export class PiChildRuntime {
               reason: outputError.type,
             }),
           ),
-      );
+      )
+      .orElse((failure) => {
+        authState.releaseOutgoingSequence(sequence);
+        return errAsync(failure);
+      });
   }
 
   /** Idempotent terminal cleanup: zeroes the secret. Safe to call more than once, including before activation ever completed. */
@@ -546,9 +731,18 @@ export class PiChildRuntime {
     if (this.disposed) return;
     this.disposed = true;
     for (const pending of this.pendingCorrelated.values()) {
-      pending.reject({ type: "ApprovalTimedOut", reason: "disposed" });
+      pending.reject({
+        type: "CorrelatedRequestTimedOut",
+        reason: "disposed",
+      });
     }
     this.pendingCorrelated.clear();
+    const pendingOutputTransfer = this.pendingOutputTransfer;
+    this.pendingOutputTransfer = undefined;
+    pendingOutputTransfer?.reject({
+      type: "TransferTimedOut",
+      reason: "disposed",
+    });
     this.secretBytes?.fill(0);
     this.secretBytes = undefined;
     this.authState?.dispose();

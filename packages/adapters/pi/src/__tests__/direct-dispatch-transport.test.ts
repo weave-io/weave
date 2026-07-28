@@ -8,7 +8,10 @@ import {
 } from "../child-crypto.js";
 import { WEAVE_CHILD_SECRET_ENV } from "../child-env.js";
 import { type PiControlKind, signEnvelope } from "../child-envelope.js";
-import type { PiDirectDispatchInput } from "../direct-dispatch.js";
+import {
+  type PiDirectDispatchInput,
+  TransportDirectDispatchPort,
+} from "../direct-dispatch.js";
 import {
   createDirectDispatchTransport,
   PiDirectStepChildRegistry,
@@ -24,7 +27,7 @@ import { FakeIdGenerator } from "./fakes/fake-pi-host.js";
 
 /**
  * Regression coverage for the live exact-host direct-dispatch bootstrap
- * timeout (issue #21 Task 12): `createDirectDispatchTransport` generates
+ * timeout (issue #21): `createDirectDispatchTransport` generates
  * its own authenticated `childId` for `PiRpcChild`, but the bootstrap body
  * it sent placed the caller's own, unrelated engine-level
  * `PiDirectDispatchInput.correlationId` (`dispatchEffect.runAgent.correlationId`,
@@ -62,8 +65,8 @@ function extractControlEnvelopeFromPrompt(line: unknown): {
   readonly correlationId: string;
   readonly body: {
     readonly correlationId?: string;
-    readonly activeTools?: readonly string[];
     readonly resolvedModel?: unknown;
+    readonly thinkingLevel?: string;
   };
 } {
   const record = line as { type: string; message: string };
@@ -126,13 +129,6 @@ function baseInput(
     // below cannot pass by accident if the two were ever conflated again.
     correlationId: "engine-effect-correlation-unrelated",
     models: ["anthropic/claude-sonnet-5"],
-    effectiveToolPolicy: {
-      read: "allow",
-      write: "ask",
-      execute: "deny",
-      delegate: "deny",
-      network: "deny",
-    },
     delegationTargets: [],
     ...overrides,
   };
@@ -156,7 +152,10 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
       "gen-1",
     );
 
-    const resultPromise = transport(baseInput());
+    const directPort = new TransportDirectDispatchPort(transport);
+    const resultPromise = directPort.dispatch(
+      baseInput({ models: ["anthropic/claude-sonnet-5#high"] }),
+    );
     await flush();
 
     const spawned = processPort.spawnedProcesses[0];
@@ -194,16 +193,14 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
     expect(bootstrapEnvelope.body.correlationId).not.toBe(
       "engine-effect-correlation-unrelated",
     );
+    expect(bootstrapEnvelope.body.thinkingLevel).toBe("high");
 
     // Complete the flow so the transport's returned promise resolves
     // cleanly rather than leaving dangling async work in the test.
     await responder.send(
       "bootstrap-ack",
       expectedChildId,
-      {
-        activeTools: [...(bootstrapEnvelope.body.activeTools ?? [])],
-        resolvedModel: bootstrapEnvelope.body.resolvedModel,
-      } as JsonValue,
+      { resolvedModel: bootstrapEnvelope.body.resolvedModel } as JsonValue,
       secretBytes,
     );
     await flush();
@@ -212,10 +209,82 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
       expectedChildId,
       {
         outcome: "completed",
-        summary: serializeCompletionCandidate({
+        completionCandidate: serializeCompletionCandidate({
           outcome: "success",
           method: "agent_signal",
           message: "SMOKE_FLOW_COMPLETE",
+        }),
+        assistantOutput: "ordinary terminal assistant prose",
+      },
+      secretBytes,
+    );
+
+    const settlement = await resultPromise;
+    expect(settlement.isOk()).toBe(true);
+    // This is the real seam: PiRpcChild parses the authenticated settlement,
+    // then TransportDirectDispatchPort interprets only the dedicated
+    // completion-candidate field. Ordinary assistant prose must not replace it.
+    expect(settlement._unsafeUnwrap()).toEqual({
+      outcome: "success",
+      method: "agent_signal",
+      message: "SMOKE_FLOW_COMPLETE",
+    });
+  });
+
+  it("omits an unresolved model identity so strict bootstrap serialization and dispatch still succeed", async () => {
+    const processPort = new FakeChildProcessPort();
+    const idGenerator = new FakeIdGenerator();
+    const transport = createDirectDispatchTransport(
+      {
+        processPort,
+        randomPort,
+        hmacPort,
+        logger: noopLogger(),
+        idGenerator,
+        availableModels: AVAILABLE_MODELS,
+      },
+      "gen-1",
+    );
+
+    const resultPromise = transport(
+      baseInput({ models: ["unavailable/model"] }),
+    );
+    await flush();
+
+    const spawned = processPort.spawnedProcesses[0];
+    expect(spawned).toBeDefined();
+    const expectedChildId = "direct-wf-1-verify-generation-1";
+    const secretBytes = extractSecretFromSpawn(processPort);
+    const responder = new ScriptedChildResponder(
+      spawned,
+      expectedChildId,
+      "gen-1",
+    );
+    await responder.send("handshake", expectedChildId, {}, secretBytes);
+    await flush();
+    await flush();
+
+    const bootstrapEnvelope = extractControlEnvelopeFromPrompt(
+      spawned.writtenLines()[0],
+    );
+    expect(bootstrapEnvelope.correlationId).toBe(expectedChildId);
+    expect(bootstrapEnvelope.body.correlationId).toBe(expectedChildId);
+    expect("resolvedModel" in bootstrapEnvelope.body).toBe(false);
+
+    await responder.send(
+      "bootstrap-ack",
+      expectedChildId,
+      {},
+      secretBytes,
+    );
+    await flush();
+    await responder.send(
+      "settled",
+      expectedChildId,
+      {
+        outcome: "completed",
+        completionCandidate: serializeCompletionCandidate({
+          outcome: "success",
         }),
       },
       secretBytes,
@@ -223,17 +292,6 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
 
     const settlement = await resultPromise;
     expect(settlement.isOk()).toBe(true);
-    // `DirectDispatchTransport` passes the raw `PiChildSettlement` through
-    // unparsed (Pi adapter contract) - structured-candidate interpretation happens
-    // one layer up, in `direct-dispatch.ts`'s own port, not here.
-    expect(settlement._unsafeUnwrap()).toEqual({
-      outcome: "completed",
-      summary: serializeCompletionCandidate({
-        outcome: "success",
-        method: "agent_signal",
-        message: "SMOKE_FLOW_COMPLETE",
-      }),
-    } as never);
   });
 
   it("relays a direct-step child's nested delegation through the shared parent controller", async () => {
@@ -290,10 +348,7 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
     await responder.send(
       "bootstrap-ack",
       expectedChildId,
-      {
-        activeTools: [...(bootstrapEnvelope.body.activeTools ?? [])],
-        resolvedModel: bootstrapEnvelope.body.resolvedModel,
-      } as JsonValue,
+      { resolvedModel: bootstrapEnvelope.body.resolvedModel } as JsonValue,
       secretBytes,
     );
     await flush();
@@ -347,7 +402,9 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
       expectedChildId,
       {
         outcome: "completed",
-        summary: serializeCompletionCandidate({ outcome: "success" }),
+        completionCandidate: serializeCompletionCandidate({
+          outcome: "success",
+        }),
       },
       secretBytes,
     );
@@ -389,13 +446,11 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
     const bootstrapEnvelope = extractControlEnvelopeFromPrompt(
       spawned.writtenLines()[0],
     );
+    expect("thinkingLevel" in bootstrapEnvelope.body).toBe(false);
     await responder.send(
       "bootstrap-ack",
       expectedChildId,
-      {
-        activeTools: [...(bootstrapEnvelope.body.activeTools ?? [])],
-        resolvedModel: bootstrapEnvelope.body.resolvedModel,
-      } as JsonValue,
+      { resolvedModel: bootstrapEnvelope.body.resolvedModel } as JsonValue,
       secretBytes,
     );
     await flush();
@@ -404,7 +459,9 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
       expectedChildId,
       {
         outcome: "completed",
-        summary: serializeCompletionCandidate({ outcome: "success" }),
+        completionCandidate: serializeCompletionCandidate({
+          outcome: "success",
+        }),
       },
       secretBytes,
     );

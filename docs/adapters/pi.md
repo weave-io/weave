@@ -41,13 +41,16 @@ A controller generation owns callbacks, children, and transient session state. R
 
 Pi registration returns no receipt, so activation verifies command provenance and generated suffixes through `getCommands()` rather than assuming registration succeeded. Authority-bearing callbacks recheck the generation after asynchronous host work.
 
+Local extension development may set `WEAVE_PI_UNSAFE_DISABLE_COMMAND_PROVENANCE=1` before Pi starts. This accepts unsuffixed `/weave:*` commands from a top-level extension while retaining missing-command and collision checks. Published builds and release verification must leave the variable unset so npm package provenance remains fail-closed.
+
 ## Agents, prompts, models, and skills
 
 The first `before_agent_start` event supplies Pi's loaded skill catalog. The adapter:
 
 - resolves requested skills through the engine matcher;
 - resolves ordered model intent against `ctx.modelRegistry.getAvailable()`;
-- applies a valid thinking suffix separately from model identity;
+- preserves a native model selected with Pi's set/cycle controls after startup instead of replacing it on the first prompt;
+- applies a valid thinking suffix separately from model identity when Weave applies the model;
 - appends one delimited composed-prompt block without replacing Pi or other-extension context;
 - reports model or temperature degradation once per generation.
 
@@ -97,19 +100,46 @@ The control protocol uses:
 - an authenticated handshake before bootstrap;
 - monotonic sequence numbers and random nonces in each direction;
 - closed envelope kinds and validated bounded bodies;
-- one bootstrap acknowledgment after prompt, tools, and model activation succeed.
+- one bootstrap acknowledgment after prompt, tools, and model activation succeed;
+- acknowledged parent-to-child prompt and child-to-parent output transfers.
 
-Malformed, unauthenticated, replayed, or out-of-sequence input fails closed and disposes the runtime. Every secret is zeroed and every resource released exactly once.
+The protocol keeps three limits separate: native Pi JSONL records are capped at
+8 MiB, signed control bodies remain capped at 64 KiB, and one logical chunked
+transfer is capped at 64 MiB. Chunks carry at most 24 KiB of decoded payload.
+Assemblers bound chunk count and concurrent transfers. Senders wait 10 seconds
+for an authenticated ACK/NACK, retry once with a fresh transfer ID, and then
+return a typed timeout, rejection, oversize, or delivery failure. Stdin writes
+retain partial-write suffixes and await flush.
+
+Malformed, unauthenticated, replayed, or out-of-sequence input fails closed and disposes the runtime. Outbound control writes are serialized, and a failed settlement write is retried once without consuming its authenticated sequence number. Every secret is zeroed and every resource released exactly once.
 
 A child may request nested delegation only to its own declared targets. Canceling a node cancels queued and live descendants. Live children get a bounded cooperative grace period before force termination.
 
 Children are inspectable and cancellable through the TUI tree, not steerable. Public user-started RPC mode does not activate this private path.
 
-### Settlement limitation
+### Settlement and output
+
+While a child runs, `weave_delegate` updates its tool entry from Pi's streamed
+`message_update` events. Before answer text starts, the entry shows the latest
+bounded `thinking_delta` preview so a reasoning child does not look frozen.
+Once a `text_delta` arrives, answer text replaces the thinking preview and
+remains authoritative. Both previews are transient, capped at 4 KiB, and never
+persisted. The collapsed tool entry shows the latest whitespace-normalized 240
+code points; expanding it reveals the full bounded preview. The status line also
+shows the child's current tool. Spawn failures return the typed code plus the adapter-owned safe message,
+closed reason when available, retryability, and recovery hint; raw host errors
+and environment values never enter the result.
 
 Pi's `agent_settled` event has no payload. The adapter derives `failed` from the latest assistant `message_end.stopReason` when it is `error` or `aborted`; every other case, including no observed reason, settles as `completed`. Once cancellation is admitted, that child cannot report `completed`.
 
-A completed child's result is its own bounded final assistant text, with a fixed fallback when the turn emitted none.
+Completed settlement fields have one meaning each: `assistantOutput` is the
+bounded parent projection, `completionCandidate` is direct-step structured JSON,
+`outputTransferId` references an ACKed private transfer, and
+`outputByteLength` is numeric metadata. Output above the 4 KiB projection cap is
+transferred before settlement. A failed output transfer still produces one
+bounded inline settlement. The inspector/history sink receives full output;
+controller, delegation-tool, and workflow results receive only the bounded
+projection plus numeric metadata.
 
 ## Plans, artifacts, and recovery
 
@@ -123,7 +153,7 @@ Trusted healthy activation opens `.weave/runtime/weave.db` through the engine Ru
 
 The adapter records bounded normalized journal families, exactly-once primary/child usage observations, configured retention, deduplicated TUI failures, and scoped pino output. Its rotating file sink serializes writes and closes held handles at generation shutdown.
 
-The adapter never logs or persists prompts, responses, transcripts, raw RPC, tool input/output, plan/artifact content, private paths, environment values, or child secrets. Telemetry failures expose only closed codes, phases, impacts, and safe correlation fields.
+The adapter never logs prompts, responses, transcripts, raw RPC, tool input/output, plan/artifact content, private paths, environment values, or child secrets. Full child output and normalized session events may persist only inside the restrictive local child-history store for inspection; they never enter telemetry, parent-model results, controller results, or workflow completion. Telemetry failures expose only closed codes, phases, impacts, and safe correlation fields.
 
 ## Health-only mode
 

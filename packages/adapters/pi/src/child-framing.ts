@@ -11,29 +11,36 @@
  *   sequence split across two `push()` calls is decoded correctly instead
  *   of being corrupted at the split point.
  * - Accepts an optional trailing CR before the LF and strips it.
- * - Enforces the 1 MiB complete-record cap (including any CR and the LF
- *   itself) and rejects invalid UTF-8, both fatally: once a violation
+ * - Enforces the bounded native-record cap (8 MiB, including any CR and
+ *   the LF itself) and rejects invalid UTF-8, both fatally: once a violation
  *   occurs the byte stream can no longer be trusted to be aligned on
  *   record boundaries, so the framer poisons itself and refuses further
  *   input rather than risk desynchronized parsing.
  * - Delegates JSON parsing to `strict-json.ts`, which rejects duplicate
  *   object keys structurally.
  */
-import { err, ok, type Result } from "neverthrow";
+import { err, ok, Result, type Result as ResultType } from "neverthrow";
 import {
   type JsonValue,
   parseStrictJson,
   type StrictJsonParseError,
 } from "./strict-json.js";
 
-/** Complete record cap, inclusive of an optional trailing CR and the terminating LF (Spec 33 §11.4). */
-export const MAX_FRAME_RECORD_BYTES = 1024 * 1024;
-const MAX_CONTENT_BYTES = MAX_FRAME_RECORD_BYTES - 1; // reserve one byte for the terminating LF
-
 export type FramingError =
   | { readonly type: "RecordTooLarge"; readonly byteLength: number }
   | { readonly type: "InvalidUtf8" }
   | { readonly type: "InvalidJson"; readonly error: StrictJsonParseError };
+
+/**
+ * Maximum native Pi JSONL record size, inclusive of an optional trailing CR
+ * and the terminating LF. Native records are separate from authenticated
+ * control-envelope bodies, which remain capped at 64 KiB.
+ */
+export const MAX_NATIVE_RECORD_BYTES = 8 * 1024 * 1024;
+
+/** @deprecated Use MAX_NATIVE_RECORD_BYTES for native JSONL records. */
+export const MAX_FRAME_RECORD_BYTES = MAX_NATIVE_RECORD_BYTES;
+const MAX_CONTENT_BYTES = MAX_NATIVE_RECORD_BYTES - 1;
 
 export interface ParsedFrame {
   readonly raw: string;
@@ -42,41 +49,47 @@ export interface ParsedFrame {
 
 const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
 
-function decodeUtf8Strict(bytes: Uint8Array): Result<string, FramingError> {
-  try {
-    return ok(utf8Decoder.decode(bytes));
-  } catch {
-    return err({ type: "InvalidUtf8" });
-  }
+function decodeUtf8Strict(
+  bytes: Uint8Array,
+): ResultType<string, FramingError> {
+  return Result.fromThrowable(
+    () => utf8Decoder.decode(bytes),
+    (): FramingError => ({ type: "InvalidUtf8" }),
+  )();
 }
 
 export class PiLineFramer {
-  private pending: number[] = [];
+  private pendingSegments: Uint8Array[] = [];
+  private pendingByteLength = 0;
   private poisoned: FramingError | undefined;
 
   /** Feeds one chunk of raw bytes, returning every complete record parsed from it. */
-  push(chunk: Uint8Array): Result<ParsedFrame[], FramingError> {
+  push(chunk: Uint8Array): ResultType<ParsedFrame[], FramingError> {
     if (this.poisoned !== undefined) return err(this.poisoned);
     const frames: ParsedFrame[] = [];
-    for (const byte of chunk) {
-      if (byte === 0x0a) {
-        const lineResult = this.flushLine();
-        if (lineResult.isErr()) {
-          this.poisoned = lineResult.error;
-          return err(lineResult.error);
-        }
-        if (lineResult.value !== undefined) frames.push(lineResult.value);
-        continue;
+    let recordStart = 0;
+
+    for (let index = 0; index < chunk.byteLength; index += 1) {
+      if (chunk[index] !== 0x0a) continue;
+      const appendResult = this.appendSegment(
+        chunk.subarray(recordStart, index),
+      );
+      if (appendResult.isErr()) {
+        this.poisoned = appendResult.error;
+        return err(appendResult.error);
       }
-      this.pending.push(byte);
-      if (this.pending.length > MAX_CONTENT_BYTES) {
-        const error: FramingError = {
-          type: "RecordTooLarge",
-          byteLength: this.pending.length + 1,
-        };
-        this.poisoned = error;
-        return err(error);
+      const lineResult = this.flushLine();
+      if (lineResult.isErr()) {
+        this.poisoned = lineResult.error;
+        return err(lineResult.error);
       }
+      if (lineResult.value !== undefined) frames.push(lineResult.value);
+      recordStart = index + 1;
+    }
+    const appendResult = this.appendSegment(chunk.subarray(recordStart));
+    if (appendResult.isErr()) {
+      this.poisoned = appendResult.error;
+      return err(appendResult.error);
     }
     return ok(frames);
   }
@@ -86,18 +99,43 @@ export class PiLineFramer {
     return this.poisoned !== undefined;
   }
 
-  private flushLine(): Result<ParsedFrame | undefined, FramingError> {
-    let bytes = this.pending;
-    this.pending = [];
+  private appendSegment(
+    segment: Uint8Array,
+  ): ResultType<void, FramingError> {
+    if (segment.byteLength === 0) return ok(undefined);
+    const nextByteLength = this.pendingByteLength + segment.byteLength;
+    if (nextByteLength > MAX_CONTENT_BYTES) {
+      return err({
+        type: "RecordTooLarge",
+        byteLength: nextByteLength + 1,
+      });
+    }
+    this.pendingSegments.push(segment);
+    this.pendingByteLength = nextByteLength;
+    return ok(undefined);
+  }
+
+  private flushLine(): ResultType<ParsedFrame | undefined, FramingError> {
+    const record = new Uint8Array(this.pendingByteLength);
+    let offset = 0;
+    for (const segment of this.pendingSegments) {
+      record.set(segment, offset);
+      offset += segment.byteLength;
+    }
+    this.pendingSegments = [];
+    this.pendingByteLength = 0;
+
+    let bytes = record;
     if (bytes.length > 0 && bytes[bytes.length - 1] === 0x0d) {
-      bytes = bytes.slice(0, -1);
+      bytes = bytes.subarray(0, -1);
     }
     if (bytes.length === 0) return ok(undefined);
-    const decoded = decodeUtf8Strict(Uint8Array.from(bytes));
+    const decoded = decodeUtf8Strict(bytes);
     if (decoded.isErr()) return err(decoded.error);
     const parsed = parseStrictJson(decoded.value);
-    if (parsed.isErr())
+    if (parsed.isErr()) {
       return err({ type: "InvalidJson", error: parsed.error });
+    }
     return ok({ raw: decoded.value, json: parsed.value });
   }
 }

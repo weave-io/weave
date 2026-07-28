@@ -16,7 +16,6 @@ const INPUT = {
   cwd: "/tmp/project",
   correlationId: "corr-1",
   models: ["claude-sonnet-4-5"],
-  effectiveToolPolicy: undefined,
   delegationTargets: [],
 };
 
@@ -25,7 +24,7 @@ describe("TransportDirectDispatchPort", () => {
     const port = new TransportDirectDispatchPort(() =>
       okAsync({
         outcome: "completed" as const,
-        summary: serializeCompletionCandidate({
+        completionCandidate: serializeCompletionCandidate({
           outcome: "success",
           method: "agent_signal",
         }),
@@ -58,11 +57,11 @@ describe("TransportDirectDispatchPort", () => {
       expect(result.error.code).toBe("CompletionSignalMissing");
   });
 
-  it("rejects a completed settlement whose summary is valid JSON but an invalid completion shape", async () => {
+  it("rejects a completed settlement whose candidate is valid JSON but an invalid completion shape", async () => {
     const port = new TransportDirectDispatchPort(() =>
       okAsync({
         outcome: "completed" as const,
-        summary: '{"outcome":"not-a-real-outcome"}',
+        completionCandidate: '{"outcome":"not-a-real-outcome"}',
       }),
     );
     const result = await port.dispatch(INPUT);

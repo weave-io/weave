@@ -107,10 +107,37 @@ export function extractAssistantTextDeltaPreview(
 }
 
 /**
+ * Reads a streamed assistant *thinking* delta from a Pi RPC `message_update`
+ * record (`assistantMessageEvent: { type: "thinking_delta", delta: string }`).
+ *
+ * A reasoning model can think for a long time before it emits a single
+ * visible text token. Without this, a delegated child looks frozen for that
+ * entire stretch: `latestOutput` stays empty and the parent tool renders
+ * nothing but a status. Thinking is treated exactly like text - transient,
+ * bounded, and never persisted - but is tracked in its own buffer by the
+ * caller so real answer text always wins once it starts.
+ */
+export function extractAssistantThinkingDeltaPreview(
+  record: Record<string, JsonValue>,
+): string | undefined {
+  const assistantEvent = record.assistantMessageEvent;
+  if (
+    typeof assistantEvent !== "object" ||
+    assistantEvent === null ||
+    Array.isArray(assistantEvent)
+  ) {
+    return undefined;
+  }
+  const eventRecord = assistantEvent as Record<string, JsonValue>;
+  if (eventRecord.type !== "thinking_delta") return undefined;
+  return typeof eventRecord.delta === "string" ? eventRecord.delta : undefined;
+}
+
+/**
  * Reads the terminal `stopReason` of a just-completed assistant message from
  * a `message_end` event record, if present.
  *
- * Limitation (Task 9 finding 2): Pi's `agent_settled` event carries no
+ * Limitation (Task 9): Pi's `agent_settled` event carries no
  * payload at all (`{"type":"agent_settled"}` per the pi-coding-agent RPC
  * docs) - it cannot itself tell us whether the run that just settled ended
  * in error. The one observable signal the RPC protocol exposes for this is

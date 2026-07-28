@@ -18,10 +18,7 @@
  * only place that ever interprets that payload as a structured completion
  * candidate - ordinary delegation settlements are never parsed this way.
  */
-import type {
-  DelegationTarget,
-  EffectiveToolPolicy,
-} from "@weaveio/weave-engine";
+import type { DelegationTarget } from "@weaveio/weave-engine";
 import { err, type Result, ResultAsync } from "neverthrow";
 import {
   makeChildSpawnFailedFailure,
@@ -43,23 +40,20 @@ export interface PiDirectDispatchInput {
   readonly agentName: string;
   /** Activated descriptor prompt installed as the child's system context. */
   readonly composedPrompt: string;
-  /** Rendered workflow-step instructions sent as the bounded RPC task. */
+  /** Rendered workflow-step instructions sent as the RPC task. */
   readonly taskPrompt: string;
   readonly cwd: string;
   /** Pre-generated so the caller can pin it into the bootstrap/prompt correlation before spawning. */
   readonly correlationId: string;
   /**
    * The direct-step agent's OWN resolved descriptor fields (Pi adapter contract,
-   * §13-§15), resolved by the caller against its own activated descriptor
+   *), resolved by the caller against its own activated descriptor
    * catalog by `agentName` - never the engine-emitted `RunAgentEffect`'s
-   * own `agentDescriptor`, whose `composedPrompt`/`models`/tool-policy are
+   * own `agentDescriptor`, whose `composedPrompt` and `models` are
    * deliberately always empty/minimal (a security invariant: the engine
-   * never carries raw prompt text or resolved policy in an effect). A
-   * direct-step child with no governed tools beyond `weave_complete_step`
-   * and no real prompt is a bug this field exists to prevent.
+   * never carries raw prompt text in an effect).
    */
   readonly models: readonly string[];
-  readonly effectiveToolPolicy: EffectiveToolPolicy | undefined;
   readonly delegationTargets: readonly DelegationTarget[];
 }
 
@@ -98,6 +92,7 @@ export interface PiDirectDispatchPort {
 export interface DirectDispatchSettlement {
   readonly outcome: "completed" | "failed";
   readonly summary?: string;
+  readonly completionCandidate?: string;
   readonly reason?: string;
 }
 
@@ -131,7 +126,7 @@ export class TransportDirectDispatchPort implements PiDirectDispatchPort {
     if (settlement.outcome === "failed") {
       // The child's own `weave_complete_step` recorder distinguishes
       // missing/duplicate/late/malformed completion attempts (Pi adapter contract
-      // §15) via these fixed, closed reason strings - never free text -
+      //) via these fixed, closed reason strings - never free text -
       // so this is the one place that maps them to the exact typed
       // failure the engine/UI expect, instead of one generic
       // child-failed code for every distinct cause.
@@ -155,7 +150,9 @@ export class TransportDirectDispatchPort implements PiDirectDispatchPort {
       }
       return err(makeChildSpawnFailedFailure(stepName, reason));
     }
-    const raw = tryParseCompletionCandidateJson(settlement.summary ?? "");
+    const raw = tryParseCompletionCandidateJson(
+      settlement.completionCandidate ?? "",
+    );
     return parseStructuredCompletionCandidate(raw, stepName).map(
       (signal) => signal as PiDirectDispatchCandidate,
     );

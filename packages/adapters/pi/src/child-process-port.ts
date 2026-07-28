@@ -24,7 +24,7 @@ export interface PiChildStdout {
 }
 
 export interface PiSpawnedChildProcess {
-  writeStdin(bytes: Uint8Array): Result<void, ChildProcessError>;
+  writeStdin(bytes: Uint8Array): ResultAsync<void, ChildProcessError>;
   readonly stdout: PiChildStdout;
   /**
    * Cooperative/default termination (SIGTERM). Never throws, regardless of
@@ -87,13 +87,62 @@ const READ_FAILED_REASON = "child-process-read-failed";
  */
 export const FORCE_KILL_SIGNAL = 9;
 
+export interface PiChildStdinSink {
+  write(bytes: Uint8Array): number | Promise<number>;
+  flush(): void | number | Promise<void | number>;
+}
+
+/**
+ * Writes every byte in order and waits for the sink to flush after each
+ * accepted segment. A partial write retains the untouched suffix; a sink
+ * that remains unable to accept data after a flush fails closed.
+ */
+export function writeAllToSink(
+  sink: PiChildStdinSink,
+  bytes: Uint8Array,
+): ResultAsync<void, ChildProcessError> {
+  const write = ResultAsync.fromThrowable(
+    async (): Promise<Result<void, ChildProcessError>> => {
+      let offset = 0;
+      let zeroWrites = 0;
+      while (offset < bytes.byteLength) {
+        const remaining = bytes.subarray(offset);
+        const accepted = await sink.write(remaining);
+        if (
+          !Number.isInteger(accepted) ||
+          accepted < 0 ||
+          accepted > remaining.byteLength
+        ) {
+          return err({ type: "WriteFailed", reason: WRITE_FAILED_REASON });
+        }
+        if (accepted === 0) {
+          zeroWrites += 1;
+          if (zeroWrites > 1) {
+            return err({ type: "WriteFailed", reason: WRITE_FAILED_REASON });
+          }
+        } else {
+          zeroWrites = 0;
+          offset += accepted;
+        }
+        await sink.flush();
+      }
+      return ok(undefined);
+    },
+    (): ChildProcessError => ({
+      type: "WriteFailed",
+      reason: WRITE_FAILED_REASON,
+    }),
+  )();
+  return write.andThen((result) => result);
+}
+
 /**
  * The pure signal-selection mapping underlying {@link PiSpawnedChildProcess.kill}
  * vs {@link PiSpawnedChildProcess.forceKill}: cooperative termination sends
  * no explicit signal (letting the runtime apply its own default, `SIGTERM`);
  * mandatory force-kill always sends {@link FORCE_KILL_SIGNAL} (`SIGKILL`)
- * explicitly. Exported and unit-tested on its own (Spec 33 §24 layer D/§11.5)
- * because the surrounding process boundary - the real `Bun.spawn` call
+ * explicitly. Exported and unit-tested on its own because the surrounding
+ * process boundary - the real `Bun.spawn` call
  * itself - is deliberately never exercised by an automated test; this pure
  * mapping is the one piece of "which signal do we actually ask for" logic
  * that can be proven without spawning a real process.
@@ -173,14 +222,14 @@ export class BunPiChildProcessPort implements PiChildProcessPort {
       for (const handler of endHandlers) handler();
     })();
     return {
-      writeStdin: (bytes: Uint8Array): Result<void, ChildProcessError> => {
-        try {
-          subprocess.stdin.write(bytes);
-          return ok(undefined);
-        } catch {
-          return err({ type: "WriteFailed", reason: WRITE_FAILED_REASON });
-        }
-      },
+      writeStdin: (bytes) =>
+        writeAllToSink(
+          {
+            write: (chunk) => subprocess.stdin.write(chunk),
+            flush: () => subprocess.stdin.flush(),
+          },
+          bytes,
+        ),
       stdout: {
         onData: (cb) => dataHandlers.push(cb),
         onEnd: (cb) => endHandlers.push(cb),

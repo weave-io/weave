@@ -1,9 +1,6 @@
 import {
-  err,
   errAsync,
-  ok,
   okAsync,
-  type Result,
   type ResultAsync,
 } from "neverthrow";
 import type {
@@ -67,14 +64,14 @@ export class FakeSpawnedProcess implements PiSpawnedChildProcess {
     this.nextWriteError = error;
   }
 
-  writeStdin(bytes: Uint8Array): Result<void, ChildProcessError> {
+  writeStdin(bytes: Uint8Array): ResultAsync<void, ChildProcessError> {
     if (this.nextWriteError !== undefined) {
       const error = this.nextWriteError;
       this.nextWriteError = undefined;
-      return err(error);
+      return errAsync(error);
     }
     this.writtenChunks.push(bytes);
-    return ok(undefined);
+    return okAsync(undefined);
   }
 
   readonly stdout = {

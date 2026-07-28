@@ -6,6 +6,75 @@ import {
   parseSemver,
 } from "../host-compatibility.js";
 
+describe("BunHostPackageReader", () => {
+  it("reads host identity through Pi's root virtual module without package JSON", async () => {
+    const hostCompatibilityPath = new URL(
+      "../host-compatibility.ts",
+      import.meta.url,
+    ).pathname;
+    const buildResult = await Bun.build({
+      entrypoints: ["virtual:host-reader-test"],
+      format: "esm",
+      target: "bun",
+      plugins: [
+        {
+          name: "pi-host-virtual-module",
+          setup(build) {
+            build.onResolve({ filter: /^virtual:host-reader-test$/ }, () => ({
+              namespace: "test",
+              path: "host-reader-test",
+            }));
+            build.onLoad({ filter: /.*/, namespace: "test" }, () => ({
+              loader: "ts",
+              contents: `
+                import { BunHostPackageReader } from ${JSON.stringify(hostCompatibilityPath)};
+
+                export async function readHost() {
+                  const result = await new BunHostPackageReader().read();
+                  return result.match(
+                    (value) => ({ ok: true, value }),
+                    (error) => ({ ok: false, error }),
+                  );
+                }
+              `,
+            }));
+            build.onResolve(
+              { filter: /^@earendil-works\/pi-coding-agent$/ },
+              () => ({ namespace: "pi-host", path: "pi-coding-agent" }),
+            );
+            build.onLoad({ filter: /.*/, namespace: "pi-host" }, () => ({
+              loader: "js",
+              contents: 'export const VERSION = "0.82.1";',
+            }));
+          },
+        },
+      ],
+    });
+
+    expect(buildResult.success).toBe(true);
+    const bundledModule = await buildResult.outputs[0]?.text();
+    expect(bundledModule).toBeDefined();
+    const moduleUrl = URL.createObjectURL(
+      new Blob([bundledModule ?? ""], { type: "text/javascript" }),
+    );
+    try {
+      const readerModule = (await import(moduleUrl)) as {
+        readHost(): Promise<{
+          readonly ok: boolean;
+          readonly value?: { readonly name: string; readonly version: string };
+        }>;
+      };
+
+      expect(await readerModule.readHost()).toEqual({
+        ok: true,
+        value: { name: HOST_PACKAGE_NAME, version: "0.82.1" },
+      });
+    } finally {
+      URL.revokeObjectURL(moduleUrl);
+    }
+  });
+});
+
 describe("isSupportedHostVersion", () => {
   it("accepts the exact floor 0.81.1", () => {
     expect(isSupportedHostVersion("0.81.1")).toBe(true);

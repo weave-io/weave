@@ -125,6 +125,45 @@ describe("PiConfigActivator (unit, fake ports)", () => {
     expect(activation.trust).toBe("trusted");
   });
 
+  it("returns Pi-local settings validation without rejecting unrelated adapter blocks", async () => {
+    const config = {
+      agents: {},
+      disabled: { agents: [], skills: [] },
+      settings: {
+        adapters: {
+          other_harness: { preserved: true },
+          pi: {
+            child_inspection: {
+              max_bytes_per_child: 65_536,
+              max_bytes_total: 65_535,
+              unknown_limit: 1,
+            },
+          },
+        },
+      },
+    } as unknown as WeaveConfig;
+    const activator = new PiConfigActivator({
+      configLoader: { load: () => okAsync(config) },
+      materializer: { materialize: () => okAsync({ agents: [], errors: [] }) },
+    });
+
+    const result = await activator.activate({
+      projectRoot: PROJECT_ROOT,
+      trust: "trusted",
+    });
+
+    expect(result.isOk()).toBe(true);
+    const settings = result._unsafeUnwrap().childInspectionSettings;
+    expect(settings.status).toBe("invalid");
+    if (settings.status === "invalid") {
+      expect(settings.issues.length).toBe(2);
+      expect(settings.issues.some((issue) => issue.code === "unrecognized_keys")).toBe(
+        true,
+      );
+    }
+    expect(result._unsafeUnwrap().config).toBe(config);
+  });
+
   it("maps a config load failure into an ActivationFailed PiAdapterFailure", async () => {
     const activator = new PiConfigActivator({
       configLoader: {

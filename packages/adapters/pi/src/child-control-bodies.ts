@@ -8,12 +8,12 @@
  * fallbacks. A body that fails its schema is always a typed, fail-closed
  * `ControlBodyValidationError` - never a best-effort partial read.
  */
+import { ThinkingLevelSchema } from "@weaveio/weave-core";
 import { z } from "zod";
 import {
   MAX_CONTROL_BODY_BYTES,
   type PiControlKind,
 } from "./child-envelope.js";
-import { MAX_TASK_INPUT_CHARS } from "./delegation-limits.js";
 import type { JsonValue } from "./strict-json.js";
 import { WEAVE_COMPLETE_STEP_TOOL_NAME } from "./structured-completion.js";
 
@@ -22,9 +22,6 @@ const MAX_SUMMARY_LENGTH = 8_192;
 const MAX_REASON_LENGTH = 2_000;
 const MAX_MODELS = 32;
 const MAX_DELEGATION_TARGETS = 9;
-const MAX_APPROVAL_REQUESTS = 20;
-/** Bounds the derived active-tool-name list carried in `bootstrap`/`bootstrap-ack` (Spec 33 §11.2 Task 9) - the closed native set plus at most a handful of Weave-owned tools, never an unbounded list. */
-export const MAX_ACTIVE_TOOLS = 64;
 /** Bounds the bootstrap `context.cwd` field - a real filesystem path, not name-length text. */
 export const MAX_CWD_LENGTH = 4_096;
 /** Bounds `context.parentDepth` - mirrors Pi adapter contract's own depth-limit universe generously; a value outside this is always malformed, never a legitimate deep tree. */
@@ -37,9 +34,8 @@ const MAX_PARENT_DEPTH = 64;
 // canonicalization time (Pi adapter contract), so an unbounded string field
 // was never actually able to smuggle unbounded data through - but it did
 // mean a bootstrap body could consume nearly the *entire* 64KiB budget on
-// `composedPrompt` alone, starving `agentName`/`models`/
-// `effectiveToolPolicy`/`delegationTargets` of any room and turning what
-// should be an explicit, schema-level bound into an implicit, accidental
+// `composedPrompt` alone, starving the other bootstrap fields of room and
+// turning what should be an explicit, schema-level bound into an accidental
 // one discovered only at the transport layer. Half of the byte budget,
 // expressed conservatively in UTF-16 code units (so it's also a safe bound
 // on UTF-8 byte length even for encodings that expand, e.g. up to 4 bytes
@@ -66,14 +62,6 @@ const DelegationTargetBodySchema = z
     isCategory: z.boolean(),
   })
   .strict();
-
-// `effectiveToolPolicy` is validated only as a bounded plain object here;
-// its full field-level shape is the engine's own `EffectiveToolPolicy`
-// schema, which this adapter-owned transport module intentionally does not
-// duplicate. Passing an unrecognized shape downstream is safe because
-// `PiPermissionBridge.planToolPolicy` treats it as opaque policy data keyed
-// by agent name, never as trusted authorization input on its own.
-const OpaqueBoundedObjectSchema = z.record(z.string(), z.unknown());
 
 /**
  * A resolved, concrete Pi model identity (Pi adapter contract) -
@@ -111,7 +99,7 @@ export interface HostModelIdentity {
 /**
  * Projects a host-supplied model object down to exactly the fields
  * {@link ModelIdentityBodySchema}'s `.strict()` shape allows (Pi adapter contract
- * §11.2 finding 2). Every call site that places a resolved/applied model
+ *). Every call site that places a resolved/applied model
  * identity into a `bootstrap` or `bootstrap-ack` control body MUST route
  * it through this function first - passing the raw host object directly
  * fails closed at `parseControlBody`/`runTask`'s own re-validation
@@ -128,7 +116,7 @@ export function toModelIdentityBody(
 
 /**
  * The bounded, non-secret delegation context carried in `bootstrap` (Spec
- * 33 §11.2 Task 9): who is delegating, at what depth, and in what project
+ * 33): who is delegating, at what depth, and in what project
  * directory. Every field here is operational metadata already visible
  * elsewhere in this transport (env vars, spawn input) - never a secret, raw
  * RPC payload, or private value.
@@ -156,7 +144,6 @@ const BootstrapCommonShape = {
   agentName: NameSchema,
   composedPrompt: z.string().max(MAX_COMPOSED_PROMPT_LENGTH),
   models: z.array(z.string().max(MAX_NAME_LENGTH)).max(MAX_MODELS),
-  effectiveToolPolicy: OpaqueBoundedObjectSchema.optional(),
   delegationTargets: z
     .array(DelegationTargetBodySchema)
     .max(MAX_DELEGATION_TARGETS)
@@ -164,10 +151,10 @@ const BootstrapCommonShape = {
   /** The task/child correlation id (Pi adapter contract) - the child must reject bootstrap whose `correlationId` does not match its own env-derived child id. */
   correlationId: NameSchema,
   context: TaskContextBodySchema,
-  /** The exact, parent-derived active tool name list the child MUST apply via `setActiveTools()` (Spec 33 §11.2 Task 9). */
-  activeTools: z.array(NameSchema).max(MAX_ACTIVE_TOOLS),
-  /** Present only when the parent itself resolved a concrete model identity (Spec 33 §9.2, §11.2 Task 9); absent means the child must resolve against its own authenticated catalog. */
+  /** Present only when the parent itself resolved a concrete model identity (Pi adapter contract); absent means the child must resolve against its own authenticated catalog. */
   resolvedModel: ModelIdentityBodySchema.optional(),
+  /** The core-owned model thinking intent selected alongside `resolvedModel`, when one was requested. */
+  thinkingLevel: ThinkingLevelSchema.optional(),
 } as const;
 
 const OrdinaryBootstrapBodySchema = z
@@ -205,22 +192,13 @@ const BootstrapBodySchema = z.discriminatedUnion("mode", [
   DirectStepBootstrapBodySchema,
 ]);
 
-/**
- * The child's authenticated proof that bootstrap actually applied (Spec 33
- * §11.2 Task 9): the exact active-tool set `pi.getActiveTools()` reports
- * after `setActiveTools()` (or, when unsupported, the requested set the
- * child applied without a host-side read-back), and the concrete model
- * identity actually active afterward. Never sent unless both are true -
- * this body existing at all is the atomicity proof; there is no partial/
- * degraded shape.
- */
+/** The child's authenticated proof that bootstrap applied successfully. */
 const BootstrapAckBodySchema = z
   .object({
-    activeTools: z.array(NameSchema).max(MAX_ACTIVE_TOOLS),
     // Optional: present whenever a concrete model actually applies. Absent
     // only when the descriptor declared no resolvable model preference and
     // Pi's already-active model was correctly left untouched (Pi adapter contract
-    // §9.2's graceful degradation) - never absent because of a silently
+    //'s graceful degradation) - never absent because of a silently
     // swallowed *activation* failure, which fails the whole bootstrap
     // closed before an ack is ever sent (Pi adapter contract).
     resolvedModel: ModelIdentityBodySchema.optional(),
@@ -235,7 +213,17 @@ const SettledBodySchema = z.discriminatedUnion("outcome", [
   z
     .object({
       outcome: z.literal("completed"),
+      /** Deprecated legacy prose field; never used for direct completion. */
       summary: z.string().max(MAX_SUMMARY_LENGTH).optional(),
+      assistantOutput: z.string().max(MAX_SUMMARY_LENGTH).optional(),
+      completionCandidate: z.string().max(MAX_SUMMARY_LENGTH).optional(),
+      outputTransferId: z.string().min(1).max(MAX_NAME_LENGTH).optional(),
+      outputByteLength: z
+        .number()
+        .int()
+        .nonnegative()
+        .max(64 * 1024 * 1024)
+        .optional(),
     })
     .strict(),
   z
@@ -250,47 +238,23 @@ const ErrorBodySchema = z
   .object({ reason: z.string().max(MAX_REASON_LENGTH) })
   .strict();
 
-const ApprovalPendingRequestBodySchema = z
-  .object({
-    summary: z.string().max(2_048),
-    details: z.string().max(4_096).optional(),
-    unresolved: z.boolean(),
-  })
-  .strict();
-
-const ApprovalRequestBodySchema = z
-  .object({
-    agentName: NameSchema,
-    toolIdentity: NameSchema,
-    requests: z
-      .array(ApprovalPendingRequestBodySchema)
-      .min(1)
-      .max(MAX_APPROVAL_REQUESTS),
-    allowedScopes: z
-      .array(z.enum(["once", "session", "durable"]))
-      .min(1)
-      .max(3),
-  })
-  .strict();
-
-const ApprovalResponseBodySchema = z.discriminatedUnion("scope", [
-  z
-    .object({
-      scope: z.enum(["once", "session", "durable"]),
-      expiresAt: z.number().finite().optional(),
-    })
-    .strict(),
-  z.object({ scope: z.literal("reject") }).strict(),
-]);
-
 const DelegateRequestBodySchema = z
   .object({
     agentName: NameSchema,
     // Same bound as tool parsing, the controller, and RPC prompt send
-    // (Spec 33 §11.2 Task 9) - a live child relaying its own nested
-    // `delegate-request` must never get a looser limit than an ordinary
-    // top-level `weave_delegate` tool call would.
-    task: z.string().min(1).max(MAX_TASK_INPUT_CHARS),
+    // Empty tasks are invalid, but task size is bounded only by the
+    // transport framing/chunking layer.
+    task: z.string().min(1),
+  })
+  .strict();
+
+const DelegateRequestChunkBodySchema = z
+  .object({
+    agentName: NameSchema,
+    transferId: z.string().min(1).max(256),
+    index: z.number().int().nonnegative(),
+    total: z.number().int().positive(),
+    data: z.string().min(1).max(32_768),
   })
   .strict();
 
@@ -317,6 +281,49 @@ const DelegateResponseBodySchema = z
   })
   .strict();
 
+const TransferChunkBodySchema = z
+  .object({
+    channel: z.literal("output"),
+    transferId: z.string().min(1).max(MAX_NAME_LENGTH),
+    index: z.number().int().nonnegative(),
+    total: z.number().int().positive(),
+    data: z.string().min(1).max(32_768),
+  })
+  .strict();
+
+const TransferChannelSchema = z.enum(["prompt", "output"]);
+const TransferRejectionReasonSchema = z.enum([
+  "invalid-transfer-id",
+  "invalid-total",
+  "invalid-index",
+  "invalid-base64",
+  "duplicate-index",
+  "total-mismatch",
+  "chunk-too-large",
+  "aggregate-too-large",
+  "too-many-transfers",
+  "missing-index",
+  "malformed-chunk",
+]);
+
+const TransferResultBodySchema = z.discriminatedUnion("status", [
+  z
+    .object({
+      channel: TransferChannelSchema,
+      transferId: z.string().min(1).max(MAX_NAME_LENGTH),
+      status: z.literal("ack"),
+    })
+    .strict(),
+  z
+    .object({
+      channel: TransferChannelSchema,
+      transferId: z.string().min(1).max(MAX_NAME_LENGTH),
+      status: z.literal("nack"),
+      reason: TransferRejectionReasonSchema,
+    })
+    .strict(),
+]);
+
 const CONTROL_BODY_SCHEMAS = {
   handshake: EmptyBodySchema,
   bootstrap: BootstrapBodySchema,
@@ -325,10 +332,11 @@ const CONTROL_BODY_SCHEMAS = {
   cancelled: EmptyBodySchema,
   settled: SettledBodySchema,
   error: ErrorBodySchema,
-  "approval-request": ApprovalRequestBodySchema,
-  "approval-response": ApprovalResponseBodySchema,
   "delegate-request": DelegateRequestBodySchema,
+  "delegate-request-chunk": DelegateRequestChunkBodySchema,
   "delegate-response": DelegateResponseBodySchema,
+  "transfer-chunk": TransferChunkBodySchema,
+  "transfer-result": TransferResultBodySchema,
 } as const satisfies Record<PiControlKind, z.ZodType>;
 
 export type PiBootstrapBody = z.infer<typeof BootstrapBodySchema>;
@@ -344,10 +352,13 @@ export type PiTaskContextBody = z.infer<typeof TaskContextBodySchema>;
 export type PiCancelBody = z.infer<typeof CancelBodySchema>;
 export type PiSettledBody = z.infer<typeof SettledBodySchema>;
 export type PiErrorBody = z.infer<typeof ErrorBodySchema>;
-export type PiApprovalRequestBody = z.infer<typeof ApprovalRequestBodySchema>;
-export type PiApprovalResponseBody = z.infer<typeof ApprovalResponseBodySchema>;
 export type PiDelegateRequestBody = z.infer<typeof DelegateRequestBodySchema>;
+export type PiDelegateRequestChunkBody = z.infer<
+  typeof DelegateRequestChunkBodySchema
+>;
 export type PiDelegateResponseBody = z.infer<typeof DelegateResponseBodySchema>;
+export type PiTransferChunkBody = z.infer<typeof TransferChunkBodySchema>;
+export type PiTransferResultBody = z.infer<typeof TransferResultBodySchema>;
 
 /** A mapped type resolving the validated body shape for a given control kind. */
 export type ControlBodyFor<K extends PiControlKind> = z.infer<

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "bun:test";
-import { MAX_FRAME_RECORD_BYTES, PiLineFramer } from "../child-framing.js";
+import {
+  MAX_NATIVE_RECORD_BYTES,
+  PiLineFramer,
+} from "../child-framing.js";
 
 const enc = new TextEncoder();
 
@@ -62,16 +65,20 @@ describe("PiLineFramer", () => {
     ]);
   });
 
-  it("rejects a complete record exceeding the 1 MiB cap and poisons the framer", () => {
+  it("rejects a complete record exceeding the native cap and poisons the framer", () => {
     const framer = new PiLineFramer();
-    const oversized = `{"pad":"${"x".repeat(MAX_FRAME_RECORD_BYTES)}"}\n`;
+    const oversized = `{"pad":"${"x".repeat(MAX_NATIVE_RECORD_BYTES)}"}\n`;
     const result = framer.push(enc.encode(oversized));
     expect(result.isErr()).toBe(true);
-    expect(result._unsafeUnwrapErr().type).toBe("RecordTooLarge");
+    const error = result._unsafeUnwrapErr();
+    expect(error.type).toBe("RecordTooLarge");
+    if (error.type === "RecordTooLarge") {
+      expect(error.byteLength).toBeGreaterThan(MAX_NATIVE_RECORD_BYTES);
+    }
+    expect(JSON.stringify(error)).not.toContain("x");
     expect(framer.isPoisoned()).toBe(true);
     // Once poisoned, further input is fatally rejected without further parsing.
-    const after = framer.push(enc.encode('{"a":1}\n'));
-    expect(after.isErr()).toBe(true);
+    expect(framer.push(enc.encode('{"a":1}\n')).isErr()).toBe(true);
   });
 
   it("rejects invalid UTF-8 fatally", () => {
@@ -90,14 +97,68 @@ describe("PiLineFramer", () => {
     expect(result._unsafeUnwrapErr().type).toBe("InvalidJson");
   });
 
-  it("accepts a record that lands exactly at the 1 MiB cap (inclusive of the LF)", () => {
+  it("accepts a record that lands exactly at the native cap, including the LF", () => {
     const framer = new PiLineFramer();
-    // '{"p":""}' is 9 bytes of fixed overhead; pad so the whole line + LF == MAX_FRAME_RECORD_BYTES.
-    const fixedOverhead = '{"p":""}'.length + 1; // +1 for the LF
-    const padLength = MAX_FRAME_RECORD_BYTES - fixedOverhead;
+    const fixedOverhead = '{"p":""}'.length + 1;
+    const padLength = MAX_NATIVE_RECORD_BYTES - fixedOverhead;
     const line = `{"p":"${"x".repeat(padLength)}"}\n`;
-    expect(enc.encode(line).byteLength).toBe(MAX_FRAME_RECORD_BYTES);
+    expect(enc.encode(line).byteLength).toBe(MAX_NATIVE_RECORD_BYTES);
     const result = framer.push(enc.encode(line));
     expect(result.isOk()).toBe(true);
+    expect(framer.isPoisoned()).toBe(false);
+  });
+
+  it("rejects a complete native record exactly one byte over the cap", () => {
+    const framer = new PiLineFramer();
+    const fixedOverhead = '{"p":""}'.length + 1;
+    const padLength = MAX_NATIVE_RECORD_BYTES + 1 - fixedOverhead;
+    const line = `{"p":"${"x".repeat(padLength)}"}\n`;
+    expect(enc.encode(line).byteLength).toBe(MAX_NATIVE_RECORD_BYTES + 1);
+
+    const result = framer.push(enc.encode(line));
+    expect(result.isErr()).toBe(true);
+    if (result.isOk()) return;
+    expect(result.error).toEqual({
+      type: "RecordTooLarge",
+      byteLength: MAX_NATIVE_RECORD_BYTES + 1,
+    });
+    expect(framer.isPoisoned()).toBe(true);
+  });
+
+  it("accepts a split exact-bound native record and later records", () => {
+    const framer = new PiLineFramer();
+    const fixedOverhead = '{"p":""}'.length + 1;
+    const padLength = MAX_NATIVE_RECORD_BYTES - fixedOverhead;
+    const nativeLine = `{"p":"${"x".repeat(padLength)}"}\n`;
+    const input = enc.encode(`${nativeLine}{"next":true}\n`);
+
+    const first = framer.push(input.slice(0, 17));
+    expect(first.isOk()).toBe(true);
+    if (first.isOk()) expect(first.value).toHaveLength(0);
+
+    const rest = framer.push(input.slice(17));
+    expect(rest.isOk()).toBe(true);
+    if (rest.isOk()) {
+      expect(rest.value).toHaveLength(2);
+      expect(rest.value[0]?.raw.length).toBeGreaterThan(1_000_000);
+      expect(rest.value[1]?.json).toEqual({ next: true });
+    }
+    expect(framer.isPoisoned()).toBe(false);
+  });
+
+  it("rejects an unterminated record before it can grow past the native cap", () => {
+    const framer = new PiLineFramer();
+    const atBoundary = new Uint8Array(MAX_NATIVE_RECORD_BYTES - 1);
+    expect(framer.push(atBoundary).isOk()).toBe(true);
+
+    const result = framer.push(new Uint8Array([0x78]));
+    expect(result.isErr()).toBe(true);
+    const error = result._unsafeUnwrapErr();
+    expect(error.type).toBe("RecordTooLarge");
+    if (error.type === "RecordTooLarge") {
+      expect(error.byteLength).toBe(MAX_NATIVE_RECORD_BYTES + 1);
+    }
+    expect(JSON.stringify(error)).not.toContain("x");
+    expect(framer.isPoisoned()).toBe(true);
   });
 });

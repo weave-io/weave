@@ -26,24 +26,17 @@ export const PROJECT_PATH_DEPENDENT_CAPABILITIES: readonly CapabilityId[] = [
  * threaded into probing so these capabilities reflect the actual outcome
  * instead of a placeholder. Absent (`undefined`) only when preflight is
  * blocked before config activation could safely run (Pi adapter contract,
- * §28 "wrong mode/host/version -\> health-only").
+ * "wrong mode/host/version -\> health-only").
  */
 export interface PiCandidatePlanContext {
   readonly configLoaded: boolean;
   readonly materializationErrorCount: number;
   readonly primaryDescriptorFound: boolean;
   readonly primaryModelDryResolved: boolean;
-  /** True only when the candidate plan includes the governed `weave_delegate` tool. */
+  /** True only when the candidate plan includes the `weave_delegate` tool. */
   readonly delegationToolPlanned?: boolean;
   /** True only when the trusted Runtime Store path passed containment checks. */
   readonly eventLoggingPlanned?: boolean;
-  /**
-   * Result of the registered-tool coverage proof (Spec 33 §12, §21):
-   * `"ok"` when `verifyPermissionCoverage` succeeded for the sealed
-   * candidate registry; a bounded, closed-set `reason` string otherwise.
-   * `undefined` only when the plan never ran (mode/host blocked).
-   */
-  readonly toolPolicyCoverage?: "ok" | { readonly reason: string };
   /**
    * Real, read-only no-follow containment proof for `.weave/runtime` under
    * the project root (Pi adapter contract): `true` only when that path either
@@ -75,36 +68,6 @@ const CANDIDATE_PLAN_CAPABILITIES: ReadonlySet<CapabilityId> = new Set([
   "plan-file-compatibility",
   "event-logging",
 ]);
-
-/**
- * Evaluates `tool-policy-mapping` against the registered-tool coverage
- * proof computed once during preflight (Spec 33 §12, §21). Never raises a
- * declared ceiling - `undefined` (plan never ran) and an incomplete/invalid
- * coverage result both report `unavailable`.
- */
-function evaluateToolPolicyCapability(
-  plan: PiCandidatePlanContext,
-): CapabilityProbeResult {
-  if (plan.toolPolicyCoverage === undefined) {
-    return {
-      capabilityId: "tool-policy-mapping",
-      probeStatus: "unavailable",
-      details: "tool-policy-plan-not-run",
-    };
-  }
-  if (plan.toolPolicyCoverage === "ok") {
-    return {
-      capabilityId: "tool-policy-mapping",
-      probeStatus: "ok",
-      details: "registered-tool-coverage-proven",
-    };
-  }
-  return {
-    capabilityId: "tool-policy-mapping",
-    probeStatus: "unavailable",
-    details: plan.toolPolicyCoverage.reason,
-  };
-}
 
 /**
  * Evaluates the four candidate-plan-aware capabilities against real
@@ -295,6 +258,13 @@ export interface PiCapabilityProbeSource {
   probe(context: PiPreflightContext): readonly CapabilityProbeResult[];
 }
 
+export const WEAVE_PI_UNSAFE_DISABLE_COMMAND_PROVENANCE_ENV =
+  "WEAVE_PI_UNSAFE_DISABLE_COMMAND_PROVENANCE";
+
+export interface DefaultPiCapabilityProberOptions {
+  readonly enforceCommandProvenance?: boolean;
+}
+
 /**
  * Returns exactly one `unavailable` probe for every capability ID, with a
  * shared reason. Used when mode or host identity/version blocks preflight
@@ -322,18 +292,21 @@ function isSuffixedVariant(entryName: string, baseName: string): boolean {
 
 /**
  * Verifies exclusive ownership of every required `/weave:*` command (Pi adapter contract
- * §7.1): each name must have exactly one unsuffixed invocation whose
+ *): each name must have exactly one unsuffixed invocation whose
  * `sourceInfo` proves it is ours, and no same-base numeric-suffixed entry
  * may exist at all (a suffix means some registration collided on this name,
  * even if we kept the bare slot).
  */
 function evaluateCommandEntrypoints(
   commands: readonly PiCommandInfo[],
+  enforceCommandProvenance: boolean,
 ): CapabilityProbeResult {
   const problems: string[] = [];
   for (const name of WEAVE_COMMAND_NAMES) {
     const owned = commands.find(
-      (command) => command.name === name && isOwnSourceInfo(command.sourceInfo),
+      (command) =>
+        command.name === name &&
+        (!enforceCommandProvenance || isOwnSourceInfo(command.sourceInfo)),
     );
     if (owned === undefined) {
       problems.push(name);
@@ -355,7 +328,9 @@ function evaluateCommandEntrypoints(
   return {
     capabilityId: "command-entrypoints",
     probeStatus: "ok",
-    details: "all-nine-commands-exclusively-owned",
+    details: enforceCommandProvenance
+      ? "all-nine-commands-exclusively-owned"
+      : "all-nine-commands-present-local-provenance-disabled",
   };
 }
 
@@ -367,6 +342,13 @@ function evaluateCommandEntrypoints(
  * `lowerReadinessByProbe`.
  */
 export class DefaultPiCapabilityProber implements PiCapabilityProbeSource {
+  private readonly enforceCommandProvenance: boolean;
+
+  constructor(options: DefaultPiCapabilityProberOptions = {}) {
+    this.enforceCommandProvenance =
+      options.enforceCommandProvenance ?? true;
+  }
+
   probe(context: PiPreflightContext): readonly CapabilityProbeResult[] {
     return ALL_CAPABILITY_IDS.map((id) => this.probeOne(id, context));
   }
@@ -376,7 +358,10 @@ export class DefaultPiCapabilityProber implements PiCapabilityProbeSource {
     context: PiPreflightContext,
   ): CapabilityProbeResult {
     if (id === "command-entrypoints") {
-      return evaluateCommandEntrypoints(context.commands);
+      return evaluateCommandEntrypoints(
+        context.commands,
+        this.enforceCommandProvenance,
+      );
     }
     if (id === "token-usage-reporting") {
       return {
@@ -386,13 +371,11 @@ export class DefaultPiCapabilityProber implements PiCapabilityProbeSource {
       };
     }
     if (id === "tool-policy-mapping") {
-      return context.candidatePlan !== undefined
-        ? evaluateToolPolicyCapability(context.candidatePlan)
-        : {
-            capabilityId: id,
-            probeStatus: "unavailable",
-            details: "tool-policy-plan-not-run",
-          };
+      return {
+        capabilityId: id,
+        probeStatus: "ok",
+        details: "pi-native-tool-control",
+      };
     }
     if (
       context.candidatePlan !== undefined &&

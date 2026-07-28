@@ -2,7 +2,7 @@
  * Native `/weave:*` command handlers and palette actions (Pi adapter contract).
  * Pure builder functions: given a {@link PiWorkflowController} and the
  * active session's UI port, they return real handlers - never the inert
- * `"not yet implemented"` shells. Only this module's start/resume handlers
+ * `"not yet implemented"` shells. Only this module's run/resume handlers
  * are allowed to mint an {@link AuthorizedByUser} token, and only from a
  * real `ctx.ui.confirm(...)`/`ctx.ui.select(...)` result - never from
  * prompt text, delegation, tools, idle/session events, or continuation
@@ -13,7 +13,7 @@ import type {
   PlanTaskSnapshot,
   WorkflowExecutionContext,
 } from "@weaveio/weave-engine";
-import type { ResultAsync } from "neverthrow";
+import { okAsync, ResultAsync } from "neverthrow";
 import type { PiAdapterFailure } from "./errors.js";
 import {
   authorizeByExplicitUser,
@@ -39,7 +39,7 @@ export interface PiActiveWorkflowTracker {
         leaseId?: string;
         /**
          * Set only when this instance was reconstructed from a durable
-         * recovery pointer (Issue #21 Task 12 S020), never for an
+         * recovery pointer (Issue #21 S020), never for an
          * ordinarily tracked in-session instance. Carries the exact
          * pre-reload owner (controller generation) the pointer's lease
          * was acquired under, so `handleWeaveResume` can build an explicit
@@ -70,6 +70,30 @@ export interface PiActiveWorkflowTracker {
   currentAgentName(): string | undefined;
 }
 
+export type PiForegroundPlanStartFailure =
+  | {
+      readonly type: "PrimarySwitchFailed";
+      readonly safeMessage: string;
+    }
+  | {
+      readonly type: "MessageDispatchFailed";
+      readonly safeMessage: string;
+    }
+  | {
+      readonly type: "SessionUnavailable";
+      readonly safeMessage: string;
+    };
+
+/** Adapter-owned foreground start seam for the parent Pi session. */
+export interface PiForegroundPlanStartPort {
+  start(planName: string): ResultAsync<void, PiForegroundPlanStartFailure>;
+}
+
+type PiWorkflowCommandUiFailure = {
+  readonly type: "UiInteractionFailed";
+  readonly safeMessage: string;
+};
+
 function describeRunResult(result: PiRunResult): string {
   return `Workflow ${result.workflowInstanceId} is now ${result.finalStatus}${
     result.currentStepName !== undefined
@@ -78,50 +102,68 @@ function describeRunResult(result: PiRunResult): string {
   }.`;
 }
 
-/** `/weave:start [plan]` - select or name an existing plan, then explicitly start it. */
+/** `/weave:start [plan]` - select or name an existing plan, switch the parent session to Tapestry, and submit its foreground kickoff turn. */
 export async function handleWeaveStart(
   rawArgs: string,
   ui: PiWorkflowCommandUiPort,
-  controller: PiWorkflowController,
+  foregroundStarter: PiForegroundPlanStartPort,
   tracker: PiActiveWorkflowTracker,
 ): Promise<void> {
+  const listed = await tracker.listPlanNames();
+  if (listed.isErr()) {
+    ui.notify(`Could not list plans: ${listed.error.safeMessage}`, "error");
+    return;
+  }
+
   const requested = rawArgs.trim();
-  const planName =
-    requested.length > 0 ? requested : await selectPlanName(ui, tracker);
+  let planName: string | undefined =
+    requested.length > 0 ? requested : undefined;
+  if (planName === undefined) {
+    const selected = await selectListedPlanName(ui, listed.value);
+    if (selected.isErr()) {
+      ui.notify(selected.error.safeMessage, "error");
+      return;
+    }
+    planName = selected.value;
+  }
   if (planName === undefined || planName.length === 0) {
     ui.notify("No plan selected; nothing started.", "info");
     return;
   }
-  const confirmed = await ui.confirm(
-    "Start plan",
-    `Start plan "${planName}" now? This begins durable execution.`,
+  if (!listed.value.includes(planName)) {
+    ui.notify("The requested plan was not found.", "error");
+    return;
+  }
+
+  const confirmStart = ResultAsync.fromThrowable(
+    () =>
+      ui.confirm(
+        "Start plan",
+        `Start plan "${planName}" with Tapestry in this session?`,
+      ),
+    (): PiWorkflowCommandUiFailure => ({
+      type: "UiInteractionFailed",
+      safeMessage: "Pi could not confirm the plan start request.",
+    }),
   );
-  const authorization = authorizeByExplicitUser(confirmed);
-  if (authorization.isErr()) {
+  const confirmed = await confirmStart();
+  if (confirmed.isErr()) {
+    ui.notify(confirmed.error.safeMessage, "error");
+    return;
+  }
+  if (!confirmed.value) {
     ui.notify(
       "Start cancelled; plan execution requires explicit confirmation.",
       "info",
     );
     return;
   }
-  const context = tracker.buildContext(planName);
-  if (context === undefined) {
-    ui.notify(`No workflow is configured for plan "${planName}".`, "error");
-    return;
-  }
-  const result = await controller.startExecution(
-    { workflowInstanceId: planName, context },
-    authorization.value,
-  );
+
+  const result = await foregroundStarter.start(planName);
   result.match(
-    (started) => {
-      tracker.setActiveInstance({
-        workflowInstanceId: started.workflowInstanceId,
-        leaseId: started.leaseId,
-      });
-      ui.notify(describeRunResult(started), "info");
-    },
-    (failure) => ui.notify(`Could not start: ${failure.safeMessage}`, "error"),
+    () => {},
+    (failure) =>
+      ui.notify(`Could not start plan: ${failure.safeMessage}`, "error"),
   );
 }
 
@@ -316,7 +358,7 @@ export async function handleWeaveResume(
     {
       workflowInstanceId: active.workflowInstanceId,
       context,
-      // Issue #21 Task 12 S020: only present when this instance was
+      // Issue #21 S020: only present when this instance was
       // reconstructed from a durable recovery pointer, and only reaches
       // the engine now that the user has freshly confirmed above.
       ...(active.leaseId !== undefined &&
@@ -343,6 +385,25 @@ export async function handleWeaveResume(
   );
 }
 
+function selectListedPlanName(
+  ui: PiWorkflowCommandUiPort,
+  planNames: readonly string[],
+  title = "Select a plan to start",
+): ResultAsync<string | undefined, PiWorkflowCommandUiFailure> {
+  if (planNames.length === 0) {
+    ui.notify("No plans found for this project.", "info");
+    return okAsync(undefined);
+  }
+  const selectPlan = ResultAsync.fromThrowable(
+    () => ui.select(title, planNames),
+    (): PiWorkflowCommandUiFailure => ({
+      type: "UiInteractionFailed",
+      safeMessage: "Pi could not open the plan selector.",
+    }),
+  );
+  return selectPlan();
+}
+
 /**
  * Resolves the plan name a caller with no explicit `rawArgs` should list/
  * start: lists the catalog and prompts, notifying and returning `undefined`
@@ -358,11 +419,12 @@ async function selectPlanName(
     ui.notify(`Could not list plans: ${listed.error.safeMessage}`, "error");
     return undefined;
   }
-  if (listed.value.length === 0) {
-    ui.notify("No plans found for this project.", "info");
+  const selected = await selectListedPlanName(ui, listed.value, title);
+  if (selected.isErr()) {
+    ui.notify(selected.error.safeMessage, "error");
     return undefined;
   }
-  return ui.select(title, listed.value);
+  return selected.value;
 }
 
 function planTaskMarker(node: PlanTaskNode): string {

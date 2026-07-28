@@ -5,13 +5,13 @@
  * observations for settled primary/child assistant messages, activates
  * retention pruning at safe boundaries, and wires an engine-scoped rotating
  * pino sink. This module is a thin, injectable seam over the existing
- * engine Task 3 APIs (`RuntimeJournalWriter`, `RuntimeRetentionService`,
+ * engine APIs (`RuntimeJournalWriter`, `RuntimeRetentionService`,
  * `createRotatingRuntimeLogSink`) — it never reimplements journal
  * validation, usage idempotency, retention pruning, or log rotation.
  *
  * See docs/adapters/pi.md.
  *
- * Data ban (§19.1): every method here accepts only bounded, closed-set safe
+ * Data ban: every method here accepts only bounded, closed-set safe
  * scalars (IDs, event-type names, enum values, counts, costs, timestamps).
  * Callers MUST NOT pass raw prompts, completions, transcripts, tool
  * arguments, RPC/provider payloads, plan/artifact contents, secrets,

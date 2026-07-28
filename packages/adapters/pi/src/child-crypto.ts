@@ -130,7 +130,7 @@ function toFreshBuffer(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
  * exception from Web Crypto could in principle echo back input material,
  * and this reason string can end up in adapter failure `correlation`
  * fields, which must never carry raw payload/secret content (Pi adapter contract
- * §19.1). Every HMAC failure is reported through this single bounded,
+ *). Every HMAC failure is reported through this single bounded,
  * closed-set reason regardless of cause.
  */
 function describeThrown(_cause: unknown): string {

@@ -4,6 +4,7 @@ import type {
   CapabilityProbeResult,
 } from "@weaveio/weave-engine";
 import { ALL_CAPABILITY_IDS } from "@weaveio/weave-engine";
+import { okAsync } from "neverthrow";
 import {
   DefaultPiCapabilityProber,
   type PiCapabilityProbeSource,
@@ -65,7 +66,6 @@ describe("PiSafeInitializer.preflight", () => {
     const result = await initializer.preflight(
       sessionOf("tui", true),
       ALL_OWNED_COMMANDS,
-      [],
     );
     expect(result.isOk()).toBe(true);
     const preflight = result._unsafeUnwrap();
@@ -73,6 +73,79 @@ describe("PiSafeInitializer.preflight", () => {
     expect(preflight.modeSupported).toBe(true);
     expect(preflight.hostSupported).toBe(true);
     expect(preflight.trust).toBe("trusted");
+  });
+
+  it("uses defaults only after the explicit invalid-settings choice", async () => {
+    const initializer = new PiSafeInitializer({
+      hostPackageReader: FakeHostPackageReader.ok({
+        name: HOST_PACKAGE_NAME,
+        version: "0.81.1",
+      }),
+      capabilityProber: new FixedProber(allOkProbes()),
+      configActivator: fakeConfigActivator(
+        { agents: [], errors: [] },
+        {
+          agents: {},
+          disabled: { agents: [], skills: [] },
+          settings: {
+            adapters: {
+              pi: {
+                child_inspection: {
+                  max_bytes_per_child: 65_535,
+                  max_bytes_total: 1_048_576,
+                },
+              },
+            },
+          },
+        } as never,
+      ),
+      chooseInvalidChildInspectionSettings: () => okAsync("defaults" as const),
+    });
+
+    const result = await initializer.preflight(
+      sessionOf("tui", true),
+      ALL_OWNED_COMMANDS,
+    );
+    const preflight = result._unsafeUnwrap();
+    expect(preflight.healthOnlyMode).toBe(false);
+    expect(preflight.childInspection.mode).toBe("defaults");
+    expect(preflight.childInspection.settings.max_bytes_per_child).toBe(
+      4_194_304,
+    );
+    expect(Object.isFrozen(preflight.childInspection)).toBe(true);
+    expect(Object.isFrozen(preflight.childInspection.settings)).toBe(true);
+  });
+
+  it("enters health-only mode after the explicit invalid-settings choice", async () => {
+    const initializer = new PiSafeInitializer({
+      hostPackageReader: FakeHostPackageReader.ok({
+        name: HOST_PACKAGE_NAME,
+        version: "0.81.1",
+      }),
+      capabilityProber: new FixedProber(allOkProbes()),
+      configActivator: fakeConfigActivator(
+        { agents: [], errors: [] },
+        {
+          agents: {},
+          disabled: { agents: [], skills: [] },
+          settings: {
+            adapters: {
+              pi: { child_inspection: { max_bytes_total: 0 } },
+            },
+          },
+        } as never,
+      ),
+      chooseInvalidChildInspectionSettings: () =>
+        okAsync("health-only" as const),
+    });
+
+    const result = await initializer.preflight(
+      sessionOf("tui", true),
+      ALL_OWNED_COMMANDS,
+    );
+    const preflight = result._unsafeUnwrap();
+    expect(preflight.healthOnlyMode).toBe(true);
+    expect(preflight.childInspection.mode).toBe("health-only");
   });
 
   it("enters health-only mode when mode is not tui, without touching the capability prober", async () => {
@@ -94,13 +167,12 @@ describe("PiSafeInitializer.preflight", () => {
     const result = await initializer.preflight(
       sessionOf("rpc", true),
       ALL_OWNED_COMMANDS,
-      [],
     );
     const preflight = result._unsafeUnwrap();
     expect(preflight.healthOnlyMode).toBe(true);
     expect(preflight.modeSupported).toBe(false);
     expect(probeCalls).toBe(0);
-    expect(preflight.healthReport.effectiveCapabilities).toHaveLength(19);
+    expect(preflight.healthReport.effectiveCapabilities).toHaveLength(20);
     for (const capability of preflight.healthReport.effectiveCapabilities) {
       expect(
         capability.effectiveReadiness === "degraded" ||
@@ -121,7 +193,6 @@ describe("PiSafeInitializer.preflight", () => {
     const result = await initializer.preflight(
       sessionOf("tui", true),
       ALL_OWNED_COMMANDS,
-      [],
     );
     const preflight = result._unsafeUnwrap();
     expect(preflight.healthOnlyMode).toBe(true);
@@ -140,7 +211,6 @@ describe("PiSafeInitializer.preflight", () => {
     const result = await initializer.preflight(
       sessionOf("tui", true),
       ALL_OWNED_COMMANDS,
-      [],
     );
     expect(result._unsafeUnwrap().healthOnlyMode).toBe(true);
   });
@@ -154,7 +224,6 @@ describe("PiSafeInitializer.preflight", () => {
     const result = await initializer.preflight(
       sessionOf("tui", true),
       ALL_OWNED_COMMANDS,
-      [],
     );
     expect(result.isOk()).toBe(true);
     expect(result._unsafeUnwrap().healthOnlyMode).toBe(true);
@@ -173,7 +242,6 @@ describe("PiSafeInitializer.preflight", () => {
     const result = await initializer.preflight(
       sessionOf("tui", false),
       ALL_OWNED_COMMANDS,
-      [],
     );
     const preflight = result._unsafeUnwrap();
     expect(preflight.trust).toBe("withheld");
@@ -192,7 +260,6 @@ describe("PiSafeInitializer.preflight", () => {
     const result = await initializer.preflight(
       sessionOf("tui", false),
       ALL_OWNED_COMMANDS,
-      [],
     );
     const preflight = result._unsafeUnwrap();
     expect(preflight.trust).toBe("withheld");
@@ -288,10 +355,9 @@ describe("PiSafeInitializer.preflight", () => {
     const result = await initializer.preflight(
       sessionOf("tui", false),
       ALL_OWNED_COMMANDS,
-      [],
     );
     const preflight = result._unsafeUnwrap();
-    expect(preflight.healthReport.effectiveCapabilities).toHaveLength(19);
+    expect(preflight.healthReport.effectiveCapabilities).toHaveLength(20);
     expect(preflight.healthOnlyMode).toBe(true);
   });
 
@@ -312,7 +378,6 @@ describe("PiSafeInitializer.preflight", () => {
     const result = await initializer.preflight(
       sessionOf("tui", true),
       ALL_OWNED_COMMANDS,
-      [],
     );
     expect(result._unsafeUnwrap().healthOnlyMode).toBe(true);
   });
@@ -334,7 +399,6 @@ describe("PiSafeInitializer.preflight", () => {
     const result = await initializer.preflight(
       sessionOf("tui", true),
       ALL_OWNED_COMMANDS,
-      [],
     );
     expect(result._unsafeUnwrap().healthOnlyMode).toBe(false);
   });
@@ -356,7 +420,6 @@ describe("PiSafeInitializer.preflight", () => {
     const result = await initializer.preflight(
       sessionOf("tui", true),
       ALL_OWNED_COMMANDS,
-      [],
     );
     expect(result.isErr()).toBe(true);
     expect(result._unsafeUnwrapErr().code).toBe("InvariantViolation");
@@ -402,7 +465,6 @@ describe("PiSafeInitializer.preflight", () => {
         },
       },
       ALL_OWNED_COMMANDS,
-      [],
     );
     const preflight = result._unsafeUnwrap();
     const statusOf = (id: string) =>
@@ -454,7 +516,6 @@ describe("PiSafeInitializer.preflight", () => {
         },
       },
       ALL_OWNED_COMMANDS,
-      [],
     );
     const preflight = result._unsafeUnwrap();
     const primaryAgentSelection = preflight.healthReport.probeResults.find(
@@ -521,7 +582,6 @@ describe("PiSafeInitializer.preflight", () => {
         },
       },
       ALL_OWNED_COMMANDS,
-      [],
     );
     const preflight = result._unsafeUnwrap();
     const statusOf = (id: string) =>
@@ -556,7 +616,6 @@ describe("PiSafeInitializer.preflight", () => {
     const result = await initializer.preflight(
       sessionOf("tui", true),
       ALL_OWNED_COMMANDS,
-      [],
     );
 
     // preflight() itself must still succeed (it always reports a health
@@ -599,7 +658,6 @@ describe("PiSafeInitializer.preflight", () => {
     const result = await initializer.preflight(
       sessionOf("tui", true),
       ALL_OWNED_COMMANDS,
-      [],
     );
 
     expect(result.isOk()).toBe(true);
@@ -657,7 +715,6 @@ describe("PiSafeInitializer.preflight", () => {
         },
       },
       ALL_OWNED_COMMANDS,
-      [],
     );
 
     // preflight() must not reject/throw; the primary is still found and
@@ -695,7 +752,6 @@ describe("PiSafeInitializer.preflight", () => {
     const result = await initializer.preflight(
       sessionOf("tui", true),
       ALL_OWNED_COMMANDS,
-      [],
     );
 
     expect(result.isOk()).toBe(true);

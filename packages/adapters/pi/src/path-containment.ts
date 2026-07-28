@@ -255,6 +255,165 @@ function openNoFollowDirectoryChain(
   return ok(currentFd);
 }
 
+/** Stable identity and permission bits read from one no-follow descriptor. */
+export interface NoFollowEntryIdentity {
+  readonly dev: number;
+  readonly ino: number;
+  readonly mode: number;
+}
+
+/** Errors returned by the private-history no-follow inspection helpers. */
+export type NoFollowInspectionError =
+  | { readonly type: "unsafe-path" }
+  | { readonly type: "missing" }
+  | { readonly type: "symlink-rejected" }
+  | { readonly type: "wrong-kind"; readonly kind: "directory" | "file" }
+  | { readonly type: "permissive-mode"; readonly kind: "directory" | "file" }
+  | { readonly type: "unavailable" }
+  | { readonly type: "io" };
+
+function inspectionError(error: PathContainmentError): NoFollowInspectionError {
+  switch (error) {
+    case "resolved-target-outside-root":
+      return { type: "unsafe-path" };
+    case "path-component-missing":
+      return { type: "missing" };
+    case "symlink-component-rejected":
+      return { type: "symlink-rejected" };
+    case "target-unresolvable":
+      return { type: "wrong-kind", kind: "file" };
+    default:
+      return { type: "unavailable" };
+  }
+}
+
+function absoluteNoFollowSegments(
+  path: string,
+): Result<readonly string[], NoFollowInspectionError> {
+  if (!isAbsolute(path)) return err({ type: "unsafe-path" });
+  const segments = path.split(/[\\/]+/).filter((segment) => segment.length > 0);
+  if (segments.some((segment) => segment === "." || segment === "..")) {
+    return err({ type: "unsafe-path" });
+  }
+  return ok(segments);
+}
+
+function inspectOpenedEntry(
+  libc: LoadedNoFollowLibc,
+  fd: number,
+  kind: "directory" | "file",
+  mode: number,
+): ResultAsync<NoFollowEntryIdentity, NoFollowInspectionError> {
+  return ResultAsync.fromThrowable(
+    () => Bun.file(fd).stat(),
+    (): NoFollowInspectionError => ({ type: "io" }),
+  )()
+    .andThen((stat) => {
+      if ((kind === "directory" && !stat.isDirectory()) || (kind === "file" && !stat.isFile())) {
+        return errAsync<NoFollowEntryIdentity, NoFollowInspectionError>({
+          type: "wrong-kind",
+          kind,
+        });
+      }
+      if ((stat.mode & 0o7777) !== mode) {
+        return errAsync<NoFollowEntryIdentity, NoFollowInspectionError>({
+          type: "permissive-mode",
+          kind,
+        });
+      }
+      return okAsync<NoFollowEntryIdentity, NoFollowInspectionError>({
+        dev: stat.dev,
+        ino: stat.ino,
+        mode: stat.mode & 0o7777,
+      });
+    })
+    .map((identity) => {
+      libc.close(fd);
+      return identity;
+    })
+    .mapErr((error) => {
+      libc.close(fd);
+      return error;
+    });
+}
+
+/**
+ * Reopens an absolute directory through the same descriptor-relative
+ * no-follow walk used by containment, then checks its identity and mode from
+ * that descriptor. Callers use this beside a held descriptor to detect a
+ * directory replaced at its path before mutating the held directory.
+ */
+export function inspectNoFollowDirectory(
+  path: string,
+  mode: number,
+): ResultAsync<NoFollowEntryIdentity, NoFollowInspectionError> {
+  const segments = absoluteNoFollowSegments(path);
+  if (segments.isErr()) return errAsync(segments.error);
+  const libcResult = loadNoFollowLibc();
+  if (libcResult.isErr()) return errAsync(inspectionError(libcResult.error));
+  const libc = libcResult.value;
+  const opened = openNoFollowDirectoryChain(libc, "/", segments.value);
+  if (opened.isErr()) {
+    libc.dispose();
+    return errAsync(inspectionError(opened.error));
+  }
+  return inspectOpenedEntry(libc, opened.value, "directory", mode)
+    .map((identity) => {
+      libc.dispose();
+      return identity;
+    })
+    .mapErr((error) => {
+      libc.dispose();
+      return error;
+    });
+}
+
+/**
+ * Inspects one absolute regular file through its held parent descriptor. A
+ * missing file is a successful `undefined`; symlinks, non-files, and modes
+ * other than the requested private mode fail closed.
+ */
+export function inspectNoFollowFile(
+  path: string,
+  mode: number,
+): ResultAsync<NoFollowEntryIdentity | undefined, NoFollowInspectionError> {
+  const segments = absoluteNoFollowSegments(path);
+  if (segments.isErr()) return errAsync(segments.error);
+  const fileName = segments.value.at(-1);
+  if (fileName === undefined) return errAsync({ type: "unsafe-path" });
+  const libcResult = loadNoFollowLibc();
+  if (libcResult.isErr()) return errAsync(inspectionError(libcResult.error));
+  const libc = libcResult.value;
+  const opened = openNoFollowDirectoryChain(libc, "/", segments.value.slice(0, -1));
+  if (opened.isErr()) {
+    libc.dispose();
+    return errAsync(inspectionError(opened.error));
+  }
+  const fileFd = libc.openat(
+    opened.value,
+    cstr(fileName),
+    libc.flags.O_RDONLY | libc.flags.O_NOFOLLOW | libc.flags.O_CLOEXEC,
+  );
+  const openErrno = fileFd < 0 ? libc.errno() : undefined;
+  libc.close(opened.value);
+  if (fileFd < 0) {
+    libc.dispose();
+    if (isMissingComponentErrno(openErrno ?? -1)) return okAsync(undefined);
+    return errAsync(
+      openErrno === 40 ? { type: "symlink-rejected" } : { type: "io" },
+    );
+  }
+  return inspectOpenedEntry(libc, fileFd, "file", mode)
+    .map((identity) => {
+      libc.dispose();
+      return identity;
+    })
+    .mapErr((error) => {
+      libc.dispose();
+      return error;
+    });
+}
+
 /**
  * Fully no-follow-safe production port (Pi adapter contract): proves every
  * directory component of `relativePath` under `canonicalRoot` via a held

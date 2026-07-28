@@ -1,8 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import {
-  readValidatedCommands,
-  readValidatedTools,
-} from "../host-inventory.js";
+import { readValidatedCommands } from "../host-inventory.js";
 
 describe("readValidatedCommands", () => {
   it("passes through a well-formed inventory", () => {
@@ -39,37 +36,6 @@ describe("readValidatedCommands", () => {
   it("converts a malformed payload into InvariantViolation instead of trusting the shape", () => {
     const api = { getCommands: () => [{ name: 42 }] as unknown as [] };
     const result = readValidatedCommands(api);
-    expect(result.isErr()).toBe(true);
-    expect(result._unsafeUnwrapErr().code).toBe("InvariantViolation");
-  });
-});
-
-describe("readValidatedTools", () => {
-  it("passes through a well-formed inventory", () => {
-    const api = {
-      getAllTools: () => [
-        {
-          name: "read",
-          sourceInfo: {
-            path: "builtin",
-            source: "builtin",
-            scope: "user" as const,
-            origin: "top-level" as const,
-          },
-        },
-      ],
-    };
-    const result = readValidatedTools(api);
-    expect(result.isOk()).toBe(true);
-  });
-
-  it("converts a throwing host call into InvariantViolation", () => {
-    const api = {
-      getAllTools: () => {
-        throw new Error("host exploded");
-      },
-    };
-    const result = readValidatedTools(api);
     expect(result.isErr()).toBe(true);
     expect(result._unsafeUnwrapErr().code).toBe("InvariantViolation");
   });

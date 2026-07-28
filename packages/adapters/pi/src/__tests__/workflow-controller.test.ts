@@ -354,7 +354,7 @@ describe("PiWorkflowController — recovery pointer", () => {
   });
 });
 
-describe("PiWorkflowController — resumeExecution recoveryTakeover (Issue #21 Task 12 S020)", () => {
+describe("PiWorkflowController — resumeExecution recoveryTakeover (Issue #21 S020)", () => {
   it("reload leaves the store paused at wait with the pre-reload lease unexpired, and S019 stays inert (no auto resume)", async () => {
     const old = buildHarness({
       ownerId: "controller-gen-old",
@@ -1589,7 +1589,7 @@ describe("PiWorkflowController — onPlanSnapshotChanged fires at every required
   });
 });
 
-describe("PiWorkflowController — terminal completion idle observation ordering against a real SQLite Runtime Store (#21 Task 12)", () => {
+describe("PiWorkflowController — terminal completion idle observation ordering against a real SQLite Runtime Store (#21)", () => {
   // A live-exact-host regression: `completeStep` on the workflow's final
   // step releases the active ExecutionLease - the SQLite Runtime Store
   // deletes that row outright. Observing `idle` for that same settlement

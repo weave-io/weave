@@ -12,6 +12,7 @@ import {
   handleWeaveStart,
   handleWeaveStatus,
   type PiActiveWorkflowTracker,
+  type PiForegroundPlanStartPort,
   type PiWorkflowCommandUiPort,
 } from "../workflow-commands.js";
 import type { PiWorkflowController } from "../workflow-controller.js";
@@ -55,48 +56,139 @@ describe("handleWeaveStart", () => {
     const ui = fakeUi({ confirm: async () => false });
     const tracker = fakeTracker({ listPlanNames: () => okAsync(["my-plan"]) });
     let called = false;
-    const controller = fakeController({
-      startExecution: (async () => {
+    const foregroundStarter: PiForegroundPlanStartPort = {
+      start: () => {
         called = true;
-        return okAsync(undefined as never);
-      }) as never,
-    });
-    await handleWeaveStart("my-plan", ui, controller, tracker);
+        return okAsync(undefined);
+      },
+    };
+
+    await handleWeaveStart("my-plan", ui, foregroundStarter, tracker);
+
     expect(called).toBe(false);
     expect(
       ui.notified.some((n) => n.message.includes("explicit confirmation")),
     ).toBe(true);
   });
 
-  it("starts the named plan after explicit confirmation", async () => {
+  it("starts the named existing plan in the foreground after confirmation", async () => {
     const ui = fakeUi({ confirm: async () => true });
-    let capturedInput: unknown;
-    const tracker = fakeTracker({
-      listPlanNames: () => okAsync(["my-plan"]),
-      buildContext: (name) => ({
-        workflowName: name,
-        goal: "g",
-        slug: "s",
-        workflows: {},
-      }),
+    const tracker = fakeTracker({ listPlanNames: () => okAsync(["my-plan"]) });
+    let capturedPlanName: string | undefined;
+    const foregroundStarter: PiForegroundPlanStartPort = {
+      start: (planName) => {
+        capturedPlanName = planName;
+        return okAsync(undefined);
+      },
+    };
+
+    await handleWeaveStart("my-plan", ui, foregroundStarter, tracker);
+
+    expect(capturedPlanName).toBe("my-plan");
+    expect(ui.notified.some((n) => n.level === "error")).toBe(false);
+  });
+
+  it("rejects a plan name that is absent from the safe plan catalog", async () => {
+    const ui = fakeUi({ confirm: async () => true });
+    const tracker = fakeTracker({ listPlanNames: () => okAsync(["my-plan"]) });
+    let called = false;
+    const foregroundStarter: PiForegroundPlanStartPort = {
+      start: () => {
+        called = true;
+        return okAsync(undefined);
+      },
+    };
+
+    await handleWeaveStart("../other-plan", ui, foregroundStarter, tracker);
+
+    expect(called).toBe(false);
+    expect(ui.notified.at(-1)).toEqual({
+      message: "The requested plan was not found.",
+      level: "error",
     });
-    const controller = fakeController({
-      startExecution: (async (input: unknown) => {
-        capturedInput = input;
-        return okAsync({
-          workflowInstanceId: "my-plan",
-          leaseId: "lease-1",
-          finalStatus: "completed",
-        });
-      }) as never,
+  });
+
+  it("fails closed when the plan selector rejects", async () => {
+    const ui = fakeUi({
+      select: async () => {
+        throw new Error("sensitive selector failure");
+      },
     });
-    await handleWeaveStart("my-plan", ui, controller, tracker);
-    expect(capturedInput).toBeDefined();
-    expect(ui.notified.some((n) => n.message.includes("completed"))).toBe(true);
+    const tracker = fakeTracker({ listPlanNames: () => okAsync(["my-plan"]) });
+    let called = false;
+    const foregroundStarter: PiForegroundPlanStartPort = {
+      start: () => {
+        called = true;
+        return okAsync(undefined);
+      },
+    };
+
+    await handleWeaveStart("", ui, foregroundStarter, tracker);
+
+    expect(called).toBe(false);
+    expect(ui.notified.at(-1)).toEqual({
+      message: "Pi could not open the plan selector.",
+      level: "error",
+    });
+    expect(JSON.stringify(ui.notified)).not.toContain("sensitive");
+  });
+
+  it("fails closed when the confirmation dialog rejects", async () => {
+    const ui = fakeUi({
+      confirm: async () => {
+        throw new Error("sensitive confirmation failure");
+      },
+    });
+    const tracker = fakeTracker({ listPlanNames: () => okAsync(["my-plan"]) });
+    let called = false;
+    const foregroundStarter: PiForegroundPlanStartPort = {
+      start: () => {
+        called = true;
+        return okAsync(undefined);
+      },
+    };
+
+    await handleWeaveStart("my-plan", ui, foregroundStarter, tracker);
+
+    expect(called).toBe(false);
+    expect(ui.notified.at(-1)).toEqual({
+      message: "Pi could not confirm the plan start request.",
+      level: "error",
+    });
+    expect(JSON.stringify(ui.notified)).not.toContain("sensitive");
   });
 });
 
 describe("handleWeaveRun", () => {
+  it("keeps configured workflows on the durable startExecution path", async () => {
+    const ui = fakeUi({ confirm: async () => true });
+    const tracker = fakeTracker({
+      listWorkflowNames: () => ["release"],
+      buildContext: (workflowName) => ({
+        workflowName,
+        goal: workflowName,
+        slug: workflowName,
+        workflows: { release: {} as never },
+      }),
+    });
+    let capturedInput: { workflowInstanceId: string } | undefined;
+    const controller = fakeController({
+      startExecution: (async (input: { workflowInstanceId: string }) => {
+        capturedInput = input;
+        return okAsync({
+          workflowInstanceId: input.workflowInstanceId,
+          leaseId: "lease-1",
+          finalStatus: "running",
+        });
+      }) as never,
+    });
+
+    await handleWeaveRun("release", ui, controller, tracker);
+
+    expect(capturedInput?.workflowInstanceId.startsWith("release-")).toBe(true);
+    expect(ui.notified.at(-1)?.message).toContain("running");
+  });
+
   it("requires a configured workflow", async () => {
     const ui = fakeUi();
     const tracker = fakeTracker({ buildContext: () => undefined });

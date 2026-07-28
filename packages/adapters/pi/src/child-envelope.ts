@@ -2,24 +2,21 @@
  * Authenticated private control envelopes exchanged between the controller
  * (parent) and a delegated RPC child (Pi adapter contract).
  *
- * These envelopes are a distinct, HMAC-authenticated channel layered *on
- * top of* Pi's own documented RPC protocol - never a replacement for it,
- * and never `steer`/`follow_up`. Parent-to-child envelopes are carried as
- * the message text of an ordinary, documented `prompt` RPC command
- * invoking a private, non-public slash command; child-to-parent envelopes
- * are written by the child's own loaded extension code directly to its
- * process's stdout, interleaved with (but structurally distinguishable
- * from) Pi's own event/response JSON lines. See `rpc-child.ts` for the
- * transport wiring and `docs/adapters/pi.md`
- * §11.2-§11.4 for the full contract this module implements.
+ * These envelopes are a distinct, HMAC-authenticated private channel layered
+ * on top of Pi's documented RPC protocol, not a replacement for it.
+ * Parent-to-child envelopes are carried as the message text of an ordinary,
+ * documented `prompt` RPC command invoking a private slash command;
+ * child-to-parent envelopes are written by the child's loaded extension code
+ * directly to its stdout, alongside Pi's event/response JSON lines. See
+ * `rpc-child.ts` and `docs/adapters/pi.md` for the transport contract.
  *
- * Only genuine controller-issued instructions (handshake, descriptor
- * bootstrap, cancellation, settlement) travel this way; the ban on
- * steer/follow_up and the requirement to authenticate every private
- * envelope exists specifically so that ordinary conversational content -
- * including anything an injected prompt or a compromised tool could cause
- * to be written to a child's stdout - can never be mistaken for a
- * legitimate control instruction.
+ * Authenticated bootstrap, cancellation, settlement, and delegation remain
+ * private envelopes. Native Pi `steer`, `follow_up`, and `get_entries`
+ * commands, plus extension UI responses, are deliberately not envelope kinds:
+ * they use Pi's native correlated RPC channel with lifecycle and identity
+ * guards. Authentication keeps ordinary conversational content - including
+ * content written by an injected prompt or compromised tool - from being
+ * mistaken for a private control instruction.
  */
 import { err, errAsync, ok, type Result, type ResultAsync } from "neverthrow";
 import { z } from "zod";
@@ -33,7 +30,12 @@ import {
 export const CONTROL_ENVELOPE_TYPE_MARKER = "weave_control" as const;
 export const CONTROL_ENVELOPE_SCHEMA_VERSION = 1 as const;
 
-/** Private signed control-body cap (Pi adapter contract). */
+/**
+ * Private signed control-body cap (Pi adapter contract).
+ *
+ * This limits the canonical JSON body before signing or verification. It is
+ * separate from the 8 MiB native-record cap enforced by `child-framing.ts`.
+ */
 export const MAX_CONTROL_BODY_BYTES = 64 * 1024;
 
 export type PiControlDirection = "parent-to-child" | "child-to-parent";
@@ -46,16 +48,15 @@ export const PI_CONTROL_KINDS = [
   "cancelled",
   "settled",
   "error",
-  // A child relays one of its own governed tool-call approval prompts to
-  // the sole parent TUI (Spec 33 §11.5/§12) and awaits a correlated reply.
-  "approval-request",
-  "approval-response",
   // A child relays its own delegation request through its authenticated
   // parent/root coordinator (Pi adapter contract): nested delegation is never a
   // second, untracked budget - every descendant request travels this exact
   // control channel back to the one root-owned `PiDelegationController`.
   "delegate-request",
+  "delegate-request-chunk",
   "delegate-response",
+  "transfer-chunk",
+  "transfer-result",
 ] as const;
 export type PiControlKind = (typeof PI_CONTROL_KINDS)[number];
 
@@ -264,6 +265,16 @@ export class PiChildAuthState {
     const sequence = this.nextOutgoingSequence;
     this.nextOutgoingSequence += 1;
     return sequence;
+  }
+
+  /**
+   * Returns a failed outbound allocation to the sequence stream. Callers must
+   * serialize allocation and output so a later sequence cannot be in flight.
+   */
+  releaseOutgoingSequence(sequence: number): void {
+    if (this.nextOutgoingSequence === sequence + 1) {
+      this.nextOutgoingSequence = sequence;
+    }
   }
 
   /** Validates and (on success) consumes an authenticated envelope received from the counterparty. */
