@@ -473,6 +473,7 @@ export class PiChildHistoryStore {
         }),
         updatedAt: this.now(),
       };
+      return undefined;
     });
   }
 
