@@ -156,7 +156,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
         },
         T002: {
           file: "packages/adapters/pi/src/__tests__/extension.test.ts",
-          name: "registers commands, the palette shortcut, and five lifecycle delegates without a tool-call interceptor",
+          name: "registers commands, the palette shortcut, and six lifecycle delegates without a tool-call interceptor",
         },
       },
       packedProof: { required: true, evidenceIds: ["P001"] },
@@ -209,7 +209,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
       tests: {
         T001: {
           file: "packages/adapters/pi/src/__tests__/extension.test.ts",
-          name: "registers commands, the palette shortcut, and five lifecycle delegates without a tool-call interceptor",
+          name: "registers commands, the palette shortcut, and six lifecycle delegates without a tool-call interceptor",
         },
         T002: {
           file: "packages/adapters/pi/src/__tests__/workflow-commands.test.ts",

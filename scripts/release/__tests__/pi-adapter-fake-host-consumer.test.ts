@@ -41,7 +41,7 @@ const FAKE_HOST_PACKAGES: Record<string, { version: string; source: string }> =
   {
     "@earendil-works/pi-coding-agent": {
       version: EXACT_TESTED_HOST_VERSION,
-      source: "export class CustomEditor {}\n",
+      source: `export const VERSION = "${EXACT_TESTED_HOST_VERSION}";\nexport class CustomEditor {}\n`,
     },
     "@earendil-works/pi-ai": {
       version: EXACT_TESTED_HOST_VERSION,
