@@ -7,16 +7,23 @@ This specification governs private Pi child execution from spawn to completion.
 Its purpose is to give private children durable inspection while keeping private
 transcript content adapter-local.
 
-This document **amends** prior private-child clauses in earlier Spec 33 text:
+This document **amends** prior private-child clauses in earlier Spec 33 text.
+The amendments below are normative and supersede the named rules without
+changing unrelated execution authority:
 
-- §11: replace ephemeral `pi --mode rpc --no-session` with persisted sessions.
-- §11: replace transient 4 KiB inspector view with durable switchable history.
-- §7 and general restart behavior: remove blanket prohibition on private-child
-  auto-resume; add recovery only for eligible interrupted **ordinary top-level**
-  children.
+- §11: replace ephemeral `pi --mode rpc --no-session` with persisted,
+  adapter-owned sessions; replace the transient 4 KiB inspector view with
+  durable switchable history.
+- §18: replace the private-child no-persistence rule with the bounded local
+  persistence, quota, quarantine, and clear contract in §§3–7.
+- §28: replace blanket private-child no-auto-resume with recovery only for
+  eligible interrupted **ordinary top-level** children. Workflow resume remains
+  a fresh attempt, not process recovery.
+- §7 controller-generation staleness and one-shot settlement remain unchanged: stale generations cannot control or settle a child, and each child has exactly one terminal settlement.
 
-No section in this document requires any user review, approval, or confirmation
-as part of the child-inspection flow.
+No section in this document requires a human review or approval gate for
+implementation or execution. The operational cancellation and recovery choices
+specified below are direct child controls, not a review or approval workflow.
 
 ## 0. Non-negotiable invariants carried over
 
@@ -159,14 +166,14 @@ All other interrupted private children remain history-only.
 
 ### 6.2 Recovery policy
 
-- `recovery_countdown_seconds` default: `10`
-- On startup, show one recovery popup with the explicit choices:
+- `recovery_countdown_seconds` default: `10`.
+- On startup, show one no-timeout recovery popup with the explicit choices:
   - `Recover now`
   - `Skip`
   - `Inspect`
-- `Inspect` leaves the child recoverable in picker.
-- `Skip` suppresses immediate recovery and keeps only history visibility.
-- If countdown expires with `Recover now` still pending, recovery starts.
+- `Inspect` leaves the child recoverable in the picker.
+- `Skip` suppresses immediate recovery and keeps the child history-visible and recoverable through the picker or `/weave:recover-children`.
+- Countdown expiry starts recovery without another prompt; it never waits for review or approval.
 - A recovered run uses current trusted descriptor/model/policy/limits.
 - Recovery reuses only the prior session path and checkpoint pointer; it does not
   bypass generation checks.
@@ -192,8 +199,16 @@ continuing authority and never claims old attempt state as current execution.
 ### 7.2 Storage layout and I/O safety
 
 - Root path: `$XDG_DATA_HOME/weave/adapters/pi/child-history/<parent-session-id>/`
-- Directory mode: `0700`
-- File mode: `0600`
+  (default: `~/.local/share/weave/adapters/pi/child-history/<parent-session-id>/`).
+- Directory mode: `0700`.
+- File mode: `0600`.
+- The V1 format is `index.v1.json` at the parent root, one
+  `<child-id>/session.jsonl` append-only event stream per child, and one
+  `<child-id>/checkpoint.v1.json` active-branch/checkpoint record. Index and
+  checkpoint writes are atomic; each JSONL entry is complete and bounded.
+- A missing or v0 index is treated as empty history and upgraded to V1 on the
+  first successful write; an unknown version, malformed index, or failed
+  migration is quarantined with bounded metadata and no raw content in errors.
 - No-follow, descriptor-relative I/O for all read/write operations.
 - No path traversal and no symbolic-link dereference outside the root.
 
@@ -207,8 +222,9 @@ continuing authority and never claims old attempt state as current execution.
 
 ### 7.4 Quarantine and corruption handling
 
-- Unknown version, missing index, malformed JSONL, malformed checkpoint, symlink,
-  oversized entry, or root replacement is quarantined.
+- Unknown version, malformed index, malformed JSONL, malformed checkpoint,
+  symlink, oversized entry, or root replacement is quarantined. A missing or v0
+  index follows the migration rule in §7.2 and is not an error.
 - Quarantined entries are never treated as recoverable execution authority.
 - Quarantine metadata is bounded and index-local.
 
@@ -222,19 +238,22 @@ continuing authority and never claims old attempt state as current execution.
 
 ## 8. Parent-result and export boundary
 
-The parent receives only bounded terminal output projection plus explicit numeric
-metadata.
+The only bounded export is a child index plus the terminal assistant
+`finalOutput` projection and existing numeric metadata. The export contains no
+session path, checkpoint, branch payload, or raw event.
 
-Never export or persist outside the adapter-owned history:
+The following values are private to the adapter-owned history and must never
+cross into the parent model, controller/workflow result, Runtime Store, journal,
+logs, health, failures, recovery pointers, telemetry, diagnostics, acceptance
+proof, smoke artifacts, package exports, or network/remote sync:
 
-- full raw transcript
-- intermediate assistant messages
+- full raw transcript and intermediate assistant messages
 - thinking text
-- tool arguments
-- tool calls/results
-- prompts or task text
-- intervention text
-- extension UI payloads or events
+- prompts, task text, and sanitized previews derived from them
+- tool arguments, tool calls, tool results, and images
+- intervention/steering/follow-up text
+- extension UI payloads, editor text, notifications, widgets, and dialogs
+- private session paths, checkpoints, branch contents, and raw RPC bodies
 
 Adapter-facing controller/workflow completion uses:
 
@@ -250,20 +269,27 @@ artifacts.
 
 ## 9. Failure-code namespace for child inspection
 
-Private-child persistence and transport must raise closed codes, including and
-not limited to:
+Private-child persistence, transport, recovery, and UI relay use this closed
+failure-code set:
 
-- `ChildTransferTimedOut`
-- `ChildTransferRejected`
-- `ChildTransferTooLarge`
-- `ChildDeliveryFailed`
-- `ChildHistoryQuotaExceeded`
-- `ChildHistoryQuarantined`
-- `ChildHistoryCorrupt`
-- `ChildHistoryClearRefused`
-- `ChildRecoveryUnavailable`
-- `ChildInteractionUnavailable`
-- `ChildSettlementMissing` only when execution truly never settled.
+- `ChildSchemaInvalid` — an event, index, or setting violates its schema.
+- `ChildCheckpointInvalid` — a checkpoint is malformed or cannot be restored.
+- `ChildTransferTimedOut` — an authenticated transfer exceeded its deadline.
+- `ChildTransferRejected` — the child rejected an authenticated transfer.
+- `ChildTransferTooLarge` — a logical transfer exceeded `64 MiB`.
+- `ChildNativeRecordTooLarge` — a native JSONL record exceeded `8 MiB`.
+- `ChildControlEnvelopeTooLarge` — a signed control body exceeded `64 KiB`.
+- `ChildDeliveryFailed` — a bounded delivery or write failed after retry.
+- `ChildHistoryQuotaExceeded` — quota enforcement could not complete safely.
+- `ChildHistoryQuarantined` — history was isolated after a safety failure.
+- `ChildHistoryCorrupt` — stored history cannot be parsed or migrated.
+- `ChildHistoryClearRefused` — clear targeted a running or queued child.
+- `ChildRecoveryUnavailable` — recovery lacks a trusted eligible record.
+- `ChildInteractionUnavailable` — steering, follow-up, or UI relay is unavailable.
+- `ChildExtensionUiRejected` — an extension UI response was stale, cross-child,
+  or not accepted by the originating child.
+- `ChildSettlementMissing` — execution truly never settled; valid bounded or
+  transferred output must never be reported with this code.
 
 ## 10. Control surface
 
@@ -276,21 +302,57 @@ The adapter exposes these commands to users:
 
 No additional child-specific command may restart or override controller authority.
 
-## 11. Replacement summary (amendments)
+## §11. Amendment of the original private-child session and view rule
 
-The following earlier rules are explicitly replaced:
+The following earlier §11 rules are **amended and replaced**, not additive:
 
-1. **Ephemeral child sessions** (`--no-session`) are replaced by persisted,
-   private-session directories at `$XDG_DATA_HOME/weave/adapters/pi/child-history/`.
-2. **Transient inspector views** are replaced by durable, switchable child views
-   with slot and picker navigation.
-3. **Blanket no-auto-resume** is replaced by constrained ordinary-top-level
-   recovery with explicit countdown handling.
+| Superseded rule | Normative replacement |
+| --- | --- |
+| Spawn private children with `pi --mode rpc --no-session`. | Spawn with an explicit `--session-dir` under the adapter-owned path in §2 and persist the V1 history format in §7.2. |
+| Expose only a transient 4 KiB inspector view and discard child history. | Expose the durable, switchable views, native/fallback rendering, slots, picker, and per-view state in §§4–5; retain bounded history under §§7.1–7.5. |
+| Treat child inspection as a parent-output-only projection. | Keep full private content in the local adapter inspector only; export only the fields in §8. |
 
-The parent-projection rule, controller-generation staleness, and one-shot
-settlement semantics remain in force.
+No implementation may apply a superseded rule alongside its replacement.
+Controller-generation checks, force-kill boundaries, and one-shot settlement are
+not amended.
 
-## 12. Related contracts
+## §18. Amendment of the original private-history and persistence rule
+
+The earlier §18 private-child rule that prohibited persistence is **amended and
+replaced**. Private history is now local adapter state, never engine state:
+
+- The storage path, permissions, format, lifecycle, quotas, trimming,
+  quarantine, orphan pruning, and clear behavior are exactly §§3 and 7.
+- `/weave:clear-children` physically deletes session bytes and terminal index
+  references only; running and queued records are refused and remain intact.
+- The Pi adapter owns discovery and all session I/O. The engine never scans the
+  history root and receives no session path, transcript, checkpoint, or raw
+  event.
+- `persist_history = false` disables new history writes and recovery while
+  preserving the running child and bounded settlement contract; it does not
+  permit fallback writes to Runtime Store, logs, or telemetry.
+
+This amendment does not change controller-generation staleness or one-shot
+settlement.
+
+## §28. Amendment of the original restart and auto-resume rule
+
+The earlier §28 blanket prohibition on private-child auto-resume is **amended and
+replaced** by §6:
+
+- Only interrupted ordinary top-level children with `recovery_enabled = true`
+  are recovery candidates.
+- Nested descendants and workflow-step children remain history-only; workflow
+  `/weave:resume` creates a fresh authorized attempt.
+- Recovery uses the current trusted descriptor, model, policy, limits,
+  generation, and authentication. It cannot reuse old execution authority.
+- Startup recovery has one no-timeout popup, a `10`-second countdown, and the
+  exact choices `Recover now`, `Skip`, and `Inspect`; expiry starts recovery
+  without a further review or approval step.
+
+No other command, picker action, or persisted record may bypass these rules.
+
+## 29. Related contracts
 
 - [ADR 0013 — Pi Private Child Sessions](../adr/0013-pi-private-child-sessions.md)
 - [Adapter boundary](../architecture/adapter-boundary.md)

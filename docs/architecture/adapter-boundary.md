@@ -37,7 +37,7 @@ If yes, it belongs in an adapter. Engine-to-adapter calls are fine when they exc
 | Runtime Store | Engine owns `.weave/runtime/**` and its repositories | Calls engine APIs; never receives a database mutation surface |
 | Plans | Engine owns the `PlanStateProvider` contract and plan semantics | Supplies safe concrete plan discovery and file I/O |
 | Artifacts | Engine owns references, revisions, approval, and digest comparison | Proves containment, reads files, computes SHA-256 digests |
-| Delegation | Core/config/engine own portable budgets and authorization | Owns live queues, process/task counts, spawn, cancellation, child UI, and recovery orchestration |
+| Delegation | Core/config/engine own portable budgets and authorization | Owns live queues, process/task counts, spawn, cancellation, child inspection UI, RPC, session discovery/I/O, persistence, quotas, and recovery orchestration |
 | Logging | Engine supplies structured pino logging | Routes output where the harness will not corrupt its UI |
 | Feature gaps | Defines the portable behavior | Emulates missing hooks, commands, subagents, or UI honestly |
 
@@ -74,7 +74,7 @@ Ordinary chat, passive observations, and tool previews do not silently start or 
 
 The Runtime Store is a narrow engine I/O exception because `.weave/runtime/**` is Weave-owned state. The engine may use Bun filesystem and database APIs there; it may not inspect harness-owned storage or session history.
 
-Pi private-child transcripts and control state are adapter-owned, including child UI, RPC framing and transport, session discovery/path selection, session file I/O, and recovery orchestration. The Pi adapter may pass only bounded normalized observations into engine APIs. See [Pi](../adapters/pi.md).
+Pi private-child transcripts and control state are adapter-owned, including child inspection rendering/fallbacks, steering/follow-up, slots/picker/navigation, subtree cancellation, RPC framing and transport, session discovery/path selection, session file I/O, quotas, quarantine, orphan pruning, clear, and recovery orchestration. The Pi adapter may pass only the bounded normalized observations and exports defined by Spec 33 into engine APIs. The engine never scans Pi history and never receives session paths, raw events, checkpoints, or private transcript content. See [Pi](../adapters/pi.md) and [Spec 33](../specs/33-spec-pi-adapter/33-spec-pi-adapter.md).
 
 ### Plans and artifacts
 

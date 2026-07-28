@@ -69,7 +69,7 @@ Give every private Pi child — ordinary, nested, and direct workflow-step — a
 
 ## Tasks
 
-- [ ] 1. Freeze the normative contract and amend Spec 33
+- [x] 1. Freeze the normative contract and amend Spec 33
   - **What**: Amend Spec 33 §11, §18, and §28 to supersede the ephemeral `--no-session`, transient-view, and blanket no-auto-resume rules for private children, while preserving §7 controller-generation staleness rules and one-shot settlement. Add a new normative section defining: view model and rendering fallback policy; interaction rules (Enter steer, Alt+Enter follow-up queue, running-only, read-only completed); slot/picker/navigation rules; disabled child slash commands with the two parent exceptions; Escape subtree-cancellation confirmation content; persistence location/permissions/format/state machine; quota, trim-marker, quarantine, orphan, and clear semantics; export contents (child index + bounded final output, never transcripts); recovery classes and limits; and the privacy exclusion list. Record #21 as the implementation issue.
   - **Files**: `docs/specs/33-spec-pi-adapter/33-spec-pi-adapter.md`, `docs/adr/0013-pi-private-child-sessions.md`, `docs/adapter-boundary.md`, `docs/README.md`, `docs/specs/README.md`
   - **Depends on**: None

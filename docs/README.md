@@ -61,7 +61,7 @@ User-facing tutorials and product reference live in the [public docs package](..
 
 | Spec | Status |
 | --- | --- |
-| [33 — Pi private child sessions](specs/README.md) | Active |
+| [33 — Pi private child sessions](specs/33-spec-pi-adapter/33-spec-pi-adapter.md) | Active; amended for private child inspection |
 
 ## Architecture Decision Records
 
@@ -80,7 +80,7 @@ ADRs preserve the reason for decisions. Current behavior belongs in the pages ab
 | [0009](adr/0009-input-aware-tool-permission-authorization.md) | Accepted | Input-aware authorization |
 | [0010](adr/0010-plan-state-and-artifact-approval-authority.md) | Accepted | Plan and artifact approval authority |
 | [0011](adr/0011-effective-adapter-readiness-and-runtime-observability.md) | Accepted | Effective readiness and observability |
-| [0013](adr/0013-pi-private-child-sessions.md) | Accepted | Private Pi child sessions are adapter-owned |
+| [0013](adr/0013-pi-private-child-sessions.md) | Accepted | Private Pi child sessions are adapter-owned and outside Runtime Store |
 
 ## Validation
 
