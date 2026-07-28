@@ -3,7 +3,7 @@ import { err, ok, type Result, ResultAsync } from "neverthrow";
 /**
  * Parser for the digest-bound stable TUI smoke checklist (Pi adapter contract).
  *
- * The checklist itself (`docs/specs/33-spec-pi-adapter/33-smoke-checklist.md`)
+ * The checklist itself (`scripts/release/pi-acceptance/smoke-checklist.md`)
  * is a manual, human-executed document — this module only extracts its
  * structural facts (checklist version, item IDs) so the acceptance manifest
  * validator can confirm every `liveSmoke.checklistIds` entry actually names
@@ -89,7 +89,7 @@ export interface SmokeChecklistReader {
 export class BunSmokeChecklistReader implements SmokeChecklistReader {
   constructor(
     private readonly path: string = new URL(
-      "../../docs/specs/33-spec-pi-adapter/33-smoke-checklist.md",
+      "./pi-acceptance/smoke-checklist.md",
       import.meta.url,
     ).pathname,
   ) {}

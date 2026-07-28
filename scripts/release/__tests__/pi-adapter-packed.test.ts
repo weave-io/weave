@@ -8,7 +8,7 @@ import { TarInspector } from "../tar-inspector.js";
 /**
  * Packed-artifact proof for the pi adapter's public package/build/pack
  * policy (Pi adapter contract package and public surface, host compatibility,
- * §24 layer F packed tarball, §25 acceptance manifest PI-PKG).
+ * packed tarball, acceptance manifest PI-PKG).
  *
  * Runs `npm pack --ignore-scripts` on the staged, publicly-approved files
  * only (no lifecycle scripts, no network). Never starts Pi.

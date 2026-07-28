@@ -31,8 +31,8 @@ const EXACT_TESTED_HOST_VERSION =
  * Minimal stub bodies for the handful of runtime *value* imports the
  * compiled pi adapter bundle actually references from each Pi-provided
  * peer package (`import { CustomEditor } from "@earendil-works/pi-coding-agent"`,
- * `import { StringEnum } from "@earendil-works/pi-ai"`, `import { matchesKey }
- * from "@earendil-works/pi-tui"` - verified directly against
+ * `import { StringEnum } from "@earendil-works/pi-ai"`, and `matchesKey` plus
+ * `Text` from `@earendil-works/pi-tui` - verified directly against
  * packages/adapters/pi/dist/{index,extension}.js). These exist only so a
  * clean-room `import()` can link without starting Pi or touching the
  * network; they carry no adapter behavior of their own.
@@ -49,7 +49,8 @@ const FAKE_HOST_PACKAGES: Record<string, { version: string; source: string }> =
     },
     "@earendil-works/pi-tui": {
       version: EXACT_TESTED_HOST_VERSION,
-      source: "export function matchesKey() { return false; }\n",
+      source:
+        "export function matchesKey() { return false; }\nexport class Text {}\n",
     },
   };
 

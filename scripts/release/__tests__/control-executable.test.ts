@@ -52,12 +52,16 @@ test("compiled control dry-runs publication from a clean directory", async () =>
   const artifact = archive();
   const artifactFilename = "@weaveio-weave-cli-1.0.0.tgz";
   const artifactDigest = digest(artifact);
+  const cutAt = new Date(Date.now() - 60_000).toISOString();
+  const expiresAt = new Date(
+    Date.parse(cutAt) + 7 * 24 * 60 * 60 * 1000,
+  ).toISOString();
   const trainContent = {
     schemaVersion: 1 as const,
-    trainRef: "release/20260719-aaaaaaaaaaaa",
+    trainRef: `release/${cutAt.slice(0, 10).replaceAll("-", "")}-aaaaaaaaaaaa`,
     subjectSha: "a".repeat(40),
-    cutAt: "2026-07-19T00:00:00.000Z",
-    expiresAt: "2026-07-26T00:00:00.000Z",
+    cutAt,
+    expiresAt,
     state: "bound" as const,
     packages: ["@weaveio/weave-cli"] as "@weaveio/weave-cli"[],
     versions: { "@weaveio/weave-cli": "1.0.0" },

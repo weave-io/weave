@@ -25,7 +25,7 @@ import type { SmokeChecklistResult } from "./smoke-checklist.js";
 /**
  * Acceptance manifest builder and validator (Pi adapter contract, PI-PKG).
  *
- * Mirrors `docs/specs/33-spec-pi-adapter/acceptance-manifest.schema.json`
+ * Mirrors `scripts/release/pi-acceptance/acceptance-manifest.schema.json`
  * (the checked-in normative contract) as Zod schemas, provides the
  * source-controlled requirement rows tracing every mandatory `PI-*` ID to
  * real named automated tests, and validates that the named evidence
@@ -226,16 +226,6 @@ export interface ClosedSetSpec {
   readonly members: readonly string[];
 }
 
-/** The 3 permission-gate outcome kinds the Pi adapter's permission bridge can
- * return (Spec 33 §12). `block`'s free-form `reason` string is not a closed
- * literal union in code today, so it is deliberately not included here —
- * see the `PI-POL` row's `notes` for that honestly-scoped limitation. */
-export const PERMISSION_OUTCOME_KINDS = [
-  "allow-unmanaged",
-  "allow",
-  "block",
-] as const;
-
 /** The 2 `ArtifactApprovalActor` kinds (Pi adapter contract). */
 export const ARTIFACT_APPROVAL_ACTOR_KINDS = ["user", "agent"] as const;
 
@@ -264,10 +254,6 @@ export const CLOSED_SET_REQUIREMENTS: Partial<
   "PI-DEL": {
     description: "9 private control envelope kinds (Pi adapter contract)",
     members: PI_CONTROL_KINDS,
-  },
-  "PI-POL": {
-    description: "3 permission-gate outcome kinds (Spec 33 §12)",
-    members: PERMISSION_OUTCOME_KINDS,
   },
   "PI-PLN": {
     description: "3 plan task markers/states (Pi adapter contract)",

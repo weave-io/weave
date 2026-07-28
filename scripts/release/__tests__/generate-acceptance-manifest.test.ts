@@ -24,9 +24,16 @@ describe("generateAcceptanceManifest", () => {
     expect(manifest.artifactBinding.sha256).toMatch(/^[a-f0-9]{64}$/);
     expect(manifest.artifactBinding.subjectSha).toMatch(/^[a-f0-9]{40}$/);
     expect(manifest.requirements).toHaveLength(20);
-    expect(manifest.requirements.every((row) => row.result === "pass")).toBe(
-      true,
-    );
+    expect(
+      manifest.requirements
+        .filter((row) => row.result === "pending")
+        .map((row) => row.id),
+    ).toEqual(["PI-POL"]);
+    expect(
+      manifest.requirements
+        .filter((row) => row.id !== "PI-POL")
+        .every((row) => row.result === "pass"),
+    ).toBe(true);
   }, 60_000);
 });
 

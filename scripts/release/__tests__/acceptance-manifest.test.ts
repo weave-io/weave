@@ -23,7 +23,6 @@ import {
   type EvidenceFileReader,
   HOST_BOUNDARY_TOKENS,
   LIFECYCLE_OPERATIONS,
-  PERMISSION_OUTCOME_KINDS,
   REQUIREMENT_IDS,
   validateAcceptanceManifestStructure,
   verifyAcceptanceManifestEvidence,
@@ -132,7 +131,7 @@ describe("buildAcceptanceManifest + validateAcceptanceManifestStructure", () => 
     expect(result.isErr()).toBe(true);
   });
 
-  it("rejects duplicate normative, packed-proof, and smoke IDs within a row", () => {
+  it("rejects duplicate contract, packed-proof, and smoke IDs within a row", () => {
     const base = buildAcceptanceManifest({
       artifactBinding: VALID_ARTIFACT_BINDING,
       requirements: ACCEPTANCE_MANIFEST_REQUIREMENTS,
@@ -169,6 +168,24 @@ describe("buildAcceptanceManifest + validateAcceptanceManifestStructure", () => 
     };
     expect(validateAcceptanceManifestStructure(duplicated).isErr()).toBe(true);
   });
+
+  it("rejects obsolete docs/specs references and section-number values", () => {
+    const manifest = buildAcceptanceManifest({
+      artifactBinding: VALID_ARTIFACT_BINDING,
+      requirements: ACCEPTANCE_MANIFEST_REQUIREMENTS,
+    });
+    const first = manifest.requirements[0]!;
+    for (const reference of ["docs/specs/legacy.md#old", "33§7"]) {
+      const candidate = {
+        ...manifest,
+        requirements: [
+          { ...first, contractReferences: [reference] },
+          ...manifest.requirements.slice(1),
+        ],
+      };
+      expect(validateAcceptanceManifestStructure(candidate).isErr()).toBe(true);
+    }
+  });
 });
 
 describe("verifyAcceptanceManifestEvidence (mocked reader)", () => {
@@ -203,10 +220,6 @@ describe("verifyAcceptanceManifestEvidence (mocked reader)", () => {
     const delRow = manifest.requirements.find((row) => row.id === "PI-DEL")!;
     for (const test of Object.values(delRow.tests))
       files[test.file] = `${files[test.file]}\n${PI_CONTROL_KINDS.join(" ")}`;
-    const polRow = manifest.requirements.find((row) => row.id === "PI-POL")!;
-    for (const test of Object.values(polRow.tests))
-      files[test.file] =
-        `${files[test.file]}\n${PERMISSION_OUTCOME_KINDS.join(" ")}`;
     const plnRow = manifest.requirements.find((row) => row.id === "PI-PLN")!;
     for (const test of Object.values(plnRow.tests))
       files[test.file] = `${files[test.file]}\n${PLAN_TASK_STATES.join(" ")}`;

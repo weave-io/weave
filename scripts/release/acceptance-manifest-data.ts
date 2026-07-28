@@ -7,9 +7,9 @@ import type {
  * Source-controlled requirement rows for the Pi adapter acceptance manifest
  * (Pi adapter contract). Every mandatory `PI-*` ID is traced here to real, existing
  * named tests and packed-proof evidence IDs (see `PACKED_PROOF_REGISTRY`
- * below). Every row is `"pass"` because all 23 digest-bound live TUI smoke
- * checks passed against the artifact recorded in
- * `docs/specs/33-spec-pi-adapter/33-smoke-checklist.md`. Automated and packed
+ * below). Permission-specific live evidence belongs to the historical
+ * permission-enabled artifact, so `PI-POL` remains pending until a new
+ * digest-bound native-control smoke run completes. Automated and packed
  * evidence remains mandatory and is verified by
  * `scripts/release/__tests__/acceptance-manifest.test.ts`.
  */
@@ -151,28 +151,12 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
       contractReferences: ["docs/reference/permissions.md#adapter-support"],
       tests: {
         T001: {
-          file: "packages/adapters/pi/src/__tests__/permission-bridge.test.ts",
-          name: "classifies discovered tools, seals a registry, and proves complete coverage for native + weave-owned tools",
+          file: "packages/adapters/pi/src/__tests__/capability-prober.test.ts",
+          name: "reports Pi native tool control without permission interception",
         },
         T002: {
-          file: "packages/adapters/pi/src/__tests__/permission-bridge.test.ts",
-          name: "fails closed when the name is not free, and never calls registerTool",
-        },
-        T003: {
-          file: "packages/adapters/pi/src/__tests__/extension-tool-governance.test.ts",
-          name: "allows a governed native call under an allow policy and writes back only the consumed snapshot",
-        },
-        T004: {
-          file: "packages/adapters/pi/src/__tests__/extension-tool-governance.test.ts",
-          name: "blocks a governed native call under a deny policy",
-        },
-        T005: {
-          file: "packages/adapters/pi/src/__tests__/extension-tool-governance.test.ts",
-          name: "prompts for approval under an ask policy and allows once approved",
-        },
-        T006: {
-          file: "packages/adapters/pi/src/__tests__/tool-governance.test.ts",
-          name: "reports an unrelated third-party tool as unmanaged, never as native or weave-owned",
+          file: "packages/adapters/pi/src/__tests__/extension.test.ts",
+          name: "registers commands, the palette shortcut, and five lifecycle delegates without a tool-call interceptor",
         },
       },
       packedProof: { required: true, evidenceIds: ["P001"] },
@@ -180,9 +164,9 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
         required: true,
         checklistIds: ["S010", "S011", "S012", "S013"],
       },
-      result: "pass",
+      result: "pending",
       notes:
-        "Closed-set check verifies all 3 permission-gate outcome kinds (allow-unmanaged, allow, block) appear across the referenced tests. The `block` variant's free-form `reason: string` is not a closed literal union in code today, so per-reason exhaustiveness is not separately automated.",
+        "Pi leaves tool authorization to Pi and each tool owner. The cited live smoke row belongs to the superseded permission implementation; a new native-control smoke run is pending.",
     },
     {
       id: "PI-DEL",
@@ -198,26 +182,26 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
         },
         T003: {
           file: "packages/adapters/pi/src/__tests__/delegation-tool.test.ts",
-          name: "resolver: hard-rejects (never asks) an agent outside the eligible target set",
+          name: "execute: rejects an ineligible agent with a structured (not thrown) error, never touching the controller",
         },
         T004: {
           file: "packages/adapters/pi/src/__tests__/rpc-child.test.ts",
           name: "passes the secret only via environment, never argv/prompt, and completes the handshake before returning",
         },
         T005: {
-          file: "packages/adapters/pi/src/__tests__/rpc-child.test.ts",
-          name: "relays the child's own approval-request to the caller-supplied callback, and delivers the caller's approval-response back to it",
-        },
-        T006: {
           file: "packages/adapters/pi/src/__tests__/child-mode.test.ts",
           name: "reports settlement exactly once via an authenticated envelope on agent_settled",
+        },
+        T006: {
+          file: "packages/adapters/pi/src/__tests__/child-runtime.test.ts",
+          name: "sends and resolves a nested task larger than one control envelope",
         },
       },
       packedProof: { required: true, evidenceIds: ["P001"] },
       liveSmoke: { required: true, checklistIds: ["S014", "S015"] },
       result: "pass",
       notes:
-        "Closed-set check verifies all 11 PI_CONTROL_KINDS private control envelope/reply kinds appear across the referenced tests.",
+        "Closed-set check verifies all 9 PI_CONTROL_KINDS private control envelope kinds appear across the referenced tests.",
     },
     {
       id: "PI-CMD",
@@ -225,7 +209,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
       tests: {
         T001: {
           file: "packages/adapters/pi/src/__tests__/extension.test.ts",
-          name: "registers exactly the nine /weave:* command shells, the bare native palette command, and four lifecycle delegates, nothing else",
+          name: "registers commands, the palette shortcut, and five lifecycle delegates without a tool-call interceptor",
         },
         T002: {
           file: "packages/adapters/pi/src/__tests__/workflow-commands.test.ts",
@@ -259,10 +243,6 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
           name: "carries workflow instance/lease/step correlation on every direct-dispatch call",
         },
         T003: {
-          file: "packages/adapters/pi/src/__tests__/extension-tool-governance.test.ts",
-          name: "allows a governed native call under an allow policy and writes back only the consumed snapshot",
-        },
-        T004: {
           file: "packages/engine/src/__tests__/permissions-before-tool.test.ts",
           name: "uses the registered session policy and registry",
         },
@@ -381,13 +361,9 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
           file: "packages/adapters/pi/src/__tests__/runtime-store-port.test.ts",
           name: "maps a scripted open failure onto RuntimeStoreOpenFailed",
         },
-        T003: {
-          file: "packages/adapters/pi/src/__tests__/permission-bridge.test.ts",
-          name: "never mutates Pi - registerTool is not called during planning",
-        },
       },
       packedProof: { required: true, evidenceIds: ["P001"] },
-      liveSmoke: { required: true, checklistIds: ["S010", "S011", "S012"] },
+      liveSmoke: { required: true, checklistIds: ["S019", "S020"] },
       result: "pass",
     },
     {
@@ -438,7 +414,7 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
       tests: {
         T001: {
           file: "packages/adapters/pi/src/__tests__/capability-prober.test.ts",
-          name: "returns exactly one unavailable probe for all 19 capability IDs",
+          name: "returns exactly one unavailable probe for all 20 capability IDs",
         },
         T002: {
           file: "packages/adapters/pi/src/__tests__/capability-prober.test.ts",
@@ -446,14 +422,14 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
         },
         T003: {
           file: "packages/adapters/pi/src/__tests__/capability-prober.test.ts",
-          name: "handles every anomaly kind at once and still returns exactly 19 fail-closed rows",
+          name: "handles every anomaly kind at once and still returns exactly 20 fail-closed rows",
         },
       },
       packedProof: { required: true, evidenceIds: ["P001"] },
       liveSmoke: { required: true, checklistIds: ["S004"] },
       result: "pass",
       notes:
-        "Closed-set check verifies all 19 ALL_CAPABILITY_IDS appear across the referenced tests.",
+        "Closed-set check verifies all 20 ALL_CAPABILITY_IDS appear across the referenced tests.",
     },
     {
       id: "PI-ERR",
@@ -534,8 +510,8 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
           name: "returns not-a-child and never deletes anything when no bootstrap secret is present in the environment",
         },
         T003: {
-          file: "packages/adapters/pi/src/__tests__/delegation-controller.test.ts",
-          name: "fails closed (never spawns a process) when the request's own task exceeds the same bound enforced at tool parsing and RPC send",
+          file: "packages/adapters/pi/src/__tests__/child-runtime.test.ts",
+          name: "sends and resolves a nested task larger than one control envelope",
         },
       },
       packedProof: { required: true, evidenceIds: ["P002"] },

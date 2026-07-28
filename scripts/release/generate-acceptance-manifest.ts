@@ -26,7 +26,7 @@ import {
 } from "./smoke-checklist.js";
 
 /**
- * Regenerates `docs/specs/33-spec-pi-adapter/acceptance-manifest.json`
+ * Regenerates `scripts/release/pi-acceptance/acceptance-manifest.json`
  * (Pi adapter contract) from the source-controlled requirement rows in
  * `acceptance-manifest-data.ts`.
  *
@@ -199,7 +199,7 @@ if (import.meta.main) {
         process.exitCode = 1;
         return;
       }
-      const path = `${root}/docs/specs/33-spec-pi-adapter/acceptance-manifest.json`;
+      const path = `${root}/scripts/release/pi-acceptance/acceptance-manifest.json`;
       await Bun.write(path, `${JSON.stringify(manifest, null, 2)}\n`);
       log.info({ path }, "wrote acceptance manifest");
     },
