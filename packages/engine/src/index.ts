@@ -224,6 +224,11 @@ export type {
   UnresolvedPermissionRequestView,
 } from "./permissions/types.js";
 export type {
+  ActivePlanTask,
+  PlanActiveTaskError,
+} from "./plan-active-task.js";
+export { selectActivePlanTask } from "./plan-active-task.js";
+export type {
   PlanFormat,
   PlanStateError,
   PlanStateProvider,
@@ -474,6 +479,35 @@ export {
   runWorkflowLifecycle,
   startPlan,
 } from "./runtime-command-operations/index.js";
+export type {
+  SessionGoalContinuationDecision,
+  SessionGoalContinuationInput,
+} from "./session-goal-continuation.js";
+export { decideSessionGoalContinuation } from "./session-goal-continuation.js";
+export type {
+  AdjudicateSessionGoalCompletionInput,
+  SessionGoalReportedStatus,
+  SessionGoalVerdict,
+} from "./session-goal-plan.js";
+export {
+  adjudicateSessionGoalCompletion,
+  countIncompleteLeaves,
+  renderGoalPlanBlock,
+} from "./session-goal-plan.js";
+export type {
+  SessionGoalError,
+  SessionGoalSnapshot,
+  SessionGoalState,
+  SessionGoalStatus,
+} from "./session-goal.js";
+export {
+  DEFAULT_MAX_GOAL_CONTINUATIONS,
+  formatDuration,
+  formatTokenCount,
+  parseSessionGoalSnapshot,
+  SESSION_GOAL_STATE_VERSION,
+  SessionGoalController,
+} from "./session-goal.js";
 export type {
   ConfigSkillResolutionResult,
   ResolvedSkill,
