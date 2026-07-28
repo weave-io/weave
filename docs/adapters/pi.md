@@ -113,7 +113,7 @@ retain partial-write suffixes and await flush.
 
 Malformed, unauthenticated, replayed, or out-of-sequence input fails closed and disposes the runtime. Outbound control writes are serialized, and a failed settlement write is retried once without consuming its authenticated sequence number. Every secret is zeroed and every resource released exactly once.
 
-A child may request nested delegation only to its own declared targets. Canceling a node cancels queued and live descendants. Live children get a bounded cooperative grace period before force termination.
+A child may request nested delegation only to its own declared targets. Canceling a node cancels queued and live descendants. Live children get a bounded cooperative grace period before force termination. The 15-minute settlement budget is an inactivity timeout: each parser-approved session event or authenticated control envelope renews it, while a silent child still fails with `ChildSettlementMissing`.
 
 Children are inspectable and cancellable through the TUI tree, not steerable. Public user-started RPC mode does not activate this private path.
 

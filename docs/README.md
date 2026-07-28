@@ -57,6 +57,12 @@ User-facing tutorials and product reference live in the [public docs package](..
 | [Releases](contributing/releases.md) | Artifact identity, channels, stable trains, and trust boundaries |
 | [Documentation](contributing/documentation.md) | Audience split, page types, update rules, and pruning policy |
 
+## Specifications
+
+| Spec | Status |
+| --- | --- |
+| [33 — Pi private child sessions](specs/README.md) | Active |
+
 ## Architecture Decision Records
 
 ADRs preserve the reason for decisions. Current behavior belongs in the pages above.
@@ -74,6 +80,7 @@ ADRs preserve the reason for decisions. Current behavior belongs in the pages ab
 | [0009](adr/0009-input-aware-tool-permission-authorization.md) | Accepted | Input-aware authorization |
 | [0010](adr/0010-plan-state-and-artifact-approval-authority.md) | Accepted | Plan and artifact approval authority |
 | [0011](adr/0011-effective-adapter-readiness-and-runtime-observability.md) | Accepted | Effective readiness and observability |
+| [0013](adr/0013-pi-private-child-sessions.md) | Accepted | Private Pi child sessions are adapter-owned |
 
 ## Validation
 

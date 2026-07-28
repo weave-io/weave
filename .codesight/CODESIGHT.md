@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 233 lib files | 32 env vars | 10 middleware | 0% test coverage
 > **Token savings:** this file is ~23,300 tokens. Without it, AI exploration would cost ~76,400 tokens. **Saves ~53,200 tokens per conversation.**
-> **Last scanned:** 2026-07-28 18:16 — re-run after significant changes
+> **Last scanned:** 2026-07-28 21:04 — re-run after significant changes
 
 ---
 
@@ -96,7 +96,7 @@
   - interface PiCandidatePlanContext
   - interface PiPreflightContext
   - interface PiCapabilityProbeSource
-  - _...1 more_
+  - _...3 more_
 - `packages/adapters/pi/src/child-control-bodies.ts`
   - function toModelIdentityBody: (model) => PiModelIdentityBody
   - function parseControlBody: (kind, body) => void

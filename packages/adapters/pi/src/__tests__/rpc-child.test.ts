@@ -285,7 +285,9 @@ describe("PiRpcChild", () => {
     await waitFor(() =>
       running.spawned
         .writtenLines()
-        .some((line) => (line as Record<string, unknown>).type === "get_entries"),
+        .some(
+          (line) => (line as Record<string, unknown>).type === "get_entries",
+        ),
     );
     const linesBeforeVerification = running.spawned.writtenLines();
     const getEntriesIndex = linesBeforeVerification.findIndex(
@@ -316,7 +318,10 @@ describe("PiRpcChild", () => {
     await waitFor(() =>
       running.spawned
         .writtenLines()
-        .some((line) => (line as Record<string, unknown>).message === "do the thing"),
+        .some(
+          (line) =>
+            (line as Record<string, unknown>).message === "do the thing",
+        ),
     );
 
     expect(observed).toEqual([
@@ -324,9 +329,11 @@ describe("PiRpcChild", () => {
     ]);
     expect(observed[0]).not.toHaveProperty("sessionPath");
     expect(JSON.stringify(observed)).not.toContain("/tmp/weave-sessions");
-    const taskIndex = running.spawned.writtenLines().findIndex(
-      (line) => (line as Record<string, unknown>).message === "do the thing",
-    );
+    const taskIndex = running.spawned
+      .writtenLines()
+      .findIndex(
+        (line) => (line as Record<string, unknown>).message === "do the thing",
+      );
     expect(taskIndex).toBeGreaterThan(getEntriesIndex);
 
     running.child.dispose();
@@ -344,7 +351,9 @@ describe("PiRpcChild", () => {
     await waitFor(() =>
       running.spawned
         .writtenLines()
-        .some((line) => (line as Record<string, unknown>).type === "get_entries"),
+        .some(
+          (line) => (line as Record<string, unknown>).type === "get_entries",
+        ),
     );
     const getEntries = running.spawned.writtenLines().at(-1) as Record<
       string,
@@ -363,7 +372,10 @@ describe("PiRpcChild", () => {
     expect(
       running.spawned
         .writtenLines()
-        .some((line) => (line as Record<string, unknown>).message === "do the thing"),
+        .some(
+          (line) =>
+            (line as Record<string, unknown>).message === "do the thing",
+        ),
     ).toBe(false);
   });
 
@@ -373,7 +385,9 @@ describe("PiRpcChild", () => {
       await waitFor(() =>
         running.spawned
           .writtenLines()
-          .some((line) => (line as Record<string, unknown>).type === "get_entries"),
+          .some(
+            (line) => (line as Record<string, unknown>).type === "get_entries",
+          ),
       );
       if (event === "settled") {
         await running.responder.send(
@@ -389,7 +403,10 @@ describe("PiRpcChild", () => {
       expect(
         running.spawned
           .writtenLines()
-          .some((line) => (line as Record<string, unknown>).message === "do the thing"),
+          .some(
+            (line) =>
+              (line as Record<string, unknown>).message === "do the thing",
+          ),
       ).toBe(false);
     }
   });
@@ -403,7 +420,9 @@ describe("PiRpcChild", () => {
     await waitFor(() =>
       running.spawned
         .writtenLines()
-        .some((line) => (line as Record<string, unknown>).type === "get_entries"),
+        .some(
+          (line) => (line as Record<string, unknown>).type === "get_entries",
+        ),
     );
     const getEntries = running.spawned.writtenLines().at(-1) as Record<
       string,
@@ -421,7 +440,10 @@ describe("PiRpcChild", () => {
     expect(
       running.spawned
         .writtenLines()
-        .some((line) => (line as Record<string, unknown>).message === "do the thing"),
+        .some(
+          (line) =>
+            (line as Record<string, unknown>).message === "do the thing",
+        ),
     ).toBe(false);
   });
 
@@ -458,7 +480,9 @@ describe("PiRpcChild", () => {
       await waitFor(() =>
         running.spawned
           .writtenLines()
-          .some((line) => (line as Record<string, unknown>).type === "get_entries"),
+          .some(
+            (line) => (line as Record<string, unknown>).type === "get_entries",
+          ),
       );
       if (testCase.response !== undefined) {
         const getEntries = running.spawned.writtenLines().at(-1) as Record<
@@ -476,7 +500,10 @@ describe("PiRpcChild", () => {
       expect(
         running.spawned
           .writtenLines()
-          .some((line) => (line as Record<string, unknown>).message === "do the thing"),
+          .some(
+            (line) =>
+              (line as Record<string, unknown>).message === "do the thing",
+          ),
       ).toBe(false);
     }
   });
@@ -517,12 +544,17 @@ describe("PiRpcChild", () => {
       expect(
         running.spawned
           .writtenLines()
-          .some((line) => (line as Record<string, unknown>).type === "get_entries"),
+          .some(
+            (line) => (line as Record<string, unknown>).type === "get_entries",
+          ),
       ).toBe(false);
       expect(
         running.spawned
           .writtenLines()
-          .some((line) => (line as Record<string, unknown>).message === "do the thing"),
+          .some(
+            (line) =>
+              (line as Record<string, unknown>).message === "do the thing",
+          ),
       ).toBe(true);
       await running.responder.send(
         "settled",
@@ -1525,6 +1557,74 @@ describe("PiRpcChild", () => {
     expect(result._unsafeUnwrapErr().code).toBe("ChildSettlementMissing");
   });
 
+  it("renews the settlement timeout while a running child reports activity", async () => {
+    const processPort = new FakeChildProcessPort();
+    const timers: Array<{ cancelled: boolean; fire: () => void }> = [];
+    const child = new PiRpcChild("child-1", "root", "gen-1", "shuttle", 1, {
+      processPort,
+      randomPort,
+      hmacPort,
+      logger: noopLogger(),
+      timerPort: {
+        schedule: (callback) => {
+          const timer = {
+            cancelled: false,
+            fire: () => {
+              if (!timer.cancelled) callback();
+            },
+          };
+          timers.push(timer);
+          return { cancel: () => (timer.cancelled = true) };
+        },
+      },
+    });
+    const input = baseSpawnInput();
+    const spawnPromise = child.spawnAndHandshake(input);
+    await flush();
+    const spawned = processPort.spawnedProcesses[0];
+    const secretBytes = extractSecretFromSpawn(processPort);
+    const responder = new ScriptedChildResponder(spawned, "child-1", "gen-1");
+    await responder.send("handshake", "child-1", {}, secretBytes);
+    await spawnPromise;
+
+    const runPromise = child.runTask(input, validBootstrap());
+    await flush();
+    await responder.send("bootstrap-ack", "child-1", validAck(), secretBytes);
+    await flush();
+    const originalSettlementTimer = timers.at(-1);
+    expect(originalSettlementTimer).toBeDefined();
+
+    spawned.emitLine({ type: "turn_start" });
+    const sessionEventTimer = timers.at(-1);
+    expect(sessionEventTimer).not.toBe(originalSettlementTimer);
+    expect(originalSettlementTimer?.cancelled).toBe(true);
+
+    await responder.send(
+      "delegate-request",
+      "delegation-1",
+      { agentName: "shuttle", task: "continue working" },
+      secretBytes,
+    );
+    await flush();
+    const authenticatedControlTimer = timers.at(-1);
+    expect(authenticatedControlTimer).not.toBe(sessionEventTimer);
+    expect(sessionEventTimer?.cancelled).toBe(true);
+
+    originalSettlementTimer?.fire();
+    sessionEventTimer?.fire();
+    await responder.send(
+      "settled",
+      "child-1",
+      { outcome: "completed", assistantOutput: "done" },
+      secretBytes,
+    );
+    expect((await runPromise)._unsafeUnwrap()).toEqual({
+      outcome: "completed",
+      summary: "done",
+      interventionCount: 0,
+    });
+  });
+
   it("stops the child on a replayed nonce (fail-closed authentication)", async () => {
     const processPort = new FakeChildProcessPort();
     const child = new PiRpcChild("child-1", "root", "gen-1", "shuttle", 1, {
@@ -2423,9 +2523,7 @@ describe("PiRpcChild", () => {
       `${JSON.stringify(nativeEvent)}\n`,
     );
     expect(nativeLine.byteLength).toBeGreaterThan(1 * 1024 * 1024);
-    expect(nativeLine.byteLength).toBeLessThanOrEqual(
-      MAX_NATIVE_RECORD_BYTES,
-    );
+    expect(nativeLine.byteLength).toBeLessThanOrEqual(MAX_NATIVE_RECORD_BYTES);
     const captureLog = (record: Record<string, unknown>) => logs.push(record);
     const child = new PiRpcChild("child-1", "root", "gen-1", "shuttle", 1, {
       processPort,
@@ -2578,7 +2676,8 @@ describe("PiRpcChild", () => {
       interventionCount: 0,
     });
     const projected = JSON.stringify(result.value);
-    for (const marker of privateMarkers) expect(projected).not.toContain(marker);
+    for (const marker of privateMarkers)
+      expect(projected).not.toContain(marker);
   });
 
   it("accepts the native record boundary and fails closed above it", async () => {

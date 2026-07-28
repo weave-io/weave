@@ -56,6 +56,7 @@ import {
   signEnvelope,
   verifyEnvelope,
 } from "./child-envelope.js";
+import { normalizePiExtensionUiRequest } from "./child-extension-ui.js";
 import { PiLineFramer } from "./child-framing.js";
 import type {
   PiChildProcessPort,
@@ -66,15 +67,16 @@ import {
   PiExtensionUiResponseSchema,
   parsePiChildSessionEvent,
 } from "./child-session-events.js";
-import { normalizePiExtensionUiRequest } from "./child-extension-ui.js";
 import {
   DEFAULT_CANCEL_GRACE_MS,
   DEFAULT_HANDSHAKE_TIMEOUT_MS,
   DEFAULT_REPLY_TIMEOUT_MS,
   DEFAULT_SETTLEMENT_TIMEOUT_MS,
   SystemTimerPort,
+  type TimerHandle,
   type TimerPort,
 } from "./child-timer.js";
+import { ChunkTransferAssembler } from "./child-transfer.js";
 import {
   addUsage,
   EMPTY_USAGE_AGGREGATE,
@@ -85,13 +87,12 @@ import {
   type PiChildUsageAggregate,
   truncateLatestOutput,
 } from "./child-tree.js";
-import { ChunkTransferAssembler } from "./child-transfer.js";
 import { DelegateRequestAssembler } from "./delegate-request-chunking.js";
 import {
   makeChildAbortFailedFailure,
   makeChildAuthenticationFailedFailure,
-  makeChildEnvelopeMalformedFailure,
   makeChildDeliveryFailedFailure,
+  makeChildEnvelopeMalformedFailure,
   makeChildEnvelopeReplayFailure,
   makeChildExitedUnexpectedlyFailure,
   makeChildHandshakeMissingFailure,
@@ -145,6 +146,7 @@ export interface PiRpcChildDeps {
   readonly command?: readonly string[];
   readonly handshakeTimeoutMs?: number;
   readonly replyTimeoutMs?: number;
+  /** Maximum silence while awaiting settlement; valid child activity renews it. */
   readonly settlementTimeoutMs?: number;
   readonly cancelGraceMs?: number;
   readonly now?: () => number;
@@ -645,6 +647,7 @@ export class PiRpcChild {
     | undefined;
   private cancelResolvers: { resolve: () => void } | undefined;
   private settled = false;
+  private settlementTimer: TimerHandle | undefined;
   private readonly replyTimeoutMs: number;
   private readonly cancelGraceMs: number;
   private readonly baseEnv: Readonly<Record<string, string>>;
@@ -895,6 +898,7 @@ export class PiRpcChild {
       this.failOutstanding(failure);
       return;
     }
+    this.renewSettlementTimeout();
     this.dispatchControlKind(envelope);
   }
 
@@ -1571,10 +1575,7 @@ export class PiRpcChild {
     }
     if (accepted.value === undefined) return;
 
-    this.completedOutputTransfers.set(
-      parsed.value.transferId,
-      accepted.value,
-    );
+    this.completedOutputTransfers.set(parsed.value.transferId, accepted.value);
     void this.sendControl("transfer-result", parsed.value.transferId, {
       channel: "output",
       transferId: parsed.value.transferId,
@@ -1598,7 +1599,8 @@ export class PiRpcChild {
       );
       return;
     }
-    const completed = parsed.value.outcome === "completed" ? parsed.value : undefined;
+    const completed =
+      parsed.value.outcome === "completed" ? parsed.value : undefined;
     let privateOutput = "";
     if (completed !== undefined) {
       if (completed.outputTransferId !== undefined) {
@@ -1621,7 +1623,9 @@ export class PiRpcChild {
         privateOutput =
           completed.assistantOutput ?? this.latestCompletedAssistantOutput;
       }
-      const actualByteLength = new TextEncoder().encode(privateOutput).byteLength;
+      const actualByteLength = new TextEncoder().encode(
+        privateOutput,
+      ).byteLength;
       if (
         completed.outputByteLength !== undefined &&
         completed.outputByteLength !== actualByteLength
@@ -1735,6 +1739,7 @@ export class PiRpcChild {
     }
     const parsed = parsePiChildSessionEvent(normalized.value);
     if (parsed.success) {
+      this.renewSettlementTimeout();
       if (
         parsed.data.type === "extension_ui_request" &&
         parsed.data.requestType === "dialog" &&
@@ -2048,23 +2053,26 @@ export class PiRpcChild {
       );
     }
 
-    return this.getEntries(this.childId, this.generationId, activeLeafId.value)
-      .andThen((entries) => {
-        if (entries.leafId !== activeLeafId.value) {
-          return errAsync(
-            makeChildAuthenticationFailedFailure(
-              this.childId,
-              "restore-active-leaf-mismatch",
-            ),
-          );
-        }
-        return this.notifyRestoreContextVerified({
-          activeLeafId: activeLeafId.value,
-          ...(restore.checkpointCursor === undefined
-            ? {}
-            : { checkpointCursor: restore.checkpointCursor }),
-        });
+    return this.getEntries(
+      this.childId,
+      this.generationId,
+      activeLeafId.value,
+    ).andThen((entries) => {
+      if (entries.leafId !== activeLeafId.value) {
+        return errAsync(
+          makeChildAuthenticationFailedFailure(
+            this.childId,
+            "restore-active-leaf-mismatch",
+          ),
+        );
+      }
+      return this.notifyRestoreContextVerified({
+        activeLeafId: activeLeafId.value,
+        ...(restore.checkpointCursor === undefined
+          ? {}
+          : { checkpointCursor: restore.checkpointCursor }),
       });
+    });
   }
 
   /** Delivers only bounded restore metadata; observer failure blocks task send. */
@@ -2174,11 +2182,7 @@ export class PiRpcChild {
     const chunks = encodePromptChunksBounded(task, transferId);
     if (chunks.isErr()) {
       return errAsync(
-        makeChildDeliveryFailedFailure(
-          this.childId,
-          "prompt",
-          "encode-failed",
-        ),
+        makeChildDeliveryFailedFailure(this.childId, "prompt", "encode-failed"),
       );
     }
 
@@ -2253,32 +2257,52 @@ export class PiRpcChild {
     return process
       .writeStdin(new TextEncoder().encode(line))
       .mapErr(() =>
-        makeChildDeliveryFailedFailure(
-          this.childId,
-          "prompt",
-          "write-failed",
-        ),
+        makeChildDeliveryFailedFailure(this.childId, "prompt", "write-failed"),
       );
   }
 
   private awaitSettlement(): ResultAsync<PiChildSettlement, PiAdapterFailure> {
     return new ResultAsync(
       new Promise((resolve) => {
-        const timer = this.timerPort.schedule(() => {
-          this.failOutstanding(makeChildSettlementMissingFailure(this.childId));
-        }, this.settlementTimeoutMs);
         this.settlementResolvers = {
           resolve: (settlement) => {
-            timer.cancel();
+            this.clearSettlementTimeout();
             resolve(ok(settlement));
           },
           reject: (failure) => {
-            timer.cancel();
+            this.clearSettlementTimeout();
             resolve(err(failure));
           },
         };
+        this.renewSettlementTimeout();
       }),
     );
+  }
+
+  /**
+   * Treats the settlement budget as an inactivity timeout, not a hard runtime
+   * cap. A child that keeps sending parser-approved session events or
+   * authenticated control envelopes is still making observable progress and
+   * must not be killed merely because its task lasts longer than the budget.
+   */
+  private renewSettlementTimeout(): void {
+    if (
+      this.disposed ||
+      this.status !== "running" ||
+      this.settlementResolvers === undefined
+    ) {
+      return;
+    }
+    this.clearSettlementTimeout();
+    this.settlementTimer = this.timerPort.schedule(() => {
+      this.settlementTimer = undefined;
+      this.failOutstanding(makeChildSettlementMissingFailure(this.childId));
+    }, this.settlementTimeoutMs);
+  }
+
+  private clearSettlementTimeout(): void {
+    this.settlementTimer?.cancel();
+    this.settlementTimer = undefined;
   }
 
   /**
@@ -2520,9 +2544,7 @@ function normalizeExtensionUiResponse(
   });
 }
 
-function extractCompletedAssistantText(
-  message: JsonValue,
-): string | undefined {
+function extractCompletedAssistantText(message: JsonValue): string | undefined {
   if (!isJsonRecord(message) || message.role !== "assistant") return undefined;
 
   const content = message.content;

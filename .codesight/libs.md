@@ -85,7 +85,7 @@
   - interface PiCandidatePlanContext
   - interface PiPreflightContext
   - interface PiCapabilityProbeSource
-  - _...1 more_
+  - _...3 more_
 - `packages/adapters/pi/src/child-control-bodies.ts`
   - function toModelIdentityBody: (model) => PiModelIdentityBody
   - function parseControlBody: (kind, body) => void

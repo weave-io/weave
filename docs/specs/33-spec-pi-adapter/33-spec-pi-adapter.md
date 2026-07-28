@@ -1,161 +1,297 @@
-# 33 — Pi adapter: bounded transfers, acknowledged delivery, and settlement fields
+# 33 — Pi private child sessions: inspection, persistence, and parent-result boundary
 
 Status: active. Owner: Pi adapter.
+Implementation issue: [#21](https://github.com/weave-io/weave/issues/21).
 
-This specification governs how a private Pi child receives its work and returns
-its result. It exists because a child could produce valid output that never
-reached its parent: the parent then waited out its settlement timer and reported
-`ChildSettlementMissing`, a code that names the symptom and hides the cause.
+This specification governs private Pi child execution from spawn to completion.
+Its purpose is to give private children durable inspection while keeping private
+transcript content adapter-local.
 
-The rule this document enforces: **a child of any output size either returns its
-result or fails with a typed error that names the real cause.** No delivery
-problem may surface as a settlement timeout.
+This document **amends** prior private-child clauses in earlier Spec 33 text:
 
-## 1. The three limits
+- §11: replace ephemeral `pi --mode rpc --no-session` with persisted sessions.
+- §11: replace transient 4 KiB inspector view with durable switchable history.
+- §7 and general restart behavior: remove blanket prohibition on private-child
+  auto-resume; add recovery only for eligible interrupted **ordinary top-level**
+  children.
 
-Three numbers bound three different things. Conflating them is the bug this
-specification prevents, so each has its own name, its own owner, and its own
-test.
+No section in this document requires any user review, approval, or confirmation
+as part of the child-inspection flow.
 
-| Limit | Frozen value | Bounds | Owner |
-| --- | --- | --- | --- |
-| Native record cap | 8 MiB | One native Pi JSONL record on the wire | Pi's own protocol; `child-framing.ts` |
-| Signed control-body cap | 64 KiB | One authenticated Weave control-envelope body | Weave security boundary; `child-envelope.ts` |
-| Logical transfer cap | 64 MiB | One reassembled chunked-transfer payload | Weave transfer protocol; `child-transfer.ts` |
+## 0. Non-negotiable invariants carried over
 
-The signed control-body cap is a **security bound**: it is the amount of bytes a
-single signature covers. It is never raised to make a payload fit. A payload
-larger than a signed body is split into chunks that each fit inside one, which
-is why the logical transfer cap grows independently of the other two.
+- Authentication, nonce/sequence checks, and one-shot settlement remain required.
+- Force-kill and failure boundaries remain unchanged.
+- `ControllerGeneration` staleness rules remain unchanged: stale generations are
+  rejected for control and settlement.
+- The controller may not reuse private-child session records to override durable
+  execution authority.
 
-The native record cap is not a Weave choice. Weave only refuses to buffer past
-it, and reports that refusal as a typed framing error rather than letting a
-runaway record poison the stream.
+## 1. Three transport and projection limits
 
-### Frozen constants
+All three limits are normative and must stay distinct:
 
-`PI_TRANSPORT_LIMITS` in `packages/adapters/pi/src/errors.ts` is the single
-registry. `__tests__/failure-taxonomy.test.ts` freezes every value and proves
-the registry agrees with `child-framing.ts`, `child-envelope.ts`, and
-`child-tree.ts`.
-
-| Constant | Value | Meaning |
+| Limit | Frozen value | Owner |
 | --- | --- | --- |
-| `nativeRecordBytes` | 8 MiB | Native Pi JSONL record cap |
-| `signedControlBodyBytes` | 64 KiB | Signed control-body cap |
-| `transferChunkPayloadBytes` | 24 KiB | Decoded payload bytes per chunk |
-| `transferAggregateBytes` | 64 MiB | Reassembled transfer payload cap |
-| `transferMaxChunks` | 65 536 | Chunks per transfer |
-| `maxConcurrentTransfers` | 32 | Transfers one assembler tracks at once |
-| `transferAckTimeoutMs` | 10 000 | Bounded wait for ACK or NACK |
-| `transferMaxRetries` | 1 | Retries before a typed failure |
-| `parentProjectionBytes` | 4 KiB | Cap on output projected to the parent model |
+| Native JSONL record cap | `8 MiB` | Pi protocol (`child-framing.ts`) |
+| Signed control-body cap | `64 KiB` | Weave security envelope (`child-envelope.ts`) |
+| Logical transfer cap | `64 MiB` | Weave transfer protocol (`child-transfer.ts`) |
+| Parent output projection | `4 KiB` | Parent-facing `assistantOutput` and `outputByteLength` |
 
-24 KiB of payload base64-encodes to 32 KiB, which leaves room for envelope
-metadata inside the 64 KiB signed body. That headroom is asserted by test, not
-assumed.
+Any attempt to exceed one cap must fail through a typed protocol failure; no child
+result may fall through to `ChildSettlementMissing`.
 
-Changing any value here is a protocol change and must land with its test.
+## 2. Private-child spawn contract (amendment)
 
-## 2. Failure codes
+Private children are spawned with an adapter-owned persisted history directory:
 
-Four codes name transfer failures. They belong to the `protocol` phase and carry
-the logical channel (`prompt`, `delegate-request`, or `output`) in correlation.
+- Session path: `$XDG_DATA_HOME/weave/adapters/pi/child-history/<parent-session-id>/`
+  (default: `~/.local/share/weave/adapters/pi/child-history/<parent-session-id>/`).
+- Child directory names are stable and derived from the child id.
+- Parent process keeps only a reference to the child id and branch pointer.
+- Each child runs with an explicit `--session-dir` to the adapter-owned history
+  location.
+- A child process may still be short-lived or queued by existing delegation policy,
+  but every private child has a private-history anchor path at creation.
 
-| Code | Raised when | Retryable |
-| --- | --- | --- |
-| `ChildTransferTimedOut` | No ACK or NACK arrived within the bounded wait | yes |
-| `ChildTransferRejected` | The peer NACKed a chunk as malformed, duplicated, or out of range | yes |
-| `ChildTransferTooLarge` | The payload exceeds the aggregate transfer cap | no |
-| `ChildDeliveryFailed` | Delivery failed after the single bounded retry | yes |
+## 3. Private-history state and status model
 
-`ChildTransferTooLarge` is not retryable: retrying an oversized payload
-reproduces the same rejection.
+Each private child has exactly one canonical status in the adapter index:
 
-Every `reason` in correlation is a closed, fixed string chosen by the transfer
-module. Raw error text never reaches a correlation field, a log, or the TUI.
+- `running`
+- `queued`
+- `settled`
+- `interrupted`
+- `quarantined`
+- `cleared`
 
-### The code these replace
+Record `kind` is one of `ordinary`, `nested`, or `workflow-step`.
 
-`ChildSettlementMissing` remains, and keeps its original meaning: a child that
-genuinely never settled. It is no longer the code a delivery problem produces.
-A child that never received its prompt fails with a transfer code that says so.
+A child must keep its latest status transition consistent with process and parent
+inputs:
 
-## 3. The acknowledged transfer protocol
+- start → `running`
+- queued entry and explicit admission → `running`
+- successful completion path → `settled`
+- explicit stop or runtime interruption while awaiting resume → `interrupted`
+- validation/failure to parse/migrate/corrupt events, hostile root mutation,
+  malformed storage, or unknown version → `quarantined`
+- clear operation on terminal records → `cleared`
 
-Every chunked transfer is acknowledged. The sequence is:
+Settled or cleared children are not live for capacity accounting.
 
-1. The sender splits the payload into chunks of at most
-   `transferChunkPayloadBytes` decoded bytes, tagged with a transfer id, an
-   index, and a total.
-2. The sender writes every chunk, honouring stdin backpressure.
-3. The receiver assembles chunks, enforcing per-chunk bytes, aggregate bytes,
-   chunk count, and concurrent-transfer caps.
-4. The receiver replies exactly once per transfer through its existing
-   authenticated control path: an ACK on complete reassembly, a NACK carrying a
-   closed reason otherwise.
-5. The sender waits at most `transferAckTimeoutMs`. On NACK or timeout it
-   retries the whole transfer once. A second failure produces a typed transfer
-   failure.
+## 4. Deterministic child inspector state model
 
-The receiver rejects duplicate indices, indices outside `[0, total)`, totals
-inconsistent with the transfer already in flight, chunks whose decoded size
-exceeds the per-chunk cap, payloads whose running total exceeds the aggregate
-cap, and new transfers beyond the concurrency cap. Each rejection has its own
-closed reason.
+Every private child has a persisted, switchable inspector record containing:
 
-Transfers may interleave. The assembler tracks up to `maxConcurrentTransfers`
-independently and evicts nothing silently: exceeding the cap is a typed
-rejection, not a quiet drop.
+- `status`
+- current branch pointer
+- one-way checkpoint cursor for replay
+- user draft text and per-view UI state (scroll offset, markdown/usage expansion,
+  thinking visibility, queued follow-up queue length)
+- last seen breadcrumb/title
 
-## 4. Settlement field layout
+View selection uses these rules:
 
-Settlement carries structured fields. It never repurposes one field to mean two
-things.
+1. Stable slots `Alt+1` through `Alt+9` map only to **live, non-queued**
+   children.
+2. A slot is assigned when the child enters `running` and held until the child
+   leaves live state.
+3. Slot assignment skips queued and terminal states.
+4. Picker selection does not change slots.
+5. Completed children remain available in history navigation even when not slotted.
 
-A completed settlement has these structured fields:
+## 5. Interaction and rendering contract
 
-- `assistantOutput` — the bounded parent projection;
-- `completionCandidate` — direct-step structured completion JSON, never prose;
-- `outputTransferId` — optional reference to an ACKed private output transfer;
-- `outputByteLength` — numeric metadata for the full private output.
+### 5.1 Rendering policy
 
-A direct-step child's structured completion candidate has its own field. The
-parent interpreter reads that field and only that field when interpreting a
-direct-step completion. Ordinary assistant output stays in its own separate
-field, and the parent never parses it as a completion candidate.
+Pi-native rendering is preferred when host export probes show native components.
+When unavailable, the adapter must render a fallback that exposes the same
+information.
 
-This replaces the previous arrangement, in which a direct-step child serialized
-its completion candidate into the summary field while the parent overwrote that
-same field with terminal assistant text. Because a terminal `weave_complete_step`
-message is a tool-use message, its extracted text was empty, and a valid
-completion degraded to `CompletionSignalMissing`.
+Required event classes visible in every view:
 
-When final output exceeds `parentProjectionBytes`, the child sends it as
-authenticated `transfer-chunk` controls *before* the terminal settlement
-envelope. The parent reassembles it privately and replies with authenticated
-`transfer-result` ACK or NACK; only after ACK does the child settle referencing
-that transfer. Exactly-once settlement, strict sequence ordering, sequence
-rollback on failed writes, and the single bounded retry all hold unchanged. A
-failed output transfer degrades to bounded inline `assistantOutput` plus
-`outputByteLength` — never to no settlement at all.
+- user task/task preview (sanitized, width-aware, and bounded preview text)
+- assistant text and thinking
+- tool calls, arguments, tool partial results, and tool errors
+- images
+- usage data
+- queue / current tool status
+- extension UI: notifications, widgets, dialogs
+- breadcrumb/title including parent chain and workflow metadata
+- one-line global status summary (no raw task text)
+- continuation/interruption/recovery markers
 
-## 5. The parent projection rule
+### 5.2 Interaction rules
 
-Full output is private. Bounded output is projected.
+- `Enter` sends steering text to the running child.
+- `Alt+Enter` appends follow-up text to running child queue.
+- Completed views are read-only.
+- Child slash commands are rejected unless the command is one of:
+  - `/weave:inspect`
+  - `/weave:clear-children`
+- Empty `Backspace` returns parent context.
+- Non-empty `Backspace` edits draft text.
+- `Escape` confirms subtree-cancel request for the active child, including:
+  child id, current tool, and all known descendants.
+- Child UI must not inject parent text or transcript into private child tasks.
 
-The inspector and the history service receive the complete output. The parent
-model, controller results, and workflow completion receive only a projection
-bounded by `parentProjectionBytes`, plus numeric metadata such as byte counts
-and event counts.
+### 5.3 Navigation contract
 
-Transcripts, thinking, tool calls, tool results, and extension UI events never
-cross that boundary in either direction. Numeric metadata may cross; content may
-not.
+- `Alt+I` opens hierarchy picker.
+- `/weave:inspect` opens hierarchy picker.
+- Picker lists active and historical private children with sanitized preview.
+- Picker exposes recovery actions where allowed and resume actions for
+  workflow-step descendants only.
 
-## 6. What must not weaken
+## 6. Child recovery contract
 
-Authentication, nonce and sequence checks, one-shot settlement, force-kill, and
-the 64 KiB signed control-body cap are invariants. No transfer feature may relax
-any of them. In particular, a larger payload is always solved by more chunks,
-never by a larger signed body.
+### 6.1 Auto-recovery scope
+
+Only this class is auto-recovery eligible:
+
+- ordinary children
+- top-level under the same parent session
+- status `interrupted`
+- recovery setting enabled
+
+All other interrupted private children remain history-only.
+
+### 6.2 Recovery policy
+
+- `recovery_countdown_seconds` default: `10`
+- On startup, show one recovery popup with the explicit choices:
+  - `Recover now`
+  - `Skip`
+  - `Inspect`
+- `Inspect` leaves the child recoverable in picker.
+- `Skip` suppresses immediate recovery and keeps only history visibility.
+- If countdown expires with `Recover now` still pending, recovery starts.
+- A recovered run uses current trusted descriptor/model/policy/limits.
+- Recovery reuses only the prior session path and checkpoint pointer; it does not
+  bypass generation checks.
+
+### 6.3 Workflow continuation
+
+`/weave:resume` is a fresh attempt. It never reuses prior workflow process as
+continuing authority and never claims old attempt state as current execution.
+
+## 7. Persistence, quotas, retention, and clear semantics
+
+### 7.1 Settings
+
+`child_inspection` accepts these exact keys with these defaults:
+
+- `persist_history = true`
+- `max_bytes_per_child = 4_194_304`
+- `max_bytes_total = 67_108_864`
+- `orphan_retention_days = 30`
+- `recovery_enabled = true`
+- `recovery_countdown_seconds = 10`
+
+### 7.2 Storage layout and I/O safety
+
+- Root path: `$XDG_DATA_HOME/weave/adapters/pi/child-history/<parent-session-id>/`
+- Directory mode: `0700`
+- File mode: `0600`
+- No-follow, descriptor-relative I/O for all read/write operations.
+- No path traversal and no symbolic-link dereference outside the root.
+
+### 7.3 Quota and trim
+
+- Enforce `max_bytes_per_child` and `max_bytes_total` after each append.
+- On overflow, trim oldest complete history but keep active branch integrity.
+- Trim must not drop active view and inspected view unless a single child alone
+  exceeds its own cap.
+- Trimming creates an explicit trim marker entry visible in history views.
+
+### 7.4 Quarantine and corruption handling
+
+- Unknown version, missing index, malformed JSONL, malformed checkpoint, symlink,
+  oversized entry, or root replacement is quarantined.
+- Quarantined entries are never treated as recoverable execution authority.
+- Quarantine metadata is bounded and index-local.
+
+### 7.5 Orphan and clear
+
+- Orphaned records (missing parent session link) are pruned after
+  `orphan_retention_days`.
+- `/weave:clear-children` clears terminal records only; running/queued children
+  cannot be physically cleared.
+- Clear deletes session bytes and terminal index references for affected children.
+
+## 8. Parent-result and export boundary
+
+The parent receives only bounded terminal output projection plus explicit numeric
+metadata.
+
+Never export or persist outside the adapter-owned history:
+
+- full raw transcript
+- intermediate assistant messages
+- thinking text
+- tool arguments
+- tool calls/results
+- prompts or task text
+- intervention text
+- extension UI payloads or events
+
+Adapter-facing controller/workflow completion uses:
+
+- `assistantOutput`: bounded by parent projection cap
+- `completionCandidate`: direct-step completion JSON only when applicable
+- `outputTransferId` and `outputByteLength` metadata when a private transfer is
+  used
+- existing numeric metadata already defined by delegation metadata contract
+
+No other child content crosses into Runtime Store, journals, logs, health,
+failures, recovery pointers, telemetry, diagnostics, acceptance proof, or smoke
+artifacts.
+
+## 9. Failure-code namespace for child inspection
+
+Private-child persistence and transport must raise closed codes, including and
+not limited to:
+
+- `ChildTransferTimedOut`
+- `ChildTransferRejected`
+- `ChildTransferTooLarge`
+- `ChildDeliveryFailed`
+- `ChildHistoryQuotaExceeded`
+- `ChildHistoryQuarantined`
+- `ChildHistoryCorrupt`
+- `ChildHistoryClearRefused`
+- `ChildRecoveryUnavailable`
+- `ChildInteractionUnavailable`
+- `ChildSettlementMissing` only when execution truly never settled.
+
+## 10. Control surface
+
+The adapter exposes these commands to users:
+
+- `/weave:inspect`
+- `/weave:clear-children`
+- `/weave:recover-children`
+- `/weave:resume` for workflow attempts
+
+No additional child-specific command may restart or override controller authority.
+
+## 11. Replacement summary (amendments)
+
+The following earlier rules are explicitly replaced:
+
+1. **Ephemeral child sessions** (`--no-session`) are replaced by persisted,
+   private-session directories at `$XDG_DATA_HOME/weave/adapters/pi/child-history/`.
+2. **Transient inspector views** are replaced by durable, switchable child views
+   with slot and picker navigation.
+3. **Blanket no-auto-resume** is replaced by constrained ordinary-top-level
+   recovery with explicit countdown handling.
+
+The parent-projection rule, controller-generation staleness, and one-shot
+settlement semantics remain in force.
+
+## 12. Related contracts
+
+- [ADR 0013 — Pi Private Child Sessions](../adr/0013-pi-private-child-sessions.md)
+- [Adapter boundary](../architecture/adapter-boundary.md)
+- [Pi adapter implementation issue #21](https://github.com/weave-io/weave/issues/21)
