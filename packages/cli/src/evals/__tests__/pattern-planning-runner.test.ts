@@ -556,7 +556,7 @@ describe("extractPlanningSignals", () => {
         "#scope Release cleanup only.",
         "#files",
         "`packages/cli/src/evals/pattern-planning-runner.ts`",
-        "`docs/agent-evals.md`",
+        "`docs/guides/evals.md`",
       ].join("\n"),
     );
 
@@ -612,7 +612,7 @@ describe("extractPlanningSignals", () => {
         "- In scope: release cleanup.",
         "## Files",
         "- `packages/cli/src/evals/pattern-planning-runner.ts`",
-        "- `docs/agent-evals.md`",
+        "- `docs/guides/evals.md`",
         "## Acceptance",
         "- Verify the release plan is documented.",
       ].join("\n"),
