@@ -213,7 +213,7 @@ function renderMigrateHelp(
     "",
     `  ${theme.boldCyan("OPTIONS")}`,
     "",
-    `    ${theme.cyan("--scope")} global|local  ${theme.dim("Choose migration scope (default: local)")}`,
+    `    ${theme.cyan("--scope")} global|local  ${theme.dim("Choose migration scope (default: global)")}`,
     `    ${theme.cyan("--yes, -y")}            ${theme.dim("Non-interactive: skip confirmation prompt")}`,
     `    ${theme.cyan("--force")}              ${theme.dim("Overwrite destination even if it exists (backup created)")}`,
     "",

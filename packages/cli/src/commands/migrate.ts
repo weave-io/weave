@@ -219,7 +219,7 @@ export async function runMigrateMode(
   ) => Promise<number>,
 ): Promise<Result<number, CliError>> {
   const { fs, prompt } = ctx;
-  const scope = ctx.flags.scope ?? "local";
+  const scope = ctx.flags.scope ?? "global";
 
   // Step 1: Build preliminary plan (skippedWarningCount=0) for path resolution
   const preliminaryPlan = buildMigrationPlan(scope, fs);
