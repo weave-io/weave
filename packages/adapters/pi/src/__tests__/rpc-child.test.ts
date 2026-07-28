@@ -2680,6 +2680,44 @@ describe("PiRpcChild", () => {
       expect(projected).not.toContain(marker);
   });
 
+  it("degrades a missing output transfer to bounded inline settlement", async () => {
+    const captures: Array<{ output: string; byteLength: number }> = [];
+    const running = await startRunningChild({
+      onPrivateOutput: (capture) => {
+        captures.push(capture);
+        return ok(undefined);
+      },
+    });
+
+    await running.responder.send(
+      "settled",
+      "child-1",
+      {
+        outcome: "completed",
+        assistantOutput: "inline terminal answer",
+        outputTransferId: "missing-output-transfer",
+        outputByteLength: 999,
+      },
+      running.secretBytes,
+    );
+    const result = await running.runPromise;
+
+    expect(result).toEqual(
+      ok({
+        outcome: "completed",
+        summary: "inline terminal answer",
+        interventionCount: 0,
+      }),
+    );
+    expect(captures).toEqual([
+      {
+        output: "inline terminal answer",
+        byteLength: new TextEncoder().encode("inline terminal answer").byteLength,
+      },
+    ]);
+    expect(running.spawned.forceKilled).toBe(true);
+  });
+
   it("accepts the native record boundary and fails closed above it", async () => {
     const input = baseSpawnInput();
     const boundaryProcessPort = new FakeChildProcessPort();

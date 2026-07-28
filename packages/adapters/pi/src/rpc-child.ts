@@ -1602,24 +1602,24 @@ export class PiRpcChild {
     const completed =
       parsed.value.outcome === "completed" ? parsed.value : undefined;
     let privateOutput = "";
+    // A private output transfer is an optimisation, not the settlement
+    // authority. If it is missing or corrupt, retain the bounded inline
+    // projection and settle normally; otherwise a delivery hiccup would
+    // incorrectly turn a completed child into ChildDeliveryFailed.
+    let outputTransferUsable = true;
     if (completed !== undefined) {
       if (completed.outputTransferId !== undefined) {
         const transferred = this.completedOutputTransfers.get(
           completed.outputTransferId,
         );
         if (transferred === undefined) {
-          this.failOutstanding(
-            makeChildDeliveryFailedFailure(
-              this.childId,
-              "output",
-              "referenced-transfer-missing",
-            ),
-          );
-          return;
+          outputTransferUsable = false;
+        } else {
+          this.completedOutputTransfers.delete(completed.outputTransferId);
+          privateOutput = transferred;
         }
-        this.completedOutputTransfers.delete(completed.outputTransferId);
-        privateOutput = transferred;
-      } else {
+      }
+      if (privateOutput === "") {
         privateOutput =
           completed.assistantOutput ?? this.latestCompletedAssistantOutput;
       }
@@ -1627,17 +1627,13 @@ export class PiRpcChild {
         privateOutput,
       ).byteLength;
       if (
+        outputTransferUsable &&
         completed.outputByteLength !== undefined &&
         completed.outputByteLength !== actualByteLength
       ) {
-        this.failOutstanding(
-          makeChildTransferRejectedFailure(
-            this.childId,
-            "output",
-            "byte-length-mismatch",
-          ),
-        );
-        return;
+        outputTransferUsable = false;
+        privateOutput =
+          completed.assistantOutput ?? this.latestCompletedAssistantOutput;
       }
     }
 
@@ -1657,7 +1653,7 @@ export class PiRpcChild {
               ...(parsed.value.completionCandidate !== undefined
                 ? { completionCandidate: parsed.value.completionCandidate }
                 : {}),
-              ...(parsed.value.outputByteLength !== undefined
+              ...(outputTransferUsable && parsed.value.outputByteLength !== undefined
                 ? { outputByteLength: parsed.value.outputByteLength }
                 : {}),
               interventionCount,
