@@ -24,6 +24,21 @@ describe("engine public API", () => {
     );
   });
 
+  it("re-exports the model-thinking API for adapters", () => {
+    expect(engine.THINKING_LEVEL_VALUES).toEqual([
+      "off",
+      "minimal",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ]);
+    expect(
+      engine.parseModelIntentEntry("provider/model#high")._unsafeUnwrap(),
+    ).toEqual({ baseModel: "provider/model", thinkingLevel: "high" });
+  });
+
   it("does not expose permission mutation on RuntimeStore instances", () => {
     const store = createInMemoryRuntimeStore();
     expect("permissions" in store).toBe(false);

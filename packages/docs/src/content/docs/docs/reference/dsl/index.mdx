@@ -151,6 +151,7 @@ disable skills ["tdd"]
 
 settings {
   log_level INFO
+  enforce_permissions true
   runtime {
     journal {
       strict false
@@ -158,6 +159,8 @@ settings {
   }
 }
 ```
+
+`enforce_permissions` defaults to enabled behavior. Set it to `false` to let supporting adapters preserve native or tool-owner permission behavior. The Pi adapter applies the setting to parent and authenticated child sessions.
 
 `continuation` and `analytics` are not current validated public schema blocks.
 

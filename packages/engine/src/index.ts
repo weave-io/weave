@@ -152,6 +152,15 @@ export type {
   ModelResolutionResult,
   ResolutionSource,
 } from "./model-resolution.js";
+export type {
+  ModelIntentEntry,
+  ModelIntentParseError,
+  ThinkingLevelDecl,
+} from "@weaveio/weave-core";
+export {
+  parseModelIntentEntry,
+  THINKING_LEVEL_VALUES,
+} from "@weaveio/weave-core";
 export {
   DEFAULT_FALLBACK_MODEL,
   resolveAdapterModelIntent,

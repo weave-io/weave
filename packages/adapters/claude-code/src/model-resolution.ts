@@ -5,8 +5,11 @@
  * for the engine's `resolveAdapterModelIntent()`.
  */
 
-import type { AgentDescriptor } from "@weaveio/weave-engine";
-import type { ModelResolutionInput } from "@weaveio/weave-engine";
+import type {
+  AgentDescriptor,
+  ModelResolutionInput,
+} from "@weaveio/weave-engine";
+import { parseModelIntentEntry } from "@weaveio/weave-engine";
 
 /**
  * Static set of models known to be available through Claude Code.
@@ -29,6 +32,8 @@ export const CLAUDE_CODE_AVAILABLE_MODELS: Set<string> = new Set([
  *
  * The adapter does not currently have access to a UI-selected model or
  * system default from Claude Code's runtime, so those fields are omitted.
+ * Thinking-level intent is validated by core and stripped here because the
+ * current Claude Code adapter has no host-controllable activation surface.
  */
 export function buildClaudeCodeModelInput(
   descriptor: AgentDescriptor,
@@ -36,7 +41,17 @@ export function buildClaudeCodeModelInput(
   return {
     agentName: descriptor.name,
     agentMode: descriptor.mode,
-    agentModels: descriptor.models.length > 0 ? descriptor.models : undefined,
+    agentModels:
+      descriptor.models.length > 0
+        ? descriptor.models.map((entry) => {
+            const parsed = parseModelIntentEntry(entry);
+            if (parsed.isErr()) return entry;
+
+            // Claude Code has no host-controlled thinking-level activation;
+            // intentionally ignore the extracted level after stripping it.
+            return parsed.value.baseModel;
+          })
+        : undefined,
     categoryModels: descriptor.category
       ? undefined // Category models are already merged into descriptor.models by the engine
       : undefined,

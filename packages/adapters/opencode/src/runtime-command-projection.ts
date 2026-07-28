@@ -822,6 +822,13 @@ export function buildOpenCodeHealthReport(overrides?: {
           notes:
             "OpenCode SDK does not expose per-session token usage in this version",
         },
+        {
+          id: "model-thinking-activation",
+          description: "Activate descriptor model thinking intent",
+          readiness: "degraded",
+          notes:
+            "The OpenCode SDK per-request reasoning-effort surface is not confirmed.",
+        },
       ],
     },
     probeResults: [],

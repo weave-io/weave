@@ -1,6 +1,12 @@
 import { describe, expect, it } from "bun:test";
-import { buildClaudeCodeModelInput, CLAUDE_CODE_AVAILABLE_MODELS } from "../model-resolution.js";
-import type { AgentDescriptor } from "@weaveio/weave-engine";
+import {
+  resolveAdapterModelIntent,
+  type AgentDescriptor,
+} from "@weaveio/weave-engine";
+import {
+  buildClaudeCodeModelInput,
+  CLAUDE_CODE_AVAILABLE_MODELS,
+} from "../model-resolution.js";
 
 function makeDescriptor(overrides: Partial<AgentDescriptor> = {}): AgentDescriptor {
   return {
@@ -50,6 +56,28 @@ describe("buildClaudeCodeModelInput", () => {
   it("sets agentModels from descriptor when non-empty", () => {
     const input = buildClaudeCodeModelInput(makeDescriptor({ models: ["claude-opus-4"] }));
     expect(input.agentModels).toEqual(["claude-opus-4"]);
+  });
+
+  it("strips thinking suffixes before static availability matching", () => {
+    const input = buildClaudeCodeModelInput(
+      makeDescriptor({ models: ["claude-opus-4#high", "claude-sonnet-4-5#low"] }),
+    );
+
+    expect(input.agentModels).toEqual(["claude-opus-4", "claude-sonnet-4-5"]);
+    const resolved = resolveAdapterModelIntent(input);
+    expect(resolved).toMatchObject({
+      model: "claude-opus-4",
+      source: "agent-preference",
+    });
+    expect(resolved.thinkingLevel).toBeUndefined();
+  });
+
+  it("unescapes literal hashes without treating them as thinking suffixes", () => {
+    const input = buildClaudeCodeModelInput(
+      makeDescriptor({ models: ["weird\\#model"] }),
+    );
+
+    expect(input.agentModels).toEqual(["weird#model"]);
   });
 
   it("sets agentModels to undefined when empty", () => {

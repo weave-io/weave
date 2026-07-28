@@ -72,6 +72,11 @@ class Lexer {
           case '"':
             value += '"';
             break;
+          case "#":
+            // Preserve the escape marker so model-intent validation can
+            // distinguish a literal hash from a thinking-level delimiter.
+            value += "\\#";
+            break;
           default:
             value += escaped;
         }

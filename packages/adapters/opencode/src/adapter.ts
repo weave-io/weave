@@ -302,7 +302,7 @@ export class OpenCodeAdapter implements HarnessAdapter {
       );
     }
 
-    const resolvedModel = modelResult.value;
+    const resolvedModel = modelResult.value.model;
 
     // Step 2: Translate descriptor to OpenCode AgentConfig with resolved model.
     const translateResult = translateAgent(descriptor, resolvedModel);

@@ -272,7 +272,7 @@ export function createWeavePlugin(options: WeavePluginOptions = {}): Plugin {
         continue;
       }
 
-      const translateResult = translateAgent(descriptor, modelResult.value);
+      const translateResult = translateAgent(descriptor, modelResult.value.model);
 
       if (translateResult.isErr()) {
         log.warn(

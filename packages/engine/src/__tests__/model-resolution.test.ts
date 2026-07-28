@@ -258,3 +258,88 @@ describe("resolveAdapterModelIntent", () => {
     });
   });
 });
+
+describe("model thinking suffix resolution", () => {
+  it("matches availability against the base model and returns its level", () => {
+    const result = resolveAdapterModelIntent({
+      agentName: "shuttle",
+      agentModels: ["provider/model#high"],
+      availableModels: new Set(["provider/model"]),
+    });
+    expect(result).toEqual({
+      model: "provider/model",
+      source: "agent-preference",
+      thinkingLevel: "high",
+    });
+  });
+
+  it("carries thinking intent independently through category and UI branches", () => {
+    expect(
+      resolveAdapterModelIntent({
+        agentName: "shuttle",
+        categoryModels: ["category/model#low"],
+        availableModels: new Set(["category/model"]),
+      }),
+    ).toMatchObject({ model: "category/model", thinkingLevel: "low" });
+    expect(
+      resolveAdapterModelIntent({
+        agentName: "loom",
+        agentMode: "primary",
+        uiSelectedModel: "ui/model#minimal",
+      }),
+    ).toMatchObject({ model: "ui/model", thinkingLevel: "minimal" });
+  });
+
+  it("carries thinking intent through override and system-default branches", () => {
+    expect(
+      resolveAdapterModelIntent({
+        agentName: "loom",
+        overrideModel: "override/model#medium",
+      }),
+    ).toEqual({
+      model: "override/model",
+      source: "override",
+      thinkingLevel: "medium",
+    });
+    expect(
+      resolveAdapterModelIntent({
+        agentName: "loom",
+        systemDefault: "system/model#xhigh",
+      }),
+    ).toEqual({
+      model: "system/model",
+      source: "system-default",
+      thinkingLevel: "xhigh",
+    });
+  });
+
+  it("preserves plain entries without a thinking level", () => {
+    expect(
+      resolveAdapterModelIntent({
+        agentName: "shuttle",
+        agentModels: ["plain/model"],
+      }),
+    ).toEqual({ model: "plain/model", source: "agent-preference" });
+  });
+
+  it("falls back without throwing for malformed suffixes", () => {
+    expect(
+      resolveAdapterModelIntent({
+        agentName: "shuttle",
+        agentModels: ["malformed/model#unknown"],
+      }),
+    ).toEqual({
+      model: "malformed/model#unknown",
+      source: "agent-preference",
+    });
+  });
+
+  it("unescapes literal hashes without assigning a thinking level", () => {
+    expect(
+      resolveAdapterModelIntent({
+        agentName: "special",
+        agentModels: ["weird\\#model"],
+      }),
+    ).toEqual({ model: "weird#model", source: "agent-preference" });
+  });
+});

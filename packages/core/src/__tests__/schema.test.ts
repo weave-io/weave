@@ -1656,9 +1656,9 @@ describe("WorkflowStepSchema — reconciliation_handlers", () => {
 
 describe("WorkflowStepSchema — v1 before-plan non-reconciling contract", () => {
   // The execution lifecycle contract states: "before-plan steps do not
-  // reconciliation semantics" in v1.
+  // participate in reconciliation semantics" in v1.
   //
-  // As of Task 4.1, `reconciliation_handlers` IS a valid schema field on
+  // `reconciliation_handlers` is a valid schema field on
   // WorkflowStepSchema. The v1 non-reconciling constraint for before-plan
   // steps is enforced at the engine/runtime layer (not the schema layer),
   // because the schema cannot know which steps will end up in the before-plan

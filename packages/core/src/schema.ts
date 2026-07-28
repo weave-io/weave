@@ -641,7 +641,7 @@ export const LogLevelSchema = z.enum([
   "FATAL",
 ]);
 
-/** Defaults for `settings.runtime` (Spec 33 §19.3 / Spec 12 retention extension). */
+/** Defaults for Runtime Store journaling and retention. */
 export const DEFAULT_RUNTIME_JOURNAL_SETTINGS = {
   strict: false,
   retention_days: 30,
@@ -748,8 +748,8 @@ export const SettingsConfigSchema = z
  *
  * `extend_before_plan` holds the merged result of all `extend before-plan [...]`
  * top-level directives. The step list is applied globally — there is no
- * per-workflow targeting in v1. The config layer inserts these steps into every
- * workflow that publishes `extension_points { before-plan }`.
+ * per-workflow targeting in v1. The config layer inserts these steps into
+ * every workflow that publishes `extension_points { before-plan }`.
  */
 export const WeaveConfigSchema = z
   .object({
@@ -853,7 +853,7 @@ export type ArtifactDecl = z.infer<typeof ArtifactDeclSchema>;
 /** Behaviour when a gate step rejects. */
 export type OnReject = z.infer<typeof OnRejectSchema>;
 /**
- * One of the four closed built-in reconciliation reasons (Spec 22 Unit 3).
+ * One of the four closed built-in reconciliation reasons.
  * `execution-mismatch` | `user-revision-request` | `review-rejection` | `security-rejection`
  */
 export type ReconciliationReason = z.infer<typeof ReconciliationReasonSchema>;
