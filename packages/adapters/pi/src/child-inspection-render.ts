@@ -134,6 +134,9 @@ export interface PiChildInspectionRenderOutput {
 
 export interface InspectionCacheKey {
   readonly childName: string;
+  readonly topologyPath: string;
+  readonly workflowName: string | undefined;
+  readonly stepName: string | undefined;
   readonly generationId: string;
   readonly width: number;
   readonly status: PiChildStatus;
@@ -141,6 +144,11 @@ export interface InspectionCacheKey {
   readonly interventionCount: number;
   readonly queueSize: number;
   readonly turnCount: number;
+  readonly usageInputTokens: number | undefined;
+  readonly usageOutputTokens: number | undefined;
+  readonly usageCacheReadTokens: number | undefined;
+  readonly usageCacheWriteTokens: number | undefined;
+  readonly usageCost: number | undefined;
   readonly trimmed: boolean;
   readonly recoveryContinuation: boolean;
   readonly recoverableInterruption: boolean;
@@ -395,6 +403,11 @@ function computeCacheKey(
   const ts = input.transcriptState;
   return {
     childName: input.childName,
+    topologyPath: input.topologyPath
+      .map((segment) => segment.name)
+      .join("\u001f"),
+    workflowName: input.workflowMeta?.workflowName,
+    stepName: input.workflowMeta?.stepName,
     generationId: input.generationId,
     width,
     status: input.status,
@@ -402,6 +415,11 @@ function computeCacheKey(
     interventionCount: input.interventionCount,
     queueSize: input.summary.queueSize,
     turnCount: input.summary.turnCount,
+    usageInputTokens: input.summary.usage?.inputTokens,
+    usageOutputTokens: input.summary.usage?.outputTokens,
+    usageCacheReadTokens: input.summary.usage?.cacheReadTokens,
+    usageCacheWriteTokens: input.summary.usage?.cacheWriteTokens,
+    usageCost: input.summary.usage?.cost,
     trimmed: input.trimmed,
     recoveryContinuation: input.recoveryContinuation,
     recoverableInterruption: input.recoverableInterruption,
@@ -418,6 +436,9 @@ function computeCacheKey(
 function cacheKeysEqual(a: InspectionCacheKey, b: InspectionCacheKey): boolean {
   return (
     a.childName === b.childName &&
+    a.topologyPath === b.topologyPath &&
+    a.workflowName === b.workflowName &&
+    a.stepName === b.stepName &&
     a.generationId === b.generationId &&
     a.width === b.width &&
     a.status === b.status &&
@@ -425,6 +446,11 @@ function cacheKeysEqual(a: InspectionCacheKey, b: InspectionCacheKey): boolean {
     a.interventionCount === b.interventionCount &&
     a.queueSize === b.queueSize &&
     a.turnCount === b.turnCount &&
+    a.usageInputTokens === b.usageInputTokens &&
+    a.usageOutputTokens === b.usageOutputTokens &&
+    a.usageCacheReadTokens === b.usageCacheReadTokens &&
+    a.usageCacheWriteTokens === b.usageCacheWriteTokens &&
+    a.usageCost === b.usageCost &&
     a.trimmed === b.trimmed &&
     a.recoveryContinuation === b.recoveryContinuation &&
     a.recoverableInterruption === b.recoverableInterruption &&

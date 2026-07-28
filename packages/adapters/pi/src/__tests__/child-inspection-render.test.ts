@@ -573,6 +573,36 @@ describe("Pi child inspection render", () => {
       expect(first._unsafeUnwrap()).not.toBe(second._unsafeUnwrap());
     });
 
+    it("invalidates when displayed topology, workflow, or usage changes", () => {
+      const renderer = createChildInspectionRenderer();
+      const first = renderer.render(baseInput(), 80)._unsafeUnwrap();
+      const topology = renderer
+        .render(baseInput({ topologyPath: [{ name: "other-root" }] }), 80)
+        ._unsafeUnwrap();
+      const workflow = renderer
+        .render(
+          baseInput({
+            workflowMeta: { workflowName: "deploy", stepName: "build" },
+          }),
+          80,
+        )
+        ._unsafeUnwrap();
+      const usage = renderer
+        .render(
+          baseInput({
+            summary: {
+              ...baseInput().summary,
+              usage: { ...USAGE, outputTokens: 401 },
+            },
+          }),
+          80,
+        )
+        ._unsafeUnwrap();
+      expect(topology).not.toBe(first);
+      expect(workflow).not.toBe(topology);
+      expect(usage).not.toBe(workflow);
+    });
+
     it("invalidates on generation change (child restart)", () => {
       const renderer = createChildInspectionRenderer();
       const gen1 = renderer.render(baseInput({ generationId: "gen-1" }), 80);
