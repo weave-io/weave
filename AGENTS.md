@@ -38,6 +38,7 @@ Each of `packages/core`, `packages/engine`, and `packages/adapters` has its own 
 - **Builtin agents are just DSL.** Loom, Tapestry, Shuttle and friends are declared in the same `.weave` config that users write, with no separate code path. If a builtin needs a behaviour the DSL cannot express, extend the DSL.
 - **Failures are values.** Anything that can fail returns `Result` / `ResultAsync` from `neverthrow`, with a discriminated-union error type. Never throw on an expected path; never use `console.*`. See [`docs/contributing/typescript.md`](docs/contributing/typescript.md).
 - **Schema change = test change, same commit.** DSL and schema edits need coverage at every layer, and boundary-crossing code is tested against mocks, never a live harness. See [`docs/contributing/testing.md`](docs/contributing/testing.md).
+- **Adapters need real-harness proof.** An LLM must be able to verify that every adapter properly loads and works in its real harness; mocks and package imports alone are not enough. Follow [`docs/testing/adapter-verification.md`](docs/testing/adapter-verification.md).
 - **Docs ship with the change.** A non-trivial change is not done until `docs/` reflects it. See [`docs/contributing/documentation.md`](docs/contributing/documentation.md).
 - **Pull requests name their issue.** Always reference the related issue.
 

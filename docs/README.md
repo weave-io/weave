@@ -45,6 +45,7 @@ User-facing tutorials and product reference live in the [public docs package](..
 | --- | --- |
 | [Develop an Adapter](guides/adapter-development.md) | Bootstrap, materialize, project commands, and lifecycle mapping |
 | [Author Agent Evals](guides/evals.md) | Add cases, run dry checks, and interpret results |
+| [Verify an Adapter](testing/adapter-verification.md) | Prove a packaged adapter loads, becomes ready, and works in its real harness |
 
 ## Contributing
 
