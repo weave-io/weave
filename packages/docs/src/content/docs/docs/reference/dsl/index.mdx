@@ -113,6 +113,8 @@ Workflow step fields include `name`, `type`, `agent`, `prompt`, `completion`, `i
 
 ```weave
 workflow plan-and-implement {
+  version 1
+
   extension_points {
     before-plan
   }
@@ -170,8 +172,7 @@ Do not use these as current public instructions:
 | `routes` | Unsupported in current public DSL. |
 | `continuation { ... }` | Not current validated public schema. |
 | `analytics { ... }` | Not current validated public schema. |
-| `weave build` | No current CLI command. |
 
-## Related Guides
+## Related pages
 
-Use [Configuration](../../configuration/) for authoring and validation workflow. Use [Agents and Categories](../../agents-and-categories/) and [Workflows](../../workflows/) for task-oriented examples.
+Use [Configuration](../../configuration/) for authoring and validation. Use [Agents and categories](../../agents-and-categories/) and [Workflows](../../workflows/) for examples.

@@ -22,14 +22,13 @@
  * `term`, `callout`, `prevnext`, `prose`) and the command-palette styling are
  * already provided by the ported `tokens.css` / `docs.css` design system.
  *
- * The Quickstart CTA targets the Anatomy section on this page (the markdown
- * heading's auto slug `#anatomy-of-a-weave-file`); the spec CTA points at the
- * canonical Workflows article via `import.meta.env.BASE_URL`.
+ * The primary CTA points at the canonical Quickstart page; the secondary CTA
+ * points at the canonical Workflows article via `import.meta.env.BASE_URL`.
  */
 import { normalizeBaseUrl, withBaseUrl } from '../../utils/base-url';
 
 const base = normalizeBaseUrl(import.meta.env.BASE_URL);
-const gettingStartedHref = withBaseUrl(base, 'docs/getting-started/');
+const gettingStartedHref = withBaseUrl(base, 'docs/quickstart/');
 const workflowsHref = withBaseUrl(base, 'docs/workflows/');
 ---
 
@@ -39,7 +38,7 @@ const workflowsHref = withBaseUrl(base, 'docs/workflows/');
     content element) carries it instead. The TableOfContents override already
     drops `_top`, so it never appears in the on-this-page list. */}
 <div class="home-hero" id="_top">
-  <span class="tag">documentation · v0.4.7</span>
+  <span class="tag">documentation</span>
   <h1>Welcome to Weave.</h1>
   <p class="lede">
     Author intent once. Weave compiles a single <code

@@ -1,186 +1,69 @@
 ---
 title: Configuration
-description: Author, layer, validate, and inspect Weave configuration files.
-tableOfContents:
-  minHeadingLevel: 2
-  maxHeadingLevel: 3
+description: Create, locate, merge, and validate Weave configuration.
 ---
 
-## Configuration Goals
+## Where configuration lives
 
-Configuration should be readable, project-local when possible, and easy to verify before an adapter consumes it. A good Weave authoring loop is:
+Weave reads two optional files:
 
-1. Create or migrate config.
-2. Add the smallest useful agent, category, workflow, or setting.
-3. Validate the effective config.
-4. Inspect composed prompts or runtime state.
-5. Connect an adapter only after the config is correct.
-
-## File Locations
-
-| Scope | Path | Use it for |
+| Scope | File | Use |
 | --- | --- | --- |
-| Global | `~/.weave/config.weave` | Personal defaults shared by projects. |
-| Project | `.weave/config.weave` | Repository-specific roles, categories, workflows, and overrides. |
-| Global prompts | `~/.weave/prompts/` | Prompt files referenced by global config. |
-| Project prompts | `.weave/prompts/` | Prompt files referenced by project config. |
+| Global | `~/.weave/config.weave` | Defaults shared across projects. |
+| Project | `.weave/config.weave` | Settings for the current project. |
 
-Prompt paths are resolved relative to the config scope's `prompts/` directory. A project-level `prompt_file "reviewer.md"` resolves to `.weave/prompts/reviewer.md`, not to the repository root.
+Prompt files belong in the `prompts/` directory beside the selected config file.
 
-## Initialize Config
+Create either scope with:
 
-Create project config:
-
-```bash
-bun packages/cli/src/main.ts init --scope local --yes
+```sh
+weave init --scope local --yes
+weave init --scope global --yes
 ```
 
-Create global config:
+## Merge order
 
-```bash
-bun packages/cli/src/main.ts init --scope global --yes
-```
-
-Install OpenCode support during local init:
-
-```bash
-bun packages/cli/src/main.ts init --scope local --harness opencode --yes
-```
-
-Expected outcome: `.weave/config.weave` exists locally or `~/.weave/config.weave` exists globally. If a harness is selected, init also writes the harness-specific integration files that installer supports.
-
-## Migrate Legacy OpenCode Config
-
-If a project still has legacy OpenCode JSONC config, migrate it into `.weave` DSL:
-
-```bash
-bun packages/cli/src/main.ts init migrate --scope local --yes
-```
-
-The local source is `./.opencode/weave-opencode.jsonc`; the local destination is `.weave/config.weave`. Use `--force` only when you intentionally want to overwrite an existing destination and have reviewed the backup behavior.
-
-## Merge Priority
-
-The effective config is loaded from builtins, then global config, then project config. Later layers have higher priority.
+Weave loads bundled defaults first, then global values, then project values:
 
 ```text
-builtins < ~/.weave/config.weave < .weave/config.weave
+builtins < global < project
 ```
 
-Scalars override. Objects deep-merge. Arrays union-merge. This lets a project add a model preference or prompt append to a builtin agent without duplicating the builtin agent's entire definition.
+- Scalars override earlier values.
+- Objects deep-merge recursively.
+- Arrays union-merge, keeping the later declaration's entries first and removing duplicates.
 
-## Where Builtins Come From
+Keep shared defaults global and project-specific agents, prompts, and workflows local. Use `weave validate --project` and `weave validate --global` to validate each scope independently.
 
-Weave ships a builtin config layer in `packages/config/src/builtins.ts`. That file contains `BUILTIN_WEAVE_SOURCE`, which is ordinary `.weave` DSL for the default built-in agents.
+## Prompt paths
 
-This is important because the builtin layer is not a hidden internal format. It is parsed and validated exactly like user config, then merged into the effective config before `~/.weave/config.weave` and `.weave/config.weave` are applied.
-
-If you are looking for the default definitions for `loom`, `tapestry`, `shuttle`, `pattern`, `thread`, `spindle`, `weft`, or `warp`, that is the canonical source.
-
-## Prompt Files
-
-Use inline `prompt` for short instructions:
-
-```weave
-agent reviewer {
-  prompt "Review the current diff for correctness and missing tests."
-}
-```
-
-Use `prompt_file` when the prompt is long enough to deserve prose formatting:
+A `prompt_file` or `prompt_append_file` value names a file under the scope's `prompts/` directory:
 
 ```weave
 agent reviewer {
   prompt_file "reviewer.md"
+  prompt_append_file "reviewer-rules.md"
 }
 ```
 
-Project file layout:
+Use [Prompts, models, and policy](../prompts-models-policy/) for composition rules.
 
-```text
-.weave/
-  config.weave
-  prompts/
-    reviewer.md
+## Migrate a legacy configuration
+
+If you have a supported legacy OpenCode configuration, ask the CLI to convert it:
+
+```sh
+weave init migrate --scope local
 ```
 
-Do not set both `prompt` and `prompt_file` on the same agent. The same mutual-exclusion rule applies to `prompt_append` and `prompt_append_file`.
+Add `--yes` to accept the migration without prompts. Review the generated `.weave/config.weave`, then validate it before using an adapter.
 
-## Validate Config
+## Inspect the result
 
-Validate the effective config from the current project:
-
-```bash
-bun packages/cli/src/main.ts validate
+```sh
+weave prompt list
+weave prompt inspect reviewer
+weave runtime status
 ```
 
-Validate only project config:
-
-```bash
-bun packages/cli/src/main.ts validate --project
-```
-
-Validate a specific file:
-
-```bash
-bun packages/cli/src/main.ts validate --path .weave/config.weave
-```
-
-Emit JSON for automation or debugging:
-
-```bash
-bun packages/cli/src/main.ts validate --project --json
-```
-
-Expected result: exit code `0` and either a text summary or JSON config. Parse or validation errors return a non-zero exit code and identify the failing path.
-
-## Inspect Prompts
-
-List available agents, including category-generated shuttles:
-
-```bash
-bun packages/cli/src/main.ts prompt list
-```
-
-Inspect one composed prompt:
-
-```bash
-bun packages/cli/src/main.ts prompt inspect loom
-```
-
-JSON output includes metadata such as mode, models, effective tool policy, skills, delegation targets, and composed prompt:
-
-```bash
-bun packages/cli/src/main.ts prompt inspect loom --json
-```
-
-Use prompt inspection whenever you change `prompt_file`, `prompt_append`, delegation placeholders, category overrides, or `routing.delegation_exclude`.
-
-## Self-Modification Guide
-
-When an agent needs to modify Weave's own configuration, use `weave prompt self-modify` to obtain a deterministic, text-only guide:
-
-```bash
-weave prompt self-modify                  # guide for global scope (default)
-weave prompt self-modify --scope global
-weave prompt self-modify --scope local
-```
-
-The guide names the canonical config and prompts paths for the selected scope, lists required reading (`docs/reference/dsl.md` and `docs/reference/configuration.md`), and provides a step-by-step workflow for safe config edits.
-
-In v1, the command is text-only, defaults to `global` scope, accepts only `--scope global|local`, and rejects `--json` plus extra positional tailoring arguments.
-
-**Documentation audience**: repo-root `docs/` owns internal configuration contracts; `packages/docs/` owns public user guidance. A change that affects both audiences updates both surfaces. See [CLI Reference](../reference/cli/#weave-prompt-self-modify) for the command contract.
-
-## Troubleshooting
-
-| Problem | Why it happens | Fix |
-| --- | --- | --- |
-| Prompt file cannot be read | The file path is resolved under the scope's `prompts/` directory | Move the file to `.weave/prompts/` or update the path. |
-| Project values do not appear | You are validating the wrong directory or only global config | Run from the project root or pass `--path`. |
-| Duplicate agent names behave unexpectedly | Project config overrides or deep-merges with earlier layers | Inspect JSON output to see the effective value. |
-| Legacy JSONC syntax fails | `.weave` is not JSON, YAML, or TypeScript | Use `init migrate` or rewrite in block-structured DSL. |
-
-## Next Steps
-
-Use [Agents and Categories](../agents-and-categories/) to add roles. Use [Prompts, Models, and Policy](../prompts-models-policy/) to tune composed prompts and adapter policy. Use [CLI Reference](../reference/cli/) for every command and flag.
+Run prompt and runtime inspection from the project root. The [CLI reference](../reference/cli/) lists command-specific flags.

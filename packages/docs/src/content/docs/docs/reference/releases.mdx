@@ -1,39 +1,36 @@
 ---
 title: Releases
-description: Public package channels, integrity records, and release policy.
+description: Public package channels and adapter distribution status.
 ---
 
 ## Public packages
 
-Weave publishes only these packages:
-
-| Package | Channels | Purpose |
+| Package | Release status | Use |
 | --- | --- | --- |
-| `@weaveio/weave-cli` | `latest`, `next`, `nightly` | Stable CLI; includes the Claude Code adapter. |
-| `@weaveio/weave-adapter-opencode` | `latest`, `next`, `nightly` | OpenCode plugin adapter. |
-| `@weaveio/weave-adapter-claude-code` | `nightly` | Standalone experimental Claude Code adapter. |
+| `@weaveio/weave-cli` | Stable and nightly | The `weave` CLI and Claude Code materialization. |
+| `@weaveio/weave-adapter-opencode` | Stable and nightly | OpenCode plugin adapter. |
+| `@weaveio/weave-adapter-claude-code` | Nightly only | Standalone Claude Code adapter. Stable users should use the CLI's `compose` command. |
+| `@weaveio/weave-adapter-pi` | Nightly only | Implemented Pi extension; check the package peer requirement before installing. |
 
-Core, config, and engine are bundled implementation layers. They are not npm APIs and must not be installed directly.
+Core, config, and engine packages are implementation layers bundled into public artifacts. They are not supported direct installation targets.
 
-## Channels and installs
+## Install channels
 
-Use `latest` for stable CLI/OpenCode installs, `nightly` for scheduled builds, and `next` only for stable-train verification. `preview` is retired: historical preview versions remain available under the no-unpublish policy, but new users should not select that tag.
+Use `latest` for stable CLI and OpenCode installs. Use `nightly` for the nightly-only Claude Code and Pi packages or to test unreleased changes.
 
-```bash
+```sh
+bun add --global @weaveio/weave-cli@latest
 bunx @weaveio/weave-cli@latest --help
-# OpenCode plugin: @weaveio/weave-adapter-opencode@<exact-version>/plugin
 ```
 
-Claude Code users normally use the CLI-bundled adapter via `weave compose --adapter claude-code`. The standalone Claude adapter is nightly-only.
+Pin the OpenCode plugin to an exact published version in `opencode.json` or `opencode.jsonc`:
 
-## Integrity and provenance
+```text
+@weaveio/weave-adapter-opencode@<exact-version>
+```
 
-OIDC trusted publishing runs only from `weave-io/weave`'s `publish.yml`; release jobs use no npm publishing token. GitHub immutable Releases contain the exact `.tgz` files and their SHA-256 files. Verify the version and checksum, not only a mutable dist-tag.
+Pi installs through Pi's package command; see [Pi](../adapters/pi/).
 
-We accept GitHub's platform immutable-release attestation. We do not create custom attestations or SBOMs.
+## Verify a release
 
-## Release policy
-
-Published versions, tarballs, tags, releases, and accepted attestations are immutable. Never unpublish or replace them. `latest` is promoted manually with MFA by a second maintainer after OIDC publication and checksum verification. Release PRs must link their related issue.
-
-For operators, recovery, and external setup evidence, read the repository [release runbook](https://github.com/weave-io/weave/blob/main/RELEASING.md).
+Use the exact package version and its registry metadata when you need reproducible setup. Do not treat a mutable channel name as a version pin. Published release records include the package tarball and checksum.

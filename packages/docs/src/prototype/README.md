@@ -147,8 +147,8 @@ Classes: `prose`, `crumbs`, `meta`/`meta-row`, `lede`, numbered headings,
 `prevnext`, `feedback`, `toc`/`toc-label`/`toc-meta`.
 
 **Canonical article route (implemented):** `src/content/docs/docs/workflows.mdx`
-is the canonical port of `docs-article.html`. All other article routes
-(`getting-started`, `guides/*`, `reference/*`) reuse the same chrome. The
+is the canonical port of `docs-article.html`. All other live article routes
+under `src/content/docs/docs/` reuse the same chrome. The
 article-only chrome that lived in the prototype's *inline* `<style>`/`<script>`
 is factored into three shared docs components so every article shares one source:
 

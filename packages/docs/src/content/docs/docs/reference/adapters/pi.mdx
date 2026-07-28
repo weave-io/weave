@@ -1,0 +1,44 @@
+---
+title: Pi
+description: Install and use the Weave extension in Pi.
+---
+
+## Install
+
+The Pi adapter is implemented, but its package is distributed through the nightly channel only. Pi loads the extension through its package installer:
+
+```text
+pi install npm:@weaveio/weave-adapter-pi@nightly
+```
+
+The adapter requires Pi `>=0.81.1` and runs in the Bun-based Pi environment.
+
+## Activate Weave
+
+Start Pi in a project with a valid `.weave/config.weave`. The extension checks trust, configuration, and capabilities before activation. If those checks cannot pass, it enters **health-only** mode: health and diagnostic commands remain available, but configuration-driven execution is disabled.
+
+Fix the reported configuration or installation issue, then restart Pi to activate the full adapter.
+
+## Switch agents
+
+Use `Alt+A` to cycle through healthy primary agents. The active agent is shown in Pi's interface. Switching changes the active Weave agent without changing the project configuration.
+
+## Commands
+
+The extension exposes these commands:
+
+- `/weave:start` — start configured work.
+- `/weave:run` — run a direct workflow step.
+- `/weave:resume` — resume recorded work.
+- `/weave:advance` — advance the active workflow.
+- `/weave:abort` — stop active work.
+- `/weave:status` — inspect workflow status.
+- `/weave:health` — inspect activation health.
+- `/weave:plan` — inspect the current plan.
+- `/weave:artifact` — inspect an available artifact.
+
+## Private children
+
+Pi can run private child agents for delegated work and direct workflow steps. Child sessions inherit the authenticated configuration and count toward the configured parallel-child limit. Finished children release that capacity.
+
+See [Prompts, models, and policy](../../../prompts-models-policy/) for delegation intent and the [support matrix](./) for distribution status.
