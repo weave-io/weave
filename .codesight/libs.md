@@ -302,7 +302,7 @@
   - function makeActivationFailedFailure: (reason) => PiAdapterFailure
   - function makeCommandCollisionFailure: (commandName) => PiAdapterFailure
   - function makeRequiredCapabilityUnavailableFailure: (capabilityId, reason) => PiAdapterFailure
-  - _...65 more_
+  - _...70 more_
 - `packages/adapters/pi/src/extension.ts`
   - function createDefaultPiExtensionDeps: () => PiExtensionDeps
   - function buildChildBootstrapBody: (descriptorsByName, AgentDescriptor>, target, childId, context, ctx?) => JsonValue

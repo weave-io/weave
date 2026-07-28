@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 233 lib files | 32 env vars | 10 middleware | 0% test coverage
 > **Token savings:** this file is ~23,300 tokens. Without it, AI exploration would cost ~76,400 tokens. **Saves ~53,200 tokens per conversation.**
-> **Last scanned:** 2026-07-28 21:04 — re-run after significant changes
+> **Last scanned:** 2026-07-28 22:07 — re-run after significant changes
 
 ---
 
@@ -313,7 +313,7 @@
   - function makeActivationFailedFailure: (reason) => PiAdapterFailure
   - function makeCommandCollisionFailure: (commandName) => PiAdapterFailure
   - function makeRequiredCapabilityUnavailableFailure: (capabilityId, reason) => PiAdapterFailure
-  - _...65 more_
+  - _...70 more_
 - `packages/adapters/pi/src/extension.ts`
   - function createDefaultPiExtensionDeps: () => PiExtensionDeps
   - function buildChildBootstrapBody: (descriptorsByName, AgentDescriptor>, target, childId, context, ctx?) => JsonValue

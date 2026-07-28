@@ -1690,10 +1690,33 @@ describe("mergeConfigsResult — delegation limits", () => {
     }
   });
 
+  it("rejects an invalid source layer before a later override can hide it", () => {
+    const invalid = {
+      ...emptyConfig,
+      settings: {
+        ...emptyConfig.settings,
+        adapters: { generic: { payload: "x".repeat(65 * 1024) } },
+      },
+    } as WeaveConfig;
+    const valid = cfg(`settings { adapters { generic { payload "ok" } } }`);
+    const result = mergeConfigsResult(invalid, valid);
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toContainEqual({
+      type: "ConfigValidationError",
+      errors: [expect.objectContaining({ path: "settings.adapters.generic" })],
+    });
+  });
+
   it("deep-merges three adapter layers and preserves null overrides", () => {
-    const builtin = cfg(`settings { adapters { generic { object { base true } list [1, 2] value "base" } } }`);
-    const global = cfg(`settings { adapters { generic { object { global true } list [2, 3] value null } } }`);
-    const project = cfg(`settings { adapters { generic { object { project true } list [3, 4] } } }`);
+    const builtin = cfg(
+      `settings { adapters { generic { object { base true } list [1, 2] value "base" } } }`,
+    );
+    const global = cfg(
+      `settings { adapters { generic { object { global true } list [2, 3] value null } } }`,
+    );
+    const project = cfg(
+      `settings { adapters { generic { object { project true } list [3, 4] } } }`,
+    );
     const result = mergeConfigsResult(builtin, global, project);
     expect(result.isOk()).toBe(true);
     expect(result._unsafeUnwrap().settings.adapters?.generic).toEqual({

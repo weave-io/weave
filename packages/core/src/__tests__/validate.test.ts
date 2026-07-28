@@ -1609,18 +1609,44 @@ agent tapestry {
   });
 
   it("accepts all JSON-like opaque adapter values", () => {
-    const result = validateSource(`settings { adapters { test { text "x" number 1.5 flag true empty null list [1, false] object { key "value" } } } }`);
+    const result = validateSource(
+      `settings { adapters { test { text "x" number 1.5 flag true empty null list [1, false] object { key "value" } } } }`,
+    );
     expect(result.isOk()).toBe(true);
     expect(result._unsafeUnwrap().settings.adapters?.test).toEqual({
-      text: "x", number: 1.5, flag: true, empty: null, list: [1, false], object: { key: "value" },
+      text: "x",
+      number: 1.5,
+      flag: true,
+      empty: null,
+      list: [1, false],
+      object: { key: "value" },
     });
   });
 
   it("aggregates duplicate, non-JSON, and depth errors with adapter paths", () => {
-    const result = validateSource(`settings { adapters { test { bad nope deep { a { b { c { d { e true } } } } } } } }`);
+    const result = validateSource(
+      `settings { adapters { test { bad nope duplicate true duplicate false deep { a { b { c { d { e true } } } } } } } }`,
+    );
     expect(result.isErr()).toBe(true);
-    const paths = result._unsafeUnwrapErr().map((error) => error.path);
+    const errors = result._unsafeUnwrapErr();
+    const paths = errors.map((error) => error.path);
     expect(paths).toContain("settings.adapters.test.bad");
-    expect(paths.some((path) => path.includes("settings.adapters.test.deep"))).toBe(true);
+    expect(paths).toContain("settings.adapters.test.duplicate");
+    expect(paths).toContain("settings.adapters.test.deep.a.b.c.d");
+    expect(errors.every((error) => error.message.length > 0)).toBe(true);
+  });
+
+  it("rejects an adapter block larger than 64 KiB of canonical JSON", () => {
+    const payload = "x".repeat(65 * 1024);
+    const result = validateSource(
+      `settings { adapters { test { payload "${payload}" } } }`,
+    );
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toContainEqual(
+      expect.objectContaining({
+        path: "settings.adapters.test",
+        message: expect.stringContaining("64 KiB"),
+      }),
+    );
   });
 });

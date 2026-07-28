@@ -136,31 +136,57 @@ class Lexer {
 
   /** Read a numeric literal (integer or float). */
   #readNumber(startLine: number, startCol: number): Result<string, LexError> {
-    let value = "";
-    let dotCount = 0;
-    while (this.#pos < this.#source.length) {
-      const ch = this.#peek();
-      if (ch === ".") {
-        dotCount++;
-        if (dotCount > 1) {
-          // consume the rest of the bad token
-          while (/[\d.]/.test(this.#peek())) this.#advance();
-          return err({
-            type: "InvalidNumber",
-            line: startLine,
-            column: startCol,
-            value: `${value}.`,
-          });
-        }
-        value += ch;
-        this.#advance();
-        continue;
-      }
-      if (!/\d/.test(ch)) break;
-      value += ch;
-      this.#advance();
+    const start = this.#pos;
+    if (this.#peek() === "-") this.#advance();
+
+    const integerStart = this.#pos;
+    while (/\d/.test(this.#peek())) this.#advance();
+    if (this.#pos === integerStart) {
+      this.#consumeInvalidNumber();
+      return err({
+        type: "InvalidNumber",
+        line: startLine,
+        column: startCol,
+        value: this.#source.slice(start, this.#pos),
+      });
     }
-    return ok(value);
+
+    if (this.#peek() === ".") {
+      this.#advance();
+      const fractionStart = this.#pos;
+      while (/\d/.test(this.#peek())) this.#advance();
+      if (this.#pos === fractionStart) {
+        this.#consumeInvalidNumber();
+        return err({
+          type: "InvalidNumber",
+          line: startLine,
+          column: startCol,
+          value: this.#source.slice(start, this.#pos),
+        });
+      }
+    }
+
+    if (this.#peek() === "e" || this.#peek() === "E") {
+      this.#advance();
+      if (this.#peek() === "+" || this.#peek() === "-") this.#advance();
+      const exponentStart = this.#pos;
+      while (/\d/.test(this.#peek())) this.#advance();
+      if (this.#pos === exponentStart) {
+        this.#consumeInvalidNumber();
+        return err({
+          type: "InvalidNumber",
+          line: startLine,
+          column: startCol,
+          value: this.#source.slice(start, this.#pos),
+        });
+      }
+    }
+
+    return ok(this.#source.slice(start, this.#pos));
+  }
+
+  #consumeInvalidNumber(): void {
+    while (/[a-zA-Z0-9._+-]/.test(this.#peek())) this.#advance();
   }
 
   /** Read an identifier (keyword, bare enum value, boolean, etc.) */
@@ -254,7 +280,7 @@ class Lexer {
       }
 
       // --- number ---
-      if (/\d/.test(ch)) {
+      if (/\d/.test(ch) || (ch === "-" && /\d/.test(this.#peek(1)))) {
         const result = this.#readNumber(line, col);
         if (result.isErr()) {
           errors.push(result.error);

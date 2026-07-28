@@ -1,7 +1,7 @@
 import {
+  AdapterSettingsSchema,
   DEFAULT_DELEGATION_LIMITS,
   type WeaveConfig,
-  AdapterSettingsSchema,
   WeaveConfigSchema,
   type WorkflowConfig,
   type WorkflowStep,
@@ -365,22 +365,24 @@ function mergeWorkflowRecord(
   return ok(combined);
 }
 
+function adapterSettingsIssues(
+  config: WeaveConfig,
+): Array<{ path: string; message: string }> {
+  const adapters = config.settings.adapters;
+  if (adapters === undefined) return [];
+  const parsed = AdapterSettingsSchema.safeParse(adapters);
+  if (parsed.success) return [];
+  return parsed.error.issues.map((issue) => ({
+    path: ["settings", "adapters", ...issue.path].join("."),
+    message: issue.message,
+  }));
+}
+
 function validateMergedConfig(
   config: WeaveConfig,
 ): Result<WeaveConfig, MergeError[]> {
-  const issues: Array<{ path: string; message: string }> = [];
-  const adapters = config.settings.adapters;
-  if (adapters !== undefined) {
-    const parsed = AdapterSettingsSchema.safeParse(adapters);
-    if (!parsed.success) {
-      issues.push(
-        ...parsed.error.issues.map((issue) => ({
-          path: ["settings", "adapters", ...issue.path].join("."),
-          message: issue.message,
-        })),
-      );
-    }
-  }
+  const issues: Array<{ path: string; message: string }> =
+    adapterSettingsIssues(config);
   const project = config.settings.delegation;
   const projectMaxChildren =
     project?.max_children ?? DEFAULT_DELEGATION_LIMITS.max_children;
@@ -518,6 +520,16 @@ export function mergeConfigsResult(
   if (configs.length === 0) {
     return ok(WeaveConfigSchema.parse({}));
   }
+
+  // Validate every source before merging. Otherwise a later override could
+  // hide an invalid adapter block and bypass the per-source contract.
+  const sourceIssues = configs.flatMap((config) =>
+    adapterSettingsIssues(config),
+  );
+  if (sourceIssues.length > 0) {
+    return err([{ type: "ConfigValidationError", errors: sourceIssues }]);
+  }
+
   if (configs.length === 1) {
     return validateMergedConfig(configs[0] as WeaveConfig);
   }

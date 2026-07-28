@@ -27,7 +27,9 @@ describe("Parser — model strings", () => {
 }`);
     expect(result.isOk()).toBe(true);
     const agent = result._unsafeUnwrap()[0] as AgentBlock;
-    const models = agent.properties.find((property) => property.key === "models");
+    const models = agent.properties.find(
+      (property) => property.key === "models",
+    );
     expect(models?.value).toMatchObject({
       kind: "array",
       elements: [
@@ -757,14 +759,38 @@ agent tapestry {
     });
   });
 
+  it("parses JSON number forms inside opaque adapter settings", () => {
+    const result = parseSource(
+      `settings { adapters { test { negative -1 exponent 1.25e+2 } } }`,
+    );
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      const test = ((result.value[0] as SettingAssignment).value as BlockValue)
+        .properties[0]?.value as BlockValue;
+      const adapter = test.properties[0]?.value as BlockValue;
+      expect(
+        adapter.properties.map((property) => property.value),
+      ).toMatchObject([
+        { kind: "number", value: -1 },
+        { kind: "number", value: 125 },
+      ]);
+    }
+  });
+
   it("parses null inside opaque adapter settings", () => {
-    const result = parse(tokenize(`settings { adapters { test { value null } } }`)._unsafeUnwrap());
+    const result = parse(
+      tokenize(`settings { adapters { test { value null } } }`)._unsafeUnwrap(),
+    );
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
       const settings = result.value[0] as SettingAssignment;
-      const adapters = (settings.value as BlockValue).properties[0]?.value as BlockValue;
+      const adapters = (settings.value as BlockValue).properties[0]
+        ?.value as BlockValue;
       const test = adapters.properties[0]?.value as BlockValue;
-      expect(test.properties[0]?.value).toMatchObject({ kind: "null", value: null });
+      expect(test.properties[0]?.value).toMatchObject({
+        kind: "null",
+        value: null,
+      });
     }
   });
 });
