@@ -1,5 +1,5 @@
 /**
- * Serialized retention/pruning service (Spec 33 §19.3 / Spec 12 extension).
+ * Serialized retention and pruning service for the Runtime Store.
  */
 
 import { describe, expect, it } from "bun:test";

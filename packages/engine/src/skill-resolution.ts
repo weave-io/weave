@@ -14,7 +14,7 @@
  * - No harness-specific references: no OpenCode, Claude Code, Pi, Bun.file, or process-spawning.
  * - All fallible paths return `Result<T, E>` from `neverthrow`.
  *
- * @see docs/specs/09-spec-adapter-provided-skill-resolution/09-spec-adapter-provided-skill-resolution.md
+ * @see docs/architecture/adapter-boundary.md
  */
 
 import type { WeaveConfig } from "@weaveio/weave-core";

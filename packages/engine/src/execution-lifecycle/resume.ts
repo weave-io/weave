@@ -14,7 +14,7 @@
  * defaulted); ordinary resume keeps the prior default-to-`"user"` behavior.
  *
  * @see docs/adr/0004-workflow-first-execution-contract.md
- * @see docs/specs/33-spec-pi-adapter/33-spec-pi-adapter.md — §18
+ * @see docs/adapters/pi.md#plans-artifacts-and-recovery
  */
 
 import type { Result, ResultAsync } from "neverthrow";

@@ -5,7 +5,7 @@
  * engine's closed authorization contract (ADR 0004, execution lifecycle contract).
  *
  * @see docs/adr/0004-workflow-first-execution-contract.md
- * @see docs/specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md
+ * @see docs/reference/execution-lifecycle.md
  */
 
 import type { ReconciliationReason } from "@weaveio/weave-core";
@@ -72,7 +72,7 @@ export function validateReconciliationSource(
     lifecyclePolicyDecisionError(
       `Reconciliation reason "${reason}" requires source "${authorized}" but received "${source}". ` +
         `Only the authorized source may trigger this reconciliation reason. ` +
-        `See docs/specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md Unit 3.`,
+        `See docs/reference/execution-lifecycle.md`,
       "reconciliationSource",
     ),
   );

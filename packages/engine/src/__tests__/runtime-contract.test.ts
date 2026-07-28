@@ -1672,7 +1672,7 @@ describe("execution lifecycle contract — ExecutionAuthorizationSource contract
 });
 
 // ---------------------------------------------------------------------------
-// Tests: Task 3.1 — Artifact identity, monotonic revisions, approval state,
+// Tests: Artifact identity, monotonic revisions, approval state,
 // and integrity-verification metadata
 // ---------------------------------------------------------------------------
 
@@ -2056,15 +2056,15 @@ describe("Reconciliation contract — closed reason set (execution lifecycle con
     expect(result.error.message).toContain('"user"');
   });
 
-  it("validateReconciliationSource error message references the spec", () => {
+  it("validateReconciliationSource error message references the lifecycle contract", () => {
     const result = validateReconciliationSource(
       "security-rejection",
       "runtime",
     );
     expect(result.isErr()).toBe(true);
     if (!result.isErr()) return;
-    // Error message should reference the spec for traceability
-    expect(result.error.message).toContain("22-spec-workflow-first-execution");
+    // Error message should reference the maintained lifecycle contract.
+    expect(result.error.message).toContain("docs/reference/execution-lifecycle.md");
   });
 });
 

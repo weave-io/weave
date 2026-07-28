@@ -22,7 +22,7 @@
  *   profile evaluation failures and warnings in the health report.
  *
  * @see docs/reference/cli.md
- * @see docs/adapter-boundary.md
+ * @see docs/architecture/adapter-boundary.md
  * @see packages/engine/src/capability-contract.ts — AdapterHealthReport, buildAdapterHealthReport
  * @see packages/engine/src/runtime-command-operations/types.ts
  */

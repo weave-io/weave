@@ -583,7 +583,7 @@ function loadAppendSourceFromInput(
  * 2. **Workflow-scope fallback**: when the step has no append of its own,
  *    the workflow-level `prompt_append` / `prompt_append_file` is applied.
  *
- * 3. **No append**: when neither scope has an append, the step prompt is
+ * 3. **No append**: when neither scope has an append, the step is
  *    returned as-is (after template rendering).
  *
  * 4. **Same-scope last-append-wins**: within a single scope, the config-merge

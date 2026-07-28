@@ -26,7 +26,7 @@
  * | Advance step         | `advance-step`        | Advance or complete a blocked step       |
  *
  * @see docs/reference/cli.md
- * @see docs/adapter-boundary.md
+ * @see docs/architecture/adapter-boundary.md
  */
 
 export { abortExecution, advanceStep } from "./control.js";

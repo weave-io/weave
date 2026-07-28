@@ -10,7 +10,7 @@
  * lease steal.
  *
  * @see packages/engine/src/execution-lifecycle/resume.ts
- * @see docs/specs/33-spec-pi-adapter/33-spec-pi-adapter.md — §18
+ * @see docs/adapters/pi.md#plans-artifacts-and-recovery
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";

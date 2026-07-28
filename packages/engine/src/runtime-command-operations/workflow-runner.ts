@@ -25,7 +25,7 @@
  *   `PlanStateProvider` (not used here — plan validation is caller-owned).
  *
  * @see docs/reference/cli.md
- * @see docs/adapter-boundary.md
+ * @see docs/architecture/adapter-boundary.md
  * @see packages/engine/src/execution-lifecycle/start.ts — startExecution
  * @see packages/engine/src/execution-lifecycle/dispatch.ts — dispatchStep
  * @see packages/engine/src/execution-lifecycle/completion.ts — completeStep

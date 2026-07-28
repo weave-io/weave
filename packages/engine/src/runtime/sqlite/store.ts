@@ -2537,7 +2537,7 @@ export class SqliteRuntimeStore implements RuntimeStore {
     }
 
     // Cross-store coordinator over the held directory descriptor (Pi adapter contract
-    // §18 concurrency hardening): every `acquire()` takes the leaf's
+    // concurrency hardening): every `acquire()` takes the leaf's
     // exclusive advisory lock and reloads its latest on-disk bytes, and
     // `commit()` persists atomically and always releases the lock
     // afterward. The entire bootstrap sequence below - reading the

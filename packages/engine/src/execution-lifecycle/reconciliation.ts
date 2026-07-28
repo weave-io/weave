@@ -6,7 +6,7 @@
  * the nearest explicitly declared upstream handler step, and fails closed
  * by pausing the instance when no handler exists.
  *
- * @see docs/specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md Unit 3
+ * @see docs/reference/execution-lifecycle.md
  */
 
 import type {
@@ -187,7 +187,7 @@ function checkCompletedPlanImmutability(
         lifecyclePolicyDecisionError(
           `Reconciliation rejected: plan "${planPath}" has all tasks completed. ` +
             `Completed Plan Markdown tasks are immutable — corrective work must be expressed as follow-up tasks, not in-place revisions. ` +
-            `See docs/specs/22-spec-workflow-first-execution/22-spec-workflow-first-execution.md Unit 3.`,
+            `See docs/reference/execution-lifecycle.md.`,
           "completed_plan_immutability",
         ),
       );

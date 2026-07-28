@@ -190,7 +190,7 @@ export type ToolDecision = MappedToolDecision | UnmappedToolDecision;
  *
  * **Pure and deterministic** — no I/O, no harness names, no adapter calls.
  * Aligned with adapter capability contract `tool-policy-mapping` capability
- * (see `docs/specs/07-spec-adapter-capability-contract/`).
+ * (see `docs/reference/adapter-capabilities.md`).
  *
  * Rules:
  * - A tool id present in `classifications` → `MappedToolDecision` with the

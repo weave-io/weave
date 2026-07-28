@@ -20,7 +20,7 @@
  * - `/start-work` is out of scope for this operation.
  *
  * @see docs/reference/cli.md
- * @see docs/adapter-boundary.md
+ * @see docs/architecture/adapter-boundary.md
  * @see packages/engine/src/runtime-command-operations/workflow-runner.ts
  * @see packages/engine/src/runtime-command-operations/types.ts
  * @see packages/engine/src/plan-state-provider.ts

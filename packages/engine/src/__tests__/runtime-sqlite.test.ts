@@ -687,7 +687,7 @@ describe("migrations", () => {
     db.close();
   });
 
-  // Regression for #21 Task 12, proven against a real pre-existing v2
+  // Regression for #21, proven against a real pre-existing v2
   // database (not just a fresh v5 one): a SessionSnapshot created under
   // the legacy schema (lease_id NOT NULL, implicit ON DELETE NO ACTION)
   // must survive the v5 table-recreate migration, and its referenced
@@ -2971,7 +2971,7 @@ describe("ExecutionLease CRUD and conflicts", () => {
     await store.close();
   });
 
-  // Regression for #21 Task 12: terminal completeStep() must be able to
+  // Regression for #21: terminal completeStep() must be able to
   // release the lease that drove a workflow to `completed` even though a
   // SessionSnapshot recorded during execution still references it. Before
   // the fix, session_snapshots.lease_id was NOT NULL with an implicit

@@ -17,7 +17,7 @@
  *   adapters apply through their own projection behavior.
  *
  * @see docs/reference/cli.md
- * @see docs/adapter-boundary.md
+ * @see docs/architecture/adapter-boundary.md
  * @see packages/engine/src/execution-lifecycle/types.ts — lifecycle I/O types
  * @see packages/engine/src/plan-state-provider.ts — plan existence/completion
  * @see packages/engine/src/runtime/store.ts — RuntimeStore

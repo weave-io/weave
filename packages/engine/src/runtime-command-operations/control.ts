@@ -25,7 +25,7 @@
  *   succeeding or failing.
  *
  * @see docs/reference/cli.md
- * @see docs/adapter-boundary.md
+ * @see docs/architecture/adapter-boundary.md
  * @see packages/engine/src/execution-lifecycle/interrupts.ts — handleUserInterrupt
  * @see packages/engine/src/execution-lifecycle/completion.ts — completeStep
  * @see packages/engine/src/runtime-command-operations/types.ts

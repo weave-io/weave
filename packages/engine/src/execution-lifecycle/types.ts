@@ -183,7 +183,7 @@ export type LifecycleEffect =
 // ---------------------------------------------------------------------------
 
 /**
- * Structured signal describing how a workflow step finished.
+ * Structured signal describing how a workflow step completed.
  */
 export interface StepCompletionSignal {
   readonly outcome: "success" | "blocked" | "failed" | "paused";
@@ -329,7 +329,7 @@ export interface StartExecutionOutput {
 
 /**
  * Explicit, user-authorized takeover correlation for one exact pre-reload
- * lease (Issue #21 Task 12 S020). Combined with the sibling
+ * lease. Combined with the sibling
  * `workflowInstanceId`, this must match the active `ExecutionLease` exactly
  * (lease ID and owner) or `resumeExecution` fails closed with the ordinary
  * `lease_conflict` error - never a broad foreign-lease steal.
@@ -401,8 +401,8 @@ export interface DispatchStepOutput {
    * logged, or copied into one. Adapters read it exactly once, compose it
    * with their own resolved `AgentDescriptor.composedPrompt`, and discard it.
    * `RunAgentEffect.promptMetadata.byteLength` remains the only
-   * effect-visible trace of the rendered prompt (Spec 33 §8.1 / composedPrompt
-   * security invariant).
+   * effect-visible trace of the rendered prompt; see the Pi adapter's
+   * composed-prompt security invariant.
    */
   readonly stepPromptText?: string;
 }
@@ -515,9 +515,8 @@ export interface InspectExecutionOutput {
   /**
    * All recorded step attempts for this instance, in dispatch order.
    *
-   * Exposes `WorkflowInstance.stepAttempts` (Spec 22 Unit 3: "record
-   * consumed revisions for all explicit artifact inputs on each step
-   * attempt") through the read-only `inspectExecution` projection so
+   * Exposes `WorkflowInstance.stepAttempts` through the read-only
+   * `inspectExecution` projection so
    * adapters can determine, before calling `dispatchStep`, whether the
    * current step already has a prior attempt and — if so — which exact
    * artifact revisions it consumed. This is what lets an adapter compute
@@ -526,8 +525,8 @@ export interface InspectExecutionOutput {
    * omitted; see `latestAttemptForStep` in
    * `execution-lifecycle/artifacts.ts`) instead of re-deriving "latest
    * revision" from scratch, which silently rebinds to newer artifact
-   * revisions and violates the "no automatic latest-artifact rebinding on
-   * retry" invariant (Spec 22 Non-Goal 5).
+   * revisions and violates the no-automatic-latest-artifact-rebinding
+   * invariant.
    */
   readonly stepAttempts: readonly StepAttemptRecord[];
 }

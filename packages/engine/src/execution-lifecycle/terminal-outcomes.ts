@@ -4,7 +4,7 @@
  * Handles artifact approval/rejection with actor validation, revision/digest
  * binding, self-approval prohibition, and lease enforcement.
  *
- * @see docs/specs/33-spec-pi-adapter/33-spec-pi-adapter.md §17
+ * @see docs/adapters/pi.md#workflow-projection
  * @see docs/adr/0010-plan-state-and-artifact-approval-authority.md
  */
 

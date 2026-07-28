@@ -286,7 +286,7 @@ describe("inspectExecution", () => {
     expect(result.value.stepAttempts).toEqual([]);
   });
 
-  it("exposes recorded step attempts and their consumed artifact revisions so adapters can compute retry-safe pins (Spec 22 Unit 3 default retry reuse)", async () => {
+  it("exposes recorded step attempts and consumed artifact revisions so adapters can compute retry-safe pins", async () => {
     const store = createInMemoryRuntimeStore();
     const instanceId = createWorkflowInstanceId("inspect-step-attempts-001");
 

@@ -18,7 +18,7 @@ export interface HarnessAdapter {
    * Perform any one-time initialisation required by the harness before
    * normalized Weave intent can be materialised. Called exactly once by the
    * bootstrap entry point before any other adapter method (see
-   * `docs/adapter-bootstrap.md`).
+   * `docs/guides/adapter-development.md`).
    */
   init(): Promise<void>;
 
