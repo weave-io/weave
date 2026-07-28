@@ -8,6 +8,7 @@ import {
 } from "@weaveio/weave-engine";
 import { errAsync, ok, okAsync } from "neverthrow";
 import { DefaultPiCapabilityProber } from "../capability-prober.js";
+import type { PiChildHistoryStore } from "../child-history-store.js";
 import { WEAVE_COMMAND_NAMES } from "../commands.js";
 import { PiConfigActivator } from "../config-activator.js";
 import {
@@ -1057,7 +1058,9 @@ describe("createPiExtension: config activation, materialization consumption, pri
       systemPrompt: "native",
     });
 
-    expect(first.systemPrompt).toContain("You are Loom, the main orchestrator.");
+    expect(first.systemPrompt).toContain(
+      "You are Loom, the main orchestrator.",
+    );
     expect(host.setModelCalls).toHaveLength(0);
     expect(host.getCurrentModel()).toBe(userModel);
     await host.invokeCommand("weave:health");
@@ -1369,5 +1372,72 @@ describe("createPiExtension: config activation, materialization consumption, pri
         (call) => call.key === "weave-agent" && call.value === "◆ WEAVE · LOOM",
       ),
     ).toHaveLength(2);
+  });
+
+  it("uses one trusted parent-session history identity across replacement generations and separates distinct sessions", async () => {
+    const opened: string[] = [];
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    installExtension(host, "0.81.1", {
+      parentSessionId: () => "parent-session-a",
+      childHistoryStoreFactory: (id) => {
+        opened.push(id);
+        return errAsync("not persisted" as unknown);
+      },
+    });
+    await host.triggerSessionStart();
+    await host.triggerSessionStart();
+    expect(opened).toEqual(["parent-session-a", "parent-session-a"]);
+
+    const otherOpened: string[] = [];
+    const otherHost = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    installExtension(otherHost, "0.81.1", {
+      parentSessionId: () => "parent-session-b",
+      childHistoryStoreFactory: (id) => {
+        otherOpened.push(id);
+        return errAsync("not persisted" as unknown);
+      },
+    });
+    await otherHost.triggerSessionStart();
+    expect(otherOpened).toEqual(["parent-session-b"]);
+    expect(opened[0]).not.toBe(otherOpened[0]);
+  });
+
+  it("keeps persist_history=false write-free and never lets a fake host touch user data", async () => {
+    let writes = 0;
+    const fakeStore = {
+      upsertRecord: () => {
+        writes += 1;
+        return okAsync(undefined);
+      },
+      updateRecord: () => {
+        writes += 1;
+        return okAsync(undefined);
+      },
+      appendSessionEvent: () => {
+        writes += 1;
+        return okAsync(undefined);
+      },
+      clear: () => {
+        writes += 1;
+        return okAsync(undefined);
+      },
+    } as unknown as PiChildHistoryStore;
+    const config = {
+      ...EMPTY_CONFIG,
+      settings: {
+        adapters: { pi: { child_inspection: { persist_history: false } } },
+      },
+    } as unknown as WeaveConfig;
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    installExtension(host, "0.81.1", {
+      configActivator: fakeConfigActivator(undefined, config),
+      parentSessionId: () => "fake-parent",
+      childHistoryStoreFactory: () => okAsync(fakeStore),
+    });
+    await host.triggerSessionStart();
+    expect(writes).toBe(0);
+    expect(
+      host.notifyCalls.some((call) => String(call.message).includes("/Users/")),
+    ).toBe(false);
   });
 });

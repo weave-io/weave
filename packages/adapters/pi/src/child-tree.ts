@@ -5,9 +5,322 @@
  * tested without a real host.
  */
 
+import { errAsync, okAsync, type ResultAsync } from "neverthrow";
+import type { PiChildHistoryRecord } from "./child-history-schema.js";
+import type {
+  PiChildHistoryStore,
+  PiChildHistoryStoreError,
+} from "./child-history-store.js";
+import { preserveUnknownChildEvent } from "./child-session-events.js";
 import type { JsonValue } from "./strict-json.js";
 
 export const ROOT_NODE_ID = "root";
+
+/**
+ * Shared per-generation child registry. Execution owners keep their own
+ * process maps and budgets; this registry is the single topology/inspection
+ * view for ordinary, nested, and workflow-step children. Terminal snapshots
+ * remain after the process owner disposes the child.
+ */
+export type PiChildInspectionHistoryError = {
+  readonly kind: "history-write-failed";
+  readonly operation: "register" | "checkpoint" | "interrupted" | "terminal";
+  readonly reason: "unavailable" | "corrupt" | "quota" | "invalid";
+};
+
+function statusForSnapshot(
+  snapshot: PiChildTreeNode,
+):
+  | "queued"
+  | "running"
+  | "settled"
+  | "interrupted"
+  | "quarantined"
+  | "cleared" {
+  if (snapshot.status === "cancelled") return "interrupted";
+  if (snapshot.status === "completed") return "settled";
+  return "running";
+}
+
+function mapHistoryError(
+  operation: PiChildInspectionHistoryError["operation"],
+  error: PiChildHistoryStoreError,
+): PiChildInspectionHistoryError {
+  let reason: PiChildInspectionHistoryError["reason"];
+  if (error.type === "quota-exceeded") reason = "quota";
+  else if (error.type === "history-disabled") reason = "unavailable";
+  else if (
+    error.type === "history-json" ||
+    error.type === "history-schema" ||
+    error.type === "history-quarantined"
+  )
+    reason = "corrupt";
+  else reason = "invalid";
+  return { kind: "history-write-failed", operation, reason };
+}
+
+export interface PiChildInspectionHistoryPort {
+  readonly register?: (
+    registration: PiChildInspectionRegistration,
+  ) => ResultAsync<void, PiChildInspectionHistoryError>;
+  readonly checkpoint?: (
+    id: string,
+    event?: unknown,
+  ) => ResultAsync<void, PiChildInspectionHistoryError>;
+  readonly interrupted?: (
+    id: string,
+  ) => ResultAsync<void, PiChildInspectionHistoryError>;
+  readonly terminal?: (
+    id: string,
+    snapshot: PiChildTreeNode,
+    finalOutput?: string,
+  ) => ResultAsync<void, PiChildInspectionHistoryError>;
+}
+
+/** Adapts the persistent Task 5 store without leaking store details into controllers. */
+export function createPiChildHistoryPort(
+  store: PiChildHistoryStore,
+  now: () => number = Date.now,
+): PiChildInspectionHistoryPort {
+  const base = (
+    registration: PiChildInspectionRegistration,
+    snapshot: PiChildTreeNode,
+  ): PiChildHistoryRecord => ({
+    childId: registration.id,
+    parentSessionId: store.parentSessionId,
+    parentChildId:
+      registration.parentId === ROOT_NODE_ID
+        ? undefined
+        : registration.parentId,
+    kind: registration.kind,
+    status: statusForSnapshot(snapshot),
+    workflow: {
+      workflow: registration.workflowInstanceId,
+      step: registration.stepName,
+    },
+    sessionPath: `children/${registration.id}/session.jsonl`,
+    checkpointCursor: 0,
+    branchAncestry: [],
+    interventionCount: 0,
+    finalOutput: "",
+    trim: { trimmed: false, markerCount: 0 },
+    quarantine: { quarantined: false },
+    clear: { cleared: false },
+    recovery: { eligible: false, count: 0 },
+    bytes: { session: 0, checkpoint: 0, total: 0 },
+    createdAt: now(),
+    updatedAt: now(),
+  });
+  const registrations = new Map<string, PiChildInspectionRegistration>();
+  let checkpointSequence = 0;
+  const nextCheckpointId = (id: string) =>
+    `${id}-${now()}-${checkpointSequence++}`;
+  const mapped = <T>(
+    operation: PiChildInspectionHistoryError["operation"],
+    result: ResultAsync<T, PiChildHistoryStoreError>,
+  ) => result.mapErr((error) => mapHistoryError(operation, error));
+  return {
+    register: (registration) =>
+      mapped(
+        "register",
+        store
+          .upsertRecord(base(registration, registration.snapshot()))
+          .map(() => {
+            registrations.set(registration.id, registration);
+            return undefined;
+          }),
+      ),
+    checkpoint: (id, event) => {
+      const registration = registrations.get(id);
+      if (!registration) return okAsync(undefined);
+      const checkpoint =
+        event === undefined
+          ? store.updateRecord(id, {})
+          : (() => {
+              const normalized = preserveUnknownChildEvent(event);
+              return store
+                .appendSessionEvent(id, normalized)
+                .andThen(() =>
+                  store.appendCheckpoint(id, [
+                    {
+                      id: nextCheckpointId(id),
+                      kind: "session-event",
+                      payload: normalized as unknown as JsonValue,
+                    },
+                  ]),
+                )
+                .map(() => undefined);
+            })();
+      return mapped("checkpoint", checkpoint);
+    },
+    interrupted: (id) =>
+      mapped("interrupted", store.updateRecord(id, { status: "interrupted" })),
+    terminal: (id, snapshot, finalOutput) =>
+      mapped(
+        "terminal",
+        store.updateRecord(id, {
+          status: snapshot.status === "completed" ? "settled" : "interrupted",
+          ...(finalOutput === undefined ? {} : { finalOutput }),
+        }),
+      ),
+  };
+}
+export interface PiChildInspectionRegistration {
+  readonly id: string;
+  readonly parentId: string;
+  readonly name: string;
+  readonly kind: "ordinary" | "nested" | "workflow-step";
+  readonly snapshot: () => PiChildTreeNode;
+  readonly workflowInstanceId?: string;
+  readonly stepName?: string;
+  readonly onInterrupted?: () => void;
+  readonly onTerminal?: (snapshot: PiChildTreeNode) => void;
+}
+
+export class PiChildInspectionRegistry {
+  private readonly live = new Map<string, PiChildInspectionRegistration>();
+  private readonly records = new Map<string, PiChildTreeNode>();
+  private generationOpen = true;
+  private tail: ResultAsync<void, PiChildInspectionHistoryError> =
+    okAsync(undefined);
+  private firstFailure: PiChildInspectionHistoryError | undefined;
+
+  constructor(private readonly history?: PiChildInspectionHistoryPort) {}
+
+  private enqueue(
+    operation: () => ResultAsync<void, PiChildInspectionHistoryError>,
+  ): ResultAsync<void, PiChildInspectionHistoryError> {
+    // Recover the chain after each failure so one bad write cannot suppress
+    // later checkpoints or the terminal/interrupted write. Keep the first
+    // typed failure and report it after the queued operation has run.
+    const next = this.tail
+      .orElse((failure) => {
+        this.firstFailure ??= failure;
+        return okAsync(undefined);
+      })
+      .andThen(operation)
+      .mapErr((failure) => {
+        this.firstFailure ??= failure;
+        return failure;
+      });
+    this.tail = next;
+    return next
+      .orElse((failure) => {
+        this.firstFailure ??= failure;
+        return okAsync(undefined);
+      })
+      .andThen(() =>
+        this.firstFailure === undefined
+          ? okAsync(undefined)
+          : errAsync(this.firstFailure),
+      );
+  }
+
+  /** Waits for every queued history write, including same-tick checkpoints. */
+  drain(): ResultAsync<void, PiChildInspectionHistoryError> {
+    return this.tail
+      .orElse((failure) => {
+        this.firstFailure ??= failure;
+        return okAsync(undefined);
+      })
+      .andThen(() =>
+        this.firstFailure === undefined
+          ? okAsync(undefined)
+          : errAsync(this.firstFailure),
+      );
+  }
+
+  register(
+    registration: PiChildInspectionRegistration,
+  ): ResultAsync<void, PiChildInspectionHistoryError> {
+    if (!this.generationOpen) return okAsync(undefined);
+    return this.enqueue(() =>
+      (this.history?.register?.(registration) ?? okAsync(undefined)).map(() => {
+        this.live.set(registration.id, registration);
+        this.records.set(registration.id, registration.snapshot());
+        return undefined;
+      }),
+    );
+  }
+
+  checkpointEvent(
+    id: string,
+    event: unknown,
+  ): ResultAsync<void, PiChildInspectionHistoryError> {
+    if (!this.live.has(id)) return okAsync(undefined);
+    return this.enqueue(() =>
+      (this.history?.checkpoint?.(id, event) ?? okAsync(undefined)).map(
+        () => undefined,
+      ),
+    );
+  }
+
+  checkpoint(id: string): ResultAsync<void, PiChildInspectionHistoryError> {
+    if (!this.live.has(id)) return okAsync(undefined);
+    return this.enqueue(() =>
+      (this.history?.checkpoint?.(id) ?? okAsync(undefined)).map(() => {
+        const registration = this.live.get(id);
+        if (registration) this.records.set(id, registration.snapshot());
+        return undefined;
+      }),
+    );
+  }
+
+  markInterrupted(
+    id: string,
+  ): ResultAsync<void, PiChildInspectionHistoryError> {
+    const registration = this.live.get(id);
+    if (registration === undefined) return okAsync(undefined);
+    return this.enqueue(() =>
+      (this.history?.interrupted?.(id) ?? okAsync(undefined)).map(() => {
+        const snapshot = registration.snapshot();
+        this.records.set(id, { ...snapshot, status: "cancelled" });
+        registration.onInterrupted?.();
+        return undefined;
+      }),
+    );
+  }
+
+  retainTerminal(
+    id: string,
+    snapshot?: PiChildTreeNode,
+    finalOutput?: string,
+  ): ResultAsync<void, PiChildInspectionHistoryError> {
+    const registration = this.live.get(id);
+    const terminal = snapshot ?? registration?.snapshot();
+    if (terminal === undefined) return okAsync(undefined);
+    return this.enqueue(() =>
+      (
+        this.history?.terminal?.(id, terminal, finalOutput) ??
+        okAsync(undefined)
+      ).map(() => {
+        this.records.set(id, terminal);
+        this.live.delete(id);
+        registration?.onTerminal?.(terminal);
+        return undefined;
+      }),
+    );
+  }
+
+  /** Live nodes for the execution tree; terminal nodes remain in history. */
+  snapshotLive(): readonly PiChildTreeNode[] {
+    return [...this.live.keys()]
+      .map((id) => this.records.get(id))
+      .filter((node): node is PiChildTreeNode => node !== undefined);
+  }
+
+  snapshotHistory(): readonly PiChildTreeNode[] {
+    return [...this.records.values()];
+  }
+
+  snapshot(): readonly PiChildTreeNode[] {
+    return this.snapshotHistory();
+  }
+
+  closeGeneration(): void {
+    this.generationOpen = false;
+  }
+}
 
 export type PiChildStatus =
   | "queued"

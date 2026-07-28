@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { classifyChildTreeKey } from "../child-tree-keys.js";
+import { classifyChildInspectorKey, classifyChildTreeKey } from "../child-tree-keys.js";
 
 describe("classifyChildTreeKey", () => {
   it("classifies Alt+1..Alt+9 as select-direct-child with a 1-based index", () => {
@@ -28,5 +28,14 @@ describe("classifyChildTreeKey", () => {
 
   it("never classifies Alt+Backspace or Alt+Esc as a plain Backspace/Esc", () => {
     expect(classifyChildTreeKey("\x1b\x7f")).toBeUndefined();
+  });
+
+  it("classifies Alt+I as opening the picker", () => {
+    expect(classifyChildInspectorKey("\x1bi")).toEqual({ kind: "open-picker" });
+  });
+
+  it("classifies Enter and Alt+Enter as steer and follow-up", () => {
+    expect(classifyChildInspectorKey("\r")).toEqual({ kind: "steer" });
+    expect(classifyChildInspectorKey("\x1b\r")).toEqual({ kind: "follow-up" });
   });
 });

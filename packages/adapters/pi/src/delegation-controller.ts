@@ -31,6 +31,8 @@ import type { TimerHandle, TimerPort } from "./child-timer.js";
 import {
   addUsage,
   EMPTY_USAGE_AGGREGATE,
+  type PiChildInspectionHistoryError,
+  type PiChildInspectionRegistry,
   type PiChildTreeNode,
   ROOT_NODE_ID,
   subtreeIds,
@@ -38,6 +40,10 @@ import {
 import {
   makeChildAbortFailedFailure,
   makeChildCapacityExceededFailure,
+  makeChildHistoryCorruptFailure,
+  makeChildHistoryQuarantinedFailure,
+  makeChildHistoryQuotaExceededFailure,
+  makeChildRecoveryUnavailableFailure,
   type PiAdapterFailure,
 } from "./errors.js";
 import {
@@ -126,6 +132,7 @@ export interface PiDelegationControllerDeps {
     childId: string,
     capture: { readonly output: string; readonly byteLength: number },
   ) => PiChildSessionObserverResult;
+  readonly inspectionRegistry?: PiChildInspectionRegistry;
 }
 
 export interface PiAuthenticatedDelegationRequest extends PiDelegationContext {
@@ -257,7 +264,10 @@ export class PiDelegationController {
       request.cwd.length > MAX_CWD_LENGTH
     ) {
       return err(
-        makeChildAbortFailedFailure(childId, "task is empty or context exceeds bound"),
+        makeChildAbortFailedFailure(
+          childId,
+          "task is empty or context exceeds bound",
+        ),
       );
     }
     return ok(undefined);
@@ -396,6 +406,52 @@ export class PiDelegationController {
     );
   }
 
+  private historyFailure(
+    childId: string,
+    failure: PiChildInspectionHistoryError,
+  ): PiAdapterFailure {
+    if (failure.reason === "quota")
+      return makeChildHistoryQuotaExceededFailure(childId);
+    if (failure.reason === "corrupt")
+      return makeChildHistoryCorruptFailure(childId);
+    if (failure.reason === "unavailable")
+      return makeChildRecoveryUnavailableFailure(childId);
+    return makeChildHistoryQuarantinedFailure(childId);
+  }
+
+  private finalizeChild(
+    childId: string,
+    child: PiRpcChild,
+    result: ResultAsync<PiChildSettlement, PiAdapterFailure>,
+  ): ResultAsync<PiChildSettlement, PiAdapterFailure> {
+    return new ResultAsync(
+      (async () => {
+        const outcome = await result;
+        const finalOutput =
+          outcome.isOk() && outcome.value.outcome === "completed"
+            ? outcome.value.summary
+            : undefined;
+        const persisted =
+          this.deps.inspectionRegistry === undefined
+            ? ok(undefined)
+            : await this.deps.inspectionRegistry.retainTerminal(
+                childId,
+                child.snapshot(),
+                finalOutput,
+              );
+        // Disposal and capacity promotion are cleanup, so they happen even when
+        // terminal persistence fails. The persistence result is still returned.
+        child.dispose();
+        this.promoteQueued();
+        this.notifyTreeChanged();
+        this.maybeStopTreeRefreshTimer();
+        if (persisted.isErr())
+          return err(this.historyFailure(childId, persisted.error));
+        return outcome;
+      })(),
+    );
+  }
+
   private spawnNow(
     childId: string,
     request: PiDelegationRequest,
@@ -437,51 +493,66 @@ export class PiDelegationController {
             })
             .orElse(() => okAsync("noop" as const));
         },
+        sessionObserver: {
+          onEvent: (event) => {
+            this.deps.inspectionRegistry?.checkpointEvent(childId, event).match(
+              () => undefined,
+              () => undefined,
+            );
+            return ok(undefined);
+          },
+        },
         onStreamingUpdate: (snapshot) => {
           request.onUpdate?.(snapshot);
+          this.deps.inspectionRegistry?.checkpoint(childId).match(
+            () => undefined,
+            () => undefined,
+          );
           this.notifyTreeChanged();
         },
         onPrivateOutput: (capture) =>
           this.deps.onPrivateOutput?.(childId, capture) ?? ok(undefined),
       },
     );
-    this.children.set(childId, child);
-    this.notifyTreeChanged();
-    this.ensureTreeRefreshTimer();
-    const spawnInput = {
-      childId,
-      parentId: request.parentId,
-      generationId: this.deps.generationId,
-      agentName: request.agentName,
-      depth,
-      cwd: request.cwd,
-      env: request.env,
-      task: request.task,
-    };
-    return child
-      .spawnAndHandshake(spawnInput)
-      .andThen(() => child.runTask(spawnInput, request.bootstrap))
-      .map((settlement) => {
-        // The child itself already killed its own ephemeral process and
-        // erased its secret as part of settling successfully; `dispose()`
-        // here is the explicit, idempotent, controller-owned confirmation
-        // that this slot is fully freed before any queued request is ever
-        // promoted into it.
-        child.dispose();
-        this.promoteQueued();
-        this.notifyTreeChanged();
-        this.maybeStopTreeRefreshTimer();
-        return settlement;
+    const registration =
+      this.deps.inspectionRegistry?.register({
+        id: childId,
+        parentId: request.parentId,
+        name: request.agentName,
+        kind: request.parentId === ROOT_NODE_ID ? "ordinary" : "nested",
+        snapshot: () => child.snapshot(),
+      }) ?? okAsync<void, never>(undefined);
+    return registration
+      .mapErr((failure): PiAdapterFailure => {
+        if (failure.reason === "quota")
+          return makeChildHistoryQuotaExceededFailure(childId);
+        if (failure.reason === "corrupt")
+          return makeChildHistoryCorruptFailure(childId);
+        if (failure.reason === "unavailable")
+          return makeChildRecoveryUnavailableFailure(childId);
+        return makeChildHistoryQuarantinedFailure(childId);
       })
-      .orElse((failure) => {
-        // Same guarantee on every failure path: the child's own terminal
-        // failure handling already killed its process/erased its secret;
-        // `dispose()` is the explicit confirmation before promotion.
-        child.dispose();
-        this.promoteQueued();
+      .andThen(() => {
+        this.children.set(childId, child);
         this.notifyTreeChanged();
-        this.maybeStopTreeRefreshTimer();
-        return errAsync(failure);
+        this.ensureTreeRefreshTimer();
+        const spawnInput = {
+          childId,
+          parentId: request.parentId,
+          generationId: this.deps.generationId,
+          agentName: request.agentName,
+          depth,
+          cwd: request.cwd,
+          env: request.env,
+          task: request.task,
+        };
+        return this.finalizeChild(
+          childId,
+          child,
+          child
+            .spawnAndHandshake(spawnInput)
+            .andThen(() => child.runTask(spawnInput, request.bootstrap)),
+        );
       });
   }
 
@@ -612,7 +683,24 @@ export class PiDelegationController {
     const cancellations = ids
       .map((id) => this.children.get(id))
       .filter((child): child is PiRpcChild => child !== undefined)
-      .map((child) => child.cancel());
+      .map(
+        (child) =>
+          new ResultAsync(
+            (async () => {
+              const marked =
+                this.deps.inspectionRegistry === undefined
+                  ? ok(undefined)
+                  : await this.deps.inspectionRegistry.markInterrupted(
+                      child.getId(),
+                    );
+              // Never leave a process alive because history persistence failed.
+              const cancelled = await child.cancel();
+              if (marked.isErr())
+                return err(this.historyFailure(child.getId(), marked.error));
+              return cancelled;
+            })(),
+          ),
+      );
     return ResultAsync.combineWithAllErrors(cancellations).map(() => {
       this.notifyTreeChanged();
       this.maybeStopTreeRefreshTimer();
@@ -703,7 +791,32 @@ export class PiDelegationController {
         err(makeChildAbortFailedFailure(entry.childId, "controller shut down")),
       );
     }
-    for (const child of this.children.values()) child.dispose();
+    for (const child of this.children.values()) {
+      const interrupted = !this.isTerminal(child);
+      const history = this.deps.inspectionRegistry;
+      const persist = (() => {
+        if (history === undefined) return okAsync(undefined);
+        // Enqueue both writes before awaiting either result. A failed
+        // interrupted write must not suppress terminal retention.
+        const interruptedWrite = interrupted
+          ? history.markInterrupted(child.getId())
+          : okAsync(undefined);
+        const terminalWrite = history.retainTerminal(
+          child.getId(),
+          interrupted
+            ? { ...child.snapshot(), status: "cancelled" }
+            : child.snapshot(),
+        );
+        return interruptedWrite.andThen(() => terminalWrite);
+      })();
+      // Disposal is deliberately downstream of both interrupted and terminal
+      // persistence, but still runs when either write fails.
+      void persist.match(
+        () => child.dispose(),
+        () => child.dispose(),
+      );
+    }
+    this.deps.inspectionRegistry?.closeGeneration();
     this.treeRefreshTimer?.cancel();
     this.treeRefreshTimer = undefined;
     this.notifyTreeChanged();

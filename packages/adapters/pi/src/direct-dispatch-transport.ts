@@ -9,24 +9,31 @@
  */
 import type { ThinkingLevelDecl } from "@weaveio/weave-core";
 import type { DelegationTarget } from "@weaveio/weave-engine";
-import type { ResultAsync } from "neverthrow";
+import { err, ok, okAsync, ResultAsync } from "neverthrow";
 import { toModelIdentityBody } from "./child-control-bodies.js";
 import type { HmacPort, RandomPort } from "./child-crypto.js";
 import type { PiChildProcessPort } from "./child-process-port.js";
+import { type PiChildInspectionRegistry, ROOT_NODE_ID } from "./child-tree.js";
 import type { PiAuthenticatedDelegationRequest } from "./delegation-controller.js";
 import type {
   DirectDispatchSettlement,
   DirectDispatchTransport,
   PiDirectDispatchInput,
 } from "./direct-dispatch.js";
-import type { PiAdapterFailure } from "./errors.js";
+import {
+  makeChildHistoryCorruptFailure,
+  makeChildHistoryQuarantinedFailure,
+  makeChildHistoryQuotaExceededFailure,
+  makeChildRecoveryUnavailableFailure,
+  type PiAdapterFailure,
+} from "./errors.js";
 import { type PiModelInfo, PiModelResolver } from "./model-resolution.js";
 import { type PiChildSettlement, PiRpcChild } from "./rpc-child.js";
 import type { JsonValue } from "./strict-json.js";
 import { WEAVE_COMPLETE_STEP_TOOL_NAME } from "./structured-completion.js";
 import type { IdGenerator, PiAdapterLogger } from "./types.js";
 
-const DIRECT_DISPATCH_PARENT_ID = "workflow-controller";
+const DIRECT_DISPATCH_PARENT_ID = ROOT_NODE_ID;
 const DIRECT_DISPATCH_DEPTH = 0;
 
 export interface PiDirectDispatchTransportDeps {
@@ -44,6 +51,8 @@ export interface PiDirectDispatchTransportDeps {
    * `PiDelegationController`'s own tracked tree - to pause or cancel it.
    */
   readonly registry?: PiDirectStepChildRegistry;
+  /** Shared topology/history registry for ordinary and workflow-step children. */
+  readonly inspectionRegistry?: PiChildInspectionRegistry;
   /**
    * The authenticated model catalog captured once at session start (Spec
    * 33), used to resolve the direct-step descriptor's own `models`
@@ -154,6 +163,21 @@ export function createDirectDispatchTransport(
         logger: deps.logger,
         command: deps.command,
         baseEnv: deps.baseEnv,
+        sessionObserver: {
+          onEvent: (event) => {
+            deps.inspectionRegistry?.checkpointEvent(childId, event).match(
+              () => undefined,
+              () => undefined,
+            );
+            return ok(undefined);
+          },
+        },
+        onStreamingUpdate: () => {
+          deps.inspectionRegistry?.checkpoint(childId).match(
+            () => undefined,
+            () => undefined,
+          );
+        },
         onDelegationRequest: (authenticatedChildId, correlationId, body) => {
           const relayDelegation = deps.relayDelegation;
           if (relayDelegation === undefined) {
@@ -242,38 +266,84 @@ export function createDirectDispatchTransport(
       completionTool: WEAVE_COMPLETE_STEP_TOOL_NAME,
     };
 
-    deps.registry?.setActive(child);
-    return child
-      .spawnAndHandshake(spawnInput)
-      .andThen(() =>
-        child.runTask(spawnInput, bootstrap as unknown as JsonValue),
-      )
-      .map((settlement): DirectDispatchSettlement => {
-        deps.registry?.setActive(undefined);
-        // A direct-step child's own cancellation (Pi adapter contract) is
-        // handled by `handleUserInterrupt(...pause)` at the workflow layer,
-        // never as a structured completion candidate - `PiChildSettlement`'s
-        // `"cancelled"` outcome has no equivalent in the narrower
-        // `DirectDispatchSettlement` shape `interpretSettlement` expects, so
-        // it is projected down to the same closed `"failed"` shape every
-        // other non-completion outcome already uses here.
-        if (settlement.outcome === "cancelled") {
-          return { outcome: "failed", reason: "cancelled" };
-        }
-        return settlement;
-      })
-      .mapErr((failure) => {
-        deps.registry?.setActive(undefined);
-        deps.logger.error(
-          {
-            childId,
-            agentName: input.agentName,
-            code: failure.code,
-            correlation: failure.correlation,
-          },
-          "direct-step child transport failed",
+    const registration =
+      deps.inspectionRegistry?.register({
+        id: childId,
+        parentId: DIRECT_DISPATCH_PARENT_ID,
+        name: input.agentName,
+        kind: "workflow-step",
+        workflowInstanceId: input.workflowInstanceId,
+        stepName: input.stepName,
+        snapshot: () => child.snapshot(),
+      }) ?? okAsync(undefined);
+    const historyFailure = (failure: {
+      readonly reason: "unavailable" | "corrupt" | "quota" | "invalid";
+    }): PiAdapterFailure => {
+      if (failure.reason === "quota")
+        return makeChildHistoryQuotaExceededFailure(childId);
+      if (failure.reason === "corrupt")
+        return makeChildHistoryCorruptFailure(childId);
+      if (failure.reason === "unavailable")
+        return makeChildRecoveryUnavailableFailure(childId);
+      return makeChildHistoryQuarantinedFailure(childId);
+    };
+    return registration.mapErr(historyFailure).andThen(() => {
+      deps.registry?.setActive(child);
+      const execution = child
+        .spawnAndHandshake(spawnInput)
+        .andThen(() =>
+          child.runTask(spawnInput, bootstrap as unknown as JsonValue),
         );
-        return failure;
-      });
+      return new ResultAsync(
+        (async () => {
+          const outcome = await execution;
+          const finalOutput =
+            outcome.isOk() && outcome.value.outcome === "completed"
+              ? outcome.value.summary
+              : undefined;
+          const persisted =
+            deps.inspectionRegistry === undefined
+              ? ok(undefined)
+              : await deps.inspectionRegistry.retainTerminal(
+                  childId,
+                  child.snapshot(),
+                  finalOutput,
+                );
+          // Cleanup is unconditional, including when history persistence fails.
+          child.dispose();
+          deps.registry?.setActive(undefined);
+          if (persisted.isErr()) return err(historyFailure(persisted.error));
+          if (outcome.isErr()) {
+            deps.logger.error(
+              {
+                childId,
+                agentName: input.agentName,
+                code: outcome.error.code,
+                correlation: outcome.error.correlation,
+              },
+              "direct-step child transport failed",
+            );
+            return err(outcome.error);
+          }
+          // A direct-step child's cancellation is projected to the closed
+          // failed shape expected by the workflow layer.
+          if (outcome.value.outcome === "cancelled")
+            return ok<DirectDispatchSettlement, PiAdapterFailure>({
+              outcome: "failed",
+              reason: "cancelled",
+            });
+          if (outcome.value.outcome === "completed")
+            return ok<DirectDispatchSettlement, PiAdapterFailure>({
+              outcome: "completed",
+              summary: outcome.value.summary,
+              completionCandidate: outcome.value.completionCandidate,
+            });
+          return ok<DirectDispatchSettlement, PiAdapterFailure>({
+            outcome: "failed",
+            reason: outcome.value.reason,
+          });
+        })(),
+      );
+    });
   };
 }

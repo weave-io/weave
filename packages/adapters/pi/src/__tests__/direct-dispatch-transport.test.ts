@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { okAsync } from "neverthrow";
+import { errAsync, okAsync } from "neverthrow";
 import {
   generateNonceHex,
   hexToBytes,
@@ -8,6 +8,11 @@ import {
 } from "../child-crypto.js";
 import { WEAVE_CHILD_SECRET_ENV } from "../child-env.js";
 import { type PiControlKind, signEnvelope } from "../child-envelope.js";
+import {
+  type PiChildInspectionRegistration,
+  PiChildInspectionRegistry,
+  ROOT_NODE_ID,
+} from "../child-tree.js";
 import {
   type PiDirectDispatchInput,
   TransportDirectDispatchPort,
@@ -271,12 +276,7 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
     expect(bootstrapEnvelope.body.correlationId).toBe(expectedChildId);
     expect("resolvedModel" in bootstrapEnvelope.body).toBe(false);
 
-    await responder.send(
-      "bootstrap-ack",
-      expectedChildId,
-      {},
-      secretBytes,
-    );
+    await responder.send("bootstrap-ack", expectedChildId, {}, secretBytes);
     await flush();
     await responder.send(
       "settled",
@@ -409,6 +409,199 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
       secretBytes,
     );
     expect((await resultPromise).isOk()).toBe(true);
+  });
+
+  it("registers workflow steps at ROOT before spawn and keeps trusted metadata despite forged child fields", async () => {
+    const processPort = new FakeChildProcessPort();
+    const idGenerator = new FakeIdGenerator();
+    let registration: PiChildInspectionRegistration | undefined;
+    const registry = new PiChildInspectionRegistry({
+      register: (value) => {
+        registration = value;
+        expect(processPort.spawnInputs).toHaveLength(0);
+        return okAsync(undefined);
+      },
+      checkpoint: () => okAsync(undefined),
+      terminal: () => okAsync(undefined),
+    });
+    const transport = createDirectDispatchTransport(
+      {
+        processPort,
+        randomPort,
+        hmacPort,
+        logger: noopLogger(),
+        idGenerator,
+        inspectionRegistry: registry,
+        availableModels: AVAILABLE_MODELS,
+      },
+      "gen-1",
+    );
+    const resultPromise = transport(baseInput());
+    await flush();
+    expect(registration).toMatchObject({
+      parentId: ROOT_NODE_ID,
+      kind: "workflow-step",
+      workflowInstanceId: "wf-1",
+      stepName: "verify",
+    });
+    expect(processPort.spawnInputs).toHaveLength(1);
+
+    const spawned = processPort.spawnedProcesses[0];
+    const childId = "direct-wf-1-verify-generation-1";
+    const secretBytes = extractSecretFromSpawn(processPort);
+    const responder = new ScriptedChildResponder(spawned, childId, "gen-1");
+    await responder.send("handshake", childId, {}, secretBytes);
+    await flush();
+    await flush();
+    const bootstrap = extractControlEnvelopeFromPrompt(
+      spawned.writtenLines()[0],
+    );
+    await responder.send(
+      "bootstrap-ack",
+      childId,
+      { resolvedModel: bootstrap.body.resolvedModel } as JsonValue,
+      secretBytes,
+    );
+    await flush();
+    spawned.emitLine({
+      type: "message_update",
+      workflowInstanceId: "forged-workflow",
+      stepName: "forged-step",
+      delta: { text: "forged" },
+    });
+    await flush();
+    expect(registration?.workflowInstanceId).toBe("wf-1");
+    expect(registration?.stepName).toBe("verify");
+    await responder.send(
+      "settled",
+      childId,
+      {
+        outcome: "completed",
+        completionCandidate: serializeCompletionCandidate({
+          outcome: "success",
+        }),
+      },
+      secretBytes,
+    );
+    expect((await resultPromise).isOk()).toBe(true);
+  });
+
+  it("persists terminal history before disposal, retains it, disposes on failure, and remains outside ordinary budgets", async () => {
+    const processPort = new FakeChildProcessPort();
+    const idGenerator = new FakeIdGenerator();
+    const order: string[] = [];
+    const registry = new PiChildInspectionRegistry({
+      register: () => okAsync(undefined),
+      terminal: () => {
+        order.push("terminal");
+        return okAsync(undefined);
+      },
+    });
+    const transport = createDirectDispatchTransport(
+      {
+        processPort,
+        randomPort,
+        hmacPort,
+        logger: noopLogger(),
+        idGenerator,
+        inspectionRegistry: registry,
+        availableModels: AVAILABLE_MODELS,
+      },
+      "gen-1",
+    );
+    const resultPromise = transport(baseInput());
+    await flush();
+    const spawned = processPort.spawnedProcesses[0];
+    const childId = "direct-wf-1-verify-generation-1";
+    const secretBytes = extractSecretFromSpawn(processPort);
+    const responder = new ScriptedChildResponder(spawned, childId, "gen-1");
+    await responder.send("handshake", childId, {}, secretBytes);
+    await flush();
+    await flush();
+    const bootstrap = extractControlEnvelopeFromPrompt(
+      spawned.writtenLines()[0],
+    );
+    await responder.send(
+      "bootstrap-ack",
+      childId,
+      { resolvedModel: bootstrap.body.resolvedModel } as JsonValue,
+      secretBytes,
+    );
+    await flush();
+    await responder.send(
+      "settled",
+      childId,
+      {
+        outcome: "completed",
+        completionCandidate: serializeCompletionCandidate({
+          outcome: "success",
+          message: "terminal",
+        }),
+      },
+      secretBytes,
+    );
+    expect((await resultPromise).isOk()).toBe(true);
+    expect(order).toEqual(["terminal"]);
+    expect(registry.snapshotHistory()).toHaveLength(1);
+    expect(spawned.killed).toBe(true);
+
+    const failingProcess = new FakeChildProcessPort();
+    const failingRegistry = new PiChildInspectionRegistry({
+      register: () => okAsync(undefined),
+      terminal: () =>
+        errAsync({
+          kind: "history-write-failed",
+          operation: "terminal",
+          reason: "unavailable",
+        }),
+    });
+    const failingTransport = createDirectDispatchTransport(
+      {
+        processPort: failingProcess,
+        randomPort,
+        hmacPort,
+        logger: noopLogger(),
+        idGenerator: new FakeIdGenerator(),
+        inspectionRegistry: failingRegistry,
+        availableModels: AVAILABLE_MODELS,
+      },
+      "gen-1",
+    );
+    const failed = failingTransport(baseInput());
+    await flush();
+    const failedProcess = failingProcess.spawnedProcesses[0];
+    const failedSecret = extractSecretFromSpawn(failingProcess);
+    const failedResponder = new ScriptedChildResponder(
+      failedProcess,
+      childId,
+      "gen-1",
+    );
+    await failedResponder.send("handshake", childId, {}, failedSecret);
+    await flush();
+    await flush();
+    const failedBootstrap = extractControlEnvelopeFromPrompt(
+      failedProcess.writtenLines()[0],
+    );
+    await failedResponder.send(
+      "bootstrap-ack",
+      childId,
+      { resolvedModel: failedBootstrap.body.resolvedModel } as JsonValue,
+      failedSecret,
+    );
+    await flush();
+    await failedResponder.send(
+      "settled",
+      childId,
+      {
+        outcome: "completed",
+        completionCandidate: serializeCompletionCandidate({
+          outcome: "success",
+        }),
+      },
+      failedSecret,
+    );
+    expect((await failed).isErr()).toBe(true);
+    expect(failedProcess.killed).toBe(true);
   });
 
   it("registers/clears the direct-step child in the shared registry across a full bootstrap-ack/settle cycle", async () => {

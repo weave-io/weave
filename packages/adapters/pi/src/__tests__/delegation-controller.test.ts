@@ -1,10 +1,17 @@
 import { describe, expect, it } from "bun:test";
 import { parseConfig, type WeaveConfig } from "@weaveio/weave-core";
+import { errAsync, ok, okAsync, ResultAsync } from "neverthrow";
 import { MAX_CWD_LENGTH } from "../child-control-bodies.js";
 import { WebCryptoHmacPort, WebCryptoRandomPort } from "../child-crypto.js";
 import { WEAVE_CHILD_ID_ENV, WEAVE_CHILD_SECRET_ENV } from "../child-env.js";
 import { signEnvelope } from "../child-envelope.js";
 import { SystemTimerPort } from "../child-timer.js";
+import {
+  type PiChildInspectionHistoryError,
+  type PiChildInspectionHistoryPort,
+  type PiChildInspectionRegistration,
+  PiChildInspectionRegistry,
+} from "../child-tree.js";
 import {
   PiDelegationController,
   type PiDelegationRequest,
@@ -69,6 +76,17 @@ function request(
 
 function flush(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+function spawnedAt(
+  port: FakeChildProcessPort,
+  index: number,
+): FakeSpawnedProcess {
+  const process = port.spawnedProcesses[index];
+  expect(process).toBeDefined();
+  if (process === undefined)
+    throw new Error(`missing spawned process ${index}`);
+  return process;
 }
 
 function extractSecret(
@@ -262,7 +280,7 @@ describe("PiDelegationController", () => {
     await flush();
     const spawned = port.spawnedProcesses[0];
     expect(spawned).toBeDefined();
-    await respondHandshakeAndSettle(spawned!, port, "gen-1");
+    await respondHandshakeAndSettle(spawnedAt(port, 0), port, "gen-1");
     const result = await resultPromise;
     expect(result.isOk()).toBe(true);
     expect(result._unsafeUnwrap()).toEqual({
@@ -319,13 +337,13 @@ describe("PiDelegationController", () => {
       "max_children",
     );
 
-    await respondHandshakeAndSettle(port.spawnedProcesses[0]!, port, "gen-1");
+    await respondHandshakeAndSettle(spawnedAt(port, 0), port, "gen-1");
     expect((await firstPromise).isOk()).toBe(true);
 
     const nextPromise = controller.delegate(request());
     await flush();
     expect(port.spawnedProcesses.length).toBe(2);
-    await respondHandshakeAndSettle(port.spawnedProcesses[1]!, port, "gen-1");
+    await respondHandshakeAndSettle(spawnedAt(port, 1), port, "gen-1");
     expect((await nextPromise).isOk()).toBe(true);
     controller.disposeAll();
   });
@@ -347,7 +365,7 @@ describe("PiDelegationController", () => {
     // spawns normally.
     void controller.delegate(request());
     await flush();
-    const child = port.spawnedProcesses[0]!;
+    const child = spawnedAt(port, 0);
     const childId = childIdOf(child, port);
 
     // That same live child, at its own true depth of 1, now attempts a
@@ -387,13 +405,13 @@ describe("PiDelegationController", () => {
     // Still only one process spawned - the second request is queued, not denied.
     expect(port.spawnedProcesses.length).toBe(1);
 
-    await respondHandshakeAndSettle(port.spawnedProcesses[0]!, port, "gen-1");
+    await respondHandshakeAndSettle(spawnedAt(port, 0), port, "gen-1");
     const first = await firstPromise;
     expect(first.isOk()).toBe(true);
 
     await flush();
     expect(port.spawnedProcesses.length).toBe(2);
-    await respondHandshakeAndSettle(port.spawnedProcesses[1]!, port, "gen-1");
+    await respondHandshakeAndSettle(spawnedAt(port, 1), port, "gen-1");
     const second = await secondPromise;
     expect(second.isOk()).toBe(true);
   });
@@ -414,7 +432,7 @@ describe("PiDelegationController", () => {
     void controller.delegate(request({ parentId: "root" }));
     await flush();
     expect(port.spawnedProcesses.length).toBe(1);
-    const firstChildId = childIdOf(port.spawnedProcesses[0]!, port);
+    const firstChildId = childIdOf(spawnedAt(port, 0), port);
 
     // A second, genuinely different real parent - the first live child
     // itself, delegating further - not a fabricated, never-registered
@@ -429,10 +447,10 @@ describe("PiDelegationController", () => {
     await flush();
     expect(port.spawnedProcesses.length).toBe(1);
 
-    await respondHandshakeAndSettle(port.spawnedProcesses[0]!, port, "gen-1");
+    await respondHandshakeAndSettle(spawnedAt(port, 0), port, "gen-1");
     await flush();
     expect(port.spawnedProcesses.length).toBe(2);
-    await respondHandshakeAndSettle(port.spawnedProcesses[1]!, port, "gen-1");
+    await respondHandshakeAndSettle(spawnedAt(port, 1), port, "gen-1");
     const second = await secondPromise;
     expect(second.isOk()).toBe(true);
   });
@@ -482,11 +500,11 @@ describe("PiDelegationController", () => {
     );
     const firstPromise = controller.delegate(request({ parentId: "root" }));
     await flush();
-    const liveChildId = childIdOf(port.spawnedProcesses[0]!, port);
+    const liveChildId = childIdOf(spawnedAt(port, 0), port);
 
     // Complete the handshake (but never settle) so the child is genuinely
     // "live" - otherwise it would still be blocked on a real handshake timer.
-    await sendHandshakeOnly(port.spawnedProcesses[0]!, port, "gen-1");
+    await sendHandshakeOnly(spawnedAt(port, 0), port, "gen-1");
     await flush();
 
     // Second request queues under the global max_processes=1 budget and
@@ -528,7 +546,7 @@ describe("PiDelegationController", () => {
     const firstPromise = controller.delegate(request({ parentId: "root" }));
     await flush();
     expect(port.spawnedProcesses.length).toBe(1);
-    const child1Id = childIdOf(port.spawnedProcesses[0]!, port);
+    const child1Id = childIdOf(spawnedAt(port, 0), port);
 
     // child-2: queued under child-1 (global budget exhausted) - child-2 is
     // never spawned, so it never enters `this.children` at all.
@@ -590,7 +608,7 @@ describe("PiDelegationController", () => {
     // and must remain live/untouched by the cancellation below.
     const firstPromise = controller.delegate(request({ parentId: "root" }));
     await flush();
-    const child1Id = childIdOf(port.spawnedProcesses[0]!, port);
+    const child1Id = childIdOf(spawnedAt(port, 0), port);
 
     // child-2: queued sibling directly under root - the cancellation target.
     const child2Id = "child-2";
@@ -620,7 +638,7 @@ describe("PiDelegationController", () => {
     const tree = controller.snapshotTree();
     expect(tree.some((node) => node.id === child1Id)).toBe(true);
 
-    await respondHandshakeAndSettle(port.spawnedProcesses[0]!, port, "gen-1");
+    await respondHandshakeAndSettle(spawnedAt(port, 0), port, "gen-1");
     const first = await firstPromise;
     expect(first.isOk()).toBe(true);
     controller.disposeAll();
@@ -641,7 +659,7 @@ describe("PiDelegationController", () => {
     );
     const delegatePromise = controller.delegate(request({ parentId: "root" }));
     await flush();
-    const spawned = port.spawnedProcesses[0]!;
+    const spawned = spawnedAt(port, 0);
     const childId = childIdOf(spawned, port);
     // Genuinely running - past handshake and bootstrap-ack, task dispatched
     // - not merely queued or mid-handshake, which instead fail closed
@@ -741,7 +759,7 @@ describe("PiDelegationController", () => {
     await flush();
 
     expect(port.spawnedProcesses.length).toBe(1);
-    const child = port.spawnedProcesses[0]!;
+    const child = spawnedAt(port, 0);
     const childId = childIdOf(child, port);
     expect(childId).toBe("child-1");
     const treeNode = controller
@@ -793,7 +811,7 @@ describe("PiDelegationController", () => {
     );
     void controller.delegate(request());
     await flush();
-    const first = port.spawnedProcesses[0]!;
+    const first = spawnedAt(port, 0);
     const firstChildId = childIdOf(first, port);
     await sendChildToRunning(first, port, "gen-1");
 
@@ -843,7 +861,7 @@ describe("PiDelegationController", () => {
     // Once the parent settles and frees the global budget, the queued
     // relayed request is promoted and spawned as a real grandchild.
     expect(port.spawnedProcesses.length).toBe(2);
-    const grandchild = port.spawnedProcesses[1]!;
+    const grandchild = spawnedAt(port, 1);
     const grandchildId = childIdOf(grandchild, port);
     const tree = controller.snapshotTree();
     const grandchildNode = tree.find((node) => node.id === grandchildId);
@@ -870,7 +888,7 @@ describe("PiDelegationController", () => {
     });
     void controller.delegate(request());
     await flush();
-    const first = port.spawnedProcesses[0]!;
+    const first = spawnedAt(port, 0);
     const firstChildId = childIdOf(first, port);
     await sendChildToRunning(first, port, "gen-1");
 
@@ -918,7 +936,7 @@ describe("PiDelegationController", () => {
     );
     void controller.delegate(request());
     await flush();
-    const first = port.spawnedProcesses[0]!;
+    const first = spawnedAt(port, 0);
     const firstChildId = childIdOf(first, port);
     await sendChildToRunning(first, port, "gen-1");
 
@@ -949,7 +967,7 @@ describe("PiDelegationController", () => {
     );
     void controller.delegate(request());
     await flush();
-    const first = port.spawnedProcesses[0]!;
+    const first = spawnedAt(port, 0);
     const firstChildId = childIdOf(first, port);
     await sendChildToRunning(first, port, "gen-1");
 
@@ -1007,7 +1025,7 @@ describe("PiDelegationController", () => {
     const controller = makeController(config(GENEROUS), port);
     const firstPromise = controller.delegate(request());
     await flush();
-    const child = port.spawnedProcesses[0]!;
+    const child = spawnedAt(port, 0);
     const childId = childIdOf(child, port);
     await respondHandshakeAndSettle(child, port, "gen-1");
     const first = await firstPromise;
@@ -1030,6 +1048,227 @@ describe("PiDelegationController", () => {
     controller.disposeAll();
   });
 
+  it("registers history before spawning, and returns a bounded typed failure without spawning when registration fails", async () => {
+    const events: string[] = [];
+    let release!: () => void;
+    const history: PiChildInspectionHistoryPort = {
+      register: () =>
+        new ResultAsync<void, PiChildInspectionHistoryError>(
+          new Promise((resolve) => {
+            release = () => {
+              events.push("register");
+              resolve(ok(undefined));
+            };
+          }),
+        ),
+    };
+    const registry = new PiChildInspectionRegistry(history);
+    const port = new FakeChildProcessPort();
+    const controller = makeController(config(GENEROUS), port, {
+      inspectionRegistry: registry,
+    });
+    void controller.delegate(request());
+    await flush();
+    expect(port.spawnedProcesses).toHaveLength(0);
+    release();
+    await flush();
+    expect(events).toEqual(["register"]);
+    expect(port.spawnedProcesses).toHaveLength(1);
+    controller.disposeAll();
+
+    const failing = new PiChildInspectionRegistry({
+      register: () =>
+        errAsync({
+          kind: "history-write-failed",
+          operation: "register",
+          reason: "unavailable",
+        }),
+    });
+    const failedPort = new FakeChildProcessPort();
+    const failed = makeController(config(GENEROUS), failedPort, {
+      inspectionRegistry: failing,
+    }).delegate(request());
+    const result = await failed;
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().code).toBe("ChildRecoveryUnavailable");
+    expect(failedPort.spawnedProcesses).toHaveLength(0);
+  });
+
+  it("uses one registry for ordinary and nested children with the correct parent topology", async () => {
+    const registrations: PiChildInspectionRegistration[] = [];
+    const registry = new PiChildInspectionRegistry({
+      register: (registration) => {
+        registrations.push(registration);
+        return okAsync(undefined);
+      },
+    });
+    const port = new FakeChildProcessPort();
+    const controller = makeController(config(GENEROUS), port, {
+      inspectionRegistry: registry,
+    });
+    const rootPromise = controller.delegate(request());
+    await flush();
+    const rootId = childIdOf(spawnedAt(port, 0), port);
+    const nestedPromise = controller.delegate(
+      request({ parentId: rootId, parentDepth: 1 }),
+    );
+    await flush();
+    expect(
+      registrations.map(({ id, parentId, kind }) => ({ id, parentId, kind })),
+    ).toEqual([
+      { id: rootId, parentId: "root", kind: "ordinary" },
+      { id: "child-2", parentId: rootId, kind: "nested" },
+    ]);
+    controller.disposeAll();
+    await rootPromise;
+    await nestedPromise;
+  });
+
+  it("keeps checkpoint events ordered and persists interruption before cancellation", async () => {
+    const events: string[] = [];
+    const registry = new PiChildInspectionRegistry({
+      register: (r) => {
+        events.push(`register:${r.id}`);
+        return okAsync(undefined);
+      },
+      checkpoint: (id, event) => {
+        events.push(`checkpoint:${id}:${String(event)}`);
+        return okAsync(undefined);
+      },
+      interrupted: (id) => {
+        events.push(`interrupted:${id}`);
+        return okAsync(undefined);
+      },
+    });
+    const port = new FakeChildProcessPort();
+    const controller = makeController(config(GENEROUS), port, {
+      inspectionRegistry: registry,
+    });
+    const promise = controller.delegate(request());
+    await flush();
+    const child = spawnedAt(port, 0);
+    const id = childIdOf(child, port);
+    await sendChildToRunning(child, port, "gen-1");
+    await registry.checkpointEvent(id, "one");
+    await registry.checkpointEvent(id, "two");
+    await controller.cancelSubtree("root");
+    const one = events.indexOf(`checkpoint:${id}:one`);
+    const two = events.indexOf(`checkpoint:${id}:two`);
+    const interrupted = events.indexOf(`interrupted:${id}`);
+    expect(one).toBeGreaterThan(-1);
+    expect(two).toBeGreaterThan(one);
+    expect(interrupted).toBeGreaterThan(two);
+    expect(child.killed).toBe(true);
+    await promise;
+    controller.disposeAll();
+  });
+
+  it("persists terminal assistantOutput before disposal and capacity promotion, retaining the terminal record", async () => {
+    const events: string[] = [];
+    let observedAlive = false;
+    const registry = new PiChildInspectionRegistry({
+      register: (r) => {
+        events.push(`register:${r.id}`);
+        return okAsync(undefined);
+      },
+      terminal: (id, _snapshot, output) => {
+        events.push(`terminal:${id}:${output}`);
+        observedAlive = port.spawnedProcesses.length === 1;
+        return okAsync(undefined);
+      },
+    });
+    const port = new FakeChildProcessPort();
+    const controller = makeController(
+      config(
+        limitsSource({
+          maxChildren: 9,
+          maxConcurrency: 1,
+          maxDepth: 3,
+          maxProcesses: 9,
+        }),
+      ),
+      port,
+      { inspectionRegistry: registry },
+    );
+    const firstPromise = controller.delegate(request());
+    await flush();
+    const secondPromise = controller.delegate(request());
+    await respondHandshakeAndSettle(spawnedAt(port, 0), port, "gen-1");
+    const first = await firstPromise;
+    expect(first.isOk()).toBe(true);
+    await flush();
+    expect(events.some((event) => event.startsWith("terminal:"))).toBe(true);
+    expect(observedAlive).toBe(true);
+    expect(registry.snapshotHistory()[0]?.status).toBe("completed");
+    expect(port.spawnedProcesses).toHaveLength(2);
+    await respondHandshakeAndSettle(spawnedAt(port, 1), port, "gen-1");
+    await secondPromise;
+    controller.disposeAll();
+  });
+
+  it("still kills, disposes, and releases capacity when terminal persistence fails without exposing raw output", async () => {
+    const registry = new PiChildInspectionRegistry({
+      register: () => okAsync(undefined),
+      terminal: () =>
+        errAsync({
+          kind: "history-write-failed",
+          operation: "terminal",
+          reason: "quota",
+        }),
+    });
+    const port = new FakeChildProcessPort();
+    const controller = makeController(config(GENEROUS), port, {
+      inspectionRegistry: registry,
+    });
+    const promise = controller.delegate(request());
+    await flush();
+    await respondHandshakeAndSettle(spawnedAt(port, 0), port, "gen-1");
+    const result = await promise;
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr().code).toBe("ChildHistoryQuotaExceeded");
+    expect(spawnedAt(port, 0).killed).toBe(true);
+    expect(JSON.stringify(result)).not.toContain("ok");
+    controller.disposeAll();
+  });
+
+  it("blocks stale history work after close generation", async () => {
+    const registrations: string[] = [];
+    const registry = new PiChildInspectionRegistry({
+      register: (r) => {
+        registrations.push(r.id);
+        return okAsync(undefined);
+      },
+    });
+    registry.closeGeneration();
+    const registration: PiChildInspectionRegistration = {
+      id: "stale",
+      parentId: "root",
+      name: "shuttle",
+      kind: "ordinary",
+      snapshot: () => ({
+        id: "stale",
+        parentId: "root",
+        name: "shuttle",
+        status: "queued",
+        currentTurn: 0,
+        currentTool: undefined,
+        startedAtMs: 0,
+        elapsedMs: 0,
+        usage: {
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          cost: 0,
+        },
+        latestOutput: "",
+      }),
+    };
+    await registry.register(registration);
+    expect(registrations).toEqual([]);
+    expect(registry.snapshotHistory()).toEqual([]);
+  });
+
   it("disposes (kills the process, erases the secret) each settled child before promoting the next queued delegation", async () => {
     const port = new FakeChildProcessPort();
     const controller = makeController(
@@ -1045,7 +1284,7 @@ describe("PiDelegationController", () => {
     );
     const firstPromise = controller.delegate(request());
     await flush();
-    const first = port.spawnedProcesses[0]!;
+    const first = spawnedAt(port, 0);
     expect(first.killed).toBe(false);
 
     const secondPromise = controller.delegate(request());
@@ -1063,7 +1302,7 @@ describe("PiDelegationController", () => {
     await flush();
     expect(port.spawnedProcesses.length).toBe(2);
 
-    await respondHandshakeAndSettle(port.spawnedProcesses[1]!, port, "gen-1");
+    await respondHandshakeAndSettle(spawnedAt(port, 1), port, "gen-1");
     const secondResult = await secondPromise;
     expect(secondResult.isOk()).toBe(true);
     controller.disposeAll();

@@ -12,6 +12,12 @@
 import { matchesKey } from "@earendil-works/pi-tui";
 import type { PiTreeControlKey } from "./child-tree.js";
 
+export type PiChildInspectorKey =
+  | PiTreeControlKey
+  | { readonly kind: "open-picker" }
+  | { readonly kind: "steer" }
+  | { readonly kind: "follow-up" };
+
 const DIRECT_CHILD_KEY_IDS = [
   "alt+1",
   "alt+2",
@@ -35,5 +41,15 @@ export function classifyChildTreeKey(
   }
   if (matchesKey(data, "backspace")) return { kind: "select-parent" };
   if (matchesKey(data, "escape")) return { kind: "cancel-selected" };
+  return undefined;
+}
+
+/** Full inspector classifier, layered over the tree controls. */
+export function classifyChildInspectorKey(data: string): PiChildInspectorKey | undefined {
+  const treeKey = classifyChildTreeKey(data);
+  if (treeKey) return treeKey;
+  if (matchesKey(data, "alt+i")) return { kind: "open-picker" };
+  if (matchesKey(data, "enter")) return { kind: "steer" };
+  if (matchesKey(data, "alt+enter")) return { kind: "follow-up" };
   return undefined;
 }

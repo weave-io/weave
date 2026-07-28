@@ -1,12 +1,22 @@
 import { describe, expect, it } from "bun:test";
+import { errAsync, okAsync } from "neverthrow";
+import {
+  MemoryPiChildHistoryFs,
+  resolvePiChildHistoryRoot,
+} from "../child-history-fs.js";
+import { PI_CHILD_HISTORY_LAYOUT } from "../child-history-schema.js";
+import { PiChildHistoryStore } from "../child-history-store.js";
+import { DEFAULT_PI_CHILD_INSPECTION_SETTINGS } from "../child-inspection-settings.js";
 import {
   addUsage,
   applyTreeControlKey,
+  createPiChildHistoryPort,
   EMPTY_USAGE_AGGREGATE,
   extractAssistantStopReason,
   extractAssistantTextDeltaPreview,
   extractAssistantThinkingDeltaPreview,
   MAX_LATEST_OUTPUT_BYTES,
+  PiChildInspectionRegistry,
   type PiChildTreeNode,
   ROOT_NODE_ID,
   subtreeIds,
@@ -343,5 +353,260 @@ describe("extractAssistantStopReason (Task 9 finding 2)", () => {
         }),
       ).toBe(stopReason);
     }
+  });
+});
+
+async function openTestHistory(now: () => number) {
+  const fs = new MemoryPiChildHistoryFs();
+  const result = await PiChildHistoryStore.open(
+    "parent",
+    DEFAULT_PI_CHILD_INSPECTION_SETTINGS,
+    { fs, now, env: { XDG_DATA_HOME: "/tmp/weave-test" }, home: "/tmp/home" },
+  );
+  expect(result.isOk()).toBe(true);
+  if (result.isErr()) throw new Error("test history store failed to open");
+  return { fs, store: result.value };
+}
+
+async function readTestIndex(fs: MemoryPiChildHistoryFs) {
+  const root = resolvePiChildHistoryRoot({
+    parentSessionId: "parent",
+    env: { XDG_DATA_HOME: "/tmp/weave-test" },
+    homeDir: "/tmp/home",
+  })._unsafeUnwrap();
+  const directory = (await fs.openDirectory(root, false))._unsafeUnwrap();
+  const bytes = (
+    await directory.readFile(PI_CHILD_HISTORY_LAYOUT.indexFile)
+  )._unsafeUnwrap();
+  directory.close();
+  if (!bytes) throw new Error("test history index missing");
+  return JSON.parse(new TextDecoder().decode(bytes)) as {
+    records: Array<Record<string, unknown>>;
+  };
+}
+
+describe("PiChildInspectionRegistry persistence", () => {
+  it("uses one valid ROOT topology for ordinary, nested, and workflow-step registrations", async () => {
+    const registrations: string[] = [];
+    const registry = new PiChildInspectionRegistry({
+      register: (entry) => {
+        registrations.push(`${entry.id}:${entry.parentId}:${entry.kind}`);
+        return okAsync(undefined);
+      },
+    });
+    await registry.register({
+      id: "ordinary",
+      parentId: ROOT_NODE_ID,
+      name: "ordinary",
+      kind: "ordinary",
+      snapshot: () => node({ id: "ordinary" }),
+    });
+    await registry.register({
+      id: "nested",
+      parentId: "ordinary",
+      name: "nested",
+      kind: "nested",
+      snapshot: () => node({ id: "nested", parentId: "ordinary" }),
+    });
+    await registry.register({
+      id: "step",
+      parentId: ROOT_NODE_ID,
+      name: "step",
+      kind: "workflow-step",
+      workflowInstanceId: "workflow-1",
+      stepName: "step-1",
+      snapshot: () => node({ id: "step" }),
+    });
+    await registry.drain();
+    expect(registrations).toEqual([
+      "ordinary:root:ordinary",
+      "nested:ordinary:nested",
+      "step:root:workflow-step",
+    ]);
+    expect(registry.snapshotLive().map((entry) => entry.id)).toEqual([
+      "ordinary",
+      "nested",
+      "step",
+    ]);
+  });
+
+  it("keeps trusted workflow metadata when checkpoint events contain forged fields", async () => {
+    const now = () => 10;
+    const { fs, store } = await openTestHistory(now);
+    const registry = new PiChildInspectionRegistry(
+      createPiChildHistoryPort(store, now),
+    );
+    await registry.register({
+      id: "step",
+      parentId: ROOT_NODE_ID,
+      name: "step",
+      kind: "workflow-step",
+      workflowInstanceId: "trusted-workflow",
+      stepName: "trusted-step",
+      snapshot: () => node({ id: "step" }),
+    });
+    await registry.checkpointEvent("step", {
+      type: "status",
+      status: "running",
+      workflowInstanceId: "forged-workflow",
+      stepName: "forged-step",
+    });
+    await registry.drain();
+    const record = (await readTestIndex(fs)).records.find(
+      (entry) => entry.childId === "step",
+    );
+    expect(record?.workflow).toEqual({
+      workflow: "trusted-workflow",
+      step: "trusted-step",
+    });
+    store.close();
+  });
+
+  it("makes same-tick checkpoint IDs unique and preserves event order", async () => {
+    const now = () => 20;
+    const { store } = await openTestHistory(now);
+    const registry = new PiChildInspectionRegistry(
+      createPiChildHistoryPort(store, now),
+    );
+    await registry.register({
+      id: "child",
+      parentId: ROOT_NODE_ID,
+      name: "child",
+      kind: "ordinary",
+      snapshot: () => node({ id: "child" }),
+    });
+    await registry.checkpointEvent("child", { type: "text", text: "first" });
+    await registry.checkpointEvent("child", { type: "text", text: "second" });
+    await registry.drain();
+    const checkpoint = (await store.readCheckpointFor("child"))._unsafeUnwrap();
+    expect(checkpoint.entries.map((entry) => entry.payload)).toEqual([
+      { type: "unknown", originalType: "text", payload: { text: "first" } },
+      { type: "unknown", originalType: "text", payload: { text: "second" } },
+    ]);
+    expect(new Set(checkpoint.entries.map((entry) => entry.id)).size).toBe(2);
+    expect(checkpoint.entries[0]?.id).toBe("child-20-0");
+    expect(checkpoint.entries[1]?.id).toBe("child-20-1");
+    store.close();
+  });
+
+  it("keeps intermediate latestOutput out of finalOutput and persists terminal output", async () => {
+    const now = () => 30;
+    const { fs, store } = await openTestHistory(now);
+    const registry = new PiChildInspectionRegistry(
+      createPiChildHistoryPort(store, now),
+    );
+    await registry.register({
+      id: "child",
+      parentId: ROOT_NODE_ID,
+      name: "child",
+      kind: "ordinary",
+      snapshot: () => node({ id: "child", latestOutput: "intermediate" }),
+    });
+    await registry.checkpoint("child");
+    expect(
+      (await readTestIndex(fs)).records.find(
+        (entry) => entry.childId === "child",
+      )?.finalOutput,
+    ).toBe("");
+    await registry.retainTerminal(
+      "child",
+      node({ id: "child", status: "completed" }),
+      "authenticated final",
+    );
+    await registry.drain();
+    expect(
+      (await readTestIndex(fs)).records.find(
+        (entry) => entry.childId === "child",
+      )?.finalOutput,
+    ).toBe("authenticated final");
+    store.close();
+  });
+
+  it("rejects registration after close while retaining terminal history", async () => {
+    const now = () => 40;
+    const { fs, store } = await openTestHistory(now);
+    const registry = new PiChildInspectionRegistry(
+      createPiChildHistoryPort(store, now),
+    );
+    await registry.register({
+      id: "old",
+      parentId: ROOT_NODE_ID,
+      name: "old",
+      kind: "ordinary",
+      snapshot: () => node({ id: "old" }),
+    });
+    await registry.retainTerminal(
+      "old",
+      node({ id: "old", status: "completed" }),
+      "done",
+    );
+    registry.closeGeneration();
+    await registry.register({
+      id: "new",
+      parentId: ROOT_NODE_ID,
+      name: "new",
+      kind: "ordinary",
+      snapshot: () => node({ id: "new" }),
+    });
+    await registry.drain();
+    expect(registry.snapshotLive()).toEqual([]);
+    expect(
+      (await readTestIndex(fs)).records.map((entry) => entry.childId),
+    ).toEqual(["old"]);
+    store.close();
+  });
+});
+
+describe("PiChildInspectionRegistry persistence queue", () => {
+  it("continues in order after a checkpoint failure and reports the first failure", async () => {
+    const calls: string[] = [];
+    const failure = {
+      kind: "history-write-failed" as const,
+      operation: "checkpoint" as const,
+      reason: "unavailable" as const,
+    };
+    let checkpointCalls = 0;
+    const registry = new PiChildInspectionRegistry({
+      register: () => {
+        calls.push("register");
+        return okAsync(undefined);
+      },
+      checkpoint: () => {
+        calls.push("checkpoint");
+        checkpointCalls += 1;
+        return checkpointCalls === 1 ? errAsync(failure) : okAsync(undefined);
+      },
+      interrupted: () => {
+        calls.push("interrupted");
+        return okAsync(undefined);
+      },
+      terminal: (_id, _snapshot, output) => {
+        calls.push(`terminal:${output ?? ""}`);
+        return okAsync(undefined);
+      },
+    });
+    const snapshot = () => node({ id: "child", status: "completed" });
+    await registry.register({
+      id: "child",
+      parentId: ROOT_NODE_ID,
+      name: "child",
+      kind: "ordinary",
+      snapshot,
+    });
+    void registry.checkpoint("child");
+    void registry.checkpoint("child");
+    void registry.markInterrupted("child");
+    void registry.retainTerminal("child", snapshot(), "final");
+    const result = await registry.drain();
+    expect(calls).toEqual([
+      "register",
+      "checkpoint",
+      "checkpoint",
+      "interrupted",
+      "terminal:final",
+    ]);
+    expect(result.isErr()).toBe(true);
+    expect(result._unsafeUnwrapErr()).toEqual(failure);
+    expect(registry.snapshotLive()).toHaveLength(0);
   });
 });

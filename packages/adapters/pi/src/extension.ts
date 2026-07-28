@@ -45,6 +45,12 @@ import {
   sanitizedBaseEnv,
   WEAVE_CHILD_SECRET_ENV,
 } from "./child-env.js";
+import { PiChildHistoryStore } from "./child-history-store.js";
+import {
+  formatPiChildInspectionSettingsIssues,
+  type PiChildInspectionEffectiveSettings,
+  type PiChildInspectionSettingsChoice,
+} from "./child-inspection-settings.js";
 import {
   BunPiChildProcessPort,
   type PiChildProcessPort,
@@ -52,14 +58,16 @@ import {
 import {
   type PiChildOutputError,
   type PiChildOutputPort,
-  type PiChildRuntimeError,
   PiChildRuntime,
+  type PiChildRuntimeError,
 } from "./child-runtime.js";
 import {
   applyTreeControlKey,
+  createPiChildHistoryPort,
   EMPTY_USAGE_AGGREGATE,
   extractAssistantStopReason,
   extractAssistantTextDeltaPreview,
+  PiChildInspectionRegistry,
   type PiChildTreeNode,
   ROOT_NODE_ID,
   truncateLatestOutput,
@@ -122,6 +130,12 @@ import {
   PiPrimarySession,
 } from "./primary-session.js";
 import {
+  PROMPT_CHUNK_COMMAND,
+  PromptChunkAssembler,
+  parsePromptChunk,
+  promptTransferNackReason,
+} from "./prompt-chunking.js";
+import {
   activeInstanceFromRecoveryPointer,
   BunJsonlRecoveryPointerStore,
   isPointerEligibleForExplicitResume,
@@ -130,20 +144,9 @@ import {
   type PiRuntimeStoreFactory,
   SqliteRuntimeStoreFactory,
 } from "./runtime-store-port.js";
-import {
-  formatPiChildInspectionSettingsIssues,
-  type PiChildInspectionEffectiveSettings,
-  type PiChildInspectionSettingsChoice,
-} from "./child-inspection-settings.js";
 import { PiSafeInitializer } from "./safe-initializer.js";
 import { PiSkillCatalog } from "./skill-catalog.js";
 import { type JsonValue, parseStrictJson } from "./strict-json.js";
-import {
-  parsePromptChunk,
-  PromptChunkAssembler,
-  promptTransferNackReason,
-  PROMPT_CHUNK_COMMAND,
-} from "./prompt-chunking.js";
 import {
   buildWeaveCompleteStepToolRegistration,
   type CompletionRecordAttempt,
@@ -260,6 +263,13 @@ export interface PiExtensionDeps {
    * `InMemoryRuntimeStoreFactory`/`FailingRuntimeStoreFactory`.
    */
   readonly runtimeStoreFactory: PiRuntimeStoreFactory;
+  /** Stable identity supplied by the host; unlike a generation ID it survives reload. */
+  readonly parentSessionId?: (ctx: PiSessionContext) => string;
+  /** Opens the one per-parent-session child history store. Injectable for tests. */
+  readonly childHistoryStoreFactory?: (
+    parentSessionId: string,
+    settings: PiActiveSession["childInspectionSettings"],
+  ) => ResultAsync<PiChildHistoryStore, unknown>;
   /**
    * Real, no-follow-safe containment proof for `.weave/runtime`/
    * `.weave/plans` (Pi adapter contract) - injected into
@@ -345,6 +355,8 @@ export function createDefaultPiExtensionDeps(): PiExtensionDeps {
     childCommand: buildDefaultPiChildCommand(envPort),
     childOutputPort: new StdoutChildOutputPort(),
     runtimeStoreFactory: new SqliteRuntimeStoreFactory(),
+    childHistoryStoreFactory: (parentSessionId, settings) =>
+      PiChildHistoryStore.open(parentSessionId, settings),
     pathContainmentPort: new BunPathContainmentPort(),
     planCatalogPort: new BunPiPlanCatalogPort(),
   };
@@ -1212,7 +1224,7 @@ function renderHealthMessage(
 
 function renderStatusMessage(
   controller: PiExtensionController,
-  activeSession: PiActiveSession | undefined,
+  _activeSession: PiActiveSession | undefined,
   delegationController?: PiDelegationController,
 ): string {
   const generation = controller.getCurrentGeneration();
@@ -1297,8 +1309,10 @@ function renderChildTreeWidget(
   ctx: PiSessionContext,
   controller: PiDelegationController | undefined,
   selectionCell: { selectedId: string },
+  inspectionRegistry?: PiChildInspectionRegistry,
 ): void {
-  const nodes = controller?.snapshotTree() ?? [];
+  const nodes =
+    inspectionRegistry?.snapshotLive() ?? controller?.snapshotTree() ?? [];
   const lines = renderChildTreeLines(
     nodes,
     selectionCell.selectedId,
@@ -1422,6 +1436,11 @@ export function createPiExtension(
   // engine lifecycle operations. Constructed only when trusted and not
   // health-only, mirroring `delegationControllerCell`'s gating.
   const directStepChildRegistry = new PiDirectStepChildRegistry();
+  const inspectionRegistryCell: {
+    registry: PiChildInspectionRegistry | undefined;
+  } = {
+    registry: undefined,
+  };
   const workflowControllerCell: {
     controller: PiWorkflowController | undefined;
   } = {
@@ -2302,6 +2321,29 @@ export function createPiExtension(
       };
 
       const sessionHealthOnly = effectiveHealthOnly(generation);
+      const parentSessionId =
+        deps.parentSessionId?.(ctx) ??
+        (ctx as PiSessionContext & { readonly sessionId?: string }).sessionId;
+      const historyStore =
+        deps.childHistoryStoreFactory === undefined ||
+        parentSessionId === undefined
+          ? undefined
+          : await deps.childHistoryStoreFactory(
+              parentSessionId,
+              generation.preflight.childInspection,
+            );
+      if (historyStore?.isErr()) {
+        deps.logger.warn(
+          { failure: historyStore.error },
+          "child history store open failed; inspection remains memory-only",
+        );
+      }
+      const inspectionRegistry = new PiChildInspectionRegistry(
+        historyStore?.isOk()
+          ? createPiChildHistoryPort(historyStore.value)
+          : undefined,
+      );
+      inspectionRegistryCell.registry = inspectionRegistry;
       ctx.ui.setStatus(
         "weave",
         sessionHealthOnly
@@ -2364,9 +2406,11 @@ export function createPiExtension(
               ctx,
               delegationControllerCell.controller,
               treeSelectionCell,
+              inspectionRegistry,
             );
           },
           onPrivateOutput: deps.onChildPrivateOutput,
+          inspectionRegistry,
           // Lazy wrapper (Pi adapter contract): `telemetryCell.telemetry` is only
           // populated once the Runtime Store opens successfully, below -
           // reading it here would always see `undefined`. A settled child
@@ -2454,6 +2498,7 @@ export function createPiExtension(
                   command: deps.childCommand,
                   baseEnv: buildPiChildBaseEnv(),
                   registry: directStepChildRegistry,
+                  inspectionRegistry,
                   availableModels: safelyListAvailableModels(
                     ctx.modelRegistry,
                   ).unwrapOr([]),
@@ -2566,6 +2611,7 @@ export function createPiExtension(
           ctx,
           delegationControllerCell.controller,
           treeSelectionCell,
+          inspectionRegistry,
         );
         // Compositional custom editor (Pi adapter contract): production-wires
         // Alt+1..Alt+9/Backspace/Esc against the live child tree while
@@ -2574,8 +2620,7 @@ export function createPiExtension(
           (tui: unknown, theme: unknown, keybindings: unknown) =>
             new WeaveChildTreeEditor(tui, theme, keybindings, {
               getNodesMap: () => {
-                const nodes =
-                  delegationControllerCell.controller?.snapshotTree() ?? [];
+                const nodes = inspectionRegistry.snapshotLive();
                 return new Map(nodes.map((node) => [node.id, node]));
               },
               getSelection: () => treeSelectionCell.selectedId,
@@ -2585,6 +2630,7 @@ export function createPiExtension(
                   ctx,
                   delegationControllerCell.controller,
                   treeSelectionCell,
+                  inspectionRegistry,
                 );
               },
               cancelSubtree: (nodeId) => {
@@ -2782,6 +2828,8 @@ export function createPiExtension(
         "terminated",
       );
       activeSession = undefined;
+      inspectionRegistryCell.registry?.closeGeneration();
+      inspectionRegistryCell.registry = undefined;
       delegationControllerCell.controller?.disposeAll();
       delegationControllerCell.controller = undefined;
       workflowControllerCell.controller = undefined;
