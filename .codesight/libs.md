@@ -118,6 +118,14 @@
   - interface PiControlEnvelope
   - interface UnsignedEnvelopeInput
   - _...8 more_
+- `packages/adapters/pi/src/child-extension-ui.ts`
+  - function normalizePiExtensionUiRequest: (value) => Result<
+  - function createPiChildExtensionUiBridge: (options) => PiChildExtensionUiBridge<E>
+  - class PiChildExtensionUiBridge
+  - interface PiExtensionUiRequestNormalizationError
+  - interface PiChildExtensionUiWidgetSnapshot
+  - interface PiChildExtensionUiDialogSnapshot
+  - _...10 more_
 - `packages/adapters/pi/src/child-framing.ts`
   - class PiLineFramer
   - interface ParsedFrame
@@ -210,7 +218,10 @@
   - function renderPiChildTranscriptLines: (state, width, input?) => string[]
   - _...45 more_
 - `packages/adapters/pi/src/child-tree-keys.ts` — function classifyChildTreeKey: (data) => PiTreeControlKey | undefined
-- `packages/adapters/pi/src/child-tree-render.ts` — function renderChildTreeLines: (nodes, selectedId, cumulativeUsage) => string[]
+- `packages/adapters/pi/src/child-tree-render.ts`
+  - function renderChildTreeLines: (nodes, selectedId, cumulativeUsage, options) => string[]
+  - interface ChildTreeRenderNodeMetadata
+  - interface ChildTreeRenderOptions
 - `packages/adapters/pi/src/child-tree.ts`
   - function addUsage: (a, b) => PiChildUsageAggregate
   - function truncateLatestOutput: (text) => string
