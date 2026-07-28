@@ -99,20 +99,20 @@ export function safeChildHistoryComponent(
 
 export function resolvePiChildHistoryRoot(
   input: ResolvePiChildHistoryRootInput | string,
-  env: Readonly<Record<string, string | undefined>> = {},
-  homeDir = "",
+  env?: Readonly<Record<string, string | undefined>>,
+  homeDir?: string,
 ): Result<string, PiChildHistoryFsError> {
   const value =
     typeof input === "string"
       ? {
           parentSessionId: input,
-          env: Object.keys(env).length === 0 ? Bun.env : env,
-          homeDir: homeDir || Bun.env.HOME || "",
+          env: env ?? Bun.env,
+          homeDir: homeDir ?? Bun.env.HOME ?? "",
         }
       : input;
-  const actualHome = value.homeDir ?? (homeDir || Bun.env.HOME || "");
+  const actualHome = value.homeDir ?? homeDir ?? Bun.env.HOME ?? "";
   if (actualHome.length === 0) return err({ type: "empty-home" });
-  const configured = (value.env ?? env).XDG_DATA_HOME;
+  const configured = (value.env ?? env ?? Bun.env).XDG_DATA_HOME;
   if (configured !== undefined && !isAbsolute(configured)) {
     return err({ type: "relative-xdg-data-home" });
   }
@@ -767,10 +767,7 @@ class BunHistoryDirectory implements PiChildHistoryDirectory {
 
         await unwrapResult(this.identity());
         const current = await unwrapResult(this.targetIdentity(name));
-        if (
-          current === undefined ||
-          (created ? false : !sameIdentity(fileIdentity, current))
-        ) {
+        if (current === undefined || !sameIdentity(fileIdentity, current)) {
           throw { type: "identity-changed" };
         }
       } finally {

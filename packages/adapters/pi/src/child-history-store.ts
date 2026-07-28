@@ -302,6 +302,9 @@ export class PiChildHistoryStore {
     activeLeaf?: string,
   ): ResultAsync<PiChildSessionCheckpoint, PiChildHistoryStoreError> {
     if (this.disabled) return errAsync({ type: "history-disabled" });
+    if (!this.index.records.some((record) => record.childId === childId)) {
+      return errAsync({ type: "child-not-found" });
+    }
     const now = this.now();
     return this.withChildDirectory(childId, true, "checkpoint", (directory) =>
       directory.readFile(PI_CHILD_HISTORY_LAYOUT.checkpointFile)
@@ -345,6 +348,9 @@ export class PiChildHistoryStore {
 
   appendSessionEvent(childId: string, event: PiChildSessionEvent): ResultAsync<void, PiChildHistoryStoreError> {
     if (this.disabled) return errAsync({ type: "history-disabled" });
+    if (!this.index.records.some((record) => record.childId === childId)) {
+      return errAsync({ type: "child-not-found" });
+    }
     const parsed = parsePiChildSessionEvent(event);
     if (!parsed.success) return errAsync({ type: "history-json", action: "session", reason: "malformed" });
     const line = safeJson(parsed.data, "session");
