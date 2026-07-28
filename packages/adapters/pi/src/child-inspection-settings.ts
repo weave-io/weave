@@ -69,9 +69,7 @@ export const PiChildInspectionSettingsSchema = z
       .finite()
       .min(RECOVERY_COUNTDOWN_SECONDS.min)
       .max(RECOVERY_COUNTDOWN_SECONDS.max)
-      .default(
-        DEFAULT_PI_CHILD_INSPECTION_SETTINGS.recovery_countdown_seconds,
-      ),
+      .default(DEFAULT_PI_CHILD_INSPECTION_SETTINGS.recovery_countdown_seconds),
   })
   .strict()
   .superRefine((settings, context) => {
@@ -127,9 +125,7 @@ function freezeSettings(
   return Object.isFrozen(settings) ? settings : Object.freeze({ ...settings });
 }
 
-function issueFromZod(
-  issue: z.core.$ZodIssue,
-): PiChildInspectionSettingsIssue {
+function issueFromZod(issue: z.core.$ZodIssue): PiChildInspectionSettingsIssue {
   const keys =
     issue.code === "unrecognized_keys" && "keys" in issue
       ? (issue.keys as readonly string[])
@@ -248,7 +244,8 @@ export function effectivePiChildInspectionSettings(
   });
 }
 
-const PI_CHILD_INSPECTION_PATH = "settings.adapters.pi.child_inspection";
+const PI_ADAPTER_PATH = "settings.adapters.pi";
+const PI_CHILD_INSPECTION_PATH = `${PI_ADAPTER_PATH}.child_inspection`;
 
 export function formatPiChildInspectionSettingsIssues(
   issues: readonly PiChildInspectionSettingsIssue[],
@@ -257,10 +254,14 @@ export function formatPiChildInspectionSettingsIssues(
     .map((issue) => {
       const localPath = issue.path.join(".");
       let path = PI_CHILD_INSPECTION_PATH;
-      if (localPath !== "" && localPath !== PI_CHILD_INSPECTION_PATH) {
-        path = localPath.startsWith(`${PI_CHILD_INSPECTION_PATH}.`)
-          ? localPath
-          : `${PI_CHILD_INSPECTION_PATH}.${localPath}`;
+      if (localPath === PI_ADAPTER_PATH) {
+        path = localPath;
+      } else if (localPath === PI_CHILD_INSPECTION_PATH) {
+        path = localPath;
+      } else if (localPath.startsWith(`${PI_CHILD_INSPECTION_PATH}.`)) {
+        path = localPath;
+      } else if (localPath !== "") {
+        path = `${PI_CHILD_INSPECTION_PATH}.${localPath}`;
       }
       return `${path}: ${issue.message}`;
     })

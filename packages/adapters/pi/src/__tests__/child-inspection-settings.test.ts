@@ -3,9 +3,9 @@ import type { WeaveConfig } from "@weaveio/weave-core";
 
 import {
   DEFAULT_PI_CHILD_INSPECTION_SETTINGS,
-  PiChildInspectionSettingsSchema,
   effectivePiChildInspectionSettings,
   formatPiChildInspectionSettingsIssues,
+  PiChildInspectionSettingsSchema,
   parsePiChildInspectionSettings,
   resolvePiChildInspectionSettings,
 } from "../child-inspection-settings.js";
@@ -112,9 +112,9 @@ describe("Pi child-inspection settings", () => {
 
     expect(parsed.success).toBe(false);
     if (!parsed.success) {
-      expect(parsed.error.issues.some((issue) => issue.code === "unrecognized_keys")).toBe(
-        true,
-      );
+      expect(
+        parsed.error.issues.some((issue) => issue.code === "unrecognized_keys"),
+      ).toBe(true);
     }
   });
 
@@ -137,5 +137,17 @@ describe("Pi child-inspection settings", () => {
     expect(defaults.settings).toBe(DEFAULT_PI_CHILD_INSPECTION_SETTINGS);
     expect(Object.isFrozen(defaults)).toBe(true);
     expect(Object.isFrozen(defaults.settings)).toBe(true);
+  });
+
+  it("formats already-qualified issue paths without duplicating the prefix", () => {
+    expect(
+      formatPiChildInspectionSettingsIssues([
+        {
+          code: "invalid_type",
+          path: ["settings", "adapters", "pi"],
+          message: "expected an object",
+        },
+      ]),
+    ).toBe("settings.adapters.pi: expected an object");
   });
 });
