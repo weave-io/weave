@@ -114,7 +114,8 @@ describe("SessionGoalController", () => {
   });
 
   test("rejects unresolved plans and incomplete achievement", () => {
-    const controller = new SessionGoalController(() => 1_000);
+    let now = 1_000;
+    const controller = new SessionGoalController(() => now);
     expect(errorOf(controller.start(" ", "rev"))).toEqual({
       type: "PlanNotResolved",
       planName: " ",
@@ -126,11 +127,15 @@ describe("SessionGoalController", () => {
       planContentRevision: " ",
     });
     expect(controller.start("goal", "rev").isOk()).toBe(true);
-    expect(errorOf(controller.achieve("evidence", false))).toEqual({
+    now = 6_000;
+    expect(errorOf(controller.achieve(" evidence ", false))).toEqual({
       type: "PlanIncomplete",
       reason: "The plan is not complete.",
     });
     expect(controller.current?.status).toBe("pursuing");
+    expect(controller.current?.evidence).toBe("evidence");
+    now = 8_000;
+    expect(controller.elapsedMs()).toBe(7_000);
   });
 
   test("restores snapshots and strictly rejects malformed values", () => {

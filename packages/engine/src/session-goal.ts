@@ -234,16 +234,19 @@ export class SessionGoalController {
   ): Result<void, SessionGoalError> {
     if (this.state === undefined) return err({ type: "NoActiveGoal" });
     if (this.state.status !== "pursuing") return this.illegal("achieved");
-    if (!planComplete)
+    const trimmedEvidence = evidence.trim();
+    if (!planComplete) {
+      this.state = { ...this.state, evidence: trimmedEvidence };
       return err({
         type: "PlanIncomplete",
         reason: "The plan is not complete.",
       });
+    }
     this.finishActivePeriod();
     this.state = {
       ...this.state,
       status: "achieved",
-      evidence: evidence.trim(),
+      evidence: trimmedEvidence,
       reason: undefined,
     };
     return ok(undefined);
