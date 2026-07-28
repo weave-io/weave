@@ -1,7 +1,8 @@
+import type { WeaveGoalArgs } from "./goal-args.js";
 import type { PiSourceInfo } from "./types.js";
 
 /**
- * The nine `/weave:*` direct commands (Pi adapter contract). Registered once, as
+ * The ten `/weave:*` direct commands (Pi adapter contract). Registered once, as
  * inert shells, by the extension factory. Behavior beyond gating is
  * implemented in later tasks; this foundation only classifies each command
  * so the health-only gate knows what to block.
@@ -16,6 +17,7 @@ export const WEAVE_COMMAND_NAMES = [
   "weave:resume",
   "weave:plan",
   "weave:artifact",
+  "weave:goal",
 ] as const;
 
 export type WeaveCommandName = (typeof WEAVE_COMMAND_NAMES)[number];
@@ -38,6 +40,7 @@ const MUTATING_COMMANDS: ReadonlySet<WeaveCommandName> = new Set([
   "weave:advance",
   "weave:resume",
   "weave:artifact",
+  "weave:goal",
 ]);
 
 const IDEMPOTENT_CLEANUP_COMMANDS: ReadonlySet<WeaveCommandName> = new Set([
@@ -55,6 +58,20 @@ export function classifyWeaveCommand(
   if (MUTATING_COMMANDS.has(name)) return "mutating";
   if (IDEMPOTENT_CLEANUP_COMMANDS.has(name)) return "idempotent-cleanup";
   return "read-only";
+}
+
+/** Classify a parsed `/weave:goal` invocation, failing closed for unsafe forms. */
+export function classifyWeaveGoalInvocation(
+  parsed: WeaveGoalArgs,
+): WeaveCommandClassification {
+  switch (parsed.kind) {
+    case "status":
+    case "pause":
+    case "clear":
+      return "read-only";
+    default:
+      return "mutating";
+  }
 }
 
 /** The npm package name used to install this adapter (Pi adapter contract). */
