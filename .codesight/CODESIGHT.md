@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-pi
 
-> 0 routes | 0 models | 0 components | 231 lib files | 32 env vars | 10 middleware | 0% test coverage
-> **Token savings:** this file is ~23,000 tokens. Without it, AI exploration would cost ~75,900 tokens. **Saves ~52,900 tokens per conversation.**
-> **Last scanned:** 2026-07-28 12:54 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 233 lib files | 32 env vars | 10 middleware | 0% test coverage
+> **Token savings:** this file is ~23,300 tokens. Without it, AI exploration would cost ~76,400 tokens. **Saves ~53,200 tokens per conversation.**
+> **Last scanned:** 2026-07-28 18:16 — re-run after significant changes
 
 ---
 
@@ -104,7 +104,7 @@
   - type PiBootstrapBody
   - type PiOrdinaryBootstrapBody
   - type PiDirectStepBootstrapBody
-  - _...13 more_
+  - _...15 more_
 - `packages/adapters/pi/src/child-crypto.ts`
   - function bytesToHex: (bytes) => string
   - function hexToBytes: (hex) => Uint8Array | undefined
@@ -181,21 +181,21 @@
   - interface PiChildInspectionEffectiveSettings
   - _...6 more_
 - `packages/adapters/pi/src/child-process-port.ts`
+  - function writeAllToSink: (sink, bytes) => ResultAsync<void, ChildProcessError>
   - function resolveKillSignal: (mode) => number | undefined
   - class BunPiChildProcessPort
   - interface PiChildStdout
   - interface PiSpawnedChildProcess
   - interface PiChildSpawnInput
-  - interface PiChildProcessPort
-  - _...2 more_
+  - _...4 more_
 - `packages/adapters/pi/src/child-runtime.ts`
   - class PiChildRuntime
+  - interface PiChildOutputTransfer
   - interface PiChildOutputPort
   - interface PiChildRuntimeDeps
   - interface PiChildBootstrapHandlers
   - type PiChildRuntimeError
-  - type PiChildOutputError
-  - _...1 more_
+  - _...2 more_
 - `packages/adapters/pi/src/child-session-checkpoint.ts`
   - function parsePiChildSessionCheckpoint: (value) => Result<PiChildSessionCheckpoint, PiChildCheckpointError>
   - function decodePiChildSessionCheckpoint: (bytes) => Result<PiChildSessionCheckpoint, PiChildCheckpointError>
@@ -228,6 +228,14 @@
   - function renderPiChildTranscriptRows: (state, width, input?) => readonly PiChildTranscriptRenderedRow[]
   - function renderPiChildTranscriptLines: (state, width, input?) => string[]
   - _...45 more_
+- `packages/adapters/pi/src/child-transfer.ts`
+  - function encodeTransferChunks: (payload, transferId, overrides?) => Result<readonly TransferChunk[], TransferEncodeError>
+  - class ChunkTransferAssembler
+  - interface TransferRejection
+  - interface TransferChunk
+  - interface TransferLimits
+  - type TransferRejectionReason
+  - _...2 more_
 - `packages/adapters/pi/src/child-tree-keys.ts` — function classifyChildTreeKey: (data) => PiTreeControlKey | undefined
 - `packages/adapters/pi/src/child-tree-render.ts`
   - function renderChildTreeLines: (nodes, selectedId, cumulativeUsage, options) => string[]
@@ -237,10 +245,10 @@
   - function addUsage: (a, b) => PiChildUsageAggregate
   - function truncateLatestOutput: (text) => string
   - function extractAssistantTextDeltaPreview: (record, JsonValue>) => string | undefined
+  - function extractAssistantThinkingDeltaPreview: (record, JsonValue>) => string | undefined
   - function extractAssistantStopReason: (record, JsonValue>) => string | undefined
   - function applyTreeControlKey: (nodes, PiChildTreeNode>, selectedId, key) => PiTreeControlOutcome
-  - function subtreeIds: (nodes, PiChildTreeNode>, nodeId) => readonly string[]
-  - _...9 more_
+  - _...10 more_
 - `packages/adapters/pi/src/commands.ts`
   - function classifyWeaveCommand: (name) => WeaveCommandClassification
   - function parseNpmSourceName: (source) => string | undefined
@@ -305,7 +313,7 @@
   - function makeActivationFailedFailure: (reason) => PiAdapterFailure
   - function makeCommandCollisionFailure: (commandName) => PiAdapterFailure
   - function makeRequiredCapabilityUnavailableFailure: (capabilityId, reason) => PiAdapterFailure
-  - _...59 more_
+  - _...65 more_
 - `packages/adapters/pi/src/extension.ts`
   - function createDefaultPiExtensionDeps: () => PiExtensionDeps
   - function buildChildBootstrapBody: (descriptorsByName, AgentDescriptor>, target, childId, context, ctx?) => JsonValue
@@ -360,15 +368,15 @@
   - interface PiPrimaryCapabilityWarning
   - interface PiActivePrimary
   - interface PiPrimaryActivationContext
-  - _...3 more_
+  - _...4 more_
 - `packages/adapters/pi/src/prompt-chunking.ts`
+  - function promptTransferNackReason: (error) => PromptTransferNackReason
+  - function encodePromptChunksBounded: (task, transferId) => Result<readonly PromptChunk[], PromptChunkError>
   - function encodePromptChunks: (task, transferId) => readonly PromptChunk[]
-  - function parsePromptChunk: (raw) => ResultType<PromptChunk, PromptChunkError>
+  - function parsePromptChunk: (raw) => Result<PromptChunk, PromptChunkError>
   - class PromptChunkAssembler
   - interface PromptChunk
-  - type PromptChunkError
-  - const PROMPT_CHUNK_COMMAND
-  - _...1 more_
+  - _...4 more_
 - `packages/adapters/pi/src/recovery-pointer.ts`
   - function parseRecoveryPointer: (raw) => Result<PiWeaveRecoveryPointerV1, RecoveryPointerValidationFailure>
   - function isPointerForCurrentGeneration: (pointer, currentGenerationId) => boolean
@@ -377,6 +385,13 @@
   - class InMemoryRecoveryPointerStore
   - class BunJsonlRecoveryPointerStore
   - _...5 more_
+- `packages/adapters/pi/src/repeated-settlement-validator.ts`
+  - function validateRepeatedSettlements: (options) => ResultAsync<
+  - interface PiSettlementValidationRun
+  - interface PiSettlementValidationObservation
+  - interface PiRepeatedSettlementValidationOptions
+  - interface PiRepeatedSettlementValidationReport
+  - type PiRepeatedSettlementValidationError
 - `packages/adapters/pi/src/rpc-child.ts`
   - class PiRpcChild
   - interface PiRestoreContextMetadata
@@ -1331,6 +1346,7 @@
 - `packages/cli/src/evals/openrouter-client.ts` — imported by **18** files
 - `packages/cli/src/evals/report-schema.ts` — imported by **17** files
 - `scripts/release/stable-train.ts` — imported by **16** files
+- `packages/adapters/pi/src/errors.ts` — imported by **15** files
 - `packages/engine/src/runtime/store.ts` — imported by **15** files
 - `scripts/release/npm-registry-client.ts` — imported by **15** files
 - `packages/cli/src/args.ts` — imported by **14** files
@@ -1341,7 +1357,6 @@
 - `scripts/release/clock.ts` — imported by **13** files
 - `packages/cli/src/fs/file-system.ts` — imported by **12** files
 - `packages/engine/src/runtime/errors.ts` — imported by **12** files
-- `packages/engine/src/compose.ts` — imported by **11** files
 
 ## Import Map (who imports what)
 
@@ -1354,14 +1369,14 @@
 - `packages/cli/src/evals/openrouter-client.ts` ← `packages/cli/src/evals/__tests__/loom-routing-runner.test.ts`, `packages/cli/src/evals/__tests__/pattern-planning-runner.test.ts`, `packages/cli/src/evals/__tests__/runner.test.ts`, `packages/cli/src/evals/__tests__/shuttle-execution-runner.test.ts`, `packages/cli/src/evals/__tests__/spindle-tools-runner.test.ts` +13 more
 - `packages/cli/src/evals/report-schema.ts` ← `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts`, `packages/cli/src/evals/__tests__/artifact-bundle.test.ts` +12 more
 - `scripts/release/stable-train.ts` ← `scripts/release/__tests__/artifact-manifest.test.ts`, `scripts/release/__tests__/control-executable.test.ts`, `scripts/release/__tests__/github-client.test.ts`, `scripts/release/__tests__/metadata-replay.test.ts`, `scripts/release/__tests__/payload-layout.e2e.test.ts` +11 more
-- `packages/engine/src/runtime/store.ts` ← `packages/engine/src/__tests__/permission-service.test.ts`, `packages/engine/src/__tests__/runtime-journal.test.ts`, `packages/engine/src/execution-lifecycle/artifacts.ts`, `packages/engine/src/execution-lifecycle/dispatch.ts`, `packages/engine/src/execution-lifecycle/inspection.ts` +10 more
+- `packages/adapters/pi/src/errors.ts` ← `packages/adapters/pi/src/__tests__/child-mode.test.ts`, `packages/adapters/pi/src/__tests__/child-transfer.test.ts`, `packages/adapters/pi/src/__tests__/plan-catalog.test.ts`, `packages/adapters/pi/src/__tests__/repeated-settlement-validator.test.ts`, `packages/adapters/pi/src/__tests__/runtime-store-port.test.ts` +10 more
 
 ---
 
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 233 test files found
+> 235 test files found
 
 ---
 

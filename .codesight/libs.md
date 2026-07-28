@@ -93,7 +93,7 @@
   - type PiBootstrapBody
   - type PiOrdinaryBootstrapBody
   - type PiDirectStepBootstrapBody
-  - _...13 more_
+  - _...15 more_
 - `packages/adapters/pi/src/child-crypto.ts`
   - function bytesToHex: (bytes) => string
   - function hexToBytes: (hex) => Uint8Array | undefined
@@ -170,21 +170,21 @@
   - interface PiChildInspectionEffectiveSettings
   - _...6 more_
 - `packages/adapters/pi/src/child-process-port.ts`
+  - function writeAllToSink: (sink, bytes) => ResultAsync<void, ChildProcessError>
   - function resolveKillSignal: (mode) => number | undefined
   - class BunPiChildProcessPort
   - interface PiChildStdout
   - interface PiSpawnedChildProcess
   - interface PiChildSpawnInput
-  - interface PiChildProcessPort
-  - _...2 more_
+  - _...4 more_
 - `packages/adapters/pi/src/child-runtime.ts`
   - class PiChildRuntime
+  - interface PiChildOutputTransfer
   - interface PiChildOutputPort
   - interface PiChildRuntimeDeps
   - interface PiChildBootstrapHandlers
   - type PiChildRuntimeError
-  - type PiChildOutputError
-  - _...1 more_
+  - _...2 more_
 - `packages/adapters/pi/src/child-session-checkpoint.ts`
   - function parsePiChildSessionCheckpoint: (value) => Result<PiChildSessionCheckpoint, PiChildCheckpointError>
   - function decodePiChildSessionCheckpoint: (bytes) => Result<PiChildSessionCheckpoint, PiChildCheckpointError>
@@ -217,6 +217,14 @@
   - function renderPiChildTranscriptRows: (state, width, input?) => readonly PiChildTranscriptRenderedRow[]
   - function renderPiChildTranscriptLines: (state, width, input?) => string[]
   - _...45 more_
+- `packages/adapters/pi/src/child-transfer.ts`
+  - function encodeTransferChunks: (payload, transferId, overrides?) => Result<readonly TransferChunk[], TransferEncodeError>
+  - class ChunkTransferAssembler
+  - interface TransferRejection
+  - interface TransferChunk
+  - interface TransferLimits
+  - type TransferRejectionReason
+  - _...2 more_
 - `packages/adapters/pi/src/child-tree-keys.ts` — function classifyChildTreeKey: (data) => PiTreeControlKey | undefined
 - `packages/adapters/pi/src/child-tree-render.ts`
   - function renderChildTreeLines: (nodes, selectedId, cumulativeUsage, options) => string[]
@@ -226,10 +234,10 @@
   - function addUsage: (a, b) => PiChildUsageAggregate
   - function truncateLatestOutput: (text) => string
   - function extractAssistantTextDeltaPreview: (record, JsonValue>) => string | undefined
+  - function extractAssistantThinkingDeltaPreview: (record, JsonValue>) => string | undefined
   - function extractAssistantStopReason: (record, JsonValue>) => string | undefined
   - function applyTreeControlKey: (nodes, PiChildTreeNode>, selectedId, key) => PiTreeControlOutcome
-  - function subtreeIds: (nodes, PiChildTreeNode>, nodeId) => readonly string[]
-  - _...9 more_
+  - _...10 more_
 - `packages/adapters/pi/src/commands.ts`
   - function classifyWeaveCommand: (name) => WeaveCommandClassification
   - function parseNpmSourceName: (source) => string | undefined
@@ -294,7 +302,7 @@
   - function makeActivationFailedFailure: (reason) => PiAdapterFailure
   - function makeCommandCollisionFailure: (commandName) => PiAdapterFailure
   - function makeRequiredCapabilityUnavailableFailure: (capabilityId, reason) => PiAdapterFailure
-  - _...59 more_
+  - _...65 more_
 - `packages/adapters/pi/src/extension.ts`
   - function createDefaultPiExtensionDeps: () => PiExtensionDeps
   - function buildChildBootstrapBody: (descriptorsByName, AgentDescriptor>, target, childId, context, ctx?) => JsonValue
@@ -349,15 +357,15 @@
   - interface PiPrimaryCapabilityWarning
   - interface PiActivePrimary
   - interface PiPrimaryActivationContext
-  - _...3 more_
+  - _...4 more_
 - `packages/adapters/pi/src/prompt-chunking.ts`
+  - function promptTransferNackReason: (error) => PromptTransferNackReason
+  - function encodePromptChunksBounded: (task, transferId) => Result<readonly PromptChunk[], PromptChunkError>
   - function encodePromptChunks: (task, transferId) => readonly PromptChunk[]
-  - function parsePromptChunk: (raw) => ResultType<PromptChunk, PromptChunkError>
+  - function parsePromptChunk: (raw) => Result<PromptChunk, PromptChunkError>
   - class PromptChunkAssembler
   - interface PromptChunk
-  - type PromptChunkError
-  - const PROMPT_CHUNK_COMMAND
-  - _...1 more_
+  - _...4 more_
 - `packages/adapters/pi/src/recovery-pointer.ts`
   - function parseRecoveryPointer: (raw) => Result<PiWeaveRecoveryPointerV1, RecoveryPointerValidationFailure>
   - function isPointerForCurrentGeneration: (pointer, currentGenerationId) => boolean
@@ -366,6 +374,13 @@
   - class InMemoryRecoveryPointerStore
   - class BunJsonlRecoveryPointerStore
   - _...5 more_
+- `packages/adapters/pi/src/repeated-settlement-validator.ts`
+  - function validateRepeatedSettlements: (options) => ResultAsync<
+  - interface PiSettlementValidationRun
+  - interface PiSettlementValidationObservation
+  - interface PiRepeatedSettlementValidationOptions
+  - interface PiRepeatedSettlementValidationReport
+  - type PiRepeatedSettlementValidationError
 - `packages/adapters/pi/src/rpc-child.ts`
   - class PiRpcChild
   - interface PiRestoreContextMetadata
