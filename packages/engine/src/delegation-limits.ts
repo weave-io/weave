@@ -22,7 +22,9 @@ export type DelegationLimitsError =
 
 export interface DelegationAuthorizationInput {
   readonly limits: EffectiveDelegationLimits;
+  /** Structural direct-child count supplied by the adapter for consistency checks. */
   readonly directChildren: number;
+  /** Direct children currently occupying execution capacity. */
   readonly activeChildren: number;
   readonly childDepth: number;
   readonly liveProcesses: number;
@@ -184,7 +186,9 @@ function validateCount(
 
 /**
  * Decide whether one requested child may start, must queue, or is denied.
- * Adapters supply live counts and own queue/process enforcement.
+ * `maxChildren` is a hard cap on active direct children; settled or disposed
+ * children do not consume it. Adapters supply live counts and own
+ * queue/process enforcement.
  */
 export function authorizeDelegation(
   input: DelegationAuthorizationInput,
@@ -225,7 +229,7 @@ export function authorizeDelegation(
   if (input.childDepth > input.limits.maxDepth) {
     return ok({ outcome: "denied", reason: "max_depth" });
   }
-  if (input.directChildren >= input.limits.maxChildren) {
+  if (input.activeChildren >= input.limits.maxChildren) {
     return ok({ outcome: "denied", reason: "max_children" });
   }
   if (input.activeChildren >= input.limits.maxConcurrency) {

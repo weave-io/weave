@@ -165,7 +165,21 @@ describe("authorizeDelegation", () => {
     });
   });
 
-  it("denies when direct child capacity is exhausted", () => {
+  it("denies when active child capacity is exhausted", () => {
+    const result = authorizeDelegation({
+      limits,
+      directChildren: 9,
+      activeChildren: 9,
+      childDepth: 1,
+      liveProcesses: 9,
+    });
+    expect(result._unsafeUnwrap()).toEqual({
+      outcome: "denied",
+      reason: "max_children",
+    });
+  });
+
+  it("does not consume max_children capacity after direct children settle", () => {
     const result = authorizeDelegation({
       limits,
       directChildren: 9,
@@ -173,10 +187,7 @@ describe("authorizeDelegation", () => {
       childDepth: 1,
       liveProcesses: 0,
     });
-    expect(result._unsafeUnwrap()).toEqual({
-      outcome: "denied",
-      reason: "max_children",
-    });
+    expect(result._unsafeUnwrap()).toEqual({ outcome: "authorized" });
   });
 
   it("queues when parent concurrency is exhausted", () => {
