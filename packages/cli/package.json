@@ -37,6 +37,7 @@
     "@weaveio/weave-engine": "workspace:*",
     "agentevals": "^0.0.7",
     "figlet": "^1.11.0",
+    "jsonc-parser": "^3",
     "mustache": "^4.2.0",
     "neverthrow": "^8.2.0",
     "openevals": "^0.2.0",

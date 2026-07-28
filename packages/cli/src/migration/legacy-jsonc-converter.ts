@@ -6,6 +6,8 @@
  * unsupported fields are skipped with explicit warnings.
  */
 
+import { type ParseError, parse as parseJsonc } from "jsonc-parser";
+
 import type { ConversionResult, ConversionWarning } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -94,18 +96,27 @@ const VALID_LOG_LEVELS = new Set([
 ]);
 
 // ---------------------------------------------------------------------------
-// JSONC comment stripping
+// JSONC parsing
 // ---------------------------------------------------------------------------
 
 /**
- * Strip JSONC-style line comments and block comments from a string so it
- * can be parsed by `JSON.parse`.
+ * Parse legacy JSONC with comments and trailing commas. The old
+ * comment-stripping pass left trailing commas for `JSON.parse` to reject,
+ * which made migration fall back to the starter config.
  *
- * Uses a char-by-char state machine that tracks string context so that
- * comment-like sequences inside string literals are preserved intact.
- * This correctly handles URLs (e.g. `"https://example.com"`) and other
- * string values that contain slashes.
+ * Returns `undefined` when parsing fails.
  */
+function parseLegacyJsonc(source: string): unknown {
+  const errors: ParseError[] = [];
+  const result = parseJsonc(source, errors, {
+    allowTrailingComma: true,
+    disallowComments: false,
+    allowEmptyContent: false,
+  });
+  if (errors.length > 0) return undefined;
+  return result;
+}
+
 /**
  * Escapes a string value for safe embedding in a `.weave` DSL double-quoted
  * string literal. Handles backslashes, double-quotes, newlines, carriage
@@ -128,72 +139,6 @@ function escapeForDsl(str: string): string {
       const hex = ch.charCodeAt(0).toString(16).padStart(4, "0");
       return `\\u${hex}`;
     });
-}
-
-export function stripJsoncComments(source: string): string {
-  let result = "";
-  let i = 0;
-  let inString = false;
-  let isEscaped = false;
-
-  while (i < source.length) {
-    const ch = source[i] as string;
-
-    if (inString) {
-      if (isEscaped) {
-        result += ch;
-        isEscaped = false;
-        i++;
-        continue;
-      }
-      if (ch === "\\") {
-        result += ch;
-        isEscaped = true;
-        i++;
-        continue;
-      }
-      if (ch === '"') {
-        result += ch;
-        inString = false;
-        i++;
-        continue;
-      }
-      result += ch;
-      i++;
-      continue;
-    }
-
-    if (ch === '"') {
-      result += ch;
-      inString = true;
-      i++;
-      continue;
-    }
-
-    if (ch === "/" && source[i + 1] === "/") {
-      while (i < source.length && source[i] !== "\n") {
-        i++;
-      }
-      continue;
-    }
-
-    if (ch === "/" && source[i + 1] === "*") {
-      i += 2;
-      while (i < source.length) {
-        if (source[i] === "*" && source[i + 1] === "/") {
-          i += 2;
-          break;
-        }
-        i++;
-      }
-      continue;
-    }
-
-    result += ch;
-    i++;
-  }
-
-  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -616,11 +561,13 @@ export function convertLegacyJsonc(source: string): ConversionResult {
   const warnings: ConversionWarning[] = [];
   const dslLines: string[] = [];
 
-  let parsed: Record<string, unknown>;
-  try {
-    const stripped = stripJsoncComments(source);
-    parsed = JSON.parse(stripped) as Record<string, unknown>;
-  } catch {
+  const parseResult = parseLegacyJsonc(source);
+  if (
+    parseResult === undefined ||
+    parseResult === null ||
+    typeof parseResult !== "object" ||
+    Array.isArray(parseResult)
+  ) {
     warnings.push({
       field: "<source>",
       reason:
@@ -628,6 +575,7 @@ export function convertLegacyJsonc(source: string): ConversionResult {
     });
     return { dsl: "", warnings };
   }
+  const parsed = parseResult as Record<string, unknown>;
 
   for (const [key, value] of Object.entries(parsed)) {
     if (key in UNSUPPORTED_LEGACY_FIELDS) {
