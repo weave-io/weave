@@ -2480,6 +2480,7 @@ describe("detectAppendCollisions", () => {
       const a = cfg(`
         workflow wf-a {
           version 1
+
           step s1 {
             name "S1"
             type autonomous
@@ -2493,6 +2494,7 @@ describe("detectAppendCollisions", () => {
       const b = cfg(`
         workflow wf-b {
           version 1
+
           step s1 {
             name "S1"
             type autonomous
@@ -2511,6 +2513,7 @@ describe("detectAppendCollisions", () => {
       const a = cfg(`
         workflow my-wf {
           version 1
+
           step step-a {
             name "Step A"
             type autonomous
@@ -2524,6 +2527,7 @@ describe("detectAppendCollisions", () => {
       const b = cfg(`
         workflow my-wf {
           version 1
+
           step step-b {
             name "Step B"
             type autonomous
@@ -2544,6 +2548,7 @@ describe("detectAppendCollisions", () => {
       const base = cfg(`
         workflow my-wf {
           version 1
+
           step do-it {
             name "Do it"
             type autonomous
@@ -2557,6 +2562,7 @@ describe("detectAppendCollisions", () => {
       const override = cfg(`
         workflow my-wf {
           version 1
+
           step do-it {
             name "Do it"
             type autonomous
@@ -2586,6 +2592,7 @@ describe("detectAppendCollisions", () => {
       const base = cfg(`
         workflow my-wf {
           version 1
+
           step do-it {
             name "Do it"
             type autonomous
@@ -2599,6 +2606,7 @@ describe("detectAppendCollisions", () => {
       const override = cfg(`
         workflow my-wf {
           version 1
+
           step do-it {
             name "Do it"
             type autonomous
@@ -2629,6 +2637,7 @@ describe("detectAppendCollisions", () => {
       const first = cfg(`
         workflow my-wf {
           version 1
+
           step do-it {
             name "Do it"
             type autonomous
@@ -2642,6 +2651,7 @@ describe("detectAppendCollisions", () => {
       const second = cfg(`
         workflow my-wf {
           version 1
+
           step do-it {
             name "Do it"
             type autonomous
@@ -2655,6 +2665,7 @@ describe("detectAppendCollisions", () => {
       const third = cfg(`
         workflow my-wf {
           version 1
+
           step do-it {
             name "Do it"
             type autonomous
@@ -2682,6 +2693,7 @@ describe("detectAppendCollisions", () => {
       const base = cfg(`
         workflow my-wf {
           version 1
+
           step my-step {
             name "My step"
             type autonomous
@@ -2695,6 +2707,7 @@ describe("detectAppendCollisions", () => {
       const override = cfg(`
         workflow my-wf {
           version 1
+
           step my-step {
             name "My step"
             type autonomous
@@ -2724,6 +2737,7 @@ describe("detectAppendCollisions", () => {
       const base = cfg(`
         workflow my-wf {
           version 1
+
           step my-step {
             name "My step"
             type autonomous
@@ -2737,6 +2751,7 @@ describe("detectAppendCollisions", () => {
       const override = cfg(`
         workflow my-wf {
           version 1
+
           step my-step {
             name "My step"
             type autonomous
@@ -2766,6 +2781,7 @@ describe("detectAppendCollisions", () => {
       const base = cfg(`
         workflow my-wf {
           version 1
+
           step my-step {
             name "My step"
             type autonomous
@@ -2780,6 +2796,7 @@ describe("detectAppendCollisions", () => {
       const override = cfg(`
         workflow my-wf {
           version 1
+
           step my-step {
             name "My step"
             type autonomous
@@ -2817,6 +2834,7 @@ describe("detectAppendCollisions", () => {
       const base = cfg(`
         workflow wf-a {
           version 1
+
           step s1 {
             name "S1"
             type autonomous
@@ -2828,6 +2846,7 @@ describe("detectAppendCollisions", () => {
         }
         workflow wf-b {
           version 1
+
           step s1 {
             name "S1"
             type autonomous
@@ -2841,6 +2860,7 @@ describe("detectAppendCollisions", () => {
       const override = cfg(`
         workflow wf-a {
           version 1
+
           step s1 {
             name "S1"
             type autonomous
@@ -2852,6 +2872,7 @@ describe("detectAppendCollisions", () => {
         }
         workflow wf-b {
           version 1
+
           step s1 {
             name "S1"
             type autonomous
@@ -2882,6 +2903,7 @@ describe("detectAppendCollisions", () => {
       const base = cfg(`
         workflow my-wf {
           version 1
+
           step do-it {
             name "Do it"
             type autonomous
@@ -2894,6 +2916,7 @@ describe("detectAppendCollisions", () => {
       const override = cfg(`
         workflow my-wf {
           version 1
+
           step do-it {
             name "Do it"
             type autonomous
@@ -2914,6 +2937,7 @@ describe("detectAppendCollisions", () => {
       const base = cfg(`
         workflow my-wf {
           version 1
+
           step do-it {
             name "Do it"
             type autonomous
@@ -2927,6 +2951,7 @@ describe("detectAppendCollisions", () => {
       const override = cfg(`
         workflow my-wf {
           version 1
+
           step do-it {
             name "Do it"
             type autonomous
