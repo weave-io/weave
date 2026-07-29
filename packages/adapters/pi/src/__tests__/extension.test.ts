@@ -5,6 +5,7 @@ import {
   ALL_CAPABILITY_IDS,
   createInMemoryRuntimeStore,
   type MaterializationPlan,
+  type PlanTaskSnapshot,
 } from "@weaveio/weave-engine";
 import { errAsync, ok, okAsync } from "neverthrow";
 import { DefaultPiCapabilityProber } from "../capability-prober.js";
@@ -26,6 +27,7 @@ import {
   RecordingFakePiHost,
   RecordingLogger,
 } from "./fakes/fake-pi-host.js";
+import { MutablePlanStateProvider } from "./fakes/fake-plan-state-provider.js";
 
 const EMPTY_CONFIG = {
   agents: {},
@@ -60,6 +62,27 @@ function allOkCapabilityProber() {
   };
 }
 
+function goalSnapshot(
+  planName = "weave-goal-command",
+  complete = false,
+): PlanTaskSnapshot {
+  return {
+    planName,
+    contentRevision: "test-revision",
+    format: "canonical",
+    parents: [
+      {
+        id: "task-1",
+        title: "Finish task",
+        state: complete ? "completed" : "pending",
+        children: [],
+      },
+    ],
+    totalParentCount: 1,
+    complete,
+  };
+}
+
 function installExtension(
   host: RecordingFakePiHost,
   hostVersion = "0.81.1",
@@ -74,6 +97,8 @@ function installExtension(
     idGenerator: new FakeIdGenerator(),
     clock: new FakeClock(),
     logger: new RecordingLogger(),
+    planStateProviderFactory: () =>
+      new MutablePlanStateProvider(goalSnapshot()),
     configActivator: fakeConfigActivator(),
     // Real `BunPathContainmentPort` spawns a genuine subprocess (Pi adapter contract
     // forbids this in tests); this fake host's `cwd` is a
@@ -89,6 +114,26 @@ function installExtension(
   });
   factory(host.api);
   return factory;
+}
+
+function installHealthyGoalExtension(
+  host: RecordingFakePiHost,
+  provider: MutablePlanStateProvider,
+  extras: Partial<PiExtensionDeps> = {},
+): void {
+  installExtension(host, "0.81.1", {
+    capabilityProber: allOkCapabilityProber(),
+    configActivator: fakeConfigActivator({
+      agents: [
+        { agentName: "loom", source: "explicit", descriptor: loomDescriptor() },
+      ],
+      errors: [],
+    }),
+    planCatalogPort: new FakePiPlanCatalogPort(["weave-goal-command"]),
+    runtimeStoreFactory: { open: () => okAsync(createInMemoryRuntimeStore()) },
+    planStateProviderFactory: () => provider,
+    ...extras,
+  });
 }
 
 describe("createPiExtension factory (layer C: compiled extension against a fake host)", () => {
@@ -1449,6 +1494,19 @@ describe("createPiExtension: config activation, materialization consumption, pri
     await host.triggerSessionStart();
     await host.invokeCommand("weave:goal", "weave-goal-command");
     expect(host.getActiveTools()).toContain("weave_goal_report");
+    expect(
+      host.appendedEntries.filter(({ type }) => type === "weave-goal-state"),
+    ).toHaveLength(1);
+    expect(
+      host.appendedEntries.filter(
+        ({ type }) => type === "durable-workflow-state",
+      ),
+    ).toHaveLength(0);
+    expect(
+      host.notifyCalls.filter(({ message }) =>
+        message.includes("authorization"),
+      ),
+    ).toHaveLength(0);
     expect(host.sentUserMessages.at(-1)).toMatchObject({
       options: { deliverAs: "followUp" },
     });
@@ -1544,6 +1602,235 @@ describe("createPiExtension: config activation, materialization consumption, pri
     expect(
       host.notifyCalls.some(({ message }) => message.includes("paused")),
     ).toBe(true);
+  });
+
+  it("adjudicates reports through the extension and persists evidence", async () => {
+    const provider = new MutablePlanStateProvider(goalSnapshot());
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      cwd: process.cwd(),
+    });
+    installHealthyGoalExtension(host, provider);
+    const ctx = await host.triggerSessionStart();
+    await host.invokeCommand("weave:goal", "weave-goal-command");
+    const tool = host.registerToolCalls.find(
+      ({ name }) => name === "weave_goal_report",
+    );
+    const incomplete = await tool?.execute(
+      "call",
+      { status: "achieved", evidence: "task checked" },
+      undefined,
+      undefined,
+      ctx,
+    );
+    expect((incomplete as { terminate?: boolean } | undefined)?.terminate).toBe(
+      true,
+    );
+    expect(host.getActiveTools()).toContain("weave_goal_report");
+    expect(host.appendedEntries.at(-1)?.data).toMatchObject({
+      state: { evidence: "task checked", status: "pursuing" },
+    });
+    provider.setSnapshot(goalSnapshot("weave-goal-command", true));
+    const complete = await tool?.execute(
+      "call",
+      { status: "achieved", evidence: "all tasks complete" },
+      undefined,
+      undefined,
+      ctx,
+    );
+    expect((complete as { terminate?: boolean } | undefined)?.terminate).toBe(
+      true,
+    );
+    expect(host.getActiveTools()).not.toContain("weave_goal_report");
+    expect(host.appendedEntries.at(-1)?.data).toMatchObject({
+      state: { evidence: "all tasks complete", status: "achieved" },
+    });
+  });
+
+  it("self-suspends without continuation when a durable workflow is active", async () => {
+    const provider = new MutablePlanStateProvider(goalSnapshot());
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      cwd: process.cwd(),
+    });
+    installHealthyGoalExtension(host, provider, {
+      durableWorkflowActive: () => true,
+    });
+    await host.triggerSessionStart();
+    await host.invokeCommand("weave:goal", "weave-goal-command");
+    const before = host.sentUserMessages.length;
+    await host.triggerEvent("agent_start");
+    await host.triggerEvent("agent_settled");
+    expect(host.sentUserMessages).toHaveLength(before);
+    expect(host.getActiveTools()).not.toContain("weave_goal_report");
+    expect(host.appendedEntries.at(-1)?.data).toMatchObject({
+      state: {
+        status: "paused",
+        reason: "A durable workflow took over this session.",
+      },
+    });
+    expect(
+      host.notifyCalls.some(({ message }) =>
+        message.includes("Goal paused/self-suspended"),
+      ),
+    ).toBe(true);
+  });
+
+  it("gates each mutating goal form in health-only mode while preserving valid reads and cleanup", async () => {
+    const goalEnvelope = (status: "pursuing" | "paused") => ({
+      version: 1 as const,
+      state: {
+        version: 1 as const,
+        planName: "weave-goal-command",
+        planContentRevision: "health-test-revision",
+        status,
+        startedAt: 1,
+        elapsedMs: 0,
+        turns: 2,
+        tokens: 20,
+        continuations: 0,
+      },
+    });
+    const setup = async (status: "pursuing" | "paused") => {
+      const host = new RecordingFakePiHost({
+        mode: "tui",
+        trusted: true,
+        cwd: process.cwd(),
+      });
+      installExtension(host, "0.81.1", {
+        planStateProviderFactory: () =>
+          new MutablePlanStateProvider(goalSnapshot()),
+      });
+      const ctx = await host.triggerSessionStart();
+      await host.triggerEvent(
+        "session_tree",
+        {},
+        Object.assign(ctx, {
+          sessionManager: {
+            getBranch: () => [
+              {
+                type: "custom",
+                customType: "weave-goal-state",
+                data: goalEnvelope(status),
+              },
+            ],
+          },
+        }),
+      );
+      expect(host.registerToolCalls).toHaveLength(0);
+      return host;
+    };
+    const blocked = "Weave is in health-only mode; weave:goal is unavailable";
+
+    const startHost = await setup("pursuing");
+    const startEntries = startHost.appendedEntries.length;
+    const startMessages = startHost.sentUserMessages.length;
+    await startHost.invokeCommand("weave:goal", "new objective");
+    expect(startHost.notifyCalls.at(-1)?.message).toContain(blocked);
+    expect(startHost.appendedEntries).toHaveLength(startEntries);
+    expect(startHost.sentUserMessages).toHaveLength(startMessages);
+
+    const resumeHost = await setup("paused");
+    await resumeHost.invokeCommand("weave:goal", "resume");
+    expect(resumeHost.notifyCalls.at(-1)?.message).toContain(blocked);
+    await resumeHost.invokeCommand("weave:goal", "status");
+    expect(resumeHost.notifyCalls.at(-1)?.message).toContain("(paused)");
+    expect(resumeHost.notifyCalls.at(-1)?.message).not.toContain(blocked);
+
+    const statusHost = await setup("pursuing");
+    await statusHost.invokeCommand("weave:goal", "status");
+    expect(statusHost.notifyCalls.at(-1)?.message).toContain("(pursuing)");
+    expect(statusHost.notifyCalls.at(-1)?.message).not.toContain(blocked);
+
+    const pauseHost = await setup("pursuing");
+    await pauseHost.invokeCommand("weave:goal", "pause");
+    expect(pauseHost.notifyCalls.at(-1)?.message).toContain("Goal paused");
+    expect(pauseHost.notifyCalls.at(-1)?.message).not.toContain(blocked);
+    expect(pauseHost.appendedEntries.at(-1)?.data).toMatchObject({
+      state: { status: "paused" },
+    });
+
+    const clearHost = await setup("pursuing");
+    await clearHost.invokeCommand("weave:goal", "cancel");
+    expect(clearHost.notifyCalls.at(-1)?.message).toContain("Goal cleared");
+    expect(clearHost.notifyCalls.at(-1)?.message).not.toContain(blocked);
+    expect(clearHost.appendedEntries.at(-1)?.data).toEqual({
+      version: 1,
+      state: null,
+    });
+    expect(clearHost.getActiveTools()).not.toContain("weave_goal_report");
+  });
+
+  it("restores the last valid branch goal and clears stale state when the branch has no goal", async () => {
+    const provider = new MutablePlanStateProvider(goalSnapshot());
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      cwd: process.cwd(),
+    });
+    installHealthyGoalExtension(host, provider);
+    const ctx = await host.triggerSessionStart();
+    const envelopeA = {
+      version: 1 as const,
+      state: {
+        version: 1 as const,
+        planName: "goal-a",
+        planContentRevision: "revision-a",
+        status: "paused" as const,
+        startedAt: 1,
+        elapsedMs: 10,
+        turns: 1,
+        tokens: 10,
+        continuations: 0,
+        reason: "waiting on A",
+      },
+    };
+    const envelopeB = {
+      version: 1 as const,
+      state: {
+        version: 1 as const,
+        planName: "goal-b",
+        planContentRevision: "revision-b",
+        status: "pursuing" as const,
+        startedAt: 2,
+        elapsedMs: 20,
+        turns: 3,
+        tokens: 30,
+        continuations: 1,
+      },
+    };
+    const branchCtx = Object.assign(ctx, {
+      sessionManager: {
+        getBranch: () => [
+          { type: "custom", customType: "weave-goal-state", data: envelopeA },
+          {
+            type: "custom",
+            customType: "weave-goal-state",
+            data: { malformed: true },
+          },
+          { type: "custom", customType: "weave-goal-state", data: envelopeB },
+        ],
+      },
+    });
+    await host.triggerEvent("session_tree", {}, branchCtx);
+    expect(host.getActiveTools()).toContain("weave_goal_report");
+    expect(host.statusCalls.at(-1)?.value).toContain("goal-b");
+    await host.invokeCommand("weave:goal", "status");
+    expect(host.notifyCalls.at(-1)?.message).toContain("(pursuing)");
+
+    const noGoalCtx = Object.assign(ctx, {
+      sessionManager: { getBranch: () => [] },
+    });
+    const messagesBeforeClear = host.sentUserMessages.length;
+    await host.triggerEvent("session_tree", {}, noGoalCtx);
+    expect(host.statusCalls.at(-1)).toEqual({
+      key: "weave-goal",
+      value: undefined,
+    });
+    expect(host.getActiveTools()).not.toContain("weave_goal_report");
+    expect(host.sentUserMessages).toHaveLength(messagesBeforeClear);
   });
 
   it("pauses on an aborted assistant response", async () => {
