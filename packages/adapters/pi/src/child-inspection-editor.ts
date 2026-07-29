@@ -58,9 +58,12 @@ export class PiChildInspectionEditor {
     if (key.kind === "select-parent") {
       if (this.view.state.draft.length > 0) { this.host.defaultInput?.(data); return ok({ kind: "host-default" }); }
       const child = this.inspector.child(this.view.childId);
-      if (child?.parentId !== undefined) this.switchTo(child.parentId);
-      else this.host.defaultInput?.(data);
-      return ok({ kind: "handled", key });
+      if (child?.parentId !== undefined) {
+        this.switchTo(child.parentId);
+        return ok({ kind: "handled", key });
+      }
+      this.host.defaultInput?.(data);
+      return ok({ kind: "host-default" });
     }
     if (key.kind === "cancel-selected") {
       const child = this.inspector.child(this.view.childId);
@@ -70,6 +73,10 @@ export class PiChildInspectionEditor {
     }
     const child = this.inspector.child(this.view.childId);
     const message = this.view.state.draft;
+    if (this.view.childId === this.inspector.rootId) {
+      this.host.defaultInput?.(data);
+      return ok({ kind: "host-default" });
+    }
     if (!child || child.status !== "running" || !message.trim() || !child.generationId) {
       return ok({ kind: "handled", key });
     }

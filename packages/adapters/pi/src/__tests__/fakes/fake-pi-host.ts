@@ -569,6 +569,9 @@ export class RecordingFakePiHost {
         this.editorFactoryCalls.push(factory);
         this.editorFactory = factory;
       },
+      mountChildTranscript: (view) => {
+        this.transcriptCalls.push(view);
+      },
     };
     return Object.assign(
       {

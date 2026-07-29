@@ -2319,6 +2319,63 @@ describe("createPiExtension: config activation, materialization consumption, pri
     ).toHaveLength(1);
   });
 
+  it("reproduces live child inspection no-op at the extension seam", async () => {
+    const history = mutableChildHistoryStore([
+      eligibleOrdinaryRecoveryRecord({
+        childId: "ordinary-live-child",
+        status: "interrupted",
+        recovery: { eligible: false, count: 0 },
+      }),
+    ]);
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const priorFactory = (
+      tui: unknown,
+      theme: unknown,
+      keybindings: unknown,
+    ) => ({ tui, theme, keybindings, handleInput: () => undefined });
+    host.setEditorComponentForTest(priorFactory);
+    installRecoveryExtension(host, history.store, () =>
+      okAsync({ finalOutput: "restored", interventionCount: 0 }),
+    );
+    await host.triggerSessionStart();
+
+    const initialEditorFactoryCount = host.editorFactoryCalls.length;
+    const picker = host.deferNextSelect();
+    const inspect = host.invokeCommand("weave:inspect");
+    await flushBackgroundWork();
+    const childLabel = host.selectCalls
+      .at(-1)
+      ?.options.find((label) => label.includes("history: loom"));
+    expect(childLabel).toBeDefined();
+    picker.settle(childLabel);
+    await inspect;
+
+    const selectedEditorFactoryCount = host.editorFactoryCalls.length;
+    const pickerActivatedTranscript = host.transcriptCalls.length;
+    const legacyFooterVisible = host.widgetCalls.some(
+      (call) => call.key === "weave-children",
+    );
+
+    const editor = host.createEditor({}, {}, { matches: () => false });
+    await editor.handleInput("\u001b1");
+    const altSlotActivatedTranscript = host.transcriptCalls.length;
+
+    // Expected contract versus the observed live behavior. Keeping these in
+    // one assertion makes both broken paths visible in the failure output.
+    expect({
+      pickerActivatedTranscript,
+      editorFactoryDelta:
+        selectedEditorFactoryCount - initialEditorFactoryCount,
+      legacyFooterVisible,
+      altSlotActivatedTranscript,
+    }).toEqual({
+      pickerActivatedTranscript: 1,
+      editorFactoryDelta: 1,
+      legacyFooterVisible: false,
+      altSlotActivatedTranscript: 2,
+    });
+  });
+
   it("registers thirteen described commands once across extension reloads", async () => {
     const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
     installExtension(host);

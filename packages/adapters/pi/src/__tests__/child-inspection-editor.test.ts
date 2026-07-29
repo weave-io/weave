@@ -6,6 +6,23 @@ import { PiChildInspectionEditor } from "../child-inspection-editor.js";
 const child = (childId: string, status: PiInspectorChild["status"] = "running", extra: Partial<PiInspectorChild> = {}): PiInspectorChild => ({ childId, name: childId, kind: "ordinary", status, live: status === "running", generationId: `g-${childId}`, ...extra });
 
 describe("PiChildInspectionEditor", () => {
+  it("falls parent Enter and Backspace through to the host editor", () => {
+    const defaults: string[] = [];
+    const inspector = new PiChildInspector("root", {
+      steer: () => okAsync(undefined),
+      followUp: () => okAsync(undefined),
+      cancel: () => okAsync(undefined),
+    });
+    const editor = new PiChildInspectionEditor(inspector, {
+      defaultInput: (input) => defaults.push(input),
+    });
+    editor.open(child("root"), [child("root")]);
+
+    expect(editor.handleInput("\r")._unsafeUnwrap().kind).toBe("host-default");
+    expect(editor.handleInput("\x7f")._unsafeUnwrap().kind).toBe("host-default");
+    expect(defaults).toEqual(["\r", "\x7f"]);
+  });
+
   it("opens picker, navigates parent, and preserves state", () => {
     const opened: string[] = []; const defaults: string[] = [];
     const rpc: PiInspectorRpc = { steer: () => okAsync(undefined), followUp: () => okAsync(undefined), cancel: () => okAsync(undefined) };
@@ -34,6 +51,25 @@ describe("PiChildInspectionEditor", () => {
     editor.open({ ...running, status: "settled", live: false }, [{ ...running, status: "settled", live: false }]);
     editor.updateDraft("ignored"); editor.handleInput("\r");
     expect(calls).toEqual(["steer", "follow"]);
+  });
+
+  it("does not submit an empty child draft to the parent", () => {
+    const defaults: string[] = [];
+    const calls: string[] = [];
+    const inspector = new PiChildInspector("root", {
+      steer: () => { calls.push("steer"); return okAsync(undefined); },
+      followUp: () => { calls.push("follow"); return okAsync(undefined); },
+      cancel: () => okAsync(undefined),
+    });
+    const editor = new PiChildInspectionEditor(inspector, {
+      defaultInput: (input) => defaults.push(input),
+    });
+    editor.open(child("root"), [child("root")]);
+    editor.open(child("a"), [child("root"), child("a")]);
+
+    expect(editor.handleInput("\r")._unsafeUnwrap().kind).toBe("handled");
+    expect(defaults).toEqual([]);
+    expect(calls).toEqual([]);
   });
 
   it("rejects stale views and child slash commands", () => {

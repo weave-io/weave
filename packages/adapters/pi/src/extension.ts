@@ -55,11 +55,20 @@ import {
 import type { PiChildHistoryRecord } from "./child-history-schema.js";
 import { PiChildHistoryStore } from "./child-history-store.js";
 import {
+  createChildInspectionEditor,
+  type PiChildInspectionEditor,
+} from "./child-inspection-editor.js";
+import {
   formatPiChildInspectionSettingsIssues,
   type PiChildInspectionEffectiveSettings,
   type PiChildInspectionSettingsChoice,
 } from "./child-inspection-settings.js";
-import { PiChildSlots } from "./child-inspector.js";
+import {
+  PiChildInspector,
+  PiChildSlots,
+  type PiInspectorChild,
+  type PiInspectorView,
+} from "./child-inspector.js";
 import {
   buildChildPickerEntries,
   type PiChildPickerNode,
@@ -1373,25 +1382,47 @@ async function refreshPlanWidget(
 
 /** Renders the bounded child-tree widget (Pi adapter contract) via the real, always-available `ctx.ui.setWidget` surface. Hides the widget entirely (empty array) once there are no children left. */
 function renderChildTreeWidget(
-  ctx: PiSessionContext,
-  controller: PiDelegationController | undefined,
-  selectionCell: { selectedId: string },
-  inspectionRegistry?: PiChildInspectionRegistry,
+  _ctx: PiSessionContext,
+  _controller: PiDelegationController | undefined,
+  _selectionCell: { selectedId: string },
+  _inspectionRegistry?: PiChildInspectionRegistry,
 ): void {
-  const nodes =
-    inspectionRegistry?.snapshotLive() ?? controller?.snapshotTree() ?? [];
-  const lines = renderChildTreeLines(
-    nodes,
-    selectionCell.selectedId,
-    controller?.snapshotCumulativeUsage() ?? EMPTY_USAGE_AGGREGATE,
-  );
-  ctx.ui.setWidget(
-    WEAVE_CHILD_TREE_WIDGET_KEY,
-    lines.length === 0 ? undefined : lines,
-    {
-      placement: "belowEditor",
-    },
-  );
+  // Child topology is now rendered by the compositional inspector editor.
+}
+
+class WeaveChildInspectionEditor extends CustomEditor {
+  constructor(
+    tui: unknown,
+    theme: unknown,
+    keybindings: unknown,
+    private readonly composed: PiChildInspectionEditor,
+  ) {
+    const [ctorTui, ctorTheme, ctorKeybindings] = [
+      tui,
+      theme,
+      keybindings,
+    ] as ConstructorParameters<typeof CustomEditor>;
+    super(ctorTui, ctorTheme, ctorKeybindings);
+  }
+
+  override handleInput(data: string): void {
+    const result = this.composed.handleInput(data);
+    if (result.isOk() && result.value.kind !== "host-default") {
+      const view = this.composed.currentView();
+      if (view !== undefined) {
+        this.setText(view.state.draft);
+        (
+          this as unknown as { mount?: (view: PiInspectorView) => void }
+        ).mount?.(view);
+      }
+      return;
+    }
+    super.handleInput(data);
+    const view = this.composed.currentView();
+    if (view !== undefined && !view.readOnly) {
+      this.composed.updateDraft(this.getText());
+    }
+  }
 }
 
 interface WeaveChildTreeEditorDeps {
@@ -1526,6 +1557,10 @@ export function createPiExtension(
   const treeSelectionCell: { selectedId: string } = {
     selectedId: ROOT_NODE_ID,
   };
+  const childInspectionEditorCell: {
+    editor: PiChildInspectionEditor | undefined;
+    activate?: (childId: string) => void;
+  } = { editor: undefined };
   // One allocator lives for the extension instance, so editor replacement does
   // not renumber live children.
   const childSlots = new PiChildSlots();
@@ -1989,6 +2024,7 @@ export function createPiExtension(
         activeSession?.generationId ?? "",
         (childId) => {
           treeSelectionCell.selectedId = childId;
+          childInspectionEditorCell.activate?.(childId);
         },
         () => dispatchWeaveCommand(pi, "weave:resume", "", ctx),
       );
@@ -3099,6 +3135,103 @@ export function createPiExtension(
           );
         }
         treeSelectionCell.selectedId = ROOT_NODE_ID;
+        childInspectionEditorCell.editor = createChildInspectionEditor(
+          new PiChildInspector(ROOT_NODE_ID, {
+            steer: () => errAsync("child steering unavailable"),
+            followUp: () => errAsync("child follow-up unavailable"),
+            cancel: (childId, generationId) =>
+              generationId === generation.id
+                ? (delegationControllerCell.controller?.cancelSubtree(
+                    childId,
+                  ) ?? okAsync(undefined))
+                : errAsync("stale child view"),
+          }),
+          {
+            openPicker: () => {
+              childSlots.assignTree(inspectionRegistry.snapshotLive());
+              void openChildInspector(
+                ctx,
+                inspectionRegistry,
+                historyStoreCell.store,
+                recoveryCoordinatorCell.coordinator,
+                generation.id,
+                (childId) => activateChild(childId),
+                () => dispatchWeaveCommand(pi, "weave:resume", "", ctx),
+              );
+            },
+            onViewChange: (view) => {
+              if (view.childId !== ROOT_NODE_ID)
+                ctx.ui.mountChildTranscript?.(view);
+            },
+            defaultInput: (data) => undefined,
+          },
+        );
+        const inspectionEditor = childInspectionEditorCell.editor;
+        const activateChild = (childId: string): void => {
+          if (inspectionEditor === undefined) return;
+          const node = inspectionRegistry
+            .snapshotLive()
+            .find((item) => item.id === childId);
+          const child: PiInspectorChild =
+            node === undefined
+              ? {
+                  childId,
+                  name: childId,
+                  kind: "ordinary",
+                  live: false,
+                  status: "interrupted",
+                }
+              : {
+                  childId: node.id,
+                  name: node.name,
+                  kind: "ordinary",
+                  live: true,
+                  status: node.status as PiInspectorChild["status"],
+                  parentId: node.parentId,
+                  generationId: generation.id,
+                };
+          const known = [
+            child,
+            ...inspectionRegistry.snapshotLive().map((item) => ({
+              childId: item.id,
+              name: item.name,
+              kind: "ordinary" as PiInspectorChild["kind"],
+              live: true,
+              status: item.status as PiInspectorChild["status"],
+              parentId: item.parentId,
+              generationId: generation.id,
+            })),
+          ];
+          inspectionEditor.open(child, known);
+          treeSelectionCell.selectedId = childId;
+          ctx.ui.setEditorComponent?.(editorFactory);
+        };
+        const editorFactory = (
+          tui: unknown,
+          theme: unknown,
+          keybindings: unknown,
+        ) =>
+          Object.assign(
+            new WeaveChildInspectionEditor(
+              tui,
+              theme,
+              keybindings,
+              inspectionEditor,
+            ),
+            {
+              mount: (view: PiInspectorView) =>
+                ctx.ui.mountChildTranscript?.(view),
+            },
+          );
+        childInspectionEditorCell.activate = activateChild;
+        const rootChild: PiInspectorChild = {
+          childId: ROOT_NODE_ID,
+          name: "Weave execution",
+          kind: "ordinary",
+          live: true,
+          status: "running",
+        };
+        inspectionEditor.open(rootChild, [rootChild]);
         renderChildTreeWidget(
           ctx,
           delegationControllerCell.controller,
@@ -3120,53 +3253,7 @@ export function createPiExtension(
           ctx,
           previousFactory,
         };
-        ctx.ui.setEditorComponent?.(
-          (tui: unknown, theme: unknown, keybindings: unknown) =>
-            new WeaveChildTreeEditor(tui, theme, keybindings, {
-              getNodesMap: () => {
-                const nodes = inspectionRegistry.snapshotLive();
-                return new Map(nodes.map((node) => [node.id, node]));
-              },
-              slots: childSlots,
-              getSelection: () => treeSelectionCell.selectedId,
-              setSelection: (nodeId) => {
-                treeSelectionCell.selectedId = nodeId;
-                renderChildTreeWidget(
-                  ctx,
-                  delegationControllerCell.controller,
-                  treeSelectionCell,
-                  inspectionRegistry,
-                );
-              },
-              cancelSubtree: (nodeId) => {
-                void delegationControllerCell.controller?.cancelSubtree(nodeId);
-              },
-              openInspector: () => {
-                childSlots.assignTree(inspectionRegistry.snapshotLive());
-                void ResultAsync.fromPromise(
-                  openChildInspector(
-                    ctx,
-                    inspectionRegistry,
-                    historyStoreCell.store,
-                    recoveryCoordinatorCell.coordinator,
-                    generation.id,
-                    (childId) => {
-                      treeSelectionCell.selectedId = childId;
-                    },
-                    () => dispatchWeaveCommand(pi, "weave:resume", "", ctx),
-                  ),
-                  () => undefined,
-                ).match(
-                  () => undefined,
-                  () =>
-                    ctx.ui.notify(
-                      "Child inspection is unavailable in this session.",
-                      "warning",
-                    ),
-                );
-              },
-            }),
-        );
+        ctx.ui.setEditorComponent?.(editorFactory);
       }
     });
 
@@ -3698,7 +3785,6 @@ export function createPiExtension(
       // generation (Pi adapter contract cleanup-idempotence) - clear it even
       // though `disposeAll()` above already terminated every child.
       ctx?.ui.setStatus(WEAVE_AGENT_STATUS_KEY, undefined);
-      ctx?.ui.setWidget(WEAVE_CHILD_TREE_WIDGET_KEY, undefined);
       ctx?.ui.setWidget(WEAVE_PLAN_WIDGET_KEY, undefined);
       const editorInstall = editorInstallCell;
       if (editorInstall !== undefined) {

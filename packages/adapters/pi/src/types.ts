@@ -157,6 +157,8 @@ export interface PiUiPort {
   getEditorComponent?(): unknown;
   /** Mirrors Pi's own `ctx.ui.setEditorComponent()`; pass `undefined` to restore the host default editor. */
   setEditorComponent?(factory: unknown): void;
+  /** Adapter-local transcript mounting seam used by the child inspection editor. */
+  mountChildTranscript?(view: unknown): void;
   /**
    * Interactive single-choice prompt (`ctx.ui.select`). Resolves to
    * `undefined` when the user cancels OR the dialog times out - callers
