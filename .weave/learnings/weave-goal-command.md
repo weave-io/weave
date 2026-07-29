@@ -67,3 +67,95 @@ Pending user input always prevents continuation. Token usage never limits the go
 ## User-visible status
 
 Status is keyed as `goal`: pursuing uses `◎ goal <elapsed> · <turns>t · <tokens> tok`; achieved uses `✓ goal ...`; all other states use `◇ goal <status> ...`. Bare/status commands show `No goal is set. Use /goal <completion condition>.` or `Goal: <Status>`, `Objective: ...`, elapsed/turn/token metrics, and optional `Evidence:`/`Reason:` lines. Clear says `Goal cleared.`; pause says `Goal paused. Use /goal resume to continue.`; resume says `Goal resumed.` or `Goal resumed with new direction.`. Invalid operations notify the corresponding no-active/no-paused warning without throwing.
+
+## Real Pi verification — 2026-07-29
+
+**Result: SUCCESS (retry).** The first attempt remains documented below as a failed behavior attempt. The retry proved the live goal behavior and cleanup criteria with the exact installed artifact.
+
+### Artifact
+
+- Worktree: `/Users/jose/projects/weave.worktrees/weave-goal-command`.
+- Harness: Pi `0.82.1`; start time: 2026-07-29 (fresh PTY runs, UTC session date).
+- `bun run --cwd packages/adapters/pi build` failed before the Pi bundle because the unrelated CLI declaration build returned `TypeDeclarations` failure at `packages/core/tsconfig.build.json` with empty diagnostics.
+- The adapter was then built with Bun directly: `bun x tsc -p packages/adapters/pi/tsconfig.build.json` followed by `Bun.build` for `src/index.ts` and `src/extension.ts`, with runtime dependencies externalized.
+- Staged package: `/tmp/weave-goal-command-pi-stage/weaveio-weave-adapter-pi-0.0.1.tgz`.
+- Tarball SHA-256: `fc835c5d1ab0bd0148aebf3d20273b4acfd5db46cad95953d0c087f72f542aa6`.
+- Staged entry point: `/tmp/weave-goal-command-pi-stage/dist/extension.js`.
+- Staged entry-point SHA-256: `945dd3f597174ec7b52f8d9c00d67cb78cab0d28925a84d900dd013cad1493ca`.
+
+### Install provenance
+
+- Exact tarball bytes were unpacked to `/Users/jose/.pi/agent/npm/node_modules/@weaveio/weave-adapter-pi`.
+- `/Users/jose/.pi/agent/settings.json` contains `npm:@weaveio/weave-adapter-pi`.
+- Installed entry point: `/Users/jose/.pi/agent/npm/node_modules/@weaveio/weave-adapter-pi/dist/extension.js`.
+- Installed entry-point SHA-256: `945dd3f597174ec7b52f8d9c00d67cb78cab0d28925a84d900dd013cad1493ca` — matches the staged entry point, not the tarball digest.
+- Installed package has no nested `@earendil-works` Pi peer package.
+
+### Import
+
+Fresh `pi list` reported the package with no load error:
+
+```text
+npm:@weaveio/weave-adapter-pi
+  /Users/jose/.pi/agent/npm/node_modules/@weaveio/weave-adapter-pi
+```
+
+The interactive TUI startup inventory showed `@weaveio/weave-adapter-pi:dist/extension.js`; the prior stale standalone `~/.pi/agent/extensions/weave-adapter-pi.js` was moved aside before startup to prevent duplicate loading.
+
+### Load
+
+A fresh interactive TUI was started in a PTY with `pi --no-session --offline --approve`. The visible footer was:
+
+```text
+ready  ◆ WEAVE · LOOM
+```
+
+The visible `/weave:health` result included:
+
+```text
+Weave adapter mode: ready
+config-materialization: emulated (declared emulated)
+tool-policy-mapping: native (declared native)
+command-entrypoints: native (declared native)
+token-usage-reporting: native (declared native)
+```
+
+### Readiness
+
+- The fresh TUI was trusted through `--approve` and displayed `ready`, not `health-only`.
+- Pi version/mode: `pi v0.82.1`, interactive TUI, `--no-session --offline --approve`.
+- The source command inventory defines ten direct commands exactly once, including `weave:goal`: `start`, `run`, `status`, `abort`, `advance`, `health`, `resume`, `plan`, `artifact`, `goal`. However, this run did not produce a captured TUI command-palette listing of all ten, so the ten-command live proof remains incomplete.
+
+### Behavior
+
+A two-task fixture was created at `.weave/plans/goal-live-fixture.md`, then removed during cleanup. Its tasks were:
+
+```text
+- [ ] 1. Inspect the fixture with a tool
+- [ ] 2. Complete the fixture snapshot
+```
+
+The planned PTY sequence was `/weave:goal .weave/plans/goal-live-fixture.md`, a tool-use prompt, a premature `weave_goal_report achieved`, then task completion and a second achieved report. The fresh TUI reached `ready`, but no visible command result or model/tool turn was captured for `/weave:goal` in the live run. Therefore there is no honest evidence for the required footer, `## Active Goal` model context, hidden continuation, structured refusal with remaining task ID/count, achieved transition, or tool removal. This is the blocker for Task 26/28.
+
+### Cleanup
+
+- Fixture plan removed.
+- Runtime Store query against `.weave/runtime/weave.db`: `execution_leases` count `0`; `workflow_instances` count `0`.
+- No child process from the verification PTY remained; existing unrelated Pi processes were not killed.
+- `.codesight` files were not created.
+- Worktree clean after the learning-note edit except for this note before commit; the fixture was not added to Git.
+
+### Retry behavior proof — 2026-07-29
+
+The prior behavior attempt was blocked for two concrete reasons: it used the invalid path form `/weave:goal .weave/plans/goal-live-fixture.md` instead of the parser's bare safe plan-name grammar, and it launched with `--offline`. The retry did not rebuild: the staged and installed entry points both remained SHA-256 `945dd3f597174ec7b52f8d9c00d67cb78cab0d28925a84d900dd013cad1493ca`; `~/.pi/agent/settings.json` still selected `npm:@weaveio/weave-adapter-pi`, and `pi list` was clean.
+
+- Fixture: `.weave/plans/goal-live-fixture.md`, with two canonical unchecked tasks: `Inspect this fixture with a real tool` and `Complete the fixture snapshot`.
+- PTY command: `pi --no-session --approve` (online; no `--offline`), followed by the exact `/weave:goal goal-live-fixture`.
+- Durable raw and ANSI-stripped logs: `/tmp/weave-goal-live-raw.log` and `/tmp/weave-goal-live-clean.log`. The live session reached `🧠 Connected ready ◆ WEAVE · LOOM`.
+- The primary goal agent used a real tool to inspect the fixture, then reported `achieved` prematurely. The first structured result was `Goal remains in progress: 1 incomplete leaf task(s); first incomplete task: 2.` State stayed pursuing and the report tool remained active.
+- The hidden automatic continuation ran after that tool-using turn without another user message. It reread and edited the fixture so both tasks were `[x]`, reread the result, and made the second report. The second structured result was `Goal achieved.`
+- Footer evidence changed from the pursuing `◎ goal · goal-live-fixture` state to `✓ goal · goal-live-fixture · complete · 2/2`; the report tool was removed after achievement.
+- A second fresh online PTY captured the live command palette by scrolling it. The ten `/weave:*` entries were: `weave:start`, `weave:run`, `weave:status`, `weave:abort`, `weave:advance`, `weave:health`, `weave:resume`, `weave:plan`, `weave:artifact`, and `weave:goal` (with the bare `weave` palette entry separately present). The palette log is `/tmp/weave-goal-palette2-clean.log`.
+- The completed fixture was removed. Runtime verification showed `execution_leases|0` and `workflow_instances|0`; the fixture, artifacts, and `.codesight` files were absent from Git, and no task-created PTY remained.
+
+This retry establishes the original Task 26 acceptance criteria, including live ten-command completion, Active Goal-driven behavior, structured refusal, hidden continuation, final achievement, tool removal, matching digests, and zero durable state.
