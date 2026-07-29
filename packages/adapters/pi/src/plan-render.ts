@@ -15,7 +15,11 @@
  * from `inspectExecution`/`PiWorkflowController.inspect`) and pass the
  * resulting `PlanTaskSnapshot` straight in.
  */
-import type { PlanTaskNode, PlanTaskSnapshot } from "@weaveio/weave-engine";
+import {
+  type PlanTaskNode,
+  type PlanTaskSnapshot,
+  selectActivePlanTask,
+} from "@weaveio/weave-engine";
 
 /** Bounds the number of current-parent subtask lines rendered - a pathologically large parent can never grow the widget without limit. */
 const MAX_SUBTASK_LINES = 20;
@@ -26,24 +30,6 @@ function taskMarker(state: PlanTaskNode["state"]): string {
   if (state === "completed") return "[x]";
   if (state === "in_progress") return "[~]";
   return "[ ]";
-}
-
-/**
- * The "current" parent is the first `in_progress` parent; if none is
- * in_progress, the first `pending` parent (the next one up); if every
- * parent is `completed`, the last parent (the plan is done). Never a
- * string/title heuristic - purely a function of each parent's `state`.
- */
-function findCurrentParentIndex(parents: readonly PlanTaskNode[]): number {
-  const inProgressIndex = parents.findIndex(
-    (parent) => parent.state === "in_progress",
-  );
-  if (inProgressIndex !== -1) return inProgressIndex;
-  const pendingIndex = parents.findIndex(
-    (parent) => parent.state === "pending",
-  );
-  if (pendingIndex !== -1) return pendingIndex;
-  return parents.length - 1;
 }
 
 function renderParentLine(label: string, parent: PlanTaskNode): string {
@@ -61,7 +47,12 @@ export function renderPlanWidgetLines(
   const { parents, totalParentCount, planName } = snapshot;
   if (parents.length === 0) return [];
 
-  const currentIndex = findCurrentParentIndex(parents);
+  const currentIndex = selectActivePlanTask(snapshot).match(
+    (activeTask) => activeTask.parentIndex,
+    () => undefined,
+  );
+  if (currentIndex === undefined) return [];
+
   const current = parents[currentIndex];
   if (current === undefined) return [];
 

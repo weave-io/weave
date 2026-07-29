@@ -22,6 +22,7 @@ import { errAsync, okAsync, ResultAsync } from "neverthrow";
 import { translateAgentToMarkdown } from "./agent-translation.js";
 import {
   CC_START_WORK_COMMAND,
+  CC_WEAVE_GOAL_COMMAND,
   CC_WEAVE_START_COMMAND,
 } from "./command-templates.js";
 import { buildClaudeCodeModelInput } from "./model-resolution.js";
@@ -249,7 +250,7 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
       } else {
         // Clean up any .md files not in the current command set so stale
         // commands don't remain after tapestry is removed.
-        const commandNames = new Set(["start.md", "start-work.md"]);
+        const commandNames = new Set(["start.md", "start-work.md", "goal.md"]);
         const existing = await this.readDir(commandsDir).catch(
           () => [] as string[],
         );
@@ -268,6 +269,7 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
         join(commandsDir, "start-work.md"),
         CC_START_WORK_COMMAND,
       );
+      await this.writeFile(join(commandsDir, "goal.md"), CC_WEAVE_GOAL_COMMAND);
       log.info(
         { outDir: this.outDir },
         "Wrote command files (tapestry agent present)",

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { AgentDescriptor } from "@weaveio/weave-engine";
 import { ClaudeCodeAdapter } from "../adapter.js";
+import { CC_WEAVE_GOAL_COMMAND } from "../command-templates.js";
 
 function makeDescriptor(
   overrides: Partial<AgentDescriptor> = {},
@@ -162,8 +163,10 @@ describe("ClaudeCodeAdapter", () => {
     const settingsPath = Object.keys(written).find((k) =>
       k.endsWith("settings.json"),
     );
-    expect(settingsPath).toBeDefined();
-    const parsed = JSON.parse(written[settingsPath!]!);
+    const settings =
+      settingsPath === undefined ? undefined : written[settingsPath];
+    expect(settings).toBeDefined();
+    const parsed = JSON.parse(settings ?? "{}");
     expect(parsed).toMatchObject({ agent: "loom" });
   });
 
@@ -260,8 +263,8 @@ describe("ClaudeCodeAdapter", () => {
     const agentPath = Object.keys(written).find(
       (k) => k.includes("agents") && k.endsWith("test-agent.md"),
     );
-    expect(agentPath).toBeDefined();
-    const content = written[agentPath!]!;
+    const content = agentPath === undefined ? undefined : written[agentPath];
+    expect(content).toBeDefined();
     expect(content).toContain("- Read");
     expect(content).not.toContain("- Write");
     expect(content).not.toContain("- Bash");
@@ -315,13 +318,22 @@ describe("ClaudeCodeAdapter", () => {
     const startWorkPath = Object.keys(written).find(
       (k) => k.includes("commands") && k.endsWith("start-work.md"),
     );
+    const goalPath = Object.keys(written).find(
+      (k) => k.includes("commands") && k.endsWith("goal.md"),
+    );
 
     expect(startPath).toBeDefined();
     expect(startWorkPath).toBeDefined();
-    expect(written[startPath!]).toContain("context: fork");
-    expect(written[startPath!]).toContain("agent: weave:tapestry");
-    expect(written[startWorkPath!]).toContain("context: fork");
-    expect(written[startWorkPath!]).toContain("agent: weave:tapestry");
+    expect(goalPath).toBeDefined();
+    const start = startPath === undefined ? undefined : written[startPath];
+    const startWork =
+      startWorkPath === undefined ? undefined : written[startWorkPath];
+    const goal = goalPath === undefined ? undefined : written[goalPath];
+    expect(goal).toBe(CC_WEAVE_GOAL_COMMAND);
+    expect(start).toContain("context: fork");
+    expect(start).toContain("agent: weave:tapestry");
+    expect(startWork).toContain("context: fork");
+    expect(startWork).toContain("agent: weave:tapestry");
   });
 
   it("flush does NOT write command files when tapestry is absent", async () => {
@@ -347,7 +359,9 @@ describe("ClaudeCodeAdapter", () => {
       homeDir: "/home/user",
       exists: async () => true,
       readDir: async (path) => {
-        if (path.endsWith("commands")) return ["start.md", "start-work.md"];
+        if (path.endsWith("commands")) {
+          return ["start.md", "start-work.md", "goal.md"];
+        }
         return [];
       },
       readFile: async () => "",
@@ -363,10 +377,11 @@ describe("ClaudeCodeAdapter", () => {
     await adapter.spawnSubagent(makeDescriptor({ name: "shuttle" }));
     await adapter.flush();
 
-    // Both command files should be removed when tapestry is not present
-    expect(removed).toHaveLength(2);
+    // All command files should be removed when tapestry is not present
+    expect(removed).toHaveLength(3);
     expect(removed.some((p) => p.includes("start.md"))).toBe(true);
     expect(removed.some((p) => p.includes("start-work.md"))).toBe(true);
+    expect(removed.some((p) => p.includes("goal.md"))).toBe(true);
   });
 
   it("flush removes stale command files not in the current command set", async () => {
@@ -380,7 +395,7 @@ describe("ClaudeCodeAdapter", () => {
       exists: async () => true,
       readDir: async (path) => {
         if (path.endsWith("commands"))
-          return ["start.md", "start-work.md", "old-command.md"];
+          return ["start.md", "start-work.md", "goal.md", "other.md"];
         return [];
       },
       readFile: async () => "",
@@ -396,14 +411,31 @@ describe("ClaudeCodeAdapter", () => {
     await adapter.spawnSubagent(makeDescriptor({ name: "tapestry" }));
     await adapter.flush();
 
-    // old-command.md should be removed; start.md and start-work.md should be written
+    // other.md should be removed; all three supported commands should survive.
     expect(removed).toHaveLength(1);
-    expect(removed[0]).toContain("old-command.md");
-    const startPath = Object.keys(written).find((k) => k.endsWith("start.md"));
-    const startWorkPath = Object.keys(written).find((k) =>
-      k.endsWith("start-work.md"),
+    expect(removed[0]).toContain("other.md");
+    const commandWrites = Object.keys(written)
+      .filter((path) => path.includes("/commands/"))
+      .map((path) => path.split("/").at(-1))
+      .sort();
+    expect(commandWrites).toEqual(["goal.md", "start-work.md", "start.md"]);
+    expect(removed.some((path) => path.endsWith("goal.md"))).toBe(false);
+  });
+
+  it("goal command preserves its exact Claude Code template contract", () => {
+    const [frontmatter, body] = CC_WEAVE_GOAL_COMMAND.split("\n---\n");
+    expect(frontmatter).toBe(
+      '---\ncontext: fork\nagent: weave:tapestry\ndisable-model-invocation: true\ndescription: "Work toward completing a Weave plan"\nargument-hint: "[plan-name]"',
     );
-    expect(startPath).toBeDefined();
-    expect(startWorkPath).toBeDefined();
+    expect(body).toContain(".weave/plans/$ARGUMENTS.md");
+    expect(body.match(/\$ARGUMENTS/g)).toHaveLength(1);
+    expect(body).toContain("weave:shuttle");
+    expect(body).toContain("Agent tool");
+    expect(body).toContain("re-read the plan between tasks");
+    expect(body).toContain(
+      "mark the task's checkbox completed only after verification",
+    );
+    expect(body).toContain("Stop only when all tasks are complete");
+    expect(body).toContain("user explicitly tells you to stop");
   });
 });

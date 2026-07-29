@@ -112,3 +112,28 @@ argument-hint: "[plan-name]"
 ---
 
 ${EXECUTION_INSTRUCTIONS}`;
+
+/**
+ * Template for the `/weave:goal` command.
+ *
+ * This is the full content of the `weave-goal.md` command file including
+ * YAML frontmatter. Claude Code will replace `$ARGUMENTS` with the plan name
+ * when the user invokes the command.
+ */
+const WEAVE_GOAL_PLAN_PATH = ".weave/plans/$ARGUMENTS.md";
+
+export const CC_WEAVE_GOAL_COMMAND = `---
+context: fork
+agent: weave:tapestry
+disable-model-invocation: true
+description: "Work toward completing a Weave plan"
+argument-hint: "[plan-name]"
+---
+
+Resolve the plan at \`${WEAVE_GOAL_PLAN_PATH}\` and work toward completing it.
+
+For each unchecked task in the plan, read its full description and acceptance criteria, then delegate it to weave:shuttle using the Agent tool. Verify the result against the acceptance criteria, re-read the plan between tasks, and mark the task's checkbox completed only after verification. Continue through every unchecked task without waiting for user acknowledgment.
+
+Stop only when all tasks are complete, the user explicitly tells you to stop, or every remaining task is universally blocked. If a task is blocked, record the reason in your response and continue with any task that is not blocked.
+
+This is a model-driven projection of a goal: it has no persisted goal state, enforced budget, pause/resume control, or status surface.`;

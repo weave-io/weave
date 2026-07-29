@@ -13,5 +13,12 @@ export const OPENCODE_ADAPTER_CAPABILITY_CONTRACT: AdapterCapabilityContract = {
       notes:
         "The adapter strips and resolves the suffix, but the OpenCode SDK's exact per-request reasoning-effort forwarding surface is unconfirmed; the winning level is therefore not guaranteed to reach the harness.",
     },
+    {
+      id: "idle-continuation",
+      description: "Continue plan execution while the agent is idle",
+      readiness: "degraded",
+      notes:
+        "Missing behaviors: no persisted goal state, no enforced continuation budget, no pause/resume, and no status surface.",
+    },
   ],
 };

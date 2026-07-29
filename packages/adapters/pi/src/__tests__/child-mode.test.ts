@@ -106,6 +106,20 @@ class MinimalFakeHost implements PiExtensionApi {
     this.events.set(event, existing);
   }
   sendUserMessage(_content: string): void {}
+  appendEntry(_type: string, _data: unknown): void {}
+  getActiveTools(): readonly string[] {
+    return [];
+  }
+  setActiveTools(_names: readonly string[]): void {}
+  sendMessage(
+    _message: {
+      customType: string;
+      content: string;
+      display: boolean;
+      details?: unknown;
+    },
+    _options: { triggerTurn: boolean; deliverAs: "steer" | "followUp" },
+  ): void {}
   /** Every `registerTool()` call, in order. */
   readonly registerToolCalls: PiToolRegistration[] = [];
   registerTool(tool: PiToolRegistration): void {
@@ -326,6 +340,9 @@ describe("private child mode (Pi adapter contract, end-to-end against a fake hos
     );
     expect(outcome).toBeUndefined();
     expect(host.registerToolCalls).toHaveLength(0);
+    expect(host.registerToolCalls.map(({ name }) => name)).not.toContain(
+      "weave_goal_report",
+    );
   });
 
   it("reports settlement exactly once via an authenticated envelope on agent_settled", async () => {

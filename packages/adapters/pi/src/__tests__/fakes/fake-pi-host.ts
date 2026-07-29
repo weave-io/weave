@@ -134,7 +134,12 @@ export class RecordingFakePiHost {
   readonly confirmCalls: RecordedConfirmCall[] = [];
   readonly sentUserMessages: {
     readonly content: string;
-    readonly options?: { readonly deliverAs?: "steer" | "followUp" };
+    readonly customType?: string;
+    readonly display?: boolean;
+    readonly options?: {
+      readonly deliverAs?: "steer" | "followUp";
+      readonly triggerTurn?: boolean;
+    };
   }[] = [];
   readonly sendMessageCalls: RecordedSendMessage[] = [];
   generatedTurnCount = 0;
@@ -142,11 +147,21 @@ export class RecordingFakePiHost {
   readonly interventionCalls: unknown[] = [];
   readonly editorFactoryCalls: unknown[] = [];
   private editorFactory: unknown;
+  readonly appendedEntries: {
+    readonly type: string;
+    readonly data: unknown;
+  }[] = [];
+  private activeTools: string[] = [];
+
+  getActiveTools(): readonly string[] {
+    return [...this.activeTools];
+  }
 
   private mode: PiMode;
   private trusted: boolean;
   private hasUI: boolean;
   private idle: boolean;
+  private pendingMessages = false;
   private readonly cwd: string;
   private readonly installPath: string;
   private commandsInventory: PiCommandInfo[] = [];
@@ -228,6 +243,13 @@ export class RecordingFakePiHost {
           content,
           ...(options === undefined ? {} : { options }),
         });
+      },
+      appendEntry: (type, data) => {
+        this.appendedEntries.push({ type, data });
+      },
+      getActiveTools: () => [...this.activeTools],
+      setActiveTools: (names) => {
+        this.activeTools = [...names];
       },
       sendMessage: (message, options) => {
         if (this.sendMessageOverride !== undefined)
@@ -548,17 +570,35 @@ export class RecordingFakePiHost {
         this.editorFactory = factory;
       },
     };
-    return {
-      mode,
-      cwd,
-      isProjectTrusted: () => trusted,
-      isIdle: () => this.idle,
-      ui,
-      hasUI: this.hasUI,
-      model,
-      modelRegistry,
-      getSystemPromptOptions: () => ({ skills: this.currentSkills }),
-    };
+    return Object.assign(
+      {
+        mode,
+        cwd,
+        isProjectTrusted: () => trusted,
+        isIdle: () => this.idle,
+        ui,
+        hasUI: this.hasUI,
+        model,
+        modelRegistry,
+        getSystemPromptOptions: () => ({ skills: this.currentSkills }),
+      },
+      { hasPendingMessages: () => this.pendingMessages },
+    ) as PiSessionContext;
+  }
+
+  setPendingMessages(pending: boolean): void {
+    this.pendingMessages = pending;
+  }
+
+  async triggerEvent(
+    event: string,
+    payload: unknown = {},
+    ctx = this.createSessionContext(),
+  ): Promise<PiSessionContext> {
+    for (const handler of this.handlers.get(event) ?? []) {
+      await handler(payload, ctx);
+    }
+    return ctx;
   }
 
   /** Fires every registered `session_start` handler against a fresh context, returning it. */

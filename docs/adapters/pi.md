@@ -63,13 +63,27 @@ The registered `weave_delegate` schema is static because Pi requires it at regis
 - `/weave` — native command palette;
 - `/weave:start` — confirm and submit an existing plan as a visible foreground Tapestry turn;
 - `/weave:run` — explicitly start an engine-managed durable workflow;
-- `/weave:resume`, `/weave:advance`, `/weave:abort` — explicit lifecycle actions;
-- `/weave:status`, `/weave:health`, `/weave:plan`, `/weave:artifact` — read-only views unless an explicit artifact action is chosen;
+- `/weave:resume` — resume an engine-managed durable workflow;
+- `/weave:advance` — advance the active workflow;
+- `/weave:abort` — stop active work;
+- `/weave:status` — inspect workflow status;
+- `/weave:health` — inspect activation health;
+- `/weave:plan` — inspect the current plan;
+- `/weave:artifact` — inspect an available artifact;
+- `/weave:goal <plan-name>` — run a plan in the foreground goal loop;
 - `Alt+A` — cycle healthy primary-capable agents.
 
 Only an explicit user command authorizes work. Session start, idle, settlement, recovery discovery, ordinary chat, and health views never start or resume durable execution.
 
 `/weave:start` is a foreground Pi turn and does not create durable workflow state. `/weave:run` and `/weave:resume` call the engine lifecycle surface.
+
+### Goal command
+
+`/weave:goal <plan-name>` runs the named plan in Pi's foreground loop. `/weave:goal` shows status. The command also accepts `/weave:goal status`, `/weave:goal pause`, `/weave:goal resume`, and `/weave:goal clear`; `/weave:goal check` is a status alias, and `stop`, `off`, `reset`, `none`, and `cancel` are clear aliases. Use `-- <plan-name>` to select a plan whose name collides with a control word; `/weave:goal` accepts a plan name, not inline goal prose.
+
+Goal state is local to the current branch and persists in the Pi session. The private `weave_goal_report` tool is available only while a goal is pursuing; it reports achieved or blocked evidence to the controller. The controller, not prose or process exit, adjudicates plan completion. Goal execution makes no durable workflow or authorization calls.
+
+In health-only mode, the goal `start` and `resume` forms are blocked; `status`, `pause`, and `clear` remain available, including their aliases. Delegated child mode is inert for goal restore, prompt, tool, continuation, and footer behavior. Outside health-only mode, the goal loop applies its per-form gate before each form and suppresses child delegation. Pi renders a `weave-goal` footer with the plan and task, a 72-code-point progress ladder, and event-triggered plan refreshes. Its 60-second timer refreshes metrics only. Out-of-band plan edits appear on the next lifecycle or command event, not from the timer.
 
 ## Workflow projection
 
