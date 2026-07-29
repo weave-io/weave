@@ -602,6 +602,7 @@ export type PiPaletteActionId =
   | "weave.start"
   | "weave.run"
   | "weave.status"
+  | "weave.goal"
   | "weave.abort"
   | "weave.advance"
   | "weave.health"
@@ -616,7 +617,7 @@ export interface PiPaletteAction {
   readonly disabledReason?: string;
 }
 
-/** Palette exposes the same nine actions as the commands, hidden/disabled with a reason when invalid (Pi adapter contract). */
+/** Palette exposes the same ten actions as the commands, hidden/disabled with a reason when invalid (Pi adapter contract). */
 export function buildPaletteActions(input: {
   readonly healthOnly: boolean;
   readonly hasActiveInstance: boolean;
@@ -639,6 +640,7 @@ export function buildPaletteActions(input: {
       disabledReason,
     },
     { id: "weave.status", label: "Weave: Status", visible: true },
+    { id: "weave.goal", label: "Weave: Goal", visible: true },
     {
       id: "weave.abort",
       label: "Weave: Abort",
