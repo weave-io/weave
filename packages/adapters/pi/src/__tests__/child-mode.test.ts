@@ -2,11 +2,6 @@ import { describe, expect, it } from "bun:test";
 import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 import { MAX_CWD_LENGTH } from "../child-control-bodies.js";
 import {
-  ChunkTransferAssembler,
-  type TransferChunk,
-} from "../child-transfer.js";
-import { PI_TRANSPORT_LIMITS } from "../errors.js";
-import {
   bytesToHex,
   generateNonceHex,
   WebCryptoHmacPort,
@@ -18,6 +13,11 @@ import {
   WEAVE_CONTROLLER_GENERATION_ENV,
 } from "../child-env.js";
 import { signEnvelope } from "../child-envelope.js";
+import {
+  ChunkTransferAssembler,
+  type TransferChunk,
+} from "../child-transfer.js";
+import { PI_TRANSPORT_LIMITS } from "../errors.js";
 import {
   buildChildBootstrapBody,
   createPiExtension,
@@ -106,6 +106,20 @@ class MinimalFakeHost implements PiExtensionApi {
     this.events.set(event, existing);
   }
   sendUserMessage(_content: string): void {}
+  appendEntry(_type: string, _data: unknown): void {}
+  getActiveTools(): readonly string[] {
+    return [];
+  }
+  setActiveTools(_names: readonly string[]): void {}
+  sendMessage(
+    _message: {
+      customType: string;
+      content: string;
+      display: boolean;
+      details?: unknown;
+    },
+    _options: { triggerTurn: boolean; deliverAs: "steer" | "followUp" },
+  ): void {}
   /** Every `registerTool()` call, in order. */
   readonly registerToolCalls: PiToolRegistration[] = [];
   registerTool(tool: PiToolRegistration): void {
@@ -134,7 +148,9 @@ class MinimalFakeHost implements PiExtensionApi {
       throw new Error("simulated child thinking-level host failure");
     }
     if (this.thinkingLevelBehavior === "reject") {
-      return Promise.reject(new Error("simulated child thinking-level rejection"));
+      return Promise.reject(
+        new Error("simulated child thinking-level rejection"),
+      );
     }
   }
   async fire(
@@ -204,11 +220,7 @@ async function buildChildExtension(
   // own `ctx` (captured once, at `session_start`), not any per-invocation
   // ctx a caller might pass to the command handler. Tests that need a
   // specific `ctx.modelRegistry`/`ctx.model` must supply it here.
-  await host.fire(
-    "session_start",
-    {},
-    sessionCtx,
-  );
+  await host.fire("session_start", {}, sessionCtx);
   return { host, output, secretBytes };
 }
 
@@ -705,10 +717,7 @@ describe("private child mode (Pi adapter contract, end-to-end against a fake hos
       { parentAgentName: "loom", parentDepth: 0, cwd: "/project" },
       fakeCtx({ modelRegistry: { getAvailable: () => [] } }),
     );
-    const bootstrapRecord = bootstrapBody as unknown as Record<
-      string,
-      unknown
-    >;
+    const bootstrapRecord = bootstrapBody as unknown as Record<string, unknown>;
 
     expect(bootstrapRecord).not.toHaveProperty("resolvedModel");
     expect(canonicalizeToBytes(bootstrapBody).isOk()).toBe(true);
@@ -827,41 +836,41 @@ describe("private child mode (Pi adapter contract, end-to-end against a fake hos
     ]);
   });
 
-  it.each(["throw", "reject"] as const)(
-    "keeps child model activation successful when the thinking host %s",
-    async (behavior) => {
-      const catalogModel = {
-        provider: "fake",
-        id: "model-x",
-        name: "Fake Model X",
-        api: "fake-api",
-      };
-      const { host, output, secretBytes } = await buildChildExtension(
-        fakeCtx({ modelRegistry: { getAvailable: () => [catalogModel] } }),
-      );
-      host.thinkingLevelBehavior = behavior;
-      const envelope = await signedBootstrap(secretBytes, {
-        models: ["fake/model-x#low"],
-        resolvedModel: {
-          provider: catalogModel.provider,
-          id: catalogModel.id,
-          name: catalogModel.name,
-        },
-        thinkingLevel: "low",
-      });
+  it.each([
+    "throw",
+    "reject",
+  ] as const)("keeps child model activation successful when the thinking host %s", async (behavior) => {
+    const catalogModel = {
+      provider: "fake",
+      id: "model-x",
+      name: "Fake Model X",
+      api: "fake-api",
+    };
+    const { host, output, secretBytes } = await buildChildExtension(
+      fakeCtx({ modelRegistry: { getAvailable: () => [catalogModel] } }),
+    );
+    host.thinkingLevelBehavior = behavior;
+    const envelope = await signedBootstrap(secretBytes, {
+      models: ["fake/model-x#low"],
+      resolvedModel: {
+        provider: catalogModel.provider,
+        id: catalogModel.id,
+        name: catalogModel.name,
+      },
+      thinkingLevel: "low",
+    });
 
-      await expect(deliverEnvelope(host, envelope)).resolves.toBeUndefined();
-      await flush();
+    await expect(deliverEnvelope(host, envelope)).resolves.toBeUndefined();
+    await flush();
 
-      expect(host.activationCalls).toEqual([
-        { kind: "model", model: catalogModel },
-        { kind: "thinking", level: "low" },
-      ]);
-      expect(output.lines.some((line) => line.kind === "bootstrap-ack")).toBe(
-        true,
-      );
-    },
-  );
+    expect(host.activationCalls).toEqual([
+      { kind: "model", model: catalogModel },
+      { kind: "thinking", level: "low" },
+    ]);
+    expect(output.lines.some((line) => line.kind === "bootstrap-ack")).toBe(
+      true,
+    );
+  });
 
   it("fails closed (no ack, no work applied) when the host rejects the resolved model, even though tools already applied cleanly", async () => {
     const sessionCtx = fakeCtx({

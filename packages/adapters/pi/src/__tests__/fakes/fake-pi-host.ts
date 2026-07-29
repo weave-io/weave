@@ -1,5 +1,5 @@
-import type { MaterializationPlan } from "@weaveio/weave-engine";
 import type { WeaveConfig } from "@weaveio/weave-core";
+import type { MaterializationPlan } from "@weaveio/weave-engine";
 import { okAsync } from "neverthrow";
 import { ADAPTER_PACKAGE_IDENTITY } from "../../commands.js";
 import type {
@@ -122,6 +122,11 @@ export class RecordingFakePiHost {
     readonly content: string;
     readonly options?: { readonly deliverAs?: "steer" | "followUp" };
   }[] = [];
+  readonly appendedEntries: {
+    readonly type: string;
+    readonly data: unknown;
+  }[] = [];
+  private activeTools: string[] = [];
 
   private mode: PiMode;
   private trusted: boolean;
@@ -196,6 +201,16 @@ export class RecordingFakePiHost {
           content,
           ...(options === undefined ? {} : { options }),
         });
+      },
+      appendEntry: (type, data) => {
+        this.appendedEntries.push({ type, data });
+      },
+      getActiveTools: () => [...this.activeTools],
+      setActiveTools: (names) => {
+        this.activeTools = [...names];
+      },
+      sendMessage: (message, options) => {
+        this.sentUserMessages.push({ content: message.content, options });
       },
       setModel: (model) => {
         this.setModelCalls.push(model);
@@ -291,7 +306,9 @@ export class RecordingFakePiHost {
   }
 
   /** Queues the explicit choice used by an invalid-settings activation popup. */
-  scriptSettingsChoice(response: "Use defaults" | "Enter health-only mode"): void {
+  scriptSettingsChoice(
+    response: "Use defaults" | "Enter health-only mode",
+  ): void {
     this.scriptSelect(response);
   }
 

@@ -282,6 +282,21 @@ export interface PiExtensionApi {
     content: string,
     options?: { readonly deliverAs?: "steer" | "followUp" },
   ): void;
+  /** Appends a custom entry to the current Pi session branch. */
+  appendEntry(type: string, data: unknown): void;
+  /** Reads and changes Pi's active tool list. */
+  getActiveTools(): readonly string[];
+  setActiveTools(names: readonly string[]): void;
+  /** Sends a custom message through Pi's native message API. */
+  sendMessage(
+    message: {
+      customType: string;
+      content: string;
+      display: boolean;
+      details?: unknown;
+    },
+    options: { triggerTurn: boolean; deliverAs: "steer" | "followUp" },
+  ): void | Promise<void>;
   /** Registers a tool the LLM can call (`ExtensionAPI.registerTool`). */
   registerTool(tool: PiToolRegistration): void;
   /**
@@ -296,7 +311,9 @@ export interface PiExtensionApi {
   /** Reads Pi's current-session thinking level (`ExtensionAPI.getThinkingLevel`). */
   getThinkingLevel?: () => string;
   /** Applies Pi's current-session thinking level (`ExtensionAPI.setThinkingLevel`). */
-  setThinkingLevel?: (level: string) => void | undefined | Promise<void | undefined>;
+  setThinkingLevel?: (
+    level: string,
+  ) => void | undefined | Promise<void | undefined>;
   /**
    * Registers a keyboard shortcut (`ExtensionAPI.registerShortcut`, Pi adapter contract
    *). Alt+A cycles primary agents. Alt+1..Alt+9 direct-child selection
