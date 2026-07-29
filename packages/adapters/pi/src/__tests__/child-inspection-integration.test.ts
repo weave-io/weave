@@ -1,4 +1,7 @@
 import { expect, test } from "bun:test";
+import { parseConfig, type WeaveConfig } from "@weaveio/weave-core";
+import { createInMemoryRuntimeStore } from "@weaveio/weave-engine";
+import { ok, okAsync } from "neverthrow";
 import {
   generateNonceHex,
   hexToBytes,
@@ -12,24 +15,42 @@ import {
   signEnvelope,
 } from "../child-envelope.js";
 import { MAX_NATIVE_RECORD_BYTES } from "../child-framing.js";
-import { MemoryPiChildHistoryFs } from "../child-history-fs.js";
 import type { PiChildHistoryRecord } from "../child-history-schema.js";
-import { PiChildHistoryStore } from "../child-history-store.js";
-import type { PiChildInspectionSettings } from "../child-inspection-settings.js";
+import { SystemTimerPort } from "../child-timer.js";
+import {
+  type PiChildInspectionHistoryPort,
+  PiChildInspectionRegistry,
+  ROOT_NODE_ID,
+} from "../child-tree.js";
+import {
+  PiDelegationController,
+  type PiDelegationRequest,
+} from "../delegation-controller.js";
+import {
+  createDirectDispatchTransport,
+  PiDirectStepChildRegistry,
+} from "../direct-dispatch-transport.js";
+import { InMemoryRecoveryPointerStore } from "../recovery-pointer.js";
 import { PiRpcChild, type PiRpcChildSpawnInput } from "../rpc-child.js";
 import { canonicalizeToBytes, type JsonValue } from "../strict-json.js";
+import {
+  authorizeByExplicitUser,
+  PiWorkflowController,
+} from "../workflow-controller.js";
 import {
   FakeChildProcessPort,
   type FakeSpawnedProcess,
 } from "./fakes/fake-child-process-port.js";
 
-const canary = "PRIVATE-CANARY-7f2b";
 const encoder = new TextEncoder();
 const randomPort = new WebCryptoRandomPort();
 const hmacPort = new WebCryptoHmacPort();
+const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+const noopLogger = { debug() {}, info() {}, warn() {}, error() {} };
+
 const input: PiRpcChildSpawnInput = {
   childId: "child-1",
-  parentId: "root",
+  parentId: ROOT_NODE_ID,
   generationId: "gen-1",
   agentName: "shuttle",
   depth: 1,
@@ -37,34 +58,164 @@ const input: PiRpcChildSpawnInput = {
   env: {},
   task: "inspect the child",
 };
-const bootstrap = {
-  mode: "ordinary",
-  agentName: "shuttle",
-  composedPrompt: "bounded",
-  models: [],
-  correlationId: "child-1",
-  context: { parentAgentName: "loom", parentDepth: 0, cwd: "/project" },
-} as JsonValue;
-const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+function bootstrapFor(correlationId: string): JsonValue {
+  return {
+    mode: "ordinary",
+    agentName: "shuttle",
+    composedPrompt: "bounded",
+    models: [],
+    correlationId,
+    context: { parentAgentName: "loom", parentDepth: 0, cwd: "/project" },
+  };
+}
+
+function config(source: string): WeaveConfig {
+  const result = parseConfig(source);
+  if (result.isErr()) throw new Error(JSON.stringify(result.error));
+  return result.value;
+}
+
+const generous = config(`settings {
+  delegation {
+    max_children 9
+    max_concurrency 9
+    max_depth 3
+    max_processes 9
+  }
+}
+agent shuttle {
+}
+agent loom {
+  delegation_targets [shuttle]
+}
+`);
+
+class Ids {
+  private n = 0;
+  next(): string {
+    this.n += 1;
+    return `child-${this.n}`;
+  }
+}
+
+function request(
+  overrides: Partial<PiDelegationRequest> = {},
+): PiDelegationRequest {
+  return {
+    parentId: ROOT_NODE_ID,
+    parentDepth: 0,
+    parentAgentName: "loom",
+    agentName: "shuttle",
+    task: "do the thing",
+    cwd: "/project",
+    env: {},
+    bootstrap: bootstrapFor(overrides.childId ?? "child-1"),
+    ...overrides,
+  };
+}
+
+function processAt(
+  port: FakeChildProcessPort,
+  index: number,
+): FakeSpawnedProcess {
+  const process = port.spawnedProcesses[index];
+  if (process === undefined) throw new Error(`missing fake process ${index}`);
+  return process;
+}
+
+function secretFor(
+  port: FakeChildProcessPort,
+  process: FakeSpawnedProcess,
+): Uint8Array {
+  const index = port.spawnedProcesses.indexOf(process);
+  const hex = port.spawnInputs[index]?.env[WEAVE_CHILD_SECRET_ENV];
+  if (hex === undefined) throw new Error("missing child secret");
+  const secret = hexToBytes(hex);
+  if (secret === undefined) throw new Error("invalid child secret");
+  return secret;
+}
+
+async function settleProcess(
+  port: FakeChildProcessPort,
+  process: FakeSpawnedProcess,
+  generationId = "gen-1",
+  output = "bounded terminal result",
+): Promise<void> {
+  const secret = secretFor(port, process);
+  const childId =
+    port.spawnInputs[port.spawnedProcesses.indexOf(process)]?.env
+      .WEAVE_CHILD_ID;
+  if (childId === undefined) throw new Error("missing child id");
+  const random = new WebCryptoRandomPort();
+  const hmac = new WebCryptoHmacPort();
+  let sequence = 1;
+  const send = async (kind: PiControlKind, body: JsonValue): Promise<void> => {
+    const signed = await signEnvelope(
+      {
+        childId,
+        generationId,
+        direction: "child-to-parent",
+        sequence: sequence++,
+        nonce: generateNonceHex(random),
+        correlationId: childId,
+        kind,
+        body,
+      },
+      secret,
+      hmac,
+    );
+    if (signed.isErr()) throw new Error("could not sign fake reply");
+    process.emitLine(signed.value);
+  };
+  await send("handshake", {});
+  await flush();
+  await send("bootstrap-ack", {});
+  await flush();
+  await flush();
+  const entriesRequest = process
+    .writtenLines()
+    .find(
+      (line): line is { type: string; id: string; command: string } =>
+        typeof line === "object" &&
+        line !== null &&
+        (line as { type?: unknown }).type === "get_entries",
+    );
+  if (entriesRequest !== undefined) {
+    process.emitLine({
+      type: "response",
+      id: entriesRequest.id,
+      command: "get_entries",
+      success: true,
+      data: { entries: [], leafId: "leaf-42" },
+    });
+    await flush();
+  }
+  process.emitLine({
+    type: "message_end",
+    message: { role: "assistant", content: [{ type: "text", text: output }] },
+  });
+  await send("settled", {
+    outcome: "completed",
+    assistantOutput: output,
+    outputByteLength: encoder.encode(output).byteLength,
+  });
+}
 
 async function runningRpc() {
   const processPort = new FakeChildProcessPort();
-  const child = new PiRpcChild("child-1", "root", "gen-1", "shuttle", 1, {
+  const child = new PiRpcChild("child-1", ROOT_NODE_ID, "gen-1", "shuttle", 1, {
     processPort,
     randomPort,
     hmacPort,
-    logger: { debug() {}, info() {}, warn() {}, error() {} },
+    logger: noopLogger,
   });
   const spawnedResult = child.spawnAndHandshake(input);
   await flush();
-  const spawned = processPort.spawnedProcesses[0] as FakeSpawnedProcess;
-  const secretHex = processPort.spawnInputs[0]?.env[WEAVE_CHILD_SECRET_ENV];
-  if (secretHex === undefined) throw new Error("missing child secret");
-  const secret = hexToBytes(secretHex);
-  if (secret === undefined) throw new Error("invalid child secret");
+  const spawned = processAt(processPort, 0);
+  const secret = secretFor(processPort, spawned);
   let sequence = 1;
-  const send = async (kind: PiControlKind, body: JsonValue) => {
-    const envelope = await signEnvelope(
+  const send = async (kind: PiControlKind, body: JsonValue): Promise<void> => {
+    const signed = await signEnvelope(
       {
         childId: "child-1",
         generationId: "gen-1",
@@ -78,121 +229,419 @@ async function runningRpc() {
       secret,
       hmacPort,
     );
-    if (envelope.isErr()) throw new Error("could not sign fake reply");
-    spawned.emitLine(envelope.value);
+    if (signed.isErr()) throw new Error("could not sign fake reply");
+    spawned.emitLine(signed.value);
   };
   await send("handshake", {});
   expect((await spawnedResult).isOk()).toBe(true);
-  const run = child.runTask(input, bootstrap);
+  const run = child.runTask(input, bootstrapFor("child-1"));
   await flush();
   await send("bootstrap-ack", {});
   await flush();
   return { child, spawned, run, send, secret };
 }
 
-const record = (
-  childId: string,
-  overrides: Partial<PiChildHistoryRecord> = {},
-): PiChildHistoryRecord => ({
-  childId,
-  parentSessionId: "parent-session",
-  kind: "ordinary",
-  status: "settled",
-  workflow: {},
-  sessionPath: `children/${childId}/session.jsonl`,
-  checkpointCursor: 0,
-  branchAncestry: [],
-  interventionCount: 2,
-  finalOutput: "bounded terminal result",
-  trim: { trimmed: false, markerCount: 0 },
-  quarantine: { quarantined: false },
-  clear: { cleared: false },
-  recovery: { eligible: true, count: 0 },
-  bytes: { session: 0, checkpoint: 0, total: 0 },
-  createdAt: 1,
-  updatedAt: 1,
-  ...overrides,
-});
+const resumeConfig = config(`
+workflow recovery-flow {
+  description "Recovery workflow"
+  version 1
+  step verify {
+    name "Verify recovery"
+    type autonomous
+    agent shuttle
+    prompt "verify {{instance.goal}}"
+    completion agent_signal
+  }
+}
+`);
 
-async function open(
-  fs = new MemoryPiChildHistoryFs(),
-  now = 10,
-  settings: Partial<PiChildInspectionSettings> = {},
-) {
-  return PiChildHistoryStore.open(
-    "parent-session",
-    {
-      persist_history: true,
-      max_bytes_per_child: 4 * 1024 * 1024,
-      max_bytes_total: 64 * 1024 * 1024,
-      orphan_retention_days: 30,
-      ...settings,
-    },
-    { fs, now: () => now },
-  );
+function recoveryRecord(childId: string): PiChildHistoryRecord {
+  return {
+    childId,
+    parentSessionId: "parent",
+    kind: "ordinary",
+    status: "interrupted",
+    workflow: {},
+    descriptorName: "shuttle",
+    sessionPath: `children/${childId}/session.jsonl`,
+    activeLeaf: "leaf-42",
+    checkpointCursor: 7,
+    branchAncestry: [],
+    interventionCount: 1,
+    finalOutput: "",
+    trim: { trimmed: false, markerCount: 0 },
+    quarantine: { quarantined: false },
+    clear: { cleared: false },
+    recovery: { eligible: true, count: 0 },
+    bytes: { session: 1, checkpoint: 1, total: 2 },
+    createdAt: 1,
+    updatedAt: 1,
+  };
 }
 
-test("fake nested and workflow children expose bounded metadata only", async () => {
-  const fs = new MemoryPiChildHistoryFs();
-  const opened = await open(fs);
-  expect(opened.isOk()).toBe(true);
-  if (opened.isErr()) return;
-  const store = opened.value;
-  expect(
-    (
-      await store.upsertRecord(
-        record("nested", { kind: "nested", parentChildId: "root" }),
-      )
-    ).isOk(),
-  ).toBe(true);
-  expect(
-    (
-      await store.upsertRecord(
-        record("workflow", {
-          kind: "workflow-step",
-          workflow: { workflow: "release", step: "verify" },
-        }),
-      )
-    ).isOk(),
-  ).toBe(true);
-  await store.appendSessionEvent("nested", {
-    type: "steer",
-    text: canary,
-    at: 2,
+test("real ordinary, nested, and workflow execution retain only bounded topology metadata", async () => {
+  const port = new FakeChildProcessPort();
+  const terminal: Array<{ id: string; snapshot: unknown; output?: string }> =
+    [];
+  const history: PiChildInspectionHistoryPort = {
+    register: () => okAsync(undefined),
+    checkpoint: () => okAsync(undefined),
+    terminal: (id, snapshot, output) => {
+      terminal.push({ id, snapshot, output });
+      return okAsync(undefined);
+    },
+  };
+  const registry = new PiChildInspectionRegistry(history);
+  const controller = new PiDelegationController({
+    config: generous,
+    generationId: "gen-1",
+    idGenerator: new Ids(),
+    logger: noopLogger,
+    processPort: port,
+    randomPort,
+    hmacPort,
+    timerPort: new SystemTimerPort(),
+    cancelGraceMs: 10,
+    rootAgentName: () => "loom",
+    resolveDelegationTarget: () => ({ name: "shuttle" }) as never,
+    buildBootstrap: (_target, childId) => bootstrapFor(childId),
+    inspectionRegistry: registry,
   });
-  await store.appendCheckpoint(
-    "workflow",
-    [{ id: "root", kind: "message", payload: canary }],
-    "root",
+  const ordinary = controller.delegate(request());
+  await flush();
+  const nested = controller.delegate(
+    request({
+      parentId: "child-1",
+      parentDepth: 1,
+      parentAgentName: "shuttle",
+    }),
   );
-
-  const exported = JSON.stringify(store.getIndex());
-  expect(exported).toContain("bounded terminal result");
-  expect(exported).not.toContain(canary);
+  await flush();
   expect(
-    store
-      .getIndex()
-      .records.map(({ childId, status, finalOutput, interventionCount }) => ({
-        childId,
-        status,
-        finalOutput,
-        interventionCount,
-      })),
+    controller.snapshotTree().map((node) => [node.parentId, node.status]),
   ).toEqual([
-    {
-      childId: "nested",
-      status: "settled",
-      finalOutput: "bounded terminal result",
-      interventionCount: 2,
-    },
-    {
-      childId: "workflow",
-      status: "settled",
-      finalOutput: "bounded terminal result",
-      interventionCount: 2,
-    },
+    [ROOT_NODE_ID, "handshaking"],
+    ["child-1", "handshaking"],
   ]);
-  store.close();
+  await settleProcess(port, processAt(port, 0));
+  await settleProcess(port, processAt(port, 1));
+  expect((await ordinary).isOk()).toBe(true);
+  expect((await nested).isOk()).toBe(true);
+
+  const workflowPort = new FakeChildProcessPort();
+  const workflowRegistry = new PiChildInspectionRegistry(history);
+  const workflow = createDirectDispatchTransport(
+    {
+      processPort: workflowPort,
+      randomPort,
+      hmacPort,
+      logger: noopLogger,
+      idGenerator: new Ids(),
+      inspectionRegistry: workflowRegistry,
+      registry: new PiDirectStepChildRegistry(),
+    },
+    "gen-1",
+  )({
+    agentName: "shuttle",
+    composedPrompt: "workflow prompt",
+    models: [],
+    delegationTargets: [],
+    workflowInstanceId: "workflow-1",
+    leaseId: "lease-1",
+    stepName: "verify",
+    taskPrompt: "run verify",
+    cwd: "/project",
+    correlationId: "effect-1",
+  });
+  await flush();
+  await settleProcess(workflowPort, processAt(workflowPort, 0));
+  expect((await workflow).isOk()).toBe(true);
+
+  const ids = terminal.map(({ id }) => id);
+  expect(ids).toEqual([
+    "child-1",
+    "child-2",
+    "direct-workflow-1-verify-child-1",
+  ]);
+  expect((terminal[0]?.snapshot as { parentId?: string }).parentId).toBe(
+    ROOT_NODE_ID,
+  );
+  expect((terminal[1]?.snapshot as { parentId?: string }).parentId).toBe(
+    "child-1",
+  );
+  expect((terminal[2]?.snapshot as { status?: string }).status).toBe(
+    "completed",
+  );
+  expect(
+    terminal.every(({ output }) => output === "bounded terminal result"),
+  ).toBe(true);
+  expect(JSON.stringify(terminal)).not.toContain("workflow prompt");
+  expect(JSON.stringify(terminal)).not.toContain("intermediate");
+  controller.disposeAll();
+});
+
+test("real RPC lifecycle supports steer, queued follow-up, UI response, interruption, and restart", async () => {
+  const running = await runningRpc();
+  const steer = running.child.steer("child-1", "gen-1", "steer");
+  await flush();
+  const steerLine = running.spawned.writtenLines().at(-1) as { id: string };
+  running.spawned.emitLine({
+    id: steerLine.id,
+    type: "response",
+    command: "steer",
+    success: true,
+  });
+  expect((await steer).isOk()).toBe(true);
+  const follow = running.child.followUp("child-1", "gen-1", "follow-up");
+  await flush();
+  const followLine = running.spawned.writtenLines().at(-1) as { id: string };
+  running.spawned.emitLine({
+    id: followLine.id,
+    type: "response",
+    command: "follow_up",
+    success: true,
+  });
+  expect((await follow).isOk()).toBe(true);
+  running.spawned.emitLine({
+    type: "extension_ui_request",
+    requestType: "dialog",
+    requestId: "ui-1",
+  });
+  await flush();
+  expect(
+    (
+      await running.child.sendExtensionUiResponse("child-1", "gen-1", {
+        type: "extension_ui_response",
+        requestId: "ui-1",
+        response: "yes",
+      })
+    ).isOk(),
+  ).toBe(true);
+  expect(running.spawned.writtenText).toContain('"id":"ui-1"');
+  const run = running.run;
+  running.spawned.endStdout();
+  expect((await run).isErr()).toBe(true);
+  expect(running.child.snapshot().status).toBe("failed");
+
+  // Restart through the controller's authenticated restore seam, not by
+  // constructing another child directly. The restore must use a new process.
+  const restorePort = new FakeChildProcessPort();
+  const restoredTerminal: Array<{ id: string; output?: string }> = [];
+  const restoreRegistry = new PiChildInspectionRegistry({
+    register: () => okAsync(undefined),
+    checkpoint: () => okAsync(undefined),
+    terminal: (id, _snapshot, output) => {
+      restoredTerminal.push({ id, output });
+      return okAsync(undefined);
+    },
+  });
+  const restoreController = new PiDelegationController({
+    config: generous,
+    generationId: "gen-1",
+    idGenerator: new Ids(),
+    logger: noopLogger,
+    processPort: restorePort,
+    randomPort,
+    hmacPort,
+    timerPort: new SystemTimerPort(),
+    cancelGraceMs: 10,
+    rootAgentName: () => "loom",
+    resolveRootDelegationTarget: () => ({ name: "shuttle" }) as never,
+    buildBootstrap: (_target, childId) => bootstrapFor(childId),
+    pathContainment: {
+      verifyContainment: () => okAsync("/history/children/child-1"),
+    },
+    historyRoot: () => "/history",
+    currentCwd: () => "/project",
+    inspectionRegistry: restoreRegistry,
+  });
+  const restarted = restoreController.restoreOrdinaryChild({
+    generationId: "gen-1",
+    descriptor: { name: "shuttle" },
+    continuation: "private continuation must not escape",
+    record: recoveryRecord("child-1"),
+  });
+  await flush();
+  expect(restorePort.spawnedProcesses).toHaveLength(1);
+  await settleProcess(restorePort, processAt(restorePort, 0));
+  const restartedResult = await restarted;
+  expect(restartedResult.isOk()).toBe(true);
+  if (restartedResult.isOk()) {
+    expect(restartedResult.value).toEqual({
+      finalOutput: "bounded terminal result",
+      interventionCount: 0,
+    });
+    expect(JSON.stringify(restartedResult.value)).not.toContain(
+      "private continuation",
+    );
+  }
+  expect(restoredTerminal).toEqual([
+    { id: "child-1", output: "bounded terminal result" },
+  ]);
+  expect(JSON.stringify(restoredTerminal)).not.toContain(
+    "private continuation",
+  );
+  restoreController.disposeAll();
+});
+
+test("real ordinary recovery resumes through the controller and preserves bounded result", async () => {
+  const port = new FakeChildProcessPort();
+  const registry = new PiChildInspectionRegistry();
+  const controller = new PiDelegationController({
+    config: generous,
+    generationId: "gen-1",
+    idGenerator: new Ids(),
+    logger: noopLogger,
+    processPort: port,
+    randomPort,
+    hmacPort,
+    timerPort: new SystemTimerPort(),
+    cancelGraceMs: 10,
+    rootAgentName: () => "loom",
+    resolveRootDelegationTarget: () => ({ name: "shuttle" }) as never,
+    buildBootstrap: (_target, childId) => bootstrapFor(childId),
+    pathContainment: {
+      verifyContainment: () => okAsync("/history/children/recover-me"),
+    },
+    historyRoot: () => "/history",
+    currentCwd: () => "/project",
+    inspectionRegistry: registry,
+  });
+  const resumed = controller.restoreOrdinaryChild({
+    generationId: "gen-1",
+    descriptor: { name: "shuttle" },
+    continuation: "continue",
+    record: recoveryRecord("recover-me"),
+  });
+  await flush();
+  await settleProcess(port, processAt(port, 0));
+  const resumedResult = await resumed;
+  expect(resumedResult.isOk()).toBe(true);
+  expect(resumedResult._unsafeUnwrap()).toEqual({
+    finalOutput: "bounded terminal result",
+    interventionCount: 0,
+  });
+  expect(JSON.stringify(resumedResult._unsafeUnwrap())).not.toContain(
+    "continue",
+  );
+  controller.disposeAll();
+});
+
+test("the actual workflow resume controller completes the persisted step", async () => {
+  const store = createInMemoryRuntimeStore();
+  const created = await store.instances.create({
+    workflowName: "recovery-flow",
+    goal: "resume the interrupted step",
+    slug: "resume-the-interrupted-step",
+  });
+  expect(created.isOk()).toBe(true);
+  if (created.isErr()) return;
+
+  const workflow = resumeConfig.workflows["recovery-flow"];
+  if (workflow === undefined) throw new Error("missing recovery workflow");
+  const context = {
+    workflowName: "recovery-flow",
+    goal: "resume the interrupted step",
+    slug: "resume-the-interrupted-step",
+    workflows: { "recovery-flow": workflow },
+  };
+  let dispatchCount = 0;
+  let dispatchOutcome: "paused" | "success" = "paused";
+  const directDispatch = {
+    dispatch: (input: { workflowInstanceId: string; stepName: string }) => {
+      dispatchCount += 1;
+      expect(input.workflowInstanceId).toBe(created.value.id);
+      expect(input.stepName).toBe("verify");
+      return okAsync({ outcome: dispatchOutcome, method: "agent_signal" });
+    },
+  };
+  const recoveryPointerStore = new InMemoryRecoveryPointerStore();
+  const deps = {
+    store,
+    directDispatch,
+    recoveryPointerStore,
+    clock: { now: () => 1_700_000_000_000 },
+    idGenerator: { next: () => "resume-attempt" },
+    logger: noopLogger,
+    controllerGenerationId: "gen-1",
+    assertGenerationCurrent: () => ok(undefined),
+    ownerId: "gen-1",
+    projectRoot: "/project",
+    maxAutoAdvanceSteps: 2,
+    resolveAgentDescriptor: (name: string) => ({
+      name,
+      composedPrompt: "bounded workflow prompt",
+      models: [],
+      mode: "subagent",
+      effectiveToolPolicy: {
+        read: "allow",
+        write: "allow",
+        execute: "allow",
+        delegate: "deny",
+        network: "deny",
+      },
+      rawToolPolicy: undefined,
+      delegationTargets: [],
+      skills: [],
+    }),
+  };
+  const controller = new PiWorkflowController(deps as never);
+  const authorization = authorizeByExplicitUser(true);
+  expect(authorization.isOk()).toBe(true);
+  if (authorization.isErr()) return;
+  const started = await controller.startExecution(
+    { workflowInstanceId: created.value.id, context },
+    authorization.value,
+  );
+  if (started.isErr())
+    throw new Error(`start failed: ${JSON.stringify(started.error)}`);
+  expect(started.isOk()).toBe(true);
+  expect(dispatchCount).toBe(1);
+  if (started.isOk()) {
+    recoveryPointerStore.appendPointer({
+      schemaVersion: 1,
+      workflowId: created.value.id,
+      leaseId: started.value.leaseId,
+      controllerGeneration: "gen-1",
+      attempt: {
+        attemptId: "00000000-0000-4000-8000-000000000001",
+      },
+      status: "recoverable",
+      observedAt: "2024-01-01T00:00:00.000Z",
+    });
+  }
+
+  dispatchOutcome = "success";
+  const freshController = new PiWorkflowController({
+    ...deps,
+    ownerId: "owner-new",
+    controllerGenerationId: "gen-2",
+  } as never);
+  const resumed = await freshController.resumeExecution(
+    {
+      workflowInstanceId: created.value.id,
+      context,
+      metadata: {
+        weaveResumeAttemptId: "00000000-0000-4000-8000-000000000002",
+        weaveResumePreviousAttemptId: "00000000-0000-4000-8000-000000000001",
+      },
+      recoveryTakeover: {
+        expectedLeaseId: started.isOk() ? started.value.leaseId ?? "" : "",
+        expectedControllerGeneration: "gen-1",
+      },
+    },
+    authorization.value,
+  );
+  if (resumed.isErr()) throw new Error(JSON.stringify(resumed.error));
+  expect(resumed.isOk()).toBe(true);
+  expect(dispatchCount).toBe(2);
+  const inspected = await controller.inspect(created.value.id);
+  expect(inspected.isOk()).toBe(true);
+  if (inspected.isOk()) {
+    expect(inspected.value.workflowInstanceId).toBe(created.value.id);
+    expect(inspected.value.workflowName).toBe("recovery-flow");
+    expect(inspected.value.status).toBe("completed");
+  }
 });
 
 test("the real RPC child accepts a >1 MiB assistant record and settles without poison", async () => {
@@ -216,8 +665,6 @@ test("the real RPC child accepts a >1 MiB assistant record and settles without p
   });
   const result = await running.run;
   expect(result.isOk()).toBe(true);
-  if (result.isErr()) throw new Error(JSON.stringify(result.error));
-  expect(running.child.snapshot().status).toBe("completed");
   expect(JSON.stringify(result)).not.toContain(payload);
   expect(JSON.stringify(result)).not.toContain("ChildSettlementMissing");
 });

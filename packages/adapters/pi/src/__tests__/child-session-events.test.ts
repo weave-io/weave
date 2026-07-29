@@ -23,9 +23,14 @@ describe("Pi child session event protocol", () => {
       "queue_change",
       "status",
       "retry",
+      "extension_ui_response",
     ] as const;
     for (const type of kinds) {
-      const value = type === "text" ? { type, text: "bounded" } : { type };
+      let value: Record<string, string> = { type };
+      if (type === "text") value = { type, text: "bounded" };
+      if (type === "extension_ui_response") {
+        value = { type, requestId: "request-1" };
+      }
       expect(PiChildSessionEventSchema.safeParse(value).success).toBe(true);
     }
     for (const requestType of ["notification", "widget", "dialog"] as const) {
@@ -82,6 +87,13 @@ describe("Pi child session event protocol", () => {
         type: "extension_ui_response",
         requestId: "request-1",
         cancelled: true,
+      }).success,
+    ).toBe(true);
+    expect(
+      parsePiChildSessionEvent({
+        type: "extension_ui_response",
+        requestId: "request-1",
+        response: { accepted: true },
       }).success,
     ).toBe(true);
   });

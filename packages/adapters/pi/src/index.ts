@@ -236,11 +236,16 @@ export type {
 } from "./errors.js";
 export {
   makeActivationFailedFailure,
+  makeChildCheckpointInvalidFailure,
+  makeChildControlEnvelopeTooLargeFailure,
+  makeChildExtensionUiRejectedFailure,
   makeChildHistoryClearRefusedFailure,
   makeChildHistoryCorruptFailure,
   makeChildHistoryQuotaExceededFailure,
   makeChildHistoryQuarantinedFailure,
   makeChildInteractionUnavailableFailure,
+  makeChildNativeRecordTooLargeFailure,
+  makeChildSchemaInvalidFailure,
   makeChildRecoveryUnavailableFailure,
   makeUiBridgeUnavailableFailure,
   makeCommandCollisionFailure,

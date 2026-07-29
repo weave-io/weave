@@ -19,6 +19,7 @@ import {
   type PiTelemetryUiPort,
   type PiUsagePort,
 } from "../telemetry.js";
+import { makeChildCapacityExceededFailure } from "../errors.js";
 import type { Clock, PiAdapterLogger } from "../types.js";
 
 function fakeClock(startMs = 1_700_000_000_000): Clock {
@@ -151,6 +152,24 @@ describe("PiTelemetry — TUI diagnostics dedupe (Pi adapter contract)", () => {
       expect(typeof n.message).toBe("string");
     }
   });
+
+  it("never leaks private correlation reason into user diagnostics", () => {
+    const telemetry = buildTelemetry();
+    const { ui, notifications } = fakeUi();
+    const privateCanary = "PRIVATE-DIAGNOSTIC-CANARY";
+    telemetry.notifyFailureOnce(
+      ui,
+      makeChildCapacityExceededFailure(
+        privateCanary,
+        "max_children",
+      ),
+    );
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0]?.message).toBe(
+      "Delegation limits do not permit spawning this child right now. (retry)",
+    );
+    expect(JSON.stringify(notifications)).not.toContain(privateCanary);
+  });
 });
 
 describe("PiTelemetry — data ban (Pi adapter contract)", () => {
@@ -260,29 +279,64 @@ describe("PiTelemetry — data ban (Pi adapter contract)", () => {
     expect(result.isOk()).toBe(true);
   });
 
-  it("keeps canaries out of the real journal and usage sinks", async () => {
-    const telemetry = buildTelemetry();
-    const canary = "prompt-task-intervention-tool-image-rpc-path-secret";
+  it("passes private canaries through the real journal boundary, then omits them from every sink", async () => {
+    const store = createInMemoryRuntimeStore();
+    const { logger, logs } = fakeLogger();
+    const telemetry = new PiTelemetry({
+      journal: new RuntimeJournalWriter(store.journal, { strictMode: false }),
+      usage: store.usage,
+      retention: alwaysStoppedRetention().port,
+      logger,
+      clock: fakeClock(),
+      maxTrackedUsageIds: DEFAULT_SETTINGS.usage.max_observations,
+    });
+    const privateCanaries = {
+      prompt: "PRIVATE-PROMPT-CANARY",
+      task: "PRIVATE-TASK-CANARY",
+      intervention: "PRIVATE-INTERVENTION-CANARY",
+      toolArgs: "PRIVATE-TOOL-ARGS-CANARY",
+      image: "PRIVATE-IMAGE-CANARY",
+      rpcBody: "PRIVATE-RPC-BODY-CANARY",
+      path: "PRIVATE-PATH-CANARY",
+      secret: "PRIVATE-SECRET-CANARY",
+    };
     const journal = await telemetry.recordJournalEvent({
       family: "activation-health",
       event: "generation-activated",
       severity: "info",
-      data: { generationId: "gen-1", trusted: true, attempt: 1 },
+      data: {
+        prompt: privateCanaries.prompt,
+        task: privateCanaries.task,
+        intervention: privateCanaries.intervention,
+        toolArgs: privateCanaries.toolArgs,
+        image: privateCanaries.image,
+        rpcBody: privateCanaries.rpcBody,
+        path: privateCanaries.path,
+        secret: privateCanaries.secret,
+      },
     });
+    expect(journal.isErr()).toBe(true);
     const usage = await telemetry.recordAssistantUsage({
-      id: "canary-message",
+      id: "safe-message",
       inputTokens: 2,
       outputTokens: 3,
       cost: 0.01,
       source: "child",
     });
-    expect(journal.isOk()).toBe(true);
     expect(usage.isOk()).toBe(true);
-    expect(JSON.stringify(journal)).not.toContain(canary);
-    expect(JSON.stringify(usage)).not.toContain(canary);
+    const sinks = [
+      JSON.stringify(store.journal.snapshot()),
+      JSON.stringify(store.usage.snapshot()),
+      JSON.stringify(logs),
+      JSON.stringify(journal),
+      JSON.stringify(usage),
+    ];
+    for (const canary of Object.values(privateCanaries)) {
+      expect(sinks.every((sink) => !sink.includes(canary))).toBe(true);
+    }
   });
 
-  it("rejects raw-content fields and invalid event names before persistence", async () => {
+  it("rejects raw-content fields and private input before persistence", async () => {
     const telemetry = buildTelemetry();
     const rawContent = await telemetry.recordJournalEvent({
       family: "generation",
@@ -293,14 +347,27 @@ describe("PiTelemetry — data ban (Pi adapter contract)", () => {
     expect(rawContent.isErr()).toBe(true);
     if (rawContent.isErr()) {
       expect(rawContent.error.code).toBe("JournalWriteFailed");
+      expect(rawContent.error.safeMessage).toBe(
+        "Weave could not write a Runtime Journal entry.",
+      );
+      expect(JSON.stringify(rawContent.error)).not.toContain("secret content");
     }
 
     const invalidEvent = await telemetry.recordJournalEvent({
       family: "generation",
-      event: `event-${"x".repeat(64)}`,
+      event: "PRIVATE-GENERATION-INVALID-EVENT-CANARY",
       severity: "info",
     });
     expect(invalidEvent.isErr()).toBe(true);
+    if (invalidEvent.isErr()) {
+      expect(invalidEvent.error.code).toBe("JournalWriteFailed");
+      expect(invalidEvent.error.safeMessage).toBe(
+        "Weave could not write a Runtime Journal entry.",
+      );
+      expect(JSON.stringify(invalidEvent.error)).not.toContain(
+        "PRIVATE-GENERATION-INVALID-EVENT-CANARY",
+      );
+    }
   });
 });
 

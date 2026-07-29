@@ -32,6 +32,10 @@ export const PiAdapterFailureCodeSchema = z.enum([
   "ChildAuthenticationFailed",
   "ChildEnvelopeMalformed",
   "ChildEnvelopeReplay",
+  "ChildSchemaInvalid",
+  "ChildCheckpointInvalid",
+  "ChildNativeRecordTooLarge",
+  "ChildControlEnvelopeTooLarge",
   "ChildReplyMissing",
   "ChildReplyDuplicate",
   "ChildReplyLate",
@@ -50,6 +54,7 @@ export const PiAdapterFailureCodeSchema = z.enum([
   "ChildHistoryClearRefused",
   "ChildRecoveryUnavailable",
   "ChildInteractionUnavailable",
+  "ChildExtensionUiRejected",
   "UiBridgeUnavailable",
   // completion
   "CompletionSignalMissing",
@@ -595,6 +600,66 @@ export function makeRpcBridgeUnavailableFailure(
   };
 }
 
+export function makeChildSchemaInvalidFailure(
+  childId: string,
+  reason: string,
+): PiAdapterFailure {
+  return {
+    code: "ChildSchemaInvalid",
+    phase: "protocol",
+    scope: childScope(childId),
+    impact: "operation-stopped",
+    retryable: false,
+    recovery: "abort",
+    safeMessage: "Private child data failed the adapter schema.",
+    correlation: { reason },
+  };
+}
+
+export function makeChildCheckpointInvalidFailure(
+  childId: string,
+  reason: string,
+): PiAdapterFailure {
+  return {
+    code: "ChildCheckpointInvalid",
+    phase: "persistence",
+    scope: childScope(childId),
+    impact: "operation-stopped",
+    retryable: false,
+    recovery: "none",
+    safeMessage: "The delegated child checkpoint cannot be restored safely.",
+    correlation: { reason },
+  };
+}
+
+export function makeChildNativeRecordTooLargeFailure(
+  childId: string,
+): PiAdapterFailure {
+  return {
+    code: "ChildNativeRecordTooLarge",
+    phase: "protocol",
+    scope: childScope(childId),
+    impact: "operation-stopped",
+    retryable: false,
+    recovery: "abort",
+    safeMessage: "The delegated child sent an oversized native record.",
+  };
+}
+
+export function makeChildControlEnvelopeTooLargeFailure(
+  childId: string,
+): PiAdapterFailure {
+  return {
+    code: "ChildControlEnvelopeTooLarge",
+    phase: "protocol",
+    scope: childScope(childId),
+    impact: "operation-stopped",
+    retryable: false,
+    recovery: "abort",
+    safeMessage: "The delegated child sent an oversized control envelope.",
+  };
+}
+
 export function makeChildHistoryCorruptFailure(
   childId: string,
 ): PiAdapterFailure {
@@ -676,6 +741,22 @@ export function makeChildInteractionUnavailableFailure(
     retryable: false,
     recovery: "none",
     safeMessage: "The delegated child cannot accept interaction right now.",
+  };
+}
+
+export function makeChildExtensionUiRejectedFailure(
+  childId: string,
+  reason: "stale" | "cross-child" | "not-accepted",
+): PiAdapterFailure {
+  return {
+    code: "ChildExtensionUiRejected",
+    phase: "protocol",
+    scope: childScope(childId),
+    impact: "degraded",
+    retryable: false,
+    recovery: "abort",
+    safeMessage: "The delegated child rejected an extension UI response.",
+    correlation: { reason },
   };
 }
 

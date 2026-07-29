@@ -5,6 +5,11 @@ import { join } from "node:path";
 import { createInMemoryRuntimeStore } from "@weaveio/weave-engine";
 import { makeRuntimeStoreOpenFailedFailure } from "../errors.js";
 import {
+  BunJsonlRecoveryPointerStore,
+  parseRecoveryPointer,
+  type PiWeaveRecoveryPointerV1,
+} from "../recovery-pointer.js";
+import {
   FailingRuntimeStoreFactory,
   InMemoryRuntimeStoreFactory,
   SqliteRuntimeStoreFactory,
@@ -57,5 +62,75 @@ describe("SqliteRuntimeStoreFactory — real filesystem conformance", () => {
     const second = await factory.open(root);
     expect(second.isOk()).toBe(true);
     if (second.isOk()) second.value.close();
+  });
+});
+
+describe("BunJsonlRecoveryPointerStore — schema-safe read safety", () => {
+  let root: string;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "weave-recovery-pointer-test-"));
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("reads only the latest valid pointer and skips malformed/unknown-version entries", async () => {
+    const privateCanary = "PRIVATE-RECOVERY-POINTER-CANARY";
+    const pointerPath = join(root, "pointers.jsonl");
+    const store = new BunJsonlRecoveryPointerStore(pointerPath);
+
+    const appendResult = await store.appendPointer({
+      schemaVersion: 1,
+      workflowId: "workflow-valid",
+      leaseId: "lease-valid",
+      controllerGeneration: "gen-1",
+      status: "recoverable",
+      observedAt: "2026-01-01T00:00:00.000Z",
+      attempt: {
+        attemptId: "attempt-valid",
+      },
+    });
+    expect(appendResult.isOk()).toBe(true);
+
+    // Put a malformed/unknown-version pointer containing private canary data after the
+    // real pointer: the seam should reject it while reading, and the returned output
+    // should still reflect the valid pointer only.
+    const malformed = `${JSON.stringify({
+      schemaVersion: 99,
+      workflowId: privateCanary,
+      leaseId: "lease-ignored",
+      controllerGeneration: "gen-ignored",
+      status: "recoverable",
+      observedAt: "2026-01-01T00:00:00.000Z",
+    })}\n`;
+    const existing = await Bun.file(pointerPath).text();
+    await Bun.write(pointerPath, `${existing}${malformed}`);
+
+    const result = await store.readLatestPointer();
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value?.workflowId).toBe("workflow-valid");
+      expect(result.value?.workflowId).not.toContain(privateCanary);
+      expect(JSON.stringify(result.value)).not.toContain(privateCanary);
+    }
+  });
+
+  it("returns typed parse failures for unknown-version pointer payloads passed through the parser", () => {
+    const privateCanary = "PRIVATE-RECOVERY-PARSER-CANARY";
+    const parse = parseRecoveryPointer({
+      schemaVersion: 99,
+      workflowId: privateCanary,
+      leaseId: "lease-parse",
+      controllerGeneration: "controller-parse",
+      status: "recoverable",
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as unknown as PiWeaveRecoveryPointerV1);
+    expect(parse.isErr()).toBe(true);
+    if (parse.isErr()) {
+      expect(parse.error.kind).toBe("unknown-version");
+      expect(JSON.stringify(parse.error)).not.toContain(privateCanary);
+    }
   });
 });

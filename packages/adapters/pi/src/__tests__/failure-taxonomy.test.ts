@@ -3,7 +3,14 @@ import { MAX_CONTROL_BODY_BYTES } from "../child-envelope.js";
 import { MAX_NATIVE_RECORD_BYTES } from "../child-framing.js";
 import { MAX_LATEST_OUTPUT_BYTES } from "../child-tree.js";
 import {
+  makeChildCheckpointInvalidFailure,
+  makeChildControlEnvelopeTooLargeFailure,
   makeChildDeliveryFailedFailure,
+  makeChildExtensionUiRejectedFailure,
+  makeChildHistoryQuarantinedFailure,
+  makeChildNativeRecordTooLargeFailure,
+  makeChildRecoveryUnavailableFailure,
+  makeChildSchemaInvalidFailure,
   makeChildTransferRejectedFailure,
   makeChildTransferTimedOutFailure,
   makeChildTransferTooLargeFailure,
@@ -52,6 +59,10 @@ const FROZEN_FAILURE_CODES = [
   "ChildAuthenticationFailed",
   "ChildEnvelopeMalformed",
   "ChildEnvelopeReplay",
+  "ChildSchemaInvalid",
+  "ChildCheckpointInvalid",
+  "ChildNativeRecordTooLarge",
+  "ChildControlEnvelopeTooLarge",
   "ChildReplyMissing",
   "ChildReplyDuplicate",
   "ChildReplyLate",
@@ -69,6 +80,7 @@ const FROZEN_FAILURE_CODES = [
   "ChildHistoryClearRefused",
   "ChildRecoveryUnavailable",
   "ChildInteractionUnavailable",
+  "ChildExtensionUiRejected",
   "UiBridgeUnavailable",
   // completion
   "CompletionSignalMissing",
@@ -122,6 +134,32 @@ describe("PiAdapterFailureCodeSchema closed-set exhaustiveness (Pi adapter contr
     expect(PiAdapterFailureCodeSchema.options).toHaveLength(
       new Set(PiAdapterFailureCodeSchema.options).size,
     );
+  });
+
+  it("covers schema, checkpoint, quota, recovery, and UI relay failures", () => {
+    const failures = [
+      makeChildSchemaInvalidFailure("child", "invalid"),
+      makeChildCheckpointInvalidFailure("child", "invalid"),
+      makeChildNativeRecordTooLargeFailure("child"),
+      makeChildControlEnvelopeTooLargeFailure("child"),
+      makeChildHistoryQuarantinedFailure("child"),
+      makeChildRecoveryUnavailableFailure("child"),
+      makeChildExtensionUiRejectedFailure("child", "stale"),
+    ];
+    expect(failures.map((failure) => failure.code)).toEqual([
+      "ChildSchemaInvalid",
+      "ChildCheckpointInvalid",
+      "ChildNativeRecordTooLarge",
+      "ChildControlEnvelopeTooLarge",
+      "ChildHistoryQuarantined",
+      "ChildRecoveryUnavailable",
+      "ChildExtensionUiRejected",
+    ]);
+    for (const failure of failures) {
+      expect(PiAdapterFailureCodeSchema.safeParse(failure.code).success).toBe(
+        true,
+      );
+    }
   });
 });
 
@@ -233,28 +271,6 @@ describe("PiAdapterFailureImpactSchema closed-set exhaustiveness (Pi adapter con
   });
 });
 
-describe("PiAdapterFailureRecoverySchema closed-set exhaustiveness (Pi adapter contract)", () => {
-  it("matches the frozen recovery list exactly, in both directions", () => {
-    const actual = new Set(PiAdapterFailureRecoverySchema.options);
-    const frozen = new Set(FROZEN_RECOVERIES);
-    expect(actual).toEqual(frozen);
-  });
-});
-describe("Task 13 bounded failure proof (Pi adapter contract)", () => {
-  it("keeps bounded control, native, and settlement failures distinct", () => {
-    const settlement = makeChildRecoveryUnavailableFailure(
-      "child-1",
-      "ChildSettlementMissing",
-    );
-    expect(settlement.code).toBe("ChildRecoveryUnavailable");
-    expect(settlement.safeMessage).not.toContain("private");
-    expect(PiAdapterFailureCodeSchema.options).toContain(
-      "ChildRecoveryUnavailable",
-    );
-  });
-});
-
-describe("PiAdapterFailureRecoverySchema closed-set exhaustiveness (Pi adapter contract)", () => {
 describe("Task 13 bounded failure proof (Pi adapter contract)", () => {
   it("keeps bounded control, native, and settlement failures distinct", () => {
     const settlement = makeChildRecoveryUnavailableFailure("child-1");
@@ -267,3 +283,9 @@ describe("Task 13 bounded failure proof (Pi adapter contract)", () => {
 });
 
 describe("PiAdapterFailureRecoverySchema closed-set exhaustiveness (Pi adapter contract)", () => {
+  it("matches the frozen recovery list exactly, in both directions", () => {
+    const actual = new Set(PiAdapterFailureRecoverySchema.options);
+    const frozen = new Set(FROZEN_RECOVERIES);
+    expect(actual).toEqual(frozen);
+  });
+});

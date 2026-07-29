@@ -88,6 +88,14 @@ const ExtensionUiRequest = event("extension_ui_request", {
   dialog: boundedJson.optional(),
 });
 
+const ExtensionUiResponse = event("extension_ui_response", {
+  /** Correlates the response with exactly one originating child request. */
+  requestId: boundedString,
+  response: boundedJson.optional(),
+  cancelled: z.boolean().optional(),
+  error: boundedString.optional(),
+});
+
 const UnknownChildEvent = z
   .object({
     type: z.literal("unknown"),
@@ -120,6 +128,7 @@ export const PiChildSessionEventSchema = z.discriminatedUnion("type", [
   Status,
   Retry,
   ExtensionUiRequest,
+  ExtensionUiResponse,
   UnknownChildEvent,
 ]);
 export type PiChildSessionEvent = z.infer<typeof PiChildSessionEventSchema>;
@@ -145,15 +154,7 @@ export function preserveUnknownChildEvent(value: unknown): PiChildSessionEvent {
 }
 
 /** The correlated response sent back to the originating child extension. */
-export const PiExtensionUiResponseSchema = z
-  .object({
-    type: z.literal("extension_ui_response"),
-    requestId: boundedString,
-    response: boundedJson.optional(),
-    cancelled: z.boolean().optional(),
-    error: boundedString.optional(),
-  })
-  .catchall(boundedJson);
+export const PiExtensionUiResponseSchema = ExtensionUiResponse;
 export type PiExtensionUiResponse = z.infer<typeof PiExtensionUiResponseSchema>;
 
 const KNOWN_CHILD_EVENT_TYPES = new Set([
@@ -173,6 +174,7 @@ const KNOWN_CHILD_EVENT_TYPES = new Set([
   "status",
   "retry",
   "extension_ui_request",
+  "extension_ui_response",
 ]);
 
 /** Validate known events; preserve only genuinely unknown event kinds. */

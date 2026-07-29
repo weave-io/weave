@@ -15,7 +15,11 @@
 
 export type {
   PiChildHistoryIndexV1,
+  PiChildHistoryKind,
+  PiChildHistoryLayout,
+  PiChildHistoryMigrationOutcome,
   PiChildHistoryRecord,
+  PiChildHistorySchemaError,
   PiChildHistoryStatus,
 } from "./child-history-schema.js";
 export type {
@@ -281,6 +285,14 @@ export interface PiExtensionApi {
   sendUserMessage(
     content: string,
     options?: { readonly deliverAs?: "steer" | "followUp" },
+  ): void;
+  /** Injects a custom context message without impersonating the user. */
+  sendMessage?(
+    message: { customType: string; content: string; display?: boolean },
+    options?: {
+      triggerTurn?: boolean;
+      deliverAs?: "steer" | "followUp" | "nextTurn";
+    },
   ): void;
   /** Registers a tool the LLM can call (`ExtensionAPI.registerTool`). */
   registerTool(tool: PiToolRegistration): void;
