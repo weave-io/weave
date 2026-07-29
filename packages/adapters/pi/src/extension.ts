@@ -54,10 +54,12 @@ import {
 } from "./child-env.js";
 import type { PiChildHistoryRecord } from "./child-history-schema.js";
 import { PiChildHistoryStore } from "./child-history-store.js";
+import { createChildInspectionCustomComponent } from "./child-inspection-custom.js";
 import {
   createChildInspectionEditor,
   type PiChildInspectionEditor,
 } from "./child-inspection-editor.js";
+import type { PiChildInspectionRenderInput } from "./child-inspection-render.js";
 import {
   formatPiChildInspectionSettingsIssues,
   type PiChildInspectionEffectiveSettings,
@@ -1409,12 +1411,7 @@ class WeaveChildInspectionEditor extends CustomEditor {
     const result = this.composed.handleInput(data);
     if (result.isOk() && result.value.kind !== "host-default") {
       const view = this.composed.currentView();
-      if (view !== undefined) {
-        this.setText(view.state.draft);
-        (
-          this as unknown as { mount?: (view: PiInspectorView) => void }
-        ).mount?.(view);
-      }
+      if (view !== undefined) this.setText(view.state.draft);
       return;
     }
     super.handleInput(data);
@@ -3135,6 +3132,10 @@ export function createPiExtension(
           );
         }
         treeSelectionCell.selectedId = ROOT_NODE_ID;
+        let customInspectionComponent:
+          | ReturnType<typeof createChildInspectionCustomComponent>
+          | undefined;
+        let customInspectionTui: { requestRender(): void } | undefined;
         childInspectionEditorCell.editor = createChildInspectionEditor(
           new PiChildInspector(ROOT_NODE_ID, {
             steer: () => errAsync("child steering unavailable"),
@@ -3159,14 +3160,26 @@ export function createPiExtension(
                 () => dispatchWeaveCommand(pi, "weave:resume", "", ctx),
               );
             },
-            onViewChange: (view) => {
-              if (view.childId !== ROOT_NODE_ID)
-                ctx.ui.mountChildTranscript?.(view);
+            onViewChange: () => {
+              customInspectionComponent?.invalidate();
+              customInspectionTui?.requestRender();
             },
             defaultInput: (data) => undefined,
           },
         );
         const inspectionEditor = childInspectionEditorCell.editor;
+        const editorFactory = (
+          tui: unknown,
+          theme: unknown,
+          keybindings: unknown,
+        ) =>
+          new WeaveChildInspectionEditor(
+            tui,
+            theme,
+            keybindings,
+            inspectionEditor,
+          );
+        let customInspectionOpen = false;
         const activateChild = (childId: string): void => {
           if (inspectionEditor === undefined) return;
           const node = inspectionRegistry
@@ -3205,24 +3218,84 @@ export function createPiExtension(
           inspectionEditor.open(child, known);
           treeSelectionCell.selectedId = childId;
           ctx.ui.setEditorComponent?.(editorFactory);
+          openCustomInspection();
         };
-        const editorFactory = (
-          tui: unknown,
-          theme: unknown,
-          keybindings: unknown,
-        ) =>
-          Object.assign(
-            new WeaveChildInspectionEditor(
-              tui,
-              theme,
-              keybindings,
-              inspectionEditor,
-            ),
-            {
-              mount: (view: PiInspectorView) =>
-                ctx.ui.mountChildTranscript?.(view),
-            },
-          );
+        const openCustomInspection = (): void => {
+          if (ctx.mode !== "tui" || ctx.ui.custom === undefined) {
+            ctx.ui.notify("Child inspection requires Pi TUI mode.", "warning");
+            return;
+          }
+          if (customInspectionOpen) {
+            customInspectionComponent?.invalidate();
+            customInspectionTui?.requestRender();
+            return;
+          }
+          customInspectionOpen = true;
+          let finished = false;
+          const finish = (): void => {
+            if (finished) return;
+            finished = true;
+            customInspectionOpen = false;
+          };
+          void ctx.ui
+            .custom<void>((tui, theme, keybindings, done) => {
+              customInspectionTui = tui as { requestRender(): void };
+              customInspectionComponent = createChildInspectionCustomComponent(
+                customInspectionTui as never,
+                theme as never,
+                keybindings as never,
+                inspectionEditor,
+                () => {
+                  const view = inspectionEditor.currentView();
+                  const node = inspectionRegistry
+                    .snapshotLive()
+                    .find((item) => item.id === view?.childId);
+                  const transcriptState =
+                    node === undefined
+                      ? inspectionRegistry.getTranscriptState(
+                          view?.childId ?? "",
+                        )
+                      : inspectionRegistry.getTranscriptState(node.id);
+                  return {
+                    topologyPath: [{ name: view?.childId ?? "child" }],
+                    childName: node?.name ?? view?.childId ?? "child",
+                    status: (node?.status ??
+                      "running") as PiChildInspectionRenderInput["status"],
+                    currentTool: node?.currentTool,
+                    interventionCount: 0,
+                    summary: {
+                      queueSize: 0,
+                      turnCount: node?.currentTurn ?? 0,
+                      usage: node?.usage,
+                    },
+                    generationId: view?.generationId ?? generation.id,
+                    trimmed: false,
+                    recoveryContinuation: false,
+                    recoverableInterruption: false,
+                    interruptedHistory: false,
+                    readOnlyCompletion: view?.readOnly ?? false,
+                    transcriptState,
+                  };
+                },
+                () => inspectionEditor.currentView()?.state.draft ?? "",
+                (draft) => inspectionEditor.updateDraft(draft),
+                () => {
+                  if (finished) return;
+                  finish();
+                  ctx.ui.setEditorComponent?.(
+                    editorInstallCell?.previousFactory,
+                  );
+                  done(undefined);
+                },
+              );
+              return customInspectionComponent;
+            })
+            .finally(() => {
+              customInspectionComponent = undefined;
+              customInspectionTui = undefined;
+              finish();
+            });
+        };
         childInspectionEditorCell.activate = activateChild;
         const rootChild: PiInspectorChild = {
           childId: ROOT_NODE_ID,

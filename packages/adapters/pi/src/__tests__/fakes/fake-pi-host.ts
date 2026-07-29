@@ -143,7 +143,12 @@ export class RecordingFakePiHost {
   }[] = [];
   readonly sendMessageCalls: RecordedSendMessage[] = [];
   generatedTurnCount = 0;
-  readonly transcriptCalls: unknown[] = [];
+  readonly customCalls: unknown[] = [];
+  readonly customRenderedLines: string[][] = [];
+  private activeCustomDone: (() => void) | undefined;
+  private activeCustom:
+    | { render(width: number): string[]; handleInput(data: string): void }
+    | undefined;
   readonly interventionCalls: unknown[] = [];
   readonly editorFactoryCalls: unknown[] = [];
   private editorFactory: unknown;
@@ -569,8 +574,25 @@ export class RecordingFakePiHost {
         this.editorFactoryCalls.push(factory);
         this.editorFactory = factory;
       },
-      mountChildTranscript: (view) => {
-        this.transcriptCalls.push(view);
+      custom: async (factory) => {
+        this.customCalls.push(factory);
+        let resolve!: (value: unknown) => void;
+        const result = new Promise<unknown>((res) => {
+          resolve = res;
+        });
+        this.activeCustomDone = () => resolve(undefined);
+        const component = factory(
+          { width: 80, requestRender: () => undefined },
+          {},
+          { matches: () => false },
+          (value) => resolve(value),
+        ) as {
+          render(width: number): string[];
+          handleInput(data: string): void;
+        };
+        this.activeCustom = component;
+        this.customRenderedLines.push(component.render(80));
+        return (await result) as never;
       },
     };
     return Object.assign(
@@ -587,6 +609,21 @@ export class RecordingFakePiHost {
       },
       { hasPendingMessages: () => this.pendingMessages },
     ) as PiSessionContext;
+  }
+
+  renderCustom(): string[] {
+    const lines = this.activeCustom?.render(80) ?? [];
+    this.customRenderedLines.push(lines);
+    return lines;
+  }
+
+  inputCustom(data: string): void {
+    this.activeCustom?.handleInput(data);
+    this.renderCustom();
+  }
+
+  finishCustom(): void {
+    this.activeCustomDone?.();
   }
 
   setPendingMessages(pending: boolean): void {

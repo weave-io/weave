@@ -1880,7 +1880,7 @@ describe("createPiExtension: config activation, materialization consumption, pri
     expect(sent.options).toEqual({ triggerTurn: false });
     expect(host.sentUserMessages).toHaveLength(0);
     expect(host.generatedTurnCount).toBe(0);
-    expect(host.transcriptCalls).toHaveLength(0);
+    expect(host.customCalls).toHaveLength(0);
     expect(host.interventionCalls).toHaveLength(0);
     expect(host.widgetCalls).toHaveLength(widgetCallsBeforeSettlement);
   });
@@ -1905,7 +1905,7 @@ describe("createPiExtension: config activation, materialization consumption, pri
       ).toHaveLength(1);
       expect(host.sentUserMessages).toHaveLength(0);
       expect(host.generatedTurnCount).toBe(0);
-      expect(host.transcriptCalls).toHaveLength(0);
+      expect(host.customCalls).toHaveLength(0);
       expect(host.interventionCalls).toHaveLength(0);
       expect(
         host.notifyCalls.some((call) =>
@@ -2351,28 +2351,31 @@ describe("createPiExtension: config activation, materialization consumption, pri
     await inspect;
 
     const selectedEditorFactoryCount = host.editorFactoryCalls.length;
-    const pickerActivatedTranscript = host.transcriptCalls.length;
+    const pickerActivatedTranscript = host.customCalls.length;
+    const renderedChildTranscript = host.customRenderedLines.flat().join("\\n");
     const legacyFooterVisible = host.widgetCalls.some(
       (call) => call.key === "weave-children",
     );
 
     const editor = host.createEditor({}, {}, { matches: () => false });
     await editor.handleInput("\u001b1");
-    const altSlotActivatedTranscript = host.transcriptCalls.length;
+    const altSlotActivatedTranscript = host.customCalls.length;
 
     // Expected contract versus the observed live behavior. Keeping these in
     // one assertion makes both broken paths visible in the failure output.
     expect({
       pickerActivatedTranscript,
+      renderedChildTranscript,
       editorFactoryDelta:
         selectedEditorFactoryCount - initialEditorFactoryCount,
       legacyFooterVisible,
       altSlotActivatedTranscript,
     }).toEqual({
       pickerActivatedTranscript: 1,
+      renderedChildTranscript: expect.stringContaining("ordinary-live-child"),
       editorFactoryDelta: 1,
       legacyFooterVisible: false,
-      altSlotActivatedTranscript: 2,
+      altSlotActivatedTranscript: 1,
     });
   });
 

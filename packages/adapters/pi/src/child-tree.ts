@@ -11,7 +11,15 @@ import type {
   PiChildHistoryStore,
   PiChildHistoryStoreError,
 } from "./child-history-store.js";
-import { preserveUnknownChildEvent } from "./child-session-events.js";
+import {
+  parsePiChildSessionEvent,
+  preserveUnknownChildEvent,
+} from "./child-session-events.js";
+import {
+  EMPTY_PI_CHILD_TRANSCRIPT_STATE,
+  PiChildTranscriptReducer,
+  type PiChildTranscriptState,
+} from "./child-transcript.js";
 import type { JsonValue } from "./strict-json.js";
 
 export const ROOT_NODE_ID = "root";
@@ -199,6 +207,10 @@ export interface PiChildInspectionRegistration {
 export class PiChildInspectionRegistry {
   private readonly live = new Map<string, PiChildInspectionRegistration>();
   private readonly records = new Map<string, PiChildTreeNode>();
+  private readonly transcriptStates = new Map<
+    string,
+    PiChildTranscriptReducer
+  >();
   private generationOpen = true;
   private tail: ResultAsync<void, PiChildInspectionHistoryError> =
     okAsync(undefined);
@@ -291,10 +303,25 @@ export class PiChildInspectionRegistry {
     event: unknown,
   ): ResultAsync<void, PiChildInspectionHistoryError> {
     if (!this.live.has(id)) return okAsync(undefined);
+    const parsed = parsePiChildSessionEvent(event);
+    if (parsed.success) {
+      const reducer =
+        this.transcriptStates.get(id) ?? new PiChildTranscriptReducer();
+      reducer.applyEvent(parsed.data);
+      this.transcriptStates.set(id, reducer);
+    }
     return this.enqueue(() =>
       (this.history?.checkpoint?.(id, event) ?? okAsync(undefined)).map(
         () => undefined,
       ),
+    );
+  }
+
+  /** Read-only snapshot of the private transcript maintained from child events. */
+  getTranscriptState(id: string): PiChildTranscriptState {
+    return (
+      this.transcriptStates.get(id)?.getState() ??
+      EMPTY_PI_CHILD_TRANSCRIPT_STATE
     );
   }
 

@@ -73,11 +73,13 @@
   - function renderActiveAgentBadge: (agentName, theme?) => string
   - const PI_PRIMARY_AGENT_CYCLE_SHORTCUT
 - `packages/adapters/pi/src/artifact-provider.ts`
+  - function createPiSanitizedChildIndex: (entries) => Result<PiSanitizedChildIndex, PiSanitizedChildIndexError>
+  - class PiSanitizedChildIndexExporter
   - class BunPiArtifactProvider
   - class FakePiArtifactProvider
   - interface PiArtifactReadInput
   - interface PiArtifactDigest
-  - interface PiArtifactProvider
+  - _...9 more_
 - `packages/adapters/pi/src/capability-prober.ts`
   - function buildBlockedProbeSet: (reason) => CapabilityProbeResult[]
   - function sanitizeCapabilityProbeResults: (raw) => CapabilityProbeResult[]
@@ -93,7 +95,7 @@
   - type PiBootstrapBody
   - type PiOrdinaryBootstrapBody
   - type PiDirectStepBootstrapBody
-  - _...15 more_
+  - _...16 more_
 - `packages/adapters/pi/src/child-crypto.ts`
   - function bytesToHex: (bytes) => string
   - function hexToBytes: (hex) => Uint8Array | undefined
@@ -135,7 +137,7 @@
 - `packages/adapters/pi/src/child-history-fs.ts`
   - function safeParentSessionComponent: (parentSessionId) => Result<string, PiChildHistoryFsError>
   - function safeChildHistoryComponent: (childId) => Result<string, PiChildHistoryFsError>
-  - function resolvePiChildHistoryRoot: (input, env, string | undefined>>, homeDir) => Result<string, PiChildHistoryFsError>
+  - function resolvePiChildHistoryRoot: (input, env?, string | undefined>>, homeDir?) => Result<string, PiChildHistoryFsError>
   - class MemoryPiChildHistoryFs
   - interface HistoryIdentity
   - interface PiChildHistoryDirectory
@@ -153,6 +155,15 @@
   - interface PiChildHistoryStoreOptions
   - interface PiChildHistoryOpenOptions
   - type PiChildHistoryStoreError
+- `packages/adapters/pi/src/child-inspection-custom.ts`
+  - function createChildInspectionCustomComponent: (tui, theme, keybindings, editor, getInput) => void
+  - interface PiCustomTui
+  - interface PiChildInspectionCustomComponent
+- `packages/adapters/pi/src/child-inspection-editor.ts`
+  - function createChildInspectionEditor: (inspector, host?) => PiChildInspectionEditor
+  - class PiChildInspectionEditor
+  - interface PiChildInspectionEditorHost
+  - type PiChildInspectionEditorResult
 - `packages/adapters/pi/src/child-inspection-render.ts`
   - function renderChildInspection: (input, width) => Result<PiChildInspectionRenderOutput, PiChildInspectionRenderError>
   - function createChildInspectionRenderer: (transcriptInput?) => PiChildInspectionRenderer
@@ -169,6 +180,22 @@
   - interface PiChildInspectionSettingsIssue
   - interface PiChildInspectionEffectiveSettings
   - _...6 more_
+- `packages/adapters/pi/src/child-inspector.ts`
+  - function interceptChildSlashCommand: (input, isParentView) => Result<
+  - class PiChildSlots
+  - class PiChildInspector
+  - interface PiInspectorChild
+  - interface PiInspectorViewState
+  - interface PiInspectorView
+  - _...7 more_
+- `packages/adapters/pi/src/child-picker.ts`
+  - function buildChildPickerEntries: (input) => Result<readonly PiChildPickerEntry[], PiChildPickerError>
+  - function sanitizeChildPickerPreview: (value) => string
+  - function moveChildPicker: (state, delta) => PiChildPickerState
+  - function selectedChildPickerEntry: (state) => PiChildPickerEntry | undefined
+  - interface PiChildPickerNode
+  - interface PiChildPickerEntry
+  - _...5 more_
 - `packages/adapters/pi/src/child-process-port.ts`
   - function writeAllToSink: (sink, bytes) => ResultAsync<void, ChildProcessError>
   - function resolveKillSignal: (mode) => number | undefined
@@ -177,6 +204,14 @@
   - interface PiSpawnedChildProcess
   - interface PiChildSpawnInput
   - _...4 more_
+- `packages/adapters/pi/src/child-recovery.ts`
+  - function findOrdinaryRecoveryCandidates: (records) => readonly PiChildHistoryRecord[]
+  - function boundedRecoveryOutput: (value) => string
+  - function isRecoveryKind: (kind) => boolean
+  - class PiChildRecoveryCoordinator
+  - interface PiChildRecoveryUi
+  - interface PiChildRecoveryHistory
+  - _...8 more_
 - `packages/adapters/pi/src/child-runtime.ts`
   - class PiChildRuntime
   - interface PiChildOutputTransfer
@@ -225,27 +260,30 @@
   - interface TransferLimits
   - type TransferRejectionReason
   - _...2 more_
-- `packages/adapters/pi/src/child-tree-keys.ts` — function classifyChildTreeKey: (data) => PiTreeControlKey | undefined
+- `packages/adapters/pi/src/child-tree-keys.ts`
+  - function classifyChildTreeKey: (data) => PiTreeControlKey | undefined
+  - function classifyChildInspectorKey: (data) => PiChildInspectorKey | undefined
+  - type PiChildInspectorKey
 - `packages/adapters/pi/src/child-tree-render.ts`
   - function renderChildTreeLines: (nodes, selectedId, cumulativeUsage, options) => string[]
   - interface ChildTreeRenderNodeMetadata
   - interface ChildTreeRenderOptions
 - `packages/adapters/pi/src/child-tree.ts`
+  - function createPiChildHistoryPort: (store, now) => void
   - function addUsage: (a, b) => PiChildUsageAggregate
   - function truncateLatestOutput: (text) => string
   - function extractAssistantTextDeltaPreview: (record, JsonValue>) => string | undefined
   - function extractAssistantThinkingDeltaPreview: (record, JsonValue>) => string | undefined
   - function extractAssistantStopReason: (record, JsonValue>) => string | undefined
-  - function applyTreeControlKey: (nodes, PiChildTreeNode>, selectedId, key) => PiTreeControlOutcome
-  - _...10 more_
+  - _...15 more_
 - `packages/adapters/pi/src/commands.ts`
   - function classifyWeaveCommand: (name) => WeaveCommandClassification
+  - function classifyWeaveGoalInvocation: (parsed) => WeaveCommandClassification
   - function parseNpmSourceName: (source) => string | undefined
   - function isOwnSourceInfo: (sourceInfo) => boolean
   - type WeaveCommandName
   - type WeaveCommandClassification
-  - const WEAVE_COMMAND_NAMES
-  - _...2 more_
+  - _...6 more_
 - `packages/adapters/pi/src/config-activator.ts`
   - function createTrustWithheldFileReader: (inner, projectRoot) => FileReader
   - function buildDescriptorCatalog: (plan) => PiDescriptorCatalog
@@ -310,11 +348,44 @@
   - interface PiSharedLogRedirector
   - interface PiExtensionDeps
   - const PI_SHARED_LOG_PATH
+- `packages/adapters/pi/src/goal-args.ts` — function parseWeaveGoalArgs: (raw) => WeaveGoalArgs, type WeaveGoalArgs
+- `packages/adapters/pi/src/goal-commands.ts`
+  - function handleWeaveGoal: (rawArgs, ui, deps) => Promise<void>
+  - interface WeaveGoalFooterPort
+  - interface WeaveGoalCommandPiPort
+  - interface WeaveGoalCommandDependencies
+- `packages/adapters/pi/src/goal-footer-controller.ts`
+  - class PiGoalFooterController
+  - interface PiGoalFooterCache
+  - interface PiGoalFooterTimerHandle
+  - interface PiGoalFooterTimerPort
+  - interface PiGoalFooterControllerDependencies
+  - const GOAL_FOOTER_REFRESH_INTERVAL_MS
+- `packages/adapters/pi/src/goal-plan-resolver.ts` — function resolveGoalPlan: ({...}, catalog, projectRoot, readSnapshot, }) => ResultAsync<PlanTaskSnapshot, PiAdapterFailure>, interface ResolveGoalPlanInput
+- `packages/adapters/pi/src/goal-session.ts`
+  - function persistGoalState: (pi, controller, "serialize">) => void
+  - function restoreGoalState: (ctx, controller, "restore">) => Result<void, SessionGoalError>
+  - const WEAVE_GOAL_STATE_ENTRY_TYPE
+- `packages/adapters/pi/src/goal-status.ts`
+  - function renderGoalFooter: (input) => string | undefined
+  - interface RenderGoalFooterInput
+  - const WEAVE_GOAL_STATUS_KEY
+  - const WEAVE_GOAL_STATUS_MAX_WIDTH
+- `packages/adapters/pi/src/goal-tool.ts`
+  - function syncWeaveGoalReportToolAvailability: (pi, "getActiveTools" | "setActiveTools">, controller, "isPursuing">) => void
+  - function buildWeaveGoalReportToolRegistration: (deps) => WeaveGoalReportToolRegistration
+  - function registerWeaveGoalReportTool: (deps) => void
+  - interface WeaveGoalReportToolDependencies
+  - type WeaveGoalReportToolRegistration
+  - const WEAVE_GOAL_REPORT_TOOL_NAME
 - `packages/adapters/pi/src/host-compatibility-matrix.ts`
   - function validateHostCompatibilityMatrix: (matrix) => Result<PiHostCompatibilityMatrix, HostCompatibilityMatrixError>
+  - interface PiHostSurfaceDeclaration
   - interface PiHostCompatibilityMatrix
+  - type PiHostSurfaceId
   - type HostCompatibilityMatrixError
-  - const PI_HOST_COMPATIBILITY_MATRIX: PiHostCompatibilityMatrix
+  - const PI_HOST_SURFACE_IDS
+  - _...1 more_
 - `packages/adapters/pi/src/host-compatibility.ts`
   - function parseSemver: (version) => Result<ParsedVersion, void>
   - function isSupportedHostVersion: (version) => boolean
@@ -323,7 +394,14 @@
   - interface HostPackageReader
   - type HostPackageInfo
   - _...3 more_
-- `packages/adapters/pi/src/host-inventory.ts` — function readValidatedCommands: (api, "getCommands">) => Result<PiCommandInfo[], PiAdapterFailure>
+- `packages/adapters/pi/src/host-inventory.ts`
+  - function readValidatedCommands: (api, "getCommands">) => Result<PiCommandInfo[], PiAdapterFailure>
+  - function readHostSurfaceReport: (raw) => PiHostSurfaceReport
+  - function safeReadHostSurfaceReport: (reader, input) => ResultAsync<PiHostSurfaceReport, never>
+  - function emptyHostSurfaceReport
+  - function defaultHostSurfaceReport
+  - class DefaultPiHostSurfaceReader
+  - _...6 more_
 - `packages/adapters/pi/src/model-resolution.ts`
   - class PiModelResolver
   - class PiModelActivator
@@ -370,10 +448,10 @@
   - function parseRecoveryPointer: (raw) => Result<PiWeaveRecoveryPointerV1, RecoveryPointerValidationFailure>
   - function isPointerForCurrentGeneration: (pointer, currentGenerationId) => boolean
   - function isPointerEligibleForExplicitResume: (pointer) => boolean
+  - function createWorkflowAttemptLinkage: (previousAttemptId, newAttemptId?) => Result<PiWorkflowAttemptLinkage, WorkflowAttemptLinkageValidationFailure>
   - function activeInstanceFromRecoveryPointer: (pointer) => |
   - class InMemoryRecoveryPointerStore
-  - class BunJsonlRecoveryPointerStore
-  - _...5 more_
+  - _...9 more_
 - `packages/adapters/pi/src/repeated-settlement-validator.ts`
   - function validateRepeatedSettlements: (options) => ResultAsync<
   - interface PiSettlementValidationRun
@@ -408,7 +486,7 @@
   - type CanonicalizeError
 - `packages/adapters/pi/src/structured-completion.ts`
   - function parseStructuredCompletionCandidate: (raw, stepName) => Result<StepCompletionSignal, PiAdapterFailure>
-  - function serializeCompletionCandidate: (candidate, unknown>) => string
+  - function serializeCompletionCandidate: (candidate) => string
   - function tryParseCompletionCandidateJson: (raw) => unknown
   - function buildWeaveCompleteStepParameters: () => void
   - function recordCompletionAttempt: (recorder, windowOpen, raw, stepName) => CompletionRecordAttempt
@@ -936,6 +1014,10 @@
   - function activatePermissionSessionForTesting: (input) => ResultAsync<PermissionSession, PermissionError>
   - class PermissionSession
   - _...2 more_
+- `packages/engine/src/plan-active-task.ts`
+  - function selectActivePlanTask: (snapshot) => Result<ActivePlanTask, PlanActiveTaskError>
+  - interface ActivePlanTask
+  - type PlanActiveTaskError
 - `packages/engine/src/plan-state-provider.ts`
   - function isAllowedPlanLeafTransition: (from, to) => boolean
   - function derivePlanParentState: (childStates) => PlanTaskState
@@ -1049,6 +1131,26 @@
   - interface WorkflowRunnerInput
   - interface WorkflowRunnerOutput
   - type WorkflowRunnerError
+- `packages/engine/src/session-goal-continuation.ts`
+  - function decideSessionGoalContinuation: (input) => SessionGoalContinuationDecision
+  - interface SessionGoalContinuationInput
+  - type SessionGoalContinuationDecision
+- `packages/engine/src/session-goal-plan.ts`
+  - function countIncompleteLeaves: (parents) => number
+  - function adjudicateSessionGoalCompletion: ({...}, reportedStatus, evidence, }) => Result<
+  - function renderGoalPlanBlock: ({...}, snapshot, }) => string
+  - interface AdjudicateSessionGoalCompletionInput
+  - type SessionGoalReportedStatus
+  - type SessionGoalVerdict
+  - _...1 more_
+- `packages/engine/src/session-goal.ts`
+  - function parseSessionGoalSnapshot: (value) => Result<SessionGoalState | null, SessionGoalError>
+  - function formatDuration: (milliseconds) => string
+  - function formatTokenCount: (tokens) => string
+  - class SessionGoalController
+  - interface SessionGoalState
+  - interface SessionGoalSnapshot
+  - _...6 more_
 - `packages/engine/src/skill-resolution.ts`
   - function resolveSkillsForAgent: (input) => Result<ResolvedSkill[], SkillResolutionError[]>
   - function resolveSkillsForConfig: (input) => Result<ConfigSkillResolutionResult, SkillResolutionError[]>
@@ -1200,6 +1302,14 @@
   - interface ReleaseCheckout
   - interface PackageCommandRunner
   - _...2 more_
+- `scripts/release/pi-child-inspection-smoke.ts`
+  - function validateSmokeBinding: (binding) => Result<SmokeBinding, SmokeValidationError>
+  - function validateLargeOutputSmoke: (run) => void
+  - function sanitizedAssertion: (value) => string
+  - function artifactDigest: (bytes) => string
+  - function runAutonomousSmoke: (input) => void
+  - interface SmokeBinding
+  - _...5 more_
 - `scripts/release/promotion-commands.ts`
   - function promotionCommands: (authorization, priorLatestVersions?, string>>) => Result<PromotionCommandSummary,
   - function promotionCommandsFromRegistry: (authorization, registry) => ResultAsync<PromotionCommandSummary, PromotionCommandError>

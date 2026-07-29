@@ -8,6 +8,10 @@
 - `HOME` (has default) — packages/adapters/pi/src/__tests__/config-activator.test.ts
 - `LOG_LEVEL` (has default) — packages/config/src/logger.ts
 - `PATH` **required** — packages/adapters/pi/src/__tests__/child-env.test.ts
+- `PI_BIN` (has default) — scripts/release/pi-child-inspection-smoke.ts
+- `PI_CHILD_SMOKE_DEBUG` **required** — scripts/release/pi-child-inspection-smoke.ts
+- `PI_CHILD_SMOKE_RUN_ATTEMPT` (has default) — scripts/release/pi-child-inspection-smoke.ts
+- `PI_CODING_AGENT_DIR` (has default) — scripts/release/pi-child-inspection-smoke.ts
 - `PWD` (has default) — packages/adapters/opencode/dist-types/adapter.d.ts
 - `RELEASE_APP_TOKEN` **required** — scripts/release/release-refs-main.ts
 - `RELEASE_AWAITING_STABLE_TRAIN` **required** — scripts/release/release-refs-main.ts
@@ -31,6 +35,7 @@
 - `RELEASE_WORKFLOW_SHA` **required** — scripts/release/control-main.ts
 - `RUN_HARNESS_SMOKE` **required** — packages/adapters/opencode/src/__tests__/category-routing-smoke.test.ts
 - `SITE_URL` (has default) — packages/docs/astro.config.mjs
+- `VOLTA_HOME` (has default) — scripts/release/pi-child-inspection-smoke.ts
 - `WEAVE_CLI_VERSION` (has default) — packages/cli/src/theme/render.ts
 - `WEAVE_LOG_FILE` **required** — packages/engine/src/env.ts
 - `WEAVE_RELEASE_FORCE_SCENARIO_FAILURE` **required** — scripts/release/verification-harness.ts
