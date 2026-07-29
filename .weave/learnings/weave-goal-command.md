@@ -208,3 +208,25 @@ This retry establishes the original Task 26 acceptance criteria, including live 
 
 - Temporary project/plugin roots, fixtures, and generated tarballs were removed after capture; real Claude/OpenCode configuration was not modified.
 - This projection has no persistence, enforced budget, pause/resume, status surface, private reporting tool, or footer.
+
+## Strict retry — 2026-07-29 — remains BLOCKED
+
+The retry preserved the first-attempt notes above and used new isolated paths. It did not change the strict result because the missing harness-owned evidence was not captured.
+
+### OpenCode retry
+
+- Current harness output: `opencode --version` → `1.18.9`. `opencode --help` identifies the harness-owned surfaces `opencode session list`, `opencode session delete <sessionID>`, and `opencode export [sessionID]`; `opencode session list --help` identifies `--format json`.
+- Retry root: `/tmp/weave-opencode-retry.JanL7r`, with copied `.weave/config.weave`, fixture `.weave/plans/live-opencode.md`, isolated `XDG_DATA_HOME`, `XDG_CONFIG_HOME`, and `HOME`, and the same built plugin URL in `opencode.json`.
+- Retry PTY command: `env XDG_DATA_HOME=$ROOT/data XDG_CONFIG_HOME=$ROOT/config HOME=$ROOT/home opencode $ROOT --print-logs`; after startup the driver sent `/weave:goal live-opencode`, then interrupted the turn. The harness startup log showed `directory=/private/tmp/weave-opencode-retry.JanL7r`, loaded the isolated project plugin, and displayed the harness-owned error `Agent loom's configured model claude-sonnet-4-5/ is not valid`. The first driver sent input before the TUI finished booting; the second driver reached the TUI only after roughly 55 seconds but timed out before producing a completed inspectable session.
+- Harness-owned listing/export result: `opencode session list --format json` produced no session JSON, and no `opencode export <sessionID>` output was available. Therefore no harness-owned expanded turn proves `<command-name>weave:goal</command-name>`, substituted `<arguments>live-opencode</arguments>`, and exact `.weave/plans/live-opencode.md` in one exported user message. The prior live screen and source/config evidence do not satisfy this requirement.
+- OpenCode fresh restart proof is therefore also not strict: no completed retry session existed from which to perform the required post-turn listing and fresh restart check.
+
+### Claude retry
+
+- Installed harness remains Claude Code `2.1.220`. The requested second isolated materialization and fresh PTY palette capture were not completed in this retry. No ANSI-stripped live palette log exists showing `/weave:goal [plan-name]`; the existing generated frontmatter evidence is explicitly not substituted for that requirement.
+- No independently captured second fresh Claude PTY exists for this retry. The prior invocation/restart note remains unchanged above.
+
+### Retry cleanup and exact limitation
+
+- Removed the retry root, PTY drivers, raw logs, listing/export attempts, and restart artifacts after capture; no real user configuration was changed. The retry commands and observed harness outputs are recorded above, but the required OpenCode export, Claude live palette row, and second Claude restart remain unproven.
+- Overall Task 27 remains **BLOCKED**. Commit `6f27820` was not amended.
