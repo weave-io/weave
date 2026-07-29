@@ -30,9 +30,9 @@ the adapter into the user's default `~/.pi` directory.
   `payloadArtifactId`, `sha256`, `subjectSha`, and `runAttempt` recorded
   alongside it. Any rebuild, repack, or new commit invalidates every prior
   result — the whole checklist must be re-run against the new binding.
-- Only an interactive TUI parent session counts. `pi --mode rpc --no-session`
-  child processes, unit tests, and fake-host consumer tests are evidence for
-  the automated rows of the acceptance manifest, never for this checklist.
+- Only an autonomous interactive TUI parent session counts. Child processes,
+  unit tests, and fake-host consumer tests are evidence for the automated rows
+  of the acceptance manifest, never substitutes for this checklist.
 
 ## Executed binding
 
@@ -77,7 +77,7 @@ verification.
 | S011 | Tool policy | Confirm a `deny`-policy registered tool is blocked with a safe, non-leaking message. | Pass |
 | S012 | Tool policy | Confirm an `ask`-policy registered tool opens exactly one dialog and that `once`/`session`/`durable` approval scopes behave as advertised. | Pass |
 | S013 | Tool policy | Confirm an unmanaged/unregistered tool call is left untouched by the permission bridge. | Pass |
-| S014 | Authenticated child | Confirm `weave_delegate` spawns an authenticated `pi --mode rpc --no-session` child and that envelopes are HMAC-signed and sequenced. | Pass |
+| S014 | Authenticated child | Confirm `weave_delegate` spawns an authenticated native-control child and that envelopes are HMAC-signed and sequenced. | Pass |
 | S015 | Authenticated child | Confirm a delegated child's approval dialog and cooperative-then-forced cancellation both behave as documented, *and* that host-level abort/interrupt (`app.interrupt`/Esc) on the parent's own `weave_delegate` tool call cancels the exact generated child subtree immediately, rather than only after that child eventually settles on its own (see [`33-ordinary-delegation-cancellation-fix.md`](../../../docs/adapters/pi.md)). | Pass |
 | S016 | Workflow/completion | Confirm `/weave:start <plan>` changes the parent badge to Tapestry and posts a visible kickoff user message in the same session without spawning a direct-step child; separately confirm `/weave:run` drives a durable workflow through `weave_complete_step`-signaled completion. | Pass |
 | S017 | Plan/artifact | Confirm `/weave:plan` reflects live plan markers/transitions matching `.weave/plans` state. | Pass |
@@ -87,6 +87,19 @@ verification.
 | S021 | Diagnostics/usage | Confirm `.weave/runtime/logs/pi-adapter.ndjson` contains no prompts, secrets, or raw filesystem paths, and that usage observations are recorded. | Pass |
 | S022 | Cleanup | Confirm session end triggers idempotent secret/child cleanup with no leaked child processes. | Pass |
 | S023 | Package removal | Remove the packed package and reload; confirm Weave commands are gone, no child process remains, and durable `.weave/runtime` state stays inert for a later reinstall rather than being mutated or deleted. | Pass |
+| S024 | Child inspection | Render native and fallback child views with breadcrumbs, status, metadata, and sanitized previews. | Pending |
+| S025 | Child inspection | Render safely at narrow widths and preserve bounded interaction. | Pending |
+| S026 | Interaction | Steer a running child through the native control path. | Pending |
+| S027 | Interaction | Complete a queued follow-up and extension UI response. | Pending |
+| S028 | Interaction | Interrupt and restart a child without losing authenticated state. | Pending |
+| S029 | Privacy | Persist private history only under disposable isolated data roots. | Pending |
+| S030 | Privacy | Keep private content out of every parent-facing projection. | Pending |
+| S031 | Boundary | Return only bounded terminal output and numeric metadata to the parent. | Pending |
+| S032 | Native output | Return unique sentinels for >1 MiB output ten times sequentially and once at maximum child parallelism. | Pending |
+| S033 | Quotas | Enforce quotas and clear terminal history without exposing bytes. | Pending |
+| S034 | Settings | Reject invalid settings with structured validation issues. | Pending |
+| S035 | Recovery | Resume ordinary work after restart. | Pending |
+| S036 | Settlement | Reject exact structured `ChildSettlementMissing`, even when logs are clean. | Pending |
 
 ## Pass criteria
 

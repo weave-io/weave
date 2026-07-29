@@ -92,7 +92,7 @@ describe("buildAcceptanceManifest + validateAcceptanceManifestStructure", () => 
       artifactBinding: VALID_ARTIFACT_BINDING,
       requirements: ACCEPTANCE_MANIFEST_REQUIREMENTS,
     });
-    expect(manifest.requirements).toHaveLength(20);
+    expect(manifest.requirements).toHaveLength(28);
     expect(new Set(manifest.requirements.map((row) => row.id))).toEqual(
       new Set(REQUIREMENT_IDS),
     );

@@ -22,6 +22,14 @@ export const PACKED_PROOF_REGISTRY: Readonly<Record<string, TestEvidence>> = {
     file: "scripts/release/__tests__/pi-adapter-fake-host-consumer.test.ts",
     name: "installs the packed tarball against a local fake ${HOST_PACKAGE_NAME}@${EXACT_TESTED_HOST_VERSION} host, without network or starting Pi",
   },
+  P003: { file: "packages/adapters/pi/src/__tests__/child-inspection-render.test.ts", name: "composes fallback transcript into inspection view" },
+  P004: { file: "packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts", name: "real RPC lifecycle supports steer, queued follow-up, UI response, interruption, and restart" },
+  P005: { file: "packages/adapters/pi/src/__tests__/child-inspection-privacy.test.ts", name: "private canaries stay out of every parent-facing history projection" },
+  P006: { file: "packages/adapters/pi/src/__tests__/child-inspection-privacy.test.ts", name: "parent result is the store's terminal projection plus numeric metadata" },
+  P007: { file: "packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts", name: "the real RPC child accepts a >1 MiB assistant record and settles without poison" },
+  P008: { file: "packages/adapters/pi/src/__tests__/child-history-store.test.ts", name: "enforces the per-child ceiling from persisted bytes and records a trim marker" },
+  P009: { file: "packages/adapters/pi/src/__tests__/child-inspection-settings.test.ts", name: "aggregates unknown, type, range, and cross-field issues" },
+  P010: { file: "packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts", name: "real ordinary recovery resumes through the controller and preserves bounded result" },
 };
 
 export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequirement[] =
@@ -517,5 +525,53 @@ export const ACCEPTANCE_MANIFEST_REQUIREMENTS: readonly AcceptanceManifestRequir
       packedProof: { required: true, evidenceIds: ["P002"] },
       liveSmoke: { required: true, checklistIds: ["S001", "S002"] },
       result: "pass",
+    },
+    {
+      id: "PI-INS",
+      contractReferences: ["docs/adapters/pi.md#child-inspection"],
+      tests: { T001: { file: "packages/adapters/pi/src/__tests__/child-inspection-render.test.ts", name: "composes fallback transcript into inspection view" }, T002: { file: "packages/adapters/pi/src/__tests__/child-inspection-render.test.ts", name: "renders at every width including width=1" } },
+      packedProof: { required: true, evidenceIds: ["P003"] }, liveSmoke: { required: true, checklistIds: ["S024", "S025"] }, result: "pending",
+    },
+    {
+      id: "PI-INT",
+      contractReferences: ["docs/adapters/pi.md#child-inspection-controls"],
+      tests: { T001: { file: "packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts", name: "real RPC lifecycle supports steer, queued follow-up, UI response, interruption, and restart" } },
+      packedProof: { required: true, evidenceIds: ["P004"] }, liveSmoke: { required: true, checklistIds: ["S026", "S027", "S028"] }, result: "pending",
+    },
+    {
+      id: "PI-PRI",
+      contractReferences: ["docs/reference/runtime.md#private-child-history"],
+      tests: { T001: { file: "packages/adapters/pi/src/__tests__/child-inspection-privacy.test.ts", name: "private canaries stay out of every parent-facing history projection" }, T002: { file: "packages/adapters/pi/src/__tests__/child-inspection-migration.test.ts", name: "missing adapter settings and history root retain ephemeral behavior" } },
+      packedProof: { required: true, evidenceIds: ["P005"] }, liveSmoke: { required: true, checklistIds: ["S029", "S030"] }, result: "pending",
+    },
+    {
+      id: "PI-BND",
+      contractReferences: ["docs/reference/execution-lifecycle.md#parent-result-boundary"],
+      tests: { T001: { file: "packages/adapters/pi/src/__tests__/child-inspection-privacy.test.ts", name: "parent result is the store's terminal projection plus numeric metadata" } },
+      packedProof: { required: true, evidenceIds: ["P006"] }, liveSmoke: { required: true, checklistIds: ["S031"] }, result: "pending",
+    },
+    {
+      id: "PI-OVR",
+      contractReferences: ["docs/reference/execution-lifecycle.md#native-output"],
+      tests: { T001: { file: "packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts", name: "the real RPC child accepts a >1 MiB assistant record and settles without poison" }, T002: { file: "packages/adapters/pi/src/__tests__/repeated-settlement-validator.test.ts", name: "requires ten sequential runs plus one maximum-parallelism batch and every unique sentinel" } },
+      packedProof: { required: true, evidenceIds: ["P007"] }, liveSmoke: { required: true, checklistIds: ["S032"] }, result: "pending",
+    },
+    {
+      id: "PI-QUO",
+      contractReferences: ["docs/reference/runtime.md#child-history-quotas"],
+      tests: { T001: { file: "packages/adapters/pi/src/__tests__/child-history-store.test.ts", name: "enforces the per-child ceiling from persisted bytes and records a trim marker" }, T002: { file: "packages/adapters/pi/src/__tests__/child-history-store.test.ts", name: "physically clears terminal history but refuses running and queued children" } },
+      packedProof: { required: true, evidenceIds: ["P008"] }, liveSmoke: { required: true, checklistIds: ["S033"] }, result: "pending",
+    },
+    {
+      id: "PI-SET",
+      contractReferences: ["docs/reference/configuration.md#pi-child-inspection"],
+      tests: { T001: { file: "packages/adapters/pi/src/__tests__/child-inspection-settings.test.ts", name: "aggregates unknown, type, range, and cross-field issues" }, T002: { file: "packages/adapters/pi/src/__tests__/child-inspection-settings.test.ts", name: "requires an explicit policy for invalid settings" } },
+      packedProof: { required: true, evidenceIds: ["P009"] }, liveSmoke: { required: true, checklistIds: ["S034"] }, result: "pending",
+    },
+    {
+      id: "PI-RCV",
+      contractReferences: ["docs/reference/execution-lifecycle.md#recovery"],
+      tests: { T001: { file: "packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts", name: "real ordinary recovery resumes through the controller and preserves bounded result" }, T002: { file: "packages/adapters/pi/src/__tests__/child-inspection-integration.test.ts", name: "the actual workflow resume controller completes the persisted step" } },
+      packedProof: { required: true, evidenceIds: ["P010"] }, liveSmoke: { required: true, checklistIds: ["S035", "S036"] }, result: "pending",
     },
   ];

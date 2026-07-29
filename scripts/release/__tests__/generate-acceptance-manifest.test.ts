@@ -23,15 +23,15 @@ describe("generateAcceptanceManifest", () => {
     expect(evidenceOk).toBe(true);
     expect(manifest.artifactBinding.sha256).toMatch(/^[a-f0-9]{64}$/);
     expect(manifest.artifactBinding.subjectSha).toMatch(/^[a-f0-9]{40}$/);
-    expect(manifest.requirements).toHaveLength(20);
+    expect(manifest.requirements).toHaveLength(28);
     expect(
       manifest.requirements
         .filter((row) => row.result === "pending")
         .map((row) => row.id),
-    ).toEqual(["PI-POL"]);
+    ).toEqual(["PI-POL", "PI-INS", "PI-INT", "PI-PRI", "PI-BND", "PI-OVR", "PI-QUO", "PI-SET", "PI-RCV"]);
     expect(
       manifest.requirements
-        .filter((row) => row.id !== "PI-POL")
+        .filter((row) => row.id === "PI-ACT" || row.id === "PI-MAT" || row.id === "PI-PRM" || row.id === "PI-SKL" || row.id === "PI-MDL" || row.id === "PI-DEL" || row.id === "PI-CMD" || row.id === "PI-LIF" || row.id === "PI-CMP" || row.id === "PI-REC" || row.id === "PI-PLN" || row.id === "PI-ART" || row.id === "PI-PER" || row.id === "PI-DIA" || row.id === "PI-USG" || row.id === "PI-CAP" || row.id === "PI-ERR" || row.id === "PI-PKG" || row.id === "PI-MODE")
         .every((row) => row.result === "pass"),
     ).toBe(true);
   }, 60_000);

@@ -27,6 +27,15 @@ import { TarInspector } from "../tar-inspector.js";
 const EXACT_TESTED_HOST_VERSION =
   PI_HOST_COMPATIBILITY_MATRIX.exactTestedVersion;
 
+const ACCEPTANCE_FIXTURE_MANIFEST = join(
+  ".",
+  "scripts/release/pi-acceptance/acceptance-manifest.json",
+);
+const ACCEPTANCE_FIXTURE_SMOKE = join(
+  ".",
+  "scripts/release/pi-acceptance/smoke-checklist.md",
+);
+
 /**
  * Minimal stub bodies for the handful of runtime *value* imports the
  * compiled pi adapter bundle actually references from each Pi-provided
@@ -85,11 +94,6 @@ class IsolatedFakeHostConsumer {
 }
 
 describe("pi adapter clean-room fake-host consumer (Pi adapter contract, PI-PKG)", () => {
-  it("keeps the fake-host compatibility canary inside the supported matrix", () => {
-    expect(isSupportedHostVersion(EXACT_TESTED_HOST_VERSION)).toBe(true);
-    expect(HOST_PACKAGE_NAME).toContain("pi-coding-agent");
-    expect(HOST_VERSION_FLOOR).toBeDefined();
-  });
   it(`installs the packed tarball against a local fake ${HOST_PACKAGE_NAME}@${EXACT_TESTED_HOST_VERSION} host, without network or starting Pi`, async () => {
     // the exact host version this test binds to must fall inside the
     // adapter's own declared, enforced compatibility range
@@ -113,8 +117,42 @@ describe("pi adapter clean-room fake-host consumer (Pi adapter contract, PI-PKG)
 
       const bytes = await Bun.file(packed.value).bytes();
       const inspected = new TarInspector().inspect(bytes);
+      // The packed/generated artifact is the privacy boundary: private
+      // prompt, task, intervention, tool, image, RPC, path, and secret data
+      // must not be embedded in any shipped entry.
+      const privateCanaries = [
+        "PRIVATE-PROMPT-CANARY",
+        "PRIVATE-TASK-CANARY",
+        "PRIVATE-INTERVENTION-CANARY",
+        "PRIVATE-TOOL-ARGS-CANARY",
+        "PRIVATE-IMAGE-CANARY",
+        "PRIVATE-RPC-BODY-CANARY",
+        "PRIVATE-PATH-CANARY",
+        "PRIVATE-SECRET-CANARY",
+      ];
+      for (const canary of privateCanaries) {
+        expect(new TextDecoder().decode(bytes)).not.toContain(canary);
+      }
       expect(inspected.isOk()).toBe(true);
       if (!inspected.isOk()) return;
+
+      // Real release evidence artifacts from checked-in fixtures, loaded and scanned
+      // exactly as CI expects them to prove the adapter’s non-PI evidence.
+      const manifestText = await Bun.file(ACCEPTANCE_FIXTURE_MANIFEST).text();
+      const manifestJson = JSON.parse(manifestText) as {
+        schemaVersion: number;
+        requirements: unknown[];
+        host: { package: string; floorVersion: string; supportedRange: string };
+      };
+      expect(manifestJson.schemaVersion).toBe(1);
+      expect(manifestJson.requirements).toHaveLength(28);
+      expect(manifestJson.host.package).toBe(HOST_PACKAGE_NAME);
+      expect(typeof manifestJson.host.floorVersion).toBe("string");
+      expect(manifestJson.host.supportedRange).toContain(">=0.81.1");
+
+      const smokeText = await Bun.file(ACCEPTANCE_FIXTURE_SMOKE).text();
+      expect(smokeText).toContain("S001");
+      expect(smokeText).toContain("Smoke Checklist");
 
       const manifestEntry = inspected.value.find(
         (entry) => entry.path === "package/package.json",

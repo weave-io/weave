@@ -70,7 +70,7 @@ describe("parseSmokeChecklist", () => {
     expect(result.isOk()).toBe(true);
     if (!result.isOk()) return;
     expect(result.value.version).toBe("1");
-    expect(result.value.items).toHaveLength(23);
-    expect(new Set(result.value.items.map((item) => item.id)).size).toBe(23);
+    expect(result.value.items).toHaveLength(36);
+    expect(new Set(result.value.items.map((item) => item.id)).size).toBe(36);
   });
 });

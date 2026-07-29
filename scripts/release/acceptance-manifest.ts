@@ -55,6 +55,14 @@ export const REQUIREMENT_IDS = [
   "PI-ERR",
   "PI-PKG",
   "PI-MODE",
+  "PI-INS",
+  "PI-INT",
+  "PI-PRI",
+  "PI-BND",
+  "PI-OVR",
+  "PI-QUO",
+  "PI-SET",
+  "PI-RCV",
 ] as const;
 
 export type RequirementId = (typeof REQUIREMENT_IDS)[number];
@@ -146,7 +154,7 @@ export const AcceptanceManifestSchema = z
     adapter: z.literal("@weaveio/weave-adapter-pi"),
     host: HostSchema,
     artifactBinding: ArtifactBindingSchema,
-    requirements: z.array(RequirementSchema).length(20),
+    requirements: z.array(RequirementSchema).length(REQUIREMENT_IDS.length),
   })
   .strict();
 export type AcceptanceManifest = z.infer<typeof AcceptanceManifestSchema>;
