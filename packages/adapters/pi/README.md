@@ -50,9 +50,19 @@ Running children push bounded partial results into the tool entry; expanding it
 with Pi's normal tool-expansion control reveals the latest streamed output. A
 completed child's settlement summary is its own bounded real assistant output,
 not a placeholder. See
-[`docs/adapters/pi.md`](../../../docs/adapters/pi.md#delegation) in the Weave
+[`docs/adapters/pi.md`](../../../docs/adapters/pi.md#private-children) in the Weave
 repository for the full delegation contract, including a documented
 limitation of Pi's `agent_settled` event (no payload).
+
+Private child inspection is adapter-owned and local-only. Its exact
+`child_inspection` settings, private path and permissions, controls and
+commands, quotas and trim markers, clear and recovery limits, resume behavior,
+export boundary, and privacy rules are canonical in
+[Spec 33](../../../docs/specs/33-spec-pi-adapter/33-spec-pi-adapter.md), with
+ownership recorded in [ADR 0013](../../../docs/adr/0013-pi-private-child-sessions.md).
+Private history may contain sensitive raw content. It is not an engine
+transcript, workflow recovery store, telemetry stream, or exported transcript;
+physical clear removes it from the local private store.
 
 The native `/weave` palette and nine direct commands project all ten engine
 lifecycle operations. Explicit starts and resumes require fresh confirmation.

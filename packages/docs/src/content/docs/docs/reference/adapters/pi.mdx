@@ -41,4 +41,6 @@ The extension exposes these commands:
 
 Pi can run private child agents for delegated work and direct workflow steps. Child sessions inherit the authenticated configuration and count toward the configured parallel-child limit. Finished children release that capacity.
 
+The optional child inspector is adapter-owned and local-only. Its exact `child_inspection` defaults, bounds, private storage path and permissions, controls, commands, quotas, trim markers, clear behavior, recovery scope, resume limits, export boundary, and privacy rules are defined by the repository's [amended Spec 33](https://github.com/weaveio/weave/blob/main/docs/specs/33-spec-pi-adapter/33-spec-pi-adapter.md). [ADR 0013](https://github.com/weaveio/weave/blob/main/docs/adr/0013-pi-private-child-sessions.md) records why this history does not belong to the engine. Private history may contain sensitive raw content; it is not an engine transcript, workflow recovery store, telemetry stream, or exported transcript.
+
 See [Prompts, models, and policy](../../../prompts-models-policy/) for delegation intent and the [support matrix](./) for distribution status.

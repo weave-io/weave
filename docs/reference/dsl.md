@@ -2,7 +2,7 @@
 
 The `.weave` configuration language is a block-structured, declarative DSL for declaring agents, categories, workflows, prompts, delegation intent, model preferences, and settings. It is not TypeScript, JSON, or YAML.
 
-**Related:** [Config Loading](configuration.md) · [Prompt Composition](prompts.md) · [Workflow Schema](workflows.md) · [Adapter Boundary](../architecture/adapter-boundary.md) · [CLI — `weave prompt self-modify`](cli.md#weave-prompt-self-modify)
+**Related:** [Config Loading](configuration.md) · [Prompt Composition](prompts.md) · [Workflow Schema](workflows.md) · [Adapter Boundary](../architecture/adapter-boundary.md) · [Pi adapter contract](../adapters/pi.md) · [Spec 33 — Pi private child sessions](../specs/33-spec-pi-adapter/33-spec-pi-adapter.md) · [ADR 0013](../adr/0013-pi-private-child-sessions.md) · [CLI — `weave prompt self-modify`](cli.md#weave-prompt-self-modify)
 
 > **Status**: This reference describes the current DSL. See [Execution Lifecycle](execution-lifecycle.md) for runtime semantics and [Workflows](workflows.md) for the typed workflow contract.
 
@@ -423,7 +423,7 @@ analytics {
 | --- | --- | --- |
 | `log_level` | `DEBUG` \| `INFO` \| `WARN` \| `ERROR` | Runtime log level |
 | `enforce_permissions` | boolean | Enforce adapter tool policies through the Weave permission system. Default `true`; adapters that support opt-out preserve native/tool-owner behavior when `false`. |
-| `adapters.<harness>` | JSON-like value | Opaque adapter settings: strings, finite numbers, booleans, `null`, arrays, and objects. Each harness block allows nesting depth 4 and at most 64 KiB of canonical UTF-8 JSON. Source layers are validated before merge and the effective merged config is validated again; objects deep-merge, arrays union-merge, and scalars (including `null`) override. Duplicate keys and non-JSON identifiers are rejected. |
+| `adapters.<harness>` | JSON-like value | Opaque adapter settings: strings, finite numbers, booleans, `null`, arrays, and objects. Each harness block allows nesting depth 4 and at most 64 KiB of canonical UTF-8 JSON. Source layers are validated before merge and the effective merged config is validated again; objects deep-merge, arrays union-merge, and scalars (including `null`) override. Duplicate keys and non-JSON identifiers are rejected. Core does not interpret harness names or adapter fields; each adapter owns its block's schema and behavior. See the [Pi private-child contract](../specs/33-spec-pi-adapter/33-spec-pi-adapter.md#71-settings). |
 | `delegation.max_children` | integer `1..9` | Hard cap on active direct children running in parallel per parent; settled or disposed children release capacity. Default `9`. |
 | `delegation.max_concurrency` | integer `1..max_children` | Maximum concurrent children per parent before additional requests queue. Default `3`. |
 | `delegation.max_depth` | positive integer | Maximum delegation depth below root. Default `3`. |
@@ -435,6 +435,8 @@ analytics {
 | `runtime.usage.max_observations` | integer `1..10000000` | Maximum retained detailed usage observations. Default `100000`. |
 | `runtime.log.max_segment_bytes` | integer `65536..1073741824` | Rotating runtime log segment size. Default `5242880`. |
 | `runtime.log.max_segments` | integer `1..100` | Number of runtime log segments to keep. Default `3`. |
+
+Adapter blocks are optional. An unknown or invalid field is an adapter validation error, not a core DSL error; the adapter must fail closed without invalidating unrelated adapter blocks. For Pi, `settings.adapters.pi.child_inspection` is defined by [Spec 33 §7.1](../specs/33-spec-pi-adapter/33-spec-pi-adapter.md#71-settings), including its defaults, bounds, and invalid-settings recovery choice.
 
 An agent `delegation` block may set only `max_children` and `max_concurrency`; each value may narrow but never raise the merged project setting. `max_children` limits active parallel direct children, not the lifetime number of children ever executed. Settled or disposed children release that capacity. If the project omits `max_concurrency`, effective project concurrency is clamped to `max_children`; likewise, if an agent narrows `max_children` without setting concurrency, its effective concurrency is clamped to that child cap. Omitted project fields remain absent through per-scope parsing so higher layers do not overwrite lower-layer values with defaults; unresolved values receive defaults only during engine resolution. See [Delegation Limits](delegation.md), [ADR 0008](../adr/0008-portable-delegation-budgets.md), and [Pi adapter contract](../adapters/pi.md).
 

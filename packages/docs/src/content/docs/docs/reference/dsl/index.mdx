@@ -162,6 +162,10 @@ settings {
 
 `enforce_permissions` defaults to enabled behavior. Set it to `false` to let supporting adapters preserve native or tool-owner permission behavior. The Pi adapter applies the setting to parent and authenticated child sessions.
 
+`settings.adapters.<harness>` contains adapter-owned JSON-like settings. Core validates the shared shape and limits, then preserves the block for the named adapter; it does not interpret harness-specific keys. Objects deep-merge, arrays union-merge, and scalars override across built-in, global, and project layers. See [Config Loading](../../configuration/) for merge behavior and the [Pi adapter reference](../adapters/pi/) for harness-facing behavior. The repository's [DSL reference](https://github.com/weaveio/weave/blob/main/docs/reference/dsl.md#settings-and-disables) is the canonical contract for shared limits.
+
+Pi's `child_inspection` settings, exact defaults, bounds, private storage, controls, quotas, and recovery limits are canonical in the repository's [amended Spec 33](https://github.com/weaveio/weave/blob/main/docs/specs/33-spec-pi-adapter/33-spec-pi-adapter.md#71-settings). The [Pi adapter reference](../adapters/pi/) explains how the adapter exposes them without making history engine-owned.
+
 `continuation` and `analytics` are not current validated public schema blocks.
 
 ## Unsupported Or Historical Syntax

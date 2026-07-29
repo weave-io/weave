@@ -117,6 +117,16 @@ A child may request nested delegation only to its own declared targets. Cancelin
 
 Children are inspectable and cancellable through the TUI tree, not steerable. Public user-started RPC mode does not activate this private path.
 
+### Private child inspection
+
+Pi's optional `settings.adapters.pi.child_inspection` block controls the local inspector for private child sessions. The canonical source for its exact defaults, bounds, storage path and permissions, inspector slots and controls, commands, quotas and trim markers, retention, clear behavior, recovery scope, resume behavior, export fields, and privacy boundary is [Spec 33 §§4–10](../specs/33-spec-pi-adapter/33-spec-pi-adapter.md#4-deterministic-child-inspector-state-model). Do not infer these settings from engine configuration.
+
+The inspector is adapter-owned. It may retain sensitive raw prompts, responses, and session events in local-only private history; it never places that history in the engine Runtime Store, workflow state, logs, telemetry, proof, network requests, or parent-model results. Physical clear removes the private store; it is not a workflow or engine-history operation. Export is a bounded diagnostic projection, not a transcript export.
+
+Recovery is deliberately narrow: it may recover an interrupted ordinary top-level child when the canonical evidence permits it. It does not recursively recover nested children, recover a workflow process, or turn `/weave:resume` into automatic workflow continuation. A workflow resume is a fresh engine-authorized attempt, and engine-owned leases and workflow state remain the engine's concern. See [ADR 0013](../adr/0013-pi-private-child-sessions.md) for the ownership decision and [Spec 33 §6](../specs/33-spec-pi-adapter/33-spec-pi-adapter.md#6-child-recovery-contract) for the limits.
+
+For troubleshooting, start with `/weave:health`, then inspect the private-child failure code and the adapter's bounded diagnostics. A missing or corrupt private-history record is quarantined or reported according to [Spec 33 §7.4](../specs/33-spec-pi-adapter/33-spec-pi-adapter.md#74-quarantine-and-corruption-handling); it does not authorize a guessed resume. The complete command and key map is [Spec 33 §10](../specs/33-spec-pi-adapter/33-spec-pi-adapter.md#10-control-surface).
+
 ### Settlement and output
 
 While a child runs, `weave_delegate` updates its tool entry from Pi's streamed

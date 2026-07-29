@@ -2,7 +2,7 @@
 
 `@weaveio/weave-config` owns the config-discovery, merge, and loading pipeline for Weave. It is the single entry point for reading agent configuration from disk and producing the final merged `WeaveConfig` consumed by the engine.
 
-**Related:** [Product Vision](../architecture/product-vision.md) · [Adapter Boundary](../architecture/adapter-boundary.md) · [Models](models.md) · [Workflows](workflows.md) · [CLI self-modification](cli.md#weave-prompt-self-modify)
+**Related:** [Product Vision](../architecture/product-vision.md) · [Adapter Boundary](../architecture/adapter-boundary.md) · [DSL Reference](dsl.md#settings-and-disables) · [Pi adapter contract](../adapters/pi.md) · [Spec 33 — Pi private child sessions](../specs/33-spec-pi-adapter/33-spec-pi-adapter.md) · [Models](models.md) · [Workflows](workflows.md) · [CLI self-modification](cli.md#weave-prompt-self-modify)
 
 ---
 
@@ -37,6 +37,12 @@ Configuration is assembled from three layers in priority order (lowest → highe
 **Immutability:** Inputs are never mutated. Each merge a new object.
 
 See [`packages/config/src/merge.ts`](../../packages/config/src/merge.ts) for the implementation.
+
+## Harness adapter settings
+
+`settings.adapters.<harness>` is an opaque, JSON-like block. The DSL and config loader enforce the shared shape, nesting, and canonical-size limits; the named adapter owns the fields inside its block. Each source layer and the merged result are validated, and adapter settings merge with the same object/array/scalar rules above. Config loading does not open a harness session, inspect private history, or own transcripts.
+
+For the Pi-specific `child_inspection` block, link to the canonical [Spec 33 settings contract](../specs/33-spec-pi-adapter/33-spec-pi-adapter.md#71-settings) rather than duplicating defaults or bounds. The Pi adapter applies those settings only in its local private-session store; they do not change engine Runtime Store retention or telemetry.
 
 ---
 
