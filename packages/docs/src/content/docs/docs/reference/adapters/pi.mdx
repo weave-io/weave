@@ -28,7 +28,7 @@ Use `Alt+A` to cycle through healthy primary agents. The active agent is shown i
 The extension exposes these commands:
 
 - `/weave:start` — start configured work.
-- `/weave:run` — run a direct workflow step.
+- `/weave:run` — run a durable workflow.
 - `/weave:resume` — resume recorded work.
 - `/weave:advance` — advance the active workflow.
 - `/weave:abort` — stop active work.
@@ -36,6 +36,17 @@ The extension exposes these commands:
 - `/weave:health` — inspect activation health.
 - `/weave:plan` — inspect the current plan.
 - `/weave:artifact` — inspect an available artifact.
+- `/weave:goal <plan-name>` — run a plan in the foreground goal loop.
+
+### Goals and workflows
+
+Use `/weave:goal <plan-name>` to pursue a plan in Pi's foreground loop. `/weave:goal status` shows status; `/weave:goal pause`, `/weave:goal resume`, and `/weave:goal clear` control it. `check` aliases status, `stop`, `off`, `reset`, `none`, and `cancel` alias clear. Use `-- <plan-name>` to select a plan whose name collides with a control word; `/weave:goal` accepts a plan name, not inline goal prose.
+
+In health-only mode, the goal `start` and `resume` forms are blocked; `status`, `pause`, and `clear` remain available, including their aliases. Delegated child mode is inert for goal restore, prompt, tool, continuation, and footer behavior.
+
+Goal completion comes from the plan's completion decision, reported through Pi's private goal tool. The footer shows the plan, task, and a 72-code-point progress ladder. Plan refreshes follow lifecycle and command events; the timer refreshes metrics only.
+
+This is separate from `/weave:run`, which starts a durable workflow with persisted workflow state.
 
 ## Private children
 

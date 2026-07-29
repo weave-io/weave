@@ -29,6 +29,10 @@ The adapter owns Claude-specific file locations, model aliases, tool names,
 and capability gaps. Internal core/config/engine workspace layers remain
 bundled and are never consumer npm dependencies.
 
+## Goal command
+
+`/weave:goal [plan-name]` is a model-driven degraded projection in generated Claude Code prompts. It does not provide persisted goal state, an enforced budget, pause/resume controls, a goal status surface, a native reporting tool, or a goal footer. It does not imply Pi goal behavior or durable workflow execution.
+
 ## Consequences
 
 - Users must reload plugins or start a new session after generated files change.

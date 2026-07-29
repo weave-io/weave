@@ -42,6 +42,8 @@ Category shuttles remain ordinary normalized descriptors. The adapter never repa
 
 OpenCode exposes `/weave:start` and `/start-work` as foreground plan-entry commands. Durable execution uses explicit engine lifecycle operations where the adapter declares the required effective capabilities. Ordinary chat and passive hooks do not start work.
 
+`/weave:goal [plan-name]` is a model-driven degraded projection. It does not provide persisted goal state, an enforced budget, pause/resume controls, a goal status surface, a native reporting tool, or a goal footer. It does not imply Pi goal behavior or durable workflow execution.
+
 ## Logging
 
 Plugin logs go to `.weave/weave.log` by default so structured JSON does not appear in the OpenCode UI. `WEAVE_LOG_FILE` overrides the path. Outside the plugin, the engine logger uses its normal sink.
