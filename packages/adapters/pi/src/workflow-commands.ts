@@ -13,8 +13,9 @@ import type {
   PlanTaskSnapshot,
   WorkflowExecutionContext,
 } from "@weaveio/weave-engine";
-import { okAsync, ResultAsync } from "neverthrow";
+import { ok, okAsync, ResultAsync } from "neverthrow";
 import type { PiAdapterFailure } from "./errors.js";
+import { createWorkflowAttemptLinkage } from "./recovery-pointer.js";
 import {
   authorizeByExplicitUser,
   type PiReconciliationReason,
@@ -46,6 +47,8 @@ export interface PiActiveWorkflowTracker {
          * takeover correlation for `resumeExecution`.
          */
         controllerGeneration?: string;
+        /** Identifier of the history attempt being resumed, if present. */
+        attemptId?: string;
       }
     | undefined;
   setActiveInstance(
@@ -54,6 +57,7 @@ export interface PiActiveWorkflowTracker {
           workflowInstanceId: string;
           leaseId?: string;
           controllerGeneration?: string;
+          attemptId?: string;
         }
       | undefined,
   ): void;
@@ -354,10 +358,43 @@ export async function handleWeaveResume(
     );
     return;
   }
+  // A pointer-backed resume is a new attempt. Keep only bounded identifier
+  // linkage in lifecycle metadata; the old process/session is never passed to
+  // the controller and therefore cannot remain execution authority.
+  const attemptLinkageResult =
+    active.controllerGeneration === undefined
+      ? ok(undefined)
+      : createWorkflowAttemptLinkage(
+          active.attemptId ?? active.workflowInstanceId,
+        );
+  const attemptLinkage = attemptLinkageResult.match(
+    (linkage) => linkage,
+    () => undefined,
+  );
+  if (
+    active.controllerGeneration !== undefined &&
+    attemptLinkage === undefined
+  ) {
+    ui.notify("Could not resume: invalid recovery attempt linkage.", "error");
+    return;
+  }
   const result = await controller.resumeExecution(
     {
       workflowInstanceId: active.workflowInstanceId,
       context,
+      ...(attemptLinkage !== undefined
+        ? {
+            metadata: {
+              weaveResumeAttemptId: attemptLinkage.attemptId,
+              ...(attemptLinkage.previousAttemptId !== undefined
+                ? {
+                    weaveResumePreviousAttemptId:
+                      attemptLinkage.previousAttemptId,
+                  }
+                : {}),
+            },
+          }
+        : {}),
       // Issue #21 S020: only present when this instance was
       // reconstructed from a durable recovery pointer, and only reaches
       // the engine now that the user has freshly confirmed above.
@@ -378,6 +415,9 @@ export async function handleWeaveResume(
       tracker.setActiveInstance({
         workflowInstanceId: resumed.workflowInstanceId,
         leaseId: resumed.leaseId,
+        ...(attemptLinkage !== undefined
+          ? { attemptId: attemptLinkage.attemptId }
+          : {}),
       });
       ui.notify(describeRunResult(resumed), "info");
     },
@@ -616,7 +656,7 @@ export interface PiPaletteAction {
   readonly disabledReason?: string;
 }
 
-/** Palette exposes the same nine actions as the commands, hidden/disabled with a reason when invalid (Pi adapter contract). */
+/** Palette exposes the canonical Weave actions, hidden/disabled with a reason when invalid. */
 export function buildPaletteActions(input: {
   readonly healthOnly: boolean;
   readonly hasActiveInstance: boolean;

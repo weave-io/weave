@@ -1,24 +1,20 @@
 import type { AdapterCapabilityContract } from "@weaveio/weave-engine";
+import {
+  PI_HOST_COMPATIBILITY_MATRIX,
+  type PiHostSurfaceDeclaration,
+} from "./host-compatibility-matrix.js";
 
-/**
- * Static capability ceilings for this adapter build (Pi adapter contract). These are
- * declarations, not runtime facts: `evaluateEffectiveCapabilities` (Task 5,
- * `@weaveio/weave-engine`) lowers each one by an exactly-one-per-ID runtime
- * probe. A probe may only preserve or lower a declared level, never raise
- * it.
- *
- * Required-native: command entrypoints and token usage reporting are native
- * Pi facilities. Required-emulated: everything Weave itself must construct
- * on top of Pi. Optional tiers cover context-window monitoring, idle/compaction
- * continuation, analytics/artifact extras, and out-of-scope eval/multi-workflow
- * support (Pi adapter contract marks the last two explicitly out of scope for this
- * adapter).
- */
+export type { PiHostSurfaceDeclaration } from "./host-compatibility-matrix.js";
+
+/** The host-surface contract is declared in the compatibility matrix. */
+export const PI_HOST_SURFACE_DECLARATIONS: readonly PiHostSurfaceDeclaration[] =
+  PI_HOST_COMPATIBILITY_MATRIX.surfaces;
+
 export const PI_ADAPTER_CAPABILITY_CONTRACT: AdapterCapabilityContract = {
   capabilities: [
     {
       id: "command-entrypoints",
-      description: "Exclusive ownership of the nine /weave:* direct commands",
+      description: "Exclusive ownership of the twelve /weave:* direct commands",
       readiness: "native",
     },
     {

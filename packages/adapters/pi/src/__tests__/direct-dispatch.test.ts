@@ -20,7 +20,7 @@ const INPUT = {
 };
 
 describe("TransportDirectDispatchPort", () => {
-  it("interprets a completed settlement's summary as a structured completion candidate", async () => {
+  it("interprets only the structured completion candidate", async () => {
     const port = new TransportDirectDispatchPort(() =>
       okAsync({
         outcome: "completed" as const,
@@ -44,11 +44,14 @@ describe("TransportDirectDispatchPort", () => {
     if (result.isErr()) expect(result.error.code).toBe("ChildSpawnFailed");
   });
 
-  it("rejects a completed settlement whose summary is unparseable prose (never treated as free-form success)", async () => {
+  it("rejects an unparseable candidate even when prose and intervention metadata exist", async () => {
     const port = new TransportDirectDispatchPort(() =>
       okAsync({
         outcome: "completed" as const,
-        summary: "just some free-form prose",
+        completionCandidate: "just some free-form prose",
+        assistantOutput:
+          "final output that must not become completion authority",
+        interventionCount: 4,
       }),
     );
     const result = await port.dispatch(INPUT);
@@ -70,9 +73,15 @@ describe("TransportDirectDispatchPort", () => {
       expect(result.error.code).toBe("CompletionSignalMalformed");
   });
 
-  it("rejects a completed settlement with no summary at all as a missing completion signal", async () => {
+  it("rejects a missing candidate even when final output, prose, and count exist", async () => {
     const port = new TransportDirectDispatchPort(() =>
-      okAsync({ outcome: "completed" as const }),
+      okAsync({
+        outcome: "completed" as const,
+        assistantOutput:
+          "final output that must not become completion authority",
+        interventionText: "late free-text intervention",
+        interventionCount: 9,
+      }),
     );
     const result = await port.dispatch(INPUT);
     expect(result.isErr()).toBe(true);

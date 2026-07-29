@@ -8,6 +8,7 @@ import {
 } from "@weaveio/weave-engine";
 import { errAsync, ok, okAsync } from "neverthrow";
 import { DefaultPiCapabilityProber } from "../capability-prober.js";
+import type { PiChildHistoryRecord } from "../child-history-schema.js";
 import type { PiChildHistoryStore } from "../child-history-store.js";
 import { WEAVE_COMMAND_NAMES } from "../commands.js";
 import { PiConfigActivator } from "../config-activator.js";
@@ -17,6 +18,11 @@ import {
   type PiExtensionDeps,
 } from "../extension.js";
 import { HOST_PACKAGE_NAME } from "../host-compatibility.js";
+import {
+  PI_HOST_SURFACE_IDS,
+  type PiHostSurfaceId,
+  type PiHostSurfaceReader,
+} from "../host-inventory.js";
 import { FakePathContainmentPort } from "../path-containment.js";
 import { FakePiPlanCatalogPort } from "../plan-catalog.js";
 import { MODEL_REGISTRY_THREW_REASON } from "../port-safety.js";
@@ -59,6 +65,150 @@ function allOkCapabilityProber() {
         probeStatus: "ok" as const,
       })),
   };
+}
+
+function hostSurfaceReader(
+  unavailable: readonly PiHostSurfaceId[] = [],
+  renderingUnavailable = false,
+): PiHostSurfaceReader {
+  const unavailableSet = new Set(unavailable);
+  return {
+    read: () =>
+      okAsync(
+        PI_HOST_SURFACE_IDS.map((surfaceId) => ({
+          surfaceId,
+          status:
+            unavailableSet.has(surfaceId) ||
+            (renderingUnavailable && surfaceId === "status-rendering")
+              ? "unavailable"
+              : "native",
+          details: `test-${surfaceId}`,
+        })),
+      ),
+  };
+}
+
+function allNativeWithRenderingFallback(): PiHostSurfaceReader {
+  return {
+    read: () =>
+      okAsync(
+        PI_HOST_SURFACE_IDS.map((surfaceId) => ({
+          surfaceId,
+          status: surfaceId === "status-rendering" ? "fallback" : "native",
+          details: "test-controlled",
+        })),
+      ),
+  };
+}
+
+function eligibleOrdinaryRecoveryRecord(
+  overrides: Partial<PiChildHistoryRecord> = {},
+): PiChildHistoryRecord {
+  return {
+    childId: "recover-me",
+    parentSessionId: "parent",
+    kind: "ordinary",
+    status: "interrupted",
+    workflow: {},
+    descriptorName: "loom",
+    sessionPath: "children/recover-me/session.jsonl",
+    activeLeaf: "leaf-1",
+    checkpointCursor: 1,
+    branchAncestry: [],
+    interventionCount: 0,
+    finalOutput: "",
+    trim: { trimmed: false, markerCount: 0 },
+    quarantine: { quarantined: false },
+    clear: { cleared: false },
+    recovery: { eligible: true, count: 0 },
+    bytes: { session: 1, checkpoint: 1, total: 2 },
+    createdAt: 1,
+    updatedAt: 1,
+    ...overrides,
+  };
+}
+
+function mutableChildHistoryStore(
+  input:
+    | PiChildHistoryRecord
+    | readonly PiChildHistoryRecord[] = eligibleOrdinaryRecoveryRecord(),
+): {
+  store: PiChildHistoryStore;
+  records: PiChildHistoryRecord[];
+  updates: Partial<PiChildHistoryRecord>[];
+  cleared: string[];
+} {
+  const records = [...(Array.isArray(input) ? input : [input])];
+  const updates: Partial<PiChildHistoryRecord>[] = [];
+  const cleared: string[] = [];
+  const clear = (childId: string) => {
+    const index = records.findIndex(
+      (candidate) => candidate.childId === childId,
+    );
+    if (index >= 0) {
+      records.splice(index, 1);
+      cleared.push(childId);
+    }
+    return okAsync(undefined);
+  };
+  const store = {
+    getIndex: () => ({ records }),
+    clear,
+    clearTerminal: () => {
+      const terminal = records.filter((record) =>
+        ["settled", "interrupted", "quarantined", "cleared"].includes(
+          record.status,
+        ),
+      );
+      for (const record of terminal) void clear(record.childId);
+      return okAsync(terminal.length);
+    },
+    updateRecord: (childId: string, patch: Partial<PiChildHistoryRecord>) => {
+      updates.push(patch);
+      const index = records.findIndex(
+        (candidate) => candidate.childId === childId,
+      );
+      const existing = records[index];
+      if (existing !== undefined) records[index] = { ...existing, ...patch };
+      return okAsync(undefined);
+    },
+  } as unknown as PiChildHistoryStore;
+  return { store, records, updates, cleared };
+}
+
+async function flushBackgroundWork(): Promise<void> {
+  for (let index = 0; index < 8; index += 1) await Promise.resolve();
+}
+
+function installRecoveryExtension(
+  host: RecordingFakePiHost,
+  store: PiChildHistoryStore,
+  restoreOrdinaryChild: NonNullable<PiExtensionDeps["restoreOrdinaryChild"]>,
+  settings: { readonly recovery_countdown_seconds?: number } = {},
+) {
+  return installExtension(host, "0.81.1", {
+    capabilityProber: allOkCapabilityProber(),
+    configActivator: fakeConfigActivator(
+      {
+        agents: [
+          {
+            agentName: "loom",
+            source: "explicit",
+            descriptor: loomDescriptor(),
+          },
+        ],
+        errors: [],
+      },
+      {
+        ...EMPTY_CONFIG,
+        settings: { adapters: { pi: { child_inspection: { ...settings } } } },
+      } as unknown as WeaveConfig,
+    ),
+    runtimeStoreFactory: { open: () => okAsync(createInMemoryRuntimeStore()) },
+    parentSessionId: () => "parent",
+    childHistoryStoreFactory: () => okAsync(store),
+    restoreOrdinaryChild,
+  });
 }
 
 function installExtension(
@@ -210,6 +360,192 @@ describe("createPiExtension factory (layer C: compiled extension against a fake 
       key: "weave-agent",
       value: "◆ WEAVE · LOOM",
     });
+  });
+
+  it("accepts injected rendering fallback and all required native surfaces through the real session lifecycle", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    let readerCalls = 0;
+    const reader = allNativeWithRenderingFallback();
+    installExtension(host, "0.81.1", {
+      capabilityProber: allOkCapabilityProber(),
+      hostSurfaceReader: {
+        read: (input) => {
+          readerCalls += 1;
+          return reader.read(input);
+        },
+      },
+      configActivator: fakeConfigActivator({
+        agents: [
+          {
+            agentName: "loom",
+            source: "explicit",
+            descriptor: loomDescriptor(),
+          },
+        ],
+        errors: [],
+      }),
+      runtimeStoreFactory: {
+        open: () => okAsync(createInMemoryRuntimeStore()),
+      },
+    });
+    expect(readerCalls).toBe(0);
+    await host.triggerSessionStart();
+    expect(readerCalls).toBe(1);
+    expect(
+      host.statusCalls.filter((call) => call.key === "weave").at(-1)?.value,
+    ).toBe("ready");
+  });
+
+  it("fails closed for every host reader failure without writes or an unbounded notification", async () => {
+    const readers: readonly PiHostSurfaceReader[] = [
+      {
+        read: () => {
+          throw new Error("secret-reader-path");
+        },
+      },
+      { read: () => Promise.reject(new Error("secret-rejection")) as never },
+      { read: () => errAsync({ type: "ReaderRejected" }) },
+      { read: () => okAsync("not-an-array" as unknown as readonly unknown[]) },
+    ];
+    for (const reader of readers) {
+      const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+      let runtimeWrites = 0;
+      let historyWrites = 0;
+      let processWrites = 0;
+      installExtension(host, "0.81.1", {
+        capabilityProber: allOkCapabilityProber(),
+        hostSurfaceReader: reader,
+        runtimeStoreFactory: {
+          open: () => {
+            runtimeWrites += 1;
+            return okAsync(createInMemoryRuntimeStore());
+          },
+        },
+        childHistoryStoreFactory: () => {
+          historyWrites += 1;
+          return okAsync(undefined as never);
+        },
+        processPort: {
+          spawn: () => {
+            processWrites += 1;
+            return errAsync({ type: "spawn-failed" });
+          },
+        } as unknown as PiExtensionDeps["processPort"],
+      });
+      await host.triggerSessionStart();
+      const weaveStatuses = host.statusCalls.filter(
+        (call) => call.key === "weave",
+      );
+      expect(weaveStatuses.at(-1)?.value).toContain("health-only");
+      expect(
+        weaveStatuses.filter((call) => call.value?.includes("health-only"))
+          .length,
+      ).toBeLessThanOrEqual(2);
+      expect(runtimeWrites).toBe(0);
+      expect(historyWrites).toBe(0);
+      expect(processWrites).toBe(0);
+      expect(
+        host.statusCalls.filter((call) => call.key === "weave").at(-1)?.value
+          ?.length ?? 0,
+      ).toBeLessThan(120);
+      await host.invokeCommand("weave:health");
+      expect(host.notifyCalls.at(-1)?.message).toContain("health-only");
+      expect(host.notifyCalls.at(-1)?.message.length).toBeLessThan(1200);
+    }
+  });
+
+  it("makes each required surface fail closed while rendering loss uses the fallback and stays ready", async () => {
+    const required = PI_HOST_SURFACE_IDS.filter(
+      (surfaceId) => surfaceId !== "status-rendering",
+    ).slice(-6);
+    for (const surfaceId of required) {
+      const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+      installExtension(host, "0.81.1", {
+        capabilityProber: allOkCapabilityProber(),
+        hostSurfaceReader: hostSurfaceReader([surfaceId]),
+      });
+      await host.triggerSessionStart();
+      expect(
+        host.statusCalls.filter((call) => call.key === "weave").at(-1)?.value,
+      ).toContain("health-only");
+    }
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    installExtension(host, "0.81.1", {
+      capabilityProber: allOkCapabilityProber(),
+      hostSurfaceReader: hostSurfaceReader([], true),
+      configActivator: fakeConfigActivator({
+        agents: [
+          {
+            agentName: "loom",
+            source: "explicit",
+            descriptor: loomDescriptor(),
+          },
+        ],
+        errors: [],
+      }),
+      runtimeStoreFactory: {
+        open: () => okAsync(createInMemoryRuntimeStore()),
+      },
+    });
+    await host.triggerSessionStart();
+    expect(
+      host.statusCalls.filter((call) => call.key === "weave").at(-1)?.value,
+    ).toBe("ready");
+  });
+
+  it("reads once per session generation and keeps each normalized report immutable", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    let calls = 0;
+    const firstRows = PI_HOST_SURFACE_IDS.map((surfaceId) => ({
+      surfaceId,
+      status: "native",
+      details: "first",
+    }));
+    const secondRows = PI_HOST_SURFACE_IDS.map((surfaceId) => ({
+      surfaceId,
+      status: surfaceId === "editor-composition" ? "unavailable" : "native",
+      details: "second",
+    }));
+    const reader: PiHostSurfaceReader = {
+      read: () => okAsync(++calls === 1 ? firstRows : secondRows),
+    };
+    installExtension(host, "0.81.1", {
+      capabilityProber: allOkCapabilityProber(),
+      hostSurfaceReader: reader,
+      configActivator: fakeConfigActivator({
+        agents: [
+          {
+            agentName: "loom",
+            source: "explicit",
+            descriptor: loomDescriptor(),
+          },
+        ],
+        errors: [],
+      }),
+      runtimeStoreFactory: {
+        open: () => okAsync(createInMemoryRuntimeStore()),
+      },
+    });
+    expect(calls).toBe(0);
+    await host.triggerSessionStart();
+    expect(calls).toBe(1);
+    const firstGeneration = host.statusCalls
+      .filter((call) => call.key === "weave")
+      .at(-1)?.value;
+    await host.triggerSessionStart();
+    expect(calls).toBe(2);
+    const secondGeneration = host.statusCalls
+      .filter((call) => call.key === "weave")
+      .at(-1)?.value;
+    expect(secondGeneration).toContain("health-only");
+    expect(secondGeneration).not.toBe(firstGeneration);
+    const firstRow = firstRows[0];
+    expect(firstRow).toBeDefined();
+    if (firstRow) firstRow.details = "mutated-after-session";
+    await host.invokeCommand("weave:health");
+    expect(host.notifyCalls.at(-1)?.message).not.toContain(
+      "mutated-after-session",
+    );
   });
 
   it("enters health-only mode (real prober) on a fresh trusted TUI session, since later subsystems are not implemented yet, and blocks mutating commands", async () => {
@@ -1400,6 +1736,552 @@ describe("createPiExtension: config activation, materialization consumption, pri
     await otherHost.triggerSessionStart();
     expect(otherOpened).toEqual(["parent-session-b"]);
     expect(opened[0]).not.toBe(otherOpened[0]);
+  });
+
+  it("expires startup recovery countdown and restores one eligible root exactly once", async () => {
+    const history = mutableChildHistoryStore();
+    let restores = 0;
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    host.scriptSelect(undefined);
+    installRecoveryExtension(
+      host,
+      history.store,
+      () => {
+        restores += 1;
+        return okAsync({ finalOutput: "done", interventionCount: 1 });
+      },
+      { recovery_countdown_seconds: 0 },
+    );
+    await host.triggerSessionStart();
+    await flushBackgroundWork();
+    expect(restores).toBe(1);
+    expect(history.records[0]?.status).toBe("settled");
+    expect(history.records[0]?.recovery.eligible).toBe(false);
+  });
+
+  it("honors exact startup choices: Recover now recovers, while Skip and Inspect preserve eligibility", async () => {
+    for (const choice of ["Recover now", "Skip", "Inspect"] as const) {
+      const history = mutableChildHistoryStore();
+      let restores = 0;
+      const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+      host.scriptSelect(choice);
+      installRecoveryExtension(host, history.store, () => {
+        restores += 1;
+        return okAsync({ finalOutput: "done", interventionCount: 0 });
+      });
+      await host.triggerSessionStart();
+      await flushBackgroundWork();
+      expect(restores).toBe(choice === "Recover now" ? 1 : 0);
+      expect(history.records[0]?.recovery.eligible).toBe(
+        choice !== "Recover now",
+      );
+      if (choice === "Inspect") {
+        expect(host.notifyCalls).toContainEqual({
+          message: "Interrupted child recover-me is available for inspection.",
+          level: "info",
+        });
+      }
+    }
+  });
+
+  it("recovers skipped children on the command and registers that command only once across reloads", async () => {
+    const history = mutableChildHistoryStore();
+    let restores = 0;
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    host.scriptSelect("Skip");
+    installRecoveryExtension(host, history.store, () => {
+      restores += 1;
+      return okAsync({ finalOutput: "done", interventionCount: 0 });
+    });
+    await host.triggerSessionStart();
+    await flushBackgroundWork();
+    await host.invokeCommand("weave:recover-children");
+    await host.triggerSessionStart();
+    await flushBackgroundWork();
+    expect(restores).toBe(1);
+    expect(
+      host.registerCommandCalls.filter(
+        (call) => call.name === "weave:recover-children",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("projects one bounded settlement message without creating a turn or leaking canaries", async () => {
+    const history = mutableChildHistoryStore();
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    host.scriptSelect("Recover now");
+    installRecoveryExtension(host, history.store, () =>
+      okAsync({ finalOutput: "x".repeat(20_000), interventionCount: 7 }),
+    );
+    await host.triggerSessionStart();
+    const widgetCallsBeforeSettlement = host.widgetCalls.length;
+    await flushBackgroundWork();
+    expect(host.sendMessageCalls).toHaveLength(1);
+    const sent = host.sendMessageCalls[0];
+    if (sent === undefined) throw new Error("expected a recovery message");
+    expect(sent.message.customType).toBe("weave-child-recovery");
+    expect(sent.message.content).toContain("Interventions: 7");
+    expect(
+      new TextEncoder().encode(sent.message.content).byteLength,
+    ).toBeLessThanOrEqual(16_384 + 32);
+    expect(sent.options).toEqual({ triggerTurn: false });
+    expect(host.sentUserMessages).toHaveLength(0);
+    expect(host.generatedTurnCount).toBe(0);
+    expect(host.transcriptCalls).toHaveLength(0);
+    expect(host.interventionCalls).toHaveLength(0);
+    expect(host.widgetCalls).toHaveLength(widgetCallsBeforeSettlement);
+  });
+
+  it("turns restore and send failures into one safe notification without a turn or raw canary", async () => {
+    for (const failure of ["restore", "send"] as const) {
+      const history = mutableChildHistoryStore();
+      const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+      host.scriptSelect("Recover now");
+      if (failure === "send") host.poisonSendMessage();
+      installRecoveryExtension(host, history.store, () => {
+        if (failure === "restore") throw new Error("raw restore secret");
+        return okAsync({ finalOutput: "safe", interventionCount: 0 });
+      });
+      await host.triggerSessionStart();
+      await flushBackgroundWork();
+      expect(
+        host.notifyCalls.filter(
+          (call) =>
+            call.message === "Child recovery is unavailable in this session.",
+        ),
+      ).toHaveLength(1);
+      expect(host.sentUserMessages).toHaveLength(0);
+      expect(host.generatedTurnCount).toBe(0);
+      expect(host.transcriptCalls).toHaveLength(0);
+      expect(host.interventionCalls).toHaveLength(0);
+      expect(
+        host.notifyCalls.some((call) =>
+          call.message.includes("raw restore secret"),
+        ),
+      ).toBe(false);
+    }
+  });
+
+  it("fails closed when recovery is disabled, with no startup or command spawn", async () => {
+    const history = mutableChildHistoryStore();
+    let restores = 0;
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    installExtension(host, "0.81.1", {
+      capabilityProber: allOkCapabilityProber(),
+      configActivator: fakeConfigActivator(
+        {
+          agents: [
+            {
+              agentName: "loom",
+              source: "explicit",
+              descriptor: loomDescriptor(),
+            },
+          ],
+          errors: [],
+        },
+        {
+          ...EMPTY_CONFIG,
+          settings: {
+            adapters: { pi: { child_inspection: { recovery_enabled: false } } },
+          },
+        } as unknown as WeaveConfig,
+      ),
+      runtimeStoreFactory: {
+        open: () => okAsync(createInMemoryRuntimeStore()),
+      },
+      parentSessionId: () => "parent",
+      childHistoryStoreFactory: () => okAsync(history.store),
+      restoreOrdinaryChild: () => {
+        restores += 1;
+        return okAsync({ finalOutput: "leak", interventionCount: 0 });
+      },
+    });
+    await host.triggerSessionStart();
+    await flushBackgroundWork();
+    host.notifyCalls.length = 0;
+    await host.invokeCommand("weave:recover-children");
+    expect(restores).toBe(0);
+    expect(host.sendMessageCalls).toHaveLength(0);
+    expect(host.notifyCalls).toHaveLength(1);
+    expect(host.notifyCalls[0]?.message).toBe(
+      "No interrupted children are recoverable.",
+    );
+  });
+
+  it("does not recover from an untrusted project and gives one safe command message", async () => {
+    const history = mutableChildHistoryStore();
+    let restores = 0;
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: false });
+    host.scriptSelect("Skip");
+    installRecoveryExtension(host, history.store, () => {
+      restores += 1;
+      return okAsync({ finalOutput: "leak", interventionCount: 0 });
+    });
+    await host.triggerSessionStart();
+    await flushBackgroundWork();
+    host.notifyCalls.length = 0;
+    await host.invokeCommand("weave:recover-children");
+    expect(restores).toBe(0);
+    expect(host.sendMessageCalls).toHaveLength(0);
+    expect(host.notifyCalls).toEqual([
+      {
+        message: "Child recovery is unavailable in this session.",
+        level: "info",
+      },
+    ]);
+  });
+
+  it("fails closed for missing descriptors and history stores without leaking paths", async () => {
+    const missingDescriptor = mutableChildHistoryStore();
+    let restores = 0;
+    const descriptorHost = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+    });
+    installExtension(descriptorHost, "0.81.1", {
+      capabilityProber: allOkCapabilityProber(),
+      configActivator: fakeConfigActivator({ agents: [], errors: [] }),
+      runtimeStoreFactory: {
+        open: () => okAsync(createInMemoryRuntimeStore()),
+      },
+      parentSessionId: () => "parent",
+      childHistoryStoreFactory: () => okAsync(missingDescriptor.store),
+      restoreOrdinaryChild: () => {
+        restores += 1;
+        return okAsync({
+          finalOutput: "/raw/descriptor/path",
+          interventionCount: 0,
+        });
+      },
+    });
+    await descriptorHost.triggerSessionStart();
+    descriptorHost.notifyCalls.length = 0;
+    await descriptorHost.invokeCommand("weave:recover-children");
+    expect(restores).toBe(0);
+    expect(descriptorHost.sendMessageCalls).toHaveLength(0);
+    expect(descriptorHost.notifyCalls).toHaveLength(1);
+    expect(descriptorHost.notifyCalls[0]?.message).toBe(
+      "Child recovery is unavailable in this session.",
+    );
+    expect(descriptorHost.notifyCalls[0]?.message).not.toContain("recover-me");
+
+    const missingStoreHost = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+    });
+    installExtension(missingStoreHost, "0.81.1", {
+      capabilityProber: allOkCapabilityProber(),
+      configActivator: fakeConfigActivator({
+        agents: [
+          {
+            agentName: "loom",
+            source: "explicit",
+            descriptor: loomDescriptor(),
+          },
+        ],
+        errors: [],
+      }),
+      runtimeStoreFactory: {
+        open: () => okAsync(createInMemoryRuntimeStore()),
+      },
+      parentSessionId: () => "parent",
+      childHistoryStoreFactory: () =>
+        errAsync("/raw/history/store/path" as unknown),
+    });
+    await missingStoreHost.triggerSessionStart();
+    missingStoreHost.notifyCalls.length = 0;
+    await missingStoreHost.invokeCommand("weave:recover-children");
+    expect(missingStoreHost.notifyCalls).toEqual([
+      {
+        message: "Child recovery is unavailable in this session.",
+        level: "info",
+      },
+    ]);
+    expect(missingStoreHost.notifyCalls[0]?.message).not.toContain("/raw/");
+  });
+
+  it("never auto-recovers quarantined records, including from the command", async () => {
+    const history = mutableChildHistoryStore(
+      eligibleOrdinaryRecoveryRecord({
+        quarantine: { quarantined: true, reasonClass: "raw" },
+      }),
+    );
+    let restores = 0;
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    host.scriptSelect("Recover now");
+    installRecoveryExtension(host, history.store, () => {
+      restores += 1;
+      return okAsync({ finalOutput: "leak", interventionCount: 0 });
+    });
+    await host.triggerSessionStart();
+    await flushBackgroundWork();
+    await host.invokeCommand("weave:recover-children");
+    expect(restores).toBe(0);
+    expect(host.sendMessageCalls).toHaveLength(0);
+  });
+
+  it("does not let a stale deferred startup recover or inject after a new generation starts", async () => {
+    const history = mutableChildHistoryStore();
+    let restores = 0;
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const deferred = host.deferNextSelect();
+    installRecoveryExtension(host, history.store, () => {
+      restores += 1;
+      return okAsync({ finalOutput: "stale canary", interventionCount: 0 });
+    });
+    await host.triggerSessionStart();
+    host.scriptSelect("Skip");
+    await host.triggerSessionStart();
+    await flushBackgroundWork();
+    deferred.settle("Recover now");
+    await flushBackgroundWork();
+    expect(restores).toBe(0);
+    expect(host.sendMessageCalls).toHaveLength(0);
+    expect(host.sentUserMessages).toHaveLength(0);
+  });
+
+  it("clears recovery on shutdown after Skip", async () => {
+    const history = mutableChildHistoryStore();
+    let restores = 0;
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    host.scriptSelect("Skip");
+    installRecoveryExtension(host, history.store, () => {
+      restores += 1;
+      return okAsync({ finalOutput: "leak", interventionCount: 0 });
+    });
+    await host.triggerSessionStart();
+    await flushBackgroundWork();
+    await host.triggerSessionShutdown();
+    await host.invokeCommand("weave:recover-children");
+    expect(restores).toBe(0);
+    expect(host.notifyCalls.at(-1)).toEqual({
+      message: "Child recovery is unavailable in this session.",
+      level: "info",
+    });
+  });
+
+  it("turns selection failures into one safe notification without restore or raw canaries", async () => {
+    for (const fail of ["throw", "reject"] as const) {
+      const history = mutableChildHistoryStore();
+      let restores = 0;
+      const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+      if (fail === "throw") host.poisonSelect();
+      else host.rejectSelect();
+      installRecoveryExtension(host, history.store, () => {
+        restores += 1;
+        return okAsync({
+          finalOutput: "raw turn canary",
+          interventionCount: 0,
+        });
+      });
+      await host.triggerSessionStart();
+      await flushBackgroundWork();
+      expect(restores).toBe(0);
+      expect(host.sendMessageCalls).toHaveLength(0);
+      expect(host.generatedTurnCount).toBe(0);
+      expect(
+        host.notifyCalls.filter(
+          (call) =>
+            call.message === "Child recovery is unavailable in this session.",
+        ),
+      ).toHaveLength(1);
+      expect(
+        host.notifyCalls.some(
+          (call) =>
+            call.message.includes("raw") ||
+            call.message.includes("token=") ||
+            call.message.includes("/Users/"),
+        ),
+      ).toBe(false);
+    }
+  });
+
+  it("turns inspection failures into one safe notification without restore or raw canaries", async () => {
+    const history = mutableChildHistoryStore();
+    let restores = 0;
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    host.scriptSelect("Inspect");
+    host.poisonNextNotify();
+    installRecoveryExtension(host, history.store, () => {
+      restores += 1;
+      return okAsync({
+        finalOutput: "raw inspection canary",
+        interventionCount: 0,
+      });
+    });
+    await host.triggerSessionStart();
+    await flushBackgroundWork();
+    expect(restores).toBe(0);
+    expect(host.sendMessageCalls).toHaveLength(0);
+    expect(host.generatedTurnCount).toBe(0);
+    const safeNotifications = host.notifyCalls.filter(
+      (call) =>
+        call.message === "Child recovery is unavailable in this session.",
+    );
+    expect(safeNotifications).toHaveLength(1);
+    expect(safeNotifications[0]?.message).not.toContain("/Users/");
+  });
+
+  it("proves inspect labels, terminal clearing, and bounded child clearing through registered commands", async () => {
+    const live = eligibleOrdinaryRecoveryRecord({
+      childId: "live-running",
+      status: "running",
+      recovery: { eligible: false, count: 0 },
+    });
+    const interrupted = eligibleOrdinaryRecoveryRecord({
+      childId: "ordinary-interrupted",
+    });
+    const workflow = eligibleOrdinaryRecoveryRecord({
+      childId: "workflow-interrupted",
+      kind: "workflow-step",
+      workflow: { workflow: "workflow-canary", step: "step-canary" },
+    });
+    const history = mutableChildHistoryStore([live, interrupted, workflow]);
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    host.scriptSelect("Skip");
+    installRecoveryExtension(host, history.store, () =>
+      okAsync({ finalOutput: "restored", interventionCount: 0 }),
+    );
+    await host.triggerSessionStart();
+    const deferred = host.deferNextSelect();
+    const inspect = host.invokeCommand("weave:inspect");
+    await flushBackgroundWork();
+    const options = host.selectCalls.at(-1)?.options ?? [];
+    expect(
+      options.some(
+        (label) =>
+          label.includes("workflow-canary") && label.includes("step-canary"),
+      ),
+    ).toBe(true);
+    expect(
+      options.some(
+        (label) =>
+          label.includes("children/live-running/session.jsonl") ||
+          label.includes("ordinary-interrupted"),
+      ),
+    ).toBe(false);
+    const clearLabel = options
+      .filter((label) => label.includes("clear history"))
+      .at(-1);
+    expect(clearLabel).toBeDefined();
+    deferred.settle(clearLabel);
+    await inspect;
+    expect(history.cleared).toEqual(["ordinary-interrupted"]);
+    expect(history.records.map((record) => record.childId)).toContain(
+      "live-running",
+    );
+    await host.invokeCommand("weave:clear-children");
+    expect(history.records.map((record) => record.childId)).toEqual([
+      "live-running",
+    ]);
+    expect(host.notifyCalls.at(-1)?.message).toContain("1");
+  });
+
+  it("proves recover, workflow resume, and stale deferred actions are generation scoped", async () => {
+    const ordinary = eligibleOrdinaryRecoveryRecord({
+      childId: "ordinary-recover",
+    });
+    const workflow = eligibleOrdinaryRecoveryRecord({
+      childId: "workflow-resume",
+      kind: "workflow-step",
+      workflow: { workflow: "workflow", step: "step" },
+    });
+    const history = mutableChildHistoryStore([ordinary, workflow]);
+    const restores: string[] = [];
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    host.scriptSelect("Skip");
+    installRecoveryExtension(host, history.store, (input) => {
+      restores.push(input.record.childId);
+      return okAsync({ finalOutput: "restored", interventionCount: 0 });
+    });
+    await host.triggerSessionStart();
+    const recoverPick = host.deferNextSelect();
+    const recover = host.invokeCommand("weave:inspect");
+    await flushBackgroundWork();
+    const recoverLabel = host.selectCalls
+      .at(-1)
+      ?.options.filter((label) => label.includes("recover"))
+      .at(-1);
+    recoverPick.settle(recoverLabel);
+    await recover;
+    expect(restores).toEqual(["ordinary-recover"]);
+
+    const resumePick = host.deferNextSelect();
+    const resume = host.invokeCommand("weave:inspect");
+    await flushBackgroundWork();
+    const resumeLabel = host.selectCalls
+      .at(-1)
+      ?.options.filter((label) => label.includes("resume"))
+      .at(-1);
+    resumePick.settle(resumeLabel);
+    await resume;
+    expect(host.sentUserMessages).toHaveLength(0);
+    expect(host.generatedTurnCount).toBe(0);
+
+    const stalePick = host.deferNextSelect();
+    const stale = host.invokeCommand("weave:inspect");
+    await flushBackgroundWork();
+    await host.triggerSessionStart();
+    const staleLabel = host.selectCalls
+      .at(-2)
+      ?.options.find((label) => label.includes("workflow-resume"));
+    stalePick.settle(staleLabel);
+    await stale;
+    expect(restores).toEqual(["ordinary-recover"]);
+    expect(host.sentUserMessages).toHaveLength(0);
+    expect(
+      host.notifyCalls.filter((call) => call.message.includes("stale")),
+    ).toHaveLength(0);
+  });
+
+  it("proves the composed editor handles Alt+I and Alt+1 without global shortcut leakage", async () => {
+    const history = mutableChildHistoryStore([
+      eligibleOrdinaryRecoveryRecord({
+        childId: "live-child",
+        status: "running",
+      }),
+    ]);
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const priorFactory = (
+      tui: unknown,
+      theme: unknown,
+      keybindings: unknown,
+    ) => ({ tui, theme, keybindings, handleInput: () => undefined });
+    host.setEditorComponentForTest(priorFactory);
+    installRecoveryExtension(host, history.store, () =>
+      okAsync({ finalOutput: "restored", interventionCount: 0 }),
+    );
+    await host.triggerSessionStart();
+    const editor = host.createEditor({}, {}, {});
+    const picker = host.deferNextSelect();
+    await editor.handleInput("\u001bi");
+    expect(host.registerShortcutCalls.map((call) => call.shortcut)).toEqual([
+      "alt+a",
+    ]);
+    picker.settle(undefined);
+    await host.triggerSessionShutdown();
+    expect(host.getEditorComponentForTest()).toBe(priorFactory);
+    expect(
+      host.editorFactoryCalls.filter((factory) => factory === priorFactory),
+    ).toHaveLength(1);
+  });
+
+  it("registers twelve described commands once across extension reloads", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    installExtension(host);
+    installExtension(host);
+    expect(host.registerCommandCalls).toHaveLength(26);
+    const directNames = new Set(
+      host.registerCommandCalls
+        .map((call) => call.name)
+        .filter((name) => name !== "weave"),
+    );
+    expect(directNames.size).toBe(12);
+    expect(
+      host.registerCommandCalls.every(
+        (call) => (call.registration.description ?? "").trim().length > 0,
+      ),
+    ).toBe(true);
   });
 
   it("keeps persist_history=false write-free and never lets a fake host touch user data", async () => {

@@ -1,10 +1,11 @@
 import { describe, expect, it } from "bun:test";
 import { parseConfig, type WeaveConfig } from "@weaveio/weave-core";
-import { errAsync, ok, okAsync, ResultAsync } from "neverthrow";
+import { err, errAsync, ok, okAsync, ResultAsync } from "neverthrow";
 import { MAX_CWD_LENGTH } from "../child-control-bodies.js";
 import { WebCryptoHmacPort, WebCryptoRandomPort } from "../child-crypto.js";
 import { WEAVE_CHILD_ID_ENV, WEAVE_CHILD_SECRET_ENV } from "../child-env.js";
 import { signEnvelope } from "../child-envelope.js";
+import type { PiChildHistoryRecord } from "../child-history-schema.js";
 import { SystemTimerPort } from "../child-timer.js";
 import {
   type PiChildInspectionHistoryError,
@@ -180,6 +181,35 @@ async function respondHandshakeAndSettle(
   );
   process.emitLine(bootstrapAck._unsafeUnwrap());
   await flush();
+  await flush();
+  const request = process
+    .writtenLines()
+    .find(
+      (line): line is { type: string; id: string; command: string } =>
+        typeof line === "object" &&
+        line !== null &&
+        (line as { type?: unknown }).type === "get_entries",
+    );
+  if (request !== undefined) {
+    process.emitLine({
+      type: "response",
+      id: request.id,
+      command: "get_entries",
+      success: true,
+      data: { entries: [], leafId: "leaf-42" },
+    });
+    await flush();
+  }
+  if (outcome === "completed") {
+    process.emitLine({
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "ok" }],
+      },
+    });
+    await flush();
+  }
   const settled = await signEnvelope(
     {
       childId,
@@ -196,6 +226,45 @@ async function respondHandshakeAndSettle(
     },
     secret,
     hmacPort,
+  );
+  process.emitLine(settled._unsafeUnwrap());
+}
+
+async function settleRunningChild(
+  process: FakeSpawnedProcess,
+  port: FakeChildProcessPort,
+  generationId: string,
+  sequence: number,
+): Promise<void> {
+  const secret = extractSecret(process, port);
+  const childId = childIdOf(process, port);
+  process.emitLine({
+    type: "message_end",
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: "ok" }],
+    },
+  });
+  await flush();
+  const settled = await signEnvelope(
+    {
+      childId,
+      generationId,
+      direction: "child-to-parent",
+      sequence,
+      nonce: Buffer.from(new WebCryptoRandomPort().randomBytes(16)).toString(
+        "hex",
+      ),
+      correlationId: childId,
+      kind: "settled",
+      body: {
+        outcome: "completed",
+        assistantOutput: "ok",
+        outputByteLength: 2,
+      },
+    },
+    secret,
+    new WebCryptoHmacPort(),
   );
   process.emitLine(settled._unsafeUnwrap());
 }
@@ -253,15 +322,31 @@ async function sendChildToRunning(
   await flush();
 }
 
-function extractControlEnvelopeFromWritten(
+function controlEnvelopesFromWritten(
   process: FakeSpawnedProcess,
-): { kind: string; body: unknown } | undefined {
-  const lines = process.writtenLines() as Array<{ message?: string }>;
-  const last = lines.at(-1);
-  if (last?.message === undefined) return undefined;
+): Array<{ kind: string; body: unknown }> {
   const prefix = "/weave:__control__ ";
-  if (!last.message.startsWith(prefix)) return undefined;
-  return JSON.parse(last.message.slice(prefix.length));
+  return (process.writtenLines() as Array<{ message?: string }>)
+    .filter(
+      (line): line is { message: string } =>
+        typeof line.message === "string" && line.message.startsWith(prefix),
+    )
+    .map((line) => JSON.parse(line.message.slice(prefix.length)));
+}
+
+async function waitForDelegateResponses(
+  process: FakeSpawnedProcess,
+): Promise<Array<{ kind: string; body: unknown }>> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const responses = controlEnvelopesFromWritten(process).filter(
+      (envelope) => envelope.kind === "delegate-response",
+    );
+    if (responses.length > 0) return responses;
+    await flush();
+  }
+  return controlEnvelopesFromWritten(process).filter(
+    (envelope) => envelope.kind === "delegate-response",
+  );
 }
 
 const GENEROUS = limitsSource({
@@ -271,6 +356,105 @@ const GENEROUS = limitsSource({
   maxProcesses: 9,
 });
 const NO_AGENTS = `settings {\n  delegation {\n    max_children 9\n    max_concurrency 9\n    max_depth 3\n    max_processes 9\n  }\n}\n`;
+
+class DeterministicRandomPort {
+  private value = 0;
+  randomBytes(length: number): Uint8Array {
+    const bytes = new Uint8Array(length);
+    bytes.fill(this.value++ & 0xff);
+    return bytes;
+  }
+}
+
+function recoveryRecord(
+  overrides: Partial<PiChildHistoryRecord> = {},
+): PiChildHistoryRecord {
+  return {
+    childId: "recover-me",
+    parentSessionId: "parent",
+    kind: "ordinary",
+    status: "interrupted",
+    workflow: {},
+    descriptorName: "shuttle",
+    sessionPath: "children/recover-me/session.jsonl",
+    activeLeaf: "leaf-42",
+    checkpointCursor: 7,
+    branchAncestry: [],
+    interventionCount: 2,
+    finalOutput: "",
+    trim: { trimmed: false, markerCount: 0 },
+    quarantine: { quarantined: false },
+    clear: { cleared: false },
+    recovery: { eligible: true, count: 0 },
+    bytes: { session: 1, checkpoint: 1, total: 2 },
+    createdAt: 1,
+    updatedAt: 1,
+    ...overrides,
+  };
+}
+
+function instrumentedRegistry(
+  events: string[],
+  failures: Partial<
+    Record<"interrupted" | "terminal", PiChildInspectionHistoryError>
+  > = {},
+): PiChildInspectionRegistry {
+  const history: PiChildInspectionHistoryPort = {
+    interrupted: () => {
+      const failure = failures.interrupted;
+      return failure === undefined ? okAsync(undefined) : errAsync(failure);
+    },
+    terminal: () => {
+      const failure = failures.terminal;
+      return failure === undefined ? okAsync(undefined) : errAsync(failure);
+    },
+  };
+  const registry = new PiChildInspectionRegistry(history);
+  const originalInterrupted = registry.markInterrupted.bind(registry);
+  const originalTerminal = registry.retainTerminal.bind(registry);
+  registry.markInterrupted = (id) => {
+    events.push(`interrupted:${id}`);
+    return originalInterrupted(id);
+  };
+  registry.retainTerminal = (id, snapshot, output) => {
+    events.push(`terminal:${id}`);
+    return originalTerminal(id, snapshot, output);
+  };
+  return registry;
+}
+
+function recoveryController(
+  port: FakeChildProcessPort,
+  overrides: Partial<
+    ConstructorParameters<typeof PiDelegationController>[0]
+  > = {},
+): PiDelegationController {
+  return makeController(config(GENEROUS), port, {
+    randomPort: new DeterministicRandomPort(),
+    rootAgentName: () => "shuttle",
+    resolveRootDelegationTarget: () => ({ name: "shuttle" }) as never,
+    buildBootstrap: (_target, childId, context) =>
+      ({
+        mode: "ordinary",
+        agentName: "shuttle",
+        composedPrompt: "You are Shuttle.",
+        models: [],
+        correlationId: childId,
+        context: {
+          parentAgentName: context.parentAgentName,
+          parentDepth: context.parentDepth,
+          cwd: context.cwd,
+        },
+      }) as never,
+    pathContainment: {
+      verifyContainment: () => okAsync("/history/children/safe"),
+    },
+    historyRoot: () => "/history",
+    currentCwd: () => "/workspace/current",
+    currentEnv: () => ({ SAFE: "yes" }),
+    ...overrides,
+  });
+}
 
 describe("PiDelegationController", () => {
   it("authorizes and spawns immediately when under budget, resolving on settlement", async () => {
@@ -285,7 +469,7 @@ describe("PiDelegationController", () => {
     expect(result.isOk()).toBe(true);
     expect(result._unsafeUnwrap()).toEqual({
       outcome: "completed",
-      summary: "ok",
+      assistantOutput: "ok",
       outputByteLength: 2,
       interventionCount: 0,
     });
@@ -771,7 +955,7 @@ describe("PiDelegationController", () => {
     const settlement = await settlementPromise;
     expect(settlement._unsafeUnwrap()).toEqual({
       outcome: "completed",
-      summary: "ok",
+      assistantOutput: "ok",
       outputByteLength: 2,
       interventionCount: 0,
     });
@@ -850,7 +1034,7 @@ describe("PiDelegationController", () => {
         nonce: Buffer.from(randomPort.randomBytes(16)).toString("hex"),
         correlationId: firstChildId,
         kind: "settled",
-        body: { outcome: "completed", summary: "parent done" },
+        body: { outcome: "completed", assistantOutput: "parent done" },
       },
       secret,
       hmacPort,
@@ -913,11 +1097,11 @@ describe("PiDelegationController", () => {
     await flush();
 
     expect(port.spawnedProcesses.length).toBe(1);
-    const envelope = extractControlEnvelopeFromWritten(first);
+    const responses = await waitForDelegateResponses(first);
+    expect(responses).toHaveLength(1);
+    const envelope = responses[0];
     expect(envelope?.kind).toBe("delegate-response");
-    expect(
-      (envelope?.body as { ok: boolean; error?: string } | undefined)?.ok,
-    ).toBe(false);
+    expect((envelope?.body as { ok: boolean; error?: string }).ok).toBe(false);
     controller.disposeAll();
   });
 
@@ -1305,6 +1489,506 @@ describe("PiDelegationController", () => {
     await respondHandshakeAndSettle(spawnedAt(port, 1), port, "gen-1");
     const secondResult = await secondPromise;
     expect(secondResult.isOk()).toBe(true);
+    controller.disposeAll();
+  });
+
+  it("restores a real child with the verified session, leaf, cursor, and fixed continuation", async () => {
+    const port = new FakeChildProcessPort();
+    const controller = recoveryController(port);
+    const promise = controller.restoreOrdinaryChild({
+      generationId: "gen-1",
+      descriptor: { name: "shuttle" },
+      continuation: "Continue safely.",
+      record: recoveryRecord(),
+    });
+    await flush();
+    expect(port.spawnInputs[0]).toMatchObject({
+      cwd: "/workspace/current",
+      env: { SAFE: "yes" },
+      command: [
+        "pi",
+        "--mode",
+        "rpc",
+        "--session-dir",
+        "/history/children/safe",
+        "--session",
+        "/history/children/safe/session.jsonl",
+      ],
+    });
+    expect(port.spawnInputs[0]?.env[WEAVE_CHILD_ID_ENV]).toBe("recover-me");
+    expect(port.spawnInputs[0]?.env.WEAVE_CHILD_DEPTH).toBe("1");
+    expect(port.spawnInputs[0]?.env.WEAVE_CHILD_PARENT_ID).toBe("root");
+    expect(port.spawnInputs[0]?.env.WEAVE_CONTROLLER_GENERATION).toBe("gen-1");
+    expect(JSON.stringify(port.spawnInputs[0])).not.toContain(
+      "old task canary",
+    );
+    expect(port.spawnInputs[0]?.command.at(-1)).toBe(
+      "/history/children/safe/session.jsonl",
+    );
+    await respondHandshakeAndSettle(spawnedAt(port, 0), port, "gen-1");
+    const result = await promise;
+    expect(result._unsafeUnwrap()).toEqual({
+      finalOutput: "ok",
+      interventionCount: 0,
+    });
+    expect(spawnedAt(port, 0).killed).toBe(true);
+    controller.disposeAll();
+  });
+
+  it("generates fresh recovery authority and never reuses the stored authority", async () => {
+    const port = new FakeChildProcessPort();
+    const controller = recoveryController(port);
+    const first = controller.restoreOrdinaryChild({
+      generationId: "gen-1",
+      descriptor: { name: "shuttle" },
+      continuation: "one",
+      record: recoveryRecord(),
+    });
+    await flush();
+    const firstSecret = port.spawnInputs[0]?.env[WEAVE_CHILD_SECRET_ENV];
+    await respondHandshakeAndSettle(spawnedAt(port, 0), port, "gen-1");
+    await first;
+    const second = controller.restoreOrdinaryChild({
+      generationId: "gen-1",
+      descriptor: { name: "shuttle" },
+      continuation: "two",
+      record: recoveryRecord(),
+    });
+    await flush();
+    const secondSecret = port.spawnInputs[1]?.env[WEAVE_CHILD_SECRET_ENV];
+    expect(firstSecret).toMatch(/^[0-9a-f]{64}$/);
+    expect(secondSecret).toMatch(/^[0-9a-f]{64}$/);
+    expect(secondSecret).not.toBe(firstSecret);
+    await respondHandshakeAndSettle(spawnedAt(port, 1), port, "gen-1");
+    expect((await second).isOk()).toBe(true);
+    controller.disposeAll();
+  });
+
+  it("rejects every invalid restore before process spawn and bounds its error", async () => {
+    const port = new FakeChildProcessPort();
+    const containment = {
+      verifyContainment: () => errAsync("path-component-missing" as const),
+    };
+    const controller = recoveryController(port, {
+      pathContainment: containment,
+    });
+    const cases = [
+      { generationId: "old", record: recoveryRecord() },
+      {
+        generationId: "gen-1",
+        record: recoveryRecord({ parentChildId: "nested" }),
+      },
+      {
+        generationId: "gen-1",
+        record: recoveryRecord({
+          sessionPath: "../old-task-canary/session.jsonl",
+        }),
+      },
+      {
+        generationId: "gen-1",
+        record: recoveryRecord({ sessionPath: "children/x/wrong.jsonl" }),
+      },
+      {
+        generationId: "gen-1",
+        record: recoveryRecord({ activeLeaf: undefined }),
+      },
+      { generationId: "gen-1", record: recoveryRecord({ status: "settled" }) },
+    ];
+    for (const item of cases) {
+      const result = await controller.restoreOrdinaryChild({
+        generationId: item.generationId,
+        descriptor: { name: "shuttle" },
+        continuation: "task-canary",
+        record: item.record,
+      });
+      expect(result.isErr()).toBe(true);
+      expect(JSON.stringify(result._unsafeUnwrapErr())).not.toContain("canary");
+    }
+    expect(port.spawnedProcesses).toHaveLength(0);
+    controller.disposeAll();
+  });
+
+  it("releases reservation after bootstrap failure, allowing the next restore", async () => {
+    const port = new FakeChildProcessPort();
+    const controller = recoveryController(port, {
+      buildBootstrap: () => {
+        throw new Error("raw canary");
+      },
+    });
+    const failed = await controller.restoreOrdinaryChild({
+      generationId: "gen-1",
+      descriptor: { name: "shuttle" },
+      continuation: "one",
+      record: recoveryRecord(),
+    });
+    expect(failed.isErr()).toBe(true);
+    expect(JSON.stringify(failed._unsafeUnwrapErr())).not.toContain("canary");
+    expect(port.spawnedProcesses).toHaveLength(0);
+    const next = recoveryController(port);
+    const promise = next.restoreOrdinaryChild({
+      generationId: "gen-1",
+      descriptor: { name: "shuttle" },
+      continuation: "two",
+      record: recoveryRecord(),
+    });
+    await flush();
+    expect(port.spawnedProcesses).toHaveLength(1);
+    await respondHandshakeAndSettle(spawnedAt(port, 0), port, "gen-1");
+    expect((await promise).isOk()).toBe(true);
+    next.disposeAll();
+  });
+
+  it("persists interruption before disposing on handshake/run failure and releases capacity", async () => {
+    const port = new FakeChildProcessPort();
+    const controller = recoveryController(port);
+    const promise = controller.restoreOrdinaryChild({
+      generationId: "gen-1",
+      descriptor: { name: "shuttle" },
+      continuation: "one",
+      record: recoveryRecord(),
+    });
+    await flush();
+    const child = spawnedAt(port, 0);
+    child.endStdout();
+    const result = await promise;
+    expect(result.isErr()).toBe(true);
+    expect(child.killed).toBe(true);
+    expect(port.spawnedProcesses).toHaveLength(1);
+    controller.disposeAll();
+  });
+
+  it("attachment failure erases its reservation and a later restore uses capacity", async () => {
+    const port = new FakeChildProcessPort();
+    const registry = instrumentedRegistry([]);
+    await registry.attachRecovered({
+      id: "recover-me",
+      parentId: "root",
+      name: "shuttle",
+      kind: "ordinary",
+      snapshot: () =>
+        ({
+          id: "recover-me",
+          parentId: undefined,
+          name: "shuttle",
+          status: "running",
+          currentTurn: 0,
+          currentTool: undefined,
+          startedAtMs: 1,
+          elapsedMs: 0,
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 },
+          latestOutput: "",
+        }) as never,
+    });
+    const controller = recoveryController(port, {
+      config: config(
+        limitsSource({
+          maxChildren: 1,
+          maxConcurrency: 1,
+          maxDepth: 3,
+          maxProcesses: 1,
+        }),
+      ),
+      inspectionRegistry: registry,
+    });
+    const failed = await controller.restoreOrdinaryChild({
+      generationId: "gen-1",
+      descriptor: { name: "shuttle" },
+      continuation: "one",
+      record: recoveryRecord(),
+    });
+    expect(failed.isErr()).toBe(true);
+    expect(port.spawnedProcesses).toHaveLength(0);
+    const next = controller.restoreOrdinaryChild({
+      generationId: "gen-1",
+      descriptor: { name: "shuttle" },
+      continuation: "two",
+      record: recoveryRecord({
+        childId: "recover-next",
+        sessionPath: "children/recover-next/session.jsonl",
+      }),
+    });
+    await flush();
+    expect(port.spawnedProcesses).toHaveLength(1);
+    await respondHandshakeAndSettle(spawnedAt(port, 0), port, "gen-1");
+    expect(
+      (
+        await next.match(
+          (value) => ok(value),
+          (error) => err(error),
+        )
+      ).isOk(),
+    ).toBe(true);
+    controller.disposeAll();
+  });
+
+  it("cancelled and failed settlements persist interruption before disposal and release capacity", async () => {
+    for (const outcome of ["cancelled", "failed"] as const) {
+      const events: string[] = [];
+      const port = new FakeChildProcessPort();
+      const registry = instrumentedRegistry(events);
+      const controller = recoveryController(port, {
+        config: config(
+          limitsSource({
+            maxChildren: 1,
+            maxConcurrency: 1,
+            maxDepth: 3,
+            maxProcesses: 1,
+          }),
+        ),
+        inspectionRegistry: registry,
+      });
+      const promise = controller.restoreOrdinaryChild({
+        generationId: "gen-1",
+        descriptor: { name: "shuttle" },
+        continuation: outcome,
+        record: recoveryRecord(),
+      });
+      await flush();
+      const child = spawnedAt(port, 0);
+      const originalKill = child.kill.bind(child);
+      const originalForceKill = child.forceKill.bind(child);
+      child.kill = () => {
+        events.push("disposed");
+        originalKill();
+      };
+      child.forceKill = () => {
+        events.push("disposed");
+        originalForceKill();
+      };
+      if (outcome === "cancelled") {
+        const cancellation = await controller.cancelSubtree("recover-me").match(
+          (value) => ok(value),
+          (error) => err(error),
+        );
+        expect(cancellation.isOk()).toBe(true);
+      } else {
+        await respondHandshakeAndSettle(child, port, "gen-1", "failed");
+      }
+      const result = await promise.match(
+        (value) => ok(value),
+        (error) => err(error),
+      );
+      expect(result.isErr()).toBe(true);
+      expect(events).toContain("interrupted:recover-me");
+      expect(events).toContain("disposed");
+      expect(child.killed).toBe(true);
+      expect(controller.snapshotTree()).toHaveLength(0);
+      controller.disposeAll();
+    }
+  });
+
+  it("successful restore persists terminal history before disposal and retains it", async () => {
+    const events: string[] = [];
+    const port = new FakeChildProcessPort();
+    const registry = instrumentedRegistry(events);
+    const controller = recoveryController(port, {
+      inspectionRegistry: registry,
+    });
+    const promise = controller.restoreOrdinaryChild({
+      generationId: "gen-1",
+      descriptor: { name: "shuttle" },
+      continuation: "fixed",
+      record: recoveryRecord(),
+    });
+    await flush();
+    const child = spawnedAt(port, 0);
+    const originalKill = child.kill.bind(child);
+    const originalForceKill = child.forceKill.bind(child);
+    child.kill = () => {
+      events.push("disposed");
+      originalKill();
+    };
+    child.forceKill = () => {
+      events.push("disposed");
+      originalForceKill();
+    };
+    await respondHandshakeAndSettle(child, port, "gen-1");
+    expect(
+      (
+        await promise.match(
+          (value) => ok(value),
+          (error) => err(error),
+        )
+      ).isOk(),
+    ).toBe(true);
+    expect(events).toContain("terminal:recover-me");
+    expect(events).toContain("disposed");
+    expect(controller.snapshotTree()).toHaveLength(0);
+    expect(registry.snapshotHistory()).toHaveLength(1);
+    controller.disposeAll();
+  });
+
+  it("recovered running children route authenticated nested delegation through the shared budget", async () => {
+    const port = new FakeChildProcessPort();
+    const controller = recoveryController(port, {
+      config: config(
+        limitsSource({
+          maxChildren: 2,
+          maxConcurrency: 2,
+          maxDepth: 3,
+          maxProcesses: 3,
+        }),
+      ),
+      resolveDelegationTarget: () => ({
+        name: "shuttle",
+        triggers: [],
+        isCategory: false,
+      }),
+    });
+    const restore = controller.restoreOrdinaryChild({
+      generationId: "gen-1",
+      descriptor: { name: "shuttle" },
+      continuation: "fixed",
+      record: recoveryRecord(),
+    });
+    await flush();
+    const parent = spawnedAt(port, 0);
+    await sendChildToRunning(parent, port, "gen-1");
+    const entriesRequest = parent
+      .writtenLines()
+      .find(
+        (line): line is { type: string; id: string } =>
+          typeof line === "object" &&
+          line !== null &&
+          (line as { type?: unknown }).type === "get_entries" &&
+          typeof (line as { id?: unknown }).id === "string",
+      );
+    if (entriesRequest !== undefined) {
+      parent.emitLine({
+        type: "response",
+        id: entriesRequest.id,
+        command: "get_entries",
+        success: true,
+        data: { entries: [], leafId: "leaf-42" },
+      });
+      await flush();
+    }
+    const secret = extractSecret(parent, port);
+    const childId = childIdOf(parent, port);
+    const nested = await signEnvelope(
+      {
+        childId,
+        generationId: "gen-1",
+        direction: "child-to-parent",
+        sequence: 3,
+        nonce: Buffer.from(new WebCryptoRandomPort().randomBytes(16)).toString(
+          "hex",
+        ),
+        correlationId: "nested-correlation",
+        kind: "delegate-request",
+        body: { agentName: "shuttle", task: "nested" },
+      },
+      secret,
+      new WebCryptoHmacPort(),
+    );
+    parent.emitLine(nested._unsafeUnwrap());
+    await flush();
+    await flush();
+    await flush();
+    expect(port.spawnedProcesses).toHaveLength(2);
+    const grandchild = spawnedAt(port, 1);
+    await respondHandshakeAndSettle(grandchild, port, "gen-1");
+    await flush();
+    const response = parent
+      .writtenLines()
+      .map((line) => {
+        if (typeof line !== "object" || line === null) return undefined;
+        const message = (line as { message?: unknown }).message;
+        const prefix = "/weave:__control__ ";
+        if (typeof message !== "string" || !message.startsWith(prefix))
+          return undefined;
+        return JSON.parse(message.slice(prefix.length)) as {
+          kind: string;
+          correlationId?: string;
+          body: unknown;
+        };
+      })
+      .reverse()
+      .find((envelope) => envelope?.kind === "delegate-response");
+    expect(response).toBeDefined();
+    expect(response?.kind).toBe("delegate-response");
+    expect(response?.correlationId).toBe("nested-correlation");
+    await settleRunningChild(parent, port, "gen-1", 4);
+    expect(
+      (
+        await restore.match(
+          (value) => ok(value),
+          (error) => err(error),
+        )
+      ).isOk(),
+    ).toBe(true);
+    await flush();
+    await flush();
+    await flush();
+    expect(controller.snapshotTree()).toHaveLength(1);
+    controller.disposeAll();
+  });
+
+  it("cleanup survives bounded terminal and interruption persistence failures", async () => {
+    for (const operation of ["terminal", "interrupted"] as const) {
+      const events: string[] = [];
+      const port = new FakeChildProcessPort();
+      const registry = instrumentedRegistry(events, {
+        [operation]: {
+          kind: "history-write-failed",
+          operation,
+          reason: "quota",
+        },
+      });
+      const controller = recoveryController(port, {
+        inspectionRegistry: registry,
+      });
+      const promise = controller.restoreOrdinaryChild({
+        generationId: "gen-1",
+        descriptor: { name: "shuttle" },
+        continuation: operation,
+        record: recoveryRecord(),
+      });
+      await flush();
+      const child = spawnedAt(port, 0);
+      const originalKill = child.kill.bind(child);
+      const originalForceKill = child.forceKill.bind(child);
+      child.kill = () => {
+        events.push("disposed");
+        originalKill();
+      };
+      child.forceKill = () => {
+        events.push("disposed");
+        originalForceKill();
+      };
+      if (operation === "terminal")
+        await respondHandshakeAndSettle(child, port, "gen-1");
+      else child.endStdout();
+      const result = await promise.match(
+        (value) => ok(value),
+        (error) => err(error),
+      );
+      expect(result.isErr()).toBe(true);
+      expect(events).toContain("disposed");
+      expect(events.indexOf("disposed")).toBeGreaterThanOrEqual(0);
+      expect(child.killed).toBe(true);
+      controller.disposeAll();
+    }
+  });
+
+  it("retains terminal persistence before disposal and releases the recovered child", async () => {
+    const port = new FakeChildProcessPort();
+    const controller = recoveryController(port);
+    const promise = controller.restoreOrdinaryChild({
+      generationId: "gen-1",
+      descriptor: { name: "shuttle" },
+      continuation: "fixed",
+      record: recoveryRecord(),
+    });
+    await flush();
+    await respondHandshakeAndSettle(spawnedAt(port, 0), port, "gen-1");
+    const result = await promise;
+    expect(result._unsafeUnwrap()).toMatchObject({
+      finalOutput: "ok",
+      interventionCount: 0,
+    });
+    expect(spawnedAt(port, 0).killed).toBe(true);
+    expect(controller.snapshotTree()).toHaveLength(0);
     controller.disposeAll();
   });
 });

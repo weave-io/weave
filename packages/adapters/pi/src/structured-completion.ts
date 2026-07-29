@@ -251,16 +251,41 @@ export function parseStructuredCompletionCandidate(
 }
 
 /**
- * Serializes a validated candidate back to a bounded JSON string (used as
- * the reusable `PiChildSettlement.summary` payload when a direct-step child
- * settles - Pi adapter contract: direct dispatch reuses the private child
+ * Serializes a validated candidate back to a bounded JSON string for the
+ * direct-step completion authority. Direct dispatch reuses the private child
  * transport, but its completion semantics are distinct from ordinary
- * delegation's free-text summary).
+ * delegation's free-text output.
  */
-export function serializeCompletionCandidate(
-  candidate: Record<string, unknown>,
-): string {
-  return JSON.stringify(candidate);
+export function serializeCompletionCandidate(candidate: object): string {
+  // Re-project the already validated signal before crossing the settlement
+  // boundary. This is deliberate defense in depth: a caller cannot smuggle
+  // transcript, intervention, thinking, tool, or UI fields into the only
+  // completion-authority payload by passing an object with extra properties.
+  const signal = candidate as Partial<StepCompletionSignal>;
+  const bounded: Partial<StepCompletionSignal> = {
+    ...(signal.outcome !== undefined ? { outcome: signal.outcome } : {}),
+    ...(signal.method !== undefined ? { method: signal.method } : {}),
+    ...(signal.approved !== undefined ? { approved: signal.approved } : {}),
+    ...(signal.message !== undefined ? { message: signal.message } : {}),
+    ...(signal.nextStepHint !== undefined
+      ? { nextStepHint: signal.nextStepHint }
+      : {}),
+    ...(signal.artifacts !== undefined
+      ? {
+          artifacts: signal.artifacts.map((artifact) => ({
+            name: artifact.name,
+            path: artifact.path,
+            ...(artifact.mimeType !== undefined
+              ? { mimeType: artifact.mimeType }
+              : {}),
+            ...(artifact.description !== undefined
+              ? { description: artifact.description }
+              : {}),
+          })),
+        }
+      : {}),
+  };
+  return JSON.stringify(bounded);
 }
 
 /**
@@ -280,10 +305,10 @@ export function tryParseCompletionCandidateJson(raw: string): unknown {
 
 /** One-shot recorder used by the child-side tool registration: records exactly one candidate, rejects a second as a typed duplicate. */
 export class SingleCompletionCandidateRecorder {
-  private candidate: Record<string, unknown> | undefined;
+  private candidate: StepCompletionSignal | undefined;
   private duplicateAttempted = false;
 
-  record(input: Record<string, unknown>): Result<void, "duplicate"> {
+  record(input: StepCompletionSignal): Result<void, "duplicate"> {
     if (this.candidate !== undefined) {
       this.duplicateAttempted = true;
       return err("duplicate");
@@ -292,7 +317,7 @@ export class SingleCompletionCandidateRecorder {
     return ok(undefined);
   }
 
-  take(): Record<string, unknown> | undefined {
+  take(): StepCompletionSignal | undefined {
     return this.candidate;
   }
 
@@ -385,9 +410,7 @@ export function recordCompletionAttempt(
   if (parsed.isErr()) {
     return { outcome: "malformed", malformedReason: parsed.error.safeMessage };
   }
-  const recorded = recorder.record(
-    parsed.value as unknown as Record<string, unknown>,
-  );
+  const recorded = recorder.record(parsed.value);
   return recorded.isErr() ? { outcome: "duplicate" } : { outcome: "recorded" };
 }
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
   activeInstanceFromRecoveryPointer,
+  createWorkflowAttemptLinkage,
   InMemoryRecoveryPointerStore,
   isPointerEligibleForExplicitResume,
   isPointerForCurrentGeneration,
@@ -95,6 +96,15 @@ describe("isPointerEligibleForExplicitResume", () => {
     expect(isPointerEligibleForExplicitResume(pointer.value)).toBe(false);
   });
 
+  it("rejects untrusted and quarantined pointers", () => {
+    for (const marker of [{ trusted: false }, { quarantined: true }]) {
+      const pointer = parseRecoveryPointer({ ...VALID_POINTER, ...marker });
+      if (!pointer.isOk()) throw new Error("fixture invalid");
+      expect(isPointerEligibleForExplicitResume(pointer.value)).toBe(false);
+      expect(activeInstanceFromRecoveryPointer(pointer.value)).toBeUndefined();
+    }
+  });
+
   it("returns false for a terminal pointer from a prior generation", () => {
     const pointer = parseRecoveryPointer({
       ...VALID_POINTER,
@@ -104,6 +114,21 @@ describe("isPointerEligibleForExplicitResume", () => {
     if (!pointer.isOk()) throw new Error("fixture invalid");
     // Terminal pointers always fail closed, regardless of generation
     expect(isPointerEligibleForExplicitResume(pointer.value)).toBe(false);
+  });
+});
+
+describe("workflow attempt linkage", () => {
+  it("contains only bounded old/new attempt identifiers", () => {
+    const linkage = createWorkflowAttemptLinkage(
+      "old-attempt",
+      "00000000-0000-4000-8000-000000000002",
+    );
+    expect(linkage.isOk()).toBe(true);
+    expect(linkage._unsafeUnwrap()).toEqual({
+      attemptId: "00000000-0000-4000-8000-000000000002",
+      previousAttemptId: "old-attempt",
+    });
+    expect(JSON.stringify(linkage._unsafeUnwrap())).not.toContain("transcript");
   });
 });
 

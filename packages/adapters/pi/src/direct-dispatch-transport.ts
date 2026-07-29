@@ -108,8 +108,8 @@ export class PiDirectStepChildRegistry {
  * field is what tells the child-side extension instance
  * (`activateChildModeIfApplicable`) to register the
  * `weave_complete_step` tool and report its recorded structured
- * candidate as the settlement summary, instead of the ordinary-delegation
- * free-text summary path.
+ * candidate as the structured completionCandidate, instead of the
+ * ordinary-delegation free-text output path.
  */
 export interface PiDirectStepBootstrap {
   readonly mode: "direct-step";
@@ -299,7 +299,7 @@ export function createDirectDispatchTransport(
           const outcome = await execution;
           const finalOutput =
             outcome.isOk() && outcome.value.outcome === "completed"
-              ? outcome.value.summary
+              ? outcome.value.assistantOutput
               : undefined;
           const persisted =
             deps.inspectionRegistry === undefined
@@ -335,8 +335,8 @@ export function createDirectDispatchTransport(
           if (outcome.value.outcome === "completed")
             return ok<DirectDispatchSettlement, PiAdapterFailure>({
               outcome: "completed",
-              summary: outcome.value.summary,
               completionCandidate: outcome.value.completionCandidate,
+              interventionCount: outcome.value.interventionCount ?? 0,
             });
           return ok<DirectDispatchSettlement, PiAdapterFailure>({
             outcome: "failed",

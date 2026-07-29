@@ -13,6 +13,11 @@ import {
 import { ADAPTER_PACKAGE_IDENTITY, WEAVE_COMMAND_NAMES } from "../commands.js";
 import { PiConfigActivator } from "../config-activator.js";
 import { HOST_PACKAGE_NAME } from "../host-compatibility.js";
+import {
+  PI_HOST_COMPATIBILITY_MATRIX,
+  PI_HOST_SURFACE_IDS,
+} from "../host-compatibility-matrix.js";
+import { readHostSurfaceReport } from "../host-inventory.js";
 import { PiSafeInitializer } from "../safe-initializer.js";
 import type { PiCommandInfo } from "../types.js";
 import { FakeHostPackageReader } from "./fakes/fake-host-package-reader.js";
@@ -53,7 +58,69 @@ function sessionOf(mode: "tui" | "rpc" | "json" | "print", trusted: boolean) {
   };
 }
 
+function readyHostSurfaceReport() {
+  return readHostSurfaceReport(
+    PI_HOST_SURFACE_IDS.map((surfaceId) => ({
+      surfaceId,
+      status: PI_HOST_COMPATIBILITY_MATRIX.surfaces.find(
+        (surface) => surface.id === surfaceId,
+      )?.required
+        ? ("native" as const)
+        : ("fallback" as const),
+      details: "fixture",
+    })),
+  );
+}
+
+function initializerWith(prober: PiCapabilityProbeSource) {
+  return new PiSafeInitializer({
+    hostPackageReader: FakeHostPackageReader.ok({
+      name: HOST_PACKAGE_NAME,
+      version: "0.81.1",
+    }),
+    capabilityProber: prober,
+    configActivator: fakeConfigActivator(),
+  });
+}
+
 describe("PiSafeInitializer.preflight", () => {
+  it("keeps the ready fixture ready with fallback rendering and preserves exact immutable host and engine inventories", async () => {
+    const initializer = initializerWith(new FixedProber(allOkProbes()));
+    const hostSurface = readyHostSurfaceReport();
+    const result = await initializer.preflight(
+      sessionOf("tui", true),
+      ALL_OWNED_COMMANDS,
+      hostSurface,
+    );
+    const preflight = result._unsafeUnwrap();
+
+    expect(preflight.healthOnlyMode).toBe(false);
+    expect(
+      preflight.healthReport.probeResults.map((probe) => probe.capabilityId),
+    ).toEqual([...ALL_CAPABILITY_IDS]);
+    expect(preflight.healthReport.probeResults).toHaveLength(
+      ALL_CAPABILITY_IDS.length,
+    );
+    expect(preflight.hostSurface).toBe(hostSurface);
+    expect(hostSurface.probes.map((probe) => probe.surfaceId)).toEqual([
+      ...PI_HOST_SURFACE_IDS,
+    ]);
+    expect(hostSurface.probes).toHaveLength(13);
+    expect(
+      hostSurface.probes
+        .slice(0, 7)
+        .every((probe) => probe.status === "fallback"),
+    ).toBe(true);
+    expect(
+      hostSurface.probes.slice(7).every((probe) => probe.status === "native"),
+    ).toBe(true);
+    expect(Object.isFrozen(hostSurface)).toBe(true);
+    expect(Object.isFrozen(hostSurface.probes)).toBe(true);
+    expect(hostSurface.probes.every((probe) => Object.isFrozen(probe))).toBe(
+      true,
+    );
+  });
+
   it("reaches a ready (non-health-only) state when every probe is ok, mode is tui, host is compatible", async () => {
     const initializer = new PiSafeInitializer({
       hostPackageReader: FakeHostPackageReader.ok({
@@ -82,23 +149,20 @@ describe("PiSafeInitializer.preflight", () => {
         version: "0.81.1",
       }),
       capabilityProber: new FixedProber(allOkProbes()),
-      configActivator: fakeConfigActivator(
-        { agents: [], errors: [] },
-        {
-          agents: {},
-          disabled: { agents: [], skills: [] },
-          settings: {
-            adapters: {
-              pi: {
-                child_inspection: {
-                  max_bytes_per_child: 65_535,
-                  max_bytes_total: 1_048_576,
-                },
+      configActivator: fakeConfigActivator({ agents: [], errors: [] }, {
+        agents: {},
+        disabled: { agents: [], skills: [] },
+        settings: {
+          adapters: {
+            pi: {
+              child_inspection: {
+                max_bytes_per_child: 65_535,
+                max_bytes_total: 1_048_576,
               },
             },
           },
-        } as never,
-      ),
+        },
+      } as never),
       chooseInvalidChildInspectionSettings: () => okAsync("defaults" as const),
     });
 
@@ -123,18 +187,15 @@ describe("PiSafeInitializer.preflight", () => {
         version: "0.81.1",
       }),
       capabilityProber: new FixedProber(allOkProbes()),
-      configActivator: fakeConfigActivator(
-        { agents: [], errors: [] },
-        {
-          agents: {},
-          disabled: { agents: [], skills: [] },
-          settings: {
-            adapters: {
-              pi: { child_inspection: { max_bytes_total: 0 } },
-            },
+      configActivator: fakeConfigActivator({ agents: [], errors: [] }, {
+        agents: {},
+        disabled: { agents: [], skills: [] },
+        settings: {
+          adapters: {
+            pi: { child_inspection: { max_bytes_total: 0 } },
           },
-        } as never,
-      ),
+        },
+      } as never),
       chooseInvalidChildInspectionSettings: () =>
         okAsync("health-only" as const),
     });
@@ -359,6 +420,70 @@ describe("PiSafeInitializer.preflight", () => {
     const preflight = result._unsafeUnwrap();
     expect(preflight.healthReport.effectiveCapabilities).toHaveLength(20);
     expect(preflight.healthOnlyMode).toBe(true);
+  });
+
+  it("makes every required host surface gap health-only and keeps delegated execution unavailable", async () => {
+    for (const requiredSurface of PI_HOST_COMPATIBILITY_MATRIX.surfaces.filter(
+      (surface) => surface.required,
+    )) {
+      const hostSurface = readHostSurfaceReport(
+        PI_HOST_SURFACE_IDS.map((surfaceId) => ({
+          surfaceId,
+          status: "native" as const,
+          details: "fixture",
+        })).filter((row) => row.surfaceId !== requiredSurface.id),
+      );
+      const preflight = (
+        await initializerWith(new FixedProber(allOkProbes())).preflight(
+          sessionOf("tui", true),
+          ALL_OWNED_COMMANDS,
+          hostSurface,
+        )
+      )._unsafeUnwrap();
+
+      expect(preflight.healthOnlyMode).toBe(true);
+      expect(preflight.hostSurface.requiredGaps).toEqual([requiredSurface.id]);
+      // Even an adversarial all-ok engine prober cannot promote delegated
+      // execution: the required host gap keeps the complete preflight blocked.
+      expect(preflight.healthOnlyMode).toBe(true);
+    }
+  });
+
+  it("normalizes missing and malformed reports to exact rows, while only required gaps force health-only", async () => {
+    const malformed = readHostSurfaceReport([
+      { surfaceId: "assistant-rendering", status: "bad" },
+      { surfaceId: "rpc-steer", status: "bad" },
+      { surfaceId: "unknown", status: "native" },
+    ] as never);
+    expect(malformed.probes.map((probe) => probe.surfaceId)).toEqual([
+      ...PI_HOST_SURFACE_IDS,
+    ]);
+    expect(malformed.probes).toHaveLength(13);
+    expect(malformed.requiredGaps).toEqual(
+      PI_HOST_COMPATIBILITY_MATRIX.surfaces
+        .filter((surface) => surface.required)
+        .map((surface) => surface.id),
+    );
+
+    const renderingOnly = readHostSurfaceReport(
+      PI_HOST_SURFACE_IDS.map((surfaceId) => ({
+        surfaceId,
+        status: PI_HOST_COMPATIBILITY_MATRIX.surfaces.find(
+          (surface) => surface.id === surfaceId,
+        )?.required
+          ? ("native" as const)
+          : ("fallback" as const),
+      })),
+    );
+    expect(renderingOnly.requiredGaps).toEqual([]);
+    const preflight = (
+      await initializerWith(new FixedProber(allOkProbes())).preflight(
+        sessionOf("tui", true),
+        ALL_OWNED_COMMANDS,
+        renderingOnly,
+      )
+    )._unsafeUnwrap();
+    expect(preflight.healthOnlyMode).toBe(false);
   });
 
   it("enters health-only mode when a required capability is degraded or unsupported", async () => {

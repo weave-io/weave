@@ -1,5 +1,5 @@
-import type { MaterializationPlan } from "@weaveio/weave-engine";
 import type { WeaveConfig } from "@weaveio/weave-core";
+import type { MaterializationPlan } from "@weaveio/weave-engine";
 import { okAsync } from "neverthrow";
 import { ADAPTER_PACKAGE_IDENTITY } from "../../commands.js";
 import type {
@@ -72,6 +72,20 @@ export interface RecordedConfirmCall {
   readonly opts: PiUiDialogOptions | undefined;
 }
 
+export interface RecordedSendMessage {
+  readonly message: {
+    readonly customType: string;
+    readonly content: string;
+    readonly display?: boolean;
+  };
+  readonly options:
+    | {
+        readonly triggerTurn?: boolean;
+        readonly deliverAs?: "steer" | "followUp" | "nextTurn";
+      }
+    | undefined;
+}
+
 export interface FakePiHostOptions {
   readonly mode?: PiMode;
   readonly trusted?: boolean;
@@ -122,6 +136,12 @@ export class RecordingFakePiHost {
     readonly content: string;
     readonly options?: { readonly deliverAs?: "steer" | "followUp" };
   }[] = [];
+  readonly sendMessageCalls: RecordedSendMessage[] = [];
+  generatedTurnCount = 0;
+  readonly transcriptCalls: unknown[] = [];
+  readonly interventionCalls: unknown[] = [];
+  readonly editorFactoryCalls: unknown[] = [];
+  private editorFactory: unknown;
 
   private mode: PiMode;
   private trusted: boolean;
@@ -130,7 +150,12 @@ export class RecordingFakePiHost {
   private readonly cwd: string;
   private readonly installPath: string;
   private commandsInventory: PiCommandInfo[] = [];
-  private selectResponses: (string | undefined)[] = [];
+  private selectResponses: (
+    | string
+    | undefined
+    | Promise<string | undefined>
+  )[] = [];
+  private notifyFailure: Error | undefined;
   private confirmResponses: (boolean | Promise<boolean>)[] = [];
   private currentModel: PiModelInfo | undefined;
   private availableModels: readonly PiModelInfo[];
@@ -141,7 +166,7 @@ export class RecordingFakePiHost {
     | ((model: PiModelInfo) => boolean | Promise<boolean>)
     | undefined;
   private setThinkingLevelOverride:
-    | ((level: string) => void | undefined | Promise<void | undefined>)
+    | ((level: string) => void | Promise<void>)
     | undefined;
   private thinkingLevel = "off";
   private registerToolOverride:
@@ -149,6 +174,12 @@ export class RecordingFakePiHost {
     | undefined;
   private getAvailableModelsOverride:
     | (() => readonly PiModelInfo[])
+    | undefined;
+  private sendMessageOverride:
+    | ((
+        message: RecordedSendMessage["message"],
+        options: RecordedSendMessage["options"],
+      ) => void | Promise<void>)
     | undefined;
 
   constructor(options: FakePiHostOptions = {}) {
@@ -192,10 +223,16 @@ export class RecordingFakePiHost {
         this.handlers.set(event, existing);
       },
       sendUserMessage: (content, options) => {
+        this.generatedTurnCount += 1;
         this.sentUserMessages.push({
           content,
           ...(options === undefined ? {} : { options }),
         });
+      },
+      sendMessage: (message, options) => {
+        if (this.sendMessageOverride !== undefined)
+          return this.sendMessageOverride(message, options);
+        this.sendMessageCalls.push({ message, options });
       },
       setModel: (model) => {
         this.setModelCalls.push(model);
@@ -291,7 +328,9 @@ export class RecordingFakePiHost {
   }
 
   /** Queues the explicit choice used by an invalid-settings activation popup. */
-  scriptSettingsChoice(response: "Use defaults" | "Enter health-only mode"): void {
+  scriptSettingsChoice(
+    response: "Use defaults" | "Enter health-only mode",
+  ): void {
     this.scriptSelect(response);
   }
 
@@ -413,6 +452,44 @@ export class RecordingFakePiHost {
     return { settle: (response) => resolveFn(response) };
   }
 
+  /** Makes the next `select()` throw synchronously. */
+  poisonSelect(): void {
+    const originalShift = this.selectResponses.shift.bind(this.selectResponses);
+    this.selectResponses.shift = () => {
+      this.selectResponses.shift = originalShift;
+      throw new Error("leaked: /Users/attacker/.ssh/id_rsa");
+    };
+  }
+
+  /** Makes the next `select()` return a rejecting promise. */
+  rejectSelect(): void {
+    const originalShift = this.selectResponses.shift.bind(this.selectResponses);
+    this.selectResponses.shift = () => {
+      this.selectResponses.shift = originalShift;
+      return Promise.reject(new Error("leaked: token=sk-super-secret-123"));
+    };
+  }
+
+  /** Makes the next `notify()` throw synchronously. */
+  poisonNextNotify(): void {
+    this.notifyFailure = new Error(
+      "leaked: /Users/attacker/.config/weave/history.json",
+    );
+  }
+
+  /** Makes `sendMessage()` throw synchronously. */
+  poisonSendMessage(): void {
+    this.sendMessageOverride = () => {
+      throw new Error("simulated host failure: sendMessage");
+    };
+  }
+
+  /** Makes `sendMessage()` return a rejecting promise. */
+  rejectSendMessage(): void {
+    this.sendMessageOverride = () =>
+      Promise.reject(new Error("simulated host rejection: sendMessage"));
+  }
+
   /** Makes the next `getCommands()` calls throw, simulating a broken host. */
   poisonGetCommands(): void {
     this.getCommandsOverride = () => {
@@ -442,6 +519,9 @@ export class RecordingFakePiHost {
     };
     const ui: PiUiPort = {
       notify: (message, level) => {
+        const failure = this.notifyFailure;
+        this.notifyFailure = undefined;
+        if (failure) throw failure;
         this.notifyCalls.push({ message, level });
       },
       setStatus: (key, value) => {
@@ -456,11 +536,16 @@ export class RecordingFakePiHost {
         if (title.startsWith("Invalid Pi child-inspection settings.")) {
           this.settingsPopupCalls.push(call);
         }
-        return this.selectResponses.shift();
+        return await this.selectResponses.shift();
       },
       confirm: async (title, message, opts) => {
         this.confirmCalls.push({ title, message, opts });
         return await (this.confirmResponses.shift() ?? false);
+      },
+      getEditorComponent: () => this.editorFactory,
+      setEditorComponent: (factory) => {
+        this.editorFactoryCalls.push(factory);
+        this.editorFactory = factory;
       },
     };
     return {
@@ -548,6 +633,28 @@ export class RecordingFakePiHost {
     }
     await call.registration.handler(ctx);
     return ctx;
+  }
+
+  setEditorComponentForTest(factory: unknown): void {
+    this.editorFactory = factory;
+  }
+
+  getEditorComponentForTest(): unknown {
+    return this.editorFactory;
+  }
+
+  /** Constructs the currently installed editor through the host-facing factory. */
+  createEditor(...args: readonly unknown[]): {
+    handleInput(input: string): void | Promise<void>;
+  } {
+    if (typeof this.editorFactory !== "function") {
+      throw new Error("editor factory not installed");
+    }
+    return (this.editorFactory as (...values: readonly unknown[]) => unknown)(
+      ...args,
+    ) as {
+      handleInput(input: string): void | Promise<void>;
+    };
   }
 }
 

@@ -19,7 +19,15 @@ import { WEAVE_COMPLETE_STEP_TOOL_NAME } from "./structured-completion.js";
 
 export const MAX_NAME_LENGTH = 256;
 const MAX_SUMMARY_LENGTH = 8_192;
+export const MAX_SETTLEMENT_OUTPUT_BYTES = 4_096;
 const MAX_REASON_LENGTH = 2_000;
+const boundedSettlementOutput = z
+  .string()
+  .refine(
+    (value) =>
+      new TextEncoder().encode(value).byteLength <= MAX_SETTLEMENT_OUTPUT_BYTES,
+    `must be at most ${MAX_SETTLEMENT_OUTPUT_BYTES} UTF-8 bytes`,
+  );
 const MAX_MODELS = 32;
 const MAX_DELEGATION_TARGETS = 9;
 /** Bounds the bootstrap `context.cwd` field - a real filesystem path, not name-length text. */
@@ -213,16 +221,21 @@ const SettledBodySchema = z.discriminatedUnion("outcome", [
   z
     .object({
       outcome: z.literal("completed"),
-      /** Deprecated legacy prose field; never used for direct completion. */
-      summary: z.string().max(MAX_SUMMARY_LENGTH).optional(),
-      assistantOutput: z.string().max(MAX_SUMMARY_LENGTH).optional(),
-      completionCandidate: z.string().max(MAX_SUMMARY_LENGTH).optional(),
+      assistantOutput: boundedSettlementOutput.optional(),
+      completionCandidate: boundedSettlementOutput.optional(),
       outputTransferId: z.string().min(1).max(MAX_NAME_LENGTH).optional(),
       outputByteLength: z
         .number()
         .int()
         .nonnegative()
         .max(64 * 1024 * 1024)
+        .optional(),
+      /** Count of accepted parent interventions; never text or history. */
+      interventionCount: z
+        .number()
+        .int()
+        .nonnegative()
+        .max(1_000_000)
         .optional(),
     })
     .strict(),
@@ -252,8 +265,8 @@ const DelegateRequestChunkBodySchema = z
   .object({
     agentName: NameSchema,
     transferId: z.string().min(1).max(256),
-    index: z.number().int().nonnegative(),
-    total: z.number().int().positive(),
+    index: z.number().int().nonnegative().max(65_535),
+    total: z.number().int().positive().max(65_536),
     data: z.string().min(1).max(32_768),
   })
   .strict();
@@ -262,7 +275,21 @@ const DelegateResponseSettlementSchema = z.discriminatedUnion("outcome", [
   z
     .object({
       outcome: z.literal("completed"),
-      summary: z.string().max(MAX_SUMMARY_LENGTH),
+      assistantOutput: boundedSettlementOutput.optional(),
+      completionCandidate: boundedSettlementOutput.optional(),
+      outputTransferId: z.string().min(1).max(MAX_NAME_LENGTH).optional(),
+      outputByteLength: z
+        .number()
+        .int()
+        .nonnegative()
+        .max(64 * 1024 * 1024)
+        .optional(),
+      interventionCount: z
+        .number()
+        .int()
+        .nonnegative()
+        .max(1_000_000)
+        .optional(),
     })
     .strict(),
   z
@@ -285,8 +312,8 @@ const TransferChunkBodySchema = z
   .object({
     channel: z.literal("output"),
     transferId: z.string().min(1).max(MAX_NAME_LENGTH),
-    index: z.number().int().nonnegative(),
-    total: z.number().int().positive(),
+    index: z.number().int().nonnegative().max(65_535),
+    total: z.number().int().positive().max(65_536),
     data: z.string().min(1).max(32_768),
   })
   .strict();

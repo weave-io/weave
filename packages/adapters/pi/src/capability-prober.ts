@@ -4,6 +4,7 @@ import type {
 } from "@weaveio/weave-engine";
 import { ALL_CAPABILITY_IDS } from "@weaveio/weave-engine";
 import { isOwnSourceInfo, WEAVE_COMMAND_NAMES } from "./commands.js";
+import type { PiHostSurfaceReport } from "./host-inventory.js";
 import type { PiCommandInfo, PiMode, PiTrustState } from "./types.js";
 
 /**
@@ -55,6 +56,7 @@ export interface PiPreflightContext {
   readonly trust: PiTrustState;
   readonly commands: readonly PiCommandInfo[];
   readonly candidatePlan?: PiCandidatePlanContext;
+  readonly hostSurface?: PiHostSurfaceReport;
 }
 
 const CANDIDATE_PLAN_CAPABILITIES: ReadonlySet<CapabilityId> = new Set([
@@ -329,8 +331,8 @@ function evaluateCommandEntrypoints(
     capabilityId: "command-entrypoints",
     probeStatus: "ok",
     details: enforceCommandProvenance
-      ? "all-nine-commands-exclusively-owned"
-      : "all-nine-commands-present-local-provenance-disabled",
+      ? "all-twelve-commands-exclusively-owned"
+      : "all-twelve-commands-present-local-provenance-disabled",
   };
 }
 
@@ -345,8 +347,7 @@ export class DefaultPiCapabilityProber implements PiCapabilityProbeSource {
   private readonly enforceCommandProvenance: boolean;
 
   constructor(options: DefaultPiCapabilityProberOptions = {}) {
-    this.enforceCommandProvenance =
-      options.enforceCommandProvenance ?? true;
+    this.enforceCommandProvenance = options.enforceCommandProvenance ?? true;
   }
 
   probe(context: PiPreflightContext): readonly CapabilityProbeResult[] {
@@ -357,6 +358,17 @@ export class DefaultPiCapabilityProber implements PiCapabilityProbeSource {
     id: CapabilityId,
     context: PiPreflightContext,
   ): CapabilityProbeResult {
+    if (
+      context.hostSurface !== undefined &&
+      context.hostSurface.requiredGaps.length > 0 &&
+      id === "delegated-specialist-execution"
+    ) {
+      return {
+        capabilityId: id,
+        probeStatus: "unavailable",
+        details: `host-surface-gap:${context.hostSurface.requiredGaps.join(",")}`,
+      };
+    }
     if (id === "command-entrypoints") {
       return evaluateCommandEntrypoints(
         context.commands,

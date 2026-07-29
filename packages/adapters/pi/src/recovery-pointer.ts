@@ -18,16 +18,35 @@ import {
 
 export const RECOVERY_POINTER_SCHEMA_VERSION = 1 as const;
 
-export const PiWeaveRecoveryPointerSchema = z.object({
-  schemaVersion: z.literal(RECOVERY_POINTER_SCHEMA_VERSION),
-  workflowId: z.string().min(1).optional(),
-  leaseId: z.string().min(1).optional(),
-  controllerGeneration: z.string().min(1),
-  planName: z.string().min(1).optional(),
-  planRevision: z.number().int().nonnegative().optional(),
-  status: z.enum(["recoverable", "terminal"]),
-  observedAt: z.string().min(1),
-});
+const boundedId = z.string().min(1).max(256);
+
+/** Bounded, history-facing linkage only. It contains identifiers, never text. */
+export const PiWorkflowAttemptLinkageSchema = z
+  .object({
+    attemptId: boundedId,
+    previousAttemptId: boundedId.optional(),
+  })
+  .strict();
+export type PiWorkflowAttemptLinkage = z.infer<
+  typeof PiWorkflowAttemptLinkageSchema
+>;
+
+export const PiWeaveRecoveryPointerSchema = z
+  .object({
+    schemaVersion: z.literal(RECOVERY_POINTER_SCHEMA_VERSION),
+    workflowId: boundedId.optional(),
+    leaseId: boundedId.optional(),
+    controllerGeneration: boundedId,
+    /** False trust and quarantine markers always fail closed. */
+    trusted: z.boolean().optional(),
+    quarantined: z.boolean().optional(),
+    attempt: PiWorkflowAttemptLinkageSchema.optional(),
+    planName: z.string().min(1).optional(),
+    planRevision: z.number().int().nonnegative().optional(),
+    status: z.enum(["recoverable", "terminal"]),
+    observedAt: z.string().min(1).max(128),
+  })
+  .strict();
 
 export type PiWeaveRecoveryPointerV1 = z.infer<
   typeof PiWeaveRecoveryPointerSchema
@@ -92,7 +111,65 @@ export function isPointerForCurrentGeneration(
 export function isPointerEligibleForExplicitResume(
   pointer: PiWeaveRecoveryPointerV1,
 ): boolean {
-  return pointer.status === "recoverable";
+  return (
+    pointer.status === "recoverable" &&
+    pointer.trusted !== false &&
+    pointer.quarantined !== true
+  );
+}
+
+/**
+ * Creates the metadata for a fresh workflow attempt. The identifiers are the
+ * only linkage exported to history; callers must not place prompts,
+ * transcripts, interventions, or task text in this object.
+ */
+export type WorkflowAttemptLinkageValidationFailure = {
+  readonly kind: "malformed";
+  readonly reason: "attempt-id" | "previous-attempt-id";
+};
+
+/** Creates fresh attempt linkage without throwing on bounded input failures. */
+export function createWorkflowAttemptLinkage(
+  previousAttemptId: string | undefined,
+  newAttemptId?: string,
+): Result<PiWorkflowAttemptLinkage, WorkflowAttemptLinkageValidationFailure> {
+  // Keep UUID generation inside the Result boundary: crypto providers and
+  // test doubles are allowed to fail without throwing from this API.
+  const generated: Result<string, WorkflowAttemptLinkageValidationFailure> =
+    Result.fromThrowable(
+      () => newAttemptId ?? crypto.randomUUID(),
+      () => ({ kind: "malformed" as const, reason: "attempt-id" as const }),
+    )();
+  if (generated.isErr()) {
+    return err<
+      PiWorkflowAttemptLinkage,
+      WorkflowAttemptLinkageValidationFailure
+    >(generated.error);
+  }
+  const attemptId = generated.value;
+  // New attempts are always UUIDs. Previous IDs remain bounded strings so
+  // pointers written by older adapter versions stay readable.
+  if (!z.string().uuid().safeParse(attemptId).success) {
+    return err<
+      PiWorkflowAttemptLinkage,
+      WorkflowAttemptLinkageValidationFailure
+    >({ kind: "malformed", reason: "attempt-id" });
+  }
+  const parsed = PiWorkflowAttemptLinkageSchema.safeParse({
+    attemptId,
+    ...(previousAttemptId !== undefined ? { previousAttemptId } : {}),
+  });
+  if (!parsed.success) {
+    return err<
+      PiWorkflowAttemptLinkage,
+      WorkflowAttemptLinkageValidationFailure
+    >({
+      kind: "malformed",
+      reason:
+        previousAttemptId === undefined ? "attempt-id" : "previous-attempt-id",
+    });
+  }
+  return ok(parsed.data);
 }
 
 /**
@@ -122,6 +199,7 @@ export function activeInstanceFromRecoveryPointer(
       workflowInstanceId: string;
       leaseId: string;
       controllerGeneration: string;
+      attemptId?: string;
     }
   | undefined {
   if (!isPointerEligibleForExplicitResume(pointer)) return undefined;
@@ -131,6 +209,9 @@ export function activeInstanceFromRecoveryPointer(
     workflowInstanceId: pointer.workflowId,
     leaseId: pointer.leaseId,
     controllerGeneration: pointer.controllerGeneration,
+    ...(pointer.attempt?.attemptId !== undefined
+      ? { attemptId: pointer.attempt.attemptId }
+      : {}),
   };
 }
 

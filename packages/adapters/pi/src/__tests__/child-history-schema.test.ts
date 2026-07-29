@@ -44,6 +44,28 @@ describe("PiChildHistoryIndexV1", () => {
       expect(unknown.error.type).toBe("ChildHistoryVersionUnsupported");
   });
 
+  it("keeps old records without descriptorName valid but non-recoverable", () => {
+    const parsed = PiChildHistoryIndexV1Schema.safeParse(INDEX);
+    expect(parsed.success).toBe(true);
+    if (parsed.success)
+      expect(parsed.data.records[0]?.descriptorName).toBeUndefined();
+  });
+
+  it("bounds descriptorName independently", () => {
+    expect(
+      PiChildHistoryIndexV1Schema.safeParse({
+        ...INDEX,
+        records: [{ ...RECORD, descriptorName: "a".repeat(257) }],
+      }).success,
+    ).toBe(false);
+    expect(
+      PiChildHistoryIndexV1Schema.safeParse({
+        ...INDEX,
+        records: [{ ...RECORD, descriptorName: "🙂".repeat(64) }],
+      }).success,
+    ).toBe(true);
+  });
+
   it("caps all stored strings and final output by UTF-8 bytes", () => {
     expect(
       PiChildHistoryIndexV1Schema.safeParse({

@@ -175,7 +175,7 @@ describe("buildDelegationToolRegistration", () => {
         getController: () =>
           fakeController(() => {
             called = true;
-            return okAsync({ outcome: "completed", summary: "x" });
+            return okAsync({ outcome: "completed", assistantOutput: "x" });
           }),
       }),
     );
@@ -218,7 +218,7 @@ describe("buildDelegationToolRegistration", () => {
             capturedRequest = request;
             return okAsync({
               outcome: "completed",
-              summary: "done",
+              assistantOutput: "done",
             } as PiChildSettlement);
           }),
       }),
@@ -233,7 +233,11 @@ describe("buildDelegationToolRegistration", () => {
     const text = JSON.parse((result.content[0] as { text: string }).text);
     expect(text).toEqual({
       ok: true,
-      settlement: { outcome: "completed", summary: "done" },
+      settlement: {
+        outcome: "completed",
+        finalOutput: "done",
+        interventionCount: 0,
+      },
     });
     expect(capturedRequest?.agentName).toBe("shuttle");
     expect(capturedRequest?.parentId).toBe("root");
@@ -248,7 +252,7 @@ describe("buildDelegationToolRegistration", () => {
         getController: () =>
           fakeController((request) => {
             capturedRequest = request;
-            return okAsync({ outcome: "completed", summary: "done" });
+            return okAsync({ outcome: "completed", assistantOutput: "done" });
           }),
       }),
     );
@@ -322,7 +326,7 @@ describe("buildDelegationToolRegistration", () => {
         getController: () =>
           fakeController((request) => {
             capturedRequest = request;
-            return okAsync({ outcome: "completed", summary: "done" });
+            return okAsync({ outcome: "completed", assistantOutput: "done" });
           }),
         buildBootstrap: (_target, _task, _childId, _ctx, parentAgentName) => {
           bootstrapParentAgentName = parentAgentName;
@@ -345,7 +349,11 @@ describe("buildDelegationToolRegistration", () => {
     );
     expect(JSON.parse((accepted.content[0] as { text: string }).text)).toEqual({
       ok: true,
-      settlement: { outcome: "completed", summary: "done" },
+      settlement: {
+        outcome: "completed",
+        finalOutput: "done",
+        interventionCount: 0,
+      },
     });
     expect(capturedRequest?.parentAgentName).toBe("tapestry");
     expect(bootstrapParentAgentName).toBe("tapestry");
@@ -406,7 +414,7 @@ describe("buildDelegationToolRegistration", () => {
         getController: () =>
           fakeController(() => {
             delegateCalled = true;
-            return okAsync({ outcome: "completed", summary: "x" });
+            return okAsync({ outcome: "completed", assistantOutput: "x" });
           }),
       }),
     );
@@ -579,7 +587,7 @@ describe("buildDelegationToolRegistration", () => {
       baseDeps({
         getController: () =>
           fakeController(
-            () => okAsync({ outcome: "completed", summary: "done" }),
+            () => okAsync({ outcome: "completed", assistantOutput: "done" }),
             () => {
               cancelSubtreeCalls += 1;
               return okAsync(undefined);
@@ -598,7 +606,11 @@ describe("buildDelegationToolRegistration", () => {
     const text = JSON.parse((result.content[0] as { text: string }).text);
     expect(text).toEqual({
       ok: true,
-      settlement: { outcome: "completed", summary: "done" },
+      settlement: {
+        outcome: "completed",
+        finalOutput: "done",
+        interventionCount: 0,
+      },
     });
     // The tool call already settled successfully; had the abort listener
     // leaked past that point, this would spuriously cancel a subtree that

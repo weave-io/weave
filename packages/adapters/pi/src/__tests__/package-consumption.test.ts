@@ -17,9 +17,93 @@ describe("public package entry points", () => {
     expect(pkg.HOST_PACKAGE_NAME).toBe("@earendil-works/pi-coding-agent");
     expect(pkg.HOST_VERSION_FLOOR).toBe("0.81.1");
     expect("HOST_VERSION_CEILING" in pkg).toBe(false);
-    expect(pkg.WEAVE_COMMAND_NAMES).toHaveLength(9);
+    expect(pkg.WEAVE_COMMAND_NAMES).toHaveLength(12);
+    expect(pkg.WEAVE_INSPECT_COMMAND_NAME).toBe("weave:inspect");
+    expect(pkg.WEAVE_CLEAR_CHILDREN_COMMAND_NAME).toBe("weave:clear-children");
+    expect(pkg.WEAVE_RECOVERY_COMMAND_NAME).toBe("weave:recover-children");
     expect(pkg.PI_ADAPTER_CAPABILITY_CONTRACT.capabilities).toHaveLength(20);
     expect(typeof pkg.createPiExtension).toBe("function");
+  });
+
+  it("exposes and exercises stable inspection and probe services", async () => {
+    const pkg = await import("@weaveio/weave-adapter-pi");
+    expect(typeof pkg.PiChildInspector).toBe("function");
+    expect(typeof pkg.PiChildSlots).toBe("function");
+    expect(typeof pkg.buildChildPickerEntries).toBe("function");
+    expect(typeof pkg.createPiSanitizedChildIndex).toBe("function");
+    expect(typeof pkg.safeReadHostSurfaceReport).toBe("function");
+    expect(pkg.WEAVE_COMMAND_NAMES).toEqual([
+      "weave:start",
+      "weave:run",
+      "weave:status",
+      "weave:abort",
+      "weave:advance",
+      "weave:health",
+      "weave:resume",
+      "weave:plan",
+      "weave:artifact",
+      "weave:inspect",
+      "weave:clear-children",
+      "weave:recover-children",
+    ]);
+
+    const slots = new pkg.PiChildSlots();
+    expect(
+      slots.assign([
+        {
+          childId: "child",
+          name: "child",
+          kind: "ordinary",
+          status: "running",
+          live: true,
+        },
+      ]),
+    ).toEqual(new Map([[1, "child"]]));
+    const picker = pkg.buildChildPickerEntries({
+      live: [
+        {
+          childId: "child",
+          name: "child",
+          kind: "ordinary",
+          status: "running",
+          live: true,
+        },
+      ],
+    });
+    expect(picker.isOk()).toBe(true);
+    const exported = pkg.createPiSanitizedChildIndex([
+      {
+        id: "child",
+        name: "child",
+        kind: "ordinary",
+        status: "running",
+        currentTurn: 1,
+        startedAtMs: 0,
+        elapsedMs: 1,
+        usage: {
+          inputTokens: 1,
+          outputTokens: 2,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          cost: 0,
+        },
+        interventionCount: 0,
+      },
+    ]);
+    expect(exported.isOk()).toBe(true);
+    const hostReport = await pkg.safeReadHostSurfaceReport(
+      new pkg.DefaultPiHostSurfaceReader(),
+      { api: {} as never, ui: {} as never, rootExports: { VERSION: "0.81.1" } },
+    );
+    expect(hostReport.isOk()).toBe(true);
+    for (const forbidden of [
+      "MAX_SANITIZED_IDENTIFIER_BYTES",
+      "projectEntry",
+      "truncateUtf8",
+      "hostVersionIsValid",
+    ]) {
+      expect(forbidden in pkg).toBe(false);
+    }
   });
 
   it("exposes exactly one default extension factory from the /extension subpath", async () => {

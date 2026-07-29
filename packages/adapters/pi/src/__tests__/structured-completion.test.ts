@@ -72,6 +72,59 @@ describe("parseStructuredCompletionCandidate", () => {
     expect(result.isErr()).toBe(true);
   });
 
+  it("projects only structured fields and drops transcript/private canaries", () => {
+    const result = parseStructuredCompletionCandidate(
+      {
+        outcome: "success",
+        method: "agent_signal",
+        interventionText: "INTERVENTION-CANARY",
+        finalOutput: "FINAL-OUTPUT-CANARY",
+        summary: "SUMMARY-CANARY",
+        thinking: "THINKING-CANARY",
+        toolData: "TOOL-CANARY",
+        uiData: "UI-CANARY",
+      },
+      "implement",
+    );
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    expect(result.value).toEqual({
+      outcome: "success",
+      method: "agent_signal",
+    });
+    expect(JSON.stringify(result.value)).not.toContain("CANARY");
+  });
+
+  it("does not turn absent or non-terminal output into a completion candidate", () => {
+    expect(
+      parseStructuredCompletionCandidate(undefined, "implement").isErr(),
+    ).toBe(true);
+    expect(
+      parseStructuredCompletionCandidate(
+        { assistantOutput: "INTERMEDIATE-CANARY" },
+        "implement",
+      ).isErr(),
+    ).toBe(true);
+    expect(tryParseCompletionCandidateJson("")).toBeUndefined();
+    expect(
+      tryParseCompletionCandidateJson("INTERMEDIATE-CANARY"),
+    ).toBeUndefined();
+  });
+
+  it("serializes only the structured completion allowlist", () => {
+    const candidate = {
+      outcome: "success" as const,
+      method: "agent_signal" as const,
+      privateCanary: "PRIVATE-CANARY",
+    } as never;
+    const serialized = serializeCompletionCandidate(candidate);
+    expect(JSON.parse(serialized)).toEqual({
+      outcome: "success",
+      method: "agent_signal",
+    });
+    expect(serialized).not.toContain("PRIVATE-CANARY");
+  });
+
   it("rejects an oversized message", () => {
     const result = parseStructuredCompletionCandidate(
       { outcome: "success", message: "x".repeat(5000) },
@@ -83,7 +136,10 @@ describe("parseStructuredCompletionCandidate", () => {
 
 describe("serializeCompletionCandidate / tryParseCompletionCandidateJson round trip", () => {
   it("round-trips a candidate through the bounded JSON channel", () => {
-    const candidate = { outcome: "success", method: "agent_signal" };
+    const candidate = {
+      outcome: "success" as const,
+      method: "agent_signal" as const,
+    };
     const serialized = serializeCompletionCandidate(candidate);
     const parsed = tryParseCompletionCandidateJson(serialized);
     expect(parsed).toEqual(candidate);

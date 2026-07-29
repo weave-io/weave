@@ -2,11 +2,6 @@ import { describe, expect, it } from "bun:test";
 import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 import { MAX_CWD_LENGTH } from "../child-control-bodies.js";
 import {
-  ChunkTransferAssembler,
-  type TransferChunk,
-} from "../child-transfer.js";
-import { PI_TRANSPORT_LIMITS } from "../errors.js";
-import {
   bytesToHex,
   generateNonceHex,
   WebCryptoHmacPort,
@@ -18,6 +13,11 @@ import {
   WEAVE_CONTROLLER_GENERATION_ENV,
 } from "../child-env.js";
 import { signEnvelope } from "../child-envelope.js";
+import {
+  ChunkTransferAssembler,
+  type TransferChunk,
+} from "../child-transfer.js";
+import { PI_TRANSPORT_LIMITS } from "../errors.js";
 import {
   buildChildBootstrapBody,
   createPiExtension,
@@ -134,7 +134,9 @@ class MinimalFakeHost implements PiExtensionApi {
       throw new Error("simulated child thinking-level host failure");
     }
     if (this.thinkingLevelBehavior === "reject") {
-      return Promise.reject(new Error("simulated child thinking-level rejection"));
+      return Promise.reject(
+        new Error("simulated child thinking-level rejection"),
+      );
     }
   }
   async fire(
@@ -204,11 +206,7 @@ async function buildChildExtension(
   // own `ctx` (captured once, at `session_start`), not any per-invocation
   // ctx a caller might pass to the command handler. Tests that need a
   // specific `ctx.modelRegistry`/`ctx.model` must supply it here.
-  await host.fire(
-    "session_start",
-    {},
-    sessionCtx,
-  );
+  await host.fire("session_start", {}, sessionCtx);
   return { host, output, secretBytes };
 }
 
@@ -370,24 +368,47 @@ describe("private child mode (Pi adapter contract, end-to-end against a fake hos
     expect(settledLinesAfterSecond).toBe(1);
   });
 
-  it("reports the child's real streamed assistant text as the settlement summary, never the old constant placeholder (Task 9)", async () => {
+  it("reports terminal assistant output, not streamed previews or canary events, in the settlement output", async () => {
     const { host, output } = await buildChildExtension();
+    const uiCanaryContext = fakeCtx();
+    uiCanaryContext.ui.notify("ui canary", "info");
+    uiCanaryContext.ui.setStatus("canary", "ui canary");
+    uiCanaryContext.ui.setWidget("canary", "ui canary");
     await host.fire(
       "message_update",
       {
         type: "message_update",
         assistantMessageEvent: {
           type: "text_delta",
-          delta: "Here is the ",
+          delta: "streamed preview that must stay intermediate",
         },
       },
       fakeCtx(),
     );
     await host.fire(
-      "message_update",
+      "tool_execution_end",
       {
-        type: "message_update",
-        assistantMessageEvent: { type: "text_delta", delta: "real result." },
+        type: "tool_execution_end",
+        toolCallId: "tool-canary",
+        toolName: "read",
+        result: "tool output must stay private",
+      },
+      fakeCtx(),
+    );
+    await host.fire(
+      "message_end",
+      {
+        type: "message_end",
+        message: {
+          role: "assistant",
+          id: "terminal-assistant",
+          stopReason: "stop",
+          content: [
+            { type: "thinking", thinking: "thinking canary" },
+            { type: "toolCall", name: "read", arguments: {} },
+            { type: "text", text: "terminal assistant output" },
+          ],
+        },
       },
       fakeCtx(),
     );
@@ -398,8 +419,10 @@ describe("private child mode (Pi adapter contract, end-to-end against a fake hos
     expect(settled?.kind).toBe("settled");
     const body = settled?.body as Record<string, unknown>;
     expect(body.outcome).toBe("completed");
-    expect(body.assistantOutput).toBe("Here is the real result.");
-    expect(body.assistantOutput).not.toBe("delegated task settled");
+    expect(body.assistantOutput).toBe("terminal assistant output");
+    expect(body.assistantOutput).not.toContain("streamed preview");
+    expect(body.assistantOutput).not.toContain("tool output");
+    expect(body.assistantOutput).not.toContain("thinking canary");
   });
 
   it("transfers large final output before settlement and projects only bounded text plus numeric metadata", async () => {
@@ -506,32 +529,73 @@ describe("private child mode (Pi adapter contract, end-to-end against a fake hos
     ).toBeLessThanOrEqual(PI_TRANSPORT_LIMITS.parentProjectionBytes);
   });
 
-  it("reports a safe fixed fallback summary (not the old constant) when a completed turn produced no observable assistant text", async () => {
+  it("omits assistantOutput when a completed turn has no terminal assistant message", async () => {
     const { host, output } = await buildChildExtension();
+    await host.fire(
+      "message_update",
+      {
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "text_delta",
+          delta: "streamed-only text must not become output",
+        },
+      },
+      fakeCtx(),
+    );
+    await host.fire(
+      "tool_execution_end",
+      {
+        type: "tool_execution_end",
+        toolCallId: "tool-canary",
+        toolName: "read",
+        result: "tool canary",
+      },
+      fakeCtx(),
+    );
     await host.fire("agent_settled", {}, fakeCtx());
     await flush();
 
     const settled = output.lines.at(-1);
     const body = settled?.body as Record<string, unknown>;
     expect(body.outcome).toBe("completed");
-    expect(typeof body.assistantOutput).toBe("string");
-    expect(body.assistantOutput).not.toBe("delegated task settled");
+    expect(body).not.toHaveProperty("assistantOutput");
   });
 
-  it("resets the settlement summary buffer on turn_start so a later turn never reports a stale earlier turn's text", async () => {
+  it("clears prior terminal output at turn_start and omits streamed-only output from the later turn", async () => {
     const { host, output } = await buildChildExtension();
     await host.fire(
-      "message_update",
+      "message_end",
       {
-        type: "message_update",
-        delta: { text: "stale text from an earlier turn" },
+        type: "message_end",
+        message: {
+          role: "assistant",
+          id: "earlier-terminal",
+          stopReason: "stop",
+          content: [{ type: "text", text: "stale terminal output" }],
+        },
       },
       fakeCtx(),
     );
     await host.fire("turn_start", { type: "turn_start" }, fakeCtx());
     await host.fire(
       "message_update",
-      { type: "message_update", delta: { text: "fresh turn text" } },
+      {
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "text_delta",
+          delta: "fresh streamed-only text",
+        },
+      },
+      fakeCtx(),
+    );
+    await host.fire(
+      "tool_execution_end",
+      {
+        type: "tool_execution_end",
+        toolCallId: "tool-canary",
+        toolName: "read",
+        result: "later tool canary",
+      },
       fakeCtx(),
     );
     await host.fire("agent_settled", {}, fakeCtx());
@@ -539,8 +603,8 @@ describe("private child mode (Pi adapter contract, end-to-end against a fake hos
 
     const settled = output.lines.at(-1);
     const body = settled?.body as Record<string, unknown>;
-    expect(body.assistantOutput).toBe("fresh turn text");
-    expect(body.assistantOutput).not.toContain("stale text");
+    expect(body.outcome).toBe("completed");
+    expect(body).not.toHaveProperty("assistantOutput");
   });
 
   it("derives a failed outcome from the last observed assistant stopReason, since agent_settled itself carries no payload (Task 9)", async () => {
@@ -705,10 +769,7 @@ describe("private child mode (Pi adapter contract, end-to-end against a fake hos
       { parentAgentName: "loom", parentDepth: 0, cwd: "/project" },
       fakeCtx({ modelRegistry: { getAvailable: () => [] } }),
     );
-    const bootstrapRecord = bootstrapBody as unknown as Record<
-      string,
-      unknown
-    >;
+    const bootstrapRecord = bootstrapBody as unknown as Record<string, unknown>;
 
     expect(bootstrapRecord).not.toHaveProperty("resolvedModel");
     expect(canonicalizeToBytes(bootstrapBody).isOk()).toBe(true);
@@ -827,41 +888,41 @@ describe("private child mode (Pi adapter contract, end-to-end against a fake hos
     ]);
   });
 
-  it.each(["throw", "reject"] as const)(
-    "keeps child model activation successful when the thinking host %s",
-    async (behavior) => {
-      const catalogModel = {
-        provider: "fake",
-        id: "model-x",
-        name: "Fake Model X",
-        api: "fake-api",
-      };
-      const { host, output, secretBytes } = await buildChildExtension(
-        fakeCtx({ modelRegistry: { getAvailable: () => [catalogModel] } }),
-      );
-      host.thinkingLevelBehavior = behavior;
-      const envelope = await signedBootstrap(secretBytes, {
-        models: ["fake/model-x#low"],
-        resolvedModel: {
-          provider: catalogModel.provider,
-          id: catalogModel.id,
-          name: catalogModel.name,
-        },
-        thinkingLevel: "low",
-      });
+  it.each([
+    "throw",
+    "reject",
+  ] as const)("keeps child model activation successful when the thinking host %s", async (behavior) => {
+    const catalogModel = {
+      provider: "fake",
+      id: "model-x",
+      name: "Fake Model X",
+      api: "fake-api",
+    };
+    const { host, output, secretBytes } = await buildChildExtension(
+      fakeCtx({ modelRegistry: { getAvailable: () => [catalogModel] } }),
+    );
+    host.thinkingLevelBehavior = behavior;
+    const envelope = await signedBootstrap(secretBytes, {
+      models: ["fake/model-x#low"],
+      resolvedModel: {
+        provider: catalogModel.provider,
+        id: catalogModel.id,
+        name: catalogModel.name,
+      },
+      thinkingLevel: "low",
+    });
 
-      await expect(deliverEnvelope(host, envelope)).resolves.toBeUndefined();
-      await flush();
+    await expect(deliverEnvelope(host, envelope)).resolves.toBeUndefined();
+    await flush();
 
-      expect(host.activationCalls).toEqual([
-        { kind: "model", model: catalogModel },
-        { kind: "thinking", level: "low" },
-      ]);
-      expect(output.lines.some((line) => line.kind === "bootstrap-ack")).toBe(
-        true,
-      );
-    },
-  );
+    expect(host.activationCalls).toEqual([
+      { kind: "model", model: catalogModel },
+      { kind: "thinking", level: "low" },
+    ]);
+    expect(output.lines.some((line) => line.kind === "bootstrap-ack")).toBe(
+      true,
+    );
+  });
 
   it("fails closed (no ack, no work applied) when the host rejects the resolved model, even though tools already applied cleanly", async () => {
     const sessionCtx = fakeCtx({

@@ -13,10 +13,7 @@ import {
   PiChildInspectionRegistry,
   ROOT_NODE_ID,
 } from "../child-tree.js";
-import {
-  type PiDirectDispatchInput,
-  TransportDirectDispatchPort,
-} from "../direct-dispatch.js";
+import type { PiDirectDispatchInput } from "../direct-dispatch.js";
 import {
   createDirectDispatchTransport,
   PiDirectStepChildRegistry,
@@ -157,8 +154,7 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
       "gen-1",
     );
 
-    const directPort = new TransportDirectDispatchPort(transport);
-    const resultPromise = directPort.dispatch(
+    const resultPromise = transport(
       baseInput({ models: ["anthropic/claude-sonnet-5#high"] }),
     );
     await flush();
@@ -219,6 +215,7 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
           method: "agent_signal",
           message: "SMOKE_FLOW_COMPLETE",
         }),
+        interventionCount: 7,
         assistantOutput: "ordinary terminal assistant prose",
       },
       secretBytes,
@@ -226,14 +223,22 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
 
     const settlement = await resultPromise;
     expect(settlement.isOk()).toBe(true);
-    // This is the real seam: PiRpcChild parses the authenticated settlement,
-    // then TransportDirectDispatchPort interprets only the dedicated
-    // completion-candidate field. Ordinary assistant prose must not replace it.
+    // PiRpcChild authenticates both fields. The transport preserves the
+    // numeric metadata beside the candidate; it does not put the count into
+    // the completion authority.
     expect(settlement._unsafeUnwrap()).toEqual({
-      outcome: "success",
-      method: "agent_signal",
-      message: "SMOKE_FLOW_COMPLETE",
+      outcome: "completed",
+      completionCandidate: serializeCompletionCandidate({
+        outcome: "success",
+        method: "agent_signal",
+        message: "SMOKE_FLOW_COMPLETE",
+      }),
+      interventionCount: 0,
     });
+    expect(typeof settlement._unsafeUnwrap().interventionCount).toBe("number");
+    expect(settlement._unsafeUnwrap().completionCandidate).not.toContain(
+      "interventionCount",
+    );
   });
 
   it("omits an unresolved model identity so strict bootstrap serialization and dispatch still succeed", async () => {
@@ -302,7 +307,7 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
       relayRequests.push(request);
       return okAsync({
         outcome: "completed" as const,
-        summary: "TAPESTRY_CHILD_OK",
+        assistantOutput: "TAPESTRY_CHILD_OK",
       });
     };
     const transport = createDirectDispatchTransport(
@@ -393,7 +398,7 @@ describe("createDirectDispatchTransport (Pi adapter contract)", () => {
       ok: true,
       settlement: {
         outcome: "completed",
-        summary: "TAPESTRY_CHILD_OK",
+        assistantOutput: "TAPESTRY_CHILD_OK",
       },
     });
 

@@ -16,6 +16,8 @@ const utf8BoundedString = (maxBytes: number, maxCharacters = maxBytes) =>
       `string exceeds ${maxBytes} UTF-8 bytes`,
     );
 const text = utf8BoundedString(MAX_HISTORY_STRING);
+// Descriptor names are stable identities, not user-authored transcript text.
+const descriptorName = utf8BoundedString(256, 256);
 const finalOutput = utf8BoundedString(MAX_FINAL_OUTPUT_BYTES);
 const id = z
   .string()
@@ -104,13 +106,15 @@ function isSafeRelativeSessionPath(value: string): boolean {
     return false;
   }
 
-  return value.split("/").every(
-    (component) =>
-      component.length > 0 &&
-      component !== "." &&
-      component !== ".." &&
-      SAFE_SESSION_PATH_COMPONENT.test(component),
-  );
+  return value
+    .split("/")
+    .every(
+      (component) =>
+        component.length > 0 &&
+        component !== "." &&
+        component !== ".." &&
+        SAFE_SESSION_PATH_COMPONENT.test(component),
+    );
 }
 
 /** Export/index-facing metadata. It deliberately has no transcript fields. */
@@ -122,6 +126,8 @@ export const PiChildHistoryRecordSchema = z
     kind: PiChildHistoryKindSchema,
     status: PiChildHistoryStatusSchema,
     workflow: BreadcrumbSchema,
+    /** Stable descriptor identity. It is optional for backward-compatible V1 records. */
+    descriptorName: descriptorName.optional(),
     sessionPath: utf8BoundedString(1_024).pipe(
       z
         .string()

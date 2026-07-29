@@ -465,7 +465,7 @@ describe("PiChildRuntime.admitControlLine", () => {
         nonce: generateNonceHex(randomPort),
         correlationId: "child-1",
         kind: "settled",
-        body: { outcome: "completed", summary: "x" },
+        body: { outcome: "completed", assistantOutput: "x" },
       },
       secretBytes,
       hmacPort,
@@ -501,15 +501,18 @@ describe("PiChildRuntime.admitControlLine", () => {
 });
 
 describe("PiChildRuntime.reportSettled / reportCancelled", () => {
-  it("writes a settled envelope with the outcome and summary", async () => {
+  it("writes a settled envelope with the outcome and output", async () => {
     const { runtime, output } = await buildActivatedRuntime();
     const result = await runtime.reportSettled("completed", {
-      summary: "done",
+      assistantOutput: "done",
     });
     expect(result.isOk()).toBe(true);
     const settled = output.lines.at(-1) as Record<string, unknown>;
     expect(settled.kind).toBe("settled");
-    expect(settled.body).toEqual({ outcome: "completed", summary: "done" });
+    expect(settled.body).toEqual({
+      outcome: "completed",
+      assistantOutput: "done",
+    });
     // Sequence 1 was the handshake; this is sequence 2.
     expect(settled.sequence).toBe(2);
   });
@@ -530,11 +533,15 @@ describe("PiChildRuntime.reportSettled / reportCancelled", () => {
       reason: "stdout-write-failed",
     });
 
-    const first = await runtime.reportSettled("completed", { summary: "ok" });
+    const first = await runtime.reportSettled("completed", {
+      assistantOutput: "ok",
+    });
     expect(first.isErr()).toBe(true);
     expect(output.lines).toHaveLength(1);
 
-    const second = await runtime.reportSettled("completed", { summary: "ok" });
+    const second = await runtime.reportSettled("completed", {
+      assistantOutput: "ok",
+    });
     expect(second.isOk()).toBe(true);
     expect(output.lines).toHaveLength(2);
     expect((output.lines.at(-1) as Record<string, unknown>).sequence).toBe(2);
@@ -542,7 +549,9 @@ describe("PiChildRuntime.reportSettled / reportCancelled", () => {
 
   it("reports settlement exactly once - a second call is rejected rather than sending a duplicate envelope", async () => {
     const { runtime, output } = await buildActivatedRuntime();
-    const first = await runtime.reportSettled("completed", { summary: "ok" });
+    const first = await runtime.reportSettled("completed", {
+      assistantOutput: "ok",
+    });
     expect(first.isOk()).toBe(true);
     const linesAfterFirst = output.lines.length;
 
@@ -556,7 +565,7 @@ describe("PiChildRuntime.reportSettled / reportCancelled", () => {
 describe("PiChildRuntime.requestDelegation", () => {
   it("sends and resolves a nested task larger than one control envelope", async () => {
     const { runtime, output, secretBytes } = await buildActivatedRuntime();
-    const task = "nested-🙂\n" + "x".repeat(1_100_000);
+    const task = `nested-🙂\n${"x".repeat(1_100_000)}`;
 
     const expectedChunkCount = encodeDelegateRequestChunks(
       task,
@@ -595,7 +604,7 @@ describe("PiChildRuntime.requestDelegation", () => {
         kind: "delegate-response",
         body: {
           ok: true,
-          settlement: { outcome: "completed", summary: "done" },
+          settlement: { outcome: "completed", assistantOutput: "done" },
         },
       },
       secretBytes,
@@ -608,7 +617,7 @@ describe("PiChildRuntime.requestDelegation", () => {
 
     expect((await request)._unsafeUnwrap()).toEqual({
       ok: true,
-      settlement: { outcome: "completed", summary: "done" },
+      settlement: { outcome: "completed", assistantOutput: "done" },
     });
   });
 });

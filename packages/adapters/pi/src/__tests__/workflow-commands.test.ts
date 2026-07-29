@@ -303,7 +303,14 @@ describe("handleWeaveResume", () => {
         return okAsync({
           workflowInstanceId,
           workflowName: "wf",
+          goal: "g",
+          slug: "wf",
           status: "paused",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          artifacts: [],
+          hasActiveLease: true,
+          stepAttempts: [],
         });
       }) as never,
       resumeExecution: ((input: { workflowInstanceId: string }) => {
@@ -323,6 +330,59 @@ describe("handleWeaveResume", () => {
     expect(inspectedInstanceId).toBe("wf-1");
     expect(resumeCalledWithInstanceId).toBe("wf-1");
     expect(tracked).toEqual({ workflowInstanceId: "wf-1", leaseId: "lease-2" });
+  });
+
+  it("mints a linked attempt and forwards only bounded linkage metadata", async () => {
+    let tracked: PiActiveWorkflowTracker["getActiveInstance"] extends () => infer T
+      ? T
+      : never = {
+      workflowInstanceId: "wf-1",
+      leaseId: "lease-old",
+      controllerGeneration: "gen-old",
+      attemptId: "attempt-old",
+    };
+    let input: Record<string, unknown> | undefined;
+    const tracker = fakeTracker({
+      getActiveInstance: () => tracked,
+      setActiveInstance: (next) => {
+        tracked = next;
+      },
+      buildContext: () => ({
+        workflowName: "wf",
+        goal: "wf",
+        slug: "wf",
+        workflows: {},
+      }),
+    });
+    const controller = fakeController({
+      inspect: () =>
+        okAsync({
+          workflowInstanceId: "wf-1",
+          workflowName: "wf",
+          goal: "wf",
+          slug: "wf",
+          status: "paused",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          artifacts: [],
+          hasActiveLease: true,
+          stepAttempts: [],
+        }) as never,
+      resumeExecution: (next) => {
+        input = next as unknown as Record<string, unknown>;
+        return okAsync({
+          workflowInstanceId: "wf-1",
+          leaseId: "lease-new",
+          finalStatus: "running",
+        });
+      },
+    });
+    await handleWeaveResume(fakeUi(), controller, tracker);
+    const metadata = input?.metadata as Record<string, string>;
+    expect(metadata.weaveResumePreviousAttemptId).toBe("attempt-old");
+    expect(metadata.weaveResumeAttemptId).not.toBe("attempt-old");
+    expect(tracked?.attemptId).toBe(metadata.weaveResumeAttemptId);
+    expect(JSON.stringify(metadata)).not.toContain("transcript");
   });
 
   it("forwards recoveryTakeover to resumeExecution only when the tracked instance carries a controllerGeneration (Issue #21 Task 12 S020)", async () => {

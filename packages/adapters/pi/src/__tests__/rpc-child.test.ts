@@ -393,7 +393,7 @@ describe("PiRpcChild", () => {
         await running.responder.send(
           "settled",
           "child-1",
-          { outcome: "completed", summary: "done" },
+          { outcome: "completed", assistantOutput: "done" },
           running.secretBytes,
         );
       } else {
@@ -559,7 +559,7 @@ describe("PiRpcChild", () => {
       await running.responder.send(
         "settled",
         "child-1",
-        { outcome: "completed", summary: "done" },
+        { outcome: "completed", assistantOutput: "done" },
         running.secretBytes,
       );
       expect((await running.runPromise).isOk()).toBe(true);
@@ -1081,7 +1081,7 @@ describe("PiRpcChild", () => {
     await running.responder.send(
       "settled",
       "child-1",
-      { outcome: "completed", summary: "done" },
+      { outcome: "completed", assistantOutput: "done" },
       running.secretBytes,
     );
     expect((await running.runPromise).isOk()).toBe(true);
@@ -1330,20 +1330,19 @@ describe("PiRpcChild", () => {
     await responder.send(
       "settled",
       "child-1",
-      { outcome: "completed", summary: "done" },
+      { outcome: "completed", assistantOutput: "done" },
       secretBytes,
     );
     const settlement = await runPromise;
     expect(settlement.isOk()).toBe(true);
     expect(settlement._unsafeUnwrap()).toEqual({
       outcome: "completed",
-      summary: "",
       interventionCount: 0,
     });
   });
 
   it("delivers a task larger than one RPC record through prompt chunks", async () => {
-    const task = "large-🙂\n" + "x".repeat(1_100_000);
+    const task = `large-🙂\n${"x".repeat(1_100_000)}`;
     const input = baseSpawnInput({ task });
     const processPort = new FakeChildProcessPort();
     const child = new PiRpcChild("child-1", "root", "gen-1", "shuttle", 1, {
@@ -1400,14 +1399,14 @@ describe("PiRpcChild", () => {
     await responder.send(
       "settled",
       "child-1",
-      { outcome: "completed", summary: "done" },
+      { outcome: "completed", assistantOutput: "done" },
       secretBytes,
     );
     expect((await runPromise).isOk()).toBe(true);
   });
 
   it("reports a dropped prompt transfer as a typed timeout, never missing settlement", async () => {
-    const task = "dropped-" + "x".repeat(1_100_000);
+    const task = `dropped-${"x".repeat(1_100_000)}`;
     const timers: Array<() => void> = [];
     const processPort = new FakeChildProcessPort();
     const child = new PiRpcChild("child-1", "root", "gen-1", "shuttle", 1, {
@@ -1620,7 +1619,6 @@ describe("PiRpcChild", () => {
     );
     expect((await runPromise)._unsafeUnwrap()).toEqual({
       outcome: "completed",
-      summary: "done",
       interventionCount: 0,
     });
   });
@@ -1676,7 +1674,7 @@ describe("PiRpcChild", () => {
     await responder.send(
       "settled",
       "child-1",
-      { outcome: "completed", summary: "x" },
+      { outcome: "completed", assistantOutput: "x" },
       secretBytes,
       5,
     );
@@ -1995,7 +1993,7 @@ describe("PiRpcChild", () => {
     await responder.send(
       "settled",
       "child-1",
-      { outcome: "completed", summary: "done" },
+      { outcome: "completed", assistantOutput: "done" },
       secretBytes,
     );
     const result = await runPromise;
@@ -2036,7 +2034,7 @@ describe("PiRpcChild", () => {
     await responder.send(
       "settled",
       "child-1",
-      { outcome: "completed", summary: "done" },
+      { outcome: "completed", assistantOutput: "done" },
       secretBytes,
     );
     const result = await runPromise;
@@ -2068,7 +2066,7 @@ describe("PiRpcChild", () => {
     await responder.send(
       "settled",
       "child-1",
-      { outcome: "completed", summary: "done" },
+      { outcome: "completed", assistantOutput: "done" },
       secretBytes,
     );
     const result = await runPromise;
@@ -2301,18 +2299,18 @@ describe("PiRpcChild", () => {
     await running.responder.send(
       "settled",
       "child-1",
-      { outcome: "completed", summary: "control-summary" },
+      { outcome: "completed", assistantOutput: "control-summary" },
       running.secretBytes,
     );
 
     expect((await running.runPromise)._unsafeUnwrap()).toEqual({
       outcome: "completed",
-      summary: "final answer",
+      assistantOutput: "final answer",
       interventionCount: 0,
     });
   });
 
-  it("returns an empty summary for absent, nonassistant, and tool-only messages", async () => {
+  it("returns no final output for absent, nonassistant, and tool-only messages", async () => {
     const messages: JsonValue[] = [
       { type: "message_end" },
       {
@@ -2334,12 +2332,11 @@ describe("PiRpcChild", () => {
       await running.responder.send(
         "settled",
         "child-1",
-        { outcome: "completed", summary: "ignored-control-summary" },
+        { outcome: "completed", assistantOutput: "ignored-control-summary" },
         running.secretBytes,
       );
       expect((await running.runPromise)._unsafeUnwrap()).toEqual({
         outcome: "completed",
-        summary: "",
         interventionCount: 0,
       });
     }
@@ -2366,7 +2363,7 @@ describe("PiRpcChild", () => {
     await running.responder.send(
       "settled",
       "child-1",
-      { outcome: "completed", summary: "ignored-control-summary" },
+      { outcome: "completed", assistantOutput: "ignored-control-summary" },
       running.secretBytes,
     );
     const settlement = (await running.runPromise)._unsafeUnwrap();
@@ -2378,7 +2375,6 @@ describe("PiRpcChild", () => {
     });
     expect(settlement).toEqual({
       outcome: "completed",
-      summary: "",
       interventionCount: 1,
     });
     expect(running.child.getInterventionCount()).toBe(1);
@@ -2396,7 +2392,7 @@ describe("PiRpcChild", () => {
     await running.responder.send(
       "settled",
       "child-1",
-      { outcome: "completed", summary: "ignored-control-summary" },
+      { outcome: "completed", assistantOutput: "ignored-control-summary" },
       running.secretBytes,
     );
 
@@ -2405,10 +2401,10 @@ describe("PiRpcChild", () => {
     if (result.isOk()) {
       expect(result.value.outcome).toBe("completed");
       if (result.value.outcome === "completed") {
-        expect(new TextEncoder().encode(result.value.summary).byteLength).toBe(
-          4096,
-        );
-        expect(result.value.summary).toBe("a".repeat(4096));
+        expect(
+          new TextEncoder().encode(result.value.assistantOutput).byteLength,
+        ).toBe(4096);
+        expect(result.value.assistantOutput).toBe("a".repeat(4096));
         expect(JSON.stringify(result.value)).not.toContain(payload);
       }
     }
@@ -2564,7 +2560,7 @@ describe("PiRpcChild", () => {
     await responder.send(
       "settled",
       "child-1",
-      { outcome: "completed", summary: "done" },
+      { outcome: "completed", assistantOutput: "done" },
       secretBytes,
     );
     const result = await runPromise;
@@ -2626,7 +2622,8 @@ describe("PiRpcChild", () => {
       "PRIVATE_TOOL_RESULT",
       "PRIVATE_EXTENSION_UI",
     ];
-    const fullOutput = `${"x".repeat(6_000)}${privateMarkers.join("|")}`;
+    const terminalSentinel = "OBSERVED_TERMINAL_SENTINEL";
+    const fullOutput = `${"x".repeat(1_100_000)}${privateMarkers.join("|")}`;
     const captures: Array<{ output: string; byteLength: number }> = [];
     const running = await startRunningChild({
       onPrivateOutput: (capture) => {
@@ -2646,6 +2643,14 @@ describe("PiRpcChild", () => {
         running.secretBytes,
       );
     }
+    await flush();
+    running.spawned.emitLine({
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: terminalSentinel }],
+      },
+    });
     await flush();
 
     await running.responder.send(
@@ -2669,12 +2674,15 @@ describe("PiRpcChild", () => {
         byteLength: new TextEncoder().encode(fullOutput).byteLength,
       },
     ]);
-    expect(result.value).toEqual({
-      outcome: "completed",
-      summary: "bounded parent projection",
-      outputByteLength: new TextEncoder().encode(fullOutput).byteLength,
-      interventionCount: 0,
-    });
+    if (result.value.outcome !== "completed") return;
+    expect(result.value.assistantOutput).toBe(terminalSentinel);
+    expect(
+      new TextEncoder().encode(result.value.assistantOutput ?? "").byteLength,
+    ).toBeLessThanOrEqual(4096);
+    expect(result.value.outputByteLength).toBe(
+      new TextEncoder().encode(fullOutput).byteLength,
+    );
+    expect(result.value.interventionCount).toBe(0);
     const projected = JSON.stringify(result.value);
     for (const marker of privateMarkers)
       expect(projected).not.toContain(marker);
@@ -2705,16 +2713,10 @@ describe("PiRpcChild", () => {
     expect(result).toEqual(
       ok({
         outcome: "completed",
-        summary: "inline terminal answer",
         interventionCount: 0,
       }),
     );
-    expect(captures).toEqual([
-      {
-        output: "inline terminal answer",
-        byteLength: new TextEncoder().encode("inline terminal answer").byteLength,
-      },
-    ]);
+    expect(captures).toEqual([{ output: "", byteLength: 0 }]);
     expect(running.spawned.forceKilled).toBe(true);
   });
 
@@ -2769,7 +2771,7 @@ describe("PiRpcChild", () => {
     await boundaryResponder.send(
       "settled",
       "child-1",
-      { outcome: "completed", summary: "done" },
+      { outcome: "completed", assistantOutput: "done" },
       boundarySecret,
     );
     const boundaryResult = await boundaryRun;
@@ -2777,7 +2779,6 @@ describe("PiRpcChild", () => {
     if (boundaryResult.isOk()) {
       expect(boundaryResult.value).toEqual({
         outcome: "completed",
-        summary: "",
         interventionCount: 0,
       });
     }

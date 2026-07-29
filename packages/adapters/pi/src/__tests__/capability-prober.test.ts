@@ -1,13 +1,18 @@
 import { describe, expect, it } from "bun:test";
 import { ALL_CAPABILITY_IDS } from "@weaveio/weave-engine";
+import { PI_ADAPTER_CAPABILITY_CONTRACT } from "../capability-declarations.js";
 import {
   buildBlockedProbeSet,
   DefaultPiCapabilityProber,
   PROJECT_PATH_DEPENDENT_CAPABILITIES,
   sanitizeCapabilityProbeResults,
 } from "../capability-prober.js";
-import { PI_ADAPTER_CAPABILITY_CONTRACT } from "../capability-declarations.js";
 import { ADAPTER_PACKAGE_IDENTITY, WEAVE_COMMAND_NAMES } from "../commands.js";
+import { PI_HOST_COMPATIBILITY_MATRIX } from "../host-compatibility-matrix.js";
+import {
+  PI_HOST_SURFACE_IDS,
+  readHostSurfaceReport,
+} from "../host-inventory.js";
 import type { PiCommandInfo } from "../types.js";
 
 /**
@@ -118,7 +123,7 @@ describe("DefaultPiCapabilityProber", () => {
     });
   });
 
-  it("reports command-entrypoints ok when all nine commands are exclusively owned", () => {
+  it("reports command-entrypoints ok when all twelve commands are exclusively owned", () => {
     const probes = prober.probe({
       mode: "tui",
       trust: "trusted",
@@ -233,7 +238,7 @@ describe("DefaultPiCapabilityProber", () => {
     ).toEqual({
       capabilityId: "command-entrypoints",
       probeStatus: "ok",
-      details: "all-nine-commands-present-local-provenance-disabled",
+      details: "all-twelve-commands-present-local-provenance-disabled",
     });
   });
 
@@ -286,6 +291,62 @@ describe("DefaultPiCapabilityProber", () => {
     );
     expect(promptComposition?.probeStatus).toBe("unavailable");
     expect(promptComposition?.details).toBe("not-yet-implemented");
+  });
+
+  it("blocks delegated specialist execution on required host gaps but not rendering fallbacks", () => {
+    const complete = readHostSurfaceReport(
+      PI_HOST_SURFACE_IDS.map((surfaceId) => ({
+        surfaceId,
+        status: "native",
+        details: "ok",
+      })),
+    );
+    const required = PI_HOST_COMPATIBILITY_MATRIX.surfaces.find(
+      (surface) => surface.required,
+    );
+    expect(required).toBeDefined();
+    const gap = readHostSurfaceReport(
+      PI_HOST_SURFACE_IDS.map((surfaceId) => ({
+        surfaceId,
+        status: "native" as const,
+        details: "ok",
+      })).filter((row) => row.surfaceId !== required?.id),
+    );
+    const base = {
+      mode: "tui" as const,
+      trust: "trusted" as const,
+      commands: ALL_OWNED_COMMANDS,
+      candidatePlan: {
+        configLoaded: true,
+        materializationErrorCount: 0,
+        primaryDescriptorFound: true,
+        primaryModelDryResolved: true,
+        delegationToolPlanned: true,
+        eventLoggingPlanned: true,
+        runtimeDirectoryContained: true,
+        plansDirectoryContained: true,
+      },
+    };
+    const blocked = prober
+      .probe({ ...base, hostSurface: gap })
+      .find((probe) => probe.capabilityId === "delegated-specialist-execution");
+    expect(blocked).toEqual({
+      capabilityId: "delegated-specialist-execution",
+      probeStatus: "unavailable",
+      details: `host-surface-gap:${required?.id}`,
+    });
+    const renderingFallback = readHostSurfaceReport(
+      PI_HOST_SURFACE_IDS.map((surfaceId, index) => ({
+        surfaceId,
+        status: index < 6 ? ("fallback" as const) : ("native" as const),
+        details: "ok",
+      })),
+    );
+    const allowed = prober
+      .probe({ ...base, hostSurface: renderingFallback })
+      .find((probe) => probe.capabilityId === "delegated-specialist-execution");
+    expect(allowed?.probeStatus).toBe("ok");
+    expect(complete.requiredGaps).toEqual([]);
   });
 
   it("reports sealed delegation, event logging, workflow, and plan capabilities as ok", () => {

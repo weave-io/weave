@@ -5,6 +5,7 @@ import {
   makeControllerGenerationStaleFailure,
   type PiAdapterFailure,
 } from "./errors.js";
+import type { PiHostSurfaceReport } from "./host-inventory.js";
 import type {
   PiPreflightResult,
   PiSafeInitializer,
@@ -72,10 +73,11 @@ export class PiExtensionController {
       "mode" | "isProjectTrusted" | "cwd" | "modelRegistry"
     >,
     commands: readonly PiCommandInfo[],
+    hostSurface?: PiHostSurfaceReport,
   ): ResultAsync<PiGeneration, PiAdapterFailure> {
     const id = this.deps.idGenerator.next();
     return this.deps.safeInitializer
-      .preflight(session, commands)
+      .preflight(session, commands, hostSurface)
       .map((preflight) => {
         const generation: PiGeneration = {
           id,

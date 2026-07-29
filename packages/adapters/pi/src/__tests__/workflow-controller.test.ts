@@ -19,7 +19,11 @@ import {
   type PiDirectDispatchCandidate,
 } from "../direct-dispatch.js";
 import { makeControllerGenerationStaleFailure } from "../errors.js";
-import { InMemoryRecoveryPointerStore } from "../recovery-pointer.js";
+import {
+  activeInstanceFromRecoveryPointer,
+  createWorkflowAttemptLinkage,
+  InMemoryRecoveryPointerStore,
+} from "../recovery-pointer.js";
 import {
   authorizeByExplicitUser,
   PiWorkflowController,
@@ -277,6 +281,57 @@ describe("PiWorkflowController — startExecution drives the full lifecycle", ()
     expect(result.value.finalStatus).toBe("completed");
   });
 
+  it("passes only completion-signal fields to the workflow state", async () => {
+    const { store, directDispatch, controller } = buildHarness();
+    const workflowInstanceId = await createInstance(store);
+    const canaries = {
+      interventionText: "INTERVENTION-CANARY",
+      finalOutput: "FINAL-OUTPUT-CANARY",
+      intermediateAssistantOutput: "INTERMEDIATE-CANARY",
+      thinking: "THINKING-CANARY",
+      toolData: "TOOL-CANARY",
+      uiData: "UI-CANARY",
+    };
+    directDispatch.enqueue(
+      okAsync({
+        outcome: "success",
+        method: "agent_signal",
+        interventionCount: 27,
+        ...canaries,
+      } as never) as never,
+    );
+    directDispatch.enqueue(
+      okAsync({
+        outcome: "success",
+        method: "agent_signal",
+        interventionCount: 27,
+        ...canaries,
+      } as never) as never,
+    );
+
+    const auth = authorizeByExplicitUser(true);
+    if (!auth.isOk()) throw new Error("unexpected");
+    const result = await controller.startExecution(
+      { workflowInstanceId, context: buildContext() },
+      auth.value,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    expect(result.value.finalStatus).toBe("completed");
+    const instance = await store.instances.getById(
+      createWorkflowInstanceId(workflowInstanceId),
+    );
+    expect(instance.isOk()).toBe(true);
+    if (!instance.isOk()) return;
+    const serialized = JSON.stringify(instance.value);
+    for (const canary of Object.values(canaries)) {
+      expect(serialized).not.toContain(canary);
+    }
+    expect(serialized).not.toContain("assistantOutput");
+    expect(serialized).not.toContain("interventionCount");
+  });
+
   it("never advances a step without an explicit user authorization token at the type level", () => {
     // authorizeByExplicitUser(false) never yields a token; there is no way
     // to call controller.startExecution without a real AuthorizedByUser.
@@ -330,6 +385,139 @@ describe("PiWorkflowController — recovery pointer", () => {
       expect(pointer.controllerGeneration).toBe("gen-1");
       expect(pointer.status).toBe("recoverable");
     }
+    const attemptIds = pointers.map((pointer) => pointer.attempt?.attemptId);
+    expect(attemptIds.every((attemptId) => attemptId === attemptIds[0])).toBe(
+      true,
+    );
+    expect(attemptIds[0]).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+  });
+
+  it("persists exact resumed attempt linkage on every checkpoint and keeps pointer metadata bounded", async () => {
+    const old = buildHarness({
+      ownerId: "controller-gen-old",
+      controllerGenerationId: "controller-gen-old",
+    });
+    const workflowInstanceId = await createInstance(old.store);
+    old.directDispatch.enqueue(
+      okAsync({ outcome: "paused", method: "agent_signal" }) as never,
+    );
+    const auth = authorizeByExplicitUser(true);
+    if (!auth.isOk()) throw new Error("unexpected");
+    const started = await old.controller.startExecution(
+      { workflowInstanceId, context: buildContext() },
+      auth.value,
+    );
+    expect(started.isOk()).toBe(true);
+    if (!started.isOk()) return;
+
+    const previousAttemptId = "00000000-0000-4000-8000-000000000001";
+    const resumedAttemptId = "00000000-0000-4000-8000-000000000002";
+    await old.recoveryPointerStore.appendPointer({
+      schemaVersion: 1,
+      workflowId: workflowInstanceId,
+      leaseId: started.value.leaseId,
+      controllerGeneration: "controller-gen-old",
+      attempt: { attemptId: previousAttemptId },
+      status: "recoverable",
+      observedAt: "2024-01-01T00:00:00.000Z",
+    });
+
+    const fresh = buildHarness({
+      store: old.store,
+      recoveryPointerStore: old.recoveryPointerStore,
+      ownerId: "controller-gen-new",
+      controllerGenerationId: "controller-gen-new",
+    });
+    fresh.directDispatch.enqueue(okAsync(successCandidate()) as never);
+    fresh.directDispatch.enqueue(okAsync(successCandidate()) as never);
+    const resumed = await fresh.controller.resumeExecution(
+      {
+        workflowInstanceId,
+        context: buildContext(),
+        metadata: {
+          weaveResumeAttemptId: resumedAttemptId,
+          weaveResumePreviousAttemptId: previousAttemptId,
+        },
+        recoveryTakeover: {
+          expectedLeaseId: started.value.leaseId as string,
+          expectedControllerGeneration: "controller-gen-old",
+        },
+      },
+      auth.value,
+    );
+    expect(resumed.isOk()).toBe(true);
+
+    const pointers = old.recoveryPointerStore
+      .all()
+      .filter((pointer) => pointer.attempt?.attemptId === resumedAttemptId);
+    expect(pointers.length).toBe(2);
+    for (const pointer of pointers) {
+      expect(pointer.attempt).toEqual({
+        attemptId: resumedAttemptId,
+        previousAttemptId,
+      });
+      expect(Object.keys(pointer).sort()).toEqual([
+        "attempt",
+        "controllerGeneration",
+        "leaseId",
+        "observedAt",
+        "schemaVersion",
+        "status",
+        "workflowId",
+      ]);
+    }
+    const serialized = JSON.stringify({
+      pointers,
+      metadata: {
+        weaveResumeAttemptId: resumedAttemptId,
+        weaveResumePreviousAttemptId: previousAttemptId,
+      },
+    });
+    for (const forbidden of [
+      "transcript",
+      "task",
+      "tool",
+      "session",
+      "path",
+      "intervention",
+    ]) {
+      expect(serialized.toLowerCase()).not.toContain(forbidden);
+    }
+  });
+
+  it("restores the newest attempt identity after reload and links the next fresh resume", async () => {
+    const store = new InMemoryRecoveryPointerStore();
+    const newest = {
+      schemaVersion: 1 as const,
+      workflowId: "00000000-0000-4000-8000-000000000010",
+      leaseId: "00000000-0000-4000-8000-000000000011",
+      controllerGeneration: "gen-old",
+      attempt: {
+        attemptId: "00000000-0000-4000-8000-000000000002",
+        previousAttemptId: "00000000-0000-4000-8000-000000000001",
+      },
+      status: "recoverable" as const,
+      observedAt: "2024-01-01T00:01:00.000Z",
+    };
+    await store.appendPointer({
+      ...newest,
+      observedAt: "2024-01-01T00:00:00.000Z",
+    });
+    await store.appendPointer(newest);
+
+    const latest = await store.readLatestPointer();
+    expect(latest.isOk()).toBe(true);
+    if (!latest.isOk() || latest.value === undefined) return;
+    const restored = activeInstanceFromRecoveryPointer(latest.value);
+    expect(restored?.attemptId).toBe(newest.attempt.attemptId);
+
+    const next = createWorkflowAttemptLinkage(newest.attempt.attemptId);
+    expect(next.isOk()).toBe(true);
+    if (!next.isOk()) return;
+    expect(next.value.previousAttemptId).toBe(newest.attempt.attemptId);
+    expect(next.value.attemptId).not.toBe(newest.attempt.attemptId);
   });
 
   it("degrades telemetry only on pointer append failure - never rolls back the Runtime Store commit", async () => {

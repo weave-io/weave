@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import {
+  MAX_SETTLEMENT_OUTPUT_BYTES,
   parseControlBody,
   toModelIdentityBody,
 } from "../child-control-bodies.js";
@@ -18,6 +19,77 @@ const REQUIRED_BOOTSTRAP_FIELDS = {
   correlationId: "child-1",
   context: { parentAgentName: "loom", parentDepth: 0, cwd: "/project" },
 };
+
+describe("settled control body strict boundaries", () => {
+  it("rejects legacy summary and accepts exact UTF-8 output boundaries", () => {
+    expect(
+      parseControlBody("settled", { outcome: "completed", summary: "legacy" })
+        .ok,
+    ).toBe(false);
+    const ascii = "a".repeat(MAX_SETTLEMENT_OUTPUT_BYTES);
+    const unicode = "🙂".repeat(MAX_SETTLEMENT_OUTPUT_BYTES / 4);
+    expect(
+      parseControlBody("settled", {
+        outcome: "completed",
+        assistantOutput: ascii,
+      }).ok,
+    ).toBe(true);
+    expect(
+      parseControlBody("settled", {
+        outcome: "completed",
+        completionCandidate: unicode,
+      }).ok,
+    ).toBe(true);
+    expect(
+      parseControlBody("settled", {
+        outcome: "completed",
+        assistantOutput: `${ascii}a`,
+      }).ok,
+    ).toBe(false);
+    expect(
+      parseControlBody("settled", {
+        outcome: "completed",
+        completionCandidate: `${unicode}a`,
+      }).ok,
+    ).toBe(false);
+  });
+
+  it("rejects malformed intervention counts and out-of-range transfer numbers", () => {
+    for (const interventionCount of [
+      -1,
+      1.5,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      1_000_001,
+      "1",
+    ]) {
+      expect(
+        parseControlBody("settled", { outcome: "completed", interventionCount })
+          .ok,
+      ).toBe(false);
+    }
+    for (const value of [-1, 1.5, 65_537, Number.POSITIVE_INFINITY]) {
+      expect(
+        parseControlBody("transfer-chunk", {
+          channel: "output",
+          transferId: "t",
+          index: value,
+          total: 1,
+          data: "x",
+        }).ok,
+      ).toBe(false);
+      expect(
+        parseControlBody("transfer-chunk", {
+          channel: "output",
+          transferId: "t",
+          index: 0,
+          total: value,
+          data: "x",
+        }).ok,
+      ).toBe(false);
+    }
+  });
+});
 
 describe("BootstrapBodySchema composedPrompt bound", () => {
   it("accepts a composedPrompt exactly at the max bound", () => {

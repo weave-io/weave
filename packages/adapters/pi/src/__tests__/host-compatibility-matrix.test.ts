@@ -86,4 +86,47 @@ describe("validateHostCompatibilityMatrix", () => {
     });
     expect(result.isOk()).toBe(true);
   });
+
+  it("rejects surface count, duplicate, unknown, policy, and minimum-version drift", () => {
+    const surfaces = [...PI_HOST_COMPATIBILITY_MATRIX.surfaces];
+    expect(
+      validateHostCompatibilityMatrix({
+        ...PI_HOST_COMPATIBILITY_MATRIX,
+        surfaces: surfaces.slice(1),
+      }).isErr(),
+    ).toBe(true);
+    expect(
+      validateHostCompatibilityMatrix({
+        ...PI_HOST_COMPATIBILITY_MATRIX,
+        surfaces: [
+          ...surfaces.slice(0, -1),
+          surfaces[0] as (typeof surfaces)[number],
+        ],
+      }).isErr(),
+    ).toBe(true);
+    expect(
+      validateHostCompatibilityMatrix({
+        ...PI_HOST_COMPATIBILITY_MATRIX,
+        surfaces: surfaces.map((surface, index) =>
+          index === 0 ? { ...surface, id: "unknown" as never } : surface,
+        ),
+      }).isErr(),
+    ).toBe(true);
+    expect(
+      validateHostCompatibilityMatrix({
+        ...PI_HOST_COMPATIBILITY_MATRIX,
+        surfaces: surfaces.map((surface, index) =>
+          index === 0 ? { ...surface, nativeSupport: true } : surface,
+        ),
+      }).isErr(),
+    ).toBe(true);
+    expect(
+      validateHostCompatibilityMatrix({
+        ...PI_HOST_COMPATIBILITY_MATRIX,
+        surfaces: surfaces.map((surface, index) =>
+          index === 0 ? { ...surface, minimumHostVersion: "0.80.0" } : surface,
+        ),
+      }).isErr(),
+    ).toBe(true);
+  });
 });

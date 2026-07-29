@@ -430,6 +430,30 @@ describe("PiChildInspectionRegistry persistence", () => {
     ]);
   });
 
+  it("rejects duplicate and closed recovered attachments without history writes", async () => {
+    const writes: string[] = [];
+    const registry = new PiChildInspectionRegistry({
+      register: () => okAsync(undefined),
+      checkpoint: () => okAsync(undefined),
+    });
+    const registration = {
+      id: "recovered",
+      parentId: ROOT_NODE_ID,
+      name: "ordinary",
+      kind: "ordinary" as const,
+      snapshot: () => node({ id: "recovered" }),
+    };
+    expect((await registry.attachRecovered(registration)).isOk()).toBe(true);
+    expect((await registry.attachRecovered(registration)).isErr()).toBe(true);
+    registry.closeGeneration();
+    expect(
+      (
+        await registry.attachRecovered({ ...registration, id: "closed" })
+      ).isErr(),
+    ).toBe(true);
+    expect(writes).toEqual([]);
+  });
+
   it("keeps trusted workflow metadata when checkpoint events contain forged fields", async () => {
     const now = () => 10;
     const { fs, store } = await openTestHistory(now);

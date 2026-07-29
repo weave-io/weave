@@ -85,9 +85,11 @@ import {
   mapPlanStateErrorToPiFailure,
   type PiAdapterFailure,
 } from "./errors.js";
-import type {
-  PiRecoveryPointerStore,
-  PiWeaveRecoveryPointerV1,
+import {
+  createWorkflowAttemptLinkage,
+  type PiRecoveryPointerStore,
+  type PiWeaveRecoveryPointerV1,
+  type PiWorkflowAttemptLinkage,
 } from "./recovery-pointer.js";
 import type { Clock, IdGenerator, PiAdapterLogger } from "./types.js";
 
@@ -334,6 +336,8 @@ export class PiWorkflowController {
    * stale pending confirmation from a prior generation can never leak
    * forward.
    */
+  private currentAttemptLinkage: PiWorkflowAttemptLinkage | undefined;
+
   private pendingUserConfirmation:
     | {
         workflowInstanceId: string;
@@ -415,6 +419,8 @@ export class PiWorkflowController {
     if (generationCheck.isErr()) {
       return errAsync(generationCheck.error);
     }
+    const attempt = this.ensureCurrentAttemptId();
+    if (attempt.isErr()) return errAsync(attempt.error);
     return startExecution(
       {
         workflowInstanceId: createWorkflowInstanceId(input.workflowInstanceId),
@@ -460,6 +466,21 @@ export class PiWorkflowController {
     const generationCheck = this.deps.assertGenerationCurrent();
     if (generationCheck.isErr()) {
       return errAsync(generationCheck.error);
+    }
+    const metadataAttemptId = input.metadata?.weaveResumeAttemptId;
+    if (typeof metadataAttemptId === "string") {
+      const linkage = createWorkflowAttemptLinkage(
+        input.metadata?.weaveResumePreviousAttemptId as string | undefined,
+        metadataAttemptId,
+      );
+      if (linkage.isErr())
+        return errAsync(
+          makeInvariantViolationFailure("invalid resume attempt linkage"),
+        );
+      this.currentAttemptLinkage = linkage.value;
+    } else {
+      const attempt = this.ensureCurrentAttemptId();
+      if (attempt.isErr()) return errAsync(attempt.error);
     }
     return resumeExecution(
       {
@@ -1018,6 +1039,11 @@ export class PiWorkflowController {
       .andThen((candidate) => {
         const generationCheck2 = this.deps.assertGenerationCurrent();
         if (generationCheck2.isErr()) return errAsync(generationCheck2.error);
+        // Project only the normalized StepCompletionSignal fields. The
+        // authenticated agent_settled boundary has already selected this one
+        // structured candidate; transcript, finalOutput/summary,
+        // intervention text/count, thinking, tool, and UI payloads are not
+        // workflow metadata and must not cross into completeStep.
         const signal: StepCompletionSignal = {
           outcome: candidate.outcome,
           ...(candidate.method !== undefined
@@ -1372,6 +1398,22 @@ export class PiWorkflowController {
     return ResultAsync.fromSafePromise(Promise.resolve(undefined));
   }
 
+  private ensureCurrentAttemptId(): Result<string, PiAdapterFailure> {
+    if (this.currentAttemptLinkage !== undefined) {
+      return ok(this.currentAttemptLinkage.attemptId);
+    }
+    const linkage = createWorkflowAttemptLinkage(undefined);
+    if (linkage.isErr()) {
+      return err(
+        makeInvariantViolationFailure(
+          "could not create workflow attempt linkage",
+        ),
+      );
+    }
+    this.currentAttemptLinkage = linkage.value;
+    return ok(linkage.value.attemptId);
+  }
+
   private appendRecoveryPointer(
     workflowInstanceId: string,
     leaseId: string,
@@ -1381,6 +1423,9 @@ export class PiWorkflowController {
       workflowId: workflowInstanceId,
       leaseId,
       controllerGeneration: this.deps.controllerGenerationId,
+      ...(this.currentAttemptLinkage !== undefined
+        ? { attempt: this.currentAttemptLinkage }
+        : {}),
       status: "recoverable",
       observedAt: new Date(this.deps.clock.now()).toISOString(),
     };

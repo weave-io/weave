@@ -6,6 +6,8 @@
  * cancellation with descendant cleanup, and the bounded inspectable tree
  * snapshot. Never reimplements the engine's limit-decision logic.
  */
+
+import { basename, dirname, isAbsolute, join } from "node:path";
 import type { WeaveConfig } from "@weaveio/weave-core";
 import {
   authorizeDelegation,
@@ -15,18 +17,15 @@ import {
   type DelegationTarget,
   resolveEffectiveDelegationLimits,
 } from "@weaveio/weave-engine";
-import {
-  err,
-  errAsync,
-  ok,
-  okAsync,
-  type Result,
-  ResultAsync,
-} from "neverthrow";
+import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
 import type { PiDelegateRequestBody } from "./child-control-bodies.js";
 import { MAX_CWD_LENGTH, MAX_NAME_LENGTH } from "./child-control-bodies.js";
 import type { HmacPort, RandomPort } from "./child-crypto.js";
 import type { PiChildProcessPort } from "./child-process-port.js";
+import type {
+  PiChildRecoverySettlement,
+  PiChildRecoverySpawnInput,
+} from "./child-recovery.js";
 import type { TimerHandle, TimerPort } from "./child-timer.js";
 import {
   addUsage,
@@ -46,6 +45,8 @@ import {
   makeChildRecoveryUnavailableFailure,
   type PiAdapterFailure,
 } from "./errors.js";
+import type { PathContainmentPort } from "./path-containment.js";
+import { isLexicallyContained } from "./path-containment.js";
 import {
   type PiChildSessionObserverResult,
   type PiChildSettlement,
@@ -133,6 +134,13 @@ export interface PiDelegationControllerDeps {
     capture: { readonly output: string; readonly byteLength: number },
   ) => PiChildSessionObserverResult;
   readonly inspectionRegistry?: PiChildInspectionRegistry;
+  readonly pathContainment?: PathContainmentPort;
+  readonly historyRoot?: () => string;
+  readonly currentCwd?: () => string;
+  readonly currentEnv?: () => Readonly<Record<string, string>>;
+  readonly resolveRootDelegationTarget?: (
+    name: string,
+  ) => DelegationTarget | undefined;
 }
 
 export interface PiAuthenticatedDelegationRequest extends PiDelegationContext {
@@ -176,11 +184,40 @@ interface QueuedDelegation {
 
 const DEFAULT_TREE_REFRESH_INTERVAL_MS = 500;
 
+type PiChildRestoreUnavailableReason =
+  | "stale generation"
+  | "record is not an interrupted ordinary child"
+  | "duplicate live child"
+  | "active leaf is missing"
+  | "restore dependencies unavailable"
+  | "root authority unavailable"
+  | "invalid session path"
+  | "invalid session directory"
+  | "containment failed"
+  | "capacity unavailable";
+
+type PiChildRestoreFailure =
+  | {
+      readonly type: "ChildRecoveryUnavailable";
+      readonly reason: PiChildRestoreUnavailableReason;
+    }
+  | {
+      readonly type: "ChildRecoverySpawnFailed";
+      readonly phase:
+        | "attachment"
+        | "bootstrap"
+        | "handshake"
+        | "run"
+        | "settlement"
+        | "persistence";
+    };
+
 export class PiDelegationController {
   private readonly children = new Map<string, PiRpcChild>();
   private readonly queue: QueuedDelegation[] = [];
   private disposedAll = false;
   private treeRefreshTimer: TimerHandle | undefined;
+  private readonly restoreReservations = new Set<string>();
 
   constructor(private readonly deps: PiDelegationControllerDeps) {}
 
@@ -380,6 +417,7 @@ export class PiDelegationController {
       if (child.getParentId() === parentId && !this.isTerminal(child))
         count += 1;
     }
+    if (parentId === ROOT_NODE_ID) count += this.restoreReservations.size;
     return count;
   }
 
@@ -387,6 +425,7 @@ export class PiDelegationController {
     let count = 0;
     for (const child of this.children.values())
       if (!this.isTerminal(child)) count += 1;
+    count += this.restoreReservations.size;
     return count;
   }
 
@@ -429,16 +468,17 @@ export class PiDelegationController {
         const outcome = await result;
         const finalOutput =
           outcome.isOk() && outcome.value.outcome === "completed"
-            ? outcome.value.summary
+            ? outcome.value.assistantOutput
             : undefined;
         const persisted =
           this.deps.inspectionRegistry === undefined
             ? ok(undefined)
-            : await this.deps.inspectionRegistry.retainTerminal(
-                childId,
-                child.snapshot(),
-                finalOutput,
-              );
+            : await this.deps.inspectionRegistry
+                .retainTerminal(childId, child.snapshot(), finalOutput)
+                .match(
+                  () => ok(undefined),
+                  (error) => err(error),
+                );
         // Disposal and capacity promotion are cleanup, so they happen even when
         // terminal persistence fails. The persistence result is still returned.
         child.dispose();
@@ -690,9 +730,12 @@ export class PiDelegationController {
               const marked =
                 this.deps.inspectionRegistry === undefined
                   ? ok(undefined)
-                  : await this.deps.inspectionRegistry.markInterrupted(
-                      child.getId(),
-                    );
+                  : await this.deps.inspectionRegistry
+                      .markInterrupted(child.getId())
+                      .match(
+                        () => ok(undefined),
+                        (error) => err(error),
+                      );
               // Never leave a process alive because history persistence failed.
               const cancelled = await child.cancel();
               if (marked.isErr())
@@ -782,7 +825,252 @@ export class PiDelegationController {
     return total;
   }
 
-  /** Idempotent whole-tree teardown: cancels every live child, drains the queue, clears every secret. Safe to call more than once. */
+  /** Restore an ordinary child through the controller's authenticated boundary. */
+  restoreOrdinaryChild(
+    input: PiChildRecoverySpawnInput,
+  ): ResultAsync<PiChildRecoverySettlement, PiChildRestoreFailure> {
+    const unavailable = (
+      reason: PiChildRestoreUnavailableReason,
+    ): ResultAsync<PiChildRecoverySettlement, PiChildRestoreFailure> =>
+      errAsync({ type: "ChildRecoveryUnavailable" as const, reason });
+    if (this.disposedAll || input.generationId !== this.deps.generationId)
+      return unavailable("stale generation");
+    const record = input.record;
+    if (
+      record.parentChildId !== undefined ||
+      record.kind !== "ordinary" ||
+      record.status !== "interrupted"
+    )
+      return unavailable("record is not an interrupted ordinary child");
+    if (this.children.has(record.childId))
+      return unavailable("duplicate live child");
+    if (record.activeLeaf === undefined || record.activeLeaf.length === 0)
+      return unavailable("active leaf is missing");
+    const activeLeaf = record.activeLeaf;
+    const target = this.deps.resolveRootDelegationTarget?.(
+      input.descriptor.name,
+    );
+    const buildBootstrap = this.deps.buildBootstrap;
+    const rootPath = this.deps.historyRoot?.();
+    const containment = this.deps.pathContainment;
+    const rootAgentName = this.deps.rootAgentName?.();
+    if (
+      target === undefined ||
+      buildBootstrap === undefined ||
+      rootPath === undefined ||
+      containment === undefined
+    )
+      return unavailable("restore dependencies unavailable");
+    if (rootAgentName === undefined)
+      return unavailable("root authority unavailable");
+
+    // The history record is the only source of the session location. Check its
+    // canonical relative path, then prove only its parent directory with the
+    // no-follow port. Never turn childId into a path.
+    const sessionPath = record.sessionPath;
+    if (
+      isAbsolute(sessionPath) ||
+      !isLexicallyContained(sessionPath) ||
+      basename(sessionPath) !== "session.jsonl"
+    )
+      return unavailable("invalid session path");
+    const relativeDir = dirname(sessionPath);
+    if (relativeDir === "." || !isLexicallyContained(relativeDir))
+      return unavailable("invalid session directory");
+    return containment
+      .verifyContainment(rootPath, relativeDir)
+      .mapErr(() => ({
+        type: "ChildRecoveryUnavailable" as const,
+        reason: "containment failed" as const,
+      }))
+      .andThen((sessionDir) => {
+        const authorization = this.authorize({
+          parentId: ROOT_NODE_ID,
+          parentDepth: 0,
+          parentAgentName: rootAgentName,
+          agentName: input.descriptor.name,
+          task: input.continuation,
+          cwd: this.deps.currentCwd?.() ?? ".",
+          env: this.deps.currentEnv?.() ?? {},
+          bootstrap: null,
+        });
+        if (
+          authorization.isErr() ||
+          authorization.value.outcome !== "authorized"
+        )
+          return unavailable("capacity unavailable");
+        const childId = record.childId;
+        const cwd = this.deps.currentCwd?.() ?? ".";
+        const env = this.deps.currentEnv?.() ?? this.deps.baseEnv ?? {};
+        const child = new PiRpcChild(
+          childId,
+          ROOT_NODE_ID,
+          this.deps.generationId,
+          input.descriptor.name,
+          1,
+          {
+            processPort: this.deps.processPort,
+            randomPort: this.deps.randomPort,
+            hmacPort: this.deps.hmacPort,
+            timerPort: this.deps.timerPort,
+            cancelGraceMs: this.deps.cancelGraceMs,
+            baseEnv: this.deps.baseEnv,
+            logger: this.deps.logger,
+            command: this.deps.command,
+            now: this.deps.now,
+            onDelegationRequest: (relayId, correlationId, body) =>
+              this.handleChildDelegationRequest(relayId, correlationId, body),
+            onAssistantUsageObserved: (usage) => {
+              this.deps.telemetry
+                ?.recordAssistantUsage({
+                  id: usage.id,
+                  source: "child",
+                  agentName: input.descriptor.name,
+                  inputTokens: usage.inputTokens,
+                  outputTokens: usage.outputTokens,
+                  cacheReadTokens: usage.cacheReadTokens,
+                  cacheWriteTokens: usage.cacheWriteTokens,
+                  cost: usage.cost,
+                })
+                .match(
+                  () => undefined,
+                  () => undefined,
+                );
+            },
+            onStreamingUpdate: () => {
+              this.deps.inspectionRegistry?.checkpoint(childId).match(
+                () => undefined,
+                () => undefined,
+              );
+              this.notifyTreeChanged();
+            },
+            onPrivateOutput: (capture) =>
+              this.deps.onPrivateOutput?.(childId, capture) ?? ok(undefined),
+            sessionObserver: {
+              onEvent: (event) => {
+                this.deps.inspectionRegistry
+                  ?.checkpointEvent(childId, event)
+                  .match(
+                    () => undefined,
+                    () => undefined,
+                  );
+                return ok(undefined);
+              },
+            },
+          },
+        );
+        const spawn = {
+          childId,
+          parentId: ROOT_NODE_ID,
+          generationId: this.deps.generationId,
+          agentName: input.descriptor.name,
+          depth: 1,
+          cwd,
+          env,
+          task: input.continuation,
+          session: {
+            mode: "restore" as const,
+            sessionDir,
+            sessionPath: join(sessionDir, "session.jsonl"),
+            activeLeafId: activeLeaf,
+            checkpointCursor: record.checkpointCursor,
+          },
+        };
+        this.restoreReservations.add(childId);
+        const attached =
+          this.deps.inspectionRegistry?.attachRecovered({
+            id: childId,
+            parentId: ROOT_NODE_ID,
+            name: input.descriptor.name,
+            kind: "ordinary",
+            snapshot: () => child.snapshot(),
+          }) ?? okAsync(undefined);
+        const finalize = (
+          terminal: boolean,
+          summary?: string,
+        ): ResultAsync<void, PiChildRestoreFailure> => {
+          let persistence: ResultAsync<void, PiChildInspectionHistoryError>;
+          if (this.deps.inspectionRegistry === undefined) {
+            persistence = okAsync(undefined);
+          } else if (terminal) {
+            persistence = this.deps.inspectionRegistry.retainTerminal(
+              childId,
+              child.snapshot(),
+              summary,
+            );
+          } else {
+            persistence = this.deps.inspectionRegistry.markInterrupted(childId);
+          }
+          return new ResultAsync(
+            persistence.match(
+              () => {
+                child.dispose();
+                this.children.delete(childId);
+                this.restoreReservations.delete(childId);
+                this.promoteQueued();
+                this.notifyTreeChanged();
+                return ok(undefined);
+              },
+              () => {
+                child.dispose();
+                this.children.delete(childId);
+                this.restoreReservations.delete(childId);
+                this.promoteQueued();
+                this.notifyTreeChanged();
+                return err({
+                  type: "ChildRecoverySpawnFailed" as const,
+                  phase: "persistence" as const,
+                });
+              },
+            ),
+          );
+        };
+        const bootstrap = Result.fromThrowable(
+          () =>
+            buildBootstrap(target, childId, {
+              parentAgentName: rootAgentName,
+              parentDepth: 0,
+              cwd,
+            }),
+          () => ({
+            type: "ChildRecoverySpawnFailed" as const,
+            phase: "bootstrap" as const,
+          }),
+        )();
+        if (bootstrap.isErr())
+          return finalize(false).andThen(() => errAsync(bootstrap.error));
+        return ResultAsync.fromThrowable(
+          async () => {
+            const attachedResult = await attached;
+            if (attachedResult.isErr()) throw new Error("attachment failed");
+            this.children.set(childId, child);
+            if (bootstrap.isErr()) throw new Error("bootstrap failed");
+            const started = await child
+              .spawnAndHandshake(spawn)
+              .andThen(() => child.runTask(spawn, bootstrap.value));
+            if (started.isErr()) throw new Error("run failed");
+            if (started.value.outcome !== "completed")
+              throw new Error("settlement failed");
+            const finalOutput = started.value.assistantOutput ?? "";
+            const cleaned = await finalize(true, finalOutput);
+            if (cleaned.isErr()) throw new Error("persistence failed");
+            return {
+              finalOutput,
+              interventionCount: started.value.interventionCount ?? 0,
+            };
+          },
+          () => ({
+            type: "ChildRecoverySpawnFailed" as const,
+            phase: "run" as const,
+          }),
+        )().orElse((failure) =>
+          finalize(false)
+            .orElse(() => errAsync(failure))
+            .andThen(() => errAsync(failure)),
+        );
+      });
+  }
+
   disposeAll(): void {
     if (this.disposedAll) return;
     this.disposedAll = true;

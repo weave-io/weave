@@ -75,7 +75,11 @@ export {
   classifyWeaveCommand,
   isOwnSourceInfo,
   parseNpmSourceName,
+  WEAVE_CLEAR_CHILDREN_COMMAND_NAME,
+  WEAVE_COMMAND_CLASSIFICATIONS,
   WEAVE_COMMAND_NAMES,
+  WEAVE_INSPECT_COMMAND_NAME,
+  WEAVE_RECOVERY_COMMAND_NAME,
 } from "./commands.js";
 export type {
   PiConfigActivationInput,
@@ -144,6 +148,74 @@ export type {
   PiChildHistoryStatus,
 } from "./child-history-schema.js";
 export {
+  EMPTY_INSPECTOR_VIEW_STATE,
+  interceptChildSlashCommand,
+  PiChildInspector,
+  PiChildSlots,
+} from "./child-inspector.js";
+export type {
+  PiChildSlashCommand,
+  PiInspectorChild,
+  PiInspectorConfirmation,
+  PiInspectorError,
+  PiInspectorRpc,
+  PiInspectorStatus,
+  PiInspectorView,
+  PiInspectorViewState,
+  PiInspectorViewStateUpdate,
+} from "./child-inspector.js";
+export {
+  buildChildPickerEntries,
+  createChildPickerEntries,
+  moveChildPicker,
+  sanitizeChildPickerPreview,
+  selectedChildPickerEntry,
+} from "./child-picker.js";
+export type {
+  PiChildPickerEntry,
+  PiChildPickerError,
+  PiChildPickerInput,
+  PiChildPickerKind,
+  PiChildPickerNode,
+  PiChildPickerState,
+} from "./child-picker.js";
+export {
+  createChildInspectionEditor,
+  PiChildInspectionEditor,
+} from "./child-inspection-editor.js";
+export type {
+  PiChildInspectionEditorHost,
+  PiChildInspectionEditorResult,
+} from "./child-inspection-editor.js";
+export {
+  createChildInspectionRenderer,
+  PiChildInspectionRenderer,
+  renderChildInspection,
+} from "./child-inspection-render.js";
+export type {
+  InspectionBreadcrumbSegment,
+  InspectionCacheKey,
+  InspectionSummary,
+  InspectionWorkflowMeta,
+  PiChildInspectionRenderError,
+  PiChildInspectionRenderInput,
+  PiChildInspectionRenderOutput,
+} from "./child-inspection-render.js";
+export {
+  MAX_SANITIZED_CHILD_EXPORT_BYTES,
+  MAX_SANITIZED_CHILD_INDEX_ENTRIES,
+  PiSanitizedChildIndexEntrySchema,
+  PiSanitizedChildIndexSchema,
+  createPiSanitizedChildIndex,
+  PiSanitizedChildIndexExporter,
+} from "./artifact-provider.js";
+export type {
+  PiSanitizedChildIndex,
+  PiSanitizedChildIndexEntry,
+  PiSanitizedChildIndexError,
+  PiSanitizedChildIndexInput,
+} from "./artifact-provider.js";
+export {
   parsePiChildSessionEvent,
   preserveUnknownChildEvent,
   PiChildSessionEventSchema,
@@ -201,7 +273,29 @@ export {
   isSupportedHostVersion,
   parseSemver,
 } from "./host-compatibility.js";
-export { readValidatedCommands } from "./host-inventory.js";
+export {
+  DefaultPiHostSurfaceReader,
+  PI_HOST_SURFACE_IDS,
+  readHostSurfaceReport,
+  safeReadHostSurfaceReport,
+  readValidatedCommands,
+  type PiHostSurfaceId,
+  type PiHostSurfaceProbe,
+  type PiHostSurfaceReader,
+  type PiHostSurfaceReadInput,
+  type PiHostSurfaceReport,
+  type PiHostSurfaceStatus,
+  type PiHostSurfaceReadError,
+} from "./host-inventory.js";
+export {
+  PI_HOST_COMPATIBILITY_MATRIX,
+  validateHostCompatibilityMatrix,
+} from "./host-compatibility-matrix.js";
+export type {
+  HostCompatibilityMatrixError,
+  PiHostCompatibilityMatrix,
+} from "./host-compatibility-matrix.js";
+export { PI_HOST_SURFACE_DECLARATIONS, type PiHostSurfaceDeclaration } from "./capability-declarations.js";
 export type {
   PiModelActivationOutcome,
   PiModelApplyPort,

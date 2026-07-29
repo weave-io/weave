@@ -24,7 +24,13 @@ export const ROOT_NODE_ID = "root";
  */
 export type PiChildInspectionHistoryError = {
   readonly kind: "history-write-failed";
-  readonly operation: "register" | "checkpoint" | "interrupted" | "terminal";
+  readonly operation:
+    | "register"
+    | "attach"
+    | "checkpoint"
+    | "interrupted"
+    | "terminal"
+    | "clear";
   readonly reason: "unavailable" | "corrupt" | "quota" | "invalid";
 };
 
@@ -75,6 +81,13 @@ export interface PiChildInspectionHistoryPort {
     snapshot: PiChildTreeNode,
     finalOutput?: string,
   ) => ResultAsync<void, PiChildInspectionHistoryError>;
+  readonly clear?: (
+    id: string,
+  ) => ResultAsync<void, PiChildInspectionHistoryError>;
+  readonly clearTerminal?: () => ResultAsync<
+    number,
+    PiChildInspectionHistoryError
+  >;
 }
 
 /** Adapts the persistent Task 5 store without leaking store details into controllers. */
@@ -98,6 +111,10 @@ export function createPiChildHistoryPort(
       workflow: registration.workflowInstanceId,
       step: registration.stepName,
     },
+    ...(registration.kind === "ordinary" &&
+    registration.parentId === ROOT_NODE_ID
+      ? { descriptorName: registration.name }
+      : {}),
     sessionPath: `children/${registration.id}/session.jsonl`,
     checkpointCursor: 0,
     branchAncestry: [],
@@ -163,6 +180,8 @@ export function createPiChildHistoryPort(
           ...(finalOutput === undefined ? {} : { finalOutput }),
         }),
       ),
+    clear: (id) => mapped("clear", store.clear(id)),
+    clearTerminal: () => mapped("clear", store.clearTerminal()),
   };
 }
 export interface PiChildInspectionRegistration {
@@ -228,6 +247,30 @@ export class PiChildInspectionRegistry {
           ? okAsync(undefined)
           : errAsync(this.firstFailure),
       );
+  }
+
+  /** Attach a recovered live process without rewriting its durable record. */
+  attachRecovered(
+    registration: PiChildInspectionRegistration,
+  ): ResultAsync<void, PiChildInspectionHistoryError> {
+    if (!this.generationOpen)
+      return errAsync({
+        kind: "history-write-failed",
+        operation: "attach",
+        reason: "invalid",
+      });
+    if (this.live.has(registration.id))
+      return errAsync({
+        kind: "history-write-failed",
+        operation: "attach",
+        reason: "invalid",
+      });
+    // Recovery attaches an already durable record. Do not call register or
+    // replace the record: attachment only restores the live in-memory owner.
+    this.live.set(registration.id, registration);
+    if (!this.records.has(registration.id))
+      this.records.set(registration.id, registration.snapshot());
+    return okAsync(undefined);
   }
 
   register(
@@ -309,12 +352,71 @@ export class PiChildInspectionRegistry {
       .filter((node): node is PiChildTreeNode => node !== undefined);
   }
 
+  /** Live registration metadata for inspection; never includes private session text. */
+  snapshotLiveRegistrations(): readonly {
+    readonly registration: PiChildInspectionRegistration;
+    readonly snapshot: PiChildTreeNode;
+  }[] {
+    return [...this.live.values()]
+      .map((registration) => ({
+        registration,
+        snapshot: this.records.get(registration.id),
+      }))
+      .filter(
+        (
+          item,
+        ): item is {
+          registration: PiChildInspectionRegistration;
+          snapshot: PiChildTreeNode;
+        } => item.snapshot !== undefined,
+      );
+  }
+
   snapshotHistory(): readonly PiChildTreeNode[] {
     return [...this.records.values()];
   }
 
   snapshot(): readonly PiChildTreeNode[] {
     return this.snapshotHistory();
+  }
+
+  clearTerminal(
+    isCurrent: () => boolean = () => true,
+  ): ResultAsync<number, PiChildInspectionHistoryError> {
+    if (!isCurrent()) return okAsync(0);
+    const terminal = [...this.records.entries()].filter(([, node]) =>
+      ["completed", "cancelled", "failed"].includes(node.status),
+    );
+    const clear = this.history?.clearTerminal;
+    if (clear) {
+      let clearedCount = 0;
+      return this.enqueue(() => {
+        if (!isCurrent()) return okAsync(undefined);
+        return clear().map((count) => {
+          clearedCount = count;
+          if (isCurrent()) {
+            for (const [id, node] of this.records) {
+              if (["completed", "cancelled", "failed"].includes(node.status))
+                this.records.delete(id);
+            }
+          }
+          return undefined;
+        });
+      }).map(() => clearedCount);
+    }
+    return terminal.reduce<ResultAsync<number, PiChildInspectionHistoryError>>(
+      (result, [id]) =>
+        result.andThen((count) => {
+          if (!isCurrent()) return okAsync(count);
+          return this.enqueue(() =>
+            (this.history?.clear?.(id) ?? okAsync(undefined)).map(() => {
+              if (isCurrent()) this.records.delete(id);
+              return undefined;
+            }),
+          ).map(() => count + 1);
+        }),
+      okAsync(0),
+    );
   }
 
   closeGeneration(): void {

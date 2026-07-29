@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import * as PiPublicExports from "@earendil-works/pi-coding-agent";
 import { CustomEditor } from "@earendil-works/pi-coding-agent";
 import {
   DEFAULT_RUNTIME_SETTINGS,
@@ -45,16 +46,25 @@ import {
   sanitizedBaseEnv,
   WEAVE_CHILD_SECRET_ENV,
 } from "./child-env.js";
+import type { PiChildHistoryRecord } from "./child-history-schema.js";
 import { PiChildHistoryStore } from "./child-history-store.js";
 import {
   formatPiChildInspectionSettingsIssues,
   type PiChildInspectionEffectiveSettings,
   type PiChildInspectionSettingsChoice,
 } from "./child-inspection-settings.js";
+import { PiChildSlots } from "./child-inspector.js";
+import {
+  buildChildPickerEntries,
+  type PiChildPickerNode,
+  sanitizeChildPickerPreview,
+} from "./child-picker.js";
 import {
   BunPiChildProcessPort,
   type PiChildProcessPort,
 } from "./child-process-port.js";
+import type { PiChildRecoverySpawnInput } from "./child-recovery.js";
+import { PiChildRecoveryCoordinator } from "./child-recovery.js";
 import {
   type PiChildOutputError,
   type PiChildOutputPort,
@@ -72,7 +82,10 @@ import {
   ROOT_NODE_ID,
   truncateLatestOutput,
 } from "./child-tree.js";
-import { classifyChildTreeKey } from "./child-tree-keys.js";
+import {
+  classifyChildInspectorKey,
+  classifyChildTreeKey,
+} from "./child-tree-keys.js";
 import { renderChildTreeLines } from "./child-tree-render.js";
 import { WEAVE_COMMAND_NAMES, type WeaveCommandName } from "./commands.js";
 import {
@@ -105,7 +118,13 @@ import {
   BunHostPackageReader,
   type HostPackageReader,
 } from "./host-compatibility.js";
-import { readValidatedCommands } from "./host-inventory.js";
+import {
+  DefaultPiHostSurfaceReader,
+  emptyHostSurfaceReport,
+  type PiHostSurfaceReader,
+  readValidatedCommands,
+  safeReadHostSurfaceReport,
+} from "./host-inventory.js";
 import {
   PiModelActivator,
   type PiModelApplyPort,
@@ -229,6 +248,7 @@ class DefaultPiSharedLogRedirector implements PiSharedLogRedirector {
 /** Every dependency this extension needs beyond what Pi hands it directly. Fully injectable for tests. */
 export interface PiExtensionDeps {
   readonly hostPackageReader: HostPackageReader;
+  readonly hostSurfaceReader?: PiHostSurfaceReader;
   readonly capabilityProber: PiCapabilityProbeSource;
   readonly idGenerator: IdGenerator;
   readonly clock: Clock;
@@ -270,6 +290,11 @@ export interface PiExtensionDeps {
     parentSessionId: string,
     settings: PiActiveSession["childInspectionSettings"],
   ) => ResultAsync<PiChildHistoryStore, unknown>;
+  /** Injectable ordinary-child recovery seam. Production falls back to the
+   * authenticated delegation controller restore path. */
+  readonly restoreOrdinaryChild?: (
+    input: PiChildRecoverySpawnInput,
+  ) => ReturnType<PiDelegationController["restoreOrdinaryChild"]>;
   /**
    * Real, no-follow-safe containment proof for `.weave/runtime`/
    * `.weave/plans` (Pi adapter contract) - injected into
@@ -339,6 +364,7 @@ export function createDefaultPiExtensionDeps(): PiExtensionDeps {
   const envPort = new BunEnvPort();
   return {
     hostPackageReader: new BunHostPackageReader(),
+    hostSurfaceReader: new DefaultPiHostSurfaceReader(),
     capabilityProber: new DefaultPiCapabilityProber({
       enforceCommandProvenance:
         envPort.read(WEAVE_PI_UNSAFE_DISABLE_COMMAND_PROVENANCE_ENV) !== "1",
@@ -613,7 +639,7 @@ interface PiChildModeState {
    * The current turn's accumulated assistant text, truncated to <=4KiB
    * valid UTF-8 (Task 9). Reset on every `turn_start` so a stale
    * previous turn's text is never reported as this turn's settlement
-   * summary; fed by `message_update` deltas; read (and re-truncated as a
+   * output; fed by `message_update` deltas; read (and re-truncated as a
    * belt-and-suspenders bound) when `agent_settled` fires.
    */
   latestAssistantOutput: string;
@@ -659,9 +685,6 @@ function createChildModeState(): PiChildModeState {
     lastAssistantStopReason: undefined,
   };
 }
-
-/** Safe, fixed fallback summary used only when a completed child produced no observable assistant text (Task 9). */
-const EMPTY_CHILD_SUMMARY_FALLBACK = "(child produced no assistant output)";
 
 function reportChildSettlement(
   runtime: PiChildRuntime,
@@ -1042,7 +1065,17 @@ async function activateChildModeIfApplicable(
     const stopReason = extractAssistantStopReason(record);
     if (stopReason !== undefined) state.lastAssistantStopReason = stopReason;
     const completed = extractFullAssistantText(record.message);
-    if (completed !== undefined) state.fullAssistantOutput = completed;
+    // Only a terminal assistant response is eligible for settlement output.
+    // Intermediate tool-use assistant messages and non-terminal canaries never
+    // replace the final answer.
+    if (
+      completed !== undefined &&
+      (stopReason === undefined ||
+        stopReason === "stop" ||
+        stopReason === "length")
+    ) {
+      state.fullAssistantOutput = completed;
+    }
     return undefined;
   });
 
@@ -1093,11 +1126,12 @@ async function activateChildModeIfApplicable(
       await reportSettlement("failed", { reason: attempt.outcome });
       return;
     }
-    let fullOutput = EMPTY_CHILD_SUMMARY_FALLBACK;
-    if (state.fullAssistantOutput.length > 0) {
-      fullOutput = state.fullAssistantOutput;
-    } else if (state.latestAssistantOutput.length > 0) {
-      fullOutput = state.latestAssistantOutput;
+    // Only message_end populates fullAssistantOutput. Streamed previews are
+    // intermediate state and must never become a parent result.
+    const fullOutput = state.fullAssistantOutput;
+    if (fullOutput.length === 0) {
+      await reportSettlement("completed", {});
+      return;
     }
     const projection = truncateLatestOutput(fullOutput);
     const byteLength = new TextEncoder().encode(fullOutput).byteLength;
@@ -1178,6 +1212,12 @@ function commandDescription(name: WeaveCommandName): string {
       return "Show the full read-only plan task tree";
     case "weave:artifact":
       return "Approve or reject a pending artifact revision";
+    case "weave:inspect":
+      return "Inspect the Weave child hierarchy and history";
+    case "weave:clear-children":
+      return "Clear terminal Weave child history";
+    case "weave:recover-children":
+      return "Recover interrupted Weave children";
   }
 }
 
@@ -1332,6 +1372,8 @@ interface WeaveChildTreeEditorDeps {
   getSelection(): string;
   setSelection(nodeId: string): void;
   cancelSubtree(nodeId: string): void;
+  slots: PiChildSlots;
+  openInspector?(): void;
 }
 
 /**
@@ -1368,6 +1410,28 @@ class WeaveChildTreeEditor extends CustomEditor {
   }
 
   override handleInput(data: string): void {
+    this.weaveDeps.slots.assignTree(
+      [...this.weaveDeps.getNodesMap().values()].map((node) => ({
+        id: node.id,
+        status: node.status,
+      })),
+    );
+    const inspectorKey = classifyChildInspectorKey(data);
+    if (inspectorKey?.kind === "open-picker") {
+      this.weaveDeps.openInspector?.();
+      return;
+    }
+    // Direct-child selection uses the persistent allocator, not the current
+    // tree ordering. This keeps Alt+1..9 stable across insertion/reordering.
+    const altSlot =
+      inspectorKey?.kind === "select-direct-child"
+        ? inspectorKey.index
+        : undefined;
+    if (altSlot !== undefined) {
+      const nodeId = this.weaveDeps.slots.childAt(altSlot);
+      if (nodeId !== undefined) this.weaveDeps.setSelection(nodeId);
+      return;
+    }
     const key = classifyChildTreeKey(data);
     if (key === undefined) {
       super.handleInput(data);
@@ -1399,7 +1463,7 @@ class WeaveChildTreeEditor extends CustomEditor {
 /**
  * The one compiled extension entry (Pi adapter contract). The returned factory is
  * synchronous and, under the Pi adapter contract, only: constructs the controller, registers the
- * nine inert `/weave:*` command shells and the lifecycle delegates, and
+ * inert `/weave:*` command shells and the lifecycle delegates, and
  * returns. It never loads project config, opens the Runtime Store, starts a
  * timer, or launches a child process at factory time.
  */
@@ -1427,11 +1491,17 @@ export function createPiExtension(
   } = {
     controller: undefined,
   };
+  const recoveryCoordinatorCell: {
+    coordinator: PiChildRecoveryCoordinator | undefined;
+  } = { coordinator: undefined };
   // Bounded, live child-tree selection state (Pi adapter contract) - reset to the
   // root whenever a fresh generation activates.
   const treeSelectionCell: { selectedId: string } = {
     selectedId: ROOT_NODE_ID,
   };
+  // One allocator lives for the extension instance, so editor replacement does
+  // not renumber live children.
+  const childSlots = new PiChildSlots();
   // Per-generation workflow controller (Pi adapter contract) - projects all ten
   // engine lifecycle operations. Constructed only when trusted and not
   // health-only, mirroring `delegationControllerCell`'s gating.
@@ -1468,6 +1538,12 @@ export function createPiExtension(
     import("@weaveio/weave-engine").WorkflowExecutionContext["workflows"][string]
   > = {};
   let activeSession: PiActiveSession | undefined;
+  let editorInstallCell:
+    | { generationId: string; ctx: PiSessionContext; previousFactory: unknown }
+    | undefined;
+  const historyStoreCell: { store: PiChildHistoryStore | undefined } = {
+    store: undefined,
+  };
   // The controller performs read-only preflight, but invalid settings need an
   // explicit user choice. Keep the current UI only for the duration of one
   // activation so a retry cannot prompt twice or use stale session state.
@@ -1615,6 +1691,152 @@ export function createPiExtension(
     }
   }
 
+  async function openChildInspector(
+    ctx: PiSessionContext,
+    registry: PiChildInspectionRegistry,
+    historyStore: PiChildHistoryStore | undefined,
+    coordinator: PiChildRecoveryCoordinator | undefined,
+    generationId: string,
+    setSelection?: (childId: string) => void,
+    sendResume?: () => Promise<void>,
+  ): Promise<void> {
+    const live = registry.snapshotLiveRegistrations().map(
+      ({ registration, snapshot }): PiChildPickerNode => ({
+        childId: snapshot.id,
+        name: registration.name,
+        kind: registration.kind,
+        parentId: snapshot.parentId,
+        status: snapshot.status,
+        preview: sanitizeChildPickerPreview(snapshot.latestOutput),
+        live: true,
+        currentTool: snapshot.currentTool,
+        generationId,
+        workflowInstanceId: registration.workflowInstanceId,
+        stepName: registration.stepName,
+      }),
+    );
+    const indexResult =
+      historyStore === undefined
+        ? ok({ records: [] as const })
+        : Result.fromThrowable(
+            () => historyStore.getIndex(),
+            () => "history unavailable",
+          )();
+    if (indexResult.isErr()) {
+      ctx.ui.notify(
+        "Child inspection is unavailable in this session.",
+        "warning",
+      );
+      return;
+    }
+    const records = indexResult.value.records;
+    const liveIds = new Set(live.map((node) => node.childId));
+    const history = records
+      .filter((record) => !liveIds.has(record.childId))
+      .map(
+        (record): PiChildPickerNode => ({
+          childId: record.childId,
+          name: record.descriptorName ?? record.childId,
+          kind: record.kind,
+          ...(record.parentChildId === undefined
+            ? {}
+            : { parentId: record.parentChildId }),
+          status: record.status,
+          preview: sanitizeChildPickerPreview(record.finalOutput),
+          live: false,
+          recoverable:
+            record.kind === "ordinary" &&
+            record.parentChildId === undefined &&
+            record.status === "interrupted" &&
+            record.recovery.eligible,
+          resumable:
+            record.kind === "workflow-step" &&
+            record.status === "interrupted" &&
+            record.recovery.eligible,
+          workflowInstanceId: record.workflow.workflow,
+          stepName: record.workflow.step,
+        }),
+      );
+    const entries = buildChildPickerEntries({
+      rootLabel: "Weave execution",
+      live,
+      history,
+    });
+    if (entries.isErr()) {
+      ctx.ui.notify(
+        "Child inspection is unavailable in this session.",
+        "warning",
+      );
+      return;
+    }
+    const selected = await ResultAsync.fromThrowable(
+      () =>
+        ctx.ui.select(
+          "Weave child inspection",
+          entries.value.map((entry) => entry.label),
+        ),
+      () => "inspection unavailable",
+    )();
+    if (selected.isErr() || selected.value === undefined) {
+      if (selected.isErr())
+        ctx.ui.notify(
+          "Child inspection is unavailable in this session.",
+          "warning",
+        );
+      return;
+    }
+    const entry = entries.value.find((item) => item.label === selected.value);
+    if (entry === undefined || activeSession?.generationId !== generationId)
+      return;
+    if (entry.action === "clear") {
+      const clearNode = entry.node;
+      if (
+        historyStore === undefined ||
+        clearNode === undefined ||
+        activeSession?.generationId !== generationId
+      )
+        return;
+      const result = await historyStore.clear(clearNode.childId);
+      if (activeSession?.generationId !== generationId) return;
+      if (result.isErr())
+        ctx.ui.notify("Could not clear terminal child history.", "warning");
+      return;
+    }
+    if (entry.action === "recover") {
+      if (coordinator === undefined) return;
+      if (activeSession?.generationId !== generationId) return;
+      const result = await coordinator.recoverByChildId(
+        entry.node?.childId ?? "",
+      );
+      if (activeSession?.generationId !== generationId) return;
+      if (result.isErr())
+        ctx.ui.notify(
+          "Child recovery is unavailable in this session.",
+          "warning",
+        );
+      return;
+    }
+    if (entry.action === "resume") {
+      if (activeSession?.generationId !== generationId) return;
+      const result = await ResultAsync.fromThrowable(
+        () => sendResume?.() ?? Promise.resolve(),
+        () => "resume unavailable",
+      )();
+      if (activeSession?.generationId !== generationId) return;
+      if (result.isErr())
+        ctx.ui.notify(
+          "Workflow resume is unavailable in this session.",
+          "warning",
+        );
+      return;
+    }
+    if (entry.id === "root") {
+      setSelection?.(ROOT_NODE_ID);
+      return;
+    }
+    setSelection?.(entry.node?.childId ?? entry.id);
+  }
+
   // Shared dispatch used by both the colon-prefixed direct commands and the
   // bare `/weave` native palette (Pi adapter contract): every action, regardless of
   // how it was invoked, goes through this exact one gate/generation/health
@@ -1631,13 +1853,21 @@ export function createPiExtension(
     // factory time before child mode can be detected (Pi adapter contract,
     // - public adapter surface stays TUI-only).
     if (childModeState.active) return;
+    if (name === "weave:recover-children" && activeSession === undefined) {
+      ctx.ui.notify("Child recovery is unavailable in this session.", "info");
+      return;
+    }
     const gate = controller.evaluateCommandGate(name);
     if (gate.isErr()) {
       ctx.ui.notify(gate.error.safeMessage, "error");
       return;
     }
     if (!gate.value.allowed) {
-      ctx.ui.notify(renderHealthOnlyBlockedMessage(name), "warning");
+      if (name === "weave:recover-children") {
+        ctx.ui.notify("Child recovery is unavailable in this session.", "info");
+      } else {
+        ctx.ui.notify(renderHealthOnlyBlockedMessage(name), "warning");
+      }
       return;
     }
     if (name === "weave:health") {
@@ -1665,6 +1895,61 @@ export function createPiExtension(
           buildWorkflowTracker(ctx.cwd),
         );
       }
+      return;
+    }
+    if (name === "weave:inspect") {
+      const registry = inspectionRegistryCell.registry;
+      if (registry === undefined) {
+        ctx.ui.notify(
+          "Child inspection is unavailable in this session.",
+          "info",
+        );
+        return;
+      }
+      await openChildInspector(
+        ctx,
+        registry,
+        historyStoreCell.store,
+        recoveryCoordinatorCell.coordinator,
+        activeSession?.generationId ?? "",
+        (childId) => {
+          treeSelectionCell.selectedId = childId;
+        },
+        () => dispatchWeaveCommand(pi, "weave:resume", "", ctx),
+      );
+      return;
+    }
+    if (name === "weave:clear-children") {
+      const registry = inspectionRegistryCell.registry;
+      if (registry === undefined) {
+        ctx.ui.notify("Child history is unavailable in this session.", "info");
+        return;
+      }
+      const generationId = activeSession?.generationId;
+      const result = await registry.clearTerminal(
+        () => activeSession?.generationId === generationId,
+      );
+      let historyMessage = "Could not clear terminal child history.";
+      if (result.isOk() && result.value === 0)
+        historyMessage = "No terminal child history to clear.";
+      if (result.isOk() && result.value > 0)
+        historyMessage = `Cleared ${result.value} terminal child record${result.value === 1 ? "" : "s"}.`;
+      ctx.ui.notify(historyMessage, result.isOk() ? "info" : "warning");
+      return;
+    }
+    if (name === "weave:recover-children") {
+      const coordinator = recoveryCoordinatorCell.coordinator;
+      if (coordinator === undefined) {
+        ctx.ui.notify("Child recovery is unavailable in this session.", "info");
+        return;
+      }
+      const result = await coordinator.recoverAll();
+      let recoveryMessage = "Child recovery is unavailable in this session.";
+      if (result.isOk() && result.value === 0)
+        recoveryMessage = "No interrupted children are recoverable.";
+      if (result.isOk() && result.value > 0)
+        recoveryMessage = `Recovered ${result.value} child${result.value === 1 ? "" : "ren"}.`;
+      ctx.ui.notify(recoveryMessage, result.isErr() ? "warning" : "info");
       return;
     }
     const tracker: PiActiveWorkflowTracker = buildWorkflowTracker(ctx.cwd);
@@ -2091,11 +2376,8 @@ export function createPiExtension(
       });
     }
 
-    // Native `/weave` palette (Pi adapter contract): the same nine actions as the
-    // colon commands, derived from `inspect()`/current state, with invalid
-    // actions hidden/disabled with a reason - dispatched through the exact
-    // same `dispatchWeaveCommand` gate/generation/health check, never a
-    // second looser path.
+    // Native `/weave` palette (Pi adapter contract) derives actions from current
+    // state and routes them through the same dispatch gate.
     pi.registerCommand("weave", {
       description: "Weave: choose an action from the current state",
       handler: async (_rawArgs: string, ctx: PiSessionContext) => {
@@ -2216,12 +2498,28 @@ export function createPiExtension(
         return;
       }
       childInspectionSettingsUi.ui = ctx.hasUI ? ctx.ui : undefined;
-      let activation: Awaited<ReturnType<typeof controller.activate>>;
-      try {
-        activation = await controller.activate(ctx, commands.value);
-      } finally {
-        childInspectionSettingsUi.ui = undefined;
-      }
+      const hostSurfaceInput = {
+        api: pi,
+        ui: ctx.ui,
+        rootExports: PiPublicExports as unknown as Readonly<
+          Record<string, unknown>
+        >,
+      };
+      const hostSurface = (
+        await safeReadHostSurfaceReport(
+          deps.hostSurfaceReader ?? new DefaultPiHostSurfaceReader(),
+          hostSurfaceInput,
+        )
+      ).match(
+        (report) => report,
+        () => emptyHostSurfaceReport(),
+      );
+      const activation = await controller.activate(
+        ctx,
+        commands.value,
+        hostSurface,
+      );
+      childInspectionSettingsUi.ui = undefined;
       if (activation.isErr()) {
         ctx.ui.notify(activation.error.safeMessage, "error");
         return;
@@ -2338,6 +2636,9 @@ export function createPiExtension(
           "child history store open failed; inspection remains memory-only",
         );
       }
+      historyStoreCell.store = historyStore?.isOk()
+        ? historyStore.value
+        : undefined;
       const inspectionRegistry = new PiChildInspectionRegistry(
         historyStore?.isOk()
           ? createPiChildHistoryPort(historyStore.value)
@@ -2380,6 +2681,15 @@ export function createPiExtension(
           // spawned `pi` process, while never forwarding secrets/credentials
           // or this adapter's own private child-bootstrap variables.
           baseEnv: buildPiChildBaseEnv(),
+          pathContainment: deps.pathContainmentPort,
+          historyRoot: () =>
+            historyStore?.isOk() ? historyStore.value.getRootPath() : "",
+          currentCwd: () => ctx.cwd,
+          currentEnv: () => buildPiChildBaseEnv(),
+          resolveRootDelegationTarget: (name) =>
+            configActivation.descriptors.byName
+              .get(DEFAULT_PRIMARY_AGENT_NAME)
+              ?.delegationTargets.find((target) => target.name === name),
           rootAgentName: () =>
             activeSession?.primarySession.getCurrent()?.descriptor.name ??
             DEFAULT_PRIMARY_AGENT_NAME,
@@ -2428,6 +2738,83 @@ export function createPiExtension(
             },
           },
         });
+
+        // Child recovery is generation-scoped. Construct it only after history
+        // is open, then prompt exactly once for this stable parent session.
+        if (historyStore?.isOk()) {
+          const history = historyStore.value;
+          const historyPort = {
+            list: () => okAsync(history.getIndex().records),
+            updateRecord: (
+              childId: string,
+              patch: Partial<PiChildHistoryRecord>,
+            ) => history.updateRecord(childId, patch),
+          };
+          const recovery = new PiChildRecoveryCoordinator({
+            history: historyPort,
+            generationId: generation.id,
+            isGenerationCurrent: (id) => activeSession?.generationId === id,
+            trustedProject: generation.preflight.trust === "trusted",
+            recoveryEnabled:
+              generation.preflight.childInspection.settings.recovery_enabled,
+            countdownSeconds:
+              generation.preflight.childInspection.settings
+                .recovery_countdown_seconds,
+            resolveDescriptor: (name) =>
+              configActivation.descriptors.byName.get(name),
+            currentModel: ctx.model?.id,
+            currentPolicy: configActivation.config.settings,
+            currentLimits: generation.preflight.childInspection.settings,
+            ui: {
+              select: (title, options, optionsConfig) =>
+                ctx.ui.select(title, options, optionsConfig),
+              notify: (message, level) => ctx.ui.notify(message, level),
+              inspect: (record) =>
+                ctx.ui.notify(
+                  `Interrupted child ${record.childId} is available for inspection.`,
+                  "info",
+                ),
+            },
+            // The authenticated restore seam is intentionally owned by the
+            // controller. Until a controller is active, fail closed.
+            spawn: (input) =>
+              deps.restoreOrdinaryChild !== undefined
+                ? deps.restoreOrdinaryChild(input)
+                : (delegationControllerCell.controller?.restoreOrdinaryChild(
+                    input,
+                  ) ?? errAsync({ type: "unavailable" })),
+            injectParentContext: (content, _options) => {
+              const sendMessage = pi.sendMessage;
+              if (
+                activeSession?.generationId !== generation.id ||
+                sendMessage === undefined
+              )
+                return errAsync<void, unknown>({ type: "stale" });
+              return ResultAsync.fromPromise(
+                Promise.resolve().then(() => {
+                  sendMessage(
+                    {
+                      customType: "weave-child-recovery",
+                      content,
+                      display: true,
+                    },
+                    { triggerTurn: false },
+                  );
+                }),
+                (error) => ({ type: "send-message-failed" as const, error }),
+              );
+            },
+          });
+          recoveryCoordinatorCell.coordinator = recovery;
+          void recovery.startup().match(
+            () => undefined,
+            () =>
+              ctx.ui.notify(
+                "Child recovery is unavailable in this session.",
+                "info",
+              ),
+          );
+        }
         // Workflow lifecycle projection reuses the trusted Runtime Store.
         if (runtimeStore !== undefined) {
           // Adapter telemetry (Pi adapter contract): activated only now that the
@@ -2616,6 +3003,18 @@ export function createPiExtension(
         // Compositional custom editor (Pi adapter contract): production-wires
         // Alt+1..Alt+9/Backspace/Esc against the live child tree while
         // preserving every Pi host default (see `WeaveChildTreeEditor`).
+        if (editorInstallCell !== undefined) {
+          editorInstallCell.ctx.ui.setEditorComponent?.(
+            editorInstallCell.previousFactory,
+          );
+          editorInstallCell = undefined;
+        }
+        const previousFactory = ctx.ui.getEditorComponent?.();
+        editorInstallCell = {
+          generationId: generation.id,
+          ctx,
+          previousFactory,
+        };
         ctx.ui.setEditorComponent?.(
           (tui: unknown, theme: unknown, keybindings: unknown) =>
             new WeaveChildTreeEditor(tui, theme, keybindings, {
@@ -2623,6 +3022,7 @@ export function createPiExtension(
                 const nodes = inspectionRegistry.snapshotLive();
                 return new Map(nodes.map((node) => [node.id, node]));
               },
+              slots: childSlots,
               getSelection: () => treeSelectionCell.selectedId,
               setSelection: (nodeId) => {
                 treeSelectionCell.selectedId = nodeId;
@@ -2635,6 +3035,30 @@ export function createPiExtension(
               },
               cancelSubtree: (nodeId) => {
                 void delegationControllerCell.controller?.cancelSubtree(nodeId);
+              },
+              openInspector: () => {
+                childSlots.assignTree(inspectionRegistry.snapshotLive());
+                void ResultAsync.fromPromise(
+                  openChildInspector(
+                    ctx,
+                    inspectionRegistry,
+                    historyStoreCell.store,
+                    recoveryCoordinatorCell.coordinator,
+                    generation.id,
+                    (childId) => {
+                      treeSelectionCell.selectedId = childId;
+                    },
+                    () => dispatchWeaveCommand(pi, "weave:resume", "", ctx),
+                  ),
+                  () => undefined,
+                ).match(
+                  () => undefined,
+                  () =>
+                    ctx.ui.notify(
+                      "Child inspection is unavailable in this session.",
+                      "warning",
+                    ),
+                );
               },
             }),
         );
@@ -2830,6 +3254,7 @@ export function createPiExtension(
       activeSession = undefined;
       inspectionRegistryCell.registry?.closeGeneration();
       inspectionRegistryCell.registry = undefined;
+      recoveryCoordinatorCell.coordinator = undefined;
       delegationControllerCell.controller?.disposeAll();
       delegationControllerCell.controller = undefined;
       workflowControllerCell.controller = undefined;
@@ -2860,7 +3285,14 @@ export function createPiExtension(
       ctx?.ui.setStatus(WEAVE_AGENT_STATUS_KEY, undefined);
       ctx?.ui.setWidget(WEAVE_CHILD_TREE_WIDGET_KEY, undefined);
       ctx?.ui.setWidget(WEAVE_PLAN_WIDGET_KEY, undefined);
-      ctx?.ui.setEditorComponent?.(undefined);
+      const editorInstall = editorInstallCell;
+      if (editorInstall !== undefined) {
+        editorInstall.ctx.ui.setEditorComponent?.(
+          editorInstall.previousFactory,
+        );
+        editorInstallCell = undefined;
+      }
+      historyStoreCell.store = undefined;
       controller.shutdown();
       // Idempotent regardless of role: a no-op for an ordinary parent
       // session, and terminal secret/process cleanup for a private child.

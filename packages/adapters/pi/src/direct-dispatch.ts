@@ -12,7 +12,7 @@
  * ordinary delegation (`PiDelegationController`/`PiRpcChild`) rather than a
  * second protocol implementation, under the Pi adapter contract ("Direct dispatch may
  * reuse private child transport"). The child settles through the existing
- * `PiChildSettlement` channel; its `summary` carries a bounded JSON
+ * `PiChildSettlement` channel; its `completionCandidate` carries a bounded JSON
  * completion candidate (produced by the child's governed
  * `weave_complete_step` tool) rather than free text, and this module is the
  * only place that ever interprets that payload as a structured completion
@@ -91,8 +91,9 @@ export interface PiDirectDispatchPort {
 /** The underlying settlement shape shared with ordinary delegation (`PiChildSettlement`). Declared structurally here so this module has no import-time dependency on `rpc-child.ts`. */
 export interface DirectDispatchSettlement {
   readonly outcome: "completed" | "failed";
-  readonly summary?: string;
   readonly completionCandidate?: string;
+  /** Authenticated count of accepted parent interventions. */
+  readonly interventionCount?: number;
   readonly reason?: string;
 }
 

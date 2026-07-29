@@ -241,7 +241,7 @@ export interface PiRpcChildSpawnInput {
 export type PiChildSettlement =
   | {
       readonly outcome: "completed";
-      readonly summary: string;
+      readonly assistantOutput?: string;
       readonly completionCandidate?: string;
       readonly outputByteLength?: number;
       /** Present on settlements produced by PiRpcChild; optional for legacy callers. */
@@ -610,7 +610,7 @@ export class PiRpcChild {
    * Transient reasoning preview for the current turn, held separately from
    * `latestOutput` so visible answer text always takes precedence. Cleared
    * when a new turn emits its first delta and as soon as real text arrives;
-   * never persisted and never part of a settlement summary.
+   * never persisted and never part of the parent-visible projection.
    */
   private latestThinking = "";
   private resetPreviewOnNextDelta = false;
@@ -1620,8 +1620,10 @@ export class PiRpcChild {
         }
       }
       if (privateOutput === "") {
-        privateOutput =
-          completed.assistantOutput ?? this.latestCompletedAssistantOutput;
+        // The private callback may fall back to the bounded observed terminal
+        // projection when no transfer arrived. This value is never used as
+        // the parent-visible settlement output below.
+        privateOutput = this.latestCompletedAssistantOutput;
       }
       const actualByteLength = new TextEncoder().encode(
         privateOutput,
@@ -1632,8 +1634,7 @@ export class PiRpcChild {
         completed.outputByteLength !== actualByteLength
       ) {
         outputTransferUsable = false;
-        privateOutput =
-          completed.assistantOutput ?? this.latestCompletedAssistantOutput;
+        privateOutput = this.latestCompletedAssistantOutput;
       }
     }
 
@@ -1646,14 +1647,21 @@ export class PiRpcChild {
           ? { outcome: "failed", reason: parsed.value.reason ?? "unknown" }
           : {
               outcome: "completed",
-              // Only this bounded projection crosses to the parent model.
-              summary:
-                parsed.value.assistantOutput ??
-                truncateLatestOutput(privateOutput),
+              // Only the last observer-approved terminal message_end crosses
+              // to the parent model. A transferred/private payload, including
+              // one supplied by a child, is never parent-projection authority.
+              ...(this.latestCompletedAssistantOutput.length > 0
+                ? {
+                    assistantOutput: truncateLatestOutput(
+                      this.latestCompletedAssistantOutput,
+                    ),
+                  }
+                : {}),
               ...(parsed.value.completionCandidate !== undefined
                 ? { completionCandidate: parsed.value.completionCandidate }
                 : {}),
-              ...(outputTransferUsable && parsed.value.outputByteLength !== undefined
+              ...(outputTransferUsable &&
+              parsed.value.outputByteLength !== undefined
                 ? { outputByteLength: parsed.value.outputByteLength }
                 : {}),
               interventionCount,
@@ -1809,9 +1817,20 @@ export class PiRpcChild {
       return;
     }
     if (type === "message_end") {
-      const assistantOutput = extractCompletedAssistantText(record.message);
-      if (assistantOutput !== undefined)
+      const message = record.message;
+      const stopReason =
+        isJsonRecord(message) && typeof message.stopReason === "string"
+          ? message.stopReason
+          : undefined;
+      const assistantOutput = extractCompletedAssistantText(message);
+      if (
+        assistantOutput !== undefined &&
+        (stopReason === undefined ||
+          stopReason === "stop" ||
+          stopReason === "length")
+      ) {
         this.latestCompletedAssistantOutput = assistantOutput;
+      }
       this.projectUsageFromMessage(record);
       return;
     }
@@ -2544,7 +2563,7 @@ function extractCompletedAssistantText(message: JsonValue): string | undefined {
   if (!isJsonRecord(message) || message.role !== "assistant") return undefined;
 
   const content = message.content;
-  if (typeof content === "string") return truncateLatestOutput(content);
+  if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
 
   let containsToolUse = false;
@@ -2569,7 +2588,7 @@ function extractCompletedAssistantText(message: JsonValue): string | undefined {
   }
 
   if (containsToolUse || !hasTerminalText) return "";
-  return truncateLatestOutput(text);
+  return text;
 }
 
 function isJsonRecord(value: JsonValue): value is Record<string, JsonValue> {

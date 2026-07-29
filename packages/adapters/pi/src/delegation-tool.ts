@@ -13,6 +13,7 @@ import type { ResultAsync } from "neverthrow";
 import { Type } from "typebox";
 import type { PiChildRuntime, PiChildRuntimeError } from "./child-runtime.js";
 import type { PiChildTreeNode } from "./child-tree.js";
+import { truncateLatestOutput } from "./child-tree.js";
 import type {
   PiDelegationController,
   PiDelegationRequest,
@@ -71,7 +72,8 @@ export interface PiDelegationToolDeps {
   readonly targets: readonly DelegationTarget[];
   /** Reads the active primary identity and its current target set at execution time. */
   readonly getInvocationContext?: () =>
-    PiDelegationInvocationContext | undefined;
+    | PiDelegationInvocationContext
+    | undefined;
   /**
    * Lazily reads the live delegation controller. `undefined` until the
    * generation that built this tool has finished its own real activation -
@@ -138,22 +140,69 @@ function toolResult(
 }
 
 function settlementOutput(settlement: PiChildSettlement): string {
-  if (settlement.outcome === "completed") return settlement.summary;
+  if (settlement.outcome === "completed") {
+    return settlement.assistantOutput ?? settlement.completionCandidate ?? "";
+  }
   if (settlement.outcome === "failed") return settlement.reason;
   return "Cancelled";
+}
+
+/**
+ * The tool result is a public parent boundary. Do not serialize the settlement
+ * object: it also contains transport and workflow-control fields. Completed
+ * children expose only their bounded terminal output and intervention count.
+ */
+const MAX_PUBLIC_INTERVENTION_COUNT = 1_000_000;
+
+function normalizePublicInterventionCount(value: unknown): number {
+  return typeof value === "number" &&
+    Number.isFinite(value) &&
+    Number.isSafeInteger(value) &&
+    value >= 0 &&
+    value <= MAX_PUBLIC_INTERVENTION_COUNT
+    ? value
+    : 0;
+}
+
+function parentVisibleSettlement(
+  settlement: PiChildSettlement,
+): Record<string, unknown> {
+  if (settlement.outcome === "completed") {
+    const output =
+      typeof settlement.assistantOutput === "string"
+        ? truncateLatestOutput(settlement.assistantOutput)
+        : "";
+    return {
+      outcome: "completed",
+      ...(output.length > 0 ? { finalOutput: output } : {}),
+      interventionCount: normalizePublicInterventionCount(
+        settlement.interventionCount,
+      ),
+    };
+  }
+  if (settlement.outcome === "failed") {
+    return { outcome: "failed", reason: settlement.reason };
+  }
+  return { outcome: "cancelled" };
 }
 
 function successResult(
   agent: string,
   settlement: PiChildSettlement,
 ): PiToolResult {
-  return toolResult(JSON.stringify({ ok: true, settlement }), {
-    kind: "weave-delegation",
-    agent,
-    displayName: formatDelegationAgentName(agent),
-    status: settlement.outcome,
-    latestOutput: settlementOutput(settlement),
-  });
+  return toolResult(
+    JSON.stringify({
+      ok: true,
+      settlement: parentVisibleSettlement(settlement),
+    }),
+    {
+      kind: "weave-delegation",
+      agent,
+      displayName: formatDelegationAgentName(agent),
+      status: settlement.outcome,
+      latestOutput: settlementOutput(settlement),
+    },
+  );
 }
 
 /**
@@ -164,7 +213,10 @@ function successResult(
  * Both are adapter-owned safe strings - never raw host errors, paths, or
  * environment values.
  */
-function failureResult(error: string, failure?: PiAdapterFailure): PiToolResult {
+function failureResult(
+  error: string,
+  failure?: PiAdapterFailure,
+): PiToolResult {
   const reason = failure?.correlation?.reason;
   const detail =
     failure === undefined
@@ -262,7 +314,8 @@ function watchForCancelSubtreeFailure(
   readonly unwire: () => void;
 } {
   let resolveFailure:
-    ((result: { content: readonly PiToolResultContent[] }) => void) | undefined;
+    | ((result: { content: readonly PiToolResultContent[] }) => void)
+    | undefined;
   const failure = new Promise<{
     content: readonly PiToolResultContent[];
   }>((resolve) => {
@@ -360,11 +413,7 @@ export function buildDelegationToolRegistration(
         ? details.latestOutput
         : collapsedPreview(details.latestOutput);
       if (output.length === 0) return new Text(heading, 0, 0);
-      return new Text(
-        `${heading}\n${theme.fg("toolOutput", output)}`,
-        0,
-        0,
-      );
+      return new Text(`${heading}\n${theme.fg("toolOutput", output)}`, 0, 0);
     },
     execute: async (_toolCallId, params, signal, onUpdate, ctx) => {
       const parsed = parseDelegationCall(params);

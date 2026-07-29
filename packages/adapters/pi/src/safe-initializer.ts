@@ -8,18 +8,18 @@ import { buildAdapterHealthReport } from "@weaveio/weave-engine";
 import { err, ok, okAsync, Result, ResultAsync } from "neverthrow";
 import { PI_ADAPTER_CAPABILITY_CONTRACT } from "./capability-declarations.js";
 import {
+  buildBlockedProbeSet,
+  type PiCandidatePlanContext,
+  type PiCapabilityProbeSource,
+  sanitizeCapabilityProbeResults,
+} from "./capability-prober.js";
+import {
   DEFAULT_PI_CHILD_INSPECTION_SETTINGS,
   effectivePiChildInspectionSettings,
   type PiChildInspectionEffectiveSettings,
   type PiChildInspectionSettingsChoice,
   type PiChildInspectionSettingsIssue,
 } from "./child-inspection-settings.js";
-import {
-  buildBlockedProbeSet,
-  type PiCandidatePlanContext,
-  type PiCapabilityProbeSource,
-  sanitizeCapabilityProbeResults,
-} from "./capability-prober.js";
 import type {
   PiConfigActivationResult,
   PiConfigActivator,
@@ -35,6 +35,10 @@ import {
   type HostPackageInfo,
   type HostPackageReader,
 } from "./host-compatibility.js";
+import {
+  defaultHostSurfaceReport,
+  type PiHostSurfaceReport,
+} from "./host-inventory.js";
 import { PiModelResolver } from "./model-resolution.js";
 import {
   isDirectoryContainmentSafeWith,
@@ -47,7 +51,6 @@ import {
 } from "./port-safety.js";
 import { DEFAULT_PRIMARY_AGENT_NAME } from "./primary-session.js";
 import type {
-  PiAdapterLogger,
   PiCommandInfo,
   PiMode,
   PiModelRegistry,
@@ -94,6 +97,7 @@ export interface PiPreflightResult {
   readonly healthOnlyMode: boolean;
   /** One immutable object shared by the store, inspector, and recovery seams. */
   readonly childInspection: PiChildInspectionEffectiveSettings;
+  readonly hostSurface: PiHostSurfaceReport;
 }
 
 export interface PiSafeInitializerDeps {
@@ -162,9 +166,11 @@ export class PiSafeInitializer {
       "mode" | "isProjectTrusted" | "cwd" | "modelRegistry"
     >,
     commands: readonly PiCommandInfo[],
+    hostSurface?: PiHostSurfaceReport,
   ): ResultAsync<PiPreflightResult, PiAdapterFailure> {
     const mode = session.mode;
     const modeSupported = mode === "tui";
+    const normalizedHostSurface = hostSurface ?? defaultHostSurfaceReport();
     const trust: PiTrustState = session.isProjectTrusted()
       ? "trusted"
       : "withheld";
@@ -189,6 +195,7 @@ export class PiSafeInitializer {
               trust,
               commands,
               candidatePlan: candidate.probeContext,
+              hostSurface: normalizedHostSurface,
             }).andThen((probes) => {
               const healthReport = buildAdapterHealthReport({
                 harness: HOST_PACKAGE_NAME,
@@ -210,8 +217,10 @@ export class PiSafeInitializer {
                   blocked ||
                   trust === "withheld" ||
                   healthReport.healthOnlyMode ||
-                  childInspection.mode === "health-only",
+                  childInspection.mode === "health-only" ||
+                  normalizedHostSurface.requiredGaps.length > 0,
                 childInspection,
+                hostSurface: normalizedHostSurface,
               };
               return ok(result);
             }),
@@ -401,6 +410,7 @@ export class PiSafeInitializer {
       trust: PiTrustState;
       commands: readonly PiCommandInfo[];
       candidatePlan?: PiCandidatePlanContext;
+      hostSurface?: PiHostSurfaceReport;
     },
   ): Result<CapabilityProbeResult[], PiAdapterFailure> {
     return Result.fromThrowable(

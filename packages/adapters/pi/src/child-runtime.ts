@@ -46,10 +46,10 @@ import {
   verifyEnvelope,
 } from "./child-envelope.js";
 import { SystemTimerPort, type TimerPort } from "./child-timer.js";
-import type { JsonValue } from "./strict-json.js";
-import { encodeDelegateRequestChunks } from "./delegate-request-chunking.js";
 import { encodeTransferChunks } from "./child-transfer.js";
+import { encodeDelegateRequestChunks } from "./delegate-request-chunking.js";
 import { PI_TRANSPORT_LIMITS } from "./errors.js";
+import type { JsonValue } from "./strict-json.js";
 import type { PiAdapterLogger, PiEnvPort } from "./types.js";
 
 export type PiChildRuntimeError = {
@@ -346,10 +346,7 @@ export class PiChildRuntime {
     await handlers.onCancel();
   }
 
-  private admitCorrelatedReply(
-    correlationId: string,
-    body: JsonValue,
-  ): void {
+  private admitCorrelatedReply(correlationId: string, body: JsonValue): void {
     const kind = "delegate-response";
     const parsed = parseControlBody(kind, body);
     if (!parsed.ok) {
@@ -416,11 +413,11 @@ export class PiChildRuntime {
   reportSettled(
     outcome: "completed" | "failed",
     detail: {
-      summary?: string;
       assistantOutput?: string;
       completionCandidate?: string;
       outputTransferId?: string;
       outputByteLength?: number;
+      interventionCount?: number;
       reason?: string;
     },
   ): ResultAsync<void, PiChildRuntimeError> {
@@ -433,7 +430,6 @@ export class PiChildRuntime {
     this.settledReportInFlight = true;
     const body: JsonValue = {
       outcome,
-      ...(detail.summary !== undefined ? { summary: detail.summary } : {}),
       ...(detail.assistantOutput !== undefined
         ? { assistantOutput: detail.assistantOutput }
         : {}),
@@ -445,6 +441,9 @@ export class PiChildRuntime {
         : {}),
       ...(detail.outputByteLength !== undefined
         ? { outputByteLength: detail.outputByteLength }
+        : {}),
+      ...(detail.interventionCount !== undefined
+        ? { interventionCount: detail.interventionCount }
         : {}),
       ...(detail.reason !== undefined ? { reason: detail.reason } : {}),
     };
