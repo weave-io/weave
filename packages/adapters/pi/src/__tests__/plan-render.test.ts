@@ -68,6 +68,46 @@ describe("renderPlanWidgetLines", () => {
     expect(lines[0]).toContain("Task 2 of 2");
   });
 
+  it("preserves the byte-for-byte mixed-plan widget output", () => {
+    const lines = renderPlanWidgetLines(
+      snapshot(
+        [
+          parent({ id: "1", title: "Alpha", state: "completed" }),
+          parent({ id: "2", title: "Bravo", state: "pending" }),
+          parent({
+            id: "3",
+            title: "Charlie",
+            state: "in_progress",
+            children: [
+              { id: "3.a", title: "Sub a", state: "completed", children: [] },
+              {
+                id: "3.b",
+                title: "Sub b",
+                state: "in_progress",
+                children: [],
+              },
+              { id: "3.c", title: "Sub c", state: "pending", children: [] },
+            ],
+          }),
+          parent({ id: "4", title: "Delta", state: "in_progress" }),
+          parent({ id: "5", title: "Echo", state: "pending" }),
+        ],
+        { planName: "mixed-plan" },
+      ),
+    );
+
+    expect(lines).toEqual([
+      'Plan "mixed-plan" - Task 3 of 5',
+      "  prev [ ] 2. Bravo",
+      "  now  [~] 3. Charlie",
+      "  next [~] 4. Delta",
+      "    [x] 3.a. Sub a",
+      "    [~] 3.b. Sub b",
+      "    [ ] 3.c. Sub c",
+      "  also active: [4]",
+    ]);
+  });
+
   it("renders previous, current, and next parent lines", () => {
     const lines = renderPlanWidgetLines(
       snapshot([
