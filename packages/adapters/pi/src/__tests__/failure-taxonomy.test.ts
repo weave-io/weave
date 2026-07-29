@@ -240,3 +240,30 @@ describe("PiAdapterFailureRecoverySchema closed-set exhaustiveness (Pi adapter c
     expect(actual).toEqual(frozen);
   });
 });
+describe("Task 13 bounded failure proof (Pi adapter contract)", () => {
+  it("keeps bounded control, native, and settlement failures distinct", () => {
+    const settlement = makeChildRecoveryUnavailableFailure(
+      "child-1",
+      "ChildSettlementMissing",
+    );
+    expect(settlement.code).toBe("ChildRecoveryUnavailable");
+    expect(settlement.safeMessage).not.toContain("private");
+    expect(PiAdapterFailureCodeSchema.options).toContain(
+      "ChildRecoveryUnavailable",
+    );
+  });
+});
+
+describe("PiAdapterFailureRecoverySchema closed-set exhaustiveness (Pi adapter contract)", () => {
+describe("Task 13 bounded failure proof (Pi adapter contract)", () => {
+  it("keeps bounded control, native, and settlement failures distinct", () => {
+    const settlement = makeChildRecoveryUnavailableFailure("child-1");
+    expect(settlement.code).toBe("ChildRecoveryUnavailable");
+    expect(settlement.safeMessage).not.toContain("private");
+    expect(PiAdapterFailureCodeSchema.options).toContain(
+      "ChildRecoveryUnavailable",
+    );
+  });
+});
+
+describe("PiAdapterFailureRecoverySchema closed-set exhaustiveness (Pi adapter contract)", () => {

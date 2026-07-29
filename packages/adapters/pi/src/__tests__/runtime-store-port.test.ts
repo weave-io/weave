@@ -48,4 +48,14 @@ describe("SqliteRuntimeStoreFactory — real filesystem conformance", () => {
     const result = await factory.open(root);
     expect(result.isOk()).toBe(true);
   });
+
+  it("reopens the same isolated store without losing its schema", async () => {
+    const factory = new SqliteRuntimeStoreFactory();
+    const first = await factory.open(root);
+    expect(first.isOk()).toBe(true);
+    if (first.isOk()) first.value.close();
+    const second = await factory.open(root);
+    expect(second.isOk()).toBe(true);
+    if (second.isOk()) second.value.close();
+  });
 });

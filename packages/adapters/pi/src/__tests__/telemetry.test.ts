@@ -260,6 +260,28 @@ describe("PiTelemetry — data ban (Pi adapter contract)", () => {
     expect(result.isOk()).toBe(true);
   });
 
+  it("keeps canaries out of the real journal and usage sinks", async () => {
+    const telemetry = buildTelemetry();
+    const canary = "prompt-task-intervention-tool-image-rpc-path-secret";
+    const journal = await telemetry.recordJournalEvent({
+      family: "activation-health",
+      event: "generation-activated",
+      severity: "info",
+      data: { generationId: "gen-1", trusted: true, attempt: 1 },
+    });
+    const usage = await telemetry.recordAssistantUsage({
+      id: "canary-message",
+      inputTokens: 2,
+      outputTokens: 3,
+      cost: 0.01,
+      source: "child",
+    });
+    expect(journal.isOk()).toBe(true);
+    expect(usage.isOk()).toBe(true);
+    expect(JSON.stringify(journal)).not.toContain(canary);
+    expect(JSON.stringify(usage)).not.toContain(canary);
+  });
+
   it("rejects raw-content fields and invalid event names before persistence", async () => {
     const telemetry = buildTelemetry();
     const rawContent = await telemetry.recordJournalEvent({

@@ -85,6 +85,11 @@ class IsolatedFakeHostConsumer {
 }
 
 describe("pi adapter clean-room fake-host consumer (Pi adapter contract, PI-PKG)", () => {
+  it("keeps the fake-host compatibility canary inside the supported matrix", () => {
+    expect(isSupportedHostVersion(EXACT_TESTED_HOST_VERSION)).toBe(true);
+    expect(HOST_PACKAGE_NAME).toContain("pi-coding-agent");
+    expect(HOST_VERSION_FLOOR).toBeDefined();
+  });
   it(`installs the packed tarball against a local fake ${HOST_PACKAGE_NAME}@${EXACT_TESTED_HOST_VERSION} host, without network or starting Pi`, async () => {
     // the exact host version this test binds to must fall inside the
     // adapter's own declared, enforced compatibility range
