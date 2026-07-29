@@ -159,3 +159,52 @@ The prior behavior attempt was blocked for two concrete reasons: it used the inv
 - The completed fixture was removed. Runtime verification showed `execution_leases|0` and `workflow_instances|0`; the fixture, artifacts, and `.codesight` files were absent from Git, and no task-created PTY remained.
 
 This retry establishes the original Task 26 acceptance criteria, including live ten-command completion, Active Goal-driven behavior, structured refusal, hidden continuation, final achievement, tool removal, matching digests, and zero durable state.
+
+## Real OpenCode projection verification — 2026-07-29
+
+### Artifact/import
+
+- Harness: OpenCode 1.18.8 (`/Users/jose/.opencode/bin/opencode`); Bun 1.3.13.
+- Worktree: `/Users/jose/projects/weave.worktrees/weave-goal-command`.
+- Bun build command: `bun /tmp/build-weave-goal.ts`, bundling `src/index.ts` and `src/plugin.ts` to `packages/adapters/opencode/dist/` with harness/runtime dependencies externalized.
+- Tarball: `/tmp/weave-goal-opencode-artifact.tgz`, SHA-256 `73862fa367eabf6c2da318aa44034a46eac0f8f7c320311eb40c8818be64e25e`.
+- Entry digests: `dist/plugin.js` `6537697c0035fcc41d8c17fd15aab81c42d7fdc0a09b26fc06c54390c7e92d57`; `dist/index.js` `a1865030bbd0077e854ae38e51ca997e0eb08ffc7e3b7d36f02a7fd53465a4e2`.
+- The normal public-package command (`bun run --cwd packages/adapters/opencode build`) was also run and hit the unrelated empty-diagnostics `TypeDeclarations` failure for `@weaveio/weave-cli`; the direct Bun bundle above succeeded.
+
+### Load and command behavior
+
+- Isolated root: `/tmp/weave-opencode-goal.RJSvet`; it contained only copied `.weave/config.weave`, `opencode.json`, and fixture `.weave/plans/live-opencode.md`.
+- `opencode debug config` from that root returned RC 0. Harness-owned output showed the plugin URL `file:///Users/jose/projects/weave.worktrees/weave-goal-command/packages/adapters/opencode/dist/plugin.js`, command `weave:goal`, command agent `tapestry`, and the template envelope containing `<command-name>weave:goal</command-name>` and `<arguments>$ARGUMENTS</arguments>`.
+- Fresh interactive PTY command: `opencode` from the isolated root; input `/weave:goal live-opencode`. The captured harness screen showed the substituted fixture name `live-opencode`, Tapestry-directed goal semantics, and model/tool turns reading `.weave/plans/live-opencode.md`. The model turn was stopped after projection delivery. This is live harness evidence, not source grep. The captured screen did not independently expose the full command envelope, so that portion remains a blocker for strict acceptance.
+
+### Degraded restart
+
+- A fresh `opencode debug config` process was started after the invocation. It loaded the plugin and showed no goal state, status, footer, or prior goal session. This matches the intentionally degraded projection.
+
+### Cleanup and limitations
+
+- The isolated root and fixture were removed after capture; no developer OpenCode config was changed.
+- This projection has no persistence, enforced budget, pause/resume, status surface, private reporting tool, or footer.
+
+## Real Claude Code projection verification — 2026-07-29
+
+### Artifact/import
+
+- Harness: Claude Code 2.1.220 (`/Users/jose/.local/bin/claude`); Bun 1.3.13.
+- Isolated project/plugin roots: `/tmp/weave-claude-goal.VNyNKp` and `/tmp/weave-claude-goal.VNyNKp/plugin`.
+- Materialization used the built adapter through `/tmp/materialize-claude.ts`, with injected `projectRoot`, `homeDir`, and `outDir` paths. The generated plugin tarball `/tmp/weave-goal-claude-artifact.tgz` has SHA-256 `154247ce53248d55cc378dd8ed32ede03b29eb1815fb1c4321acf56f12cd8ba7`; `dist/index.js` is `24a0a7b865d813a938321c6453f530ecc18acf5e8998b411f0e03a1733672a74`.
+- Materialization output created `.claude-plugin/plugin.json`, agents, settings, and commands. `commands/goal.md` SHA-256 is `cfeba76fd81741ccf572499e20ec31b22570dcb0bd0ff32740f59c66c1b730e6`.
+
+### Load and command behavior
+
+- Exact generated frontmatter was captured: `context: fork`, `agent: weave:tapestry`, `disable-model-invocation: true`, `description: "Work toward completing a Weave plan"`, `argument-hint: "[plan-name]"`.
+- Fresh interactive PTY command: `claude --plugin-dir /tmp/weave-claude-goal.VNyNKp/plugin` from the isolated project. Harness output showed `@weave:loom`, accepted `/weave:goal live-claude`, displayed `Running in the background as @weave-goal`, and showed the turn row `/weave:goal live-claude`. This proves command discovery and `$ARGUMENTS` substitution; the model-driven turn was stopped by timeout. The live screen did not independently show the `[plan-name]` palette hint; generated frontmatter proves the hint source, but strict palette acceptance remains a blocker.
+
+### Degraded restart
+
+- The invocation process started from a clean temporary project and showed no prior goal state. A post-invocation Claude restart was not independently captured before cleanup; strict restart acceptance therefore remains a blocker.
+
+### Cleanup and limitations
+
+- Temporary project/plugin roots, fixtures, and generated tarballs were removed after capture; real Claude/OpenCode configuration was not modified.
+- This projection has no persistence, enforced budget, pause/resume, status surface, private reporting tool, or footer.
