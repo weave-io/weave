@@ -108,12 +108,20 @@ describe("createPiExtension factory (layer C: compiled extension against a fake 
       },
     ]);
     expect(host.onCalls.map((call) => call.event).sort()).toEqual([
+      "agent_settled",
+      "agent_start",
+      "before_agent_start",
       "before_agent_start",
       "input",
+      "message_end",
       "message_end",
       "model_select",
       "session_shutdown",
       "session_start",
+      "session_tree",
+      "tool_execution_start",
+      "turn_end",
+      "turn_start",
     ]);
   });
 
@@ -1057,7 +1065,9 @@ describe("createPiExtension: config activation, materialization consumption, pri
       systemPrompt: "native",
     });
 
-    expect(first.systemPrompt).toContain("You are Loom, the main orchestrator.");
+    expect(first.systemPrompt).toContain(
+      "You are Loom, the main orchestrator.",
+    );
     expect(host.setModelCalls).toHaveLength(0);
     expect(host.getCurrentModel()).toBe(userModel);
     await host.invokeCommand("weave:health");
@@ -1369,5 +1379,207 @@ describe("createPiExtension: config activation, materialization consumption, pri
         (call) => call.key === "weave-agent" && call.value === "◆ WEAVE · LOOM",
       ),
     ).toHaveLength(2);
+  });
+
+  it("registers ten commands and one goal report tool exactly once in a healthy parent", async () => {
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      cwd: process.cwd(),
+    });
+    installExtension(host, "0.81.1", {
+      capabilityProber: allOkCapabilityProber(),
+      configActivator: fakeConfigActivator({
+        agents: [
+          {
+            agentName: "loom",
+            source: "explicit",
+            descriptor: loomDescriptor(),
+          },
+        ],
+        errors: [],
+      }),
+      planCatalogPort: new FakePiPlanCatalogPort(["weave-goal-command"]),
+      runtimeStoreFactory: {
+        open: () => okAsync(createInMemoryRuntimeStore()),
+      },
+      pathContainmentPort: new FakePathContainmentPort(
+        new Map(),
+        ok(process.cwd()),
+      ),
+    });
+    await host.triggerSessionStart();
+    expect(
+      host.registerCommandCalls
+        .filter(({ name }) => name.startsWith("weave:"))
+        .map(({ name }) => name),
+    ).toHaveLength(10);
+    expect(
+      host.registerToolCalls.filter(({ name }) => name === "weave_goal_report"),
+    ).toHaveLength(1);
+  });
+
+  it("starts a goal, persists it, activates reporting, and sends its custom opening turn", async () => {
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      cwd: process.cwd(),
+    });
+    installExtension(host, "0.81.1", {
+      capabilityProber: allOkCapabilityProber(),
+      configActivator: fakeConfigActivator({
+        agents: [
+          {
+            agentName: "loom",
+            source: "explicit",
+            descriptor: loomDescriptor(),
+          },
+        ],
+        errors: [],
+      }),
+      planCatalogPort: new FakePiPlanCatalogPort(["weave-goal-command"]),
+      runtimeStoreFactory: {
+        open: () => okAsync(createInMemoryRuntimeStore()),
+      },
+      pathContainmentPort: new FakePathContainmentPort(
+        new Map(),
+        ok(process.cwd()),
+      ),
+    });
+    await host.triggerSessionStart();
+    await host.invokeCommand("weave:goal", "weave-goal-command");
+    expect(host.getActiveTools()).toContain("weave_goal_report");
+    expect(host.sentUserMessages.at(-1)).toMatchObject({
+      options: { deliverAs: "followUp" },
+    });
+    expect(host.sentUserMessages.at(-1)?.content).toContain(
+      "weave-goal-command",
+    );
+  });
+
+  it("appends the active goal tree and authoritative completion guidance", async () => {
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      cwd: process.cwd(),
+    });
+    installExtension(host, "0.81.1", {
+      capabilityProber: allOkCapabilityProber(),
+      configActivator: fakeConfigActivator({
+        agents: [
+          {
+            agentName: "loom",
+            source: "explicit",
+            descriptor: loomDescriptor(),
+          },
+        ],
+        errors: [],
+      }),
+      planCatalogPort: new FakePiPlanCatalogPort(["weave-goal-command"]),
+      runtimeStoreFactory: {
+        open: () => okAsync(createInMemoryRuntimeStore()),
+      },
+      pathContainmentPort: new FakePathContainmentPort(
+        new Map(),
+        ok(process.cwd()),
+      ),
+    });
+    await host.triggerSessionStart();
+    await host.invokeCommand("weave:goal", "weave-goal-command");
+    const result = await host.triggerBeforeAgentStart({
+      systemPrompt: "existing prompt",
+    });
+    expect(result.systemPrompt).toContain("existing prompt");
+    expect(result.systemPrompt).toContain("## Active Goal");
+    expect(result.systemPrompt).toContain("Remaining unchecked leaf tasks:");
+    expect(result.systemPrompt).toContain(
+      "Achievement is authoritative only when the plan is complete.",
+    );
+  });
+
+  it("uses hidden follow-up continuations, pauses after a no-tool continuation, and holds queued input", async () => {
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      cwd: process.cwd(),
+    });
+    installExtension(host, "0.81.1", {
+      capabilityProber: allOkCapabilityProber(),
+      configActivator: fakeConfigActivator({
+        agents: [
+          {
+            agentName: "loom",
+            source: "explicit",
+            descriptor: loomDescriptor(),
+          },
+        ],
+        errors: [],
+      }),
+      planCatalogPort: new FakePiPlanCatalogPort(["weave-goal-command"]),
+      runtimeStoreFactory: {
+        open: () => okAsync(createInMemoryRuntimeStore()),
+      },
+      pathContainmentPort: new FakePathContainmentPort(
+        new Map(),
+        ok(process.cwd()),
+      ),
+    });
+    await host.triggerSessionStart();
+    await host.invokeCommand("weave:goal", "weave-goal-command");
+    await host.triggerEvent("agent_start");
+    await host.triggerEvent("tool_execution_start");
+    await host.triggerEvent("agent_settled");
+    expect(host.sentUserMessages.at(-1)).toMatchObject({
+      customType: "weave-goal-continuation",
+      display: false,
+      options: { triggerTurn: true, deliverAs: "followUp" },
+    });
+    host.setPendingMessages(true);
+    const before = host.sentUserMessages.length;
+    await host.triggerEvent("agent_settled");
+    expect(host.sentUserMessages).toHaveLength(before);
+    host.setPendingMessages(false);
+    await host.triggerEvent("agent_start");
+    await host.triggerEvent("agent_settled");
+    expect(
+      host.notifyCalls.some(({ message }) => message.includes("paused")),
+    ).toBe(true);
+  });
+
+  it("pauses on an aborted assistant response", async () => {
+    const host = new RecordingFakePiHost({
+      mode: "tui",
+      trusted: true,
+      cwd: process.cwd(),
+    });
+    installExtension(host, "0.81.1", {
+      capabilityProber: allOkCapabilityProber(),
+      configActivator: fakeConfigActivator({
+        agents: [
+          {
+            agentName: "loom",
+            source: "explicit",
+            descriptor: loomDescriptor(),
+          },
+        ],
+        errors: [],
+      }),
+      planCatalogPort: new FakePiPlanCatalogPort(["weave-goal-command"]),
+      runtimeStoreFactory: {
+        open: () => okAsync(createInMemoryRuntimeStore()),
+      },
+      pathContainmentPort: new FakePathContainmentPort(
+        new Map(),
+        ok(process.cwd()),
+      ),
+    });
+    await host.triggerSessionStart();
+    await host.invokeCommand("weave:goal", "weave-goal-command");
+    await host.triggerEvent("message_end", {
+      message: { role: "assistant", stopReason: "aborted" },
+    });
+    expect(
+      host.notifyCalls.some(({ message }) => message.includes("interruption")),
+    ).toBe(true);
   });
 });
