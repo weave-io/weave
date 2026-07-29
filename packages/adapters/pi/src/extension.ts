@@ -7,6 +7,7 @@ import {
 import type {
   AgentDescriptor,
   DelegationTarget,
+  PlanStateProvider,
   RuntimeLogFileSystem,
   RuntimeStore,
 } from "@weaveio/weave-engine";
@@ -296,6 +297,12 @@ export interface PiExtensionDeps {
    * filesystem scan in a test).
    */
   readonly planCatalogPort: PiPlanCatalogPort;
+  /** Adapter-local plan state seam for trusted-session and goal tests. */
+  readonly planStateProviderFactory?: (
+    projectRoot: string,
+  ) => PlanStateProvider;
+  /** Adapter-local override for testing durable-workflow goal suspension. */
+  readonly durableWorkflowActive?: () => boolean;
   /**
    * Injectable telemetry seams (Pi adapter contract) — journal/usage/retention
    * ports and the rotating log-sink filesystem. Absent means "construct
@@ -1447,6 +1454,13 @@ export function createPiExtension(
   } = {
     controller: undefined,
   };
+  const planStateProviderCell: { value: PlanStateProvider | undefined } = {
+    value: undefined,
+  };
+  const readPlanSnapshot = (projectRoot: string, planName: string) =>
+    (planStateProviderCell.value ?? createPiPlanStateProvider(projectRoot))
+      .readSnapshot(planName)
+      .mapErr(mapPlanStateErrorToPiFailure);
   const activeWorkflowInstanceCell: {
     value:
       | {
@@ -1668,10 +1682,7 @@ export function createPiExtension(
         controller: goalController,
         catalog: deps.planCatalogPort,
         projectRoot: ctx.cwd,
-        readSnapshot: (planName) =>
-          createPiPlanStateProvider(ctx.cwd)
-            .readSnapshot(planName)
-            .mapErr(mapPlanStateErrorToPiFailure),
+        readSnapshot: (planName) => readPlanSnapshot(ctx.cwd, planName),
         footer,
       });
       return;
@@ -2350,6 +2361,9 @@ export function createPiExtension(
       }
 
       currentWorkflows = configActivation.config.workflows ?? {};
+      planStateProviderCell.value =
+        deps.planStateProviderFactory?.(ctx.cwd) ??
+        createPiPlanStateProvider(ctx.cwd);
       activeSession = {
         generationId: generation.id,
         childInspectionSettings: generation.preflight.childInspection,
@@ -2366,9 +2380,7 @@ export function createPiExtension(
       };
 
       const goalReadSnapshot = (planName: string) =>
-        createPiPlanStateProvider(ctx.cwd)
-          .readSnapshot(planName)
-          .mapErr(mapPlanStateErrorToPiFailure);
+        readPlanSnapshot(ctx.cwd, planName);
       const goalFooter = new PiGoalFooterController({
         controller: goalController,
         readSnapshot: goalReadSnapshot,
@@ -2530,7 +2542,8 @@ export function createPiExtension(
             delegationControllerCell.controller;
           workflowControllerCell.controller = new PiWorkflowController({
             store: runtimeStore,
-            planStateProvider: createPiPlanStateProvider(ctx.cwd),
+            planStateProvider:
+              planStateProviderCell.value ?? createPiPlanStateProvider(ctx.cwd),
             artifactProvider: new BunPiArtifactProvider(),
             directDispatch: new TransportDirectDispatchPort(
               createDirectDispatchTransport(
@@ -2882,13 +2895,10 @@ export function createPiExtension(
       if (childModeState.active || !goalController.isPursuing) return undefined;
       const state = goalController.current;
       if (state === undefined) return undefined;
-      const snapshot = await createPiPlanStateProvider(ctx.cwd)
-        .readSnapshot(state.planName)
-        .mapErr(mapPlanStateErrorToPiFailure)
-        .match(
-          (value) => value,
-          () => undefined,
-        );
+      const snapshot = await readPlanSnapshot(ctx.cwd, state.planName).match(
+        (value) => value,
+        () => undefined,
+      );
       if (snapshot === undefined) return undefined;
       const activeGoal = [
         "## Active Goal",
@@ -2992,13 +3002,10 @@ export function createPiExtension(
       if (childModeState.active) return;
       const state = goalController.current;
       if (state === undefined) return;
-      const snapshot = await createPiPlanStateProvider(ctx.cwd)
-        .readSnapshot(state.planName)
-        .mapErr(mapPlanStateErrorToPiFailure)
-        .match(
-          (value) => value,
-          () => undefined,
-        );
+      const snapshot = await readPlanSnapshot(ctx.cwd, state.planName).match(
+        (value) => value,
+        () => undefined,
+      );
       const decision = decideSessionGoalContinuation({
         status: state.status,
         isIdle: ctx.isIdle(),
@@ -3012,7 +3019,9 @@ export function createPiExtension(
         lastRunWasContinuation: goalCurrentContinuation,
         lastRunMadeToolCall: goalRunMadeToolCall,
         planComplete: snapshot?.complete === true,
-        durableWorkflowActive: activeWorkflowInstanceCell.value !== undefined,
+        durableWorkflowActive:
+          deps.durableWorkflowActive?.() ??
+          activeWorkflowInstanceCell.value !== undefined,
         continuations: state.continuations,
         maxContinuations: DEFAULT_MAX_GOAL_CONTINUATIONS,
       });
@@ -3190,6 +3199,7 @@ export function createPiExtension(
       delegationControllerCell.controller?.disposeAll();
       delegationControllerCell.controller = undefined;
       workflowControllerCell.controller = undefined;
+      planStateProviderCell.value = undefined;
       activeWorkflowInstanceCell.value = undefined;
       currentWorkflows = {};
       treeSelectionCell.selectedId = ROOT_NODE_ID;
