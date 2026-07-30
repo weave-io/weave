@@ -13,7 +13,6 @@ import type {
   RuntimeStore,
 } from "@weaveio/weave-engine";
 import {
-  countIncompleteLeaves,
   env,
   isDeniedKey,
   logger,

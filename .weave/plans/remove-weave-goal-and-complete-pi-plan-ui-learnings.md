@@ -132,3 +132,56 @@ Remaining `goal` mentions are only:
 - intentional negative test assertions,
 - Claude Code stale-file fixtures and comments,
 - one production stale-sweep explanatory comment.
+
+## Task 4 — engine goal module removal
+
+### Pre-deletion consumer proof
+
+A workspace-wide search for `SessionGoal`, `session-goal`, `weave_goal_report`,
+`adjudicateSessionGoalCompletion`, and `decideSessionGoalContinuation`
+(excluding `dist/`, `dist-types/`, `node_modules/`) matched only:
+
+- the three goal modules themselves,
+- their three unit tests,
+- the goal export block in `packages/engine/src/index.ts`,
+- one historical prose line in `docs/adapters/pi.md` (outside task scope).
+
+The secondary-symbol search (`formatDuration`, `formatTokenCount`,
+`countIncompleteLeaves`, `renderGoalPlanBlock`,
+`DEFAULT_MAX_GOAL_CONTINUATIONS`, `SESSION_GOAL_STATE_VERSION`,
+`parseSessionGoalSnapshot`, `SessionGoalController`) found one extra hit:
+`packages/adapters/pi/src/extension.ts` imported `countIncompleteLeaves` from
+`@weaveio/weave-engine`. The symbol appeared exactly once in the file, so it was
+an unused leftover import from the Task 2 Pi goal removal, not a live consumer.
+Removing that import line was required for typecheck after deletion.
+
+### Changes
+
+- Deleted `packages/engine/src/session-goal.ts`,
+  `session-goal-plan.ts`, `session-goal-continuation.ts`.
+- Deleted `packages/engine/src/__tests__/session-goal.test.ts`,
+  `session-goal-plan.test.ts`, `session-goal-continuation.test.ts`.
+- Removed only the goal export block from `packages/engine/src/index.ts`.
+- Removed the dead `countIncompleteLeaves` import from Pi `extension.ts`.
+
+`selectActivePlanTask`, `PlanTaskSnapshot`, `plan-active-task.ts`,
+`plan-state-provider.ts`, and all durable workflow/recovery exports are
+unchanged.
+
+### Verification
+
+- `rg -n 'SessionGoal|session-goal|weave_goal_report' packages` (excluding
+  `dist/`, `dist-types/`): no matches.
+- Engine source imports no harness package: `rg` for
+  `@weaveio/weave-adapter*`, `@earendil-works`, `pi-coding-agent` in
+  `packages/engine/src` returns nothing.
+- `bun test packages/engine/src/__tests__`: 2054 pass, 0 fail, 8364 expect
+  calls, 57 files.
+- `bun test plan-active-task.test.ts plan-state-provider.test.ts`: 15 pass,
+  0 fail, 47 expect calls.
+- `bun test packages/adapters/pi/src/__tests__/extension.test.ts`: 73 pass,
+  0 fail, 285 expect calls.
+- `bun run typecheck`: exit 0 (docs package emits pre-existing hints only).
+
+Unrelated dirty engine and Pi files were left untouched; the only tracked
+diffs introduced here are the six deletions plus the two import/export edits.
