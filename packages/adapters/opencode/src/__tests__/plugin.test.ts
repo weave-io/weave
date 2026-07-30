@@ -44,7 +44,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { logDestination } from "@weaveio/weave-engine";
 import { okAsync, ResultAsync } from "neverthrow";
-import { WEAVE_GOAL_COMMAND_TEMPLATE } from "../command-templates.js";
 import type { OpenCodeClientError, OpenCodeClientFacade } from "../index.js";
 import {
   createWeavePlugin,
@@ -468,7 +467,7 @@ describe("WeavePlugin — slash command registration", () => {
     expect(cmd.agent).toBe("tapestry");
   });
 
-  it("Config_hook_registers_weave_goal_command", async () => {
+  it("Config_hook_does_not_register_a_weave_goal_command", async () => {
     const root = await makeTempProject("cmd-weave-goal-agent");
     const client = new MockOpenCodeClient();
     client.setListResult(okAsync([]));
@@ -486,41 +485,15 @@ describe("WeavePlugin — slash command registration", () => {
     } = {};
     await hooks.config?.(cfg as never);
 
-    const cmd = cfg.command?.["weave:goal"] as
-      | { agent?: string; description?: string; template?: string }
-      | undefined;
-    expect(cmd).toBeDefined();
-    expect(cmd?.agent).toBe("tapestry");
-    expect(cmd?.description).toBe("Pursue a Weave plan to completion");
-    expect(cmd?.template).toBe(WEAVE_GOAL_COMMAND_TEMPLATE);
-  });
-
-  it("weave_goal_template_declares_protocol_and_safe_placeholders", () => {
-    expect(WEAVE_GOAL_COMMAND_TEMPLATE).toContain(
-      "<protocol-version>1</protocol-version>",
+    expect(cfg.command?.["weave:goal"]).toBeUndefined();
+    const templates = Object.values(cfg.command ?? {}).map((entry) =>
+      typeof entry === "object" && entry !== null
+        ? ((entry as { template?: unknown }).template ?? "")
+        : "",
     );
-    expect(WEAVE_GOAL_COMMAND_TEMPLATE).toContain(
-      "<command-name>weave:goal</command-name>",
-    );
-    expect(WEAVE_GOAL_COMMAND_TEMPLATE).toContain(".weave/plans/$ARGUMENTS.md");
-
-    const placeholders = [
-      ...WEAVE_GOAL_COMMAND_TEMPLATE.matchAll(/\$[A-Z_]+/g),
-    ].map(([placeholder]) => placeholder);
-    expect(new Set(placeholders)).toEqual(
-      new Set(["$ARGUMENTS", "$SESSION_ID", "$TIMESTAMP"]),
-    );
-  });
-
-  it("weave_goal_template_is_honest_about_model_driven_execution", () => {
-    expect(WEAVE_GOAL_COMMAND_TEMPLATE).toContain("model-driven");
-    expect(WEAVE_GOAL_COMMAND_TEMPLATE).toContain("no persistence");
-    expect(WEAVE_GOAL_COMMAND_TEMPLATE).toContain("budget enforcement");
-    expect(WEAVE_GOAL_COMMAND_TEMPLATE).toContain("Delegate");
-    expect(WEAVE_GOAL_COMMAND_TEMPLATE).toContain("Re-read");
-    expect(WEAVE_GOAL_COMMAND_TEMPLATE).toContain(
-      "all checkboxes are complete",
-    );
+    for (const template of templates) {
+      expect(String(template)).not.toContain("weave:goal");
+    }
   });
 
   it("Command_templates_contain_execution_instructions", async () => {

@@ -1,7 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { AgentDescriptor } from "@weaveio/weave-engine";
 import { ClaudeCodeAdapter } from "../adapter.js";
-import { CC_WEAVE_GOAL_COMMAND } from "../command-templates.js";
 
 function makeDescriptor(
   overrides: Partial<AgentDescriptor> = {},
@@ -324,12 +323,10 @@ describe("ClaudeCodeAdapter", () => {
 
     expect(startPath).toBeDefined();
     expect(startWorkPath).toBeDefined();
-    expect(goalPath).toBeDefined();
+    expect(goalPath).toBeUndefined();
     const start = startPath === undefined ? undefined : written[startPath];
     const startWork =
       startWorkPath === undefined ? undefined : written[startWorkPath];
-    const goal = goalPath === undefined ? undefined : written[goalPath];
-    expect(goal).toBe(CC_WEAVE_GOAL_COMMAND);
     expect(start).toContain("context: fork");
     expect(start).toContain("agent: weave:tapestry");
     expect(startWork).toContain("context: fork");
@@ -411,31 +408,15 @@ describe("ClaudeCodeAdapter", () => {
     await adapter.spawnSubagent(makeDescriptor({ name: "tapestry" }));
     await adapter.flush();
 
-    // other.md should be removed; all three supported commands should survive.
-    expect(removed).toHaveLength(1);
-    expect(removed[0]).toContain("other.md");
+    // other.md and the old goal.md are stale and removed by the generic stale
+    // sweep; the two supported commands are written.
+    expect(removed).toHaveLength(2);
+    expect(removed.some((path) => path.endsWith("other.md"))).toBe(true);
+    expect(removed.some((path) => path.endsWith("goal.md"))).toBe(true);
     const commandWrites = Object.keys(written)
       .filter((path) => path.includes("/commands/"))
       .map((path) => path.split("/").at(-1))
       .sort();
-    expect(commandWrites).toEqual(["goal.md", "start-work.md", "start.md"]);
-    expect(removed.some((path) => path.endsWith("goal.md"))).toBe(false);
-  });
-
-  it("goal command preserves its exact Claude Code template contract", () => {
-    const [frontmatter, body] = CC_WEAVE_GOAL_COMMAND.split("\n---\n");
-    expect(frontmatter).toBe(
-      '---\ncontext: fork\nagent: weave:tapestry\ndisable-model-invocation: true\ndescription: "Work toward completing a Weave plan"\nargument-hint: "[plan-name]"',
-    );
-    expect(body).toContain(".weave/plans/$ARGUMENTS.md");
-    expect(body.match(/\$ARGUMENTS/g)).toHaveLength(1);
-    expect(body).toContain("weave:shuttle");
-    expect(body).toContain("Agent tool");
-    expect(body).toContain("re-read the plan between tasks");
-    expect(body).toContain(
-      "mark the task's checkbox completed only after verification",
-    );
-    expect(body).toContain("Stop only when all tasks are complete");
-    expect(body).toContain("user explicitly tells you to stop");
+    expect(commandWrites).toEqual(["start-work.md", "start.md"]);
   });
 });

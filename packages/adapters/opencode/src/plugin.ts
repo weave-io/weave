@@ -98,7 +98,6 @@ import {
 
 import {
   START_WORK_COMMAND_TEMPLATE,
-  WEAVE_GOAL_COMMAND_TEMPLATE,
   WEAVE_START_COMMAND_TEMPLATE,
 } from "./command-templates.js";
 import { resolveModelForAgent } from "./model-resolution.js";
@@ -336,7 +335,7 @@ export function createWeavePlugin(options: WeavePluginOptions = {}): Plugin {
         }
 
         // --- Command injection ---
-        // Register /start-work, /weave:start, and /weave:goal as OpenCode
+        // Register /start-work and /weave:start as OpenCode
         // slash commands. These are prompt-based commands (not LLM tools) —
         // they inject the Tapestry execution template into the conversation
         // when the user types the command in the TUI.
@@ -356,14 +355,8 @@ export function createWeavePlugin(options: WeavePluginOptions = {}): Plugin {
           agent: "tapestry",
         };
 
-        cfg.command["weave:goal"] = {
-          template: WEAVE_GOAL_COMMAND_TEMPLATE,
-          description: "Pursue a Weave plan to completion",
-          agent: "tapestry",
-        };
-
         log.info(
-          { commands: ["start-work", "weave:start", "weave:goal"] },
+          { commands: ["start-work", "weave:start"] },
           "Weave slash commands registered",
         );
       },

@@ -102,3 +102,33 @@ was defined but never called. It was removed, and `goalSnapshot` /
   unrelated dirty edit and was not touched.
 - `rg -n 'weave:goal|weave_goal_report|weave-goal-state|weave-goal|goalController|goalFooter' packages/adapters/pi/src`
   returns nothing.
+
+## Task 3 — remove goal commands from OpenCode and Claude Code
+
+### Verification observed
+
+- OpenCode tests: 363 pass, 11 skip, 0 fail.
+- Claude Code tests: 80 pass, 0 fail.
+
+### Final design
+
+- OpenCode current commands are `start-work` and `weave:start`.
+- Claude Code current files are `start.md` and `start-work.md`.
+- The old Claude `goal.md` is removed by the existing generic stale sweep, not
+  by a dedicated retired-file list.
+- No production goal template, export, registration, write, or current-inventory
+  entry remains.
+
+### Discrepancy and remediation
+
+The first implementation retained `goal.md` in `commandNames` and added
+duplicate retired pruning. The first remediation worker errored without making a
+change. The second remediation worker removed both.
+
+### Final source audit
+
+Remaining `goal` mentions are only:
+
+- intentional negative test assertions,
+- Claude Code stale-file fixtures and comments,
+- one production stale-sweep explanatory comment.

@@ -98,33 +98,6 @@ For each unchecked \`- [ ]\` task in the plan:
   3. every remaining unchecked task is truly blocked
 - When all tasks are complete, switch to terminal-state behavior`;
 
-const GOAL_EXECUTION_INSTRUCTIONS = `You are being activated by the /weave:goal command to execute a Weave plan.
-
-## Your Mission
-Resolve the plan at .weave/plans/$ARGUMENTS.md. Read it, then delegate every unchecked task to Shuttle via the Task tool.
-You do NOT implement work directly yourself — coordinate, delegate, verify, and track progress in the plan.
-
-This OpenCode loop is model-driven. Weave provides no persistence, continuation, pause/resume, status, or budget enforcement for this command.
-
-## Execution Loop
-
-For each unchecked - [ ] task in the plan:
-
-1. Read the task description, acceptance criteria, and references.
-2. Delegate the task to Shuttle via the Task tool using the task title, full description, files, acceptance criteria, prior-task context, and relevant entries from .weave/learnings/{plan-name}.md when it exists.
-3. Verify Shuttle's result by re-reading modified files and checking the acceptance criteria.
-4. Mark complete by changing - [ ] to - [x] in the plan file.
-5. Re-read .weave/plans/$ARGUMENTS.md before selecting the next task.
-6. Continue immediately with the next unchecked task.
-
-## Rules
-
-- Delegate every unchecked task to Shuttle; do not implement work directly yourself.
-- Re-read the plan after every task and use its current checkbox state to decide what remains.
-- If a task is blocked, document the reason in the plan and continue with the next unchecked task that is not blocked.
-- Stop only when all checkboxes are complete, the user explicitly tells you to stop, or every remaining task is truly blocked.
-- Do not claim native persistence, pause/resume, status, or budget enforcement.`;
-
 // ---------------------------------------------------------------------------
 // Exported command templates
 // ---------------------------------------------------------------------------
@@ -152,18 +125,5 @@ export const WEAVE_START_COMMAND_TEMPLATE = `<command-instruction>
 ${EXECUTION_INSTRUCTIONS}
 </command-instruction>
 ${renderCommandEnvelope("weave:start")}
-<session-context>Session ID: $SESSION_ID  Timestamp: $TIMESTAMP</session-context>
-<user-request>$ARGUMENTS</user-request>`;
-
-/**
- * Template for the `/weave:goal` slash command.
- *
- * This is a prompt-driven projection of goal execution for OpenCode. Unlike
- * Pi, it does not provide native persistence or continuation controls.
- */
-export const WEAVE_GOAL_COMMAND_TEMPLATE = `<command-instruction>
-${GOAL_EXECUTION_INSTRUCTIONS}
-</command-instruction>
-${renderCommandEnvelope("weave:goal")}
 <session-context>Session ID: $SESSION_ID  Timestamp: $TIMESTAMP</session-context>
 <user-request>$ARGUMENTS</user-request>`;
