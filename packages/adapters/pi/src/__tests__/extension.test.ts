@@ -213,8 +213,8 @@ function installRecoveryExtension(
   });
 }
 
-function goalSnapshot(
-  planName = "weave-goal-command",
+function planSnapshotFixture(
+  planName = "weave-plan-command",
   complete = false,
 ): PlanTaskSnapshot {
   return {
@@ -249,7 +249,7 @@ function installExtension(
     clock: new FakeClock(),
     logger: new RecordingLogger(),
     planStateProviderFactory: () =>
-      new MutablePlanStateProvider(goalSnapshot()),
+      new MutablePlanStateProvider(planSnapshotFixture()),
     configActivator: fakeConfigActivator(),
     // Real `BunPathContainmentPort` spawns a genuine subprocess (Pi adapter contract
     // forbids this in tests); this fake host's `cwd` is a
@@ -265,26 +265,6 @@ function installExtension(
   });
   factory(host.api);
   return factory;
-}
-
-function installHealthyGoalExtension(
-  host: RecordingFakePiHost,
-  provider: MutablePlanStateProvider,
-  extras: Partial<PiExtensionDeps> = {},
-): void {
-  installExtension(host, "0.81.1", {
-    capabilityProber: allOkCapabilityProber(),
-    configActivator: fakeConfigActivator({
-      agents: [
-        { agentName: "loom", source: "explicit", descriptor: loomDescriptor() },
-      ],
-      errors: [],
-    }),
-    planCatalogPort: new FakePiPlanCatalogPort(["weave-goal-command"]),
-    runtimeStoreFactory: { open: () => okAsync(createInMemoryRuntimeStore()) },
-    planStateProviderFactory: () => provider,
-    ...extras,
-  });
 }
 
 describe("createPiExtension factory (layer C: compiled extension against a fake host)", () => {
@@ -304,20 +284,13 @@ describe("createPiExtension factory (layer C: compiled extension against a fake 
       },
     ]);
     expect(host.onCalls.map((call) => call.event).sort()).toEqual([
-      "agent_settled",
       "agent_start",
       "before_agent_start",
-      "before_agent_start",
       "input",
-      "message_end",
       "message_end",
       "model_select",
       "session_shutdown",
       "session_start",
-      "session_tree",
-      "tool_execution_start",
-      "turn_end",
-      "turn_start",
     ]);
   });
 
@@ -2379,18 +2352,17 @@ describe("createPiExtension: config activation, materialization consumption, pri
     });
   });
 
-  it("registers thirteen described commands once across extension reloads", async () => {
+  it("registers twelve described commands once across extension reloads", async () => {
     const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
     installExtension(host);
     installExtension(host);
-    expect(host.registerCommandCalls).toHaveLength(28);
+    expect(host.registerCommandCalls).toHaveLength(26);
     const directNames = new Set(
       host.registerCommandCalls
         .map((call) => call.name)
         .filter((name) => name !== "weave"),
     );
-    expect(directNames.size).toBe(13);
-    // The closed command set includes /weave:goal.
+    expect(directNames.size).toBe(12);
     expect(
       host.registerCommandCalls.every(
         (call) => (call.registration.description ?? "").trim().length > 0,

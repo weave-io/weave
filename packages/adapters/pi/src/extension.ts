@@ -14,14 +14,10 @@ import type {
 } from "@weaveio/weave-engine";
 import {
   countIncompleteLeaves,
-  DEFAULT_MAX_GOAL_CONTINUATIONS,
-  decideSessionGoalContinuation,
   env,
   isDeniedKey,
   logger,
   redirectLogsToFile,
-  renderGoalPlanBlock,
-  SessionGoalController,
 } from "@weaveio/weave-engine";
 import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
 import {
@@ -105,7 +101,6 @@ import {
 } from "./child-tree-keys.js";
 import { renderChildTreeLines } from "./child-tree-render.js";
 import {
-  classifyWeaveGoalInvocation,
   WEAVE_COMMAND_NAMES,
   type WeaveCommandName,
 } from "./commands.js";
@@ -136,14 +131,6 @@ import {
   mapPlanStateErrorToPiFailure,
   type PiAdapterFailure,
 } from "./errors.js";
-import { parseWeaveGoalArgs } from "./goal-args.js";
-import { handleWeaveGoal } from "./goal-commands.js";
-import { PiGoalFooterController } from "./goal-footer-controller.js";
-import { persistGoalState, restoreGoalState } from "./goal-session.js";
-import {
-  buildWeaveGoalReportToolRegistration,
-  syncWeaveGoalReportToolAvailability,
-} from "./goal-tool.js";
 import {
   BunHostPackageReader,
   type HostPackageReader,
@@ -343,12 +330,10 @@ export interface PiExtensionDeps {
    * filesystem scan in a test).
    */
   readonly planCatalogPort: PiPlanCatalogPort;
-  /** Adapter-local plan state seam for trusted-session and goal tests. */
+  /** Adapter-local plan state seam for trusted-session tests. */
   readonly planStateProviderFactory?: (
     projectRoot: string,
   ) => PlanStateProvider;
-  /** Adapter-local override for testing durable-workflow goal suspension. */
-  readonly durableWorkflowActive?: () => boolean;
   /**
    * Injectable telemetry seams (Pi adapter contract) — journal/usage/retention
    * ports and the rotating log-sink filesystem. Absent means "construct
@@ -1236,8 +1221,6 @@ function commandDescription(name: WeaveCommandName): string {
       return "Start a configured Weave workflow";
     case "weave:status":
       return "Show the current Weave adapter and execution status";
-    case "weave:goal":
-      return "Manage the active session goal";
     case "weave:abort":
       return "Cancel the active Weave execution and its child tree";
     case "weave:advance":
@@ -1610,17 +1593,6 @@ export function createPiExtension(
   const historyStoreCell: { store: PiChildHistoryStore | undefined } = {
     store: undefined,
   };
-  const goalController = new SessionGoalController(() => deps.clock.now(), {
-    maxContinuations: DEFAULT_MAX_GOAL_CONTINUATIONS,
-  });
-  const goalFooterCell: { value: PiGoalFooterController | undefined } = {
-    value: undefined,
-  };
-  let goalTurnBeganPursuing = false;
-  let goalRunMadeToolCall = false;
-  let goalCurrentContinuation = false;
-  let goalPendingContinuation = false;
-  const goalToolRegisteredCell = { value: false };
   // The controller performs read-only preflight, but invalid settings need an
   // explicit user choice. Keep the current UI only for the duration of one
   // activation so a retry cannot prompt twice or use stale session state.
@@ -1932,36 +1904,6 @@ export function createPiExtension(
     if (childModeState.active) return;
     if (name === "weave:recover-children" && activeSession === undefined) {
       ctx.ui.notify("Child recovery is unavailable in this session.", "info");
-      return;
-    }
-    if (name === "weave:goal") {
-      const parsed = parseWeaveGoalArgs(_rawArgs);
-      const classification = classifyWeaveGoalInvocation(parsed);
-      const generation = controller.getCurrentGeneration();
-      if (
-        classification === "mutating" &&
-        generation !== undefined &&
-        effectiveHealthOnly(generation)
-      ) {
-        ctx.ui.notify(renderHealthOnlyBlockedMessage(name), "warning");
-        return;
-      }
-      const footer = goalFooterCell.value;
-      if (footer === undefined) {
-        ctx.ui.notify(
-          "Goal state is not available in this session.",
-          "warning",
-        );
-        return;
-      }
-      await handleWeaveGoal(_rawArgs, ctx.ui, {
-        pi,
-        controller: goalController,
-        catalog: deps.planCatalogPort,
-        projectRoot: ctx.cwd,
-        readSnapshot: (planName) => readPlanSnapshot(ctx.cwd, planName),
-        footer,
-      });
       return;
     }
     const gate = controller.evaluateCommandGate(name);
@@ -2729,16 +2671,6 @@ export function createPiExtension(
         primaryActivationFailure: undefined,
       };
 
-      const goalReadSnapshot = (planName: string) =>
-        readPlanSnapshot(ctx.cwd, planName);
-      const goalFooter = new PiGoalFooterController({
-        controller: goalController,
-        readSnapshot: goalReadSnapshot,
-        setStatus: (key, value) => ctx.ui.setStatus(key, value),
-        isChildMode: () => childModeState.active,
-      });
-      goalFooterCell.value = goalFooter;
-      await restoreGoalLifecycle(ctx);
       const sessionHealthOnly = effectiveHealthOnly(generation);
       const parentSessionId =
         deps.parentSessionId?.(ctx) ??
@@ -2766,22 +2698,6 @@ export function createPiExtension(
           : undefined,
       );
       inspectionRegistryCell.registry = inspectionRegistry;
-      if (
-        !goalToolRegisteredCell.value &&
-        !childModeState.active &&
-        !sessionHealthOnly &&
-        generation.preflight.trust === "trusted"
-      ) {
-        pi.registerTool(
-          buildWeaveGoalReportToolRegistration({
-            pi,
-            controller: goalController,
-            readSnapshot: goalReadSnapshot,
-          }),
-        );
-        goalToolRegisteredCell.value = true;
-        syncWeaveGoalReportToolAvailability(pi, goalController);
-      }
       ctx.ui.setStatus(
         "weave",
         sessionHealthOnly
@@ -3466,294 +3382,8 @@ export function createPiExtension(
       };
     });
 
-    const syncGoalReportToolAvailability = (): void => {
-      if (!goalToolRegisteredCell.value) {
-        const activeTools = pi.getActiveTools();
-        if (activeTools.includes("weave_goal_report")) {
-          pi.setActiveTools(
-            activeTools.filter((name) => name !== "weave_goal_report"),
-          );
-        }
-        return;
-      }
-      syncWeaveGoalReportToolAvailability(pi, goalController);
-    };
-
-    const restoreGoalLifecycle = async (
-      ctx: PiSessionContext,
-    ): Promise<void> => {
-      if (childModeState.active) return;
-      goalPendingContinuation = false;
-      goalCurrentContinuation = false;
-      goalRunMadeToolCall = false;
-      goalTurnBeganPursuing = false;
-      const sessionManager = (ctx as unknown as { sessionManager?: unknown })
-        .sessionManager;
-      if (
-        sessionManager === undefined ||
-        typeof sessionManager !== "object" ||
-        sessionManager === null ||
-        typeof (sessionManager as { getBranch?: unknown }).getBranch !==
-          "function"
-      ) {
-        syncGoalReportToolAvailability();
-        return;
-      }
-      const restored = restoreGoalState(
-        ctx as unknown as Parameters<typeof restoreGoalState>[0],
-        goalController,
-      );
-      if (restored.isErr()) {
-        deps.logger.warn(
-          { error: restored.error },
-          "could not restore session goal",
-        );
-        return;
-      }
-      syncGoalReportToolAvailability();
-      const footer = goalFooterCell.value;
-      if (footer !== undefined) {
-        await footer.restore();
-      }
-    };
-
-    pi.on("session_tree", async (_event, ctx) => {
-      if (!childModeState.active) await restoreGoalLifecycle(ctx);
-    });
-
-    pi.on("before_agent_start", async (event, ctx) => {
-      if (childModeState.active || !goalController.isPursuing) return undefined;
-      const state = goalController.current;
-      if (state === undefined) return undefined;
-      const snapshot = await readPlanSnapshot(ctx.cwd, state.planName).match(
-        (value) => value,
-        () => undefined,
-      );
-      if (snapshot === undefined) return undefined;
-      const activeGoal = [
-        "## Active Goal",
-        `Safe plan: ${state.planName}`,
-        `Remaining unchecked leaf tasks: ${countIncompleteLeaves(snapshot.parents)}`,
-        "",
-        renderGoalPlanBlock({ planName: state.planName, snapshot }),
-        "",
-        "Achievement is authoritative only when the plan is complete.",
-      ].join("\n");
-      return {
-        systemPrompt: `${readSystemPrompt(event)}\n\n${activeGoal}`,
-      };
-    });
-
     pi.on("agent_start", () => {
       if (childModeState.active) return;
-      goalCurrentContinuation = goalPendingContinuation;
-      goalPendingContinuation = false;
-      goalTurnBeganPursuing = goalController.isPursuing;
-      goalRunMadeToolCall = false;
-    });
-
-    pi.on("turn_start", () => {
-      if (childModeState.active) return;
-      goalTurnBeganPursuing = goalController.isPursuing;
-      goalRunMadeToolCall = false;
-    });
-
-    pi.on("tool_execution_start", () => {
-      if (childModeState.active) return;
-      goalRunMadeToolCall = true;
-    });
-
-    pi.on("turn_end", async (event) => {
-      if (childModeState.active || !goalTurnBeganPursuing) return;
-      const record = asJsonRecord(event);
-      const message = record?.message;
-      const extracted =
-        message !== undefined && typeof message === "object" && message !== null
-          ? extractAssistantUsageFromMessage(
-              message as Record<string, JsonValue>,
-            )
-          : undefined;
-      const usage = extracted?.usage;
-      const tokens = Math.min(
-        Math.max(
-          0,
-          (usage?.inputTokens ?? 0) +
-            (usage?.outputTokens ?? 0) +
-            (usage?.cacheReadTokens ?? 0) +
-            (usage?.cacheWriteTokens ?? 0),
-        ),
-        1_000_000_000,
-      );
-      const recorded = goalController.recordTurn(tokens);
-      if (recorded.isOk()) {
-        persistGoalState(pi, goalController);
-        const footer = goalFooterCell.value;
-        if (footer !== undefined) await footer.refreshFromCache();
-      } else {
-        deps.logger.warn(
-          { error: recorded.error },
-          "could not record goal turn",
-        );
-      }
-      goalTurnBeganPursuing = false;
-    });
-
-    pi.on("message_end", async (event, ctx) => {
-      if (childModeState.active || !goalController.isPursuing) return;
-      const record = asJsonRecord(event);
-      const message = record?.message;
-      if (
-        typeof message !== "object" ||
-        message === null ||
-        Array.isArray(message) ||
-        (message as Record<string, JsonValue>).role !== "assistant" ||
-        (message as Record<string, JsonValue>).stopReason !== "aborted"
-      )
-        return;
-      const paused = goalController.pause("Interrupted by the user.");
-      if (paused.isErr()) {
-        deps.logger.warn(
-          { error: paused.error },
-          "could not pause aborted goal",
-        );
-        return;
-      }
-      persistGoalState(pi, goalController);
-      syncGoalReportToolAvailability();
-      const footer = goalFooterCell.value;
-      if (footer !== undefined) await footer.refreshFromPlan();
-      ctx.ui.notify(
-        "Goal paused after interruption. Use /weave:goal resume to continue.",
-        "warning",
-      );
-    });
-
-    pi.on("agent_settled", async (_event, ctx) => {
-      if (childModeState.active) return;
-      const state = goalController.current;
-      if (state === undefined) return;
-      const snapshot = await readPlanSnapshot(ctx.cwd, state.planName).match(
-        (value) => value,
-        () => undefined,
-      );
-      const decision = decideSessionGoalContinuation({
-        status: state.status,
-        isIdle: ctx.isIdle(),
-        hasPendingMessages:
-          typeof (ctx as unknown as { hasPendingMessages?: () => boolean })
-            .hasPendingMessages === "function"
-            ? (
-                ctx as unknown as { hasPendingMessages: () => boolean }
-              ).hasPendingMessages()
-            : false,
-        lastRunWasContinuation: goalCurrentContinuation,
-        lastRunMadeToolCall: goalRunMadeToolCall,
-        planComplete: snapshot?.complete === true,
-        durableWorkflowActive:
-          deps.durableWorkflowActive?.() ??
-          activeWorkflowInstanceCell.value !== undefined,
-        continuations: state.continuations,
-        maxContinuations: DEFAULT_MAX_GOAL_CONTINUATIONS,
-      });
-      if (decision.kind === "hold") {
-        const footer = goalFooterCell.value;
-        if (footer !== undefined) await footer.refreshFromPlan();
-        return;
-      }
-
-      if (decision.kind === "continue") {
-        const recorded = goalController.recordContinuation();
-        if (recorded.isErr()) {
-          deps.logger.warn(
-            { error: recorded.error },
-            "could not record goal continuation",
-          );
-          return;
-        }
-        persistGoalState(pi, goalController);
-        syncGoalReportToolAvailability();
-        const footer = goalFooterCell.value;
-        if (footer !== undefined) await footer.refreshFromPlan();
-        goalPendingContinuation = true;
-        const sent = await ResultAsync.fromThrowable(
-          async () => {
-            await pi.sendMessage(
-              {
-                customType: "weave-goal-continuation",
-                content: "Continue working toward the active goal.",
-                display: false,
-              },
-              { triggerTurn: true, deliverAs: "followUp" },
-            );
-          },
-          () => "continuation-send-failed" as const,
-        )();
-        if (sent.isErr()) {
-          goalPendingContinuation = false;
-          const paused = goalController.pause(
-            "Automatic continuation failed to start.",
-          );
-          if (paused.isErr()) {
-            deps.logger.warn(
-              { error: paused.error },
-              "could not pause goal after continuation send failure",
-            );
-          }
-          persistGoalState(pi, goalController);
-          syncGoalReportToolAvailability();
-          const footer = goalFooterCell.value;
-          if (footer !== undefined) await footer.refreshFromPlan();
-          Result.fromThrowable(
-            () =>
-              ctx.ui.notify(
-                "Goal paused because the automatic continuation could not start. Use /weave:goal resume to continue.",
-                "warning",
-              ),
-            () => undefined,
-          )().match(
-            () => undefined,
-            () => undefined,
-          );
-        }
-        return;
-      }
-
-      let result: ReturnType<SessionGoalController["achieve"]>;
-      if (decision.kind === "achieved") {
-        result = goalController.achieve("The plan is complete.");
-      } else if (decision.kind === "pause") {
-        result = goalController.pause(decision.reason);
-      } else {
-        result = goalController.limitBudget(decision.reason);
-      }
-      if (result.isErr()) {
-        deps.logger.warn(
-          { error: result.error },
-          "could not update goal status",
-        );
-        return;
-      }
-      persistGoalState(pi, goalController);
-      syncGoalReportToolAvailability();
-      const footer = goalFooterCell.value;
-      if (footer !== undefined) await footer.refreshFromPlan();
-      if (decision.kind === "pause") {
-        let notice: string;
-        if (decision.reason.includes("no tool")) {
-          notice =
-            "Goal paused because the last continuation made no tool call. Use /weave:goal resume after refining the goal.";
-        } else if (decision.reason.includes("durable workflow")) {
-          notice = `Goal paused/self-suspended: ${decision.reason}. Use /weave:goal resume to continue.`;
-        } else {
-          notice = `Goal paused: ${decision.reason}. Use /weave:goal resume to continue.`;
-        }
-        ctx.ui.notify(notice, "warning");
-      } else if (decision.kind === "budget-limited") {
-        ctx.ui.notify(
-          `Goal stopped: ${decision.reason}. Use /weave:goal resume to continue.`,
-          "warning",
-        );
-      }
     });
 
     // Pi adapter contract: one exact-once usage observation per settled primary
@@ -3806,25 +3436,6 @@ export function createPiExtension(
           "workflow-controller",
         "terminated",
       );
-      if (!childModeState.active) {
-        persistGoalState(pi, goalController);
-        goalFooterCell.value?.clear();
-        goalController.clear().match(
-          () => undefined,
-          (error) =>
-            deps.logger.warn({ error }, "could not clear session goal"),
-        );
-        const activeTools = pi.getActiveTools();
-        pi.setActiveTools(
-          activeTools.filter((name) => name !== "weave_goal_report"),
-        );
-        syncGoalReportToolAvailability();
-        goalPendingContinuation = false;
-        goalCurrentContinuation = false;
-        goalRunMadeToolCall = false;
-        goalTurnBeganPursuing = false;
-        goalFooterCell.value = undefined;
-      }
       activeSession = undefined;
       inspectionRegistryCell.registry?.closeGeneration();
       inspectionRegistryCell.registry = undefined;

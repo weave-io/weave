@@ -340,9 +340,6 @@ describe("private child mode (Pi adapter contract, end-to-end against a fake hos
     );
     expect(outcome).toBeUndefined();
     expect(host.registerToolCalls).toHaveLength(0);
-    expect(host.registerToolCalls.map(({ name }) => name)).not.toContain(
-      "weave_goal_report",
-    );
   });
 
   it("reports settlement exactly once via an authenticated envelope on agent_settled", async () => {
