@@ -185,3 +185,51 @@ unchanged.
 
 Unrelated dirty engine and Pi files were left untouched; the only tracked
 diffs introduced here are the six deletions plus the two import/export edits.
+
+## Task 5 — coverage audit and verification
+
+### Coverage map
+
+- **Current/recovered parity:** `active-plan-ui-state.test.ts` covers
+  `resolves current and recovered workflows through the identical lookup` and
+  `cannot retain the previous workflow across a current/recovery transition`;
+  `extension.test.ts` adds `renders a recovered plan through the shared widget,
+  footer, and Alt+T resolver without resuming`.
+- **Shared widget/footer/Alt+T identity:** the resolver's retained identity and
+  snapshot tests, the recovered host test above, and the existing stale active
+  plan and stale Alt+T generation tests prove that the surfaces use one view and
+  reject stale views.
+- **Early startup clearing:** `extension.test.ts` adds `clears active-plan
+  surfaces before an early startup return`.
+- **Failed recovery/read/inspect/snapshot clearing:** the resolver tests cover
+  recovery-read, inspect, and snapshot errors plus `clears on demand and is
+  idempotent`; the host suite adds `clears active-plan surfaces when a read
+  fails through Alt+T`.
+- **Terminal settlement and abort/no-active:** the resolver covers terminal
+  pointers and empty state; `extension.test.ts` adds `clears active-plan
+  surfaces on terminal abort and remains clear with no active workflow`.
+- **Generation replacement:** existing `ignores a deferred active-plan result
+  from an old generation`, `ignores a deferred Alt+T plan result from an old
+  generation`, and `fails closed for retained Alt+T callbacks after
+  replacement` cover replacement and stale callbacks.
+- **Shutdown:** existing `clears the compact plan widget on session_shutdown`
+  covers widget and footer clearing at shutdown.
+- **Read-only recovery:** the resolver's `exposes only read methods, so a
+  recoverable plan can be shown but never resumed` and the recovered host test's
+  unchanged child-process count prove that resolution does not resume execution.
+
+### Verification
+
+- Added only the four missing host-level tests listed above. No production bug
+  was exposed. The test setup required an injected in-memory runtime store and
+  an explicit abort confirmation; neither was a production change.
+- The previous Task 5 delegation returned `completed` without the required
+  evidence report. This audit independently checked the map and reran all
+  required commands.
+- The exact focused command passed with **143 tests passed, 0 failed, and
+  567 expect calls**.
+- `bunx biome check` passed on the four Task 5 TypeScript files with exit 0;
+  it reports seven existing warnings for unused imports, variables, and a
+  parameter, but no errors.
+- `bun run typecheck` passed with exit 0.
+- Host integration wiring/tests remain in the dirty working tree for the next cohesive Pi UI commit because staging them now would absorb unrelated post-baseline work.
