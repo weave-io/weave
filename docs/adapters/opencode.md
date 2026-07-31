@@ -40,9 +40,7 @@ Category shuttles remain ordinary normalized descriptors. The adapter never repa
 
 ## Commands and execution
 
-OpenCode exposes `/weave:start` and `/start-work` as foreground plan-entry commands. Durable execution uses explicit engine lifecycle operations where the adapter declares the required effective capabilities. Ordinary chat and passive hooks do not start work.
-
-`/weave:goal [plan-name]` is a model-driven degraded projection. It does not provide persisted goal state, an enforced budget, pause/resume controls, a goal status surface, a native reporting tool, or a goal footer. It does not imply Pi goal behavior or durable workflow execution.
+OpenCode exposes `/weave:start` and `/start-work` as foreground plan-entry commands. `/start-work` is a compatibility alias for `/weave:start` and is behavior-identical. Durable execution uses explicit engine lifecycle operations where the adapter declares the required effective capabilities. Ordinary chat and passive hooks do not start work.
 
 ## Logging
 

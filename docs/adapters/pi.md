@@ -56,6 +56,8 @@ The first `before_agent_start` event supplies Pi's loaded skill catalog. The ada
 
 Alt+A cycles healthy `primary` and `all` descriptors in materialization order while Pi is idle. It skips subagents and switches atomically. The footer shows `◆ WEAVE · <NORMALIZED-NAME>`, follows a direct workflow agent while it runs, restores the primary after settlement, and clears in health-only mode or at shutdown.
 
+The badge tints the agent name with a stable background drawn only from theme background tokens Pi itself supports. The choice is deterministic: the normalized agent name (trimmed, whitespace-collapsed, case-folded) always selects the same token in every session and on every machine, with no stored assignment, so you learn one color per agent. Distinct agents may share a color; the same agent never changes color. The agent name keeps its accent foreground. If the active theme exposes no background helper, the badge renders foreground-only — accent, bold agent name, no tint — rather than substituting a different color.
+
 The registered `weave_delegate` schema is static because Pi requires it at registration time. Each invocation still resolves the live primary identity and that descriptor's current eligible targets, so switching primary agents cannot reuse stale authority.
 
 ## User surface
@@ -70,20 +72,26 @@ The registered `weave_delegate` schema is static because Pi requires it at regis
 - `/weave:health` — inspect activation health;
 - `/weave:plan` — inspect the current plan;
 - `/weave:artifact` — inspect an available artifact;
-- `/weave:goal <plan-name>` — run a plan in the foreground goal loop;
-- `Alt+A` — cycle healthy primary-capable agents.
+- `Alt+A` — cycle healthy primary-capable agents;
+- `Alt+T` — open the read-only plan-task list.
 
 Only an explicit user command authorizes work. Session start, idle, settlement, recovery discovery, ordinary chat, and health views never start or resume durable execution.
 
-`/weave:start` is a foreground Pi turn and does not create durable workflow state. `/weave:run` and `/weave:resume` call the engine lifecycle surface.
+`/weave:start` is the only plan-execution command. It confirms an existing plan and submits it as one visible foreground Pi turn; it creates no durable workflow state and starts no engine-managed workflow. `/weave:run` does one separate thing: it explicitly starts a named engine-managed durable workflow through the engine lifecycle surface, and it never runs a plan on `/weave:start`'s behalf. `/weave:resume` also calls the engine lifecycle surface. Neither command implies the other.
 
-### Goal command
+### Plan-task footer
 
-`/weave:goal <plan-name>` runs the named plan in Pi's foreground loop. `/weave:goal` shows status. The command also accepts `/weave:goal status`, `/weave:goal pause`, `/weave:goal resume`, and `/weave:goal clear`; `/weave:goal check` is a status alias, and `stop`, `off`, `reset`, `none`, and `cancel` are clear aliases. Use `-- <plan-name>` to select a plan whose name collides with a control word; `/weave:goal` accepts a plan name, not inline goal prose.
+While a durable workflow is active, Pi renders one `weave-task` status entry: `▸ task N/M · <id>. <title>`, bounded to 56 code points with a single ellipsis when the text is longer. The footer shows exactly one active task, selected by the engine from the same plan snapshot the plan widget and the Alt+T list read, so those surfaces cannot disagree.
 
-Goal state is local to the current branch and persists in the Pi session. The private `weave_goal_report` tool is available only while a goal is pursuing; it reports achieved or blocked evidence to the controller. The controller, not prose or process exit, adjudicates plan completion. Goal execution makes no durable workflow or authorization calls.
+The footer clears when nothing is active: no tracked workflow, no readable plan task, a completed, failed, or cancelled workflow, or an unreadable lookup. It never freezes the last snapshot on screen. When the session tracks no workflow but an eligible recovered pointer exists, the footer may show that paused plan as read-only state. Showing a recovered plan authorizes nothing; only `/weave:resume`, with its own confirmation and lease recheck, continues that work.
 
-In health-only mode, the goal `start` and `resume` forms are blocked; `status`, `pause`, and `clear` remain available, including their aliases. Delegated child mode is inert for goal restore, prompt, tool, continuation, and footer behavior. Outside health-only mode, the goal loop applies its per-form gate before each form and suppresses child delegation. Pi renders a `weave-goal` footer with the plan and task, a 72-code-point progress ladder, and event-triggered plan refreshes. Its 60-second timer refreshes metrics only. Out-of-band plan edits appear on the next lifecycle or command event, not from the timer.
+### Alt+T plan-task list
+
+`Alt+T` opens a read-only, scrollable list of the active plan's parent tasks. It reads the same active-plan and recovery source as the footer, marks each task `[ ]`, `[~]`, or `[x]`, points a cursor at the active task, and opens on that task rather than at the top. The viewport is bounded on both ends, so a small terminal still scrolls and a tall terminal does not become a full-screen takeover; when tasks are hidden the last line says how many.
+
+Navigation uses your configured Pi keybindings, not fixed bytes: `tui.select.up` and `tui.select.down` scroll, `tui.select.cancel` closes. The hint line names the keys you actually have bound. If a binding is unbound, the list says so rather than silently restoring a default.
+
+The list starts, resumes, advances, and cancels nothing. When no plan is active, it says the plan has no tasks or reports a short, path-free notice such as "Weave could not read the active plan" instead of opening a stale or empty modal. An unreadable plan or workflow produces the same bounded notice and no modal contents.
 
 ## Workflow projection
 

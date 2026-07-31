@@ -21,7 +21,7 @@ Fix the reported configuration or installation issue, then restart Pi to activat
 
 ## Switch agents
 
-Use `Alt+A` to cycle through healthy primary agents. The active agent is shown in Pi's interface. Switching changes the active Weave agent without changing the project configuration.
+Use `Alt+A` to cycle through healthy primary agents. The active agent is shown in Pi's interface as `◆ WEAVE · <AGENT>`. Each agent name always carries the same background tint, chosen deterministically from the background tokens the active theme supports, so one color means one agent in every session. Different agents may share a color. If the theme provides no background support, the badge renders the agent name in accent bold with no tint. Switching changes the active Weave agent without changing the project configuration.
 
 ## Commands
 
@@ -36,17 +36,22 @@ The extension exposes these commands:
 - `/weave:health` — inspect activation health.
 - `/weave:plan` — inspect the current plan.
 - `/weave:artifact` — inspect an available artifact.
-- `/weave:goal <plan-name>` — run a plan in the foreground goal loop.
 
-### Goals and workflows
+### Start work and run workflows
 
-Use `/weave:goal <plan-name>` to pursue a plan in Pi's foreground loop. `/weave:goal status` shows status; `/weave:goal pause`, `/weave:goal resume`, and `/weave:goal clear` control it. `check` aliases status, `stop`, `off`, `reset`, `none`, and `cancel` alias clear. Use `-- <plan-name>` to select a plan whose name collides with a control word; `/weave:goal` accepts a plan name, not inline goal prose.
+`/weave:start` is the only plan-execution command. It confirms an existing plan and submits it as one visible foreground Pi turn. It records no durable workflow state.
 
-In health-only mode, the goal `start` and `resume` forms are blocked; `status`, `pause`, and `clear` remain available, including their aliases. Delegated child mode is inert for goal restore, prompt, tool, continuation, and footer behavior.
+`/weave:run` does one separate thing: it explicitly starts a named durable workflow that the engine manages and persists. Neither command implies the other, and `/weave:start` never starts a durable workflow on your behalf.
 
-Goal completion comes from the plan's completion decision, reported through Pi's private goal tool. The footer shows the plan, task, and a 72-code-point progress ladder. Plan refreshes follow lifecycle and command events; the timer refreshes metrics only.
+### Track the active task
 
-This is separate from `/weave:run`, which starts a durable workflow with persisted workflow state.
+While a durable workflow is active, Pi shows one bounded `weave-task` status entry naming the current task, such as `▸ task 3/10 · 3. Update the adapter docs`. Long titles are shortened with a single ellipsis.
+
+The entry clears when there is nothing active: no tracked workflow, no readable plan task, a completed, failed, or cancelled workflow, or a lookup Weave could not read. If your session tracks no workflow but Weave finds an eligible recovered pointer, the entry may show that paused plan as read-only state. Continue it with `/weave:resume`; showing it starts nothing.
+
+Press `Alt+T` to open the read-only plan-task list. It reads the same active plan and recovery state as the status entry, marks each task `[ ]`, `[~]`, or `[x]`, and opens on the active task. Your configured Pi keybindings drive it: `tui.select.up` and `tui.select.down` scroll, `tui.select.cancel` closes, and the hint line names the keys you actually have bound. The list scrolls and closes; it starts, resumes, advances, and cancels nothing.
+
+When no plan is available or Weave cannot read the plan or workflow, the list reports a short notice instead of opening a stale or empty view.
 
 ## Private children
 

@@ -530,3 +530,77 @@ Tasks 5–7 and unrelated boot work, so they are deferred to the later cohesive
 Pi UI integration commit. The unrelated `getSystemPrompt` hunk in `types.ts`
 was kept unstaged with a partial `git apply --cached` patch rather than any
 reset, checkout, or stash.
+
+## Task 9 — Docs and release metadata
+
+### Files changed
+
+- `docs/adapters/pi.md` — removed the `### Goal command` section and the
+  `/weave:goal` bullet; added `Alt+T` to the user-surface list; stated that
+  `/weave:start` is the sole plan executor and `/weave:run` explicitly starts a
+  named engine-managed durable workflow, with neither implying the other; added
+  `### Plan-task footer` (`weave-task`, one bounded active task from the shared
+  plan snapshot, clears when inactive/unreadable/terminal, may show eligible
+  recovered read-only state) and `### Alt+T plan-task list` (read-only bounded
+  list, shared active/recovery source, configured
+  `tui.select.up`/`down`/`cancel` bindings, safe notice instead of a stale
+  modal, no start/resume side effect); extended the Alt+A paragraph with the
+  deterministic per-agent badge background and the exact foreground-only
+  fallback.
+- `docs/adapters/opencode.md` — dropped the degraded goal-projection paragraph;
+  `/start-work` is documented as a behavior-identical alias of `/weave:start`.
+- `docs/adapters/claude-code.md` — replaced `## Goal command` with a `##
+  Commands` section naming only `/weave:start` and its `/start-work` alias, and
+  restating that generated markdown adds no durable-workflow runtime surface.
+- `packages/docs/.../adapters/pi.mdx` — same removals; added
+  "Start work and run workflows" and "Track the active task" sections and the
+  badge-color sentence to "Switch agents".
+
+This Task 9 record uses American English ("color", "behavior"), matching the
+repository writing style; the earlier British spellings in this file were left
+as written.
+- `packages/docs/.../adapters/opencode.mdx` and `claude-code.mdx` — goal bullets
+  and degraded-projection paragraphs removed; start command/alias only.
+- `.changeset/weave-goal-command.md` — deleted.
+
+### Changeset decision and evidence
+
+The changeset claimed a *minor* addition of `/weave:goal` across four packages.
+It was still pending at the start of Task 9 and was deleted during Task 9. Direct
+Git evidence shows that `.changeset/weave-goal-command.md` was added by commit
+`672a87a172db312ac10d300d9469443d06b1c207`; `git tag --contains
+672a87a172db312ac10d300d9469443d06b1c207` returns no tags, and only the
+development branches `main`, `feat/database-backed-operational-storage`, and
+`feat/weave-goal-command` contain the commit. The affected manifests — `packages/engine/package.json`,
+`packages/adapters/pi/package.json`, `packages/adapters/opencode/package.json`,
+and `packages/adapters/claude-code/package.json` — each remain at version
+`0.0.1`. This direct no-release-tag evidence shows that the changeset was never
+released. As corroboration only, no `CHANGELOG.md` exists
+in the repository (`find . -name CHANGELOG.md -not -path '*/node_modules/*'`
+returned nothing), and `.changeset/config.json` uses
+`@changesets/cli/changelog`. An unreleased "Add" entry for a feature that is
+being removed before shipping has no accurate rewrite — a removal note would
+describe a change no published version ever saw. The file was therefore deleted
+rather than rewritten. Twenty other changesets remain untouched.
+
+### Residual `weave:goal` matches — classified
+
+`rg -n 'weave:goal|weave_goal_report|WEAVE_GOAL|SessionGoal' packages docs
+.changeset --glob '!**/dist/**' --glob '!**/dist-types/**'` now returns only two
+hits, both in `packages/adapters/opencode/src/__tests__/plugin.test.ts` (lines
+488 and 495). They are intentional negative assertions: the generated OpenCode
+config must not register a `weave:goal` command and no command template may
+mention the string. They are retained as regression protection.
+
+### Verification observed in this session
+
+- `bun run docs:check-links` → "Checked local documentation links", exit 0.
+- `bunx biome check` on the six touched doc files → Biome ignores `.md`/`.mdx`
+  in this repo ("No files were processed"), so no Markdown linter applies to
+  these paths; no other Markdown check exists in the root scripts.
+- Nothing committed; no stash, reset, checkout, or worktree used. The unrelated
+  dirty `docs/adapters/pi.md` hunks recorded in
+  `/tmp/remove-weave-goal-task9-before.diff` (skill-catalog/boot-activation,
+  native inspection components, editor coexistence, delegation entry header)
+  were preserved; only the goal/plan-UI regions were rewritten.
+- Generated `dist`/`dist-types` were not touched.
