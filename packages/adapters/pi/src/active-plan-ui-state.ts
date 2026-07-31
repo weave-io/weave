@@ -203,12 +203,36 @@ export function resolveActivePlanView(
 }
 
 /**
+ * What happened to one `resolve()` call by the time it finished.
+ *
+ * Resolution is asynchronous and callers are fire-and-forget, so two lookups
+ * started in the same generation can overlap. `superseded` says "a newer
+ * lookup (or a `clear()`) took over while this one was in flight": its result
+ * is stale by construction and must be discarded, not painted. Only `applied`
+ * carries a view that is still the latest word on the active plan.
+ *
+ * A superseded failure is reported on the *success* channel deliberately: a
+ * stale error must clear nothing and say nothing, exactly like a stale view.
+ */
+export type ActivePlanResolution =
+  | { readonly status: "applied"; readonly view: ActivePlanView }
+  | { readonly status: "superseded" };
+
+const SUPERSEDED: ActivePlanResolution = { status: "superseded" };
+
+/**
  * The session-scoped holder of the resolved identity and snapshot.
  *
  * `resolve()` clears the retained identity *before* it looks anything up, so a
  * stale workflow can never survive a current/recovery transition, a failed
  * lookup, a terminal settlement, or a generation change: the only way to hold
  * an identity is to have just resolved it successfully.
+ *
+ * Every `resolve()` and every `clear()` takes a fresh monotonic token and so
+ * invalidates whatever was already in flight. That makes resolution
+ * last-request-wins: an older lookup that finishes after a newer one can no
+ * longer overwrite the newer retained view with its own active, empty, or
+ * failed outcome.
  */
 export interface ActivePlanUiState {
   /** The last successfully resolved identity, or `undefined`. */
@@ -219,12 +243,20 @@ export interface ActivePlanUiState {
   readonly clear: () => void;
   readonly resolve: (
     port: ActivePlanReadPort,
-  ) => ResultAsync<ActivePlanView, ActivePlanUiError>;
+  ) => ResultAsync<ActivePlanResolution, ActivePlanUiError>;
 }
 
 export function createActivePlanUiState(): ActivePlanUiState {
   let retained: ActivePlanView | undefined;
+  // Monotonic and never reused: the only token that may write retained state
+  // is the one taken by the most recent `resolve()`/`clear()`.
+  let latestToken = 0;
+  const nextToken = (): number => {
+    latestToken += 1;
+    return latestToken;
+  };
   const clear = (): void => {
+    nextToken();
     retained = undefined;
   };
   return {
@@ -236,17 +268,26 @@ export function createActivePlanUiState(): ActivePlanUiState {
     clear,
     resolve: (port) => {
       // Clear first: an in-flight lookup must never leave the previous
-      // workflow visible if it fails or resolves to nothing.
-      clear();
+      // workflow visible if it fails or resolves to nothing. Taking the token
+      // here is what invalidates any lookup already in flight.
+      const token = nextToken();
+      retained = undefined;
+      const isLatest = (): boolean => token === latestToken;
       return resolveActivePlanView(port)
-        .map((view) => {
-          retained = view;
-          return view;
-        })
-        .orElse((error) => {
-          clear();
-          return errAsync(error);
-        });
+        .andThen(
+          (view): ResultAsync<ActivePlanResolution, ActivePlanUiError> => {
+            if (!isLatest()) return okAsync(SUPERSEDED);
+            retained = view;
+            return okAsync({ status: "applied", view });
+          },
+        )
+        .orElse(
+          (error): ResultAsync<ActivePlanResolution, ActivePlanUiError> => {
+            if (!isLatest()) return okAsync(SUPERSEDED);
+            retained = undefined;
+            return errAsync(error);
+          },
+        );
     },
   };
 }

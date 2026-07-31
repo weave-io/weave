@@ -160,15 +160,46 @@ describe("plan-task-list rendering", () => {
     );
   });
 
-  it("still shows a scrollable window on a pathologically small terminal", () => {
-    expect(planTaskListVisibleRows(1)).toBe(3);
-    expect(planTaskListVisibleRows(0)).toBe(3);
+  it("never claims more rows than a pathologically small terminal has", () => {
+    expect(planTaskListVisibleRows(1)).toBe(0);
+    expect(planTaskListVisibleRows(0)).toBe(0);
     const lines = renderPlanTaskListLines({
       snapshot: snapshotOf(manyTasks(4)),
       viewport: { rows: 1, scrollOffset: 0 },
     });
-    expect(lines).toHaveLength(6);
-    expect(lines.at(-1)).toBe("1 more \u2014 Up/Down scrolls, Esc closes");
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toBe('Plan "demo-plan" - 4 tasks');
+  });
+
+  it("renders a compact two-line state on a two-row terminal", () => {
+    const lines = renderPlanTaskListLines({
+      snapshot: snapshotOf(manyTasks(4)),
+      viewport: { rows: 2, scrollOffset: 0 },
+    });
+    expect(lines).toHaveLength(2);
+    expect(lines.at(-1)).toBe("4 more \u2014 Up/Down scrolls, Esc closes");
+  });
+
+  it("drops the blank separator before it drops task rows", () => {
+    const lines = renderPlanTaskListLines({
+      snapshot: snapshotOf(manyTasks(4)),
+      viewport: { rows: 4, scrollOffset: 0 },
+    });
+    expect(lines).toHaveLength(4);
+    expect(lines).not.toContain("");
+    expect(lines.at(-1)).toBe("2 more \u2014 Up/Down scrolls, Esc closes");
+  });
+
+  it("never emits more lines than the viewport for rows 1 through 12", () => {
+    for (const rows of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) {
+      for (const count of [0, 1, 30]) {
+        const lines = renderPlanTaskListLines({
+          snapshot: snapshotOf(manyTasks(count)),
+          viewport: { rows, scrollOffset: 0 },
+        });
+        expect(lines.length).toBeLessThanOrEqual(rows);
+      }
+    }
   });
 
   it("caps the viewport on an enormous terminal", () => {
@@ -179,6 +210,14 @@ describe("plan-task-list rendering", () => {
   it("never reports a negative max scroll for a plan smaller than the viewport", () => {
     expect(planTaskListMaxScroll(2, 20)).toBe(0);
     expect(planTaskListMaxScroll(0, 20)).toBe(0);
+  });
+
+  it("cannot scroll at all when no task rows are visible", () => {
+    expect(planTaskListVisibleRows(2)).toBe(0);
+    expect(planTaskListMaxScroll(50, 2)).toBe(0);
+    expect(planTaskListMaxScroll(50, 1)).toBe(0);
+    expect(planTaskListOffsetForIndex(40, 50, 2)).toBe(0);
+    expect(planTaskListOffsetForIndex(40, 50, 1)).toBe(0);
   });
 });
 
@@ -200,9 +239,25 @@ describe("plan-task-list terminal-height budgeting", () => {
     }
   });
 
-  it("never drops below a scrollable minimum on a tiny terminal", () => {
-    expect(planTaskListRowBudget(4)).toBe(7);
-    expect(planTaskListVisibleRows(planTaskListRowBudget(4))).toBe(3);
+  it("never budgets more rows than a tiny terminal actually has", () => {
+    expect(planTaskListRowBudget(4)).toBe(4);
+    expect(planTaskListVisibleRows(planTaskListRowBudget(4))).toBe(2);
+  });
+
+  it("stays within the terminal and above zero for every small height", () => {
+    for (const rows of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) {
+      const budget = planTaskListRowBudget(rows);
+      expect(budget).toBeLessThanOrEqual(rows);
+      expect(budget).toBeGreaterThanOrEqual(1);
+    }
+  });
+
+  it("stays within the terminal for arbitrary finite positive heights", () => {
+    for (const rows of [1, 2, 7, 13, 14, 27, 33, 34, 100, 999, 4.9]) {
+      const budget = planTaskListRowBudget(rows);
+      expect(budget).toBeGreaterThanOrEqual(1);
+      expect(budget).toBeLessThanOrEqual(Math.trunc(rows));
+    }
   });
 
   it("never exceeds the maximum viewport on a very tall terminal", () => {
@@ -562,5 +617,191 @@ describe("plan-task-list component behaviour", () => {
     expect(component.render(80).length).toBeGreaterThan(0);
     current = false;
     expect(component.render(80)).toEqual([]);
+  });
+
+  it("reports staleness once so the host can close the overlay it owns", () => {
+    let current = true;
+    let staleReports = 0;
+    let cancels = 0;
+    const component = createPlanTaskListComponent({
+      snapshot: snapshotOf(manyTasks(5)),
+      isCurrent: () => current,
+      onStale: () => {
+        staleReports += 1;
+      },
+      onCancel: () => {
+        cancels += 1;
+      },
+      onChange: () => {
+        // A host that re-renders on change must not be able to loop here.
+        component.render(80);
+      },
+    });
+
+    expect(component.render(80).length).toBeGreaterThan(0);
+    expect(staleReports).toBe(0);
+
+    current = false;
+    // Render and input both arrange closure, and both do it only once, so a
+    // re-rendering host cannot drive an unbounded loop of settlements.
+    expect(component.render(80)).toEqual([]);
+    expect(component.render(80)).toEqual([]);
+    component.handleInput("\u001b");
+    component.handleInput("j");
+    expect(staleReports).toBe(1);
+    // Staleness is not a cancel: the host settles the overlay itself.
+    expect(cancels).toBe(0);
+  });
+
+  it("cancels exactly once and ignores input afterwards", () => {
+    let cancels = 0;
+    const component = createPlanTaskListComponent({
+      snapshot: snapshotOf(manyTasks(5)),
+      onCancel: () => {
+        cancels += 1;
+      },
+    });
+    component.handleInput("\u001b");
+    component.handleInput("\u001b");
+    component.handleInput("j");
+    expect(cancels).toBe(1);
+  });
+});
+
+describe("plan-task-list tiny-terminal geometry", () => {
+  const snapshots: readonly [string, PlanTaskSnapshot][] = [
+    ["empty plan", snapshotOf([])],
+    ["single-task plan", snapshotOf([parent("1", "Only task", "in_progress")])],
+    ["long plan", snapshotOf(manyTasks(120))],
+    [
+      "unicode plan",
+      snapshotOf([
+        parent("1", "🚀 ship the 日本語 renderer ✨", "completed"),
+        parent("2", "e\u0301tude combinée ".repeat(8), "in_progress"),
+        ...manyTasks(20),
+      ]),
+    ],
+  ];
+
+  it("never renders more lines than its own row budget, at any height", () => {
+    for (const [label, snapshot] of snapshots) {
+      for (const rows of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) {
+        const component = createPlanTaskListComponent({
+          snapshot,
+          getTerminalRows: () => rows,
+          onCancel: () => {},
+        });
+        const rendered = component.render(80);
+        const budget = planTaskListRowBudget(rows);
+        expect(budget).toBeLessThanOrEqual(rows);
+        expect({
+          label,
+          rows,
+          rendered: rendered.length,
+          budget,
+          fits: rendered.length <= budget,
+        }).toMatchObject({ fits: true });
+      }
+    }
+  });
+
+  it("keeps every line inside the width even on a tiny terminal", () => {
+    for (const [, snapshot] of snapshots) {
+      for (const rows of [1, 2, 4, 8]) {
+        for (const width of [1, 3, 12, 40]) {
+          const component = createPlanTaskListComponent({
+            snapshot,
+            theme: fakeTheme,
+            getTerminalRows: () => rows,
+            onCancel: () => {},
+          });
+          for (const line of component.render(width)) {
+            expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+          }
+        }
+      }
+    }
+  });
+
+  it("re-budgets on a live shrink and on a live grow", () => {
+    let rows: number | undefined = 40;
+    const component = createPlanTaskListComponent({
+      snapshot: snapshotOf(manyTasks(60)),
+      getTerminalRows: () => rows,
+      onCancel: () => {},
+    });
+    expect(component.render(80).length).toBeLessThanOrEqual(
+      planTaskListRowBudget(40),
+    );
+
+    rows = 4;
+    const shrunk = component.render(80);
+    expect(shrunk.length).toBeLessThanOrEqual(4);
+    expect(shrunk.length).toBeLessThanOrEqual(planTaskListRowBudget(4));
+
+    rows = 1;
+    expect(component.render(80)).toHaveLength(1);
+
+    rows = 40;
+    const grown = component.render(80);
+    expect(grown.length).toBeGreaterThan(shrunk.length);
+    expect(grown.length).toBeLessThanOrEqual(planTaskListRowBudget(40));
+  });
+
+  it("falls back to the conservative height for undefined and invalid heights", () => {
+    const invalid = [
+      undefined,
+      0,
+      -10,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+    ] as const;
+    for (const rows of invalid) {
+      expect(planTaskListRowBudget(rows)).toBe(18);
+      const component = createPlanTaskListComponent({
+        snapshot: snapshotOf(manyTasks(60)),
+        getTerminalRows: () => rows,
+        onCancel: () => {},
+      });
+      expect(component.render(80).length).toBeLessThanOrEqual(18);
+      expect(component.render(80)).toHaveLength(17);
+    }
+  });
+
+  it("stays cancellable through the configured binding on a one-row terminal", () => {
+    let cancels = 0;
+    const component = createPlanTaskListComponent({
+      snapshot: snapshotOf(manyTasks(60)),
+      keybindings: { getKeys: () => ["q"] },
+      getTerminalRows: () => 1,
+      onCancel: () => {
+        cancels += 1;
+      },
+    });
+    expect(component.render(80)).toHaveLength(1);
+    component.handleInput("q");
+    expect(cancels).toBe(1);
+    component.handleInput("q");
+    expect(cancels).toBe(1);
+  });
+
+  it("ignores scroll keys when no task rows are visible", () => {
+    let changes = 0;
+    const component = createPlanTaskListComponent({
+      snapshot: snapshotOf(manyTasks(60)),
+      getTerminalRows: () => 2,
+      onCancel: () => {},
+      onChange: () => {
+        changes += 1;
+      },
+    });
+    const before = component.render(80);
+    component.handleInput(KEY.down);
+    component.handleInput(KEY.down);
+    component.handleInput(KEY.up);
+    expect(component.render(80)).toEqual(before);
+    // Scroll keys are still consumed, but nothing can move: the offset cannot
+    // underflow or run off the end of a plan the viewport cannot show.
+    expect(changes).toBe(3);
   });
 });

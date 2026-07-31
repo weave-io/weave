@@ -36,7 +36,7 @@ If yes, it belongs in an adapter. Engine-to-adapter calls are fine when they exc
 | Lifecycle | Engine validates transitions, mutates Runtime Store state, returns abstract effects | Registers hooks/commands, maps events, applies effects |
 | Runtime Store | Engine owns `.weave/runtime/**` and its repositories | Calls engine APIs; never receives a database mutation surface |
 | Plans | Engine owns the `PlanStateProvider` contract and plan semantics | Supplies safe concrete plan discovery and file I/O |
-| Goals | Engine owns goal state, budgets, plan adjudication, active-task selection, and the continuation decision | Owns plan discovery/I/O, session persistence, tool registration, prompt delivery, event mapping, and UI/footer |
+| Goals | Engine carries normalized workflow goal metadata and owns harness-neutral active-plan task selection and plan semantics | Adapters own concrete plan discovery/I/O, command/event projection, and UI/footer |
 | Artifacts | Engine owns references, revisions, approval, and digest comparison | Proves containment, reads files, computes SHA-256 digests |
 | Delegation | Core/config/engine own portable budgets and authorization | Owns live queues, process/task counts, spawn, cancellation, child inspection UI, RPC, session discovery/I/O, persistence, quotas, and recovery orchestration |
 | Logging | Engine supplies structured pino logging | Routes output where the harness will not corrupt its UI |

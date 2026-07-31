@@ -42,6 +42,13 @@ export const PI_PLAN_TASK_LIST_SHORTCUT = "alt+t";
 /** Lines the popup spends on its own title, blank separator, and hint. */
 const CHROME_LINES = 4;
 
+/**
+ * Chrome the popup cannot drop even on a terminal too small for the ordinary
+ * layout: one title line and one hint line. The blank separator is the first
+ * thing sacrificed.
+ */
+const COMPACT_CHROME_LINES = 2;
+
 /** Rows Pi keeps for its own editor, footer, status, and padding. */
 const RESERVED_HOST_ROWS = 6;
 
@@ -131,15 +138,21 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 /**
- * Number of task rows that fit in a viewport of `rows` total height, bounded
- * on both ends so neither a one-row terminal nor a 200-row terminal produces
- * an unusable viewport.
+ * Number of task rows that fit in a viewport of `rows` total height.
+ *
+ * A roomy viewport keeps the ordinary 3..24 window. A viewport too small for
+ * that layout does not pretend otherwise: it drops the blank separator and
+ * reports only the rows that actually remain, down to zero. Reporting a
+ * minimum the terminal cannot honour is what let the popup render more lines
+ * than it had rows for.
  */
 export function planTaskListVisibleRows(rows: number): number {
-  return clamp(
-    Math.trunc(rows) - CHROME_LINES,
-    MIN_VISIBLE_ROWS,
-    MAX_VISIBLE_ROWS,
+  const total = Number.isFinite(rows) ? Math.trunc(rows) : 0;
+  const roomy = total - CHROME_LINES;
+  if (roomy >= MIN_VISIBLE_ROWS) return Math.min(roomy, MAX_VISIBLE_ROWS);
+  return Math.max(
+    0,
+    Math.min(total - COMPACT_CHROME_LINES, MIN_VISIBLE_ROWS - 1),
   );
 }
 
@@ -147,6 +160,10 @@ export function planTaskListVisibleRows(rows: number): number {
  * Rows the popup may occupy on a terminal of `terminalRows` height, after
  * leaving Pi's own editor and footer room. Falls back to a conservative
  * height when the host reports nothing usable.
+ *
+ * The returned budget is always at least 1 and never more than the terminal
+ * actually has: the preferred minimum layout is a *preference*, not a licence
+ * to overdraw a four-row terminal.
  */
 export function planTaskListRowBudget(
   terminalRows: number | undefined,
@@ -157,15 +174,22 @@ export function planTaskListRowBudget(
     terminalRows > 0
       ? Math.trunc(terminalRows)
       : FALLBACK_TERMINAL_ROWS;
-  return Math.max(
+  const preferred = Math.max(
     MIN_VISIBLE_ROWS + CHROME_LINES,
     Math.min(usable - RESERVED_HOST_ROWS, MAX_VISIBLE_ROWS + CHROME_LINES),
   );
+  return clamp(preferred, 1, usable);
 }
 
-/** Highest scroll offset that still fills the viewport. */
+/**
+ * Highest scroll offset that still fills the viewport. A viewport with no task
+ * rows cannot scroll at all, so the offset stays pinned at zero rather than
+ * running off the end of the plan.
+ */
 export function planTaskListMaxScroll(taskCount: number, rows: number): number {
-  return Math.max(0, taskCount - planTaskListVisibleRows(rows));
+  const visible = planTaskListVisibleRows(rows);
+  if (visible <= 0) return 0;
+  return Math.max(0, taskCount - visible);
 }
 
 /**
@@ -190,7 +214,8 @@ export function planTaskListOffsetForIndex(
  * than opening empty.
  *
  * Every line is truncated as plain text *before* styling, so styled output has
- * exactly the same visible width as unstyled output.
+ * exactly the same visible width as unstyled output, and the number of lines
+ * never exceeds `viewport.rows`.
  */
 export function renderPlanTaskListLines(
   input: RenderPlanTaskListInput,
@@ -226,13 +251,23 @@ export function renderPlanTaskListLines(
     true,
   );
   const hint = input.hint ?? "Up/Down scrolls, Esc closes";
+  const totalRows = Math.max(
+    0,
+    Number.isFinite(input.viewport.rows) ? Math.trunc(input.viewport.rows) : 0,
+  );
+  if (totalRows <= 0) return [];
+  const visibleRows = planTaskListVisibleRows(input.viewport.rows);
+  // The blank separator is the first line dropped when the terminal cannot
+  // afford the ordinary layout.
+  const separator = visibleRows >= MIN_VISIBLE_ROWS ? [""] : [];
+
   if (parents.length === 0) {
     return [
       title,
-      "",
+      ...separator,
       style(fit("This plan has no tasks."), "muted"),
       style(fit(hint), "dim"),
-    ];
+    ].slice(0, totalRows);
   }
 
   const activeIndex = selectActivePlanTask(input.snapshot).match(
@@ -240,12 +275,11 @@ export function renderPlanTaskListLines(
     () => undefined,
   );
 
-  const visibleRows = planTaskListVisibleRows(input.viewport.rows);
   const maxScroll = planTaskListMaxScroll(parents.length, input.viewport.rows);
   const offset = clamp(Math.trunc(input.viewport.scrollOffset), 0, maxScroll);
   const window = parents.slice(offset, offset + visibleRows);
 
-  const lines = [title, ""];
+  const lines = [title, ...separator];
   for (const [index, parent] of window.entries()) {
     const ordinal = offset + index;
     const active = ordinal === activeIndex;
@@ -264,7 +298,9 @@ export function renderPlanTaskListLines(
   lines.push(
     style(fit(hidden > 0 ? `${hidden} more \u2014 ${hint}` : hint), "dim"),
   );
-  return lines;
+  // Final guard: whatever the layout decided, the popup never claims more
+  // rows than the terminal gave it.
+  return lines.slice(0, totalRows);
 }
 
 /** Pi `Component` shape this module produces. */
@@ -289,6 +325,16 @@ export interface CreatePlanTaskListComponentInput {
   readonly onChange?: () => void;
   /** Guard so a stale generation renders nothing instead of a dead plan. */
   readonly isCurrent?: () => boolean;
+  /**
+   * Called at most once, the first time `render()` or `handleInput()` sees
+   * that `isCurrent()` has gone false. The host uses it to close the overlay
+   * it can no longer own; without it a replaced generation would leave a
+   * blank overlay that no key can dismiss.
+   *
+   * The single-shot guard is what makes it safe to call from `render()`: a
+   * host that re-renders in response cannot drive an unbounded loop.
+   */
+  readonly onStale?: () => void;
 }
 
 function resolveKeys(
@@ -344,9 +390,17 @@ export function createPlanTaskListComponent(
     rowsNow(),
   );
   let cancelled = false;
+  let staleNotified = false;
   let cachedWidth: number | undefined;
   let cachedRows: number | undefined;
   let cachedLines: string[] | undefined;
+
+  /** Single-shot stale report, so repeated stale renders stay side-effect free. */
+  const notifyStale = (): void => {
+    if (staleNotified) return;
+    staleNotified = true;
+    input.onStale?.();
+  };
 
   const invalidate = (): void => {
     cachedWidth = undefined;
@@ -368,7 +422,10 @@ export function createPlanTaskListComponent(
 
   return {
     render(width) {
-      if (input.isCurrent?.() === false) return [];
+      if (input.isCurrent?.() === false) {
+        notifyStale();
+        return [];
+      }
       const rows = rowsNow();
       // Both width and height are part of the cache key: a resize must not
       // serve a viewport computed for the old geometry.
@@ -398,6 +455,12 @@ export function createPlanTaskListComponent(
     },
     handleInput(data) {
       if (cancelled) return;
+      // A replaced generation must not act on input, but it must still arrange
+      // closure rather than trap the user in an overlay that ignores Esc.
+      if (input.isCurrent?.() === false) {
+        notifyStale();
+        return;
+      }
       if (matchesAny(data, cancelKeys)) {
         cancelled = true;
         input.onCancel();

@@ -17,7 +17,7 @@ export const CLAUDE_CODE_ADAPTER_CAPABILITY_CONTRACT: AdapterCapabilityContract 
         description: "Continue working toward a goal while the session is idle",
         readiness: "degraded",
         notes:
-          "Claude Code's goal command has no persisted goal state, no enforced continuation budget, no pause/resume, and no status surface.",
+          "Claude Code's /weave:start projection submits and enters plan work as a foreground command; it does not provide persisted idle-continuation state, an enforced continuation budget, pause/resume, or a status surface.",
       },
     ],
   };

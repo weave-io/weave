@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from "bun:test";
 import type { PlanTaskSnapshot } from "@weaveio/weave-engine";
-import { errAsync, okAsync } from "neverthrow";
+import { errAsync, okAsync, ResultAsync } from "neverthrow";
 import {
   type ActivePlanReadPort,
   createActivePlanUiState,
@@ -271,7 +271,10 @@ describe("createActivePlanUiState", () => {
       workflowInstanceId: "wf-x",
       source: "current",
     });
-    expect(state.view()).toBe(resolved);
+    expect(resolved.status).toBe("applied");
+    expect(state.view()).toBe(
+      resolved.status === "applied" ? resolved.view : undefined,
+    );
   });
 
   it("cannot retain the previous workflow across a current/recovery transition", async () => {
@@ -316,5 +319,92 @@ describe("createActivePlanUiState", () => {
     state.clear();
     expect(state.identity()).toBeUndefined();
     expect(state.view()).toBeUndefined();
+  });
+
+  describe("last request wins", () => {
+    /**
+     * A port whose `inspect()` blocks until the test releases it, so two
+     * resolutions can be interleaved deterministically in one generation.
+     */
+    function deferredPort(input: {
+      readonly currentWorkflowInstanceId?: string | undefined;
+      readonly slug?: string;
+      readonly status?: string;
+      readonly inspectFails?: boolean;
+      readonly snapshotFails?: boolean;
+    }): { port: ActivePlanReadPort; release: () => void } {
+      let release = (): void => {};
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const base = makePort(input).port;
+      return {
+        port: {
+          ...base,
+          inspect: (workflowInstanceId) =>
+            ResultAsync.fromSafePromise(gate).andThen(() =>
+              base.inspect(workflowInstanceId),
+            ),
+        },
+        release: () => {
+          release();
+        },
+      };
+    }
+
+    it.each([
+      ["an active view", { currentWorkflowInstanceId: "wf-a" }],
+      [
+        "a terminal empty view",
+        { currentWorkflowInstanceId: "wf-a", status: "completed" },
+      ],
+      [
+        "a safe error",
+        { currentWorkflowInstanceId: "wf-a", inspectFails: true },
+      ],
+    ] as const)("reports an older resolution that finishes with %s as superseded", async (_label, input) => {
+      const state = createActivePlanUiState();
+      const older = deferredPort(input);
+      const pendingA = state.resolve(older.port);
+
+      const resolvedB = (
+        await state.resolve(
+          makePort({
+            currentWorkflowInstanceId: "wf-b",
+            slug: "plan-b",
+          }).port,
+        )
+      )._unsafeUnwrap();
+      expect(resolvedB.status).toBe("applied");
+      expect(state.identity()?.workflowInstanceId).toBe("wf-b");
+
+      older.release();
+      const resolvedA = (await pendingA)._unsafeUnwrap();
+      expect(resolvedA).toEqual({ status: "superseded" });
+      expect(state.identity()).toEqual({
+        workflowInstanceId: "wf-b",
+        source: "current",
+      });
+      const retained = state.view();
+      if (retained?.kind !== "active") {
+        throw new Error("expected the newer view to stay retained");
+      }
+      expect(retained.planName).toBe("plan-b");
+    });
+
+    it("supersedes a pending resolution when clear() runs first", async () => {
+      const state = createActivePlanUiState();
+      const older = deferredPort({ currentWorkflowInstanceId: "wf-a" });
+      const pendingA = state.resolve(older.port);
+
+      state.clear();
+      older.release();
+
+      expect((await pendingA)._unsafeUnwrap()).toEqual({
+        status: "superseded",
+      });
+      expect(state.identity()).toBeUndefined();
+      expect(state.view()).toBeUndefined();
+    });
   });
 });

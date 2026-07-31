@@ -13,16 +13,22 @@ describe("Claude Code adapter capability contract", () => {
     expect(capability?.notes).toContain("ignored after base-model matching");
   });
 
-  it("declares idle continuation as degraded and names its capability gaps", () => {
+  it("declares idle continuation as degraded for the foreground /weave:start projection", () => {
     const capability =
       CLAUDE_CODE_ADAPTER_CAPABILITY_CONTRACT.capabilities.find(
         (entry) => entry.id === "idle-continuation",
       );
+    const notes = capability?.notes ?? "";
 
     expect(capability?.readiness).toBe("degraded");
-    expect(capability?.notes).toContain("persisted goal state");
-    expect(capability?.notes).toContain("enforced continuation budget");
-    expect(capability?.notes).toContain("pause/resume");
-    expect(capability?.notes).toContain("status surface");
+    expect(notes).toContain("/weave:start");
+    expect(notes).toContain("submits and enters plan work");
+    expect(notes).toContain("foreground command");
+    expect(notes).toContain("persisted idle-continuation state");
+    expect(notes).toContain("enforced continuation budget");
+    expect(notes).toContain("pause/resume");
+    expect(notes).toContain("status surface");
+    expect(notes).not.toContain(["goal", "command"].join(" "));
+    expect(notes).not.toContain(["/weave", "goal"].join(":"));
   });
 });

@@ -81,7 +81,7 @@ Only an explicit user command authorizes work. Session start, idle, settlement, 
 
 ### Plan-task footer
 
-While a durable workflow is active, Pi renders one `weave-task` status entry: `▸ task N/M · <id>. <title>`, bounded to 56 code points with a single ellipsis when the text is longer. The footer shows exactly one active task, selected by the engine from the same plan snapshot the plan widget and the Alt+T list read, so those surfaces cannot disagree.
+While a durable workflow is active, Pi renders one `weave-task` status entry: `▸ task N/M · <id>. <title>`, bounded to 56 terminal display columns with a single ellipsis when the text is longer. The footer shows exactly one active task, selected by the engine from the same plan snapshot the plan widget and the Alt+T list read, so those surfaces cannot disagree.
 
 The footer clears when nothing is active: no tracked workflow, no readable plan task, a completed, failed, or cancelled workflow, or an unreadable lookup. It never freezes the last snapshot on screen. When the session tracks no workflow but an eligible recovered pointer exists, the footer may show that paused plan as read-only state. Showing a recovered plan authorizes nothing; only `/weave:resume`, with its own confirmation and lease recheck, continues that work.
 

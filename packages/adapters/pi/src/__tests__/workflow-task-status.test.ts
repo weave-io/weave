@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import type { ActivePlanTask } from "@weaveio/weave-engine";
 import {
   renderWorkflowTaskFooter,
@@ -41,14 +42,125 @@ describe("workflow-task-status (durable workflow current-task footer)", () => {
     ).toBe("▸ task 2/5 · 3. Write the tests");
   });
 
-  it("keeps a pathological Unicode title within the width cap", () => {
+  it("keeps a pathological Unicode title within the display-column cap", () => {
     const text = renderWorkflowTaskFooter({
       activeTask: { ...task, taskTitle: "🚀✨".repeat(200) },
     });
-    expect(Array.from(text ?? "")).toHaveLength(
+    expect(visibleWidth(text ?? "")).toBeLessThanOrEqual(
       WEAVE_WORKFLOW_TASK_STATUS_MAX_WIDTH,
     );
     expect(text).toContain("…");
+  });
+
+  it("bounds a wide-emoji title by display columns, not code points", () => {
+    const text =
+      renderWorkflowTaskFooter({
+        activeTask: { ...task, taskTitle: "😀".repeat(200) },
+      }) ?? "";
+    expect(visibleWidth(text)).toBeLessThanOrEqual(
+      WEAVE_WORKFLOW_TASK_STATUS_MAX_WIDTH,
+    );
+    // Each emoji costs two columns, so a code-point bound would have let this
+    // string occupy far more terminal columns than the cap allows.
+    expect(Array.from(text).length).toBeLessThan(
+      WEAVE_WORKFLOW_TASK_STATUS_MAX_WIDTH,
+    );
+    expect(text.endsWith("…")).toBe(true);
+  });
+
+  it("bounds a CJK title by display columns", () => {
+    const text =
+      renderWorkflowTaskFooter({
+        activeTask: { ...task, taskTitle: "日本語テキスト".repeat(40) },
+      }) ?? "";
+    expect(visibleWidth(text)).toBeLessThanOrEqual(
+      WEAVE_WORKFLOW_TASK_STATUS_MAX_WIDTH,
+    );
+    expect(text.endsWith("…")).toBe(true);
+    expect(Array.from(text).filter((c) => c === "…")).toHaveLength(1);
+  });
+
+  it("counts combining characters as their single rendered column", () => {
+    const text =
+      renderWorkflowTaskFooter({
+        activeTask: { ...task, taskTitle: "e\u0301".repeat(100) },
+      }) ?? "";
+    expect(visibleWidth(text)).toBeLessThanOrEqual(
+      WEAVE_WORKFLOW_TASK_STATUS_MAX_WIDTH,
+    );
+    // Combining marks are zero-width, so the cap must not be reached after
+    // only half as many base letters as a naive code-point count would allow.
+    expect(visibleWidth(text)).toBeGreaterThan(
+      WEAVE_WORKFLOW_TASK_STATUS_MAX_WIDTH - 4,
+    );
+  });
+
+  it("bounds wide characters in the prefix itself", () => {
+    const text =
+      renderWorkflowTaskFooter({
+        activeTask: {
+          ...task,
+          taskId: "🔥".repeat(60),
+          taskTitle: "dropped",
+        },
+      }) ?? "";
+    expect(visibleWidth(text)).toBeLessThanOrEqual(
+      WEAVE_WORKFLOW_TASK_STATUS_MAX_WIDTH,
+    );
+    expect(text).not.toContain("dropped");
+    expect(Array.from(text).filter((c) => c === "…")).toHaveLength(1);
+  });
+
+  it("bounds every wide-character combination of ID and title by display width", () => {
+    const sizes = [0, 1, 5, 27, 28, 29, 56, 120];
+    const alphabets = ["i", "😀", "日", "e\u0301"];
+    for (const idSize of sizes) {
+      for (const titleSize of sizes) {
+        for (const alphabet of alphabets) {
+          const text = renderWorkflowTaskFooter({
+            activeTask: {
+              ...task,
+              parentOrdinal: 123456789,
+              totalParentCount: 987654321,
+              taskId: alphabet.repeat(idSize),
+              taskTitle: alphabet.repeat(titleSize),
+            },
+          });
+          expect(visibleWidth(text ?? "")).toBeLessThanOrEqual(
+            WEAVE_WORKFLOW_TASK_STATUS_MAX_WIDTH,
+          );
+        }
+      }
+    }
+  });
+
+  it("keeps the themed footer within the display-column cap", () => {
+    const themed =
+      renderWorkflowTaskFooter({
+        activeTask: { ...task, taskTitle: "😀日本".repeat(80) },
+        theme: {
+          fg: (_token: string, value: string) => `\u001b[31m${value}\u001b[39m`,
+          bold: (value: string) => value,
+        },
+      }) ?? "";
+    expect(themed).toContain("\u001b[31m");
+    expect(visibleWidth(themed)).toBeLessThanOrEqual(
+      WEAVE_WORKFLOW_TASK_STATUS_MAX_WIDTH,
+    );
+  });
+
+  it("re-bounds a theme that inserts visible characters", () => {
+    const themed =
+      renderWorkflowTaskFooter({
+        activeTask: { ...task, taskTitle: "t".repeat(200) },
+        theme: {
+          fg: (_token: string, value: string) => `${"<".repeat(20)}${value}`,
+          bold: (value: string) => value,
+        },
+      }) ?? "";
+    expect(visibleWidth(themed)).toBeLessThanOrEqual(
+      WEAVE_WORKFLOW_TASK_STATUS_MAX_WIDTH,
+    );
   });
 
   it("bounds the whole footer when the task ID itself is enormous", () => {
@@ -61,9 +173,7 @@ describe("workflow-task-status (durable workflow current-task footer)", () => {
     });
     // The prefix alone exhausts the budget, so the footer as a whole is
     // truncated rather than allowed to grow past its cap.
-    expect(Array.from(text ?? "")).toHaveLength(
-      WEAVE_WORKFLOW_TASK_STATUS_MAX_WIDTH,
-    );
+    expect(visibleWidth(text ?? "")).toBe(WEAVE_WORKFLOW_TASK_STATUS_MAX_WIDTH);
     expect(text).not.toContain("dropped entirely");
     expect(text?.startsWith("▸ task 2/5 · ")).toBe(true);
     expect(text?.endsWith("…")).toBe(true);
@@ -80,9 +190,7 @@ describe("workflow-task-status (durable workflow current-task footer)", () => {
         taskTitle: "x".repeat(400),
       },
     });
-    expect(Array.from(text ?? "")).toHaveLength(
-      WEAVE_WORKFLOW_TASK_STATUS_MAX_WIDTH,
-    );
+    expect(visibleWidth(text ?? "")).toBe(WEAVE_WORKFLOW_TASK_STATUS_MAX_WIDTH);
     expect(Array.from(text ?? "").filter((c) => c === "…")).toHaveLength(1);
     expect(text?.startsWith("▸ task ")).toBe(true);
   });
@@ -100,7 +208,7 @@ describe("workflow-task-status (durable workflow current-task footer)", () => {
             taskTitle: "t".repeat(titleSize),
           },
         });
-        expect(Array.from(text ?? "").length).toBeLessThanOrEqual(
+        expect(visibleWidth(text ?? "")).toBeLessThanOrEqual(
           WEAVE_WORKFLOW_TASK_STATUS_MAX_WIDTH,
         );
       }
