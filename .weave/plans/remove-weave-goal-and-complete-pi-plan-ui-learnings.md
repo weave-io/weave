@@ -450,3 +450,83 @@ The extension host wiring/tests and fake-host support are intentionally deferred
 to the later cohesive Pi UI integration commit because those files contain
 unrelated pre-existing work; this commit stages only the standalone component,
 its unit tests, and these learnings.
+
+## Task 8 — stable per-agent badge backgrounds
+
+### Audit result
+
+The dirty pre-existing implementation was already close: `agent-cycle.ts`
+declared the six supported Pi background tokens (`selectedBg`,
+`userMessageBg`, `customMessageBg`, `toolPendingBg`, `toolSuccessBg`,
+`toolErrorBg`, verified against Pi's own `docs/themes.md` token table), a pure
+FNV-1a `selectAgentBadgeBg`, and a single `renderActiveAgentBadge` used by
+every badge path. `types.ts` already projected exactly those six tokens.
+
+One real gap was found and fixed: `selectAgentBadgeBg` hashed the **raw**
+name, so `"loom"`, `"LOOM"` and `" Loom "` could land on different colours.
+A new exported `normalizeAgentBadgeKey` now trims, collapses internal
+whitespace runs, and lowercases before hashing. Nothing else in the mapping
+changed, so no already-observed builtin colour moved.
+
+No extension change was needed: `setActiveAgentStatus` is the single writer of
+the `weave-agent` status key, and every path (boot commit, Alt+A switch,
+`onDirectStepActiveChange` temporary badge, restoration via
+`resolveDirectStepBadgeAgent`, recovered primary) routes through it, so the
+renderer and token rule are already shared.
+
+### Coverage added
+
+`agent-cycle.test.ts` (16 tests total in the file) now proves: the exact
+supported token list and its fixed order; only supported tokens are ever
+returned (including empty/whitespace/unicode names); case and whitespace
+variants collapse to one token; purity across repeated and interleaved calls;
+order independence; frozen per-builtin token expectations (loom, pattern,
+shuttle, spindle, tapestry, thread, warp, weft) so a colour move fails loudly;
+distribution (≥4 distinct tokens over the 8 builtins, and all six tokens over
+200 synthetic names); wrapper order `bg(token, fg("accent", bold(label)))`;
+and the exact foreground-only fallback when `theme.bg` is absent.
+
+`extension.test.ts` gained a `themed active-agent badge` block proving the
+committed boot primary, the Alt+A switch, and the Alt+A restore all paint the
+same `selectAgentBadgeBg`-derived badge, that a failed sole activation commits
+no colored badge at all, and that a stale primary switch never repaints.
+
+`fakes/fake-pi-host.ts` gained an optional `theme` host option (absent by
+default, so every existing plain-text badge assertion is unchanged) wired into
+the `PiUiPort` via a conditional spread to satisfy the optional property type.
+
+### Verification observed in this session
+
+- `bun test packages/adapters/pi/src/__tests__/agent-cycle.test.ts
+  packages/adapters/pi/src/__tests__/extension.test.ts` → **126 pass, 0 fail,
+  552 expect calls, 2 files**.
+- `bunx biome check` on the four touched files → clean apart from one
+  **pre-existing** warning about unused `PiRecoveryPointerStore` /
+  `PiWeaveRecoveryPointerV1` type imports in `extension.test.ts`, which comes
+  from the dirty Task 5–7 work and was left untouched.
+- `bun run typecheck` → `@weaveio/weave-adapter-pi` exit 0; whole workspace 0
+  errors.
+- Changes were diffed against the reconstructed pre-Task-8 state
+  (`git show HEAD:<path>` + `/tmp/remove-weave-goal-task8-before.diff`) to
+  confirm Biome's `--write` reformatted nothing outside the new code.
+- Nothing committed; no stash, reset, or checkout used.
+
+### Gap discovered
+
+`renderActiveAgentBadge` still labels the badge with the **raw**
+`agentName.toUpperCase()`, so a name carrying stray whitespace would display
+that whitespace while still receiving the correct normalized colour. This was
+left alone deliberately: normalizing the label would change existing exact
+badge output, which is outside Task 8's stated scope.
+
+### Task 8 safe partial-commit boundary
+
+The Task 8 commit stages exactly four paths: `agent-cycle.ts`, its unit tests,
+the two badge-background hunks of `types.ts` (`PiUiThemeBgColor` and the
+optional `PiUiThemePort.bg`), and these learnings. The extension host wiring
+assertions in `extension.test.ts` and the optional `theme` support in
+`fakes/fake-pi-host.ts` stay dirty on purpose: they are interleaved with the
+Tasks 5–7 and unrelated boot work, so they are deferred to the later cohesive
+Pi UI integration commit. The unrelated `getSystemPrompt` hunk in `types.ts`
+was kept unstaged with a partial `git apply --cached` patch rather than any
+reset, checkout, or stash.

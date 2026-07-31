@@ -101,6 +101,19 @@ export interface PiBeforeAgentStartEvent {
 /** Notification severity accepted by `ctx.ui.notify`. */
 export type PiUiNotifyLevel = "info" | "warning" | "error";
 
+/**
+ * The exact background tokens Pi's own `Theme.bg()` accepts (`ThemeBg` in
+ * `modes/interactive/theme/theme.d.ts`). Never invent a token here: an
+ * unknown key would resolve to no ANSI background at all in the real host.
+ */
+export type PiUiThemeBgColor =
+  | "selectedBg"
+  | "userMessageBg"
+  | "customMessageBg"
+  | "toolPendingBg"
+  | "toolSuccessBg"
+  | "toolErrorBg";
+
 /** Narrow projection of Pi's theme helpers used by the active-agent badge. */
 export interface PiUiThemePort {
   fg(
@@ -117,6 +130,12 @@ export interface PiUiThemePort {
     text: string,
   ): string;
   bold(text: string): string;
+  /**
+   * Optional deliberately: the real Pi `Theme` always provides `bg()`, but
+   * this narrow port is also satisfied by simpler stand-ins, so every caller
+   * must degrade to foreground-only rendering when it is absent.
+   */
+  bg?(color: PiUiThemeBgColor, text: string): string;
 }
 
 /**
