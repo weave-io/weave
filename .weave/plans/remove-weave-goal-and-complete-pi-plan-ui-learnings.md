@@ -303,3 +303,150 @@ The host shutdown assertion remains unstaged for the later cohesive Pi UI integr
   `biome check --write`.
 - `bun run typecheck` → exit 0 across all packages, no TypeScript errors.
 - Nothing committed; unrelated dirty work untouched.
+
+## Task 7 — Rebuild Alt+T as a compliant read-only Pi modal
+
+### What changed
+
+- `packages/adapters/pi/src/plan-task-list.ts` (rewritten): now owns the whole
+  Alt+T surface as a real Pi component. New exports:
+  `createPlanTaskListComponent()` returning `{ render(width), handleInput(data),
+  invalidate() }`, `planTaskListRowBudget(terminalRows)`,
+  `planTaskListOffsetForIndex(index, count, rows)`, plus the existing
+  `PI_PLAN_TASK_LIST_SHORTCUT`, `planTaskListVisibleRows`,
+  `planTaskListMaxScroll`, and `renderPlanTaskListLines` (which now accepts
+  optional `width`, `theme`, and `hint`).
+- `packages/adapters/pi/src/extension.ts`: deleted `PLAN_TASK_LIST_ROWS = 20`
+  and `createPlanTaskListView` (raw `\u001b` / `\u001b[A` / `\u001b[B` / `j` /
+  `k` / `q` comparisons). `openPlanTaskList` now builds the component inside
+  the `ctx.ui.custom` factory, passing the injected `theme` and `keybindings`
+  and a `getTerminalRows` reader over the injected `tui`, and forwards
+  `invalidate()` to Pi. Removed the now-unused `PlanTaskSnapshot` type import.
+- `packages/adapters/pi/src/__tests__/fakes/fake-pi-host.ts`: the fake
+  `ctx.ui.custom` now injects `terminal: { rows }` on the `tui` object and
+  `getKeys()` on the keybindings object (defaulting to Pi's documented
+  `tui.select.*` keys), with `host.terminalRows` and
+  `host.customKeybindingKeys` for tests to vary.
+- Tests: `__tests__/plan-task-list.test.ts` rewritten (32 tests);
+  `__tests__/extension.test.ts` gained two host tests
+  (`opens, scrolls, and cancels the Alt+T plan list for the current plan`,
+  `notifies instead of opening a stale Alt+T modal when no workflow is active`).
+- `packages/adapters/pi/src/types.ts` needed no change: `PiUiPort.custom`
+  already passes `tui`, `theme`, `keybindings`, and `done` as `unknown`, which
+  the extension narrows locally.
+
+### Pi API constraints found (verified against the installed 0.82.x packages)
+
+- `render(width)` must return lines whose `visibleWidth` never exceeds `width`.
+  The safe order is **truncate the plain string first, then apply theme
+  styling**: ANSI escapes have zero visible width, so styling after
+  `truncateToWidth` cannot break the bound. Styling first and truncating after
+  would work too, but only because `truncateToWidth` is ANSI-aware; the plain
+  path is cheaper and easier to prove.
+- `matchesKey(data, keyId)` from `@earendil-works/pi-tui` is typed as
+  `(data: string, keyId: KeyId) => boolean`. `KeyId` is a template-literal
+  union, so binding key arrays must be typed `readonly KeyId[]`, not
+  `readonly string[]`, or `bun run typecheck` fails with TS2345.
+- The injected keybindings object is a `KeybindingsManager`, which exposes both
+  `matches(data, binding)` and `getKeys(binding): KeyId[]`. `getKeys` is what
+  makes user configuration observable in the rendered hint, so the component
+  reads keys once and matches against them. It uses Pi's documented defaults
+  (`up`, `down`, `escape`/`ctrl+c`) only when no keybinding manager or
+  `getKeys` function is available; an available `getKeys` that returns `[]`
+  intentionally leaves that action unbound.
+- The injected `theme` may be a partial object in non-Pi hosts (the fake host
+  passes `{}`). `theme.fg` and `theme.bold` are therefore probed with `typeof
+  ... === "function"` and the component degrades to unstyled text instead of
+  throwing mid-render. This was a real failure: three host tests crashed with
+  `theme.fg is not a function` before the guard was added.
+- `invalidate()` is called by Pi on theme change and must drop cached *themed*
+  strings, not just a line array. The component's cache key is `(width, rows)`
+  and `invalidate()` clears all three cached fields, so a theme swap rebuilds
+  every styled line.
+- Terminal height is read from `tui.terminal?.rows` on every render, so a
+  resize re-budgets the viewport instead of serving a stale window.
+
+### Row budgeting
+
+`planTaskListRowBudget(terminalRows)` = `clamp(terminalRows - 6 host rows,
+MIN_VISIBLE_ROWS + 4 chrome rows, MAX_VISIBLE_ROWS + 4 chrome rows)` = a value
+in `[7, 28]`, falling back to 24 terminal rows (→ 18) when the host reports
+nothing usable. `planTaskListVisibleRows(rows)` = `clamp(rows - 4, 3, 24)`.
+The result: a 4-row terminal still scrolls 3 tasks, and a 400-row terminal is
+capped at 24 task rows rather than becoming a full-screen takeover.
+
+### Behaviour notes
+
+- The popup opens scrolled so the active task (from the shared
+  `selectActivePlanTask` resolver) is inside the first window.
+- Cancel is guarded by a `cancelled` flag, so `done(undefined)` fires exactly
+  once, and later input is ignored.
+- The stale-generation branch in `extension.ts` returns **without** calling
+  `done(undefined)`. Calling `done` there breaks
+  `fails closed for retained Alt+T callbacks after replacement`, which asserts a
+  retained old component changes no counters including `customDoneCalls`: a
+  replaced generation must not settle a promise the current generation owns.
+- Nothing in this surface mutates state: no execution starts or resumes, and no
+  interval or polling loop exists.
+
+### Results
+
+- `bun test packages/adapters/pi/src/__tests__/plan-task-list.test.ts
+  packages/adapters/pi/src/__tests__/active-plan-ui-state.test.ts
+  packages/adapters/pi/src/__tests__/workflow-task-status.test.ts
+  packages/adapters/pi/src/__tests__/extension.test.ts` →
+  **171 pass, 0 fail, 1012 expect calls, 4 files** (plan-task-list 32,
+  extension 106).
+- `bunx biome check` on `plan-task-list.ts`, `plan-task-list.test.ts`, and
+  `fake-pi-host.ts` → **clean, 0 errors, 0 warnings** (formatting applied with
+  `--write`). `extension.ts` + `extension.test.ts` → 0 errors, 7 warnings, all
+  pre-existing unrelated dirty work (unused child-inspector/recovery imports,
+  `WEAVE_CHILD_TREE_WIDGET_KEY`, `WeaveChildTreeEditor`, `readPlanSnapshot`,
+  and a `defaultInput` parameter). Removing the `PlanTaskSnapshot` import this
+  task orphaned took the count from 8 to 7.
+- `bun run typecheck` → exit 0 across all packages.
+- Nothing committed; unrelated dirty work untouched.
+
+### Task 7 retry — respect intentionally empty injected keybindings
+
+The verification gap was that the original test named `when the host resolves no
+keys` injected `getKeys: () => []` but expected Pi's defaults. It did not verify
+that missing keybinding managers or missing `getKeys` functions are the only
+fallback cases, and it did not prove that an intentionally empty binding is
+unbound.
+
+The fix makes the injected manager authoritative: `resolveKeys` uses documented
+Pi defaults only when the manager or its `getKeys` function is unavailable. When
+the function is present, its result is used, with an undefined result treated as
+no keys. The hint now labels empty actions as `unbound` instead of claiming that
+the disabled default is active. Tests cover default fallback, alternate
+`matchesKey()` bindings, and empty up/down/cancel bindings that ignore default
+raw keypresses without cancelling.
+
+Retry verification observed in this session:
+
+- The required four-file Bun test command → **172 pass, 0 fail, 1,020 expect
+  calls, 4 files**.
+- `bunx biome check packages/adapters/pi/src/plan-task-list.ts
+  packages/adapters/pi/src/__tests__/plan-task-list.test.ts` → clean; no fixes
+  applied.
+- `bun run typecheck` → exit 0 across all packages. The docs package emitted
+  existing hints only.
+- Nothing committed; no stash used; unrelated dirty work untouched.
+
+### Process warning for later tasks
+
+`git stash push --keep-index --include-untracked` was run in this session while
+trying to produce a lint baseline and it stashed the entire in-progress Task 7
+change set, including the untracked component file. It was recovered
+immediately with `git stash pop` and verified byte-for-byte, but **do not run
+`git stash` in this repository while the plan's dirty work is unstaged**; use
+`git show HEAD:<path>` piped into `biome check --stdin-file-path=<path>` for a
+baseline instead.
+
+### Task 7 safe partial-commit boundary
+
+The extension host wiring/tests and fake-host support are intentionally deferred
+to the later cohesive Pi UI integration commit because those files contain
+unrelated pre-existing work; this commit stages only the standalone component,
+its unit tests, and these learnings.
