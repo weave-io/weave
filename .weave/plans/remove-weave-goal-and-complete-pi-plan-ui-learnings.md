@@ -233,3 +233,73 @@ diffs introduced here are the six deletions plus the two import/export edits.
   parameter, but no errors.
 - `bun run typecheck` passed with exit 0.
 - Host integration wiring/tests remain in the dirty working tree for the next cohesive Pi UI commit because staging them now would absorb unrelated post-baseline work.
+
+## Task 6 — durable-workflow task footer (`weave-task`)
+
+### Discovered bug: the width cap bounded only the title
+
+The first footer implementation computed `budget = MAX - prefix.length` and
+truncated *only* the title. When the prefix itself (`▸ task N/M · <id>. `)
+was already at or past `WEAVE_WORKFLOW_TASK_STATUS_MAX_WIDTH`, the budget went
+to zero and the title was dropped, but the returned string was still
+`prefix`-length — so a pathological `taskId`, ordinal, or total pushed the
+footer past 56 code points. The Task 5 test only asserted that the title
+disappeared, so it passed against the broken bound.
+
+Fix: `renderWorkflowTaskFooter` now bounds the whole normalized string.
+
+- Preferred degradation keeps the full `▸ task N/M · <id>. ` prefix and spends
+  the remaining budget on the truncated title.
+- When the prefix alone exhausts the budget, the entire footer is truncated to
+  56 code points, which keeps the leading `▸ task N/M` visible.
+- Exactly one `…` appears in any truncated result.
+- `taskId` and `taskTitle` are both whitespace-normalized. An empty ID drops the
+  ` · <id>` segment; an empty title drops the `. <title>` segment, so a cleared
+  or untitled task never names stale work.
+- Theming is unchanged: `fg("accent", text)` is applied once, after bounding,
+  and never on the `undefined` clear path.
+
+### Coverage added
+
+- `workflow-task-status.test.ts`: replaced the enormous-ID test with one that
+  asserts the *total* code-point bound, single ellipsis, and preserved
+  `▸ task 2/5 · ` prefix; added a pathological ordinal/total case; added an
+  exhaustive 8×8 sweep over ID and title sizes asserting the bound holds; added
+  empty/whitespace title and empty/whitespace ID cases.
+- `extension.test.ts`: the shutdown test `clears the compact plan widget on
+  session_shutdown` asserted only `weave-plan`. Added the explicit
+  `weave-task` clear assertion. This was the only genuinely missing host-level
+  footer assertion.
+
+### Host coverage audit (all `weave-task` assertions verified present)
+
+| Scenario | Test | Footer assertion |
+| --- | --- | --- |
+| Eligible recovery render | `renders a recovered plan through the shared widget, footer, and Alt+T resolver without resuming` | present |
+| Early startup return | `clears active-plan surfaces before an early startup return` | present |
+| Read error via Alt+T | `clears active-plan surfaces when a read fails through Alt+T` | present |
+| Terminal abort + no active workflow | `clears active-plan surfaces on terminal abort and remains clear with no active workflow` | present (twice) |
+| Generation replacement | `ignores a deferred active-plan result from an old generation`, `ignores a deferred Alt+T plan result from an old generation` | present |
+| Shutdown | `clears the compact plan widget on session_shutdown` | **added in Task 6** |
+
+No production `extension.ts` change was needed: shutdown already clears
+`WEAVE_WORKFLOW_TASK_STATUS_KEY`; only the assertion was missing.
+
+The host shutdown assertion remains unstaged for the later cohesive Pi UI integration commit because staging the interleaved file would absorb unrelated work.
+
+### Results
+
+- `bun test packages/adapters/pi/src/__tests__/workflow-task-status.test.ts
+  packages/adapters/pi/src/__tests__/active-plan-ui-state.test.ts
+  packages/adapters/pi/src/__tests__/extension.test.ts` →
+  **137 pass, 0 fail, 620 expect calls, 3 files**. (The Task 5 note claims 143
+  tests / 567 expects for the same command; that count was not reproducible
+  here and the discrepancy is unexplained — the current number is what this
+  session actually observed.)
+- `bunx biome check` on the three touched files: **0 errors**, 1 warning
+  (pre-existing unused `PiRecoveryPointerStore` / `PiWeaveRecoveryPointerV1`
+  type imports in `extension.test.ts`, from unrelated dirty work; the fix is
+  marked unsafe, so it was left alone). Formatting fixes were applied with
+  `biome check --write`.
+- `bun run typecheck` → exit 0 across all packages, no TypeScript errors.
+- Nothing committed; unrelated dirty work untouched.
