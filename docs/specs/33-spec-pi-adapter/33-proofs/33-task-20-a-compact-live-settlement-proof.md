@@ -112,3 +112,77 @@ This section records a follow-on create-path fix that is required after the trus
 | Scope | Native child session create path only; no assistant fabrication; collision/nonempty/race fail closed |
 
 A rebuilt npm-provenance artifact for the Task 20(a) rerun must include both remediation commits (`8b9dc84` and `c952ef89`).
+
+## Rerun attempt after both remediations
+
+Result: **FAIL**
+
+This rerun used the refreshed npm-provenance artifact that includes both recorded remediations. It does not supersede or remove the earlier failure evidence.
+
+| Field | Value |
+| --- | --- |
+| Date | `2026-08-05` |
+| Herdr pane | `w23:p8Q` |
+| Pi | `0.83.0` |
+| Pi extension source | `npm:@weaveio/weave-adapter-pi` |
+| Setup proof | [`33-task-20-release-setup-proof.md`](./33-task-20-release-setup-proof.md) |
+| Artifact | `weaveio-weave-adapter-pi-0.0.1-eec3a4a-task20-c927ea47e3af.tgz` |
+| Artifact SHA-256 | `c927ea47e3af584582770c8fac96547f12d9bfcf234f095987387e3586635d7c` |
+| Installed extension SHA-256 | `4e1c360fe1e0d764c64b5eaa1535188a480110e8a48fb22f6c1089efaba4c653` |
+| Installed index SHA-256 | `95efd487860d219e40fe57acbaf964fa62f8d89e309a9c95ecd38a95a6c1ea66` |
+| Installed CLI SHA-256 | `8321e436db13296ae1967c0d84e51ba95c86e36e961e2650e08ddb2016d1cfdd` |
+
+### Structured readiness
+
+```yaml
+healthReady: true
+statusTrusted: true
+healthOnly: false
+provenanceOverrideAbsentInVerifierProcess: true
+```
+
+The live footer showed `Connected`, `ready`, and `WEAVE · LOOM`. The loaded npm package and matching installed hashes establish trusted provenance. The registered delegation tool entered the interactive controller rather than a health-only rejection path.
+
+### Delegation result
+
+One ordinary delegation attempted a harmless, no-edit task. The child acknowledged authenticated bootstrap, but the parent rejected the restored session before it delivered task content:
+
+```yaml
+ok: false
+error: ChildAuthenticationFailed
+reason: restore-active-leaf-mismatch
+retryable: false
+recovery: abort
+```
+
+Hash-only inspection found an unbroken five-entry chain. Its entry types were `custom`, `model_change`, `thinking_level_change`, `model_change`, and `thinking_level_change`. The final leaf hash differed from the metadata-leaf hash. Pi advanced the active leaf during child startup and bootstrap model activation, after Weave established the metadata leaf but before `PiRpcChild.verifyRestoreContext()` required exact equality. No prompt or assistant transcript reached the child session.
+
+### Compact block assertions
+
+| Assertion | Result | Sanitized evidence |
+| --- | --- | --- |
+| Live compact block has exactly three sanitized lines | **FAIL — not observed** | Hash-only sampler: `runningSeen=false`. |
+| Live block contains a non-whitespace assistant fragment | **FAIL — not observed** | The parent withheld task content after restore verification failed. |
+| Settled compact block has exactly three sanitized lines | **FAIL — not observed** | Hash-only sampler: `settledSeen=false`. |
+| Final tail is authoritative | **FAIL — not testable** | No successful terminal response existed. |
+| Compact block exposes no path or native session ID | **FAIL — not testable** | No live or settled compact sample was captured. |
+| Sampler stored no prompt or transcript text | **PASS** | It stored only booleans, line counts, lengths, and SHA-256 values; no sample qualified for storage. |
+| No child process remains | **PASS** | Post-failure process count was zero. |
+| No Runtime Store lease remains | **PASS** | Runtime Store schema 5 reported `No active lease.` |
+
+### Cleanup
+
+```yaml
+childProcessRemaining: false
+runtimeStoreLeaseActive: false
+samplerRunning: false
+cleanupPending: true
+cleanupPendingReason: close only pane w23:p8Q after the parent verification run consumes this proof
+otherPanesAltered: false
+```
+
+Pane `w23:p8Q` remains open. No other pane was changed.
+
+### Additional remediation required
+
+Task 20(a) remains incomplete. The restore check must authenticate the established metadata leaf as an ancestor while allowing only the bounded, expected Pi startup entries that advance the live leaf before task delivery. The implementation must still fail closed on a disconnected or malformed chain. Rebuild and install a new npm-provenance artifact after that fix, then rerun this matrix item in a fresh pane.
