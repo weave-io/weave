@@ -138,3 +138,107 @@ Fix:
 
 Status: unchanged. This is source-side remediation only. Task 20(b), S043, and
 S044 stay incomplete until a fresh Herdr rerun proves the live behaviour.
+
+---
+
+## Fresh rerun — 2026-08-05
+
+Result: **FAIL**
+
+This rerun used one fresh Pi 0.83 pane and one controlled `shuttle-mini` child.
+It preserves the prior failure history above. It does not mark Task 20(b), S043,
+or S044 complete.
+
+### Fresh prerequisite observations
+
+```yaml
+piVersion083: true
+readyStatusObserved: true
+trustedNpmPackageProvenance: true
+healthOnly: false
+npmPackageConfigured: true
+packageDirectoryIsSymlink: false
+primaryEditorOwnedByPiVim: true
+unsafeProvenanceOverrideProcessCount: 0
+livePiProcessCountChecked: 2
+installedExtensionSha256: 480d83b90133d6a92e7e1cf6db701425a3679fe975a218ce161e7f76cf38016f
+productionCodeChanged: false
+controlledChildCount: 1
+```
+
+### Fresh controlled-run observations
+
+The proof driver started before the child dispatch and exhausted its bounded
+mount window as the child became active. The timestamps show only six seconds
+of overlap. The driver sent the real Alt+1 shortcut 120 times, but it did not
+observe a mounted overlay before its window ended. It therefore sent no draft
+or intervention. The child then completed its 120 bounded progress events and
+reported zero interventions.
+
+```yaml
+driverStartedAt: 2026-08-05T22:19:34.504061Z
+childStartedAt: 2026-08-05T22:21:33Z
+driverCompletedAt: 2026-08-05T22:21:39.480271Z
+childCompletedAt: 2026-08-05T22:23:34Z
+activeWindowOverlapSeconds: 6
+overlayMountAttempts: 120
+overlayMounted: false
+liveTailDistinctBodyHashCount: 0
+liveTailAdvanced: false
+manualScrollDisengaged: false
+manualScrollNewEntriesObserved: false
+manualScrollAnchorStable: false
+bottomReturnDistinctBodyHashCount: 0
+bottomReturnResumedLiveTail: false
+steeringSubmitted: false
+followUpSubmitted: false
+childSteeringObserved: false
+childFollowUpObserved: false
+interventionCount: 0
+childProgressEventCount: 120
+childSettlementOutcome: completed
+settledOverlayObserved: false
+settledReadOnlyObserved: false
+driverOutcome: FAIL
+driverErrorSha256: c6e7f8935ef29d301b096f93af0a05281fc11a9cb77f9d84403fe369ad099557
+evidenceSha256: 8decd6ab7e0fa19490d825d0e66def009bb017ccc8efa1b4bbec46ea860d29a8
+```
+
+### Fresh assertion matrix
+
+| Assertion | Result | Sanitized evidence |
+| --- | --- | --- |
+| Ready, trusted, non-health-only Pi 0.83 pane | **PASS** | All five prerequisite booleans were observed. |
+| Unsafe provenance override is absent | **PASS** | `0/2` checked live Pi processes contained the override. |
+| Required installed extension is active | **PASS** | Installed extension SHA-256 matched the required hash. |
+| One controlled active child runs long enough | **PASS** | One child emitted 120 progress events and settled as completed. |
+| Real Alt+1 mounts the native active-child overlay | **FAIL** | `overlayMounted=false` after 120 attempts in the bounded driver window. |
+| Live tail advances | **FAIL — not observed** | `liveTailDistinctBodyHashCount=0`. |
+| Manual scroll disengages without a viewport jump | **FAIL — not observed** | The overlay did not mount. |
+| Returning to bottom resumes live-tail | **FAIL — not observed** | The overlay did not mount. |
+| Enter submits steering | **FAIL — not observed** | `steeringSubmitted=false`. |
+| Alt+Enter submits a follow-up | **FAIL — not observed** | `followUpSubmitted=false`. |
+| Overlay input does not leak into the primary editor | **FAIL — not testable** | No overlay draft or intervention was entered. |
+| The child observes both interventions | **FAIL** | Both observation booleans were false; intervention count was zero. |
+| Settlement is clean | **PASS** | Child settlement completed and no Runtime Store lease remained. |
+| Settled overlay is read-only | **FAIL — not observed** | `settledReadOnlyObserved=false`. |
+| No production code or other pane changed | **PASS** | Production-change and other-pane-change counts were zero. |
+
+### Fresh blocker and cleanup
+
+The exact blocker is proof orchestration timing: the bounded driver had only six
+seconds of active-child overlap and ended before it observed the overlay. This
+rerun does not establish a product regression or validate the Task 21 remedy.
+A new run must start the driver immediately before child dispatch, or give the
+mount loop a window that begins only after the child is active.
+
+```yaml
+runtimeStoreLeaseActive: false
+childProcessRemaining: false
+driverRunning: false
+otherPanesAlteredCount: 0
+panesClosedCount: 0
+cleanupOutcome: temporary_proof_files_removed
+coordinatorCleanupTargetCount: 1
+coordinatorCleanupTargetOutcome: close_current_proof_pane_when_no_longer_needed
+```
