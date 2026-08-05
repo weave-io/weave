@@ -100,3 +100,15 @@ This section records the code change made in response to the failure above. It c
 The trust boundary is now explicit. The configured base — `$XDG_DATA_HOME`, or `$HOME/.local/share` when unset — is canonicalized once with libc `realpath(3)`, so a user-owned symlinked base resolves to its real target. The canonical base must be absolute, a directory, owned by the current uid, and neither group- nor world-writable; a base whose unresolved components are symlinks (dangling or looping) is refused. The adapter-owned `weave/adapters/pi/sessions` components are appended only after that check, and everything at or below them is still opened with strict `openat(O_NOFOLLOW)`. Symlinked components inside the adapter root or inside a child directory remain rejected.
 
 Rerun conditions are therefore relaxed in one respect only: a fresh pane no longer needs a symlink-free `XDG_DATA_HOME`. Every other rerun requirement above still stands, including the removal of `WEAVE_PI_UNSAFE_DISABLE_COMMAND_PROVENANCE` and a rebuilt npm-provenance artifact that contains the remediation commit.
+
+## Remediation (session header persistence)
+
+This section records a follow-on create-path fix that is required after the trusted XDG root remediation. It does not change the result of the run above, which remains **FAIL**. Task 20(a) is still not proven.
+
+| Field | Value |
+| --- | --- |
+| Remediation commit | `fix(pi): persist native child session headers before spawn` — `c952ef89d90a2efa8dc27394f217d6b6307d4367` |
+| Blocker addressed | Pi 0.83 `SessionManager.create` leaves the generated session path absent until an assistant entry; Weave must exclusive-create the host header at 0600, reopen, and revalidate identity before spawn so `establishThreadLeaf` can append durable custom metadata |
+| Scope | Native child session create path only; no assistant fabrication; collision/nonempty/race fail closed |
+
+A rebuilt npm-provenance artifact for the Task 20(a) rerun must include both remediation commits (`8b9dc84` and `c952ef89`).
