@@ -63,9 +63,9 @@ const RunDividerDataSchema = z.looseObject({
     .optional(),
 });
 
-/** C0 controls except TAB/LF/CR, plus DEL — built via String.raw for Biome. */
+/** C0 except TAB/LF/CR, DEL, and C1 U+0080–U+009F — String.raw for Biome. */
 const BOUND_TEXT_CONTROL_PATTERN = new RegExp(
-  String.raw`[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]`,
+  String.raw`[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u0080-\u009f]`,
   "gu",
 );
 

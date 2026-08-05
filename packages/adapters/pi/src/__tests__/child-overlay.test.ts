@@ -291,9 +291,18 @@ describe("boundText", () => {
     expect(boundText(value)).toBe("a\t\nb\rc[31md");
   });
 
-  it("does not strip C1 controls (outside the boundText C0/DEL pattern)", () => {
-    expect(boundText("a\u009bb")).toBe("a\u009bb");
-    expect(boundText("x\u0080y\u009fz")).toBe("x\u0080y\u009fz");
+  it("strips all C1 controls including CSI U+009B and OSC U+009D", () => {
+    const allC1 = Array.from({ length: 0x9f - 0x80 + 1 }, (_, i) =>
+      String.fromCodePoint(0x80 + i),
+    ).join("");
+    expect(boundText(`keep${allC1}text`)).toBe("keeptext");
+    // Terminal-like CSI payload: C1 CSI + params/intermediates + final byte
+    expect(boundText("a\u009b31mb")).toBe("a31mb");
+    // Raw C1 OSC introducer with payload fragment
+    expect(boundText("x\u009d8;https://evil.example\u009cz")).toBe(
+      "x8;https://evil.examplez",
+    );
+    expect(boundText("x\u0080y\u009fz")).toBe("xyz");
   });
 
   it("bounds length after control sanitization", () => {
