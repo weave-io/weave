@@ -528,6 +528,107 @@ export interface PiGetEntriesResult {
   readonly leafId: string | null;
 }
 
+/**
+ * Entry kinds Pi 0.83 itself appends to a restored session during child
+ * startup, before the parent can authenticate the restore. These carry no
+ * transcript content: `model_change` records the resolved provider/model and
+ * `thinking_level_change` records the resolved reasoning level. Every other
+ * kind (messages, tool activity, custom/custom_message, compaction, branch
+ * summaries, labels, session info) is task-bearing or branch-bearing and is
+ * never accepted as an unauthenticated startup suffix.
+ */
+const RESTORE_STARTUP_SUFFIX_KINDS: ReadonlySet<PiGetEntriesEntry["type"]> =
+  new Set(["model_change", "thinking_level_change"] as const);
+
+/**
+ * Pi 0.83 appends its resolved model and thinking level on startup, and
+ * bootstrap model activation can append a second pair. Six leaves bounded slack
+ * over that observed four-entry suffix without admitting an open-ended tail.
+ */
+const MAX_RESTORE_STARTUP_SUFFIX_ENTRIES = 6;
+const MAX_RESTORE_STARTUP_SUFFIX_BYTES = 8 * 1024;
+
+/** Stable, non-revealing failure reasons for restore authentication. */
+export type PiRestoreAuthenticationReason =
+  | "restore-active-leaf-mismatch"
+  | "restore-startup-suffix-forbidden-kind"
+  | "restore-startup-suffix-disconnected"
+  | "restore-startup-suffix-cycle"
+  | "restore-startup-suffix-malformed"
+  | "restore-startup-suffix-too-large";
+
+function measureRestoreSuffixEntry(entry: PiGetEntriesEntry): number {
+  const encoded = Result.fromThrowable(
+    () => new TextEncoder().encode(JSON.stringify(entry)).byteLength,
+    () => undefined,
+  )();
+  // An unserializable entry is treated as over budget rather than free.
+  return encoded.isOk() ? encoded.value : Number.POSITIVE_INFINITY;
+}
+
+/**
+ * Authenticates a restored child's reported active leaf against the leaf this
+ * parent established, tolerating only a bounded contiguous suffix of Pi-owned
+ * startup state entries.
+ *
+ * The persisted leaf must be an ancestor of the reported leaf through an
+ * unbroken `parentId` chain built solely from {@link RESTORE_STARTUP_SUFFIX_KINDS}
+ * entries with valid unique ids, within the entry-count and byte bounds.
+ * Anything else - a disconnected or branched leaf, a repeated id, a malformed
+ * id/parent, a forbidden kind, or an oversized suffix - fails closed.
+ */
+export function authenticateRestoreStartupSuffix(
+  establishedLeafId: string,
+  page: PiGetEntriesResult,
+): Result<void, PiRestoreAuthenticationReason> {
+  const { entries, leafId } = page;
+  if (entries.length === 0) {
+    return leafId === establishedLeafId
+      ? ok(undefined)
+      : err("restore-active-leaf-mismatch");
+  }
+  if (typeof leafId !== "string" || leafId.length === 0) {
+    return err("restore-active-leaf-mismatch");
+  }
+  if (entries.length > MAX_RESTORE_STARTUP_SUFFIX_ENTRIES) {
+    return err("restore-startup-suffix-too-large");
+  }
+
+  const seenIds = new Set<string>([establishedLeafId]);
+  let expectedParentId = establishedLeafId;
+  let suffixBytes = 0;
+  for (const entry of entries) {
+    if (!RESTORE_STARTUP_SUFFIX_KINDS.has(entry.type)) {
+      return err("restore-startup-suffix-forbidden-kind");
+    }
+    if (!entryIdSchema.safeParse(entry.id).success) {
+      return err("restore-startup-suffix-malformed");
+    }
+    if (
+      entry.parentId !== null &&
+      !entryIdSchema.safeParse(entry.parentId).success
+    ) {
+      return err("restore-startup-suffix-malformed");
+    }
+    if (seenIds.has(entry.id)) {
+      return err("restore-startup-suffix-cycle");
+    }
+    if (entry.parentId !== expectedParentId) {
+      return err("restore-startup-suffix-disconnected");
+    }
+    suffixBytes += measureRestoreSuffixEntry(entry);
+    if (suffixBytes > MAX_RESTORE_STARTUP_SUFFIX_BYTES) {
+      return err("restore-startup-suffix-too-large");
+    }
+    seenIds.add(entry.id);
+    expectedParentId = entry.id;
+  }
+
+  return expectedParentId === leafId
+    ? ok(undefined)
+    : err("restore-active-leaf-mismatch");
+}
+
 export interface PiExtensionUiResponseInput {
   readonly type: "extension_ui_response";
   readonly requestId: string;
@@ -2203,9 +2304,22 @@ export class PiRpcChild {
   }
 
   /**
-   * Verifies that a restored child is still on the exact persisted active
-   * leaf. Pi exposes no safe in-place branch-selection RPC, so a mismatch is
-   * terminal rather than an invitation to issue an unsupported switch/fork.
+   * Verifies that a restored child is still anchored to the persisted active
+   * leaf. Pi exposes no safe in-place branch-selection RPC, so anything the
+   * parent cannot authenticate is terminal rather than an invitation to issue
+   * an unsupported switch/fork.
+   *
+   * Pi 0.83 appends its own startup state entries (`model_change`,
+   * `thinking_level_change`) to a restored session before the parent gets to
+   * run this check, so the reported active leaf legitimately moves past the
+   * persisted leaf. The persisted leaf is therefore authenticated as an
+   * *ancestor* of the reported leaf, and only a bounded contiguous suffix of
+   * Pi-owned startup state entries is tolerated between them. Any message,
+   * tool, custom, or other transcript-bearing entry, any broken/duplicated
+   * parent link, and any oversized suffix fail closed.
+   *
+   * The read is a bounded cursor page (`get_entries` with `since` = persisted
+   * leaf), never a full transcript read.
    */
   private verifyRestoreContext(): ResultAsync<void, PiAdapterFailure> {
     const restore = this.restoreSession;
@@ -2221,21 +2335,26 @@ export class PiRpcChild {
       );
     }
 
+    const establishedLeafId = activeLeafId.value;
     return this.getEntries(
       this.childId,
       this.generationId,
-      activeLeafId.value,
+      establishedLeafId,
     ).andThen((entries) => {
-      if (entries.leafId !== activeLeafId.value) {
+      const authenticated = authenticateRestoreStartupSuffix(
+        establishedLeafId,
+        entries,
+      );
+      if (authenticated.isErr()) {
         return errAsync(
           makeChildAuthenticationFailedFailure(
             this.childId,
-            "restore-active-leaf-mismatch",
+            authenticated.error,
           ),
         );
       }
       return this.notifyRestoreContextVerified({
-        activeLeafId: activeLeafId.value,
+        activeLeafId: establishedLeafId,
         ...(restore.checkpointCursor === undefined
           ? {}
           : { checkpointCursor: restore.checkpointCursor }),

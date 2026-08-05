@@ -283,6 +283,61 @@ async function startRestoreChild(
   return { child, processPort, spawned, responder, secretBytes, runPromise };
 }
 
+/** The startup state entries Pi 0.83 appends to a restored session on boot. */
+function piStartupSuffixEntries(): readonly Record<string, unknown>[] {
+  return [
+    {
+      type: "model_change",
+      id: "startup-model",
+      parentId: "leaf-restore",
+      timestamp: "2026-08-05T00:00:00.000Z",
+      provider: "openai-codex",
+      modelId: "gpt-5.6-luna",
+    },
+    {
+      type: "thinking_level_change",
+      id: "startup-thinking",
+      parentId: "startup-model",
+      timestamp: "2026-08-05T00:00:01.000Z",
+      thinkingLevel: "medium",
+    },
+  ];
+}
+
+/** Drives a restore child to its `get_entries` probe and answers it once. */
+async function respondToRestoreVerification(data: {
+  readonly entries: readonly unknown[];
+  readonly leafId: unknown;
+}): Promise<{
+  running: Awaited<ReturnType<typeof startRestoreChild>>;
+  observed: unknown[];
+}> {
+  const observed: unknown[] = [];
+  const running = await startRestoreChild({
+    onRestoreContextVerified: (metadata) => {
+      observed.push(metadata);
+      return ok(undefined);
+    },
+  });
+  await waitFor(() =>
+    running.spawned
+      .writtenLines()
+      .some((line) => (line as Record<string, unknown>).type === "get_entries"),
+  );
+  const getEntries = running.spawned.writtenLines().at(-1) as Record<
+    string,
+    unknown
+  >;
+  running.spawned.emitLine({
+    id: getEntries.id,
+    type: "response",
+    command: "get_entries",
+    success: true,
+    data: { entries: data.entries, leafId: data.leafId },
+  });
+  return { running, observed };
+}
+
 async function startRunningChild(
   deps: Partial<ConstructorParameters<typeof PiRpcChild>[5]> = {},
 ): Promise<{
@@ -421,6 +476,418 @@ describe("PiRpcChild", () => {
             (line as Record<string, unknown>).message === "do the thing",
         ),
     ).toBe(false);
+  });
+
+  it("accepts the bounded Pi 0.83 startup state suffix appended after the established leaf", async () => {
+    const observed: unknown[] = [];
+    const running = await startRestoreChild({
+      onRestoreContextVerified: (metadata) => {
+        observed.push(metadata);
+        return ok(undefined);
+      },
+    });
+    await waitFor(() =>
+      running.spawned
+        .writtenLines()
+        .some(
+          (line) => (line as Record<string, unknown>).type === "get_entries",
+        ),
+    );
+    const getEntriesIndex = running.spawned
+      .writtenLines()
+      .findIndex(
+        (line) => (line as Record<string, unknown>).type === "get_entries",
+      );
+    const getEntries = running.spawned.writtenLines().at(-1) as Record<
+      string,
+      unknown
+    >;
+    expect(
+      running.spawned
+        .writtenLines()
+        .some(
+          (line) =>
+            (line as Record<string, unknown>).message === "do the thing",
+        ),
+    ).toBe(false);
+
+    running.spawned.emitLine({
+      id: getEntries.id,
+      type: "response",
+      command: "get_entries",
+      success: true,
+      data: {
+        entries: piStartupSuffixEntries(),
+        leafId: "startup-thinking",
+      },
+    });
+
+    await waitFor(() =>
+      running.spawned
+        .writtenLines()
+        .some(
+          (line) =>
+            (line as Record<string, unknown>).message === "do the thing",
+        ),
+    );
+    // The observer still sees the established leaf, never the Pi-owned suffix.
+    expect(observed).toEqual([
+      { activeLeafId: "leaf-restore", checkpointCursor: 42 },
+    ]);
+    const taskIndex = running.spawned
+      .writtenLines()
+      .findIndex(
+        (line) => (line as Record<string, unknown>).message === "do the thing",
+      );
+    expect(taskIndex).toBeGreaterThan(getEntriesIndex);
+
+    running.child.dispose();
+    expect((await running.runPromise).isErr()).toBe(true);
+  });
+
+  it("accepts a single startup state entry and a retried restore identically", async () => {
+    for (const entries of [
+      [piStartupSuffixEntries()[0]],
+      piStartupSuffixEntries(),
+    ]) {
+      const leafId = (entries.at(-1) as Record<string, unknown>).id;
+      const verified = await respondToRestoreVerification({
+        entries,
+        leafId,
+      });
+      await waitFor(() =>
+        verified.running.spawned
+          .writtenLines()
+          .some(
+            (line) =>
+              (line as Record<string, unknown>).message === "do the thing",
+          ),
+      );
+      expect(verified.observed).toEqual([
+        { activeLeafId: "leaf-restore", checkpointCursor: 42 },
+      ]);
+      verified.running.child.dispose();
+      expect((await verified.running.runPromise).isErr()).toBe(true);
+    }
+  });
+
+  it("accepts the exact four-entry startup suffix observed in the real Pi 0.83 harness", async () => {
+    const timestamp = "2026-08-05T00:00:00.000Z";
+    // Pane w23:p8Q observed: custom metadata leaf, then model_change,
+    // thinking_level_change, model_change, thinking_level_change.
+    const entries = [
+      {
+        type: "model_change",
+        id: "startup-model-1",
+        parentId: "leaf-restore",
+        timestamp,
+        provider: "openai-codex",
+        modelId: "gpt-5.6-luna",
+      },
+      {
+        type: "thinking_level_change",
+        id: "startup-thinking-1",
+        parentId: "startup-model-1",
+        timestamp,
+        thinkingLevel: "medium",
+      },
+      {
+        type: "model_change",
+        id: "startup-model-2",
+        parentId: "startup-thinking-1",
+        timestamp,
+        provider: "openai-codex",
+        modelId: "gpt-5.6-luna",
+      },
+      {
+        type: "thinking_level_change",
+        id: "startup-thinking-2",
+        parentId: "startup-model-2",
+        timestamp,
+        thinkingLevel: "high",
+      },
+    ];
+    const verified = await respondToRestoreVerification({
+      entries,
+      leafId: "startup-thinking-2",
+    });
+    await waitFor(() =>
+      verified.running.spawned
+        .writtenLines()
+        .some(
+          (line) =>
+            (line as Record<string, unknown>).message === "do the thing",
+        ),
+    );
+    expect(verified.observed).toEqual([
+      { activeLeafId: "leaf-restore", checkpointCursor: 42 },
+    ]);
+    verified.running.child.dispose();
+    expect((await verified.running.runPromise).isErr()).toBe(true);
+  });
+
+  it("fails closed on forbidden, malformed, disconnected, cyclic, or excessive restore suffixes", async () => {
+    const timestamp = "2026-08-05T00:00:00.000Z";
+    const cases: readonly {
+      readonly name: string;
+      readonly entries: readonly unknown[];
+      readonly leafId: unknown;
+      readonly reason: string;
+    }[] = [
+      {
+        name: "message entry",
+        entries: [
+          {
+            type: "message",
+            id: "startup-message",
+            parentId: "leaf-restore",
+            timestamp,
+            message: { role: "user", content: "leaked task" },
+          },
+        ],
+        leafId: "startup-message",
+        reason: "restore-startup-suffix-forbidden-kind",
+      },
+      {
+        name: "custom entry",
+        entries: [
+          {
+            type: "custom",
+            id: "startup-custom",
+            parentId: "leaf-restore",
+            timestamp,
+            customType: "weave.child.thread",
+            data: { spoofed: true },
+          },
+        ],
+        leafId: "startup-custom",
+        reason: "restore-startup-suffix-forbidden-kind",
+      },
+      {
+        name: "custom_message entry",
+        entries: [
+          {
+            type: "custom_message",
+            id: "startup-custom-message",
+            parentId: "leaf-restore",
+            timestamp,
+            customType: "tool",
+            content: "tool output",
+            display: true,
+          },
+        ],
+        leafId: "startup-custom-message",
+        reason: "restore-startup-suffix-forbidden-kind",
+      },
+      {
+        name: "compaction entry",
+        entries: [
+          {
+            type: "compaction",
+            id: "startup-compaction",
+            parentId: "leaf-restore",
+            timestamp,
+            summary: "compacted",
+            firstKeptEntryId: "leaf-restore",
+            tokensBefore: 10,
+          },
+        ],
+        leafId: "startup-compaction",
+        reason: "restore-startup-suffix-forbidden-kind",
+      },
+      {
+        name: "branch_summary entry",
+        entries: [
+          {
+            type: "branch_summary",
+            id: "startup-branch",
+            parentId: "leaf-restore",
+            timestamp,
+            fromId: "leaf-restore",
+            summary: "branched",
+          },
+        ],
+        leafId: "startup-branch",
+        reason: "restore-startup-suffix-forbidden-kind",
+      },
+      {
+        name: "label entry",
+        entries: [
+          {
+            type: "label",
+            id: "startup-label",
+            parentId: "leaf-restore",
+            timestamp,
+            targetId: "leaf-restore",
+            label: "x",
+          },
+        ],
+        leafId: "startup-label",
+        reason: "restore-startup-suffix-forbidden-kind",
+      },
+      {
+        name: "session_info entry",
+        entries: [
+          {
+            type: "session_info",
+            id: "startup-session-info",
+            parentId: "leaf-restore",
+            timestamp,
+            name: "child",
+          },
+        ],
+        leafId: "startup-session-info",
+        reason: "restore-startup-suffix-forbidden-kind",
+      },
+      {
+        name: "disconnected parent",
+        entries: [
+          {
+            type: "model_change",
+            id: "startup-model",
+            parentId: "some-other-leaf",
+            timestamp,
+            provider: "openai-codex",
+            modelId: "gpt-5.6-luna",
+          },
+        ],
+        leafId: "startup-model",
+        reason: "restore-startup-suffix-disconnected",
+      },
+      {
+        name: "null parent",
+        entries: [
+          {
+            type: "model_change",
+            id: "startup-model",
+            parentId: null,
+            timestamp,
+            provider: "openai-codex",
+            modelId: "gpt-5.6-luna",
+          },
+        ],
+        leafId: "startup-model",
+        reason: "restore-startup-suffix-disconnected",
+      },
+      {
+        name: "broken chain in the middle",
+        entries: [
+          {
+            type: "model_change",
+            id: "startup-model",
+            parentId: "leaf-restore",
+            timestamp,
+            provider: "openai-codex",
+            modelId: "gpt-5.6-luna",
+          },
+          {
+            type: "thinking_level_change",
+            id: "startup-thinking",
+            parentId: "leaf-restore",
+            timestamp,
+            thinkingLevel: "medium",
+          },
+        ],
+        leafId: "startup-thinking",
+        reason: "restore-startup-suffix-disconnected",
+      },
+      {
+        name: "cyclic repeated id",
+        entries: [
+          {
+            type: "model_change",
+            id: "startup-model",
+            parentId: "leaf-restore",
+            timestamp,
+            provider: "openai-codex",
+            modelId: "gpt-5.6-luna",
+          },
+          {
+            type: "thinking_level_change",
+            id: "startup-model",
+            parentId: "startup-model",
+            timestamp,
+            thinkingLevel: "medium",
+          },
+        ],
+        leafId: "startup-model",
+        reason: "restore-startup-suffix-cycle",
+      },
+      {
+        name: "self-parented established leaf",
+        entries: [
+          {
+            type: "model_change",
+            id: "leaf-restore",
+            parentId: "leaf-restore",
+            timestamp,
+            provider: "openai-codex",
+            modelId: "gpt-5.6-luna",
+          },
+        ],
+        leafId: "leaf-restore",
+        reason: "restore-startup-suffix-cycle",
+      },
+      {
+        name: "excessive suffix",
+        entries: Array.from({ length: 7 }, (_unused, index) => ({
+          type: "thinking_level_change",
+          id: `startup-${index}`,
+          parentId: index === 0 ? "leaf-restore" : `startup-${index - 1}`,
+          timestamp,
+          thinkingLevel: "medium",
+        })),
+        leafId: "startup-6",
+        reason: "restore-startup-suffix-too-large",
+      },
+      {
+        name: "suffix that does not reach the reported leaf",
+        entries: piStartupSuffixEntries(),
+        leafId: "foreign-leaf",
+        reason: "restore-active-leaf-mismatch",
+      },
+      {
+        name: "empty suffix with a moved leaf",
+        entries: [],
+        leafId: "different-leaf",
+        reason: "restore-active-leaf-mismatch",
+      },
+      {
+        name: "null leaf with a suffix",
+        entries: piStartupSuffixEntries(),
+        leafId: null,
+        reason: "restore-active-leaf-mismatch",
+      },
+    ];
+
+    for (const testCase of cases) {
+      const rejected = await respondToRestoreVerification({
+        entries: testCase.entries,
+        leafId: testCase.leafId,
+      });
+      const outcome = await rejected.running.runPromise;
+      expect(outcome.isErr()).toBe(true);
+      if (outcome.isErr()) {
+        expect({
+          name: testCase.name,
+          code: outcome.error.code,
+          reason: outcome.error.correlation?.reason,
+        }).toEqual({
+          name: testCase.name,
+          code: "ChildAuthenticationFailed",
+          reason: testCase.reason,
+        });
+      }
+      expect(rejected.observed).toEqual([]);
+      expect(
+        rejected.running.spawned
+          .writtenLines()
+          .some(
+            (line) =>
+              (line as Record<string, unknown>).message === "do the thing",
+          ),
+      ).toBe(false);
+    }
   });
 
   it("fails closed when the child settles or exits during restore verification", async () => {
