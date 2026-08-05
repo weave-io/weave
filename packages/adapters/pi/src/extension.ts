@@ -6,6 +6,7 @@ import {
   type ThinkingLevelDecl,
 } from "@weaveio/weave-core";
 import type {
+  AdapterCommandHandler,
   AgentDescriptor,
   DelegationTarget,
   PlanStateProvider,
@@ -25,6 +26,12 @@ import {
   type ActivePlanView,
   createActivePlanUiState,
 } from "./active-plan-ui-state.js";
+import {
+  createPiAdapterCommandHandlers,
+  createPiChildrenCommandPort,
+  type PiAdapterChildrenPort,
+  type PiAdapterDoctorPort,
+} from "./adapter-cli-commands.js";
 import {
   listCycleablePrimaryAgents,
   nextCycleablePrimaryAgent,
@@ -48,6 +55,15 @@ import {
   WebCryptoRandomPort,
 } from "./child-crypto.js";
 import {
+  createPiDoctorPort,
+  createSkippedDoctorCheckPorts,
+  createStoreBackedDoctorCheckPorts,
+  doctorCapabilitiesFromProbes,
+  failedDoctorCheck,
+  type PiDoctorCheckPorts,
+  passedDoctorCheck,
+} from "./child-doctor.js";
+import {
   BunEnvPort,
   buildDefaultPiChildCommand,
   sanitizedBaseEnv,
@@ -60,33 +76,18 @@ import {
 } from "./child-inspection-editor.js";
 import type { PiChildInspectionRenderInput } from "./child-inspection-render.js";
 import {
-  createChildOverlayController,
-  createChildOverlayCustomComponent,
-  createReadSessionEntryPageOverlaySource,
-  type ChildOverlayController,
-  type ChildOverlayFallbackRequired,
-  type PiChildOverlayCustomComponent,
-} from "./child-overlay.js";
+  clearThreadSources,
+  closeChildOverlay,
+  createChildInspectionEditorCell,
+  createChildInspectionRegistryCell,
+  createChildInspectionRuntime,
+  createChildOverlayCell,
+  createChildOverlayKeysCell,
+  createChildTreeSelectionCell,
+  createDelegationControllerCell,
+  createThreadSourcesCell,
+} from "./child-inspection-runtime.js";
 import {
-  applyChildOverlayKeyPlan,
-  captureChildOverlayKeybindings,
-  CHILD_OVERLAY_CANCEL_CHOICES,
-  CHILD_OVERLAY_ESCAPE_HINT,
-  childOverlayConflictPortFromHost,
-  createChildOverlayKeyInterceptor,
-  createChildOverlayKeyMachine,
-  PI_CHILD_OVERLAY_KEY_BOUNDS,
-  PI_NAMED_SHORTCUT_ACTIONS_DIAGNOSTIC,
-  planChildOverlayKeyRegistrations,
-  resolveChildOverlayCancelChoice,
-  type PiChildOverlayAction,
-  type PiChildOverlayHierarchyNode,
-  type PiChildOverlayKeyInterceptor,
-  type PiChildOverlayKeyMachine,
-  type PiChildOverlayKeyPlan,
-} from "./child-overlay-keys.js";
-import {
-  childInspectionOverlayKeyOverrides,
   formatPiChildInspectionSettingsIssues,
   type PiChildInspectionEffectiveSettings,
   type PiChildInspectionSettingsChoice,
@@ -97,16 +98,21 @@ import {
   type PiInspectorChild,
   type PiInspectorView,
 } from "./child-inspector.js";
+import type { PiChildMetadataCache } from "./child-metadata-cache.js";
+import type {
+  PiNativeSessionError,
+  PiNativeSessionStore,
+} from "./child-native-sessions.js";
+import {
+  type ChildOverlayFallbackRequired,
+  createChildOverlayController,
+  createChildOverlayCustomComponent,
+  createReadSessionEntryPageOverlaySource,
+} from "./child-overlay.js";
+import { PI_CHILD_OVERLAY_KEY_BOUNDS } from "./child-overlay-keys.js";
 import {
   buildChildPickerEntries,
-  buildChildPickerMetadataEntries,
-  collectChildPickerCandidates,
-  type PiChildPickerActiveChild,
-  type PiChildPickerCachePort,
   type PiChildPickerNode,
-  type PiChildPickerRefPort,
-  type PiChildPickerSourceState,
-  type PiChildPickerStatus,
   sanitizeChildPickerPreview,
 } from "./child-picker.js";
 import {
@@ -139,28 +145,7 @@ import {
   classifyChildTreeKey,
 } from "./child-tree-keys.js";
 import { renderChildTreeLines } from "./child-tree-render.js";
-import type { AdapterCommandHandler } from "@weaveio/weave-engine";
-import {
-  createPiAdapterCommandHandlers,
-  createPiChildrenCommandPort,
-  type PiAdapterChildrenPort,
-  type PiAdapterDoctorPort,
-} from "./adapter-cli-commands.js";
-import {
-  createPiDoctorPort,
-  createSkippedDoctorCheckPorts,
-  createStoreBackedDoctorCheckPorts,
-  doctorCapabilitiesFromProbes,
-  failedDoctorCheck,
-  passedDoctorCheck,
-  type PiDoctorCheckPorts,
-} from "./child-doctor.js";
 import { WEAVE_COMMAND_NAMES, type WeaveCommandName } from "./commands.js";
-import type { PiChildMetadataCache } from "./child-metadata-cache.js";
-import type {
-  PiNativeSessionError,
-  PiNativeSessionStore,
-} from "./child-native-sessions.js";
 import {
   logMaterializationErrors,
   PiConfigActivator,
@@ -172,14 +157,8 @@ import {
 import {
   type PiDelegationContext,
   PiDelegationController,
-  type PiThreadCachePort,
   type PiThreadRefPort,
-  type PiThreadSessionPort,
 } from "./delegation-controller.js";
-import {
-  createProductionPiThreadSourceFactory,
-  type PiThreadSourceFactory,
-} from "./thread-sources.js";
 import {
   buildDelegationToolRegistration,
   buildRelayedDelegationToolRegistration,
@@ -254,6 +233,10 @@ import {
   SqliteRuntimeStoreFactory,
 } from "./runtime-store-port.js";
 import { PiSafeInitializer } from "./safe-initializer.js";
+import {
+  createSessionTransitionNoticeCell,
+  createSessionTransitionRuntime,
+} from "./session-transition-runtime.js";
 import { PiSkillCatalog } from "./skill-catalog.js";
 import { type JsonValue, parseStrictJson } from "./strict-json.js";
 import {
@@ -272,6 +255,10 @@ import {
   type PiTelemetryUiPort,
   type PiUsagePort,
 } from "./telemetry.js";
+import {
+  createProductionPiThreadSourceFactory,
+  type PiThreadSourceFactory,
+} from "./thread-sources.js";
 import type {
   Clock,
   IdGenerator,
@@ -386,7 +373,6 @@ class PiGenerationResourceOwner {
       .map(() => undefined)
       .orElse(() => okAsync(undefined));
   }
-
 }
 
 function renderPlanStartPrompt(planName: string): string {
@@ -1794,32 +1780,6 @@ const WEAVE_AGENT_STATUS_KEY = "weave-agent";
 const WEAVE_CHILD_TREE_WIDGET_KEY = "weave-children";
 const WEAVE_PLAN_WIDGET_KEY = "weave-plan";
 
-/**
- * Session-transition prompt options. `Stay` is listed first so it is the
- * pre-selected default, and every non-`Proceed` answer - including cancel and
- * dialog timeout - is treated as `Stay`.
- */
-const SESSION_TRANSITION_STAY = "Stay";
-const SESSION_TRANSITION_PROCEED = "Proceed";
-const SESSION_TRANSITION_NO_UI_NOTICE =
-  "Weave: delegated children are still active and no dialog is available; the session transition was refused.";
-const SESSION_TRANSITION_PROMPT_FAILED_NOTICE =
-  "Weave: the session-transition prompt failed, so the transition was refused.";
-const SESSION_TRANSITION_GUARD_FAILED_NOTICE =
-  "Weave: the session-transition guard failed, so the transition was refused.";
-
-/** Shows one fixed transition notice, ignoring a UI that cannot show it. */
-function notifySessionTransition(
-  ctx: PiSessionContext | undefined,
-  notice: string,
-): void {
-  if (ctx === undefined) return;
-  void ResultAsync.fromPromise(
-    Promise.resolve(ctx.ui.notify(notice, "error")),
-    () => undefined,
-  );
-}
-
 /** Shows one exact normalized descriptor name in Pi's persistent footer. */
 function setActiveAgentStatus(
   ctx: PiSessionContext,
@@ -2115,23 +2075,10 @@ export function createPiExtension(
   // coverage proof describe the tool before a controller instance can exist,
   // while `execute()` always runs on a later turn, well after the cell below
   // is populated.
-  const delegationControllerCell: {
-    controller: PiDelegationController | undefined;
-    // The generation the held controller belongs to. Kept beside the instance
-    // so replacement and authority checks can never drift apart.
-    generationId: string | undefined;
-  } = {
-    controller: undefined,
-    generationId: undefined,
-  };
-  /**
-   * Last session-transition diagnostic shown to the user. Generation-scoped:
-   * a fresh destination session must never inherit an origin session's
-   * old-child notice.
-   */
-  const sessionTransitionNoticeCell: { value: string | undefined } = {
-    value: undefined,
-  };
+  // The generation the held controller belongs to stays beside the instance
+  // so replacement and authority checks can never drift apart.
+  const delegationControllerCell = createDelegationControllerCell();
+  const sessionTransitionNoticeCell = createSessionTransitionNoticeCell();
   /**
    * Generation-scoped thread sources: the parent ref store (Task 5), the
    * native child session store (Task 4), and the metadata cache (Task 6).
@@ -2142,23 +2089,7 @@ export function createPiExtension(
    * thread whose authoritative source it cannot read, so an unwired source
    * degrades to a structured refusal and never to an unverified resume.
    */
-  const threadSourcesCell: {
-    refs: PiThreadRefPort | undefined;
-    sessions: PiThreadSessionPort | undefined;
-    cache: PiThreadCachePort | undefined;
-    cacheMode: "active" | "degraded" | undefined;
-  } = {
-    refs: undefined,
-    sessions: undefined,
-    cache: undefined,
-    cacheMode: undefined,
-  };
-  const clearThreadSources = (): void => {
-    threadSourcesCell.refs = undefined;
-    threadSourcesCell.sessions = undefined;
-    threadSourcesCell.cache = undefined;
-    threadSourcesCell.cacheMode = undefined;
-  };
+  const threadSourcesCell = createThreadSourcesCell();
   /** Production sets true only after a successful required factory open. */
   let threadSourcesRequired = false;
   const recoveryCoordinatorCell: {
@@ -2166,82 +2097,16 @@ export function createPiExtension(
   } = { coordinator: undefined };
   // Bounded, live child-tree selection state (Pi adapter contract) - reset to the
   // root whenever a fresh generation activates.
-  const treeSelectionCell: { selectedId: string } = {
-    selectedId: ROOT_NODE_ID,
-  };
-  const childInspectionEditorCell: {
-    editor: PiChildInspectionEditor | undefined;
-    activate?: (childId: string) => void;
-  } = { editor: undefined };
-  /**
-   * Generation-scoped native child overlay (Task 12). One controller and at
-   * most one mounted `ui.custom` component; content swaps never stack.
-   */
-  const childOverlayCell: {
-    controller: ChildOverlayController | undefined;
-    settle: (() => void) | undefined;
-    component: PiChildOverlayCustomComponent | undefined;
-    tui: { requestRender(): void } | undefined;
-    open: boolean;
-    generationId: string | undefined;
-  } = {
-    controller: undefined,
-    settle: undefined,
-    component: undefined,
-    tui: undefined,
-    open: false,
-    generationId: undefined,
-  };
+  const treeSelectionCell = createChildTreeSelectionCell();
+  const childInspectionEditorCell = createChildInspectionEditorCell();
+  /** Generation-scoped native child overlay (Task 12). */
+  const childOverlayCell = createChildOverlayCell();
   /**
    * Task 13 overlay-key registration. Applied exactly once when the composed
    * editor factory first receives a keybindings object that exposes
-   * `getEffectiveConfig()`. Otherwise every shortcut is skipped and the gap
-   * is reported through the bounded health diagnostic list.
+   * `getEffectiveConfig()`.
    */
-  const overlayKeysCell: {
-    status: "pending" | "applied";
-    plan: PiChildOverlayKeyPlan | undefined;
-    machine: PiChildOverlayKeyMachine;
-    interceptor: PiChildOverlayKeyInterceptor | undefined;
-    diagnostics: readonly string[];
-    generationId: string | undefined;
-  } = {
-    status: "pending",
-    plan: undefined,
-    machine: createChildOverlayKeyMachine({ now: () => Date.now() }),
-    interceptor: undefined,
-    diagnostics: Object.freeze([PI_NAMED_SHORTCUT_ACTIONS_DIAGNOSTIC]),
-    generationId: undefined,
-  };
-  const closeChildOverlay = (): void => {
-    const settle = childOverlayCell.settle;
-    childOverlayCell.settle = undefined;
-    childOverlayCell.open = false;
-    childOverlayCell.component = undefined;
-    childOverlayCell.tui = undefined;
-    overlayKeysCell.machine.disarmEscape();
-    const overlay = childOverlayCell.controller;
-    if (overlay?.isOpen()) {
-      Result.fromThrowable(
-        () => overlay.close(),
-        () => "overlay_close_failed" as const,
-      )().match(
-        () => undefined,
-        () => undefined,
-      );
-    }
-    settle?.();
-  };
-  const clearChildOverlayGeneration = (): void => {
-    closeChildOverlay();
-    childOverlayCell.controller = undefined;
-    childOverlayCell.generationId = undefined;
-    overlayKeysCell.interceptor = undefined;
-    overlayKeysCell.plan = undefined;
-    overlayKeysCell.generationId = undefined;
-    // Registration is exactly-once for the extension lifetime once applied;
-    // a replaced generation keeps the already-registered raw shortcuts.
-  };
+  const overlayKeysCell = createChildOverlayKeysCell();
   // One allocator lives for the extension instance, so editor replacement does
   // not renumber live children.
   const childSlots = new PiChildSlots();
@@ -2249,11 +2114,7 @@ export function createPiExtension(
   // engine lifecycle operations. Constructed only when trusted and not
   // health-only, mirroring `delegationControllerCell`'s gating.
   const directStepChildRegistry = new PiDirectStepChildRegistry();
-  const inspectionRegistryCell: {
-    registry: PiChildInspectionRegistry | undefined;
-  } = {
-    registry: undefined,
-  };
+  const inspectionRegistryCell = createChildInspectionRegistryCell();
   const unavailableChildrenPort: PiAdapterChildrenPort = {
     list: () => okAsync({ children: [] }),
     show: () =>
@@ -3000,10 +2861,7 @@ export function createPiExtension(
     if (name === "weave:history") {
       const handlers = adapterCommandHandlersCell.handlers;
       if (handlers === undefined) {
-        ctx.ui.notify(
-          "Child history is unavailable in this session.",
-          "info",
-        );
+        ctx.ui.notify("Child history is unavailable in this session.", "info");
         return;
       }
       const listed = await handlers["children.list"]?.(
@@ -3724,430 +3582,99 @@ export function createPiExtension(
     await observeActiveLeaseBestEffort(next.name, "active");
   }
 
-  const formatChildPickerTimestamp = (epochMs: number): string =>
-    Result.fromThrowable(
-      () => new Date(epochMs).toLocaleString(),
-      () => `${epochMs}`,
-    )().match(
-      (label) => label,
-      (fallback) => fallback,
-    );
-
-  const mapLiveStatusToPicker = (
-    status: PiChildTreeNode["status"],
-  ): PiChildPickerStatus => {
-    if (status === "queued") return "queued";
-    if (status === "completed") return "completed";
-    if (status === "cancelled") return "cancelled";
-    if (status === "failed") return "failed";
-    return "running";
-  };
-
-  const buildOverlayHierarchy = (
-    registry: PiChildInspectionRegistry,
-  ): readonly PiChildOverlayHierarchyNode[] =>
-    registry.snapshotLive().map((node) => ({
-      childId: node.id,
-      ...(node.parentId === undefined || node.parentId === ROOT_NODE_ID
-        ? {}
-        : { parentId: node.parentId }),
-      active: !["completed", "cancelled", "failed"].includes(node.status),
-      order: node.startedAtMs,
-    }));
-
-  const reportOverlayKeyDiagnostic = (detail: string): void => {
-    const next = [...overlayKeysCell.diagnostics, detail];
-    overlayKeysCell.diagnostics = Object.freeze(
-      next.slice(0, PI_CHILD_OVERLAY_KEY_BOUNDS.maxDiagnostics),
-    );
-    const ctx = latestSessionCtx;
-    if (ctx !== undefined && ctx.hasUI) {
-      ctx.ui.notify(detail, "warning");
-    }
-  };
-
-  const focusOverlayChild = (childId: string): void => {
-    const activate = childInspectionEditorCell.activate;
-    if (activate === undefined) return;
-    activate(childId);
-  };
-
-  const openTask13ChildPicker = async (
-    ctx: PiSessionContext,
-    generationId: string,
-  ): Promise<void> => {
-    const registry = inspectionRegistryCell.registry;
-    if (registry === undefined || activeSession?.generationId !== generationId) {
-      return;
-    }
-    const ordered = buildOverlayHierarchy(registry);
-    const orderById = new Map(
-      ordered.map((node) => [node.childId, node.order] as const),
-    );
-    const active: PiChildPickerActiveChild[] = registry
-      .snapshotLiveRegistrations()
-      .map(({ registration, snapshot }) => ({
-        childId: snapshot.id,
-        threadId:
-          delegationControllerCell.controller?.resolveThreadIdForLiveChild(
-            snapshot.id,
-          ) ?? snapshot.id,
-        ...(snapshot.parentId === undefined ||
-        snapshot.parentId === ROOT_NODE_ID
-          ? {}
-          : { parentId: snapshot.parentId }),
-        status: mapLiveStatusToPicker(snapshot.status),
-        agent: registration.name,
-        createdAt: snapshot.startedAtMs,
-        updatedAt: snapshot.startedAtMs + snapshot.elapsedMs,
-        treeOrder: orderById.get(snapshot.id) ?? snapshot.startedAtMs,
-        ...(registration.stepName === undefined
-          ? {}
-          : { workflowStep: registration.stepName }),
-      }));
-
-    const parentState = activeSession.primarySession.getParentSession();
-    const parentSessionId =
-      threadSourcesCell.refs?.liveParentSessionId() ??
-      (parentState.persistence === "persistent"
-        ? parentState.sessionId
-        : "");
-    type CacheListPage = {
-      readonly records: readonly {
-        readonly childId: string;
-        readonly threadId: string;
-        readonly title: string;
-        readonly status: string;
-        readonly createdAt: number;
-        readonly updatedAt: number;
-        readonly originParentSessionId: string;
-        readonly stale: boolean;
-        readonly tombstoned: boolean;
-      }[];
-    };
-    const cacheCandidate = threadSourcesCell.cache as
-      | {
-          list?: (input: {
-            readonly workspaceKey: string;
-            readonly parentSessionId?: string;
-            readonly limit: number;
-          }) => Result<CacheListPage, unknown>;
-          get?: (
-            scope: {
-              readonly workspaceKey: string;
-              readonly parentSessionId: string;
-            },
-            childId: string,
-          ) => ResultAsync<
-            unknown,
-            { readonly type?: string; readonly state?: string }
-          >;
-        }
-      | undefined;
-    const canUseCache =
-      parentSessionId.length > 0 &&
-      threadSourcesCell.cacheMode === "active" &&
-      typeof cacheCandidate?.list === "function" &&
-      typeof cacheCandidate.get === "function";
-    const cachePort: PiChildPickerCachePort | undefined = canUseCache
-      ? {
-          list: (input) => {
-            const listed = cacheCandidate.list?.(input);
-            if (listed === undefined || listed.isErr()) {
-              return errAsync({
-                type: "invalid-picker-input" as const,
-                detail: "cache list unavailable",
-              });
-            }
-            return okAsync(listed.value);
-          },
-          validate: (childId) => {
-            const got = cacheCandidate.get?.(
-              { workspaceKey: ctx.cwd, parentSessionId },
-              childId,
-            );
-            if (got === undefined) return okAsync("unavailable" as const);
-            return got
-              .map((): PiChildPickerSourceState => "available")
-              .orElse((failure) => {
-                if (failure.state === "orphan") {
-                  return okAsync("orphan" as const);
-                }
-                if (failure.state === "stale") {
-                  return okAsync("stale" as const);
-                }
-                return okAsync("unavailable" as const);
-              });
-          },
-        }
-      : undefined;
-
-    const refsPort: PiChildPickerRefPort | undefined =
-      threadSourcesCell.refs === undefined
-        ? undefined
-        : {
-            readRefs: (input) =>
-              threadSourcesCell.refs!.readRefs({ limit: input.limit }).map(
-                (scan) =>
-                  scan.refs.map((record) => ({
-                    childId: record.childId,
-                    threadId: record.threadId,
-                    title: record.title,
-                    status: record.status,
-                    createdAt: record.createdAt,
-                    updatedAt: record.updatedAt,
-                    originParentSessionId: record.originParentSessionId,
-                  })),
-              ),
-          };
-
-    const candidates = await collectChildPickerCandidates({
-      active,
-      workspaceKey: ctx.cwd,
-      parentSessionId: parentSessionId.length > 0 ? parentSessionId : ctx.cwd,
-      ...(cachePort === undefined ? {} : { cache: cachePort }),
-      cacheDegraded: !canUseCache,
-      ...(refsPort === undefined ? {} : { refs: refsPort }),
-    });
-    if (candidates.isErr()) {
-      ctx.ui.notify("Child picker is unavailable in this session.", "warning");
-      return;
-    }
-    const entries = buildChildPickerMetadataEntries({
-      candidates: candidates.value,
-      formatTimestamp: formatChildPickerTimestamp,
-    });
-    if (entries.isErr()) {
-      ctx.ui.notify("Child picker is unavailable in this session.", "warning");
-      return;
-    }
-    if (entries.value.length === 0) {
-      ctx.ui.notify("No Weave children are available to inspect.", "info");
-      return;
-    }
-    const labels = entries.value.map(
-      (entry) =>
-        `${entry.active ? "●" : "○"} ${entry.title} [${entry.status}] ${entry.timestampLabel}`,
-    );
-    const selected = await ResultAsync.fromThrowable(
-      () => ctx.ui.select("Weave children", labels),
-      () => "picker unavailable",
-    )();
-    if (selected.isErr() || selected.value === undefined) return;
-    if (activeSession?.generationId !== generationId) return;
-    const index = labels.indexOf(selected.value);
-    const entry = entries.value[index];
-    if (entry === undefined || entry.readOnly) return;
-    focusOverlayChild(entry.childId);
-  };
-
-  const dispatchOverlayAction = (
-    action: PiChildOverlayAction,
-    generationId: string,
-  ): void => {
-    const ctx = latestSessionCtx;
-    if (ctx === undefined || activeSession?.generationId !== generationId) {
-      return;
-    }
-    const registry = inspectionRegistryCell.registry;
-    if (registry === undefined) return;
-    const plan = overlayKeysCell.plan;
-    if (plan === undefined) return;
-    const focused =
-      childOverlayCell.controller?.view().match(
-        (view) => view.child.childId,
-        () => treeSelectionCell.selectedId,
-      ) ?? treeSelectionCell.selectedId;
-    const focusedId =
-      focused === ROOT_NODE_ID ? undefined : focused;
-    const draft =
-      childOverlayCell.controller?.view().match(
-        (view) => view.draft,
-        () => "",
-      ) ?? "";
-    const outcome = overlayKeysCell.machine.handleAction(action, {
-      plan,
-      nodes: buildOverlayHierarchy(registry),
-      focusedChildId: focusedId,
-      draft,
-    });
-    if (outcome.isErr()) {
-      reportOverlayKeyDiagnostic(
-        `weave overlay key failed: ${outcome.error.detail}`,
-      );
-      return;
-    }
-    switch (outcome.value.kind) {
-      case "open-picker":
-        void openTask13ChildPicker(ctx, generationId);
-        return;
-      case "focus-child":
-        focusOverlayChild(outcome.value.childId);
-        return;
-      case "no-target":
-        reportOverlayKeyDiagnostic(
-          "weave overlay key ignored: no matching child",
-        );
-        return;
-      default:
-        return;
-    }
-  };
-
-  const bindOverlayKeyInterceptor = (generationId: string): void => {
-    const plan = overlayKeysCell.plan;
-    if (plan === undefined) {
-      overlayKeysCell.interceptor = undefined;
-      return;
-    }
-    overlayKeysCell.interceptor = createChildOverlayKeyInterceptor({
-      machine: overlayKeysCell.machine,
-      context: () => {
-        if (activeSession?.generationId !== generationId) return undefined;
-        const registry = inspectionRegistryCell.registry;
-        if (registry === undefined) return undefined;
-        const focused =
-          childOverlayCell.controller?.view().match(
-            (view) => view.child.childId,
-            () => undefined,
-          ) ?? undefined;
-        const draft =
-          childOverlayCell.controller?.view().match(
-            (view) => view.draft,
-            () => "",
-          ) ?? "";
+  const childInspectionRuntime = createChildInspectionRuntime({
+    overlayCell: childOverlayCell,
+    overlayKeysCell,
+    inspectionEditorCell: childInspectionEditorCell,
+    inspectionRegistryCell,
+    treeSelectionCell,
+    threadSourcesCell,
+    delegationControllerCell,
+    latestSessionCtx: () => latestSessionCtx,
+    activeGenerationId: () => activeSession?.generationId,
+    parentSessionState: () => {
+      const state = activeSession?.primarySession.getParentSession();
+      if (state === undefined) {
+        return { persistence: "unknown", sessionId: "" };
+      }
+      if (state.persistence === "persistent") {
         return {
-          plan,
-          nodes: buildOverlayHierarchy(registry),
-          focusedChildId: focused,
-          draft,
+          persistence: state.persistence,
+          sessionId: state.sessionId,
         };
-      },
-      openPicker: () => {
-        const ctx = latestSessionCtx;
-        if (ctx === undefined) return;
-        void openTask13ChildPicker(ctx, generationId);
-      },
-      focusChild: (childId) => focusOverlayChild(childId),
-      closeOverlay: () => closeChildOverlay(),
-      updateDraft: (draft) => {
-        const overlay = childOverlayCell.controller;
-        if (overlay === undefined) return;
-        Result.fromThrowable(
-          () => overlay.updateDraft(draft),
-          () => "overlay_draft_failed" as const,
-        )().match(
-          () => {
-            childOverlayCell.component?.invalidate();
-            childOverlayCell.tui?.requestRender();
-          },
-          () => undefined,
-        );
-      },
-      showHint: (hint) => {
-        reportOverlayKeyDiagnostic(hint);
-      },
-      confirmCancelSubtree: (childId) => {
-        const ctx = latestSessionCtx;
-        if (ctx === undefined || activeSession?.generationId !== generationId) {
-          return;
-        }
-        void (async () => {
-          const choice = await ResultAsync.fromThrowable(
-            () =>
-              ctx.ui.select(
-                CHILD_OVERLAY_ESCAPE_HINT,
-                [...CHILD_OVERLAY_CANCEL_CHOICES],
-              ),
-            () => "cancel confirm unavailable",
-          )();
-          if (activeSession?.generationId !== generationId) return;
-          const decision = resolveChildOverlayCancelChoice(
-            childId,
-            choice.isOk() ? choice.value : undefined,
-          );
-          if (decision.kind !== "cancel-subtree") return;
-          const controller = delegationControllerCell.controller;
-          if (controller === undefined) return;
-          await controller.cancelSubtree(decision.childId);
-        })();
-      },
-      report: (detail) => reportOverlayKeyDiagnostic(detail),
-    });
-  };
-
-  /**
-   * Captures the live keybindings from the composed editor factory (or the
-   * overlay custom factory) and registers Task 13 shortcuts exactly once.
-   */
-  const maybeRegisterOverlayKeys = (
-    pi: PiExtensionApi,
-    keybindings: unknown,
-    generationId: string,
-  ): void => {
-    if (overlayKeysCell.status === "applied") return;
-    const diagnostics: string[] = [PI_NAMED_SHORTCUT_ACTIONS_DIAGNOSTIC];
-    const captured = captureChildOverlayKeybindings(keybindings);
-    const conflictPort = childOverlayConflictPortFromHost(captured);
-    if (conflictPort === undefined) {
-      diagnostics.push(
-        "weave overlay keys skipped: host keybindings do not expose getEffectiveConfig()",
-      );
-      overlayKeysCell.diagnostics = Object.freeze(
-        diagnostics.slice(0, PI_CHILD_OVERLAY_KEY_BOUNDS.maxDiagnostics),
-      );
-      return;
-    }
-    const generation = controller.getCurrentGeneration();
-    const settings =
-      generation?.id === generationId
+      }
+      return { persistence: state.persistence, sessionId: "" };
+    },
+    childInspectionSettings: (generationId) => {
+      const generation = controller.getCurrentGeneration();
+      return generation?.id === generationId
         ? generation.preflight.childInspection.settings
         : undefined;
-    const overrides =
-      settings === undefined
-        ? undefined
-        : Object.fromEntries(childInspectionOverlayKeyOverrides(settings));
-    const plan = planChildOverlayKeyRegistrations({
-      ...(overrides === undefined ? {} : { overrides }),
-      conflicts: conflictPort,
-    });
-    if (plan.isErr()) {
-      diagnostics.push(`weave overlay keys failed: ${plan.error.detail}`);
-      overlayKeysCell.diagnostics = Object.freeze(
-        diagnostics.slice(0, PI_CHILD_OVERLAY_KEY_BOUNDS.maxDiagnostics),
-      );
-      return;
-    }
-    diagnostics.push(...plan.value.diagnostics);
-    const applied = applyChildOverlayKeyPlan(
-      {
-        registerShortcut: (key, options) => {
-          pi.registerShortcut?.(key, options);
-        },
-      },
-      plan.value,
-      (action) => {
-        dispatchOverlayAction(action, generationId);
-      },
-    );
-    if (applied.isErr()) {
-      diagnostics.push(`weave overlay keys failed: ${applied.error.detail}`);
-      overlayKeysCell.diagnostics = Object.freeze(
-        diagnostics.slice(0, PI_CHILD_OVERLAY_KEY_BOUNDS.maxDiagnostics),
-      );
-      return;
-    }
-    overlayKeysCell.status = "applied";
-    overlayKeysCell.plan = plan.value;
-    overlayKeysCell.generationId = generationId;
-    overlayKeysCell.diagnostics = Object.freeze(
-      diagnostics.slice(0, PI_CHILD_OVERLAY_KEY_BOUNDS.maxDiagnostics),
-    );
-    bindOverlayKeyInterceptor(generationId);
-    for (const diagnostic of plan.value.diagnostics) {
-      reportOverlayKeyDiagnostic(diagnostic);
-    }
-  };
+    },
+    closeOverlay: () => closeChildOverlay(childOverlayCell, overlayKeysCell),
+  });
+
+  const sessionTransitionRuntime = createSessionTransitionRuntime({
+    noticeCell: sessionTransitionNoticeCell,
+    delegationControllerCell,
+    threadSourcesCell,
+    treeSelectionCell,
+    inspectionRegistryCell,
+    childOverlayCell,
+    overlayKeysCell,
+    workflowControllerCell,
+    activeWorkflowInstanceCell,
+    recoveryCoordinatorCell,
+    planStateProviderCell,
+    telemetryCell,
+    generationResourcesCell,
+    bumpSessionStartSequence: () => {
+      sessionStartSequence += 1;
+    },
+    closePlanTaskOverlay,
+    shutdownExtensionController: () => {
+      controller.shutdown();
+    },
+    clearBootActivationFailure: () => {
+      lastBootActivationFailure = undefined;
+    },
+    takeActiveSession: () => {
+      const session = activeSession;
+      activeSession = undefined;
+      if (session === undefined) return undefined;
+      return {
+        primaryAgentName: session.primarySession.getCurrent()?.descriptor.name,
+      };
+    },
+    setThreadSourcesRequired: (required) => {
+      threadSourcesRequired = required;
+    },
+    clearCurrentWorkflows: () => {
+      currentWorkflows = {};
+    },
+    cancelDirectStep: () =>
+      directStepChildRegistry.cancel() ?? okAsync(undefined),
+    clearActivePlanSurfaces,
+    restoreEditor: () => {
+      const editorInstall = editorInstallCell;
+      if (editorInstall !== undefined) {
+        if (
+          editorInstall.ctx.ui.getEditorComponent?.() === editorInstall.factory
+        ) {
+          editorInstall.ctx.ui.setEditorComponent?.(
+            editorInstall.previousFactory,
+          );
+        }
+        editorInstallCell = undefined;
+      }
+    },
+    disposeChildMode: () => {
+      childModeState.runtime?.dispose();
+    },
+    warnObserveFailure: (failure) => {
+      deps.logger.warn({ failure }, "observeSession failed; degrading");
+    },
+  });
 
   return function piAdapterExtension(pi: PiExtensionApi): void {
     pi.registerShortcut?.(PI_PRIMARY_AGENT_CYCLE_SHORTCUT, {
@@ -4279,55 +3806,18 @@ export function createPiExtension(
 
     pi.on("session_start", async (_event, ctx: PiSessionContext) => {
       latestSessionCtx = ctx;
-      // First action of replacement: an overlay owned by the outgoing
-      // generation is settled before any stale work can run, so the user is
-      // never left in front of a mounted, uncancellable plan list.
-      closePlanTaskOverlay();
-      clearChildOverlayGeneration();
-      const startupSequence = ++sessionStartSequence;
+      // Revoke the prior generation synchronously, before the first await.
+      // Overlays settle first, then the startup sequence bumps, then every
+      // live authority cell is dropped so a retained tool registration or
+      // late callback cannot outlive the replaced generation - even if this
+      // new startup later fails. A fresh destination starts with no
+      // old-child notice.
+      sessionTransitionRuntime.revokeForReplacement((prior) => {
+        (prior as PiDelegationController).disposeAll();
+      });
+      const startupSequence = sessionStartSequence;
       const startupStillCurrent = (): boolean =>
         sessionStartSequence === startupSequence;
-
-      // Revoke the prior generation synchronously, before the first await.
-      // A retained tool registration or late callback must lose every live
-      // authority cell as soon as Pi announces replacement, even if this new
-      // startup later fails.
-      controller.shutdown();
-      activeSession = undefined;
-      lastBootActivationFailure = undefined;
-      delegationControllerCell.controller?.disposeAll();
-      delegationControllerCell.controller = undefined;
-      delegationControllerCell.generationId = undefined;
-      clearThreadSources();
-      threadSourcesRequired = false;
-      // A fresh destination generation starts with no old-child notice.
-      sessionTransitionNoticeCell.value = undefined;
-      workflowControllerCell.controller = undefined;
-      recoveryCoordinatorCell.coordinator = undefined;
-      inspectionRegistryCell.registry?.closeGeneration();
-      inspectionRegistryCell.registry = undefined;
-      planStateProviderCell.value = undefined;
-      activeWorkflowInstanceCell.value = undefined;
-      currentWorkflows = {};
-      treeSelectionCell.selectedId = ROOT_NODE_ID;
-      const priorResources = generationResourcesCell.owner;
-      generationResourcesCell.owner = undefined;
-      const priorTelemetry = telemetryCell.telemetry;
-      telemetryCell.telemetry = undefined;
-      if (priorResources !== undefined) {
-        void priorResources.dispose();
-      } else if (priorTelemetry !== undefined) {
-        void priorTelemetry.shutdown().match(
-          () => undefined,
-          () => undefined,
-        );
-      }
-      const cancelPriorDirectStep =
-        directStepChildRegistry.cancel() ?? okAsync(undefined);
-      void cancelPriorDirectStep.match(
-        () => undefined,
-        () => undefined,
-      );
       ctx.ui.setStatus("weave", "starting");
 
       // First statement of the generation, before log redirect, child-mode
@@ -4540,7 +4030,7 @@ export function createPiExtension(
           lastBootActivationFailure = booted.error;
           activeSession = undefined;
           controller.shutdown();
-          clearThreadSources();
+          clearThreadSources(threadSourcesCell);
           threadSourcesRequired = false;
           currentWorkflows = {};
           planStateProviderCell.value = undefined;
@@ -4582,7 +4072,7 @@ export function createPiExtension(
         if (registerTools().isErr()) {
           activeSession = undefined;
           controller.shutdown();
-          clearThreadSources();
+          clearThreadSources(threadSourcesCell);
           threadSourcesRequired = false;
           setActiveAgentStatus(ctx, undefined);
           ctx.ui.setStatus(
@@ -4669,7 +4159,7 @@ export function createPiExtension(
             return;
           }
           if (opened.isErr()) {
-            clearThreadSources();
+            clearThreadSources(threadSourcesCell);
             threadSourcesRequired = false;
             allowDelegationController = false;
             deps.logger.warn(
@@ -4766,258 +4256,263 @@ export function createPiExtension(
         }
 
         if (allowDelegationController) {
-        delegationControllerCell.generationId = generation.id;
-        delegationControllerCell.controller = new PiDelegationController({
-          config: configActivation.config,
-          generationId: generation.id,
-          idGenerator: deps.idGenerator,
-          logger: deps.logger,
-          processPort: deps.processPort,
-          randomPort: deps.randomPort,
-          hmacPort: deps.hmacPort,
-          ...(deps.childResponseDrainMs === undefined
-            ? {}
-            : { responseDrainMs: deps.childResponseDrainMs }),
-          ...(deps.childCancelGraceMs === undefined
-            ? {}
-            : { cancelGraceMs: deps.childCancelGraceMs }),
-          // The exact executable that launched this host, never a bare
-          // "pi" a spawner would have to re-resolve via `PATH` (Pi adapter contract
-          //).
-          command: deps.childCommand,
-          // Preserves ordinary runtime necessities (PATH/HOME/etc.) for the
-          // spawned `pi` process, while never forwarding secrets/credentials
-          // or this adapter's own private child-bootstrap variables.
-          baseEnv: buildPiChildBaseEnv(),
-          pathContainment: deps.pathContainmentPort,
-          currentCwd: () => ctx.cwd,
-          currentEnv: () => buildPiChildBaseEnv(),
-          // Thread ownership is measured against the live persistent parent
-          // session, so a session transition can never let a new parent
-          // inherit or resume another parent's threads.
-          parentSessionId: () => {
-            const parent = session.primarySession.getParentSession();
-            return parent.persistence === "persistent"
-              ? parent.sessionId
-              : undefined;
-          },
-          // Task 4/5/6 thread sources. `resumeThread` refuses to run a thread
-          // whose authoritative ref and native session it cannot read, so an
-          // absent source here fails closed with a structured
-          // `ThreadResumeUnavailable` instead of resuming on memory alone.
-          threadRefs: () => threadSourcesCell.refs,
-          threadSessions: () => threadSourcesCell.sessions,
-          threadCache: () => threadSourcesCell.cache,
-          threadWorkspaceKey: () => ctx.cwd,
-          threadSourcesRequired,
-          resolveRootDelegationTarget: (name) =>
-            configActivation.descriptors.byName
-              .get(DEFAULT_PRIMARY_AGENT_NAME)
-              ?.delegationTargets.find((target) => target.name === name),
-          rootAgentName: () =>
-            activeSession?.primarySession.getCurrent()?.descriptor.name ??
-            DEFAULT_PRIMARY_AGENT_NAME,
-          // Nested/descendant delegation (Pi adapter contract): a requesting
-          // child is only ever resolved against ITS OWN declared
-          // `delegationTargets`, never the full descriptor set - exactly
-          // the same restriction the root's own tool already applies.
-          resolveDelegationTarget: (requestingAgentName, targetAgentName) =>
-            configActivation.descriptors.byName
-              .get(requestingAgentName)
-              ?.delegationTargets.find(
-                (target) => target.name === targetAgentName,
-              ),
-          buildBootstrap: (target, childId, context) =>
-            buildChildBootstrapBody(
-              configActivation.descriptors.byName,
-              target,
-              childId,
-              context,
-              ctx,
-              (descriptor) =>
-                session.primarySession.prepareComposedPrompt(
-                  descriptor,
-                  session.disabledSkills,
+          delegationControllerCell.generationId = generation.id;
+          delegationControllerCell.controller = new PiDelegationController({
+            config: configActivation.config,
+            generationId: generation.id,
+            idGenerator: deps.idGenerator,
+            logger: deps.logger,
+            processPort: deps.processPort,
+            randomPort: deps.randomPort,
+            hmacPort: deps.hmacPort,
+            ...(deps.childResponseDrainMs === undefined
+              ? {}
+              : { responseDrainMs: deps.childResponseDrainMs }),
+            ...(deps.childCancelGraceMs === undefined
+              ? {}
+              : { cancelGraceMs: deps.childCancelGraceMs }),
+            // The exact executable that launched this host, never a bare
+            // "pi" a spawner would have to re-resolve via `PATH` (Pi adapter contract
+            //).
+            command: deps.childCommand,
+            // Preserves ordinary runtime necessities (PATH/HOME/etc.) for the
+            // spawned `pi` process, while never forwarding secrets/credentials
+            // or this adapter's own private child-bootstrap variables.
+            baseEnv: buildPiChildBaseEnv(),
+            pathContainment: deps.pathContainmentPort,
+            currentCwd: () => ctx.cwd,
+            currentEnv: () => buildPiChildBaseEnv(),
+            // Thread ownership is measured against the live persistent parent
+            // session, so a session transition can never let a new parent
+            // inherit or resume another parent's threads.
+            parentSessionId: () => {
+              const parent = session.primarySession.getParentSession();
+              return parent.persistence === "persistent"
+                ? parent.sessionId
+                : undefined;
+            },
+            // Task 4/5/6 thread sources. `resumeThread` refuses to run a thread
+            // whose authoritative ref and native session it cannot read, so an
+            // absent source here fails closed with a structured
+            // `ThreadResumeUnavailable` instead of resuming on memory alone.
+            threadRefs: () => threadSourcesCell.refs,
+            threadSessions: () => threadSourcesCell.sessions,
+            threadCache: () => threadSourcesCell.cache,
+            threadWorkspaceKey: () => ctx.cwd,
+            threadSourcesRequired,
+            resolveRootDelegationTarget: (name) =>
+              configActivation.descriptors.byName
+                .get(DEFAULT_PRIMARY_AGENT_NAME)
+                ?.delegationTargets.find((target) => target.name === name),
+            rootAgentName: () =>
+              activeSession?.primarySession.getCurrent()?.descriptor.name ??
+              DEFAULT_PRIMARY_AGENT_NAME,
+            // Nested/descendant delegation (Pi adapter contract): a requesting
+            // child is only ever resolved against ITS OWN declared
+            // `delegationTargets`, never the full descriptor set - exactly
+            // the same restriction the root's own tool already applies.
+            resolveDelegationTarget: (requestingAgentName, targetAgentName) =>
+              configActivation.descriptors.byName
+                .get(requestingAgentName)
+                ?.delegationTargets.find(
+                  (target) => target.name === targetAgentName,
                 ),
-            ),
-          onTreeChanged: () => {
-            if (!startupOwnsGeneration()) return;
-            renderChildTreeWidget(
-              ctx,
-              delegationControllerCell.controller,
-              treeSelectionCell,
-              inspectionRegistry,
-            );
-          },
-          onPrivateOutput: deps.onChildPrivateOutput,
-          inspectionRegistry,
-          onChildSessionEvent: (childId, event) => {
-            if (!startupOwnsGeneration()) return;
-            const overlay = childOverlayCell.controller;
-            if (
-              overlay === undefined ||
-              !overlay.isOpen() ||
-              childOverlayCell.generationId !== generation.id
-            ) {
-              return;
-            }
-            const openView = overlay.view();
-            if (openView.isErr()) return;
-            const threadId =
-              delegationControllerCell.controller?.resolveThreadIdForLiveChild(
+            buildBootstrap: (target, childId, context) =>
+              buildChildBootstrapBody(
+                configActivation.descriptors.byName,
+                target,
                 childId,
-              ) ?? childId;
-            if (
-              openView.value.child.threadId !== threadId &&
-              openView.value.child.childId !== childId &&
-              openView.value.child.childId !== threadId
-            ) {
-              return;
-            }
-            Result.fromThrowable(
-              () => overlay.applyLiveEvent(event),
-              () => "overlay_live_event_failed" as const,
-            )().match(
-              () => {
-                childOverlayCell.component?.invalidate();
-                childOverlayCell.tui?.requestRender();
+                context,
+                ctx,
+                (descriptor) =>
+                  session.primarySession.prepareComposedPrompt(
+                    descriptor,
+                    session.disabledSkills,
+                  ),
+              ),
+            onTreeChanged: () => {
+              if (!startupOwnsGeneration()) return;
+              renderChildTreeWidget(
+                ctx,
+                delegationControllerCell.controller,
+                treeSelectionCell,
+                inspectionRegistry,
+              );
+            },
+            onPrivateOutput: deps.onChildPrivateOutput,
+            inspectionRegistry,
+            onChildSessionEvent: (childId, event) => {
+              if (!startupOwnsGeneration()) return;
+              const overlay = childOverlayCell.controller;
+              if (
+                overlay === undefined ||
+                !overlay.isOpen() ||
+                childOverlayCell.generationId !== generation.id
+              ) {
+                return;
+              }
+              const openView = overlay.view();
+              if (openView.isErr()) return;
+              const threadId =
+                delegationControllerCell.controller?.resolveThreadIdForLiveChild(
+                  childId,
+                ) ?? childId;
+              if (
+                openView.value.child.threadId !== threadId &&
+                openView.value.child.childId !== childId &&
+                openView.value.child.childId !== threadId
+              ) {
+                return;
+              }
+              Result.fromThrowable(
+                () => overlay.applyLiveEvent(event),
+                () => "overlay_live_event_failed" as const,
+              )().match(
+                () => {
+                  childOverlayCell.component?.invalidate();
+                  childOverlayCell.tui?.requestRender();
+                },
+                () => undefined,
+              );
+            },
+            // Lazy wrapper (Pi adapter contract): `telemetryCell.telemetry` is only
+            // populated once the Runtime Store opens successfully, below -
+            // reading it here would always see `undefined`. A settled child
+            // assistant message always arrives well after that point, so the
+            // lazy read is safe; absent telemetry degrades to a silent no-op
+            // rather than blocking child settlement.
+            telemetry: {
+              recordAssistantUsage: (input) => {
+                if (!startupOwnsGeneration()) return okAsync("noop" as const);
+                const telemetry = generationTelemetryCell.telemetry;
+                if (telemetry === undefined) return okAsync("noop" as const);
+                return telemetry
+                  .recordAssistantUsage(input)
+                  .mapErr((failure) => {
+                    telemetry.recordDegradation(failure);
+                    return failure;
+                  });
               },
-              () => undefined,
-            );
-          },
-          // Lazy wrapper (Pi adapter contract): `telemetryCell.telemetry` is only
-          // populated once the Runtime Store opens successfully, below -
-          // reading it here would always see `undefined`. A settled child
-          // assistant message always arrives well after that point, so the
-          // lazy read is safe; absent telemetry degrades to a silent no-op
-          // rather than blocking child settlement.
-          telemetry: {
-            recordAssistantUsage: (input) => {
-              if (!startupOwnsGeneration()) return okAsync("noop" as const);
-              const telemetry = generationTelemetryCell.telemetry;
-              if (telemetry === undefined) return okAsync("noop" as const);
-              return telemetry.recordAssistantUsage(input).mapErr((failure) => {
-                telemetry.recordDegradation(failure);
-                return failure;
-              });
             },
-          },
-        });
-        childOverlayCell.generationId = generation.id;
-        childOverlayCell.controller = createChildOverlayController(
-          createReadSessionEntryPageOverlaySource({
-            describe: (id) => {
-              const ctrl = delegationControllerCell.controller;
-              if (ctrl === undefined) {
-                return errAsync({
-                  type: "SourceUnavailable" as const,
-                  operation: "describe",
-                });
-              }
-              return ctrl.resolveOverlayChild(id).map((descriptor) => ({
-                childId: descriptor.childId,
-                threadId: descriptor.threadId,
-                ...(descriptor.parentChildId === undefined
-                  ? {}
-                  : { parentChildId: descriptor.parentChildId }),
-                status: descriptor.status,
-                title: descriptor.title,
-                generationId: descriptor.generationId,
-                runs: descriptor.runs.map((run) => ({
-                  run: run.run,
-                  action: run.action,
-                  ...(run.startedAt === undefined
-                    ? {}
-                    : { startedAt: run.startedAt }),
-                  ...(run.priorOutcome === undefined
-                    ? {}
-                    : { priorOutcome: run.priorOutcome }),
-                  ...(run.initiator === undefined
-                    ? {}
-                    : { initiator: run.initiator }),
-                  ...(run.model === undefined ? {} : { model: run.model }),
-                  ...(run.reasoning === undefined
-                    ? {}
-                    : { reasoning: run.reasoning }),
-                })),
-                branchIds: [...descriptor.branchIds],
-                descendantChildIds: [...descriptor.descendantChildIds],
-              })).mapErr(() => ({
-                type: "ChildNotFound" as const,
-                childId: id,
-              }));
-            },
-            readSessionEntryPage: (id, options) => {
-              const ctrl = delegationControllerCell.controller;
-              const sessions = threadSourcesCell.sessions;
-              if (
-                ctrl === undefined ||
-                sessions === undefined ||
-                typeof sessions.readSessionEntryPage !== "function"
-              ) {
-                return errAsync({
-                  type: "SessionCorrupt" as const,
-                  ref: id,
-                  reason: "unreadable" as const,
-                } satisfies PiNativeSessionError);
-              }
-              return ctrl
-                .resolveOverlayChild(id)
-                .mapErr(
-                  (): PiNativeSessionError => ({
-                    type: "SessionMissing",
+          });
+          childOverlayCell.generationId = generation.id;
+          childOverlayCell.controller = createChildOverlayController(
+            createReadSessionEntryPageOverlaySource({
+              describe: (id) => {
+                const ctrl = delegationControllerCell.controller;
+                if (ctrl === undefined) {
+                  return errAsync({
+                    type: "SourceUnavailable" as const,
+                    operation: "describe",
+                  });
+                }
+                return ctrl
+                  .resolveOverlayChild(id)
+                  .map((descriptor) => ({
+                    childId: descriptor.childId,
+                    threadId: descriptor.threadId,
+                    ...(descriptor.parentChildId === undefined
+                      ? {}
+                      : { parentChildId: descriptor.parentChildId }),
+                    status: descriptor.status,
+                    title: descriptor.title,
+                    generationId: descriptor.generationId,
+                    runs: descriptor.runs.map((run) => ({
+                      run: run.run,
+                      action: run.action,
+                      ...(run.startedAt === undefined
+                        ? {}
+                        : { startedAt: run.startedAt }),
+                      ...(run.priorOutcome === undefined
+                        ? {}
+                        : { priorOutcome: run.priorOutcome }),
+                      ...(run.initiator === undefined
+                        ? {}
+                        : { initiator: run.initiator }),
+                      ...(run.model === undefined ? {} : { model: run.model }),
+                      ...(run.reasoning === undefined
+                        ? {}
+                        : { reasoning: run.reasoning }),
+                    })),
+                    branchIds: [...descriptor.branchIds],
+                    descendantChildIds: [...descriptor.descendantChildIds],
+                  }))
+                  .mapErr(() => ({
+                    type: "ChildNotFound" as const,
+                    childId: id,
+                  }));
+              },
+              readSessionEntryPage: (id, options) => {
+                const ctrl = delegationControllerCell.controller;
+                const sessions = threadSourcesCell.sessions;
+                if (
+                  ctrl === undefined ||
+                  sessions === undefined ||
+                  typeof sessions.readSessionEntryPage !== "function"
+                ) {
+                  return errAsync({
+                    type: "SessionCorrupt" as const,
                     ref: id,
-                  }),
-                )
-                .andThen((descriptor) => {
-                  if (descriptor.sessionRef === undefined) {
-                    return okAsync({
-                      entries: [],
-                      bytesRead: 0,
-                      linesScanned: 0,
-                    });
-                  }
-                  const parent = session.primarySession.getParentSession();
-                  const parentId =
-                    parent.persistence === "persistent"
-                      ? parent.sessionId
-                      : undefined;
-                  return sessions.readSessionEntryPage(
-                    descriptor.sessionRef,
-                    parentId,
-                    options,
-                  );
-                });
+                    reason: "unreadable" as const,
+                  } satisfies PiNativeSessionError);
+                }
+                return ctrl
+                  .resolveOverlayChild(id)
+                  .mapErr(
+                    (): PiNativeSessionError => ({
+                      type: "SessionMissing",
+                      ref: id,
+                    }),
+                  )
+                  .andThen((descriptor) => {
+                    if (descriptor.sessionRef === undefined) {
+                      return okAsync({
+                        entries: [],
+                        bytesRead: 0,
+                        linesScanned: 0,
+                      });
+                    }
+                    const parent = session.primarySession.getParentSession();
+                    const parentId =
+                      parent.persistence === "persistent"
+                        ? parent.sessionId
+                        : undefined;
+                    return sessions.readSessionEntryPage(
+                      descriptor.sessionRef,
+                      parentId,
+                      options,
+                    );
+                  });
+              },
+            }),
+            {},
+            {
+              steer: (childId, generationId, text) => {
+                if (
+                  !startupOwnsGeneration() ||
+                  generationId !== generation.id ||
+                  delegationControllerCell.controller === undefined
+                ) {
+                  return errAsync({ type: "MutationFailed" as const });
+                }
+                return delegationControllerCell.controller
+                  .steerChild(childId, text)
+                  .mapErr(() => ({ type: "MutationFailed" as const }));
+              },
+              followUp: (childId, generationId, text) => {
+                if (
+                  !startupOwnsGeneration() ||
+                  generationId !== generation.id ||
+                  delegationControllerCell.controller === undefined
+                ) {
+                  return errAsync({ type: "MutationFailed" as const });
+                }
+                return delegationControllerCell.controller
+                  .followUpChild(childId, text)
+                  .mapErr(() => ({ type: "MutationFailed" as const }));
+              },
             },
-          }),
-          {},
-          {
-            steer: (childId, generationId, text) => {
-              if (
-                !startupOwnsGeneration() ||
-                generationId !== generation.id ||
-                delegationControllerCell.controller === undefined
-              ) {
-                return errAsync({ type: "MutationFailed" as const });
-              }
-              return delegationControllerCell.controller
-                .steerChild(childId, text)
-                .mapErr(() => ({ type: "MutationFailed" as const }));
-            },
-            followUp: (childId, generationId, text) => {
-              if (
-                !startupOwnsGeneration() ||
-                generationId !== generation.id ||
-                delegationControllerCell.controller === undefined
-              ) {
-                return errAsync({ type: "MutationFailed" as const });
-              }
-              return delegationControllerCell.controller
-                .followUpChild(childId, text)
-                .mapErr(() => ({ type: "MutationFailed" as const }));
-            },
-          },
-        );
+          );
         }
 
         // Child recovery is generation-scoped. Construct it only after the
@@ -5026,12 +4521,14 @@ export function createPiExtension(
         const recoveryRefs = threadSourcesCell.refs;
         if (recoveryRefs !== undefined) {
           const historyPort = {
-            list: () =>
-              recoveryRefs.readRefs().map((scan) => scan.refs),
+            list: () => recoveryRefs.readRefs().map((scan) => scan.refs),
             updateStatus: (
               record: PiChildRecoveryRecord,
               status: PiChildRecoveryRecord["status"],
-            ) => recoveryRefs.appendLifecycle(record, { status }).map(() => undefined),
+            ) =>
+              recoveryRefs
+                .appendLifecycle(record, { status })
+                .map(() => undefined),
           };
           const recovery = new PiChildRecoveryCoordinator({
             history: historyPort,
@@ -5374,9 +4871,9 @@ export function createPiExtension(
               // back to its previous owner (possibly `pi-vim`) and no stale
               // component/editor state survives into the next activation.
               settleCustomInspection?.();
-              closeChildOverlay();
+              closeChildOverlay(childOverlayCell, overlayKeysCell);
               childSlots.assignTree(inspectionRegistry.snapshotLive());
-              void openTask13ChildPicker(ctx, generation.id);
+              void childInspectionRuntime.openChildPicker(ctx, generation.id);
             },
             onViewChange: () => {
               customInspectionComponent?.invalidate();
@@ -5393,7 +4890,11 @@ export function createPiExtension(
         ) => {
           // Task 13: capture the public live keybindings object. Shortcuts are
           // planned/applied exactly once when getEffectiveConfig() is present.
-          maybeRegisterOverlayKeys(pi, keybindings, generation.id);
+          childInspectionRuntime.maybeRegisterOverlayKeys(
+            pi,
+            keybindings,
+            generation.id,
+          );
           return new WeaveChildInspectionEditor(
             tui,
             theme,
@@ -5468,7 +4969,10 @@ export function createPiExtension(
             ctx.ui.notify("Child inspection requires Pi TUI mode.", "warning");
             return;
           }
-          if (childOverlayCell.open && childOverlayCell.component !== undefined) {
+          if (
+            childOverlayCell.open &&
+            childOverlayCell.component !== undefined
+          ) {
             childOverlayCell.component.invalidate();
             childOverlayCell.tui?.requestRender();
             return;
@@ -5500,8 +5004,12 @@ export function createPiExtension(
               childOverlayCell.tui = tui as { requestRender(): void };
               // Also capture keybindings here so pi-vim-yielded sessions still
               // register Task 13 shortcuts the first time the overlay mounts.
-              maybeRegisterOverlayKeys(pi, keybindings, generation.id);
-              bindOverlayKeyInterceptor(generation.id);
+              childInspectionRuntime.maybeRegisterOverlayKeys(
+                pi,
+                keybindings,
+                generation.id,
+              );
+              childInspectionRuntime.bindOverlayKeyInterceptor(generation.id);
               const settle = (): void => {
                 if (finished) return;
                 finish();
@@ -5548,7 +5056,7 @@ export function createPiExtension(
               mountNativeOverlay();
               return;
             }
-            closeChildOverlay();
+            closeChildOverlay(childOverlayCell, overlayKeysCell);
             if (isFallbackRequired(opened.error)) {
               activateCustomEditorInspection(opened.error.metadata.childId);
               return;
@@ -5811,234 +5319,15 @@ export function createPiExtension(
       return undefined;
     });
 
-    /**
-     * Guards one awaited, vetoable Pi session-transition surface.
-     *
-     * Order is fixed and observable: count owned descendants, prompt (default
-     * **Stay**), cancel the whole owned subtree, drain final child events,
-     * write settlement metadata back to the *origin* parent, and only then
-     * allow the transition. Anything that fails vetoes with a bounded,
-     * secret-free diagnostic and leaves the destination untouched.
-     *
-     * Resolves `true` to allow the transition and `false` to veto it.
-     */
-    const guardSessionTransition = async (
-      surface: string,
-      ctx: PiSessionContext | undefined,
-    ): Promise<boolean> => {
-      const controller = delegationControllerCell.controller;
-      if (controller === undefined) return true;
-      const pending = controller.countUnsettledDescendants();
-      // Fast path: nothing owned is running or queued, so the transition is
-      // allowed immediately - no prompt, no notice, and nothing copied into
-      // the destination session.
-      if (pending === 0) return true;
-      if (ctx === undefined || !ctx.hasUI) {
-        // No dialog-capable UI to ask through. Fail closed: silently killing a
-        // live subtree is worse than refusing the transition.
-        sessionTransitionNoticeCell.value = SESSION_TRANSITION_NO_UI_NOTICE;
-        notifySessionTransition(ctx, SESSION_TRANSITION_NO_UI_NOTICE);
-        return false;
-      }
-      // `Stay` is listed first so it is the pre-selected default; the prompt
-      // text carries the description the two short choices deliberately omit.
-      const asked = await ResultAsync.fromPromise(
-        Promise.resolve(
-          ctx.ui.select(
-            `Weave: ${pending} delegated ${pending === 1 ? "child is" : "children are"} still active (${surface}). Proceed cancels them; Stay keeps this session.`,
-            [SESSION_TRANSITION_STAY, SESSION_TRANSITION_PROCEED],
-          ),
-        ),
-        () => SESSION_TRANSITION_PROMPT_FAILED_NOTICE,
-      );
-      if (asked.isErr()) {
-        // A rejected prompt is never an approval. Fail closed with a bounded,
-        // secret-free notice built from a fixed string, never the rejection.
-        sessionTransitionNoticeCell.value = asked.error;
-        notifySessionTransition(ctx, asked.error);
-        return false;
-      }
-      // `select` resolves `undefined` on cancel or timeout. Both mean Stay:
-      // Stay is the default and never cancels anything.
-      if (asked.value !== SESSION_TRANSITION_PROCEED) return false;
-      const settled = await ResultAsync.fromPromise(
-        Promise.resolve(controller.settleForTransition()),
-        () =>
-          // A rejected controller call is a failed settlement, never a silent
-          // allow. The rejection value itself never reaches the user.
-          makeChildAbortFailedFailure("", "transition-settlement-rejected"),
-      ).andThen((result) => result);
-      return settled.match(
-        () => {
-          sessionTransitionNoticeCell.value = undefined;
-          return true;
-        },
-        (failure) => {
-          // `safeMessage` and `code` are the closed, secret-free diagnostic
-          // surface of every adapter failure.
-          const notice = `Weave: ${failure.safeMessage} (${failure.code})`;
-          sessionTransitionNoticeCell.value = notice;
-          notifySessionTransition(ctx, notice);
-          return false;
-        },
-      );
-    };
-
-    /**
-     * Wraps one Pi transition pre-hook. A rejection anywhere inside the guard
-     * vetoes: an unhandled pre-hook rejection must never be read by Pi as
-     * permission to transition.
-     */
-    const guardedTransitionHook =
-      (surface: (event: unknown) => string) =>
-      async (
-        event: unknown,
-        ctx?: PiSessionContext,
-      ): Promise<{ readonly cancel: true } | undefined> => {
-        const guarded = await ResultAsync.fromPromise(
-          guardSessionTransition(surface(event), ctx),
-          () => SESSION_TRANSITION_GUARD_FAILED_NOTICE,
-        );
-        if (guarded.isErr()) {
-          sessionTransitionNoticeCell.value = guarded.error;
-          notifySessionTransition(ctx, guarded.error);
-          return { cancel: true };
-        }
-        return guarded.value ? undefined : { cancel: true };
-      };
-
     // Every Pi 0.83 session-transition surface that exposes an awaited,
-    // vetoable pre-event is registered here: `/new` and `/resume`
-    // (`session_before_switch`), `/fork` and `/clone` (`session_before_fork`,
-    // distinguished by `position`), and `/tree` branch navigation
-    // (`session_before_tree`). Pi exposes no other awaited pre-transition
-    // event, so no surface is left silently unguarded.
-    pi.on(
-      "session_before_switch",
-      guardedTransitionHook(
-        (event) => readStringField(event, "reason") ?? "new session",
-      ),
-    );
-
-    pi.on(
-      "session_before_fork",
-      guardedTransitionHook((event) =>
-        readStringField(event, "position") === "at" ? "clone" : "fork",
-      ),
-    );
-
-    pi.on(
-      "session_before_tree",
-      guardedTransitionHook(() => "tree navigation"),
-    );
+    // vetoable pre-event is registered here via the transition runtime.
+    sessionTransitionRuntime.register(pi);
 
     pi.on("session_shutdown", async (_event, ctx?: PiSessionContext) => {
-      // Revoke synchronously. Everything used after the first await is a local
-      // snapshot of the generation being shut down, so a replacement startup
-      // can safely publish new state while best-effort cleanup continues.
-      sessionStartSequence += 1;
-      // Settled here for the same reason as in `session_start`: a shutdown
-      // that leaves the overlay mounted would also leave its promise pending.
-      closePlanTaskOverlay();
-      clearChildOverlayGeneration();
-      controller.shutdown();
-      lastBootActivationFailure = undefined;
-      const shuttingSession = activeSession;
-      const shuttingWorkflowController = workflowControllerCell.controller;
-      const shuttingWorkflowInstance = activeWorkflowInstanceCell.value;
-      const shuttingTelemetry = telemetryCell.telemetry;
-      const shuttingResources = generationResourcesCell.owner;
-      activeSession = undefined;
-      generationResourcesCell.owner = undefined;
-      inspectionRegistryCell.registry?.closeGeneration();
-      inspectionRegistryCell.registry = undefined;
-      recoveryCoordinatorCell.coordinator = undefined;
-      // Captured before the cell is revoked: the bounded graceful-cancel and
-      // force-stop below runs on this snapshot, so a replacement startup can
-      // publish a new controller while the old tree is still being stopped.
-      const shuttingDelegation = delegationControllerCell.controller;
-      delegationControllerCell.controller = undefined;
-      delegationControllerCell.generationId = undefined;
-      clearThreadSources();
-      threadSourcesRequired = false;
-      sessionTransitionNoticeCell.value = undefined;
-      workflowControllerCell.controller = undefined;
-      planStateProviderCell.value = undefined;
-      activeWorkflowInstanceCell.value = undefined;
-      currentWorkflows = {};
-      treeSelectionCell.selectedId = ROOT_NODE_ID;
-      telemetryCell.telemetry = undefined;
-      const cancelDirectStep =
-        directStepChildRegistry.cancel() ?? okAsync(undefined);
-      void cancelDirectStep.match(
-        () => undefined,
-        () => undefined,
-      );
-
-      ctx?.ui.setStatus("weave", undefined);
-      ctx?.ui.setStatus(WEAVE_AGENT_STATUS_KEY, undefined);
-      clearActivePlanSurfaces(ctx);
-      ctx?.ui.setWidget(WEAVE_PLAN_WIDGET_KEY, undefined);
-      ctx?.ui.setStatus(WEAVE_WORKFLOW_TASK_STATUS_KEY, undefined);
-      const editorInstall = editorInstallCell;
-      if (editorInstall !== undefined) {
-        if (
-          editorInstall.ctx.ui.getEditorComponent?.() === editorInstall.factory
-        ) {
-          editorInstall.ctx.ui.setEditorComponent?.(
-            editorInstall.previousFactory,
-          );
-        }
-        editorInstallCell = undefined;
-      }
-      childModeState.runtime?.dispose();
-
-      // Quit/reload shutdown bound: a graceful cancellation window for the
-      // whole owned subtree, then an unconditional force-stop of whatever is
-      // left, so no residual child process, lease, or capacity survives. The
-      // report is a value; expected stop failures are never thrown.
-      if (shuttingDelegation !== undefined) {
-        await shuttingDelegation.shutdownWithinBudget().match(
-          () => undefined,
-          () => undefined,
-        );
-      }
-
-      if (
-        shuttingWorkflowInstance?.leaseId !== undefined &&
-        shuttingWorkflowController !== undefined
-      ) {
-        const observed = await shuttingWorkflowController.observe({
-          workflowInstanceId: shuttingWorkflowInstance.workflowInstanceId,
-          leaseId: shuttingWorkflowInstance.leaseId,
-          harnessName: "pi",
-          agentName:
-            shuttingSession?.primarySession.getCurrent()?.descriptor.name ??
-            "workflow-controller",
-          sessionStatus: "terminated",
-        });
-        if (observed.isErr()) {
-          deps.logger.warn(
-            { failure: observed.error },
-            "observeSession failed; degrading",
-          );
-        }
-      }
-
-      if (shuttingTelemetry !== undefined) {
-        await shuttingTelemetry
-          .recordJournalEvent({
-            family: "generation",
-            event: "shutdown",
-            severity: "info",
-          })
-          .orElse(() => okAsync(undefined));
-      }
-      if (shuttingResources !== undefined) {
-        await shuttingResources.dispose();
-      } else if (shuttingTelemetry !== undefined) {
-        await shuttingTelemetry.shutdown().orElse(() => okAsync(undefined));
-      }
+      // Revoke synchronously, clear UI, then await bounded child stop. The
+      // runtime owns the order so a replacement startup can publish new state
+      // while best-effort cleanup continues on the captured snapshot.
+      await sessionTransitionRuntime.runBoundedShutdown(ctx);
     });
   };
 }
