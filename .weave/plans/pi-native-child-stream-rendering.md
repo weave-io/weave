@@ -80,7 +80,7 @@ Dirty-worktree rule: many files are dirty for unrelated in-flight work (OpenCode
     - ADR 0014 exists, is internally consistent with the confirmed design, and links ADR 0013, Spec 33, `docs/adapters/pi.md`, `docs/architecture/adapter-boundary.md`.
     - `bun run docs:check-links` passes.
 
-- [ ] 2. Rewrite Spec 33 sections and add the security threat model
+- [x] 2. Rewrite Spec 33 sections and add the security threat model
   - **What**: Update `docs/specs/33-spec-pi-adapter/33-spec-pi-adapter.md` normative sections to the new contract (session layout, refs, cache, compact block, overlay, keys, picker, thread lifecycle, result contract, transitions, diagnostics codes, CLI, capability probes), and add a threat-model document covering path/session authority.
   - **Files**: `docs/specs/33-spec-pi-adapter/33-spec-pi-adapter.md`, `docs/specs/33-spec-pi-adapter/33-threat-model.md` (new), `docs/specs/33-spec-pi-adapter/33-smoke-checklist.md`.
   - **Depends on**: Task 1.
