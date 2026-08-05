@@ -140,10 +140,9 @@ function mapNative(
 ): ChildOverlayEntry[] {
   const mapped: ChildOverlayEntry[] = [];
   for (let index = 0; index < native.length; index += 1) {
-    const entry = mapNativeSessionEntryToOverlay(
-      native[index],
-      index,
-    )._unsafeUnwrap();
+    const result = mapNativeSessionEntryToOverlay(native[index], index);
+    expect(result.isOk()).toBe(true);
+    const entry = result._unsafeUnwrap();
     if (entry !== undefined) mapped.push(entry);
   }
   return mapped;
@@ -358,6 +357,139 @@ describe("mapNativeSessionEntryToOverlay", () => {
     expect(tool).toBeDefined();
     expect(JSON.stringify(tool)).toContain("image");
   });
+
+  it("derives replay steps large enough for every admitted content block plus framing", () => {
+    expect(CHILD_OVERLAY_BOUNDS.maxEntryReplaySteps).toBe(
+      CHILD_OVERLAY_BOUNDS.maxEntryContentBlocks + 3,
+    );
+  });
+
+  it("reconstructs 15 tool calls/results plus final text/image with streaming=false", () => {
+    const toolCount = 15;
+    const assistantContent: unknown[] = [];
+    for (let i = 0; i < toolCount; i += 1) {
+      assistantContent.push({
+        type: "toolCall",
+        id: `call-${i}`,
+        name: `tool-${i}`,
+        arguments: { i },
+      });
+    }
+    assistantContent.push({ type: "text", text: "final answer" });
+    assistantContent.push({
+      type: "image",
+      mimeType: "image/webp",
+    });
+
+    const native: unknown[] = [assistantMessage("bound-asst", assistantContent)];
+    for (let i = 0; i < toolCount; i += 1) {
+      native.push(
+        toolResultMessage(`tr-${i}`, `call-${i}`, [
+          { type: "text", text: `result-${i}` },
+        ]),
+      );
+    }
+
+    const mapped = mapNative(native);
+    const assistant = mapped[0];
+    expect(assistant?.kind).toBe("assistant");
+    expect(assistant?.text).toContain("final answer");
+    expect(
+      (assistant?.replay ?? []).some(
+        (step) => step.kind === "event" && step.event.type === "message_end",
+      ),
+    ).toBe(true);
+
+    const transcript = transcriptFromOverlayEntries(mapped);
+    const tools = transcript.entries.filter((entry) => entry.kind === "tool");
+    expect(tools.length).toBe(toolCount);
+    for (let i = 0; i < toolCount; i += 1) {
+      const tool = tools.find(
+        (entry) => "toolCallId" in entry && entry.toolCallId === `call-${i}`,
+      );
+      expect(tool).toBeDefined();
+      expect(tool && "state" in tool ? tool.state : undefined).toBe("result");
+      expect(tool && "toolName" in tool ? tool.toolName : undefined).toBe(
+        `tool-${i}`,
+      );
+    }
+    const asst = transcript.entries.find((entry) => entry.kind === "assistant");
+    expect(asst).toBeDefined();
+    expect(asst && "text" in asst ? asst.text : undefined).toBe("final answer");
+    expect(asst && "streaming" in asst ? asst.streaming : undefined).toBe(
+      false,
+    );
+    expect(transcript.entries.some((entry) => entry.kind === "image")).toBe(
+      true,
+    );
+  });
+
+  it("reconstructs an assistant at the content-block bound with streaming=false", () => {
+    const bound = CHILD_OVERLAY_BOUNDS.maxEntryContentBlocks;
+    const content: unknown[] = [];
+    for (let i = 0; i < bound - 2; i += 1) {
+      content.push({
+        type: "toolCall",
+        id: `bound-call-${i}`,
+        name: `bound-tool-${i}`,
+        arguments: {},
+      });
+    }
+    content.push({ type: "text", text: "bound terminal" });
+    content.push({ type: "image", mimeType: "image/png" });
+    expect(content.length).toBe(bound);
+
+    const mapped = mapNativeSessionEntryToOverlay(
+      assistantMessage("bound-max", content),
+      0,
+    );
+    expect(mapped.isOk()).toBe(true);
+    const entry = mapped._unsafeUnwrap();
+    expect(entry?.replay?.length).toBeLessThanOrEqual(
+      CHILD_OVERLAY_BOUNDS.maxEntryReplaySteps,
+    );
+    expect(
+      (entry?.replay ?? []).some(
+        (step) => step.kind === "event" && step.event.type === "message_end",
+      ),
+    ).toBe(true);
+
+    const transcript = transcriptFromOverlayEntries(
+      entry === undefined ? [] : [entry],
+    );
+    const tools = transcript.entries.filter((item) => item.kind === "tool");
+    expect(tools.length).toBe(bound - 2);
+    const asst = transcript.entries.find((item) => item.kind === "assistant");
+    expect(asst && "streaming" in asst ? asst.streaming : undefined).toBe(
+      false,
+    );
+    expect(asst && "text" in asst ? asst.text : undefined).toBe(
+      "bound terminal",
+    );
+    expect(transcript.entries.some((item) => item.kind === "image")).toBe(true);
+  });
+
+  it("rejects max+1 content blocks with a typed capacity error", () => {
+    const overflow = CHILD_OVERLAY_BOUNDS.maxEntryContentBlocks + 1;
+    const content: unknown[] = [];
+    for (let i = 0; i < overflow; i += 1) {
+      content.push({
+        type: "toolCall",
+        id: `overflow-${i}`,
+        name: "read",
+        arguments: {},
+      });
+    }
+    const mapped = mapNativeSessionEntryToOverlay(
+      assistantMessage("overflow", content),
+      0,
+    );
+    expect(mapped.isErr()).toBe(true);
+    expect(mapped._unsafeUnwrapErr()).toEqual({
+      type: "OverlayCapacityExceeded",
+      operation: "entry-content-blocks",
+    });
+  });
 });
 
 describe("ChildOverlayController", () => {
@@ -513,6 +645,196 @@ describe("ChildOverlayController", () => {
     expect(kinds).not.toContain("unknown");
     // Expansion state survives the rebuild for every retained entry.
     expect(view.transcript.entries.every((entry) => entry.expanded)).toBe(true);
+  });
+
+  it("preserves live merge start/end terminals at the replay bound without false streaming", async () => {
+    const source = createMemoryChildOverlaySource([
+      child({
+        childId: "live-merge-bound",
+        status: "live",
+        generationId: "gen-1",
+        entries: [],
+      }),
+    ]);
+    const overlay = createChildOverlayController(source, {
+      pageSize: 10,
+      windowCap: 64,
+    });
+    await mustOpen(overlay, "live-merge-bound");
+
+    overlay
+      .applyLiveEvent({
+        type: "message_start",
+        message: { id: "msg-bound", role: "assistant" },
+      })
+      ._unsafeUnwrap();
+
+    const toolCount = 15;
+    for (let i = 0; i < toolCount; i += 1) {
+      overlay
+        .applyLiveEvent({
+          type: "tool_call",
+          toolCallId: `live-call-${i}`,
+          toolName: `live-tool-${i}`,
+        })
+        ._unsafeUnwrap();
+      overlay
+        .applyLiveEvent({
+          type: "tool_result",
+          toolCallId: `live-call-${i}`,
+          result: { content: [{ type: "text", text: `live-result-${i}` }] },
+        })
+        ._unsafeUnwrap();
+    }
+    overlay
+      .applyLiveEvent({ type: "image", mimeType: "image/png" })
+      ._unsafeUnwrap();
+    const view = overlay
+      .applyLiveEvent({
+        type: "message_end",
+        message: {
+          id: "msg-bound",
+          role: "assistant",
+          content: "live final",
+        },
+      })
+      ._unsafeUnwrap();
+
+    const assistantEntry = view.entries.find((entry) => entry.id === "msg-bound");
+    expect(assistantEntry).toBeDefined();
+    const replay = assistantEntry?.replay ?? [];
+    expect(replay.length).toBeLessThanOrEqual(
+      CHILD_OVERLAY_BOUNDS.maxEntryReplaySteps,
+    );
+    expect(
+      replay.some(
+        (step) => step.kind === "event" && step.event.type === "message_start",
+      ),
+    ).toBe(true);
+    expect(
+      replay.some(
+        (step) => step.kind === "event" && step.event.type === "message_end",
+      ),
+    ).toBe(true);
+
+    const asst = view.transcript.entries.find(
+      (entry) => entry.kind === "assistant" && entry.messageId === "msg-bound",
+    );
+    expect(asst && "streaming" in asst ? asst.streaming : undefined).toBe(
+      false,
+    );
+    expect(asst && "text" in asst ? asst.text : undefined).toBe("live final");
+
+    const tools = view.transcript.entries.filter(
+      (entry) => entry.kind === "tool",
+    );
+    expect(tools.length).toBe(toolCount);
+    for (let i = 0; i < toolCount; i += 1) {
+      expect(
+        tools.some(
+          (entry) =>
+            "toolCallId" in entry && entry.toolCallId === `live-call-${i}`,
+        ),
+      ).toBe(true);
+    }
+
+    // Rebuild from the window must keep the terminal (no false streaming).
+    const rebuilt = transcriptFromOverlayEntries(view.entries);
+    const rebuiltAsst = rebuilt.entries.find(
+      (entry) => entry.kind === "assistant" && entry.messageId === "msg-bound",
+    );
+    expect(
+      rebuiltAsst && "streaming" in rebuiltAsst
+        ? rebuiltAsst.streaming
+        : undefined,
+    ).toBe(false);
+    expect(
+      rebuiltAsst && "text" in rebuiltAsst ? rebuiltAsst.text : undefined,
+    ).toBe("live final");
+  });
+
+  it("degrades live assistant merge over the replay bound without false streaming", async () => {
+    const source = createMemoryChildOverlaySource([
+      child({
+        childId: "live-merge-overflow",
+        status: "live",
+        generationId: "gen-1",
+        entries: [],
+      }),
+    ]);
+    const overlay = createChildOverlayController(source, {
+      pageSize: 10,
+      windowCap: 256,
+    });
+    await mustOpen(overlay, "live-merge-overflow");
+
+    const messageId = "msg-overflow";
+    overlay
+      .applyLiveEvent({
+        type: "message_start",
+        message: { id: messageId, role: "assistant" },
+      })
+      ._unsafeUnwrap();
+
+    // Force many unique replay steps onto the same assistant entry id by
+    // projecting thinking/text events that share the assistant id via merge
+    // is not how live works — instead overfill a single tool entry's replay
+    // merge, then confirm assistant terminals still settle cleanly.
+    const overfill = CHILD_OVERLAY_BOUNDS.maxEntryReplaySteps + 4;
+    for (let i = 0; i < overfill; i += 1) {
+      overlay
+        .applyLiveEvent({
+          type: "tool_partial_result",
+          toolCallId: "merge-tool",
+          toolName: "read",
+          partialResult: { content: [{ type: "text", text: `partial-${i}` }] },
+        })
+        ._unsafeUnwrap();
+    }
+    overlay
+      .applyLiveEvent({
+        type: "tool_result",
+        toolCallId: "merge-tool",
+        result: { content: [{ type: "text", text: "done" }] },
+      })
+      ._unsafeUnwrap();
+
+    const view = overlay
+      .applyLiveEvent({
+        type: "message_end",
+        message: { id: messageId, role: "assistant", content: "overflow ok" },
+      })
+      ._unsafeUnwrap();
+
+    const toolEntry = view.entries.find((entry) => entry.id === "merge-tool");
+    expect(toolEntry).toBeDefined();
+    expect((toolEntry?.replay ?? []).length).toBeLessThanOrEqual(
+      CHILD_OVERLAY_BOUNDS.maxEntryReplaySteps,
+    );
+
+    const assistantEntry = view.entries.find((entry) => entry.id === messageId);
+    expect(
+      (assistantEntry?.replay ?? []).some(
+        (step) => step.kind === "event" && step.event.type === "message_end",
+      ),
+    ).toBe(true);
+
+    const asst = view.transcript.entries.find(
+      (entry) => entry.kind === "assistant" && entry.messageId === messageId,
+    );
+    expect(asst && "streaming" in asst ? asst.streaming : undefined).toBe(
+      false,
+    );
+
+    const rebuilt = transcriptFromOverlayEntries(view.entries);
+    const rebuiltAsst = rebuilt.entries.find(
+      (entry) => entry.kind === "assistant" && entry.messageId === messageId,
+    );
+    expect(
+      rebuiltAsst && "streaming" in rebuiltAsst
+        ? rebuiltAsst.streaming
+        : undefined,
+    ).toBe(false);
   });
 
   it("pages historical native entries without losing kinds or expansion", async () => {

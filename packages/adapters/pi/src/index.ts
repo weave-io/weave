@@ -321,6 +321,7 @@ export type {
   ChildOverlayEntry,
   ChildOverlayEntryKind,
   ChildOverlayError,
+  ChildOverlayMappingError,
   ChildOverlayFallbackMetadata,
   ChildOverlayFallbackReason,
   ChildOverlayFallbackRequired,

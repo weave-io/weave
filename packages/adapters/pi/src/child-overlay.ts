@@ -59,6 +59,17 @@ import type {
 // Bounds
 // ---------------------------------------------------------------------------
 
+/**
+ * Admitted content-block ceiling for one native message entry.
+ *
+ * Replay framing needs headroom beyond this: `message_start`, an optional
+ * standalone `text` step, and terminal `message_end` (tool call/result facts
+ * expand 1:1 from admitted blocks and must not crowd out the terminal).
+ */
+const MAX_ENTRY_CONTENT_BLOCKS = 32;
+/** `message_start` + `text` + `message_end` framing beside admitted blocks. */
+const ENTRY_REPLAY_FRAME_STEPS = 3;
+
 export const CHILD_OVERLAY_BOUNDS = Object.freeze({
   /** Entries loaded by one page request. */
   defaultPageSize: 50,
@@ -84,10 +95,16 @@ export const CHILD_OVERLAY_BOUNDS = Object.freeze({
   maxRuns: 64,
   /** Ceiling on nested hierarchy depth reported in descriptors. */
   maxHierarchyDepth: 16,
-  /** Ceiling on replay steps retained per overlay entry. */
-  maxEntryReplaySteps: 16,
   /** Ceiling on content blocks read from one native message entry. */
-  maxEntryContentBlocks: 32,
+  maxEntryContentBlocks: MAX_ENTRY_CONTENT_BLOCKS,
+  /**
+   * Ceiling on replay steps retained per overlay entry.
+   *
+   * Derived so every admitted content block plus start/text/end framing fits;
+   * mapping must fail typed when input would exceed either ceiling rather than
+   * silently drop `message_end` (which leaves assistants falsely streaming).
+   */
+  maxEntryReplaySteps: MAX_ENTRY_CONTENT_BLOCKS + ENTRY_REPLAY_FRAME_STEPS,
 });
 
 const SCROLL_KEYS = {
@@ -294,6 +311,11 @@ export interface ChildOverlayFallbackRequired {
   readonly transcript: PiChildTranscriptState;
 }
 
+export type ChildOverlayMappingError = {
+  readonly type: "OverlayCapacityExceeded";
+  readonly operation: "entry-content-blocks" | "entry-replay-steps";
+};
+
 export type ChildOverlayError =
   | ChildOverlaySourceError
   | { readonly type: "OverlayNotOpen" }
@@ -482,28 +504,36 @@ function imageMimeType(block: Record<string, unknown>): string | undefined {
  * bytes, so an image result is preserved as a typed placeholder with its MIME
  * type. Text is bounded by {@link boundText}.
  */
-function toolResultContent(value: unknown): {
-  readonly content: readonly NativeResultBlock[];
-  readonly text: string;
-} {
+function toolResultContent(
+  value: unknown,
+): Result<
+  { readonly content: readonly NativeResultBlock[]; readonly text: string },
+  ChildOverlayMappingError
+> {
   if (typeof value === "string") {
     const text = boundText(value);
-    return { content: [{ type: "text", text }], text };
+    return ok({ content: [{ type: "text", text }], text });
   }
   const record = recordOf(value);
   if (record !== undefined && Array.isArray(record.content))
     return toolResultContent(record.content);
   if (record !== undefined) {
     const text = boundText(nonEmptyString(record.text) ?? "");
-    return {
+    return ok({
       content: text.length > 0 ? [{ type: "text", text }] : [],
       text,
-    };
+    });
   }
-  if (!Array.isArray(value)) return { content: [], text: "" };
+  if (!Array.isArray(value)) return ok({ content: [], text: "" });
+  if (value.length > CHILD_OVERLAY_BOUNDS.maxEntryContentBlocks) {
+    return err({
+      type: "OverlayCapacityExceeded",
+      operation: "entry-content-blocks",
+    });
+  }
   const content: NativeResultBlock[] = [];
   let text = "";
-  for (const item of value.slice(0, CHILD_OVERLAY_BOUNDS.maxEntryContentBlocks)) {
+  for (const item of value) {
     if (typeof item === "string") {
       text += item;
       content.push({ type: "text", text: boundText(item) });
@@ -524,7 +554,7 @@ function toolResultContent(value: unknown): {
     text += blockText;
     content.push({ type: "text", text: boundText(blockText) });
   }
-  return { content, text: boundText(text) };
+  return ok({ content, text: boundText(text) });
 }
 
 /**
@@ -533,28 +563,44 @@ function toolResultContent(value: unknown): {
  * (text / error / image) and standalone images. Nothing is flattened into an
  * opaque `unknown` fact and no raw host payload is retained.
  */
-function nativeMessageParts(message: unknown): NativeMessageParts {
+function nativeMessageParts(
+  message: unknown,
+): Result<NativeMessageParts, ChildOverlayMappingError> {
   const record = recordOf(message);
   const role = nonEmptyString(record?.role);
   const content = record?.content;
   if (typeof content === "string") {
-    return {
+    return ok({
       role,
       text: boundText(content),
       thinking: [],
       toolCalls: [],
       toolResults: [],
       images: [],
-    };
+    });
   }
   const thinking: string[] = [];
   const toolCalls: NativeToolCallBlock[] = [];
   const toolResults: NativeToolResultBlock[] = [];
   const images: (string | undefined)[] = [];
   let text = "";
-  const blocks = Array.isArray(content)
-    ? content.slice(0, CHILD_OVERLAY_BOUNDS.maxEntryContentBlocks)
-    : [];
+  if (content !== undefined && !Array.isArray(content)) {
+    return ok({
+      role,
+      text: "",
+      thinking: [],
+      toolCalls: [],
+      toolResults: [],
+      images: [],
+    });
+  }
+  const blocks = Array.isArray(content) ? content : [];
+  if (blocks.length > CHILD_OVERLAY_BOUNDS.maxEntryContentBlocks) {
+    return err({
+      type: "OverlayCapacityExceeded",
+      operation: "entry-content-blocks",
+    });
+  }
   for (const item of blocks) {
     if (typeof item === "string") {
       text += item;
@@ -593,11 +639,12 @@ function nativeMessageParts(message: unknown): NativeMessageParts {
       const normalized = toolResultContent(
         block.content ?? block.output ?? block.result,
       );
+      if (normalized.isErr()) return err(normalized.error);
       toolResults.push({
         toolCallId: safeEntryId(rawId, `tool-${toolResults.length}`),
         isError: block.isError === true || block.is_error === true,
-        content: normalized.content,
-        text: normalized.text,
+        content: normalized.value.content,
+        text: normalized.value.text,
       });
       continue;
     }
@@ -608,14 +655,14 @@ function nativeMessageParts(message: unknown): NativeMessageParts {
     const blockText = nonEmptyString(block.text);
     if (blockText !== undefined) text += blockText;
   }
-  return {
+  return ok({
     role,
     text: boundText(text),
     thinking,
     toolCalls,
     toolResults,
     images,
-  };
+  });
 }
 
 /** Validates a synthesized child event through the shared bounded schema. */
@@ -628,16 +675,105 @@ function replayEvent(candidate: unknown): ChildOverlayReplayStep | undefined {
 function pushReplayEvent(
   steps: ChildOverlayReplayStep[],
   candidate: unknown,
-): void {
-  if (steps.length >= CHILD_OVERLAY_BOUNDS.maxEntryReplaySteps) return;
+): Result<void, ChildOverlayMappingError> {
+  if (steps.length >= CHILD_OVERLAY_BOUNDS.maxEntryReplaySteps) {
+    return err({
+      type: "OverlayCapacityExceeded",
+      operation: "entry-replay-steps",
+    });
+  }
   const step = replayEvent(candidate);
   if (step !== undefined) steps.push(step);
+  return ok(undefined);
+}
+
+function isReplayMessageStart(step: ChildOverlayReplayStep): boolean {
+  return step.kind === "event" && step.event.type === "message_start";
+}
+
+function isReplayMessageEnd(step: ChildOverlayReplayStep): boolean {
+  return step.kind === "event" && step.event.type === "message_end";
+}
+
+function replayStepKey(step: ChildOverlayReplayStep): string {
+  if (step.kind === "input") return `input:${step.input}:${step.text}`;
+  const event = step.event as unknown as Record<string, unknown>;
+  const type = typeof event.type === "string" ? event.type : "event";
+  const message = recordOf(event.message);
+  const toolCallId = nonEmptyString(event.toolCallId) ?? "";
+  const messageId = nonEmptyString(message?.id) ?? "";
+  const text = nonEmptyString(event.text) ?? "";
+  const mimeType = nonEmptyString(event.mimeType) ?? "";
+  // Distinguish successive tool partial/result payloads so live merges keep
+  // every admitted unique fact rather than collapsing them by toolCallId.
+  const payload =
+    event.partialResult !== undefined ||
+    event.result !== undefined ||
+    event.error !== undefined
+      ? JSON.stringify({
+          partialResult: event.partialResult ?? null,
+          result: event.result ?? null,
+          error: event.error ?? null,
+        })
+      : "";
+  return `${type}:${messageId}:${toolCallId}:${text}:${mimeType}:${payload}`;
+}
+
+/**
+ * Deduplicates replay steps while preserving first-seen order so live merges
+ * keep every admitted unique fact (call → partial → result) once.
+ */
+function uniqueReplaySteps(
+  steps: readonly ChildOverlayReplayStep[],
+): ChildOverlayReplayStep[] {
+  const seen = new Set<string>();
+  const unique: ChildOverlayReplayStep[] = [];
+  for (const step of steps) {
+    const key = replayStepKey(step);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(step);
+  }
+  return unique;
+}
+
+/**
+ * Explicit capacity degrade for live merge: keep `message_start`, as many
+ * unique middle facts as fit, and always retain terminal `message_end` when
+ * present so rebuild never leaves an assistant falsely streaming.
+ */
+function degradeReplaySteps(
+  steps: readonly ChildOverlayReplayStep[],
+  cap: number,
+): readonly ChildOverlayReplayStep[] {
+  if (cap <= 0) return [];
+  const start = steps.find(isReplayMessageStart);
+  const end = [...steps].reverse().find(isReplayMessageEnd);
+  const middle = steps.filter(
+    (step) => !isReplayMessageStart(step) && !isReplayMessageEnd(step),
+  );
+  if (end !== undefined && cap === 1) return [end];
+  const reserved = (start !== undefined ? 1 : 0) + (end !== undefined ? 1 : 0);
+  const middleBudget = Math.max(0, cap - reserved);
+  // Prefer the most recent unique facts when the middle must shrink.
+  const keptMiddle =
+    middle.length <= middleBudget
+      ? middle
+      : middle.slice(middle.length - middleBudget);
+  return [
+    ...(start !== undefined ? [start] : []),
+    ...keptMiddle,
+    ...(end !== undefined ? [end] : []),
+  ];
 }
 
 /**
  * Concatenates replay steps for an entry replaced in place (a tool call that
  * later gains partial results and a terminal result, or a message that ends).
- * Bounded by keeping the opening step and the most recent steps.
+ *
+ * Under the bound every unique admitted fact is kept. Over the bound the merge
+ * degrades explicitly while preserving start/end terminals — never silently
+ * truncates away `message_end`.
  */
 function mergeReplaySteps(
   existing: readonly ChildOverlayReplayStep[] | undefined,
@@ -645,12 +781,10 @@ function mergeReplaySteps(
 ): readonly ChildOverlayReplayStep[] | undefined {
   if (existing === undefined) return incoming;
   if (incoming === undefined) return existing;
-  const merged = [...existing, ...incoming];
+  const merged = uniqueReplaySteps([...existing, ...incoming]);
   const cap = CHILD_OVERLAY_BOUNDS.maxEntryReplaySteps;
   if (merged.length <= cap) return merged;
-  const first = merged[0];
-  const tail = merged.slice(merged.length - (cap - 1));
-  return first === undefined ? tail : [first, ...tail];
+  return degradeReplaySteps(merged, cap);
 }
 
 
@@ -664,24 +798,29 @@ function safeEntryId(value: string, fallback: string): string {
  * Maps one host native session entry into zero or one overlay facts without
  * retaining the raw host payload. Paths and absolute locations are never
  * copied into the result.
+ *
+ * Capacity overflow (more content blocks or replay steps than the derived
+ * bounds allow) fails typed via {@link ChildOverlayMappingError} instead of
+ * silently truncating admitted facts or dropping `message_end`.
  */
 export function mapNativeSessionEntryToOverlay(
   entry: unknown,
   sequence: number,
-): Result<ChildOverlayEntry | undefined, never> {
+): Result<ChildOverlayEntry | undefined, ChildOverlayMappingError> {
   const message = NativeMessageSchema.safeParse(entry);
   if (message.success) {
     const id = safeEntryId(message.data.id, `entry-${sequence}`);
     const parts = nativeMessageParts(message.data.message);
-    if (parts.role === "assistant")
-      return ok(assistantEntryFromParts(id, sequence, parts));
-    if (parts.role === "user")
-      return ok(userEntryFromParts(id, sequence, parts));
+    if (parts.isErr()) return err(parts.error);
+    if (parts.value.role === "assistant")
+      return assistantEntryFromParts(id, sequence, parts.value);
+    if (parts.value.role === "user")
+      return userEntryFromParts(id, sequence, parts.value);
     return ok({
       id,
       sequence,
       kind: "unknown",
-      text: parts.role ? `message:${parts.role}` : "message",
+      text: parts.value.role ? `message:${parts.value.role}` : "message",
       expanded: false,
       replay: [],
     });
@@ -703,11 +842,12 @@ export function mapNativeSessionEntryToOverlay(
       const action = data.success ? data.data.action : undefined;
       const text = boundText(`run ${runNumber ?? "?"} · ${action ?? "start"}`);
       const dividerSteps: ChildOverlayReplayStep[] = [];
-      pushReplayEvent(dividerSteps, {
+      const pushed = pushReplayEvent(dividerSteps, {
         type: "retry",
         attempt: runNumber,
         reason: text,
       });
+      if (pushed.isErr()) return err(pushed.error);
       return ok({
         id,
         sequence,
@@ -736,7 +876,11 @@ export function mapNativeSessionEntryToOverlay(
     }
     const statusText = boundText(customType || "custom");
     const customSteps: ChildOverlayReplayStep[] = [];
-    pushReplayEvent(customSteps, { type: "status", status: statusText });
+    const pushed = pushReplayEvent(customSteps, {
+      type: "status",
+      status: statusText,
+    });
+    if (pushed.isErr()) return err(pushed.error);
     return ok({
       id,
       sequence,
@@ -758,10 +902,11 @@ export function mapNativeSessionEntryToOverlay(
       return ok(undefined);
     }
     const unknownSteps: ChildOverlayReplayStep[] = [];
-    pushReplayEvent(unknownSteps, {
+    const pushed = pushReplayEvent(unknownSteps, {
       type: "unknown",
       originalType: boundLabel(type),
     });
+    if (pushed.isErr()) return err(pushed.error);
     return ok({
       id,
       sequence,
@@ -787,35 +932,47 @@ function customInputKind(
  * Projects one assistant message: reasoning blocks, tool calls and the message
  * body each keep their own reducer step, so a rebuilt page renders the same
  * native components (thinking block, tool block, markdown) as the live view.
+ *
+ * Order is start → content facts → terminal `message_end` (carries final text)
+ * → images. The terminal is pushed before images so `message_end` is never
+ * crowded out of the derived replay bound.
  */
 function assistantEntryFromParts(
   id: string,
   sequence: number,
   parts: NativeMessageParts,
-): ChildOverlayEntry {
+): Result<ChildOverlayEntry, ChildOverlayMappingError> {
   const steps: ChildOverlayReplayStep[] = [];
-  pushReplayEvent(steps, {
+  const start = pushReplayEvent(steps, {
     type: "message_start",
     message: { id, role: "assistant" },
   });
-  for (const thinking of parts.thinking)
-    pushReplayEvent(steps, { type: "thinking", text: thinking });
-  for (const call of parts.toolCalls)
-    pushReplayEvent(steps, {
+  if (start.isErr()) return err(start.error);
+  for (const thinking of parts.thinking) {
+    const pushed = pushReplayEvent(steps, { type: "thinking", text: thinking });
+    if (pushed.isErr()) return err(pushed.error);
+  }
+  for (const call of parts.toolCalls) {
+    const pushed = pushReplayEvent(steps, {
       type: "tool_call",
       toolCallId: call.toolCallId,
       toolName: call.toolName,
       arguments: call.arguments,
     });
-  pushReplayEvent(steps, {
+    if (pushed.isErr()) return err(pushed.error);
+  }
+  const end = pushReplayEvent(steps, {
     type: "message_end",
     message: { id, role: "assistant", content: parts.text },
   });
-  for (const mimeType of parts.images)
-    pushReplayEvent(steps, {
+  if (end.isErr()) return err(end.error);
+  for (const mimeType of parts.images) {
+    const pushed = pushReplayEvent(steps, {
       type: "image",
       ...(mimeType === undefined ? {} : { mimeType }),
     });
+    if (pushed.isErr()) return err(pushed.error);
+  }
 
   const hasText = parts.text.trim().length > 0;
   let kind: ChildOverlayEntryKind = "assistant";
@@ -830,7 +987,7 @@ function assistantEntryFromParts(
           ...parts.thinking,
         ].join("\n"),
       );
-  return { id, sequence, kind, text, expanded: false, replay: steps };
+  return ok({ id, sequence, kind, text, expanded: false, replay: steps });
 }
 
 /**
@@ -842,37 +999,45 @@ function userEntryFromParts(
   id: string,
   sequence: number,
   parts: NativeMessageParts,
-): ChildOverlayEntry {
+): Result<ChildOverlayEntry, ChildOverlayMappingError> {
   const steps: ChildOverlayReplayStep[] = [];
   const hasText = parts.text.trim().length > 0;
   const hasOtherFacts =
     parts.toolResults.length > 0 || parts.images.length > 0;
-  if (hasText || !hasOtherFacts)
+  if (hasText || !hasOtherFacts) {
+    if (steps.length >= CHILD_OVERLAY_BOUNDS.maxEntryReplaySteps) {
+      return err({
+        type: "OverlayCapacityExceeded",
+        operation: "entry-replay-steps",
+      });
+    }
     steps.push({
       kind: "input",
       input: "task",
       text: parts.text,
     });
-  for (const result of parts.toolResults) {
-    if (result.isError) {
-      pushReplayEvent(steps, {
-        type: "tool_error",
-        toolCallId: result.toolCallId,
-        error: result.text,
-      });
-      continue;
-    }
-    pushReplayEvent(steps, {
-      type: "tool_result",
-      toolCallId: result.toolCallId,
-      result: { content: result.content, isError: false },
-    });
   }
-  for (const mimeType of parts.images)
-    pushReplayEvent(steps, {
+  for (const result of parts.toolResults) {
+    const pushed = result.isError
+      ? pushReplayEvent(steps, {
+          type: "tool_error",
+          toolCallId: result.toolCallId,
+          error: result.text,
+        })
+      : pushReplayEvent(steps, {
+          type: "tool_result",
+          toolCallId: result.toolCallId,
+          result: { content: result.content, isError: false },
+        });
+    if (pushed.isErr()) return err(pushed.error);
+  }
+  for (const mimeType of parts.images) {
+    const pushed = pushReplayEvent(steps, {
       type: "image",
       ...(mimeType === undefined ? {} : { mimeType }),
     });
+    if (pushed.isErr()) return err(pushed.error);
+  }
 
   let kind: ChildOverlayEntryKind = sequence === 0 ? "prompt" : "user";
   let text = parts.text;
@@ -889,7 +1054,7 @@ function userEntryFromParts(
     kind = "image";
     text = "image";
   }
-  return { id, sequence, kind, text, expanded: false, replay: steps };
+  return ok({ id, sequence, kind, text, expanded: false, replay: steps });
 }
 
 /**
@@ -932,11 +1097,12 @@ function legacyReplaySteps(
     return [{ kind: "input", input: "follow_up", text: entry.text }];
   if (entry.kind === "assistant") {
     const steps: ChildOverlayReplayStep[] = [];
-    pushReplayEvent(steps, {
+    // Legacy fixtures are two framing steps; capacity failure is impossible.
+    void pushReplayEvent(steps, {
       type: "message_start",
       message: { id: entry.id, role: "assistant" },
     });
-    pushReplayEvent(steps, {
+    void pushReplayEvent(steps, {
       type: "message_end",
       message: { id: entry.id, role: "assistant", content: entry.text },
     });
@@ -944,7 +1110,7 @@ function legacyReplaySteps(
   }
   if (entry.kind === "retry" || entry.kind === "run-divider") {
     const steps: ChildOverlayReplayStep[] = [];
-    pushReplayEvent(steps, {
+    void pushReplayEvent(steps, {
       type: "retry",
       attempt: entry.runNumber,
       reason: entry.text,
@@ -952,6 +1118,22 @@ function legacyReplaySteps(
     return steps;
   }
   return [];
+}
+
+/** Explicit degrade for page mapping when a native entry exceeds overlay bounds. */
+function degradedCapacityEntry(
+  id: string,
+  sequence: number,
+  error: ChildOverlayMappingError,
+): ChildOverlayEntry {
+  return {
+    id,
+    sequence,
+    kind: "unknown",
+    text: boundText(`capacity:${error.operation}`),
+    expanded: false,
+    replay: [],
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -989,9 +1171,16 @@ export function createMemoryChildOverlaySource(
       const mappedEntry = mapNativeSessionEntryToOverlay(
         item.payload,
         startInclusive + i,
-      ).unwrapOr(undefined);
-      if (mappedEntry === undefined) continue;
-      mapped.push({ ...mappedEntry, id: item.id });
+      );
+      if (mappedEntry.isErr()) {
+        mapped.push({
+          ...degradedCapacityEntry(item.id, startInclusive + i, mappedEntry.error),
+          id: item.id,
+        });
+        continue;
+      }
+      if (mappedEntry.value === undefined) continue;
+      mapped.push({ ...mappedEntry.value, id: item.id });
     }
     // Cursors address the oldest/newest entry already in the page so the next
     // loadOlder/loadNewer call continues contiguously (exclusive of that edge).
@@ -1104,7 +1293,7 @@ export function mapNativeSessionEntryPageToOverlay(
   for (const item of page.entries) {
     if (item.kind === "corrupt") {
       const corruptSteps: ChildOverlayReplayStep[] = [];
-      pushReplayEvent(corruptSteps, {
+      void pushReplayEvent(corruptSteps, {
         type: "unknown",
         originalType: "corrupt",
         payload: { reason: boundLabel(item.reason) },
@@ -1119,11 +1308,18 @@ export function mapNativeSessionEntryPageToOverlay(
       });
       continue;
     }
-    const entry = mapNativeSessionEntryToOverlay(
-      item.value,
-      item.offset,
-    ).unwrapOr(undefined);
-    if (entry !== undefined) mapped.push(entry);
+    const entry = mapNativeSessionEntryToOverlay(item.value, item.offset);
+    if (entry.isErr()) {
+      mapped.push(
+        degradedCapacityEntry(
+          safeEntryId(`capacity-${item.offset}`, `capacity-${item.offset}`),
+          item.offset,
+          entry.error,
+        ),
+      );
+      continue;
+    }
+    if (entry.value !== undefined) mapped.push(entry.value);
   }
   return {
     entries: mapped,
