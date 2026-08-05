@@ -242,3 +242,120 @@ cleanupOutcome: temporary_proof_files_removed
 coordinatorCleanupTargetCount: 1
 coordinatorCleanupTargetOutcome: close_current_proof_pane_when_no_longer_needed
 ```
+
+---
+
+## Fresh wait-gated rerun — 2026-08-05
+
+Result: **FAIL**
+
+This rerun used one fresh Pi 0.83 pane and exactly one controlled
+`shuttle-mini` child. It preserves both earlier failed attempts. The driver
+waited for a new active-child process signal before it sent any overlay key.
+The run does not mark Task 20(b), S043, or S044 complete.
+
+### Prerequisite observations
+
+```yaml
+piVersion083: true
+readyStatusObserved: true
+trustedNpmPackageProvenance: true
+healthOnly: false
+unsafeProvenanceOverrideAbsent: true
+primaryEditorOwnedByPiVim: true
+primaryPiVimStateBefore: INSERT
+installedExtensionSha256: 480d83b90133d6a92e7e1cf6db701425a3679fe975a218ce161e7f76cf38016f
+installedExtensionHashExact: true
+productionCodeChanged: false
+controlledChildCount: 1
+```
+
+### Wait-gated controlled-run observations
+
+The driver observed the controlled child's active RPC process after 8.013
+seconds. It sent zero overlay keys before that signal. It then sent the real
+Alt+1 shortcut 120 times during a bounded 120-second mount window while the
+child remained active. The native overlay did not mount. The child remained
+active for about 375 progress events, received zero interventions, and settled
+as completed. Thus, this run removed the prior six-second-overlap orchestration
+error but directly reproduced an active-child Alt+1 mount failure.
+
+```yaml
+activeChildSignalObserved: true
+activeChildSignalWaitMilliseconds: 8013
+overlayKeyAttemptsBeforeActiveSignal: 0
+activeChildRpcProcessCountAtSignal: 2
+overlayMountAttemptsAfterActiveSignal: 120
+overlayMountWindowSeconds: 120
+overlayMounted: false
+liveTailDistinctBodyHashCount: 0
+liveTailAdvanced: false
+manualScrollDisengaged: false
+manualScrollNewEntriesObserved: false
+manualScrollAnchorStable: false
+bottomReturnDistinctBodyHashCount: 0
+bottomReturnResumedLiveTail: false
+steeringDraftByteCount: 0
+steeringSubmitted: false
+steeringReachedChild: false
+followUpDraftByteCount: 0
+followUpSubmitted: false
+followUpReachedChild: false
+childInterventionCount: 0
+childProgressEventCountApproximate: 375
+childSettlementOutcome: completed
+settledOverlayObserved: false
+settledReadOnlyObserved: false
+piVimRestoredAfterUnmountObserved: false
+primaryEditorLeakCheckObserved: false
+primarySessionLeakCheckObserved: false
+childProcessRemaining: false
+runtimeStoreLeaseActive: false
+driverOutcome: FAIL
+driverBlockerOutcome: overlay_not_mounted_after_active_signal
+driverErrorSha256: b3e12ed6011c1089599af110645a0800bfe3a9660ad488a3da5b624f7aafb85d
+evidenceByteCount: 2146
+evidenceSha256: 7593f359d304fb04c2383028ae065bb8b20fe51b065909f447c417e160c8fe00
+```
+
+### Wait-gated assertion matrix
+
+| Assertion | Result | Sanitized evidence |
+| --- | --- | --- |
+| Required installed extension is active | **PASS** | The installed SHA-256 matched exactly. |
+| Ready, trusted npm provenance, non-health-only Pi 0.83 | **PASS** | All prerequisite booleans were observed before dispatch. |
+| Unsafe provenance override is absent | **PASS** | The live Pi process did not contain the override. |
+| Pi-vim owns the primary editor | **PASS** | Pi-vim state was `INSERT` before dispatch. |
+| Driver waits for an active child before Alt+1 | **PASS** | The signal arrived after 8.013 seconds; pre-signal key count was zero. |
+| One controlled child provides enough active overlap | **PASS** | The child stayed active for about 375 progress events. |
+| Real Alt+1 mounts the active-child overlay | **FAIL** | The overlay did not mount after 120 post-signal attempts. |
+| Live tail advances | **FAIL — not observed** | No native overlay mounted. |
+| Manual scroll disengages and the viewport stays fixed | **FAIL — not observed** | No native overlay mounted. |
+| Returning to bottom resumes live tail | **FAIL — not observed** | No native overlay mounted. |
+| Enter submits steering and the child receives it | **FAIL — not observed** | No overlay editor was available; intervention count was zero. |
+| Alt+Enter submits follow-up and the child receives it | **FAIL — not observed** | No overlay editor was available; intervention count was zero. |
+| Neither intervention leaks into the primary editor or session | **FAIL — not testable** | No draft or intervention was entered. |
+| Settlement is clean | **PASS** | Settlement completed with no child process and no active lease. |
+| Settled overlay is read-only | **FAIL — not observed** | No overlay mounted. |
+| Pi-vim state returns after unmount | **FAIL — not testable** | No overlay mounted, so no unmount occurred. |
+| No production code or other pane changed | **PASS** | Change and close counts were zero. |
+
+### Exact blocker and cleanup
+
+The exact sanitized blocker is
+`overlay_not_mounted_after_active_signal`: after the active-child signal, the
+real Alt+1 shortcut did not mount the native overlay during 120 attempts and a
+120-second active overlap. Because the overlay never mounted, every required
+interaction assertion after mount remains unproved. The result is **FAIL**.
+
+```yaml
+runtimeStoreLeaseActive: false
+childProcessRemaining: false
+driverRunning: false
+otherPanesAlteredCount: 0
+panesClosedCount: 0
+coordinatorCleanupTargetCount: 2
+coordinatorCleanupTargets:
+  - current_proof_pane_when_no_longer_needed
+  - temporary_proof_artifacts_after_commit_verification
+```
