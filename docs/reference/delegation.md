@@ -1,6 +1,6 @@
 # Delegation Limits
 
-Portable delegation limits bound fan-out, concurrency, depth, and live work across harnesses.
+Portable delegation limits bound fan-out, concurrency, depth, and live work across harnesses. This page also records the harness-neutral thread lifecycle and result contract that adapters project.
 
 **Related:** [DSL Reference](dsl.md#settings-block) · [ADR 0008](../adr/0008-portable-delegation-budgets.md) · [Pi Adapter](../adapters/pi.md) · [Adapter Boundary](../architecture/adapter-boundary.md)
 
@@ -50,3 +50,25 @@ The result is:
 - `denied` for exhausted active direct-child capacity or excess depth. Settled and disposed children do not consume `max_children` capacity.
 
 Invalid or unsafe counts return a typed `InvalidDelegationCount` error. Adapters own count collection, queues, process/task creation, cancellation, and enforcement. The engine performs no harness discovery or process inspection.
+
+## Thread lifecycle
+
+A delegation call addresses a *thread*: one logical unit of delegated work that may run more than once. The adapter mints an opaque thread id and returns it with every result; the id is an identifier, never a path.
+
+| Action | Required arguments | Meaning |
+| --- | --- | --- |
+| start | `agent`, `task` | Start a new thread. Omit `action` entirely. |
+| `retry` | `thread`, optional `instruction` | Rerun a failed or cancelled thread, optionally with extra guidance. |
+| `continue` | `thread`, `task` | Give a completed thread more work. |
+
+`instruction` applies only to `retry`; `start` and `continue` ignore it. A `retry` or `continue` on a thread that is still running is refused rather than queued twice. Each run gets its own run number, and the previous run's rendering is frozen rather than rewritten.
+
+A retried or continued thread reuses its existing conversation, so capacity accounting follows the same rules as a fresh start: it consumes active capacity while it runs and releases it on settlement.
+
+## Result contract
+
+A delegated run must end with a terminal assistant response. Settling with no response, whitespace only, thinking blocks only, or tool calls only is not success: the adapter returns `ChildResponseMissing` with the reason (`empty`, `whitespace-only`, `thinking-only`, `tool-only`, or `no-response`).
+
+`ChildResponseMissing` is a result failure, not a transport failure. It is retryable, its recovery hint is to retry the thread, the recorded conversation stays intact and inspectable, and the child releases its `max_children` capacity exactly like any other settlement. The failure carries bounded correlation ids only — never the attempted output.
+
+See [Pi Adapter](../adapters/pi.md#private-children) for the concrete projection.

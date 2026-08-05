@@ -1,8 +1,8 @@
 # CLI
 
-The `weave` CLI validates and inspects configuration, initializes harness integrations, materializes file-based adapters, inspects local runtime state, and runs agent evals. It does not launch or replace a harness runtime.
+The `weave` CLI validates and inspects configuration, initializes harness integrations, materializes file-based adapters, inspects local runtime state, dispatches adapter-owned inspection commands, and runs agent evals. It does not launch or replace a harness runtime.
 
-**Related:** [Configuration](configuration.md) · [Prompts](prompts.md) · [Runtime Store](runtime.md) · [Agent Evals](../guides/evals.md) · [Claude Code](../adapters/claude-code.md)
+**Related:** [Configuration](configuration.md) · [Prompts](prompts.md) · [Runtime Store](runtime.md) · [Adapter Boundary](../architecture/adapter-boundary.md) · [Agent Evals](../guides/evals.md) · [Claude Code](../adapters/claude-code.md)
 
 ---
 
@@ -19,6 +19,10 @@ The `weave` CLI validates and inspects configuration, initializes harness integr
 | `weave prompt self-modify` | Print the self-modification guide for a config scope |
 | `weave runtime status` | Inspect local Runtime Store schema, lease, and instances |
 | `weave runtime journal` | Read recent sanitized journal entries |
+| `weave adapter pi children list` | List locally recorded Pi child sessions for a workspace |
+| `weave adapter pi children show <id>` | Read one child's bounded metadata and native entry index |
+| `weave adapter pi children delete <id>` | Append a tombstone for one child session |
+| `weave adapter pi doctor` | Run bounded Pi child-storage diagnostics |
 | `weave eval run` | Run registered text-only agent evals |
 
 `weave run` exits with guidance to launch OpenCode, Claude Code, or Pi through its own command. Durable workflow execution starts through an adapter-native surface, not the standalone CLI.
@@ -114,6 +118,28 @@ Both commands inspect `.weave/runtime/weave.db` without creating it when absent.
 The CLI opens the database read-only when reading schema metadata. It never writes workflow state, advances execution, or exposes raw prompts, completions, transcripts, credentials, cookies, authorization headers, tokens, or provider payloads.
 
 See [Runtime Store](runtime.md) and [`commands/runtime.ts`](../../packages/cli/src/commands/runtime.ts).
+
+## `weave adapter`
+
+`weave adapter <name> <command>` is a generic front end over the engine's opaque adapter-command dispatch. The CLI parses argv into an envelope, calls `dispatchAdapterCommand()`, and prints the adapter-owned result. It contains no harness-specific semantics. `pi` is the only registered adapter today; any other name exits `1` with `Unsupported adapter: <name>`.
+
+```bash
+weave adapter pi children list [--json] [--diagnostic]
+weave adapter pi children show <id> [--json] [--diagnostic] [--cursor <c>]
+weave adapter pi children delete <id> [--yes] [--json]
+weave adapter pi doctor [--json] [--diagnostic]
+```
+
+The workspace defaults to the current working directory.
+
+- `children list` returns the newest 50 children for the workspace, including tombstoned rows, each with child id, thread id, bounded title, status, timestamps, origin parent session, and the `tombstoned` and `stale` flags.
+- `children show` returns the child plus the newest 100 native entry descriptors (`index`, `id`, `type`) and a `nextCursor` when more remain. Pass `--cursor <c>` to page backward through older entries.
+- `children delete` appends a tombstone; it never rewrites or truncates stored session data. Without `--yes` it prompts `Delete child <id> and append a tombstone?`, defaulting to no. Declining prints `Delete cancelled.` and exits `0`. A non-interactive terminal without `--yes` exits with `Interactive mode is unavailable. Re-run with --yes to delete without a prompt.`
+- `doctor` runs the seven bounded storage checks and reports `ok`, `degraded`, `unavailable`, or `not_implemented`.
+
+`--json` prints stable JSON and suppresses decorative output. `--diagnostic` is the only way to see filesystem paths: without it every absolute path is replaced with `[path omitted]` and the `sessionPath` field is dropped entirely. Both flags are local-only inspection; neither starts, resumes, or mutates work.
+
+See [Pi Adapter](../adapters/pi.md#child-session-commands), [Pi child troubleshooting](../guides/pi-child-troubleshooting.md), and [`commands/adapter.ts`](../../packages/cli/src/commands/adapter.ts).
 
 ## Agent evals
 

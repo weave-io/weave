@@ -73,8 +73,14 @@ The registered `weave_delegate` schema is static because Pi requires it at regis
 - `/weave:health` — inspect activation health;
 - `/weave:plan` — inspect the current plan;
 - `/weave:artifact` — inspect an available artifact;
+- `/weave:inspect` — open the child inspector for the current session's children;
+- `/weave:history` — list bounded child metadata for this workspace, including tombstoned rows;
+- `/weave:doctor` — run the bounded child-storage diagnostics and print each check;
+- `/weave:clear-children` — clear terminal child records for this session;
+- `/weave:recover-children` — recover interrupted top-level children;
 - `Alt+A` — cycle healthy primary-capable agents;
-- `Alt+T` — open the read-only plan-task list.
+- `Alt+T` — open the read-only plan-task list;
+- `Alt+I` — open the child picker (see [Overlay keys](#overlay-keys)).
 
 Only an explicit user command authorizes work. Session start, idle, settlement, recovery discovery, ordinary chat, and health views never start or resume durable execution.
 
@@ -115,6 +121,12 @@ Retries use persisted attempt metadata so they reuse the artifact revisions cons
 
 `weave_delegate` authorizes one non-empty task against engine-resolved limits: eligible targets, direct-child budget, active-child `max_children`, depth, and global live-process count. `max_children` caps children running in parallel; settled or disposed children release capacity.
 
+Delegation requires a persistent parent session. A parent started with `--no-session` has nowhere to record child references, so the adapter refuses to spawn a child and returns `PersistentParentSessionRequired`; the child surfaces stay mounted but read-only. This fails before any child work starts rather than falling back to an unrecorded child.
+
+A delegation call addresses a *thread*, not a single run. Omitting `action` starts a new thread from `agent` plus `task`. `action retry` reruns a failed or cancelled thread by opaque `thread` id, with optional extra `instruction`. `action continue` gives a completed thread more work from a new `task`. A thread that is already running refuses both with `ThreadAlreadyRunning`; other thread failures are `ThreadNotFound`, `ThreadAuthorityDenied`, `ThreadStale`, `ThreadIntegrityError`, `ThreadNotRetryable`, `ThreadNotResumable`, and `ThreadResumeUnavailable`. Each run increments a run number, and earlier runs freeze rather than being rewritten. See [Delegation](../reference/delegation.md#thread-lifecycle).
+
+A run that settles with no terminal assistant response fails with `ChildResponseMissing` and one reason: `empty`, `whitespace-only`, `thinking-only`, `tool-only`, or `no-response`. This is a result failure, not a transport failure — the recorded session stays intact, capacity is released like any other settlement, the failure is retryable, and its recovery hint is to retry the thread.
+
 Authorized work enters a FIFO queue per parent and spawns an independent `pi --mode rpc --no-session` process. Each child has its own 256-bit secret, read once from the environment and then erased.
 
 The control protocol uses:
@@ -140,11 +152,37 @@ A child may request nested delegation only to its own declared targets. Cancelin
 
 Children are inspectable and cancellable through the TUI tree, not steerable. Public user-started RPC mode does not activate this private path.
 
+### Native child sessions
+
+Every delegated child runs in a persistent native Pi v3 session created through the host's own session manager, so recorded child work is real Pi session data rather than an adapter transcript format.
+
+Sessions live under `$XDG_DATA_HOME/weave/adapters/pi/sessions/`, defaulting to `~/.local/share/weave/adapters/pi/sessions/`. That root sits outside Pi's default session tree, so child sessions never appear in Pi discovery or `/resume`, while remaining readable through Pi's native open and read APIs. A relative `XDG_DATA_HOME` is a root violation, not a silently ignored value.
+
+All filesystem access goes through a no-follow `openat` chain: directories are `0700`, files are `0600`, and traversal, absolute escape, symlinked components, and permissive modes fail closed. The adapter never copies transcript bytes into its own storage; entry reads return the host's `getEntries()` output.
+
+A bounded metadata cache lives beside it at `$XDG_DATA_HOME/weave/adapters/pi/cache/child-metadata.sqlite` (schema version 1, same permissions). It stores metadata only — ids, titles, statuses, and timestamps — with no column for any prompt, message, response, thinking block, tool call, tool result, or transcript. It is fully rebuildable from the parent session's child references, and its loss is never fatal: an open failure, permission failure, corruption, or schema mismatch degrades to reading the bounded parent references directly, so delegation, settlement, and the live overlay keep working with no cache at all.
+
+The authoritative record of which children belong to a parent is a custom entry in the parent's own Pi session. A reference whose recorded origin does not match the current parent session — after a fork or clone, for example — is excluded rather than adopted.
+
+#### Cleanup, tombstones, and orphans
+
+Cleanup is explicit only. The adapter runs no retention timer, prunes nothing on a schedule, enforces no byte quota, and deletes no session because it is old, large, or settled. Data disappears only when you ask for it through `/weave:clear-children` or `weave adapter pi children delete <id>`.
+
+Deletion appends a tombstone record to `tombstones.jsonl` at the session-tree root. The tombstone file is append-only: there is no rewrite or truncate path. A tombstoned child stays listed, marked `tombstoned`, so a removal is visible rather than silent.
+
+A child whose parent session is gone becomes an orphan. Orphans stay readable and stay listed; the overlay marks them `Read-only orphan — mutations disabled` and refuses steering, follow-up, retry, and continue. `ChildOrphanReadOnly` is the corresponding failure code. The adapter does not delete orphans.
+
+#### No migration from the JSONL store
+
+Earlier versions kept child history in an adapter-owned JSONL store under `child-history/<parent-session-id>/`. That store is removed, and there is no migration. Weave does not read, convert, quarantine, or delete existing JSONL history — the files are simply left in place and are no longer visible to Weave. Handle them outside Weave if you still want the data. See [ADR 0014](../adr/0014-pi-native-child-sessions.md).
+
+The removed settings `persist_history`, `max_bytes_per_child`, `max_bytes_total`, and `orphan_retention_days` went with the store. The `child_inspection` block is strict, so a config that still sets them fails validation.
+
 ### Private child inspection
 
-Pi's optional `settings.adapters.pi.child_inspection` block controls the local inspector for private child sessions. The canonical source for its exact defaults, bounds, storage path and permissions, inspector slots and controls, commands, quotas and trim markers, retention, clear behavior, recovery scope, resume behavior, export fields, and privacy boundary is [Spec 33 §§4–10](../specs/33-spec-pi-adapter/33-spec-pi-adapter.md#4-deterministic-child-inspector-state-model). Do not infer these settings from engine configuration.
+Pi's optional `settings.adapters.pi.child_inspection` block controls the local inspector for private child sessions. It carries `recovery_enabled` (default `true`), `recovery_countdown_seconds` (default `10`, range `0`–`60`), and the optional `keys` overlay key map. The canonical source for its exact defaults, bounds, storage path and permissions, inspector slots and controls, commands, retention, clear behavior, recovery scope, resume behavior, export fields, and privacy boundary is [Spec 33 §§4–10](../specs/33-spec-pi-adapter/33-spec-pi-adapter.md#4-deterministic-child-inspector-state-model). Do not infer these settings from engine configuration.
 
-The inspector is adapter-owned. It may retain sensitive raw prompts, responses, and session events in local-only private history; it never places that history in the engine Runtime Store, workflow state, logs, telemetry, proof, network requests, or parent-model results. Physical clear removes the private store; it is not a workflow or engine-history operation. Export is a bounded diagnostic projection, not a transcript export.
+The inspector is adapter-owned. It reads sensitive raw prompts, responses, and session events from local-only native child sessions; it never places that content in the engine Runtime Store, workflow state, logs, telemetry, proof, network requests, or parent-model results. Clearing removes local records; it is not a workflow or engine-history operation. Export is a bounded diagnostic projection, not a transcript export.
 
 Recovery is deliberately narrow: it may recover an interrupted ordinary top-level child when the canonical evidence permits it. It does not recursively recover nested children, recover a workflow process, or turn `/weave:resume` into automatic workflow continuation. A workflow resume is a fresh engine-authorized attempt, and engine-owned leases and workflow state remain the engine's concern. See [ADR 0013](../adr/0013-pi-private-child-sessions.md) for the ownership decision and [Spec 33 §6](../specs/33-spec-pi-adapter/33-spec-pi-adapter.md#6-child-recovery-contract) for the limits.
 
@@ -154,7 +192,76 @@ A pinned header names the child and its runtime: status, the concrete model, the
 
 The session editor is a single shared Pi surface, so Weave never claims it away from another extension. If a foreign editor factory (for example `pi-vim`'s modal editor) is already installed, Weave leaves it in place for the rest of the generation and does not reassert its own on `session_start`, `before_agent_start`, or `agent_start`. If a foreign factory appears after Weave activated, Weave yields on the next lifecycle event instead of reclaiming. Child inspection still works: it borrows the editor only while the overlay is mounted, and every teardown path hands the editor back to the previous owner. The overlay carries its own local editor, so inspection input does not depend on owning the session surface. Root-level child-tree keys are the only optional convenience lost when Weave yields.
 
-For troubleshooting, start with `/weave:health`, then inspect the private-child failure code and the adapter's bounded diagnostics. A missing or corrupt private-history record is quarantined or reported according to [Spec 33 §7.4](../specs/33-spec-pi-adapter/33-spec-pi-adapter.md#74-quarantine-and-corruption-handling); it does not authorize a guessed resume. The complete command and key map is [Spec 33 §10](../specs/33-spec-pi-adapter/33-spec-pi-adapter.md#10-control-surface).
+#### Compact delegation block
+
+A running `weave_delegate` call renders as exactly three collapsed lines, in every state, for every child:
+
+```
+Shuttle gpt-5.6-terra high
+<latest activity>
+run 2 · editing
+```
+
+Line one names the child, its concrete model, and its reasoning level. Line two is the latest whitespace-normalized activity, bounded to 240 code points; expanding the entry reveals the current item up to 4 KiB. Line three names the run number and the current action, so a retried or continued thread shows which run you are watching.
+
+The block is fail-closed: invalid state or a render failure produces a degraded three-line block rather than a partial or missing entry. Chrome lines never echo opaque thread ids, session paths, or native session ids. The reducer keeps at most 64 runs per thread and 128 items per run; older runs stay frozen exactly as they last rendered.
+
+#### Full-screen child overlay
+
+Opening a child mounts a full-screen overlay built from Pi's own `CustomEditor` and native transcript components, so a child reads like a native Pi session. The overlay owns pagination through recorded history, search, live tail, and per-child view state, and it isolates input: while it is mounted, no key reaches Pi or the primary editor.
+
+Historical pages adapt native session entries directly through the host's read API. Live output flows through the same parser and compact pipeline as the collapsed block, so the two views cannot disagree.
+
+When the host does not provide the `child-overlay-lifecycle` surface, the overlay degrades to the existing custom-editor inspection path instead of disappearing. Delegation itself is unaffected: overlay gaps never trigger health-only mode.
+
+#### Overlay keys
+
+Overlay controls are named actions with defaults, not fixed bytes:
+
+| Action | Default keys |
+| --- | --- |
+| `weave.child.picker.open` | `alt+i` |
+| `weave.child.slot.1` … `weave.child.slot.9` | `alt+1` … `alt+9` |
+| `weave.child.sibling.previous` | `alt+left`, `alt+h` |
+| `weave.child.sibling.next` | `alt+right`, `alt+l` |
+
+Override them under `settings.adapters.pi.child_inspection.keys`, keyed by action id, with a single key string or up to four keys per action. The map is strict: an unknown action id or malformed key syntax is a validation error, never a silent drop.
+
+Every key is checked against your effective Pi keybindings before it is claimed. A key that is already bound stays with its existing owner; the adapter skips its own binding and reports it once as `weave overlay action <id> skipped key <key>: already bound to <owner>`. Weave never overwrites a binding you or another extension already have.
+
+Escape is a two-step, non-destructive control. The first Escape shows `Press Escape again to cancel this child subtree`. A second Escape within 750 ms opens a confirmation whose choices are `Keep running` and `Cancel subtree`, defaulting to `Keep running`. A later press re-arms the hint rather than acting on stale intent.
+
+Backspace edits your draft when the draft is non-empty. On an empty draft it moves focus to the parent child, or closes the overlay when the focused child is already a direct child of the session.
+
+#### Child picker
+
+`Alt+I` opens a bounded metadata picker over at most 200 candidates. Rows are ordered by stable depth-first tree order, and the numbered slots `Alt+1` through `Alt+9` address the active children in that same order, so a slot means the same child in the list and on the keyboard. Sibling navigation wraps at both ends.
+
+Each row resolves its title by precedence: explicit title, then the task's first line, then the workflow step, then the agent name. Titles are bounded to 200 characters. Rows carry a status — `queued`, `running`, `completed`, `failed`, `cancelled`, `settled`, `interrupted`, `quarantined`, `cleared`, or `tombstoned` — and a source state of `available`, `stale`, `unavailable`, or `orphan`, so an unreadable or orphaned child is labeled rather than hidden.
+
+### Child session commands
+
+In the TUI, `/weave:inspect` opens the inspector, `/weave:history` prints the bounded child list for this workspace including tombstoned rows, `/weave:doctor` prints the doctor status and each check, `/weave:clear-children` clears terminal child records for the session, and `/weave:recover-children` recovers interrupted top-level children.
+
+Outside the TUI, the same adapter-owned data is reachable through `weave adapter pi children list|show|delete` and `weave adapter pi doctor`. Those commands travel over the engine's opaque adapter-command dispatch: the engine validates the envelope and routes it, while command names, payloads, and results stay adapter-owned. List pages are 50 children; entry pages are 100 entries with a cursor. Filesystem paths appear only under `--diagnostic`; otherwise every absolute path is replaced with `[path omitted]`. See [CLI](../reference/cli.md#weave-adapter).
+
+### Doctor
+
+`weave adapter pi doctor` and `/weave:doctor` run the same seven bounded checks and never write anything:
+
+| Check | Question |
+| --- | --- |
+| `doctor.capabilities` | Are the required host surfaces present? |
+| `doctor.permissions` | Are the storage directories `0700` and files `0600`? |
+| `doctor.sessions` | Is the session tree readable and well-formed? |
+| `doctor.refs` | Do the parent's child references parse and match their origin? |
+| `doctor.cache` | Is the metadata cache open, current, and uncorrupted? |
+| `doctor.stale` | How many recorded children no longer resolve? |
+| `doctor.orphans` | How many children have lost their parent session? |
+
+Each check reports `pass`, `fail`, or `skip` with a bounded detail string. The report status is `ok` when no check fails, `degraded` when any check fails, and `unavailable` when every check is skipped or the report itself fails validation. Scans are bounded to 50 rows per page and details carry counters, never child text.
+
+For troubleshooting, start with `/weave:health`, then `/weave:doctor`, then the private-child failure code and the adapter's bounded diagnostics. A missing or corrupt record is reported as a diagnostic code — `ChildSessionMissing`, `ChildSessionCorrupt`, `ChildSessionRootViolation`, `ChildSessionPermissionError`, `ChildTombstoneAppendFailed`, `ChildRefInvalid`, `ChildRefOriginMismatch`, `ChildCacheDegraded`, or `ChildCacheStale` — and it does not authorize a guessed resume. Step-by-step remedies are in [Pi child troubleshooting](../guides/pi-child-troubleshooting.md); the complete command and key map is [Spec 33 §10](../specs/33-spec-pi-adapter/33-spec-pi-adapter.md#10-control-surface).
 
 ### Settlement and output
 
@@ -205,7 +312,17 @@ Trusted healthy activation opens `.weave/runtime/weave.db` through the engine Ru
 
 The adapter records bounded normalized journal families, exactly-once primary/child usage observations, configured retention, deduplicated TUI failures, and scoped pino output. Its rotating file sink serializes writes and closes held handles at generation shutdown.
 
-The adapter never logs prompts, responses, transcripts, raw RPC, tool input/output, plan/artifact content, private paths, environment values, or child secrets. Full child output and normalized session events may persist only inside the restrictive local child-history store for inspection; they never enter telemetry, parent-model results, controller results, or workflow completion. Telemetry failures expose only closed codes, phases, impacts, and safe correlation fields.
+The adapter never logs prompts, responses, transcripts, raw RPC, tool input/output, plan/artifact content, private paths, environment values, or child secrets. Full child output and normalized session events persist only inside the restrictive native child sessions described above; they never enter telemetry, parent-model results, controller results, or workflow completion. Telemetry failures expose only closed codes, phases, impacts, and safe correlation fields.
+
+## Host surface probes
+
+Beyond the engine's closed capability IDs, the adapter declares the concrete Pi host surfaces it needs, each with a severity. The compatibility floor is Pi `0.81.1`.
+
+- `required-for-delegation` — a gap puts the generation into health-only mode. Native child sessions add `rpc-persistent-session`, `rpc-append-entry`, `rpc-session-tree-read`, and `custom-session-directory` to this set, alongside the existing editor, RPC, and session-restore surfaces.
+- `overlay-only` — a gap selects the custom-editor fallback and never triggers health-only mode. `child-overlay-lifecycle` is the only such surface. Session reads are deliberately not overlay-only.
+- `rendering-fallback` — a gap uses Pi's default rendering.
+
+A gap reports the stable surface id plus a remediation string, for example upgrading to a host that exposes `pi.appendEntry`. Pi 0.83 exposes no named extension action ids, so overlay actions are reported through the `named-configurable-shortcut-actions` diagnostic rather than as a native capability. See [Adapter Capabilities](../reference/adapter-capabilities.md#adapter-owned-host-surface-probes).
 
 ## Health-only mode
 

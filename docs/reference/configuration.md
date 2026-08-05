@@ -42,7 +42,7 @@ See [`packages/config/src/merge.ts`](../../packages/config/src/merge.ts) for the
 
 `settings.adapters.<harness>` is an opaque, JSON-like block. The DSL and config loader enforce the shared shape, nesting, and canonical-size limits; the named adapter owns the fields inside its block. Each source layer and the merged result are validated, and adapter settings merge with the same object/array/scalar rules above. Config loading does not open a harness session, inspect private history, or own transcripts.
 
-For the Pi-specific `child_inspection` block, link to the canonical [Spec 33 settings contract](../specs/33-spec-pi-adapter/33-spec-pi-adapter.md#71-settings) rather than duplicating defaults or bounds. The Pi adapter applies those settings only in its local private-session store; they do not change engine Runtime Store retention or telemetry.
+For the Pi-specific `child_inspection` block, link to the canonical [Spec 33 settings contract](../specs/33-spec-pi-adapter/33-spec-pi-adapter.md#71-settings) rather than duplicating defaults or bounds. The block is strict: an unknown field is a validation error, not a silently ignored one. It now carries only `recovery_enabled`, `recovery_countdown_seconds`, and the optional `keys` overlay key map. The former history-store fields `persist_history`, `max_bytes_per_child`, `max_bytes_total`, and `orphan_retention_days` were removed with the adapter's JSONL child-history store; a config that still sets them fails validation and must drop them. The Pi adapter applies these settings only in its local native child-session storage; they do not change engine Runtime Store retention or telemetry.
 
 ---
 

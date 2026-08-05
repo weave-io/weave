@@ -328,7 +328,7 @@ Dirty-worktree rule: many files are dirty for unrelated in-flight work (OpenCode
     - `bun test packages/adapters/pi` passes; each scenario in the list maps to at least one named test.
     - `bun test && bun run typecheck && bun run lint` pass workspace-wide.
 
-- [ ] 18. Update docs (adapter, commands, keybindings, storage, recovery, CLI, troubleshooting)
+- [x] 18. Update docs (adapter, commands, keybindings, storage, recovery, CLI, troubleshooting)
   - **What**: Bring all user/contributor docs to the shipped behavior: Pi adapter guide (compact block, overlay, keys, picker, thread lifecycle, persistent-parent requirement, storage layout, cleanup/tombstones, orphans), adapter boundary (adapter-command dispatch), CLI reference (`weave adapter pi ...`), delegation reference (retry/continue, `ChildResponseMissing`, capacity semantics), adapter-capabilities (new probes), troubleshooting (diagnostic codes, doctor, repair/remove), and the no-migration note for prior JSONL users.
   - **Files**: `docs/adapters/pi.md`, `docs/architecture/adapter-boundary.md`, `docs/reference/cli.md`, `docs/reference/delegation.md`, `docs/reference/adapter-capabilities.md`, `docs/reference/configuration.md` (settings removal), `docs/guides/` troubleshooting page (locate exact file during execution), `docs/README.md` index if new pages are added.
   - **Depends on**: Tasks 1–17 (documents shipped behavior).

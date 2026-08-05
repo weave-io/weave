@@ -65,6 +65,22 @@ Required effective gaps put an adapter generation into health-only mode. Optiona
 
 See [Tool Policy](tool-policy.md) and [Permissions](permissions.md).
 
+## Adapter-owned host surface probes
+
+The closed capability ID vocabulary is engine-owned, but an adapter may also declare *host surfaces*: the concrete host APIs it needs, each with its own severity. Surfaces are internal to the adapter; they never widen the engine's ID set. They exist so a host that is otherwise healthy can degrade one feature instead of failing the whole generation.
+
+The Pi adapter declares three severities:
+
+| Severity | Gap behavior |
+| --- | --- |
+| `required-for-delegation` | The generation enters health-only mode |
+| `overlay-only` | The overlay falls back to the custom-editor path; delegation keeps working |
+| `rendering-fallback` | The harness's default rendering is used |
+
+Its native child-session storage adds four `required-for-delegation` probes — `rpc-persistent-session`, `rpc-append-entry`, `rpc-session-tree-read`, and `custom-session-directory` — plus the `overlay-only` `child-overlay-lifecycle` surface. A missing session read surface is never treated as overlay-only, because reading recorded child work must not silently disappear.
+
+A gap reports the stable surface ID and a remediation string. See [Pi Adapter](../adapters/pi.md#host-surface-probes).
+
 ## Health reports
 
 Health reports are normalized engine output. Adapters may render them as text, JSON, TUI rows, or harness-native diagnostics, but must not change the verdicts.

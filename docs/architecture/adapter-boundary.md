@@ -39,6 +39,7 @@ If yes, it belongs in an adapter. Engine-to-adapter calls are fine when they exc
 | Goals | Engine carries normalized workflow goal metadata and owns harness-neutral active-plan task selection and plan semantics | Adapters own concrete plan discovery/I/O, command/event projection, and UI/footer |
 | Artifacts | Engine owns references, revisions, approval, and digest comparison | Proves containment, reads files, computes SHA-256 digests |
 | Delegation | Core/config/engine own portable budgets and authorization | Owns live queues, process/task counts, spawn, cancellation, child inspection UI, RPC, session discovery/I/O, persistence, quotas, and recovery orchestration |
+| Adapter commands | Engine validates one opaque request envelope and routes it to a registered handler | Owns command names, payload semantics, execution, and result shape |
 | Logging | Engine supplies structured pino logging | Routes output where the harness will not corrupt its UI |
 | Feature gaps | Defines the portable behavior | Emulates missing hooks, commands, subagents, or UI honestly |
 
@@ -96,6 +97,18 @@ The engine creates a `MaterializationPlan` with ordered descriptors and typed pe
 ### Capabilities
 
 Static declarations are ceilings. Adapter probes may lower effective readiness, never raise it. A required effective gap activates health-only mode. See [Adapter Capabilities](../reference/adapter-capabilities.md).
+
+### Adapter commands
+
+`dispatchAdapterCommand()` is the only path from a generic surface (for example the `weave adapter <name> …` CLI) into adapter-owned behavior. The engine validates one opaque envelope and nothing else:
+
+- `adapter` and `command` are lowercase identifiers matching `^[a-z][a-z0-9._-]*$`, at most 128 characters;
+- `payloadJson` is adapter-owned JSON text, at most 256,000 characters;
+- the success envelope is `{ resultJson }` with the same size bound.
+
+The engine never parses the payload, never knows a command name beyond the opaque string, and never interprets a result. Failures are the closed set `InvalidEnvelope`, `AdapterNotRegistered`, `CommandNotRegistered`, and `HandlerFailed`; a handler failure carries a message only, never a harness object. Handlers are registered in a nested adapter-name → command-name map.
+
+A harness-specific command must not add an engine type, an engine flag, or an engine branch. See [`packages/engine/src/adapter-command.ts`](../../packages/engine/src/adapter-command.ts) and [CLI](../reference/cli.md#weave-adapter).
 
 ### Safe metadata
 
@@ -161,3 +174,4 @@ If any answer is no, narrow the API or move the responsibility into the adapter.
 - [`packages/engine/src/capability-contract.ts`](../../packages/engine/src/capability-contract.ts) — readiness contract
 - [`packages/engine/src/execution-lifecycle/`](../../packages/engine/src/execution-lifecycle/) — lifecycle surface
 - [`packages/engine/src/runtime/`](../../packages/engine/src/runtime/) — Weave-owned persistence
+- [`packages/engine/src/adapter-command.ts`](../../packages/engine/src/adapter-command.ts) — opaque adapter-command dispatch

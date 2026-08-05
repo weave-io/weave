@@ -370,7 +370,7 @@ settings {
 
   adapters {
     # Harness names and values are opaque to core.
-    pi { child_inspection { persist_history true } }
+    pi { child_inspection { recovery_enabled true } }
   }
 
   delegation {

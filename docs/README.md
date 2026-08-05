@@ -28,7 +28,7 @@ User-facing tutorials and product reference live in the [public docs package](..
 | [Adapter Capabilities](reference/adapter-capabilities.md) | Static ceilings, runtime probes, health, and readiness |
 | [Execution Lifecycle](reference/execution-lifecycle.md) | Normalized operations, effects, completion, and recovery |
 | [Runtime Store](reference/runtime.md) | Durable state, leases, journal, privacy, and retention |
-| [CLI](reference/cli.md) | Internal command behavior and runtime command operations |
+| [CLI](reference/cli.md) | Internal command behavior, runtime commands, and adapter dispatch |
 | [Eval Reporting](reference/eval-reporting.md) | Sanitized bundles, indexes, raw artifacts, and publication |
 
 ## Adapters
@@ -45,6 +45,7 @@ User-facing tutorials and product reference live in the [public docs package](..
 | --- | --- |
 | [Develop an Adapter](guides/adapter-development.md) | Bootstrap, materialize, project commands, and lifecycle mapping |
 | [Author Agent Evals](guides/evals.md) | Add cases, run dry checks, and interpret results |
+| [Troubleshoot Pi Child Sessions](guides/pi-child-troubleshooting.md) | Read doctor checks, diagnostic codes, and child session commands |
 | [Verify an Adapter](testing/adapter-verification.md) | Prove a packaged adapter loads, becomes ready, and works in its real harness |
 
 ## Contributing
@@ -81,6 +82,7 @@ ADRs preserve the reason for decisions. Current behavior belongs in the pages ab
 | [0010](adr/0010-plan-state-and-artifact-approval-authority.md) | Accepted | Plan and artifact approval authority |
 | [0011](adr/0011-effective-adapter-readiness-and-runtime-observability.md) | Accepted | Effective readiness and observability |
 | [0013](adr/0013-pi-private-child-sessions.md) | Accepted | Private Pi child sessions are adapter-owned and outside Runtime Store |
+| [0014](adr/0014-pi-native-child-sessions.md) | Accepted | Pi children use native Pi sessions with no JSONL migration |
 
 ## Validation
 
