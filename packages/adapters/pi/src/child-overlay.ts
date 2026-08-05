@@ -8,10 +8,11 @@
  * `CustomEditor` + transcript factory seams without touching the primary editor
  * or registering extension keybindings (Task 13).
  *
- * Historical pages adapt Task 4 `readSessionEntries` output through
- * {@link mapNativeSessionEntryToOverlay} without copying transcript bytes into
- * adapter storage. Live events use the shared Task 11 parser + compact map /
- * reduce pipeline, then project into the overlay window via the existing
+ * Historical pages adapt Task 4 {@link PiNativeSessionStore.readSessionEntryPage}
+ * output through {@link mapNativeSessionEntryToOverlay} without copying
+ * transcript bytes into adapter storage and without ever materializing a full
+ * transcript. Live events use the shared Task 11 parser + compact map / reduce
+ * pipeline, then project into the overlay window via the existing
  * child-transcript reducer.
  */
 
@@ -46,6 +47,11 @@ import {
   type PiChildTranscriptState,
   type PiTranscriptComponentFactory,
 } from "./child-transcript.js";
+import type {
+  PiNativeSessionEntryPage,
+  PiNativeSessionEntryPageOptions,
+  PiNativeSessionError,
+} from "./child-native-sessions.js";
 
 // ---------------------------------------------------------------------------
 // Bounds
@@ -672,79 +678,121 @@ export function createMemoryChildOverlaySource(
 }
 
 /**
- * Adapts Task 4 `readSessionEntries` into a paginated overlay source.
+ * Maps one Task 4 bounded native entry page into an overlay page.
  *
- * Each page request performs one transient host read and slices only the
- * requested page from the full entry list. Older/newer cursors can therefore
- * reach beyond {@link CHILD_OVERLAY_BOUNDS.maxWindowCap}; the overlay
- * controller still retains only its hard in-memory window. Nothing is cached
- * across calls and no transcript bytes are copied into adapter persistence.
+ * Opaque older/newer cursors pass through unchanged. Corrupt lines become
+ * bounded `unknown` facts. No full transcript is retained.
  */
-export function createReadSessionEntriesOverlaySource(deps: {
+export function mapNativeSessionEntryPageToOverlay(
+  page: PiNativeSessionEntryPage,
+): ChildOverlayPage {
+  const mapped: ChildOverlayEntry[] = [];
+  for (const item of page.entries) {
+    if (item.kind === "corrupt") {
+      mapped.push({
+        id: safeEntryId(`corrupt-${item.offset}`, `corrupt-${item.offset}`),
+        sequence: item.offset,
+        kind: "unknown",
+        text: boundText(`corrupt:${item.reason}`),
+        expanded: false,
+      });
+      continue;
+    }
+    const entry = mapNativeSessionEntryToOverlay(
+      item.value,
+      item.offset,
+    ).unwrapOr(undefined);
+    if (entry !== undefined) mapped.push(entry);
+  }
+  return {
+    entries: mapped,
+    olderCursor: page.olderCursor,
+    newerCursor: page.newerCursor,
+    hasOlder: page.olderCursor !== undefined,
+    hasNewer: page.newerCursor !== undefined,
+  };
+}
+
+function mapNativePageError(
+  error: PiNativeSessionError,
+  operation: string,
+): ChildOverlaySourceError {
+  if (
+    error.type === "SessionCorrupt" &&
+    (error.reason === "invalid-cursor" || error.reason === "stale-cursor")
+  ) {
+    return { type: "SourceInvalidCursor", operation };
+  }
+  if (error.type === "SessionMissing") {
+    return { type: "SourceCorrupt", operation };
+  }
+  return { type: "SourceCorrupt", operation };
+}
+
+/**
+ * Adapts Task 4 `readSessionEntryPage` into a paginated overlay source.
+ *
+ * Each page request performs one injected bounded native page read — never
+ * `readSessionEntries`, `SessionManager.getEntries`, or a full-file cache.
+ * Opaque older/newer cursors are forwarded verbatim. The overlay controller
+ * still retains only its hard in-memory window.
+ */
+export function createReadSessionEntryPageOverlaySource(deps: {
   readonly describe: (
     childId: string,
   ) => ResultAsync<ChildOverlayChild, ChildOverlaySourceError>;
-  readonly readEntries: (
+  readonly readSessionEntryPage: (
     childId: string,
-  ) => ResultAsync<readonly unknown[], ChildOverlaySourceError>;
+    options: PiNativeSessionEntryPageOptions,
+  ) => ResultAsync<PiNativeSessionEntryPage, PiNativeSessionError>;
 }): ChildOverlaySourcePort {
-  const materialize = (
+  const loadPage = (
     childId: string,
-  ): ResultAsync<readonly MemoryOverlaySourceEntry[], ChildOverlaySourceError> =>
-    deps.readEntries(childId).map((entries) =>
-      entries.map((payload, index) => {
-        const record =
-          typeof payload === "object" &&
-          payload !== null &&
-          !Array.isArray(payload)
-            ? (payload as Record<string, unknown>)
-            : undefined;
-        const id =
-          typeof record?.id === "string" && record.id.length > 0
-            ? safeEntryId(record.id, `idx-${index}`)
-            : `idx-${index}`;
-        return { id, payload };
-      }),
-    );
-
-  const asChild = (
-    childId: string,
-    entries: readonly MemoryOverlaySourceEntry[],
-  ): MemoryOverlaySourceChild => ({
-    childId,
-    threadId: childId,
-    status: "settled",
-    runs: [],
-    branchIds: [],
-    descendantChildIds: [],
-    entries,
-  });
-
-  const withSource = (
-    childId: string,
-    fn: (
-      source: ChildOverlaySourcePort,
-    ) => ResultAsync<ChildOverlayPage, ChildOverlaySourceError>,
+    options: PiNativeSessionEntryPageOptions,
+    operation: string,
   ): ResultAsync<ChildOverlayPage, ChildOverlaySourceError> =>
-    materialize(childId).andThen((entries) =>
-      fn(createMemoryChildOverlaySource([asChild(childId, entries)])),
-    );
+    deps
+      .readSessionEntryPage(childId, options)
+      .map(mapNativeSessionEntryPageToOverlay)
+      .mapErr((error) => mapNativePageError(error, operation));
 
   return {
     describe: deps.describe,
     loadNewest(childId, pageSize) {
-      return withSource(childId, (source) =>
-        source.loadNewest(childId, pageSize),
+      return loadPage(
+        childId,
+        { direction: "newest", limit: clampPageSize(pageSize) },
+        "loadNewest",
       );
     },
     loadOlder(childId, cursor, pageSize) {
-      return withSource(childId, (source) =>
-        source.loadOlder(childId, cursor, pageSize),
+      const parsed = OpaqueCursorSchema.safeParse(cursor);
+      if (!parsed.success) {
+        return errAsync({ type: "SourceInvalidCursor", operation: "loadOlder" });
+      }
+      return loadPage(
+        childId,
+        {
+          direction: "older",
+          cursor: parsed.data,
+          limit: clampPageSize(pageSize),
+        },
+        "loadOlder",
       );
     },
     loadNewer(childId, cursor, pageSize) {
-      return withSource(childId, (source) =>
-        source.loadNewer(childId, cursor, pageSize),
+      const parsed = OpaqueCursorSchema.safeParse(cursor);
+      if (!parsed.success) {
+        return errAsync({ type: "SourceInvalidCursor", operation: "loadNewer" });
+      }
+      return loadPage(
+        childId,
+        {
+          direction: "newer",
+          cursor: parsed.data,
+          limit: clampPageSize(pageSize),
+        },
+        "loadNewer",
       );
     },
   };

@@ -13,10 +13,13 @@ import { dlopen, ptr, read } from "bun:ffi";
 import { platform } from "node:os";
 import { isAbsolute } from "node:path";
 import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
-import type {
-  PiNativeSessionDirectory,
-  PiNativeSessionFsError,
-  PiNativeSessionFsPort,
+import {
+  PI_NATIVE_SESSION_MAX_RANGE_LENGTH,
+  type PiNativeSessionDirectory,
+  type PiNativeSessionFileRange,
+  type PiNativeSessionFileStat,
+  type PiNativeSessionFsError,
+  type PiNativeSessionFsPort,
 } from "./child-native-sessions.js";
 
 /** Device/inode/mode triple used to bind a handle to one filesystem node. */
@@ -24,6 +27,11 @@ interface NodeIdentity {
   readonly dev: number;
   readonly ino: number;
   readonly mode: number;
+}
+
+/** Regular-file identity including size for bounded range reads. */
+interface FileNodeIdentity extends NodeIdentity {
+  readonly size: number;
 }
 
 const textEncoder = new TextEncoder();
@@ -43,6 +51,37 @@ function sameIdentity(left: NodeIdentity, right: NodeIdentity): boolean {
   return left.dev === right.dev && left.ino === right.ino;
 }
 
+function sameFileStat(
+  left: PiNativeSessionFileStat,
+  right: PiNativeSessionFileStat,
+): boolean {
+  return (
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.size === right.size
+  );
+}
+
+function toFileStat(identity: FileNodeIdentity): PiNativeSessionFileStat {
+  return { dev: identity.dev, ino: identity.ino, size: identity.size };
+}
+
+function validateRange(
+  offset: number,
+  length: number,
+): Result<void, PiNativeSessionFsError> {
+  if (
+    !Number.isSafeInteger(offset) ||
+    !Number.isSafeInteger(length) ||
+    offset < 0 ||
+    length < 0 ||
+    length > PI_NATIVE_SESSION_MAX_RANGE_LENGTH
+  ) {
+    return err({ type: "invalid-range" });
+  }
+  return ok(undefined);
+}
+
 function isFsError(value: unknown): value is PiNativeSessionFsError {
   if (typeof value !== "object" || value === null || !("type" in value)) {
     return false;
@@ -56,6 +95,7 @@ function isFsError(value: unknown): value is PiNativeSessionFsError {
     type === "missing" ||
     type === "symlink-rejected" ||
     type === "identity-changed" ||
+    type === "invalid-range" ||
     type === "permissive-mode" ||
     type === "wrong-kind" ||
     type === "io"
@@ -108,6 +148,12 @@ interface NativeLibc {
   readonly close: (fd: number) => number;
   readonly fchmod: (fd: number, mode: number) => number;
   readonly write: (fd: number, bytes: Uint8Array, count: number) => number;
+  readonly pread: (
+    fd: number,
+    bytes: Uint8Array,
+    count: number,
+    offset: number,
+  ) => number;
   readonly fsync: (fd: number) => number;
   readonly renameat: (
     oldDir: number,
@@ -183,6 +229,8 @@ function loadNative(): Result<NativeLibc, PiNativeSessionFsError> {
         close: { args: ["i32"], returns: "i32" },
         fchmod: { args: ["i32", "i32"], returns: "i32" },
         write: { args: ["i32", "ptr", "i32"], returns: "i32" },
+        // off_t is 64-bit on Darwin/Linux; count/return stay i32 like write().
+        pread: { args: ["i32", "ptr", "i32", "i64"], returns: "i32" },
         fsync: { args: ["i32"], returns: "i32" },
         renameat: { args: ["i32", "ptr", "i32", "ptr"], returns: "i32" },
         unlinkat: { args: ["i32", "ptr", "i32"], returns: "i32" },
@@ -202,6 +250,12 @@ function loadNative(): Result<NativeLibc, PiNativeSessionFsError> {
       close: (fd: number) => number;
       fchmod: (fd: number, mode: number) => number;
       write: (fd: number, bytes: unknown, count: number) => number;
+      pread: (
+        fd: number,
+        bytes: unknown,
+        count: number,
+        offset: bigint | number,
+      ) => number;
       fsync: (fd: number) => number;
       renameat: (
         oldDir: number,
@@ -228,6 +282,8 @@ function loadNative(): Result<NativeLibc, PiNativeSessionFsError> {
       fchmod: (fd: number, mode: number) => symbols.fchmod(fd, mode),
       write: (fd: number, bytes: Uint8Array, count: number) =>
         symbols.write(fd, ptr(bytes), count),
+      pread: (fd: number, bytes: Uint8Array, count: number, offset: number) =>
+        symbols.pread(fd, ptr(bytes), count, BigInt(offset)),
       fsync: (fd: number) => symbols.fsync(fd),
       renameat: (
         oldDir: number,
@@ -294,6 +350,64 @@ function statFd(
       mode,
     });
   });
+}
+
+/**
+ * fstat-equivalent identity for a regular 0600 leaf already opened with
+ * `O_NOFOLLOW`. Size is included so range readers can detect truncate.
+ */
+function statFileFd(
+  fd: number,
+): ResultAsync<FileNodeIdentity, PiNativeSessionFsError> {
+  return ResultAsync.fromThrowable(
+    () => Bun.file(fd).stat(),
+    () => ({ type: "io" }) as const,
+  )().andThen((stat) => {
+    if (!stat.isFile()) {
+      return errAsync<FileNodeIdentity, PiNativeSessionFsError>({
+        type: "wrong-kind",
+        kind: "file",
+      });
+    }
+    const mode = stat.mode & 0o7777;
+    if (mode !== 0o600) {
+      return errAsync<FileNodeIdentity, PiNativeSessionFsError>({
+        type: "permissive-mode",
+        kind: "file",
+      });
+    }
+    return okAsync<FileNodeIdentity, PiNativeSessionFsError>({
+      dev: stat.dev,
+      ino: stat.ino,
+      mode,
+      size: Number(stat.size),
+    });
+  });
+}
+
+function preadExact(
+  libc: NativeLibc,
+  fd: number,
+  offset: number,
+  length: number,
+): Result<Uint8Array, PiNativeSessionFsError> {
+  if (length === 0) return ok(new Uint8Array());
+  const buffer = new Uint8Array(length);
+  let filled = 0;
+  let cursor = offset;
+  while (filled < length) {
+    const count = libc.pread(
+      fd,
+      buffer.subarray(filled),
+      length - filled,
+      cursor,
+    );
+    if (count < 0) return err({ type: "io" });
+    if (count === 0) break;
+    filled += count;
+    cursor += count;
+  }
+  return ok(filled === length ? buffer : buffer.subarray(0, filled));
 }
 
 /**
@@ -531,6 +645,119 @@ class BunNativeSessionDirectory implements PiNativeSessionDirectory {
     });
   }
 
+  statFile(
+    name: string,
+  ): ResultAsync<PiNativeSessionFileStat | undefined, PiNativeSessionFsError> {
+    const checked = this.name(name);
+    if (checked.isErr()) return errAsync(checked.error);
+    return this.identity().andThen(() => {
+      const file = this.libc.openat(
+        this.fd,
+        cstr(checked.value),
+        this.libc.flags.O_RDONLY |
+          this.libc.flags.O_NOFOLLOW |
+          this.libc.flags.O_CLOEXEC,
+        0,
+      );
+      if (file < 0) {
+        if (this.libc.errno() === ERRNO_ENOENT) {
+          return okAsync<
+            PiNativeSessionFileStat | undefined,
+            PiNativeSessionFsError
+          >(undefined);
+        }
+        return fsErrAsync<PiNativeSessionFileStat | undefined>({
+          type: "symlink-rejected",
+        });
+      }
+      return statFileFd(file)
+        .map((fileIdentity) => {
+          this.libc.close(file);
+          return fileIdentity;
+        })
+        .mapErr((error) => {
+          this.libc.close(file);
+          return error;
+        })
+        .andThen((fileIdentity) => {
+          const bound = this.checkFileIdentity(checked.value, fileIdentity);
+          if (bound.isErr()) return errAsync(bound.error);
+          return this.identity()
+            .andThen(() => this.targetIdentity(checked.value))
+            .andThen((current) =>
+              current !== undefined && sameIdentity(fileIdentity, current)
+                ? okAsync<PiNativeSessionFileStat, PiNativeSessionFsError>(
+                    toFileStat(fileIdentity),
+                  )
+                : errAsync<PiNativeSessionFileStat, PiNativeSessionFsError>({
+                    type: "identity-changed",
+                  }),
+            );
+        });
+    });
+  }
+
+  readFileRange(
+    name: string,
+    offset: number,
+    length: number,
+  ): ResultAsync<PiNativeSessionFileRange | undefined, PiNativeSessionFsError> {
+    const range = validateRange(offset, length);
+    if (range.isErr()) return errAsync(range.error);
+    const checked = this.name(name);
+    if (checked.isErr()) return errAsync(checked.error);
+    return this.identity().andThen(() => {
+      const file = this.libc.openat(
+        this.fd,
+        cstr(checked.value),
+        this.libc.flags.O_RDONLY |
+          this.libc.flags.O_NOFOLLOW |
+          this.libc.flags.O_CLOEXEC,
+        0,
+      );
+      if (file < 0) {
+        if (this.libc.errno() === ERRNO_ENOENT) {
+          return okAsync<
+            PiNativeSessionFileRange | undefined,
+            PiNativeSessionFsError
+          >(undefined);
+        }
+        return fsErrAsync<PiNativeSessionFileRange | undefined>({
+          type: "symlink-rejected",
+        });
+      }
+      return ResultAsync.fromThrowable(async () => {
+        const before = await unwrapResult(statFileFd(file));
+        const bound = this.checkFileIdentity(checked.value, before);
+        if (bound.isErr()) throw bound.error;
+        const bytes = preadExact(this.libc, file, offset, length);
+        if (bytes.isErr()) throw bytes.error;
+        const after = await unwrapResult(statFileFd(file));
+        if (!sameFileStat(toFileStat(before), toFileStat(after))) {
+          throw { type: "identity-changed" } satisfies PiNativeSessionFsError;
+        }
+        await unwrapResult(this.identity());
+        const current = await unwrapResult(this.targetIdentity(checked.value));
+        if (current === undefined || !sameIdentity(before, current)) {
+          throw { type: "identity-changed" } satisfies PiNativeSessionFsError;
+        }
+        return {
+          identity: toFileStat(before),
+          bytes: bytes.value,
+          offset,
+        } satisfies PiNativeSessionFileRange;
+      }, mapThrownError)()
+        .map((result) => {
+          this.libc.close(file);
+          return result;
+        })
+        .mapErr((error) => {
+          this.libc.close(file);
+          return error;
+        });
+    });
+  }
+
   private appendValidated(
     name: string,
     bytes: Uint8Array,
@@ -696,6 +923,11 @@ function nextMemoryIdentity(mode = 0o700): NodeIdentity {
 export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
   private readonly directories = new Map<string, MemoryDirectoryData>();
   private readonly replaced = new Set<string>();
+  private readonly midReadTruncates = new Map<string, number>();
+
+  private midReadKey(path: string, name: string): string {
+    return `${path}\0${name}`;
+  }
 
   openDirectory(
     path: string,
@@ -736,6 +968,14 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
       return ok(identity);
     };
 
+    const memoryFileStat = (
+      file: MemoryFileData,
+    ): PiNativeSessionFileStat => ({
+      dev: file.identity.dev,
+      ino: file.identity.ino,
+      size: file.bytes.length,
+    });
+
     const handle: PiNativeSessionDirectory & {
       identity(): ResultAsync<NodeIdentity, PiNativeSessionFsError>;
     } = {
@@ -775,6 +1015,82 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
                 )
               : fsErrAsync<Uint8Array>({ type: "identity-changed" });
           });
+        });
+      },
+      statFile(
+        name,
+      ): ResultAsync<
+        PiNativeSessionFileStat | undefined,
+        PiNativeSessionFsError
+      > {
+        if (!safeName(name)) return errAsync({ type: "unsafe-path" });
+        return this.identity().andThen(() => {
+          const file = fs.directories.get(path)?.files.get(name);
+          if (file === undefined) return okAsync(undefined);
+          const checked = validateMemoryFile(file);
+          if (checked.isErr()) return errAsync(checked.error);
+          const boundFile = checkFileIdentity(name, file.identity);
+          if (boundFile.isErr()) return errAsync(boundFile.error);
+          const identity = memoryFileStat(file);
+          return this.identity().andThen(() => {
+            const current = fs.directories.get(path)?.files.get(name);
+            return current !== undefined &&
+              sameIdentity(current.identity, file.identity) &&
+              current.bytes.length === identity.size
+              ? okAsync<PiNativeSessionFileStat, PiNativeSessionFsError>(
+                  identity,
+                )
+              : fsErrAsync<PiNativeSessionFileStat>({
+                  type: "identity-changed",
+                });
+          });
+        });
+      },
+      readFileRange(
+        name,
+        offset,
+        length,
+      ): ResultAsync<
+        PiNativeSessionFileRange | undefined,
+        PiNativeSessionFsError
+      > {
+        const range = validateRange(offset, length);
+        if (range.isErr()) return errAsync(range.error);
+        if (!safeName(name)) return errAsync({ type: "unsafe-path" });
+        return this.identity().andThen(() => {
+          const file = fs.directories.get(path)?.files.get(name);
+          if (file === undefined) return okAsync(undefined);
+          const checked = validateMemoryFile(file);
+          if (checked.isErr()) return errAsync(checked.error);
+          const before = memoryFileStat(file);
+          const boundFile = checkFileIdentity(name, file.identity);
+          if (boundFile.isErr()) return errAsync(boundFile.error);
+
+          const truncateTo = fs.midReadTruncates.get(fs.midReadKey(path, name));
+          if (truncateTo !== undefined) {
+            file.bytes = file.bytes.slice(0, truncateTo);
+            fs.midReadTruncates.delete(fs.midReadKey(path, name));
+          }
+
+          const start = Math.min(offset, file.bytes.length);
+          const end = Math.min(offset + length, file.bytes.length);
+          const bytes = file.bytes.slice(start, end);
+
+          const current = fs.directories.get(path)?.files.get(name);
+          if (
+            current === undefined ||
+            !sameIdentity(current.identity, file.identity) ||
+            current.bytes.length !== before.size
+          ) {
+            return fsErrAsync<PiNativeSessionFileRange>({
+              type: "identity-changed",
+            });
+          }
+          return this.identity().map(() => ({
+            identity: before,
+            bytes,
+            offset,
+          }));
         });
       },
       appendFile(name, bytes, mode) {
@@ -879,6 +1195,18 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
     const existing = directory?.files.get(name);
     if (directory && existing) {
       existing.identity = nextMemoryIdentity(existing.mode);
+    }
+  }
+
+  /** Truncate a leaf between identity capture and re-check inside one range read. */
+  simulateMidReadTruncate(path: string, name: string, size: number): void {
+    this.midReadTruncates.set(this.midReadKey(path, name), size);
+  }
+
+  simulateFileTruncate(path: string, name: string, size: number): void {
+    const file = this.directories.get(path)?.files.get(name);
+    if (file) {
+      file.bytes = file.bytes.slice(0, Math.max(0, size));
     }
   }
 

@@ -10,13 +10,14 @@
  * native open/read APIs.
  *
  * This module is storage only. It creates, opens, lists by explicit ref,
- * reads live/historical native entries through the host, and explicitly
- * deletes child sessions. It does not render, does not own parent
+ * reads live/historical native entries through the host, pages historical
+ * JSONL entries through bounded `statFile`/`readFileRange` scans, and
+ * explicitly deletes child sessions. It does not render, does not own parent
  * custom-entry refs (Task 5), does not cache (Task 6), does not prune, and
  * never falls back to an ephemeral `--no-session` child: a persistence
- * failure is returned as an error *before* the child task starts. Entry
- * reads return host `getEntries()` output only; transcript bytes are never
- * copied into adapter storage.
+ * failure is returned as an error *before* the child task starts. Host entry
+ * reads return `getEntries()` output only; paged reads never call the host
+ * and never copy transcript bytes into adapter storage.
  *
  * Every filesystem touch goes through an injected no-follow
  * {@link PiNativeSessionFsPort} (the same libc `openat(O_NOFOLLOW)`
@@ -53,6 +54,32 @@ export const PI_NATIVE_SESSION_LAYOUT = Object.freeze({
 const SAFE_COMPONENT = /^[A-Za-z0-9._-]+$/;
 const MAX_COMPONENT_LENGTH = 64;
 const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder("utf-8", { fatal: false });
+
+/**
+ * Hard ceilings for one {@link PiNativeSessionStore.readSessionEntryPage}
+ * call. Budgets are independent of total file size: a page never scans more
+ * than these caps even when the transcript is much larger.
+ */
+export const PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS = Object.freeze({
+  /** Hard ceiling on `limit` (and the default when omitted). */
+  maxLimit: 100,
+  /** Maximum bytes returned by `readFileRange` across one page call. */
+  maxBytesScanned: 1024 * 1024,
+  /** Maximum JSONL lines examined (including header skips and corrupt lines). */
+  maxLinesScanned: 4_096,
+  /**
+   * Single-line ceiling; a longer line fails closed as `line-too-long`.
+   * Kept below `maxBytesScanned` so an unterminated overlong line is
+   * discovered inside one page budget rather than silently truncated.
+   */
+  maxLineBytes: 512 * 1024,
+  /** Opaque cursor string ceiling. */
+  maxCursorLength: 512,
+});
+
+/** Schema version of {@link PiNativeSessionEntryCursor}. */
+export const PI_NATIVE_SESSION_ENTRY_CURSOR_VERSION = 1 as const;
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -72,7 +99,10 @@ export type PiNativeSessionCorruption =
   | "missing-header"
   | "unsupported-version"
   | "parent-session-mismatch"
-  | "not-persisted";
+  | "not-persisted"
+  | "invalid-cursor"
+  | "stale-cursor"
+  | "line-too-long";
 
 /** Closed failure set for every fallible operation in this module. */
 export type PiNativeSessionError =
@@ -121,9 +151,30 @@ export type PiNativeSessionFsError =
   | { readonly type: "missing" }
   | { readonly type: "symlink-rejected" }
   | { readonly type: "identity-changed" }
+  | { readonly type: "invalid-range" }
   | { readonly type: "permissive-mode"; readonly kind: "directory" | "file" }
   | { readonly type: "wrong-kind"; readonly kind: "directory" | "file" }
   | { readonly type: "io" };
+
+/**
+ * Maximum `readFileRange` length. Callers page through larger files with
+ * repeated bounded reads; a single call never exceeds this budget.
+ */
+export const PI_NATIVE_SESSION_MAX_RANGE_LENGTH = 64 * 1024;
+
+/** Stable regular-file identity used by bounded range reads. */
+export interface PiNativeSessionFileStat {
+  readonly dev: number;
+  readonly ino: number;
+  readonly size: number;
+}
+
+/** One exact positional chunk plus the identity observed for that read. */
+export interface PiNativeSessionFileRange {
+  readonly identity: PiNativeSessionFileStat;
+  readonly bytes: Uint8Array;
+  readonly offset: number;
+}
 
 /** One no-follow directory handle opened under the verified session root. */
 export interface PiNativeSessionDirectory {
@@ -131,6 +182,24 @@ export interface PiNativeSessionDirectory {
   readFile(
     name: string,
   ): ResultAsync<Uint8Array | undefined, PiNativeSessionFsError>;
+  /**
+   * No-follow `fstat` of a regular 0600 leaf. Missing leaves return
+   * `undefined`; symlinks and non-files fail closed.
+   */
+  statFile(
+    name: string,
+  ): ResultAsync<PiNativeSessionFileStat | undefined, PiNativeSessionFsError>;
+  /**
+   * No-follow positional read via `pread`. `offset`/`length` must be
+   * nonnegative safe integers with `length <= PI_NATIVE_SESSION_MAX_RANGE_LENGTH`.
+   * Returns exact bytes (possibly short at EOF) bound to the observed
+   * `{dev,ino,size}` identity; mid-read replace/truncate fails closed.
+   */
+  readFileRange(
+    name: string,
+    offset: number,
+    length: number,
+  ): ResultAsync<PiNativeSessionFileRange | undefined, PiNativeSessionFsError>;
   appendFile(
     name: string,
     bytes: Uint8Array,
@@ -172,6 +241,8 @@ function fromFsError(
     case "wrong-kind":
       return { type: "SessionCorrupt", ref, reason: "unreadable" };
     case "identity-changed":
+      return { type: "SessionCorrupt", ref, reason: "unreadable" };
+    case "invalid-range":
       return { type: "SessionCorrupt", ref, reason: "unreadable" };
     case "unavailable":
       return { type: "SessionStorageUnavailable" };
@@ -350,6 +421,63 @@ export interface PiNativeSessionEntries {
   readonly entries: readonly unknown[];
 }
 
+/**
+ * Strict opaque cursor payload for bounded native JSONL entry paging.
+ * Encoded as base64url JSON for the public string form; callers never need
+ * to inspect fields, but the schema rejects unknown keys and wrong versions.
+ */
+export const PiNativeSessionEntryCursorSchema = z
+  .object({
+    version: z.literal(PI_NATIVE_SESSION_ENTRY_CURSOR_VERSION),
+    dev: z.number().int().nonnegative(),
+    ino: z.number().int().nonnegative(),
+    size: z.number().int().nonnegative(),
+    /** Absolute byte offset of the anchored entry's line start. */
+    offset: z.number().int().nonnegative(),
+    /**
+     * Which page edge produced this cursor: `older` means load further older
+     * entries strictly before `offset`; `newer` means load further newer
+     * entries strictly after that entry's line.
+     */
+    anchor: z.enum(["older", "newer"]),
+  })
+  .strict();
+
+export type PiNativeSessionEntryCursor = z.infer<
+  typeof PiNativeSessionEntryCursorSchema
+>;
+
+/** Page scan direction for {@link PiNativeSessionStore.readSessionEntryPage}. */
+export type PiNativeSessionEntryPageDirection = "newest" | "older" | "newer";
+
+/** One parsed JSONL body line (header lines are never returned). */
+export type PiNativeSessionPagedEntry =
+  | {
+      readonly kind: "entry";
+      readonly offset: number;
+      readonly value: unknown;
+    }
+  | {
+      readonly kind: "corrupt";
+      readonly offset: number;
+      readonly reason: "invalid-json" | "not-object" | "empty";
+    };
+
+/** One bounded native session entry page. */
+export interface PiNativeSessionEntryPage {
+  readonly entries: readonly PiNativeSessionPagedEntry[];
+  readonly olderCursor?: string;
+  readonly newerCursor?: string;
+  readonly bytesRead: number;
+  readonly linesScanned: number;
+}
+
+export interface PiNativeSessionEntryPageOptions {
+  readonly direction: PiNativeSessionEntryPageDirection;
+  readonly cursor?: string;
+  readonly limit?: number;
+}
+
 /** Bounded, typed view of one requested ref. */
 export type PiNativeSessionState =
   | { readonly state: "available"; readonly record: PiNativeSessionRecord }
@@ -494,6 +622,530 @@ function withDirectory<T>(
           return error;
         }),
     );
+}
+
+function encodeBase64Url(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/u, "");
+}
+
+function decodeBase64Url(value: string): Result<Uint8Array, undefined> {
+  return Result.fromThrowable(
+    () => {
+      const padded = value.replace(/-/g, "+").replace(/_/g, "/");
+      const padLength = (4 - (padded.length % 4)) % 4;
+      const binary = atob(padded + "=".repeat(padLength));
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index);
+      }
+      return bytes;
+    },
+    () => undefined,
+  )();
+}
+
+/** Encode a validated cursor payload as an opaque base64url string. */
+export function encodePiNativeSessionEntryCursor(
+  cursor: PiNativeSessionEntryCursor,
+): Result<string, PiNativeSessionError> {
+  const parsed = PiNativeSessionEntryCursorSchema.safeParse(cursor);
+  if (!parsed.success) {
+    return err({
+      type: "SessionCorrupt",
+      ref: "",
+      reason: "invalid-cursor",
+    });
+  }
+  const encoded = encodeBase64Url(
+    textEncoder.encode(JSON.stringify(parsed.data)),
+  );
+  if (encoded.length > PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS.maxCursorLength) {
+    return err({
+      type: "SessionCorrupt",
+      ref: "",
+      reason: "invalid-cursor",
+    });
+  }
+  return ok(encoded);
+}
+
+/** Decode and strictly validate an opaque entry-page cursor. */
+export function decodePiNativeSessionEntryCursor(
+  cursor: string,
+  ref: string,
+): Result<PiNativeSessionEntryCursor, PiNativeSessionError> {
+  if (
+    cursor.length === 0 ||
+    cursor.length > PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS.maxCursorLength
+  ) {
+    return err({ type: "SessionCorrupt", ref, reason: "invalid-cursor" });
+  }
+  const bytes = decodeBase64Url(cursor);
+  if (bytes.isErr()) {
+    return err({ type: "SessionCorrupt", ref, reason: "invalid-cursor" });
+  }
+  const json = Result.fromThrowable(
+    () => JSON.parse(textDecoder.decode(bytes.value)) as unknown,
+    () => undefined,
+  )();
+  if (json.isErr()) {
+    return err({ type: "SessionCorrupt", ref, reason: "invalid-cursor" });
+  }
+  const parsed = PiNativeSessionEntryCursorSchema.safeParse(json.value);
+  if (!parsed.success) {
+    return err({ type: "SessionCorrupt", ref, reason: "invalid-cursor" });
+  }
+  return ok(parsed.data);
+}
+
+interface LocatedLine {
+  readonly offset: number;
+  readonly bytes: Uint8Array;
+}
+
+interface PageScanState {
+  bytesRead: number;
+  linesScanned: number;
+}
+
+function clampEntryPageLimit(limit: number | undefined): number {
+  if (limit === undefined) return PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS.maxLimit;
+  if (!Number.isSafeInteger(limit) || limit < 1) return 0;
+  return Math.min(limit, PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS.maxLimit);
+}
+
+function cursorMatchesIdentity(
+  cursor: PiNativeSessionEntryCursor,
+  identity: PiNativeSessionFileStat,
+): PiNativeSessionCorruption | undefined {
+  if (cursor.dev !== identity.dev || cursor.ino !== identity.ino) {
+    return "stale-cursor";
+  }
+  if (identity.size < cursor.size || identity.size < cursor.offset) {
+    return "stale-cursor";
+  }
+  return undefined;
+}
+
+function parseJsonlBodyLine(
+  offset: number,
+  lineBytes: Uint8Array,
+): PiNativeSessionPagedEntry {
+  if (lineBytes.length === 0) {
+    return { kind: "corrupt", offset, reason: "empty" };
+  }
+  const text = textDecoder.decode(lineBytes);
+  const parsed = Result.fromThrowable(
+    () => JSON.parse(text) as unknown,
+    () => undefined,
+  )();
+  if (parsed.isErr()) {
+    return { kind: "corrupt", offset, reason: "invalid-json" };
+  }
+  if (typeof parsed.value !== "object" || parsed.value === null) {
+    return { kind: "corrupt", offset, reason: "not-object" };
+  }
+  return { kind: "entry", offset, value: parsed.value };
+}
+
+function isSessionHeaderLine(value: unknown): value is {
+  type: "session";
+  version?: number;
+  id?: string;
+  parentSession?: string;
+  cwd?: string;
+} {
+  if (typeof value !== "object" || value === null) return false;
+  const record = value as { type?: unknown };
+  return record.type === "session";
+}
+
+function readRangeExact(
+  directory: PiNativeSessionDirectory,
+  fileName: string,
+  offset: number,
+  length: number,
+  ref: string,
+  state: PageScanState,
+  expected: PiNativeSessionFileStat,
+): ResultAsync<Uint8Array, PiNativeSessionError> {
+  if (length === 0) {
+    return okAsync(new Uint8Array());
+  }
+  const remaining =
+    PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS.maxBytesScanned - state.bytesRead;
+  if (remaining <= 0) {
+    return errAsync({
+      type: "SessionCorrupt",
+      ref,
+      reason: "unreadable",
+    });
+  }
+  const capped = Math.min(
+    length,
+    remaining,
+    PI_NATIVE_SESSION_MAX_RANGE_LENGTH,
+  );
+  return directory
+    .readFileRange(fileName, offset, capped)
+    .mapErr((error) => fromFsError(error, ref))
+    .andThen((range) => {
+      if (range === undefined) {
+        return errAsync<Uint8Array, PiNativeSessionError>({
+          type: "SessionMissing",
+          ref,
+        });
+      }
+      if (
+        range.identity.dev !== expected.dev ||
+        range.identity.ino !== expected.ino ||
+        range.identity.size !== expected.size
+      ) {
+        return errAsync<Uint8Array, PiNativeSessionError>({
+          type: "SessionCorrupt",
+          ref,
+          reason: "stale-cursor",
+        });
+      }
+      state.bytesRead += range.bytes.length;
+      return okAsync(range.bytes);
+    });
+}
+
+/**
+ * Reads complete newline-delimited lines forward from `start` up to (but not
+ * past) `endExclusive`. Stops on byte/line budgets or `maxLines`. A line
+ * without a trailing newline is yielded only when `endExclusive` is EOF.
+ */
+function readLinesForward(
+  directory: PiNativeSessionDirectory,
+  fileName: string,
+  start: number,
+  endExclusive: number,
+  ref: string,
+  state: PageScanState,
+  identity: PiNativeSessionFileStat,
+  maxLines: number = Number.POSITIVE_INFINITY,
+): ResultAsync<readonly LocatedLine[], PiNativeSessionError> {
+  if (start >= endExclusive || maxLines <= 0) return okAsync([]);
+
+  const collect = (
+    cursor: number,
+    carry: Uint8Array,
+    carryOffset: number,
+    lines: LocatedLine[],
+  ): ResultAsync<readonly LocatedLine[], PiNativeSessionError> => {
+    if (
+      lines.length >= maxLines ||
+      state.bytesRead >= PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS.maxBytesScanned ||
+      state.linesScanned >= PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS.maxLinesScanned
+    ) {
+      return okAsync(lines);
+    }
+    if (cursor >= endExclusive && carry.length === 0) return okAsync(lines);
+
+    if (cursor >= endExclusive) {
+      if (endExclusive === identity.size && carry.length > 0) {
+        if (carry.length > PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS.maxLineBytes) {
+          return errAsync({
+            type: "SessionCorrupt",
+            ref,
+            reason: "line-too-long",
+          });
+        }
+        state.linesScanned += 1;
+        lines.push({ offset: carryOffset, bytes: carry });
+      }
+      return okAsync(lines);
+    }
+
+    const want = Math.min(
+      PI_NATIVE_SESSION_MAX_RANGE_LENGTH,
+      endExclusive - cursor,
+      PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS.maxBytesScanned - state.bytesRead,
+    );
+    if (want <= 0) return okAsync(lines);
+
+    return readRangeExact(
+      directory,
+      fileName,
+      cursor,
+      want,
+      ref,
+      state,
+      identity,
+    ).andThen((chunk) => {
+      if (chunk.length === 0) return okAsync(lines);
+
+      let lineStart = 0;
+      const merged =
+        carry.length === 0
+          ? chunk
+          : (() => {
+              const next = new Uint8Array(carry.length + chunk.length);
+              next.set(carry);
+              next.set(chunk, carry.length);
+              return next;
+            })();
+      const baseOffset = carry.length === 0 ? cursor : carryOffset;
+
+      for (let index = 0; index < merged.length; index += 1) {
+        if (merged[index] !== 0x0a) continue;
+        const length = index - lineStart;
+        if (length > PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS.maxLineBytes) {
+          return errAsync<readonly LocatedLine[], PiNativeSessionError>({
+            type: "SessionCorrupt",
+            ref,
+            reason: "line-too-long",
+          });
+        }
+        if (
+          lines.length >= maxLines ||
+          state.linesScanned >=
+            PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS.maxLinesScanned
+        ) {
+          return okAsync(lines);
+        }
+        state.linesScanned += 1;
+        lines.push({
+          offset: baseOffset + lineStart,
+          bytes: merged.subarray(lineStart, index),
+        });
+        lineStart = index + 1;
+        if (lines.length >= maxLines) return okAsync(lines);
+      }
+
+      const rest =
+        lineStart < merged.length ? merged.subarray(lineStart).slice() : new Uint8Array();
+      if (rest.length > PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS.maxLineBytes) {
+        return errAsync<readonly LocatedLine[], PiNativeSessionError>({
+          type: "SessionCorrupt",
+          ref,
+          reason: "line-too-long",
+        });
+      }
+
+      return collect(
+        cursor + chunk.length,
+        rest,
+        lineStart < merged.length ? baseOffset + lineStart : cursor + chunk.length,
+        lines,
+      );
+    });
+  };
+
+  return collect(start, new Uint8Array(), start, []);
+}
+
+function concatBytes(left: Uint8Array, right: Uint8Array): Uint8Array {
+  if (left.length === 0) return right;
+  if (right.length === 0) return left;
+  const next = new Uint8Array(left.length + right.length);
+  next.set(left);
+  next.set(right, left.length);
+  return next;
+}
+
+function lineTooLongError(ref: string): PiNativeSessionError {
+  return { type: "SessionCorrupt", ref, reason: "line-too-long" };
+}
+
+function pushCollectedLine(
+  collected: LocatedLine[],
+  state: PageScanState,
+  maxLines: number,
+  line: LocatedLine,
+  ref: string,
+): Result<"continue" | "full", PiNativeSessionError> {
+  if (line.bytes.length > PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS.maxLineBytes) {
+    return err(lineTooLongError(ref));
+  }
+  if (
+    collected.length >= maxLines ||
+    state.linesScanned >= PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS.maxLinesScanned
+  ) {
+    return ok("full");
+  }
+  state.linesScanned += 1;
+  collected.push(line);
+  return collected.length >= maxLines ||
+    state.linesScanned >= PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS.maxLinesScanned
+    ? ok("full")
+    : ok("continue");
+}
+
+/**
+ * Scans complete lines backward from `endExclusive` down toward `startFloor`.
+ * Returned lines are newest-first. Newline is a byte delimiter (UTF-8 safe).
+ * A trailing file newline does not invent an empty line; an unterminated
+ * final line at EOF is yielded when the scan reaches `startFloor`.
+ */
+function readLinesBackward(
+  directory: PiNativeSessionDirectory,
+  fileName: string,
+  endExclusive: number,
+  startFloor: number,
+  ref: string,
+  state: PageScanState,
+  identity: PiNativeSessionFileStat,
+  maxLines: number,
+): ResultAsync<readonly LocatedLine[], PiNativeSessionError> {
+  if (endExclusive <= startFloor || maxLines <= 0) return okAsync([]);
+
+  const collected: LocatedLine[] = [];
+
+  /**
+   * `buffer` holds the incomplete right-hand fragment whose absolute start is
+   * `bufferOffset` — bytes not yet closed by a newline to their left.
+   */
+  const step = (
+    pos: number,
+    buffer: Uint8Array,
+    bufferOffset: number,
+  ): ResultAsync<readonly LocatedLine[], PiNativeSessionError> => {
+    if (
+      collected.length >= maxLines ||
+      state.bytesRead >= PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS.maxBytesScanned ||
+      state.linesScanned >= PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS.maxLinesScanned
+    ) {
+      return okAsync(collected);
+    }
+
+    if (pos <= startFloor) {
+      if (buffer.length > 0) {
+        const pushed = pushCollectedLine(
+          collected,
+          state,
+          maxLines,
+          { offset: bufferOffset, bytes: buffer },
+          ref,
+        );
+        if (pushed.isErr()) return errAsync(pushed.error);
+      }
+      return okAsync(collected);
+    }
+
+    const want = Math.min(
+      PI_NATIVE_SESSION_MAX_RANGE_LENGTH,
+      pos - startFloor,
+      PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS.maxBytesScanned - state.bytesRead,
+    );
+    if (want <= 0) {
+      if (buffer.length > 0) {
+        const pushed = pushCollectedLine(
+          collected,
+          state,
+          maxLines,
+          { offset: bufferOffset, bytes: buffer },
+          ref,
+        );
+        if (pushed.isErr()) return errAsync(pushed.error);
+      }
+      return okAsync(collected);
+    }
+
+    const offset = pos - want;
+    return readRangeExact(
+      directory,
+      fileName,
+      offset,
+      want,
+      ref,
+      state,
+      identity,
+    ).andThen((chunk) => {
+      const merged = concatBytes(chunk, buffer);
+      const base = offset;
+
+      // Split merged into newline-terminated segments.
+      // parts[0] may still be incomplete (needs bytes to the left).
+      // parts[1..] are definitely complete.
+      // The fragment after the final newline stays as the next right buffer
+      // (empty when merged ends with \n).
+      const segments: LocatedLine[] = [];
+      let start = 0;
+      const newlineAt: number[] = [];
+      for (let index = 0; index < merged.length; index += 1) {
+        if (merged[index] === 0x0a) newlineAt.push(index);
+      }
+
+      if (newlineAt.length === 0) {
+        if (merged.length > PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS.maxLineBytes) {
+          return errAsync(lineTooLongError(ref));
+        }
+        return step(offset, merged.slice(), base);
+      }
+
+      for (const nl of newlineAt) {
+        segments.push({
+          offset: base + start,
+          bytes: merged.subarray(start, nl),
+        });
+        start = nl + 1;
+      }
+      const rightFragment = merged.subarray(start);
+
+      // segments[0] is incomplete unless we have reached startFloor.
+      // segments[1..] are complete — emit newest-first.
+      const definite = segments.slice(1);
+      for (let index = definite.length - 1; index >= 0; index -= 1) {
+        const line = definite[index];
+        if (line === undefined || line.offset < startFloor) continue;
+        const pushed = pushCollectedLine(
+          collected,
+          state,
+          maxLines,
+          line,
+          ref,
+        );
+        if (pushed.isErr()) return errAsync(pushed.error);
+        if (pushed.value === "full") return okAsync(collected);
+      }
+
+      const head = segments[0];
+      if (head === undefined) return okAsync(collected);
+
+      // Unterminated final line at EOF (no trailing newline): emit once as the
+      // newest line, then continue carrying only the incomplete left head.
+      if (rightFragment.length > 0) {
+        const pushedTail = pushCollectedLine(
+          collected,
+          state,
+          maxLines,
+          { offset: base + start, bytes: rightFragment.slice() },
+          ref,
+        );
+        if (pushedTail.isErr()) return errAsync(pushedTail.error);
+        if (pushedTail.value === "full") return okAsync(collected);
+      }
+
+      if (offset === startFloor) {
+        const pushedHead = pushCollectedLine(
+          collected,
+          state,
+          maxLines,
+          head,
+          ref,
+        );
+        if (pushedHead.isErr()) return errAsync(pushedHead.error);
+        return okAsync(collected);
+      }
+
+      if (head.bytes.length > PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS.maxLineBytes) {
+        return errAsync(lineTooLongError(ref));
+      }
+      return step(offset, head.bytes.slice(), head.offset);
+    });
+  };
+
+  return step(endExclusive, new Uint8Array(), endExclusive);
 }
 
 function headerCorruption(
@@ -678,6 +1330,462 @@ export class PiNativeSessionStore {
           }),
         )().map((entries) => ({ record, entries })),
     );
+  }
+
+  /**
+   * Bounded native v3 JSONL entry page. Uses only `statFile` /
+   * `readFileRange` in ≤64 KiB chunks — never `readFile`,
+   * `readSessionEntries`, or `SessionManager.getEntries`.
+   *
+   * Directions:
+   * - `newest`: newest body entries (header skipped), optional cursor ignored
+   * - `older`: body entries strictly older than the opaque cursor
+   * - `newer`: body entries strictly newer than the opaque cursor
+   *
+   * Stops at `limit` (≤100) or the fixed byte/line scan budgets, whichever
+   * comes first. Corrupt lines are typed in-page; overlong lines fail closed.
+   */
+  readSessionEntryPage(
+    ref: string,
+    expectedParentSession: string | undefined,
+    options: PiNativeSessionEntryPageOptions,
+  ): ResultAsync<PiNativeSessionEntryPage, PiNativeSessionError> {
+    const verified = verifyNativeSessionRef(ref);
+    if (verified.isErr()) return errAsync(verified.error);
+    const limit = clampEntryPageLimit(options.limit);
+    if (limit === 0) {
+      return errAsync({
+        type: "SessionCorrupt",
+        ref: verified.value,
+        reason: "unreadable",
+      });
+    }
+    if (
+      (options.direction === "older" || options.direction === "newer") &&
+      (options.cursor === undefined || options.cursor.length === 0)
+    ) {
+      return errAsync({
+        type: "SessionCorrupt",
+        ref: verified.value,
+        reason: "invalid-cursor",
+      });
+    }
+
+    const separator = verified.value.lastIndexOf("/");
+    if (separator <= 0) {
+      return errAsync({ type: "SessionRootViolation", reason: "path-escape" });
+    }
+    const component = verified.value.slice(0, separator);
+    const fileName = verified.value.slice(separator + 1);
+    const childDir = join(this.root, component);
+
+    return withDirectory(
+      this.fs,
+      childDir,
+      false,
+      verified.value,
+      (directory) =>
+        this.pageFromDirectory(
+          directory,
+          fileName,
+          verified.value,
+          expectedParentSession,
+          options.direction,
+          options.cursor,
+          limit,
+        ),
+    );
+  }
+
+  private pageFromDirectory(
+    directory: PiNativeSessionDirectory,
+    fileName: string,
+    ref: string,
+    expectedParentSession: string | undefined,
+    direction: PiNativeSessionEntryPageDirection,
+    cursorToken: string | undefined,
+    limit: number,
+  ): ResultAsync<PiNativeSessionEntryPage, PiNativeSessionError> {
+    const state: PageScanState = { bytesRead: 0, linesScanned: 0 };
+    return directory
+      .statFile(fileName)
+      .mapErr((error) => fromFsError(error, ref))
+      .andThen((identity) => {
+        if (identity === undefined) {
+          return errAsync<PiNativeSessionEntryPage, PiNativeSessionError>({
+            type: "SessionMissing",
+            ref,
+          });
+        }
+        return this.validateHeaderFromFile(
+          directory,
+          fileName,
+          ref,
+          identity,
+          state,
+          expectedParentSession,
+        ).andThen((headerEnd) => {
+          let decodedCursor: PiNativeSessionEntryCursor | undefined;
+          if (cursorToken !== undefined && direction !== "newest") {
+            const decoded = decodePiNativeSessionEntryCursor(cursorToken, ref);
+            if (decoded.isErr()) return errAsync(decoded.error);
+            const stale = cursorMatchesIdentity(decoded.value, identity);
+            if (stale !== undefined) {
+              return errAsync<PiNativeSessionEntryPage, PiNativeSessionError>({
+                type: "SessionCorrupt",
+                ref,
+                reason: stale,
+              });
+            }
+            if (decoded.value.offset < headerEnd) {
+              return errAsync<PiNativeSessionEntryPage, PiNativeSessionError>({
+                type: "SessionCorrupt",
+                ref,
+                reason: "invalid-cursor",
+              });
+            }
+            decodedCursor = decoded.value;
+          }
+
+          if (direction === "newest") {
+            return this.pageNewest(
+              directory,
+              fileName,
+              ref,
+              identity,
+              state,
+              headerEnd,
+              limit,
+            );
+          }
+          if (decodedCursor === undefined) {
+            return errAsync<PiNativeSessionEntryPage, PiNativeSessionError>({
+              type: "SessionCorrupt",
+              ref,
+              reason: "invalid-cursor",
+            });
+          }
+          if (direction === "older") {
+            return this.pageOlder(
+              directory,
+              fileName,
+              ref,
+              identity,
+              state,
+              headerEnd,
+              decodedCursor,
+              limit,
+            );
+          }
+          return this.pageNewer(
+            directory,
+            fileName,
+            ref,
+            identity,
+            state,
+            decodedCursor,
+            limit,
+          );
+        });
+      });
+  }
+
+  private validateHeaderFromFile(
+    directory: PiNativeSessionDirectory,
+    fileName: string,
+    ref: string,
+    identity: PiNativeSessionFileStat,
+    state: PageScanState,
+    expectedParentSession: string | undefined,
+  ): ResultAsync<number, PiNativeSessionError> {
+    if (identity.size === 0) {
+      return errAsync({
+        type: "SessionCorrupt",
+        ref,
+        reason: "missing-header",
+      });
+    }
+    return readLinesForward(
+      directory,
+      fileName,
+      0,
+      Math.min(identity.size, PI_NATIVE_SESSION_MAX_RANGE_LENGTH),
+      ref,
+      state,
+      identity,
+      1,
+    ).andThen((lines) => {
+      const headerLine = lines[0];
+      if (headerLine === undefined) {
+        return errAsync<number, PiNativeSessionError>({
+          type: "SessionCorrupt",
+          ref,
+          reason: "missing-header",
+        });
+      }
+      const parsed = parseJsonlBodyLine(headerLine.offset, headerLine.bytes);
+      if (parsed.kind !== "entry" || !isSessionHeaderLine(parsed.value)) {
+        return errAsync<number, PiNativeSessionError>({
+          type: "SessionCorrupt",
+          ref,
+          reason: "missing-header",
+        });
+      }
+      const version = parsed.value.version;
+      if (version !== undefined && version !== 3) {
+        return errAsync<number, PiNativeSessionError>({
+          type: "SessionCorrupt",
+          ref,
+          reason: "unsupported-version",
+        });
+      }
+      const parent = parsed.value.parentSession;
+      if (typeof parent !== "string" || parent.length === 0) {
+        return errAsync<number, PiNativeSessionError>({
+          type: "SessionCorrupt",
+          ref,
+          reason: "parent-session-mismatch",
+        });
+      }
+      if (
+        expectedParentSession !== undefined &&
+        parent !== expectedParentSession
+      ) {
+        return errAsync<number, PiNativeSessionError>({
+          type: "SessionCorrupt",
+          ref,
+          reason: "parent-session-mismatch",
+        });
+      }
+      // Header line ends at first newline, or the whole file when absent.
+      const headerEnd =
+        headerLine.offset +
+        headerLine.bytes.length +
+        (headerLine.offset + headerLine.bytes.length < identity.size ? 1 : 0);
+      return okAsync(headerEnd);
+    });
+  }
+
+  private buildPageResult(
+    identity: PiNativeSessionFileStat,
+    state: PageScanState,
+    /** Oldest→newest body entries for this page. */
+    entries: readonly PiNativeSessionPagedEntry[],
+    hasOlder: boolean,
+    hasNewer: boolean,
+  ): Result<PiNativeSessionEntryPage, PiNativeSessionError> {
+    const oldest = entries[0];
+    const newest = entries[entries.length - 1];
+    let olderCursor: string | undefined;
+    let newerCursor: string | undefined;
+    if (hasOlder && oldest !== undefined) {
+      const encoded = encodePiNativeSessionEntryCursor({
+        version: PI_NATIVE_SESSION_ENTRY_CURSOR_VERSION,
+        dev: identity.dev,
+        ino: identity.ino,
+        size: identity.size,
+        offset: oldest.offset,
+        anchor: "older",
+      });
+      if (encoded.isErr()) return err(encoded.error);
+      olderCursor = encoded.value;
+    }
+    if (hasNewer && newest !== undefined) {
+      const encoded = encodePiNativeSessionEntryCursor({
+        version: PI_NATIVE_SESSION_ENTRY_CURSOR_VERSION,
+        dev: identity.dev,
+        ino: identity.ino,
+        size: identity.size,
+        offset: newest.offset,
+        anchor: "newer",
+      });
+      if (encoded.isErr()) return err(encoded.error);
+      newerCursor = encoded.value;
+    }
+    return ok({
+      entries,
+      ...(olderCursor === undefined ? {} : { olderCursor }),
+      ...(newerCursor === undefined ? {} : { newerCursor }),
+      bytesRead: state.bytesRead,
+      linesScanned: state.linesScanned,
+    });
+  }
+
+  private pageNewest(
+    directory: PiNativeSessionDirectory,
+    fileName: string,
+    ref: string,
+    identity: PiNativeSessionFileStat,
+    state: PageScanState,
+    headerEnd: number,
+    limit: number,
+  ): ResultAsync<PiNativeSessionEntryPage, PiNativeSessionError> {
+    // Scan enough lines to fill the page plus detect whether older exists.
+    return readLinesBackward(
+      directory,
+      fileName,
+      identity.size,
+      headerEnd,
+      ref,
+      state,
+      identity,
+      limit + 1,
+    ).andThen((linesNewestFirst) => {
+      const body = linesNewestFirst.filter((line) => line.offset >= headerEnd);
+      const hasOlder = body.length > limit;
+      const pageNewestFirst = body.slice(0, limit);
+      const pageOldestFirst = [...pageNewestFirst].reverse();
+      const entries = pageOldestFirst.map((line) =>
+        parseJsonlBodyLine(line.offset, line.bytes),
+      );
+      // Anchor a newer cursor at the tip so a later append can be loaded.
+      const hasNewer = entries.length > 0;
+      return this.buildPageResult(
+        identity,
+        state,
+        entries,
+        hasOlder,
+        hasNewer,
+      ).asyncAndThen((page) => okAsync(page));
+    });
+  }
+
+  private pageOlder(
+    directory: PiNativeSessionDirectory,
+    fileName: string,
+    ref: string,
+    identity: PiNativeSessionFileStat,
+    state: PageScanState,
+    headerEnd: number,
+    cursor: PiNativeSessionEntryCursor,
+    limit: number,
+  ): ResultAsync<PiNativeSessionEntryPage, PiNativeSessionError> {
+    return readLinesBackward(
+      directory,
+      fileName,
+      cursor.offset,
+      headerEnd,
+      ref,
+      state,
+      identity,
+      limit + 1,
+    ).andThen((linesNewestFirst) => {
+      const body = linesNewestFirst.filter(
+        (line) => line.offset >= headerEnd && line.offset < cursor.offset,
+      );
+      const hasOlder = body.length > limit;
+      const pageNewestFirst = body.slice(0, limit);
+      const pageOldestFirst = [...pageNewestFirst].reverse();
+      const entries = pageOldestFirst.map((line) =>
+        parseJsonlBodyLine(line.offset, line.bytes),
+      );
+      return this.buildPageResult(
+        identity,
+        state,
+        entries,
+        hasOlder,
+        entries.length > 0,
+      ).asyncAndThen((page) => okAsync(page));
+    });
+  }
+
+  private pageNewer(
+    directory: PiNativeSessionDirectory,
+    fileName: string,
+    ref: string,
+    identity: PiNativeSessionFileStat,
+    state: PageScanState,
+    cursor: PiNativeSessionEntryCursor,
+    limit: number,
+  ): ResultAsync<PiNativeSessionEntryPage, PiNativeSessionError> {
+    return this.lineEndAfter(
+      directory,
+      fileName,
+      ref,
+      identity,
+      state,
+      cursor.offset,
+    ).andThen((after) => {
+      if (after >= identity.size) {
+        return this.buildPageResult(
+          identity,
+          state,
+          [],
+          false,
+          false,
+        ).asyncAndThen((page) => okAsync(page));
+      }
+      return readLinesForward(
+        directory,
+        fileName,
+        after,
+        identity.size,
+        ref,
+        state,
+        identity,
+        limit + 1,
+      ).andThen((lines) => {
+        const hasNewer = lines.length > limit;
+        const page = lines.slice(0, limit);
+        const entries = page.map((line) =>
+          parseJsonlBodyLine(line.offset, line.bytes),
+        );
+        return this.buildPageResult(
+          identity,
+          state,
+          entries,
+          entries.length > 0,
+          hasNewer,
+        ).asyncAndThen((result) => okAsync(result));
+      });
+    });
+  }
+
+  /** Byte offset immediately after the line that starts at `lineStart`. */
+  private lineEndAfter(
+    directory: PiNativeSessionDirectory,
+    fileName: string,
+    ref: string,
+    identity: PiNativeSessionFileStat,
+    state: PageScanState,
+    lineStart: number,
+  ): ResultAsync<number, PiNativeSessionError> {
+    if (lineStart >= identity.size) return okAsync(identity.size);
+    const scanEnd = Math.min(
+      identity.size,
+      lineStart + PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS.maxLineBytes + 1,
+    );
+    return readLinesForward(
+      directory,
+      fileName,
+      lineStart,
+      scanEnd,
+      ref,
+      state,
+      identity,
+      1,
+    ).andThen((lines) => {
+      const first = lines[0];
+      if (first === undefined) {
+        return errAsync<number, PiNativeSessionError>({
+          type: "SessionCorrupt",
+          ref,
+          reason: "invalid-cursor",
+        });
+      }
+      if (first.offset !== lineStart) {
+        return errAsync<number, PiNativeSessionError>({
+          type: "SessionCorrupt",
+          ref,
+          reason: "invalid-cursor",
+        });
+      }
+      const end =
+        first.offset +
+        first.bytes.length +
+        (first.offset + first.bytes.length < identity.size ? 1 : 0);
+      return okAsync(end);
+    });
   }
 
   /**

@@ -28,6 +28,8 @@ import type { HmacPort, RandomPort } from "./child-crypto.js";
 import type {
   CreateNativeChildSessionInput,
   PiNativeSessionEntries,
+  PiNativeSessionEntryPage,
+  PiNativeSessionEntryPageOptions,
   PiNativeSessionError,
   PiNativeSessionRecord,
   PiNativeSessionTombstone,
@@ -346,6 +348,15 @@ export interface PiThreadSessionPort {
     ref: string,
     expectedParentSession?: string,
   ): ResultAsync<PiNativeSessionEntries, PiNativeSessionError>;
+  /**
+   * Bounded native JSONL page read for historical overlay paging. Must not
+   * materialize the full transcript for overlay consumers.
+   */
+  readSessionEntryPage(
+    ref: string,
+    expectedParentSession: string | undefined,
+    options: PiNativeSessionEntryPageOptions,
+  ): ResultAsync<PiNativeSessionEntryPage, PiNativeSessionError>;
   readThreadMetadata(
     ref: string,
     expectedParentSession?: string,

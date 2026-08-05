@@ -6668,6 +6668,75 @@ describe("createPiExtension: themed active-agent badge", () => {
   });
 });
 
+function pageOverlayEntries(
+  entries: readonly unknown[],
+  options: {
+    readonly direction: "newest" | "older" | "newer";
+    readonly cursor?: string;
+    readonly limit?: number;
+  },
+) {
+  const limit = Math.max(1, Math.min(100, Math.floor(options.limit ?? 100)));
+  const parseCursor = (cursor: string | undefined): number => {
+    if (cursor === undefined || !cursor.startsWith("idx:")) return -1;
+    const value = Number(cursor.slice(4));
+    return Number.isSafeInteger(value) ? value : -1;
+  };
+  if (options.direction === "newest") {
+    const start = Math.max(0, entries.length - limit);
+    const slice = entries.slice(start);
+    return {
+      entries: slice.map((value, index) => ({
+        kind: "entry" as const,
+        offset: start + index,
+        value,
+      })),
+      ...(start > 0 ? { olderCursor: `idx:${start}` } : {}),
+      ...(entries.length > 0
+        ? { newerCursor: `idx:${entries.length - 1}` }
+        : {}),
+      bytesRead: slice.length,
+      linesScanned: slice.length,
+    };
+  }
+  const cursorIndex = parseCursor(options.cursor);
+  if (cursorIndex < 0) {
+    return { entries: [], bytesRead: 0, linesScanned: 0 };
+  }
+  if (options.direction === "older") {
+    const end = cursorIndex;
+    const start = Math.max(0, end - limit);
+    const slice = entries.slice(start, end);
+    return {
+      entries: slice.map((value, index) => ({
+        kind: "entry" as const,
+        offset: start + index,
+        value,
+      })),
+      ...(start > 0 ? { olderCursor: `idx:${start}` } : {}),
+      ...(slice.length > 0
+        ? { newerCursor: `idx:${start + slice.length - 1}` }
+        : {}),
+      bytesRead: slice.length,
+      linesScanned: slice.length,
+    };
+  }
+  const start = cursorIndex + 1;
+  const end = Math.min(entries.length, start + limit);
+  const slice = entries.slice(start, end);
+  return {
+    entries: slice.map((value, index) => ({
+      kind: "entry" as const,
+      offset: start + index,
+      value,
+    })),
+    ...(start > 0 && slice.length > 0 ? { olderCursor: `idx:${start}` } : {}),
+    ...(end < entries.length ? { newerCursor: `idx:${end - 1}` } : {}),
+    bytesRead: slice.length,
+    linesScanned: slice.length,
+  };
+}
+
 describe("createPiExtension: Task 12 native child overlay", () => {
   const OVERLAY_CHILD_ID = "overlay-hist-child";
   const OVERLAY_SESSION_REF = `${OVERLAY_CHILD_ID}/session.jsonl`;
@@ -6748,7 +6817,11 @@ describe("createPiExtension: Task 12 native child overlay", () => {
             errAsync({ type: "SessionMissing" as const, ref: "x" }),
           readSessionEntries: () =>
             options.failRead
-              ? errAsync({ type: "SessionCorrupt" as const, ref: "x", reason: "unreadable" as const })
+              ? errAsync({
+                  type: "SessionCorrupt" as const,
+                  ref: "x",
+                  reason: "unreadable" as const,
+                })
               : okAsync({
                   record: {
                     ref: OVERLAY_SESSION_REF,
@@ -6759,6 +6832,22 @@ describe("createPiExtension: Task 12 native child overlay", () => {
                   },
                   entries,
                 }),
+          readSessionEntryPage: (
+            _ref: string,
+            _parent: string | undefined,
+            pageOptions: {
+              readonly direction: "newest" | "older" | "newer";
+              readonly cursor?: string;
+              readonly limit?: number;
+            },
+          ) =>
+            options.failRead
+              ? errAsync({
+                  type: "SessionCorrupt" as const,
+                  ref: "x",
+                  reason: "unreadable" as const,
+                })
+              : okAsync(pageOverlayEntries(entries, pageOptions)),
           readThreadMetadata: () =>
             errAsync({ type: "SessionMissing" as const, ref: "x" }),
         } as unknown as PiThreadSessionPort,
@@ -6965,6 +7054,37 @@ describe("createPiExtension: Task 12 native child overlay", () => {
                 },
               ],
             }),
+          readSessionEntryPage: (
+            ref: string,
+            _parent: string | undefined,
+            pageOptions: {
+              readonly direction: "newest" | "older" | "newer";
+              readonly cursor?: string;
+              readonly limit?: number;
+            },
+          ) =>
+            okAsync(
+              pageOverlayEntries(
+                [
+                  {
+                    type: "message",
+                    id: "x",
+                    message: {
+                      role: "assistant",
+                      content: [
+                        {
+                          type: "text",
+                          text: ref.startsWith(secondId)
+                            ? "second-child-body"
+                            : "native-overlay-body",
+                        },
+                      ],
+                    },
+                  },
+                ],
+                pageOptions,
+              ),
+            ),
           readThreadMetadata: () =>
             errAsync({ type: "SessionMissing" as const, ref: "x" }),
         } as unknown as PiThreadSessionPort,
@@ -7355,6 +7475,30 @@ describe("createPiExtension: Task 13 overlay keys and picker", () => {
                 ],
                 tree: [],
               }),
+            readSessionEntryPage: (
+              _ref: string,
+              _parent: string | undefined,
+              pageOptions: {
+                readonly direction: "newest" | "older" | "newer";
+                readonly cursor?: string;
+                readonly limit?: number;
+              },
+            ) =>
+              okAsync(
+                pageOverlayEntries(
+                  [
+                    {
+                      type: "message",
+                      id: "m1",
+                      message: {
+                        role: "assistant",
+                        content: [{ type: "text", text: "body" }],
+                      },
+                    },
+                  ],
+                  pageOptions,
+                ),
+              ),
             readThreadMetadata: () =>
               errAsync({ type: "SessionMissing" as const, ref: "x" }),
           } as unknown as PiThreadSessionPort,

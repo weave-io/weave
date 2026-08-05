@@ -7,7 +7,7 @@
 import { describe, expect, it } from "bun:test";
 import { parseConfig, type WeaveConfig } from "@weaveio/weave-core";
 import type { DelegationTarget } from "@weaveio/weave-engine";
-import { errAsync, ok, okAsync } from "neverthrow";
+import { err, errAsync, ok, okAsync, type Result } from "neverthrow";
 import { WebCryptoHmacPort, WebCryptoRandomPort } from "../child-crypto.js";
 import { WEAVE_CHILD_ID_ENV, WEAVE_CHILD_SECRET_ENV } from "../child-env.js";
 import { signEnvelope, type PiControlEnvelope } from "../child-envelope.js";
@@ -405,6 +405,99 @@ class FakeSessionStore implements PiThreadSessionPort {
       record,
       entries: this.entries.get(ref) ?? [],
     });
+  }
+
+  readSessionEntryPage(
+    ref: string,
+    expectedParentSession: string | undefined,
+    options: {
+      readonly direction: "newest" | "older" | "newer";
+      readonly cursor?: string;
+      readonly limit?: number;
+    },
+  ) {
+    return this.readSessionEntries(ref, expectedParentSession).andThen(
+      ({ entries }) => {
+        const limit = Math.max(
+          1,
+          Math.min(100, Math.floor(options.limit ?? 100)),
+        );
+        const all = [...entries];
+        const parseCursor = (
+          cursor: string | undefined,
+        ): Result<number, PiNativeSessionError> => {
+          if (cursor === undefined || !cursor.startsWith("idx:")) {
+            return err({
+              type: "SessionCorrupt",
+              ref,
+              reason: "invalid-cursor",
+            });
+          }
+          const value = Number(cursor.slice(4));
+          if (!Number.isSafeInteger(value) || value < 0) {
+            return err({
+              type: "SessionCorrupt",
+              ref,
+              reason: "invalid-cursor",
+            });
+          }
+          return ok(value);
+        };
+        if (options.direction === "newest") {
+          const start = Math.max(0, all.length - limit);
+          const slice = all.slice(start);
+          return okAsync({
+            entries: slice.map((value, index) => ({
+              kind: "entry" as const,
+              offset: start + index,
+              value,
+            })),
+            ...(start > 0 ? { olderCursor: `idx:${start}` } : {}),
+            ...(all.length > 0
+              ? { newerCursor: `idx:${all.length - 1}` }
+              : {}),
+            bytesRead: slice.length,
+            linesScanned: slice.length,
+          });
+        }
+        const cursorIndex = parseCursor(options.cursor);
+        if (cursorIndex.isErr()) return errAsync(cursorIndex.error);
+        if (options.direction === "older") {
+          const end = cursorIndex.value;
+          const start = Math.max(0, end - limit);
+          const slice = all.slice(start, end);
+          return okAsync({
+            entries: slice.map((value, index) => ({
+              kind: "entry" as const,
+              offset: start + index,
+              value,
+            })),
+            ...(start > 0 ? { olderCursor: `idx:${start}` } : {}),
+            ...(slice.length > 0
+              ? { newerCursor: `idx:${start + slice.length - 1}` }
+              : {}),
+            bytesRead: slice.length,
+            linesScanned: slice.length,
+          });
+        }
+        const start = cursorIndex.value + 1;
+        const end = Math.min(all.length, start + limit);
+        const slice = all.slice(start, end);
+        return okAsync({
+          entries: slice.map((value, index) => ({
+            kind: "entry" as const,
+            offset: start + index,
+            value,
+          })),
+          ...(start > 0 && slice.length > 0
+            ? { olderCursor: `idx:${start}` }
+            : {}),
+          ...(end < all.length ? { newerCursor: `idx:${end - 1}` } : {}),
+          bytesRead: slice.length,
+          linesScanned: slice.length,
+        });
+      },
+    );
   }
 
   readThreadMetadata(ref: string, expectedParentSession?: string) {

@@ -62,7 +62,7 @@ import type { PiChildInspectionRenderInput } from "./child-inspection-render.js"
 import {
   createChildOverlayController,
   createChildOverlayCustomComponent,
-  createReadSessionEntriesOverlaySource,
+  createReadSessionEntryPageOverlaySource,
   type ChildOverlayController,
   type ChildOverlayFallbackRequired,
   type PiChildOverlayCustomComponent,
@@ -157,7 +157,10 @@ import {
 } from "./child-doctor.js";
 import { WEAVE_COMMAND_NAMES, type WeaveCommandName } from "./commands.js";
 import type { PiChildMetadataCache } from "./child-metadata-cache.js";
-import type { PiNativeSessionStore } from "./child-native-sessions.js";
+import type {
+  PiNativeSessionError,
+  PiNativeSessionStore,
+} from "./child-native-sessions.js";
 import {
   logMaterializationErrors,
   PiConfigActivator,
@@ -4897,7 +4900,7 @@ export function createPiExtension(
         });
         childOverlayCell.generationId = generation.id;
         childOverlayCell.controller = createChildOverlayController(
-          createReadSessionEntriesOverlaySource({
+          createReadSessionEntryPageOverlaySource({
             describe: (id) => {
               const ctrl = delegationControllerCell.controller;
               if (ctrl === undefined) {
@@ -4939,40 +4942,46 @@ export function createPiExtension(
                 childId: id,
               }));
             },
-            readEntries: (id) => {
+            readSessionEntryPage: (id, options) => {
               const ctrl = delegationControllerCell.controller;
               const sessions = threadSourcesCell.sessions;
-              if (ctrl === undefined) {
+              if (
+                ctrl === undefined ||
+                sessions === undefined ||
+                typeof sessions.readSessionEntryPage !== "function"
+              ) {
                 return errAsync({
-                  type: "SourceUnavailable" as const,
-                  operation: "readEntries",
-                });
+                  type: "SessionCorrupt" as const,
+                  ref: id,
+                  reason: "unreadable" as const,
+                } satisfies PiNativeSessionError);
               }
               return ctrl
                 .resolveOverlayChild(id)
-                .mapErr(() => ({
-                  type: "ChildNotFound" as const,
-                  childId: id,
-                }))
+                .mapErr(
+                  (): PiNativeSessionError => ({
+                    type: "SessionMissing",
+                    ref: id,
+                  }),
+                )
                 .andThen((descriptor) => {
-                  if (
-                    descriptor.sessionRef === undefined ||
-                    sessions === undefined
-                  ) {
-                    return okAsync([] as const);
+                  if (descriptor.sessionRef === undefined) {
+                    return okAsync({
+                      entries: [],
+                      bytesRead: 0,
+                      linesScanned: 0,
+                    });
                   }
                   const parent = session.primarySession.getParentSession();
                   const parentId =
                     parent.persistence === "persistent"
                       ? parent.sessionId
                       : undefined;
-                  return sessions
-                    .readSessionEntries(descriptor.sessionRef, parentId)
-                    .map((result) => result.entries)
-                    .mapErr(() => ({
-                      type: "SourceCorrupt" as const,
-                      operation: "readEntries",
-                    }));
+                  return sessions.readSessionEntryPage(
+                    descriptor.sessionRef,
+                    parentId,
+                    options,
+                  );
                 });
             },
           }),

@@ -1,13 +1,23 @@
 import { describe, expect, it } from "bun:test";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import { getKeybindings } from "@earendil-works/pi-tui";
-import { okAsync } from "neverthrow";
+import { errAsync, okAsync } from "neverthrow";
+import {
+  PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS,
+  type PiNativeSessionEntryPage,
+  type PiNativeSessionEntryPageOptions,
+  type PiNativeSessionError,
+  type PiNativeSessionFsPort,
+  type PiNativeSessionHandle,
+  type PiNativeSessionHostPort,
+  PiNativeSessionStore,
+} from "../child-native-sessions.js";
 import {
   CHILD_OVERLAY_BOUNDS,
   createChildOverlayController,
   createChildOverlayCustomComponent,
   createMemoryChildOverlaySource,
-  createReadSessionEntriesOverlaySource,
+  createReadSessionEntryPageOverlaySource,
   mapNativeSessionEntryToOverlay,
   transcriptFromOverlayEntries,
   type ChildOverlayChild,
@@ -17,6 +27,7 @@ import {
   type MemoryOverlaySourceChild,
   type MemoryOverlaySourceEntry,
 } from "../child-overlay.js";
+import { MemoryPiNativeSessionFs } from "../native-session-fs.js";
 
 /** Pi native components read the process-wide theme. */
 initTheme("default");
@@ -92,6 +103,72 @@ async function mustOpen(
   const result = await controller.open(target);
   expect(result.isOk()).toBe(true);
   return result._unsafeUnwrap();
+}
+
+/** In-memory native page adapter for overlay source unit tests. */
+function pageMemoryEntries(
+  entries: readonly unknown[],
+  options: PiNativeSessionEntryPageOptions,
+): PiNativeSessionEntryPage {
+  const limit = Math.max(1, Math.min(100, Math.floor(options.limit ?? 100)));
+  const parseCursor = (cursor: string | undefined): number => {
+    if (cursor === undefined || !cursor.startsWith("idx:")) return -1;
+    const value = Number(cursor.slice(4));
+    return Number.isSafeInteger(value) ? value : -1;
+  };
+  if (options.direction === "newest") {
+    const start = Math.max(0, entries.length - limit);
+    const slice = entries.slice(start);
+    return {
+      entries: slice.map((value, index) => ({
+        kind: "entry" as const,
+        offset: start + index,
+        value,
+      })),
+      ...(start > 0 ? { olderCursor: `idx:${start}` } : {}),
+      ...(entries.length > 0
+        ? { newerCursor: `idx:${entries.length - 1}` }
+        : {}),
+      bytesRead: slice.length,
+      linesScanned: slice.length,
+    };
+  }
+  const cursorIndex = parseCursor(options.cursor);
+  if (cursorIndex < 0) {
+    return { entries: [], bytesRead: 0, linesScanned: 0 };
+  }
+  if (options.direction === "older") {
+    const end = cursorIndex;
+    const start = Math.max(0, end - limit);
+    const slice = entries.slice(start, end);
+    return {
+      entries: slice.map((value, index) => ({
+        kind: "entry" as const,
+        offset: start + index,
+        value,
+      })),
+      ...(start > 0 ? { olderCursor: `idx:${start}` } : {}),
+      ...(slice.length > 0
+        ? { newerCursor: `idx:${start + slice.length - 1}` }
+        : {}),
+      bytesRead: slice.length,
+      linesScanned: slice.length,
+    };
+  }
+  const start = cursorIndex + 1;
+  const end = Math.min(entries.length, start + limit);
+  const slice = entries.slice(start, end);
+  return {
+    entries: slice.map((value, index) => ({
+      kind: "entry" as const,
+      offset: start + index,
+      value,
+    })),
+    ...(start > 0 && slice.length > 0 ? { olderCursor: `idx:${start}` } : {}),
+    ...(end < entries.length ? { newerCursor: `idx:${end - 1}` } : {}),
+    bytesRead: slice.length,
+    linesScanned: slice.length,
+  };
 }
 
 describe("mapNativeSessionEntryToOverlay", () => {
@@ -524,13 +601,13 @@ describe("ChildOverlayController", () => {
     expect(JSON.stringify(error)).not.toContain("/Users/");
   });
 
-  it("adapts Task 4 readSessionEntries through the read-entries source helper", async () => {
+  it("adapts Task 4 readSessionEntryPage through the paged source helper", async () => {
     const hostEntries = Object.freeze([
       message("n0", "user", "from-native"),
       message("n1", "assistant", "reply"),
       runDivider("n2", 2, "continue"),
     ]);
-    const source = createReadSessionEntriesOverlaySource({
+    const source = createReadSessionEntryPageOverlaySource({
       describe: (childId) =>
         okAsync({
           childId,
@@ -540,7 +617,8 @@ describe("ChildOverlayController", () => {
           branchIds: ["main"],
           descendantChildIds: [],
         }),
-      readEntries: () => okAsync(hostEntries),
+      readSessionEntryPage: (_childId, options) =>
+        okAsync(pageMemoryEntries(hostEntries, options)),
     });
     const overlay = createChildOverlayController(source, { pageSize: 10 });
     const view = await mustOpen(overlay, "native-1");
@@ -552,15 +630,67 @@ describe("ChildOverlayController", () => {
     );
   });
 
-  it("pages older/newer across >512 host entries without truncating the source", async () => {
-    const total = CHILD_OVERLAY_BOUNDS.maxWindowCap + 80;
-    const hostEntries = Object.freeze(
-      Array.from({ length: total }, (_, index) =>
-        message(`big-${index}`, "assistant", `row-${index}`),
-      ),
-    );
-    let reads = 0;
-    const source = createReadSessionEntriesOverlaySource({
+  it("pages >10k native source with bounded metrics and no full materialization", async () => {
+    const entryCount = 10_500;
+    const ROOT = "/data/weave/adapters/pi/sessions";
+    const PARENT = "parent-session-1";
+    const REF = "child-1/session.jsonl";
+    const DIR = `${ROOT}/child-1`;
+    const FILE = "session.jsonl";
+    const textEncoder = new TextEncoder();
+    const fs = new MemoryPiNativeSessionFs();
+    const lines = [
+      JSON.stringify({
+        type: "session",
+        version: 3,
+        id: "native-session-1",
+        cwd: "/repo",
+        parentSession: PARENT,
+        timestamp: "2026-01-01T00:00:00.000Z",
+      }),
+    ];
+    for (let index = 0; index < entryCount; index += 1) {
+      lines.push(
+        JSON.stringify({
+          type: "message",
+          id: `entry-${index}`,
+          parentId: index === 0 ? null : `entry-${index - 1}`,
+          timestamp: "2026-01-01T00:00:00.000Z",
+          message: { role: "assistant", content: `n=${index}` },
+        }),
+      );
+    }
+    const directory = (await fs.openDirectory(DIR, true))._unsafeUnwrap();
+    (
+      await directory.appendFile(
+        FILE,
+        textEncoder.encode(`${lines.join("\n")}\n`),
+        0o600,
+      )
+    )._unsafeUnwrap();
+    directory.close();
+
+    class ForbiddenHost implements PiNativeSessionHostPort {
+      create(): PiNativeSessionHandle {
+        throw new Error("host.create must not be called");
+      }
+      open(): PiNativeSessionHandle {
+        throw new Error("host.open must not be called");
+      }
+    }
+    const store = new PiNativeSessionStore({
+      root: ROOT,
+      fs: fs as unknown as PiNativeSessionFsPort,
+      host: new ForbiddenHost(),
+    });
+
+    const metrics: Array<{
+      readonly entries: number;
+      readonly bytesRead: number;
+      readonly linesScanned: number;
+    }> = [];
+    let maxEntriesReturned = 0;
+    const source = createReadSessionEntryPageOverlaySource({
       describe: (childId) =>
         okAsync({
           childId,
@@ -570,58 +700,127 @@ describe("ChildOverlayController", () => {
           branchIds: [],
           descendantChildIds: [],
         }),
-      readEntries: () => {
-        reads += 1;
-        return okAsync(hostEntries);
-      },
+      readSessionEntryPage: (_childId, options) =>
+        store.readSessionEntryPage(REF, PARENT, options).map((page) => {
+          metrics.push({
+            entries: page.entries.length,
+            bytesRead: page.bytesRead,
+            linesScanned: page.linesScanned,
+          });
+          maxEntriesReturned = Math.max(maxEntriesReturned, page.entries.length);
+          return page;
+        }),
     });
-    // Direct source paging proves cursors reach past the old 512 truncation.
+
     const newest = (await source.loadNewest("big-hist", 40))._unsafeUnwrap();
+    expect(newest.entries.length).toBeLessThanOrEqual(40);
     expect(newest.hasOlder).toBe(true);
-    expect(newest.entries.some((entry) => entry.text === `row-${total - 1}`)).toBe(
-      true,
-    );
+    expect(
+      newest.entries.some((entry) => entry.text === `n=${entryCount - 1}`),
+    ).toBe(true);
+
     let cursor = newest.olderCursor;
-    let reachedStart = false;
-    let sawEarly = false;
-    for (let step = 0; step < 40 && cursor !== undefined; step += 1) {
+    let sawOlderWindow = false;
+    const targetOlder = `n=${entryCount - 200}`;
+    for (let step = 0; step < 8 && cursor !== undefined; step += 1) {
       const page = (
         await source.loadOlder("big-hist", cursor, 40)
       )._unsafeUnwrap();
-      if (page.entries.some((entry) => entry.text === "row-0")) {
-        sawEarly = true;
+      expect(page.entries.length).toBeLessThanOrEqual(40);
+      if (page.entries.some((entry) => entry.text === targetOlder)) {
+        sawOlderWindow = true;
       }
-      if (page.entries.some((entry) => entry.text === "row-10")) {
-        sawEarly = true;
+      if (page.newerCursor !== undefined) {
+        const newer = (
+          await source.loadNewer("big-hist", page.newerCursor, 40)
+        )._unsafeUnwrap();
+        expect(newer.entries.length).toBeLessThanOrEqual(40);
       }
-      reachedStart = !page.hasOlder;
       cursor = page.olderCursor;
     }
-    expect(sawEarly).toBe(true);
-    expect(reachedStart).toBe(true);
-    expect(reads).toBeGreaterThan(1);
+    expect(sawOlderWindow).toBe(true);
 
     const overlay = createChildOverlayController(source, {
       pageSize: 40,
       windowCap: 120,
+      maxSearchPages: 3,
     });
-    const opened = await mustOpen(overlay, "big-hist");
-    expect(opened.hasOlder).toBe(true);
-    for (
-      let step = 0;
-      step < 40 && overlay.view()._unsafeUnwrap().hasOlder;
-      step += 1
-    ) {
-      await overlay.loadOlder();
+    await mustOpen(overlay, "big-hist");
+    const beforeSearch = metrics.length;
+    await overlay.search("n=5");
+    const searchCalls = metrics.length - beforeSearch;
+    expect(searchCalls).toBeLessThanOrEqual(3);
+
+    expect(maxEntriesReturned).toBeLessThanOrEqual(
+      PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS.maxLimit,
+    );
+    for (const sample of metrics) {
+      expect(sample.entries).toBeLessThanOrEqual(
+        PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS.maxLimit,
+      );
+      expect(sample.bytesRead).toBeLessThanOrEqual(
+        PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS.maxBytesScanned,
+      );
+      expect(sample.linesScanned).toBeLessThanOrEqual(
+        PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS.maxLinesScanned,
+      );
+      // Never materializes the full >10k source in one page.
+      expect(sample.entries).toBeLessThan(entryCount);
     }
-    // Overlay retains only its hard window while still exhausting older cursors.
     expect(overlay.view()._unsafeUnwrap().entries.length).toBeLessThanOrEqual(
       120,
     );
-    expect(overlay.view()._unsafeUnwrap().hasOlder).toBe(false);
     expect(
       JSON.stringify(overlay.view()._unsafeUnwrap().entries.map((e) => e.id)),
     ).not.toContain("/Users/");
+  });
+
+  it("rejects invalid overlay cursors without a full read", async () => {
+    let calls = 0;
+    const source = createReadSessionEntryPageOverlaySource({
+      describe: (childId) =>
+        okAsync({
+          childId,
+          threadId: childId,
+          status: "settled" as const,
+          runs: [],
+          branchIds: [],
+          descendantChildIds: [],
+        }),
+      readSessionEntryPage: () => {
+        calls += 1;
+        return errAsync({
+          type: "SessionCorrupt",
+          ref: "x",
+          reason: "invalid-cursor",
+        } satisfies PiNativeSessionError);
+      },
+    });
+    const older = await source.loadOlder("c1", "", 10);
+    expect(older.isErr()).toBe(true);
+    expect(older._unsafeUnwrapErr().type).toBe("SourceInvalidCursor");
+    expect(calls).toBe(0);
+  });
+
+  it("keeps production overlay/extension free of full-read overlay sources", async () => {
+    const overlaySrc = await Bun.file(
+      new URL("../child-overlay.ts", import.meta.url),
+    ).text();
+    const extensionSrc = await Bun.file(
+      new URL("../extension.ts", import.meta.url),
+    ).text();
+    expect(overlaySrc).not.toContain("createReadSessionEntriesOverlaySource");
+    expect(extensionSrc).not.toContain("createReadSessionEntriesOverlaySource");
+    expect(overlaySrc).toContain("createReadSessionEntryPageOverlaySource");
+    expect(extensionSrc).toContain("createReadSessionEntryPageOverlaySource");
+    expect(extensionSrc).toContain("readSessionEntryPage");
+    // Overlay controller wiring must not call the full-read host path.
+    const overlayWire = extensionSrc.slice(
+      extensionSrc.indexOf("createChildOverlayController("),
+      extensionSrc.indexOf("createChildOverlayController(") + 2_500,
+    );
+    expect(overlayWire).not.toContain("readSessionEntries");
+    expect(overlayWire).toContain("readSessionEntryPage");
   });
 
   it("keeps one instance: open swaps content instead of stacking", async () => {
