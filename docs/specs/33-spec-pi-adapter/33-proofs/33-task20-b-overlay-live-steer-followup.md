@@ -376,17 +376,26 @@ editor from whoever owns it (`pi-vim`). That path never mounts the native
 
 Fix:
 
-The source layer now distinguishes a transient startup gap from a real
-failure. `SourceStartupNotReady` is emitted only when the child's persisted
-thread record, session reference, or native session file does not exist yet
-(native `SessionMissing`, or thread sources not yet wired for the
-generation). Permission errors, root violations, malformed or missing
-headers, parent-session mismatch, and every other corruption still map to
-`SourceCorrupt`.
+The page-reader and source layers now distinguish a transient startup gap
+from a wiring or integrity defect.
 
-- When `loadNewest` fails with `SourceStartupNotReady` for a child with
-  `status === "live"`, open an empty native live-tail page (`entries: []`,
-  `liveTail: true`) and fill from the live event stream.
+Exact boundary (`readOverlaySessionEntryPage` in `extension.ts`, then
+`mapNativePageError` / controller recovery in `child-overlay.ts` /
+`child-overlay-controller.ts`):
+
+- A resolved child with no session reference returns an empty initial page
+  (`entries: []`) without consulting session infrastructure.
+- An absent controller, a child-resolution failure, or a missing session
+  source / `readSessionEntryPage` API for a child that already has a session
+  ref fails closed as unreadable (`SessionCorrupt` reason `unreadable`).
+  Those conditions do **not** emit `SourceStartupNotReady`.
+- Only a native `SessionMissing` raised while reading a session ref the
+  resolved child already claims maps to `SourceStartupNotReady`. Permission
+  errors, root violations, malformed or missing headers, parent-session
+  mismatch, and every other corruption still map to `SourceCorrupt`.
+- The overlay controller recovers from `SourceStartupNotReady` only while
+  child `status === "live"`: open an empty native live-tail page
+  (`entries: []`, `liveTail: true`) and fill from the live event stream.
 - Every other live failure (`SourceCorrupt`, `SourceUnavailable`,
   `SourceInvalidCursor`, `ChildNotFound`) keeps the fail-closed
   `source-failed` fallback.
@@ -395,6 +404,10 @@ headers, parent-session mismatch, and every other corruption still map to
 
 Unit coverage:
 
+- Page reader: no session ref → empty page, sessions unread; absent
+  controller / unresolved child / missing session source or read API for a
+  known ref → unreadable fail-closed; native `SessionMissing` for a known
+  ref preserved for source mapping.
 - Source: native `SessionMissing` → `SourceStartupNotReady`; permission,
   root violation, missing header, parent-session mismatch, and unreadable →
   `SourceCorrupt`.
