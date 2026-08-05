@@ -6780,7 +6780,7 @@ describe("createPiExtension: Task 12 native child overlay", () => {
       threadId: OVERLAY_CHILD_ID,
       nativeSessionId: "ns-overlay",
       sessionRef: OVERLAY_SESSION_REF,
-      originParentSessionId: "parent",
+      originParentSessionId: "fake-session-1",
       originEntryId: "entry-overlay",
       title: "loom",
       status: "completed" as const,
@@ -6992,9 +6992,21 @@ describe("createPiExtension: Task 12 native child overlay", () => {
     expect(host.selectCalls.length).toBe(selectsBeforeReplacement + 1);
     expect(host.selectCalls.at(-1)?.title).toBe("Weave children");
     expect(host.selectCalls.at(-1)?.options.length).toBeGreaterThan(0);
-    replacementPicker.settle(undefined);
+    const replacementChildLabel = host.selectCalls
+      .at(-1)
+      ?.options.find((label) => label.includes("loom"));
+    expect(replacementChildLabel).toBeDefined();
+    const replacementCustomCallsBefore = host.customCalls.length;
+    replacementPicker.settle(replacementChildLabel);
     await replacementPressed;
+    await waitForCustomCalls(host, replacementCustomCallsBefore + 1);
     await flushBackgroundWork();
+
+    expect(host.customCalls.length).toBe(replacementCustomCallsBefore + 1);
+    const replacementOverlay =
+      host.customRenderedLines.at(-1)?.join("\n") ?? "";
+    expect(replacementOverlay).toContain("◆ loom · SETTLED");
+    expect(replacementOverlay).toContain("native-overlay-body");
 
     expect(host.editorFactoryCalls.length).toBe(0);
     expect(host.getEditorComponentForTest()).toBe(modalFactory);
