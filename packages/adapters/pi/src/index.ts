@@ -188,16 +188,45 @@ export type {
   PiNativeSessionState,
   PiNativeSessionStoreOptions,
   PiNativeSessionTombstone,
+  PiNativeThreadMetadata,
+  PiNativeThreadMetadataInput,
 } from "./child-native-sessions.js";
 export {
   isDisjointFromDefaultSessionTree,
   nativeSessionDeletionToken,
   PI_NATIVE_SESSION_LAYOUT,
+  PI_NATIVE_THREAD_ENTRY_TYPE,
+  PI_NATIVE_THREAD_SCHEMA_VERSION,
   PiNativeSessionStore,
+  PiNativeThreadMetadataSchema,
+  readNativeThreadMetadata,
   resolvePiNativeSessionRoot,
   safeNativeSessionComponent,
   verifyNativeSessionRef,
 } from "./child-native-sessions.js";
+export {
+  adaptPiNativeSessionFs,
+  createBunPiNativeSessionFs,
+} from "./native-session-fs.js";
+export type {
+  PiSessionManagerInstance,
+  PiSessionManagerStatic,
+} from "./native-session-host.js";
+export {
+  adaptPiSessionManagerHandle,
+  createPiNativeSessionHost,
+  isPiSessionManagerStatic,
+} from "./native-session-host.js";
+export type {
+  PiThreadSourceFactory,
+  PiThreadSourceFactoryError,
+  PiThreadSourceFactoryInput,
+  PiThreadSources,
+} from "./thread-sources.js";
+export {
+  createProductionPiThreadSourceFactory,
+  openPiThreadSources,
+} from "./thread-sources.js";
 export type {
   PiChildPickerEntry,
   PiChildPickerError,
@@ -345,9 +374,18 @@ export type {
 } from "./controller.js";
 export { PiExtensionController } from "./controller.js";
 export {
+  DEFAULT_THREAD_RETRY_INSTRUCTION,
+  PI_THREAD_LIMITS,
   PiDelegationController,
   type PiDelegationControllerDeps,
   type PiDelegationRequest,
+  type PiThreadAction,
+  type PiThreadCachePort,
+  type PiThreadInitiator,
+  type PiThreadRefPort,
+  type PiThreadRunOutcome,
+  type PiThreadRunRequest,
+  type PiThreadSessionPort,
 } from "./delegation-controller.js";
 export {
   buildDelegationToolRegistration,

@@ -4,9 +4,12 @@ import { errAsync, ok, okAsync, type Result, ResultAsync } from "neverthrow";
 import type {
   PiDelegationController,
   PiDelegationRequest,
+  PiThreadRunOutcome,
+  PiThreadRunRequest,
 } from "../delegation-controller.js";
 import {
   buildDelegationToolRegistration,
+  buildRelayedDelegationToolRegistration,
   formatDelegationAgentName,
   type PiDelegationToolDeps,
   WEAVE_DELEGATION_TOOL_NAME,
@@ -14,6 +17,7 @@ import {
 import {
   makeChildResponseMissingFailure,
   makeChildSpawnFailedFailure,
+  makeThreadStaleFailure,
   type PiAdapterFailure,
 } from "../errors.js";
 import type { PiChildSettlement } from "../rpc-child.js";
@@ -896,5 +900,201 @@ describe("weave_delegate persistent-parent guard", () => {
     expect(text.error).toBe("PersistentParentSessionRequired");
     expect(text.reason).toBe("probe-failed");
     expect([idCalls, controllerCalls]).toEqual([0, 0]);
+  });
+});
+
+/**
+ * Thread lifecycle call forms (Pi adapter contract §9). Parsing is strict: the
+ * tool never guesses which of start, retry, or continue a malformed call meant.
+ */
+describe("weave_delegate thread lifecycle", () => {
+  function threadController(
+    resume: (
+      request: PiThreadRunRequest,
+    ) => ResultAsync<PiThreadRunOutcome, PiAdapterFailure>,
+  ): PiDelegationController {
+    return {
+      delegate: () => {
+        throw new Error("start path must not run for a thread action");
+      },
+      resumeThread: resume,
+    } as unknown as PiDelegationController;
+  }
+
+  async function run(
+    args: Record<string, unknown>,
+    controller: PiDelegationController,
+  ): Promise<Record<string, unknown>> {
+    const registration = buildDelegationToolRegistration(
+      baseDeps({ getController: () => controller }),
+    );
+    const result = await registration.execute(
+      "call-1",
+      args,
+      undefined,
+      undefined,
+      ctx(),
+    );
+    return JSON.parse((result.content[0] as { text: string }).text);
+  }
+
+  it("retries a thread by opaque id and returns only bounded public fields", async () => {
+    let seen: PiThreadRunRequest | undefined;
+    const text = await run(
+      { action: "retry", thread: "thread-1" },
+      threadController((request) => {
+        seen = request;
+        return okAsync({
+          threadId: "thread-1",
+          run: 2,
+          settlement: {
+            outcome: "completed",
+            assistantOutput: "done",
+          } as PiChildSettlement,
+        });
+      }),
+    );
+    expect(seen?.action).toBe("retry");
+    expect(seen?.instruction).toBeUndefined();
+    expect(seen?.initiator).toEqual({
+      kind: "owner",
+      parentSessionId: "session-test",
+    });
+    expect(text).toEqual({
+      ok: true,
+      thread: "thread-1",
+      run: 2,
+      status: "completed",
+      retryable: false,
+      response: "done",
+    });
+  });
+
+  it("passes a bounded retry instruction through untouched", async () => {
+    let seen: PiThreadRunRequest | undefined;
+    await run(
+      { action: "retry", thread: "thread-1", instruction: "fix the test" },
+      threadController((request) => {
+        seen = request;
+        return okAsync({
+          threadId: "thread-1",
+          run: 3,
+          settlement: { outcome: "cancelled" } as PiChildSettlement,
+        });
+      }),
+    );
+    expect(seen?.instruction).toBe("fix the test");
+  });
+
+  it("reports a cancelled thread run as retryable", async () => {
+    const text = await run(
+      { action: "retry", thread: "thread-1" },
+      threadController(() =>
+        okAsync({
+          threadId: "thread-1",
+          run: 2,
+          settlement: { outcome: "cancelled" } as PiChildSettlement,
+        }),
+      ),
+    );
+    expect(text).toEqual({
+      ok: true,
+      thread: "thread-1",
+      run: 2,
+      status: "cancelled",
+      retryable: true,
+    });
+  });
+
+  it("continues a thread with the caller's task", async () => {
+    let seen: PiThreadRunRequest | undefined;
+    await run(
+      { action: "continue", thread: "thread-1", task: "now write docs" },
+      threadController((request) => {
+        seen = request;
+        return okAsync({
+          threadId: "thread-1",
+          run: 2,
+          settlement: {
+            outcome: "completed",
+            assistantOutput: "ok",
+          } as PiChildSettlement,
+        });
+      }),
+    );
+    expect(seen?.action).toBe("continue");
+    expect(seen?.instruction).toBe("now write docs");
+  });
+
+  it("refuses a continue without a task rather than inventing one", async () => {
+    const text = await run(
+      { action: "continue", thread: "thread-1" },
+      threadController(() => {
+        throw new Error("must not reach the controller");
+      }),
+    );
+    expect(text).toEqual({ ok: false, error: "invalid-delegation-call" });
+  });
+
+  it("refuses malformed thread calls", async () => {
+    const controller = threadController(() => {
+      throw new Error("must not reach the controller");
+    });
+    const rejected = [
+      { action: "retry" },
+      { thread: "thread-1" },
+      { action: "resume", thread: "thread-1" },
+      { action: "retry", thread: "thread-1", task: "x" },
+      { action: "continue", thread: "thread-1", task: "x", instruction: "y" },
+      { action: "retry", thread: "thread-1", agent: "shuttle" },
+      { action: "retry", thread: "thread-1", instruction: "   " },
+      { action: "retry", thread: "thread-1", instruction: "x".repeat(8_193) },
+      { agent: "shuttle", task: "do it", instruction: "extra" },
+    ];
+    for (const args of rejected) {
+      expect(await run(args, controller)).toEqual({
+        ok: false,
+        error: "invalid-delegation-call",
+      });
+    }
+  });
+
+  it("surfaces a refused thread run as a structured, path-free failure", async () => {
+    const text = await run(
+      { action: "retry", thread: "thread-1" },
+      threadController(() =>
+        errAsync(makeThreadStaleFailure("thread-1", "session-missing")),
+      ),
+    );
+    expect(text).toEqual({
+      ok: false,
+      thread: "thread-1",
+      error: "ThreadStale",
+      message: "That delegated thread no longer has a usable session.",
+      reason: "session-missing",
+      retryable: false,
+      recovery: "none",
+    });
+    expect(JSON.stringify(text)).not.toContain("/");
+  });
+
+  it("keeps a relayed child tool restricted to starting new delegations", async () => {
+    const registration = buildRelayedDelegationToolRegistration({
+      targets: TARGETS,
+      getRuntime: () => {
+        throw new Error("must not relay a thread action");
+      },
+    });
+    const result = await registration.execute(
+      "call-1",
+      { action: "retry", thread: "thread-1" },
+      undefined,
+      undefined,
+      ctx(),
+    );
+    expect(JSON.parse((result.content[0] as { text: string }).text)).toEqual({
+      ok: false,
+      error: "invalid-delegation-target",
+    });
   });
 });

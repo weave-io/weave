@@ -187,7 +187,7 @@ Dirty-worktree rule: many files are dirty for unrelated in-flight work (OpenCode
   - **Acceptance**:
     - Regression tests cover: valid response, whitespace-only, thinking-only, tool-only, out-of-order final events; each asserts retryability, transcript preservation, and capacity release. `bun test packages/adapters/pi/src/__tests__/child-response-contract.test.ts` passes.
 
-- [ ] 9. Extend `weave_delegate` with thread lifecycle (start/retry/continue)
+- [x] 9. Extend `weave_delegate` with thread lifecycle (start/retry/continue)
   - **What**: Compatible extension: existing `{agent, task}` = start new thread. Add retry (retryable failed OR cancelled thread) and continue (completed thread, task required). Same logical child/native session across runs; new tool block per run; old block frozen. Reopen the active leaf and append a divider entry with run/action/time/prior outcome/model/reasoning/initiator. Retry uses a default bounded continuation instruction or an optional caller instruction. Results expose opaque thread ID, run number, status, retryability, final response/error — no paths. Owner or authenticated ancestor with explicit transfer only. Retry/continue count toward `max_children` while running; settlement releases. Preserve agent/native model state; revalidate current tool/skill policy per run. Already-running/stale/integrity failures are structured errors.
   - **Files**: `packages/adapters/pi/src/delegation-tool.ts`, `packages/adapters/pi/src/delegation-controller.ts`, `packages/adapters/pi/src/child-transfer.ts`, `packages/adapters/pi/src/errors.ts`, `packages/adapters/pi/src/types.ts`; tests `delegation-tool.test.ts`, `delegation-controller` tests, new `thread-lifecycle.test.ts`.
   - **Depends on**: Tasks 4–8.

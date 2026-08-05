@@ -29,6 +29,7 @@
 
 import { isAbsolute, join } from "node:path";
 import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
+import { z } from "zod";
 import { isLexicallyContained } from "./path-containment.js";
 
 // ---------------------------------------------------------------------------
@@ -291,6 +292,18 @@ export interface PiNativeSessionHandle {
   getHeader(): PiNativeSessionHeader | null;
   getEntries(): readonly unknown[];
   isPersisted(): boolean;
+  /**
+   * Current native leaf id, when the host exposes one. A session whose host
+   * cannot report a leaf can still be read; it simply cannot be reopened at a
+   * proven leaf, which the delegation runtime refuses rather than guesses.
+   */
+  getLeafId?(): string | null;
+  /**
+   * Appends one bounded, metadata-only custom entry and advances the leaf.
+   * Optional because reading a session never needs it; the thread runtime
+   * uses it once, at thread creation, to establish a real active leaf.
+   */
+  appendCustomEntry?(customType: string, data?: unknown): string;
 }
 
 /**
@@ -388,6 +401,74 @@ export interface CreateNativeChildSessionInput {
   readonly childId: string;
   readonly parentSession: string;
   readonly cwd: string;
+}
+
+// ---------------------------------------------------------------------------
+// Thread metadata entry
+// ---------------------------------------------------------------------------
+
+/** Custom entry type carrying one thread's rebuildable identity. */
+export const PI_NATIVE_THREAD_ENTRY_TYPE = "weave.child.thread";
+
+/** Schema version of {@link PiNativeThreadMetadata}. */
+export const PI_NATIVE_THREAD_SCHEMA_VERSION = 1;
+
+const BOUNDED_NAME = z.string().min(1).max(256);
+
+/**
+ * The bounded, metadata-only state a thread must be able to rebuild from its
+ * own authoritative session: who ran it, under whom, where, and with which
+ * model intent. It carries no task text, no response, and no filesystem path.
+ */
+export const PiNativeThreadMetadataSchema = z
+  .object({
+    schemaVersion: z.literal(PI_NATIVE_THREAD_SCHEMA_VERSION),
+    threadId: BOUNDED_NAME,
+    agentName: BOUNDED_NAME,
+    parentId: BOUNDED_NAME,
+    parentAgentName: BOUNDED_NAME,
+    parentDepth: z.number().int().min(0).max(64),
+    ownerParentSessionId: BOUNDED_NAME,
+    cwd: z.string().min(1).max(4_096),
+    model: BOUNDED_NAME.optional(),
+    reasoning: BOUNDED_NAME.optional(),
+    createdAt: z.number().int().min(0),
+  })
+  .strict();
+
+export type PiNativeThreadMetadata = z.infer<
+  typeof PiNativeThreadMetadataSchema
+>;
+
+/** Caller-supplied thread metadata; the schema version is added here. */
+export type PiNativeThreadMetadataInput = Omit<
+  PiNativeThreadMetadata,
+  "schemaVersion"
+>;
+
+const NativeThreadEntryShapeSchema = z.looseObject({
+  type: z.string().optional(),
+  customType: z.string().optional(),
+  data: z.unknown(),
+});
+
+/**
+ * Finds the newest valid thread metadata entry in a native session's entries.
+ * Malformed or foreign entries are ignored, never repaired; an absence is
+ * reported to the caller as an absence.
+ */
+export function readNativeThreadMetadata(
+  entries: readonly unknown[],
+): PiNativeThreadMetadata | undefined {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const shape = NativeThreadEntryShapeSchema.safeParse(entries[index]);
+    if (!shape.success) continue;
+    if (shape.data.customType !== PI_NATIVE_THREAD_ENTRY_TYPE) continue;
+    const parsed = PiNativeThreadMetadataSchema.safeParse(shape.data.data);
+    if (!parsed.success) continue;
+    return parsed.data;
+  }
+  return undefined;
 }
 
 function withDirectory<T>(
@@ -596,6 +677,101 @@ export class PiNativeSessionStore {
             reason: "unreadable",
           }),
         )().map((entries) => ({ record, entries })),
+    );
+  }
+
+  /**
+   * Establishes the thread's active leaf by appending one bounded,
+   * metadata-only thread entry to a freshly created child session, and
+   * returns the leaf that entry became.
+   *
+   * A session that carries only a header has no leaf, so it could never be
+   * reopened at a proven position. This writes the smallest possible real
+   * entry - agent identity, model/reasoning intent, owner, and creation time,
+   * never a task, response, or path - so every later run of the thread
+   * reopens an authoritative leaf and can rebuild the thread's required state
+   * from the session itself rather than from adapter memory.
+   */
+  establishThreadLeaf(
+    ref: string,
+    metadata: PiNativeThreadMetadataInput,
+    expectedParentSession?: string,
+  ): ResultAsync<
+    { readonly record: PiNativeSessionRecord; readonly leafId: string },
+    PiNativeSessionError
+  > {
+    const parsed = PiNativeThreadMetadataSchema.safeParse({
+      ...metadata,
+      schemaVersion: PI_NATIVE_THREAD_SCHEMA_VERSION,
+    });
+    if (!parsed.success) {
+      return errAsync({ type: "SessionCreateFailed", reason: "io" });
+    }
+    const payload = parsed.data;
+    return this.openValidated(ref, expectedParentSession).andThen(
+      ({ record, handle }) => {
+        const append = handle.appendCustomEntry?.bind(handle);
+        if (append === undefined) {
+          return errAsync<
+            { readonly record: PiNativeSessionRecord; readonly leafId: string },
+            PiNativeSessionError
+          >({ type: "SessionCreateFailed", reason: "host-threw" });
+        }
+        return Result.fromThrowable(
+          () => append(PI_NATIVE_THREAD_ENTRY_TYPE, payload),
+          (): PiNativeSessionError => ({
+            type: "SessionCreateFailed",
+            reason: "host-threw",
+          }),
+        )().andThen((appended) => {
+          const leafId =
+            typeof appended === "string" && appended.length > 0
+              ? appended
+              : (handle.getLeafId?.() ?? undefined);
+          if (typeof leafId !== "string" || leafId.length === 0) {
+            return err<
+              {
+                readonly record: PiNativeSessionRecord;
+                readonly leafId: string;
+              },
+              PiNativeSessionError
+            >({
+              type: "SessionCorrupt",
+              ref: record.ref,
+              reason: "unreadable",
+            });
+          }
+          return ok<
+            { readonly record: PiNativeSessionRecord; readonly leafId: string },
+            PiNativeSessionError
+          >({ record, leafId });
+        });
+      },
+    );
+  }
+
+  /**
+   * Reads the thread metadata a session was opened with. This is the
+   * authoritative source a later generation reconstructs a thread from when
+   * the adapter holds no in-memory state for it. A session without valid
+   * thread metadata is reported as corrupt rather than guessed at.
+   */
+  readThreadMetadata(
+    ref: string,
+    expectedParentSession?: string,
+  ): ResultAsync<PiNativeThreadMetadata, PiNativeSessionError> {
+    return this.readSessionEntries(ref, expectedParentSession).andThen(
+      ({ record, entries }) => {
+        const metadata = readNativeThreadMetadata(entries);
+        if (metadata === undefined) {
+          return err<PiNativeThreadMetadata, PiNativeSessionError>({
+            type: "SessionCorrupt",
+            ref: record.ref,
+            reason: "unreadable",
+          });
+        }
+        return ok<PiNativeThreadMetadata, PiNativeSessionError>(metadata);
+      },
     );
   }
 

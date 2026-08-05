@@ -21,11 +21,29 @@ import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
 import type { PiDelegateRequestBody } from "./child-control-bodies.js";
 import { MAX_CWD_LENGTH, MAX_NAME_LENGTH } from "./child-control-bodies.js";
 import type { HmacPort, RandomPort } from "./child-crypto.js";
+import type {
+  CreateNativeChildSessionInput,
+  PiNativeSessionEntries,
+  PiNativeSessionError,
+  PiNativeSessionRecord,
+  PiNativeSessionTombstone,
+  PiNativeThreadMetadata,
+  PiNativeThreadMetadataInput,
+} from "./child-native-sessions.js";
 import type { PiChildProcessPort } from "./child-process-port.js";
 import type {
   PiChildRecoverySettlement,
   PiChildRecoverySpawnInput,
 } from "./child-recovery.js";
+import type {
+  AppendChildRefLifecycleInput,
+  AppendChildRefRunInput,
+  AppendNewChildRefInput,
+  PiChildRefError,
+  PiChildRefRecord,
+  PiChildRefScan,
+  PiChildRefStatus,
+} from "./child-session-refs.js";
 import type { TimerHandle, TimerPort } from "./child-timer.js";
 import {
   addUsage,
@@ -43,6 +61,15 @@ import {
   makeChildHistoryQuarantinedFailure,
   makeChildHistoryQuotaExceededFailure,
   makeChildRecoveryUnavailableFailure,
+  makeChildSpawnFailedFailure,
+  makeThreadAlreadyRunningFailure,
+  makeThreadAuthorityDeniedFailure,
+  makeThreadIntegrityFailure,
+  makeThreadNotFoundFailure,
+  makeThreadNotResumableFailure,
+  makeThreadNotRetryableFailure,
+  makeThreadResumeUnavailableFailure,
+  makeThreadStaleFailure,
   type PiAdapterFailure,
 } from "./errors.js";
 import type { PathContainmentPort } from "./path-containment.js";
@@ -51,6 +78,7 @@ import {
   type PiChildSessionObserverResult,
   type PiChildSettlement,
   PiRpcChild,
+  type PiRpcChildSpawnSession,
 } from "./rpc-child.js";
 import type { JsonValue } from "./strict-json.js";
 import type { PiTelemetryUsageSink } from "./telemetry.js";
@@ -143,6 +171,150 @@ export interface PiDelegationControllerDeps {
   readonly resolveRootDelegationTarget?: (
     name: string,
   ) => DelegationTarget | undefined;
+  /**
+   * Reads the live parent session id (Task 7's persistent-parent probe). Thread
+   * ownership is measured against it, so a session transition can never let a
+   * new parent inherit another parent's threads.
+   */
+  readonly parentSessionId?: () => string | undefined;
+  /** Task 5 parent custom-entry ref store for thread resolution and dividers. */
+  readonly threadRefs?: () => PiThreadRefPort | undefined;
+  /** Task 4 native child session store; the authoritative thread source. */
+  readonly threadSessions?: () => PiThreadSessionPort | undefined;
+  /** Task 6 metadata cache. Best effort only: failures never block a run. */
+  readonly threadCache?: () => PiThreadCachePort | undefined;
+  /** Cache scoping key. Only read when a cache port is present. */
+  readonly threadWorkspaceKey?: () => string;
+  /**
+   * Production sets this when Task 4/5 sources were required for the
+   * generation. An absent session store then fails closed instead of taking
+   * the legacy ephemeral start path. Unit embeddings omit the flag (or set
+   * it false) so tests without a factory keep pre-thread start semantics.
+   */
+  readonly threadSourcesRequired?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Thread lifecycle (Pi adapter contract §9: start / retry / continue)
+// ---------------------------------------------------------------------------
+
+/** Bounds on the caller-supplied text a retry or continue run may carry. */
+export const PI_THREAD_LIMITS = Object.freeze({
+  /** Largest bounded retry instruction or continue task. */
+  maxInstructionLength: 8_192,
+  /** Largest run number one thread may reach. */
+  maxRuns: 1_000,
+});
+
+/** The default bounded continuation instruction used by a retry without one. */
+export const DEFAULT_THREAD_RETRY_INSTRUCTION =
+  "Retry the previous task in this thread. Review what already happened, correct what failed, and finish the task.";
+
+export type PiThreadAction = "retry" | "continue";
+
+/**
+ * Who is asking for the run. Owner is the live parent session that created the
+ * thread; an ancestor is an authenticated live child in this generation that
+ * additionally holds an explicit transfer for this exact thread.
+ */
+export type PiThreadInitiator =
+  | { readonly kind: "owner"; readonly parentSessionId: string }
+  | { readonly kind: "ancestor"; readonly ancestorChildId: string };
+
+export interface PiThreadRunRequest {
+  readonly threadId: string;
+  readonly action: PiThreadAction;
+  /** Continue: required. Retry: optional; a default instruction is used. */
+  readonly instruction?: string;
+  readonly initiator: PiThreadInitiator;
+}
+
+/** One completed thread run. The tool layer bounds and redacts it further. */
+export interface PiThreadRunOutcome {
+  readonly threadId: string;
+  readonly run: number;
+  readonly settlement: PiChildSettlement;
+}
+
+/** Structural view of the Task 5 ref store this controller depends on. */
+export interface PiThreadRefPort {
+  liveParentSessionId(): string;
+  readRefs(options?: {
+    readonly limit?: number;
+  }): ResultAsync<PiChildRefScan, PiChildRefError>;
+  appendNewChild(
+    input: AppendNewChildRefInput,
+  ): ResultAsync<PiChildRefRecord, PiChildRefError>;
+  appendRunDivider(
+    record: PiChildRefRecord,
+    input: AppendChildRefRunInput,
+  ): ResultAsync<PiChildRefRecord, PiChildRefError>;
+  appendLifecycle(
+    record: PiChildRefRecord,
+    input: AppendChildRefLifecycleInput,
+  ): ResultAsync<PiChildRefRecord, PiChildRefError>;
+}
+
+/** Structural view of the Task 4 native session store. */
+export interface PiThreadSessionPort {
+  createChildSession(
+    input: CreateNativeChildSessionInput,
+  ): ResultAsync<PiNativeSessionRecord, PiNativeSessionError>;
+  establishThreadLeaf(
+    ref: string,
+    metadata: PiNativeThreadMetadataInput,
+    expectedParentSession?: string,
+  ): ResultAsync<
+    { readonly record: PiNativeSessionRecord; readonly leafId: string },
+    PiNativeSessionError
+  >;
+  appendTombstone(
+    record: PiNativeSessionRecord,
+  ): ResultAsync<PiNativeSessionTombstone, PiNativeSessionError>;
+  openSession(
+    ref: string,
+    expectedParentSession?: string,
+  ): ResultAsync<PiNativeSessionRecord, PiNativeSessionError>;
+  readSessionEntries(
+    ref: string,
+    expectedParentSession?: string,
+  ): ResultAsync<PiNativeSessionEntries, PiNativeSessionError>;
+  readThreadMetadata(
+    ref: string,
+    expectedParentSession?: string,
+  ): ResultAsync<PiNativeThreadMetadata, PiNativeSessionError>;
+}
+
+/** Structural view of the Task 6 metadata cache. Best effort by contract. */
+export interface PiThreadCachePort {
+  upsertRef(
+    ref: PiChildRefRecord,
+    workspaceKey: string,
+    options?: { readonly stale?: boolean },
+  ): Result<unknown, unknown>;
+}
+
+/** Adapter-tracked state of one logical thread across all of its runs. */
+interface PiThreadState {
+  readonly threadId: string;
+  readonly agentName: string;
+  readonly parentId: string;
+  readonly parentDepth: number;
+  readonly parentAgentName: string;
+  readonly ownerParentSessionId: string | undefined;
+  readonly cwd: string;
+  readonly env: Readonly<Record<string, string>>;
+  /** Concrete model identity the thread's runs are dispatched with, if known. */
+  readonly model: string | undefined;
+  /** Thinking/reasoning intent recorded for the thread's runs, if known. */
+  readonly reasoning: string | undefined;
+  /** Newest run's child id. A new one is minted for every run. */
+  latestChildId: string;
+  status: PiChildRefStatus;
+  runs: number;
+  /** Retryability of the newest settled run. Unknown until one settles. */
+  lastRetryable: boolean | undefined;
+  running: boolean;
 }
 
 export interface PiAuthenticatedDelegationRequest extends PiDelegationContext {
@@ -165,6 +337,12 @@ export interface PiDelegationRequest {
   readonly cwd: string;
   readonly env: Readonly<Record<string, string>>;
   readonly bootstrap: JsonValue;
+  /**
+   * Trusted adapter-owned session selection. Only the thread lifecycle sets
+   * this, to reopen an existing native child session at its active leaf; an
+   * ordinary start never carries one and stays ephemeral.
+   */
+  readonly session?: PiRpcChildSpawnSession;
   /** Receives bounded snapshots for this exact child while it runs. */
   readonly onUpdate?: (snapshot: PiChildTreeNode) => void;
   /**
@@ -190,6 +368,22 @@ const DEFAULT_TREE_REFRESH_INTERVAL_MS = 500;
  * Reads the concrete model identity and thinking intent out of a bootstrap body
  * so the inspection view can name what the child is actually running on.
  */
+/**
+ * Reads the id of the newest entry in a native child session: the leaf a
+ * resumed run must reopen at. Entries arrive from the host by reference and
+ * are never copied; only the last id-bearing record is inspected.
+ */
+function readActiveLeafId(entries: readonly unknown[]): string | undefined {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry))
+      continue;
+    const id = (entry as Record<string, unknown>).id;
+    if (typeof id === "string" && id.length > 0) return id;
+  }
+  return undefined;
+}
+
 function bootstrapRuntimeMeta(bootstrap: unknown): {
   readonly model?: string;
   readonly thinkingLevel?: string;
@@ -209,6 +403,19 @@ function bootstrapRuntimeMeta(bootstrap: unknown): {
       ? { thinkingLevel }
       : {}),
   };
+}
+
+/**
+ * Derives resume retryability from a settled ref status. Unknown/in-flight
+ * statuses leave retryability unset so readiness fails closed instead of
+ * inventing a prior outcome.
+ */
+function retryableFromRefStatus(
+  status: PiChildRefStatus,
+): boolean | undefined {
+  if (status === "completed") return false;
+  if (status === "failed" || status === "cancelled") return true;
+  return undefined;
 }
 
 type PiChildRestoreUnavailableReason =
@@ -245,6 +452,10 @@ export class PiDelegationController {
   private disposedAll = false;
   private treeRefreshTimer: TimerHandle | undefined;
   private readonly restoreReservations = new Set<string>();
+  /** One entry per logical thread this generation started or resumed. */
+  private readonly threads = new Map<string, PiThreadState>();
+  /** Explicit thread transfers: thread id to the ancestor child id granted it. */
+  private readonly threadTransfers = new Map<string, string>();
 
   constructor(private readonly deps: PiDelegationControllerDeps) {}
 
@@ -355,10 +566,178 @@ export class PiDelegationController {
         makeChildCapacityExceededFailure(childId, decision.value.reason),
       );
     }
-    if (decision.value.outcome === "authorized") {
-      return this.spawnNow(childId, request);
+    const queued = decision.value.outcome !== "authorized";
+    // The authoritative native session and its parent ref are created here,
+    // strictly before any process or lease exists. A provisioning failure
+    // therefore leaves no child process, no lease, no thread, and no
+    // half-written authority behind - the run simply never started.
+    return this.provisionThreadSource(childId, request).andThen(
+      (provisioned) => {
+        // Every start opens a logical thread whose id is this first run's
+        // child id. Later runs of the same thread mint their own child ids and
+        // never reuse, reopen, or rewrite this one.
+        this.registerThreadRun(childId, childId, request);
+        const runRequest: PiDelegationRequest =
+          provisioned === undefined
+            ? request
+            : { ...request, session: provisioned.session };
+        const dispatched = queued
+          ? this.enqueue(childId, runRequest)
+          : this.spawnNow(childId, runRequest);
+        return new ResultAsync<PiChildSettlement, PiAdapterFailure>(
+          (async () => {
+            const settled = await dispatched;
+            this.settleThread(childId, settled);
+            if (provisioned !== undefined) {
+              this.recordThreadSettlement(
+                provisioned.ref,
+                this.threads.get(childId),
+              );
+            }
+            return settled;
+          })(),
+        );
+      },
+    );
+  }
+
+  /**
+   * Creates the thread's authoritative sources for a *new* thread: the native
+   * child session under the Weave-owned isolated root, a real active leaf, and
+   * the parent's new-child ref. The metadata cache is projected best effort
+   * and can never block or fail a run.
+   *
+   * Resolves to `undefined` when no provisioning source is wired, which
+   * preserves the pre-thread start semantics byte for byte for embeddings and
+   * tests that supply no session store.
+   */
+  private provisionThreadSource(
+    childId: string,
+    request: PiDelegationRequest,
+  ): ResultAsync<
+    | {
+        readonly session: PiRpcChildSpawnSession;
+        readonly ref: PiChildRefRecord;
+      }
+    | undefined,
+    PiAdapterFailure
+  > {
+    const sessions = this.deps.threadSessions?.();
+    if (sessions === undefined) {
+      if (this.deps.threadSourcesRequired === true) {
+        // Production wired a required factory but the authoritative store is
+        // missing: refuse before process/lease rather than legacy ephemeral start.
+        return errAsync(
+          makeChildSpawnFailedFailure(childId, "thread-sessions-unavailable"),
+        );
+      }
+      // No native session store wired: preserve pre-thread start semantics.
+      return okAsync(undefined);
     }
-    return this.enqueue(childId, request);
+    const refs = this.deps.threadRefs?.();
+    if (refs === undefined) {
+      // A native session without a parent ref would be unreachable authority:
+      // refuse before creating one rather than orphan it.
+      return errAsync(
+        makeChildSpawnFailedFailure(childId, "thread-refs-unavailable"),
+      );
+    }
+    const parentSession = refs.liveParentSessionId();
+    if (parentSession.length === 0) {
+      return errAsync(
+        makeChildSpawnFailedFailure(childId, "thread-parent-unavailable"),
+      );
+    }
+    const runtime = bootstrapRuntimeMeta(request.bootstrap);
+    const createdAt = this.deps.now?.() ?? Date.now();
+    return sessions
+      .createChildSession({ childId, parentSession, cwd: request.cwd })
+      .mapErr(() =>
+        makeChildSpawnFailedFailure(childId, "thread-session-create-failed"),
+      )
+      .andThen((record) =>
+        sessions
+          .establishThreadLeaf(
+            record.ref,
+            {
+              threadId: childId,
+              agentName: request.agentName,
+              parentId: request.parentId,
+              parentAgentName: request.parentAgentName,
+              parentDepth: request.parentDepth,
+              ownerParentSessionId: parentSession,
+              cwd: request.cwd,
+              ...(runtime.model === undefined ? {} : { model: runtime.model }),
+              ...(runtime.thinkingLevel === undefined
+                ? {}
+                : { reasoning: runtime.thinkingLevel }),
+              createdAt,
+            },
+            parentSession,
+          )
+          .mapErr(() => {
+            this.tombstoneProvisionedSession(sessions, record);
+            return makeChildSpawnFailedFailure(
+              childId,
+              "thread-leaf-unavailable",
+            );
+          })
+          .andThen((leaf) =>
+            refs
+              .appendNewChild({
+                childId,
+                threadId: childId,
+                nativeSessionId: record.sessionId,
+                sessionRef: record.ref,
+                title: request.agentName,
+                status: "running",
+                run: {
+                  action: "start",
+                  startedAt: createdAt,
+                  ...(runtime.model === undefined
+                    ? {}
+                    : { model: runtime.model }),
+                  ...(runtime.thinkingLevel === undefined
+                    ? {}
+                    : { reasoning: runtime.thinkingLevel }),
+                },
+              })
+              .mapErr(() => {
+                this.tombstoneProvisionedSession(sessions, record);
+                return makeChildSpawnFailedFailure(
+                  childId,
+                  "thread-ref-write-failed",
+                );
+              })
+              .map((ref) => {
+                this.updateThreadCache(ref);
+                return {
+                  session: {
+                    mode: "restore" as const,
+                    sessionDir: dirname(record.path),
+                    sessionPath: record.path,
+                    activeLeafId: leaf.leafId,
+                  },
+                  ref,
+                };
+              }),
+          ),
+      );
+  }
+
+  /**
+   * Marks a session created for a run that never started. Best effort by
+   * design: the ref that would have made it reachable was never written, so a
+   * failed tombstone leaves an unreferenced file, never a resumable thread.
+   */
+  private tombstoneProvisionedSession(
+    sessions: PiThreadSessionPort,
+    record: PiNativeSessionRecord,
+  ): void {
+    void sessions.appendTombstone(record).match(
+      () => undefined,
+      () => undefined,
+    );
   }
 
   /**
@@ -519,6 +898,730 @@ export class PiDelegationController {
     );
   }
 
+  // -------------------------------------------------------------------------
+  // Thread lifecycle
+  // -------------------------------------------------------------------------
+
+  /**
+   * Records the logical thread a newly dispatched run belongs to. A thread's
+   * id is the id of its first run's child and never changes; each later run
+   * mints a new child id under the same thread.
+   */
+  private registerThreadRun(
+    threadId: string,
+    childId: string,
+    request: PiDelegationRequest,
+  ): void {
+    const existing = this.threads.get(threadId);
+    if (existing !== undefined) {
+      existing.latestChildId = childId;
+      existing.status = "running";
+      existing.running = true;
+      return;
+    }
+    const runtime = bootstrapRuntimeMeta(request.bootstrap);
+    const liveParent = this.deps.threadRefs?.()?.liveParentSessionId();
+    this.threads.set(threadId, {
+      threadId,
+      agentName: request.agentName,
+      parentId: request.parentId,
+      parentDepth: request.parentDepth,
+      parentAgentName: request.parentAgentName,
+      ownerParentSessionId:
+        liveParent !== undefined && liveParent.length > 0
+          ? liveParent
+          : this.deps.parentSessionId?.(),
+      cwd: request.cwd,
+      env: request.env,
+      model: runtime.model,
+      reasoning: runtime.thinkingLevel,
+      latestChildId: childId,
+      status: "running",
+      runs: 1,
+      lastRetryable: undefined,
+      running: true,
+    });
+  }
+
+  /**
+   * Settles the thread a run belonged to. Capacity is released by the child's
+   * own disposal; this only records the outcome the next run is judged
+   * against, so a non-retryable failure can never be retried later.
+   */
+  private settleThread(
+    threadId: string,
+    outcome: Result<PiChildSettlement, PiAdapterFailure>,
+  ): void {
+    const state = this.threads.get(threadId);
+    if (state === undefined) return;
+    state.running = false;
+    if (outcome.isErr()) {
+      state.status = "failed";
+      state.lastRetryable = outcome.error.retryable;
+      return;
+    }
+    if (outcome.value.outcome === "completed") {
+      state.status = "completed";
+      state.lastRetryable = false;
+      return;
+    }
+    if (outcome.value.outcome === "cancelled") {
+      state.status = "cancelled";
+      state.lastRetryable = true;
+      return;
+    }
+    state.status = "failed";
+    state.lastRetryable = true;
+  }
+
+  /**
+   * Grants one authenticated live descendant explicit authority over one
+   * thread. Without a grant, only the owning parent session may run a thread:
+   * an ancestor is never implicitly entitled to another agent's thread.
+   */
+  grantThreadTransfer(
+    threadId: string,
+    ancestorChildId: string,
+  ): Result<void, PiAdapterFailure> {
+    const state = this.threads.get(threadId);
+    if (state === undefined) {
+      return err(makeThreadNotFoundFailure(threadId, "unknown-thread"));
+    }
+    const ancestor = this.children.get(ancestorChildId);
+    if (ancestor === undefined || this.isTerminal(ancestor)) {
+      return err(
+        makeThreadAuthorityDeniedFailure(
+          threadId,
+          "ancestor-not-authenticated",
+        ),
+      );
+    }
+    this.threadTransfers.set(threadId, ancestorChildId);
+    return ok(undefined);
+  }
+
+  /** Bounded snapshot of one thread's public lifecycle state. */
+  threadStatus(threadId: string):
+    | {
+        readonly threadId: string;
+        readonly runs: number;
+        readonly status: PiChildRefStatus;
+        readonly retryable: boolean;
+      }
+    | undefined {
+    const state = this.threads.get(threadId);
+    if (state === undefined) return undefined;
+    return {
+      threadId: state.threadId,
+      runs: state.runs,
+      status: state.status,
+      retryable: state.lastRetryable === true,
+    };
+  }
+
+  /**
+   * Runs one more run of an existing thread: `retry` after a retryable failed
+   * or cancelled run, `continue` after a completed one.
+   *
+   * Every run re-derives its own authority, source integrity, policy, and
+   * capacity. Nothing about a prior run is trusted except its recorded
+   * outcome, and no previous run record is ever mutated.
+   */
+  resumeThread(
+    request: PiThreadRunRequest,
+  ): ResultAsync<PiThreadRunOutcome, PiAdapterFailure> {
+    const threadId = request.threadId;
+    if (this.disposedAll) {
+      return errAsync(
+        makeThreadResumeUnavailableFailure(threadId, "lifecycle-unavailable"),
+      );
+    }
+    const instruction = this.resolveThreadInstruction(request);
+    if (instruction.isErr()) return errAsync(instruction.error);
+    return this.resolveThreadState(threadId).andThen((state) => {
+      if (state.running) {
+        return errAsync(makeThreadAlreadyRunningFailure(threadId));
+      }
+      const authority = this.authorizeThreadInitiator(state, request.initiator);
+      if (authority.isErr()) return errAsync(authority.error);
+      const readiness = this.checkThreadReadiness(state, request.action);
+      if (readiness.isErr()) return errAsync(readiness.error);
+      const target = this.resolveThreadTarget(state);
+      if (target.isErr()) return errAsync(target.error);
+      const buildBootstrap = this.deps.buildBootstrap;
+      if (buildBootstrap === undefined) {
+        return errAsync(
+          makeThreadResumeUnavailableFailure(threadId, "lifecycle-unavailable"),
+        );
+      }
+
+      return this.resolveThreadSource(state).andThen((source) => {
+        // Capacity is revalidated here, after every authority and integrity
+        // check and immediately before dispatch, so a run only ever holds a
+        // slot it was authorized for at the moment it starts.
+        const decision = this.authorize({
+          parentId: state.parentId,
+          parentDepth: state.parentDepth,
+          parentAgentName: state.parentAgentName,
+          agentName: state.agentName,
+          task: instruction.value,
+          cwd: state.cwd,
+          env: state.env,
+          bootstrap: null,
+        });
+        if (decision.isErr() || decision.value.outcome !== "authorized") {
+          return errAsync<PiThreadRunOutcome, PiAdapterFailure>(
+            makeChildCapacityExceededFailure(threadId, "max_children"),
+          );
+        }
+        const runNumber = state.runs + 1;
+        // A new run is a new tool block and a new child id. The previous run's
+        // record keeps its own id and is never reopened or rewritten.
+        const runChildId = this.deps.idGenerator.next();
+        const priorOutcome = state.status;
+        return this.appendThreadDivider(
+          source.ref,
+          request,
+          priorOutcome,
+          state,
+        ).andThen((divider) => {
+          state.runs = runNumber;
+          state.running = true;
+          state.status = "running";
+          state.latestChildId = runChildId;
+          const runRequest: PiDelegationRequest = {
+            parentId: state.parentId,
+            parentDepth: state.parentDepth,
+            parentAgentName: state.parentAgentName,
+            agentName: state.agentName,
+            task: instruction.value,
+            cwd: state.cwd,
+            env: state.env,
+            bootstrap: buildBootstrap(target.value, runChildId, {
+              parentAgentName: state.parentAgentName,
+              parentDepth: state.parentDepth,
+              cwd: state.cwd,
+            }),
+            ...(source.session === undefined
+              ? {}
+              : { session: source.session }),
+          };
+          return new ResultAsync<PiThreadRunOutcome, PiAdapterFailure>(
+            (async () => {
+              const settled = await this.spawnNow(runChildId, runRequest);
+              this.settleThread(threadId, settled);
+              this.recordThreadSettlement(divider, this.threads.get(threadId));
+              if (settled.isErr()) return err(settled.error);
+              return ok({
+                threadId,
+                run: runNumber,
+                settlement: settled.value,
+              });
+            })(),
+          );
+        });
+      });
+    });
+  }
+
+  /**
+   * Returns the in-memory thread when this generation already tracked it;
+   * otherwise rebuilds it from the authoritative parent ref plus the native
+   * session's thread metadata. Missing agent/owner/runtime fields are refused
+   * rather than invented.
+   */
+  private resolveThreadState(
+    threadId: string,
+  ): ResultAsync<PiThreadState, PiAdapterFailure> {
+    const existing = this.threads.get(threadId);
+    if (existing !== undefined) return okAsync(existing);
+    return this.reconstructThreadState(threadId);
+  }
+
+  /**
+   * Rebuilds one thread for a fresh controller generation from the parent ref
+   * and the native session's own metadata entry. The ref supplies observation
+   * status and run count; the session supplies the agent, owner, cwd, and
+   * model/reasoning intent that every later run must preserve.
+   */
+  private reconstructThreadState(
+    threadId: string,
+  ): ResultAsync<PiThreadState, PiAdapterFailure> {
+    const refs = this.deps.threadRefs?.();
+    const sessions = this.deps.threadSessions?.();
+    if (refs === undefined || sessions === undefined) {
+      return errAsync(makeThreadNotFoundFailure(threadId, "unknown-thread"));
+    }
+    return refs
+      .readRefs()
+      .mapErr(() => makeThreadNotFoundFailure(threadId, "refs-unavailable"))
+      .andThen((scan) => {
+        const record = scan.refs.find(
+          (candidate) => candidate.threadId === threadId,
+        );
+        if (record === undefined) {
+          return errAsync<PiThreadState, PiAdapterFailure>(
+            this.threadScanFailure(threadId, scan),
+          );
+        }
+        if (record.originParentSessionId !== refs.liveParentSessionId()) {
+          return errAsync<PiThreadState, PiAdapterFailure>(
+            makeThreadNotFoundFailure(threadId, "origin-mismatch"),
+          );
+        }
+        if (record.status === "tombstoned") {
+          return errAsync<PiThreadState, PiAdapterFailure>(
+            makeThreadStaleFailure(threadId, "tombstoned"),
+          );
+        }
+        return sessions
+          .readThreadMetadata(record.sessionRef, record.originParentSessionId)
+          .mapErr((error) => this.nativeSessionFailure(threadId, error))
+          .andThen((metadata) => {
+            const validated = this.validateReconstructedThread(
+              threadId,
+              record,
+              metadata,
+            );
+            if (validated.isErr()) return errAsync(validated.error);
+            this.threads.set(threadId, validated.value);
+            return okAsync(validated.value);
+          });
+      });
+  }
+
+  /**
+   * Proves the authoritative sources agree before a reconstructed thread is
+   * admitted. Any missing or mismatched agent/owner/runtime field fails closed.
+   */
+  private validateReconstructedThread(
+    threadId: string,
+    record: PiChildRefRecord,
+    metadata: PiNativeThreadMetadata,
+  ): Result<PiThreadState, PiAdapterFailure> {
+    if (
+      metadata.threadId !== threadId ||
+      metadata.threadId !== record.threadId ||
+      metadata.ownerParentSessionId !== record.originParentSessionId ||
+      metadata.agentName.length === 0 ||
+      metadata.parentId.length === 0 ||
+      metadata.parentAgentName.length === 0 ||
+      metadata.cwd.length === 0
+    ) {
+      return err(
+        makeThreadIntegrityFailure(threadId, "session-corrupt"),
+      );
+    }
+    const runs = record.runs.length;
+    if (runs < 1) {
+      // A thread with no recorded run has no proven prior outcome to resume.
+      return err(makeThreadIntegrityFailure(threadId, "session-corrupt"));
+    }
+    return ok({
+      threadId,
+      agentName: metadata.agentName,
+      parentId: metadata.parentId,
+      parentDepth: metadata.parentDepth,
+      parentAgentName: metadata.parentAgentName,
+      ownerParentSessionId: metadata.ownerParentSessionId,
+      cwd: metadata.cwd,
+      env: {},
+      model: metadata.model,
+      reasoning: metadata.reasoning,
+      latestChildId: record.childId,
+      status: record.status,
+      runs,
+      lastRetryable: retryableFromRefStatus(record.status),
+      running: record.status === "running" || record.status === "queued",
+    });
+  }
+
+  /** Applies the action's own text contract before anything else is touched. */
+  private resolveThreadInstruction(
+    request: PiThreadRunRequest,
+  ): Result<string, PiAdapterFailure> {
+    const supplied = request.instruction;
+    if (
+      supplied !== undefined &&
+      (supplied.trim().length === 0 ||
+        supplied.length > PI_THREAD_LIMITS.maxInstructionLength)
+    ) {
+      return err(
+        makeThreadResumeUnavailableFailure(
+          request.threadId,
+          "lifecycle-unavailable",
+        ),
+      );
+    }
+    if (request.action === "continue") {
+      // A continue without a task is a validation error, never a default.
+      if (supplied === undefined) {
+        return err(
+          makeThreadNotResumableFailure(
+            request.threadId,
+            "status-not-completed",
+          ),
+        );
+      }
+      return ok(supplied);
+    }
+    return ok(supplied ?? DEFAULT_THREAD_RETRY_INSTRUCTION);
+  }
+
+  /** Owner or explicitly transferred authenticated ancestor. Nothing else. */
+  private authorizeThreadInitiator(
+    state: PiThreadState,
+    initiator: PiThreadInitiator,
+  ): Result<void, PiAdapterFailure> {
+    if (initiator.kind === "owner") {
+      const live =
+        this.deps.threadRefs?.()?.liveParentSessionId() ??
+        this.deps.parentSessionId?.();
+      if (
+        state.ownerParentSessionId === undefined ||
+        initiator.parentSessionId !== state.ownerParentSessionId ||
+        (live !== undefined && live !== state.ownerParentSessionId)
+      ) {
+        return err(
+          makeThreadAuthorityDeniedFailure(state.threadId, "not-owner"),
+        );
+      }
+      return ok(undefined);
+    }
+    const ancestor = this.children.get(initiator.ancestorChildId);
+    if (ancestor === undefined || this.isTerminal(ancestor)) {
+      return err(
+        makeThreadAuthorityDeniedFailure(
+          state.threadId,
+          "ancestor-not-authenticated",
+        ),
+      );
+    }
+    if (
+      this.threadTransfers.get(state.threadId) !== initiator.ancestorChildId
+    ) {
+      return err(
+        makeThreadAuthorityDeniedFailure(state.threadId, "transfer-missing"),
+      );
+    }
+    return ok(undefined);
+  }
+
+  /** State machine: retry needs a retryable failure or a cancellation. */
+  private checkThreadReadiness(
+    state: PiThreadState,
+    action: PiThreadAction,
+  ): Result<void, PiAdapterFailure> {
+    if (state.runs >= PI_THREAD_LIMITS.maxRuns) {
+      return err(
+        makeThreadNotResumableFailure(state.threadId, "run-limit-reached"),
+      );
+    }
+    if (state.status === "running" || state.status === "queued") {
+      return err(makeThreadAlreadyRunningFailure(state.threadId));
+    }
+    if (state.status === "tombstoned") {
+      return err(makeThreadStaleFailure(state.threadId, "tombstoned"));
+    }
+    if (action === "continue") {
+      if (state.status !== "completed") {
+        return err(
+          makeThreadNotResumableFailure(state.threadId, "status-not-completed"),
+        );
+      }
+      return ok(undefined);
+    }
+    if (state.status === "cancelled") return ok(undefined);
+    if (state.status !== "failed") {
+      return err(
+        makeThreadNotRetryableFailure(
+          state.threadId,
+          "status-not-failed-or-cancelled",
+        ),
+      );
+    }
+    // A failure whose retryability was never recorded fails closed: the
+    // adapter never assumes an unproven failure is safe to repeat.
+    if (state.lastRetryable === undefined) {
+      return err(
+        makeThreadNotRetryableFailure(state.threadId, "retryability-unknown"),
+      );
+    }
+    if (!state.lastRetryable) {
+      return err(
+        makeThreadNotRetryableFailure(state.threadId, "outcome-not-retryable"),
+      );
+    }
+    return ok(undefined);
+  }
+
+  /** Re-reads the current config's own eligibility for this thread's agent. */
+  private resolveThreadTarget(
+    state: PiThreadState,
+  ): Result<DelegationTarget, PiAdapterFailure> {
+    const target =
+      state.parentId === ROOT_NODE_ID
+        ? this.deps.resolveRootDelegationTarget?.(state.agentName)
+        : this.deps.resolveDelegationTarget?.(
+            state.parentAgentName,
+            state.agentName,
+          );
+    if (target === undefined) {
+      return err(
+        makeThreadResumeUnavailableFailure(state.threadId, "policy-revoked"),
+      );
+    }
+    return ok(target);
+  }
+
+  /**
+   * Resolves the thread's Task 5 ref and verifies the Task 4 native session it
+   * points at, then reopens that session at its active leaf. Missing, corrupt,
+   * origin-mismatched, and conflicting sources are all refused here, before
+   * any divider is written or any process is started.
+   */
+  private resolveThreadSource(state: PiThreadState): ResultAsync<
+    {
+      readonly ref: PiChildRefRecord | undefined;
+      readonly session: PiRpcChildSpawnSession | undefined;
+    },
+    PiAdapterFailure
+  > {
+    const refs = this.deps.threadRefs?.();
+    if (refs === undefined) {
+      // No ref store wired for this generation: the thread's authoritative
+      // source cannot be proven, so it is not resumable. It is never resumed
+      // on the adapter's own in-memory word alone.
+      return errAsync(
+        makeThreadResumeUnavailableFailure(
+          state.threadId,
+          "lifecycle-unavailable",
+        ),
+      );
+    }
+    return refs
+      .readRefs()
+      .mapErr(() =>
+        makeThreadNotFoundFailure(state.threadId, "refs-unavailable"),
+      )
+      .andThen((scan) => {
+        const record = scan.refs.find(
+          (candidate) => candidate.threadId === state.threadId,
+        );
+        if (record === undefined) {
+          return errAsync<
+            {
+              readonly ref: PiChildRefRecord | undefined;
+              readonly session: PiRpcChildSpawnSession | undefined;
+            },
+            PiAdapterFailure
+          >(this.threadScanFailure(state.threadId, scan));
+        }
+        if (record.originParentSessionId !== refs.liveParentSessionId()) {
+          return errAsync<
+            {
+              readonly ref: PiChildRefRecord | undefined;
+              readonly session: PiRpcChildSpawnSession | undefined;
+            },
+            PiAdapterFailure
+          >(makeThreadNotFoundFailure(state.threadId, "origin-mismatch"));
+        }
+        if (record.status === "tombstoned") {
+          return errAsync<
+            {
+              readonly ref: PiChildRefRecord | undefined;
+              readonly session: PiRpcChildSpawnSession | undefined;
+            },
+            PiAdapterFailure
+          >(makeThreadStaleFailure(state.threadId, "tombstoned"));
+        }
+        return this.openThreadSession(state, record).map((session) => ({
+          ref: record,
+          session,
+        }));
+      });
+  }
+
+  /**
+   * Explains why a thread has no usable ref. The scan already excludes
+   * origin-mismatched and source-unusable children, so the reason lives in its
+   * issues; an unexplained absence is simply an unknown thread.
+   */
+  private threadScanFailure(
+    threadId: string,
+    scan: PiChildRefScan,
+  ): PiAdapterFailure {
+    for (const issue of scan.issues) {
+      if (!("childId" in issue) || issue.childId !== threadId) continue;
+      if (issue.kind === "origin-mismatch") {
+        return makeThreadNotFoundFailure(threadId, "origin-mismatch");
+      }
+      if (
+        issue.kind === "conflicting-entry" ||
+        issue.kind === "duplicate-entry"
+      ) {
+        return makeThreadIntegrityFailure(threadId, "ref-conflict");
+      }
+      if (issue.kind === "source-unusable") {
+        if (issue.state === "missing") {
+          return makeThreadStaleFailure(threadId, "session-missing");
+        }
+        if (issue.state === "tombstoned") {
+          return makeThreadStaleFailure(threadId, "tombstoned");
+        }
+        if (issue.state === "corrupt") {
+          return makeThreadIntegrityFailure(threadId, "session-corrupt");
+        }
+        return makeThreadResumeUnavailableFailure(
+          threadId,
+          "session-unavailable",
+        );
+      }
+    }
+    return makeThreadNotFoundFailure(threadId, "unknown-thread");
+  }
+
+  private openThreadSession(
+    state: PiThreadState,
+    record: PiChildRefRecord,
+  ): ResultAsync<PiRpcChildSpawnSession, PiAdapterFailure> {
+    const sessions = this.deps.threadSessions?.();
+    if (sessions === undefined) {
+      return errAsync(
+        makeThreadResumeUnavailableFailure(
+          state.threadId,
+          "session-unavailable",
+        ),
+      );
+    }
+    const parentSession = record.originParentSessionId;
+    return sessions
+      .readSessionEntries(record.sessionRef, parentSession)
+      .mapErr((error) => this.nativeSessionFailure(state.threadId, error))
+      .andThen((opened) => {
+        const activeLeaf = readActiveLeafId(opened.entries);
+        if (activeLeaf === undefined) {
+          return err<PiRpcChildSpawnSession, PiAdapterFailure>(
+            makeThreadIntegrityFailure(state.threadId, "session-corrupt"),
+          );
+        }
+        const sessionPath = opened.record.path;
+        const sessionDir = dirname(sessionPath);
+        if (!isAbsolute(sessionPath) || sessionDir === ".") {
+          return err<PiRpcChildSpawnSession, PiAdapterFailure>(
+            makeThreadIntegrityFailure(state.threadId, "session-corrupt"),
+          );
+        }
+        return ok<PiRpcChildSpawnSession, PiAdapterFailure>({
+          mode: "restore",
+          sessionDir,
+          sessionPath,
+          activeLeafId: activeLeaf,
+        });
+      });
+  }
+
+  private nativeSessionFailure(
+    threadId: string,
+    error: PiNativeSessionError,
+  ): PiAdapterFailure {
+    if (error.type === "SessionMissing") {
+      return makeThreadStaleFailure(threadId, "session-missing");
+    }
+    if (error.type === "SessionCorrupt") {
+      return makeThreadIntegrityFailure(threadId, "session-corrupt");
+    }
+    return makeThreadResumeUnavailableFailure(threadId, "session-unavailable");
+  }
+
+  /**
+   * Appends the metadata-only run divider that opens the new run. The divider
+   * carries the run number, action, time, prior outcome, model, reasoning, and
+   * initiator - never the instruction, the response, or a path.
+   */
+  private appendThreadDivider(
+    record: PiChildRefRecord | undefined,
+    request: PiThreadRunRequest,
+    priorOutcome: PiChildRefStatus,
+    state: PiThreadState,
+  ): ResultAsync<PiChildRefRecord | undefined, PiAdapterFailure> {
+    const refs = this.deps.threadRefs?.();
+    if (refs === undefined || record === undefined) {
+      return errAsync(
+        makeThreadResumeUnavailableFailure(
+          state.threadId,
+          "lifecycle-unavailable",
+        ),
+      );
+    }
+    const runtime = this.threadRuntimeMeta(state);
+    return refs
+      .appendRunDivider(record, {
+        action: request.action,
+        priorOutcome,
+        initiator:
+          request.initiator.kind === "owner" ? "owner" : "transferred-ancestor",
+        status: "running",
+        ...(runtime.model === undefined ? {} : { model: runtime.model }),
+        ...(runtime.reasoning === undefined
+          ? {}
+          : { reasoning: runtime.reasoning }),
+      })
+      .mapErr(() =>
+        makeThreadResumeUnavailableFailure(
+          state.threadId,
+          "divider-write-failed",
+        ),
+      )
+      .map((next) => {
+        this.updateThreadCache(next);
+        return next;
+      });
+  }
+
+  /** Names the model and reasoning the resumed run will use, when known. */
+  private threadRuntimeMeta(state: PiThreadState): {
+    readonly model?: string;
+    readonly reasoning?: string;
+  } {
+    return {
+      ...(state.model === undefined ? {} : { model: state.model }),
+      ...(state.reasoning === undefined ? {} : { reasoning: state.reasoning }),
+    };
+  }
+
+  /** Records the settled run in the refs and the cache. Never blocks a result. */
+  private recordThreadSettlement(
+    record: PiChildRefRecord | undefined,
+    state: PiThreadState | undefined,
+  ): void {
+    const refs = this.deps.threadRefs?.();
+    if (refs === undefined || record === undefined || state === undefined)
+      return;
+    void refs.appendLifecycle(record, { status: state.status }).match(
+      (next) => this.updateThreadCache(next),
+      () => undefined,
+    );
+  }
+
+  /**
+   * Projects one ref into the metadata cache. The cache is derivative: any
+   * failure is dropped, and no caller ever waits on it.
+   */
+  private updateThreadCache(record: PiChildRefRecord): void {
+    const cache = this.deps.threadCache?.();
+    if (cache === undefined) return;
+    const workspaceKey = this.deps.threadWorkspaceKey?.();
+    if (workspaceKey === undefined || workspaceKey.length === 0) return;
+    Result.fromThrowable(
+      () => cache.upsertRef(record, workspaceKey),
+      () => undefined,
+    )().match(
+      () => undefined,
+      () => undefined,
+    );
+  }
+
   private spawnNow(
     childId: string,
     request: PiDelegationRequest,
@@ -614,6 +1717,9 @@ export class PiDelegationController {
           cwd: request.cwd,
           env: request.env,
           task: request.task,
+          ...(request.session === undefined
+            ? {}
+            : { session: request.session }),
         };
         return this.finalizeChild(
           childId,

@@ -17,7 +17,9 @@ import { truncateLatestOutput } from "./child-tree.js";
 import type {
   PiDelegationController,
   PiDelegationRequest,
+  PiThreadRunOutcome,
 } from "./delegation-controller.js";
+import { PI_THREAD_LIMITS } from "./delegation-controller.js";
 import {
   makeChildAbortFailedFailure,
   type PiAdapterFailure,
@@ -53,16 +55,47 @@ export const WEAVE_DELEGATION_TOOL_NAME = "weave_delegate";
  */
 function buildDelegationParameters(allowedNames: ReadonlySet<string>) {
   return Type.Object({
-    agent: StringEnum(Array.from(allowedNames), {
-      description:
-        "Exact normalized subagent name from this agent's eligible delegation targets.",
-    }),
-    task: Type.String({
-      minLength: 1,
-      description: "The task description for the delegated agent.",
-    }),
+    agent: Type.Optional(
+      StringEnum(Array.from(allowedNames), {
+        description:
+          "Exact normalized subagent name from this agent's eligible delegation targets. Required to start a new thread; omitted when retrying or continuing one.",
+      }),
+    ),
+    task: Type.Optional(
+      Type.String({
+        minLength: 1,
+        maxLength: PI_THREAD_LIMITS.maxInstructionLength,
+        description:
+          "The task description. Required to start a new thread and to continue a completed one.",
+      }),
+    ),
+    action: Type.Optional(
+      StringEnum(["retry", "continue"], {
+        description:
+          "Omit to start a new thread. `retry` reruns a failed or cancelled thread; `continue` gives a completed thread more work.",
+      }),
+    ),
+    thread: Type.Optional(
+      Type.String({
+        minLength: 1,
+        maxLength: MAX_THREAD_ID_LENGTH,
+        description:
+          "Opaque thread id returned by an earlier delegation. Required with `action`.",
+      }),
+    ),
+    instruction: Type.Optional(
+      Type.String({
+        minLength: 1,
+        maxLength: PI_THREAD_LIMITS.maxInstructionLength,
+        description:
+          "Optional extra guidance for a `retry`. Never used by `start` or `continue`.",
+      }),
+    ),
   });
 }
+
+/** Opaque thread ids are adapter-minted identifiers, never paths. */
+const MAX_THREAD_ID_LENGTH = 256;
 
 export interface PiDelegationInvocationContext {
   readonly parentAgentName: string;
@@ -203,6 +236,13 @@ function parentVisibleSettlement(
   return { outcome: "cancelled" };
 }
 
+/**
+ * The start-path result is a frozen public contract: `{ ok, settlement }` and
+ * nothing else. A thread id is deliberately not added here, so an existing
+ * start call's bytes are identical before and after the thread lifecycle
+ * shipped; thread ids reach the parent through the child inspection surfaces
+ * that already list them.
+ */
 function successResult(
   agent: string,
   settlement: PiChildSettlement,
@@ -219,6 +259,52 @@ function successResult(
       status: settlement.outcome,
       latestOutput: settlementOutput(settlement),
     },
+  );
+}
+
+/**
+ * The public result of one thread run. It names the opaque thread, the run
+ * number, the outcome, whether another run may follow, and the bounded final
+ * response. It never carries a session path, a native session id, a ref, or
+ * any part of the child transcript beyond the bounded terminal response.
+ */
+function threadResult(outcome: PiThreadRunOutcome): PiToolResult {
+  const settlement = outcome.settlement;
+  const status = settlement.outcome;
+  const response =
+    status === "completed" && typeof settlement.assistantOutput === "string"
+      ? truncateLatestOutput(settlement.assistantOutput)
+      : "";
+  return toolResult(
+    JSON.stringify({
+      ok: true,
+      thread: outcome.threadId,
+      run: outcome.run,
+      status,
+      // A completed run is finished work, not something to repeat; only a
+      // failed or cancelled one invites another run.
+      retryable: status !== "completed",
+      ...(response.length > 0 ? { response } : {}),
+    }),
+  );
+}
+
+/** Reports a refused or failed thread run without leaking any location. */
+function threadFailureResult(
+  threadId: string,
+  failure: PiAdapterFailure,
+): PiToolResult {
+  const reason = failure.correlation?.reason;
+  return toolResult(
+    JSON.stringify({
+      ok: false,
+      thread: threadId,
+      error: failure.code,
+      message: failure.safeMessage,
+      ...(typeof reason === "string" ? { reason } : {}),
+      retryable: failure.retryable,
+      recovery: failure.recovery,
+    }),
   );
 }
 
@@ -367,17 +453,68 @@ function watchForCancelSubtreeFailure(
   };
 }
 
-function parseDelegationCall(
-  call: unknown,
-): { agent: string; task: string } | undefined {
+/**
+ * The three accepted call forms. Parsing is strict and closed: a call that
+ * mixes a start with a thread action, omits a required field, or carries a
+ * field the chosen action never uses is refused outright rather than
+ * silently reinterpreted as something else.
+ */
+type PiDelegationCall =
+  | { readonly kind: "start"; readonly agent: string; readonly task: string }
+  | {
+      readonly kind: "retry";
+      readonly threadId: string;
+      readonly instruction?: string;
+    }
+  | {
+      readonly kind: "continue";
+      readonly threadId: string;
+      readonly task: string;
+    };
+
+function boundedText(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  if (value.trim().length === 0) return undefined;
+  if (value.length > PI_THREAD_LIMITS.maxInstructionLength) return undefined;
+  return value;
+}
+
+function parseDelegationCall(call: unknown): PiDelegationCall | undefined {
   if (typeof call !== "object" || call === null || Array.isArray(call))
     return undefined;
   const record = call as Record<string, unknown>;
-  const agent = record.agent;
-  const task = record.task;
-  if (typeof agent !== "string" || typeof task !== "string") return undefined;
-  if (task.length < 1) return undefined;
-  return { agent, task };
+  const action = record.action;
+  const thread = record.thread;
+  if (action === undefined && thread === undefined) {
+    const agent = record.agent;
+    const task = record.task;
+    if (typeof agent !== "string" || typeof task !== "string") return undefined;
+    if (task.length < 1) return undefined;
+    if (record.instruction !== undefined) return undefined;
+    return { kind: "start", agent, task };
+  }
+  if (typeof thread !== "string" || thread.length < 1) return undefined;
+  if (thread.length > MAX_THREAD_ID_LENGTH) return undefined;
+  // A thread already fixes its own agent; naming one here would imply the
+  // caller can retarget an existing thread, which it cannot.
+  if (record.agent !== undefined) return undefined;
+  if (action === "retry") {
+    if (record.task !== undefined) return undefined;
+    if (record.instruction === undefined) {
+      return { kind: "retry", threadId: thread };
+    }
+    const instruction = boundedText(record.instruction);
+    if (instruction === undefined) return undefined;
+    return { kind: "retry", threadId: thread, instruction };
+  }
+  if (action === "continue") {
+    if (record.instruction !== undefined) return undefined;
+    // Continue without a task is a validation error, never a default.
+    const task = boundedText(record.task);
+    if (task === undefined) return undefined;
+    return { kind: "continue", threadId: thread, task };
+  }
+  return undefined;
 }
 
 function readInvocationContext(
@@ -466,7 +603,38 @@ export function buildDelegationToolRegistration(
         return failureResult(guard.error.code, guard.error);
       }
       const parsed = parseDelegationCall(params);
-      if (parsed === undefined || !allowedNames.has(parsed.agent)) {
+      if (parsed === undefined) {
+        return failureResult("invalid-delegation-call");
+      }
+      const controller = deps.getController();
+      if (controller === undefined) {
+        return failureResult("delegation-transport-unavailable");
+      }
+      if (parsed.kind !== "start") {
+        // A thread run reuses the thread's own recorded agent, model, and
+        // native session; the caller supplies only the opaque thread id and,
+        // for a continue, the new task.
+        const instruction =
+          parsed.kind === "retry" ? parsed.instruction : parsed.task;
+        return controller
+          .resumeThread({
+            threadId: parsed.threadId,
+            action: parsed.kind,
+            ...(instruction === undefined ? {} : { instruction }),
+            initiator: {
+              kind: "owner",
+              parentSessionId:
+                guard.value.persistence === "persistent"
+                  ? guard.value.sessionId
+                  : "",
+            },
+          })
+          .match(
+            (outcome) => threadResult(outcome),
+            (failure) => threadFailureResult(parsed.threadId, failure),
+          );
+      }
+      if (!allowedNames.has(parsed.agent)) {
         return failureResult("invalid-delegation-target");
       }
       const invocation = readInvocationContext(deps);
@@ -478,10 +646,6 @@ export function buildDelegationToolRegistration(
       );
       if (target === undefined) {
         return failureResult("invalid-delegation-target");
-      }
-      const controller = deps.getController();
-      if (controller === undefined) {
-        return failureResult("delegation-transport-unavailable");
       }
       const childId = deps.idGenerator.next();
       // Cooperative cancellation (Pi adapter contract): a Pi tool call aborted
@@ -581,7 +745,14 @@ export function buildRelayedDelegationToolRegistration(
     ],
     execute: async (_toolCallId, params) => {
       const parsed = parseDelegationCall(params);
-      if (parsed === undefined || !allowedNames.has(parsed.agent)) {
+      // A relayed child may only start a new delegation. Thread lifecycle
+      // actions belong to the owning parent session, which alone holds the
+      // refs, the native sessions, and the authority to act on them.
+      if (
+        parsed === undefined ||
+        parsed.kind !== "start" ||
+        !allowedNames.has(parsed.agent)
+      ) {
         return {
           content: [
             {

@@ -39,6 +39,11 @@ import type { PiChildHistoryRecord } from "../child-history-schema.js";
 import type { PiChildHistoryStore } from "../child-history-store.js";
 import { WEAVE_COMMAND_NAMES } from "../commands.js";
 import { PiConfigActivator } from "../config-activator.js";
+import type {
+  PiThreadCachePort,
+  PiThreadRefPort,
+  PiThreadSessionPort,
+} from "../delegation-controller.js";
 import type { PiAdapterFailure } from "../errors.js";
 import {
   createPiExtension,
@@ -47,6 +52,10 @@ import {
   parsePiSkillsFromSystemPrompt,
   resolveDirectStepBadgeAgent,
 } from "../extension.js";
+import type {
+  PiThreadSourceFactory,
+  PiThreadSources,
+} from "../thread-sources.js";
 import { HOST_PACKAGE_NAME } from "../host-compatibility.js";
 import { PI_HOST_COMPATIBILITY_MATRIX } from "../host-compatibility-matrix.js";
 import {
@@ -574,6 +583,9 @@ function installExtension(
       new Map(),
       ok("/fake/project"),
     ),
+    // Opt out of production Task 4/5/6 source opening (real XDG + SessionManager).
+    // Thread-source wiring tests inject an explicit factory via overrides.
+    threadSourceFactory: undefined,
     ...overrides,
   });
   factory(host.api);
@@ -4169,6 +4181,330 @@ describe("createPiExtension: persistent-parent guard on production weave_delegat
     expect(text.reason).toBe("probe-failed");
     expect(JSON.stringify(text)).not.toContain("host probe exploded");
     expect(idGenerator.calls).toBe(idCallsAfterStart);
+    expect(processPort.spawnedProcesses).toHaveLength(0);
+  });
+});
+
+describe("createPiExtension: Task 9 thread source factory wiring", () => {
+  function trackingFactory(
+    outcome:
+      | { readonly kind: "ok"; readonly sources?: Partial<PiThreadSources> }
+      | { readonly kind: "err" },
+  ): {
+    readonly factory: PiThreadSourceFactory;
+    readonly calls: number[];
+    readonly lastSources: PiThreadSources | undefined;
+  } {
+    const calls: number[] = [];
+    let lastSources: PiThreadSources | undefined;
+    const emptyCache: PiThreadCachePort = {
+      upsertRef: () => ok(undefined),
+    };
+    const emptyRefs = {
+      liveParentSessionId: () => "fake-session-1",
+      readRefs: () =>
+        okAsync({
+          refs: [],
+          issues: [],
+          counts: {
+            scannedEntries: 0,
+            candidateEntries: 0,
+            malformedEntries: 0,
+            originMismatchedChildren: 0,
+            conflictingChildren: 0,
+            duplicateEntries: 0,
+            unusableSourceChildren: 0,
+            usableRefs: 0,
+          },
+        }),
+      appendNewChild: () =>
+        errAsync({ type: "ChildRefParentUnavailable" as const }),
+      appendRunDivider: () =>
+        errAsync({ type: "ChildRefParentUnavailable" as const }),
+      appendLifecycle: () =>
+        errAsync({ type: "ChildRefParentUnavailable" as const }),
+    } as unknown as PiThreadRefPort;
+    const emptySessions = {
+      createChildSession: () =>
+        errAsync({
+          type: "SessionCreateFailed" as const,
+          reason: "host-threw" as const,
+        }),
+      establishThreadLeaf: () =>
+        errAsync({
+          type: "SessionCreateFailed" as const,
+          reason: "host-threw" as const,
+        }),
+      appendTombstone: () =>
+        errAsync({ type: "SessionMissing" as const, ref: "x" }),
+      openSession: () =>
+        errAsync({ type: "SessionMissing" as const, ref: "x" }),
+      readSessionEntries: () =>
+        errAsync({ type: "SessionMissing" as const, ref: "x" }),
+      readThreadMetadata: () =>
+        errAsync({ type: "SessionMissing" as const, ref: "x" }),
+    } as unknown as PiThreadSessionPort;
+    const factory: PiThreadSourceFactory = () => {
+      calls.push(Date.now());
+      if (outcome.kind === "err") {
+        return errAsync({
+          type: "SessionRootUnavailable",
+          reason: "test-forced-failure",
+        });
+      }
+      lastSources = {
+        refs: outcome.sources?.refs ?? emptyRefs,
+        sessions: outcome.sources?.sessions ?? emptySessions,
+        cache: outcome.sources?.cache ?? emptyCache,
+        cacheMode: outcome.sources?.cacheMode ?? "active",
+      };
+      return okAsync(lastSources);
+    };
+    return {
+      factory,
+      calls,
+      get lastSources() {
+        return lastSources;
+      },
+    };
+  }
+
+  it("populates thread source cells from a successful factory before delegation", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const processPort = new FakeChildProcessPort();
+    const created: string[] = [];
+    const sessions = {
+      createChildSession: (input: { childId: string }) => {
+        created.push(input.childId);
+        return errAsync({
+          type: "SessionCreateFailed" as const,
+          reason: "host-threw" as const,
+        });
+      },
+      establishThreadLeaf: () =>
+        errAsync({
+          type: "SessionCreateFailed" as const,
+          reason: "host-threw" as const,
+        }),
+      appendTombstone: () =>
+        errAsync({ type: "SessionMissing" as const, ref: "x" }),
+      openSession: () =>
+        errAsync({ type: "SessionMissing" as const, ref: "x" }),
+      readSessionEntries: () =>
+        errAsync({ type: "SessionMissing" as const, ref: "x" }),
+      readThreadMetadata: () =>
+        errAsync({ type: "SessionMissing" as const, ref: "x" }),
+    } as unknown as PiThreadSessionPort;
+    const tracked = trackingFactory({
+      kind: "ok",
+      sources: { sessions, cacheMode: "active" },
+    });
+    installDelegationLifecycleExtension(host, processPort, {
+      threadSourceFactory: tracked.factory,
+    });
+
+    await host.triggerSessionStart();
+    expect(tracked.calls).toHaveLength(1);
+    expect(tracked.lastSources?.sessions).toBe(sessions);
+
+    const registration = host.registerToolCalls.find(
+      (tool) => tool.name === "weave_delegate",
+    );
+    expect(registration).toBeDefined();
+    void registration
+      ?.execute(
+        "call-1",
+        { agent: "shuttle", task: "do it" },
+        undefined,
+        undefined,
+        host.createSessionContext(),
+      )
+      .catch(() => undefined);
+    for (let tick = 0; tick < 50; tick += 1) {
+      if (created.length > 0) break;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    // Factory-populated sessions are consulted before any child process spawn.
+    expect(created.length).toBeGreaterThan(0);
+    expect(processPort.spawnedProcesses).toHaveLength(0);
+  });
+
+  it("allows a degraded cache outcome and still constructs the controller", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const processPort = new FakeChildProcessPort();
+    const tracked = trackingFactory({
+      kind: "ok",
+      sources: { cacheMode: "degraded" },
+    });
+    installDelegationLifecycleExtension(host, processPort, {
+      threadSourceFactory: tracked.factory,
+    });
+
+    await host.triggerSessionStart();
+    expect(tracked.calls).toHaveLength(1);
+    expect(tracked.lastSources?.cacheMode).toBe("degraded");
+    // Degraded cache must not block controller construction.
+    const registration = host.registerToolCalls.find(
+      (tool) => tool.name === "weave_delegate",
+    );
+    expect(registration).toBeDefined();
+    const result = await registration?.execute(
+      "call-degraded",
+      { agent: "shuttle", task: "do it" },
+      undefined,
+      undefined,
+      host.createSessionContext(),
+    );
+    // Session stubs refuse create, so the tool fails — but a controller ran.
+    const text = JSON.parse(
+      (result?.content[0] as { text: string } | undefined)?.text ?? "{}",
+    );
+    expect(text.ok).toBe(false);
+    expect(text.error).not.toBe("delegation-transport-unavailable");
+  });
+
+  it("fails closed when the factory rejects authoritative sources (no controller / no spawn)", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const processPort = new FakeChildProcessPort();
+    const tracked = trackingFactory({ kind: "err" });
+    installDelegationLifecycleExtension(host, processPort, {
+      threadSourceFactory: tracked.factory,
+    });
+
+    await host.triggerSessionStart();
+    expect(tracked.calls).toHaveLength(1);
+    expect(
+      host.notifyCalls.some((call) =>
+        String(call.message).includes("native child session sources"),
+      ),
+    ).toBe(true);
+
+    const registration = host.registerToolCalls.find(
+      (tool) => tool.name === "weave_delegate",
+    );
+    expect(registration).toBeDefined();
+    const result = await registration?.execute(
+      "call-1",
+      { agent: "shuttle", task: "do it" },
+      undefined,
+      undefined,
+      host.createSessionContext(),
+    );
+    const text = JSON.parse(
+      (result?.content[0] as { text: string } | undefined)?.text ?? "{}",
+    );
+    expect(text.ok).toBe(false);
+    expect(text.error).toBe("delegation-transport-unavailable");
+    expect(processPort.spawnedProcesses).toHaveLength(0);
+  });
+
+  it("clears stale thread sources on session_start replacement and session_shutdown", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const processPort = new FakeChildProcessPort();
+    const firstSessions = {
+      id: "first",
+      createChildSession: () =>
+        errAsync({
+          type: "SessionCreateFailed" as const,
+          reason: "host-threw" as const,
+        }),
+      establishThreadLeaf: () =>
+        errAsync({
+          type: "SessionCreateFailed" as const,
+          reason: "host-threw" as const,
+        }),
+      appendTombstone: () =>
+        errAsync({ type: "SessionMissing" as const, ref: "x" }),
+      openSession: () =>
+        errAsync({ type: "SessionMissing" as const, ref: "x" }),
+      readSessionEntries: () =>
+        errAsync({ type: "SessionMissing" as const, ref: "x" }),
+      readThreadMetadata: () =>
+        errAsync({ type: "SessionMissing" as const, ref: "x" }),
+    } as unknown as PiThreadSessionPort & { id: string };
+    const secondSessions = {
+      id: "second",
+      createChildSession: () =>
+        errAsync({
+          type: "SessionCreateFailed" as const,
+          reason: "host-threw" as const,
+        }),
+      establishThreadLeaf: () =>
+        errAsync({
+          type: "SessionCreateFailed" as const,
+          reason: "host-threw" as const,
+        }),
+      appendTombstone: () =>
+        errAsync({ type: "SessionMissing" as const, ref: "x" }),
+      openSession: () =>
+        errAsync({ type: "SessionMissing" as const, ref: "x" }),
+      readSessionEntries: () =>
+        errAsync({ type: "SessionMissing" as const, ref: "x" }),
+      readThreadMetadata: () =>
+        errAsync({ type: "SessionMissing" as const, ref: "x" }),
+    } as unknown as PiThreadSessionPort & { id: string };
+    const opened: PiThreadSessionPort[] = [];
+    const factory: PiThreadSourceFactory = () => {
+      const sessions = opened.length === 0 ? firstSessions : secondSessions;
+      opened.push(sessions);
+      return okAsync({
+        refs: {
+          liveParentSessionId: () => "fake-session-1",
+          readRefs: () =>
+            okAsync({
+              refs: [],
+              issues: [],
+              counts: {
+                scannedEntries: 0,
+                candidateEntries: 0,
+                malformedEntries: 0,
+                originMismatchedChildren: 0,
+                conflictingChildren: 0,
+                duplicateEntries: 0,
+                unusableSourceChildren: 0,
+                usableRefs: 0,
+              },
+            }),
+          appendNewChild: () =>
+            errAsync({ type: "ChildRefParentUnavailable" as const }),
+          appendRunDivider: () =>
+            errAsync({ type: "ChildRefParentUnavailable" as const }),
+          appendLifecycle: () =>
+            errAsync({ type: "ChildRefParentUnavailable" as const }),
+        } as unknown as PiThreadRefPort,
+        sessions,
+        cache: { upsertRef: () => ok(undefined) },
+        cacheMode: "active" as const,
+      });
+    };
+    installDelegationLifecycleExtension(host, processPort, {
+      threadSourceFactory: factory,
+    });
+
+    await host.triggerSessionStart();
+    expect(opened).toHaveLength(1);
+    expect((opened[0] as unknown as { id: string }).id).toBe("first");
+
+    await host.triggerSessionStart();
+    expect(opened).toHaveLength(2);
+    expect((opened[1] as unknown as { id: string }).id).toBe("second");
+
+    await host.triggerSessionShutdown();
+    // A post-shutdown delegate must not revive the prior generation's sources.
+    const registration = host.registerToolCalls.find(
+      (tool) => tool.name === "weave_delegate",
+    );
+    const result = await registration?.execute(
+      "call-after-shutdown",
+      { agent: "shuttle", task: "do it" },
+      undefined,
+      undefined,
+      host.createSessionContext(),
+    );
+    const text = JSON.parse(
+      (result?.content[0] as { text: string } | undefined)?.text ?? "{}",
+    );
+    expect(text.ok).toBe(false);
     expect(processPort.spawnedProcesses).toHaveLength(0);
   });
 });

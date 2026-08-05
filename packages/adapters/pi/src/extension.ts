@@ -117,7 +117,14 @@ import {
 import {
   type PiDelegationContext,
   PiDelegationController,
+  type PiThreadCachePort,
+  type PiThreadRefPort,
+  type PiThreadSessionPort,
 } from "./delegation-controller.js";
+import {
+  createProductionPiThreadSourceFactory,
+  type PiThreadSourceFactory,
+} from "./thread-sources.js";
 import {
   buildDelegationToolRegistration,
   buildRelayedDelegationToolRegistration,
@@ -600,6 +607,13 @@ export interface PiExtensionDeps {
   readonly telemetryJournal?: PiJournalPort;
   readonly telemetryUsage?: PiUsagePort;
   readonly telemetryRetention?: PiRetentionPort;
+  /**
+   * Opens Task 4/5/6 thread sources for a persistent trusted generation.
+   * Production wiring MUST use {@link createProductionPiThreadSourceFactory}.
+   * Unit embeddings opt out by setting this to `undefined` so tests keep
+   * legacy ephemeral start semantics without a real session host.
+   */
+  readonly threadSourceFactory: PiThreadSourceFactory | undefined;
 }
 
 /** Production child-side stdout writer: writes directly to this process's own real stdout, interleaved with Pi's own event/response lines. */
@@ -660,6 +674,7 @@ export function createDefaultPiExtensionDeps(): PiExtensionDeps {
       PiChildHistoryStore.open(parentSessionId, settings),
     pathContainmentPort: new BunPathContainmentPort(),
     planCatalogPort: new BunPiPlanCatalogPort(),
+    threadSourceFactory: createProductionPiThreadSourceFactory(),
   };
 }
 
@@ -1997,9 +2012,16 @@ class WeaveChildTreeEditor extends CustomEditor {
 export function createPiExtension(
   overrides: Partial<PiExtensionDeps> = {},
 ): (pi: PiExtensionApi) => void {
+  const defaults = createDefaultPiExtensionDeps();
   const deps: PiExtensionDeps = {
-    ...createDefaultPiExtensionDeps(),
+    ...defaults,
     ...overrides,
+    // A custom logger denotes an embedding/test-owned sink. Those embeddings
+    // opt out of production Task 4/5/6 source opening (real XDG + SessionManager)
+    // unless they explicitly pass `threadSourceFactory` (including `undefined`).
+    ...(!("threadSourceFactory" in overrides) && overrides.logger !== undefined
+      ? { threadSourceFactory: undefined }
+      : {}),
   };
   // A custom logger denotes an embedding/test-owned sink. Production uses
   // the shared logger and must redirect it before any session log can reach
@@ -2022,6 +2044,28 @@ export function createPiExtension(
     controller: undefined,
     generationId: undefined,
   };
+  /**
+   * Generation-scoped thread sources: the parent ref store (Task 5), the
+   * native child session store (Task 4), and the metadata cache (Task 6).
+   *
+   * They stay `undefined` until a host that can supply a no-follow session
+   * filesystem and Pi's own session constructors is wired. The thread
+   * lifecycle reads them through the controller and refuses to resume a
+   * thread whose authoritative source it cannot read, so an unwired source
+   * degrades to a structured refusal and never to an unverified resume.
+   */
+  const threadSourcesCell: {
+    refs: PiThreadRefPort | undefined;
+    sessions: PiThreadSessionPort | undefined;
+    cache: PiThreadCachePort | undefined;
+  } = { refs: undefined, sessions: undefined, cache: undefined };
+  const clearThreadSources = (): void => {
+    threadSourcesCell.refs = undefined;
+    threadSourcesCell.sessions = undefined;
+    threadSourcesCell.cache = undefined;
+  };
+  /** Production sets true only after a successful required factory open. */
+  let threadSourcesRequired = false;
   const recoveryCoordinatorCell: {
     coordinator: PiChildRecoveryCoordinator | undefined;
   } = { coordinator: undefined };
@@ -3550,6 +3594,8 @@ export function createPiExtension(
       delegationControllerCell.controller?.disposeAll();
       delegationControllerCell.controller = undefined;
       delegationControllerCell.generationId = undefined;
+      clearThreadSources();
+      threadSourcesRequired = false;
       workflowControllerCell.controller = undefined;
       recoveryCoordinatorCell.coordinator = undefined;
       inspectionRegistryCell.registry?.closeGeneration();
@@ -3780,6 +3826,8 @@ export function createPiExtension(
           lastBootActivationFailure = booted.error;
           activeSession = undefined;
           controller.shutdown();
+          clearThreadSources();
+          threadSourcesRequired = false;
           currentWorkflows = {};
           planStateProviderCell.value = undefined;
           activeWorkflowInstanceCell.value = undefined;
@@ -3820,6 +3868,8 @@ export function createPiExtension(
         if (registerTools().isErr()) {
           activeSession = undefined;
           controller.shutdown();
+          clearThreadSources();
+          threadSourcesRequired = false;
           setActiveAgentStatus(ctx, undefined);
           ctx.ui.setStatus(
             "weave",
@@ -3893,6 +3943,73 @@ export function createPiExtension(
         !effectiveHealthOnly(generation) &&
         generation.preflight.trust !== "withheld"
       ) {
+        // Task 4/5/6: open authoritative thread sources before any controller
+        // can spawn a process or take a lease. Unit embeddings opt out by
+        // leaving `threadSourceFactory` undefined.
+        let allowDelegationController = true;
+        const parentForSources = session.primarySession.getParentSession();
+        if (
+          deps.threadSourceFactory !== undefined &&
+          parentForSources.persistence === "persistent"
+        ) {
+          const opened = await deps.threadSourceFactory({
+            workspaceKey: ctx.cwd,
+            parentSessionId: parentForSources.sessionId,
+            append: {
+              appendEntry: (type, data) => {
+                pi.appendEntry(type, data);
+              },
+            },
+            read: {
+              getEntries: () => {
+                const manager = ctx.sessionManager as
+                  | { getEntries?: () => readonly unknown[] }
+                  | undefined;
+                if (
+                  manager === undefined ||
+                  typeof manager.getEntries !== "function"
+                ) {
+                  return [];
+                }
+                return Result.fromThrowable(
+                  () => manager.getEntries?.() ?? [],
+                  () => undefined,
+                )().unwrapOr([]);
+              },
+            },
+            env: {
+              XDG_DATA_HOME: deps.envPort.read("XDG_DATA_HOME"),
+              HOME: deps.envPort.read("HOME"),
+            },
+          });
+          if (!startupOwnsGeneration()) {
+            void generationResources.dispose();
+            return;
+          }
+          if (opened.isErr()) {
+            clearThreadSources();
+            threadSourcesRequired = false;
+            allowDelegationController = false;
+            deps.logger.warn(
+              {
+                failure: opened.error.type,
+                reason: opened.error.reason,
+              },
+              "thread source factory failed; delegation unavailable this generation",
+            );
+            ctx.ui.notify(
+              "Weave could not open native child session sources for this parent session.",
+              "error",
+            );
+          } else {
+            threadSourcesCell.refs = opened.value.refs;
+            threadSourcesCell.sessions = opened.value.sessions;
+            threadSourcesCell.cache = opened.value.cache;
+            threadSourcesRequired = true;
+          }
+        }
+
+        if (allowDelegationController) {
         delegationControllerCell.generationId = generation.id;
         delegationControllerCell.controller = new PiDelegationController({
           config: configActivation.config,
@@ -3915,6 +4032,24 @@ export function createPiExtension(
             historyStore?.isOk() ? historyStore.value.getRootPath() : "",
           currentCwd: () => ctx.cwd,
           currentEnv: () => buildPiChildBaseEnv(),
+          // Thread ownership is measured against the live persistent parent
+          // session, so a session transition can never let a new parent
+          // inherit or resume another parent's threads.
+          parentSessionId: () => {
+            const parent = session.primarySession.getParentSession();
+            return parent.persistence === "persistent"
+              ? parent.sessionId
+              : undefined;
+          },
+          // Task 4/5/6 thread sources. `resumeThread` refuses to run a thread
+          // whose authoritative ref and native session it cannot read, so an
+          // absent source here fails closed with a structured
+          // `ThreadResumeUnavailable` instead of resuming on memory alone.
+          threadRefs: () => threadSourcesCell.refs,
+          threadSessions: () => threadSourcesCell.sessions,
+          threadCache: () => threadSourcesCell.cache,
+          threadWorkspaceKey: () => ctx.cwd,
+          threadSourcesRequired,
           resolveRootDelegationTarget: (name) =>
             configActivation.descriptors.byName
               .get(DEFAULT_PRIMARY_AGENT_NAME)
@@ -3974,6 +4109,7 @@ export function createPiExtension(
             },
           },
         });
+        }
 
         // Child recovery is generation-scoped. Construct it only after history
         // is open, then prompt exactly once for this stable parent session.
@@ -4675,6 +4811,8 @@ export function createPiExtension(
       delegationControllerCell.controller?.disposeAll();
       delegationControllerCell.controller = undefined;
       delegationControllerCell.generationId = undefined;
+      clearThreadSources();
+      threadSourcesRequired = false;
       workflowControllerCell.controller = undefined;
       planStateProviderCell.value = undefined;
       activeWorkflowInstanceCell.value = undefined;

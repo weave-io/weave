@@ -57,6 +57,15 @@ export const PiAdapterFailureCodeSchema = z.enum([
   "ChildRecoveryUnavailable",
   "ChildInteractionUnavailable",
   "ChildExtensionUiRejected",
+  // thread lifecycle (retry/continue of an existing child thread)
+  "ThreadNotFound",
+  "ThreadAuthorityDenied",
+  "ThreadAlreadyRunning",
+  "ThreadStale",
+  "ThreadIntegrityError",
+  "ThreadNotRetryable",
+  "ThreadNotResumable",
+  "ThreadResumeUnavailable",
   "UiBridgeUnavailable",
   // completion
   "CompletionSignalMissing",
@@ -868,6 +877,157 @@ export function makeChildExtensionUiRejectedFailure(
     safeMessage: "The delegated child rejected an extension UI response.",
     correlation: { reason },
   };
+}
+
+/**
+ * Thread-lifecycle closed-failure factories (Pi adapter contract §9).
+ *
+ * A thread id is an opaque adapter-minted identifier, never a path and never a
+ * host session file name, so it is safe to correlate. Every `reason` below is
+ * a closed literal: no host error text, no ref, no path, no prompt, and no
+ * transcript ever reaches a thread failure.
+ */
+export type PiThreadNotFoundReason =
+  | "unknown-thread"
+  | "origin-mismatch"
+  | "refs-unavailable";
+
+export type PiThreadAuthorityDeniedReason =
+  | "not-owner"
+  | "ancestor-not-authenticated"
+  | "transfer-missing";
+
+export type PiThreadStaleReason = "session-missing" | "tombstoned";
+
+export type PiThreadIntegrityReason = "session-corrupt" | "ref-conflict";
+
+export type PiThreadNotRetryableReason =
+  | "outcome-not-retryable"
+  | "retryability-unknown"
+  | "status-not-failed-or-cancelled";
+
+export type PiThreadNotResumableReason =
+  | "status-not-completed"
+  | "run-limit-reached";
+
+export type PiThreadResumeUnavailableReason =
+  | "lifecycle-unavailable"
+  | "session-unavailable"
+  | "policy-revoked"
+  | "divider-write-failed";
+
+function threadFailure(
+  code: PiAdapterFailureCode,
+  threadId: string,
+  reason: string,
+  overrides: {
+    readonly retryable: boolean;
+    readonly recovery: PiAdapterFailureRecovery;
+    readonly safeMessage: string;
+  },
+): PiAdapterFailure {
+  return {
+    code,
+    phase: "child",
+    scope: childScope(threadId),
+    impact: "operation-stopped",
+    retryable: overrides.retryable,
+    recovery: overrides.recovery,
+    safeMessage: overrides.safeMessage,
+    correlation: {
+      reason,
+      threadId: boundedCorrelationId(threadId) ?? "",
+    },
+  };
+}
+
+export function makeThreadNotFoundFailure(
+  threadId: string,
+  reason: PiThreadNotFoundReason,
+): PiAdapterFailure {
+  return threadFailure("ThreadNotFound", threadId, reason, {
+    retryable: false,
+    recovery: "none",
+    safeMessage: "No delegated thread with that id belongs to this session.",
+  });
+}
+
+export function makeThreadAuthorityDeniedFailure(
+  threadId: string,
+  reason: PiThreadAuthorityDeniedReason,
+): PiAdapterFailure {
+  return threadFailure("ThreadAuthorityDenied", threadId, reason, {
+    retryable: false,
+    recovery: "none",
+    safeMessage: "This session may not run that delegated thread.",
+  });
+}
+
+export function makeThreadAlreadyRunningFailure(
+  threadId: string,
+): PiAdapterFailure {
+  return threadFailure("ThreadAlreadyRunning", threadId, "already-running", {
+    retryable: true,
+    recovery: "retry",
+    safeMessage: "That delegated thread is already running.",
+  });
+}
+
+export function makeThreadStaleFailure(
+  threadId: string,
+  reason: PiThreadStaleReason,
+): PiAdapterFailure {
+  return threadFailure("ThreadStale", threadId, reason, {
+    retryable: false,
+    recovery: "none",
+    safeMessage: "That delegated thread no longer has a usable session.",
+  });
+}
+
+export function makeThreadIntegrityFailure(
+  threadId: string,
+  reason: PiThreadIntegrityReason,
+): PiAdapterFailure {
+  return threadFailure("ThreadIntegrityError", threadId, reason, {
+    retryable: false,
+    recovery: "health-check",
+    safeMessage: "That delegated thread failed its integrity check.",
+  });
+}
+
+export function makeThreadNotRetryableFailure(
+  threadId: string,
+  reason: PiThreadNotRetryableReason,
+): PiAdapterFailure {
+  return threadFailure("ThreadNotRetryable", threadId, reason, {
+    retryable: false,
+    recovery: "none",
+    safeMessage:
+      "That delegated thread cannot be retried in its current state.",
+  });
+}
+
+export function makeThreadNotResumableFailure(
+  threadId: string,
+  reason: PiThreadNotResumableReason,
+): PiAdapterFailure {
+  return threadFailure("ThreadNotResumable", threadId, reason, {
+    retryable: false,
+    recovery: "none",
+    safeMessage:
+      "That delegated thread cannot be continued in its current state.",
+  });
+}
+
+export function makeThreadResumeUnavailableFailure(
+  threadId: string,
+  reason: PiThreadResumeUnavailableReason,
+): PiAdapterFailure {
+  return threadFailure("ThreadResumeUnavailable", threadId, reason, {
+    retryable: true,
+    recovery: "retry",
+    safeMessage: "Weave cannot run that delegated thread right now.",
+  });
 }
 
 export function makeUiBridgeUnavailableFailure(
