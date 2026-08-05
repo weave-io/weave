@@ -22,6 +22,52 @@ describe("PI_HOST_COMPATIBILITY_MATRIX", () => {
     );
     expect(result.isOk()).toBe(true);
   });
+
+  it("declares the four Spec 33 §16 session capability contracts with the right severity", () => {
+    const byId = new Map(
+      PI_HOST_COMPATIBILITY_MATRIX.surfaces.map((surface) => [
+        surface.id,
+        surface,
+      ]),
+    );
+    for (const id of [
+      "rpc-persistent-session",
+      "rpc-append-entry",
+      "rpc-session-tree-read",
+      "custom-session-directory",
+    ] as const) {
+      const surface = byId.get(id);
+      expect(surface?.severity).toBe("required-for-delegation");
+      expect(surface?.required).toBe(true);
+      expect(surface?.fallback).toBeUndefined();
+      expect(surface?.contract.length).toBeGreaterThan(0);
+      expect(surface?.remediation.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("represents overlay-only fallback with an overlay lifecycle capability, not a session read", () => {
+    const overlayOnly = PI_HOST_COMPATIBILITY_MATRIX.surfaces.filter(
+      (surface) => surface.severity === "overlay-only",
+    );
+    expect(overlayOnly.map((surface) => surface.id)).toEqual([
+      "child-overlay-lifecycle",
+    ]);
+    const overlay = overlayOnly[0];
+    expect(overlay?.required).toBe(false);
+    expect(overlay?.fallback).toBe("custom-editor");
+    expect(overlay?.nativeSupport).toBe(true);
+    expect(overlay?.contract.length).toBeGreaterThan(0);
+    expect(overlay?.remediation.length).toBeGreaterThan(0);
+  });
+
+  it("keeps every surface at the 0.81.1 floor with no maximum", () => {
+    for (const surface of PI_HOST_COMPATIBILITY_MATRIX.surfaces) {
+      expect(surface.minimumHostVersion).toBe(HOST_VERSION_FLOOR);
+    }
+    expect(PI_HOST_COMPATIBILITY_MATRIX.supportedRange).toBe(
+      `>=${HOST_VERSION_FLOOR}`,
+    );
+  });
 });
 
 describe("validateHostCompatibilityMatrix", () => {
@@ -128,5 +174,51 @@ describe("validateHostCompatibilityMatrix", () => {
         ),
       }).isErr(),
     ).toBe(true);
+  });
+
+  it("rejects an overlay-only surface that claims required-for-delegation severity", () => {
+    const result = validateHostCompatibilityMatrix({
+      ...PI_HOST_COMPATIBILITY_MATRIX,
+      surfaces: PI_HOST_COMPATIBILITY_MATRIX.surfaces.map((surface) =>
+        surface.id === "child-overlay-lifecycle"
+          ? { ...surface, severity: "required-for-delegation" as const }
+          : surface,
+      ),
+    });
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) {
+      expect(result.error.type).toBe("SurfaceDrift");
+      if (result.error.type === "SurfaceDrift")
+        expect(result.error.reason).toBe(
+          "surface-policy:child-overlay-lifecycle",
+        );
+    }
+  });
+
+  it("rejects a required session surface that offers a fallback", () => {
+    const result = validateHostCompatibilityMatrix({
+      ...PI_HOST_COMPATIBILITY_MATRIX,
+      surfaces: PI_HOST_COMPATIBILITY_MATRIX.surfaces.map((surface) =>
+        surface.id === "rpc-append-entry"
+          ? { ...surface, fallback: "custom-editor" as const }
+          : surface,
+      ),
+    });
+    expect(result.isErr()).toBe(true);
+    if (result.isErr()) expect(result.error.type).toBe("SurfaceDrift");
+  });
+
+  it("rejects a surface with an empty contract or remediation", () => {
+    for (const patch of [{ contract: "  " }, { remediation: "" }]) {
+      const result = validateHostCompatibilityMatrix({
+        ...PI_HOST_COMPATIBILITY_MATRIX,
+        surfaces: PI_HOST_COMPATIBILITY_MATRIX.surfaces.map((surface) =>
+          surface.id === "rpc-persistent-session"
+            ? { ...surface, ...patch }
+            : surface,
+        ),
+      });
+      expect(result.isErr()).toBe(true);
+    }
   });
 });

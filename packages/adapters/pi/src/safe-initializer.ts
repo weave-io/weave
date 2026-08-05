@@ -32,12 +32,16 @@ import {
 import {
   checkHostCompatibility,
   HOST_PACKAGE_NAME,
+  type HostCapabilityGapDiagnostic,
   type HostPackageInfo,
   type HostPackageReader,
+  UNKNOWN_HOST_VERSION,
 } from "./host-compatibility.js";
 import {
+  buildHostSurfaceGapDiagnostics,
   defaultHostSurfaceReport,
   type PiHostSurfaceReport,
+  selectsCustomEditorFallback,
 } from "./host-inventory.js";
 import { PiModelResolver } from "./model-resolution.js";
 import {
@@ -98,6 +102,18 @@ export interface PiPreflightResult {
   /** One immutable object shared by the store, inspector, and recovery seams. */
   readonly childInspection: PiChildInspectionEffectiveSettings;
   readonly hostSurface: PiHostSurfaceReport;
+  /**
+   * One strong-debug diagnostic per host-surface gap (Spec 33 §16). Every
+   * entry names the capability, host version, contract, probe result,
+   * resulting mode, and remediation. Empty when no surface is missing.
+   */
+  readonly hostSurfaceGapDiagnostics: readonly HostCapabilityGapDiagnostic[];
+  /**
+   * Which child-inspection implementation this generation must use.
+   * `custom-editor` when an overlay-only host surface is missing; Task 12's
+   * overlay reads this instead of re-probing the host.
+   */
+  readonly childInspectionFallback: "native-overlay" | "custom-editor";
 }
 
 export interface PiSafeInitializerDeps {
@@ -221,6 +237,15 @@ export class PiSafeInitializer {
                   normalizedHostSurface.requiredGaps.length > 0,
                 childInspection,
                 hostSurface: normalizedHostSurface,
+                hostSurfaceGapDiagnostics: buildHostSurfaceGapDiagnostics(
+                  normalizedHostSurface,
+                  hostOutcome.info?.version ?? UNKNOWN_HOST_VERSION,
+                ),
+                childInspectionFallback: selectsCustomEditorFallback(
+                  normalizedHostSurface,
+                )
+                  ? "custom-editor"
+                  : "native-overlay",
               };
               return ok(result);
             }),

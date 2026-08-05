@@ -5,6 +5,11 @@ import {
   type PiAdapterFailure,
 } from "./errors.js";
 import {
+  type HostCapabilityGapDiagnostic,
+  type HostCapabilityGapMode,
+  UNKNOWN_HOST_VERSION,
+} from "./host-compatibility.js";
+import {
   PI_HOST_COMPATIBILITY_MATRIX,
   PI_HOST_SURFACE_IDS,
   type PiHostSurfaceId,
@@ -52,6 +57,12 @@ export interface PiHostSurfaceProbe {
 export interface PiHostSurfaceReport {
   readonly probes: readonly PiHostSurfaceProbe[];
   readonly requiredGaps: readonly PiHostSurfaceId[];
+  /**
+   * Overlay-only surfaces that are not natively available. These never force
+   * health-only mode (Spec 33 §16); they select the existing custom-editor
+   * child-inspection fallback (§7).
+   */
+  readonly overlayFallbackGaps: readonly PiHostSurfaceId[];
 }
 export interface PiHostSurfaceReadInput {
   readonly api: PiExtensionApi;
@@ -79,6 +90,11 @@ const safeDetails = (value: unknown): string =>
 const required = (id: PiHostSurfaceId): boolean =>
   PI_HOST_COMPATIBILITY_MATRIX.surfaces.find((surface) => surface.id === id)
     ?.required === true;
+const overlayOnly = (id: PiHostSurfaceId): boolean =>
+  PI_HOST_COMPATIBILITY_MATRIX.surfaces.find((surface) => surface.id === id)
+    ?.severity === "overlay-only";
+const fallbackDetails = (id: PiHostSurfaceId): string =>
+  overlayOnly(id) ? "custom-editor-fallback" : "pi-default-fallback";
 const fallback = (id: PiHostSurfaceId): boolean =>
   PI_HOST_COMPATIBILITY_MATRIX.surfaces.find((surface) => surface.id === id)
     ?.fallback === "pi-default";
@@ -122,7 +138,7 @@ export function readHostSurfaceReport(
       return makeProbe(
         surfaceId,
         required(surfaceId) ? "unavailable" : "fallback",
-        required(surfaceId) ? "surface-missing" : "pi-default-fallback",
+        required(surfaceId) ? "surface-missing" : fallbackDetails(surfaceId),
       );
     if (rows.length !== 1)
       return makeProbe(
@@ -137,8 +153,8 @@ export function readHostSurfaceReport(
         required(surfaceId) ? "unavailable" : "fallback",
         "surface-missing",
       );
-    if (!required(surfaceId) && row.status === "unavailable")
-      return makeProbe(surfaceId, "fallback", "pi-default-fallback");
+    if (!required(surfaceId) && row.status !== "native")
+      return makeProbe(surfaceId, "fallback", fallbackDetails(surfaceId));
     if (required(surfaceId) && row.status !== "native")
       return makeProbe(
         surfaceId,
@@ -152,9 +168,15 @@ export function readHostSurfaceReport(
       (probe) => required(probe.surfaceId) && probe.status === "unavailable",
     )
     .map((probe) => probe.surfaceId);
+  const overlayFallbackGaps = probes
+    .filter(
+      (probe) => overlayOnly(probe.surfaceId) && probe.status !== "native",
+    )
+    .map((probe) => probe.surfaceId);
   return Object.freeze({
     probes: Object.freeze(probes),
     requiredGaps: Object.freeze(requiredGaps),
+    overlayFallbackGaps: Object.freeze(overlayFallbackGaps),
   });
 }
 
@@ -204,15 +226,73 @@ export function safeReadHostSurfaceReport(
 export const emptyHostSurfaceReport = (): PiHostSurfaceReport =>
   readHostSurfaceReport([]);
 
+/**
+ * Builds the strong-debug diagnostics for every host-surface gap (Spec 33
+ * §16). Required gaps report `health-only`; overlay-only gaps report the
+ * existing custom-editor fallback and never health-only. Pure and read-only.
+ */
+export function buildHostSurfaceGapDiagnostics(
+  report: PiHostSurfaceReport,
+  hostVersion: string = UNKNOWN_HOST_VERSION,
+): readonly HostCapabilityGapDiagnostic[] {
+  const version =
+    typeof hostVersion === "string" && hostVersion.trim().length > 0
+      ? hostVersion
+      : UNKNOWN_HOST_VERSION;
+  const describe = (
+    surfaceId: PiHostSurfaceId,
+    mode: HostCapabilityGapMode,
+  ): HostCapabilityGapDiagnostic | undefined => {
+    const declaration = PI_HOST_COMPATIBILITY_MATRIX.surfaces.find(
+      (surface) => surface.id === surfaceId,
+    );
+    if (declaration === undefined) return undefined;
+    const probe = report.probes.find(
+      (candidate) => candidate.surfaceId === surfaceId,
+    );
+    return Object.freeze({
+      capability: surfaceId,
+      hostVersion: version,
+      contract: declaration.contract,
+      probeResult: `${probe?.status ?? "unavailable"}:${probe?.details ?? "surface-missing"}`,
+      mode,
+      remediation: declaration.remediation,
+    });
+  };
+  const diagnostics = [
+    ...report.requiredGaps.map((surfaceId) =>
+      describe(surfaceId, "health-only"),
+    ),
+    ...report.overlayFallbackGaps.map((surfaceId) =>
+      describe(surfaceId, "custom-editor-fallback"),
+    ),
+  ].filter(
+    (diagnostic): diagnostic is HostCapabilityGapDiagnostic =>
+      diagnostic !== undefined,
+  );
+  return Object.freeze(diagnostics);
+}
+
+/**
+ * True when the only host-surface gaps are overlay-only ones, so child
+ * inspection must use the existing custom-editor fallback while the adapter
+ * stays out of health-only mode (Spec 33 §16).
+ */
+export function selectsCustomEditorFallback(
+  report: PiHostSurfaceReport,
+): boolean {
+  return report.overlayFallbackGaps.length > 0;
+}
+
 /** Conservative built-in contract used only when no reader was injected. */
 export const defaultHostSurfaceReport = (): PiHostSurfaceReport =>
   readHostSurfaceReport(
     PI_HOST_SURFACE_IDS.map((surfaceId) => ({
       surfaceId,
-      status: required(surfaceId) ? "native" : "fallback",
-      details: required(surfaceId)
-        ? "validated-native-host-surface"
-        : "pi-default-fallback",
+      status: fallback(surfaceId) ? "fallback" : "native",
+      details: fallback(surfaceId)
+        ? "pi-default-fallback"
+        : "validated-native-host-surface",
     })),
   );
 
@@ -235,38 +315,138 @@ function hostVersionIsValid(
   );
 }
 
+/**
+ * The typed probe boundary for the concrete public host surfaces Spec 33 §16
+ * depends on. Every member answers one question about *presence of a
+ * documented public surface*; no member creates, opens, or writes a session.
+ *
+ * Tests substitute this port to toggle each capability independently.
+ */
+export interface PiHostProbePort {
+  /** `SessionManager.create(cwd, sessionDir?, options?)` is publicly callable. */
+  hasSessionCreate(): boolean;
+  /** `SessionManager.open(path, sessionDir?, cwdOverride?)` is publicly callable. */
+  hasSessionOpen(): boolean;
+  /** Instance `getEntries()` is present on the session prototype. */
+  hasSessionGetEntries(): boolean;
+  /** Instance `getTree()` is present on the session prototype. */
+  hasSessionGetTree(): boolean;
+  /** `api.appendEntry(type, data)` is present on the extension API. */
+  hasAppendEntry(): boolean;
+  /**
+   * The documented custom-session-directory contract holds.
+   *
+   * JavaScript cannot reliably introspect TypeScript's optional `sessionDir`
+   * parameter (optional parameters are indistinguishable from required ones
+   * at runtime, and `Function.length` is not a stable contract). This member
+   * therefore validates the contract through the concrete public methods that
+   * carry it - `SessionManager.create`, `SessionManager.open`, instance
+   * `getSessionDir()` and `usesDefaultSessionDir()` - combined with the
+   * supported-version contract. Callers surface that explicitly in
+   * `probeResult`.
+   */
+  hasCustomSessionDirectoryContract(): boolean;
+  /** Pi's overlay UI boundary plus the editor-restore lifecycle are present. */
+  hasOverlayLifecycle(): boolean;
+  /** The installed host version satisfies the supported-version contract. */
+  hasSupportedVersion(): boolean;
+}
+
+const isFn = (value: unknown): boolean => typeof value === "function";
+
+/**
+ * Reads only concrete public surfaces of the installed host. Strictly
+ * side-effect free: it inspects constructors and prototypes and never invokes
+ * `create`, `open`, `getEntries`, `getTree`, or `appendEntry`.
+ */
+export function createDefaultPiHostProbePort(
+  input: PiHostSurfaceReadInput,
+): PiHostProbePort {
+  const root = input.rootExports ?? {};
+  const sessionManager = root.SessionManager;
+  const statik = (name: string): boolean =>
+    isFn(sessionManager) &&
+    isFn((sessionManager as unknown as Record<string, unknown>)[name]);
+  const instanceMethod = (name: string): boolean => {
+    if (!isFn(sessionManager)) return false;
+    const proto = (sessionManager as { prototype?: unknown }).prototype;
+    if (typeof proto !== "object" || proto === null) return false;
+    return isFn((proto as Record<string, unknown>)[name]);
+  };
+  const versionValid = hostVersionIsValid(root);
+  return Object.freeze({
+    hasSessionCreate: () => statik("create"),
+    hasSessionOpen: () => statik("open"),
+    hasSessionGetEntries: () => instanceMethod("getEntries"),
+    hasSessionGetTree: () => instanceMethod("getTree"),
+    hasAppendEntry: () => isFn(input.api.appendEntry),
+    hasCustomSessionDirectoryContract: () =>
+      statik("create") &&
+      statik("open") &&
+      instanceMethod("getSessionDir") &&
+      instanceMethod("usesDefaultSessionDir") &&
+      versionValid,
+    hasOverlayLifecycle: () =>
+      isFn(input.ui.custom) &&
+      isFn(input.ui.setEditorComponent) &&
+      isFn(input.ui.getEditorComponent),
+    hasSupportedVersion: () => versionValid,
+  });
+}
+
+/** Builds the probe port for one read. Overridable so tests can inject a fake. */
+export type PiHostProbePortFactory = (
+  input: PiHostSurfaceReadInput,
+) => PiHostProbePort;
+
+/**
+ * Why one Spec 33 §16 session surface was accepted or rejected. Kept short,
+ * printable-ASCII, and free of paths, versions, and any host payload.
+ */
+const SESSION_DIR_CONTRACT_VERIFIED =
+  "session-dir-contract-verified-via-method-presence-and-version";
+const SESSION_DIR_CONTRACT_UNVERIFIED =
+  "session-dir-contract-unverified-method-or-version-missing";
+
 /** Read-only production probe. Required protocol surfaces come from the validated root VERSION and matrix, never from look-alike public methods. */
 export class DefaultPiHostSurfaceReader implements PiHostSurfaceReader {
+  constructor(
+    private readonly probePortFactory: PiHostProbePortFactory = createDefaultPiHostProbePort,
+  ) {}
+
   read(
     input: PiHostSurfaceReadInput,
   ): ResultAsync<readonly unknown[], PiHostSurfaceReadError> {
     return ResultAsync.fromThrowable(
       async () => {
         const root = input.rootExports ?? {};
-        const versionValid = hostVersionIsValid(root);
+        const port = this.probePortFactory(input);
+        const versionValid = port.hasSupportedVersion();
         const has = (name: string): boolean => typeof root[name] === "function";
         const native = (
           id: PiHostSurfaceId,
           supported: boolean,
+          presentDetails = "validated-native-host-surface",
+          missingDetails = "required-surface-missing",
         ): PiHostSurfaceProbe => {
           if (supported)
             return {
               surfaceId: id,
               status: "native",
-              details: "validated-native-host-surface",
+              details: presentDetails,
             };
           if (required(id))
             return {
               surfaceId: id,
               status: "unavailable",
-              details: "required-surface-missing",
+              details: missingDetails,
             };
           return {
             surfaceId: id,
             status: "fallback",
             details: fallback(id)
               ? "pi-default-fallback"
-              : "required-surface-missing",
+              : "custom-editor-fallback",
           };
         };
         return [
@@ -298,6 +478,48 @@ export class DefaultPiHostSurfaceReader implements PiHostSurfaceReader {
           native(
             "extension-ui-response",
             versionValid && matrixNative("extension-ui-response"),
+          ),
+          native(
+            "rpc-persistent-session",
+            versionValid &&
+              matrixNative("rpc-persistent-session") &&
+              port.hasSessionCreate() &&
+              port.hasSessionOpen(),
+            "session-create-and-open-present",
+            "session-create-or-open-missing",
+          ),
+          native(
+            "rpc-append-entry",
+            versionValid &&
+              matrixNative("rpc-append-entry") &&
+              port.hasAppendEntry(),
+            "append-entry-present",
+            "append-entry-missing",
+          ),
+          native(
+            "custom-session-directory",
+            versionValid &&
+              matrixNative("custom-session-directory") &&
+              port.hasCustomSessionDirectoryContract(),
+            SESSION_DIR_CONTRACT_VERIFIED,
+            SESSION_DIR_CONTRACT_UNVERIFIED,
+          ),
+          native(
+            "rpc-session-tree-read",
+            versionValid &&
+              matrixNative("rpc-session-tree-read") &&
+              port.hasSessionGetEntries() &&
+              port.hasSessionGetTree(),
+            "get-entries-and-get-tree-present",
+            "get-entries-or-get-tree-missing",
+          ),
+          native(
+            "child-overlay-lifecycle",
+            versionValid &&
+              matrixNative("child-overlay-lifecycle") &&
+              port.hasOverlayLifecycle(),
+            "overlay-and-editor-restore-present",
+            "overlay-or-editor-restore-missing",
           ),
         ];
       },

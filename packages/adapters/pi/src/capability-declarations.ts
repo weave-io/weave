@@ -2,6 +2,7 @@ import type { AdapterCapabilityContract } from "@weaveio/weave-engine";
 import {
   PI_HOST_COMPATIBILITY_MATRIX,
   type PiHostSurfaceDeclaration,
+  type PiHostSurfaceId,
 } from "./host-compatibility-matrix.js";
 
 export type { PiHostSurfaceDeclaration } from "./host-compatibility-matrix.js";
@@ -9,6 +10,36 @@ export type { PiHostSurfaceDeclaration } from "./host-compatibility-matrix.js";
 /** The host-surface contract is declared in the compatibility matrix. */
 export const PI_HOST_SURFACE_DECLARATIONS: readonly PiHostSurfaceDeclaration[] =
   PI_HOST_COMPATIBILITY_MATRIX.surfaces;
+
+/**
+ * The four native-session capability contracts probed under Spec 33 §16:
+ * persistent RPC session and restore, `appendEntry`, `get_entries`/`get_tree`,
+ * and custom session directory support. The names are stable; other modules
+ * and diagnostics refer to them by these IDs.
+ */
+export const PI_SESSION_CAPABILITY_SURFACE_IDS: readonly PiHostSurfaceId[] =
+  Object.freeze([
+    "rpc-persistent-session",
+    "rpc-append-entry",
+    "rpc-session-tree-read",
+    "custom-session-directory",
+  ] as const);
+
+/** Session capability gaps that force health-only mode. */
+export const PI_REQUIRED_FOR_DELEGATION_SURFACE_IDS: readonly PiHostSurfaceId[] =
+  Object.freeze(
+    PI_HOST_SURFACE_DECLARATIONS.filter(
+      (surface) => surface.severity === "required-for-delegation",
+    ).map((surface) => surface.id),
+  );
+
+/** Gaps that only degrade the overlay and select the custom-editor fallback. */
+export const PI_OVERLAY_ONLY_SURFACE_IDS: readonly PiHostSurfaceId[] =
+  Object.freeze(
+    PI_HOST_SURFACE_DECLARATIONS.filter(
+      (surface) => surface.severity === "overlay-only",
+    ).map((surface) => surface.id),
+  );
 
 export const PI_ADAPTER_CAPABILITY_CONTRACT: AdapterCapabilityContract = {
   capabilities: [

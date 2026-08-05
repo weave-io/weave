@@ -323,8 +323,14 @@ export {
   validateHostCompatibilityMatrix,
 } from "./host-compatibility-matrix.js";
 export {
+  buildHostSurfaceGapDiagnostics,
+  createDefaultPiHostProbePort,
   DefaultPiHostSurfaceReader,
+  defaultHostSurfaceReport,
+  emptyHostSurfaceReport,
   PI_HOST_SURFACE_IDS,
+  type PiHostProbePort,
+  type PiHostProbePortFactory,
   type PiHostSurfaceId,
   type PiHostSurfaceProbe,
   type PiHostSurfaceReadError,
@@ -335,6 +341,7 @@ export {
   readHostSurfaceReport,
   readValidatedCommands,
   safeReadHostSurfaceReport,
+  selectsCustomEditorFallback,
 } from "./host-inventory.js";
 export type {
   PiModelActivationOutcome,

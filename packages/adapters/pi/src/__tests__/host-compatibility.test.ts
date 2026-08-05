@@ -2,9 +2,53 @@ import { describe, expect, it } from "bun:test";
 import {
   checkHostCompatibility,
   HOST_PACKAGE_NAME,
+  HOST_VERSION_FLOOR,
+  type HostCapabilityGapDiagnostic,
   isSupportedHostVersion,
   parseSemver,
+  renderHostCapabilityGapDiagnostic,
+  UNKNOWN_HOST_VERSION,
 } from "../host-compatibility.js";
+
+describe("renderHostCapabilityGapDiagnostic", () => {
+  const diagnostic: HostCapabilityGapDiagnostic = {
+    capability: "rpc-append-entry",
+    hostVersion: "0.83.0",
+    contract: "Spec 33 §16 appendEntry",
+    probeResult: "unavailable:surface-missing",
+    mode: "health-only",
+    remediation: "Upgrade the Pi host.",
+  };
+
+  it("names the capability, host version, contract, probe result, mode, and remediation", () => {
+    const line = renderHostCapabilityGapDiagnostic(diagnostic);
+    expect(line).toContain("capability: rpc-append-entry");
+    expect(line).toContain("host version: 0.83.0");
+    expect(line).toContain(`supported >=${HOST_VERSION_FLOOR}, no maximum`);
+    expect(line).toContain("contract: Spec 33 §16 appendEntry");
+    expect(line).toContain("probe: unavailable:surface-missing");
+    expect(line).toContain("mode: health-only");
+    expect(line).toContain("remediation: Upgrade the Pi host.");
+  });
+
+  it("still names a version field when the host version is unknown", () => {
+    const line = renderHostCapabilityGapDiagnostic({
+      ...diagnostic,
+      hostVersion: UNKNOWN_HOST_VERSION,
+    });
+    expect(line).toContain("host version: unknown");
+  });
+
+  it("reports the custom-editor fallback mode for an overlay-only gap", () => {
+    const line = renderHostCapabilityGapDiagnostic({
+      ...diagnostic,
+      capability: "rpc-session-tree-read",
+      mode: "custom-editor-fallback",
+    });
+    expect(line).toContain("mode: custom-editor-fallback");
+    expect(line).not.toContain("mode: health-only");
+  });
+});
 
 describe("BunHostPackageReader", () => {
   it("reads host identity through Pi's root virtual module without package JSON", async () => {

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "bun:test";
 import { ALL_CAPABILITY_IDS } from "@weaveio/weave-engine";
-import { PI_ADAPTER_CAPABILITY_CONTRACT } from "../capability-declarations.js";
+import {
+  PI_ADAPTER_CAPABILITY_CONTRACT,
+  PI_OVERLAY_ONLY_SURFACE_IDS,
+  PI_REQUIRED_FOR_DELEGATION_SURFACE_IDS,
+  PI_SESSION_CAPABILITY_SURFACE_IDS,
+} from "../capability-declarations.js";
 import {
   buildBlockedProbeSet,
   DefaultPiCapabilityProber,
@@ -10,8 +15,11 @@ import {
 import { ADAPTER_PACKAGE_IDENTITY, WEAVE_COMMAND_NAMES } from "../commands.js";
 import { PI_HOST_COMPATIBILITY_MATRIX } from "../host-compatibility-matrix.js";
 import {
+  buildHostSurfaceGapDiagnostics,
+  DefaultPiHostSurfaceReader,
   PI_HOST_SURFACE_IDS,
   readHostSurfaceReport,
+  selectsCustomEditorFallback,
 } from "../host-inventory.js";
 import type { PiCommandInfo } from "../types.js";
 
@@ -423,6 +431,197 @@ describe("DefaultPiCapabilityProber", () => {
       expect(entry?.probeStatus).toBe("unavailable");
       expect(entry?.details).toBe("config-not-loaded");
     }
+  });
+});
+
+describe("native session capability probes", () => {
+  const prober = new DefaultPiCapabilityProber();
+  /**
+   * A `SessionManager` shaped like the installed Pi public type: static
+   * `create`/`open` factories plus the read-only instance methods. Every
+   * member is tracked so a test can prove probing never calls them.
+   */
+  const sessionManagerStub = (
+    track: (name: string) => (...args: unknown[]) => unknown,
+  ) => {
+    const constructed = track("SessionManager.construct");
+    function SessionManagerStub(this: unknown, ...args: unknown[]) {
+      return constructed(...args);
+    }
+    const stub = SessionManagerStub as unknown as Record<string, unknown>;
+    stub.create = track("SessionManager.create");
+    stub.open = track("SessionManager.open");
+    const proto = SessionManagerStub.prototype as Record<string, unknown>;
+    proto.getEntries = track("getEntries");
+    proto.getTree = track("getTree");
+    proto.getSessionDir = track("getSessionDir");
+    proto.usesDefaultSessionDir = track("usesDefaultSessionDir");
+    return SessionManagerStub;
+  };
+  const basePlan = {
+    configLoaded: true,
+    materializationErrorCount: 0,
+    primaryDescriptorFound: true,
+    primaryModelDryResolved: true,
+    delegationToolPlanned: true,
+    eventLoggingPlanned: true,
+    runtimeDirectoryContained: true,
+    plansDirectoryContained: true,
+  };
+  const base = {
+    mode: "tui" as const,
+    trust: "trusted" as const,
+    commands: ALL_OWNED_COMMANDS,
+    candidatePlan: basePlan,
+  };
+  const reportWithout = (missing?: string) =>
+    readHostSurfaceReport(
+      PI_HOST_SURFACE_IDS.filter((surfaceId) => surfaceId !== missing).map(
+        (surfaceId) => ({
+          surfaceId,
+          status: "native" as const,
+          details: "validated-native-host-surface",
+        }),
+      ),
+    );
+
+  it("declares the four Spec 33 §16 session capability contracts", () => {
+    expect([...PI_SESSION_CAPABILITY_SURFACE_IDS]).toEqual([
+      "rpc-persistent-session",
+      "rpc-append-entry",
+      "rpc-session-tree-read",
+      "custom-session-directory",
+    ]);
+    for (const id of [
+      "rpc-persistent-session",
+      "rpc-append-entry",
+      "rpc-session-tree-read",
+      "custom-session-directory",
+    ] as const) {
+      expect(PI_REQUIRED_FOR_DELEGATION_SURFACE_IDS).toContain(id);
+    }
+    expect(PI_OVERLAY_ONLY_SURFACE_IDS).toEqual(["child-overlay-lifecycle"]);
+  });
+
+  it("probes without creating a session or any other side effect", async () => {
+    const calls: string[] = [];
+    const track =
+      (name: string) =>
+      (...args: unknown[]) => {
+        calls.push(`${name}:${args.length}`);
+        return undefined;
+      };
+    const result = await new DefaultPiHostSurfaceReader().read({
+      api: {
+        appendEntry: track("appendEntry"),
+        sendUserMessage: track("sendUserMessage"),
+      } as never,
+      ui: {
+        setStatus: track("setStatus"),
+        setEditorComponent: track("setEditorComponent"),
+        getEditorComponent: track("getEditorComponent"),
+        custom: track("custom"),
+      } as never,
+      rootExports: {
+        VERSION: "0.83.0",
+        AssistantMessageComponent: () => undefined,
+        ToolExecutionComponent: () => undefined,
+        Markdown: () => undefined,
+        Image: () => undefined,
+        FooterComponent: () => undefined,
+        BorderedLoader: () => undefined,
+        CustomEditor: () => undefined,
+        SessionManager: sessionManagerStub(track),
+      },
+    });
+    expect(result.isOk()).toBe(true);
+    expect(calls).toEqual([]);
+    const report = readHostSurfaceReport(result._unsafeUnwrap());
+    expect(report.requiredGaps).toEqual([]);
+    expect(report.overlayFallbackGaps).toEqual([]);
+  });
+
+  it("reports ready with no gaps when every session capability is present", () => {
+    const report = reportWithout();
+    expect(report.requiredGaps).toEqual([]);
+    expect(report.overlayFallbackGaps).toEqual([]);
+    expect(selectsCustomEditorFallback(report)).toBe(false);
+    expect(buildHostSurfaceGapDiagnostics(report, "0.83.0")).toEqual([]);
+    const probe = prober
+      .probe({ ...base, hostSurface: report })
+      .find((entry) => entry.capabilityId === "delegated-specialist-execution");
+    expect(probe?.probeStatus).toBe("ok");
+  });
+
+  it("enters health-only with a full diagnostic for each missing required session capability", () => {
+    for (const surfaceId of [
+      "rpc-persistent-session",
+      "rpc-append-entry",
+      "rpc-session-tree-read",
+      "custom-session-directory",
+    ] as const) {
+      const report = reportWithout(surfaceId);
+      expect(report.requiredGaps).toEqual([surfaceId]);
+      expect(report.overlayFallbackGaps).toEqual([]);
+      expect(selectsCustomEditorFallback(report)).toBe(false);
+
+      const probe = prober
+        .probe({ ...base, hostSurface: report })
+        .find(
+          (entry) => entry.capabilityId === "delegated-specialist-execution",
+        );
+      expect(probe).toEqual({
+        capabilityId: "delegated-specialist-execution",
+        probeStatus: "unavailable",
+        details: `host-surface-gap:${surfaceId}`,
+      });
+
+      const [diagnostic, ...rest] = buildHostSurfaceGapDiagnostics(
+        report,
+        "0.83.0",
+      );
+      expect(rest).toEqual([]);
+      expect(diagnostic?.capability).toBe(surfaceId);
+      expect(diagnostic?.hostVersion).toBe("0.83.0");
+      expect(diagnostic?.contract.length).toBeGreaterThan(0);
+      expect(diagnostic?.probeResult).toBe("unavailable:surface-missing");
+      expect(diagnostic?.mode).toBe("health-only");
+      expect(diagnostic?.remediation.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("selects the custom-editor fallback for an overlay-only gap instead of health-only", () => {
+    const report = reportWithout("child-overlay-lifecycle");
+    expect(report.requiredGaps).toEqual([]);
+    expect(report.overlayFallbackGaps).toEqual(["child-overlay-lifecycle"]);
+    expect(selectsCustomEditorFallback(report)).toBe(true);
+    expect(
+      report.probes.find(
+        (probe) => probe.surfaceId === "child-overlay-lifecycle",
+      ),
+    ).toEqual({
+      surfaceId: "child-overlay-lifecycle",
+      status: "fallback",
+      details: "custom-editor-fallback",
+    });
+
+    const probe = prober
+      .probe({ ...base, hostSurface: report })
+      .find((entry) => entry.capabilityId === "delegated-specialist-execution");
+    expect(probe?.probeStatus).toBe("ok");
+
+    const [diagnostic] = buildHostSurfaceGapDiagnostics(report, "0.83.0");
+    expect(diagnostic?.capability).toBe("child-overlay-lifecycle");
+    expect(diagnostic?.mode).toBe("custom-editor-fallback");
+    expect(diagnostic?.probeResult).toBe("fallback:custom-editor-fallback");
+    expect(diagnostic?.remediation).toContain("custom-editor");
+  });
+
+  it("names an unknown host version rather than omitting it", () => {
+    const [diagnostic] = buildHostSurfaceGapDiagnostics(
+      reportWithout("rpc-append-entry"),
+    );
+    expect(diagnostic?.hostVersion).toBe("unknown");
   });
 });
 

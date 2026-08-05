@@ -136,6 +136,7 @@ import {
 import {
   BunHostPackageReader,
   type HostPackageReader,
+  renderHostCapabilityGapDiagnostic,
 } from "./host-compatibility.js";
 import {
   DefaultPiHostSurfaceReader,
@@ -1630,6 +1631,12 @@ function effectiveHealthOnly(generation: {
   return generation.healthOnlyMode;
 }
 
+/**
+ * Upper bound on rendered host-surface gap diagnostics, so a pathological
+ * host cannot flood `/weave:health` output.
+ */
+const MAX_RENDERED_HOST_SURFACE_GAPS = 10;
+
 function renderHealthMessage(
   controller: PiExtensionController,
   activeSession: PiActiveSession | undefined,
@@ -1648,6 +1655,26 @@ function renderHealthMessage(
   );
   const mode = effectiveHealthOnly(generation) ? "health-only" : "ready";
   const result = [`Weave adapter mode: ${mode}`, ...lines];
+
+  for (const diagnostic of generation.preflight.hostSurfaceGapDiagnostics.slice(
+    0,
+    MAX_RENDERED_HOST_SURFACE_GAPS,
+  )) {
+    result.push(
+      `host surface gap: ${renderHostCapabilityGapDiagnostic(diagnostic)}`,
+    );
+  }
+  if (
+    generation.preflight.hostSurfaceGapDiagnostics.length >
+    MAX_RENDERED_HOST_SURFACE_GAPS
+  ) {
+    result.push(
+      `host surface gaps omitted: ${generation.preflight.hostSurfaceGapDiagnostics.length - MAX_RENDERED_HOST_SURFACE_GAPS}`,
+    );
+  }
+  result.push(
+    `child inspection: ${generation.preflight.childInspectionFallback}`,
+  );
 
   if (activeSession?.generationId === generation.id) {
     for (const warning of activeSession.primarySession.getCapabilityWarnings()) {

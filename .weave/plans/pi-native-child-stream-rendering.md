@@ -96,7 +96,7 @@ Dirty-worktree rule: many files are dirty for unrelated in-flight work (OpenCode
     - Threat model enumerates each listed threat with its mitigation and the module that owns it.
     - `bun run docs:check-links` passes.
 
-- [ ] 3. Extend capability declarations, probes, and compatibility floor
+- [x] 3. Extend capability declarations, probes, and compatibility floor
   - **What**: Add mandatory probes for persistent RPC session/restore, `appendEntry`, `get_entries`/`get_tree`, and custom session directory support; keep floor Pi >= 0.81.1 with no maximum; missing required session capability ⇒ health-only with named capability, host version, contract, probe result, mode, and remediation; overlay-only gap ⇒ existing custom-editor fallback.
   - **Files**: `packages/adapters/pi/src/capability-declarations.ts`, `packages/adapters/pi/src/capability-prober.ts`, `packages/adapters/pi/src/host-compatibility-matrix.ts`, `packages/adapters/pi/src/host-compatibility.ts`, tests in `packages/adapters/pi/src/__tests__/` (existing prober/compat test files plus new cases).
   - **Depends on**: Task 1 (contract names).

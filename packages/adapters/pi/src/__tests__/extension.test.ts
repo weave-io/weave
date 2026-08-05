@@ -48,6 +48,7 @@ import {
   resolveDirectStepBadgeAgent,
 } from "../extension.js";
 import { HOST_PACKAGE_NAME } from "../host-compatibility.js";
+import { PI_HOST_COMPATIBILITY_MATRIX } from "../host-compatibility-matrix.js";
 import {
   PI_HOST_SURFACE_IDS,
   type PiHostSurfaceId,
@@ -791,13 +792,19 @@ describe("createPiExtension factory (layer C: compiled extension against a fake 
       ).toBeLessThan(120);
       await host.invokeCommand("weave:health");
       expect(host.notifyCalls.at(-1)?.message).toContain("health-only");
-      expect(host.notifyCalls.at(-1)?.message.length).toBeLessThan(1200);
+      // The health report now names every missing host surface with the full
+      // six-field Spec 33 §16 diagnostic, so the bound covers the declared
+      // maximum: MAX_RENDERED_HOST_SURFACE_GAPS diagnostics of bounded length
+      // plus the capability lines. It is still a fixed ceiling, not host data.
+      expect(host.notifyCalls.at(-1)?.message.length).toBeLessThan(6000);
     }
   });
 
   it("makes each required surface fail closed while rendering loss uses the fallback and stays ready", async () => {
-    const required = PI_HOST_SURFACE_IDS.filter(
-      (surfaceId) => surfaceId !== "status-rendering",
+    const required = PI_HOST_SURFACE_IDS.filter((surfaceId) =>
+      PI_HOST_COMPATIBILITY_MATRIX.surfaces.some(
+        (surface) => surface.id === surfaceId && surface.required,
+      ),
     ).slice(-6);
     for (const surfaceId of required) {
       const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
@@ -832,6 +839,62 @@ describe("createPiExtension factory (layer C: compiled extension against a fake 
     expect(
       host.statusCalls.filter((call) => call.key === "weave").at(-1)?.value,
     ).toBe("ready");
+  });
+
+  it("renders every missing required surface in /weave:health with all six diagnostic fields", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    installExtension(host, "0.81.1", {
+      capabilityProber: allOkCapabilityProber(),
+      hostSurfaceReader: hostSurfaceReader(["rpc-session-tree-read"]),
+    });
+    await host.triggerSessionStart();
+    await host.invokeCommand("weave:health");
+
+    const message = host.notifyCalls.at(-1)?.message ?? "";
+    expect(message).toContain("Weave adapter mode: health-only");
+    // All six Spec 33 §16 strong-debug fields reach active health reporting.
+    expect(message).toContain("host surface gap:");
+    expect(message).toContain("capability: rpc-session-tree-read");
+    expect(message).toContain("host version:");
+    expect(message).toContain("contract:");
+    expect(message).toContain("probe:");
+    expect(message).toContain("mode: health-only");
+    expect(message).toContain("remediation:");
+    // The fallback decision Task 12 consumes is reported too.
+    expect(message).toContain("child inspection: native-overlay");
+    expect(message.length).toBeLessThan(6000);
+  });
+
+  it("reports the custom-editor fallback in /weave:health without entering health-only", async () => {
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    installExtension(host, "0.81.1", {
+      capabilityProber: allOkCapabilityProber(),
+      hostSurfaceReader: hostSurfaceReader(["child-overlay-lifecycle"]),
+      configActivator: fakeConfigActivator({
+        agents: [
+          {
+            agentName: "loom",
+            source: "explicit",
+            descriptor: loomDescriptor(),
+          },
+        ],
+        errors: [],
+      }),
+      runtimeStoreFactory: {
+        open: () => okAsync(createInMemoryRuntimeStore()),
+      },
+    });
+    await host.triggerSessionStart();
+    expect(
+      host.statusCalls.filter((call) => call.key === "weave").at(-1)?.value,
+    ).toBe("ready");
+
+    await host.invokeCommand("weave:health");
+    const message = host.notifyCalls.at(-1)?.message ?? "";
+    expect(message).toContain("Weave adapter mode: ready");
+    expect(message).toContain("capability: child-overlay-lifecycle");
+    expect(message).toContain("mode: custom-editor-fallback");
+    expect(message).toContain("child inspection: custom-editor");
   });
 
   it("reads once per session generation and keeps each normalized report immutable", async () => {

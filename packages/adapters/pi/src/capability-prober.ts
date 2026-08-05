@@ -358,6 +358,11 @@ export class DefaultPiCapabilityProber implements PiCapabilityProbeSource {
     id: CapabilityId,
     context: PiPreflightContext,
   ): CapabilityProbeResult {
+    // Only `required-for-delegation` surface gaps block delegation and enter
+    // health-only mode (Spec 33 §16). An `overlay-only` gap never reaches
+    // `requiredGaps`; it is reported through the host surface report's
+    // `overlayFallbackGaps` and selects the existing custom-editor child
+    // inspection fallback instead.
     if (
       context.hostSurface !== undefined &&
       context.hostSurface.requiredGaps.length > 0 &&

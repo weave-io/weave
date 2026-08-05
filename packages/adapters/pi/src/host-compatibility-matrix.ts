@@ -19,15 +19,43 @@ export const PI_HOST_SURFACE_IDS = [
   "rpc-get-entries",
   "session-restore",
   "extension-ui-response",
+  "rpc-persistent-session",
+  "rpc-append-entry",
+  "rpc-session-tree-read",
+  "custom-session-directory",
+  "child-overlay-lifecycle",
 ] as const;
 export type PiHostSurfaceId = (typeof PI_HOST_SURFACE_IDS)[number];
+
+/**
+ * How a gap in one surface degrades the adapter (Spec 33 §16).
+ *
+ * - `required-for-delegation`: the adapter cannot run delegated children
+ *   without it, so a gap enters health-only mode.
+ * - `overlay-only`: only the native full-screen child overlay's own
+ *   mount/unmount lifecycle needs it, so a gap routes to the existing
+ *   custom-editor fallback (§7) and never forces health-only mode. Session
+ *   *reads* are never overlay-only: delegation itself depends on them.
+ * - `rendering-fallback`: Pi's own default rendering covers the gap.
+ */
+export type PiHostSurfaceSeverity =
+  | "required-for-delegation"
+  | "overlay-only"
+  | "rendering-fallback";
+
+export type PiHostSurfaceFallback = "pi-default" | "custom-editor";
 
 export interface PiHostSurfaceDeclaration {
   readonly id: PiHostSurfaceId;
   readonly required: boolean;
   readonly nativeSupport: boolean;
   readonly minimumHostVersion: string;
-  readonly fallback?: "pi-default";
+  readonly severity: PiHostSurfaceSeverity;
+  /** Human-readable contract this surface implements, used in diagnostics. */
+  readonly contract: string;
+  /** Operator-facing remediation used in health-only diagnostics. */
+  readonly remediation: string;
+  readonly fallback?: PiHostSurfaceFallback;
 }
 
 const rendering = (id: PiHostSurfaceId): PiHostSurfaceDeclaration => ({
@@ -35,13 +63,37 @@ const rendering = (id: PiHostSurfaceId): PiHostSurfaceDeclaration => ({
   required: false,
   nativeSupport: false,
   minimumHostVersion: HOST_VERSION_FLOOR,
+  severity: "rendering-fallback",
+  contract: "Spec 33 §7 native rendering",
+  remediation: "Pi default rendering is used; no operator action is required.",
   fallback: "pi-default",
 });
-const requiredNative = (id: PiHostSurfaceId): PiHostSurfaceDeclaration => ({
+const requiredNative = (
+  id: PiHostSurfaceId,
+  contract = "Spec 33 §16 required host surface",
+  remediation = `Upgrade the Pi host to a version that provides ${id}, or disable Weave delegation.`,
+): PiHostSurfaceDeclaration => ({
   id,
   required: true,
   nativeSupport: true,
   minimumHostVersion: HOST_VERSION_FLOOR,
+  severity: "required-for-delegation",
+  contract,
+  remediation,
+});
+const overlayOnly = (
+  id: PiHostSurfaceId,
+  contract: string,
+  remediation: string,
+): PiHostSurfaceDeclaration => ({
+  id,
+  required: false,
+  nativeSupport: true,
+  minimumHostVersion: HOST_VERSION_FLOOR,
+  severity: "overlay-only",
+  contract,
+  remediation,
+  fallback: "custom-editor",
 });
 
 export interface PiHostCompatibilityMatrix {
@@ -71,6 +123,31 @@ export const PI_HOST_COMPATIBILITY_MATRIX: PiHostCompatibilityMatrix = {
     requiredNative("rpc-get-entries"),
     requiredNative("session-restore"),
     requiredNative("extension-ui-response"),
+    requiredNative(
+      "rpc-persistent-session",
+      "Spec 33 §16 persistent RPC session and restore",
+      "Upgrade the Pi host to one that keeps RPC child sessions across restore, or disable Weave delegation.",
+    ),
+    requiredNative(
+      "rpc-append-entry",
+      "Spec 33 §16 appendEntry",
+      "Upgrade the Pi host to one that exposes pi.appendEntry, or disable Weave delegation.",
+    ),
+    requiredNative(
+      "rpc-session-tree-read",
+      "Spec 33 §16 get_entries/get_tree",
+      "Upgrade the Pi host to one that answers get_entries/get_tree, or disable Weave delegation.",
+    ),
+    requiredNative(
+      "custom-session-directory",
+      "Spec 33 §16 custom session directory support",
+      "Upgrade the Pi host to one that accepts a custom session directory, or disable Weave delegation.",
+    ),
+    overlayOnly(
+      "child-overlay-lifecycle",
+      "Spec 33 §7 native full-screen child overlay mount and editor restore",
+      "Upgrade the Pi host to one that exposes the overlay UI and editor-restore lifecycle; until then the custom-editor child inspection fallback is used.",
+    ),
   ]),
 } as const;
 export type HostCompatibilityMatrixError =
@@ -133,13 +210,20 @@ export function validateHostCompatibilityMatrix(
         type: "SurfaceDrift",
         reason: `surface-min-version:${surface.id}`,
       });
-    const renderingSurface =
-      surface.id.endsWith("-rendering") || surface.id === "status-rendering";
+    const renderingSurface = surface.severity === "rendering-fallback";
+    const overlaySurface = surface.severity === "overlay-only";
+    const expectedFallback = ((): PiHostSurfaceFallback | undefined => {
+      if (renderingSurface) return "pi-default";
+      if (overlaySurface) return "custom-editor";
+      return undefined;
+    })();
     if (
-      renderingSurface !== !surface.required ||
-      (renderingSurface && surface.fallback !== "pi-default") ||
-      (!renderingSurface && surface.fallback !== undefined) ||
-      surface.nativeSupport !== !renderingSurface
+      renderingSurface !== surface.id.endsWith("-rendering") ||
+      surface.required !== (surface.severity === "required-for-delegation") ||
+      surface.fallback !== expectedFallback ||
+      surface.nativeSupport !== !renderingSurface ||
+      surface.contract.trim().length === 0 ||
+      surface.remediation.trim().length === 0
     )
       return err({
         type: "SurfaceDrift",

@@ -105,14 +105,26 @@ describe("PiSafeInitializer.preflight", () => {
     expect(hostSurface.probes.map((probe) => probe.surfaceId)).toEqual([
       ...PI_HOST_SURFACE_IDS,
     ]);
-    expect(hostSurface.probes).toHaveLength(13);
+    expect(hostSurface.probes).toHaveLength(PI_HOST_SURFACE_IDS.length);
     expect(
       hostSurface.probes
-        .slice(0, 7)
-        .every((probe) => probe.status === "fallback"),
+        .filter(
+          (probe) =>
+            PI_HOST_COMPATIBILITY_MATRIX.surfaces.find(
+              (surface) => surface.id === probe.surfaceId,
+            )?.required,
+        )
+        .every((probe) => probe.status === "native"),
     ).toBe(true);
     expect(
-      hostSurface.probes.slice(7).every((probe) => probe.status === "native"),
+      hostSurface.probes
+        .filter(
+          (probe) =>
+            PI_HOST_COMPATIBILITY_MATRIX.surfaces.find(
+              (surface) => surface.id === probe.surfaceId,
+            )?.required !== true,
+        )
+        .every((probe) => probe.status === "fallback"),
     ).toBe(true);
     expect(Object.isFrozen(hostSurface)).toBe(true);
     expect(Object.isFrozen(hostSurface.probes)).toBe(true);
@@ -446,7 +458,74 @@ describe("PiSafeInitializer.preflight", () => {
       // Even an adversarial all-ok engine prober cannot promote delegated
       // execution: the required host gap keeps the complete preflight blocked.
       expect(preflight.healthOnlyMode).toBe(true);
+
+      // The strong diagnostics reach active initialization state with all six
+      // Spec 33 §16 fields, so health reporting can render them.
+      expect(preflight.hostSurfaceGapDiagnostics).toHaveLength(1);
+      const diagnostic = preflight.hostSurfaceGapDiagnostics[0];
+      expect(diagnostic?.capability).toBe(requiredSurface.id);
+      expect(diagnostic?.hostVersion.length).toBeGreaterThan(0);
+      expect(diagnostic?.contract.length).toBeGreaterThan(0);
+      expect(diagnostic?.probeResult.length).toBeGreaterThan(0);
+      expect(diagnostic?.mode).toBe("health-only");
+      expect(diagnostic?.remediation.length).toBeGreaterThan(0);
+
+      // A required gap is not an overlay gap: the native overlay stays selected.
+      expect(preflight.childInspectionFallback).toBe("native-overlay");
     }
+  });
+
+  it("carries the custom-editor fallback decision without entering health-only for an overlay gap", async () => {
+    const hostSurface = readHostSurfaceReport(
+      PI_HOST_SURFACE_IDS.filter(
+        (surfaceId) => surfaceId !== "child-overlay-lifecycle",
+      ).map((surfaceId) => ({
+        surfaceId,
+        status: "native" as const,
+        details: "fixture",
+      })),
+    );
+    const preflight = (
+      await initializerWith(new FixedProber(allOkProbes())).preflight(
+        sessionOf("tui", true),
+        ALL_OWNED_COMMANDS,
+        hostSurface,
+      )
+    )._unsafeUnwrap();
+
+    expect(preflight.hostSurface.requiredGaps).toEqual([]);
+    expect(preflight.hostSurface.overlayFallbackGaps).toEqual([
+      "child-overlay-lifecycle",
+    ]);
+    // Task 12 reads this instead of re-probing the host.
+    expect(preflight.childInspectionFallback).toBe("custom-editor");
+    expect(preflight.healthOnlyMode).toBe(false);
+
+    const [diagnostic] = preflight.hostSurfaceGapDiagnostics;
+    expect(diagnostic?.capability).toBe("child-overlay-lifecycle");
+    expect(diagnostic?.mode).toBe("custom-editor-fallback");
+  });
+
+  it("reports ready with no diagnostics and the native overlay when every surface is present", async () => {
+    const hostSurface = readHostSurfaceReport(
+      PI_HOST_SURFACE_IDS.map((surfaceId) => ({
+        surfaceId,
+        status: "native" as const,
+        details: "fixture",
+      })),
+    );
+    const preflight = (
+      await initializerWith(new FixedProber(allOkProbes())).preflight(
+        sessionOf("tui", true),
+        ALL_OWNED_COMMANDS,
+        hostSurface,
+      )
+    )._unsafeUnwrap();
+
+    expect(preflight.hostSurface.requiredGaps).toEqual([]);
+    expect(preflight.hostSurfaceGapDiagnostics).toEqual([]);
+    expect(preflight.childInspectionFallback).toBe("native-overlay");
+    expect(preflight.healthOnlyMode).toBe(false);
   });
 
   it("normalizes missing and malformed reports to exact rows, while only required gaps force health-only", async () => {
@@ -458,7 +537,7 @@ describe("PiSafeInitializer.preflight", () => {
     expect(malformed.probes.map((probe) => probe.surfaceId)).toEqual([
       ...PI_HOST_SURFACE_IDS,
     ]);
-    expect(malformed.probes).toHaveLength(13);
+    expect(malformed.probes).toHaveLength(PI_HOST_SURFACE_IDS.length);
     expect(malformed.requiredGaps).toEqual(
       PI_HOST_COMPATIBILITY_MATRIX.surfaces
         .filter((surface) => surface.required)

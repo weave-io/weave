@@ -51,6 +51,35 @@ describe("readValidatedCommands", () => {
 });
 
 describe("host surface inventory", () => {
+  /**
+   * A `SessionManager` shaped like the installed Pi public type: static
+   * `create`/`open` factories plus the read-only instance methods that carry
+   * the documented custom-session-directory contract.
+   */
+  function sessionManagerStub() {
+    function SessionManagerStub() {
+      return undefined;
+    }
+    const stub = SessionManagerStub as unknown as Record<string, unknown>;
+    stub.create = () => undefined;
+    stub.open = () => undefined;
+    const proto = SessionManagerStub.prototype as Record<string, unknown>;
+    proto.getEntries = () => [];
+    proto.getTree = () => [];
+    proto.getSessionDir = () => "";
+    proto.usesDefaultSessionDir = () => true;
+    return SessionManagerStub;
+  }
+
+  /** A host UI port exposing the overlay and editor-restore lifecycle. */
+  const overlayCapableUi = () =>
+    ({
+      setStatus: () => undefined,
+      setEditorComponent: () => undefined,
+      getEditorComponent: () => undefined,
+      custom: () => Promise.resolve(undefined),
+    }) as never;
+
   it("normalizes malformed, duplicate, missing, and unknown rows to the exact contract", () => {
     const report = readHostSurfaceReport([
       { surfaceId: "rpc-steer", status: "bad", details: { secret: "x" } },
@@ -77,14 +106,11 @@ describe("host surface inventory", () => {
     expect(Object.isFrozen(report.probes)).toBe(true);
   });
 
-  it("returns all thirteen native rows when the public namespace is complete", async () => {
+  it("returns a native row for every declared surface when the public namespace is complete", async () => {
     const reader = new DefaultPiHostSurfaceReader();
     const result = await reader.read({
-      api: {} as never,
-      ui: {
-        setStatus: () => undefined,
-        setEditorComponent: () => undefined,
-      } as never,
+      api: { appendEntry: () => undefined } as never,
+      ui: overlayCapableUi(),
       rootExports: {
         VERSION: "0.81.1",
         AssistantMessageComponent: () => undefined,
@@ -94,26 +120,30 @@ describe("host surface inventory", () => {
         FooterComponent: () => undefined,
         BorderedLoader: () => undefined,
         CustomEditor: () => undefined,
+        SessionManager: sessionManagerStub(),
       },
     });
     const report = readHostSurfaceReport(result._unsafeUnwrap());
-    expect(report.probes).toHaveLength(13);
+    expect(report.probes).toHaveLength(PI_HOST_SURFACE_IDS.length);
     expect(report.probes.every((probe) => probe.status === "native")).toBe(
       true,
     );
     expect(report.probes.map((probe) => probe.surfaceId)).toEqual([
       ...PI_HOST_SURFACE_IDS,
     ]);
+    expect(report.requiredGaps).toEqual([]);
+    expect(report.overlayFallbackGaps).toEqual([]);
   });
 
   it("uses fallback status for every optional rendering surface when exports are absent", async () => {
     const result = await new DefaultPiHostSurfaceReader().read({
-      api: {} as never,
-      ui: {
-        setStatus: () => undefined,
-        setEditorComponent: () => undefined,
-      } as never,
-      rootExports: { VERSION: "0.81.1", CustomEditor: () => undefined },
+      api: { appendEntry: () => undefined } as never,
+      ui: overlayCapableUi(),
+      rootExports: {
+        VERSION: "0.81.1",
+        CustomEditor: () => undefined,
+        SessionManager: sessionManagerStub(),
+      },
     });
     const report = readHostSurfaceReport(result._unsafeUnwrap());
     expect(
@@ -161,7 +191,7 @@ describe("host surface inventory", () => {
       const result = await safeReadHostSurfaceReport(reader, input);
       expect(result.isOk()).toBe(true);
       const report = result._unsafeUnwrap();
-      expect(report.probes).toHaveLength(13);
+      expect(report.probes).toHaveLength(PI_HOST_SURFACE_IDS.length);
       expect(report.requiredGaps).toEqual(
         PI_HOST_COMPATIBILITY_MATRIX.surfaces
           .filter((surface) => surface.required)
@@ -178,15 +208,12 @@ describe("host surface inventory", () => {
         sendUserMessage: () => undefined,
         appendEntry: () => undefined,
       } as never,
-      ui: {
-        custom: () => undefined,
-        setStatus: () => undefined,
-        setEditorComponent: () => undefined,
-      } as never,
+      ui: overlayCapableUi(),
       rootExports: {
         VERSION: "0.81.1",
         AssistantMessageComponent: () => undefined,
         CustomEditor: () => undefined,
+        SessionManager: sessionManagerStub(),
       },
     });
     const report = readHostSurfaceReport(result._unsafeUnwrap());

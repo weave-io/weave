@@ -93,6 +93,44 @@ export function checkHostCompatibility(
   return ok(info);
 }
 
+/**
+ * Placeholder used when the host package could not be read at all, so a
+ * diagnostic still names a version field instead of omitting it.
+ */
+export const UNKNOWN_HOST_VERSION = "unknown";
+
+/** How one missing host capability degrades the adapter (Spec 33 §16). */
+export type HostCapabilityGapMode = "health-only" | "custom-editor-fallback";
+
+/**
+ * The strong-debug diagnostic shape for a missing host capability. Every
+ * field is required, so a diagnostic can never omit the capability, the host
+ * version, the contract, the probe result, the resulting mode, or the
+ * remediation.
+ */
+export interface HostCapabilityGapDiagnostic {
+  readonly capability: string;
+  readonly hostVersion: string;
+  readonly contract: string;
+  readonly probeResult: string;
+  readonly mode: HostCapabilityGapMode;
+  readonly remediation: string;
+}
+
+/** Renders one diagnostic as a single plain, secret-free line. */
+export function renderHostCapabilityGapDiagnostic(
+  diagnostic: HostCapabilityGapDiagnostic,
+): string {
+  return [
+    `capability: ${diagnostic.capability}`,
+    `host version: ${diagnostic.hostVersion} (supported >=${HOST_VERSION_FLOOR}, no maximum)`,
+    `contract: ${diagnostic.contract}`,
+    `probe: ${diagnostic.probeResult}`,
+    `mode: ${diagnostic.mode}`,
+    `remediation: ${diagnostic.remediation}`,
+  ].join("; ");
+}
+
 /** Read-only source of the installed host package's identity/version. */
 export interface HostPackageReader {
   read(): ResultAsync<HostPackageInfo, PiAdapterFailure>;
