@@ -209,6 +209,14 @@ export interface ChildOverlayPage {
 export type ChildOverlaySourceError =
   | { readonly type: "SourceUnavailable"; readonly operation: string }
   | { readonly type: "SourceCorrupt"; readonly operation: string }
+  /**
+   * Transient startup gap: the child has begun, but its persisted thread
+   * record, session reference, or native session file does not exist yet.
+   * This is the only source failure a live child may recover from; every
+   * other failure (permission, root violation, malformed header, parent
+   * mismatch, corruption) stays fail-closed.
+   */
+  | { readonly type: "SourceStartupNotReady"; readonly operation: string }
   | { readonly type: "SourceInvalidCursor"; readonly operation: string }
   | { readonly type: "ChildNotFound"; readonly childId: string };
 

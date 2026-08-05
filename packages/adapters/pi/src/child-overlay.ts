@@ -266,7 +266,10 @@ function mapNativePageError(
     return { type: "SourceInvalidCursor", operation };
   }
   if (error.type === "SessionMissing") {
-    return { type: "SourceCorrupt", operation };
+    // The child's thread record, session ref, or native session file has not
+    // been written yet. Everything else - permission errors, root violations,
+    // malformed headers, parent mismatch, corruption - stays `SourceCorrupt`.
+    return { type: "SourceStartupNotReady", operation };
   }
   return { type: "SourceCorrupt", operation };
 }

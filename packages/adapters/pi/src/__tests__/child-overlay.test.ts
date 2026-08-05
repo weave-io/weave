@@ -19,6 +19,7 @@ import {
   type ChildOverlayFallbackRequired,
   type ChildOverlayMutationPort,
   type ChildOverlayReplayStep,
+  type ChildOverlaySourceError,
   type ChildOverlaySourcePort,
   type ChildOverlayView,
   createChildOverlayController,
@@ -198,18 +199,18 @@ async function mustOpen(
 }
 
 /**
- * Describe succeeds, but the initial historical newest-page read fails. Models
- * a live child's session ref/file not being readable yet, or a settled child's
- * unreadable source that must stay fail-closed.
+ * Describe succeeds, but the initial historical newest-page read fails with a
+ * caller-chosen source error. Models both the transient live startup gap and
+ * the hard failures that must stay fail-closed.
  */
-function unreadableNewestSource(
+function failingNewestSource(
   children: readonly MemoryOverlaySourceChild[],
+  error: ChildOverlaySourceError,
 ): ChildOverlaySourcePort {
   const memory = createMemoryChildOverlaySource(children);
   return {
     describe: (childId) => memory.describe(childId),
-    loadNewest: () =>
-      errAsync({ type: "SourceCorrupt", operation: "loadNewest" }),
+    loadNewest: () => errAsync(error),
     loadOlder: (childId, cursor, pageSize) =>
       memory.loadOlder(childId, cursor, pageSize),
     loadNewer: (childId, cursor, pageSize) =>
@@ -1785,17 +1786,20 @@ describe("ChildOverlayController", () => {
     expect(JSON.stringify(error)).not.toContain("/Users/");
   });
 
-  it("opens a live child on an empty native page when the initial source is unreadable", async () => {
-    const source = unreadableNewestSource([
-      child({
-        childId: "live-unreadable",
-        status: "live",
-        generationId: "gen-live",
-        entries: entries(4, "hist"),
-      }),
-    ]);
+  it("opens a live child on an empty native page while its source is still starting up", async () => {
+    const source = failingNewestSource(
+      [
+        child({
+          childId: "live-starting",
+          status: "live",
+          generationId: "gen-live",
+          entries: entries(4, "hist"),
+        }),
+      ],
+      { type: "SourceStartupNotReady", operation: "loadNewest" },
+    );
     const overlay = createChildOverlayController(source, { pageSize: 10 });
-    const opened = await mustOpen(overlay, "live-unreadable");
+    const opened = await mustOpen(overlay, "live-starting");
     expect(opened.child.status).toBe("live");
     expect(opened.readOnly).toBe(false);
     expect(opened.entries).toEqual([]);
@@ -1820,14 +1824,82 @@ describe("ChildOverlayController", () => {
     expect(view.liveTail).toBe(true);
   });
 
+  it.each([
+    ["SourceCorrupt", { type: "SourceCorrupt", operation: "loadNewest" }],
+    [
+      "SourceUnavailable",
+      { type: "SourceUnavailable", operation: "loadNewest" },
+    ],
+    [
+      "SourceInvalidCursor",
+      { type: "SourceInvalidCursor", operation: "loadNewest" },
+    ],
+    ["ChildNotFound", { type: "ChildNotFound", childId: "live-hard-failure" }],
+  ] as const)("keeps a live child fail-closed when the initial source fails with %s", async (_label, sourceError) => {
+    // Permission errors, root violations, malformed headers, parent
+    // mismatch, and corruption all reach the controller as one of these
+    // errors. None of them is a startup race, so none may open an empty
+    // page.
+    const source = failingNewestSource(
+      [
+        child({
+          childId: "live-hard-failure",
+          status: "live",
+          generationId: "gen-live",
+          entries: entries(3, "hist"),
+        }),
+      ],
+      sourceError,
+    );
+    const overlay = createChildOverlayController(source, { pageSize: 10 });
+    const result = await overlay.open("live-hard-failure");
+    expect(result.isErr()).toBe(true);
+    const error = result._unsafeUnwrapErr() as ChildOverlayFallbackRequired;
+    expect(error.kind).toBe("fallback-required");
+    expect(error.metadata.reason).toBe("source-failed");
+    expect(error.metadata.childId).toBe("live-hard-failure");
+    expect(JSON.stringify(error)).not.toContain("/Users/");
+  });
+
+  it.each([
+    "settled",
+    "orphan",
+  ] as const)("keeps a %s child fail-closed even when its source is startup-not-ready", async (status) => {
+    const source = failingNewestSource(
+      [
+        child({
+          childId: "non-live-starting",
+          status,
+          entries: entries(3, "s"),
+        }),
+      ],
+      { type: "SourceStartupNotReady", operation: "loadNewest" },
+    );
+    const overlay = createChildOverlayController(source, { pageSize: 10 });
+    const result = await overlay.open("non-live-starting");
+    expect(result.isErr()).toBe(true);
+    const error = result._unsafeUnwrapErr() as ChildOverlayFallbackRequired;
+    expect(error.kind).toBe("fallback-required");
+    // `settled` fails at the page read; `orphaned`/`unknown` are rejected
+    // earlier by the memory source's describe. Both stay fail-closed.
+    expect(["source-failed", "describe-failed"]).toContain(
+      error.metadata.reason,
+    );
+    expect(error.metadata.childId).toBe("non-live-starting");
+    expect(JSON.stringify(error)).not.toContain("/Users/");
+  });
+
   it("keeps settled children fail-closed when the initial source is unreadable", async () => {
-    const source = unreadableNewestSource([
-      child({
-        childId: "settled-unreadable",
-        status: "settled",
-        entries: entries(3, "s"),
-      }),
-    ]);
+    const source = failingNewestSource(
+      [
+        child({
+          childId: "settled-unreadable",
+          status: "settled",
+          entries: entries(3, "s"),
+        }),
+      ],
+      { type: "SourceCorrupt", operation: "loadNewest" },
+    );
     const overlay = createChildOverlayController(source, { pageSize: 10 });
     const result = await overlay.open("settled-unreadable");
     expect(result.isErr()).toBe(true);
@@ -1865,6 +1937,79 @@ describe("ChildOverlayController", () => {
     expect(view.entries.some((entry) => entry.kind === "run-divider")).toBe(
       true,
     );
+  });
+
+  it("maps a missing native session to a startup-not-ready source error", async () => {
+    const source = createReadSessionEntryPageOverlaySource({
+      describe: (childId) =>
+        okAsync({
+          childId,
+          threadId: childId,
+          status: "live" as const,
+          runs: [{ run: 1, action: "start" as const }],
+          branchIds: ["main"],
+          descendantChildIds: [],
+        }),
+      readSessionEntryPage: (childId) =>
+        errAsync({ type: "SessionMissing" as const, ref: childId }),
+    });
+    const page = await source.loadNewest("native-missing", 10);
+    expect(page.isErr()).toBe(true);
+    expect(page._unsafeUnwrapErr()).toEqual({
+      type: "SourceStartupNotReady",
+      operation: "loadNewest",
+    });
+  });
+
+  it.each([
+    [
+      "SessionPermissionError",
+      { type: "SessionPermissionError", kind: "file" },
+    ],
+    [
+      "SessionRootViolation",
+      { type: "SessionRootViolation", reason: "path-escape" },
+    ],
+    [
+      "SessionCorrupt/missing-header",
+      {
+        type: "SessionCorrupt",
+        ref: "native-hard",
+        reason: "missing-header",
+      },
+    ],
+    [
+      "SessionCorrupt/parent-session-mismatch",
+      {
+        type: "SessionCorrupt",
+        ref: "native-hard",
+        reason: "parent-session-mismatch",
+      },
+    ],
+    [
+      "SessionCorrupt/unreadable",
+      { type: "SessionCorrupt", ref: "native-hard", reason: "unreadable" },
+    ],
+  ] as const)("maps native %s to a fail-closed corrupt source error", async (_label, nativeError) => {
+    const source = createReadSessionEntryPageOverlaySource({
+      describe: (childId) =>
+        okAsync({
+          childId,
+          threadId: childId,
+          status: "live" as const,
+          runs: [{ run: 1, action: "start" as const }],
+          branchIds: ["main"],
+          descendantChildIds: [],
+        }),
+      readSessionEntryPage: () =>
+        errAsync<PiNativeSessionEntryPage, PiNativeSessionError>(nativeError),
+    });
+    const page = await source.loadNewest("native-hard", 10);
+    expect(page.isErr()).toBe(true);
+    expect(page._unsafeUnwrapErr()).toEqual({
+      type: "SourceCorrupt",
+      operation: "loadNewest",
+    });
   });
 
   it("pages >10k native source with bounded metrics and no full materialization", async () => {

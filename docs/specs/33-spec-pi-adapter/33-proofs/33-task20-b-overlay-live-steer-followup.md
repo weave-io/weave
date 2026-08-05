@@ -376,16 +376,32 @@ editor from whoever owns it (`pi-vim`). That path never mounts the native
 
 Fix:
 
-- When `loadNewest` fails for a child with `status === "live"`, open an empty
-  native live-tail page (`entries: []`, `liveTail: true`) and fill from the
-  live event stream.
-- Settled, orphaned, and unknown children keep the fail-closed
+The source layer now distinguishes a transient startup gap from a real
+failure. `SourceStartupNotReady` is emitted only when the child's persisted
+thread record, session reference, or native session file does not exist yet
+(native `SessionMissing`, or thread sources not yet wired for the
+generation). Permission errors, root violations, malformed or missing
+headers, parent-session mismatch, and every other corruption still map to
+`SourceCorrupt`.
+
+- When `loadNewest` fails with `SourceStartupNotReady` for a child with
+  `status === "live"`, open an empty native live-tail page (`entries: []`,
+  `liveTail: true`) and fill from the live event stream.
+- Every other live failure (`SourceCorrupt`, `SourceUnavailable`,
+  `SourceInvalidCursor`, `ChildNotFound`) keeps the fail-closed
   `source-failed` fallback.
+- Settled, orphaned, and unknown children keep the fail-closed fallback even
+  for `SourceStartupNotReady`.
 
 Unit coverage:
 
-- Controller: live unreadable initial source → empty page + later live event
-  renders; settled unreadable source → `fallback-required`.
+- Source: native `SessionMissing` → `SourceStartupNotReady`; permission,
+  root violation, missing header, parent-session mismatch, and unreadable →
+  `SourceCorrupt`.
+- Controller: live + startup-not-ready → empty page + later live event
+  renders; live + each hard source error → `fallback-required`; non-live +
+  startup-not-ready → `fallback-required`; settled unreadable source →
+  `fallback-required`.
 - Extension: real `weave_delegate` dispatch, registered Alt+1, native overlay
   mount while pi-vim retains primary editor ownership.
 

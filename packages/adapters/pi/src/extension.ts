@@ -4468,10 +4468,13 @@ export function createPiExtension(
                   sessions === undefined ||
                   typeof sessions.readSessionEntryPage !== "function"
                 ) {
+                  // Thread sources are not wired yet for this generation, so
+                  // no persisted native page can exist. This is the same
+                  // transient startup gap as a missing session file, not a
+                  // corrupt source.
                   return errAsync({
-                    type: "SessionCorrupt" as const,
+                    type: "SessionMissing" as const,
                     ref: id,
-                    reason: "unreadable" as const,
                   } satisfies PiNativeSessionError);
                 }
                 return ctrl

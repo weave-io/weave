@@ -191,6 +191,7 @@ export class ChildOverlayController {
         (error): ChildOverlayError =>
           error.type === "SourceUnavailable" ||
           error.type === "SourceCorrupt" ||
+          error.type === "SourceStartupNotReady" ||
           error.type === "ChildNotFound"
             ? this.fallbackFromError(childId, "describe-failed", error)
             : error,
@@ -219,24 +220,29 @@ export class ChildOverlayController {
         }
         return this.source
           .loadNewest(child.childId, this.pageSize)
-          .mapErr(
-            (error): ChildOverlayError =>
-              this.fallbackFromError(child.childId, "source-failed", error),
-          )
           .orElse((error): ResultAsync<ChildOverlayPage, ChildOverlayError> => {
-            // A live child usually has no readable historical page yet: the
-            // run is still in flight, so its thread record, session ref, and
-            // native session file may all arrive after the overlay is asked
-            // to open. Demanding a historical page here made every real
-            // active child fall back to the custom-editor inspection, which
-            // borrows the primary editor from whoever owns it (for example
-            // `pi-vim`). A live child therefore opens on an empty live-tail
-            // window and fills from its live event stream instead.
+            // A live child often has no persisted history yet: the run is
+            // still in flight, so its thread record, session ref, and native
+            // session file may all arrive after the overlay is asked to open.
+            // Demanding a historical page here made every real active child
+            // fall back to the custom-editor inspection, which borrows the
+            // primary editor from whoever owns it (for example `pi-vim`). A
+            // live child therefore opens on an empty live-tail window and
+            // fills from its live event stream instead.
             //
-            // Settled, orphaned, and unknown children keep the fail-closed
-            // fallback: for them an unreadable source is a real gap, not a
-            // race with their own startup.
-            if (child.status !== "live") return errAsync(error);
+            // The recovery is deliberately narrow. Only the transient
+            // `SourceStartupNotReady` gap qualifies; permission errors, root
+            // violations, malformed headers, parent mismatch, and corruption
+            // stay fail-closed even for a live child, and every failure for a
+            // settled, orphaned, or unknown child stays fail-closed too.
+            if (
+              child.status !== "live" ||
+              error.type !== "SourceStartupNotReady"
+            ) {
+              return errAsync(
+                this.fallbackFromError(child.childId, "source-failed", error),
+              );
+            }
             return okAsync<ChildOverlayPage, ChildOverlayError>({
               entries: [],
               olderCursor: undefined,
