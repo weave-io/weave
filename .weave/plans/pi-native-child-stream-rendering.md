@@ -314,7 +314,7 @@ Dirty-worktree rule: many files are dirty for unrelated in-flight work (OpenCode
     - `rg "child-history|ChildHistory|index\.v1" packages` returns no source hits (docs may mention it historically in ADR 0013 only).
     - `bun test packages/adapters/pi` and `bun run typecheck` pass; `bun run validate-config` passes with the settings removed.
 
-- [ ] 17. Cross-cutting test suites (concurrency, isolation, performance, regression)
+- [x] 17. Cross-cutting test suites (concurrency, isolation, performance, regression)
   - **What**: Add the acceptance-mandated suites not covered per-module: concurrent/nested/out-of-order delegation isolation and capacity; parent reload/recovery; retry/continue across reload; tombstone/missing/corrupt/cache-degrade flows; response-contract regression matrix; no child session appears in `/resume` (default session tree isolation); transition cancellation ordering; bounded-window performance for large transcripts; minimum (0.81.1 contract) and current-host capability diagnostics; health-only read-only behavior; pi-vim coexistence.
   - **Files**: `packages/adapters/pi/src/__tests__/child-isolation.test.ts` (new), `child-recovery.test.ts` (rewrite), `child-performance.test.ts` (new), extensions to `extension.test.ts`, `fakes/fake-pi-host.ts`, `fakes/fake-child-process-port.ts`.
   - **Depends on**: Tasks 4–16.

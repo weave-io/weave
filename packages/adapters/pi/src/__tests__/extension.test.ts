@@ -502,6 +502,13 @@ async function completeDirectChild(
   process: FakeSpawnedProcess,
 ): Promise<void> {
   const send = await authenticateDirectChild(processPort, process);
+  process.emitLine({
+    type: "message_end",
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: "GENERATION_LIFECYCLE_PAUSED" }],
+    },
+  });
   await send("settled", {
     outcome: "completed",
     completionCandidate: serializeCompletionCandidate({
@@ -511,7 +518,10 @@ async function completeDirectChild(
       message: "GENERATION_LIFECYCLE_PAUSED",
     }),
     interventionCount: 0,
-    assistantOutput: "",
+    // The child response contract accepts only parser-approved terminal
+    // assistant prose. The structured completion candidate is metadata and
+    // cannot stand in for that response.
+    assistantOutput: "GENERATION_LIFECYCLE_PAUSED",
   });
 }
 

@@ -50,6 +50,53 @@ export function ephemeralFakeSessionManager(): PiSessionManagerPort {
   };
 }
 
+export interface FakeNativeSessionEntry {
+  readonly type: string;
+  readonly data: unknown;
+}
+
+/**
+ * A persistent native-session stand-in shared by successive fake Pi hosts.
+ * `reload()` returns a new view over the same durable map, so tests can prove
+ * reload/recovery behaviour without touching the host filesystem.
+ */
+export class PersistentFakeNativeSessionStore {
+  private readonly sessions = new Map<string, FakeNativeSessionEntry[]>();
+  private readonly tombstones = new Set<string>();
+
+  create(sessionId: string): void {
+    if (!this.sessions.has(sessionId)) this.sessions.set(sessionId, []);
+  }
+
+  append(sessionId: string, entry: FakeNativeSessionEntry): boolean {
+    const entries = this.sessions.get(sessionId);
+    if (entries === undefined || this.tombstones.has(sessionId)) return false;
+    entries.push(entry);
+    return true;
+  }
+
+  read(sessionId: string): readonly FakeNativeSessionEntry[] | undefined {
+    const entries = this.sessions.get(sessionId);
+    return entries === undefined ? undefined : entries.map((entry) => ({ ...entry }));
+  }
+
+  tombstone(sessionId: string): void {
+    this.tombstones.add(sessionId);
+  }
+
+  isTombstoned(sessionId: string): boolean {
+    return this.tombstones.has(sessionId);
+  }
+
+  reload(): PersistentFakeNativeSessionStore {
+    const next = new PersistentFakeNativeSessionStore();
+    for (const [sessionId, entries] of this.sessions)
+      next.sessions.set(sessionId, entries.map((entry) => ({ ...entry })));
+    for (const sessionId of this.tombstones) next.tombstones.add(sessionId);
+    return next;
+  }
+}
+
 /**
  * Pi's own documented default keys for the bindings custom components read.
  * Mirrors `TUI_KEYBINDINGS` so a fake host behaves like an unconfigured one.

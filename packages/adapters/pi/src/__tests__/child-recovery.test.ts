@@ -30,6 +30,21 @@ const record = (
   ...overrides,
 });
 
+class Deferred<T> {
+  readonly promise: Promise<T>;
+  private resolvePromise!: (value: T) => void;
+
+  constructor() {
+    this.promise = new Promise<T>((resolve) => {
+      this.resolvePromise = resolve;
+    });
+  }
+
+  resolve(value: T): void {
+    this.resolvePromise(value);
+  }
+}
+
 function coordinator(
   choice: string | undefined,
   spawned: Array<unknown>,
@@ -622,10 +637,7 @@ describe("PiChildRecoveryCoordinator", () => {
 
   test("does not inject queued recovery into a replacement session", async () => {
     let current = true;
-    let resolveInjectionCalled!: () => void;
-    const injectionCalled = new Promise<void>((resolve) => {
-      resolveInjectionCalled = resolve;
-    });
+    const injectionCalled = new Deferred<void>();
     const sentMessages: string[] = [];
     const recovery = new PiChildRecoveryCoordinator({
       history: {
@@ -642,7 +654,7 @@ describe("PiChildRecoveryCoordinator", () => {
       spawn: () =>
         okAsync({ finalOutput: "replacement-safe", interventionCount: 1 }),
       injectParentContext: (content) => {
-        resolveInjectionCalled();
+        injectionCalled.resolve(undefined);
         return ResultAsync.fromPromise(
           Promise.resolve().then(() => {
             if (!current) throw new Error("stale generation");
@@ -653,7 +665,7 @@ describe("PiChildRecoveryCoordinator", () => {
       },
     }).recoverByChildId("child-1");
 
-    await injectionCalled;
+    await injectionCalled.promise;
     current = false;
     const result = await recovery;
 

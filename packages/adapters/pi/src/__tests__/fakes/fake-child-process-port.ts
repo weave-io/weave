@@ -39,6 +39,10 @@ export class FakeSpawnedProcess implements PiSpawnedChildProcess {
     });
   }
 
+  get writeCount(): number {
+    return this.writtenChunks.length;
+  }
+
   get writtenText(): string {
     const total = this.writtenChunks.reduce(
       (sum, chunk) => sum + chunk.byteLength,
@@ -97,6 +101,11 @@ export class FakeSpawnedProcess implements PiSpawnedChildProcess {
   /** Simulates the child writing one raw JSON value as a complete LF-terminated line. */
   emitLine(json: unknown): void {
     this.emit(new TextEncoder().encode(`${JSON.stringify(json)}\n`));
+  }
+
+  /** Emits a deterministic native-session window in arrival order. */
+  emitLines(values: readonly unknown[]): void {
+    for (const value of values) this.emitLine(value);
   }
 
   emit(bytes: Uint8Array): void {
