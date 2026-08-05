@@ -32,7 +32,9 @@ export interface PiSessionManagerInstance {
   getHeader(): {
     readonly id: string;
     readonly cwd: string;
+    readonly type?: string;
     readonly version?: number;
+    readonly timestamp?: string;
     readonly parentSession?: string;
   } | null;
   getEntries(): readonly unknown[];
@@ -65,10 +67,17 @@ export function adaptPiSessionManagerHandle(
     getHeader: (): PiNativeSessionHeader | null => {
       const header = manager.getHeader();
       if (header === null) return null;
+      // Every Pi-generated header field is preserved verbatim. Task 20 needs
+      // `type`/`timestamp` to persist the host's own header bytes without
+      // inventing any of them.
       return {
         id: header.id,
         cwd: header.cwd,
+        ...(header.type === undefined ? {} : { type: header.type }),
         ...(header.version === undefined ? {} : { version: header.version }),
+        ...(header.timestamp === undefined
+          ? {}
+          : { timestamp: header.timestamp }),
         ...(header.parentSession === undefined
           ? {}
           : { parentSession: header.parentSession }),

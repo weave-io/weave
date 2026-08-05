@@ -135,7 +135,22 @@ export type PiNativeSessionError =
     }
   | {
       readonly type: "SessionCreateFailed";
-      readonly reason: "host-threw" | "not-persisted" | "io";
+      readonly reason:
+        | "host-threw"
+        | "not-persisted"
+        | "io"
+        /**
+         * The generated session path was already occupied by bytes this store
+         * did not write, or a concurrent writer landed on it between the
+         * absence check and the exclusive create. Never repaired in place.
+         */
+        | "collision"
+        /**
+         * The host produced a header this store refuses to persist verbatim -
+         * a wrong entry type/version, or a missing host-generated timestamp.
+         * The store never fabricates header fields to work around this.
+         */
+        | "header-unusable";
     }
   | { readonly type: "SessionConfirmationRequired"; readonly ref: string }
   | {
@@ -167,6 +182,11 @@ export type PiNativeSessionFsError =
   | { readonly type: "invalid-range" }
   | { readonly type: "permissive-mode"; readonly kind: "directory" | "file" }
   | { readonly type: "wrong-kind"; readonly kind: "directory" | "file" }
+  /**
+   * Exclusive create lost a race: the leaf appeared between the absence check
+   * and `O_EXCL`, or already occupied the name. Callers map this to collision.
+   */
+  | { readonly type: "already-exists" }
   | { readonly type: "io" };
 
 /**
@@ -241,6 +261,16 @@ export interface PiNativeSessionDirectory {
     length: number,
   ): ResultAsync<PiNativeSessionFileRange | undefined, PiNativeSessionFsError>;
   appendFile(
+    name: string,
+    bytes: Uint8Array,
+    mode: number,
+  ): ResultAsync<void, PiNativeSessionFsError>;
+  /**
+   * Exclusive no-follow create of a new 0600 leaf. Fails with
+   * {@link PiNativeSessionFsError} `already-exists` when the name is taken;
+   * never truncates or appends to an existing leaf.
+   */
+  createExclusiveFile(
     name: string,
     bytes: Uint8Array,
     mode: number,
@@ -437,7 +467,11 @@ export function verifyNativeSessionRef(
 export interface PiNativeSessionHeader {
   readonly id: string;
   readonly cwd: string;
+  /** Native entry discriminator; Pi always emits `"session"`. */
+  readonly type?: string;
   readonly version?: number;
+  /** Host-generated ISO-8601 creation timestamp. Never synthesized here. */
+  readonly timestamp?: string;
   readonly parentSession?: string;
 }
 
@@ -1255,6 +1289,56 @@ function headerCorruption(
   return undefined;
 }
 
+/** Pi `Date.prototype.toISOString()` shape; never synthesized by this store. */
+const HOST_ISO_TIMESTAMP =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
+function isHostIsoTimestamp(value: string): boolean {
+  if (!HOST_ISO_TIMESTAMP.test(value)) return false;
+  return !Number.isNaN(Date.parse(value));
+}
+
+/**
+ * Headers this store will persist verbatim before spawn. Missing host fields
+ * are never invented; wrong type/version/timestamp fail as `header-unusable`.
+ */
+function persistableHostHeader(
+  header: PiNativeSessionHeader | null,
+  input: CreateNativeChildSessionInput,
+): Result<PiNativeSessionHeader, "header-unusable"> {
+  if (
+    header === null ||
+    header.type !== "session" ||
+    header.version !== 3 ||
+    typeof header.id !== "string" ||
+    header.id.length === 0 ||
+    typeof header.cwd !== "string" ||
+    header.cwd.length === 0 ||
+    typeof header.timestamp !== "string" ||
+    !isHostIsoTimestamp(header.timestamp) ||
+    header.parentSession !== input.parentSession
+  ) {
+    return err("header-unusable");
+  }
+  return ok(header);
+}
+
+function headersMatchIdentity(
+  left: PiNativeSessionHeader,
+  right: PiNativeSessionHeader,
+): boolean {
+  return (
+    left.type === right.type &&
+    left.version === right.version &&
+    left.id === right.id &&
+    left.cwd === right.cwd &&
+    left.timestamp === right.timestamp &&
+    left.parentSession === right.parentSession
+  );
+}
+
+const headerLineEncoder = new TextEncoder();
+
 /**
  * Storage-only manager for native Pi child sessions. Every fallible method
  * returns `ResultAsync` with {@link PiNativeSessionError}; nothing throws and
@@ -1282,8 +1366,12 @@ export class PiNativeSessionStore {
    * Creates and persists a child session *before* the child runs. The child
    * directory is created 0700 inside the verified root, the session is created
    * through the host's own `SessionManager.create(cwd, isolatedDir, options)`
-   * with an immutable `parentSession` link, and a session that did not persist
-   * is an error - never an ephemeral fallback.
+   * with an immutable `parentSession` link, and when the host has not yet
+   * flushed the generated path (Pi defers until an assistant entry), this
+   * store exclusive-creates the host header line at 0600, reopens it, and
+   * revalidates identity. A session that cannot be persisted fails closed -
+   * never an ephemeral fallback, and never by fabricating header fields or
+   * writing an assistant entry.
    */
   createChildSession(
     input: CreateNativeChildSessionInput,
@@ -1297,8 +1385,13 @@ export class PiNativeSessionStore {
     const component = safeNativeSessionComponent(input.childId);
     if (component.isErr()) return errAsync(component.error);
     const childDir = join(this.root, component.value);
-    return withDirectory(this.fs, childDir, true, component.value, () =>
-      this.createInDirectory(input, component.value, childDir),
+    return withDirectory(
+      this.fs,
+      childDir,
+      true,
+      component.value,
+      (directory) =>
+        this.createInDirectory(input, component.value, childDir, directory),
     );
   }
 
@@ -1306,6 +1399,7 @@ export class PiNativeSessionStore {
     input: CreateNativeChildSessionInput,
     component: string,
     childDir: string,
+    directory: PiNativeSessionDirectory,
   ): ResultAsync<PiNativeSessionRecord, PiNativeSessionError> {
     return Result.fromThrowable(
       () =>
@@ -1324,59 +1418,134 @@ export class PiNativeSessionStore {
           reason: "not-persisted",
         });
       }
-      const header = handle.getHeader();
-      const corruption = headerCorruption(header, input.parentSession);
-      if (corruption !== undefined || header === null) {
-        return errAsync<PiNativeSessionRecord, PiNativeSessionError>({
-          type: "SessionCorrupt",
-          ref: component,
-          reason: corruption ?? "missing-header",
-        });
-      }
-      const fileName = file.slice(file.lastIndexOf("/") + 1);
-      const refResult = verifyNativeSessionRef(`${component}/${fileName}`);
-      if (refResult.isErr()) return errAsync(refResult.error);
-      const ref = refResult.value;
       if (!file.startsWith(`${childDir}/`)) {
         return errAsync<PiNativeSessionRecord, PiNativeSessionError>({
           type: "SessionRootViolation",
           reason: "path-escape",
         });
       }
-      return this.verifyFileMode(childDir, fileName, ref).map(() => ({
-        childId: input.childId,
-        sessionId: header.id,
+      const generated = persistableHostHeader(handle.getHeader(), input);
+      if (generated.isErr()) {
+        return errAsync<PiNativeSessionRecord, PiNativeSessionError>({
+          type: "SessionCreateFailed",
+          reason: "header-unusable",
+        });
+      }
+      const hostHeader = generated.value;
+      const fileName = file.slice(file.lastIndexOf("/") + 1);
+      const refResult = verifyNativeSessionRef(`${component}/${fileName}`);
+      if (refResult.isErr()) return errAsync(refResult.error);
+      const ref = refResult.value;
+      return this.persistGeneratedHeader(
+        directory,
+        fileName,
         ref,
-        path: file,
-        parentSession: input.parentSession,
-        cwd: header.cwd,
-      }));
+        hostHeader,
+      ).andThen(() =>
+        this.reopenCreatedSession(file, childDir, ref, input, hostHeader),
+      );
     });
   }
 
   /**
-   * Proves the created session file exists with 0600 through the no-follow
-   * port. A permissive or symlinked file fails closed instead of being
-   * repaired in place.
+   * When the host-generated path has no contained bytes yet (Pi defers the
+   * first flush until an assistant entry), exclusive-create the header line
+   * through the held no-follow directory. Occupied names fail as collision.
    */
-  private verifyFileMode(
-    childDir: string,
+  private persistGeneratedHeader(
+    directory: PiNativeSessionDirectory,
     fileName: string,
     ref: string,
+    hostHeader: PiNativeSessionHeader,
   ): ResultAsync<void, PiNativeSessionError> {
-    return withDirectory(this.fs, childDir, false, ref, (directory) =>
-      directory
-        .readFile(fileName)
-        .mapErr((error) => fromFsError(error, ref))
-        .andThen((bytes) =>
-          bytes === undefined
-            ? errAsync<void, PiNativeSessionError>({
-                type: "SessionCreateFailed",
-                reason: "not-persisted",
-              })
-            : okAsync<void, PiNativeSessionError>(undefined),
-        ),
-    );
+    return directory
+      .readFile(fileName)
+      .mapErr((error) => this.mapCreateFsError(error, ref))
+      .andThen((bytes) => {
+        if (bytes !== undefined) {
+          return errAsync<void, PiNativeSessionError>({
+            type: "SessionCreateFailed",
+            reason: "collision",
+          });
+        }
+        const line = headerLineEncoder.encode(
+          `${JSON.stringify(hostHeader)}\n`,
+        );
+        return directory
+          .createExclusiveFile(fileName, line, PI_NATIVE_SESSION_LAYOUT.fileMode)
+          .mapErr((error) => this.mapCreateFsError(error, ref))
+          .andThen(() =>
+            directory
+              .statFile(fileName)
+              .mapErr((error) => this.mapCreateFsError(error, ref))
+              .andThen((stat) =>
+                stat === undefined
+                  ? errAsync<void, PiNativeSessionError>({
+                      type: "SessionCreateFailed",
+                      reason: "not-persisted",
+                    })
+                  : okAsync<void, PiNativeSessionError>(undefined),
+              ),
+          );
+      });
+  }
+
+  private mapCreateFsError(
+    error: PiNativeSessionFsError,
+    ref: string,
+  ): PiNativeSessionError {
+    if (error.type === "already-exists") {
+      return { type: "SessionCreateFailed", reason: "collision" };
+    }
+    if (error.type === "io" || error.type === "unavailable") {
+      return { type: "SessionCreateFailed", reason: "io" };
+    }
+    if (error.type === "permissive-mode") {
+      return { type: "SessionPermissionError", kind: error.kind };
+    }
+    return fromFsError(error, ref);
+  }
+
+  /**
+   * Reopens the exclusively persisted header through the host and proves the
+   * on-disk identity still matches the generated header before spawn.
+   */
+  private reopenCreatedSession(
+    path: string,
+    childDir: string,
+    ref: string,
+    input: CreateNativeChildSessionInput,
+    hostHeader: PiNativeSessionHeader,
+  ): ResultAsync<PiNativeSessionRecord, PiNativeSessionError> {
+    return Result.fromThrowable(
+      () => this.host.open(path, childDir),
+      (): PiNativeSessionError => ({
+        type: "SessionCreateFailed",
+        reason: "host-threw",
+      }),
+    )().asyncAndThen((handle) => {
+      if (!handle.isPersisted()) {
+        return errAsync<PiNativeSessionRecord, PiNativeSessionError>({
+          type: "SessionCreateFailed",
+          reason: "not-persisted",
+        });
+      }
+      const reopened = persistableHostHeader(handle.getHeader(), input);
+      if (reopened.isErr() || !headersMatchIdentity(hostHeader, reopened.value)) {
+        return errAsync<PiNativeSessionRecord, PiNativeSessionError>({
+          type: "SessionCreateFailed",
+          reason: "header-unusable",
+        });
+      }
+      return okAsync<PiNativeSessionRecord, PiNativeSessionError>({
+        childId: input.childId,
+        sessionId: reopened.value.id,
+        ref,
+        path,
+        parentSession: input.parentSession,
+        cwd: reopened.value.cwd,
+      });
+    });
   }
 
   /**

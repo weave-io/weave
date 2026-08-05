@@ -98,6 +98,7 @@ function isFsError(value: unknown): value is PiNativeSessionFsError {
     type === "invalid-range" ||
     type === "permissive-mode" ||
     type === "wrong-kind" ||
+    type === "already-exists" ||
     type === "io"
   );
 }
@@ -842,6 +843,79 @@ class BunNativeSessionDirectory implements PiNativeSessionDirectory {
     );
   }
 
+  createExclusiveFile(
+    name: string,
+    bytes: Uint8Array,
+    mode: number,
+  ): ResultAsync<void, PiNativeSessionFsError> {
+    const checked = this.name(name);
+    if (checked.isErr()) return errAsync(checked.error);
+    if (mode !== 0o600) {
+      return errAsync({ type: "permissive-mode", kind: "file" });
+    }
+    return this.identity().andThen(() =>
+      this.createExclusiveValidated(checked.value, bytes),
+    );
+  }
+
+  private createExclusiveValidated(
+    name: string,
+    bytes: Uint8Array,
+  ): ResultAsync<void, PiNativeSessionFsError> {
+    return ResultAsync.fromThrowable(async () => {
+      const fd = this.libc.openat(
+        this.fd,
+        cstr(name),
+        this.libc.flags.O_RDWR |
+          this.libc.flags.O_CREAT |
+          this.libc.flags.O_EXCL |
+          this.libc.flags.O_NOFOLLOW |
+          this.libc.flags.O_CLOEXEC,
+        0o600,
+      );
+      if (fd < 0) {
+        if (this.libc.errno() === ERRNO_EEXIST) {
+          throw { type: "already-exists" };
+        }
+        throw { type: "symlink-rejected" };
+      }
+
+      let closed = false;
+      try {
+        if (this.libc.fchmod(fd, 0o600) !== 0) {
+          throw { type: "io" };
+        }
+        const fileIdentity = await unwrapResult(statFd(fd, "file", 0o600));
+        const checkedFile = this.checkFileIdentity(name, fileIdentity);
+        if (checkedFile.isErr()) throw checkedFile.error;
+        let offset = 0;
+        while (offset < bytes.length) {
+          const count = this.libc.write(
+            fd,
+            bytes.subarray(offset),
+            bytes.length - offset,
+          );
+          if (count <= 0) throw { type: "io" };
+          offset += count;
+        }
+        if (this.libc.fsync(fd) !== 0) throw { type: "io" };
+        if (this.libc.close(fd) !== 0) throw { type: "io" };
+        closed = true;
+
+        await unwrapResult(this.identity());
+        const current = await unwrapResult(this.targetIdentity(name));
+        if (current === undefined || !sameIdentity(fileIdentity, current)) {
+          throw { type: "identity-changed" };
+        }
+      } finally {
+        if (!closed) {
+          this.libc.close(fd);
+          this.libc.unlinkat(this.fd, cstr(name), 0);
+        }
+      }
+    }, mapThrownError)().map(() => undefined);
+  }
+
   deleteFile(name: string): ResultAsync<void, PiNativeSessionFsError> {
     const checked = this.name(name);
     if (checked.isErr()) return errAsync(checked.error);
@@ -924,6 +998,10 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
   private readonly directories = new Map<string, MemoryDirectoryData>();
   private readonly replaced = new Set<string>();
   private readonly midReadTruncates = new Map<string, number>();
+  private readonly exclusiveCreateFailures = new Map<
+    string,
+    PiNativeSessionFsError
+  >();
 
   private midReadKey(path: string, name: string): string {
     return `${path}\0${name}`;
@@ -1133,6 +1211,47 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
           return this.identity().map<void>(() => undefined);
         });
       },
+      createExclusiveFile(name, bytes, mode) {
+        if (!safeName(name)) return fsErrAsync<void>({ type: "unsafe-path" });
+        if (mode !== 0o600) {
+          return fsErrAsync<void>({
+            type: "permissive-mode",
+            kind: "file",
+          });
+        }
+        return this.identity().andThen(() => {
+          const key = fs.midReadKey(path, name);
+          const forced = fs.exclusiveCreateFailures.get(key);
+          if (forced !== undefined) {
+            fs.exclusiveCreateFailures.delete(key);
+            return fsErrAsync<void>(forced);
+          }
+          const current = fs.directories.get(path);
+          if (current === undefined) {
+            return fsErrAsync<void>({
+              type: "unavailable",
+              operation: "write",
+            });
+          }
+          const existing = current.files.get(name);
+          if (existing !== undefined) {
+            if (existing.symlink) {
+              return fsErrAsync<void>({ type: "symlink-rejected" });
+            }
+            return fsErrAsync<void>({ type: "already-exists" });
+          }
+          const created: MemoryFileData = {
+            identity: nextMemoryIdentity(0o600),
+            mode: 0o600,
+            symlink: false,
+            kind: "file",
+            bytes: new Uint8Array(bytes),
+          };
+          current.files.set(name, created);
+          fileBounds.set(name, created.identity);
+          return this.identity().map<void>(() => undefined);
+        });
+      },
       deleteFile(name) {
         if (!safeName(name)) return fsErrAsync<void>({ type: "unsafe-path" });
         return this.identity().andThen(() => {
@@ -1216,6 +1335,18 @@ export class MemoryPiNativeSessionFs implements PiNativeSessionFsPort {
       file.mode = 0o644;
       file.identity = { ...file.identity, mode: 0o644 };
     }
+  }
+
+  /**
+   * Forces the next {@link PiNativeSessionDirectory.createExclusiveFile} for
+   * `path`/`name` to fail with the given error (default `already-exists`).
+   */
+  simulateExclusiveCreateFailure(
+    path: string,
+    name: string,
+    error: PiNativeSessionFsError = { type: "already-exists" },
+  ): void {
+    this.exclusiveCreateFailures.set(this.midReadKey(path, name), error);
   }
 
   simulateDirectoryFile(path: string, name: string): void {

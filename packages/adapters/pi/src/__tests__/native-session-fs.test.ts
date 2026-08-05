@@ -157,6 +157,23 @@ describe("MemoryPiNativeSessionFs — statFile / readFileRange", () => {
     ).toEqual({ type: "unsafe-path" });
     directory.close();
   });
+
+  test("createExclusiveFile writes once and rejects collisions and bad modes", async () => {
+    const fs = new MemoryPiNativeSessionFs();
+    const directory = (await fs.openDirectory(DIR, true))._unsafeUnwrap();
+    (
+      await directory.createExclusiveFile(FILE, PAYLOAD, 0o600)
+    )._unsafeUnwrap();
+    expect(
+      (await directory.createExclusiveFile(FILE, PAYLOAD, 0o600))._unsafeUnwrapErr(),
+    ).toEqual({ type: "already-exists" });
+    expect(
+      (
+        await directory.createExclusiveFile("other.jsonl", PAYLOAD, 0o644)
+      )._unsafeUnwrapErr(),
+    ).toEqual({ type: "permissive-mode", kind: "file" });
+    directory.close();
+  });
 });
 
 describe("BunPiNativeSessionFs — real no-follow range I/O", () => {

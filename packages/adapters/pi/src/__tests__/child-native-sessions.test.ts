@@ -22,6 +22,7 @@ import {
 
 const ROOT = "/data/weave/adapters/pi/sessions";
 const PARENT = "parent-session-1";
+const TIMESTAMP = "2026-01-01T00:00:00.000Z";
 
 const RECORD: PiNativeSessionRecord = {
   childId: "child-1",
@@ -31,6 +32,20 @@ const RECORD: PiNativeSessionRecord = {
   parentSession: PARENT,
   cwd: "/repo",
 };
+
+function defaultHeader(
+  cwd: string,
+  parentSession: string | undefined = PARENT,
+): PiNativeSessionHeader {
+  return {
+    type: "session",
+    id: "native-session-1",
+    cwd,
+    version: 3,
+    timestamp: TIMESTAMP,
+    parentSession,
+  };
+}
 
 interface FakeHostOptions {
   readonly fileName?: string;
@@ -62,13 +77,14 @@ function handleFor(
       return entries;
     },
     isPersisted: () => persisted,
+    getLeafId: () => null,
+    appendCustomEntry: () => "leaf-custom-1",
   };
 }
 
 /**
- * Scripted stand-in for Pi's `SessionManager`. It never starts a real harness
- * and never touches a real filesystem; the session file itself is seeded into
- * the in-memory no-follow filesystem by {@link seedSessionFile}.
+ * Scripted stand-in for Pi's `SessionManager`. It never starts a real harness.
+ * The store exclusive-creates the header when the generated path is absent.
  */
 class FakeHost implements PiNativeSessionHostPort {
   readonly created: {
@@ -77,6 +93,7 @@ class FakeHost implements PiNativeSessionHostPort {
     options: { parentSession?: string; id?: string };
   }[] = [];
   readonly opened: { path: string; dir: string }[] = [];
+  private openCount = 0;
 
   constructor(private readonly options: FakeHostOptions = {}) {}
 
@@ -94,12 +111,7 @@ class FakeHost implements PiNativeSessionHostPort {
       (persisted ? `${sessionDir}/${fileName}` : undefined);
     const header =
       this.options.header === undefined
-        ? {
-            id: "native-session-1",
-            cwd,
-            version: 3,
-            parentSession: options.parentSession,
-          }
+        ? defaultHeader(cwd, options.parentSession)
         : this.options.header;
     return handleFor(
       file,
@@ -113,16 +125,16 @@ class FakeHost implements PiNativeSessionHostPort {
 
   open(path: string, sessionDir: string): PiNativeSessionHandle {
     this.opened.push({ path, dir: sessionDir });
-    if (this.options.openThrows) throw new Error("unreadable");
+    this.openCount += 1;
+    // Create-path reopen must succeed; openSession overrides apply afterward.
+    const afterCreate = this.openCount > 1;
+    if (afterCreate && this.options.openThrows) {
+      throw new Error("unreadable");
+    }
     const header =
-      this.options.headerForOpen === undefined
-        ? {
-            id: "native-session-1",
-            cwd: "/repo",
-            version: 3,
-            parentSession: PARENT,
-          }
-        : this.options.headerForOpen;
+      afterCreate && Object.hasOwn(this.options, "headerForOpen")
+        ? (this.options.headerForOpen as PiNativeSessionHeader | null)
+        : defaultHeader("/repo", PARENT);
     return handleFor(
       path,
       sessionDir,
@@ -134,11 +146,12 @@ class FakeHost implements PiNativeSessionHostPort {
   }
 }
 
-/** Writes a 0600 session file where the real `SessionManager` would write it. */
+/** Pre-occupies a session leaf so create can assert collision. */
 async function seedSessionFile(
   fs: MemoryPiNativeSessionFs,
   directoryPath: string,
   fileName = "session.jsonl",
+  body = '{"type":"session"}\n',
 ): Promise<void> {
   const directory = (
     await fs.openDirectory(directoryPath, true)
@@ -146,7 +159,7 @@ async function seedSessionFile(
   (
     await directory.appendFile(
       fileName,
-      new TextEncoder().encode('{"type":"session"}\n'),
+      new TextEncoder().encode(body),
       0o600,
     )
   )._unsafeUnwrap();
@@ -170,18 +183,13 @@ function harness(options: FakeHostOptions = {}): Harness {
     // Structural stand-in until Task 16 removes the legacy JSONL FS module.
     fs: fs as unknown as PiNativeSessionFsPort,
     host,
-    now: () => new Date("2026-01-01T00:00:00.000Z"),
+    now: () => new Date(TIMESTAMP),
   });
   return {
     store,
     fs,
     host,
     async create(childId = "child-1") {
-      await seedSessionFile(
-        fs,
-        `${ROOT}/${childId}`,
-        options.fileName ?? "session.jsonl",
-      );
       return store.createChildSession({
         childId,
         parentSession: PARENT,
@@ -335,10 +343,9 @@ describe("containment", () => {
   });
 
   test("keeps an unsafe child id inside the root", async () => {
-    const { store, fs, host } = harness();
+    const { store, host } = harness();
     const component =
       safeNativeSessionComponent("../../escape")._unsafeUnwrap();
-    await seedSessionFile(fs, `${ROOT}/${component}`);
     const record = (
       await store.createChildSession({
         childId: "../../escape",
@@ -352,18 +359,26 @@ describe("containment", () => {
 });
 
 describe("createChildSession", () => {
-  test("persists under the isolated root with an immutable parentSession", async () => {
-    const { host, create } = harness();
+  test("persists the host header under the isolated root before reopen", async () => {
+    const { host, fs, create } = harness();
     const record = (await create())._unsafeUnwrap();
 
     expect(host.created).toHaveLength(1);
     expect(host.created[0]?.dir).toBe(`${ROOT}/child-1`);
     expect(host.created[0]?.cwd).toBe("/repo");
     expect(host.created[0]?.options.parentSession).toBe(PARENT);
+    expect(host.opened).toEqual([
+      { path: `${ROOT}/child-1/session.jsonl`, dir: `${ROOT}/child-1` },
+    ]);
     expect(record.ref).toBe("child-1/session.jsonl");
     expect(record.path).toBe(`${ROOT}/child-1/session.jsonl`);
     expect(record.parentSession).toBe(PARENT);
     expect(record.sessionId).toBe("native-session-1");
+
+    const expected = `${JSON.stringify(defaultHeader("/repo"))}\n`;
+    const bytes = fs.files(`${ROOT}/child-1`).get("session.jsonl");
+    expect(new TextDecoder().decode(bytes)).toBe(expected);
+    expect(expected).not.toContain('"role":"assistant"');
   });
 
   test("fails when the host did not persist the session", async () => {
@@ -374,17 +389,15 @@ describe("createChildSession", () => {
     });
   });
 
-  test("fails when the created file is absent from storage", async () => {
-    const { store } = harness();
+  test("exclusive-creates when the generated path is absent", async () => {
+    const { store, fs } = harness();
     const result = await store.createChildSession({
       childId: "child-1",
       parentSession: PARENT,
       cwd: "/repo",
     });
-    expect(result._unsafeUnwrapErr()).toEqual({
-      type: "SessionCreateFailed",
-      reason: "not-persisted",
-    });
+    expect(result.isOk()).toBe(true);
+    expect(fs.files(`${ROOT}/child-1`).has("session.jsonl")).toBe(true);
   });
 
   test("fails when the host throws", async () => {
@@ -395,31 +408,148 @@ describe("createChildSession", () => {
     });
   });
 
-  test("rejects a header without a parentSession link", async () => {
+  test("rejects a header without a parentSession link as unusable", async () => {
     const { create } = harness({
-      header: { id: "native-session-1", cwd: "/repo", version: 3 },
+      header: {
+        type: "session",
+        id: "native-session-1",
+        cwd: "/repo",
+        version: 3,
+        timestamp: TIMESTAMP,
+      },
     });
     expect((await create())._unsafeUnwrapErr()).toEqual({
-      type: "SessionCorrupt",
-      ref: "child-1",
-      reason: "parent-session-mismatch",
+      type: "SessionCreateFailed",
+      reason: "header-unusable",
     });
   });
 
-  test("rejects a non-v3 session header", async () => {
+  test("rejects a non-v3 session header as unusable", async () => {
     const { create } = harness({
       header: {
+        type: "session",
         id: "native-session-1",
         cwd: "/repo",
         version: 2,
+        timestamp: TIMESTAMP,
         parentSession: PARENT,
       },
     });
     expect((await create())._unsafeUnwrapErr()).toEqual({
-      type: "SessionCorrupt",
-      ref: "child-1",
-      reason: "unsupported-version",
+      type: "SessionCreateFailed",
+      reason: "header-unusable",
     });
+  });
+
+  test("rejects a missing host timestamp as unusable", async () => {
+    const { create } = harness({
+      header: {
+        type: "session",
+        id: "native-session-1",
+        cwd: "/repo",
+        version: 3,
+        parentSession: PARENT,
+      },
+    });
+    expect((await create())._unsafeUnwrapErr()).toEqual({
+      type: "SessionCreateFailed",
+      reason: "header-unusable",
+    });
+  });
+
+  test("rejects collision when the generated path is already occupied", async () => {
+    const { store, fs } = harness();
+    await seedSessionFile(fs, `${ROOT}/child-1`);
+    const result = await store.createChildSession({
+      childId: "child-1",
+      parentSession: PARENT,
+      cwd: "/repo",
+    });
+    expect(result._unsafeUnwrapErr()).toEqual({
+      type: "SessionCreateFailed",
+      reason: "collision",
+    });
+  });
+
+  test("rejects an exclusive-create race as collision", async () => {
+    const { store, fs } = harness();
+    (await fs.openDirectory(`${ROOT}/child-1`, true))._unsafeUnwrap().close();
+    fs.simulateExclusiveCreateFailure(
+      `${ROOT}/child-1`,
+      "session.jsonl",
+      { type: "already-exists" },
+    );
+    const result = await store.createChildSession({
+      childId: "child-1",
+      parentSession: PARENT,
+      cwd: "/repo",
+    });
+    expect(result._unsafeUnwrapErr()).toEqual({
+      type: "SessionCreateFailed",
+      reason: "collision",
+    });
+  });
+
+  test("rejects exclusive-create write failure as io", async () => {
+    const { store, fs } = harness();
+    (await fs.openDirectory(`${ROOT}/child-1`, true))._unsafeUnwrap().close();
+    fs.simulateExclusiveCreateFailure(`${ROOT}/child-1`, "session.jsonl", {
+      type: "io",
+    });
+    const result = await store.createChildSession({
+      childId: "child-1",
+      parentSession: PARENT,
+      cwd: "/repo",
+    });
+    expect(result._unsafeUnwrapErr()).toEqual({
+      type: "SessionCreateFailed",
+      reason: "io",
+    });
+  });
+
+  test("rejects a symlinked generated leaf", async () => {
+    const { store, fs } = harness();
+    (await fs.openDirectory(`${ROOT}/child-1`, true))._unsafeUnwrap().close();
+    fs.simulateFileSymlink(`${ROOT}/child-1`, "session.jsonl");
+    const result = await store.createChildSession({
+      childId: "child-1",
+      parentSession: PARENT,
+      cwd: "/repo",
+    });
+    expect(result._unsafeUnwrapErr()).toEqual({
+      type: "SessionRootViolation",
+      reason: "symlink-rejected",
+    });
+  });
+
+  test("rejects exclusive-create permissive-mode failures", async () => {
+    const { store, fs } = harness();
+    (await fs.openDirectory(`${ROOT}/child-1`, true))._unsafeUnwrap().close();
+    fs.simulateExclusiveCreateFailure(`${ROOT}/child-1`, "session.jsonl", {
+      type: "permissive-mode",
+      kind: "file",
+    });
+    const result = await store.createChildSession({
+      childId: "child-1",
+      parentSession: PARENT,
+      cwd: "/repo",
+    });
+    expect(result._unsafeUnwrapErr()).toEqual({
+      type: "SessionPermissionError",
+      kind: "file",
+    });
+  });
+
+  test("does not fabricate assistant entries when persisting the header", async () => {
+    const { fs, create } = harness();
+    (await create())._unsafeUnwrap();
+    const text = new TextDecoder().decode(
+      fs.files(`${ROOT}/child-1`).get("session.jsonl"),
+    );
+    const lines = text.trimEnd().split("\n");
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0] ?? "{}")).toEqual(defaultHeader("/repo"));
+    expect(text).not.toMatch(/assistant/);
   });
 
   test("rejects an empty parent session before touching storage", async () => {
@@ -487,6 +617,7 @@ describe("openSession", () => {
     expect(record.sessionId).toBe("native-session-1");
     expect(record.parentSession).toBe(PARENT);
     expect(host.opened).toEqual([
+      { path: `${ROOT}/child-1/session.jsonl`, dir: `${ROOT}/child-1` },
       { path: `${ROOT}/child-1/session.jsonl`, dir: `${ROOT}/child-1` },
     ]);
   });
@@ -572,7 +703,8 @@ describe("readSessionEntries", () => {
     expect(result.record.sessionId).toBe("native-session-1");
     expect(result.entries).toEqual(liveEntries);
     expect(result.entries).toBe(liveEntries);
-    expect(host.opened).toHaveLength(1);
+    // createChildSession reopens once; readSessionEntries opens again.
+    expect(host.opened).toHaveLength(2);
     expect(fs.files(`${ROOT}/child-1`)).toEqual(filesBefore);
     expect(fs.files(ROOT).has("transcript-copy.jsonl")).toBe(false);
   });

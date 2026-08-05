@@ -68,9 +68,11 @@ class MemoryHost implements PiNativeSessionHostPort {
       `${sessionDir}/session.jsonl`,
       sessionDir,
       {
+        type: "session",
         id: options.id ?? "native-session-1",
         cwd,
         version: 3,
+        timestamp: "2026-01-01T00:00:00.000Z",
         parentSession: options.parentSession,
       },
       true,
@@ -82,9 +84,11 @@ class MemoryHost implements PiNativeSessionHostPort {
       path,
       sessionDir,
       {
+        type: "session",
         id: "native-session-1",
         cwd: WORKSPACE,
         version: 3,
+        timestamp: "2026-01-01T00:00:00.000Z",
         parentSession: PARENT,
       },
       true,
@@ -96,28 +100,10 @@ function memoryFs(): PiNativeSessionFsPort {
   return new MemoryPiNativeSessionFs();
 }
 
-async function seedSessionFile(
-  fs: MemoryPiNativeSessionFs,
-  directoryPath: string,
-): Promise<void> {
-  const directory = (
-    await fs.openDirectory(directoryPath, true)
-  )._unsafeUnwrap();
-  (
-    await directory.appendFile(
-      "session.jsonl",
-      new TextEncoder().encode('{"type":"session"}\n'),
-      0o600,
-    )
-  )._unsafeUnwrap();
-  directory.close();
-}
-
 describe("openPiThreadSources", () => {
   test("builds native store, parent ref store, and active cache from memory seams", async () => {
     const parent = new FakeParentEntries();
     const historyFs = new MemoryPiNativeSessionFs();
-    await seedSessionFile(historyFs, `${ROOT}/child-1`);
     const result = await openPiThreadSources({
       workspaceKey: WORKSPACE,
       parentSessionId: PARENT,
@@ -146,6 +132,7 @@ describe("openPiThreadSources", () => {
     if (created.isErr()) throw new Error("expected create ok");
     expect(created.value.parentSession).toBe(PARENT);
     expect(created.value.ref).toBe("child-1/session.jsonl");
+    expect(historyFs.files(`${ROOT}/child-1`).has("session.jsonl")).toBe(true);
   });
 
   test("degraded cache stays non-blocking and still returns refs + sessions", async () => {
