@@ -93,7 +93,7 @@ This section records the code change made in response to the failure above. It c
 
 | Field | Value |
 | --- | --- |
-| Remediation commit | `fix(pi): canonicalize trusted xdg data roots` — `REMEDIATION_COMMIT_SHA` |
+| Remediation commit | `fix(pi): canonicalize trusted xdg data roots` — `8b9dc84215d85d87bac4644f24cc3e0dc02260cd` |
 | Blocker addressed | `thread-session-create-failed` caused by the symlinked `$HOME/.local` component |
 | Scope | Base-path canonicalization only; no change to no-follow behaviour below the adapter root |
 
