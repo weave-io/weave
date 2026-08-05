@@ -341,7 +341,7 @@ Dirty-worktree rule: many files are dirty for unrelated in-flight work (OpenCode
   - **Acceptance**:
     - `bun run docs:check-links` passes; every new command, key, error code, and CLI subcommand named in this plan appears in docs.
 
-- [ ] 19. Weft gate
+- [x] 19. Weft gate
   - **What**: Run the repository's Weft review gate over the completed change set and resolve every finding.
   - **Depends on**: Tasks 1–18.
   - **Implementation outline**:
