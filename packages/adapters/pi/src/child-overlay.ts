@@ -42,7 +42,9 @@ import {
 import {
   createPiChildTranscriptRenderer,
   createPiChildTranscriptState,
+  MAX_TRANSCRIPT_INPUT_BYTES,
   reducePiChildTranscript,
+  type PiChildTranscriptAction,
   type PiChildTranscriptEntry,
   type PiChildTranscriptState,
   type PiTranscriptComponentFactory,
@@ -82,6 +84,10 @@ export const CHILD_OVERLAY_BOUNDS = Object.freeze({
   maxRuns: 64,
   /** Ceiling on nested hierarchy depth reported in descriptors. */
   maxHierarchyDepth: 16,
+  /** Ceiling on replay steps retained per overlay entry. */
+  maxEntryReplaySteps: 16,
+  /** Ceiling on content blocks read from one native message entry. */
+  maxEntryContentBlocks: 32,
 });
 
 const SCROLL_KEYS = {
@@ -166,6 +172,8 @@ export type ChildOverlayChild = z.infer<typeof ChildOverlayChildSchema>;
 export type ChildOverlayEntryKind =
   | "prompt"
   | "user"
+  | "steering"
+  | "follow-up"
   | "assistant"
   | "thinking"
   | "tool"
@@ -176,6 +184,23 @@ export type ChildOverlayEntryKind =
   | "status"
   | "unknown";
 
+/**
+ * One bounded transcript-reducer step retained beside an overlay entry.
+ *
+ * Replay steps are the fidelity contract between paged history and the live
+ * reducer: every projected fact carries the schema-validated child events (or
+ * input actions) that reproduce it, so {@link transcriptFromOverlayEntries}
+ * rebuilds the same ordered transcript the live pipeline would have produced.
+ * Steps never carry raw host payloads, image bytes, or filesystem paths.
+ */
+export type ChildOverlayReplayStep =
+  | {
+      readonly kind: "input";
+      readonly input: "task" | "steering" | "follow_up";
+      readonly text: string;
+    }
+  | { readonly kind: "event"; readonly event: PiChildSessionEvent };
+
 export interface ChildOverlayEntry {
   readonly id: string;
   readonly sequence: number;
@@ -185,6 +210,13 @@ export interface ChildOverlayEntry {
   readonly runNumber?: number;
   readonly branchId?: string;
   readonly expanded: boolean;
+  /**
+   * Bounded reducer steps that reproduce this fact. `undefined` means the
+   * entry predates strict mapping and falls back to a kind heuristic; an empty
+   * array means the fact is intentionally transcript-neutral (a streaming
+   * delta already covered by its terminal message).
+   */
+  readonly replay?: readonly ChildOverlayReplayStep[];
 }
 
 export interface ChildOverlayPage {
@@ -367,9 +399,8 @@ function messageText(message: unknown): {
   readonly role: string | undefined;
   readonly text: string;
 } {
-  if (typeof message !== "object" || message === null || Array.isArray(message))
-    return { role: undefined, text: "" };
-  const record = message as Record<string, unknown>;
+  const record = recordOf(message);
+  if (record === undefined) return { role: undefined, text: "" };
   const role = typeof record.role === "string" ? record.role : undefined;
   const content = record.content;
   if (typeof content === "string") return { role, text: boundText(content) };
@@ -380,13 +411,248 @@ function messageText(message: unknown): {
       text += block;
       continue;
     }
-    if (typeof block !== "object" || block === null || Array.isArray(block))
-      continue;
-    const b = block as Record<string, unknown>;
+    const b = recordOf(block);
+    if (b === undefined) continue;
     if (typeof b.text === "string") text += b.text;
   }
   return { role, text: boundText(text) };
 }
+
+// ---------------------------------------------------------------------------
+// Strict native content-block mapping
+// ---------------------------------------------------------------------------
+
+function recordOf(value: unknown): Record<string, unknown> | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    return undefined;
+  return value as Record<string, unknown>;
+}
+
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function boundLabel(value: string): string {
+  return value.slice(0, CHILD_OVERLAY_BOUNDS.maxLabelLength);
+}
+
+/** Bounded normalized tool-result content: text and image presence only. */
+interface NativeResultBlock {
+  readonly type: string;
+  readonly text?: string;
+  readonly mimeType?: string;
+}
+
+interface NativeToolCallBlock {
+  readonly toolCallId: string;
+  readonly toolName: string;
+  readonly arguments: unknown;
+}
+
+interface NativeToolResultBlock {
+  readonly toolCallId: string;
+  readonly isError: boolean;
+  readonly content: readonly NativeResultBlock[];
+  readonly text: string;
+}
+
+interface NativeMessageParts {
+  readonly role: string | undefined;
+  readonly text: string;
+  readonly thinking: readonly string[];
+  readonly toolCalls: readonly NativeToolCallBlock[];
+  readonly toolResults: readonly NativeToolResultBlock[];
+  readonly images: readonly (string | undefined)[];
+}
+
+function imageMimeType(block: Record<string, unknown>): string | undefined {
+  const source = recordOf(block.source);
+  const mime =
+    nonEmptyString(block.mimeType) ??
+    nonEmptyString(block.mediaType) ??
+    nonEmptyString(source?.mimeType) ??
+    nonEmptyString(source?.media_type);
+  return mime === undefined ? undefined : boundLabel(mime);
+}
+
+/**
+ * Normalizes one tool result payload into bounded text/image blocks.
+ *
+ * Image bytes are deliberately dropped: the overlay never retains transcript
+ * bytes, so an image result is preserved as a typed placeholder with its MIME
+ * type. Text is bounded by {@link boundText}.
+ */
+function toolResultContent(value: unknown): {
+  readonly content: readonly NativeResultBlock[];
+  readonly text: string;
+} {
+  if (typeof value === "string") {
+    const text = boundText(value);
+    return { content: [{ type: "text", text }], text };
+  }
+  const record = recordOf(value);
+  if (record !== undefined && Array.isArray(record.content))
+    return toolResultContent(record.content);
+  if (record !== undefined) {
+    const text = boundText(nonEmptyString(record.text) ?? "");
+    return {
+      content: text.length > 0 ? [{ type: "text", text }] : [],
+      text,
+    };
+  }
+  if (!Array.isArray(value)) return { content: [], text: "" };
+  const content: NativeResultBlock[] = [];
+  let text = "";
+  for (const item of value.slice(0, CHILD_OVERLAY_BOUNDS.maxEntryContentBlocks)) {
+    if (typeof item === "string") {
+      text += item;
+      content.push({ type: "text", text: boundText(item) });
+      continue;
+    }
+    const block = recordOf(item);
+    if (block === undefined) continue;
+    const type = nonEmptyString(block.type) ?? "text";
+    if (type === "image") {
+      content.push({ type: "image", mimeType: imageMimeType(block) });
+      continue;
+    }
+    const blockText = nonEmptyString(block.text);
+    if (blockText === undefined) {
+      content.push({ type: boundLabel(type) });
+      continue;
+    }
+    text += blockText;
+    content.push({ type: "text", text: boundText(blockText) });
+  }
+  return { content, text: boundText(text) };
+}
+
+/**
+ * Splits one native message into the bounded fact families the transcript
+ * reducer understands: assistant text, reasoning, tool calls, tool results
+ * (text / error / image) and standalone images. Nothing is flattened into an
+ * opaque `unknown` fact and no raw host payload is retained.
+ */
+function nativeMessageParts(message: unknown): NativeMessageParts {
+  const record = recordOf(message);
+  const role = nonEmptyString(record?.role);
+  const content = record?.content;
+  if (typeof content === "string") {
+    return {
+      role,
+      text: boundText(content),
+      thinking: [],
+      toolCalls: [],
+      toolResults: [],
+      images: [],
+    };
+  }
+  const thinking: string[] = [];
+  const toolCalls: NativeToolCallBlock[] = [];
+  const toolResults: NativeToolResultBlock[] = [];
+  const images: (string | undefined)[] = [];
+  let text = "";
+  const blocks = Array.isArray(content)
+    ? content.slice(0, CHILD_OVERLAY_BOUNDS.maxEntryContentBlocks)
+    : [];
+  for (const item of blocks) {
+    if (typeof item === "string") {
+      text += item;
+      continue;
+    }
+    const block = recordOf(item);
+    if (block === undefined) continue;
+    const type = nonEmptyString(block.type) ?? "";
+    if (type === "thinking" || type === "reasoning") {
+      const value =
+        nonEmptyString(block.thinking) ?? nonEmptyString(block.text);
+      if (value !== undefined) thinking.push(boundText(value));
+      continue;
+    }
+    if (type === "toolCall" || type === "tool_use" || type === "tool_call") {
+      const rawId =
+        nonEmptyString(block.id) ??
+        nonEmptyString(block.toolCallId) ??
+        `tool-${toolCalls.length}`;
+      toolCalls.push({
+        toolCallId: safeEntryId(rawId, `tool-${toolCalls.length}`),
+        toolName: boundLabel(
+          nonEmptyString(block.name) ?? nonEmptyString(block.toolName) ?? "tool",
+        ),
+        arguments: block.arguments ?? block.input ?? block.args,
+      });
+      continue;
+    }
+    if (type === "toolResult" || type === "tool_result") {
+      const rawId =
+        nonEmptyString(block.toolCallId) ??
+        nonEmptyString(block.toolUseId) ??
+        nonEmptyString(block.tool_use_id) ??
+        nonEmptyString(block.id) ??
+        `tool-${toolResults.length}`;
+      const normalized = toolResultContent(
+        block.content ?? block.output ?? block.result,
+      );
+      toolResults.push({
+        toolCallId: safeEntryId(rawId, `tool-${toolResults.length}`),
+        isError: block.isError === true || block.is_error === true,
+        content: normalized.content,
+        text: normalized.text,
+      });
+      continue;
+    }
+    if (type === "image") {
+      images.push(imageMimeType(block));
+      continue;
+    }
+    const blockText = nonEmptyString(block.text);
+    if (blockText !== undefined) text += blockText;
+  }
+  return {
+    role,
+    text: boundText(text),
+    thinking,
+    toolCalls,
+    toolResults,
+    images,
+  };
+}
+
+/** Validates a synthesized child event through the shared bounded schema. */
+function replayEvent(candidate: unknown): ChildOverlayReplayStep | undefined {
+  const parsed = parsePiChildSessionEvent(candidate);
+  if (!parsed.success) return undefined;
+  return { kind: "event", event: parsed.data };
+}
+
+function pushReplayEvent(
+  steps: ChildOverlayReplayStep[],
+  candidate: unknown,
+): void {
+  if (steps.length >= CHILD_OVERLAY_BOUNDS.maxEntryReplaySteps) return;
+  const step = replayEvent(candidate);
+  if (step !== undefined) steps.push(step);
+}
+
+/**
+ * Concatenates replay steps for an entry replaced in place (a tool call that
+ * later gains partial results and a terminal result, or a message that ends).
+ * Bounded by keeping the opening step and the most recent steps.
+ */
+function mergeReplaySteps(
+  existing: readonly ChildOverlayReplayStep[] | undefined,
+  incoming: readonly ChildOverlayReplayStep[] | undefined,
+): readonly ChildOverlayReplayStep[] | undefined {
+  if (existing === undefined) return incoming;
+  if (incoming === undefined) return existing;
+  const merged = [...existing, ...incoming];
+  const cap = CHILD_OVERLAY_BOUNDS.maxEntryReplaySteps;
+  if (merged.length <= cap) return merged;
+  const first = merged[0];
+  const tail = merged.slice(merged.length - (cap - 1));
+  return first === undefined ? tail : [first, ...tail];
+}
+
 
 function safeEntryId(value: string, fallback: string): string {
   const parsed = OpaqueIdSchema.safeParse(value);
@@ -405,32 +671,19 @@ export function mapNativeSessionEntryToOverlay(
 ): Result<ChildOverlayEntry | undefined, never> {
   const message = NativeMessageSchema.safeParse(entry);
   if (message.success) {
-    const { role, text } = messageText(message.data.message);
     const id = safeEntryId(message.data.id, `entry-${sequence}`);
-    if (role === "user") {
-      return ok({
-        id,
-        sequence,
-        kind: sequence === 0 ? "prompt" : "user",
-        text,
-        expanded: false,
-      });
-    }
-    if (role === "assistant") {
-      return ok({
-        id,
-        sequence,
-        kind: "assistant",
-        text,
-        expanded: false,
-      });
-    }
+    const parts = nativeMessageParts(message.data.message);
+    if (parts.role === "assistant")
+      return ok(assistantEntryFromParts(id, sequence, parts));
+    if (parts.role === "user")
+      return ok(userEntryFromParts(id, sequence, parts));
     return ok({
       id,
       sequence,
       kind: "unknown",
-      text: role ? `message:${role}` : "message",
+      text: parts.role ? `message:${parts.role}` : "message",
       expanded: false,
+      replay: [],
     });
   }
 
@@ -448,26 +701,49 @@ export function mapNativeSessionEntryToOverlay(
         ? (data.data.run ?? data.data.runNumber)
         : undefined;
       const action = data.success ? data.data.action : undefined;
+      const text = boundText(`run ${runNumber ?? "?"} · ${action ?? "start"}`);
+      const dividerSteps: ChildOverlayReplayStep[] = [];
+      pushReplayEvent(dividerSteps, {
+        type: "retry",
+        attempt: runNumber,
+        reason: text,
+      });
       return ok({
         id,
         sequence,
         kind: "run-divider",
-        text: boundText(
-          `run ${runNumber ?? "?"} · ${action ?? "start"}`,
-        ),
+        text,
         runNumber,
         expanded: false,
+        replay: dividerSteps,
       });
     }
     if (customType === "weave.child.thread") {
       return ok(undefined);
     }
+    const inputKind = customInputKind(customType);
+    if (inputKind !== undefined) {
+      const data = recordOf(custom.data.data);
+      const text = boundText(nonEmptyString(data?.text) ?? "");
+      return ok({
+        id,
+        sequence,
+        kind: inputKind === "steering" ? "steering" : "follow-up",
+        text,
+        expanded: false,
+        replay: [{ kind: "input", input: inputKind, text }],
+      });
+    }
+    const statusText = boundText(customType || "custom");
+    const customSteps: ChildOverlayReplayStep[] = [];
+    pushReplayEvent(customSteps, { type: "status", status: statusText });
     return ok({
       id,
       sequence,
       kind: "status",
-      text: boundText(customType || "custom"),
+      text: statusText,
       expanded: false,
+      replay: customSteps,
     });
   }
 
@@ -481,15 +757,139 @@ export function mapNativeSessionEntryToOverlay(
     if (type === "thinking_level_change" || type === "model_change") {
       return ok(undefined);
     }
+    const unknownSteps: ChildOverlayReplayStep[] = [];
+    pushReplayEvent(unknownSteps, {
+      type: "unknown",
+      originalType: boundLabel(type),
+    });
     return ok({
       id,
       sequence,
       kind: "unknown",
       text: boundText(type),
       expanded: false,
+      replay: unknownSteps,
     });
   }
   return ok(undefined);
+}
+
+function customInputKind(
+  customType: string,
+): "steering" | "follow_up" | undefined {
+  if (customType.endsWith("steering")) return "steering";
+  if (customType.endsWith("follow-up") || customType.endsWith("follow_up"))
+    return "follow_up";
+  return undefined;
+}
+
+/**
+ * Projects one assistant message: reasoning blocks, tool calls and the message
+ * body each keep their own reducer step, so a rebuilt page renders the same
+ * native components (thinking block, tool block, markdown) as the live view.
+ */
+function assistantEntryFromParts(
+  id: string,
+  sequence: number,
+  parts: NativeMessageParts,
+): ChildOverlayEntry {
+  const steps: ChildOverlayReplayStep[] = [];
+  pushReplayEvent(steps, {
+    type: "message_start",
+    message: { id, role: "assistant" },
+  });
+  for (const thinking of parts.thinking)
+    pushReplayEvent(steps, { type: "thinking", text: thinking });
+  for (const call of parts.toolCalls)
+    pushReplayEvent(steps, {
+      type: "tool_call",
+      toolCallId: call.toolCallId,
+      toolName: call.toolName,
+      arguments: call.arguments,
+    });
+  pushReplayEvent(steps, {
+    type: "message_end",
+    message: { id, role: "assistant", content: parts.text },
+  });
+  for (const mimeType of parts.images)
+    pushReplayEvent(steps, {
+      type: "image",
+      ...(mimeType === undefined ? {} : { mimeType }),
+    });
+
+  const hasText = parts.text.trim().length > 0;
+  let kind: ChildOverlayEntryKind = "assistant";
+  if (!hasText && parts.toolCalls.length > 0) kind = "tool";
+  else if (!hasText && parts.thinking.length > 0) kind = "thinking";
+  else if (!hasText && parts.images.length > 0) kind = "image";
+  const text = hasText
+    ? parts.text
+    : boundText(
+        [
+          ...parts.toolCalls.map((call) => call.toolName),
+          ...parts.thinking,
+        ].join("\n"),
+      );
+  return { id, sequence, kind, text, expanded: false, replay: steps };
+}
+
+/**
+ * Projects one user message. Tool results, tool errors and images keep typed
+ * reducer steps instead of collapsing into a flat user string, so a historical
+ * page shows the tool block Pi itself would render.
+ */
+function userEntryFromParts(
+  id: string,
+  sequence: number,
+  parts: NativeMessageParts,
+): ChildOverlayEntry {
+  const steps: ChildOverlayReplayStep[] = [];
+  const hasText = parts.text.trim().length > 0;
+  const hasOtherFacts =
+    parts.toolResults.length > 0 || parts.images.length > 0;
+  if (hasText || !hasOtherFacts)
+    steps.push({
+      kind: "input",
+      input: "task",
+      text: parts.text,
+    });
+  for (const result of parts.toolResults) {
+    if (result.isError) {
+      pushReplayEvent(steps, {
+        type: "tool_error",
+        toolCallId: result.toolCallId,
+        error: result.text,
+      });
+      continue;
+    }
+    pushReplayEvent(steps, {
+      type: "tool_result",
+      toolCallId: result.toolCallId,
+      result: { content: result.content, isError: false },
+    });
+  }
+  for (const mimeType of parts.images)
+    pushReplayEvent(steps, {
+      type: "image",
+      ...(mimeType === undefined ? {} : { mimeType }),
+    });
+
+  let kind: ChildOverlayEntryKind = sequence === 0 ? "prompt" : "user";
+  let text = parts.text;
+  if (!hasText && parts.toolResults.length > 0) {
+    kind = parts.toolResults.some((result) => result.isError)
+      ? "error"
+      : "tool";
+    text = boundText(
+      parts.toolResults
+        .map((result) => (result.text.length > 0 ? result.text : "tool result"))
+        .join("\n"),
+    );
+  } else if (!hasText && parts.images.length > 0) {
+    kind = "image";
+    text = "image";
+  }
+  return { id, sequence, kind, text, expanded: false, replay: steps };
 }
 
 /**
@@ -501,51 +901,57 @@ export function transcriptFromOverlayEntries(
 ): PiChildTranscriptState {
   let state = createPiChildTranscriptState();
   for (const entry of entries) {
-    if (entry.kind === "prompt" || entry.kind === "user") {
-      const next = reducePiChildTranscript(state, {
-        kind: "task",
-        text: entry.text.slice(0, 64 * 1024),
-      });
-      if (next.isOk()) state = next.value;
-      continue;
-    }
-    if (entry.kind === "assistant") {
-      const messageId = entry.id;
-      const start = reducePiChildTranscript(state, {
-        kind: "event",
-        event: {
-          type: "message_start",
-          message: { id: messageId, role: "assistant" },
-        },
-      });
-      if (start.isErr()) continue;
-      const end = reducePiChildTranscript(start.value, {
-        kind: "event",
-        event: {
-          type: "message_end",
-          message: {
-            id: messageId,
-            role: "assistant",
-            content: entry.text,
-          },
-        },
-      });
-      if (end.isOk()) state = end.value;
-      continue;
-    }
-    if (entry.kind === "retry" || entry.kind === "run-divider") {
-      const next = reducePiChildTranscript(state, {
-        kind: "event",
-        event: {
-          type: "retry",
-          attempt: entry.runNumber,
-          reason: entry.text,
-        },
-      });
+    const steps = entry.replay ?? legacyReplaySteps(entry);
+    for (const step of steps) {
+      const action: PiChildTranscriptAction =
+        step.kind === "event"
+          ? { kind: "event", event: step.event }
+          : {
+              kind: step.input,
+              text: step.text.slice(0, MAX_TRANSCRIPT_INPUT_BYTES),
+            };
+      const next = reducePiChildTranscript(state, action);
       if (next.isOk()) state = next.value;
     }
   }
   return state;
+}
+
+/**
+ * Reproduces the pre-strict-mapping projection for entries that carry no
+ * replay steps (older persisted windows and hand-built test fixtures).
+ */
+function legacyReplaySteps(
+  entry: ChildOverlayEntry,
+): readonly ChildOverlayReplayStep[] {
+  if (entry.kind === "prompt" || entry.kind === "user")
+    return [{ kind: "input", input: "task", text: entry.text }];
+  if (entry.kind === "steering")
+    return [{ kind: "input", input: "steering", text: entry.text }];
+  if (entry.kind === "follow-up")
+    return [{ kind: "input", input: "follow_up", text: entry.text }];
+  if (entry.kind === "assistant") {
+    const steps: ChildOverlayReplayStep[] = [];
+    pushReplayEvent(steps, {
+      type: "message_start",
+      message: { id: entry.id, role: "assistant" },
+    });
+    pushReplayEvent(steps, {
+      type: "message_end",
+      message: { id: entry.id, role: "assistant", content: entry.text },
+    });
+    return steps;
+  }
+  if (entry.kind === "retry" || entry.kind === "run-divider") {
+    const steps: ChildOverlayReplayStep[] = [];
+    pushReplayEvent(steps, {
+      type: "retry",
+      attempt: entry.runNumber,
+      reason: entry.text,
+    });
+    return steps;
+  }
+  return [];
 }
 
 // ---------------------------------------------------------------------------
@@ -697,12 +1103,19 @@ export function mapNativeSessionEntryPageToOverlay(
   const mapped: ChildOverlayEntry[] = [];
   for (const item of page.entries) {
     if (item.kind === "corrupt") {
+      const corruptSteps: ChildOverlayReplayStep[] = [];
+      pushReplayEvent(corruptSteps, {
+        type: "unknown",
+        originalType: "corrupt",
+        payload: { reason: boundLabel(item.reason) },
+      });
       mapped.push({
         id: safeEntryId(`corrupt-${item.offset}`, `corrupt-${item.offset}`),
         sequence: item.offset,
         kind: "unknown",
         text: boundText(`corrupt:${item.reason}`),
         expanded: false,
+        replay: corruptSteps,
       });
       continue;
     }
@@ -1557,8 +1970,13 @@ export class ChildOverlayController {
   private mergeEntry(state: SavedChildState, entry: ChildOverlayEntry): void {
     const index = state.entries.findIndex((item) => item.id === entry.id);
     if (index >= 0) {
+      const existing = state.entries[index];
       const next = [...state.entries];
-      next[index] = { ...entry, expanded: state.globalExpanded };
+      next[index] = {
+        ...entry,
+        expanded: state.globalExpanded,
+        replay: mergeReplaySteps(existing?.replay, entry.replay),
+      };
       state.entries = next;
       return;
     }
@@ -1768,6 +2186,7 @@ function projectLiveEntry(
   sequence: number,
   expanded: boolean,
 ): ChildOverlayEntry | undefined {
+  const replay: readonly ChildOverlayReplayStep[] = [{ kind: "event", event }];
   switch (event.type) {
     case "message_start":
     case "message_update":
@@ -1781,16 +2200,7 @@ function projectLiveEntry(
           text = boundText(deltaText);
         }
       }
-      const id =
-        event.type === "message_end" &&
-        typeof event.message === "object" &&
-        event.message !== null &&
-        typeof (event.message as { id?: string }).id === "string"
-          ? safeEntryId(
-              (event.message as { id: string }).id,
-              `live-assistant-${sequence}`,
-            )
-          : `live-assistant-${sequence}`;
+      const id = liveAssistantEntryId(event, sequence);
       if (event.type === "message_update" && text.length === 0) return undefined;
       return {
         id,
@@ -1798,6 +2208,10 @@ function projectLiveEntry(
         kind: "assistant",
         text,
         expanded,
+        // A streaming delta is transcript-neutral on rebuild: its terminal
+        // `message_end` carries the whole message, so replaying the delta too
+        // would append the same text twice.
+        replay: event.type === "message_update" ? [] : replay,
       };
     }
     case "text":
@@ -1808,6 +2222,7 @@ function projectLiveEntry(
         kind: "assistant",
         text: boundText(typeof event.text === "string" ? event.text : ""),
         expanded,
+        replay,
       };
     case "thinking":
       return {
@@ -1816,6 +2231,7 @@ function projectLiveEntry(
         kind: "thinking",
         text: boundText(typeof event.text === "string" ? event.text : ""),
         expanded,
+        replay,
       };
     case "tool_call":
     case "tool_partial_result":
@@ -1833,6 +2249,7 @@ function projectLiveEntry(
           typeof event.toolName === "string" ? event.toolName : event.type,
         ),
         expanded,
+        replay,
       };
     }
     case "retry":
@@ -1846,6 +2263,7 @@ function projectLiveEntry(
         runNumber:
           typeof event.attempt === "number" ? event.attempt : undefined,
         expanded,
+        replay,
       };
     case "image":
       return {
@@ -1854,6 +2272,7 @@ function projectLiveEntry(
         kind: "image",
         text: "image",
         expanded,
+        replay,
       };
     case "status":
       return {
@@ -1864,10 +2283,34 @@ function projectLiveEntry(
           typeof event.status === "string" ? event.status : "status",
         ),
         expanded,
+        replay,
       };
     default:
       return undefined;
   }
+}
+
+/**
+ * Resolves the assistant entry id from the message the event carries so a
+ * `message_start` and its `message_end` project one window entry instead of
+ * two, matching the single assistant entry the transcript reducer keeps.
+ */
+function liveAssistantEntryId(
+  event: PiChildSessionEvent,
+  sequence: number,
+): string {
+  const record = event as unknown as Record<string, unknown>;
+  const message = recordOf(record.message);
+  const delta = recordOf(record.delta);
+  const assistantEvent = recordOf(record.assistantMessageEvent);
+  const id =
+    nonEmptyString(message?.id) ??
+    nonEmptyString(delta?.messageId) ??
+    nonEmptyString(delta?.id) ??
+    nonEmptyString(assistantEvent?.messageId);
+  return id === undefined
+    ? `live-assistant-${sequence}`
+    : safeEntryId(id, `live-assistant-${sequence}`);
 }
 
 export function createChildOverlayController(

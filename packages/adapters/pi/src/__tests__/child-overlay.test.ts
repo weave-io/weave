@@ -21,6 +21,7 @@ import {
   mapNativeSessionEntryToOverlay,
   transcriptFromOverlayEntries,
   type ChildOverlayChild,
+  type ChildOverlayEntry,
   type ChildOverlayFallbackRequired,
   type ChildOverlayMutationPort,
   type ChildOverlayView,
@@ -65,9 +66,91 @@ function runDivider(id: string, run: number, action: "start" | "retry" | "contin
   };
 }
 
+function assistantMessage(
+  id: string,
+  content: readonly unknown[],
+): unknown {
+  return {
+    type: "message",
+    id,
+    parentId: null,
+    timestamp: "2026-01-01T00:00:00.000Z",
+    message: { role: "assistant", content },
+  };
+}
+
+function userMessage(id: string, content: readonly unknown[]): unknown {
+  return {
+    type: "message",
+    id,
+    parentId: null,
+    timestamp: "2026-01-01T00:00:00.000Z",
+    message: { role: "user", content },
+  };
+}
+
+function toolResultMessage(
+  id: string,
+  toolCallId: string,
+  content: readonly unknown[],
+  isError = false,
+): unknown {
+  return userMessage(id, [
+    { type: "toolResult", toolCallId, isError, content },
+  ]);
+}
+
+/**
+ * One native page covering every entry family the overlay must survive:
+ * prompt, assistant text + reasoning + tool calls, a tool result, a tool
+ * error, a standalone image and a run divider.
+ */
+function nativeConversation(): readonly unknown[] {
+  return [
+    message("n0", "user", "inspect the repo"),
+    assistantMessage("n1", [
+      { type: "thinking", thinking: "weighing the options" },
+      { type: "text", text: "reading two files" },
+      {
+        type: "toolCall",
+        id: "call-1",
+        name: "read",
+        arguments: { path: "src/index.ts" },
+      },
+      {
+        type: "toolCall",
+        id: "call-2",
+        name: "bash",
+        arguments: { command: "ls" },
+      },
+    ]),
+    toolResultMessage("n2", "call-1", [
+      { type: "text", text: "file contents here" },
+    ]),
+    toolResultMessage("n3", "call-2", [{ type: "text", text: "boom" }], true),
+    userMessage("n4", [
+      { type: "image", data: "ignored-bytes", mimeType: "image/png" },
+    ]),
+    runDivider("n5", 2, "continue"),
+  ];
+}
+
+function mapNative(
+  native: readonly unknown[],
+): ChildOverlayEntry[] {
+  const mapped: ChildOverlayEntry[] = [];
+  for (let index = 0; index < native.length; index += 1) {
+    const entry = mapNativeSessionEntryToOverlay(
+      native[index],
+      index,
+    )._unsafeUnwrap();
+    if (entry !== undefined) mapped.push(entry);
+  }
+  return mapped;
+}
+
 function entries(count: number, prefix = "e"): MemoryOverlaySourceEntry[] {
-  const result: MemoryOverlaySourceEntry[] = [];
-  for (let i = 0; i < count; i += 1) {
+  const result: MemoryOverlaySourceEntry[] = [];  for (let i = 0; i < count; i += 1) {
     const id = `${prefix}${i}`;
     let role: "user" | "assistant";
     if (i === 0 || i % 2 === 0) {
@@ -177,8 +260,7 @@ function pageMemoryEntries(
 }
 
 describe("mapNativeSessionEntryToOverlay", () => {
-  it("maps user/assistant messages and run dividers without retaining paths", () => {
-    const prompt = mapNativeSessionEntryToOverlay(
+  it("maps user/assistant messages and run dividers without retaining paths", () => {    const prompt = mapNativeSessionEntryToOverlay(
       message("m0", "user", "do the work"),
       0,
     )._unsafeUnwrap();
@@ -210,6 +292,71 @@ describe("mapNativeSessionEntryToOverlay", () => {
     expect(transcript.entries.some((entry) => entry.kind === "assistant")).toBe(
       true,
     );
+  });
+  it("preserves assistant thinking, tool calls, tool results, errors and images", () => {
+    const mapped = mapNative(nativeConversation());
+    const kinds = mapped.map((entry) => entry.kind);
+    // No native fact collapses into an opaque `unknown` overlay fact.
+    expect(kinds).not.toContain("unknown");
+    expect(kinds).toEqual([
+      "prompt",
+      "assistant",
+      "tool",
+      "error",
+      "image",
+      "run-divider",
+    ]);
+    // Tool result text stays searchable rather than being flattened away.
+    expect(mapped[2]?.text).toContain("file contents");
+    expect(mapped[3]?.text).toContain("boom");
+
+    const transcript = transcriptFromOverlayEntries(mapped);
+    const byKind = (kind: string) =>
+      transcript.entries.filter((entry) => entry.kind === kind);
+    expect(byKind("task").length).toBe(1);
+    expect(byKind("assistant").length).toBe(1);
+    expect(byKind("thinking").length).toBe(1);
+    expect(byKind("image").length).toBe(1);
+    expect(transcript.entries.some((entry) => entry.kind === "unknown")).toBe(
+      false,
+    );
+
+    const tools = transcript.entries.filter((entry) => entry.kind === "tool");
+    expect(tools.length).toBe(2);
+    const read = tools.find(
+      (entry) => "toolCallId" in entry && entry.toolCallId === "call-1",
+    );
+    const failing = tools.find(
+      (entry) => "toolCallId" in entry && entry.toolCallId === "call-2",
+    );
+    expect(read && "toolName" in read ? read.toolName : undefined).toBe("read");
+    expect(read && "state" in read ? read.state : undefined).toBe("result");
+    expect(failing && "state" in failing ? failing.state : undefined).toBe(
+      "error",
+    );
+
+    // Ordering matches the native entry order.
+    const order = transcript.entries.map((entry) => entry.kind);
+    expect(order.indexOf("task")).toBeLessThan(order.indexOf("thinking"));
+    expect(order.indexOf("thinking")).toBeLessThan(order.indexOf("tool"));
+  });
+
+  it("reconstructs an image tool result without retaining image bytes", () => {
+    const [entry] = mapNative([
+      toolResultMessage("tr", "call-9", [
+        { type: "image", data: "A".repeat(64), mimeType: "image/png" },
+      ]),
+    ]);
+    expect(entry?.kind).toBe("tool");
+    const serialized = JSON.stringify(entry);
+    expect(serialized).not.toContain("A".repeat(64));
+    expect(serialized).toContain("image/png");
+    const transcript = transcriptFromOverlayEntries(
+      entry === undefined ? [] : [entry],
+    );
+    const tool = transcript.entries.find((item) => item.kind === "tool");
+    expect(tool).toBeDefined();
+    expect(JSON.stringify(tool)).toContain("image");
   });
 });
 
@@ -258,6 +405,170 @@ describe("ChildOverlayController", () => {
       true,
     );
     expect(view.compact.runs.length).toBeGreaterThanOrEqual(0);
+  });
+
+  it("rebuilds a trimmed live window into the same transcript the reducer built", async () => {
+    const source = createMemoryChildOverlaySource([
+      child({
+        childId: "live-fidelity",
+        status: "live",
+        generationId: "gen-1",
+        entries: [],
+      }),
+    ]);
+    const overlay = createChildOverlayController(source, {
+      pageSize: 10,
+      windowCap: 64,
+    });
+    await mustOpen(overlay, "live-fidelity");
+
+    const liveEvents: readonly unknown[] = [
+      { type: "message_start", message: { id: "msg-1", role: "assistant" } },
+      { type: "thinking", text: "considering the plan" },
+      { type: "tool_call", toolCallId: "call-1", toolName: "read" },
+      {
+        type: "tool_result",
+        toolCallId: "call-1",
+        result: { content: [{ type: "text", text: "file contents here" }] },
+      },
+      { type: "tool_call", toolCallId: "call-2", toolName: "bash" },
+      { type: "tool_error", toolCallId: "call-2", error: "boom" },
+      { type: "image", mimeType: "image/png" },
+      {
+        type: "message_end",
+        message: { id: "msg-1", role: "assistant", content: "all done" },
+      },
+    ];
+    let view = overlay.view()._unsafeUnwrap();
+    for (const event of liveEvents) {
+      view = overlay.applyLiveEvent(event)._unsafeUnwrap();
+    }
+
+    const summarize = (
+      transcript: ChildOverlayView["transcript"],
+    ): readonly string[] =>
+      transcript.entries.map((entry) => {
+        if (entry.kind === "tool")
+          return `tool:${entry.toolCallId}:${entry.toolName}:${entry.state}`;
+        if (entry.kind === "assistant")
+          return `assistant:${entry.messageId}:${entry.text}`;
+        if ("text" in entry && typeof entry.text === "string")
+          return `${entry.kind}:${entry.text}`;
+        return entry.kind;
+      });
+
+    const live = summarize(view.transcript);
+    // Live reducer fidelity: every kind survives with its own entry.
+    expect(live).toContain("thinking:considering the plan");
+    expect(live).toContain("tool:call-1:read:result");
+    expect(live).toContain("tool:call-2:bash:error");
+    expect(live).toContain("assistant:msg-1:all done");
+    expect(live.some((item) => item.startsWith("image"))).toBe(true);
+
+    // The window rebuild (what page merges and trims use) must reproduce it.
+    const rebuilt = summarize(transcriptFromOverlayEntries(view.entries));
+    expect(rebuilt).toEqual(live);
+  });
+
+  it("keeps live tool results and thinking after a window trim rebuild", async () => {
+    const source = createMemoryChildOverlaySource([
+      child({
+        childId: "live-trim",
+        status: "live",
+        generationId: "gen-1",
+        entries: [],
+      }),
+    ]);
+    const overlay = createChildOverlayController(source, {
+      pageSize: 4,
+      windowCap: 4,
+    });
+    await mustOpen(overlay, "live-trim");
+    for (const event of [
+      { type: "thinking", text: "first thought" },
+      { type: "tool_call", toolCallId: "call-x", toolName: "grep" },
+      {
+        type: "tool_result",
+        toolCallId: "call-x",
+        result: { content: [{ type: "text", text: "match found" }] },
+      },
+      { type: "thinking", text: "second thought" },
+      { type: "image", mimeType: "image/png" },
+      { type: "text", text: "summary" },
+    ]) {
+      overlay.applyLiveEvent(event)._unsafeUnwrap();
+    }
+    // Force the trim rebuild path by expanding, which re-projects the window.
+    const view = overlay.toggleGlobalExpansion()._unsafeUnwrap();
+    expect(view.entries.length).toBeLessThanOrEqual(4);
+
+    const rebuilt = transcriptFromOverlayEntries(view.entries);
+    const kinds = rebuilt.entries.map((entry) => entry.kind);
+    // Retained window facts keep their kinds instead of degrading to unknown.
+    for (const entry of view.entries) {
+      if (entry.kind === "tool") expect(kinds).toContain("tool");
+      if (entry.kind === "thinking") expect(kinds).toContain("thinking");
+      if (entry.kind === "image") expect(kinds).toContain("image");
+    }
+    expect(kinds).not.toContain("unknown");
+    // Expansion state survives the rebuild for every retained entry.
+    expect(view.transcript.entries.every((entry) => entry.expanded)).toBe(true);
+  });
+
+  it("pages historical native entries without losing kinds or expansion", async () => {
+    const native = nativeConversation();
+    const source = createMemoryChildOverlaySource([
+      child({
+        childId: "hist-native",
+        status: "settled",
+        entries: native.map((payload, index) => ({
+          id: `h${index}`,
+          payload,
+        })),
+      }),
+    ]);
+    const overlay = createChildOverlayController(source, {
+      pageSize: 3,
+      windowCap: 16,
+    });
+    const newest = await mustOpen(overlay, "hist-native");
+    expect(newest.entries.map((entry) => entry.kind)).toEqual([
+      "error",
+      "image",
+      "run-divider",
+    ]);
+
+    const older = (await overlay.loadOlder())._unsafeUnwrap();
+    expect(older.entries.map((entry) => entry.kind)).toEqual([
+      "prompt",
+      "assistant",
+      "tool",
+      "error",
+      "image",
+      "run-divider",
+    ]);
+    const kinds = older.transcript.entries.map((entry) => entry.kind);
+    expect(kinds).toContain("thinking");
+    expect(kinds).toContain("tool");
+    expect(kinds).toContain("image");
+    expect(kinds).not.toContain("unknown");
+    const tools = older.transcript.entries.filter(
+      (entry) => entry.kind === "tool",
+    );
+    expect(tools.length).toBe(2);
+    expect(
+      tools.map((entry) => ("state" in entry ? entry.state : "")).sort(),
+    ).toEqual(["error", "result"]);
+
+    // Expansion applies to the rebuilt transcript, not only the window.
+    const expanded = overlay.toggleGlobalExpansion()._unsafeUnwrap();
+    expect(expanded.entries.every((entry) => entry.expanded)).toBe(true);
+    expect(expanded.transcript.entries.every((entry) => entry.expanded)).toBe(
+      true,
+    );
+    // Searching a tool result still matches its text after paging.
+    const searched = (await overlay.search("file contents"))._unsafeUnwrap();
+    expect(searched.searchMatches.length).toBeGreaterThan(0);
   });
 
   it("paginates older and newer without exceeding the window cap", async () => {

@@ -327,6 +327,7 @@ export type {
   ChildOverlayInputOutcome,
   ChildOverlayMutationPort,
   ChildOverlayPage,
+  ChildOverlayReplayStep,
   ChildOverlayRunDivider,
   ChildOverlaySourceError,
   ChildOverlaySourcePort,
