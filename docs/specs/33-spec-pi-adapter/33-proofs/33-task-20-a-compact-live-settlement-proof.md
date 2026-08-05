@@ -186,3 +186,14 @@ Pane `w23:p8Q` remains open. No other pane was changed.
 ### Additional remediation required
 
 Task 20(a) remains incomplete. The restore check must authenticate the established metadata leaf as an ancestor while allowing only the bounded, expected Pi startup entries that advance the live leaf before task delivery. The implementation must still fail closed on a disconnected or malformed chain. Rebuild and install a new npm-provenance artifact after that fix, then rerun this matrix item in a fresh pane.
+
+### Remediation commit
+
+| Field | Value |
+| --- | --- |
+| Commit | `5b7f81f` |
+| Subject | `fix(pi): authenticate bounded restore startup suffix` |
+
+`PiRpcChild.verifyRestoreContext()` now authenticates the established metadata leaf as an ancestor of the reported active leaf through a bounded `get_entries` cursor page, and accepts only a contiguous suffix of Pi-owned `model_change` and `thinking_level_change` entries with valid unique ids and an unbroken parent chain. Forbidden kinds, a disconnected or branched leaf, a repeated id, a malformed id or parent, and an oversized suffix still fail closed, and task content is still withheld until authentication succeeds.
+
+The failures recorded above stand. They are retained as the observed evidence of the blocker. Rerunning this matrix item in a fresh pane, with a rebuilt npm-provenance artifact, is still required.
