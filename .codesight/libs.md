@@ -75,20 +75,6 @@
   - interface ActivePlanIdentity
   - interface ActivePlanUiError
   - _...7 more_
-- `packages/adapters/pi/src/adapter-cli-commands.ts`
-  - function createPlaceholderDoctorPort: () => PiAdapterDoctorPort
-  - function looksLikeFilesystemPath: (value) => boolean
-  - function stripPathsUnlessDiagnostic: (value, diagnostic) => T
-  - function createPiChildrenCommandPort: (options) => PiAdapterChildrenPort
-  - function createPiAdapterCommandHandlers: (options) => Readonly<Record<string, AdapterCommandHandler>>
-  - function createPiAdapterCommandRegistry: (options) => AdapterCommandRegistry
-  - _...20 more_
-- `packages/adapters/pi/src/adapter-cli-production.ts`
-  - function openProductionPiAdapterCommandPorts: (options) => ResultAsync<
-  - function createProductionPiAdapterCommandRegistry: (options) => ResultAsync<AdapterCommandRegistry, PiProductionAdapterCommandError>
-  - interface PiProductionAdapterCommandPorts
-  - interface CreateProductionPiAdapterCommandPortsOptions
-  - type PiProductionAdapterCommandError
 - `packages/adapters/pi/src/agent-cycle.ts`
   - function normalizeAgentBadgeKey: (agentName) => string
   - function selectAgentBadgeBg: (agentName) => PiUiThemeBgColor
@@ -113,14 +99,6 @@
   - interface PiPreflightContext
   - interface PiCapabilityProbeSource
   - _...3 more_
-- `packages/adapters/pi/src/child-compact-render.ts`
-  - function createChildCompactState: (threadId) => ChildCompactState
-  - function degradedChildCompactRender: (reason) => ChildCompactRenderOutput
-  - function sanitizeChildCompactText: (value) => string
-  - function mapPiChildSessionEventToCompactInput: (event, itemId) => NeverthrowResult<ChildCompactReducerInput | undefined, ChildCompactError>
-  - function reduceChildCompact: (state, input) => NeverthrowResult<ChildCompactState, ChildCompactError>
-  - function reduceChildCompactSafe: (state, input) => ChildCompactState
-  - _...24 more_
 - `packages/adapters/pi/src/child-control-bodies.ts`
   - function toModelIdentityBody: (model) => PiModelIdentityBody
   - function parseControlBody: (kind, body) => void
@@ -137,14 +115,6 @@
   - function generateNonceHex: (random) => string
   - class WebCryptoRandomPort
   - _...5 more_
-- `packages/adapters/pi/src/child-doctor.ts`
-  - function runChildDoctor: (input) => ResultAsync<PiDoctorResult, PiAdapterCommandPortError>
-  - function createPiDoctorPort: (options) => void
-  - function skippedDoctorCheck: (detail) => PiDoctorCheckOutcome
-  - function passedDoctorCheck: (detail) => PiDoctorCheckOutcome
-  - function failedDoctorCheck: (detail, code?) => PiDoctorCheckOutcome
-  - function createSkippedDoctorCheckPorts: (reason) => PiDoctorCheckPorts
-  - _...15 more_
 - `packages/adapters/pi/src/child-env.ts`
   - function resolveCurrentPiExecutablePath: (envPort) => string | undefined
   - function buildDefaultPiChildCommand: (envPort) => readonly string[]
@@ -175,6 +145,27 @@
   - type FramingError
   - const MAX_NATIVE_RECORD_BYTES
   - const MAX_FRAME_RECORD_BYTES
+- `packages/adapters/pi/src/child-history-fs.ts`
+  - function safeParentSessionComponent: (parentSessionId) => Result<string, PiChildHistoryFsError>
+  - function safeChildHistoryComponent: (childId) => Result<string, PiChildHistoryFsError>
+  - function resolvePiChildHistoryRoot: (input, env?, string | undefined>>, homeDir?) => Result<string, PiChildHistoryFsError>
+  - class MemoryPiChildHistoryFs
+  - interface HistoryIdentity
+  - interface PiChildHistoryDirectory
+  - _...2 more_
+- `packages/adapters/pi/src/child-history-schema.ts`
+  - function parsePiChildHistoryIndex: (value) => Result<PiChildHistoryIndexV1, PiChildHistorySchemaError>
+  - type PiChildHistoryKind
+  - type PiChildHistoryStatus
+  - type PiChildHistoryRecord
+  - type PiChildHistoryIndexV1
+  - type PiChildHistoryLayout
+  - _...13 more_
+- `packages/adapters/pi/src/child-history-store.ts`
+  - class PiChildHistoryStore
+  - interface PiChildHistoryStoreOptions
+  - interface PiChildHistoryOpenOptions
+  - type PiChildHistoryStoreError
 - `packages/adapters/pi/src/child-inspection-custom.ts`
   - function createChildInspectionCustomComponent: (tui, theme, keybindings, editor, getInput) => void
   - interface PiCustomTui
@@ -192,22 +183,14 @@
   - interface InspectionWorkflowMeta
   - interface InspectionSummary
   - _...6 more_
-- `packages/adapters/pi/src/child-inspection-runtime.ts`
-  - function createDelegationControllerCell: () => PiDelegationControllerCell
-  - function createThreadSourcesCell: () => PiThreadSourcesCell
-  - function clearThreadSources: (cell) => void
-  - function createChildOverlayCell: () => PiChildOverlayCell
-  - function createChildOverlayKeysCell: (now) => void
-  - function createChildInspectionEditorCell: () => PiChildInspectionEditorCell
-  - _...15 more_
 - `packages/adapters/pi/src/child-inspection-settings.ts`
-  - function childInspectionOverlayKeyOverrides: (settings, "keys">) => ReadonlyMap<PiChildOverlayActionId, readonly PiChildOverlayKey[]>
   - function parsePiChildInspectionSettings: (value) => Result<
   - function resolvePiChildInspectionSettings: (config, "settings">) => Result<
   - function effectivePiChildInspectionSettings: (resolution, choice?) => PiChildInspectionEffectiveSettings
   - function formatPiChildInspectionSettingsIssues: (issues) => string
-  - interface PiChildInspectionSettingsShape
-  - _...8 more_
+  - interface PiChildInspectionSettingsIssue
+  - interface PiChildInspectionEffectiveSettings
+  - _...6 more_
 - `packages/adapters/pi/src/child-inspector.ts`
   - function interceptChildSlashCommand: (input, isParentView) => Result<
   - class PiChildSlots
@@ -216,68 +199,15 @@
   - interface PiInspectorViewState
   - interface PiInspectorView
   - _...7 more_
-- `packages/adapters/pi/src/child-metadata-cache.ts`
-  - function parseChildMetadataRecord: (value) => Result<PiChildMetadataRecord, PiChildMetadataCacheError>
-  - function childMetadataRecordFromRef: (input) => Result<PiChildMetadataRecord, PiChildMetadataCacheError>
-  - function resolvePiChildMetadataCacheRoot: (input) => Result<string, PiChildMetadataCacheError>
-  - function createChildMetadataBypass: (source, reason, now) => void
-  - function openPiChildMetadataCache: (options) => ResultAsync<PiChildMetadataCacheOpenOutcome, never>
-  - function openBunChildMetadataDatabase
-  - _...27 more_
-- `packages/adapters/pi/src/child-native-components.ts`
-  - function renderPiChildCompactComponent: (output, options, theme) => NeverthrowResult<
-  - function createPiNativeTranscriptComponentFactory: (deps) => PiTranscriptComponentFactory
-  - interface PiNativeTranscriptComponentDeps
-  - const CHILD_COMPACT_NATIVE_RENDER_FAILED
-- `packages/adapters/pi/src/child-native-sessions.ts`
-  - function setPiNativeSessionMaxRangeLengthForTests: (length) => void
-  - function resolvePiNativeSessionRoot: (input) => ResultAsync<string, PiNativeSessionError>
-  - function isDisjointFromDefaultSessionTree: (sessionRoot, defaultSessionDir) => boolean
-  - function safeNativeSessionComponent: (childId) => Result<string, PiNativeSessionError>
-  - function verifyNativeSessionRef: (ref) => Result<string, PiNativeSessionError>
-  - function nativeSessionDeletionToken: (ref) => string
-  - _...37 more_
-- `packages/adapters/pi/src/child-overlay-component.ts` — function createChildOverlayCustomComponent: (tui) => void },, interface PiChildOverlayCustomComponent
-- `packages/adapters/pi/src/child-overlay-controller.ts` — function createChildOverlayController: (source, config?, mutations?) => ChildOverlayController, class ChildOverlayController
-- `packages/adapters/pi/src/child-overlay-keys.ts`
-  - function isPiChildOverlayActionId: (value) => value is PiChildOverlayActionId
-  - function childOverlayActionFromId: (id) => PiChildOverlayAction | undefined
-  - function isPiChildOverlayKeySyntax: (value) => value is PiChildOverlayKey
-  - function parseChildOverlayKeyOverrides: (raw, actions) => Result<
-  - function captureChildOverlayKeybindings: (candidate) => PiKeybindingsConfigPort | undefined
-  - function childOverlayConflictPortFromHost: (keybindings) => PiChildOverlayKeybindingConflictPort | undefined
-  - _...41 more_
-- `packages/adapters/pi/src/child-overlay-replay.ts`
-  - function boundText: (value) => string
-  - function messageText: (message) => void
-  - function recordOf: (value) => Record<string, unknown> | undefined
-  - function nonEmptyString: (value) => string | undefined
-  - function boundLabel: (value) => string
-  - function pushReplayEvent: (steps, candidate) => Result<void, ChildOverlayMappingError>
-  - _...6 more_
-- `packages/adapters/pi/src/child-overlay-types.ts`
-  - function clampPageSize: (pageSize) => number
-  - function clampWindowCap: (windowCap) => number
-  - interface ChildOverlayEntry
-  - interface ChildOverlayPage
-  - interface ChildOverlaySourcePort
-  - interface ChildOverlayConfig
-  - _...25 more_
-- `packages/adapters/pi/src/child-overlay.ts`
-  - function createMemoryChildOverlaySource: (children) => ChildOverlaySourcePort
-  - function mapNativeSessionEntryPageToOverlay: (page) => ChildOverlayPage
-  - function createReadSessionEntryPageOverlaySource: (deps) => void
-  - interface MemoryOverlaySourceEntry
-  - interface MemoryOverlaySourceChild
+- `packages/adapters/pi/src/child-native-components.ts` — function createPiNativeTranscriptComponentFactory: (deps) => PiTranscriptComponentFactory, interface PiNativeTranscriptComponentDeps
 - `packages/adapters/pi/src/child-picker.ts`
-  - function childPickerTaskFirstLine: (value) => string
-  - function resolveChildPickerTitle: (candidate, "explicitTitle" | "taskFirstLine" | "workflowStep" | "agent"
-  >) => string
-  - function buildChildPickerMetadataEntries: (input) => Result<readonly PiChildPickerMetadataEntry[], PiChildPickerError>
-  - function collectChildPickerCandidates: (input) => ResultAsync<readonly PiChildPickerCandidate[], PiChildPickerError>
   - function buildChildPickerEntries: (input) => Result<readonly PiChildPickerEntry[], PiChildPickerError>
   - function sanitizeChildPickerPreview: (value) => string
-  - _...24 more_
+  - function moveChildPicker: (state, delta) => PiChildPickerState
+  - function selectedChildPickerEntry: (state) => PiChildPickerEntry | undefined
+  - interface PiChildPickerNode
+  - interface PiChildPickerEntry
+  - _...5 more_
 - `packages/adapters/pi/src/child-process-port.ts`
   - function writeAllToSink: (sink, bytes) => ResultAsync<void, ChildProcessError>
   - function resolveKillSignal: (mode) => number | undefined
@@ -287,21 +217,21 @@
   - interface PiChildSpawnInput
   - _...4 more_
 - `packages/adapters/pi/src/child-recovery.ts`
-  - function findOrdinaryRecoveryCandidates: (records) => readonly PiChildRecoveryRecord[]
+  - function findOrdinaryRecoveryCandidates: (records) => readonly PiChildHistoryRecord[]
   - function boundedRecoveryOutput: (value) => string
+  - function isRecoveryKind: (kind) => boolean
   - class PiChildRecoveryCoordinator
   - interface PiChildRecoveryUi
   - interface PiChildRecoveryHistory
-  - interface PiChildRecoveryDescriptor
   - _...8 more_
 - `packages/adapters/pi/src/child-runtime.ts`
-  - function classifyChildAccess: (input) => PiChildAccessState
-  - function authorizeChildAccess: (childId, state, operation) => Result<void, PiChildAccessDenial>
   - class PiChildRuntime
   - interface PiChildOutputTransfer
   - interface PiChildOutputPort
   - interface PiChildRuntimeDeps
-  - _...7 more_
+  - interface PiChildBootstrapHandlers
+  - type PiChildRuntimeError
+  - _...2 more_
 - `packages/adapters/pi/src/child-session-checkpoint.ts`
   - function parsePiChildSessionCheckpoint: (value) => Result<PiChildSessionCheckpoint, PiChildCheckpointError>
   - function decodePiChildSessionCheckpoint: (bytes) => Result<PiChildSessionCheckpoint, PiChildCheckpointError>
@@ -318,14 +248,6 @@
   - type PiExtensionUiResponse
   - const MAX_CHILD_EVENT_STRING
   - _...4 more_
-- `packages/adapters/pi/src/child-session-refs.ts`
-  - function createNativeChildRefSourceAuthority: (store) => PiChildRefSourceAuthority
-  - function parseChildRefRecord: (value) => Result<PiChildRefRecord, PiChildRefError>
-  - function parseChildRefEnvelope: (value) => Result<PiChildRefEnvelope, PiChildRefError>
-  - function serializeChildRefEnvelope: (envelope) => string
-  - function hasNoTranscriptFields: (serialized) => boolean
-  - class PiChildSessionRefStore
-  - _...29 more_
 - `packages/adapters/pi/src/child-timer.ts`
   - class SystemTimerPort
   - interface TimerHandle
@@ -333,7 +255,7 @@
   - const DEFAULT_HANDSHAKE_TIMEOUT_MS
   - const DEFAULT_REPLY_TIMEOUT_MS
   - const DEFAULT_SETTLEMENT_TIMEOUT_MS
-  - _...2 more_
+  - _...1 more_
 - `packages/adapters/pi/src/child-transcript.ts`
   - function reducePiChildTranscript: (state, action) => Result<PiChildTranscriptState, PiChildTranscriptError>
   - function createPiChildTranscriptState: () => PiChildTranscriptState
@@ -359,12 +281,12 @@
   - interface ChildTreeRenderNodeMetadata
   - interface ChildTreeRenderOptions
 - `packages/adapters/pi/src/child-tree.ts`
+  - function createPiChildHistoryPort: (store, now) => void
   - function addUsage: (a, b) => PiChildUsageAggregate
   - function truncateLatestOutput: (text) => string
   - function extractAssistantTextDeltaPreview: (record, JsonValue>) => string | undefined
   - function extractAssistantThinkingDeltaPreview: (record, JsonValue>) => string | undefined
   - function extractAssistantStopReason: (record, JsonValue>) => string | undefined
-  - function applyTreeControlKey: (nodes, PiChildTreeNode>, selectedId, key) => PiTreeControlOutcome
   - _...15 more_
 - `packages/adapters/pi/src/commands.ts`
   - function classifyWeaveCommand: (name) => WeaveCommandClassification
@@ -373,7 +295,7 @@
   - type WeaveCommandName
   - type WeaveCommandClassification
   - const WEAVE_INSPECT_COMMAND_NAME
-  - _...7 more_
+  - _...5 more_
 - `packages/adapters/pi/src/config-activator.ts`
   - function createTrustWithheldFileReader: (inner, projectRoot) => FileReader
   - function buildDescriptorCatalog: (plan) => PiDescriptorCatalog
@@ -400,18 +322,16 @@
   - class PiDelegationController
   - interface PiDelegationContext
   - interface PiDelegationControllerDeps
-  - interface PiOverlayChildDescriptor
-  - interface PiThreadRunAssignment
-  - interface PiThreadRunRequest
-  - _...13 more_
+  - interface PiAuthenticatedDelegationRequest
+  - interface PiDelegationRequest
 - `packages/adapters/pi/src/delegation-tool.ts`
   - function formatDelegationAgentName: (agentName) => string
-  - function renderDelegationCompactResult: (result, options, theme, context, onCompactRenderFailure?) => void
   - function buildDelegationToolRegistration: (deps) => PiToolRegistration
   - function buildRelayedDelegationToolRegistration: (deps) => PiToolRegistration
   - interface PiDelegationInvocationContext
   - interface PiDelegationToolDeps
-  - _...4 more_
+  - interface PiRelayedDelegationToolDeps
+  - _...1 more_
 - `packages/adapters/pi/src/direct-dispatch-transport.ts`
   - function createDirectDispatchTransport: (deps, generationId) => DirectDispatchTransport
   - class PiDirectStepChildRegistry
@@ -429,10 +349,10 @@
   - function makeHostIdentityUnknownFailure: (reason) => PiAdapterFailure
   - function makeHostVersionUnsupportedFailure: (version, reason) => PiAdapterFailure
   - function makeInteractiveTuiRequiredFailure: (mode) => PiAdapterFailure
-  - function makePersistentParentSessionRequiredFailure: (operation, reason) => PiAdapterFailure
   - function makeActivationFailedFailure: (reason) => PiAdapterFailure
   - function makeCommandCollisionFailure: (commandName) => PiAdapterFailure
-  - _...92 more_
+  - function makeRequiredCapabilityUnavailableFailure: (capabilityId, reason) => PiAdapterFailure
+  - _...70 more_
 - `packages/adapters/pi/src/extension.ts`
   - function parsePiSkillsFromSystemPrompt: (systemPrompt) => Result<readonly PiSkillInfo[], PiSkillCatalogParseError>
   - function createDefaultPiExtensionDeps: () => PiExtensionDeps
@@ -446,25 +366,25 @@
   - interface PiHostSurfaceDeclaration
   - interface PiHostCompatibilityMatrix
   - type PiHostSurfaceId
-  - type PiHostSurfaceSeverity
-  - type PiHostSurfaceFallback
-  - _...3 more_
+  - type HostCompatibilityMatrixError
+  - const PI_HOST_SURFACE_IDS
+  - _...1 more_
 - `packages/adapters/pi/src/host-compatibility.ts`
   - function parseSemver: (version) => Result<ParsedVersion, void>
   - function isSupportedHostVersion: (version) => boolean
   - function checkHostCompatibility: (info) => Result<HostPackageInfo, PiAdapterFailure>
-  - function renderHostCapabilityGapDiagnostic: (diagnostic) => string
   - class BunHostPackageReader
-  - interface HostCapabilityGapDiagnostic
-  - _...7 more_
+  - interface HostPackageReader
+  - type HostPackageInfo
+  - _...3 more_
 - `packages/adapters/pi/src/host-inventory.ts`
   - function readValidatedCommands: (api, "getCommands">) => Result<PiCommandInfo[], PiAdapterFailure>
   - function readHostSurfaceReport: (raw) => PiHostSurfaceReport
   - function safeReadHostSurfaceReport: (reader, input) => ResultAsync<PiHostSurfaceReport, never>
-  - function buildHostSurfaceGapDiagnostics: (report, hostVersion) => readonly HostCapabilityGapDiagnostic[]
-  - function selectsCustomEditorFallback: (report) => boolean
-  - function createDefaultPiHostProbePort: (input) => PiHostProbePort
-  - _...11 more_
+  - function emptyHostSurfaceReport
+  - function defaultHostSurfaceReport
+  - class DefaultPiHostSurfaceReader
+  - _...6 more_
 - `packages/adapters/pi/src/model-resolution.ts`
   - class PiModelResolver
   - class PiModelActivator
@@ -473,13 +393,6 @@
   - type PiModelResolutionSource
   - type PiModelResolution
   - _...2 more_
-- `packages/adapters/pi/src/native-session-fs.ts` — function createBunPiNativeSessionFs: () => PiNativeSessionFsPort, class MemoryPiNativeSessionFs
-- `packages/adapters/pi/src/native-session-host.ts`
-  - function isPiSessionManagerStatic: (value) => value is PiSessionManagerStatic
-  - function adaptPiSessionManagerHandle: (manager) => PiNativeSessionHandle
-  - function createPiNativeSessionHost: (SessionManager) => PiNativeSessionHostPort
-  - interface PiSessionManagerStatic
-  - interface PiSessionManagerInstance
 - `packages/adapters/pi/src/path-containment.ts`
   - function isLexicallyContained: (relativePath) => boolean
   - function inspectNoFollowDirectory: (path, mode) => ResultAsync<NoFollowEntryIdentity, NoFollowInspectionError>
@@ -510,10 +423,10 @@
   - function renderRequiredSkillsPrompt: (composedPrompt, resolvedSkills) => string
   - function renderWeavePromptBlock: (descriptor, resolvedSkills) => string
   - function appendWeaveBlockOnce: (systemPrompt, descriptor, resolvedSkills) => string
-  - function probeParentSession: (probe) => PiParentSessionState
-  - function requirePersistentParentSession: (state, operation) => Result<PiParentSessionState, PiAdapterFailure>
-  - function isReadOnlyChildAccessAllowed: (_state) => boolean
-  - _...12 more_
+  - class PiPrimarySession
+  - interface PiPrimaryCapabilityWarning
+  - interface PiActivePrimary
+  - _...5 more_
 - `packages/adapters/pi/src/prompt-chunking.ts`
   - function promptTransferNackReason: (error) => PromptTransferNackReason
   - function encodePromptChunksBounded: (task, transferId) => Result<readonly PromptChunk[], PromptChunkError>
@@ -538,13 +451,13 @@
   - interface PiRepeatedSettlementValidationReport
   - type PiRepeatedSettlementValidationError
 - `packages/adapters/pi/src/rpc-child.ts`
-  - function authenticateRestoreStartupSuffix: (establishedLeafId, page) => Result<void, PiRestoreAuthenticationReason>
   - class PiRpcChild
   - interface PiRestoreContextMetadata
   - interface PiChildSessionObserver
   - interface PiRpcChildDeps
   - interface PiRpcChildSpawnInput
-  - _...7 more_
+  - interface PiGetEntriesResult
+  - _...5 more_
 - `packages/adapters/pi/src/runtime-store-port.ts`
   - class SqliteRuntimeStoreFactory
   - class InMemoryRuntimeStoreFactory
@@ -554,14 +467,6 @@
   - class PiSafeInitializer
   - interface PiPreflightResult
   - interface PiSafeInitializerDeps
-- `packages/adapters/pi/src/session-transition-runtime.ts`
-  - function createSessionTransitionNoticeCell: () => PiSessionTransitionNoticeCell
-  - function notifySessionTransition: (ctx, notice) => void
-  - function readTransitionEventString: (event, field) => string | undefined
-  - function labelSessionBeforeSwitch: (event) => string
-  - function labelSessionBeforeFork: (event) => string
-  - function labelSessionBeforeTree: (_event) => string
-  - _...36 more_
 - `packages/adapters/pi/src/skill-catalog.ts` — function toEngineSkillInfo: (skill) => SkillInfo, class PiSkillCatalog
 - `packages/adapters/pi/src/strict-json.ts`
   - function parseStrictJson: (text) => Result<JsonValue, StrictJsonParseError>
@@ -579,27 +484,13 @@
   - function buildWeaveCompleteStepToolRegistration: (deps) => void
   - _...4 more_
 - `packages/adapters/pi/src/telemetry.ts`
-  - function sanitizeDiagnosticValue: (value) => unknown
   - function extractAssistantUsageFromMessage: (record, JsonValue>) => |
   - function createPiTelemetryLogger: (options) => ResultAsync<
   - function createPiTelemetry: (options) => ResultAsync<
   - class PiTelemetry
   - interface PiJournalEventInput
-  - _...12 more_
-- `packages/adapters/pi/src/thread-sources.ts`
-  - function openPiThreadSources: (input) => ResultAsync<PiThreadSources, PiThreadSourceFactoryError>
-  - function createProductionPiThreadSourceFactory: (options) => PiThreadSourceFactory
-  - interface PiThreadSources
-  - interface PiThreadSourceFactoryInput
-  - type PiThreadSourceFactoryError
-  - type PiThreadSourceFactory
-- `packages/adapters/pi/src/trusted-data-root.ts`
-  - function createBunPiTrustedDataRootPort: () => PiTrustedDataRootPort
-  - class BunPiTrustedDataRootPort
-  - class IdentityPiTrustedDataRootPort
-  - class FakePiTrustedDataRootPort
-  - interface PiTrustedDataRootPort
-  - type PiTrustedDataRootViolation
+  - interface PiAssistantUsageInput
+  - _...11 more_
 - `packages/adapters/pi/src/workflow-commands.ts`
   - function handleWeaveStart: (rawArgs, ui, foregroundStarter, tracker) => Promise<void>
   - function handleWeaveRun: (rawArgs, ui, controller, tracker) => Promise<void>
@@ -627,13 +518,6 @@
   - type Command
   - type ArgParseError
 - `packages/cli/src/cli.ts` — function run: (deps?) => Promise<Result<number, CliError>>, interface CliDeps
-- `packages/cli/src/commands/adapter.ts`
-  - function renderAdapterHelp: (theme) => string
-  - function runAdapter: (ctx) => Promise<Result<number, CliError>>
-  - function resolveDeleteParentScope: (registry, workspaceKey, target, {...}) => Promise<
-  - function parseAdapterTarget: (rest) => Result<AdapterCliTarget, CliError>
-  - interface AdapterCommandContext
-  - type AdapterCliTarget
 - `packages/cli/src/commands/compose.ts`
   - function mapConfigLoadErrors: (path, errors) => CliError
   - function runCompose: (ctx) => Promise<Result<number, CliError>>
@@ -995,15 +879,6 @@
   - function refinePromptFileSafe: (field) => [(data: HasPromptFile) => boolean,
 - `packages/core/src/validate.ts` — function validate: (ast) => Result<WeaveConfig, ValidationError[]>
 - `packages/docs/src/utils/base-url.ts` — function normalizeBaseUrl: (base) => string, function withBaseUrl: (base, path) => string
-- `packages/engine/src/adapter-command.ts`
-  - function createAdapterCommandRegistry: (adapters, Readonly<Record<string, AdapterCommandHandler>>>
-  >) => AdapterCommandRegistry
-  - function parseAdapterCommandRequest: (value) => Result<AdapterCommandRequest, AdapterCommandError>
-  - function dispatchAdapterCommand: (registry, request) => ResultAsync<AdapterCommandResult, AdapterCommandError>
-  - type AdapterCommandRequest
-  - type AdapterCommandResult
-  - type AdapterCommandError
-  - _...4 more_
 - `packages/engine/src/capability-contract.ts`
   - function evaluateCoreReadinessProfile: (contract) => ProfileEvaluationResult
   - function lowerReadinessByProbe: (declared, resolution) => CapabilityReadiness
