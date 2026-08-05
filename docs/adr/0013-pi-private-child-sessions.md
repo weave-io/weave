@@ -1,6 +1,8 @@
 # ADR 0013 — Pi Private Child Sessions
 
-**Status:** Accepted
+**Status:** Accepted — superseded in part by [ADR 0014](0014-pi-native-child-sessions.md)
+
+**Superseded by:** [ADR 0014](0014-pi-native-child-sessions.md) for storage, layout, migration, quotas, and pruning. The Decision text below is retained as history and no longer describes the current child-history storage design. Adapter ownership, the engine privacy boundary, and the narrow recovery scope remain in force.
 
 **Related:** [Pi Adapter](../adapters/pi.md) · [Adapter Boundary](../architecture/adapter-boundary.md) · Issue #21
 

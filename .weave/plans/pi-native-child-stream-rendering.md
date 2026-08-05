@@ -65,7 +65,7 @@ Dirty-worktree rule: many files are dirty for unrelated in-flight work (OpenCode
 
 ## Tasks
 
-- [ ] 1. Write superseding ADR and no-migration decision
+- [x] 1. Write superseding ADR and no-migration decision
   - **What**: Add ADR 0014 "Pi native child sessions" superseding the storage/layout portions of ADR 0013: native Pi v3 child sessions under `$XDG_DATA_HOME/weave/adapters/pi/sessions/` (outside Pi's default tree, never in `/resume`), child `parentSession` link, parent custom-entry refs as observation-only, metadata-only rebuildable SQLite cache, explicit-cleanup-plus-tombstone, no auto pruning, explicit no-migration from the JSONL V1 store, `PersistentParentSessionRequired`, and fork/clone ref-origin rejection. Mark ADR 0013 as superseded-in-part with a pointer.
   - **Files**: `docs/adr/0014-pi-native-child-sessions.md` (new), `docs/adr/0013-pi-private-child-sessions.md` (status header edit only).
   - **Depends on**: None.
