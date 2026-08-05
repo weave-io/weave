@@ -573,12 +573,38 @@ export {
   WEAVE_DELEGATION_TOOL_NAME,
 } from "./delegation-tool.js";
 export type {
+  PiDoctorCheck,
+  PiDoctorCheckFailure,
+  PiDoctorCheckId,
+  PiDoctorCheckOutcome,
+  PiDoctorCheckPorts,
+  PiDoctorOrphanScanInput,
+  RunChildDoctorInput,
+} from "./child-doctor.js";
+export {
+  PI_DOCTOR_BOUNDS,
+  PI_DOCTOR_CHECK_IDS,
+  PiDoctorCheckIdSchema,
+  PiDoctorCheckSchema,
+  createPiDoctorPort,
+  createSkippedDoctorCheckPorts,
+  createStoreBackedDoctorCheckPorts,
+  doctorCapabilitiesFromProbes,
+  doctorOrphanCheckFromRows,
+  doctorStaleCheckFromRows,
+  failedDoctorCheck,
+  passedDoctorCheck,
+  runChildDoctor,
+  skippedDoctorCheck,
+} from "./child-doctor.js";
+export type {
   PiAdapterFailure,
   PiAdapterFailureCode,
   PiAdapterFailureImpact,
   PiAdapterFailurePhase,
   PiAdapterFailureRecovery,
   PiAdapterFailureScope,
+  PiDiagnosticCode,
 } from "./errors.js";
 export {
   makeActivationFailedFailure,
@@ -607,6 +633,7 @@ export {
   PiAdapterFailureImpactSchema,
   PiAdapterFailurePhaseSchema,
   PiAdapterFailureRecoverySchema,
+  PiDiagnosticCodeSchema,
 } from "./errors.js";
 export type { PiExtensionDeps } from "./extension.js";
 export {

@@ -95,6 +95,34 @@ export const PiAdapterFailureCodeSchema = z.enum([
 export type PiAdapterFailureCode = z.infer<typeof PiAdapterFailureCodeSchema>;
 
 /**
+ * Stable diagnostic codes for doctor / storage surfaces (Spec 33 §14).
+ * These identify sanitized report rows; they are not a widening of
+ * {@link PiAdapterFailureCodeSchema}.
+ */
+export const PiDiagnosticCodeSchema = z.enum([
+  // storage / refs / cache
+  "ChildSessionRootViolation",
+  "ChildSessionMissing",
+  "ChildSessionCorrupt",
+  "ChildSessionPermissionError",
+  "ChildTombstoneAppendFailed",
+  "ChildRefInvalid",
+  "ChildRefOriginMismatch",
+  "ChildCacheDegraded",
+  "ChildCacheStale",
+  // execution / lifecycle (doctor may reference)
+  "PersistentParentSessionRequired",
+  "ChildResponseMissing",
+  "ThreadAlreadyRunning",
+  "ThreadStale",
+  "ThreadIntegrityError",
+  "ThreadNotRetryable",
+  // capability
+  "RequiredCapabilityUnavailable",
+]);
+export type PiDiagnosticCode = z.infer<typeof PiDiagnosticCodeSchema>;
+
+/**
  * The frozen transport limits for the Pi adapter's private child protocol.
  *
  * Three limits govern three different things and must never be conflated:

@@ -285,7 +285,7 @@ Dirty-worktree rule: many files are dirty for unrelated in-flight work (OpenCode
     - Engine dispatch tests pass with a fake adapter; grep proves no `@weaveio/weave-adapter-pi` import in engine/core.
     - `bun test packages/cli/src/commands/__tests__/adapter.test.ts` passes: bounds (50/100+cursor), JSON stability snapshot, delete confirmation + tombstone, no-path default, diagnostic flag path.
 
-- [ ] 15. Implement diagnostics and doctor
+- [x] 15. Implement diagnostics and doctor
   - **What**: Stable diagnostic codes carrying child/run/parent/correlation IDs and never raw prompt/transcript content. Doctor checks: capability probes, permissions, session/ref/cache integrity, stale markers, bounded orphan scan; produces an explicit sanitized JSON report on request; no standalone log files. History/doctor remain safe read-only in health-only mode.
   - **Files**: `packages/adapters/pi/src/child-doctor.ts` (new), `packages/adapters/pi/src/errors.ts` (codes), `packages/adapters/pi/src/telemetry.ts` (sanitization reuse), wiring into Task 14 handlers; tests `child-doctor.test.ts` (new).
   - **Depends on**: Tasks 3–6, 14 (command shell).

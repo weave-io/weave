@@ -79,6 +79,49 @@ export type PiJournalSafeData = Readonly<
   Record<string, string | number | boolean>
 >;
 
+/**
+ * Field names that must never appear in doctor / journal-adjacent diagnostic
+ * payloads. Matching is case-insensitive on the final path segment.
+ */
+const DIAGNOSTIC_FORBIDDEN_FIELD_PATTERN =
+  /^(prompt|prompts|transcript|transcripts|message|messages|content|contents|assistant|thinking|reasoningtext|tool|tools|toolresult|toolresults|task|output|text|path|absolutepath|sessionpath)$/iu;
+
+const ABSOLUTE_PATH_LIKE =
+  /(?:^|[\s"'])(?:\/|[A-Za-z]:\\|\\\\)/u;
+
+/**
+ * Recursively strips transcript-like keys and absolute filesystem path strings
+ * from a diagnostic value. Used by the child doctor report assembler.
+ */
+export function sanitizeDiagnosticValue(value: unknown): unknown {
+  if (typeof value === "string") {
+    if (
+      value.startsWith("/") ||
+      value.startsWith("\\\\") ||
+      /^[A-Za-z]:[\\/]/u.test(value) ||
+      ABSOLUTE_PATH_LIKE.test(value)
+    ) {
+      return "[omitted]";
+    }
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "boolean" || value === null) {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => sanitizeDiagnosticValue(entry));
+  }
+  if (typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [key, nested] of Object.entries(value)) {
+      if (DIAGNOSTIC_FORBIDDEN_FIELD_PATTERN.test(key)) continue;
+      out[key] = sanitizeDiagnosticValue(nested);
+    }
+    return out;
+  }
+  return undefined;
+}
+
 export interface PiJournalEventInput {
   readonly family: PiJournalFamily;
   /** Event name within the family, e.g. "activated", "settled". */

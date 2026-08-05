@@ -142,10 +142,22 @@ import { renderChildTreeLines } from "./child-tree-render.js";
 import type { AdapterCommandHandler } from "@weaveio/weave-engine";
 import {
   createPiAdapterCommandHandlers,
-  createPlaceholderDoctorPort,
+  createPiChildrenCommandPort,
   type PiAdapterChildrenPort,
+  type PiAdapterDoctorPort,
 } from "./adapter-cli-commands.js";
+import {
+  createPiDoctorPort,
+  createSkippedDoctorCheckPorts,
+  createStoreBackedDoctorCheckPorts,
+  doctorCapabilitiesFromProbes,
+  failedDoctorCheck,
+  passedDoctorCheck,
+  type PiDoctorCheckPorts,
+} from "./child-doctor.js";
 import { WEAVE_COMMAND_NAMES, type WeaveCommandName } from "./commands.js";
+import type { PiChildMetadataCache } from "./child-metadata-cache.js";
+import type { PiNativeSessionStore } from "./child-native-sessions.js";
 import {
   logMaterializationErrors,
   PiConfigActivator,
@@ -2291,13 +2303,37 @@ export function createPiExtension(
         message: "native child stores are not ready",
       }),
   };
+  const doctorCheckPortsCell: { ports: PiDoctorCheckPorts } = {
+    ports: createSkippedDoctorCheckPorts("doctor source not wired"),
+  };
+  const doctorHealthOnlyCell: { value: boolean } = { value: false };
+  const doctorPort: PiAdapterDoctorPort = createPiDoctorPort({
+    ports: {
+      capabilities: () => doctorCheckPortsCell.ports.capabilities(),
+      permissions: () => doctorCheckPortsCell.ports.permissions(),
+      sessions: () => doctorCheckPortsCell.ports.sessions(),
+      refs: () => doctorCheckPortsCell.ports.refs(),
+      cache: () => doctorCheckPortsCell.ports.cache(),
+      stale: () => doctorCheckPortsCell.ports.stale(),
+      orphans: () => doctorCheckPortsCell.ports.orphans(),
+    },
+    healthOnly: () => doctorHealthOnlyCell.value,
+  });
   const adapterCommandHandlersCell: {
     handlers: Readonly<Record<string, AdapterCommandHandler>>;
   } = {
     handlers: createPiAdapterCommandHandlers({
       children: unavailableChildrenPort,
-      doctor: createPlaceholderDoctorPort(),
+      doctor: doctorPort,
     }),
+  };
+  const refreshAdapterCommandHandlers = (
+    children: PiAdapterChildrenPort,
+  ): void => {
+    adapterCommandHandlersCell.handlers = createPiAdapterCommandHandlers({
+      children,
+      doctor: doctorPort,
+    });
   };
   const workflowControllerCell: {
     controller: PiWorkflowController | undefined;
@@ -4425,6 +4461,15 @@ export function createPiExtension(
         telemetry: undefined,
       };
       generationResourcesCell.owner = generationResources;
+      doctorHealthOnlyCell.value = generation.healthOnlyMode;
+      // Doctor stays registered in health-only; capability probes are always
+      // available from preflight even when thread sources are not open yet.
+      doctorCheckPortsCell.ports = createStoreBackedDoctorCheckPorts({
+        capabilities: () =>
+          doctorCapabilitiesFromProbes(
+            generation.preflight.healthReport.probeResults,
+          ),
+      });
       // Strict boot: `ready` is not a preflight outcome, it is the reward
       // for a committed primary. Only the closed states can be painted
       // before boot activation has settled below.
@@ -4651,19 +4696,11 @@ export function createPiExtension(
           : session.primarySession.getCurrent()?.descriptor.name,
       );
 
-      // The delegation transport is only ever constructed for a fully
-      // activated generation, never at factory time (Pi adapter contract) and
-      // never for a health-only/trust-withheld generation - delegation is a
-      // registered capability tool and durable operation exactly like the
-      // ones Pi adapter contract already disable in those states.
-      if (
-        !effectiveHealthOnly(generation) &&
-        generation.preflight.trust !== "withheld"
-      ) {
-        // Task 4/5/6: open authoritative thread sources before any controller
-        // can spawn a process or take a lease. Unit embeddings opt out by
-        // leaving `threadSourceFactory` undefined.
-        let allowDelegationController = true;
+      // Task 4/5/6 sources open for trusted generations so history/doctor stay
+      // read-only in health-only. Delegation still requires a full ready
+      // generation (Pi adapter contract).
+      if (generation.preflight.trust !== "withheld") {
+        let allowDelegationController = !effectiveHealthOnly(generation);
         const parentForSources = session.primarySession.getParentSession();
         if (
           deps.threadSourceFactory !== undefined &&
@@ -4714,19 +4751,89 @@ export function createPiExtension(
               },
               "thread source factory failed; delegation unavailable this generation",
             );
-            ctx.ui.notify(
-              "Weave could not open native child session sources for this parent session.",
-              "error",
-            );
+            if (!effectiveHealthOnly(generation)) {
+              ctx.ui.notify(
+                "Weave could not open native child session sources for this parent session.",
+                "error",
+              );
+            }
           } else {
             threadSourcesCell.refs = opened.value.refs;
             threadSourcesCell.sessions = opened.value.sessions;
             threadSourcesCell.cache = opened.value.cache;
             threadSourcesCell.cacheMode = opened.value.cacheMode;
-            threadSourcesRequired = true;
-            // Task 14 keeps slash routing on the injectable handler cell.
-            // Full Task 4–6 port wiring for live history lands with doctor
-            // (Task 15) once the thread ports expose list/show/delete shapes.
+            threadSourcesRequired = !effectiveHealthOnly(generation);
+            const sessionStore = opened.value.sessions as PiNativeSessionStore;
+            const discoveryCache = opened.value.cache as PiChildMetadataCache;
+            const canList =
+              typeof discoveryCache.list === "function" &&
+              typeof discoveryCache.get === "function" &&
+              typeof discoveryCache.tombstone === "function";
+            doctorCheckPortsCell.ports = createStoreBackedDoctorCheckPorts({
+              capabilities: () =>
+                doctorCapabilitiesFromProbes(
+                  generation.preflight.healthReport.probeResults,
+                ),
+              permissions: () => {
+                const root = sessionStore.sessionRoot?.();
+                if (typeof root !== "string" || root.length === 0) {
+                  return okAsync(
+                    failedDoctorCheck(
+                      "session root unavailable",
+                      "ChildSessionRootViolation",
+                    ),
+                  );
+                }
+                return okAsync(passedDoctorCheck("session root resolved"));
+              },
+              readRefs: () =>
+                opened.value.refs.readRefs({
+                  limit: 50,
+                }),
+              listSessionsByRef: (refs) =>
+                typeof sessionStore.listByRef === "function"
+                  ? sessionStore.listByRef(refs, {
+                      limit: 50,
+                      expectedParentSession: parentForSources.sessionId,
+                    })
+                  : okAsync([]),
+              cacheMode: opened.value.cacheMode,
+              listMetadata: () => {
+                if (!canList) {
+                  return okAsync([]);
+                }
+                const listed = discoveryCache.list({
+                  workspaceKey: ctx.cwd,
+                  limit: 50,
+                  includeTombstoned: true,
+                });
+                if (listed.isErr()) {
+                  return errAsync(listed.error);
+                }
+                return okAsync(
+                  listed.value.records.map((row) => ({
+                    childId: row.childId,
+                    originParentSessionId: row.originParentSessionId,
+                    stale: row.stale,
+                    tombstoned: row.tombstoned,
+                  })),
+                );
+              },
+              liveParentSessionId: parentForSources.sessionId,
+            });
+            if (
+              canList &&
+              typeof sessionStore.openSession === "function" &&
+              typeof sessionStore.readSessionEntries === "function" &&
+              typeof sessionStore.deleteSession === "function"
+            ) {
+              refreshAdapterCommandHandlers(
+                createPiChildrenCommandPort({
+                  cache: discoveryCache,
+                  sessions: sessionStore,
+                }),
+              );
+            }
           }
         }
 

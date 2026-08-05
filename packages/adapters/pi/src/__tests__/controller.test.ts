@@ -155,7 +155,13 @@ describe("PiExtensionController command gating", () => {
       "weave:resume",
       "weave:artifact",
     ] as const;
-    const readOnly = ["weave:status", "weave:health", "weave:plan"] as const;
+    const readOnly = [
+      "weave:status",
+      "weave:health",
+      "weave:plan",
+      "weave:history",
+      "weave:doctor",
+    ] as const;
     for (const name of mutating) {
       const decision = controller.evaluateCommandGate(name)._unsafeUnwrap();
       expect(decision.allowed).toBe(false);
