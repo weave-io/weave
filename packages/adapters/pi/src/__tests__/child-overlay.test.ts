@@ -287,6 +287,116 @@ describe("ChildOverlayController", () => {
     }
   });
 
+  it("retains fetched older pages at the window cap without gaps or dupes", async () => {
+    const total = 200;
+    const pageSize = 20;
+    const windowCap = 50;
+    const source = createMemoryChildOverlaySource([
+      child({ childId: "overflow-1", entries: entries(total) }),
+    ]);
+    const overlay = createChildOverlayController(source, {
+      pageSize,
+      windowCap,
+    });
+    const opened = await mustOpen(overlay, "overflow-1");
+    expect(opened.entries.map((entry) => entry.id)).toEqual(
+      Array.from({ length: pageSize }, (_, i) => `e${total - pageSize + i}`),
+    );
+
+    // Scroll to the oldest loaded edge so the logical anchor is stable there.
+    overlay.setScrollOffset(opened.entries.length - 1)._unsafeUnwrap();
+    const anchorBefore = overlay.view()._unsafeUnwrap().anchor?.entryId;
+    expect(anchorBefore).toBe(opened.entries[0]?.id);
+
+    const seenOldestIds: string[] = [];
+    for (let step = 0; step < 6; step += 1) {
+      const view = (await overlay.loadOlder())._unsafeUnwrap();
+      expect(view.entries.length).toBeLessThanOrEqual(windowCap);
+      const ids = view.entries.map((entry) => entry.id);
+      expect(new Set(ids).size).toBe(ids.length);
+      // Contiguous numeric ids — no history gap inside the window.
+      for (let i = 1; i < ids.length; i += 1) {
+        const prev = Number(ids[i - 1]?.slice(1));
+        const next = Number(ids[i]?.slice(1));
+        expect(next).toBe(prev + 1);
+      }
+      const oldest = ids[0];
+      if (oldest !== undefined) seenOldestIds.push(oldest);
+      // Fetched older edge must remain in the window (trim newest, not oldest).
+      expect(view.entries[0]?.id).toBe(oldest);
+    }
+
+    // Multiple older pages remain reachable — oldest edge keeps moving back.
+    expect(seenOldestIds.length).toBeGreaterThan(1);
+    expect(seenOldestIds.at(-1)).not.toBe(seenOldestIds[0]);
+    const afterOlder = overlay.view()._unsafeUnwrap();
+    expect(afterOlder.entries.length).toBe(windowCap);
+    expect(afterOlder.hasNewer).toBe(true);
+    expect(afterOlder.newerCursor).toBeDefined();
+    expect(afterOlder.liveTail).toBe(false);
+    // Anchor from the first page's oldest edge stays when still retained, else
+    // the viewport stays on a retained entry (no jump to live tip).
+    expect(afterOlder.liveTail).toBe(false);
+    expect(afterOlder.scrollOffset).toBeGreaterThan(0);
+
+    // Walk newer pages back toward the tip without dupes/gaps; live-tail
+    // resumes only once the true newest edge is restored.
+    let guard = 0;
+    let tip = afterOlder;
+    while (tip.hasNewer && tip.newerCursor !== undefined && guard < 20) {
+      tip = (await overlay.loadNewer())._unsafeUnwrap();
+      guard += 1;
+      const ids = tip.entries.map((entry) => entry.id);
+      expect(new Set(ids).size).toBe(ids.length);
+      for (let i = 1; i < ids.length; i += 1) {
+        const prev = Number(ids[i - 1]?.slice(1));
+        const next = Number(ids[i]?.slice(1));
+        expect(next).toBe(prev + 1);
+      }
+      expect(tip.entries.length).toBeLessThanOrEqual(windowCap);
+    }
+    expect(tip.hasNewer).toBe(false);
+    expect(tip.entries.at(-1)?.id).toBe(`e${total - 1}`);
+    // End / live-tail path: follow output at the newest edge.
+    const followed = overlay.setScrollOffset(0)._unsafeUnwrap();
+    expect(followed.liveTail).toBe(true);
+    expect(followed.scrollOffset).toBe(0);
+  });
+
+  it("keeps a scroll anchor stable across older-page overflow", async () => {
+    const source = createMemoryChildOverlaySource([
+      child({ childId: "anchor-1", entries: entries(160) }),
+    ]);
+    const overlay = createChildOverlayController(source, {
+      pageSize: 25,
+      windowCap: 60,
+    });
+    await mustOpen(overlay, "anchor-1");
+    // Fill toward the cap, then pin near the oldest edge (survives newest trim).
+    await overlay.loadOlder();
+    await overlay.loadOlder();
+    const filled = overlay.view()._unsafeUnwrap();
+    expect(filled.entries.length).toBe(60);
+    const pinned = overlay
+      .setScrollOffset(filled.entries.length - 5)
+      ._unsafeUnwrap();
+    const anchorId = pinned.anchor?.entryId;
+    expect(anchorId).toBeDefined();
+    expect(pinned.liveTail).toBe(false);
+
+    // One more older page overflows the cap by trimming the newest tail only.
+    const after = (await overlay.loadOlder())._unsafeUnwrap();
+    expect(after.entries.length).toBe(60);
+    expect(after.entries.some((entry) => entry.id === anchorId)).toBe(true);
+    expect(after.anchor?.entryId).toBe(anchorId);
+    expect(after.liveTail).toBe(false);
+    expect(after.hasNewer).toBe(true);
+    // Window slid older: first id is below the previous oldest edge.
+    expect(Number(after.entries[0]?.id.slice(1))).toBeLessThan(
+      Number(filled.entries[0]?.id.slice(1)),
+    );
+  });
+
   it("hard-caps the retained window and dedups stable entry ids", async () => {
     const duplicated = entries(30);
     duplicated.push({
@@ -315,8 +425,9 @@ describe("ChildOverlayController", () => {
       maxSearchPages: 3,
     });
     await mustOpen(overlay, "search-1");
-    const found = (await overlay.search("e-text-5"))._unsafeUnwrap();
-    expect(found.searchQuery).toBe("e-text-5");
+    // Needle must sit within maxSearchPages of the newest page (contiguous).
+    const found = (await overlay.search("e-text-65"))._unsafeUnwrap();
+    expect(found.searchQuery).toBe("e-text-65");
     expect(found.searchMatches.length).toBeGreaterThan(0);
     expect(found.entries.length).toBeLessThanOrEqual(10 + 10 * 3);
 

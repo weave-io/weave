@@ -587,14 +587,15 @@ export function createMemoryChildOverlaySource(
       if (mappedEntry === undefined) continue;
       mapped.push({ ...mappedEntry, id: item.id });
     }
+    // Cursors address the oldest/newest entry already in the page so the next
+    // loadOlder/loadNewer call continues contiguously (exclusive of that edge).
     const olderCursor =
       startInclusive > 0
-        ? child.entries[startInclusive - 1]?.id
+        ? child.entries[startInclusive]?.id
         : undefined;
-    const newerIndex = endExclusive;
     const newerCursor =
-      newerIndex < child.entries.length
-        ? child.entries[newerIndex]?.id
+      endExclusive < child.entries.length && endExclusive > startInclusive
+        ? child.entries[endExclusive - 1]?.id
         : undefined;
     return {
       entries: mapped,
@@ -663,7 +664,7 @@ export function createMemoryChildOverlaySource(
       const index = indexOf(child, cursor);
       if (index.isErr()) return errAsync(index.error);
       const size = clampPageSize(pageSize);
-      // cursor points at the newest entry already loaded; load strictly older
+      // Cursor is the oldest entry already loaded; load strictly older than it.
       const end = index.value;
       const start = Math.max(0, end - size);
       return okAsync(pageFrom(child, start, end));
@@ -676,6 +677,7 @@ export function createMemoryChildOverlaySource(
       const index = indexOf(child, cursor);
       if (index.isErr()) return errAsync(index.error);
       const size = clampPageSize(pageSize);
+      // Cursor is the newest entry already loaded; load strictly newer than it.
       const start = index.value + 1;
       const end = Math.min(child.entries.length, start + size);
       return okAsync(pageFrom(child, start, end));
@@ -1479,31 +1481,69 @@ export class ChildOverlayController {
       expanded: state.globalExpanded,
       text: stripPathLike(entry.text),
     }));
+    const priorAnchor = state.anchor ?? anchorFromScroll(state);
+
     if (mode === "replace") {
       state.entries = dedupEntries(incoming).slice(-this.windowCap);
-    } else if (mode === "prepend") {
-      state.entries = dedupEntries([...incoming, ...state.entries]).slice(
-        -this.windowCap,
-      );
-    } else {
-      state.entries = dedupEntries([...state.entries, ...incoming]).slice(
-        -this.windowCap,
-      );
-    }
-    if (mode === "replace") {
       state.olderCursor = page.olderCursor;
       state.newerCursor = page.newerCursor;
       state.hasOlderFlag = page.hasOlder;
       state.hasNewerFlag = page.hasNewer;
       return;
     }
+
     if (mode === "prepend") {
-      state.olderCursor = page.olderCursor;
-      state.hasOlderFlag = page.hasOlder;
+      const merged = dedupEntries([...incoming, ...state.entries]);
+      // Keep fetched older entries; trim the newest tail when over cap.
+      const retained = merged.slice(0, this.windowCap);
+      const trimmedNewest = merged.length - retained.length;
+      const keptOlderEdge =
+        incoming.length === 0 ||
+        (retained[0] !== undefined && retained[0].id === incoming[0]?.id);
+
+      state.entries = retained;
+      if (keptOlderEdge) {
+        // Page older-edge was retained — advance cursor for the consumed page.
+        state.olderCursor = page.olderCursor;
+        state.hasOlderFlag = page.hasOlder;
+      }
+      // If the older edge was not retained, leave olderCursor unchanged so the
+      // unconsumed page remains reachable (no history gap).
+      if (trimmedNewest > 0) {
+        const newestRetained = retained[retained.length - 1];
+        if (newestRetained !== undefined) {
+          state.newerCursor = newestRetained.id;
+          state.hasNewerFlag = true;
+        }
+        state.liveTail = false;
+      }
+      restoreScrollAnchor(state, priorAnchor);
       return;
     }
-    state.newerCursor = page.newerCursor;
-    state.hasNewerFlag = page.hasNewer;
+
+    const merged = dedupEntries([...state.entries, ...incoming]);
+    // Append keeps the newest side; trim the oldest head when over cap.
+    const retained = merged.slice(-this.windowCap);
+    const trimmedOldest = merged.length - retained.length;
+    const keptNewerEdge =
+      incoming.length === 0 ||
+      (retained[retained.length - 1] !== undefined &&
+        retained[retained.length - 1]?.id ===
+          incoming[incoming.length - 1]?.id);
+
+    state.entries = retained;
+    if (trimmedOldest > 0) {
+      const oldestRetained = retained[0];
+      if (oldestRetained !== undefined) {
+        state.olderCursor = oldestRetained.id;
+        state.hasOlderFlag = true;
+      }
+    }
+    if (keptNewerEdge) {
+      state.newerCursor = page.newerCursor;
+      state.hasNewerFlag = page.hasNewer;
+    }
+    restoreScrollAnchor(state, priorAnchor);
   }
 
   private mergeEntry(state: SavedChildState, entry: ChildOverlayEntry): void {
@@ -1618,6 +1658,31 @@ function anchorFromScroll(state: SavedChildState): ChildOverlayAnchor | undefine
   const entry = state.entries[index];
   if (entry === undefined) return undefined;
   return { entryId: entry.id, lineOffset: 0 };
+}
+
+/** Recompute scrollOffset so a retained entry stays the logical viewport anchor. */
+function restoreScrollAnchor(
+  state: SavedChildState,
+  anchor: ChildOverlayAnchor | undefined,
+): void {
+  if (anchor === undefined || state.entries.length === 0) {
+    state.anchor = anchorFromScroll(state);
+    return;
+  }
+  const index = state.entries.findIndex((entry) => entry.id === anchor.entryId);
+  if (index < 0) {
+    // Anchor was trimmed; clamp to the nearest retained edge.
+    state.scrollOffset = Math.min(
+      state.scrollOffset,
+      Math.max(0, state.entries.length - 1),
+    );
+    state.liveTail = state.scrollOffset === 0;
+    state.anchor = anchorFromScroll(state);
+    return;
+  }
+  state.scrollOffset = Math.max(0, state.entries.length - 1 - index);
+  state.liveTail = state.scrollOffset === 0;
+  state.anchor = { entryId: anchor.entryId, lineOffset: anchor.lineOffset };
 }
 
 function scrollDelta(
