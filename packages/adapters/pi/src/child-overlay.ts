@@ -17,43 +17,46 @@
  */
 
 import { CustomEditor } from "@earendil-works/pi-coding-agent";
+import { type EditorTheme, matchesKey, type TUI } from "@earendil-works/pi-tui";
 import {
-  matchesKey,
-  type EditorTheme,
-  type TUI,
-} from "@earendil-works/pi-tui";
-import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
-import type { PiChildOverlayKeyInterceptor } from "./child-overlay-keys.js";
+  err,
+  errAsync,
+  ok,
+  okAsync,
+  Result,
+  type ResultAsync,
+} from "neverthrow";
 import { z } from "zod";
 import {
+  type ChildCompactState,
   createChildCompactState,
   mapPiChildSessionEventToCompactInput,
   reduceChildCompactSafe,
-  type ChildCompactState,
 } from "./child-compact-render.js";
 import {
   createPiNativeTranscriptComponentFactory,
   type PiNativeTranscriptComponentDeps,
 } from "./child-native-components.js";
-import {
-  parsePiChildSessionEvent,
-  type PiChildSessionEvent,
-} from "./child-session-events.js";
-import {
-  createPiChildTranscriptRenderer,
-  createPiChildTranscriptState,
-  MAX_TRANSCRIPT_INPUT_BYTES,
-  reducePiChildTranscript,
-  type PiChildTranscriptAction,
-  type PiChildTranscriptEntry,
-  type PiChildTranscriptState,
-  type PiTranscriptComponentFactory,
-} from "./child-transcript.js";
 import type {
   PiNativeSessionEntryPage,
   PiNativeSessionEntryPageOptions,
   PiNativeSessionError,
 } from "./child-native-sessions.js";
+import type { PiChildOverlayKeyInterceptor } from "./child-overlay-keys.js";
+import {
+  type PiChildSessionEvent,
+  parsePiChildSessionEvent,
+} from "./child-session-events.js";
+import {
+  createPiChildTranscriptRenderer,
+  createPiChildTranscriptState,
+  MAX_TRANSCRIPT_INPUT_BYTES,
+  type PiChildTranscriptAction,
+  type PiChildTranscriptEntry,
+  type PiChildTranscriptState,
+  type PiTranscriptComponentFactory,
+  reducePiChildTranscript,
+} from "./child-transcript.js";
 
 // ---------------------------------------------------------------------------
 // Bounds
@@ -133,9 +136,7 @@ const OpaqueCursorSchema = z
   .min(1)
   .max(CHILD_OVERLAY_BOUNDS.maxCursorLength);
 
-const OverlayTextSchema = z
-  .string()
-  .max(CHILD_OVERLAY_BOUNDS.maxTextLength);
+const OverlayTextSchema = z.string().max(CHILD_OVERLAY_BOUNDS.maxTextLength);
 
 const RunActionSchema = z.enum(["start", "retry", "continue"]);
 
@@ -144,7 +145,10 @@ export const ChildOverlayRunDividerSchema = z
     run: z.number().int().min(1).max(CHILD_OVERLAY_BOUNDS.maxRuns),
     action: RunActionSchema,
     startedAt: z.number().int().nonnegative().optional(),
-    priorOutcome: z.string().max(CHILD_OVERLAY_BOUNDS.maxLabelLength).optional(),
+    priorOutcome: z
+      .string()
+      .max(CHILD_OVERLAY_BOUNDS.maxLabelLength)
+      .optional(),
     initiator: z.string().max(CHILD_OVERLAY_BOUNDS.maxLabelLength).optional(),
     model: z.string().max(CHILD_OVERLAY_BOUNDS.maxLabelLength).optional(),
     reasoning: z.string().max(CHILD_OVERLAY_BOUNDS.maxLabelLength).optional(),
@@ -623,7 +627,9 @@ function nativeMessageParts(
       toolCalls.push({
         toolCallId: safeEntryId(rawId, `tool-${toolCalls.length}`),
         toolName: boundLabel(
-          nonEmptyString(block.name) ?? nonEmptyString(block.toolName) ?? "tool",
+          nonEmptyString(block.name) ??
+            nonEmptyString(block.toolName) ??
+            "tool",
         ),
         arguments: block.arguments ?? block.input ?? block.args,
       });
@@ -695,22 +701,55 @@ function isReplayMessageEnd(step: ChildOverlayReplayStep): boolean {
   return step.kind === "event" && step.event.type === "message_end";
 }
 
+function replayEventRecord(
+  step: ChildOverlayReplayStep,
+): Record<string, unknown> | undefined {
+  if (step.kind !== "event") return undefined;
+  return step.event as unknown as Record<string, unknown>;
+}
+
+function replayEventType(step: ChildOverlayReplayStep): string | undefined {
+  const event = replayEventRecord(step);
+  return typeof event?.type === "string" ? event.type : undefined;
+}
+
+function replayToolCallId(step: ChildOverlayReplayStep): string | undefined {
+  const event = replayEventRecord(step);
+  return event === undefined ? undefined : nonEmptyString(event.toolCallId);
+}
+
+function replayMessageId(step: ChildOverlayReplayStep): string {
+  const event = replayEventRecord(step);
+  if (event === undefined) return "";
+  const message = recordOf(event.message);
+  return nonEmptyString(message?.id) ?? nonEmptyString(event.messageId) ?? "";
+}
+
+function toolCallHasArguments(step: ChildOverlayReplayStep): boolean {
+  const event = replayEventRecord(step);
+  return event !== undefined && event.arguments !== undefined;
+}
+
+function isReplayImage(step: ChildOverlayReplayStep): boolean {
+  return replayEventType(step) === "image";
+}
+
 function replayStepKey(step: ChildOverlayReplayStep): string {
   if (step.kind === "input") return `input:${step.input}:${step.text}`;
-  const event = step.event as unknown as Record<string, unknown>;
+  const event = replayEventRecord(step);
+  if (event === undefined) return "event";
   const type = typeof event.type === "string" ? event.type : "event";
-  const message = recordOf(event.message);
   const toolCallId = nonEmptyString(event.toolCallId) ?? "";
-  const messageId = nonEmptyString(message?.id) ?? "";
+  const messageId = replayMessageId(step);
   const text = nonEmptyString(event.text) ?? "";
   const mimeType = nonEmptyString(event.mimeType) ?? "";
-  // Distinguish successive tool partial/result payloads so live merges keep
-  // every admitted unique fact rather than collapsing them by toolCallId.
   const payload =
     event.partialResult !== undefined ||
     event.result !== undefined ||
-    event.error !== undefined
+    event.error !== undefined ||
+    event.arguments !== undefined
       ? JSON.stringify({
+          arguments: event.arguments ?? null,
           partialResult: event.partialResult ?? null,
           result: event.result ?? null,
           error: event.error ?? null,
@@ -720,73 +759,246 @@ function replayStepKey(step: ChildOverlayReplayStep): string {
 }
 
 /**
- * Deduplicates replay steps while preserving first-seen order so live merges
- * keep every admitted unique fact (call → partial → result) once.
+ * Stage key for semantic compaction. Same-stage repeats replace the prior
+ * step instead of consuming another replay slot (updates / thinking / tool
+ * partials, and later tool terminals / message ends for the same id).
+ *
+ * Returns `undefined` for facts that must accumulate uniquely (images, inputs,
+ * distinct status/retry rows).
  */
-function uniqueReplaySteps(
-  steps: readonly ChildOverlayReplayStep[],
-): ChildOverlayReplayStep[] {
-  const seen = new Set<string>();
-  const unique: ChildOverlayReplayStep[] = [];
-  for (const step of steps) {
-    const key = replayStepKey(step);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    unique.push(step);
+function replayCompactionStageKey(
+  step: ChildOverlayReplayStep,
+): string | undefined {
+  if (step.kind === "input") return undefined;
+  const type = replayEventType(step);
+  if (type === undefined) return undefined;
+  const toolCallId = replayToolCallId(step) ?? "";
+  const messageId = replayMessageId(step);
+  switch (type) {
+    case "message_update":
+      return `message_update:${messageId}`;
+    case "thinking":
+      return "thinking";
+    case "text":
+      return "text";
+    case "markdown":
+      return "markdown";
+    case "tool_partial_result":
+      return `tool_partial:${toolCallId}`;
+    case "tool_call":
+      return `tool_call:${toolCallId}`;
+    case "tool_result":
+    case "tool_error":
+      return `tool_terminal:${toolCallId}`;
+    case "message_start":
+      return `message_start:${messageId}`;
+    case "message_end":
+      return `message_end:${messageId}`;
+    default:
+      return undefined;
   }
-  return unique;
 }
 
 /**
- * Explicit capacity degrade for live merge: keep `message_start`, as many
- * unique middle facts as fit, and always retain terminal `message_end` when
- * present so rebuild never leaves an assistant falsely streaming.
+ * Whether `incoming` should replace an already-compacted step at the same
+ * stage. Tool calls prefer the variant that carries arguments; other stages
+ * always take the latest fact.
  */
-function degradeReplaySteps(
+function shouldReplaceCompactedStep(
+  existing: ChildOverlayReplayStep,
+  incoming: ChildOverlayReplayStep,
+): boolean {
+  if (replayEventType(existing) !== "tool_call") return true;
+  if (toolCallHasArguments(incoming)) return true;
+  if (toolCallHasArguments(existing)) return false;
+  return true;
+}
+
+/**
+ * Collapses repeated same-stage replay facts so streaming updates/partials
+ * overwrite their prior slot before the entry bound is applied.
+ */
+function compactReplaySteps(
+  steps: readonly ChildOverlayReplayStep[],
+): ChildOverlayReplayStep[] {
+  const compacted: ChildOverlayReplayStep[] = [];
+  const stageIndex = new Map<string, number>();
+  const seenUnique = new Set<string>();
+
+  for (const step of steps) {
+    const stageKey = replayCompactionStageKey(step);
+    if (stageKey !== undefined) {
+      const index = stageIndex.get(stageKey);
+      if (index !== undefined) {
+        const prior = compacted[index];
+        if (prior !== undefined && shouldReplaceCompactedStep(prior, step)) {
+          compacted[index] = step;
+        }
+        continue;
+      }
+      stageIndex.set(stageKey, compacted.length);
+      compacted.push(step);
+      continue;
+    }
+
+    const uniqueKey = replayStepKey(step);
+    if (seenUnique.has(uniqueKey)) continue;
+    seenUnique.add(uniqueKey);
+    compacted.push(step);
+  }
+  return compacted;
+}
+
+/**
+ * Marks required framing that must survive overflow: assistant start/end,
+ * every retained tool's opening `tool_call` (preferring args) and terminal
+ * result/error, plus image facts. Returns indices into `steps`.
+ */
+function essentialReplayIndices(
+  steps: readonly ChildOverlayReplayStep[],
+): readonly number[] {
+  const toolIds = new Set<string>();
+  for (const step of steps) {
+    const toolCallId = replayToolCallId(step);
+    const type = replayEventType(step);
+    if (
+      toolCallId !== undefined &&
+      (type === "tool_call" ||
+        type === "tool_partial_result" ||
+        type === "tool_result" ||
+        type === "tool_error")
+    ) {
+      toolIds.add(toolCallId);
+    }
+  }
+
+  const chosenToolCall = new Map<string, number>();
+  const chosenToolTerminal = new Map<string, number>();
+  let messageStart: number | undefined;
+  let messageEnd: number | undefined;
+  const images: number[] = [];
+
+  for (let index = 0; index < steps.length; index += 1) {
+    const step = steps[index];
+    if (step === undefined) continue;
+    if (isReplayMessageStart(step) && messageStart === undefined) {
+      messageStart = index;
+      continue;
+    }
+    if (isReplayMessageEnd(step)) {
+      messageEnd = index;
+      continue;
+    }
+    if (isReplayImage(step)) {
+      images.push(index);
+      continue;
+    }
+    const type = replayEventType(step);
+    const toolCallId = replayToolCallId(step);
+    if (toolCallId === undefined || !toolIds.has(toolCallId)) continue;
+    if (type === "tool_call") {
+      const prior = chosenToolCall.get(toolCallId);
+      if (prior === undefined) {
+        chosenToolCall.set(toolCallId, index);
+      } else {
+        const priorStep = steps[prior];
+        if (
+          priorStep !== undefined &&
+          shouldReplaceCompactedStep(priorStep, step)
+        ) {
+          chosenToolCall.set(toolCallId, index);
+        }
+      }
+      continue;
+    }
+    if (type === "tool_result" || type === "tool_error") {
+      chosenToolTerminal.set(toolCallId, index);
+    }
+  }
+
+  const indices = new Set<number>();
+  if (messageStart !== undefined) indices.add(messageStart);
+  if (messageEnd !== undefined) indices.add(messageEnd);
+  for (const index of chosenToolCall.values()) indices.add(index);
+  for (const index of chosenToolTerminal.values()) indices.add(index);
+  for (const index of images) indices.add(index);
+  return [...indices].sort((left, right) => left - right);
+}
+
+/**
+ * Fits compacted replay under the entry bound while preserving required
+ * framing. When essential frames alone exceed the bound, fails typed —
+ * never silently drops a tool call or terminal.
+ */
+function boundReplaySteps(
   steps: readonly ChildOverlayReplayStep[],
   cap: number,
-): readonly ChildOverlayReplayStep[] {
-  if (cap <= 0) return [];
-  const start = steps.find(isReplayMessageStart);
-  const end = [...steps].reverse().find(isReplayMessageEnd);
-  const middle = steps.filter(
-    (step) => !isReplayMessageStart(step) && !isReplayMessageEnd(step),
-  );
-  if (end !== undefined && cap === 1) return [end];
-  const reserved = (start !== undefined ? 1 : 0) + (end !== undefined ? 1 : 0);
-  const middleBudget = Math.max(0, cap - reserved);
-  // Prefer the most recent unique facts when the middle must shrink.
-  const keptMiddle =
-    middle.length <= middleBudget
-      ? middle
-      : middle.slice(middle.length - middleBudget);
-  return [
-    ...(start !== undefined ? [start] : []),
-    ...keptMiddle,
-    ...(end !== undefined ? [end] : []),
-  ];
+): Result<readonly ChildOverlayReplayStep[], ChildOverlayMappingError> {
+  if (cap <= 0) {
+    return err({
+      type: "OverlayCapacityExceeded",
+      operation: "entry-replay-steps",
+    });
+  }
+  if (steps.length <= cap) return ok(steps);
+
+  const essential = essentialReplayIndices(steps);
+  if (essential.length > cap) {
+    return err({
+      type: "OverlayCapacityExceeded",
+      operation: "entry-replay-steps",
+    });
+  }
+
+  const essentialSet = new Set(essential);
+  const optional = steps
+    .map((_, index) => index)
+    .filter((index) => !essentialSet.has(index));
+  const optionalBudget = cap - essential.length;
+  const keptOptional =
+    optional.length <= optionalBudget
+      ? optional
+      : optional.slice(optional.length - optionalBudget);
+  const kept = new Set([...essential, ...keptOptional]);
+  return ok(steps.filter((_, index) => kept.has(index)));
 }
 
 /**
  * Concatenates replay steps for an entry replaced in place (a tool call that
  * later gains partial results and a terminal result, or a message that ends).
  *
- * Under the bound every unique admitted fact is kept. Over the bound the merge
- * degrades explicitly while preserving start/end terminals — never silently
- * truncates away `message_end`.
+ * Semantic compaction collapses repeated updates/thinking/tool partials onto
+ * one stage slot before the bound applies. Remaining overflow preserves
+ * required framing; essential-frame overflow fails typed.
  */
 function mergeReplaySteps(
   existing: readonly ChildOverlayReplayStep[] | undefined,
   incoming: readonly ChildOverlayReplayStep[] | undefined,
-): readonly ChildOverlayReplayStep[] | undefined {
-  if (existing === undefined) return incoming;
-  if (incoming === undefined) return existing;
-  const merged = uniqueReplaySteps([...existing, ...incoming]);
-  const cap = CHILD_OVERLAY_BOUNDS.maxEntryReplaySteps;
-  if (merged.length <= cap) return merged;
-  return degradeReplaySteps(merged, cap);
+): Result<
+  readonly ChildOverlayReplayStep[] | undefined,
+  ChildOverlayMappingError
+> {
+  if (existing === undefined && incoming === undefined) return ok(undefined);
+  const compacted = compactReplaySteps([
+    ...(existing ?? []),
+    ...(incoming ?? []),
+  ]);
+  return boundReplaySteps(compacted, CHILD_OVERLAY_BOUNDS.maxEntryReplaySteps);
 }
 
+/**
+ * Public merge helper for tests and callers that need the typed capacity
+ * result from semantic replay compaction.
+ */
+export function mergeChildOverlayReplaySteps(
+  existing: readonly ChildOverlayReplayStep[] | undefined,
+  incoming: readonly ChildOverlayReplayStep[] | undefined,
+): Result<
+  readonly ChildOverlayReplayStep[] | undefined,
+  ChildOverlayMappingError
+> {
+  return mergeReplaySteps(existing, incoming);
+}
 
 function safeEntryId(value: string, fallback: string): string {
   const parsed = OpaqueIdSchema.safeParse(value);
@@ -1002,8 +1214,7 @@ function userEntryFromParts(
 ): Result<ChildOverlayEntry, ChildOverlayMappingError> {
   const steps: ChildOverlayReplayStep[] = [];
   const hasText = parts.text.trim().length > 0;
-  const hasOtherFacts =
-    parts.toolResults.length > 0 || parts.images.length > 0;
+  const hasOtherFacts = parts.toolResults.length > 0 || parts.images.length > 0;
   if (hasText || !hasOtherFacts) {
     if (steps.length >= CHILD_OVERLAY_BOUNDS.maxEntryReplaySteps) {
       return err({
@@ -1174,7 +1385,11 @@ export function createMemoryChildOverlaySource(
       );
       if (mappedEntry.isErr()) {
         mapped.push({
-          ...degradedCapacityEntry(item.id, startInclusive + i, mappedEntry.error),
+          ...degradedCapacityEntry(
+            item.id,
+            startInclusive + i,
+            mappedEntry.error,
+          ),
           id: item.id,
         });
         continue;
@@ -1185,9 +1400,7 @@ export function createMemoryChildOverlaySource(
     // Cursors address the oldest/newest entry already in the page so the next
     // loadOlder/loadNewer call continues contiguously (exclusive of that edge).
     const olderCursor =
-      startInclusive > 0
-        ? child.entries[startInclusive]?.id
-        : undefined;
+      startInclusive > 0 ? child.entries[startInclusive]?.id : undefined;
     const newerCursor =
       endExclusive < child.entries.length && endExclusive > startInclusive
         ? child.entries[endExclusive - 1]?.id
@@ -1385,7 +1598,10 @@ export function createReadSessionEntryPageOverlaySource(deps: {
     loadOlder(childId, cursor, pageSize) {
       const parsed = OpaqueCursorSchema.safeParse(cursor);
       if (!parsed.success) {
-        return errAsync({ type: "SourceInvalidCursor", operation: "loadOlder" });
+        return errAsync({
+          type: "SourceInvalidCursor",
+          operation: "loadOlder",
+        });
       }
       return loadPage(
         childId,
@@ -1400,7 +1616,10 @@ export function createReadSessionEntryPageOverlaySource(deps: {
     loadNewer(childId, cursor, pageSize) {
       const parsed = OpaqueCursorSchema.safeParse(cursor);
       if (!parsed.success) {
-        return errAsync({ type: "SourceInvalidCursor", operation: "loadNewer" });
+        return errAsync({
+          type: "SourceInvalidCursor",
+          operation: "loadNewer",
+        });
       }
       return loadPage(
         childId,
@@ -1456,10 +1675,7 @@ interface SavedChildState {
   lastTouched: number;
 }
 
-function emptySaved(
-  threadId: string,
-  touched: number,
-): SavedChildState {
+function emptySaved(threadId: string, touched: number): SavedChildState {
   return {
     draft: "",
     searchQuery: "",
@@ -1575,9 +1791,7 @@ export class ChildOverlayController {
         const child = parsed.data;
         this.touch(child.childId);
         const existing = this.saved.get(child.childId);
-        const state =
-          existing ??
-          emptySaved(child.threadId, this.clock);
+        const state = existing ?? emptySaved(child.threadId, this.clock);
         if (existing === undefined) this.saved.set(child.childId, state);
         this.openChild = child;
         this.evictLru();
@@ -1648,9 +1862,7 @@ export class ChildOverlayController {
     });
   }
 
-  search(
-    query: string,
-  ): ResultAsync<ChildOverlayView, ChildOverlayError> {
+  search(query: string): ResultAsync<ChildOverlayView, ChildOverlayError> {
     const bounded = OverlayTextSchema.safeParse(query);
     const text = bounded.success
       ? bounded.data
@@ -1662,9 +1874,7 @@ export class ChildOverlayController {
       }
       const needle = text.toLowerCase();
       if (
-        state.entries.some((entry) =>
-          entry.text.toLowerCase().includes(needle),
-        )
+        state.entries.some((entry) => entry.text.toLowerCase().includes(needle))
       ) {
         return okAsync(this.toView(child, state));
       }
@@ -1702,9 +1912,7 @@ export class ChildOverlayController {
    * Applies one parser-approved live child event through the Task 11 map /
    * reduce pipeline and projects a window entry when meaningful.
    */
-  applyLiveEvent(
-    event: unknown,
-  ): Result<ChildOverlayView, ChildOverlayError> {
+  applyLiveEvent(event: unknown): Result<ChildOverlayView, ChildOverlayError> {
     const child = this.openChild;
     if (child === undefined) return err({ type: "OverlayNotOpen" });
     const state = this.saved.get(child.childId);
@@ -1740,9 +1948,7 @@ export class ChildOverlayController {
     return ok(this.toView(child, state));
   }
 
-  setScrollOffset(
-    offset: number,
-  ): Result<ChildOverlayView, ChildOverlayError> {
+  setScrollOffset(offset: number): Result<ChildOverlayView, ChildOverlayError> {
     return this.mutateOpen((child, state) => {
       const max = Math.max(0, state.entries.length);
       const next = Math.min(Math.max(0, Math.floor(offset)), max);
@@ -1809,9 +2015,7 @@ export class ChildOverlayController {
     });
   }
 
-  navigateRun(
-    delta: number,
-  ): Result<ChildOverlayView, ChildOverlayError> {
+  navigateRun(delta: number): Result<ChildOverlayView, ChildOverlayError> {
     return this.mutateOpen((child, state) => {
       const runs = child.runs;
       if (runs.length === 0) return this.toView(child, state);
@@ -1828,9 +2032,7 @@ export class ChildOverlayController {
     });
   }
 
-  navigateBranch(
-    delta: number,
-  ): Result<ChildOverlayView, ChildOverlayError> {
+  navigateBranch(delta: number): Result<ChildOverlayView, ChildOverlayError> {
     return this.mutateOpen((child, state) => {
       const branches = child.branchIds;
       if (branches.length === 0) return this.toView(child, state);
@@ -1916,11 +2118,12 @@ export class ChildOverlayController {
           childId: child.childId,
           text,
         }))
-        .mapErr((): ChildOverlayError =>
-          this.fallbackFromError(child.childId, "render-failed", {
-            type: "SourceUnavailable",
-            operation: "steer",
-          }),
+        .mapErr(
+          (): ChildOverlayError =>
+            this.fallbackFromError(child.childId, "render-failed", {
+              type: "SourceUnavailable",
+              operation: "steer",
+            }),
         );
     }
 
@@ -1946,11 +2149,12 @@ export class ChildOverlayController {
           childId: child.childId,
           text,
         }))
-        .mapErr((): ChildOverlayError =>
-          this.fallbackFromError(child.childId, "render-failed", {
-            type: "SourceUnavailable",
-            operation: "follow-up",
-          }),
+        .mapErr(
+          (): ChildOverlayError =>
+            this.fallbackFromError(child.childId, "render-failed", {
+              type: "SourceUnavailable",
+              operation: "follow-up",
+            }),
         );
     }
 
@@ -2047,10 +2251,7 @@ export class ChildOverlayController {
   }
 
   private mutateOpen(
-    fn: (
-      child: ChildOverlayChild,
-      state: SavedChildState,
-    ) => ChildOverlayView,
+    fn: (child: ChildOverlayChild, state: SavedChildState) => ChildOverlayView,
   ): Result<ChildOverlayView, ChildOverlayError> {
     const child = this.openChild;
     if (child === undefined) return err({ type: "OverlayNotOpen" });
@@ -2115,7 +2316,9 @@ export class ChildOverlayController {
       // (resume from a page newer/older boundary inside the window) must not
       // reorder the chronological window via naive [...incoming, ...state].
       const existingIds = new Set(state.entries.map((entry) => entry.id));
-      const uniqueOlder = incoming.filter((entry) => !existingIds.has(entry.id));
+      const uniqueOlder = incoming.filter(
+        (entry) => !existingIds.has(entry.id),
+      );
       const merged = dedupEntries([...uniqueOlder, ...state.entries]);
       // Keep fetched older entries; trim the newest tail when over cap.
       const retained = merged.slice(0, this.windowCap);
@@ -2168,10 +2371,20 @@ export class ChildOverlayController {
     if (index >= 0) {
       const existing = state.entries[index];
       const next = [...state.entries];
+      const mergedReplay = mergeReplaySteps(existing?.replay, entry.replay);
+      if (mergedReplay.isErr()) {
+        next[index] = degradedCapacityEntry(
+          entry.id,
+          entry.sequence,
+          mergedReplay.error,
+        );
+        state.entries = next;
+        return;
+      }
       next[index] = {
         ...entry,
         expanded: state.globalExpanded,
-        replay: mergeReplaySteps(existing?.replay, entry.replay),
+        replay: mergedReplay.value,
       };
       state.entries = next;
       return;
@@ -2321,12 +2534,17 @@ function stripPathLike(value: string): string {
   // Drop absolute path prefixes that would leak storage locations.
   return boundText(
     value
-      .replace(/(?:^|[\s"])(?:\/(?:Users|home|var|tmp|private)\/\S+)/gu, " [path]")
+      .replace(
+        /(?:^|[\s"])(?:\/(?:Users|home|var|tmp|private)\/\S+)/gu,
+        " [path]",
+      )
       .replace(/(?:[A-Za-z]:\\[^\s"]+)/gu, " [path]"),
   );
 }
 
-function anchorFromScroll(state: SavedChildState): ChildOverlayAnchor | undefined {
+function anchorFromScroll(
+  state: SavedChildState,
+): ChildOverlayAnchor | undefined {
   if (state.entries.length === 0) return undefined;
   const index = Math.max(
     0,
@@ -2365,9 +2583,7 @@ function restoreScrollAnchor(
   state.anchor = { entryId: anchor.entryId, lineOffset: anchor.lineOffset };
 }
 
-function scrollDelta(
-  data: string,
-): number | "oldest" | "follow" | undefined {
+function scrollDelta(data: string): number | "oldest" | "follow" | undefined {
   if (data === SCROLL_KEYS.pageUp) return SCROLL_PAGE;
   if (data === SCROLL_KEYS.pageDown) return -SCROLL_PAGE;
   if (data === SCROLL_KEYS.shiftUp) return 1;
@@ -2397,7 +2613,8 @@ function projectLiveEntry(
         }
       }
       const id = liveAssistantEntryId(event, sequence);
-      if (event.type === "message_update" && text.length === 0) return undefined;
+      if (event.type === "message_update" && text.length === 0)
+        return undefined;
       return {
         id,
         sequence,

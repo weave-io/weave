@@ -321,11 +321,11 @@ export type {
   ChildOverlayEntry,
   ChildOverlayEntryKind,
   ChildOverlayError,
-  ChildOverlayMappingError,
   ChildOverlayFallbackMetadata,
   ChildOverlayFallbackReason,
   ChildOverlayFallbackRequired,
   ChildOverlayInputOutcome,
+  ChildOverlayMappingError,
   ChildOverlayMutationPort,
   ChildOverlayPage,
   ChildOverlayReplayStep,
@@ -350,6 +350,7 @@ export {
   createReadSessionEntryPageOverlaySource,
   mapNativeSessionEntryPageToOverlay,
   mapNativeSessionEntryToOverlay,
+  mergeChildOverlayReplaySteps,
   transcriptFromOverlayEntries,
 } from "./child-overlay.js";
 export type {

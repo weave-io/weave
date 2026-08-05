@@ -14,20 +14,23 @@ import {
 } from "../child-native-sessions.js";
 import {
   CHILD_OVERLAY_BOUNDS,
-  createChildOverlayController,
-  createChildOverlayCustomComponent,
-  createMemoryChildOverlaySource,
-  createReadSessionEntryPageOverlaySource,
-  mapNativeSessionEntryToOverlay,
-  transcriptFromOverlayEntries,
   type ChildOverlayChild,
   type ChildOverlayEntry,
   type ChildOverlayFallbackRequired,
   type ChildOverlayMutationPort,
+  type ChildOverlayReplayStep,
   type ChildOverlayView,
+  createChildOverlayController,
+  createChildOverlayCustomComponent,
+  createMemoryChildOverlaySource,
+  createReadSessionEntryPageOverlaySource,
   type MemoryOverlaySourceChild,
   type MemoryOverlaySourceEntry,
+  mapNativeSessionEntryToOverlay,
+  mergeChildOverlayReplaySteps,
+  transcriptFromOverlayEntries,
 } from "../child-overlay.js";
+import { parsePiChildSessionEvent } from "../child-session-events.js";
 import { MemoryPiNativeSessionFs } from "../native-session-fs.js";
 
 /** Pi native components read the process-wide theme. */
@@ -55,7 +58,11 @@ function message(
   };
 }
 
-function runDivider(id: string, run: number, action: "start" | "retry" | "continue"): unknown {
+function runDivider(
+  id: string,
+  run: number,
+  action: "start" | "retry" | "continue",
+): unknown {
   return {
     type: "custom",
     id,
@@ -66,10 +73,7 @@ function runDivider(id: string, run: number, action: "start" | "retry" | "contin
   };
 }
 
-function assistantMessage(
-  id: string,
-  content: readonly unknown[],
-): unknown {
+function assistantMessage(id: string, content: readonly unknown[]): unknown {
   return {
     type: "message",
     id,
@@ -135,9 +139,7 @@ function nativeConversation(): readonly unknown[] {
   ];
 }
 
-function mapNative(
-  native: readonly unknown[],
-): ChildOverlayEntry[] {
+function mapNative(native: readonly unknown[]): ChildOverlayEntry[] {
   const mapped: ChildOverlayEntry[] = [];
   for (let index = 0; index < native.length; index += 1) {
     const result = mapNativeSessionEntryToOverlay(native[index], index);
@@ -149,7 +151,8 @@ function mapNative(
 }
 
 function entries(count: number, prefix = "e"): MemoryOverlaySourceEntry[] {
-  const result: MemoryOverlaySourceEntry[] = [];  for (let i = 0; i < count; i += 1) {
+  const result: MemoryOverlaySourceEntry[] = [];
+  for (let i = 0; i < count; i += 1) {
     const id = `${prefix}${i}`;
     let role: "user" | "assistant";
     if (i === 0 || i % 2 === 0) {
@@ -259,7 +262,8 @@ function pageMemoryEntries(
 }
 
 describe("mapNativeSessionEntryToOverlay", () => {
-  it("maps user/assistant messages and run dividers without retaining paths", () => {    const prompt = mapNativeSessionEntryToOverlay(
+  it("maps user/assistant messages and run dividers without retaining paths", () => {
+    const prompt = mapNativeSessionEntryToOverlay(
       message("m0", "user", "do the work"),
       0,
     )._unsafeUnwrap();
@@ -283,11 +287,21 @@ describe("mapNativeSessionEntryToOverlay", () => {
 
   it("builds a transcript handoff model from overlay entries", () => {
     const mapped = [
-      mapNativeSessionEntryToOverlay(message("a", "user", "task"), 0)._unsafeUnwrap(),
-      mapNativeSessionEntryToOverlay(message("b", "assistant", "ok"), 1)._unsafeUnwrap(),
-    ].filter((entry): entry is NonNullable<typeof entry> => entry !== undefined);
+      mapNativeSessionEntryToOverlay(
+        message("a", "user", "task"),
+        0,
+      )._unsafeUnwrap(),
+      mapNativeSessionEntryToOverlay(
+        message("b", "assistant", "ok"),
+        1,
+      )._unsafeUnwrap(),
+    ].filter(
+      (entry): entry is NonNullable<typeof entry> => entry !== undefined,
+    );
     const transcript = transcriptFromOverlayEntries(mapped);
-    expect(transcript.entries.some((entry) => entry.kind === "task")).toBe(true);
+    expect(transcript.entries.some((entry) => entry.kind === "task")).toBe(
+      true,
+    );
     expect(transcript.entries.some((entry) => entry.kind === "assistant")).toBe(
       true,
     );
@@ -381,7 +395,9 @@ describe("mapNativeSessionEntryToOverlay", () => {
       mimeType: "image/webp",
     });
 
-    const native: unknown[] = [assistantMessage("bound-asst", assistantContent)];
+    const native: unknown[] = [
+      assistantMessage("bound-asst", assistantContent),
+    ];
     for (let i = 0; i < toolCount; i += 1) {
       native.push(
         toolResultMessage(`tr-${i}`, `call-${i}`, [
@@ -700,7 +716,9 @@ describe("ChildOverlayController", () => {
       })
       ._unsafeUnwrap();
 
-    const assistantEntry = view.entries.find((entry) => entry.id === "msg-bound");
+    const assistantEntry = view.entries.find(
+      (entry) => entry.id === "msg-bound",
+    );
     expect(assistantEntry).toBeDefined();
     const replay = assistantEntry?.replay ?? [];
     expect(replay.length).toBeLessThanOrEqual(
@@ -753,7 +771,7 @@ describe("ChildOverlayController", () => {
     ).toBe("live final");
   });
 
-  it("degrades live assistant merge over the replay bound without false streaming", async () => {
+  it("compacts tool partial overflow and rebuilds call args plus terminal result", async () => {
     const source = createMemoryChildOverlaySource([
       child({
         childId: "live-merge-overflow",
@@ -769,23 +787,29 @@ describe("ChildOverlayController", () => {
     await mustOpen(overlay, "live-merge-overflow");
 
     const messageId = "msg-overflow";
+    const toolCallId = "merge-tool";
+    const toolArgs = { path: "src/index.ts", mode: "full" };
     overlay
       .applyLiveEvent({
         type: "message_start",
         message: { id: messageId, role: "assistant" },
       })
       ._unsafeUnwrap();
+    overlay
+      .applyLiveEvent({
+        type: "tool_call",
+        toolCallId,
+        toolName: "read",
+        arguments: toolArgs,
+      })
+      ._unsafeUnwrap();
 
-    // Force many unique replay steps onto the same assistant entry id by
-    // projecting thinking/text events that share the assistant id via merge
-    // is not how live works — instead overfill a single tool entry's replay
-    // merge, then confirm assistant terminals still settle cleanly.
     const overfill = CHILD_OVERLAY_BOUNDS.maxEntryReplaySteps + 4;
     for (let i = 0; i < overfill; i += 1) {
       overlay
         .applyLiveEvent({
           type: "tool_partial_result",
-          toolCallId: "merge-tool",
+          toolCallId,
           toolName: "read",
           partialResult: { content: [{ type: "text", text: `partial-${i}` }] },
         })
@@ -794,7 +818,7 @@ describe("ChildOverlayController", () => {
     overlay
       .applyLiveEvent({
         type: "tool_result",
-        toolCallId: "merge-tool",
+        toolCallId,
         result: { content: [{ type: "text", text: "done" }] },
       })
       ._unsafeUnwrap();
@@ -806,11 +830,32 @@ describe("ChildOverlayController", () => {
       })
       ._unsafeUnwrap();
 
-    const toolEntry = view.entries.find((entry) => entry.id === "merge-tool");
+    const toolEntry = view.entries.find((entry) => entry.id === toolCallId);
     expect(toolEntry).toBeDefined();
     expect((toolEntry?.replay ?? []).length).toBeLessThanOrEqual(
       CHILD_OVERLAY_BOUNDS.maxEntryReplaySteps,
     );
+    expect(
+      (toolEntry?.replay ?? []).some(
+        (step) =>
+          step.kind === "event" &&
+          step.event.type === "tool_call" &&
+          "arguments" in step.event &&
+          JSON.stringify(step.event.arguments) === JSON.stringify(toolArgs),
+      ),
+    ).toBe(true);
+    expect(
+      (toolEntry?.replay ?? []).some(
+        (step) => step.kind === "event" && step.event.type === "tool_result",
+      ),
+    ).toBe(true);
+    // Semantic compaction keeps one partial stage, not every streaming chunk.
+    expect(
+      (toolEntry?.replay ?? []).filter(
+        (step) =>
+          step.kind === "event" && step.event.type === "tool_partial_result",
+      ).length,
+    ).toBeLessThanOrEqual(1);
 
     const assistantEntry = view.entries.find((entry) => entry.id === messageId);
     expect(
@@ -827,6 +872,24 @@ describe("ChildOverlayController", () => {
     );
 
     const rebuilt = transcriptFromOverlayEntries(view.entries);
+    const rebuiltTool = rebuilt.entries.find(
+      (entry) => entry.kind === "tool" && entry.toolCallId === toolCallId,
+    );
+    expect(rebuiltTool).toBeDefined();
+    expect(
+      rebuiltTool && "state" in rebuiltTool ? rebuiltTool.state : undefined,
+    ).toBe("result");
+    expect(
+      rebuiltTool && "arguments" in rebuiltTool
+        ? rebuiltTool.arguments
+        : undefined,
+    ).toEqual(toolArgs);
+    expect(
+      rebuiltTool && "result" in rebuiltTool
+        ? JSON.stringify(rebuiltTool.result)
+        : undefined,
+    ).toContain("done");
+
     const rebuiltAsst = rebuilt.entries.find(
       (entry) => entry.kind === "assistant" && entry.messageId === messageId,
     );
@@ -835,6 +898,192 @@ describe("ChildOverlayController", () => {
         ? rebuiltAsst.streaming
         : undefined,
     ).toBe(false);
+    expect(
+      rebuiltAsst && "text" in rebuiltAsst ? rebuiltAsst.text : undefined,
+    ).toBe("overflow ok");
+  });
+
+  it("compacts tool partial overflow and rebuilds call args plus terminal error", async () => {
+    const source = createMemoryChildOverlaySource([
+      child({
+        childId: "live-merge-error",
+        status: "live",
+        generationId: "gen-1",
+        entries: [],
+      }),
+    ]);
+    const overlay = createChildOverlayController(source, {
+      pageSize: 10,
+      windowCap: 256,
+    });
+    await mustOpen(overlay, "live-merge-error");
+
+    const toolCallId = "err-tool";
+    const toolArgs = { cmd: "false" };
+    overlay
+      .applyLiveEvent({
+        type: "tool_call",
+        toolCallId,
+        toolName: "bash",
+        arguments: toolArgs,
+      })
+      ._unsafeUnwrap();
+    const overfill = CHILD_OVERLAY_BOUNDS.maxEntryReplaySteps + 4;
+    for (let i = 0; i < overfill; i += 1) {
+      overlay
+        .applyLiveEvent({
+          type: "tool_partial_result",
+          toolCallId,
+          partialResult: { content: [{ type: "text", text: `chunk-${i}` }] },
+        })
+        ._unsafeUnwrap();
+    }
+    const view = overlay
+      .applyLiveEvent({
+        type: "tool_error",
+        toolCallId,
+        error: "exit 1",
+      })
+      ._unsafeUnwrap();
+
+    const rebuilt = transcriptFromOverlayEntries(view.entries);
+    const tool = rebuilt.entries.find(
+      (entry) => entry.kind === "tool" && entry.toolCallId === toolCallId,
+    );
+    expect(tool && "state" in tool ? tool.state : undefined).toBe("error");
+    expect(tool && "arguments" in tool ? tool.arguments : undefined).toEqual(
+      toolArgs,
+    );
+    expect(tool && "error" in tool ? tool.error : undefined).toBe("exit 1");
+  });
+
+  it("rebuilds an assistant that contains tools with call, terminal, and message_end", async () => {
+    const source = createMemoryChildOverlaySource([
+      child({
+        childId: "live-asst-tools",
+        status: "live",
+        generationId: "gen-1",
+        entries: [],
+      }),
+    ]);
+    const overlay = createChildOverlayController(source, {
+      pageSize: 10,
+      windowCap: 256,
+    });
+    await mustOpen(overlay, "live-asst-tools");
+
+    const messageId = "msg-tools";
+    const events: readonly unknown[] = [
+      { type: "message_start", message: { id: messageId, role: "assistant" } },
+      {
+        type: "tool_call",
+        toolCallId: "call-a",
+        toolName: "read",
+        arguments: { path: "a.ts" },
+      },
+      {
+        type: "tool_result",
+        toolCallId: "call-a",
+        result: { content: [{ type: "text", text: "a-ok" }] },
+      },
+      {
+        type: "tool_call",
+        toolCallId: "call-b",
+        toolName: "bash",
+        arguments: { cmd: "ls" },
+      },
+      { type: "tool_error", toolCallId: "call-b", error: "denied" },
+      {
+        type: "message_end",
+        message: { id: messageId, role: "assistant", content: "wrapped up" },
+      },
+    ];
+    let view = overlay.view()._unsafeUnwrap();
+    for (const event of events) {
+      view = overlay.applyLiveEvent(event)._unsafeUnwrap();
+    }
+
+    const rebuilt = transcriptFromOverlayEntries(view.entries);
+    const toolA = rebuilt.entries.find(
+      (entry) => entry.kind === "tool" && entry.toolCallId === "call-a",
+    );
+    const toolB = rebuilt.entries.find(
+      (entry) => entry.kind === "tool" && entry.toolCallId === "call-b",
+    );
+    const asst = rebuilt.entries.find(
+      (entry) => entry.kind === "assistant" && entry.messageId === messageId,
+    );
+    expect(toolA && "state" in toolA ? toolA.state : undefined).toBe("result");
+    expect(toolA && "arguments" in toolA ? toolA.arguments : undefined).toEqual(
+      { path: "a.ts" },
+    );
+    expect(toolB && "state" in toolB ? toolB.state : undefined).toBe("error");
+    expect(toolB && "arguments" in toolB ? toolB.arguments : undefined).toEqual(
+      { cmd: "ls" },
+    );
+    expect(asst && "streaming" in asst ? asst.streaming : undefined).toBe(
+      false,
+    );
+    expect(asst && "text" in asst ? asst.text : undefined).toBe("wrapped up");
+
+    const assistantEntry = view.entries.find((entry) => entry.id === messageId);
+    expect(
+      (assistantEntry?.replay ?? []).some(
+        (step) => step.kind === "event" && step.event.type === "message_start",
+      ),
+    ).toBe(true);
+    expect(
+      (assistantEntry?.replay ?? []).some(
+        (step) => step.kind === "event" && step.event.type === "message_end",
+      ),
+    ).toBe(true);
+  });
+
+  it("returns typed capacity when essential replay frames exceed the bound", () => {
+    const eventStep = (candidate: unknown): ChildOverlayReplayStep => {
+      const parsed = parsePiChildSessionEvent(candidate);
+      expect(parsed.success).toBe(true);
+      if (!parsed.success) {
+        throw new Error("expected session event");
+      }
+      return { kind: "event", event: parsed.data };
+    };
+
+    const essentials: ChildOverlayReplayStep[] = [
+      eventStep({
+        type: "message_start",
+        message: { id: "cap-msg", role: "assistant" },
+      }),
+    ];
+    const toolCount = CHILD_OVERLAY_BOUNDS.maxEntryReplaySteps;
+    for (let i = 0; i < toolCount; i += 1) {
+      essentials.push(
+        eventStep({
+          type: "tool_call",
+          toolCallId: `cap-${i}`,
+          toolName: "read",
+          arguments: { i },
+        }),
+        eventStep({
+          type: "tool_result",
+          toolCallId: `cap-${i}`,
+          result: { content: [{ type: "text", text: `r-${i}` }] },
+        }),
+      );
+    }
+    essentials.push(
+      eventStep({
+        type: "message_end",
+        message: { id: "cap-msg", role: "assistant", content: "done" },
+      }),
+    );
+
+    const merged = mergeChildOverlayReplaySteps([], essentials);
+    expect(merged.isErr()).toBe(true);
+    expect(merged._unsafeUnwrapErr()).toEqual({
+      type: "OverlayCapacityExceeded",
+      operation: "entry-replay-steps",
+    });
   });
 
   it("pages historical native entries without losing kinds or expansion", async () => {
@@ -1021,7 +1270,9 @@ describe("ChildOverlayController", () => {
       maxSearchPages: 3,
     });
     await mustOpen(searchOverlay, "render-page-1");
-    const afterSearch = (await searchOverlay.search("e-text-0"))._unsafeUnwrap();
+    const afterSearch = (
+      await searchOverlay.search("e-text-0")
+    )._unsafeUnwrap();
     expect(afterSearch.entries.some((entry) => entry.id === "e0")).toBe(true);
     expect(afterSearch.searchMatches.length).toBeGreaterThan(0);
     assertTranscriptCoversWindow(afterSearch);
@@ -1173,7 +1424,9 @@ describe("ChildOverlayController", () => {
     expect(found.entries.length).toBeLessThanOrEqual(10 + 10 * 3);
 
     const beforeMiss = found.entries.length;
-    const miss = (await overlay.search("never-present-token-zz"))._unsafeUnwrap();
+    const miss = (
+      await overlay.search("never-present-token-zz")
+    )._unsafeUnwrap();
     expect(miss.searchMatches).toEqual([]);
     // One search call fetches at most maxSearchPages additional older pages.
     expect(miss.entries.length).toBeLessThanOrEqual(beforeMiss + 10 * 3);
@@ -1251,7 +1504,9 @@ describe("ChildOverlayController", () => {
     await mustOpen(overlay, "nav-1");
     expect(overlay.view()._unsafeUnwrap().activeRun).toBe(3);
     expect(overlay.navigateRun(-1)._unsafeUnwrap().activeRun).toBe(2);
-    expect(overlay.navigateBranch(1)._unsafeUnwrap().activeBranchId).toBe("alt");
+    expect(overlay.navigateBranch(1)._unsafeUnwrap().activeBranchId).toBe(
+      "alt",
+    );
   });
 
   it("emits steer and follow-up only for an active live child", async () => {
@@ -1564,7 +1819,10 @@ describe("ChildOverlayController", () => {
             bytesRead: page.bytesRead,
             linesScanned: page.linesScanned,
           });
-          maxEntriesReturned = Math.max(maxEntriesReturned, page.entries.length);
+          maxEntriesReturned = Math.max(
+            maxEntriesReturned,
+            page.entries.length,
+          );
           return page;
         }),
     });
@@ -1628,7 +1886,12 @@ describe("ChildOverlayController", () => {
       120,
     );
     expect(
-      JSON.stringify(overlay.view()._unsafeUnwrap().entries.map((e) => e.id)),
+      JSON.stringify(
+        overlay
+          .view()
+          ._unsafeUnwrap()
+          .entries.map((e) => e.id),
+      ),
     ).not.toContain("/Users/");
   });
 
@@ -1796,9 +2059,9 @@ describe("ChildOverlayController", () => {
       expect(newerWalk.entries.length).toBeLessThanOrEqual(windowCap);
       newerGuard += 1;
     }
-    expect(
-      newerWalk.entries.some((entry) => entry.text === tipText),
-    ).toBe(true);
+    expect(newerWalk.entries.some((entry) => entry.text === tipText)).toBe(
+      true,
+    );
 
     // --- inverse: newer trim then load older back ---
     const overlayNewer = createChildOverlayController(source, {
@@ -1824,7 +2087,10 @@ describe("ChildOverlayController", () => {
     let afterNewerTrim = pinnedNewer;
     let trimmedOldest = false;
     for (let step = 0; step < 12; step += 1) {
-      if (!afterNewerTrim.hasNewer || afterNewerTrim.newerCursor === undefined) {
+      if (
+        !afterNewerTrim.hasNewer ||
+        afterNewerTrim.newerCursor === undefined
+      ) {
         break;
       }
       const beforeOldest = afterNewerTrim.entries[0]?.id;
@@ -1847,9 +2113,9 @@ describe("ChildOverlayController", () => {
       }
     }
     expect(trimmedOldest).toBe(true);
-    expect(afterNewerTrim.entries.some((entry) => entry.id === anchorNewer)).toBe(
-      true,
-    );
+    expect(
+      afterNewerTrim.entries.some((entry) => entry.id === anchorNewer),
+    ).toBe(true);
     expect(afterNewerTrim.anchor?.entryId).toBe(anchorNewer);
 
     let olderWalk = afterNewerTrim;
@@ -1950,9 +2216,9 @@ describe("ChildOverlayController", () => {
     await mustOpen(overlay, "two");
     expect(overlay.isOpen()).toBe(true);
     expect(overlay.currentChildId()).toBe("two");
-    expect(overlay.view()._unsafeUnwrap().entries[0]?.id.startsWith("two")).toBe(
-      true,
-    );
+    expect(
+      overlay.view()._unsafeUnwrap().entries[0]?.id.startsWith("two"),
+    ).toBe(true);
   });
 
   it("exposes bounded defaults used by the controller", () => {
@@ -1967,13 +2233,15 @@ describe("createChildOverlayCustomComponent", () => {
   const flush = (): Promise<void> =>
     new Promise((resolve) => setTimeout(resolve, 0));
 
-  const mount = async (options: {
-    readonly status?: "live" | "settled" | "orphan";
-    readonly entryCount?: number;
-    readonly pageSize?: number;
-    readonly mutations?: ChildOverlayMutationPort;
-    readonly onFallback?: (fallback: ChildOverlayFallbackRequired) => void;
-  } = {}) => {
+  const mount = async (
+    options: {
+      readonly status?: "live" | "settled" | "orphan";
+      readonly entryCount?: number;
+      readonly pageSize?: number;
+      readonly mutations?: ChildOverlayMutationPort;
+      readonly onFallback?: (fallback: ChildOverlayFallbackRequired) => void;
+    } = {},
+  ) => {
     const status = options.status ?? "live";
     const source = createMemoryChildOverlaySource([
       child({
