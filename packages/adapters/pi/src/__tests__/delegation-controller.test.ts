@@ -2109,4 +2109,243 @@ describe("PiDelegationController", () => {
     ).toBe(true);
     restoreController.disposeAll();
   });
+
+  it("steers and follows up a live child through steerChild/followUpChild", async () => {
+    const port = new FakeChildProcessPort();
+    const controller = makeController(config(GENEROUS), port);
+    const promise = controller.delegate(request());
+    await flush();
+    const child = spawnedAt(port, 0);
+    await sendChildToRunning(child, port, "gen-1");
+    const childId = childIdOf(child, port);
+
+    const steerPromise = controller.steerChild(childId, "steer please");
+    await flush();
+    const steerLine = child.writtenLines().at(-1) as Record<string, unknown>;
+    expect(steerLine).toMatchObject({
+      type: "steer",
+      message: "steer please",
+    });
+    child.emitLine({
+      id: steerLine.id,
+      type: "response",
+      command: "steer",
+      success: true,
+    });
+    expect((await steerPromise).isOk()).toBe(true);
+
+    const followPromise = controller.followUpChild(childId, "follow later");
+    await flush();
+    const followLine = child.writtenLines().at(-1) as Record<string, unknown>;
+    expect(followLine).toMatchObject({
+      type: "follow_up",
+      message: "follow later",
+    });
+    child.emitLine({
+      id: followLine.id,
+      type: "response",
+      command: "follow_up",
+      success: true,
+    });
+    expect((await followPromise).isOk()).toBe(true);
+
+    await settleRunningChild(child, port, "gen-1", 3);
+    expect((await promise).isOk()).toBe(true);
+    controller.disposeAll();
+  });
+
+  it("returns ChildInteractionUnavailable for missing or settled steer/follow-up targets", async () => {
+    const port = new FakeChildProcessPort();
+    const controller = makeController(config(GENEROUS), port);
+    const missing = await controller.steerChild("no-such-child", "x");
+    expect(missing.isErr()).toBe(true);
+    expect(missing._unsafeUnwrapErr().code).toBe(
+      "ChildInteractionUnavailable",
+    );
+
+    const promise = controller.delegate(request());
+    await flush();
+    const child = spawnedAt(port, 0);
+    await respondHandshakeAndSettle(child, port, "gen-1");
+    expect((await promise).isOk()).toBe(true);
+    const childId = childIdOf(child, port);
+    const settledSteer = await controller.steerChild(childId, "too late");
+    expect(settledSteer.isErr()).toBe(true);
+    expect(settledSteer._unsafeUnwrapErr().code).toBe(
+      "ChildInteractionUnavailable",
+    );
+    const settledFollow = await controller.followUpChild(childId, "too late");
+    expect(settledFollow.isErr()).toBe(true);
+    expect(settledFollow._unsafeUnwrapErr().code).toBe(
+      "ChildInteractionUnavailable",
+    );
+    expect(JSON.stringify(settledSteer._unsafeUnwrapErr())).not.toContain(
+      "/Users/",
+    );
+    controller.disposeAll();
+  });
+
+  it("delivers live events to onChildSessionEvent after inspection checkpointing", async () => {
+    const delivered: string[] = [];
+    const checkpointEvents: string[] = [];
+    const registry = new PiChildInspectionRegistry({
+      register: () => okAsync(undefined),
+      checkpoint: (id, event) => {
+        const type =
+          typeof event === "object" &&
+          event !== null &&
+          "type" in event &&
+          typeof (event as { type?: unknown }).type === "string"
+            ? (event as { type: string }).type
+            : String(event);
+        checkpointEvents.push(`${id}:${type}`);
+        return okAsync(undefined);
+      },
+      terminal: () => okAsync(undefined),
+      interrupted: () => okAsync(undefined),
+    });
+    const port = new FakeChildProcessPort();
+    const controller = makeController(config(GENEROUS), port, {
+      inspectionRegistry: registry,
+      onChildSessionEvent: (childId, event) => {
+        delivered.push(`${childId}:${event.type}`);
+      },
+    });
+    const promise = controller.delegate(request());
+    await flush();
+    const child = spawnedAt(port, 0);
+    await sendChildToRunning(child, port, "gen-1");
+    const childId = childIdOf(child, port);
+    child.emitLine({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", delta: "stream" },
+    });
+    await flush();
+    expect(delivered).toContain(`${childId}:message_update`);
+    expect(
+      checkpointEvents.some((entry) => entry.endsWith(":message_update")),
+    ).toBe(true);
+    // Checkpoint precedes the deps callback (both observed for the same event).
+    const checkpointIndex = checkpointEvents.findIndex((entry) =>
+      entry.endsWith(":message_update"),
+    );
+    expect(checkpointIndex).toBeGreaterThanOrEqual(0);
+    await settleRunningChild(child, port, "gen-1", 3);
+    expect((await promise).isOk()).toBe(true);
+    controller.disposeAll();
+  });
+
+  it("isolates onChildSessionEvent exceptions from child execution", async () => {
+    const warns: Array<{ code?: unknown }> = [];
+    const port = new FakeChildProcessPort();
+    const controller = makeController(config(GENEROUS), port, {
+      logger: {
+        ...noopLogger,
+        warn: (obj: Record<string, unknown>) => {
+          warns.push({ code: obj.code });
+        },
+      },
+      onChildSessionEvent: () => {
+        throw new Error("/secret/path must not escape");
+      },
+    });
+    const promise = controller.delegate(request());
+    await flush();
+    const child = spawnedAt(port, 0);
+    await sendChildToRunning(child, port, "gen-1");
+    child.emitLine({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", delta: "x" },
+    });
+    await flush();
+    await settleRunningChild(child, port, "gen-1", 3);
+    expect((await promise).isOk()).toBe(true);
+    expect(
+      warns.some((entry) => entry.code === "onChildSessionEvent_failed"),
+    ).toBe(true);
+    expect(JSON.stringify(warns)).not.toContain("/secret/path");
+    controller.disposeAll();
+  });
+
+  it("resolves live run child ids to path-free overlay descriptors", async () => {
+    const port = new FakeChildProcessPort();
+    const controller = makeController(config(GENEROUS), port);
+    const promise = controller.delegate(request({ agentName: "shuttle" }));
+    await flush();
+    const child = spawnedAt(port, 0);
+    await sendChildToRunning(child, port, "gen-1");
+    const childId = childIdOf(child, port);
+
+    const resolved = await controller.resolveOverlayChild(childId);
+    expect(resolved.isOk()).toBe(true);
+    const descriptor = resolved._unsafeUnwrap();
+    expect(descriptor.threadId).toBe(childId);
+    expect(descriptor.activeChildId).toBe(childId);
+    expect(descriptor.status).toBe("live");
+    expect(descriptor.title.length).toBeGreaterThan(0);
+    expect(controller.resolveThreadIdForLiveChild(childId)).toBe(childId);
+    expect(JSON.stringify(descriptor)).not.toContain("/Users/");
+    expect(JSON.stringify(descriptor)).not.toContain("session.jsonl");
+
+    await settleRunningChild(child, port, "gen-1", 3);
+    expect((await promise).isOk()).toBe(true);
+    const settled = await controller.resolveOverlayChild(childId);
+    expect(settled.isOk()).toBe(true);
+    expect(settled._unsafeUnwrap().status).toBe("settled");
+    controller.disposeAll();
+  });
+
+  it("resolves historical overlay children through Task 5 refs", async () => {
+    const historical = {
+      childId: "hist-thread",
+      threadId: "hist-thread",
+      nativeSessionId: "ns-hist",
+      sessionRef: "hist-thread/session.jsonl",
+      originParentSessionId: "parent",
+      originEntryId: "entry-1",
+      title: "historical-shuttle",
+      status: "completed" as const,
+      createdAt: 1,
+      updatedAt: 2,
+      settledAt: 3,
+      runs: [{ run: 1, action: "start" as const, startedAt: 1 }],
+    };
+    const port = new FakeChildProcessPort();
+    const controller = makeController(config(GENEROUS), port, {
+      threadRefs: () =>
+        ({
+          liveParentSessionId: () => "parent",
+          readRefs: () =>
+            okAsync({
+              refs: [historical],
+              issues: [],
+              counts: {
+                scannedEntries: 1,
+                candidateEntries: 1,
+                malformedEntries: 0,
+                originMismatchedChildren: 0,
+                conflictingChildren: 0,
+                duplicateEntries: 0,
+                unusableSourceChildren: 0,
+                usableRefs: 1,
+              },
+            }),
+          appendNewChild: () =>
+            errAsync({ type: "ChildRefParentUnavailable" as const }),
+          appendRunDivider: () =>
+            errAsync({ type: "ChildRefParentUnavailable" as const }),
+          appendLifecycle: () =>
+            errAsync({ type: "ChildRefParentUnavailable" as const }),
+        }) as never,
+    });
+    const resolved = await controller.resolveOverlayChild("hist-thread");
+    expect(resolved.isOk()).toBe(true);
+    const descriptor = resolved._unsafeUnwrap();
+    expect(descriptor.status).toBe("settled");
+    expect(descriptor.title).toBe("historical-shuttle");
+    expect(descriptor.sessionRef).toBe("hist-thread/session.jsonl");
+    expect(controller.resolveThreadIdForLiveChild("hist-thread")).toBeUndefined();
+    expect(JSON.stringify(descriptor)).not.toContain("/Users/");
+    controller.disposeAll();
+  });
 });

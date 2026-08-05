@@ -235,7 +235,7 @@ Dirty-worktree rule: many files are dirty for unrelated in-flight work (OpenCode
   - **Acceptance**:
     - `bun test packages/adapters/pi/src/__tests__/child-compact-render.test.ts` passes: every event transition (start, first fragment, replacement, out-of-order, settle-success, settle-error, retry-new-block/frozen-old-block), sanitization, 3-line invariant, render-error isolation.
 
-- [ ] 12. Implement the full-screen focused child overlay
+- [x] 12. Implement the full-screen focused child overlay
   - **What**: One full-screen native-style overlay showing the complete child transcript live and historical: prompt first, then user/assistant/thinking/tools/errors/retries/images with native components; pagination; search; live-tail with scroll preservation; resize; global expansion toggle; branch/history navigation across runs; steering (Enter) and follow-up (Alt+Enter) for active children; settled children read-only; renderer failure falls back to the existing custom-editor path. Focused input never leaks to the primary editor; drafts and scroll positions are preserved per child. Pi-vim coexistence preserved.
   - **Files**: `packages/adapters/pi/src/child-overlay.ts` (new), reusing/absorbing `child-transcript.ts` (native entry rendering), `child-native-components.ts`, `child-inspection-editor.ts` (fallback), wiring in `extension.ts`; tests `child-overlay.test.ts` (new) plus updates to `child-transcript.test.ts`.
   - **Depends on**: Tasks 4–6 (historical reads), 8–9 (live events, steering targets), 11 (shared event reducer).

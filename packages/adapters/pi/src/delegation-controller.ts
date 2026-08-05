@@ -61,6 +61,7 @@ import {
   makeChildHistoryCorruptFailure,
   makeChildHistoryQuarantinedFailure,
   makeChildHistoryQuotaExceededFailure,
+  makeChildInteractionUnavailableFailure,
   makeChildRecoveryUnavailableFailure,
   makeChildSpawnFailedFailure,
   makeThreadAlreadyRunningFailure,
@@ -164,6 +165,15 @@ export interface PiDelegationControllerDeps {
     childId: string,
     capture: { readonly output: string; readonly byteLength: number },
   ) => PiChildSessionObserverResult;
+  /**
+   * Invoked after parser-approved inspection checkpointing for every live
+   * child session event. Exceptions are caught/logged and never affect
+   * execution. Overlay and other UI seams subscribe here.
+   */
+  readonly onChildSessionEvent?: (
+    childId: string,
+    event: PiChildSessionEvent,
+  ) => void;
   readonly inspectionRegistry?: PiChildInspectionRegistry;
   readonly pathContainment?: PathContainmentPort;
   readonly historyRoot?: () => string;
@@ -212,6 +222,37 @@ export const DEFAULT_THREAD_RETRY_INSTRUCTION =
   "Retry the previous task in this thread. Review what already happened, correct what failed, and finish the task.";
 
 export type PiThreadAction = "retry" | "continue";
+
+/**
+ * Path-free overlay descriptor for one live or historical child identity.
+ * Never carries filesystem paths or session file locations.
+ */
+export interface PiOverlayChildDescriptor {
+  readonly childId: string;
+  readonly threadId: string;
+  /** Newest live run child id when known; otherwise the resolved child id. */
+  readonly activeChildId: string;
+  readonly status: "live" | "settled" | "orphan";
+  readonly title: string;
+  readonly generationId: string;
+  readonly parentChildId: string | undefined;
+  readonly runs: readonly {
+    readonly run: number;
+    readonly action: "start" | "retry" | "continue";
+    readonly startedAt?: number;
+    readonly priorOutcome?: string;
+    readonly initiator?: string;
+    readonly model?: string;
+    readonly reasoning?: string;
+  }[];
+  readonly branchIds: readonly string[];
+  readonly descendantChildIds: readonly string[];
+  /**
+   * Opaque Task 4 session ref when known. Contained root-relative identity
+   * only — never an absolute filesystem path.
+   */
+  readonly sessionRef: string | undefined;
+}
 
 /**
  * Who is asking for the run. Owner is the live parent session that created the
@@ -531,6 +572,57 @@ export class PiDelegationController {
   >();
 
   constructor(private readonly deps: PiDelegationControllerDeps) {}
+
+  /**
+   * Steers a live child through its {@link PiRpcChild} RPC channel. Missing or
+   * settled/disposed children return a bounded typed failure without throwing.
+   */
+  steerChild(
+    childId: string,
+    text: string,
+  ): ResultAsync<void, PiAdapterFailure> {
+    return this.withLiveChild(childId, (child) =>
+      child.steer(childId, this.deps.generationId, text),
+    );
+  }
+
+  /**
+   * Queues a follow-up on a live child through its {@link PiRpcChild} RPC
+   * channel. Missing or settled/disposed children return a bounded typed
+   * failure without throwing.
+   */
+  followUpChild(
+    childId: string,
+    text: string,
+  ): ResultAsync<void, PiAdapterFailure> {
+    return this.withLiveChild(childId, (child) =>
+      child.followUp(childId, this.deps.generationId, text),
+    );
+  }
+
+  /**
+   * Resolves any live run child id (or logical thread id) to a path-free
+   * overlay descriptor. Live memory wins; historical ids fall through Task 5
+   * refs. Never returns filesystem paths.
+   */
+  resolveOverlayChild(
+    childId: string,
+  ): ResultAsync<PiOverlayChildDescriptor, PiAdapterFailure> {
+    if (childId.length === 0) {
+      return errAsync(makeThreadNotFoundFailure(childId, "unknown-thread"));
+    }
+    const live = this.resolveLiveOverlayChild(childId);
+    if (live !== undefined) return okAsync(live);
+    return this.resolveHistoricalOverlayChild(childId);
+  }
+
+  /**
+   * Maps a live run child id to its logical thread id when this generation
+   * still tracks the child. Undefined for historical-only or unknown ids.
+   */
+  resolveThreadIdForLiveChild(childId: string): string | undefined {
+    return this.findLiveThreadState(childId)?.threadId;
+  }
 
   /** Requests one delegated child. Resolves immediately if denied, queues if over budget, spawns once authorized. */
   delegate(
@@ -910,6 +1002,126 @@ export class PiDelegationController {
 
   private isTerminal(child: PiRpcChild): boolean {
     return child.isDisposed() || child.isSettled();
+  }
+
+  /**
+   * Resolves a live, non-terminal child for mutation seams. Missing and
+   * settled/disposed children share one bounded interaction-unavailable code.
+   */
+  private withLiveChild(
+    childId: string,
+    fn: (child: PiRpcChild) => ResultAsync<void, PiAdapterFailure>,
+  ): ResultAsync<void, PiAdapterFailure> {
+    if (this.disposedAll) {
+      return errAsync(makeChildInteractionUnavailableFailure(childId));
+    }
+    const child = this.children.get(childId);
+    if (child === undefined || this.isTerminal(child)) {
+      return errAsync(makeChildInteractionUnavailableFailure(childId));
+    }
+    return fn(child);
+  }
+
+  private findLiveThreadState(childId: string): PiThreadState | undefined {
+    const byThread = this.threads.get(childId);
+    if (byThread !== undefined) return byThread;
+    for (const state of this.threads.values()) {
+      if (state.latestChildId === childId) return state;
+    }
+    return undefined;
+  }
+
+  private resolveLiveOverlayChild(
+    childId: string,
+  ): PiOverlayChildDescriptor | undefined {
+    const state = this.findLiveThreadState(childId);
+    if (state === undefined) {
+      // A live process may exist before thread registration finishes; surface
+      // it from the child tree with a thread id equal to the child id.
+      const child = this.children.get(childId);
+      if (child === undefined) return undefined;
+      const snap = child.snapshot();
+      const live = !this.isTerminal(child);
+      const record = this.threadRecords.get(childId);
+      return {
+        childId,
+        threadId: childId,
+        activeChildId: childId,
+        status: live ? "live" : "settled",
+        title: snap.name,
+        generationId: this.deps.generationId,
+        parentChildId:
+          snap.parentId === ROOT_NODE_ID ? undefined : snap.parentId,
+        runs: recordToOverlayRuns(record),
+        branchIds: [],
+        descendantChildIds: [],
+        sessionRef: record?.sessionRef,
+      };
+    }
+    const record = this.threadRecords.get(state.threadId);
+    const treeChild =
+      this.children.get(state.latestChildId) ?? this.children.get(childId);
+    const title =
+      record?.title ??
+      treeChild?.snapshot().name ??
+      state.agentName;
+    const status: PiOverlayChildDescriptor["status"] = state.running
+      ? "live"
+      : state.status === "tombstoned"
+        ? "orphan"
+        : "settled";
+    return {
+      childId: state.latestChildId,
+      threadId: state.threadId,
+      activeChildId: state.latestChildId,
+      status,
+      title,
+      generationId: this.deps.generationId,
+      parentChildId:
+        state.parentId === ROOT_NODE_ID ? undefined : state.parentId,
+      runs: recordToOverlayRuns(record),
+      branchIds: [],
+      descendantChildIds: [],
+      sessionRef: record?.sessionRef,
+    };
+  }
+
+  private resolveHistoricalOverlayChild(
+    childId: string,
+  ): ResultAsync<PiOverlayChildDescriptor, PiAdapterFailure> {
+    const cached = this.threadRecords.get(childId);
+    if (cached !== undefined) {
+      return okAsync(refRecordToOverlayDescriptor(cached, this.deps.generationId));
+    }
+    for (const record of this.threadRecords.values()) {
+      if (record.childId === childId) {
+        return okAsync(
+          refRecordToOverlayDescriptor(record, this.deps.generationId),
+        );
+      }
+    }
+    const refs = this.deps.threadRefs?.();
+    if (refs === undefined) {
+      return errAsync(makeThreadNotFoundFailure(childId, "unknown-thread"));
+    }
+    return refs
+      .readRefs({ limit: 256 })
+      .mapErr(() => makeThreadNotFoundFailure(childId, "refs-unavailable"))
+      .andThen((scan) => {
+        const match = scan.refs.find(
+          (record) =>
+            record.childId === childId || record.threadId === childId,
+        );
+        if (match === undefined) {
+          return errAsync(
+            makeThreadNotFoundFailure(childId, "unknown-thread"),
+          );
+        }
+        this.rememberThreadRecord(match);
+        return okAsync(
+          refRecordToOverlayDescriptor(match, this.deps.generationId),
+        );
+      });
   }
 
   private enqueue(
@@ -1799,6 +2011,32 @@ export class PiDelegationController {
   }
 
   /**
+   * Delivers one parser-approved session event to the controller-deps sink
+   * after inspection checkpointing. Failures are logged and never propagate.
+   */
+  private invokeChildSessionEventDep(
+    childId: string,
+    event: PiChildSessionEvent,
+  ): void {
+    const callback = this.deps.onChildSessionEvent;
+    if (callback === undefined) return;
+    Result.fromThrowable(
+      () => {
+        callback(childId, event);
+      },
+      () => "onChildSessionEvent_failed" as const,
+    )().match(
+      () => undefined,
+      (code) => {
+        this.deps.logger.warn(
+          { childId, code },
+          "delegation onChildSessionEvent callback failed",
+        );
+      },
+    );
+  }
+
+  /**
    * Reports the assigned retry/continue run identity before spawn. Failures
    * are logged with a stable code and never propagate to the child.
    */
@@ -1871,6 +2109,7 @@ export class PiDelegationController {
               () => undefined,
               () => undefined,
             );
+            this.invokeChildSessionEventDep(childId, event);
             this.invokeSessionEventCallback(
               childId,
               request.onSessionEvent,
@@ -2520,6 +2759,7 @@ export class PiDelegationController {
                     () => undefined,
                     () => undefined,
                   );
+                this.invokeChildSessionEventDep(childId, event);
                 this.invokeSessionEventCallback(
                   childId,
                   input.onSessionEvent,
@@ -2680,6 +2920,48 @@ export class PiDelegationController {
     this.treeRefreshTimer = undefined;
     this.notifyTreeChanged();
   }
+}
+
+function recordToOverlayRuns(
+  record: PiChildRefRecord | undefined,
+): PiOverlayChildDescriptor["runs"] {
+  if (record === undefined) return [];
+  return record.runs.map((run) => ({
+    run: run.run,
+    action: run.action,
+    startedAt: run.startedAt,
+    ...(run.priorOutcome === undefined ? {} : { priorOutcome: run.priorOutcome }),
+    ...(run.initiator === undefined ? {} : { initiator: run.initiator }),
+    ...(run.model === undefined ? {} : { model: run.model }),
+    ...(run.reasoning === undefined ? {} : { reasoning: run.reasoning }),
+  }));
+}
+
+function refStatusToOverlayStatus(
+  status: PiChildRefStatus,
+): PiOverlayChildDescriptor["status"] {
+  if (status === "running" || status === "queued") return "live";
+  if (status === "tombstoned") return "orphan";
+  return "settled";
+}
+
+function refRecordToOverlayDescriptor(
+  record: PiChildRefRecord,
+  generationId: string,
+): PiOverlayChildDescriptor {
+  return {
+    childId: record.childId,
+    threadId: record.threadId,
+    activeChildId: record.childId,
+    status: refStatusToOverlayStatus(record.status),
+    title: record.title,
+    generationId,
+    parentChildId: undefined,
+    runs: recordToOverlayRuns(record),
+    branchIds: [],
+    descendantChildIds: [],
+    sessionRef: record.sessionRef,
+  };
 }
 
 export type { DelegationAuthorizationError, DelegationLimitsError };

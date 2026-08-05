@@ -509,9 +509,14 @@ function installRecoveryExtension(
   store: PiChildHistoryStore,
   restoreOrdinaryChild: NonNullable<PiExtensionDeps["restoreOrdinaryChild"]>,
   settings: { readonly recovery_countdown_seconds?: number } = {},
+  overrides: Partial<PiExtensionDeps> = {},
 ) {
   return installExtension(host, "0.81.1", {
     capabilityProber: allOkCapabilityProber(),
+    // Legacy custom-editor inspection tests pin this fallback so they keep
+    // proving session-editor borrow/restore rather than the Task 12 native
+    // overlay path (covered separately below).
+    hostSurfaceReader: hostSurfaceReader(["child-overlay-lifecycle"]),
     configActivator: fakeConfigActivator(
       {
         agents: [
@@ -532,6 +537,7 @@ function installRecoveryExtension(
     parentSessionId: () => "parent",
     childHistoryStoreFactory: () => okAsync(store),
     restoreOrdinaryChild,
+    ...overrides,
   });
 }
 
@@ -6651,5 +6657,602 @@ describe("createPiExtension: themed active-agent badge", () => {
           call.key === "weave-agent" && call.value === badge("tapestry"),
       ),
     ).toHaveLength(0);
+  });
+});
+
+describe("createPiExtension: Task 12 native child overlay", () => {
+  const OVERLAY_CHILD_ID = "overlay-hist-child";
+  const OVERLAY_SESSION_REF = `${OVERLAY_CHILD_ID}/session.jsonl`;
+
+  function overlayThreadFactory(options: {
+    readonly entries?: readonly unknown[];
+    readonly failRead?: boolean;
+  } = {}): PiThreadSourceFactory {
+    const entries = options.entries ?? [
+      {
+        type: "message",
+        id: "m0",
+        message: { role: "user", content: [{ type: "text", text: "prompt" }] },
+      },
+      {
+        type: "message",
+        id: "m1",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "native-overlay-body" }],
+        },
+      },
+    ];
+    const record = {
+      childId: OVERLAY_CHILD_ID,
+      threadId: OVERLAY_CHILD_ID,
+      nativeSessionId: "ns-overlay",
+      sessionRef: OVERLAY_SESSION_REF,
+      originParentSessionId: "parent",
+      originEntryId: "entry-overlay",
+      title: "loom",
+      status: "completed" as const,
+      createdAt: 1,
+      updatedAt: 2,
+      settledAt: 3,
+      runs: [{ run: 1, action: "start" as const, startedAt: 1 }],
+    };
+    return () =>
+      okAsync({
+        refs: {
+          liveParentSessionId: () => "fake-session-1",
+          readRefs: () =>
+            okAsync({
+              refs: [record],
+              issues: [],
+              counts: {
+                scannedEntries: 1,
+                candidateEntries: 1,
+                malformedEntries: 0,
+                originMismatchedChildren: 0,
+                conflictingChildren: 0,
+                duplicateEntries: 0,
+                unusableSourceChildren: 0,
+                usableRefs: 1,
+              },
+            }),
+          appendNewChild: () =>
+            errAsync({ type: "ChildRefParentUnavailable" as const }),
+          appendRunDivider: () =>
+            errAsync({ type: "ChildRefParentUnavailable" as const }),
+          appendLifecycle: () =>
+            errAsync({ type: "ChildRefParentUnavailable" as const }),
+        } as unknown as PiThreadRefPort,
+        sessions: {
+          createChildSession: () =>
+            errAsync({
+              type: "SessionCreateFailed" as const,
+              reason: "host-threw" as const,
+            }),
+          establishThreadLeaf: () =>
+            errAsync({
+              type: "SessionCreateFailed" as const,
+              reason: "host-threw" as const,
+            }),
+          appendTombstone: () =>
+            errAsync({ type: "SessionMissing" as const, ref: "x" }),
+          openSession: () =>
+            errAsync({ type: "SessionMissing" as const, ref: "x" }),
+          readSessionEntries: () =>
+            options.failRead
+              ? errAsync({ type: "SessionCorrupt" as const, ref: "x", reason: "unreadable" as const })
+              : okAsync({
+                  record: {
+                    ref: OVERLAY_SESSION_REF,
+                    childId: OVERLAY_CHILD_ID,
+                    sessionId: "ns-overlay",
+                    parentSession: "fake-session-1",
+                    path: "/ignored",
+                  },
+                  entries,
+                }),
+          readThreadMetadata: () =>
+            errAsync({ type: "SessionMissing" as const, ref: "x" }),
+        } as unknown as PiThreadSessionPort,
+        cache: { upsertRef: () => ok(undefined) },
+        cacheMode: "active" as const,
+      });
+  }
+
+  async function waitForCustomCalls(
+    host: RecordingFakePiHost,
+    count: number,
+  ): Promise<void> {
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+      if (host.customCalls.length >= count) return;
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
+  }
+
+  async function openOverlayChild(
+    host: RecordingFakePiHost,
+  ): Promise<void> {
+    const before = host.customCalls.length;
+    const picker = host.deferNextSelect();
+    const inspect = host.invokeCommand("weave:inspect");
+    await flushBackgroundWork();
+    const childLabel = host.selectCalls
+      .at(-1)
+      ?.options.find(
+        (label) =>
+          label.includes(OVERLAY_CHILD_ID) || label.includes("history: loom"),
+      );
+    expect(childLabel).toBeDefined();
+    picker.settle(childLabel);
+    await inspect;
+    await waitForCustomCalls(host, before + 1);
+  }
+
+  it("opens the native overlay without borrowing the session editor (pi-vim coexistence)", async () => {
+    const history = mutableChildHistoryStore([
+      eligibleOrdinaryRecoveryRecord({
+        childId: OVERLAY_CHILD_ID,
+        status: "interrupted",
+        recovery: { eligible: false, count: 0 },
+        descriptorName: "loom",
+      }),
+    ]);
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const modalFactory = (
+      tui: unknown,
+      theme: unknown,
+      keybindings: unknown,
+    ) => ({ tui, theme, keybindings, handleInput: () => undefined });
+    host.setEditorComponentForTest(modalFactory);
+    installExtension(host, "0.81.1", {
+      capabilityProber: allOkCapabilityProber(),
+      hostSurfaceReader: hostSurfaceReader(),
+      configActivator: fakeConfigActivator(
+        {
+          agents: [
+            {
+              agentName: "loom",
+              source: "explicit",
+              descriptor: loomDescriptor(),
+            },
+          ],
+          errors: [],
+        },
+        {
+          ...EMPTY_CONFIG,
+          settings: { adapters: { pi: { child_inspection: {} } } },
+        } as unknown as WeaveConfig,
+      ),
+      runtimeStoreFactory: { open: () => okAsync(createInMemoryRuntimeStore()) },
+      parentSessionId: () => "parent",
+      childHistoryStoreFactory: () => okAsync(history.store),
+      restoreOrdinaryChild: () =>
+        okAsync({ finalOutput: "restored", interventionCount: 0 }),
+      threadSourceFactory: overlayThreadFactory(),
+    });
+    await host.triggerSessionStart();
+    expect(host.getEditorComponentForTest()).toBe(modalFactory);
+
+    await openOverlayChild(host);
+    expect(host.getEditorComponentForTest()).toBe(modalFactory);
+    expect(host.customCalls.length).toBeGreaterThan(0);
+    const rendered = host.customRenderedLines.flat().join("\n");
+    expect(rendered).toContain("native-overlay-body");
+    expect(rendered).not.toContain("/Users/");
+
+    host.inputCustom("\u001b");
+    host.finishCustom();
+    await flushBackgroundWork();
+    expect(host.getEditorComponentForTest()).toBe(modalFactory);
+  });
+
+  it("swaps one native overlay instance instead of stacking custom promises", async () => {
+    const secondId = "overlay-hist-child-2";
+    const history = mutableChildHistoryStore([
+      eligibleOrdinaryRecoveryRecord({
+        childId: OVERLAY_CHILD_ID,
+        status: "interrupted",
+        recovery: { eligible: false, count: 0 },
+        descriptorName: "loom",
+      }),
+      eligibleOrdinaryRecoveryRecord({
+        childId: secondId,
+        status: "interrupted",
+        recovery: { eligible: false, count: 0 },
+        descriptorName: "shuttle",
+      }),
+    ]);
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const modalFactory = () => ({ handleInput: () => undefined });
+    host.setEditorComponentForTest(modalFactory);
+    const record2 = {
+      childId: secondId,
+      threadId: secondId,
+      nativeSessionId: "ns-2",
+      sessionRef: `${secondId}/session.jsonl`,
+      originParentSessionId: "parent",
+      originEntryId: "entry-2",
+      title: "shuttle",
+      status: "completed" as const,
+      createdAt: 1,
+      updatedAt: 2,
+      settledAt: 3,
+      runs: [{ run: 1, action: "start" as const, startedAt: 1 }],
+    };
+    const factory: PiThreadSourceFactory = () =>
+      okAsync({
+        refs: {
+          liveParentSessionId: () => "fake-session-1",
+          readRefs: () =>
+            okAsync({
+              refs: [
+                {
+                  childId: OVERLAY_CHILD_ID,
+                  threadId: OVERLAY_CHILD_ID,
+                  nativeSessionId: "ns-overlay",
+                  sessionRef: OVERLAY_SESSION_REF,
+                  originParentSessionId: "parent",
+                  originEntryId: "entry-overlay",
+                  title: "loom",
+                  status: "completed" as const,
+                  createdAt: 1,
+                  updatedAt: 2,
+                  settledAt: 3,
+                  runs: [{ run: 1, action: "start" as const, startedAt: 1 }],
+                },
+                record2,
+              ],
+              issues: [],
+              counts: {
+                scannedEntries: 2,
+                candidateEntries: 2,
+                malformedEntries: 0,
+                originMismatchedChildren: 0,
+                conflictingChildren: 0,
+                duplicateEntries: 0,
+                unusableSourceChildren: 0,
+                usableRefs: 2,
+              },
+            }),
+          appendNewChild: () =>
+            errAsync({ type: "ChildRefParentUnavailable" as const }),
+          appendRunDivider: () =>
+            errAsync({ type: "ChildRefParentUnavailable" as const }),
+          appendLifecycle: () =>
+            errAsync({ type: "ChildRefParentUnavailable" as const }),
+        } as unknown as PiThreadRefPort,
+        sessions: {
+          createChildSession: () =>
+            errAsync({
+              type: "SessionCreateFailed" as const,
+              reason: "host-threw" as const,
+            }),
+          establishThreadLeaf: () =>
+            errAsync({
+              type: "SessionCreateFailed" as const,
+              reason: "host-threw" as const,
+            }),
+          appendTombstone: () =>
+            errAsync({ type: "SessionMissing" as const, ref: "x" }),
+          openSession: () =>
+            errAsync({ type: "SessionMissing" as const, ref: "x" }),
+          readSessionEntries: (ref: string) =>
+            okAsync({
+              record: {
+                ref,
+                childId: ref.startsWith(secondId) ? secondId : OVERLAY_CHILD_ID,
+                sessionId: "ns",
+                parentSession: "fake-session-1",
+                path: "/ignored",
+              },
+              entries: [
+                {
+                  type: "message",
+                  id: "x",
+                  message: {
+                    role: "assistant",
+                    content: [
+                      {
+                        type: "text",
+                        text: ref.startsWith(secondId)
+                          ? "second-child-body"
+                          : "native-overlay-body",
+                      },
+                    ],
+                  },
+                },
+              ],
+            }),
+          readThreadMetadata: () =>
+            errAsync({ type: "SessionMissing" as const, ref: "x" }),
+        } as unknown as PiThreadSessionPort,
+        cache: { upsertRef: () => ok(undefined) },
+        cacheMode: "active" as const,
+      });
+    installExtension(host, "0.81.1", {
+      capabilityProber: allOkCapabilityProber(),
+      hostSurfaceReader: hostSurfaceReader(),
+      configActivator: fakeConfigActivator(
+        {
+          agents: [
+            {
+              agentName: "loom",
+              source: "explicit",
+              descriptor: loomDescriptor(),
+            },
+          ],
+          errors: [],
+        },
+        EMPTY_CONFIG,
+      ),
+      runtimeStoreFactory: { open: () => okAsync(createInMemoryRuntimeStore()) },
+      parentSessionId: () => "parent",
+      childHistoryStoreFactory: () => okAsync(history.store),
+      restoreOrdinaryChild: () =>
+        okAsync({ finalOutput: "restored", interventionCount: 0 }),
+      threadSourceFactory: factory,
+    });
+    await host.triggerSessionStart();
+
+    await openOverlayChild(host);
+    const firstCustomCount = host.customCalls.length;
+    expect(firstCustomCount).toBe(1);
+
+    const picker = host.deferNextSelect();
+    const inspect = host.invokeCommand("weave:inspect");
+    await flushBackgroundWork();
+    const secondLabel = host.selectCalls
+      .at(-1)
+      ?.options.find((label) => label.includes(secondId) || label.includes("shuttle"));
+    picker.settle(secondLabel);
+    await inspect;
+    await flushBackgroundWork();
+    // One mounted custom promise: swap invalidates, does not stack.
+    expect(host.customCalls.length).toBe(firstCustomCount);
+    expect(host.getEditorComponentForTest()).toBe(modalFactory);
+  });
+
+  it("uses the custom-editor path when capability selects custom-editor fallback", async () => {
+    const history = mutableChildHistoryStore([
+      eligibleOrdinaryRecoveryRecord({
+        childId: OVERLAY_CHILD_ID,
+        status: "interrupted",
+        recovery: { eligible: false, count: 0 },
+        descriptorName: "loom",
+      }),
+    ]);
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const modalFactory = () => ({ handleInput: () => undefined });
+    host.setEditorComponentForTest(modalFactory);
+    installExtension(host, "0.81.1", {
+      capabilityProber: allOkCapabilityProber(),
+      hostSurfaceReader: hostSurfaceReader(["child-overlay-lifecycle"]),
+      configActivator: fakeConfigActivator(
+        {
+          agents: [
+            {
+              agentName: "loom",
+              source: "explicit",
+              descriptor: loomDescriptor(),
+            },
+          ],
+          errors: [],
+        },
+        EMPTY_CONFIG,
+      ),
+      runtimeStoreFactory: { open: () => okAsync(createInMemoryRuntimeStore()) },
+      parentSessionId: () => "parent",
+      childHistoryStoreFactory: () => okAsync(history.store),
+      restoreOrdinaryChild: () =>
+        okAsync({ finalOutput: "restored", interventionCount: 0 }),
+      threadSourceFactory: overlayThreadFactory(),
+    });
+    await host.triggerSessionStart();
+    await openOverlayChild(host);
+    // Custom-editor capability still borrows the session editor.
+    expect(host.getEditorComponentForTest()).not.toBe(modalFactory);
+    expect(host.customCalls.length).toBeGreaterThan(0);
+    host.inputCustom("\u001b");
+    host.finishCustom();
+    await flushBackgroundWork();
+    expect(host.getEditorComponentForTest()).toBe(modalFactory);
+  });
+
+  it("settles the native overlay on session_shutdown and leaves the editor factory untouched", async () => {
+    const history = mutableChildHistoryStore([
+      eligibleOrdinaryRecoveryRecord({
+        childId: OVERLAY_CHILD_ID,
+        status: "interrupted",
+        recovery: { eligible: false, count: 0 },
+        descriptorName: "loom",
+      }),
+    ]);
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const modalFactory = () => ({ handleInput: () => undefined });
+    host.setEditorComponentForTest(modalFactory);
+    installExtension(host, "0.81.1", {
+      capabilityProber: allOkCapabilityProber(),
+      hostSurfaceReader: hostSurfaceReader(),
+      configActivator: fakeConfigActivator(
+        {
+          agents: [
+            {
+              agentName: "loom",
+              source: "explicit",
+              descriptor: loomDescriptor(),
+            },
+          ],
+          errors: [],
+        },
+        EMPTY_CONFIG,
+      ),
+      runtimeStoreFactory: { open: () => okAsync(createInMemoryRuntimeStore()) },
+      parentSessionId: () => "parent",
+      childHistoryStoreFactory: () => okAsync(history.store),
+      restoreOrdinaryChild: () =>
+        okAsync({ finalOutput: "restored", interventionCount: 0 }),
+      threadSourceFactory: overlayThreadFactory(),
+    });
+    await host.triggerSessionStart();
+    await openOverlayChild(host);
+    expect(host.customCalls.length).toBe(1);
+    expect(host.getEditorComponentForTest()).toBe(modalFactory);
+
+    await host.triggerSessionShutdown();
+    await flushBackgroundWork();
+    expect(host.getEditorComponentForTest()).toBe(modalFactory);
+  });
+
+  it("hands off to custom-editor inspection when native open returns fallback-required", async () => {
+    const history = mutableChildHistoryStore([
+      eligibleOrdinaryRecoveryRecord({
+        childId: OVERLAY_CHILD_ID,
+        status: "interrupted",
+        recovery: { eligible: false, count: 0 },
+        descriptorName: "loom",
+      }),
+    ]);
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const modalFactory = () => ({ handleInput: () => undefined });
+    host.setEditorComponentForTest(modalFactory);
+    installExtension(host, "0.81.1", {
+      capabilityProber: allOkCapabilityProber(),
+      hostSurfaceReader: hostSurfaceReader(),
+      configActivator: fakeConfigActivator(
+        {
+          agents: [
+            {
+              agentName: "loom",
+              source: "explicit",
+              descriptor: loomDescriptor(),
+            },
+          ],
+          errors: [],
+        },
+        EMPTY_CONFIG,
+      ),
+      runtimeStoreFactory: { open: () => okAsync(createInMemoryRuntimeStore()) },
+      parentSessionId: () => "parent",
+      childHistoryStoreFactory: () => okAsync(history.store),
+      restoreOrdinaryChild: () =>
+        okAsync({ finalOutput: "restored", interventionCount: 0 }),
+      threadSourceFactory: overlayThreadFactory({ failRead: true }),
+    });
+    await host.triggerSessionStart();
+    const editorCallsBefore = host.editorFactoryCalls.length;
+    await openOverlayChild(host);
+    // Source failure settles native and borrows the custom-editor path.
+    expect(host.editorFactoryCalls.length).toBeGreaterThan(editorCallsBefore);
+    expect(host.getEditorComponentForTest()).not.toBe(modalFactory);
+    expect(host.customCalls.length).toBeGreaterThan(0);
+    host.inputCustom("\u001b");
+    host.finishCustom();
+    await flushBackgroundWork();
+    expect(host.getEditorComponentForTest()).toBe(modalFactory);
+  });
+
+  it("rejects stale-generation overlay activation after session replacement", async () => {
+    const history = mutableChildHistoryStore([
+      eligibleOrdinaryRecoveryRecord({
+        childId: OVERLAY_CHILD_ID,
+        status: "interrupted",
+        recovery: { eligible: false, count: 0 },
+        descriptorName: "loom",
+      }),
+    ]);
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const modalFactory = () => ({ handleInput: () => undefined });
+    host.setEditorComponentForTest(modalFactory);
+    installExtension(host, "0.81.1", {
+      capabilityProber: allOkCapabilityProber(),
+      hostSurfaceReader: hostSurfaceReader(),
+      configActivator: fakeConfigActivator(
+        {
+          agents: [
+            {
+              agentName: "loom",
+              source: "explicit",
+              descriptor: loomDescriptor(),
+            },
+          ],
+          errors: [],
+        },
+        EMPTY_CONFIG,
+      ),
+      runtimeStoreFactory: { open: () => okAsync(createInMemoryRuntimeStore()) },
+      parentSessionId: () => "parent",
+      childHistoryStoreFactory: () => okAsync(history.store),
+      restoreOrdinaryChild: () =>
+        okAsync({ finalOutput: "restored", interventionCount: 0 }),
+      threadSourceFactory: overlayThreadFactory(),
+    });
+    await host.triggerSessionStart();
+
+    const picker = host.deferNextSelect();
+    const inspect = host.invokeCommand("weave:inspect");
+    await flushBackgroundWork();
+    const childLabel = host.selectCalls
+      .at(-1)
+      ?.options.find(
+        (label) =>
+          label.includes(OVERLAY_CHILD_ID) || label.includes("history: loom"),
+      );
+    expect(childLabel).toBeDefined();
+    // Replace the generation before the inspect selection resolves.
+    await host.triggerSessionStart();
+    picker.settle(childLabel);
+    await inspect;
+    await flushBackgroundWork();
+    expect(host.customCalls).toHaveLength(0);
+    expect(host.getEditorComponentForTest()).toBe(modalFactory);
+  });
+
+  it("keeps primary editor input ownership isolated while the native overlay is mounted", async () => {
+    const history = mutableChildHistoryStore([
+      eligibleOrdinaryRecoveryRecord({
+        childId: OVERLAY_CHILD_ID,
+        status: "interrupted",
+        recovery: { eligible: false, count: 0 },
+        descriptorName: "loom",
+      }),
+    ]);
+    const host = new RecordingFakePiHost({ mode: "tui", trusted: true });
+    const modalFactory = () => ({ handleInput: () => undefined });
+    host.setEditorComponentForTest(modalFactory);
+    installExtension(host, "0.81.1", {
+      capabilityProber: allOkCapabilityProber(),
+      hostSurfaceReader: hostSurfaceReader(),
+      configActivator: fakeConfigActivator(
+        {
+          agents: [
+            {
+              agentName: "loom",
+              source: "explicit",
+              descriptor: loomDescriptor(),
+            },
+          ],
+          errors: [],
+        },
+        EMPTY_CONFIG,
+      ),
+      runtimeStoreFactory: { open: () => okAsync(createInMemoryRuntimeStore()) },
+      parentSessionId: () => "parent",
+      childHistoryStoreFactory: () => okAsync(history.store),
+      restoreOrdinaryChild: () =>
+        okAsync({ finalOutput: "restored", interventionCount: 0 }),
+      threadSourceFactory: overlayThreadFactory(),
+    });
+    await host.triggerSessionStart();
+    const editorCallsBefore = host.editorFactoryCalls.length;
+    await openOverlayChild(host);
+    expect(host.editorFactoryCalls.length).toBe(editorCallsBefore);
+    expect(host.getEditorComponentForTest()).toBe(modalFactory);
+    host.inputCustom("typed-into-overlay");
+    expect(host.getEditorComponentForTest()).toBe(modalFactory);
+    expect(host.editorFactoryCalls.length).toBe(editorCallsBefore);
+    host.inputCustom("\u001b");
+    host.finishCustom();
+    await flushBackgroundWork();
+    expect(host.getEditorComponentForTest()).toBe(modalFactory);
   });
 });

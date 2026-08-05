@@ -62,6 +62,14 @@ import {
 } from "./child-inspection-editor.js";
 import type { PiChildInspectionRenderInput } from "./child-inspection-render.js";
 import {
+  createChildOverlayController,
+  createChildOverlayCustomComponent,
+  createReadSessionEntriesOverlaySource,
+  type ChildOverlayController,
+  type ChildOverlayFallbackRequired,
+  type PiChildOverlayCustomComponent,
+} from "./child-overlay.js";
+import {
   formatPiChildInspectionSettingsIssues,
   type PiChildInspectionEffectiveSettings,
   type PiChildInspectionSettingsChoice,
@@ -2139,6 +2147,48 @@ export function createPiExtension(
     editor: PiChildInspectionEditor | undefined;
     activate?: (childId: string) => void;
   } = { editor: undefined };
+  /**
+   * Generation-scoped native child overlay (Task 12). One controller and at
+   * most one mounted `ui.custom` component; content swaps never stack.
+   */
+  const childOverlayCell: {
+    controller: ChildOverlayController | undefined;
+    settle: (() => void) | undefined;
+    component: PiChildOverlayCustomComponent | undefined;
+    tui: { requestRender(): void } | undefined;
+    open: boolean;
+    generationId: string | undefined;
+  } = {
+    controller: undefined,
+    settle: undefined,
+    component: undefined,
+    tui: undefined,
+    open: false,
+    generationId: undefined,
+  };
+  const closeChildOverlay = (): void => {
+    const settle = childOverlayCell.settle;
+    childOverlayCell.settle = undefined;
+    childOverlayCell.open = false;
+    childOverlayCell.component = undefined;
+    childOverlayCell.tui = undefined;
+    const overlay = childOverlayCell.controller;
+    if (overlay?.isOpen()) {
+      Result.fromThrowable(
+        () => overlay.close(),
+        () => "overlay_close_failed" as const,
+      )().match(
+        () => undefined,
+        () => undefined,
+      );
+    }
+    settle?.();
+  };
+  const clearChildOverlayGeneration = (): void => {
+    closeChildOverlay();
+    childOverlayCell.controller = undefined;
+    childOverlayCell.generationId = undefined;
+  };
   // One allocator lives for the extension instance, so editor replacement does
   // not renumber live children.
   const childSlots = new PiChildSlots();
@@ -3647,6 +3697,7 @@ export function createPiExtension(
       // generation is settled before any stale work can run, so the user is
       // never left in front of a mounted, uncancellable plan list.
       closePlanTaskOverlay();
+      clearChildOverlayGeneration();
       const startupSequence = ++sessionStartSequence;
       const startupStillCurrent = (): boolean =>
         sessionStartSequence === startupSequence;
@@ -4166,6 +4217,40 @@ export function createPiExtension(
           },
           onPrivateOutput: deps.onChildPrivateOutput,
           inspectionRegistry,
+          onChildSessionEvent: (childId, event) => {
+            if (!startupOwnsGeneration()) return;
+            const overlay = childOverlayCell.controller;
+            if (
+              overlay === undefined ||
+              !overlay.isOpen() ||
+              childOverlayCell.generationId !== generation.id
+            ) {
+              return;
+            }
+            const openView = overlay.view();
+            if (openView.isErr()) return;
+            const threadId =
+              delegationControllerCell.controller?.resolveThreadIdForLiveChild(
+                childId,
+              ) ?? childId;
+            if (
+              openView.value.child.threadId !== threadId &&
+              openView.value.child.childId !== childId &&
+              openView.value.child.childId !== threadId
+            ) {
+              return;
+            }
+            Result.fromThrowable(
+              () => overlay.applyLiveEvent(event),
+              () => "overlay_live_event_failed" as const,
+            )().match(
+              () => {
+                childOverlayCell.component?.invalidate();
+                childOverlayCell.tui?.requestRender();
+              },
+              () => undefined,
+            );
+          },
           // Lazy wrapper (Pi adapter contract): `telemetryCell.telemetry` is only
           // populated once the Runtime Store opens successfully, below -
           // reading it here would always see `undefined`. A settled child
@@ -4184,6 +4269,115 @@ export function createPiExtension(
             },
           },
         });
+        childOverlayCell.generationId = generation.id;
+        childOverlayCell.controller = createChildOverlayController(
+          createReadSessionEntriesOverlaySource({
+            describe: (id) => {
+              const ctrl = delegationControllerCell.controller;
+              if (ctrl === undefined) {
+                return errAsync({
+                  type: "SourceUnavailable" as const,
+                  operation: "describe",
+                });
+              }
+              return ctrl.resolveOverlayChild(id).map((descriptor) => ({
+                childId: descriptor.childId,
+                threadId: descriptor.threadId,
+                ...(descriptor.parentChildId === undefined
+                  ? {}
+                  : { parentChildId: descriptor.parentChildId }),
+                status: descriptor.status,
+                title: descriptor.title,
+                generationId: descriptor.generationId,
+                runs: descriptor.runs.map((run) => ({
+                  run: run.run,
+                  action: run.action,
+                  ...(run.startedAt === undefined
+                    ? {}
+                    : { startedAt: run.startedAt }),
+                  ...(run.priorOutcome === undefined
+                    ? {}
+                    : { priorOutcome: run.priorOutcome }),
+                  ...(run.initiator === undefined
+                    ? {}
+                    : { initiator: run.initiator }),
+                  ...(run.model === undefined ? {} : { model: run.model }),
+                  ...(run.reasoning === undefined
+                    ? {}
+                    : { reasoning: run.reasoning }),
+                })),
+                branchIds: [...descriptor.branchIds],
+                descendantChildIds: [...descriptor.descendantChildIds],
+              })).mapErr(() => ({
+                type: "ChildNotFound" as const,
+                childId: id,
+              }));
+            },
+            readEntries: (id) => {
+              const ctrl = delegationControllerCell.controller;
+              const sessions = threadSourcesCell.sessions;
+              if (ctrl === undefined) {
+                return errAsync({
+                  type: "SourceUnavailable" as const,
+                  operation: "readEntries",
+                });
+              }
+              return ctrl
+                .resolveOverlayChild(id)
+                .mapErr(() => ({
+                  type: "ChildNotFound" as const,
+                  childId: id,
+                }))
+                .andThen((descriptor) => {
+                  if (
+                    descriptor.sessionRef === undefined ||
+                    sessions === undefined
+                  ) {
+                    return okAsync([] as const);
+                  }
+                  const parent = session.primarySession.getParentSession();
+                  const parentId =
+                    parent.persistence === "persistent"
+                      ? parent.sessionId
+                      : undefined;
+                  return sessions
+                    .readSessionEntries(descriptor.sessionRef, parentId)
+                    .map((result) => result.entries)
+                    .mapErr(() => ({
+                      type: "SourceCorrupt" as const,
+                      operation: "readEntries",
+                    }));
+                });
+            },
+          }),
+          {},
+          {
+            steer: (childId, generationId, text) => {
+              if (
+                !startupOwnsGeneration() ||
+                generationId !== generation.id ||
+                delegationControllerCell.controller === undefined
+              ) {
+                return errAsync({ type: "MutationFailed" as const });
+              }
+              return delegationControllerCell.controller
+                .steerChild(childId, text)
+                .mapErr(() => ({ type: "MutationFailed" as const }));
+            },
+            followUp: (childId, generationId, text) => {
+              if (
+                !startupOwnsGeneration() ||
+                generationId !== generation.id ||
+                delegationControllerCell.controller === undefined
+              ) {
+                return errAsync({ type: "MutationFailed" as const });
+              }
+              return delegationControllerCell.controller
+                .followUpChild(childId, text)
+                .mapErr(() => ({ type: "MutationFailed" as const }));
+            },
+          },
+        );
         }
 
         // Child recovery is generation-scoped. Construct it only after history
@@ -4569,7 +4763,14 @@ export function createPiExtension(
             inspectionEditor,
           );
         let customInspectionOpen = false;
-        const activateChild = (childId: string): void => {
+        const isFallbackRequired = (
+          error: unknown,
+        ): error is ChildOverlayFallbackRequired =>
+          typeof error === "object" &&
+          error !== null &&
+          "kind" in error &&
+          (error as { kind?: unknown }).kind === "fallback-required";
+        const activateCustomEditorInspection = (childId: string): void => {
           if (inspectionEditor === undefined) return;
           const node = inspectionRegistry
             .snapshotLive()
@@ -4606,9 +4807,8 @@ export function createPiExtension(
           ];
           inspectionEditor.open(child, known);
           treeSelectionCell.selectedId = childId;
-          // Explicit user action: Weave borrows the session editor for the
-          // duration of the inspection view. Whoever owns it right now
-          // (possibly another extension) gets it back when the view closes.
+          // Custom-editor fallback borrows the session editor for the
+          // duration of the inspection view. Native overlay never does this.
           const ownerBeforeInspection = ctx.ui.getEditorComponent?.();
           if (
             editorInstallCell !== undefined &&
@@ -4618,6 +4818,110 @@ export function createPiExtension(
           }
           ctx.ui.setEditorComponent?.(editorFactory);
           openCustomInspection();
+        };
+        const mountNativeOverlay = (): void => {
+          const overlay = childOverlayCell.controller;
+          if (
+            overlay === undefined ||
+            ctx.mode !== "tui" ||
+            ctx.ui.custom === undefined
+          ) {
+            ctx.ui.notify("Child inspection requires Pi TUI mode.", "warning");
+            return;
+          }
+          if (childOverlayCell.open && childOverlayCell.component !== undefined) {
+            childOverlayCell.component.invalidate();
+            childOverlayCell.tui?.requestRender();
+            return;
+          }
+          childOverlayCell.open = true;
+          let finished = false;
+          const finish = (): void => {
+            if (finished) return;
+            finished = true;
+            childOverlayCell.open = false;
+            childOverlayCell.component = undefined;
+            childOverlayCell.tui = undefined;
+            if (childOverlayCell.settle === settleMounted) {
+              childOverlayCell.settle = undefined;
+            }
+            if (overlay.isOpen()) {
+              Result.fromThrowable(
+                () => overlay.close(),
+                () => "overlay_close_failed" as const,
+              )().match(
+                () => undefined,
+                () => undefined,
+              );
+            }
+          };
+          let settleMounted: (() => void) | undefined;
+          void ctx.ui
+            .custom<void>((tui, theme, keybindings, done) => {
+              childOverlayCell.tui = tui as { requestRender(): void };
+              const settle = (): void => {
+                if (finished) return;
+                finish();
+                treeSelectionCell.selectedId = ROOT_NODE_ID;
+                done(undefined);
+              };
+              settleMounted = settle;
+              childOverlayCell.settle = settle;
+              const mounted = createChildOverlayCustomComponent(
+                childOverlayCell.tui as never,
+                theme as never,
+                keybindings as never,
+                overlay,
+                settle,
+                (fallback) => {
+                  // Settle native once, then hand off to the custom-editor path.
+                  settle();
+                  if (!startupOwnsGeneration()) return;
+                  activateCustomEditorInspection(fallback.metadata.childId);
+                },
+                { cwd: ctx.cwd },
+              );
+              childOverlayCell.component = mounted;
+              return mounted;
+            })
+            .finally(() => {
+              finish();
+            });
+        };
+        const activateNativeOverlay = (childId: string): void => {
+          const overlay = childOverlayCell.controller;
+          if (overlay === undefined || !startupOwnsGeneration()) {
+            activateCustomEditorInspection(childId);
+            return;
+          }
+          treeSelectionCell.selectedId = childId;
+          void (async () => {
+            const opened = await overlay.open(childId);
+            if (!startupOwnsGeneration()) return;
+            if (opened.isOk()) {
+              // Never touch setEditorComponent: ui.custom owns input while
+              // mounted, so pi-vim / primary editor ownership stays intact.
+              mountNativeOverlay();
+              return;
+            }
+            closeChildOverlay();
+            if (isFallbackRequired(opened.error)) {
+              activateCustomEditorInspection(opened.error.metadata.childId);
+              return;
+            }
+            activateCustomEditorInspection(childId);
+          })();
+        };
+        const activateChild = (childId: string): void => {
+          if (!startupOwnsGeneration()) return;
+          if (
+            generation.preflight.childInspectionFallback === "native-overlay" &&
+            childOverlayCell.controller !== undefined
+          ) {
+            activateNativeOverlay(childId);
+            return;
+          }
+          activateCustomEditorInspection(childId);
         };
         const openCustomInspection = (): void => {
           if (ctx.mode !== "tui" || ctx.ui.custom === undefined) {
@@ -4992,6 +5296,7 @@ export function createPiExtension(
       // Settled here for the same reason as in `session_start`: a shutdown
       // that leaves the overlay mounted would also leave its promise pending.
       closePlanTaskOverlay();
+      clearChildOverlayGeneration();
       controller.shutdown();
       lastBootActivationFailure = undefined;
       const shuttingSession = activeSession;
