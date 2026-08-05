@@ -32,6 +32,11 @@ import { isAbsolute, join } from "node:path";
 import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
 import { z } from "zod";
 import { isLexicallyContained } from "./path-containment.js";
+import {
+  createBunPiTrustedDataRootPort,
+  type PiTrustedDataRootPort,
+  type PiTrustedDataRootViolation,
+} from "./trusted-data-root.js";
 
 // ---------------------------------------------------------------------------
 // Layout
@@ -89,6 +94,14 @@ export const PI_NATIVE_SESSION_ENTRY_CURSOR_VERSION = 1 as const;
 export type PiNativeSessionRootViolation =
   | "empty-home"
   | "relative-xdg-data-home"
+  /** The configured XDG base could not be canonicalized (loop/dangling/denied). */
+  | "unresolvable-data-root"
+  /** The canonical XDG base exists but is not a directory. */
+  | "non-directory-data-root"
+  /** The canonical XDG base is owned by another user. */
+  | "foreign-data-root"
+  /** The canonical XDG base is group- or world-writable. */
+  | "writable-data-root"
   | "unsafe-component"
   | "path-escape"
   | "symlink-rejected";
@@ -184,7 +197,9 @@ export function setPiNativeSessionMaxRangeLengthForTests(
 }
 
 function effectiveMaxRangeLength(): number {
-  return piNativeSessionMaxRangeLengthForTests ?? PI_NATIVE_SESSION_MAX_RANGE_LENGTH;
+  return (
+    piNativeSessionMaxRangeLengthForTests ?? PI_NATIVE_SESSION_MAX_RANGE_LENGTH
+  );
 }
 
 /** Stable regular-file identity used by bounded range reads. */
@@ -283,34 +298,83 @@ function fromFsError(
 export interface PiNativeSessionRootInput {
   readonly env?: Readonly<Record<string, string | undefined>>;
   readonly homeDir?: string;
+  /**
+   * Canonicalizer for the configured XDG data base. Production wires the
+   * libc `realpath(3)` port; unit tests with synthetic absolute paths wire
+   * {@link IdentityPiTrustedDataRootPort}.
+   */
+  readonly trustedRoot?: PiTrustedDataRootPort;
 }
 
 /**
  * Resolves the fixed session root. `XDG_DATA_HOME` wins when set and absolute;
  * a relative `XDG_DATA_HOME` is a root violation rather than a silently
  * re-based path.
+ *
+ * The configured base (`$XDG_DATA_HOME`, else `$HOME/.local/share`) is
+ * canonicalized first, so a user-owned symlinked base - the common
+ * `~/.local -> dotfiles/.local` layout - resolves to its real target instead
+ * of failing closed against the no-follow chain below. Only the base may be
+ * a symlink: the adapter-owned `weave/adapters/pi/sessions` components are
+ * appended *after* canonicalization and still opened with strict
+ * `openat(O_NOFOLLOW)`, so nothing at or below the adapter root is ever
+ * followed.
  */
 export function resolvePiNativeSessionRoot(
   input: PiNativeSessionRootInput = {},
-): Result<string, PiNativeSessionError> {
+): ResultAsync<string, PiNativeSessionError> {
   const env = input.env ?? Bun.env;
   const home = input.homeDir ?? env.HOME ?? "";
+  const trustedRoot = input.trustedRoot ?? createBunPiTrustedDataRootPort();
   const configured = env.XDG_DATA_HOME;
+  let base: string;
   if (configured !== undefined && configured.length > 0) {
     if (!isAbsolute(configured)) {
-      return err({
+      return errAsync({
         type: "SessionRootViolation",
         reason: "relative-xdg-data-home",
       });
     }
-    return ok(join(configured, ...PI_NATIVE_SESSION_LAYOUT.segments));
+    base = configured;
+  } else {
+    if (home.length === 0) {
+      return errAsync({ type: "SessionRootViolation", reason: "empty-home" });
+    }
+    base = join(home, ".local", "share");
   }
-  if (home.length === 0) {
-    return err({ type: "SessionRootViolation", reason: "empty-home" });
+  return trustedRoot
+    .canonicalize(base)
+    .map((canonicalBase) =>
+      join(canonicalBase, ...PI_NATIVE_SESSION_LAYOUT.segments),
+    )
+    .mapErr((violation) => fromTrustedRootViolation(violation, base));
+}
+
+/** Maps a trusted-base canonicalization failure onto a root violation. */
+function fromTrustedRootViolation(
+  violation: PiTrustedDataRootViolation,
+  base: string,
+): PiNativeSessionError {
+  switch (violation) {
+    case "relative-data-root":
+      return {
+        type: "SessionRootViolation",
+        reason: base.length === 0 ? "empty-home" : "relative-xdg-data-home",
+      };
+    case "unresolvable-data-root":
+      return { type: "SessionRootViolation", reason: "unresolvable-data-root" };
+    case "non-directory-data-root":
+      return {
+        type: "SessionRootViolation",
+        reason: "non-directory-data-root",
+      };
+    case "foreign-data-root":
+      return { type: "SessionRootViolation", reason: "foreign-data-root" };
+    case "writable-data-root":
+      return { type: "SessionRootViolation", reason: "writable-data-root" };
+    default:
+      return { type: "SessionStorageUnavailable" };
   }
-  return ok(
-    join(home, ".local", "share", ...PI_NATIVE_SESSION_LAYOUT.segments),
-  );
 }
 
 /**
@@ -944,7 +1008,9 @@ function readLinesForward(
       }
 
       const rest =
-        lineStart < merged.length ? merged.subarray(lineStart).slice() : new Uint8Array();
+        lineStart < merged.length
+          ? merged.subarray(lineStart).slice()
+          : new Uint8Array();
       if (rest.length > PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS.maxLineBytes) {
         return errAsync<readonly LocatedLine[], PiNativeSessionError>({
           type: "SessionCorrupt",
@@ -956,7 +1022,9 @@ function readLinesForward(
       return collect(
         cursor + chunk.length,
         rest,
-        lineStart < merged.length ? baseOffset + lineStart : cursor + chunk.length,
+        lineStart < merged.length
+          ? baseOffset + lineStart
+          : cursor + chunk.length,
         lines,
       );
     });
@@ -1132,13 +1200,7 @@ function readLinesBackward(
       for (let index = definite.length - 1; index >= 0; index -= 1) {
         const line = definite[index];
         if (line === undefined || line.offset < startFloor) continue;
-        const pushed = pushCollectedLine(
-          collected,
-          state,
-          maxLines,
-          line,
-          ref,
-        );
+        const pushed = pushCollectedLine(collected, state, maxLines, line, ref);
         if (pushed.isErr()) return errAsync(pushed.error);
         if (pushed.value === "full") return okAsync(collected);
       }
@@ -1158,7 +1220,9 @@ function readLinesBackward(
         return okAsync(collected);
       }
 
-      if (head.bytes.length > PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS.maxLineBytes) {
+      if (
+        head.bytes.length > PI_NATIVE_SESSION_ENTRY_PAGE_BOUNDS.maxLineBytes
+      ) {
         return errAsync(lineTooLongError(ref));
       }
       return step(offset, head.bytes.slice(), head.offset);

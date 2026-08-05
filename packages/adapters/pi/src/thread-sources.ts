@@ -7,13 +7,20 @@
  */
 
 import * as PiPublicExports from "@earendil-works/pi-coding-agent";
-import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
+import {
+  err,
+  errAsync,
+  ok,
+  okAsync,
+  type Result,
+  ResultAsync,
+} from "neverthrow";
 import {
   BunPiChildMetadataCacheFs,
+  openPiChildMetadataCache,
   type PiChildMetadataCacheFsPort,
   type PiChildMetadataCacheOpenOutcome,
   type PiChildMetadataDatabaseOpener,
-  openPiChildMetadataCache,
   resolvePiChildMetadataCacheRoot,
 } from "./child-metadata-cache.js";
 import {
@@ -23,9 +30,9 @@ import {
   resolvePiNativeSessionRoot,
 } from "./child-native-sessions.js";
 import {
+  createNativeChildRefSourceAuthority,
   type PiChildRefAppendPort,
   type PiChildRefEntryReadPort,
-  createNativeChildRefSourceAuthority,
   PiChildSessionRefStore,
 } from "./child-session-refs.js";
 import type {
@@ -39,6 +46,7 @@ import {
   isPiSessionManagerStatic,
   type PiSessionManagerStatic,
 } from "./native-session-host.js";
+import type { PiTrustedDataRootPort } from "./trusted-data-root.js";
 
 /** Why production thread-source construction refused to open. */
 export type PiThreadSourceFactoryError =
@@ -82,6 +90,8 @@ export interface PiThreadSourceFactoryInput {
    * and Pi's public `SessionManager`; unit tests inject Task 4 memory host/fs.
    */
   readonly sessionRoot?: string;
+  /** Test seam: canonicalizer for the configured XDG data base. */
+  readonly trustedRoot?: PiTrustedDataRootPort;
   readonly fs?: PiNativeSessionFsPort;
   readonly host?: PiNativeSessionHostPort;
   readonly cacheRoot?: string;
@@ -102,19 +112,24 @@ const NOOP_CACHE: PiThreadCachePort = {
 
 function resolveSessionRoot(
   input: PiThreadSourceFactoryInput,
-): Result<string, PiThreadSourceFactoryError> {
+): ResultAsync<string, PiThreadSourceFactoryError> {
   if (input.sessionRoot !== undefined) {
     if (input.sessionRoot.length === 0) {
-      return err({
+      return errAsync({
         type: "SessionRootUnavailable",
         reason: "empty-session-root",
       });
     }
-    return ok(input.sessionRoot);
+    return okAsync(input.sessionRoot);
   }
+  // Production path: the configured XDG base is canonicalized (a user-owned
+  // symlinked base is fine) before the adapter-owned segments are appended.
   return resolvePiNativeSessionRoot({
     env: input.env,
     homeDir: input.homeDir,
+    ...(input.trustedRoot === undefined
+      ? {}
+      : { trustedRoot: input.trustedRoot }),
   }).mapErr((error) => ({
     type: "SessionRootUnavailable" as const,
     reason: error.type === "SessionRootViolation" ? error.reason : error.type,
@@ -171,16 +186,25 @@ export function openPiThreadSources(
     });
   }
 
-  const root = resolveSessionRoot(input);
-  if (root.isErr()) return errAsync(root.error);
   const host = resolveHost(input);
   if (host.isErr()) return errAsync(host.error);
+  const resolvedHost = host.value;
 
+  return resolveSessionRoot(input).andThen((root) =>
+    openWithSessionRoot(input, root, resolvedHost),
+  );
+}
+
+function openWithSessionRoot(
+  input: PiThreadSourceFactoryInput,
+  root: string,
+  host: PiNativeSessionHostPort,
+): ResultAsync<PiThreadSources, PiThreadSourceFactoryError> {
   const now = input.now;
   const sessions = new PiNativeSessionStore({
-    root: root.value,
+    root,
     fs: input.fs ?? createBunPiNativeSessionFs(),
-    host: host.value,
+    host,
     ...(now === undefined ? {} : { now: () => new Date(now()) }),
   });
   const authority = createNativeChildRefSourceAuthority(sessions);
@@ -246,9 +270,7 @@ export function openPiThreadSources(
 
 /** Production default: real Bun fs + Pi public `SessionManager`. */
 export function createProductionPiThreadSourceFactory(
-  options: {
-    readonly SessionManager?: PiSessionManagerStatic;
-  } = {},
+  options: { readonly SessionManager?: PiSessionManagerStatic } = {},
 ): PiThreadSourceFactory {
   return (input) =>
     openPiThreadSources({

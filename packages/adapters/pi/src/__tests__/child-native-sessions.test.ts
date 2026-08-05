@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { MemoryPiNativeSessionFs } from "../native-session-fs.js";
+import { err, ok } from "neverthrow";
 import {
   isDisjointFromDefaultSessionTree,
   nativeSessionDeletionToken,
@@ -14,6 +14,11 @@ import {
   safeNativeSessionComponent,
   verifyNativeSessionRef,
 } from "../child-native-sessions.js";
+import { MemoryPiNativeSessionFs } from "../native-session-fs.js";
+import {
+  FakePiTrustedDataRootPort,
+  IdentityPiTrustedDataRootPort,
+} from "../trusted-data-root.js";
 
 const ROOT = "/data/weave/adapters/pi/sessions";
 const PARENT = "parent-session-1";
@@ -187,28 +192,33 @@ function harness(options: FakeHostOptions = {}): Harness {
 }
 
 describe("resolvePiNativeSessionRoot", () => {
-  test("uses XDG_DATA_HOME when absolute", () => {
-    const resolved = resolvePiNativeSessionRoot({
+  const identityRoot = new IdentityPiTrustedDataRootPort();
+
+  test("uses XDG_DATA_HOME when absolute", async () => {
+    const resolved = await resolvePiNativeSessionRoot({
       env: { XDG_DATA_HOME: "/xdg" },
       homeDir: "/home/user",
+      trustedRoot: identityRoot,
     });
     expect(resolved._unsafeUnwrap()).toBe("/xdg/weave/adapters/pi/sessions");
   });
 
-  test("defaults to ~/.local/share", () => {
-    const resolved = resolvePiNativeSessionRoot({
+  test("defaults to ~/.local/share", async () => {
+    const resolved = await resolvePiNativeSessionRoot({
       env: {},
       homeDir: "/home/user",
+      trustedRoot: identityRoot,
     });
     expect(resolved._unsafeUnwrap()).toBe(
       "/home/user/.local/share/weave/adapters/pi/sessions",
     );
   });
 
-  test("rejects a relative XDG_DATA_HOME", () => {
-    const resolved = resolvePiNativeSessionRoot({
+  test("rejects a relative XDG_DATA_HOME", async () => {
+    const resolved = await resolvePiNativeSessionRoot({
       env: { XDG_DATA_HOME: "relative/data" },
       homeDir: "/home/user",
+      trustedRoot: identityRoot,
     });
     expect(resolved._unsafeUnwrapErr()).toEqual({
       type: "SessionRootViolation",
@@ -216,11 +226,59 @@ describe("resolvePiNativeSessionRoot", () => {
     });
   });
 
-  test("rejects an empty home with no XDG_DATA_HOME", () => {
-    const resolved = resolvePiNativeSessionRoot({ env: {}, homeDir: "" });
+  test("rejects an empty home with no XDG_DATA_HOME", async () => {
+    const resolved = await resolvePiNativeSessionRoot({
+      env: {},
+      homeDir: "",
+      trustedRoot: identityRoot,
+    });
     expect(resolved._unsafeUnwrapErr()).toEqual({
       type: "SessionRootViolation",
       reason: "empty-home",
+    });
+  });
+
+  test("stores under the canonical target of a symlinked base", async () => {
+    const resolved = await resolvePiNativeSessionRoot({
+      env: { XDG_DATA_HOME: "/home/user/.local/share" },
+      trustedRoot: new FakePiTrustedDataRootPort(
+        new Map([
+          ["/home/user/.local/share", ok("/home/user/dotfiles/.local/share")],
+        ]),
+      ),
+    });
+    expect(resolved._unsafeUnwrap()).toBe(
+      "/home/user/dotfiles/.local/share/weave/adapters/pi/sessions",
+    );
+  });
+
+  test.each([
+    ["unresolvable-data-root" as const, "unresolvable-data-root" as const],
+    ["non-directory-data-root" as const, "non-directory-data-root" as const],
+    ["foreign-data-root" as const, "foreign-data-root" as const],
+    ["writable-data-root" as const, "writable-data-root" as const],
+  ])("maps an untrusted base (%s) to a typed root violation", async (violation, reason) => {
+    const resolved = await resolvePiNativeSessionRoot({
+      env: { XDG_DATA_HOME: "/xdg" },
+      trustedRoot: new FakePiTrustedDataRootPort(
+        new Map([["/xdg", err(violation)]]),
+      ),
+    });
+    expect(resolved._unsafeUnwrapErr()).toEqual({
+      type: "SessionRootViolation",
+      reason,
+    });
+  });
+
+  test("reports storage unavailable when canonicalization cannot run", async () => {
+    const resolved = await resolvePiNativeSessionRoot({
+      env: { XDG_DATA_HOME: "/xdg" },
+      trustedRoot: new FakePiTrustedDataRootPort(
+        new Map([["/xdg", err("data-root-unavailable" as const)]]),
+      ),
+    });
+    expect(resolved._unsafeUnwrapErr()).toEqual({
+      type: "SessionStorageUnavailable",
     });
   });
 });
@@ -743,11 +801,14 @@ describe("deletion and tombstones", () => {
 });
 
 describe("default session tree isolation", () => {
-  test("the Weave root is disjoint from Pi's default session directory", () => {
-    const root = resolvePiNativeSessionRoot({
-      env: {},
-      homeDir: "/home/user",
-    })._unsafeUnwrap();
+  test("the Weave root is disjoint from Pi's default session directory", async () => {
+    const root = (
+      await resolvePiNativeSessionRoot({
+        env: {},
+        homeDir: "/home/user",
+        trustedRoot: new IdentityPiTrustedDataRootPort(),
+      })
+    )._unsafeUnwrap();
     expect(
       isDisjointFromDefaultSessionTree(
         root,

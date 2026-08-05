@@ -8,7 +8,14 @@
 
 import * as PiPublicExports from "@earendil-works/pi-coding-agent";
 import type { AdapterCommandRegistry } from "@weaveio/weave-engine";
-import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
+import {
+  err,
+  errAsync,
+  ok,
+  okAsync,
+  type Result,
+  type ResultAsync,
+} from "neverthrow";
 import {
   createPiAdapterCommandRegistry,
   createPiChildrenCommandPort,
@@ -27,6 +34,7 @@ import {
   resolvePiChildMetadataCacheRoot,
 } from "./child-metadata-cache.js";
 import {
+  type PiNativeSessionHostPort,
   PiNativeSessionStore,
   resolvePiNativeSessionRoot,
 } from "./child-native-sessions.js";
@@ -75,9 +83,7 @@ export interface CreateProductionPiAdapterCommandPortsOptions {
 
 const CLI_SOURCE_PARENT = "weave-cli";
 
-function unavailableChildrenPort(
-  message: string,
-): PiAdapterChildrenPort {
+function unavailableChildrenPort(message: string): PiAdapterChildrenPort {
   return {
     list: () => okAsync({ children: [] }),
     show: () =>
@@ -134,46 +140,65 @@ export function openProductionPiAdapterCommandPorts(
     });
   }
 
-  const sessionRoot = resolvePiNativeSessionRoot({
+  // Session root failures outrank cache root failures: the session store is
+  // authoritative, the cache is derivative.
+  return resolvePiNativeSessionRoot({
     env: options.env,
     homeDir: options.homeDir,
-  });
-  if (sessionRoot.isErr()) {
-    return errAsync({
-      type: "SessionRootUnavailable",
-      reason:
-        sessionRoot.error.type === "SessionRootViolation"
-          ? sessionRoot.error.reason
-          : sessionRoot.error.type,
+  })
+    .mapErr(
+      (error): PiProductionAdapterCommandError => ({
+        type: "SessionRootUnavailable",
+        reason:
+          error.type === "SessionRootViolation" ? error.reason : error.type,
+      }),
+    )
+    .andThen((root) => {
+      const cacheRoot = resolvePiChildMetadataCacheRoot({
+        env: options.env,
+        homeDir: options.homeDir,
+      });
+      if (cacheRoot.isErr()) {
+        return errAsync<
+          PiProductionAdapterCommandPorts,
+          PiProductionAdapterCommandError
+        >({
+          type: "CacheRootUnavailable",
+          reason:
+            cacheRoot.error.type === "CacheRootViolation"
+              ? cacheRoot.error.reason
+              : cacheRoot.error.type,
+        });
+      }
+      const host = resolveHost(options);
+      if (host.isErr()) {
+        return errAsync<
+          PiProductionAdapterCommandPorts,
+          PiProductionAdapterCommandError
+        >(host.error);
+      }
+      return openWithSessionRoot(options, root, cacheRoot.value, host.value);
     });
-  }
+}
 
-  const cacheRoot = resolvePiChildMetadataCacheRoot({
-    env: options.env,
-    homeDir: options.homeDir,
-  });
-  if (cacheRoot.isErr()) {
-    return errAsync({
-      type: "CacheRootUnavailable",
-      reason:
-        cacheRoot.error.type === "CacheRootViolation"
-          ? cacheRoot.error.reason
-          : cacheRoot.error.type,
-    });
-  }
-
-  const host = resolveHost(options);
-  if (host.isErr()) return errAsync(host.error);
-
+function openWithSessionRoot(
+  options: CreateProductionPiAdapterCommandPortsOptions,
+  sessionRoot: string,
+  cacheRoot: string,
+  host: PiNativeSessionHostPort,
+): ResultAsync<
+  PiProductionAdapterCommandPorts,
+  PiProductionAdapterCommandError
+> {
   const sessions = new PiNativeSessionStore({
-    root: sessionRoot.value,
+    root: sessionRoot,
     fs: createBunPiNativeSessionFs(),
-    host: host.value,
+    host,
   });
   const authority = createNativeChildRefSourceAuthority(sessions);
 
   return openPiChildMetadataCache({
-    root: cacheRoot.value,
+    root: cacheRoot,
     fs: new BunPiChildMetadataCacheFs(),
     authority,
     source: {
@@ -220,9 +245,9 @@ export function openProductionPiAdapterCommandPorts(
             );
           },
           listSessionsByRef: (refs) =>
-            sessions.listByRef(refs, { limit: 50 }).map((states) =>
-              states.map((state) => ({ state: state.state })),
-            ),
+            sessions
+              .listByRef(refs, { limit: 50 })
+              .map((states) => states.map((state) => ({ state: state.state }))),
         }),
       });
       return { children, doctor, cacheMode: "active" as const };
@@ -233,8 +258,7 @@ export function openProductionPiAdapterCommandPorts(
     );
     const doctor = createPiDoctorPort({
       ports: createStoreBackedDoctorCheckPorts({
-        permissions: () =>
-          okAsync(passedDoctorCheck("session root resolved")),
+        permissions: () => okAsync(passedDoctorCheck("session root resolved")),
         cacheMode: "degraded",
         listMetadata: () => okAsync([]),
       }),

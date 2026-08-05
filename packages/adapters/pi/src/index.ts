@@ -803,6 +803,16 @@ export {
   openPiThreadSources,
 } from "./thread-sources.js";
 export type {
+  PiTrustedDataRootPort,
+  PiTrustedDataRootViolation,
+} from "./trusted-data-root.js";
+export {
+  BunPiTrustedDataRootPort,
+  createBunPiTrustedDataRootPort,
+  FakePiTrustedDataRootPort,
+  IdentityPiTrustedDataRootPort,
+} from "./trusted-data-root.js";
+export type {
   Clock,
   IdGenerator,
   PiAdapterLogger,

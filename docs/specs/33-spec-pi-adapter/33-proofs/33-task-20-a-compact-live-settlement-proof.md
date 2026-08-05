@@ -86,3 +86,17 @@ Pane `w23:p8H` remains open as required. No other pane was closed or altered.
 ## Rerun requirement
 
 Start a fresh Pi 0.83 npm-provenance pane with an absolute, no-symlink `XDG_DATA_HOME` and without `WEAVE_PI_UNSAFE_DISABLE_COMMAND_PROVENANCE`. Then rerun only matrix item (a). Do not mark Task 20(a) complete from this proof.
+
+## Remediation (recorded after this failure)
+
+This section records the code change made in response to the failure above. It changes nothing about the result of this run, which remains **FAIL**. Task 20(a) is still not proven.
+
+| Field | Value |
+| --- | --- |
+| Remediation commit | `fix(pi): canonicalize trusted xdg data roots` — `REMEDIATION_COMMIT_SHA` |
+| Blocker addressed | `thread-session-create-failed` caused by the symlinked `$HOME/.local` component |
+| Scope | Base-path canonicalization only; no change to no-follow behaviour below the adapter root |
+
+The trust boundary is now explicit. The configured base — `$XDG_DATA_HOME`, or `$HOME/.local/share` when unset — is canonicalized once with libc `realpath(3)`, so a user-owned symlinked base resolves to its real target. The canonical base must be absolute, a directory, owned by the current uid, and neither group- nor world-writable; a base whose unresolved components are symlinks (dangling or looping) is refused. The adapter-owned `weave/adapters/pi/sessions` components are appended only after that check, and everything at or below them is still opened with strict `openat(O_NOFOLLOW)`. Symlinked components inside the adapter root or inside a child directory remain rejected.
+
+Rerun conditions are therefore relaxed in one respect only: a fresh pane no longer needs a symlink-free `XDG_DATA_HOME`. Every other rerun requirement above still stands, including the removal of `WEAVE_PI_UNSAFE_DISABLE_COMMAND_PROVENANCE` and a rebuilt npm-provenance artifact that contains the remediation commit.
